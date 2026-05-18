@@ -18,6 +18,7 @@ from ceo_agent_service.cli import (
     record_feedback_command,
     refresh_org_cache_command,
     run_loop,
+    send_attempt_command,
     settings_from_args,
     test_ding_command as run_test_ding_command,
     run_audit_web_command,
@@ -71,6 +72,15 @@ def test_parser_supports_rerun_message_command():
     assert args.force_new_decision is True
 
 
+def test_parser_supports_send_attempt_command():
+    parser = build_parser()
+
+    args = parser.parse_args(["send-attempt", "--attempt-id", "42"])
+
+    assert args.command == "send-attempt"
+    assert args.attempt_id == 42
+
+
 def test_settings_defaults_point_to_memory_home():
     parser = build_parser()
     args = parser.parse_args(["run-once"])
@@ -109,6 +119,101 @@ def test_reset_codex_sessions_command_only_clears_conversation_sessions(tmp_path
     assert loaded.get_codex_session_id("cid-1") is None
     assert attempt is not None
     assert attempt.codex_session_id == "session-1"
+
+
+def test_send_attempt_command_sends_existing_dry_run_without_rerunning_codex(
+    monkeypatch, tmp_path, capsys
+):
+    sent = {}
+
+    class FakeDws:
+        def __init__(self, **kwargs):
+            sent["kwargs"] = kwargs
+
+        @staticmethod
+        def extract_recall_key(send_result):
+            return send_result["result"]["processQueryKey"]
+
+        def send_message(self, conversation_id, text, at_users=None, user_id=None):
+            sent["message"] = (conversation_id, text, at_users, user_id)
+            return {"result": {"processQueryKey": "recall-1"}}
+
+    monkeypatch.setattr(cli, "DwsClient", FakeDws)
+    settings = WorkerSettings(
+        db_path=tmp_path / "worker.sqlite3",
+        dry_run=False,
+        dws_transient_retry_attempts=4,
+        dws_transient_retry_delay_seconds=0,
+    )
+    store = cli.AutoReplyStore(settings.db_path)
+    store.upsert_conversation("cid-1", "Friday", False, None)
+    attempt_id = store.record_reply_attempt(
+        conversation_id="cid-1",
+        conversation_title="Friday",
+        trigger_message_id="msg-1",
+        trigger_sender="Phina",
+        trigger_text="@Derek Zen 看一下",
+        action="send_reply",
+        sensitivity_kind="general",
+    )
+    final_reply = "> Phina: 看一下\n\n<@user-1> 可以先这样处理。（by磊哥分身）"
+    store.update_reply_attempt(
+        attempt_id,
+        final_reply_text=final_reply,
+        send_status="dry_run",
+    )
+
+    result = send_attempt_command(settings, attempt_id)
+
+    assert sent["message"] == ("cid-1", final_reply, ["user-1"], None)
+    assert result["send_status"] == "sent"
+    updated = cli.AutoReplyStore(settings.db_path).get_reply_attempt(attempt_id)
+    assert updated is not None
+    assert updated.send_status == "sent"
+    sent_reply = cli.AutoReplyStore(settings.db_path).get_sent_reply("cid-1", "msg-1")
+    assert sent_reply is not None
+    assert sent_reply.recall_key == "recall-1"
+    assert '"send_status": "sent"' in capsys.readouterr().out
+
+
+def test_send_attempt_command_blocks_runtime_leaks(monkeypatch, tmp_path):
+    class FakeDws:
+        def __init__(self, **kwargs):
+            pass
+
+        @staticmethod
+        def extract_recall_key(send_result):
+            return ""
+
+        def send_message(self, conversation_id, text, at_users=None, user_id=None):
+            raise AssertionError("send_message should not be called")
+
+    monkeypatch.setattr(cli, "DwsClient", FakeDws)
+    settings = WorkerSettings(db_path=tmp_path / "worker.sqlite3", dry_run=False)
+    store = cli.AutoReplyStore(settings.db_path)
+    store.upsert_conversation("cid-1", "Friday", False, None)
+    attempt_id = store.record_reply_attempt(
+        conversation_id="cid-1",
+        conversation_title="Friday",
+        trigger_message_id="msg-1",
+        trigger_sender="Phina",
+        trigger_text="@Derek Zen 看一下",
+        action="send_reply",
+        sensitivity_kind="general",
+    )
+    store.update_reply_attempt(
+        attempt_id,
+        final_reply_text="Codex 检索了本地 workspace 后认为可以。（by磊哥分身）",
+        send_status="dry_run",
+    )
+
+    with pytest.raises(SystemExit):
+        send_attempt_command(settings, attempt_id)
+
+    updated = cli.AutoReplyStore(settings.db_path).get_reply_attempt(attempt_id)
+    assert updated is not None
+    assert updated.send_status == "blocked"
+    assert updated.send_error == "leak_check"
 
 
 def test_max_batches_can_be_configured_from_env(monkeypatch):

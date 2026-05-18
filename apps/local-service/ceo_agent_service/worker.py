@@ -10,7 +10,7 @@ from ceo_agent_service.config import (
     handoff_ack,
     principal_name,
 )
-from ceo_agent_service.dws_client import DwsClient, DwsError
+from ceo_agent_service.dws_client import DwsClient, DwsDocumentSearchResult, DwsError
 from ceo_agent_service.corpus import (
     MEDIA_OR_LINK_PATTERN,
     CorpusRecord,
@@ -47,10 +47,12 @@ QUOTE_MENTION_PATTERN = re.compile(
     r"@[^\s@()]+(?:\s+[A-Za-z][^\s@()]*)?(?:\((?:[^()]|\([^()]*\))*\))?"
 )
 DINGTALK_DOC_URL_PATTERN = re.compile(r"https://alidocs\.dingtalk\.com/i/nodes/[^\s)\]]+")
+FILE_MESSAGE_PATTERN = re.compile(r"^\s*\[文件]\s*(?P<name>.+?)\s*$")
 QUOTE_WORD_OR_CJK_PATTERN = re.compile(r"[A-Za-z0-9]+(?:[-_'][A-Za-z0-9]+)*|[\u4e00-\u9fff]")
 DINGTALK_TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
 GROUP_CONTEXT_RECOVERY_WINDOW = timedelta(hours=24)
 QUOTE_INFORMATION_UNIT_LIMIT = 20
+REFERENCED_FILE_CONTEXT_WINDOW = timedelta(minutes=10)
 
 
 class DingTalkAutoReplyWorker:
@@ -441,7 +443,7 @@ class DingTalkAutoReplyWorker:
         ):
             return
         try:
-            linked_documents = self._read_linked_documents(new_messages)
+            linked_documents = self._read_linked_documents(new_messages, context_messages)
         except Exception as exc:
             self._record_linked_document_error(conversation, trigger, str(exc))
             return
@@ -663,10 +665,14 @@ class DingTalkAutoReplyWorker:
 
     def _read_linked_documents(
         self,
-        messages: list[DingTalkMessage],
+        new_messages: list[DingTalkMessage],
+        context_messages: list[DingTalkMessage],
     ) -> list[LinkedDocumentContext]:
         documents: list[LinkedDocumentContext] = []
-        for url in self._dingtalk_doc_urls(messages):
+        referenced_messages = self._referenced_document_messages(
+            new_messages, context_messages
+        )
+        for url in self._dingtalk_doc_urls(referenced_messages):
             payload = self.dws.read_doc(url)
             title = str(payload.get("title") or "钉钉文档")
             markdown = str(payload.get("markdown") or "")
@@ -679,7 +685,181 @@ class DingTalkAutoReplyWorker:
                     markdown=markdown,
                 )
             )
+        for file_name in self._referenced_file_names(new_messages, context_messages):
+            document = self._read_referenced_file(file_name)
+            if document is not None:
+                documents.append(document)
         return documents
+
+    @staticmethod
+    def _referenced_document_messages(
+        new_messages: list[DingTalkMessage],
+        context_messages: list[DingTalkMessage],
+    ) -> list[DingTalkMessage]:
+        result: list[DingTalkMessage] = []
+        seen_message_ids: set[str] = set()
+        context_by_message_id = {
+            message.open_message_id: message for message in context_messages
+        }
+        for message in new_messages:
+            if message.open_message_id not in seen_message_ids:
+                result.append(message)
+                seen_message_ids.add(message.open_message_id)
+            if (
+                message.quoted_message_id
+                and message.quoted_message_id in context_by_message_id
+                and message.quoted_message_id not in seen_message_ids
+            ):
+                quoted = context_by_message_id[message.quoted_message_id]
+                result.append(quoted)
+                seen_message_ids.add(quoted.open_message_id)
+        return result
+
+    @classmethod
+    def _referenced_file_names(
+        cls,
+        new_messages: list[DingTalkMessage],
+        context_messages: list[DingTalkMessage],
+    ) -> list[str]:
+        names: list[str] = []
+        seen_names: set[str] = set()
+
+        def add_from_text(text: str | None) -> None:
+            if not text:
+                return
+            match = FILE_MESSAGE_PATTERN.match(text.strip())
+            if not match:
+                return
+            file_name = match.group("name").strip()
+            if file_name and file_name not in seen_names:
+                seen_names.add(file_name)
+                names.append(file_name)
+
+        context_by_message_id = {
+            message.open_message_id: message for message in context_messages
+        }
+        trigger = new_messages[-1] if new_messages else None
+        for message in new_messages:
+            add_from_text(message.content)
+            add_from_text(message.quoted_content)
+            if message.quoted_message_id and message.quoted_message_id in context_by_message_id:
+                add_from_text(context_by_message_id[message.quoted_message_id].content)
+
+        if trigger is None:
+            return names
+
+        trigger_time = datetime.strptime(trigger.create_time, DINGTALK_TIME_FORMAT)
+        window_start = trigger_time - REFERENCED_FILE_CONTEXT_WINDOW
+        for message in context_messages:
+            if message.sender_name != trigger.sender_name:
+                continue
+            try:
+                message_time = datetime.strptime(message.create_time, DINGTALK_TIME_FORMAT)
+            except ValueError:
+                continue
+            if window_start <= message_time <= trigger_time:
+                add_from_text(message.content)
+        return names
+
+    def _read_referenced_file(self, file_name: str) -> LinkedDocumentContext | None:
+        matches = self._matching_document_search_results(
+            file_name,
+            self.dws.search_documents(file_name, page_size=5),
+        )
+        if not matches:
+            return LinkedDocumentContext(
+                url="",
+                title=file_name,
+                markdown="钉钉文件消息已在上下文中出现，但没有搜索到可访问的文件正文。",
+            )
+        if len(matches) > 1:
+            titles = ", ".join(self._document_display_name(match) for match in matches)
+            return LinkedDocumentContext(
+                url="",
+                title=file_name,
+                markdown=f"钉钉文件消息已在上下文中出现，但同名可访问文件不唯一：{titles}。",
+            )
+        match = matches[0]
+        if match.content_type.upper() == "ALIDOC" and match.extension.lower() == "adoc":
+            payload = self.dws.read_doc(match.node_id)
+            markdown = str(payload.get("markdown") or "")
+            if markdown.strip():
+                return LinkedDocumentContext(
+                    url=match.doc_url,
+                    title=str(payload.get("title") or self._document_display_name(match)),
+                    markdown=markdown,
+                )
+        return self._downloadable_file_context(file_name, match)
+
+    def _downloadable_file_context(
+        self,
+        file_name: str,
+        match: DwsDocumentSearchResult,
+    ) -> LinkedDocumentContext:
+        try:
+            payload = self.dws.download_doc(match.node_id)
+        except DwsError as exc:
+            return LinkedDocumentContext(
+                url=match.doc_url,
+                title=self._document_display_name(match) or file_name,
+                markdown=(
+                    "钉钉文件消息已定位，但当前未取得文件正文；"
+                    f"读取失败：{self._safe_linked_file_error(exc)}。"
+                ),
+            )
+        markdown = str(
+            payload.get("markdown")
+            or payload.get("content")
+            or payload.get("text")
+            or ""
+        )
+        if markdown.strip():
+            return LinkedDocumentContext(
+                url=match.doc_url,
+                title=self._document_display_name(match) or file_name,
+                markdown=markdown,
+            )
+        return LinkedDocumentContext(
+            url=match.doc_url,
+            title=self._document_display_name(match) or file_name,
+            markdown="钉钉文件消息已定位，但下载接口未返回可直接审阅的正文。",
+        )
+
+    @classmethod
+    def _matching_document_search_results(
+        cls,
+        file_name: str,
+        results: list[DwsDocumentSearchResult],
+    ) -> list[DwsDocumentSearchResult]:
+        expected = cls._normalized_document_name(file_name)
+        matches = []
+        for result in results:
+            candidates = {
+                cls._normalized_document_name(result.name),
+                cls._normalized_document_name(cls._document_display_name(result)),
+            }
+            if expected in candidates:
+                matches.append(result)
+        return matches
+
+    @staticmethod
+    def _document_display_name(result: DwsDocumentSearchResult) -> str:
+        if not result.extension:
+            return result.name
+        suffix = f".{result.extension.lstrip('.')}"
+        if result.name.endswith(suffix):
+            return result.name
+        return f"{result.name}{suffix}"
+
+    @staticmethod
+    def _normalized_document_name(value: str) -> str:
+        return " ".join(value.strip().split()).casefold()
+
+    @staticmethod
+    def _safe_linked_file_error(error: Exception) -> str:
+        if getattr(error, "needs_authorization", False):
+            return "缺少文件下载权限"
+        return str(error).split("authorizationUrl", 1)[0][:200]
 
     @classmethod
     def _dingtalk_doc_urls(cls, messages: list[DingTalkMessage]) -> list[str]:

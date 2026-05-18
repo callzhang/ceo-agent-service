@@ -49,6 +49,15 @@ class DwsUserProfile(BaseModel):
     department_ids: set[str] = set()
 
 
+class DwsDocumentSearchResult(BaseModel):
+    node_id: str
+    name: str = ""
+    extension: str = ""
+    content_type: str = ""
+    node_type: str = ""
+    doc_url: str = ""
+
+
 class DwsClient:
     # DWS returns generic code 6 for transient discovery/network failures such as
     # TLS handshake timeouts before the request reaches a business API.
@@ -265,6 +274,32 @@ class DwsClient:
             "json",
         ]
 
+    def build_search_documents_command(
+        self, query: str, page_size: int = 5
+    ) -> list[str]:
+        return [
+            self.dws_bin,
+            "doc",
+            "search",
+            "--query",
+            query,
+            "--page-size",
+            str(page_size),
+            "--format",
+            "json",
+        ]
+
+    def build_download_doc_command(self, node: str) -> list[str]:
+        return [
+            self.dws_bin,
+            "doc",
+            "download",
+            "--node",
+            node,
+            "--format",
+            "json",
+        ]
+
     def build_ding_self_command(self, receiver_user_id: str, text: str) -> list[str]:
         robot_code = self._ding_robot_code()
         if not robot_code:
@@ -360,6 +395,18 @@ class DwsClient:
         payload = self.run_json(self.build_read_doc_command(node))
         if not isinstance(payload, dict):
             raise DwsError("invalid doc read response")
+        return payload
+
+    def search_documents(
+        self, query: str, page_size: int = 5
+    ) -> list[DwsDocumentSearchResult]:
+        payload = self.run_json(self.build_search_documents_command(query, page_size))
+        return self.parse_document_search_results(payload)
+
+    def download_doc(self, node: str) -> dict[str, Any]:
+        payload = self.run_json(self.build_download_doc_command(node))
+        if not isinstance(payload, dict):
+            raise DwsError("invalid doc download response")
         return payload
 
     def send_message(
@@ -745,6 +792,32 @@ class DwsClient:
             )
             for conversation in conversations
         ]
+
+    @staticmethod
+    def parse_document_search_results(
+        payload: dict[str, Any]
+    ) -> list[DwsDocumentSearchResult]:
+        documents = payload.get("documents") or payload.get("result", {}).get("documents", [])
+        if not isinstance(documents, list):
+            return []
+        results: list[DwsDocumentSearchResult] = []
+        for item in documents:
+            if not isinstance(item, dict):
+                continue
+            node_id = item.get("nodeId") or item.get("dentryUuid") or item.get("fileId")
+            if not node_id:
+                continue
+            results.append(
+                DwsDocumentSearchResult(
+                    node_id=str(node_id),
+                    name=str(item.get("name") or item.get("title") or ""),
+                    extension=str(item.get("extension") or ""),
+                    content_type=str(item.get("contentType") or ""),
+                    node_type=str(item.get("nodeType") or ""),
+                    doc_url=str(item.get("docUrl") or item.get("url") or ""),
+                )
+            )
+        return results
 
     @staticmethod
     def parse_messages(

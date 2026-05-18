@@ -1,6 +1,7 @@
 import argparse
 import json
 import os
+import re
 import time
 from collections.abc import Callable
 from datetime import datetime, timedelta
@@ -8,6 +9,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, PositiveInt
 
+from ceo_agent_service.codex_decision import contains_forbidden_leak
 from ceo_agent_service.codex_decision import CodexDecisionRunner
 from ceo_agent_service.corpus import (
     append_records,
@@ -19,7 +21,7 @@ from ceo_agent_service.corpus import (
 )
 from ceo_agent_service.audit_web import run_audit_web
 from ceo_agent_service.dws_client import DwsClient, DwsError, local_time_zone_name
-from ceo_agent_service.dingtalk_models import DingTalkConversation
+from ceo_agent_service.dingtalk_models import CodexAction, DingTalkConversation
 from ceo_agent_service.org_cache import (
     CachedDwsClient,
     CachedOrgDirectory,
@@ -116,6 +118,7 @@ def build_parser() -> argparse.ArgumentParser:
         "export-feedback",
         "test-ding",
         "rerun-message",
+        "send-attempt",
         "reset-codex-sessions",
     ):
         subparser = subparsers.add_parser(command)
@@ -198,6 +201,8 @@ def build_parser() -> argparse.ArgumentParser:
                 action="store_true",
                 help="run Codex again even if this message already has an attempt",
             )
+        if command == "send-attempt":
+            subparser.add_argument("--attempt-id", type=int, required=True)
 
     return parser
 
@@ -380,6 +385,105 @@ def rerun_message_command(
         f"message_id={processed_message_id} force_new_decision={force_new_decision}",
         flush=True,
     )
+
+
+def send_attempt_command(settings: WorkerSettings, attempt_id: int) -> dict[str, object]:
+    store = AutoReplyStore(settings.db_path)
+    attempt = store.get_reply_attempt(attempt_id)
+    if attempt is None:
+        raise SystemExit(f"reply attempt not found: {attempt_id}")
+    if attempt.send_status != "dry_run":
+        raise SystemExit(
+            f"reply attempt {attempt_id} is not a dry_run attempt: {attempt.send_status}"
+        )
+    if attempt.action not in {
+        CodexAction.SEND_REPLY.value,
+        CodexAction.ASK_CLARIFYING_QUESTION.value,
+    }:
+        raise SystemExit(
+            f"reply attempt {attempt_id} is not sendable: action={attempt.action}"
+        )
+    if not attempt.final_reply_text.strip():
+        raise SystemExit(f"reply attempt {attempt_id} has empty final_reply_text")
+    if contains_forbidden_leak(attempt.final_reply_text):
+        store.update_reply_attempt(
+            attempt.id,
+            send_status="blocked",
+            send_error="leak_check",
+        )
+        store.record_error(
+            attempt.conversation_id,
+            attempt.trigger_message_id,
+            "leak_check",
+            attempt.final_reply_text,
+        )
+        raise SystemExit(f"reply attempt {attempt_id} blocked by leak_check")
+
+    conversation = store.get_conversation(attempt.conversation_id)
+    if conversation is None:
+        raise SystemExit(f"conversation not found: {attempt.conversation_id}")
+    if conversation.single_chat:
+        raise SystemExit(
+            "send-attempt cannot send single-chat dry-runs because the direct user id "
+            "is not stored on the attempt yet; rerun the message in live mode instead"
+        )
+
+    at_users = _at_user_ids_from_reply(attempt.final_reply_text)
+    dws = DwsClient(
+        ding_robot_code=settings.ding_robot_code,
+        ding_robot_name=settings.ding_robot_name,
+        ding_receiver_user_id=settings.ding_receiver_user_id,
+        transient_retry_attempts=settings.dws_transient_retry_attempts,
+        transient_retry_delay_seconds=settings.dws_transient_retry_delay_seconds,
+    )
+    try:
+        send_result = dws.send_message(
+            attempt.conversation_id,
+            attempt.final_reply_text,
+            at_users=at_users,
+        )
+    except Exception as exc:
+        store.update_reply_attempt(
+            attempt.id,
+            send_status="failed",
+            send_error=str(exc),
+        )
+        store.record_error(
+            attempt.conversation_id,
+            attempt.trigger_message_id,
+            "send",
+            str(exc),
+        )
+        raise
+
+    store.update_reply_attempt(attempt.id, send_status="sent", retry_count=0)
+    store.record_sent_reply(
+        attempt.conversation_id,
+        attempt.trigger_message_id,
+        attempt.final_reply_text,
+        send_result_json=json.dumps(send_result or {}, ensure_ascii=False),
+        recall_key=DwsClient.extract_recall_key(send_result),
+    )
+    result = {
+        "attempt_id": attempt.id,
+        "conversation_title": attempt.conversation_title,
+        "trigger_sender": attempt.trigger_sender,
+        "trigger_text_excerpt": _excerpt(attempt.trigger_text),
+        "send_status": "sent",
+        "reply_text_excerpt": _excerpt(attempt.final_reply_text),
+        "send_result_excerpt": _excerpt(json.dumps(send_result or {}, ensure_ascii=False)),
+    }
+    print(json.dumps(result, ensure_ascii=False), flush=True)
+    return result
+
+
+def _at_user_ids_from_reply(reply_text: str) -> list[str]:
+    user_ids: list[str] = []
+    for match in re.finditer(r"<@([^>]+)>", reply_text):
+        user_id = match.group(1).strip()
+        if user_id and user_id not in user_ids:
+            user_ids.append(user_id)
+    return user_ids
 
 
 def _load_style_profile(corpus_dir: Path) -> str:
@@ -644,6 +748,9 @@ def main() -> None:
             message_id=args.message_id,
             force_new_decision=args.force_new_decision,
         )
+    elif args.command == "send-attempt":
+        ensure_live_send_allowed(settings)
+        send_attempt_command(settings, attempt_id=args.attempt_id)
     elif args.command == "reset-codex-sessions":
         reset_codex_sessions_command(settings)
 

@@ -8,7 +8,7 @@ from ceo_agent_service.dingtalk_models import (
     DingTalkMessage,
     SensitivityKind,
 )
-from ceo_agent_service.dws_client import DwsError
+from ceo_agent_service.dws_client import DwsDocumentSearchResult, DwsError
 from ceo_agent_service.store import AutoReplyStore
 from ceo_agent_service.worker import HANDOFF_ACK, DingTalkAutoReplyWorker
 
@@ -37,7 +37,11 @@ class FakeDws:
         self.current_user_error = current_user_error
         self.send_result = send_result
         self.docs: dict[str, dict] = {}
+        self.document_search_results: dict[str, list[DwsDocumentSearchResult]] = {}
+        self.download_docs: dict[str, dict | Exception] = {}
         self.read_doc_calls: list[str] = []
+        self.search_document_calls: list[tuple[str, int]] = []
+        self.download_doc_calls: list[str] = []
         self.sent: list[tuple[str, str]] = []
         self.sent_at_users: list[list[str]] = []
         self.direct_user_ids: list[str | None] = []
@@ -70,6 +74,19 @@ class FakeDws:
         if node not in self.docs:
             raise DwsError(f"doc not found: {node}")
         return self.docs[node]
+
+    def search_documents(
+        self, query: str, page_size: int = 5
+    ) -> list[DwsDocumentSearchResult]:
+        self.search_document_calls.append((query, page_size))
+        return self.document_search_results.get(query, [])
+
+    def download_doc(self, node: str) -> dict:
+        self.download_doc_calls.append(node)
+        result = self.download_docs.get(node)
+        if isinstance(result, Exception):
+            raise result
+        return result or {}
 
     def send_message(
         self,
@@ -460,6 +477,111 @@ def test_dingtalk_doc_link_is_read_before_codex(tmp_path: Path, monkeypatch):
     attempt = worker.store.get_reply_attempt(1)
     assert attempt is not None
     assert attempt.send_status == "dry_run"
+
+
+def test_dingtalk_doc_link_in_context_is_read_before_codex(tmp_path: Path, monkeypatch):
+    doc_url = "https://alidocs.dingtalk.com/i/nodes/doc-in-context?utm_source=im"
+    canonical_doc_url = "https://alidocs.dingtalk.com/i/nodes/doc-in-context"
+    context_doc = message(
+        f"[文档] 方案: {doc_url}",
+        message_id="doc-msg-1",
+    )
+    trigger = message(
+        "@Derek Zen(磊哥) 磊哥comments一下",
+        message_id="msg-2",
+        quoted_content=f"[文档] 方案: {doc_url}",
+    )
+    dws = FakeDws([conversation()], {"cid-1": [context_doc, trigger]})
+    dws.docs[canonical_doc_url] = {
+        "title": "推进方案",
+        "markdown": "下一步建议：先做客户需求收敛，再做交付排期。",
+    }
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="先收敛需求")
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch, dry_run=True)
+
+    worker.run_once()
+
+    assert dws.read_doc_calls == [canonical_doc_url]
+    prompt = codex.calls[0][0]
+    assert "已读取的钉钉文档:" in prompt
+    assert "下一步建议：先做客户需求收敛" in prompt
+
+
+def test_referenced_file_message_is_located_before_codex(tmp_path: Path, monkeypatch):
+    file_message = message(
+        "[文件] 02_下一步推进建议.md",
+        message_id="file-msg-1",
+    )
+    trigger = message(
+        "@Derek Zen(磊哥) 磊哥comments一下",
+        message_id="msg-2",
+        quoted_content="[文件] 02_下一步推进建议.md",
+    )
+    trigger.quoted_message_id = "file-msg-1"
+    dws = FakeDws([conversation()], {"cid-1": [file_message, trigger]})
+    dws.document_search_results["02_下一步推进建议.md"] = [
+        DwsDocumentSearchResult(
+            node_id="node-1",
+            name="02_下一步推进建议",
+            extension="md",
+            content_type="OTHER",
+            node_type="file",
+            doc_url="https://alidocs.dingtalk.com/i/nodes/node-1",
+        )
+    ]
+    dws.download_docs["node-1"] = {
+        "markdown": "建议先把对外价值、交付边界和下一步 owner 写清楚。"
+    }
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="建议补边界和owner")
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch, dry_run=True)
+
+    worker.run_once()
+
+    assert dws.search_document_calls == [("02_下一步推进建议.md", 5)]
+    assert dws.download_doc_calls == ["node-1"]
+    prompt = codex.calls[0][0]
+    assert "已读取的钉钉文档:" in prompt
+    assert "建议先把对外价值、交付边界" in prompt
+
+
+def test_referenced_file_download_failure_is_visible_to_codex(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message(
+        "@Derek Zen(磊哥) 磊哥comments一下",
+        quoted_content="[文件] 02_下一步推进建议.md",
+    )
+    dws = FakeDws([conversation()], {"cid-1": [trigger]})
+    dws.document_search_results["02_下一步推进建议.md"] = [
+        DwsDocumentSearchResult(
+            node_id="node-1",
+            name="02_下一步推进建议",
+            extension="md",
+            content_type="OTHER",
+            node_type="file",
+            doc_url="https://alidocs.dingtalk.com/i/nodes/node-1",
+        )
+    ]
+    dws.download_docs["node-1"] = DwsError(
+        "download blocked authorizationUrl=https://example.invalid"
+    )
+    codex = FakeCodex(
+        CodexDecision(
+            action=CodexAction.ASK_CLARIFYING_QUESTION,
+            reply_text="我现在只能看到文件名，麻烦贴一下正文。",
+        )
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch, dry_run=True)
+
+    worker.run_once()
+
+    prompt = codex.calls[0][0]
+    assert "钉钉文件消息已定位，但当前未取得文件正文" in prompt
+    assert "authorizationUrl" not in prompt
 
 
 def test_dingtalk_doc_read_failure_blocks_codex(tmp_path: Path, monkeypatch):

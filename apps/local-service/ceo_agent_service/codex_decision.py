@@ -19,6 +19,11 @@ from ceo_agent_service.dingtalk_models import CodexAction, CodexDecision
 SIGNATURE = assistant_signature()
 FORBIDDEN_MARKERS = (
     *forbidden_path_prefixes(),
+    "codex",
+    "graphify",
+    "workspace",
+    "本地 workspace",
+    "本地检索",
     "graphify evidence",
     "source:",
     "sources:",

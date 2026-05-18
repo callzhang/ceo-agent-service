@@ -87,6 +87,12 @@ class CachedDwsClient:
     def read_doc(self, node: str):
         return self.dws.read_doc(node)
 
+    def search_documents(self, query: str, page_size: int = 5):
+        return self.dws.search_documents(query, page_size=page_size)
+
+    def download_doc(self, node: str):
+        return self.dws.download_doc(node)
+
     def send_message(
         self,
         conversation_id: str | None,
