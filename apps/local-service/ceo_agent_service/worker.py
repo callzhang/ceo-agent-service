@@ -789,40 +789,18 @@ class DingTalkAutoReplyWorker:
                     title=str(payload.get("title") or self._document_display_name(match)),
                     markdown=markdown,
                 )
-        return self._downloadable_file_context(file_name, match)
-
-    def _downloadable_file_context(
-        self,
-        file_name: str,
-        match: DwsDocumentSearchResult,
-    ) -> LinkedDocumentContext:
-        try:
-            payload = self.dws.download_doc(match.node_id)
-        except DwsError as exc:
-            return LinkedDocumentContext(
-                url=match.doc_url,
-                title=self._document_display_name(match) or file_name,
-                markdown=(
-                    "钉钉文件消息已定位，但当前未取得文件正文；"
-                    f"读取失败：{self._safe_linked_file_error(exc)}。"
-                ),
-            )
-        markdown = str(
-            payload.get("markdown")
-            or payload.get("content")
-            or payload.get("text")
-            or ""
-        )
-        if markdown.strip():
-            return LinkedDocumentContext(
-                url=match.doc_url,
-                title=self._document_display_name(match) or file_name,
-                markdown=markdown,
-            )
         return LinkedDocumentContext(
             url=match.doc_url,
             title=self._document_display_name(match) or file_name,
-            markdown="钉钉文件消息已定位，但下载接口未返回可直接审阅的正文。",
+            markdown=(
+                "钉钉普通文件已定位，但尚未下载正文。"
+                f"node_id: {match.node_id}\n"
+                f"extension: {match.extension or 'unknown'}\n"
+                f"content_type: {match.content_type or 'unknown'}\n"
+                "如果新消息要求对文件内容 comments、审核、总结或判断，"
+                f"先调用 `dws doc download --node \"{match.node_id}\" --format json` "
+                "获取下载凭证，再读取文件正文后回答；不要只凭文件名回复。"
+            ),
         )
 
     @classmethod
@@ -854,12 +832,6 @@ class DingTalkAutoReplyWorker:
     @staticmethod
     def _normalized_document_name(value: str) -> str:
         return " ".join(value.strip().split()).casefold()
-
-    @staticmethod
-    def _safe_linked_file_error(error: Exception) -> str:
-        if getattr(error, "needs_authorization", False):
-            return "缺少文件下载权限"
-        return str(error).split("authorizationUrl", 1)[0][:200]
 
     @classmethod
     def _dingtalk_doc_urls(cls, messages: list[DingTalkMessage]) -> list[str]:

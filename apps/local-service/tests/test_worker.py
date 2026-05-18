@@ -471,7 +471,7 @@ def test_dingtalk_doc_link_is_read_before_codex(tmp_path: Path, monkeypatch):
     assert dws.read_doc_calls == [canonical_doc_url]
     assert dws.sent == []
     prompt = codex.calls[0][0]
-    assert "已读取的钉钉文档:" in prompt
+    assert "已获取的钉钉材料:" in prompt
     assert "数据导入导出业务低效根因和最终解法" in prompt
     assert "根因是协作方式不对" in prompt
     attempt = worker.store.get_reply_attempt(1)
@@ -505,7 +505,7 @@ def test_dingtalk_doc_link_in_context_is_read_before_codex(tmp_path: Path, monke
 
     assert dws.read_doc_calls == [canonical_doc_url]
     prompt = codex.calls[0][0]
-    assert "已读取的钉钉文档:" in prompt
+    assert "已获取的钉钉材料:" in prompt
     assert "下一步建议：先做客户需求收敛" in prompt
 
 
@@ -531,9 +531,6 @@ def test_referenced_file_message_is_located_before_codex(tmp_path: Path, monkeyp
             doc_url="https://alidocs.dingtalk.com/i/nodes/node-1",
         )
     ]
-    dws.download_docs["node-1"] = {
-        "markdown": "建议先把对外价值、交付边界和下一步 owner 写清楚。"
-    }
     codex = FakeCodex(
         CodexDecision(action=CodexAction.SEND_REPLY, reply_text="建议补边界和owner")
     )
@@ -542,13 +539,17 @@ def test_referenced_file_message_is_located_before_codex(tmp_path: Path, monkeyp
     worker.run_once()
 
     assert dws.search_document_calls == [("02_下一步推进建议.md", 5)]
-    assert dws.download_doc_calls == ["node-1"]
+    assert dws.download_doc_calls == []
     prompt = codex.calls[0][0]
-    assert "已读取的钉钉文档:" in prompt
-    assert "建议先把对外价值、交付边界" in prompt
+    assert "已获取的钉钉材料:" in prompt
+    assert "钉钉普通文件已定位，但尚未下载正文" in prompt
+    assert "node_id: node-1" in prompt
+    assert "extension: md" in prompt
+    assert 'dws doc download --node "node-1" --format json' in prompt
+    assert "不要只凭文件名回复" in prompt
 
 
-def test_referenced_file_download_failure_is_visible_to_codex(
+def test_referenced_file_metadata_does_not_expose_download_credentials(
     tmp_path: Path, monkeypatch
 ):
     trigger = message(
@@ -566,9 +567,6 @@ def test_referenced_file_download_failure_is_visible_to_codex(
             doc_url="https://alidocs.dingtalk.com/i/nodes/node-1",
         )
     ]
-    dws.download_docs["node-1"] = DwsError(
-        "download blocked authorizationUrl=https://example.invalid"
-    )
     codex = FakeCodex(
         CodexDecision(
             action=CodexAction.ASK_CLARIFYING_QUESTION,
@@ -580,7 +578,9 @@ def test_referenced_file_download_failure_is_visible_to_codex(
     worker.run_once()
 
     prompt = codex.calls[0][0]
-    assert "钉钉文件消息已定位，但当前未取得文件正文" in prompt
+    assert dws.download_doc_calls == []
+    assert "钉钉普通文件已定位，但尚未下载正文" in prompt
+    assert "node_id: node-1" in prompt
     assert "authorizationUrl" not in prompt
 
 

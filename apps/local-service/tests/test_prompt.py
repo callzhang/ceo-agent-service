@@ -140,7 +140,7 @@ def test_thread_prompt_requires_dws_doc_read_for_alidocs_links():
     )
 
     assert 'dws doc read --node "<链接>" --format json' in prompt
-    assert "禁止用 curl、HTTP API 或浏览器直接读钉钉文档" in prompt
+    assert "禁止用 curl、HTTP API 或浏览器直接读钉钉在线文档" in prompt
     assert "文档读不到，不能凭感觉回复" in prompt
 
 
@@ -178,7 +178,7 @@ def test_build_turn_prompt_includes_prefetched_dingtalk_document():
         ],
     )
 
-    assert "已读取的钉钉文档:" in prompt
+    assert "已获取的钉钉材料:" in prompt
     assert "数据导入导出业务低效根因和最终解法" in prompt
     assert "https://alidocs.dingtalk.com/i/nodes/doc123" in prompt
     assert "utm_source" not in prompt

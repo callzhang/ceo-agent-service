@@ -43,12 +43,13 @@ def ceo_agent_thread_prompt() -> str:
 - 如果新消息询问 {principal} 是否已经完成某个线下动作，除非上下文明示完成状态，否则不要断言已完成或未完成；改为说明下一步动作。
 - 如果新消息是在催 {principal} 本人执行现实动作、进入会议、接电话、到现场、查看即时消息或做只有 {principal} 本人才能做的事，不能代 {principal} 声称他正在、即将或已经执行现实动作，也不能替 {principal} 承诺马上处理；应 handoff_to_human，让 {handoff_name} 本人接管。
 - 如果新消息要求审核、定稿或确认文件/报告/材料，先让对方把需要审核的文件或链接发出来；你可以给初步反馈，但最终定稿或确认必须说明还需要 {handoff_name} 本人确认。
-- 如果新消息要求 comments、审核、定稿或确认，并且“上下文消息”或“引用”里已经有被评论对象、文件名、正文、摘要或链接，必须优先使用这些上下文材料；不要忽略上文后直接要求对方重新发。只有上下文和“已读取的钉钉文档”都没有正文时，才追问可访问正文或链接。
+- 如果新消息要求 comments、审核、定稿或确认，并且“上下文消息”或“引用”里已经有被评论对象、文件名、正文、摘要或链接，必须优先使用这些上下文材料；不要忽略上文后直接要求对方重新发。只有上下文和“已获取的钉钉材料”都没有正文或可读取线索时，才追问可访问正文或链接。
 
 检索原则：
 - 回答任何问题前，先检索本地 workspace，尽量找到前文、背景材料、相关文档、会议记录、岗位要求、简历或历史讨论后再回答。
 - 因为全局规则不会自动注入，本 thread 必须主动使用 graphify：先阅读 `graphify-out/GRAPH_REPORT.md` 理解核心节点和社区结构；优先使用 `graphify query "<问题>"`、`graphify explain "<概念>"` 或 `graphify path "<A>" "<B>"` 找关系，再用 `rg` 和打开文件补充证据。
-- 如果“新消息”或“引用”里有 `https://alidocs.dingtalk.com/i/nodes/` 钉钉文档链接，必须先读取文档正文再判断；优先使用 prompt 中“已读取的钉钉文档”内容。如果没有该区块，必须调用 `dws doc read --node "<链接>" --format json` 读取正文。禁止用 curl、HTTP API 或浏览器直接读钉钉文档；如果文档读不到，不能凭感觉回复，返回 stop_with_error 并在 audit_summary 说明失败原因。
+- 如果“新消息”或“引用”里有 `https://alidocs.dingtalk.com/i/nodes/` 钉钉在线文档链接，必须先读取文档正文再判断；优先使用 prompt 中“已获取的钉钉材料”内容。如果没有该区块，必须调用 `dws doc read --node "<链接>" --format json` 读取正文。禁止用 curl、HTTP API 或浏览器直接读钉钉在线文档；如果文档读不到，不能凭感觉回复，返回 stop_with_error 并在 audit_summary 说明失败原因。
+- 普通钉钉文件和钉钉在线文档不同。如果“已获取的钉钉材料”里只显示“钉钉普通文件已定位”以及 node_id/extension/content_type，说明服务只定位到了文件，没有预读正文。你要自主判断当前问题是否必须读取文件正文：如果对方要求 comments、审核、总结、判断或修改意见，必须先按材料区块里的下载线索获取文件正文后再回答；如果上下文已经足够回答，可以不下载，但 audit_summary 要说明依据来自上下文。普通文件下载后如果返回 resourceUrl/headers 等下载凭证，按返回内容读取正文；不要把下载链接、下载凭证、工具命令或本地路径写进 reply_text。
 - 回答外部候选人是否匹配、是否推进、是否降级评估前，必须先检索 workspace 里的岗位要求/JD/岗位画像，并查看上下文提到的简历文件或链接内容；如果拿不到岗位要求或简历内容，不能凭一句消息下结论，应追问补充材料或说明材料齐全后再判断。
 
 隐私和权限：
@@ -95,7 +96,7 @@ def build_turn_prompt(
         lines.extend(message_lines(message))
 
     if linked_documents:
-        lines.append("已读取的钉钉文档:")
+        lines.append("已获取的钉钉材料:")
         for index, document in enumerate(linked_documents, start=1):
             lines.extend(linked_document_lines(index, document))
 

@@ -134,6 +134,43 @@ def test_read_doc_command_shape():
     ]
 
 
+def test_search_documents_command_shape():
+    client = DwsClient(dws_bin="dws")
+
+    command = client.build_search_documents_command(
+        "02_下一步推进建议.md",
+        page_size=5,
+    )
+
+    assert command == [
+        "dws",
+        "doc",
+        "search",
+        "--query",
+        "02_下一步推进建议.md",
+        "--page-size",
+        "5",
+        "--format",
+        "json",
+    ]
+
+
+def test_download_doc_command_shape():
+    client = DwsClient(dws_bin="dws")
+
+    command = client.build_download_doc_command("node-1")
+
+    assert command == [
+        "dws",
+        "doc",
+        "download",
+        "--node",
+        "node-1",
+        "--format",
+        "json",
+    ]
+
+
 def test_message_read_commands_do_not_mark_dingtalk_messages_seen():
     client = DwsClient(dws_bin="dws")
     conversation = DingTalkConversation(
@@ -334,6 +371,32 @@ def test_parse_unread_conversations_response():
             last_message_create_at=1778666181403,
         )
     ]
+
+
+def test_parse_document_search_results_response():
+    payload = {
+        "documents": [
+            {
+                "nodeId": "node-1",
+                "name": "02_下一步推进建议",
+                "extension": "md",
+                "contentType": "OTHER",
+                "nodeType": "file",
+                "docUrl": "https://alidocs.dingtalk.com/i/nodes/node-1",
+            },
+            {"name": "missing node"},
+        ]
+    }
+
+    results = DwsClient.parse_document_search_results(payload)
+
+    assert len(results) == 1
+    assert results[0].node_id == "node-1"
+    assert results[0].name == "02_下一步推进建议"
+    assert results[0].extension == "md"
+    assert results[0].content_type == "OTHER"
+    assert results[0].node_type == "file"
+    assert results[0].doc_url == "https://alidocs.dingtalk.com/i/nodes/node-1"
 
 
 def test_parse_messages_response_keeps_quoted_message():
