@@ -1,0 +1,119 @@
+from ceo_agent_service.dingtalk_models import (
+    CodexAction,
+    CodexDecision,
+    DingTalkMessage,
+    SensitivityKind,
+)
+from ceo_agent_service.permission import PermissionAction, PermissionGate
+
+
+def trigger() -> DingTalkMessage:
+    return DingTalkMessage(
+        open_conversation_id="cid-1",
+        open_message_id="msg-1",
+        conversation_title="Friday",
+        single_chat=True,
+        sender_name="HR",
+        sender_user_id="hr-user-1",
+        create_time="2026-05-13 18:00:00",
+        content="张三转正怎么看？",
+    )
+
+
+def test_internal_personnel_hr_requester_does_not_require_manager_chain():
+    class Dws:
+        def resolve_message_sender(self, message):
+            return message.sender_user_id
+
+        def is_hr_user(self, user_id):
+            return True
+
+        def user_in_manager_chain(self, manager_user_id, subject_user_id):
+            raise RuntimeError("manager chain should not be called")
+
+    result = PermissionGate(Dws()).evaluate(
+        CodexDecision(
+            action=CodexAction.SEND_REPLY,
+            sensitivity_kind=SensitivityKind.INTERNAL_PERSONNEL,
+            personnel_subject_user_id="subject-user-1",
+        ),
+        trigger(),
+    )
+
+    assert result.action == PermissionAction.ALLOW
+
+
+def test_internal_personnel_unresolved_hr_identity_is_error():
+    class Dws:
+        def resolve_message_sender(self, message):
+            return message.sender_user_id
+
+        def is_hr_user(self, user_id):
+            raise RuntimeError("HR membership source is not configured")
+
+    result = PermissionGate(Dws()).evaluate(
+        CodexDecision(
+            action=CodexAction.SEND_REPLY,
+            sensitivity_kind=SensitivityKind.INTERNAL_PERSONNEL,
+            personnel_subject_user_id="subject-user-1",
+        ),
+        trigger(),
+    )
+
+    assert result.action == PermissionAction.ERROR
+    assert "HR membership" in result.reason
+
+
+def test_candidate_empty_requester_departments_is_error():
+    class Dws:
+        def resolve_message_sender(self, message):
+            return message.sender_user_id
+
+        def is_hr_user(self, user_id):
+            return False
+
+        def get_user_department_ids(self, user_id):
+            return set()
+
+    result = PermissionGate(Dws()).evaluate(
+        CodexDecision(
+            action=CodexAction.SEND_REPLY,
+            sensitivity_kind=SensitivityKind.EXTERNAL_CANDIDATE,
+            candidate_context_known=True,
+            candidate_department_ids=["dept-sales"],
+        ),
+        trigger(),
+    )
+
+    assert result.action == PermissionAction.ERROR
+    assert "department" in result.reason
+
+
+def test_candidate_unknown_context_asks_for_department():
+    result = PermissionGate(object()).evaluate(
+        CodexDecision(
+            action=CodexAction.SEND_REPLY,
+            sensitivity_kind=SensitivityKind.EXTERNAL_CANDIDATE,
+        ),
+        trigger(),
+    )
+
+    assert result.action == PermissionAction.REPLY
+    assert "岗位/部门" in result.reply_text
+
+
+def test_candidate_known_context_without_department_ids_allows():
+    class Dws:
+        def resolve_message_sender(self, message):
+            raise RuntimeError("not cached")
+
+    result = PermissionGate(Dws()).evaluate(
+        CodexDecision(
+            action=CodexAction.SEND_REPLY,
+            sensitivity_kind=SensitivityKind.EXTERNAL_CANDIDATE,
+            candidate_context_known=True,
+        ),
+        trigger(),
+    )
+
+    assert result.action == PermissionAction.ALLOW

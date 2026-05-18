@@ -1,0 +1,86 @@
+# Product Logic
+
+The service treats DingTalk as the primary conversation surface and keeps
+retrieval, generation, audit, and feedback local.
+
+## Input
+
+Each worker pass asks `dws` for unread conversations. For each conversation it
+reads:
+
+- recent context before the unread cursor
+- unread messages after the cursor
+- linked DingTalk documents when a message contains an Alidocs URL
+
+Direct chats are treated as addressed to the configured principal. Group chats
+must explicitly mention the principal before they become candidates.
+
+## Decision
+
+The worker sends one batch of unread messages to Codex. Codex decides whether
+the batch needs one response, no response, clarification, human handoff, or an
+error stop.
+
+The batch may contain multiple direct-chat messages. These messages are a single
+conversation turn, not independent tickets. Codex should decide whether the
+latest unread batch as a whole requires a response and should cover every
+important item in one reply when needed.
+
+## Retrieval
+
+Before answering substantive questions, Codex is instructed to:
+
+1. Read `graphify-out/GRAPH_REPORT.md`.
+2. Use `graphify query`, `graphify explain`, or `graphify path` to find related
+   workspace knowledge.
+3. Use `rg` and file reads to verify evidence.
+4. Read DingTalk documents through `dws doc read` when document links appear.
+
+Replies must not expose local file paths, source citations, session ids, or
+tool output details.
+
+## Privacy
+
+The decision schema classifies each message as:
+
+- `general`
+- `internal_personnel`
+- `external_candidate`
+
+Internal personnel discussions are sensitive and must be refused unless the
+operator has explicitly configured permission rules for that deployment.
+External candidate discussions may be answered when the relevant role and
+department context are available.
+
+## Handoff
+
+If the sender asks for the real human, rejects the automated response, or asks
+the agent to claim a real-world action that only the human can perform, the
+decision should be `handoff_to_human`.
+
+Handoff sends a short acknowledgement in DingTalk and uses DING to notify the
+operator. The handoff remains active until the worker observes a real manual
+reply from the operator in the same conversation.
+
+## Audit
+
+Every attempt is stored locally, including:
+
+- trigger message
+- action
+- draft and final reply
+- send status and send error
+- audit summary
+- documents and tool events used for review
+- Codex session id and transcript line range when available
+- reviewer feedback and corrected reply
+
+The audit summary is a concise explanation of evidence and applied rules. It is
+not hidden chain of thought.
+
+## Safety Defaults
+
+- `CEO_DRY_RUN=1` by default.
+- Runtime state lives under `data/` and is ignored by Git.
+- Live sends require explicit opt-in.
+- System cards and notification cards are skipped before Codex.

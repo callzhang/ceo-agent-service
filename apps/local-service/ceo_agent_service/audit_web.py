@@ -1,0 +1,769 @@
+import json
+from html import escape
+import os
+from pathlib import Path
+from urllib.parse import parse_qs
+
+import uvicorn
+from fastapi import FastAPI, Request
+from fastapi.responses import HTMLResponse, RedirectResponse
+
+from ceo_agent_service.codex_history import (
+    RenderedCodexEvent,
+    render_local_codex_session,
+)
+from ceo_agent_service.codex_decision import audit_summary_explains_no_documents
+from ceo_agent_service.dws_client import DwsClient
+from ceo_agent_service.store import AutoReplyStore, ReplyAttempt, SentReply
+
+
+CSS = """
+:root{--ink:#0a0a0a;--charcoal:#1c1c1e;--slate:#3a3a3c;--steel:#5a5a5c;--stone:#888888;--muted:#a8a8aa;--canvas:#ffffff;--surface:#f7f7f7;--surface-soft:#fafafa;--surface-code:#1c1c1e;--hairline:#e5e5e5;--hairline-soft:#ededed;--mint:#00d4a4;--mint-deep:#00b48a;--tag:#3772cf;--error:#d45656}
+*{box-sizing:border-box}
+body{font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;margin:0;background:var(--canvas);color:var(--ink);font-size:14px;line-height:1.5}
+header{position:sticky;top:0;z-index:10;background:rgba(255,255,255,.94);border-bottom:1px solid var(--hairline);backdrop-filter:saturate(180%) blur(12px)}
+.shell{width:100%;margin:0 auto;padding:0 24px}
+.topbar{display:flex;align-items:center;justify-content:space-between;gap:24px;min-height:72px}
+.brand{display:flex;align-items:center;gap:12px;min-width:0}
+.brand-mark{width:28px;height:28px;border-radius:8px;background:var(--ink);box-shadow:inset 0 -8px 0 rgba(0,212,164,.26)}
+h1{margin:0;color:var(--ink);font-size:18px;font-weight:600;line-height:1.35;letter-spacing:0}
+.eyebrow{margin-top:2px;color:var(--steel);font-size:12px;font-weight:500;line-height:1.4}
+main{width:100%;margin:0 auto;padding:20px 24px 40px}
+a{color:var(--ink);text-decoration:none}
+a:hover{text-decoration:underline;text-decoration-color:var(--mint);text-underline-offset:3px}
+table{width:100%;border-collapse:separate;border-spacing:0;background:var(--canvas);border:1px solid var(--hairline);border-radius:8px;overflow:hidden}
+th,td{border-bottom:1px solid var(--hairline-soft);padding:12px 14px;text-align:left;vertical-align:top;font-size:14px;line-height:1.45}
+tr:last-child td{border-bottom:0}
+th{background:var(--surface-soft);color:var(--steel);font-size:12px;font-weight:600;line-height:1.4}
+.attempt-feed{display:grid;gap:8px}
+.attempt-item{background:var(--canvas);border:1px solid var(--hairline);border-radius:8px;padding:10px 12px}
+.attempt-head{display:flex;align-items:center;justify-content:space-between;gap:12px;min-width:0}
+.attempt-title{display:flex;align-items:center;gap:7px;min-width:0;flex-wrap:nowrap}
+.attempt-side{display:flex;align-items:center;gap:10px;flex:0 0 auto}
+.attempt-id{font-family:"Geist Mono","SF Mono",Menlo,Consolas,monospace;font-size:13px;font-weight:700;color:var(--ink)}
+.attempt-main{font-size:14px;font-weight:600;color:var(--ink);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.attempt-meta{color:var(--steel);font-size:13px;line-height:1.4;white-space:nowrap}
+.attempt-time{color:var(--stone);font-family:"Geist Mono","SF Mono",Menlo,Consolas,monospace;font-size:12px;line-height:1.4;text-align:right;white-space:nowrap}
+.attempt-lines{display:grid;gap:4px;margin-top:8px}
+.attempt-line{display:grid;grid-template-columns:24px minmax(0,1fr);gap:8px;align-items:start;min-width:0}
+.attempt-label{color:var(--steel);font-size:12px;font-weight:700;line-height:1.45}
+.attempt-copy{color:var(--charcoal);font-size:13px;line-height:1.45;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden}
+.attempt-foot{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:6px;flex-wrap:wrap}
+.attempt-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.attempt-warning{color:#8a2626;font-size:12px;line-height:1.4}
+.nav{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.nav a{display:inline-flex;align-items:center;height:36px;padding:0 14px;border:1px solid var(--hairline);border-radius:999px;background:var(--canvas);color:var(--steel);font-size:14px;font-weight:500}
+.nav a:hover{color:var(--ink);text-decoration:none;border-color:var(--ink)}
+.pill{display:inline-flex;align-items:center;min-height:24px;padding:3px 9px;border-radius:999px;background:var(--surface);color:var(--steel);border:1px solid var(--hairline);font-family:"Geist Mono","SF Mono",Menlo,Consolas,monospace;font-size:12px;line-height:1.3;white-space:nowrap}
+.action-no_reply{background:rgba(55,114,207,.10);color:#245aa5;border-color:rgba(55,114,207,.24)}
+.action-send_reply,.action-ask_clarifying_question{background:rgba(0,212,164,.10);color:#006b55;border-color:rgba(0,180,138,.24)}
+.action-handoff_to_human{background:rgba(195,125,13,.12);color:#8a5a08;border-color:rgba(195,125,13,.24)}
+.action-stop_with_error{background:rgba(212,86,86,.12);color:#9a2f2f;border-color:rgba(212,86,86,.24)}
+.status-sent{background:rgba(0,212,164,.12);color:#006b55;border-color:rgba(0,180,138,.28)}
+.status-skipped{background:var(--surface);color:var(--stone)}
+.status-failed,.status-blocked{background:rgba(212,86,86,.12);color:#9a2f2f;border-color:rgba(212,86,86,.24)}
+.quality-warning{border-color:rgba(212,86,86,.28);background:rgba(212,86,86,.08)}
+.quality-warning ul{margin:8px 0 0;padding-left:20px;color:#8a2626}
+.card{background:var(--canvas);border:1px solid var(--hairline);border-radius:8px;padding:24px;margin:16px 0}
+.card h2{margin:0 0 14px;color:var(--ink);font-size:18px;font-weight:600;line-height:1.4;letter-spacing:0}
+.card p{margin:8px 0}
+.review-grid{display:grid;grid-template-columns:minmax(0,1.25fr) minmax(340px,.75fr);gap:16px;align-items:start;margin:16px 0}
+.review-grid .card{margin:0}
+.reply-pre{min-height:188px;background:var(--surface-soft);border-color:var(--hairline);font-size:14px;line-height:1.55}
+.reply-meta{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
+.compact-card{padding:16px}
+.compact-card h2{font-size:16px;margin-bottom:10px}
+.event{background:var(--canvas);border:1px solid var(--hairline);border-radius:8px;margin:16px 0;overflow:hidden}
+.event summary{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:14px 16px;cursor:pointer;list-style:none}
+.event summary::-webkit-details-marker{display:none}
+.event-title{min-width:0;font-size:15px;font-weight:600;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.event-preview{margin-top:3px;color:var(--steel);font-size:12px;font-weight:400;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.event time{flex:0 0 auto;color:var(--stone);font-family:"Geist Mono","SF Mono",Menlo,Consolas,monospace;font-size:12px}
+.event pre{border:0;border-top:1px solid var(--hairline);border-radius:0;margin:0}
+.grid{display:grid;grid-template-columns:180px 1fr;gap:10px 18px}
+.grid .muted{font-size:12px;font-weight:600}
+pre{white-space:pre-wrap;background:var(--surface);border:1px solid var(--hairline);border-radius:8px;padding:16px;overflow:auto;color:var(--charcoal);font-family:"Geist Mono","SF Mono",Menlo,Consolas,monospace;font-size:13px;line-height:1.55}
+.json-pre{background:#fbfbfb;color:var(--charcoal)}
+.json-key{color:#7b3fb2}
+.json-string{color:#0b6b50}
+.json-number{color:#9a5b00}
+.json-bool{color:#1f5fbf}
+.json-null{color:#8a2626}
+textarea{width:100%;min-height:104px;box-sizing:border-box;background:var(--canvas);color:var(--ink);border:1px solid var(--hairline);border-radius:8px;padding:12px 14px;font:inherit;resize:vertical}
+textarea:focus{outline:0;border-color:var(--mint);box-shadow:0 0 0 3px rgba(0,212,164,.16)}
+button{background:var(--ink);color:#fff;border:0;border-radius:999px;padding:10px 18px;font-size:14px;font-weight:500;line-height:1.3}
+label{display:block;margin:14px 0 7px;color:var(--slate);font-size:13px;font-weight:600}
+.review-link{display:inline-flex;align-items:center;height:30px;padding:0 12px;border:1px solid var(--hairline);border-radius:999px;background:var(--canvas);color:var(--ink);font-size:13px;font-weight:500;white-space:nowrap}
+.review-link:hover{text-decoration:none;border-color:var(--ink);background:var(--surface-soft)}
+.danger{background:#9f1d1d}
+.muted{color:var(--steel)}
+@media (max-width:900px){.attempt-head{align-items:flex-start;flex-direction:column}.attempt-title{flex-wrap:wrap}.attempt-side{align-items:flex-start;flex-direction:column;gap:6px}.attempt-main,.attempt-meta{white-space:normal}.attempt-time{text-align:left}.attempt-copy{-webkit-line-clamp:3}.review-grid{grid-template-columns:1fr}}
+@media (max-width:760px){.shell,main{padding-left:12px;padding-right:12px}.topbar{align-items:flex-start;flex-direction:column;padding:14px 0}.grid{grid-template-columns:1fr}th,td{padding:10px 12px}.attempt-foot{align-items:flex-start;flex-direction:column}}
+"""
+
+FAVICON_HREF = (
+    "data:image/svg+xml,"
+    "%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E"
+    "%3Crect width='64' height='64' rx='14' fill='%230a0a0a'/%3E"
+    "%3Crect x='8' y='42' width='48' height='10' rx='5' fill='%2300d4a4'/%3E"
+    "%3C/svg%3E"
+)
+
+
+def render_page(title: str, body: str) -> str:
+    return (
+        "<!doctype html><html><head><meta charset=\"utf-8\">"
+        "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
+        f"<title>{escape(title)}</title>"
+        f"<link rel=\"icon\" href=\"{FAVICON_HREF}\">"
+        f"<style>{CSS}</style></head><body>"
+        "<header><div class=\"shell topbar\"><div class=\"brand\">"
+        "<div class=\"brand-mark\"></div><div>"
+        f"<h1>{escape(title)}</h1><div class=\"eyebrow\">Local audit console</div>"
+        "</div></div><nav class=\"nav\">"
+        "<a href=\"/\">History</a><a href=\"/codex\">Codex Sessions</a>"
+        "<a href=\"/errors\">Errors</a>"
+        "</nav></div></header><main>"
+        f"{body}</main></body></html>"
+    )
+
+
+def render_attempt_list(store: AutoReplyStore, limit: int | None = None) -> str:
+    items = []
+    for attempt in store.list_reply_attempts(limit=limit):
+        codex_session_id = attempt.codex_session_id or store.get_codex_session_id(
+            attempt.conversation_id
+        )
+        warning_text = _attempt_warning_summary(attempt)
+        warning_html = (
+            f"<span class=\"attempt-warning\">{escape(warning_text)}</span>"
+            if warning_text
+            else ""
+        )
+        items.append(
+            "<article class=\"attempt-item\">"
+            "<div class=\"attempt-head\">"
+            "<div class=\"attempt-title\">"
+            f"<a class=\"attempt-id\" href=\"/attempts/{attempt.id}\">#{attempt.id}</a>"
+            f"<span class=\"pill action-{escape(attempt.action)}\">{escape(attempt.action)}</span>"
+            f"<span class=\"pill status-{escape(attempt.send_status)}\">{escape(attempt.send_status)}</span>"
+            f"<div class=\"attempt-main\">{escape(attempt.conversation_title)}</div>"
+            f"<div class=\"attempt-meta\">{escape(attempt.trigger_sender)}</div>"
+            "</div>"
+            "<div class=\"attempt-side\">"
+            f"<time class=\"attempt-time\">{escape(attempt.created_at)}</time>"
+            "<div class=\"attempt-actions\">"
+            f"{_review_link(attempt)}"
+            f"{_codex_link(codex_session_id)}"
+            "</div>"
+            "</div>"
+            "</div>"
+            "<div class=\"attempt-lines\">"
+            f"{_attempt_text_line('问', attempt.trigger_text, 260)}"
+            f"{_attempt_text_line('答', _reply_preview_text(attempt), 320)}"
+            "</div>"
+            f"{'<div class=\"attempt-foot\">' + warning_html + '</div>' if warning_html else ''}"
+            "</article>"
+        )
+    if not items:
+        body = (
+            "<section class=\"card\"><p class=\"muted\">No reply attempts recorded.</p>"
+            f"<p class=\"muted\">DB: {escape(str(store.path))}</p></section>"
+        )
+    else:
+        body = "<section class=\"attempt-feed\">" + "".join(items) + "</section>"
+    return render_page("CEO Agent Audit", body)
+
+
+def render_attempt_detail(store: AutoReplyStore, attempt_id: int) -> tuple[int, str]:
+    attempt = store.get_reply_attempt(attempt_id)
+    if attempt is None:
+        return 404, render_page(
+            "Attempt not found",
+            f"<p>Attempt #{attempt_id} does not exist.</p>",
+        )
+    sent_reply = store.get_sent_reply(
+        attempt.conversation_id,
+        attempt.trigger_message_id,
+    )
+    codex_session_id = attempt.codex_session_id or store.get_codex_session_id(
+        attempt.conversation_id
+    )
+    return 200, render_page(
+        f"Attempt #{attempt.id}",
+        _attempt_detail_body(attempt, sent_reply, codex_session_id),
+    )
+
+
+def render_codex_session_list(store: AutoReplyStore) -> str:
+    rows = []
+    for conversation in store.list_codex_conversations():
+        session_id = conversation.codex_session_id or ""
+        latest_attempts = store.list_reply_attempts_for_conversation(
+            conversation.conversation_id,
+            limit=1,
+        )
+        history_cell = _attempt_link(latest_attempts[0]) if latest_attempts else ""
+        rows.append(
+            "<tr>"
+            f"<td>{escape(conversation.title)}</td>"
+            f"<td>{escape(conversation.conversation_id)}</td>"
+            f"<td>{escape('single' if conversation.single_chat else 'group')}</td>"
+            f"<td><a href=\"/codex/{escape(session_id)}\">{escape(session_id)}</a></td>"
+            f"<td>{history_cell}</td>"
+            "</tr>"
+        )
+    table = (
+        "<table><thead><tr><th>Conversation</th><th>ID</th><th>Type</th>"
+        "<th>Codex session</th><th>History</th></tr></thead><tbody>"
+        + "".join(rows)
+        + "</tbody></table>"
+    )
+    return render_page("Codex Sessions", table)
+
+
+def render_codex_session_detail(
+    session_id: str,
+    codex_home: Path | None = None,
+    store: AutoReplyStore | None = None,
+) -> tuple[int, str]:
+    rendered = render_local_codex_session(session_id, codex_home=codex_home)
+    if rendered.missing:
+        return 404, render_page(
+            "Codex session not found",
+            f"<p>Codex session not found: {escape(session_id)}</p>",
+        )
+    events = "".join(_codex_event_card(event) for event in rendered.events)
+    related_history = _related_history_card(
+        store.list_reply_attempts_for_codex_session(session_id) if store else []
+    )
+    body = (
+        "<section class=\"card\"><div class=\"grid\">"
+        f"<div class=\"muted\">session id</div><div>{escape(rendered.session_id)}</div>"
+        f"<div class=\"muted\">local file</div><div>{escape(str(rendered.path or ''))}</div>"
+        f"<div class=\"muted\">rendered events</div><div>{len(rendered.events)}</div>"
+        "</div></section>"
+        f"{related_history}"
+        f"{events}"
+    )
+    return 200, render_page(f"Codex Session {session_id}", body)
+
+
+def render_error_list(store: AutoReplyStore, limit: int | None = None) -> str:
+    rows = []
+    for error in store.list_errors(limit=limit):
+        rows.append(
+            "<tr>"
+            f"<td>#{error.id}</td>"
+            f"<td>{escape(error.created_at)}</td>"
+            f"<td>{escape(error.conversation_id or '')}</td>"
+            f"<td>{escape(error.message_id or '')}</td>"
+            f"<td><span class=\"pill status-failed\">{escape(error.kind)}</span></td>"
+            f"<td>{escape(error.detail)}</td>"
+            "</tr>"
+        )
+    table = (
+        "<table><thead><tr><th>ID</th><th>Time</th><th>Conversation</th>"
+        "<th>Message</th><th>Kind</th><th>Detail</th></tr></thead><tbody>"
+        + "".join(rows)
+        + "</tbody></table>"
+    )
+    return render_page("Errors", table)
+
+
+def handle_feedback_post(
+    store: AutoReplyStore, attempt_id: int, body: bytes
+) -> tuple[int, dict[str, str], str]:
+    parsed = parse_qs(body.decode("utf-8"), keep_blank_values=True)
+    feedback = parsed.get("feedback", [""])[0]
+    corrected_reply = parsed.get("corrected_reply", [""])[0]
+    if not store.record_reply_feedback(
+        attempt_id,
+        feedback=feedback,
+        corrected_reply_text=corrected_reply,
+    ):
+        return 404, {}, render_page("Attempt not found", "Attempt not found")
+    return 303, {"Location": f"/attempts/{attempt_id}"}, ""
+
+
+def handle_recall_post(
+    store: AutoReplyStore, dws, attempt_id: int
+) -> tuple[int, dict[str, str], str]:
+    attempt = store.get_reply_attempt(attempt_id)
+    if attempt is None:
+        return 404, {}, render_page("Attempt not found", "Attempt not found")
+    sent_reply = store.get_sent_reply(
+        attempt.conversation_id,
+        attempt.trigger_message_id,
+    )
+    if sent_reply is None or not sent_reply.recall_key:
+        return (
+            400,
+            {},
+            render_page(
+                "撤销不可用",
+                "<p>撤销不可用：没有可撤销 key，当前发送方式不支持自动撤销。</p>",
+            ),
+        )
+    try:
+        dws.recall_bot_message(attempt.conversation_id, sent_reply.recall_key)
+    except Exception as exc:
+        store.update_sent_reply_recall(
+            sent_reply.id,
+            recall_status="failed",
+            recall_error=str(exc),
+        )
+        return (
+            500,
+            {},
+            render_page("撤销失败", f"<p>{escape(str(exc))}</p>"),
+        )
+    store.update_sent_reply_recall(
+        sent_reply.id,
+        recall_status="recalled",
+        recall_error="",
+    )
+    return 303, {"Location": f"/attempts/{attempt_id}"}, ""
+
+
+def create_audit_app(
+    db_path: Path,
+    ding_robot_code: str | None = None,
+    ding_robot_name: str | None = None,
+) -> FastAPI:
+    app = FastAPI(title="CEO Agent Audit")
+
+    @app.get("/", response_class=HTMLResponse)
+    def attempt_list() -> str:
+        return render_attempt_list(AutoReplyStore(db_path))
+
+    @app.get("/errors", response_class=HTMLResponse)
+    def error_list() -> str:
+        return render_error_list(AutoReplyStore(db_path))
+
+    @app.get("/codex", response_class=HTMLResponse)
+    def codex_session_list() -> str:
+        return render_codex_session_list(AutoReplyStore(db_path))
+
+    @app.get("/codex/{session_id}", response_class=HTMLResponse)
+    def codex_session_detail(session_id: str) -> HTMLResponse:
+        status, html = render_codex_session_detail(
+            session_id,
+            store=AutoReplyStore(db_path),
+        )
+        return HTMLResponse(html, status_code=status)
+
+    @app.get("/attempts/{attempt_id}", response_class=HTMLResponse)
+    def attempt_detail(attempt_id: int) -> HTMLResponse:
+        status, html = render_attempt_detail(AutoReplyStore(db_path), attempt_id)
+        return HTMLResponse(html, status_code=status)
+
+    @app.post("/attempts/{attempt_id}/feedback")
+    async def feedback(attempt_id: int, request: Request):
+        status, headers, html = handle_feedback_post(
+            AutoReplyStore(db_path),
+            attempt_id,
+            await request.body(),
+        )
+        return _fastapi_post_response(status, headers, html)
+
+    @app.post("/attempts/{attempt_id}/recall")
+    def recall(attempt_id: int):
+        status, headers, html = handle_recall_post(
+            AutoReplyStore(db_path),
+            DwsClient(ding_robot_code=ding_robot_code, ding_robot_name=ding_robot_name),
+            attempt_id,
+        )
+        return _fastapi_post_response(status, headers, html)
+
+    return app
+
+
+def create_default_audit_app() -> FastAPI:
+    return create_audit_app(
+        Path(os.environ["CEO_WORKER_DB"]),
+        ding_robot_code=os.getenv("CEO_DING_ROBOT_CODE")
+        or os.getenv("DINGTALK_DING_ROBOT_CODE"),
+        ding_robot_name=os.getenv("CEO_DING_ROBOT_NAME"),
+    )
+
+
+def run_audit_web(
+    db_path: Path,
+    host: str,
+    port: int,
+    ding_robot_code: str | None = None,
+    ding_robot_name: str | None = None,
+    reload: bool = False,
+    reload_delay_seconds: int = 1,
+    reload_dirs: list[Path] | None = None,
+) -> None:
+    print(f"audit-web listening on http://{host}:{port}", flush=True)
+    if reload:
+        os.environ["CEO_WORKER_DB"] = str(db_path)
+        if ding_robot_code:
+            os.environ["CEO_DING_ROBOT_CODE"] = ding_robot_code
+        if ding_robot_name:
+            os.environ["CEO_DING_ROBOT_NAME"] = ding_robot_name
+        uvicorn.run(
+            "ceo_agent_service.audit_web:create_default_audit_app",
+            factory=True,
+            host=host,
+            port=port,
+            reload=True,
+            reload_delay=reload_delay_seconds,
+            reload_dirs=[str(path) for path in reload_dirs] if reload_dirs else None,
+        )
+        return
+
+    uvicorn.run(
+        create_audit_app(
+            db_path,
+            ding_robot_code=ding_robot_code,
+            ding_robot_name=ding_robot_name,
+        ),
+        host=host,
+        port=port,
+    )
+
+
+def _fastapi_post_response(status: int, headers: dict[str, str], html: str):
+    if status == 303:
+        return RedirectResponse(headers["Location"], status_code=303)
+    return HTMLResponse(html, status_code=status)
+
+
+def _attempt_detail_body(
+    attempt: ReplyAttempt,
+    sent_reply: SentReply | None,
+    codex_session_id: str | None,
+) -> str:
+    fields = [
+        ("conversation", attempt.conversation_title),
+        ("trigger sender", attempt.trigger_sender),
+        ("trigger message id", attempt.trigger_message_id),
+        ("action", attempt.action),
+        ("sensitivity", attempt.sensitivity_kind),
+        ("permission", attempt.permission_action),
+        ("permission reason", attempt.permission_reason),
+        ("send status", attempt.send_status),
+        ("send error", attempt.send_error),
+        ("retry count", str(attempt.retry_count)),
+        ("created", attempt.created_at),
+        ("updated", attempt.updated_at),
+        ("reviewed", attempt.reviewed_at or ""),
+    ]
+    rows = "".join(
+        f"<div class=\"muted\">{escape(label)}</div><div>{escape(value)}</div>"
+        for label, value in fields
+    )
+    return (
+        f"{_review_panel(attempt)}"
+        f"<section class=\"card compact-card\"><div class=\"grid\">{rows}</div></section>"
+        f"{_quality_warning_card(attempt)}"
+        f"{_recall_card(attempt, sent_reply)}"
+        f"{_codex_session_card(codex_session_id, attempt)}"
+        f"{_text_card('Trigger', attempt.trigger_text)}"
+        f"{_text_card('Codex reason', attempt.codex_reason)}"
+        f"{_text_card('Audit summary', attempt.audit_summary)}"
+        f"{_json_card('Audit documents', attempt.audit_documents_json)}"
+        f"{_json_card('Audit tool events', attempt.audit_tool_events_json)}"
+        f"{_text_card('Draft reply', attempt.draft_reply_text)}"
+        f"{_text_card('Final reply', attempt.final_reply_text)}"
+    )
+
+
+def _review_panel(attempt: ReplyAttempt) -> str:
+    reply_text = attempt.final_reply_text or attempt.draft_reply_text
+    if not reply_text.strip():
+        reply_text = "No generated reply recorded."
+    return (
+        "<section class=\"review-grid\">"
+        "<div class=\"card\">"
+        "<div class=\"reply-meta\">"
+        f"<span class=\"pill action-{escape(attempt.action)}\">{escape(attempt.action)}</span>"
+        f"<span class=\"pill status-{escape(attempt.send_status)}\">{escape(attempt.send_status)}</span>"
+        "</div>"
+        "<h2>生成回复</h2>"
+        f"<pre class=\"reply-pre\">{escape(reply_text)}</pre>"
+        "</div>"
+        f"{_feedback_form(attempt)}"
+        "</section>"
+    )
+
+
+def _codex_session_card(
+    codex_session_id: str | None, attempt: ReplyAttempt | None = None
+) -> str:
+    if not codex_session_id:
+        return (
+            "<section class=\"card\"><h2>Codex local history</h2>"
+            "<p class=\"muted\">No Codex session recorded for this conversation.</p>"
+            "</section>"
+        )
+    line_range = ""
+    if attempt and attempt.codex_transcript_end_line > attempt.codex_transcript_start_line:
+        line_range = (
+            f"<p class=\"muted\">lines {attempt.codex_transcript_start_line}-"
+            f"{attempt.codex_transcript_end_line}</p>"
+        )
+    return (
+        "<section class=\"card\"><h2>Codex local history</h2>"
+        f"<p><a href=\"/codex/{escape(codex_session_id)}\">"
+        "View rendered Codex session</a></p>"
+        f"<p class=\"muted\">{escape(codex_session_id)}</p>"
+        f"{line_range}"
+        "</section>"
+    )
+
+
+def _quality_warning_card(attempt: ReplyAttempt) -> str:
+    warnings = _quality_warnings(attempt)
+    if not warnings:
+        return ""
+    items = "".join(f"<li>{escape(warning)}</li>" for warning in warnings)
+    return (
+        "<section class=\"card quality-warning\"><h2>Audit quality warnings</h2>"
+        f"<ul>{items}</ul></section>"
+    )
+
+
+def _quality_warnings(attempt: ReplyAttempt) -> list[str]:
+    if attempt.send_status == "skipped":
+        return []
+    warnings: list[str] = []
+    if not attempt.audit_summary.strip():
+        warnings.append("missing audit_summary")
+    if not attempt.codex_session_id.strip():
+        warnings.append("missing codex_session_id")
+    if attempt.action in {"send_reply", "ask_clarifying_question"}:
+        if not _json_array_has_items(attempt.audit_tool_events_json):
+            warnings.append(f"{attempt.action} has no audit tool events")
+        if (
+            not _json_array_has_items(attempt.audit_documents_json)
+            and not audit_summary_explains_no_documents(attempt.audit_summary)
+        ):
+            warnings.append(f"{attempt.action} has no audit documents")
+    return warnings
+
+
+def _attempt_warning_summary(attempt: ReplyAttempt) -> str:
+    warnings = _quality_warnings(attempt)
+    if not warnings:
+        return ""
+    if len(warnings) == 1:
+        return f"Quality warning: {warnings[0]}"
+    return f"Quality warnings: {len(warnings)}"
+
+
+def _json_array_has_items(text: str) -> bool:
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        return False
+    return isinstance(payload, list) and len(payload) > 0
+
+
+def _related_history_card(attempts: list[ReplyAttempt]) -> str:
+    if not attempts:
+        return (
+            "<section class=\"card\"><h2>Related history</h2>"
+            "<p class=\"muted\">No reply attempts recorded for this Codex session.</p>"
+            "</section>"
+        )
+    rows = []
+    for attempt in attempts:
+        rows.append(
+            "<tr>"
+            f"<td>{_attempt_link(attempt)}</td>"
+            f"<td>{escape(attempt.created_at)}</td>"
+            f"<td>{escape(attempt.trigger_sender)}</td>"
+            f"<td><span class=\"pill action-{escape(attempt.action)}\">{escape(attempt.action)}</span></td>"
+            f"<td><span class=\"pill status-{escape(attempt.send_status)}\">{escape(attempt.send_status)}</span></td>"
+            f"<td>{escape(_excerpt(attempt.trigger_text, 120))}</td>"
+            "</tr>"
+        )
+    return (
+        "<section class=\"card\"><h2>Related history</h2>"
+        "<table><thead><tr><th>Attempt</th><th>Time</th><th>Sender</th>"
+        "<th>Action</th><th>Status</th><th>Trigger</th></tr></thead><tbody>"
+        + "".join(rows)
+        + "</tbody></table></section>"
+    )
+
+
+def _codex_event_card(event: RenderedCodexEvent) -> str:
+    open_attr = " open" if event.expanded else ""
+    preview = _excerpt(event.body, 140)
+    return (
+        f"<details class=\"event event-{escape(event.kind)}\"{open_attr}>"
+        "<summary>"
+        "<div>"
+        f"<div class=\"event-title\">{escape(event.title)}</div>"
+        f"<div class=\"event-preview\">{escape(preview)}</div>"
+        "</div>"
+        f"<time>{escape(event.timestamp)}</time>"
+        "</summary>"
+        f"<pre>{escape(event.body)}</pre>"
+        "</details>"
+    )
+
+
+def _recall_card(attempt: ReplyAttempt, sent_reply: SentReply | None) -> str:
+    if attempt.send_status != "sent":
+        return ""
+    if sent_reply is None:
+        return (
+            "<section class=\"card\"><h2>撤销发送</h2>"
+            "<p class=\"muted\">撤销不可用：没有找到对应的发送记录。</p></section>"
+        )
+    if sent_reply.recall_status == "recalled":
+        return (
+            "<section class=\"card\"><h2>撤销发送</h2>"
+            f"<p>已撤销：{escape(sent_reply.recalled_at or '')}</p></section>"
+        )
+    if not sent_reply.recall_key:
+        return (
+            "<section class=\"card\"><h2>撤销发送</h2>"
+            "<p class=\"muted\">撤销不可用：当前发送方式不支持。dws 目前只支持机器人消息通过 processQueryKey 撤回；这条消息是当前用户身份发送，未记录可撤销 key。</p>"
+            "</section>"
+        )
+    return (
+        "<section class=\"card\"><h2>撤销发送</h2>"
+        f"<form method=\"post\" action=\"/attempts/{attempt.id}/recall\" "
+        "onsubmit=\"return confirm('确认撤销这条已发送消息？');\">"
+        "<button class=\"danger\" type=\"submit\">撤销这条消息</button>"
+        "</form></section>"
+    )
+
+
+def _feedback_form(attempt: ReplyAttempt) -> str:
+    return (
+        f"<section class=\"card\" id=\"feedback\"><h2>记录反馈 / 修改意见</h2>"
+        f"<form method=\"post\" action=\"/attempts/{attempt.id}/feedback\">"
+        "<label>反馈意见</label><textarea name=\"feedback\" "
+        "placeholder=\"这条判断哪里不对、为什么不满意、以后应该遵守什么规则\">"
+        f"{escape(attempt.reviewer_feedback)}</textarea>"
+        "<label>建议回复</label><textarea name=\"corrected_reply\" "
+        "placeholder=\"如果重写，这条消息应该怎么回复\">"
+        f"{escape(attempt.corrected_reply_text)}</textarea>"
+        "<p><button type=\"submit\">保存反馈</button></p></form></section>"
+    )
+
+
+def _review_link(attempt: ReplyAttempt) -> str:
+    label = "查看/反馈" if not (attempt.reviewer_feedback or attempt.corrected_reply_text) else "查看/修改"
+    return f"<a class=\"review-link\" href=\"/attempts/{attempt.id}\">{label}</a>"
+
+
+def _attempt_link(attempt: ReplyAttempt) -> str:
+    return (
+        f"<a href=\"/attempts/{attempt.id}\">"
+        f"#{attempt.id} · {escape(attempt.action)} · {escape(attempt.send_status)}</a>"
+    )
+
+
+def _codex_link(codex_session_id: str | None) -> str:
+    if not codex_session_id:
+        return "<span class=\"muted\">-</span>"
+    return (
+        f"<a class=\"review-link\" href=\"/codex/{escape(codex_session_id)}\">"
+        "Codex</a>"
+    )
+
+
+def _attempt_text_line(label: str, text: str, length: int) -> str:
+    return (
+        "<div class=\"attempt-line\">"
+        f"<span class=\"attempt-label\">{escape(label)}</span>"
+        f"<span class=\"attempt-copy\">{escape(_excerpt(text, length))}</span>"
+        "</div>"
+    )
+
+
+def _reply_preview_text(attempt: ReplyAttempt) -> str:
+    text = attempt.final_reply_text or attempt.draft_reply_text
+    lines = text.splitlines()
+    while lines and (not lines[0].strip() or lines[0].lstrip().startswith(">")):
+        lines.pop(0)
+    preview = "\n".join(lines).strip()
+    return preview or text
+
+
+def _text_card(title: str, text: str) -> str:
+    return f"<section class=\"card\"><h2>{escape(title)}</h2><pre>{escape(text)}</pre></section>"
+
+
+def _json_card(title: str, text: str) -> str:
+    return (
+        f"<section class=\"card\"><h2>{escape(title)}</h2>"
+        f"<pre class=\"json-pre\">{_json_html(text)}</pre></section>"
+    )
+
+
+def _json_html(text: str) -> str:
+    try:
+        payload = json.loads(text or "[]")
+    except Exception:
+        return escape(text)
+    return _json_value_html(payload, 0)
+
+
+def _json_value_html(value, level: int) -> str:
+    indent = " " * (level * 2)
+    child_indent = " " * ((level + 1) * 2)
+    if isinstance(value, dict):
+        if not value:
+            return "{}"
+        lines = ["{"]
+        items = list(value.items())
+        for index, (key, item_value) in enumerate(items):
+            comma = "," if index < len(items) - 1 else ""
+            key_html = (
+                f"<span class=\"json-key\">"
+                f"{escape(json.dumps(str(key), ensure_ascii=False))}</span>"
+            )
+            lines.append(
+                f"{child_indent}{key_html}: "
+                f"{_json_value_html(item_value, level + 1)}{comma}"
+            )
+        lines.append(f"{indent}" + "}")
+        return "\n".join(lines)
+    if isinstance(value, list):
+        if not value:
+            return "[]"
+        lines = ["["]
+        for index, item_value in enumerate(value):
+            comma = "," if index < len(value) - 1 else ""
+            lines.append(
+                f"{child_indent}{_json_value_html(item_value, level + 1)}{comma}"
+            )
+        lines.append(f"{indent}]")
+        return "\n".join(lines)
+    if isinstance(value, str):
+        return (
+            f"<span class=\"json-string\">"
+            f"{escape(json.dumps(value, ensure_ascii=False))}</span>"
+        )
+    if isinstance(value, bool):
+        return f"<span class=\"json-bool\">{str(value).lower()}</span>"
+    if value is None:
+        return "<span class=\"json-null\">null</span>"
+    return f"<span class=\"json-number\">{escape(str(value))}</span>"
+
+
+def _attempt_id_from_path(path: str) -> int | None:
+    parts = path.strip("/").split("/")
+    if len(parts) != 2 or parts[0] != "attempts":
+        return None
+    try:
+        return int(parts[1])
+    except ValueError:
+        return None
+
+
+def _excerpt(text: str, length: int) -> str:
+    normalized = " ".join(text.split())
+    if len(normalized) <= length:
+        return normalized
+    return f"{normalized[:length]}..."

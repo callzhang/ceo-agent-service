@@ -1,0 +1,93 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "CEO Agent Codex Decision",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "action",
+    "reply_text",
+    "reason",
+    "ding_self",
+    "macos_notify",
+    "sensitivity_kind",
+    "personnel_subject_user_id",
+    "candidate_context_known",
+    "candidate_department_ids",
+    "audit_documents",
+    "audit_summary"
+  ],
+  "properties": {
+    "action": {
+      "type": "string",
+      "enum": [
+        "send_reply",
+        "ask_clarifying_question",
+        "handoff_to_human",
+        "no_reply",
+        "stop_with_error"
+      ]
+    },
+    "reply_text": {
+      "type": "string"
+    },
+    "reason": {
+      "type": "string"
+    },
+    "ding_self": {
+      "type": "boolean"
+    },
+    "macos_notify": {
+      "type": "boolean"
+    },
+    "sensitivity_kind": {
+      "type": "string",
+      "enum": [
+        "general",
+        "internal_personnel",
+        "external_candidate"
+      ]
+    },
+    "personnel_subject_user_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "candidate_context_known": {
+      "type": "boolean"
+    },
+    "candidate_department_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "audit_documents": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "path",
+          "title",
+          "relevance"
+        ],
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "relevance": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "audit_summary": {
+      "type": "string",
+      "minLength": 1
+    }
+  }
+}

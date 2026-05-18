@@ -1,0 +1,961 @@
+import json
+from pathlib import Path
+
+import pytest
+
+from ceo_agent_service import cli
+from ceo_agent_service.cli import (
+    WorkerSettings,
+    build_parser,
+    build_style_corpus,
+    collect_corpus,
+    create_worker,
+    ensure_live_send_allowed,
+    export_feedback_command,
+    probe_dws,
+    rerun_message_command,
+    reset_codex_sessions_command,
+    record_feedback_command,
+    refresh_org_cache_command,
+    run_loop,
+    settings_from_args,
+    test_ding_command as run_test_ding_command,
+    run_audit_web_command,
+)
+from ceo_agent_service.corpus import CorpusRecord, append_records
+from ceo_agent_service.dws_client import DwsError
+
+
+def test_parser_supports_worker_commands():
+    parser = build_parser()
+
+    args = parser.parse_args(["run-once", "--dry-run", "--db", "/tmp/worker.sqlite3"])
+
+    assert args.command == "run-once"
+    assert args.dry_run is True
+    assert args.db == "/tmp/worker.sqlite3"
+
+
+def test_parser_supports_reset_codex_sessions_command():
+    parser = build_parser()
+
+    args = parser.parse_args(
+        [
+            "reset-codex-sessions",
+            "--db",
+            "/tmp/worker.sqlite3",
+        ]
+    )
+
+    assert args.command == "reset-codex-sessions"
+    assert args.db == "/tmp/worker.sqlite3"
+
+
+def test_parser_supports_rerun_message_command():
+    parser = build_parser()
+
+    args = parser.parse_args(
+        [
+            "rerun-message",
+            "--conversation-id",
+            "cid-1",
+            "--message-id",
+            "msg-1",
+            "--force-new-decision",
+        ]
+    )
+
+    assert args.command == "rerun-message"
+    assert args.conversation_id == "cid-1"
+    assert args.message_id == "msg-1"
+    assert args.force_new_decision is True
+
+
+def test_settings_defaults_point_to_memory_home():
+    parser = build_parser()
+    args = parser.parse_args(["run-once"])
+
+    settings = settings_from_args(args)
+    repo_root = cli._repo_root()
+
+    assert settings.workspace == Path.home() / "Documents" / "memory"
+    assert settings.db_path == repo_root / "data" / "auto-reply.sqlite3"
+    assert settings.corpus_dir == repo_root / "corpus"
+    assert settings.batch_seconds == 120
+    assert settings.poll_interval_seconds == 30
+    assert settings.max_batches is None
+
+
+def test_reset_codex_sessions_command_only_clears_conversation_sessions(tmp_path):
+    settings = WorkerSettings(db_path=tmp_path / "worker.sqlite3")
+    store = cli.AutoReplyStore(settings.db_path)
+    store.upsert_conversation("cid-1", "Friday", False, "session-1")
+    attempt_id = store.record_reply_attempt(
+        conversation_id="cid-1",
+        conversation_title="Friday",
+        trigger_message_id="msg-1",
+        trigger_sender="Xiaomin",
+        trigger_text="@Derek Zen 这个怎么处理？",
+        action="send_reply",
+        sensitivity_kind="general",
+        codex_session_id="session-1",
+    )
+
+    cleared = reset_codex_sessions_command(settings)
+
+    loaded = cli.AutoReplyStore(settings.db_path)
+    attempt = loaded.get_reply_attempt(attempt_id)
+    assert cleared == 1
+    assert loaded.get_codex_session_id("cid-1") is None
+    assert attempt is not None
+    assert attempt.codex_session_id == "session-1"
+
+
+def test_max_batches_can_be_configured_from_env(monkeypatch):
+    monkeypatch.setenv("CEO_MAX_BATCHES", "3")
+    parser = build_parser()
+
+    args = parser.parse_args(["run-once"])
+    settings = settings_from_args(args)
+
+    assert settings.max_batches == 3
+
+
+def test_corpus_dir_can_be_configured_from_env(monkeypatch):
+    monkeypatch.setenv("CEO_CORPUS_DIR", "/tmp/ceo-corpus")
+    parser = build_parser()
+
+    args = parser.parse_args(["build-corpus"])
+    settings = settings_from_args(args)
+
+    assert str(settings.corpus_dir) == "/tmp/ceo-corpus"
+
+
+def test_ding_config_can_be_configured_from_env(monkeypatch):
+    monkeypatch.setenv("CEO_DING_ROBOT_CODE", "robot-code")
+    monkeypatch.setenv("CEO_DING_RECEIVER_USER_ID", "user-1")
+    parser = build_parser()
+
+    args = parser.parse_args(["run-once"])
+    settings = settings_from_args(args)
+
+    assert settings.ding_robot_code == "robot-code"
+    assert settings.ding_receiver_user_id == "user-1"
+
+
+def test_ding_config_uses_dws_standard_env(monkeypatch):
+    monkeypatch.delenv("CEO_DING_ROBOT_CODE", raising=False)
+    monkeypatch.setenv("DINGTALK_DING_ROBOT_CODE", "dws-robot-code")
+    parser = build_parser()
+
+    args = parser.parse_args(["run-once"])
+    settings = settings_from_args(args)
+
+    assert settings.ding_robot_code == "dws-robot-code"
+
+
+def test_ding_robot_name_defaults_to_none(monkeypatch):
+    monkeypatch.delenv("CEO_DING_ROBOT_NAME", raising=False)
+    parser = build_parser()
+
+    args = parser.parse_args(["run-once"])
+    settings = settings_from_args(args)
+
+    assert settings.ding_robot_name is None
+
+
+def test_ding_robot_name_can_be_configured_from_env(monkeypatch):
+    monkeypatch.setenv("CEO_DING_ROBOT_NAME", "OpenClaw小钉")
+    parser = build_parser()
+
+    args = parser.parse_args(["run-once"])
+    settings = settings_from_args(args)
+
+    assert settings.ding_robot_name == "OpenClaw小钉"
+
+
+def test_parser_supports_refresh_org_cache_command():
+    parser = build_parser()
+
+    args = parser.parse_args(["refresh-org-cache", "--user-id", "user-1"])
+
+    assert args.command == "refresh-org-cache"
+    assert args.user_id == ["user-1"]
+
+
+def test_parser_supports_feedback_command():
+    parser = build_parser()
+
+    args = parser.parse_args(
+        [
+            "feedback",
+            "--attempt-id",
+            "7",
+            "--feedback",
+            "太武断",
+            "--corrected-reply",
+            "需要先看材料",
+        ]
+    )
+
+    assert args.command == "feedback"
+    assert args.attempt_id == 7
+    assert args.feedback == "太武断"
+    assert args.corrected_reply == "需要先看材料"
+
+
+def test_parser_supports_audit_web_command():
+    parser = build_parser()
+
+    args = parser.parse_args(
+        [
+            "audit-web",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            "8765",
+            "--reload",
+            "--reload-interval-seconds",
+            "2",
+        ]
+    )
+
+    assert args.command == "audit-web"
+    assert args.host == "127.0.0.1"
+    assert args.port == 8765
+    assert args.reload is True
+    assert args.reload_interval_seconds == 2
+
+
+def test_parser_supports_export_feedback_command():
+    parser = build_parser()
+
+    args = parser.parse_args(
+        ["export-feedback", "--output", "/tmp/feedback.jsonl", "--limit", "20"]
+    )
+
+    assert args.command == "export-feedback"
+    assert args.output == "/tmp/feedback.jsonl"
+    assert args.limit == 20
+
+
+def test_invalid_dry_run_env_value_fails_fast(monkeypatch):
+    monkeypatch.setenv("CEO_DRY_RUN", "treu")
+
+    with pytest.raises(ValueError, match="CEO_DRY_RUN"):
+        build_parser()
+
+
+def test_dry_run_flag_overrides_disabled_dry_run_env(monkeypatch):
+    monkeypatch.setenv("CEO_DRY_RUN", "0")
+    parser = build_parser()
+
+    args = parser.parse_args(["run-once", "--dry-run"])
+    settings = settings_from_args(args)
+
+    assert settings.dry_run is True
+
+
+def test_live_send_fails_fast_without_blocker_acceptance(monkeypatch, tmp_path):
+    monkeypatch.delenv("CEO_LIVE_SEND_BLOCKERS_ACCEPTED", raising=False)
+    settings = WorkerSettings(
+        workspace=tmp_path / "workspace",
+        db_path=tmp_path / "worker.sqlite3",
+        corpus_dir=tmp_path / "corpus",
+        dry_run=False,
+    )
+
+    with pytest.raises(SystemExit) as exc:
+        ensure_live_send_allowed(settings)
+
+    message = str(exc.value)
+    assert "CEO_DRY_RUN=0 is blocked" in message
+    assert "deterministic personnel/candidate permission gates" in message
+    assert "handoff-clear detection" in message
+    assert "batching semantics" in message
+    assert "DING handoff delivery" not in message
+
+
+def test_live_send_allows_guarded_override(monkeypatch, tmp_path):
+    monkeypatch.setenv("CEO_LIVE_SEND_BLOCKERS_ACCEPTED", "1")
+    settings = WorkerSettings(
+        workspace=tmp_path / "workspace",
+        db_path=tmp_path / "worker.sqlite3",
+        corpus_dir=tmp_path / "corpus",
+        dry_run=False,
+    )
+
+    ensure_live_send_allowed(settings)
+
+
+def test_poll_interval_seconds_must_be_positive():
+    parser = build_parser()
+
+    with pytest.raises(SystemExit):
+        parser.parse_args(["run-once", "--poll-interval-seconds", "0"])
+
+
+def test_batch_seconds_must_be_positive():
+    parser = build_parser()
+
+    with pytest.raises(SystemExit):
+        parser.parse_args(["run-once", "--batch-seconds", "0"])
+
+
+def test_create_worker_wires_store_dws_codex_and_dry_run(monkeypatch, tmp_path):
+    constructed = {}
+
+    class FakeStore:
+        def __init__(self, path):
+            constructed["store_path"] = path
+
+    class FakeDws:
+        def __init__(self, **kwargs):
+            constructed["dws"] = self
+            constructed["dws_kwargs"] = kwargs
+
+    class FakeCachedOrgDirectory:
+        def __init__(self, store):
+            constructed["directory_store"] = store
+
+    class FakeCachedDwsClient:
+        def __init__(self, dws, org_directory):
+            constructed["cached_dws_args"] = (dws, org_directory)
+
+    class FakeCodex:
+        def __init__(self, workspace):
+            constructed["codex_workspace"] = workspace
+
+    class FakeWorker:
+        def __init__(
+            self,
+            store,
+            dws,
+            codex,
+            dry_run,
+            style_profile="",
+            style_records=None,
+        ):
+            constructed["worker"] = self
+            constructed["worker_args"] = (store, dws, codex, dry_run)
+            constructed["style_profile"] = style_profile
+            constructed["style_records"] = style_records
+
+    monkeypatch.setattr(cli, "AutoReplyStore", FakeStore)
+    monkeypatch.setattr(cli, "DwsClient", FakeDws)
+    monkeypatch.setattr(cli, "CachedOrgDirectory", FakeCachedOrgDirectory)
+    monkeypatch.setattr(cli, "CachedDwsClient", FakeCachedDwsClient)
+    monkeypatch.setattr(cli, "CodexDecisionRunner", FakeCodex)
+    monkeypatch.setattr(cli, "DingTalkAutoReplyWorker", FakeWorker)
+
+    settings = WorkerSettings(
+        workspace=tmp_path / "workspace",
+        db_path=tmp_path / "worker.sqlite3",
+        corpus_dir=tmp_path / "corpus",
+        dry_run=True,
+    )
+    settings.corpus_dir.mkdir()
+    (settings.corpus_dir / "style_profile.md").write_text(
+        "# Derek Style Profile\n- 先结论，再解释原因。\n",
+        encoding="utf-8",
+    )
+    append_records(
+        settings.corpus_dir / "derek_style_corpus.csv",
+        [
+            CorpusRecord(
+                source_type="dingtalk",
+                source_title="Friday",
+                timestamp="2026-05-13 18:00:00",
+                context="项目排期怎么处理",
+                derek_reply="先判断客户价值，再确认负责人、时间点和验收标准，不要只说继续推进。",
+                message_id="style-msg-1",
+                conversation_id="cid-1",
+                speaker_name="磊哥",
+                metadata_json="{}",
+            )
+        ],
+    )
+
+    worker = create_worker(settings)
+
+    assert worker is constructed["worker"]
+    assert constructed["store_path"] == settings.db_path
+    assert constructed["dws_kwargs"] == {
+        "ding_robot_code": None,
+        "ding_robot_name": None,
+        "ding_receiver_user_id": None,
+    }
+    assert constructed["cached_dws_args"][0] is constructed["dws"]
+    assert constructed["codex_workspace"] == settings.workspace
+    assert constructed["worker_args"][3] is True
+    assert "先结论" in constructed["style_profile"]
+    assert len(constructed["style_records"]) == 1
+    assert constructed["style_records"][0].message_id == "style-msg-1"
+
+
+def test_run_once_command_calls_worker_once(monkeypatch, tmp_path):
+    calls = []
+
+    class FakeWorker:
+        def run_once(self, max_batches=None):
+            calls.append(max_batches)
+
+    monkeypatch.setattr(cli, "create_worker", lambda settings: FakeWorker())
+
+    settings = WorkerSettings(
+        workspace=tmp_path / "workspace",
+        db_path=tmp_path / "worker.sqlite3",
+        corpus_dir=tmp_path / "corpus",
+        max_batches=3,
+    )
+
+    cli.run_once(settings)
+
+    assert calls == [3]
+
+
+def test_run_once_command_prints_attempt_sent_and_error_deltas(
+    monkeypatch, tmp_path, capsys
+):
+    settings = WorkerSettings(
+        workspace=tmp_path / "workspace",
+        db_path=tmp_path / "worker.sqlite3",
+        corpus_dir=tmp_path / "corpus",
+    )
+
+    class FakeWorker:
+        def run_once(self, max_batches=None):
+            store = cli.AutoReplyStore(settings.db_path)
+            store.record_reply_attempt(
+                conversation_id="cid-1",
+                conversation_title="BA",
+                trigger_message_id="msg-1",
+                trigger_sender="Phina",
+                trigger_text="@Derek Zen 需要看一下吗？",
+                action="send_reply",
+                sensitivity_kind="general",
+                send_status="pending",
+            )
+            store.record_sent_reply(
+                "cid-1",
+                "msg-1",
+                "可以推进，后面同步一下。（by磊哥分身）",
+                send_result_json='{"ok": true}',
+            )
+            store.record_error("cid-2", None, "read_messages", "dws exit code 6")
+
+    monkeypatch.setattr(cli, "create_worker", lambda settings: FakeWorker())
+    monkeypatch.setattr(cli, "local_time_zone_name", lambda: "America/Los_Angeles")
+
+    cli.run_once(settings)
+
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["agent_local_timezone"] == "America/Los_Angeles"
+    assert summary["counts"] == {
+        "reply_attempts": 1,
+        "sent_replies": 1,
+        "errors": 1,
+    }
+    assert summary["reply_attempts"][0]["conversation_title"] == "BA"
+    assert summary["reply_attempts"][0]["action"] == "send_reply"
+    assert summary["sent_replies"][0]["trigger_message_id"] == "msg-1"
+    assert summary["errors"][0]["kind"] == "read_messages"
+    assert summary["errors"][0]["detail_excerpt"] == "dws exit code 6"
+
+
+def test_test_ding_command_uses_dws_client(monkeypatch, tmp_path, capsys):
+    calls = {}
+
+    class FakeDws:
+        def __init__(self, **kwargs):
+            calls["kwargs"] = kwargs
+
+        def ding_self(self, text):
+            calls["ding_text"] = text
+
+    monkeypatch.setattr(cli, "DwsClient", FakeDws)
+    settings = WorkerSettings(
+        workspace=tmp_path / "workspace",
+        db_path=tmp_path / "worker.sqlite3",
+        corpus_dir=tmp_path / "corpus",
+        ding_robot_code="robot-code",
+        ding_robot_name="极简云机器人",
+        ding_receiver_user_id="user-1",
+    )
+
+    run_test_ding_command(settings)
+
+    assert calls["kwargs"] == {
+        "ding_robot_code": "robot-code",
+        "ding_robot_name": "极简云机器人",
+        "ding_receiver_user_id": "user-1",
+    }
+    assert calls["ding_text"] == "CEO agent DING smoke test"
+    assert "ding_self: OK" in capsys.readouterr().out
+
+
+def test_test_ding_command_reports_dws_error(monkeypatch, tmp_path):
+    class FakeDws:
+        def __init__(self, **kwargs):
+            pass
+
+        def ding_self(self, text):
+            raise DwsError("robotCode is illegal")
+
+    monkeypatch.setattr(cli, "DwsClient", FakeDws)
+    settings = WorkerSettings(
+        workspace=tmp_path / "workspace",
+        db_path=tmp_path / "worker.sqlite3",
+        corpus_dir=tmp_path / "corpus",
+    )
+
+    with pytest.raises(SystemExit, match="ding_self: BLOCKED robotCode is illegal"):
+        run_test_ding_command(settings)
+
+
+def test_rerun_message_command_loads_conversation_and_calls_worker(
+    monkeypatch, tmp_path, capsys
+):
+    calls = {}
+    settings = WorkerSettings(
+        workspace=tmp_path / "workspace",
+        db_path=tmp_path / "worker.sqlite3",
+        corpus_dir=tmp_path / "corpus",
+    )
+    store = cli.AutoReplyStore(settings.db_path)
+    store.upsert_conversation("cid-1", "Friday", False, "session-1")
+
+    class FakeWorker:
+        def rerun_message(self, conversation, message_id, *, force_new_decision=False):
+            calls["conversation"] = conversation
+            calls["message_id"] = message_id
+            calls["force_new_decision"] = force_new_decision
+            return message_id
+
+    monkeypatch.setattr(cli, "create_worker", lambda settings: FakeWorker())
+
+    rerun_message_command(
+        settings,
+        conversation_id="cid-1",
+        message_id="msg-1",
+        force_new_decision=True,
+    )
+
+    assert calls["conversation"].open_conversation_id == "cid-1"
+    assert calls["conversation"].title == "Friday"
+    assert calls["message_id"] == "msg-1"
+    assert calls["force_new_decision"] is True
+    assert "rerun-message processed conversation_id=cid-1" in capsys.readouterr().out
+
+
+def test_rerun_message_command_fails_for_unknown_conversation(tmp_path):
+    settings = WorkerSettings(
+        workspace=tmp_path / "workspace",
+        db_path=tmp_path / "worker.sqlite3",
+        corpus_dir=tmp_path / "corpus",
+    )
+
+    with pytest.raises(SystemExit, match="conversation not found: cid-missing"):
+        rerun_message_command(
+            settings,
+            conversation_id="cid-missing",
+            message_id="msg-1",
+        )
+
+
+def test_rerun_message_command_reports_missing_message(monkeypatch, tmp_path):
+    settings = WorkerSettings(
+        workspace=tmp_path / "workspace",
+        db_path=tmp_path / "worker.sqlite3",
+        corpus_dir=tmp_path / "corpus",
+    )
+    store = cli.AutoReplyStore(settings.db_path)
+    store.upsert_conversation("cid-1", "Friday", False, "session-1")
+
+    class FakeWorker:
+        def rerun_message(self, conversation, message_id, *, force_new_decision=False):
+            raise ValueError("message not found in recent DingTalk context: msg-1")
+
+    monkeypatch.setattr(cli, "create_worker", lambda settings: FakeWorker())
+
+    with pytest.raises(
+        SystemExit, match="message not found in recent DingTalk context: msg-1"
+    ):
+        rerun_message_command(
+            settings,
+            conversation_id="cid-1",
+            message_id="msg-1",
+        )
+
+
+def test_refresh_org_cache_command_uses_store_and_dws(monkeypatch, tmp_path):
+    calls = {}
+
+    class FakeStore:
+        def __init__(self, path):
+            calls["store_path"] = path
+
+    class FakeDws:
+        pass
+
+    def fake_refresh(store, dws, user_ids):
+        calls["refresh"] = (store, dws, user_ids)
+        return 3
+
+    monkeypatch.setattr(cli, "AutoReplyStore", FakeStore)
+    monkeypatch.setattr(cli, "DwsClient", FakeDws)
+    monkeypatch.setattr(cli, "refresh_org_cache", fake_refresh)
+
+    settings = WorkerSettings(
+        workspace=tmp_path / "workspace",
+        db_path=tmp_path / "worker.sqlite3",
+        corpus_dir=tmp_path / "corpus",
+    )
+
+    count = refresh_org_cache_command(settings, {"user-1"})
+
+    assert count == 3
+    assert calls["store_path"] == settings.db_path
+    assert calls["refresh"][2] == {"user-1"}
+
+
+def test_record_feedback_command_updates_reply_attempt(tmp_path, capsys):
+    settings = WorkerSettings(
+        workspace=tmp_path / "workspace",
+        db_path=tmp_path / "worker.sqlite3",
+        corpus_dir=tmp_path / "corpus",
+    )
+    store = cli.AutoReplyStore(settings.db_path)
+    attempt_id = store.record_reply_attempt(
+        conversation_id="cid-1",
+        conversation_title="技术部",
+        trigger_message_id="msg-1",
+        trigger_sender="Xiaomin",
+        trigger_text="@Derek Zen 这个怎么处理？",
+        action="send_reply",
+        sensitivity_kind="general",
+    )
+
+    record_feedback_command(
+        settings,
+        attempt_id=attempt_id,
+        feedback="需要更严谨",
+        corrected_reply="先看材料再判断。",
+    )
+
+    attempt = store.get_reply_attempt(attempt_id)
+    assert attempt is not None
+    assert attempt.reviewer_feedback == "需要更严谨"
+    assert attempt.corrected_reply_text == "先看材料再判断。"
+    assert "feedback recorded attempt_id=1" in capsys.readouterr().out
+
+
+def test_record_feedback_command_fails_when_attempt_is_missing(tmp_path):
+    settings = WorkerSettings(
+        workspace=tmp_path / "workspace",
+        db_path=tmp_path / "worker.sqlite3",
+        corpus_dir=tmp_path / "corpus",
+    )
+
+    with pytest.raises(SystemExit, match="reply attempt not found: 99"):
+        record_feedback_command(
+            settings,
+            attempt_id=99,
+            feedback="没有这条记录",
+        )
+
+
+def test_run_audit_web_command_uses_db_host_and_port(monkeypatch, tmp_path):
+    calls = {}
+
+    def fake_run_audit_web(
+        db_path,
+        host,
+        port,
+        ding_robot_code=None,
+        ding_robot_name=None,
+        reload=False,
+        reload_delay_seconds=1,
+        reload_dirs=None,
+    ):
+        calls["args"] = (
+            db_path,
+            host,
+            port,
+            ding_robot_code,
+            ding_robot_name,
+            reload,
+            reload_delay_seconds,
+            reload_dirs,
+        )
+
+    monkeypatch.setattr(cli, "run_audit_web", fake_run_audit_web)
+    settings = WorkerSettings(
+        workspace=tmp_path / "workspace",
+        db_path=tmp_path / "worker.sqlite3",
+        corpus_dir=tmp_path / "corpus",
+        ding_robot_code="robot-code",
+        ding_robot_name="极简云机器人",
+    )
+
+    run_audit_web_command(settings, host="127.0.0.1", port=8765)
+
+    assert calls["args"][:6] == (
+        settings.db_path,
+        "127.0.0.1",
+        8765,
+        "robot-code",
+        "极简云机器人",
+        False,
+    )
+    assert calls["args"][6] == 1
+    assert calls["args"][7][0].name == "ceo_agent_service"
+
+
+def test_run_audit_web_command_forwards_uvicorn_reload(monkeypatch, tmp_path):
+    calls = {}
+
+    def fake_run_audit_web(
+        db_path,
+        host,
+        port,
+        ding_robot_code=None,
+        ding_robot_name=None,
+        reload=False,
+        reload_delay_seconds=1,
+        reload_dirs=None,
+    ):
+        calls["args"] = (
+            db_path,
+            host,
+            port,
+            ding_robot_code,
+            ding_robot_name,
+            reload,
+            reload_delay_seconds,
+            reload_dirs,
+        )
+
+    monkeypatch.setattr(cli, "run_audit_web", fake_run_audit_web)
+    settings = WorkerSettings(
+        workspace=tmp_path / "workspace",
+        db_path=tmp_path / "worker.sqlite3",
+        corpus_dir=tmp_path / "corpus",
+    )
+
+    run_audit_web_command(
+        settings,
+        host="127.0.0.1",
+        port=8765,
+        reload=True,
+        reload_interval_seconds=2,
+    )
+
+    assert calls["args"][:6] == (
+        settings.db_path,
+        "127.0.0.1",
+        8765,
+        None,
+        None,
+        True,
+    )
+    assert calls["args"][6] == 2
+    assert calls["args"][7][0].name == "ceo_agent_service"
+
+
+def test_export_feedback_command_writes_reviewed_attempts_jsonl(tmp_path, capsys):
+    settings = WorkerSettings(
+        workspace=tmp_path / "workspace",
+        db_path=tmp_path / "worker.sqlite3",
+        corpus_dir=tmp_path / "corpus",
+    )
+    store = cli.AutoReplyStore(settings.db_path)
+    attempt_id = store.record_reply_attempt(
+        conversation_id="cid-1",
+        conversation_title="Claire",
+        trigger_message_id="msg-1",
+        trigger_sender="Claire",
+        trigger_text="磊哥上会啦",
+        action="send_reply",
+        sensitivity_kind="general",
+        codex_reason="direct ask",
+        draft_reply_text="收到，我现在进会。",
+    )
+    store.update_reply_attempt(
+        attempt_id,
+        final_reply_text="收到，我现在进会。（by磊哥分身）",
+        send_status="sent",
+    )
+    store.record_reply_feedback(
+        attempt_id,
+        feedback="不能代 Derek 声称正在进会",
+        corrected_reply_text="我让磊哥本人看一下。（by磊哥分身）",
+    )
+    output = tmp_path / "feedback.jsonl"
+
+    written_count = export_feedback_command(settings, output=output, limit=None)
+
+    text = output.read_text(encoding="utf-8")
+    assert written_count == 1
+    assert '"attempt_id": 1' in text
+    assert '"trigger_text": "磊哥上会啦"' in text
+    assert '"reviewer_feedback": "不能代 Derek 声称正在进会"' in text
+    assert '"corrected_reply_text": "我让磊哥本人看一下。（by磊哥分身）"' in text
+    assert "feedback exported count=1" in capsys.readouterr().out
+
+
+def test_run_loop_calls_run_once_and_sleeps_once():
+    calls = []
+
+    class StopLoop(Exception):
+        pass
+
+    class FakeWorker:
+        def run_once(self, max_batches=None):
+            calls.append(max_batches)
+
+    def sleep(seconds):
+        calls.append(f"sleep:{seconds}")
+        raise StopLoop
+
+    with pytest.raises(StopLoop):
+        run_loop(FakeWorker(), poll_interval_seconds=7, max_batches=3, sleep=sleep)
+
+    assert calls == [3, "sleep:7"]
+
+
+def test_build_style_corpus_scans_minutes_and_writes_outputs(tmp_path, capsys):
+    workspace = tmp_path / "workspace"
+    minutes_dir = workspace / "AI听记"
+    nested_dir = minutes_dir / "team"
+    nested_dir.mkdir(parents=True)
+    (nested_dir / "meeting.md").write_text(
+        """# Transcript
+同事
+00:01
+这个怎么排？
+磊哥
+00:02
+先看客户价值，再决定投入优先级和负责人，不要只按谁声音大来排。
+""",
+        encoding="utf-8",
+    )
+    (minutes_dir / "ignore.txt").write_text("ignore", encoding="utf-8")
+    corpus_dir = tmp_path / "corpus"
+
+    count = build_style_corpus(workspace=workspace, corpus_dir=corpus_dir)
+
+    csv_content = (corpus_dir / "derek_style_corpus.csv").read_text(encoding="utf-8")
+    profile = (corpus_dir / "style_profile.md").read_text(encoding="utf-8")
+    output = capsys.readouterr().out
+    assert count == 1
+    assert "先看客户价值" in csv_content
+    assert "先结论" in profile
+    assert "build-corpus scanned=1 records=1" in output
+
+
+def test_build_style_corpus_handles_missing_minutes_dir(tmp_path, capsys):
+    corpus_dir = tmp_path / "corpus"
+
+    count = build_style_corpus(workspace=tmp_path / "workspace", corpus_dir=corpus_dir)
+
+    assert count == 0
+    assert "build-corpus scanned=0 records=0" in capsys.readouterr().out
+    assert (corpus_dir / "style_profile.md").exists()
+
+
+def test_collect_corpus_fetches_current_user_sender_messages(monkeypatch, tmp_path, capsys):
+    class FakeDws:
+        def __init__(self):
+            self.calls = []
+
+        def get_current_user_id(self):
+            return "derek-user-1"
+
+        def list_messages_by_sender(self, sender_user_id, start, end, limit, cursor):
+            self.calls.append((sender_user_id, start, end, limit, cursor))
+            return {
+                "result": {
+                    "conversationMessagesList": [
+                        {
+                            "title": "技术部",
+                            "openConversationId": "cid-1",
+                            "singleChat": False,
+                            "messages": [
+                                {
+                                    "content": "可以纳入，但主题要围绕业务落地、AI 提效和工程实践闭环，不做单纯算法理论分享。",
+                                    "createTime": "2026-05-14 12:01:00",
+                                    "openConversationId": "cid-1",
+                                    "openMessageId": "msg-1",
+                                    "quotedMessage": {"content": "是否可以让算法同学分享？"},
+                                    "sender": "磊哥",
+                                },
+                                {
+                                    "content": "好的",
+                                    "createTime": "2026-05-14 12:02:00",
+                                    "openConversationId": "cid-1",
+                                    "openMessageId": "msg-short",
+                                    "sender": "磊哥",
+                                },
+                            ],
+                        }
+                    ],
+                    "hasMore": False,
+                }
+            }
+
+    fake_dws = FakeDws()
+    monkeypatch.setattr(cli, "DwsClient", lambda: fake_dws)
+    settings = WorkerSettings(
+        workspace=tmp_path / "workspace",
+        db_path=tmp_path / "worker.sqlite3",
+        corpus_dir=tmp_path / "corpus",
+        dry_run=True,
+    )
+
+    count = collect_corpus(settings, target_count=1000)
+
+    csv_content = (settings.corpus_dir / "derek_style_corpus.csv").read_text(encoding="utf-8")
+    assert count == 1
+    assert fake_dws.calls[0][0] == "derek-user-1"
+    assert fake_dws.calls[0][3] == 100
+    assert "msg-1" in csv_content
+    assert "msg-short" not in csv_content
+    assert "collect-corpus sender_user_id=derek-user-1 records=1" in capsys.readouterr().out
+
+
+def test_probe_dws_reports_unread_ok_and_ding_blocked(monkeypatch, capsys):
+    class FakeDws:
+        def list_unread_conversations(self, count):
+            assert count == 1
+            return [object(), object()]
+
+        def ding_self(self, text):
+            raise DwsError("DING to self is not configured")
+
+    monkeypatch.setattr(cli, "DwsClient", FakeDws)
+
+    exit_code = probe_dws()
+
+    output = capsys.readouterr().out
+    assert exit_code == 1
+    assert "unread_conversations: OK count=2" in output
+    assert "ding_self: BLOCKED DING to self is not configured" in output
+
+
+def test_probe_dws_reports_read_blocked_without_crashing(monkeypatch, capsys):
+    class FakeDws:
+        def list_unread_conversations(self, count):
+            raise DwsError("not_authenticated")
+
+        def ding_self(self, text):
+            raise DwsError("DING to self is not configured")
+
+    monkeypatch.setattr(cli, "DwsClient", FakeDws)
+
+    exit_code = probe_dws()
+
+    output = capsys.readouterr().out
+    assert exit_code == 1
+    assert "unread_conversations: BLOCKED not_authenticated" in output
+    assert "ding_self: BLOCKED DING to self is not configured" in output
