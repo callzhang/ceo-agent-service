@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import subprocess
 import time
 from datetime import datetime
@@ -8,6 +9,11 @@ from typing import Any
 from pydantic import BaseModel
 
 from ceo_agent_service.dingtalk_models import DingTalkConversation, DingTalkMessage
+
+TITLE_INFORMATION_UNIT_LIMIT = 20
+TITLE_WORD_OR_CJK_PATTERN = re.compile(
+    r"[A-Za-z0-9]+(?:[-_'][A-Za-z0-9]+)*|[\u4e00-\u9fff]"
+)
 
 
 def _local_time_zone():
@@ -141,7 +147,7 @@ class DwsClient:
             command.extend(["--user", user_id])
         else:
             command.extend(["--open-dingtalk-id", open_dingtalk_id or ""])
-        command.extend(["--title", "回复"])
+        command.extend(["--title", self._message_title(text)])
         if at_users:
             command.extend(["--at-users", ",".join(at_users)])
             text = self._with_at_placeholders(text, at_users)
@@ -664,6 +670,33 @@ class DwsClient:
         if not missing_placeholders:
             return text
         return f"{' '.join(missing_placeholders)} {text}"
+
+    @staticmethod
+    def _message_title(text: str) -> str:
+        source = DwsClient._message_title_source(text)
+        matches = list(TITLE_WORD_OR_CJK_PATTERN.finditer(source))
+        if len(matches) <= TITLE_INFORMATION_UNIT_LIMIT:
+            return source or "回复"
+        end_index = matches[TITLE_INFORMATION_UNIT_LIMIT - 1].end()
+        return f"{source[:end_index].rstrip()}..."
+
+    @staticmethod
+    def _message_title_source(text: str) -> str:
+        lines = text.splitlines()
+        index = 0
+        while index < len(lines):
+            stripped = lines[index].strip()
+            if stripped and not stripped.startswith(">"):
+                break
+            index += 1
+        source = " ".join(line.strip() for line in lines[index:] if line.strip())
+        source = " ".join(source.split())
+        while source.startswith("<@"):
+            placeholder_end = source.find(">")
+            if placeholder_end < 0:
+                break
+            source = source[placeholder_end + 1 :].lstrip()
+        return source or "回复"
 
     @staticmethod
     def _error_code(stderr: str) -> str | None:

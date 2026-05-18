@@ -175,7 +175,7 @@ def test_send_message_command_shape():
         "--group",
         "cid-1",
         "--title",
-        "回复",
+        "收到（by磊哥分身）",
         "--at-users",
         "user-1",
         "--text",
@@ -203,7 +203,7 @@ def test_send_message_command_does_not_duplicate_existing_at_placeholder():
         "--group",
         "cid-1",
         "--title",
-        "回复",
+        "收到（by磊哥分身）",
         "--at-users",
         "user-1",
         "--text",
@@ -231,13 +231,30 @@ def test_send_message_command_supports_direct_user_target():
         "--user",
         "user-1",
         "--title",
-        "回复",
+        "收到（by磊哥分身）",
         "--text",
         "收到（by磊哥分身）",
         "--format",
         "json",
         "--yes",
     ]
+
+
+def test_send_message_title_uses_reply_body_after_fake_quote():
+    client = DwsClient(dws_bin="dws")
+
+    command = client.build_send_message_command(
+        conversation_id=None,
+        text=(
+            "> Phina: 请根据这篇大纲来判断，这篇文章是在单纯地讲...\n\n"
+            "不算单纯讲道理，它已经有比较清楚的业务场景、痛点拆解和解决路径。"
+        ),
+        user_id="user-1",
+    )
+
+    assert command[command.index("--title") + 1] == (
+        "不算单纯讲道理，它已经有比较清楚的业务场景..."
+    )
 
 
 def test_recall_bot_message_command_shape():
@@ -797,7 +814,7 @@ def test_send_message_high_level_method_uses_command():
             "--group",
             "cid-1",
             "--title",
-            "回复",
+            "收到（by磊哥分身）",
             "--at-users",
             "user-1",
             "--text",
