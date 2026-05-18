@@ -53,6 +53,10 @@ Common environment variables:
 - `CEO_WORKER_DB`: SQLite path for local state.
 - `CEO_DRY_RUN`: defaults to `1`; dry-run records decisions but does not send.
 - `CEO_CORPUS_DIR`: optional local style corpus directory.
+- `CEO_DWS_TRANSIENT_RETRY_ATTEMPTS`: retries for transient `dws` discovery or
+  network failures; defaults to `3`.
+- `CEO_DWS_TRANSIENT_RETRY_DELAY_SECONDS`: base delay before each transient
+  retry; defaults to `1.0` and increases linearly per retry.
 - `CEO_DING_ROBOT_CODE` or `DINGTALK_DING_ROBOT_CODE`: optional DING robot code
   for handoff notifications.
 - `CEO_DING_ROBOT_NAME`: optional bot name resolved through `dws chat bot search`

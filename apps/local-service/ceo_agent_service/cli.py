@@ -60,6 +60,8 @@ class WorkerSettings(BaseModel):
     ding_robot_code: str | None = None
     ding_robot_name: str | None = DEFAULT_DING_ROBOT_NAME
     ding_receiver_user_id: str | None = None
+    dws_transient_retry_attempts: PositiveInt = 3
+    dws_transient_retry_delay_seconds: float = 1.0
     max_batches: PositiveInt | None = None
 
 
@@ -88,6 +90,13 @@ def _optional_positive_int_env(name: str) -> int | None:
     if value is None or value == "":
         return None
     return _positive_int(value)
+
+
+def _non_negative_float(value: str) -> float:
+    parsed = float(value)
+    if parsed < 0:
+        raise argparse.ArgumentTypeError("must be a non-negative number")
+    return parsed
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -129,6 +138,28 @@ def build_parser() -> argparse.ArgumentParser:
             type=_positive_int,
             default=_optional_positive_int_env("CEO_MAX_BATCHES"),
             help="maximum candidate batches to process before exiting this pass",
+        )
+        subparser.add_argument(
+            "--dws-transient-retry-attempts",
+            type=_positive_int,
+            default=_positive_int(
+                os.getenv(
+                    "CEO_DWS_TRANSIENT_RETRY_ATTEMPTS",
+                    str(defaults.dws_transient_retry_attempts),
+                )
+            ),
+            help="number of retries for transient dws discovery/network errors",
+        )
+        subparser.add_argument(
+            "--dws-transient-retry-delay-seconds",
+            type=_non_negative_float,
+            default=_non_negative_float(
+                os.getenv(
+                    "CEO_DWS_TRANSIENT_RETRY_DELAY_SECONDS",
+                    str(defaults.dws_transient_retry_delay_seconds),
+                )
+            ),
+            help="base delay before retrying transient dws errors; each retry multiplies this by the attempt number",
         )
         if command == "refresh-org-cache":
             subparser.add_argument("--user-id", action="append", default=[])
@@ -183,6 +214,8 @@ def settings_from_args(args: argparse.Namespace) -> WorkerSettings:
         or os.getenv("DINGTALK_DING_ROBOT_CODE"),
         ding_robot_name=os.getenv("CEO_DING_ROBOT_NAME", DEFAULT_DING_ROBOT_NAME),
         ding_receiver_user_id=os.getenv("CEO_DING_RECEIVER_USER_ID"),
+        dws_transient_retry_attempts=args.dws_transient_retry_attempts,
+        dws_transient_retry_delay_seconds=args.dws_transient_retry_delay_seconds,
         max_batches=args.max_batches,
     )
 
@@ -193,6 +226,8 @@ def create_worker(settings: WorkerSettings) -> DingTalkAutoReplyWorker:
         ding_robot_code=settings.ding_robot_code,
         ding_robot_name=settings.ding_robot_name,
         ding_receiver_user_id=settings.ding_receiver_user_id,
+        transient_retry_attempts=settings.dws_transient_retry_attempts,
+        transient_retry_delay_seconds=settings.dws_transient_retry_delay_seconds,
     )
     cached_dws = CachedDwsClient(dws=dws, org_directory=CachedOrgDirectory(store))
     codex = CodexDecisionRunner(workspace=settings.workspace)

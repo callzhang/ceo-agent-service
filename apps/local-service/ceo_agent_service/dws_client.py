@@ -1,6 +1,7 @@
 import json
 import os
 import subprocess
+import time
 from datetime import datetime
 from typing import Any
 
@@ -63,7 +64,8 @@ class DwsClient:
         ding_robot_code: str | None = None,
         ding_robot_name: str | None = None,
         ding_receiver_user_id: str | None = None,
-        transient_retry_attempts: int = 1,
+        transient_retry_attempts: int = 3,
+        transient_retry_delay_seconds: float = 1.0,
     ):
         self.dws_bin = dws_bin
         self.timeout_seconds = timeout_seconds
@@ -71,6 +73,7 @@ class DwsClient:
         self.ding_robot_name = ding_robot_name
         self.ding_receiver_user_id = ding_receiver_user_id
         self.transient_retry_attempts = transient_retry_attempts
+        self.transient_retry_delay_seconds = transient_retry_delay_seconds
 
     def build_list_unread_conversations_command(self, count: int) -> list[str]:
         return [
@@ -533,6 +536,7 @@ class DwsClient:
 
     def run_json(self, command: list[str]) -> Any:
         remaining_retries = self.transient_retry_attempts
+        attempt_index = 0
         while True:
             try:
                 result = subprocess.run(
@@ -544,6 +548,8 @@ class DwsClient:
                 )
             except subprocess.TimeoutExpired as exc:
                 if remaining_retries > 0:
+                    self._sleep_before_retry(attempt_index)
+                    attempt_index += 1
                     remaining_retries -= 1
                     continue
                 raise DwsError(
@@ -555,6 +561,8 @@ class DwsClient:
             if code in self.RETRYABLE_ERROR_CODES and remaining_retries > 0:
                 if code in self.DISCOVERY_CACHE_REFRESH_CODES:
                     self._refresh_cache()
+                self._sleep_before_retry(attempt_index)
+                attempt_index += 1
                 remaining_retries -= 1
                 continue
             raise DwsError(
@@ -565,6 +573,11 @@ class DwsClient:
             return json.loads(result.stdout)
         except json.JSONDecodeError as exc:
             raise DwsError("dws command returned invalid JSON") from exc
+
+    def _sleep_before_retry(self, attempt_index: int) -> None:
+        if self.transient_retry_delay_seconds <= 0:
+            return
+        time.sleep(self.transient_retry_delay_seconds * (attempt_index + 1))
 
     def _refresh_cache(self) -> None:
         subprocess.run(

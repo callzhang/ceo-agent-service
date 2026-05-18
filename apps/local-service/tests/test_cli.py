@@ -302,6 +302,24 @@ def test_batch_seconds_must_be_positive():
         parser.parse_args(["run-once", "--batch-seconds", "0"])
 
 
+def test_parser_supports_dws_transient_retry_options():
+    parser = build_parser()
+
+    args = parser.parse_args(
+        [
+            "run-once",
+            "--dws-transient-retry-attempts",
+            "5",
+            "--dws-transient-retry-delay-seconds",
+            "0.25",
+        ]
+    )
+    settings = settings_from_args(args)
+
+    assert settings.dws_transient_retry_attempts == 5
+    assert settings.dws_transient_retry_delay_seconds == 0.25
+
+
 def test_create_worker_wires_store_dws_codex_and_dry_run(monkeypatch, tmp_path):
     constructed = {}
 
@@ -384,6 +402,8 @@ def test_create_worker_wires_store_dws_codex_and_dry_run(monkeypatch, tmp_path):
         "ding_robot_code": None,
         "ding_robot_name": None,
         "ding_receiver_user_id": None,
+        "transient_retry_attempts": 3,
+        "transient_retry_delay_seconds": 1.0,
     }
     assert constructed["cached_dws_args"][0] is constructed["dws"]
     assert constructed["codex_workspace"] == settings.workspace

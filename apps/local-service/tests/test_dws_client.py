@@ -1045,6 +1045,7 @@ def test_run_json_extracts_error_code_from_stdout_and_retries_transient_timeout(
     monkeypatch,
 ):
     calls = []
+    sleeps = []
     timeout_payload = (
         '{"error":{"server_error_code":"TIMEOUT_ERROR",'
         '"message":"请求超时。服务响应较慢，请稍后重试"}}'
@@ -1057,12 +1058,14 @@ def test_run_json_extracts_error_code_from_stdout_and_retries_transient_timeout(
         return SimpleNamespace(returncode=0, stdout='{"ok":true}', stderr="")
 
     monkeypatch.setattr("ceo_agent_service.dws_client.subprocess.run", fake_run)
+    monkeypatch.setattr("ceo_agent_service.dws_client.time.sleep", sleeps.append)
 
     assert DwsClient().run_json(["dws", "chat", "message", "list"]) == {"ok": True}
     assert calls == [
         ["dws", "chat", "message", "list"],
         ["dws", "chat", "message", "list"],
     ]
+    assert sleeps == [1.0]
 
 
 def test_run_json_prefers_specific_server_error_code_over_generic_nested_code(
@@ -1081,6 +1084,7 @@ def test_run_json_prefers_specific_server_error_code_over_generic_nested_code(
         return SimpleNamespace(returncode=0, stdout='{"ok":true}', stderr="")
 
     monkeypatch.setattr("ceo_agent_service.dws_client.subprocess.run", fake_run)
+    monkeypatch.setattr("ceo_agent_service.dws_client.time.sleep", lambda seconds: None)
 
     assert DwsClient().run_json(["dws", "chat", "message", "list"]) == {"ok": True}
     assert len(calls) == 2
@@ -1088,6 +1092,7 @@ def test_run_json_prefers_specific_server_error_code_over_generic_nested_code(
 
 def test_run_json_refreshes_cache_before_retrying_dws_discovery_code(monkeypatch):
     calls = []
+    sleeps = []
     timeout_payload = (
         '{"error":{"category":"discovery","code":6,'
         '"cause":"Post \\"https://mcp-gw.dingtalk.com/server/...\\": '
@@ -1104,6 +1109,7 @@ def test_run_json_refreshes_cache_before_retrying_dws_discovery_code(monkeypatch
         return SimpleNamespace(returncode=0, stdout='{"ok":true}', stderr="")
 
     monkeypatch.setattr("ceo_agent_service.dws_client.subprocess.run", fake_run)
+    monkeypatch.setattr("ceo_agent_service.dws_client.time.sleep", sleeps.append)
 
     assert DwsClient().run_json(["dws", "chat", "message", "list"]) == {"ok": True}
     assert calls == [
@@ -1111,6 +1117,36 @@ def test_run_json_refreshes_cache_before_retrying_dws_discovery_code(monkeypatch
         ["dws", "cache", "refresh", "--format", "json"],
         ["dws", "chat", "message", "list"],
     ]
+    assert sleeps == [1.0]
+
+
+def test_run_json_uses_configured_retry_count_and_linear_backoff(monkeypatch):
+    calls = []
+    sleeps = []
+    timeout_payload = '{"error":{"category":"discovery","code":6}}'
+
+    def fake_run(command, text, capture_output, check, timeout):
+        calls.append(command)
+        if len([call for call in calls if call == ["dws", "probe"]]) <= 3:
+            return SimpleNamespace(returncode=6, stdout="", stderr=timeout_payload)
+        return SimpleNamespace(returncode=0, stdout='{"ok":true}', stderr="")
+
+    monkeypatch.setattr("ceo_agent_service.dws_client.subprocess.run", fake_run)
+    monkeypatch.setattr("ceo_agent_service.dws_client.time.sleep", sleeps.append)
+
+    client = DwsClient(
+        transient_retry_attempts=3,
+        transient_retry_delay_seconds=0.25,
+    )
+
+    assert client.run_json(["dws", "probe"]) == {"ok": True}
+    assert [call for call in calls if call == ["dws", "probe"]] == [
+        ["dws", "probe"],
+        ["dws", "probe"],
+        ["dws", "probe"],
+        ["dws", "probe"],
+    ]
+    assert sleeps == [0.25, 0.5, 0.75]
 
 
 def test_run_json_error_includes_sanitized_command_and_output_previews(monkeypatch):
@@ -1170,6 +1206,7 @@ def test_run_json_raises_dws_error_on_timeout(monkeypatch):
         raise subprocess.TimeoutExpired(command, timeout)
 
     monkeypatch.setattr("ceo_agent_service.dws_client.subprocess.run", fake_run)
+    monkeypatch.setattr("ceo_agent_service.dws_client.time.sleep", lambda seconds: None)
 
     with pytest.raises(DwsError, match="timed out"):
         DwsClient(timeout_seconds=3).run_json(["dws", "probe"])
