@@ -610,7 +610,11 @@ class DwsClient:
                 ) from exc
             if result.returncode == 0:
                 break
-            code = self._error_code(result.stderr) or self._error_code(result.stdout)
+            code = (
+                self._error_code(result.stderr)
+                or self._error_code(result.stdout)
+                or self._process_error_code(result.returncode)
+            )
             if code in self.RETRYABLE_ERROR_CODES and remaining_retries > 0:
                 if code in self.DISCOVERY_CACHE_REFRESH_CODES:
                     self._refresh_cache()
@@ -766,6 +770,13 @@ class DwsClient:
                 return nested_code
             if isinstance(nested_code, int):
                 return str(nested_code)
+        return None
+
+    @classmethod
+    def _process_error_code(cls, returncode: int) -> str | None:
+        code = str(returncode)
+        if code in cls.RETRYABLE_ERROR_CODES:
+            return code
         return None
 
     @staticmethod
