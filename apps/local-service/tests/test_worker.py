@@ -607,6 +607,39 @@ def test_dingtalk_doc_read_failure_blocks_codex(tmp_path: Path, monkeypatch):
     assert "linked_dingtalk_doc_read_failed" in attempt.send_error
 
 
+def test_codex_stop_with_error_sends_macos_notification(tmp_path: Path, monkeypatch):
+    trigger = message("@Derek Zen(磊哥) 这个怎么处理？")
+    dws = FakeDws([conversation()], {"cid-1": [trigger]})
+    codex = FakeCodex(
+        CodexDecision(
+            action=CodexAction.STOP_WITH_ERROR,
+            reason="codex exec failed",
+            macos_notify=False,
+        )
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch, dry_run=True)
+    notifications: list[dict[str, str | None]] = []
+    monkeypatch.setattr(
+        "ceo_agent_service.worker.send_macos_notification",
+        lambda **kwargs: notifications.append(kwargs),
+    )
+
+    worker.run_once()
+
+    assert dws.sent == []
+    attempt = worker.store.get_reply_attempt(1)
+    assert attempt is not None
+    assert attempt.action == "stop_with_error"
+    assert attempt.send_status == "failed"
+    assert notifications == [
+        {
+            "title": "CEO agent error: Friday",
+            "message": "codex exec failed",
+            "url": None,
+        }
+    ]
+
+
 def test_long_trigger_quote_is_capped_by_twenty_information_units(
     tmp_path: Path, monkeypatch
 ):
