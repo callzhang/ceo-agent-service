@@ -531,6 +531,16 @@ def _direct_send_target_for_attempt(
                     direct_open_dingtalk_id=sender_open_dingtalk_id,
                 )
                 return None, sender_open_dingtalk_id
+            try:
+                resolved_sender_user_id = dws.resolve_message_sender(message)
+            except Exception:
+                continue
+            if resolved_sender_user_id:
+                store.update_reply_attempt(
+                    attempt.id,
+                    direct_user_id=resolved_sender_user_id,
+                )
+                return resolved_sender_user_id, None
             break
     raise SystemExit(
         f"reply attempt {attempt.id} cannot resolve direct user id for single-chat send"
