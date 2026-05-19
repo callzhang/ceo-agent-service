@@ -1371,6 +1371,7 @@ def test_single_chat_unread_is_processed_without_mention(
     attempt = worker.store.get_reply_attempt(1)
     assert attempt is not None
     assert attempt.send_status == "sent"
+    assert attempt.direct_user_id == "sender-user-1"
     assert attempt.final_reply_text == (
         "> 周俊杰: 这个今天能拍吗？\n\n可以，先推进（by磊哥分身）"
     )

@@ -1033,7 +1033,11 @@ class DingTalkAutoReplyWorker:
         direct_user_id: str | None,
     ) -> None:
         reply_text = final_reply_text
-        self.store.update_reply_attempt(attempt_id, final_reply_text=reply_text)
+        self.store.update_reply_attempt(
+            attempt_id,
+            final_reply_text=reply_text,
+            direct_user_id=direct_user_id or "",
+        )
         if contains_forbidden_leak(reply_text):
             self.store.update_reply_attempt(
                 attempt_id,

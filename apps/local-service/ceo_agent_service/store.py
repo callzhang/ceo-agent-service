@@ -24,6 +24,7 @@ class ReplyAttempt(BaseModel):
     sensitivity_kind: str
     codex_reason: str
     draft_reply_text: str
+    direct_user_id: str = ""
     codex_session_id: str = ""
     codex_transcript_start_line: int = 0
     codex_transcript_end_line: int = 0
@@ -133,6 +134,7 @@ class AutoReplyStore:
                     sensitivity_kind text not null,
                     codex_reason text not null default '',
                     draft_reply_text text not null default '',
+                    direct_user_id text not null default '',
                     codex_session_id text not null default '',
                     codex_transcript_start_line integer not null default 0,
                     codex_transcript_end_line integer not null default 0,
@@ -211,6 +213,7 @@ class AutoReplyStore:
             }
             for column, definition in (
                 ("codex_session_id", "text not null default ''"),
+                ("direct_user_id", "text not null default ''"),
                 ("codex_transcript_start_line", "integer not null default 0"),
                 ("codex_transcript_end_line", "integer not null default 0"),
                 ("audit_documents_json", "text not null default '[]'"),
@@ -526,6 +529,7 @@ class AutoReplyStore:
         sensitivity_kind: str,
         codex_reason: str = "",
         draft_reply_text: str = "",
+        direct_user_id: str = "",
         codex_session_id: str = "",
         codex_transcript_start_line: int = 0,
         codex_transcript_end_line: int = 0,
@@ -547,6 +551,7 @@ class AutoReplyStore:
                     sensitivity_kind,
                     codex_reason,
                     draft_reply_text,
+                    direct_user_id,
                     codex_session_id,
                     codex_transcript_start_line,
                     codex_transcript_end_line,
@@ -555,7 +560,7 @@ class AutoReplyStore:
                     audit_summary,
                     send_status
                 )
-                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     conversation_id,
@@ -567,6 +572,7 @@ class AutoReplyStore:
                     sensitivity_kind,
                     codex_reason,
                     draft_reply_text,
+                    direct_user_id,
                     codex_session_id,
                     codex_transcript_start_line,
                     codex_transcript_end_line,
@@ -585,6 +591,7 @@ class AutoReplyStore:
         final_reply_text: str | None = None,
         permission_action: str | None = None,
         permission_reason: str | None = None,
+        direct_user_id: str | None = None,
         send_status: str | None = None,
         send_error: str | None = None,
         retry_count: int | None = None,
@@ -595,6 +602,7 @@ class AutoReplyStore:
             ("final_reply_text", final_reply_text),
             ("permission_action", permission_action),
             ("permission_reason", permission_reason),
+            ("direct_user_id", direct_user_id),
             ("send_status", send_status),
             ("send_error", send_error),
             ("retry_count", retry_count),

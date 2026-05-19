@@ -422,11 +422,6 @@ def send_attempt_command(settings: WorkerSettings, attempt_id: int) -> dict[str,
     conversation = store.get_conversation(attempt.conversation_id)
     if conversation is None:
         raise SystemExit(f"conversation not found: {attempt.conversation_id}")
-    if conversation.single_chat:
-        raise SystemExit(
-            "send-attempt cannot send single-chat dry-runs because the direct user id "
-            "is not stored on the attempt yet; rerun the message in live mode instead"
-        )
 
     at_users = _at_user_ids_from_reply(attempt.final_reply_text)
     dws = DwsClient(
@@ -436,11 +431,18 @@ def send_attempt_command(settings: WorkerSettings, attempt_id: int) -> dict[str,
         transient_retry_attempts=settings.dws_transient_retry_attempts,
         transient_retry_delay_seconds=settings.dws_transient_retry_delay_seconds,
     )
+    direct_user_id = _direct_user_id_for_attempt(
+        dws=dws,
+        conversation=conversation,
+        attempt=attempt,
+        store=store,
+    )
     try:
         send_result = dws.send_message(
-            attempt.conversation_id,
+            None if conversation.single_chat else attempt.conversation_id,
             attempt.final_reply_text,
-            at_users=at_users,
+            at_users=[] if conversation.single_chat else at_users,
+            user_id=direct_user_id,
         )
     except Exception as exc:
         store.update_reply_attempt(
@@ -475,6 +477,36 @@ def send_attempt_command(settings: WorkerSettings, attempt_id: int) -> dict[str,
     }
     print(json.dumps(result, ensure_ascii=False), flush=True)
     return result
+
+
+def _direct_user_id_for_attempt(
+    *,
+    dws: DwsClient,
+    conversation,
+    attempt,
+    store: AutoReplyStore,
+) -> str | None:
+    if not conversation.single_chat:
+        return None
+    if attempt.direct_user_id.strip():
+        return attempt.direct_user_id.strip()
+
+    dingtalk_conversation = DingTalkConversation(
+        open_conversation_id=conversation.conversation_id,
+        title=conversation.title,
+        single_chat=True,
+        unread_point=0,
+    )
+    for message in dws.read_recent_messages(dingtalk_conversation, limit=100):
+        if message.open_message_id != attempt.trigger_message_id:
+            continue
+        if not message.sender_user_id:
+            break
+        store.update_reply_attempt(attempt.id, direct_user_id=message.sender_user_id)
+        return message.sender_user_id
+    raise SystemExit(
+        f"reply attempt {attempt.id} cannot resolve direct user id for single-chat send"
+    )
 
 
 def _at_user_ids_from_reply(reply_text: str) -> list[str]:
