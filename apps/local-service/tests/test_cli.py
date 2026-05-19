@@ -306,7 +306,7 @@ def test_send_attempt_command_resolves_single_chat_direct_user_from_trigger(
 
     send_attempt_command(settings, attempt_id)
 
-    assert sent["read_recent"] == ("cid-1", 100)
+    assert sent["read_recent"] == ("cid-1", cli.SEND_ATTEMPT_TARGET_LOOKBACK_LIMIT)
     assert sent["message"] == (None, final_reply, [], "user-1", None)
     updated = cli.AutoReplyStore(settings.db_path).get_reply_attempt(attempt_id)
     assert updated is not None
@@ -374,9 +374,12 @@ def test_send_attempt_command_resolves_single_chat_direct_user_near_attempt_time
 
     send_attempt_command(settings, attempt_id)
 
-    assert sent["read_recent"][0] == (None, 100)
+    assert sent["read_recent"][0] == (
+        None,
+        cli.SEND_ATTEMPT_TARGET_LOOKBACK_LIMIT,
+    )
     assert sent["read_recent"][1][0] is not None
-    assert sent["read_recent"][1][1] == 100
+    assert sent["read_recent"][1][1] == cli.SEND_ATTEMPT_TARGET_LOOKBACK_LIMIT
     assert sent["message"] == (None, final_reply, [], "user-1", None)
 
 

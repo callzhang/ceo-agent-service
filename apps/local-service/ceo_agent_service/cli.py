@@ -38,6 +38,7 @@ LIVE_SEND_BLOCKERS = (
 LIVE_SEND_GUARD_ENV = "CEO_LIVE_SEND_BLOCKERS_ACCEPTED"
 DEFAULT_DING_ROBOT_NAME = None
 DEFAULT_WORKSPACE = Path.home() / "Documents" / "memory"
+SEND_ATTEMPT_TARGET_LOOKBACK_LIMIT = 500
 
 
 def _repo_root() -> Path:
@@ -509,7 +510,10 @@ def _direct_send_target_for_attempt(
             )
         )
     for candidate_conversation in candidate_conversations:
-        for message in dws.read_recent_messages(candidate_conversation, limit=100):
+        for message in dws.read_recent_messages(
+            candidate_conversation,
+            limit=SEND_ATTEMPT_TARGET_LOOKBACK_LIMIT,
+        ):
             if message.open_message_id != attempt.trigger_message_id:
                 continue
             if message.sender_user_id:
