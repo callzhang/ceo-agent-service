@@ -4,7 +4,7 @@ import os
 import re
 import time
 from collections.abc import Callable
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from pydantic import BaseModel, PositiveInt
@@ -497,16 +497,33 @@ def _direct_user_id_for_attempt(
         single_chat=True,
         unread_point=0,
     )
-    for message in dws.read_recent_messages(dingtalk_conversation, limit=100):
-        if message.open_message_id != attempt.trigger_message_id:
-            continue
-        if not message.sender_user_id:
-            break
-        store.update_reply_attempt(attempt.id, direct_user_id=message.sender_user_id)
-        return message.sender_user_id
+    candidate_conversations = [dingtalk_conversation]
+    attempt_created_at_ms = _attempt_created_at_ms(attempt.created_at)
+    if attempt_created_at_ms is not None:
+        candidate_conversations.append(
+            dingtalk_conversation.model_copy(
+                update={"last_message_create_at": attempt_created_at_ms}
+            )
+        )
+    for candidate_conversation in candidate_conversations:
+        for message in dws.read_recent_messages(candidate_conversation, limit=100):
+            if message.open_message_id != attempt.trigger_message_id:
+                continue
+            if not message.sender_user_id:
+                break
+            store.update_reply_attempt(attempt.id, direct_user_id=message.sender_user_id)
+            return message.sender_user_id
     raise SystemExit(
         f"reply attempt {attempt.id} cannot resolve direct user id for single-chat send"
     )
+
+
+def _attempt_created_at_ms(created_at: str) -> int | None:
+    try:
+        parsed = datetime.strptime(created_at, "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        return None
+    return int(parsed.replace(tzinfo=timezone.utc).timestamp() * 1000)
 
 
 def _at_user_ids_from_reply(reply_text: str) -> list[str]:

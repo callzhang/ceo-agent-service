@@ -274,6 +274,60 @@ def test_send_attempt_command_resolves_single_chat_direct_user_from_trigger(
     assert updated.direct_user_id == "user-1"
 
 
+def test_send_attempt_command_resolves_single_chat_direct_user_near_attempt_time(
+    monkeypatch, tmp_path
+):
+    sent = {}
+
+    class FakeDws:
+        def __init__(self, **kwargs):
+            sent["kwargs"] = kwargs
+            sent["read_recent"] = []
+
+        @staticmethod
+        def extract_recall_key(send_result):
+            return send_result["result"]["processQueryKey"]
+
+        def read_recent_messages(self, conversation, limit=50):
+            sent["read_recent"].append((conversation.last_message_create_at, limit))
+            if conversation.last_message_create_at is None:
+                return []
+            return [
+                SimpleNamespace(open_message_id="msg-1", sender_user_id="user-1"),
+            ]
+
+        def send_message(self, conversation_id, text, at_users=None, user_id=None):
+            sent["message"] = (conversation_id, text, at_users, user_id)
+            return {"result": {"processQueryKey": "recall-1"}}
+
+    monkeypatch.setattr(cli, "DwsClient", FakeDws)
+    settings = WorkerSettings(db_path=tmp_path / "worker.sqlite3", dry_run=False)
+    store = cli.AutoReplyStore(settings.db_path)
+    store.upsert_conversation("cid-1", "Claire", True, None)
+    attempt_id = store.record_reply_attempt(
+        conversation_id="cid-1",
+        conversation_title="Claire",
+        trigger_message_id="msg-1",
+        trigger_sender="Claire",
+        trigger_text="可以不参加",
+        action="send_reply",
+        sensitivity_kind="general",
+    )
+    final_reply = "> Claire: 可以不参加\n\n收到。（by磊哥分身）"
+    store.update_reply_attempt(
+        attempt_id,
+        final_reply_text=final_reply,
+        send_status="dry_run",
+    )
+
+    send_attempt_command(settings, attempt_id)
+
+    assert sent["read_recent"][0] == (None, 100)
+    assert sent["read_recent"][1][0] is not None
+    assert sent["read_recent"][1][1] == 100
+    assert sent["message"] == (None, final_reply, [], "user-1")
+
+
 def test_send_attempt_command_blocks_runtime_leaks(monkeypatch, tmp_path):
     class FakeDws:
         def __init__(self, **kwargs):
