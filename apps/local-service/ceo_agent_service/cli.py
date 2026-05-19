@@ -431,7 +431,7 @@ def send_attempt_command(settings: WorkerSettings, attempt_id: int) -> dict[str,
         transient_retry_attempts=settings.dws_transient_retry_attempts,
         transient_retry_delay_seconds=settings.dws_transient_retry_delay_seconds,
     )
-    direct_user_id = _direct_user_id_for_attempt(
+    direct_user_id, direct_open_dingtalk_id = _direct_send_target_for_attempt(
         dws=dws,
         conversation=conversation,
         attempt=attempt,
@@ -443,6 +443,7 @@ def send_attempt_command(settings: WorkerSettings, attempt_id: int) -> dict[str,
             attempt.final_reply_text,
             at_users=[] if conversation.single_chat else at_users,
             user_id=direct_user_id,
+            open_dingtalk_id=direct_open_dingtalk_id,
         )
     except Exception as exc:
         store.update_reply_attempt(
@@ -479,17 +480,19 @@ def send_attempt_command(settings: WorkerSettings, attempt_id: int) -> dict[str,
     return result
 
 
-def _direct_user_id_for_attempt(
+def _direct_send_target_for_attempt(
     *,
     dws: DwsClient,
     conversation,
     attempt,
     store: AutoReplyStore,
-) -> str | None:
+) -> tuple[str | None, str | None]:
     if not conversation.single_chat:
-        return None
+        return None, None
     if attempt.direct_user_id.strip():
-        return attempt.direct_user_id.strip()
+        return attempt.direct_user_id.strip(), None
+    if attempt.direct_open_dingtalk_id.strip():
+        return None, attempt.direct_open_dingtalk_id.strip()
 
     dingtalk_conversation = DingTalkConversation(
         open_conversation_id=conversation.conversation_id,
@@ -509,10 +512,26 @@ def _direct_user_id_for_attempt(
         for message in dws.read_recent_messages(candidate_conversation, limit=100):
             if message.open_message_id != attempt.trigger_message_id:
                 continue
-            if not message.sender_user_id:
-                break
-            store.update_reply_attempt(attempt.id, direct_user_id=message.sender_user_id)
-            return message.sender_user_id
+            if message.sender_user_id:
+                store.update_reply_attempt(
+                    attempt.id,
+                    direct_user_id=message.sender_user_id,
+                    direct_open_dingtalk_id=getattr(
+                        message, "sender_open_dingtalk_id", None
+                    )
+                    or "",
+                )
+                return message.sender_user_id, None
+            sender_open_dingtalk_id = (
+                getattr(message, "sender_open_dingtalk_id", None) or ""
+            )
+            if sender_open_dingtalk_id:
+                store.update_reply_attempt(
+                    attempt.id,
+                    direct_open_dingtalk_id=sender_open_dingtalk_id,
+                )
+                return None, sender_open_dingtalk_id
+            break
     raise SystemExit(
         f"reply attempt {attempt.id} cannot resolve direct user id for single-chat send"
     )

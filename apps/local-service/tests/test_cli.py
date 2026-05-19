@@ -135,8 +135,21 @@ def test_send_attempt_command_sends_existing_dry_run_without_rerunning_codex(
         def extract_recall_key(send_result):
             return send_result["result"]["processQueryKey"]
 
-        def send_message(self, conversation_id, text, at_users=None, user_id=None):
-            sent["message"] = (conversation_id, text, at_users, user_id)
+        def send_message(
+            self,
+            conversation_id,
+            text,
+            at_users=None,
+            user_id=None,
+            open_dingtalk_id=None,
+        ):
+            sent["message"] = (
+                conversation_id,
+                text,
+                at_users,
+                user_id,
+                open_dingtalk_id,
+            )
             return {"result": {"processQueryKey": "recall-1"}}
 
     monkeypatch.setattr(cli, "DwsClient", FakeDws)
@@ -166,7 +179,7 @@ def test_send_attempt_command_sends_existing_dry_run_without_rerunning_codex(
 
     result = send_attempt_command(settings, attempt_id)
 
-    assert sent["message"] == ("cid-1", final_reply, ["user-1"], None)
+    assert sent["message"] == ("cid-1", final_reply, ["user-1"], None, None)
     assert result["send_status"] == "sent"
     updated = cli.AutoReplyStore(settings.db_path).get_reply_attempt(attempt_id)
     assert updated is not None
@@ -190,8 +203,21 @@ def test_send_attempt_command_sends_single_chat_to_stored_direct_user(
         def extract_recall_key(send_result):
             return send_result["result"]["processQueryKey"]
 
-        def send_message(self, conversation_id, text, at_users=None, user_id=None):
-            sent["message"] = (conversation_id, text, at_users, user_id)
+        def send_message(
+            self,
+            conversation_id,
+            text,
+            at_users=None,
+            user_id=None,
+            open_dingtalk_id=None,
+        ):
+            sent["message"] = (
+                conversation_id,
+                text,
+                at_users,
+                user_id,
+                open_dingtalk_id,
+            )
             return {"result": {"processQueryKey": "recall-1"}}
 
     monkeypatch.setattr(cli, "DwsClient", FakeDws)
@@ -217,7 +243,7 @@ def test_send_attempt_command_sends_single_chat_to_stored_direct_user(
 
     send_attempt_command(settings, attempt_id)
 
-    assert sent["message"] == (None, final_reply, [], "user-1")
+    assert sent["message"] == (None, final_reply, [], "user-1", None)
     sent_reply = cli.AutoReplyStore(settings.db_path).get_sent_reply("cid-1", "msg-1")
     assert sent_reply is not None
 
@@ -241,8 +267,21 @@ def test_send_attempt_command_resolves_single_chat_direct_user_from_trigger(
                 SimpleNamespace(open_message_id="msg-1", sender_user_id="user-1"),
             ]
 
-        def send_message(self, conversation_id, text, at_users=None, user_id=None):
-            sent["message"] = (conversation_id, text, at_users, user_id)
+        def send_message(
+            self,
+            conversation_id,
+            text,
+            at_users=None,
+            user_id=None,
+            open_dingtalk_id=None,
+        ):
+            sent["message"] = (
+                conversation_id,
+                text,
+                at_users,
+                user_id,
+                open_dingtalk_id,
+            )
             return {"result": {"processQueryKey": "recall-1"}}
 
     monkeypatch.setattr(cli, "DwsClient", FakeDws)
@@ -268,7 +307,7 @@ def test_send_attempt_command_resolves_single_chat_direct_user_from_trigger(
     send_attempt_command(settings, attempt_id)
 
     assert sent["read_recent"] == ("cid-1", 100)
-    assert sent["message"] == (None, final_reply, [], "user-1")
+    assert sent["message"] == (None, final_reply, [], "user-1", None)
     updated = cli.AutoReplyStore(settings.db_path).get_reply_attempt(attempt_id)
     assert updated is not None
     assert updated.direct_user_id == "user-1"
@@ -296,8 +335,21 @@ def test_send_attempt_command_resolves_single_chat_direct_user_near_attempt_time
                 SimpleNamespace(open_message_id="msg-1", sender_user_id="user-1"),
             ]
 
-        def send_message(self, conversation_id, text, at_users=None, user_id=None):
-            sent["message"] = (conversation_id, text, at_users, user_id)
+        def send_message(
+            self,
+            conversation_id,
+            text,
+            at_users=None,
+            user_id=None,
+            open_dingtalk_id=None,
+        ):
+            sent["message"] = (
+                conversation_id,
+                text,
+                at_users,
+                user_id,
+                open_dingtalk_id,
+            )
             return {"result": {"processQueryKey": "recall-1"}}
 
     monkeypatch.setattr(cli, "DwsClient", FakeDws)
@@ -325,7 +377,74 @@ def test_send_attempt_command_resolves_single_chat_direct_user_near_attempt_time
     assert sent["read_recent"][0] == (None, 100)
     assert sent["read_recent"][1][0] is not None
     assert sent["read_recent"][1][1] == 100
-    assert sent["message"] == (None, final_reply, [], "user-1")
+    assert sent["message"] == (None, final_reply, [], "user-1", None)
+
+
+def test_send_attempt_command_uses_single_chat_open_dingtalk_id_when_user_id_absent(
+    monkeypatch, tmp_path
+):
+    sent = {}
+
+    class FakeDws:
+        def __init__(self, **kwargs):
+            sent["kwargs"] = kwargs
+
+        @staticmethod
+        def extract_recall_key(send_result):
+            return send_result["result"]["processQueryKey"]
+
+        def read_recent_messages(self, conversation, limit=50):
+            return [
+                SimpleNamespace(
+                    open_message_id="msg-1",
+                    sender_user_id=None,
+                    sender_open_dingtalk_id="open-1",
+                ),
+            ]
+
+        def send_message(
+            self,
+            conversation_id,
+            text,
+            at_users=None,
+            user_id=None,
+            open_dingtalk_id=None,
+        ):
+            sent["message"] = (
+                conversation_id,
+                text,
+                at_users,
+                user_id,
+                open_dingtalk_id,
+            )
+            return {"result": {"processQueryKey": "recall-1"}}
+
+    monkeypatch.setattr(cli, "DwsClient", FakeDws)
+    settings = WorkerSettings(db_path=tmp_path / "worker.sqlite3", dry_run=False)
+    store = cli.AutoReplyStore(settings.db_path)
+    store.upsert_conversation("cid-1", "Claire", True, None)
+    attempt_id = store.record_reply_attempt(
+        conversation_id="cid-1",
+        conversation_title="Claire",
+        trigger_message_id="msg-1",
+        trigger_sender="Claire",
+        trigger_text="可以不参加",
+        action="send_reply",
+        sensitivity_kind="general",
+    )
+    final_reply = "> Claire: 可以不参加\n\n收到。（by磊哥分身）"
+    store.update_reply_attempt(
+        attempt_id,
+        final_reply_text=final_reply,
+        send_status="dry_run",
+    )
+
+    send_attempt_command(settings, attempt_id)
+
+    assert sent["message"] == (None, final_reply, [], None, "open-1")
+    updated = cli.AutoReplyStore(settings.db_path).get_reply_attempt(attempt_id)
+    assert updated is not None
+    assert updated.direct_open_dingtalk_id == "open-1"
 
 
 def test_send_attempt_command_blocks_runtime_leaks(monkeypatch, tmp_path):
@@ -337,7 +456,14 @@ def test_send_attempt_command_blocks_runtime_leaks(monkeypatch, tmp_path):
         def extract_recall_key(send_result):
             return ""
 
-        def send_message(self, conversation_id, text, at_users=None, user_id=None):
+        def send_message(
+            self,
+            conversation_id,
+            text,
+            at_users=None,
+            user_id=None,
+            open_dingtalk_id=None,
+        ):
             raise AssertionError("send_message should not be called")
 
     monkeypatch.setattr(cli, "DwsClient", FakeDws)

@@ -929,6 +929,9 @@ class DingTalkAutoReplyWorker:
             final_reply_text=attempt.final_reply_text,
             at_users=send_at_users,
             direct_user_id=direct_user_id,
+            direct_open_dingtalk_id=trigger.sender_open_dingtalk_id
+            if conversation.single_chat
+            else None,
         )
         return True
 
@@ -1020,6 +1023,9 @@ class DingTalkAutoReplyWorker:
             final_reply_text=reply_text,
             at_users=send_at_users,
             direct_user_id=direct_user_id,
+            direct_open_dingtalk_id=trigger.sender_open_dingtalk_id
+            if conversation.single_chat
+            else None,
         )
 
     def _deliver_final_reply(
@@ -1031,12 +1037,14 @@ class DingTalkAutoReplyWorker:
         final_reply_text: str,
         at_users: list[str],
         direct_user_id: str | None,
+        direct_open_dingtalk_id: str | None,
     ) -> None:
         reply_text = final_reply_text
         self.store.update_reply_attempt(
             attempt_id,
             final_reply_text=reply_text,
             direct_user_id=direct_user_id or "",
+            direct_open_dingtalk_id=direct_open_dingtalk_id or "",
         )
         if contains_forbidden_leak(reply_text):
             self.store.update_reply_attempt(
@@ -1072,6 +1080,9 @@ class DingTalkAutoReplyWorker:
                 reply_text,
                 at_users=at_users,
                 user_id=direct_user_id,
+                open_dingtalk_id=direct_open_dingtalk_id
+                if conversation.single_chat and not direct_user_id
+                else None,
             )
         except Exception as exc:
             self.store.update_reply_attempt(
@@ -1113,11 +1124,16 @@ class DingTalkAutoReplyWorker:
         text: str,
         at_users: list[str] | None = None,
         user_id: str | None = None,
+        open_dingtalk_id: str | None = None,
     ):
         if self.dry_run:
             return None
         return self.dws.send_message(
-            conversation_id, text, at_users=at_users, user_id=user_id
+            conversation_id,
+            text,
+            at_users=at_users,
+            user_id=user_id,
+            open_dingtalk_id=open_dingtalk_id,
         )
 
     def _send_with_retry(
@@ -1126,12 +1142,17 @@ class DingTalkAutoReplyWorker:
         text: str,
         at_users: list[str] | None = None,
         user_id: str | None = None,
+        open_dingtalk_id: str | None = None,
     ) -> tuple[int, dict | None]:
         errors: list[str] = []
         for attempt_number in range(1, self.send_attempts + 1):
             try:
                 send_result = self._send(
-                    conversation_id, text, at_users=at_users, user_id=user_id
+                    conversation_id,
+                    text,
+                    at_users=at_users,
+                    user_id=user_id,
+                    open_dingtalk_id=open_dingtalk_id,
                 )
                 return attempt_number - 1, send_result
             except Exception as exc:

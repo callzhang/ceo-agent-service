@@ -94,6 +94,7 @@ class FakeDws:
         text: str,
         at_users: list[str] | None = None,
         user_id: str | None = None,
+        open_dingtalk_id: str | None = None,
     ) -> None:
         self.send_attempt_count += 1
         if self.send_error:
@@ -1372,6 +1373,7 @@ def test_single_chat_unread_is_processed_without_mention(
     assert attempt is not None
     assert attempt.send_status == "sent"
     assert attempt.direct_user_id == "sender-user-1"
+    assert attempt.direct_open_dingtalk_id == "sender-1"
     assert attempt.final_reply_text == (
         "> 周俊杰: 这个今天能拍吗？\n\n可以，先推进（by磊哥分身）"
     )
