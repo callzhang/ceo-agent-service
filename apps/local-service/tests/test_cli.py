@@ -523,6 +523,86 @@ def test_send_attempt_command_resolves_single_chat_sender_profile_when_ids_absen
     assert updated.direct_user_id == "user-1"
 
 
+def test_send_attempt_command_resolves_single_chat_target_forward_from_attempt_time(
+    monkeypatch, tmp_path
+):
+    sent = {}
+
+    class FakeDws:
+        def __init__(self, **kwargs):
+            sent["kwargs"] = kwargs
+            sent["read_recent"] = []
+            sent["forward"] = []
+
+        @staticmethod
+        def extract_recall_key(send_result):
+            return send_result["result"]["processQueryKey"]
+
+        def read_recent_messages(self, conversation, limit=50):
+            sent["read_recent"].append((conversation.last_message_create_at, limit))
+            return []
+
+        def build_message_list_command(self, conversation, limit, forward):
+            sent["forward"].append((conversation.last_message_create_at, limit, forward))
+            return {"conversation": conversation, "limit": limit, "forward": forward}
+
+        def run_json(self, command):
+            return command
+
+        def parse_messages(self, payload, conversation_title, single_chat):
+            return [
+                SimpleNamespace(
+                    open_message_id="msg-1",
+                    sender_user_id=None,
+                    sender_open_dingtalk_id="open-1",
+                ),
+            ]
+
+        def send_message(
+            self,
+            conversation_id,
+            text,
+            at_users=None,
+            user_id=None,
+            open_dingtalk_id=None,
+        ):
+            sent["message"] = (
+                conversation_id,
+                text,
+                at_users,
+                user_id,
+                open_dingtalk_id,
+            )
+            return {"result": {"processQueryKey": "recall-1"}}
+
+    monkeypatch.setattr(cli, "DwsClient", FakeDws)
+    settings = WorkerSettings(db_path=tmp_path / "worker.sqlite3", dry_run=False)
+    store = cli.AutoReplyStore(settings.db_path)
+    store.upsert_conversation("cid-1", "Claire", True, None)
+    attempt_id = store.record_reply_attempt(
+        conversation_id="cid-1",
+        conversation_title="Claire",
+        trigger_message_id="msg-1",
+        trigger_sender="Claire",
+        trigger_text="可以不参加",
+        action="send_reply",
+        sensitivity_kind="general",
+    )
+    final_reply = "> Claire: 可以不参加\n\n收到。（by磊哥分身）"
+    store.update_reply_attempt(
+        attempt_id,
+        final_reply_text=final_reply,
+        send_status="dry_run",
+    )
+
+    send_attempt_command(settings, attempt_id)
+
+    assert sent["forward"][0][0] is not None
+    assert sent["forward"][0][1] == cli.SEND_ATTEMPT_TARGET_LOOKBACK_LIMIT
+    assert sent["forward"][0][2] is True
+    assert sent["message"] == (None, final_reply, [], None, "open-1")
+
+
 def test_send_attempt_command_blocks_runtime_leaks(monkeypatch, tmp_path):
     class FakeDws:
         def __init__(self, **kwargs):

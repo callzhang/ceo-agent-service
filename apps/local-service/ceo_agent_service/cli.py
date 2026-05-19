@@ -510,10 +510,7 @@ def _direct_send_target_for_attempt(
             )
         )
     for candidate_conversation in candidate_conversations:
-        for message in dws.read_recent_messages(
-            candidate_conversation,
-            limit=SEND_ATTEMPT_TARGET_LOOKBACK_LIMIT,
-        ):
+        for message in _send_attempt_target_lookup_messages(dws, candidate_conversation):
             if message.open_message_id != attempt.trigger_message_id:
                 continue
             if message.sender_user_id:
@@ -548,6 +545,27 @@ def _direct_send_target_for_attempt(
             break
     raise SystemExit(
         f"reply attempt {attempt.id} cannot resolve direct user id for single-chat send"
+    )
+
+
+def _send_attempt_target_lookup_messages(dws: DwsClient, conversation):
+    yield from dws.read_recent_messages(
+        conversation,
+        limit=SEND_ATTEMPT_TARGET_LOOKBACK_LIMIT,
+    )
+    if conversation.last_message_create_at is None:
+        return
+    payload = dws.run_json(
+        dws.build_message_list_command(
+            conversation,
+            limit=SEND_ATTEMPT_TARGET_LOOKBACK_LIMIT,
+            forward=True,
+        )
+    )
+    yield from dws.parse_messages(
+        payload,
+        conversation_title=conversation.title,
+        single_chat=conversation.single_chat,
     )
 
 
