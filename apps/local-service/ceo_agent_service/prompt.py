@@ -56,7 +56,7 @@ def ceo_agent_thread_prompt() -> str:
 隐私和权限：
 - 必须输出 sensitivity_kind: general、internal_personnel 或 external_candidate。
 - 内部员工的人事问题必须输出 internal_personnel；如果知道对象，输出 personnel_subject_user_id，否则留空。
-- 单聊里发信人用第一人称讨论自己的请假、调休、晋升诉求、绩效反馈、工作状态或个人安排时，人事对象就是发信人，personnel_subject_user_id 必须填写该消息的 sender_user_id；不要追问“关于谁”。
+- 发信人讨论自己的请假、调休、晋升诉求、绩效反馈、工作状态、代码提交、工作节奏或个人安排时，人事对象就是发信人，personnel_subject_user_id 必须填写该消息的 sender_user_id；单聊和群聊都适用，不要追问“关于谁”。
 - 外部候选人问题必须输出 external_candidate；如果岗位/部门能从会话名、消息或引用里看出来，输出 candidate_context_known=true，否则为 false。
 - 如果知道候选人对应的钉钉部门 id，输出 candidate_department_ids；不知道部门 id 时留空，不要编造。
 - 不要输出引用、来源、文件路径、session id 或 thread id。
@@ -80,6 +80,7 @@ def build_turn_prompt(
     style_lines: list[str],
     include_thread_prompt: bool,
     linked_documents: list[LinkedDocumentContext] | None = None,
+    known_people_lines: list[str] | None = None,
 ) -> str:
     lines: list[str] = []
     if include_thread_prompt:
@@ -95,6 +96,12 @@ def build_turn_prompt(
     )
     for message in new_messages:
         lines.extend(message_lines(message))
+
+    if known_people_lines:
+        lines.append(
+            "可用组织人员标识（如内部人员问题对象匹配这些人，personnel_subject_user_id 必须使用对应 user_id）:"
+        )
+        lines.extend(known_people_lines)
 
     if linked_documents:
         lines.append("已获取的钉钉材料:")

@@ -119,9 +119,40 @@ def test_thread_prompt_explains_first_person_single_chat_subject():
         include_thread_prompt=True,
     )
 
-    assert "单聊里发信人用第一人称讨论自己的请假、调休" in prompt
+    assert "发信人讨论自己的请假、调休" in prompt
     assert "personnel_subject_user_id 必须填写该消息的 sender_user_id" in prompt
+    assert "单聊和群聊都适用" in prompt
     assert "周俊杰 sender_user_id=junjie-user-1" in prompt
+
+
+def test_build_turn_prompt_includes_known_people_lines():
+    conversation = DingTalkConversation(
+        open_conversation_id="cid-1",
+        title="Mina 邹",
+        single_chat=True,
+        unread_point=1,
+    )
+    message = DingTalkMessage(
+        open_conversation_id="cid-1",
+        open_message_id="msg-1",
+        conversation_title="Mina 邹",
+        single_chat=True,
+        sender_name="Mina 邹",
+        create_time="2026-05-15 13:00:00",
+        content="磊哥，晓民的转正时间快到了。",
+    )
+
+    prompt = build_turn_prompt(
+        conversation,
+        [message],
+        [message],
+        style_lines=[],
+        include_thread_prompt=True,
+        known_people_lines=["- 张晓民: user_id=subject-user-1"],
+    )
+
+    assert "可用组织人员标识" in prompt
+    assert "- 张晓民: user_id=subject-user-1" in prompt
 
 
 def test_thread_prompt_requires_dws_doc_read_for_alidocs_links():

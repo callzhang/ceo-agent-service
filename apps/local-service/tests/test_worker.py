@@ -1157,6 +1157,34 @@ def test_prompt_context_limits_after_sorting_reverse_chronological_history():
     ]
 
 
+def test_build_prompt_includes_known_people_from_org_cache(
+    tmp_path: Path, monkeypatch
+):
+    dws = FakeDws([conversation(single_chat=True)], {})
+    codex = FakeCodex(CodexDecision(action=CodexAction.NO_REPLY))
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+    worker.store.upsert_org_user_profile(
+        user_id="subject-user-1",
+        name="张晓民",
+        open_dingtalk_id=None,
+        manager_user_id=None,
+        department_ids=set(),
+    )
+    trigger = message(
+        "磊哥，晓民的转正时间快到了。",
+        single_chat=True,
+        message_id="msg-personnel",
+    )
+
+    prompt = worker._build_prompt(
+        conversation(single_chat=True),
+        [trigger],
+        [trigger],
+    )
+
+    assert "- 张晓民: user_id=subject-user-1" in prompt
+
+
 def test_group_stale_direct_mention_found_in_recent_context_does_not_queue(
     tmp_path: Path, monkeypatch
 ):

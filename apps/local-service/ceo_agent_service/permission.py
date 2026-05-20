@@ -48,16 +48,16 @@ class PermissionGate:
     def _evaluate_internal_personnel(
         self, decision: CodexDecision, trigger: DingTalkMessage
     ) -> PermissionResult:
-        if not decision.personnel_subject_user_id:
-            return PermissionResult(
-                action=PermissionAction.REPLY,
-                reply_text=INTERNAL_PERSONNEL_CLARIFICATION,
-                reason="missing personnel subject",
-            )
         try:
             requester_user_id = self.dws.resolve_message_sender(trigger)
             if self.dws.is_hr_user(requester_user_id):
                 return PermissionResult(action=PermissionAction.ALLOW)
+            if not decision.personnel_subject_user_id:
+                return PermissionResult(
+                    action=PermissionAction.REPLY,
+                    reply_text=INTERNAL_PERSONNEL_CLARIFICATION,
+                    reason="missing personnel subject",
+                )
             is_manager = self.dws.user_in_manager_chain(
                 requester_user_id, decision.personnel_subject_user_id
             )

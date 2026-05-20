@@ -43,6 +43,25 @@ def test_internal_personnel_hr_requester_does_not_require_manager_chain():
     assert result.action == PermissionAction.ALLOW
 
 
+def test_internal_personnel_hr_requester_does_not_require_subject_id():
+    class Dws:
+        def resolve_message_sender(self, message):
+            return message.sender_user_id
+
+        def is_hr_user(self, user_id):
+            return True
+
+    result = PermissionGate(Dws()).evaluate(
+        CodexDecision(
+            action=CodexAction.SEND_REPLY,
+            sensitivity_kind=SensitivityKind.INTERNAL_PERSONNEL,
+        ),
+        trigger(),
+    )
+
+    assert result.action == PermissionAction.ALLOW
+
+
 def test_internal_personnel_unresolved_hr_identity_is_error():
     class Dws:
         def resolve_message_sender(self, message):

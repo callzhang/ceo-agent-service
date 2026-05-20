@@ -1275,7 +1275,56 @@ class DingTalkAutoReplyWorker:
             ),
             include_thread_prompt=include_thread_prompt,
             linked_documents=linked_documents,
+            known_people_lines=self._known_people_prompt_lines(
+                new_messages,
+                context_messages,
+            ),
         )
+
+    def _known_people_prompt_lines(
+        self,
+        new_messages: list[DingTalkMessage],
+        context_messages: list[DingTalkMessage],
+        limit: int = 20,
+    ) -> list[str]:
+        messages = [*new_messages, *context_messages]
+        combined_text = "\n".join(
+            part
+            for message in messages
+            for part in (
+                message.sender_name,
+                message.content,
+                message.quoted_content or "",
+            )
+        )
+        people: dict[str, str] = {}
+        for message in messages:
+            if message.sender_user_id and message.sender_name.strip():
+                people.setdefault(message.sender_user_id, message.sender_name.strip())
+
+        for user_id in self.store.list_org_user_ids():
+            if len(people) >= limit:
+                break
+            profile = self.store.get_org_user_profile(user_id)
+            if profile is None or not self._profile_name_matches_text(
+                profile.name,
+                combined_text,
+            ):
+                continue
+            people.setdefault(profile.user_id, profile.name)
+
+        return [f"- {name}: user_id={user_id}" for user_id, name in people.items()]
+
+    @staticmethod
+    def _profile_name_matches_text(name: str, text: str) -> bool:
+        normalized_name = name.strip()
+        if not normalized_name:
+            return False
+        if normalized_name in text:
+            return True
+        if len(normalized_name) >= 3 and normalized_name[1:] in text:
+            return True
+        return False
 
     def _style_prompt_lines(
         self,
