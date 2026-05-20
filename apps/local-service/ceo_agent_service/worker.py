@@ -1,7 +1,12 @@
 import json
 import re
+import urllib.request
+import zipfile
 from datetime import datetime, timedelta
+from io import BytesIO
 from urllib.parse import urlsplit, urlunsplit
+
+from pypdf import PdfReader
 
 from ceo_agent_service.codex_decision import append_signature, contains_forbidden_leak
 from ceo_agent_service.config import (
@@ -53,6 +58,9 @@ DINGTALK_TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
 GROUP_CONTEXT_RECOVERY_WINDOW = timedelta(hours=24)
 QUOTE_INFORMATION_UNIT_LIMIT = 20
 REFERENCED_FILE_CONTEXT_WINDOW = timedelta(minutes=10)
+DOWNLOADED_FILE_MAX_BYTES = 50 * 1024 * 1024
+DOWNLOAD_TIMEOUT_SECONDS = 30
+PDF_TEXT_PAGE_LIMIT = 30
 
 
 class DingTalkAutoReplyWorker:
@@ -797,19 +805,92 @@ class DingTalkAutoReplyWorker:
                     title=str(payload.get("title") or self._document_display_name(match)),
                     markdown=markdown,
                 )
+        payload = self.dws.download_doc(match.node_id)
+        markdown = self._downloaded_file_markdown(match, payload)
+        if markdown.strip():
+            return LinkedDocumentContext(
+                url=match.doc_url,
+                title=self._document_display_name(match) or file_name,
+                markdown=markdown,
+            )
         return LinkedDocumentContext(
             url=match.doc_url,
             title=self._document_display_name(match) or file_name,
             markdown=(
-                "钉钉普通文件已定位，但尚未下载正文。"
+                "钉钉普通文件已定位，但正文未能读取。"
                 f"node_id: {match.node_id}\n"
                 f"extension: {match.extension or 'unknown'}\n"
                 f"content_type: {match.content_type or 'unknown'}\n"
-                "如果新消息要求对文件内容 comments、审核、总结或判断，"
-                f"先调用 `dws doc download --node \"{match.node_id}\" --format json` "
-                "获取下载凭证，再读取文件正文后回答；不要只凭文件名回复。"
+                "如果新消息要求对文件内容 comments、审核、总结或判断，不能只凭文件名回复。"
             ),
         )
+
+    def _downloaded_file_markdown(
+        self, match: DwsDocumentSearchResult, payload: dict
+    ) -> str:
+        for key in ("markdown", "text", "content"):
+            value = payload.get(key)
+            if isinstance(value, str) and value.strip():
+                return value
+
+        resource_url = str(payload.get("resourceUrl") or "")
+        if not resource_url:
+            return ""
+        data = self._download_resource_bytes(resource_url, payload.get("headers"))
+        extension = match.extension.lower()
+        if extension in {"txt", "md", "markdown", "csv", "json"}:
+            return self._decode_text_file(data)
+        if extension == "pdf":
+            return self._extract_pdf_text(data)
+        if extension == "docx":
+            return self._extract_docx_text(data)
+        return ""
+
+    @staticmethod
+    def _download_resource_bytes(url: str, headers: object) -> bytes:
+        normalized_headers = headers if isinstance(headers, dict) else {}
+        request = urllib.request.Request(
+            url,
+            headers={str(key): str(value) for key, value in normalized_headers.items()},
+        )
+        with urllib.request.urlopen(request, timeout=DOWNLOAD_TIMEOUT_SECONDS) as response:
+            content_length = response.headers.get("Content-Length")
+            if content_length and int(content_length) > DOWNLOADED_FILE_MAX_BYTES:
+                raise DwsError("dingtalk_file_too_large")
+            data = response.read(DOWNLOADED_FILE_MAX_BYTES + 1)
+        if len(data) > DOWNLOADED_FILE_MAX_BYTES:
+            raise DwsError("dingtalk_file_too_large")
+        return data
+
+    @staticmethod
+    def _decode_text_file(data: bytes) -> str:
+        for encoding in ("utf-8", "utf-8-sig", "gb18030"):
+            try:
+                return data.decode(encoding)
+            except UnicodeDecodeError:
+                continue
+        return data.decode("utf-8", errors="replace")
+
+    @classmethod
+    def _extract_pdf_text(cls, data: bytes) -> str:
+        reader = PdfReader(BytesIO(data))
+        chunks: list[str] = []
+        for page_number, page in enumerate(reader.pages[:PDF_TEXT_PAGE_LIMIT], start=1):
+            text = (page.extract_text() or "").strip()
+            if text:
+                chunks.append(f"第 {page_number} 页:\n{text}")
+        if len(reader.pages) > PDF_TEXT_PAGE_LIMIT:
+            chunks.append(f"[PDF 超过 {PDF_TEXT_PAGE_LIMIT} 页，后续页面未预读]")
+        return "\n\n".join(chunks)
+
+    @staticmethod
+    def _extract_docx_text(data: bytes) -> str:
+        with zipfile.ZipFile(BytesIO(data)) as archive:
+            xml = archive.read("word/document.xml").decode("utf-8", errors="replace")
+        text = re.sub(r"<w:tab[^>]*/>", "\t", xml)
+        text = re.sub(r"</w:p>", "\n", text)
+        text = re.sub(r"<[^>]+>", "", text)
+        return text
 
     @classmethod
     def _matching_document_search_results(

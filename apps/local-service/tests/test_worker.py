@@ -559,6 +559,9 @@ def test_referenced_file_message_is_located_before_codex(tmp_path: Path, monkeyp
             doc_url="https://alidocs.dingtalk.com/i/nodes/node-1",
         )
     ]
+    dws.download_docs["node-1"] = {
+        "markdown": "建议正文：先明确客户边界，再补 owner 和时间表。"
+    }
     codex = FakeCodex(
         CodexDecision(action=CodexAction.SEND_REPLY, reply_text="建议补边界和owner")
     )
@@ -567,14 +570,11 @@ def test_referenced_file_message_is_located_before_codex(tmp_path: Path, monkeyp
     worker.run_once()
 
     assert dws.search_document_calls == [("02_下一步推进建议.md", 5)]
-    assert dws.download_doc_calls == []
+    assert dws.download_doc_calls == ["node-1"]
     prompt = codex.calls[0][0]
     assert "已获取的钉钉材料:" in prompt
-    assert "钉钉普通文件已定位，但尚未下载正文" in prompt
-    assert "node_id: node-1" in prompt
-    assert "extension: md" in prompt
-    assert 'dws doc download --node "node-1" --format json' in prompt
-    assert "不要只凭文件名回复" in prompt
+    assert "建议正文：先明确客户边界" in prompt
+    assert "dws doc download" not in prompt
 
 
 def test_referenced_file_metadata_does_not_expose_download_credentials(
@@ -595,6 +595,10 @@ def test_referenced_file_metadata_does_not_expose_download_credentials(
             doc_url="https://alidocs.dingtalk.com/i/nodes/node-1",
         )
     ]
+    dws.download_docs["node-1"] = {
+        "markdown": "文件正文：这里是可审阅内容。",
+        "resourceUrl": "https://signed.example/download?authorizationUrl=secret",
+    }
     codex = FakeCodex(
         CodexDecision(
             action=CodexAction.ASK_CLARIFYING_QUESTION,
@@ -606,9 +610,8 @@ def test_referenced_file_metadata_does_not_expose_download_credentials(
     worker.run_once()
 
     prompt = codex.calls[0][0]
-    assert dws.download_doc_calls == []
-    assert "钉钉普通文件已定位，但尚未下载正文" in prompt
-    assert "node_id: node-1" in prompt
+    assert dws.download_doc_calls == ["node-1"]
+    assert "文件正文：这里是可审阅内容。" in prompt
     assert "authorizationUrl" not in prompt
 
 
