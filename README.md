@@ -119,6 +119,17 @@ cd apps/local-service
 
 Then open `http://127.0.0.1:8765/`.
 
+On macOS, run it at login with the launchd agent:
+
+```bash
+mkdir -p ~/Library/Logs/ceo-agent-service ~/Library/LaunchAgents
+cp launchd/com.derek.ceo-agent-service.audit-web.plist ~/Library/LaunchAgents/
+launchctl bootstrap "gui/$(id -u)" ~/Library/LaunchAgents/com.derek.ceo-agent-service.audit-web.plist
+launchctl kickstart -k "gui/$(id -u)/com.derek.ceo-agent-service.audit-web"
+```
+
+This only starts the audit console; it does not run the auto-reply worker.
+
 ## Feedback
 
 Record feedback on a decision:
