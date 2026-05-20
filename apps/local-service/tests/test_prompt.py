@@ -51,6 +51,15 @@ def test_sanitize_dingtalk_prompt_text_keeps_malformed_url_text():
     assert "https://[not-a-valid-ipv6/link?x=1" in rendered
 
 
+def test_sanitize_dingtalk_prompt_text_keeps_url_with_nfkc_unsafe_host_text():
+    rendered = sanitize_dingtalk_prompt_text(
+        "@Derek Zen(磊哥) 看下这个服务 http://stardust-gpu4:8787？"
+    )
+
+    assert "@Derek Zen(磊哥) 看下这个服务" in rendered
+    assert "http://stardust-gpu4:8787？" in rendered
+
+
 def test_build_turn_prompt_sanitizes_quoted_card_without_repeating_assets():
     conversation = DingTalkConversation(
         open_conversation_id="cid-1",

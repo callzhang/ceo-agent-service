@@ -1,4 +1,5 @@
 import re
+import unicodedata
 from dataclasses import dataclass
 from html import unescape
 from urllib.parse import urlsplit, urlunsplit
@@ -167,24 +168,39 @@ def _format_markdown_link(match: re.Match[str]) -> str:
 
 
 def _shorten_url(url: str) -> str:
-    if _has_unbalanced_url_host_brackets(url):
+    if _has_unbalanced_url_host_brackets(url) or _has_invalid_nfkc_url_host(url):
         return url
     parts = urlsplit(url)
     return urlunsplit((parts.scheme, parts.netloc, parts.path, "", ""))
 
 
-def _has_unbalanced_url_host_brackets(url: str) -> bool:
+def _url_authority(url: str) -> str:
     scheme_separator = url.find("://")
     if scheme_separator < 0:
-        return False
+        return ""
     authority_start = scheme_separator + len("://")
     authority_end = len(url)
     for delimiter in ("/", "?", "#"):
         delimiter_index = url.find(delimiter, authority_start)
         if delimiter_index >= 0:
             authority_end = min(authority_end, delimiter_index)
-    authority = url[authority_start:authority_end]
+    return url[authority_start:authority_end]
+
+
+def _has_unbalanced_url_host_brackets(url: str) -> bool:
+    authority = _url_authority(url)
     return ("[" in authority) != ("]" in authority)
+
+
+def _has_invalid_nfkc_url_host(url: str) -> bool:
+    authority = _url_authority(url)
+    normalized_candidate = (
+        authority.replace("@", "").replace(":", "").replace("#", "").replace("?", "")
+    )
+    normalized = unicodedata.normalize("NFKC", normalized_candidate)
+    return normalized != normalized_candidate and any(
+        char in normalized for char in "/?#@:"
+    )
 
 
 def _all_lines_present(needle: str, haystack: str) -> bool:
