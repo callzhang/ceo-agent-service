@@ -450,6 +450,33 @@ def test_group_mention_sends_signed_reply(tmp_path: Path, monkeypatch):
     assert "前面上下文" in prompt
 
 
+def test_success_notification_keeps_full_reply_text(tmp_path: Path, monkeypatch):
+    trigger = message("@Derek Zen(磊哥) 请给一下你的看法")
+    trigger.mentioned_user_ids = ["derek-user-1"]
+    dws = FakeDws([conversation()], {"cid-1": [trigger]})
+    reply_body = "我倾向于按这个方向收敛：" + "先看行业经验和交付闭环，" * 12
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text=reply_body)
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+    notifications: list[dict[str, str | None]] = []
+    monkeypatch.setattr(
+        "ceo_agent_service.worker.send_macos_notification",
+        lambda **kwargs: notifications.append(kwargs),
+    )
+
+    worker.run_once()
+
+    assert len(notifications[0]["message"]) > 120
+    assert notifications == [
+        {
+            "title": "CEO auto reply: Friday",
+            "message": dws.sent[0][1],
+            "url": None,
+        }
+    ]
+
+
 def test_dingtalk_doc_link_is_read_before_codex(tmp_path: Path, monkeypatch):
     doc_url = "https://alidocs.dingtalk.com/i/nodes/doc123?utm_source=im"
     canonical_doc_url = "https://alidocs.dingtalk.com/i/nodes/doc123"

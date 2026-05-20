@@ -1072,7 +1072,7 @@ class DingTalkAutoReplyWorker:
             )
             return
 
-        self._notify(title=f"CEO auto reply: {conversation.title}", message=reply_text[:120])
+        self._notify(title=f"CEO auto reply: {conversation.title}", message=reply_text)
         if self.dry_run:
             self.store.update_reply_attempt(
                 attempt_id,
