@@ -613,6 +613,18 @@ def test_get_user_department_ids_errors_when_profile_has_no_departments():
         client.get_user_department_ids("user-1")
 
 
+def test_parse_department_ids_accepts_top_level_dept_list():
+    payload = {
+        "deptList": [
+            {"deptId": 59442475, "deptName": "<red>人力资源</red>部"},
+            {"deptId": "920067298", "deptName": "<red>人力资源</red>部-行政部"},
+        ],
+        "hasMore": False,
+    }
+
+    assert DwsClient.parse_department_ids(payload) == {"59442475", "920067298"}
+
+
 def test_list_unread_conversations_high_level_method_uses_command():
     payload = {
         "result": {

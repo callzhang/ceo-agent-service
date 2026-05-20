@@ -938,6 +938,8 @@ class DwsClient:
     @staticmethod
     def parse_department_ids(payload: dict[str, Any]) -> set[str]:
         records = payload.get("result", [])
+        if not records:
+            records = payload.get("deptList") or payload.get("departments") or []
         if isinstance(records, dict):
             for key in ("departments", "deptList", "list"):
                 if isinstance(records.get(key), list):
