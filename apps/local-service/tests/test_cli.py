@@ -1,4 +1,5 @@
 import json
+from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -63,6 +64,8 @@ def test_parser_supports_rerun_message_command():
             "cid-1",
             "--message-id",
             "msg-1",
+            "--context-time",
+            "2026-05-20 09:56:09",
             "--force-new-decision",
         ]
     )
@@ -70,6 +73,7 @@ def test_parser_supports_rerun_message_command():
     assert args.command == "rerun-message"
     assert args.conversation_id == "cid-1"
     assert args.message_id == "msg-1"
+    assert args.context_time == "2026-05-20 09:56:09"
     assert args.force_new_decision is True
 
 
@@ -1098,10 +1102,14 @@ def test_rerun_message_command_loads_conversation_and_calls_worker(
         conversation_id="cid-1",
         message_id="msg-1",
         force_new_decision=True,
+        context_time="2026-05-20T09:56:09+08:00",
     )
 
     assert calls["conversation"].open_conversation_id == "cid-1"
     assert calls["conversation"].title == "Friday"
+    assert calls["conversation"].last_message_create_at == int(
+        datetime.fromisoformat("2026-05-20T09:56:09+08:00").timestamp() * 1000
+    )
     assert calls["message_id"] == "msg-1"
     assert calls["force_new_decision"] is True
     assert "rerun-message processed conversation_id=cid-1" in capsys.readouterr().out

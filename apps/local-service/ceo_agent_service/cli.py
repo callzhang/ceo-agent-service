@@ -198,6 +198,13 @@ def build_parser() -> argparse.ArgumentParser:
             subparser.add_argument("--conversation-id", required=True)
             subparser.add_argument("--message-id", required=True)
             subparser.add_argument(
+                "--context-time",
+                help=(
+                    "anchor time for historical message lookup; accepts "
+                    "YYYY-MM-DD HH:MM:SS or ISO datetime"
+                ),
+            )
+            subparser.add_argument(
                 "--force-new-decision",
                 action="store_true",
                 help="run Codex again even if this message already has an attempt",
@@ -356,12 +363,33 @@ def test_ding_command(settings: WorkerSettings) -> None:
     print("ding_self: OK", flush=True)
 
 
+def _context_time_to_epoch_ms(value: str | None) -> int | None:
+    if value is None:
+        return None
+    normalized = value.strip()
+    if not normalized:
+        return None
+    try:
+        if "T" in normalized:
+            parsed = datetime.fromisoformat(normalized)
+        else:
+            parsed = datetime.strptime(normalized, "%Y-%m-%d %H:%M:%S")
+    except ValueError as exc:
+        raise SystemExit(
+            "invalid --context-time; expected YYYY-MM-DD HH:MM:SS or ISO datetime"
+        ) from exc
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=datetime.now().astimezone().tzinfo)
+    return int(parsed.timestamp() * 1000)
+
+
 def rerun_message_command(
     settings: WorkerSettings,
     conversation_id: str,
     message_id: str,
     *,
     force_new_decision: bool = False,
+    context_time: str | None = None,
 ) -> None:
     store = AutoReplyStore(settings.db_path)
     record = store.get_conversation(conversation_id)
@@ -375,6 +403,7 @@ def rerun_message_command(
                 title=record.title,
                 single_chat=record.single_chat,
                 unread_point=1,
+                last_message_create_at=_context_time_to_epoch_ms(context_time),
             ),
             message_id,
             force_new_decision=force_new_decision,
@@ -847,6 +876,7 @@ def main() -> None:
             conversation_id=args.conversation_id,
             message_id=args.message_id,
             force_new_decision=args.force_new_decision,
+            context_time=args.context_time,
         )
     elif args.command == "send-attempt":
         ensure_live_send_allowed(settings)

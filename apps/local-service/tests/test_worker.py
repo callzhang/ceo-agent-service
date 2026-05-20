@@ -1138,6 +1138,25 @@ def test_group_seen_direct_mention_found_in_recent_context_does_not_queue(
     assert dws.sent == []
 
 
+def test_prompt_context_limits_after_sorting_reverse_chronological_history():
+    messages = []
+    for index in range(25):
+        item = message(f"history {index}", message_id=f"msg-{index}")
+        item.create_time = f"2026-05-13 18:{index:02d}:00"
+        messages.append(item)
+    reverse_chronological = list(reversed(messages))
+
+    context = DingTalkAutoReplyWorker._prompt_context_messages(
+        reverse_chronological,
+        [],
+        previous_limit=20,
+    )
+
+    assert [item.open_message_id for item in context] == [
+        f"msg-{index}" for index in range(5, 25)
+    ]
+
+
 def test_group_stale_direct_mention_found_in_recent_context_does_not_queue(
     tmp_path: Path, monkeypatch
 ):

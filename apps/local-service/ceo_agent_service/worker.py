@@ -351,6 +351,12 @@ class DingTalkAutoReplyWorker:
         unread_messages: list[DingTalkMessage],
         previous_limit: int = 20,
     ) -> list[DingTalkMessage]:
+        previous_messages = sorted(
+            previous_messages,
+            key=lambda message: datetime.strptime(
+                message.create_time, DINGTALK_TIME_FORMAT
+            ),
+        )
         result: list[DingTalkMessage] = []
         seen_message_ids: set[str] = set()
         for message in [*previous_messages[-previous_limit:], *unread_messages]:
