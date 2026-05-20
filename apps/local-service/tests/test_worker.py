@@ -910,6 +910,23 @@ def test_rerun_message_can_force_new_codex_decision(
     ]
 
 
+def test_force_new_rerun_starts_fresh_codex_session(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message("@Derek Zen(磊哥) 这个怎么处理？")
+    dws = FakeDws([conversation()], {"cid-1": [trigger]})
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.NO_REPLY),
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+    worker.store.upsert_conversation("cid-1", "Friday", False, "old-session")
+
+    worker.rerun_message(conversation(), "msg-1", force_new_decision=True)
+
+    assert codex.calls[0][1] is None
+    assert "你是 Derek 的钉钉自动回复分身" in codex.calls[0][0]
+
+
 def test_reply_attempt_records_codex_audit_fields(tmp_path: Path, monkeypatch):
     dws = FakeDws(
         [conversation()],

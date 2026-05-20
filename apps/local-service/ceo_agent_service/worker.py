@@ -453,7 +453,9 @@ class DingTalkAutoReplyWorker:
         except Exception as exc:
             self._record_linked_document_error(conversation, trigger, str(exc))
             return
-        session_id = self.store.get_codex_session_id(conversation.open_conversation_id)
+        session_id = None
+        if not ignore_existing_attempt:
+            session_id = self.store.get_codex_session_id(conversation.open_conversation_id)
         prompt = self._build_prompt(
             conversation,
             new_messages,
