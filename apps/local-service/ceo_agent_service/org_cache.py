@@ -135,7 +135,18 @@ class CachedDwsClient:
             return user_id
 
     def is_hr_user(self, user_id: str) -> bool:
-        return self.org_directory.is_hr_user(user_id)
+        try:
+            return self.org_directory.is_hr_user(user_id)
+        except DwsError:
+            profile = self.dws.get_user_profile(user_id)
+            self.org_directory.store.upsert_org_user_profile(
+                user_id=profile.user_id,
+                name=profile.name,
+                open_dingtalk_id=profile.open_dingtalk_id,
+                manager_user_id=profile.manager_user_id,
+                department_ids=profile.department_ids,
+            )
+            return self.dws.is_hr_user(user_id)
 
     def user_in_manager_chain(
         self, manager_user_id: str, subject_user_id: str

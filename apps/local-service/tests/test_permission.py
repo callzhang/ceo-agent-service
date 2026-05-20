@@ -62,6 +62,29 @@ def test_internal_personnel_hr_requester_does_not_require_subject_id():
     assert result.action == PermissionAction.ALLOW
 
 
+def test_internal_personnel_subject_can_receive_reply_about_self():
+    class Dws:
+        def resolve_message_sender(self, message):
+            return message.sender_user_id
+
+        def is_hr_user(self, user_id):
+            raise RuntimeError("HR membership should not be needed")
+
+        def user_in_manager_chain(self, manager_user_id, subject_user_id):
+            raise RuntimeError("manager chain should not be needed")
+
+    result = PermissionGate(Dws()).evaluate(
+        CodexDecision(
+            action=CodexAction.SEND_REPLY,
+            sensitivity_kind=SensitivityKind.INTERNAL_PERSONNEL,
+            personnel_subject_user_id="hr-user-1",
+        ),
+        trigger(),
+    )
+
+    assert result.action == PermissionAction.ALLOW
+
+
 def test_internal_personnel_unresolved_hr_identity_is_error():
     class Dws:
         def resolve_message_sender(self, message):

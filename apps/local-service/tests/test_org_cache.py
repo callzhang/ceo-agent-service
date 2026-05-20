@@ -168,6 +168,38 @@ def test_cached_dws_client_current_user_check_uses_live_sender_resolution_on_cac
     assert store.find_org_user_by_open_dingtalk_id("open-1") is not None
 
 
+def test_cached_dws_client_checks_live_hr_membership_when_hr_cache_missing(tmp_path):
+    class FakeDws:
+        def __init__(self):
+            self.checked_user_ids = []
+
+        def get_user_profile(self, user_id):
+            assert user_id == "hr-user"
+            return DwsUserProfile(
+                user_id="hr-user",
+                name="HR",
+                manager_user_id=None,
+                department_ids={"hr-dept"},
+            )
+
+        def is_hr_user(self, user_id):
+            self.checked_user_ids.append(user_id)
+            return user_id == "hr-user"
+
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.upsert_org_user_profile(
+        user_id="hr-user",
+        name="HR",
+        open_dingtalk_id=None,
+        manager_user_id=None,
+        department_ids={"hr-dept"},
+    )
+    cached = CachedDwsClient(FakeDws(), CachedOrgDirectory(store))
+
+    assert cached.is_hr_user("hr-user") is True
+    assert cached.dws.checked_user_ids == ["hr-user"]
+
+
 def test_cached_dws_client_ding_fails_closed_without_cached_current_user(tmp_path):
     class FakeDws:
         def get_current_user_id(self):

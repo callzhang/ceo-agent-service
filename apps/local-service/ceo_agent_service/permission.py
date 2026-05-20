@@ -50,14 +50,18 @@ class PermissionGate:
     ) -> PermissionResult:
         try:
             requester_user_id = self.dws.resolve_message_sender(trigger)
-            if self.dws.is_hr_user(requester_user_id):
-                return PermissionResult(action=PermissionAction.ALLOW)
             if not decision.personnel_subject_user_id:
+                if self.dws.is_hr_user(requester_user_id):
+                    return PermissionResult(action=PermissionAction.ALLOW)
                 return PermissionResult(
                     action=PermissionAction.REPLY,
                     reply_text=INTERNAL_PERSONNEL_CLARIFICATION,
                     reason="missing personnel subject",
                 )
+            if requester_user_id == decision.personnel_subject_user_id:
+                return PermissionResult(action=PermissionAction.ALLOW)
+            if self.dws.is_hr_user(requester_user_id):
+                return PermissionResult(action=PermissionAction.ALLOW)
             is_manager = self.dws.user_in_manager_chain(
                 requester_user_id, decision.personnel_subject_user_id
             )
