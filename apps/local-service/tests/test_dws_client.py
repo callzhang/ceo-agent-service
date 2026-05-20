@@ -294,6 +294,35 @@ def test_send_message_title_uses_reply_body_after_fake_quote():
     )
 
 
+def test_send_message_escapes_at_prefixed_title_for_dws_cli():
+    client = DwsClient(dws_bin="dws")
+
+    command = client.build_send_message_command(
+        conversation_id="cid-1",
+        text=(
+            "> 周俊杰: 我在本地分支改了\n\n"
+            "<@user-1> @周俊杰 明白，先把 diff 发出来。"
+        ),
+        at_users=["user-1"],
+    )
+
+    assert command[command.index("--title") + 1] == "回复：@周俊杰 明白，先把 diff 发出来。"
+    assert command[command.index("--text") + 1].startswith("> 周俊杰")
+    assert "<@user-1> @周俊杰" in command[command.index("--text") + 1]
+
+
+def test_send_message_escapes_at_prefixed_text_for_dws_cli():
+    client = DwsClient(dws_bin="dws")
+
+    command = client.build_send_message_command(
+        conversation_id="cid-1",
+        text="@周俊杰 明白，先把 diff 发出来。",
+    )
+
+    assert command[command.index("--title") + 1].startswith("回复：@")
+    assert command[command.index("--text") + 1].startswith(" @")
+
+
 def test_recall_bot_message_command_shape():
     client = DwsClient(dws_bin="dws", ding_robot_code="robot-code")
 

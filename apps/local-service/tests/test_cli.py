@@ -770,6 +770,10 @@ def test_parser_supports_audit_web_command():
     assert args.reload_interval_seconds == 2
 
 
+def test_cli_does_not_import_audit_web_until_command_needs_it():
+    assert cli.run_audit_web is None
+
+
 def test_parser_supports_export_feedback_command():
     parser = build_parser()
 

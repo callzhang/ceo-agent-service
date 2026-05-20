@@ -19,7 +19,6 @@ from ceo_agent_service.corpus import (
     load_corpus_records,
     write_records,
 )
-from ceo_agent_service.audit_web import run_audit_web
 from ceo_agent_service.dws_client import DwsClient, DwsError, local_time_zone_name
 from ceo_agent_service.dingtalk_models import CodexAction, DingTalkConversation
 from ceo_agent_service.org_cache import (
@@ -39,6 +38,7 @@ LIVE_SEND_GUARD_ENV = "CEO_LIVE_SEND_BLOCKERS_ACCEPTED"
 DEFAULT_DING_ROBOT_NAME = None
 DEFAULT_WORKSPACE = Path.home() / "Documents" / "memory"
 SEND_ATTEMPT_TARGET_LOOKBACK_LIMIT = 500
+run_audit_web = None
 
 
 def _repo_root() -> Path:
@@ -654,7 +654,11 @@ def run_audit_web_command(
     reload: bool = False,
     reload_interval_seconds: int = 1,
 ) -> None:
-    run_audit_web(
+    audit_web_runner = run_audit_web
+    if audit_web_runner is None:
+        from ceo_agent_service.audit_web import run_audit_web as audit_web_runner
+
+    audit_web_runner(
         settings.db_path,
         host=host,
         port=port,

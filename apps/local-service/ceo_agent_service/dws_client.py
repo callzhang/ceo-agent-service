@@ -14,6 +14,8 @@ TITLE_INFORMATION_UNIT_LIMIT = 20
 TITLE_WORD_OR_CJK_PATTERN = re.compile(
     r"[A-Za-z0-9]+(?:[-_'][A-Za-z0-9]+)*|[\u4e00-\u9fff]"
 )
+TITLE_AT_FILE_ESCAPE_PREFIX = "回复："
+TEXT_AT_FILE_ESCAPE_PREFIX = " "
 
 
 def _local_time_zone():
@@ -156,11 +158,11 @@ class DwsClient:
             command.extend(["--user", user_id])
         else:
             command.extend(["--open-dingtalk-id", open_dingtalk_id or ""])
-        command.extend(["--title", self._message_title(text)])
+        command.extend(["--title", self._literal_cli_value(self._message_title(text), is_title=True)])
         if at_users:
             command.extend(["--at-users", ",".join(at_users)])
             text = self._with_at_placeholders(text, at_users)
-        command.extend(["--text", text, "--format", "json", "--yes"])
+        command.extend(["--text", self._literal_cli_value(text), "--format", "json", "--yes"])
         return command
 
     def build_read_recent_messages_command(
@@ -729,6 +731,13 @@ class DwsClient:
             return source or "回复"
         end_index = matches[TITLE_INFORMATION_UNIT_LIMIT - 1].end()
         return f"{source[:end_index].rstrip()}..."
+
+    @staticmethod
+    def _literal_cli_value(value: str, *, is_title: bool = False) -> str:
+        if value.startswith("@"):
+            prefix = TITLE_AT_FILE_ESCAPE_PREFIX if is_title else TEXT_AT_FILE_ESCAPE_PREFIX
+            return f"{prefix}{value}"
+        return value
 
     @staticmethod
     def _message_title_source(text: str) -> str:
