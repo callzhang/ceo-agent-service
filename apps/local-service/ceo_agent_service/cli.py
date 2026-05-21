@@ -65,6 +65,7 @@ class WorkerSettings(BaseModel):
     ding_receiver_user_id: str | None = None
     dws_transient_retry_attempts: PositiveInt = 3
     dws_transient_retry_delay_seconds: float = 1.0
+    codex_timeout_seconds: PositiveInt = 300
     max_batches: PositiveInt | None = None
 
 
@@ -165,6 +166,14 @@ def build_parser() -> argparse.ArgumentParser:
             ),
             help="base delay before retrying transient dws errors; each retry multiplies this by the attempt number",
         )
+        subparser.add_argument(
+            "--codex-timeout-seconds",
+            type=_positive_int,
+            default=_positive_int(
+                os.getenv("CEO_CODEX_TIMEOUT_SECONDS", str(defaults.codex_timeout_seconds))
+            ),
+            help="maximum seconds to wait for one Codex decision",
+        )
         if command == "refresh-org-cache":
             subparser.add_argument("--user-id", action="append", default=[])
         if command == "feedback":
@@ -229,6 +238,7 @@ def settings_from_args(args: argparse.Namespace) -> WorkerSettings:
         ding_receiver_user_id=os.getenv("CEO_DING_RECEIVER_USER_ID"),
         dws_transient_retry_attempts=args.dws_transient_retry_attempts,
         dws_transient_retry_delay_seconds=args.dws_transient_retry_delay_seconds,
+        codex_timeout_seconds=args.codex_timeout_seconds,
         max_batches=args.max_batches,
     )
 
@@ -243,7 +253,10 @@ def create_worker(settings: WorkerSettings) -> DingTalkAutoReplyWorker:
         transient_retry_delay_seconds=settings.dws_transient_retry_delay_seconds,
     )
     cached_dws = CachedDwsClient(dws=dws, org_directory=CachedOrgDirectory(store))
-    codex = CodexDecisionRunner(workspace=settings.workspace)
+    codex = CodexDecisionRunner(
+        workspace=settings.workspace,
+        timeout_seconds=settings.codex_timeout_seconds,
+    )
     style_profile = _load_style_profile(settings.corpus_dir)
     style_records = load_corpus_records(settings.corpus_dir / "derek_style_corpus.csv")
     return DingTalkAutoReplyWorker(
