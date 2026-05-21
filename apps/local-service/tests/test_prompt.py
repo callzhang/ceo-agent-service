@@ -170,6 +170,14 @@ def test_thread_prompt_requires_dws_doc_read_for_alidocs_links():
     assert "文档读不到，不能凭感觉回复" in prompt
 
 
+def test_thread_prompt_requires_oa_review_principles_for_approval_messages():
+    prompt = ceo_agent_thread_prompt()
+
+    assert "management/OA/钉钉审批审阅原则.md" in prompt
+    assert "审批审阅不是替" in prompt
+    assert "缺任何实质材料时不能给批准、退回或拒绝结论" in prompt
+
+
 def test_build_turn_prompt_includes_prefetched_dingtalk_document():
     prompt = build_turn_prompt(
         DingTalkConversation(

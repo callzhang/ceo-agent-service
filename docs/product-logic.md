@@ -87,4 +87,10 @@ not hidden chain of thought.
   alias for older scripts.
 - Runtime state lives under `data/` and is ignored by Git.
 - Live sends require explicit opt-in.
-- System cards and notification cards are skipped before Codex.
+- DingTalk media/calendar placeholders and DingTalk internal link-only cards are
+  skipped before Codex, except approval/OA links.
+- Ordinary external links and DING approval reminders are sent to Codex for
+  context-aware handling. Approval and OA reminders or cards must follow
+  `management/OA/钉钉审批审阅原则.md`: do not execute or promise an approval
+  action, and do not recommend approval, return, or rejection until all
+  substantive approval materials have been read.

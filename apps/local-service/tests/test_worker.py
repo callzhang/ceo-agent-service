@@ -359,6 +359,39 @@ def test_structured_link_card_is_skipped_before_codex(
     assert worker.store.get_reply_attempt(1).action == "no_reply"
 
 
+def test_structured_approval_card_is_processed_by_codex(tmp_path: Path, monkeypatch):
+    trigger = message(
+        "\n".join(
+            [
+                "闫成成提交的项目立项全流程（第一曲线）",
+                "项目经理: 闫成成",
+                "销售经理: 曹宇航",
+                "项目类型: 点云;图片;视频",
+                "总预估数据量: 2546573",
+                "[dingtalk://dingtalkclient/action/open_platform_link?pcLink="
+                "https%3A%2F%2Faflow.dingtalk.com%2Fdingtalk%2Fpc%2Fquery"
+                "%2Fpchomepage.htm%3Fswfrom%3Doa%26dinghash%3Dapproval]"
+                "(dingtalk://dingtalkclient/action/open_platform_link?x=1)",
+            ]
+        ),
+        single_chat=True,
+    )
+    dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
+    codex = FakeCodex(
+        CodexDecision(
+            action=CodexAction.HANDOFF_TO_HUMAN,
+            reason="审批需要本人处理",
+            audit_summary="结构化 OA 卡片需要按审批审阅原则处理。",
+        )
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+
+    worker.run_once()
+
+    assert len(codex.calls) == 1
+    assert worker.store.get_reply_attempt(1).action == "handoff_to_human"
+
+
 def test_question_with_link_still_goes_to_codex(tmp_path: Path, monkeypatch):
     trigger = message("这个链接里的方案怎么看？ https://example.com/a", single_chat=True)
     dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
@@ -376,8 +409,33 @@ def test_question_with_link_still_goes_to_codex(tmp_path: Path, monkeypatch):
     assert len(codex.calls) == 1
 
 
-def test_bare_link_is_skipped_before_codex(tmp_path: Path, monkeypatch):
+def test_bare_external_link_is_processed_by_codex(tmp_path: Path, monkeypatch):
     trigger = message("@磊哥 https://example.com/a", single_chat=True)
+    dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
+    codex = FakeCodex(
+        CodexDecision(
+            action=CodexAction.NO_REPLY,
+            reason="test",
+            audit_summary="普通外链需要交给 agent 判断。",
+        )
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+
+    worker.run_once()
+
+    assert len(codex.calls) == 1
+    assert dws.sent == []
+    assert worker.store.get_reply_attempt(1).action == "no_reply"
+
+
+def test_bare_dingtalk_internal_link_is_skipped_before_codex(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message(
+        "@磊哥 [dingtalk://dingtalkclient/page/flash_minutes_detail?x=1]"
+        "(dingtalk://dingtalkclient/page/flash_minutes_detail?x=1)",
+        single_chat=True,
+    )
     dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
     codex = FakeCodex(
         CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该回复")
@@ -389,6 +447,24 @@ def test_bare_link_is_skipped_before_codex(tmp_path: Path, monkeypatch):
     assert codex.calls == []
     assert dws.sent == []
     assert worker.store.get_reply_attempt(1).action == "no_reply"
+
+
+def test_ding_approval_reminder_is_processed_by_codex(tmp_path: Path, monkeypatch):
+    trigger = message("[Ding]张静提醒您审批他的录用申请", single_chat=True)
+    dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
+    codex = FakeCodex(
+        CodexDecision(
+            action=CodexAction.HANDOFF_TO_HUMAN,
+            reason="审批需要本人处理",
+            audit_summary="审批催办需要按 OA 审阅原则处理。",
+        )
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+
+    worker.run_once()
+
+    assert len(codex.calls) == 1
+    assert worker.store.get_reply_attempt(1).action == "handoff_to_human"
 
 
 def test_group_mention_sends_signed_reply(tmp_path: Path, monkeypatch):

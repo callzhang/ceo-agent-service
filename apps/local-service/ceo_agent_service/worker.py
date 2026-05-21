@@ -43,7 +43,14 @@ RENDERED_NON_TEXT_PREFIXES = (
     "[图片]",
     "[视频]",
     "[日程]",
-    "[Ding]",
+)
+DINGTALK_INTERNAL_OR_RENDERED_MEDIA_PATTERN = re.compile(
+    r"dingtalk://|https?://[^\s)]*dingtalk\.com|\[(?:文件|图片|视频|日程)\]",
+    re.IGNORECASE,
+)
+DINGTALK_APPROVAL_LINK_PATTERN = re.compile(
+    r"aflow\.dingtalk\.com|dinghash(?:=|%3D)approval|swfrom(?:=|%3D)oa",
+    re.IGNORECASE,
 )
 QUESTION_MARK_PATTERN = re.compile(r"[?？]")
 FIELD_LINE_PATTERN = re.compile(r"^\s*[^:：\n]{1,60}[:：]\s*\S+")
@@ -249,6 +256,8 @@ class DingTalkAutoReplyWorker:
     def _is_link_caption_only(content: str) -> bool:
         if not MEDIA_OR_LINK_PATTERN.search(content):
             return False
+        if not DINGTALK_INTERNAL_OR_RENDERED_MEDIA_PATTERN.search(content):
+            return False
         if DingTalkAutoReplyWorker._has_question_outside_links(content):
             return False
         text_without_links = MEDIA_OR_LINK_PATTERN.sub(" ", content)
@@ -258,6 +267,10 @@ class DingTalkAutoReplyWorker:
     @staticmethod
     def _is_structured_link_card(content: str) -> bool:
         if not MEDIA_OR_LINK_PATTERN.search(content):
+            return False
+        if not DINGTALK_INTERNAL_OR_RENDERED_MEDIA_PATTERN.search(content):
+            return False
+        if DINGTALK_APPROVAL_LINK_PATTERN.search(content):
             return False
         if DingTalkAutoReplyWorker._has_question_outside_links(content):
             return False
