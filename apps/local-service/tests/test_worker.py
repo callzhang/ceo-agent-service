@@ -1427,6 +1427,51 @@ def test_handoff_does_not_clear_on_split_person_reply(
     assert store.has_seen("split-msg-1") is True
 
 
+def test_active_handoff_notification_explains_auto_reply_is_paused(
+    tmp_path: Path, monkeypatch
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.upsert_conversation("cid-1", "26年董事会筹备组", False, None)
+    store.enter_handoff(
+        "cid-1",
+        "msg-1",
+        "需要真人",
+        handoff_message_create_time="2026-05-13 18:00:00",
+    )
+    latest = message(
+        "可以东风集团（京东云渠道）",
+        message_id="msg-after-handoff",
+    )
+    latest.create_time = "2026-05-13 18:10:00"
+    dws = FakeDws([conversation()], {"cid-1": [latest]})
+    dws.conversations[0].title = "26年董事会筹备组"
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该调用")
+    )
+    notifications: list[dict[str, str | None]] = []
+    monkeypatch.setattr(
+        "ceo_agent_service.worker.send_macos_notification",
+        lambda **kwargs: notifications.append(kwargs),
+    )
+    worker = DingTalkAutoReplyWorker(store=store, dws=dws, codex=codex)
+
+    worker.run_once()
+
+    assert codex.calls == []
+    assert dws.sent == []
+    assert store.has_seen("msg-after-handoff") is True
+    assert notifications == [
+        {
+            "title": "CEO 自动回复已暂停: 26年董事会筹备组",
+            "message": (
+                "该会话已交给本人处理，本次未生成回复。"
+                "最新消息：可以东风集团（京东云渠道）"
+            ),
+            "url": None,
+        }
+    ]
+
+
 def test_handoff_current_user_lookup_failure_records_error_without_marking_seen(
     tmp_path: Path, monkeypatch
 ):

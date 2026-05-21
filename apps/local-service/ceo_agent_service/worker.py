@@ -416,8 +416,11 @@ class DingTalkAutoReplyWorker:
             return
         if unseen_messages:
             self._notify(
-                title=f"CEO handoff active: {conversation.title}",
-                message=unseen_messages[-1].content[:120],
+                title=f"CEO 自动回复已暂停: {conversation.title}",
+                message=(
+                    "该会话已交给本人处理，本次未生成回复。"
+                    f"最新消息：{unseen_messages[-1].content[:120]}"
+                ),
             )
             self._mark_seen(unseen_messages)
 

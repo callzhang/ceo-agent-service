@@ -24,6 +24,8 @@ retrieval, and records every decision in SQLite for audit and feedback.
   instructions, while each DingTalk turn is sent as the user message payload.
 - Local SQLite history for reply attempts, send status, errors, feedback, and
   organization cache.
+- Human-handoff state: when a conversation has been handed to the real user,
+  the worker pauses auto-replies and sends a clear local notification instead.
 - FastAPI audit console with feedback and recall hooks.
 - Optional style corpus built from local messages and meeting transcripts.
 - Dry-run and live-send guardrails.
