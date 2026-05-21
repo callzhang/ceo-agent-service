@@ -20,7 +20,7 @@ def test_hourly_dry_run_script_runs_single_dry_run_pass_with_lock():
     assert "--workspace" in content
 
 
-def test_hourly_dry_run_launch_agent_runs_once_per_hour_without_keepalive():
+def test_hourly_dry_run_launch_agent_runs_every_thirty_minutes_without_keepalive():
     plist_path = REPO_ROOT / "launchd" / "com.derek.ceo-agent-service.hourly-dry-run.plist"
 
     with plist_path.open("rb") as file:
@@ -28,7 +28,7 @@ def test_hourly_dry_run_launch_agent_runs_once_per_hour_without_keepalive():
 
     assert plist["Label"] == "com.derek.ceo-agent-service.hourly-dry-run"
     assert plist["RunAtLoad"] is True
-    assert plist["StartInterval"] == 3600
+    assert plist["StartInterval"] == 1800
     assert "KeepAlive" not in plist
     assert plist["StandardOutPath"].endswith("/hourly-dry-run.out.log")
     assert plist["StandardErrorPath"].endswith("/hourly-dry-run.err.log")

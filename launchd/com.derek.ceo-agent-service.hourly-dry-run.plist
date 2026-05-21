@@ -20,7 +20,7 @@
   <true/>
 
   <key>StartInterval</key>
-  <integer>3600</integer>
+  <integer>1800</integer>
 
   <key>StandardOutPath</key>
   <string>/Users/derek/Library/Logs/ceo-agent-service/hourly-dry-run.out.log</string>

@@ -130,14 +130,14 @@ launchctl kickstart -k "gui/$(id -u)/com.derek.ceo-agent-service.audit-web"
 
 This only starts the audit console; it does not run the auto-reply worker.
 
-To run the auto-reply agent once per hour in dry-run mode, install the hourly
+To run the auto-reply agent every 30 minutes in dry-run mode, install the
 launchd agent:
 
 ```bash
 scripts/install-hourly-dry-run-agent.sh
 ```
 
-The hourly agent runs `run-once --dry-run`, writes decisions to SQLite, and
+The launchd agent runs `run-once --dry-run`, writes decisions to SQLite, and
 does not live-send replies. Review the generated attempts in the audit console
 or SQLite, then send an approved attempt manually:
 
@@ -147,7 +147,7 @@ CEO_DRY_RUN=0 CEO_LIVE_SEND_BLOCKERS_ACCEPTED=1 .venv/bin/ceo-agent send-attempt
 ```
 
 The dry-run script uses a lock directory so a slow previous pass is not
-overlapped by the next hourly trigger. To stop the hourly agent:
+overlapped by the next 30-minute trigger. To stop the dry-run agent:
 
 ```bash
 launchctl bootout "gui/$(id -u)/com.derek.ceo-agent-service.hourly-dry-run"
