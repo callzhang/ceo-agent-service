@@ -94,3 +94,6 @@ not hidden chain of thought.
   `management/OA/钉钉审批审阅原则.md`: do not execute or promise an approval
   action, and do not recommend approval, return, or rejection until all
   substantive approval materials have been read.
+- See `docs/message-routing-rules.md` for the full message-type inventory,
+  implemented regexes, candidate regexes, and message types that should remain
+  agent-reviewed.
