@@ -19,12 +19,12 @@ export PYTHONPATH="${PYTHONPATH:-.}"
 export CEO_WORKSPACE="${CEO_WORKSPACE:-${HOME}/Documents/memory}"
 export CEO_WORKER_DB="${CEO_WORKER_DB:-${repo_root}/data/auto-reply.sqlite3}"
 export CEO_CORPUS_DIR="${CEO_CORPUS_DIR:-${repo_root}/corpus}"
-export CEO_DRY_RUN="1"
+export CEO_NOT_SEND_MESSAGE="1"
 
-printf '%s hourly dry-run starting\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+printf '%s hourly not-send-message starting\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 .venv/bin/python -m ceo_agent_service.cli run-once \
-  --dry-run \
+  --not-send-message \
   --db "${CEO_WORKER_DB}" \
   --workspace "${CEO_WORKSPACE}" \
   --corpus-dir "${CEO_CORPUS_DIR}"
-printf '%s hourly dry-run finished\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+printf '%s hourly not-send-message finished\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"

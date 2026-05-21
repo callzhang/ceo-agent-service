@@ -10,7 +10,7 @@
   <array>
     <string>/bin/zsh</string>
     <string>-lc</string>
-    <string>lock_dir="${TMPDIR:-/tmp}/ceo-agent-service-hourly-dry-run.lock"; if ! mkdir "$lock_dir" 2&gt;/dev/null; then date -u "+%Y-%m-%dT%H:%M:%SZ hourly dry-run skipped: previous run still active"; exit 0; fi; trap 'rmdir "$lock_dir"' EXIT; cd /Users/derek/Documents/Projects/ceo-agent-service/apps/local-service &amp;&amp; export PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH PYTHONPATH=. CEO_DRY_RUN=1 CEO_WORKER_DB=/Users/derek/Documents/Projects/ceo-agent-service/data/auto-reply.sqlite3 CEO_WORKSPACE=/Users/derek/Documents/memory CEO_CORPUS_DIR=/Users/derek/Documents/Projects/ceo-agent-service/corpus &amp;&amp; date -u "+%Y-%m-%dT%H:%M:%SZ hourly dry-run starting" &amp;&amp; .venv/bin/python -m ceo_agent_service.cli run-once --dry-run --db /Users/derek/Documents/Projects/ceo-agent-service/data/auto-reply.sqlite3 --workspace /Users/derek/Documents/memory --corpus-dir /Users/derek/Documents/Projects/ceo-agent-service/corpus; exit_code=$?; date -u "+%Y-%m-%dT%H:%M:%SZ hourly dry-run finished status=${exit_code}"; exit $exit_code</string>
+    <string>lock_dir="${TMPDIR:-/tmp}/ceo-agent-service-hourly-dry-run.lock"; if ! mkdir "$lock_dir" 2&gt;/dev/null; then date -u "+%Y-%m-%dT%H:%M:%SZ hourly not-send-message skipped: previous run still active"; exit 0; fi; trap 'rmdir "$lock_dir"' EXIT; cd /Users/derek/Documents/Projects/ceo-agent-service/apps/local-service &amp;&amp; export PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH PYTHONPATH=. CEO_NOT_SEND_MESSAGE=1 CEO_WORKER_DB=/Users/derek/Documents/Projects/ceo-agent-service/data/auto-reply.sqlite3 CEO_WORKSPACE=/Users/derek/Documents/memory CEO_CORPUS_DIR=/Users/derek/Documents/Projects/ceo-agent-service/corpus &amp;&amp; date -u "+%Y-%m-%dT%H:%M:%SZ hourly not-send-message starting" &amp;&amp; .venv/bin/python -m ceo_agent_service.cli run-once --not-send-message --db /Users/derek/Documents/Projects/ceo-agent-service/data/auto-reply.sqlite3 --workspace /Users/derek/Documents/memory --corpus-dir /Users/derek/Documents/Projects/ceo-agent-service/corpus; exit_code=$?; date -u "+%Y-%m-%dT%H:%M:%SZ hourly not-send-message finished status=${exit_code}"; exit $exit_code</string>
   </array>
 
   <key>WorkingDirectory</key>
@@ -42,7 +42,7 @@
     <string>/Users/derek/Documents/memory</string>
     <key>CEO_CORPUS_DIR</key>
     <string>/Users/derek/Documents/Projects/ceo-agent-service/corpus</string>
-    <key>CEO_DRY_RUN</key>
+    <key>CEO_NOT_SEND_MESSAGE</key>
     <string>1</string>
   </dict>
 </dict>

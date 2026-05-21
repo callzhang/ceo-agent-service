@@ -12,10 +12,10 @@ def test_hourly_dry_run_script_runs_single_dry_run_pass_with_lock():
 
     assert "mkdir \"${lock_dir}\"" in content
     assert "trap 'rmdir \"${lock_dir}\"' EXIT" in content
-    assert 'export CEO_DRY_RUN="1"' in content
+    assert 'export CEO_NOT_SEND_MESSAGE="1"' in content
     assert "CEO_LIVE_SEND_BLOCKERS_ACCEPTED" not in content
     assert "run-once" in content
-    assert "--dry-run" in content
+    assert "--not-send-message" in content
     assert "--db" in content
     assert "--workspace" in content
 
@@ -35,10 +35,10 @@ def test_hourly_dry_run_launch_agent_runs_every_thirty_minutes_without_keepalive
     command = plist["ProgramArguments"]
     assert command[:2] == ["/bin/zsh", "-lc"]
     assert "mkdir \"$lock_dir\"" in command[2]
-    assert "CEO_DRY_RUN=1" in command[2]
+    assert "CEO_NOT_SEND_MESSAGE=1" in command[2]
     assert "CEO_LIVE_SEND_BLOCKERS_ACCEPTED" not in command[2]
     assert "run-once" in command[2]
-    assert "--dry-run" in command[2]
+    assert "--not-send-message" in command[2]
 
 
 def test_hourly_dry_run_install_script_installs_and_kickstarts_launch_agent():

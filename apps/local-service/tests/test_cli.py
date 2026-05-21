@@ -32,11 +32,22 @@ from ceo_agent_service.dws_client import DwsError
 def test_parser_supports_worker_commands():
     parser = build_parser()
 
-    args = parser.parse_args(["run-once", "--dry-run", "--db", "/tmp/worker.sqlite3"])
+    args = parser.parse_args(
+        ["run-once", "--not-send-message", "--db", "/tmp/worker.sqlite3"]
+    )
 
     assert args.command == "run-once"
     assert args.dry_run is True
     assert args.db == "/tmp/worker.sqlite3"
+
+
+def test_parser_keeps_dry_run_as_not_send_message_alias():
+    parser = build_parser()
+
+    args = parser.parse_args(["run-once", "--dry-run"])
+
+    assert args.command == "run-once"
+    assert args.dry_run is True
 
 
 def test_parser_supports_reset_codex_sessions_command():
@@ -804,6 +815,24 @@ def test_dry_run_flag_overrides_disabled_dry_run_env(monkeypatch):
     assert settings.dry_run is True
 
 
+def test_not_send_message_env_replaces_dry_run_env(monkeypatch):
+    monkeypatch.setenv("CEO_DRY_RUN", "0")
+    monkeypatch.setenv("CEO_NOT_SEND_MESSAGE", "1")
+    parser = build_parser()
+
+    args = parser.parse_args(["run-once"])
+    settings = settings_from_args(args)
+
+    assert settings.dry_run is True
+
+
+def test_invalid_not_send_message_env_value_fails_fast(monkeypatch):
+    monkeypatch.setenv("CEO_NOT_SEND_MESSAGE", "treu")
+
+    with pytest.raises(ValueError, match="CEO_NOT_SEND_MESSAGE"):
+        build_parser()
+
+
 def test_live_send_fails_fast_without_blocker_acceptance(monkeypatch, tmp_path):
     monkeypatch.delenv("CEO_LIVE_SEND_BLOCKERS_ACCEPTED", raising=False)
     settings = WorkerSettings(
@@ -817,7 +846,7 @@ def test_live_send_fails_fast_without_blocker_acceptance(monkeypatch, tmp_path):
         ensure_live_send_allowed(settings)
 
     message = str(exc.value)
-    assert "CEO_DRY_RUN=0 is blocked" in message
+    assert "CEO_NOT_SEND_MESSAGE=0 is blocked" in message
     assert "deterministic personnel/candidate permission gates" in message
     assert "handoff-clear detection" in message
     assert "batching semantics" in message

@@ -82,6 +82,12 @@ def _env_bool(name: str, default: bool) -> bool:
     raise ValueError(f"{name} must be a boolean value: 1/0, true/false, yes/no, or on/off")
 
 
+def _not_send_message_default(default: bool) -> bool:
+    if os.getenv("CEO_NOT_SEND_MESSAGE") is not None:
+        return _env_bool("CEO_NOT_SEND_MESSAGE", default)
+    return _env_bool("CEO_DRY_RUN", default)
+
+
 def _positive_int(value: str) -> int:
     parsed = int(value)
     if parsed <= 0:
@@ -127,7 +133,17 @@ def build_parser() -> argparse.ArgumentParser:
         subparser.add_argument("--db", default=os.getenv("CEO_WORKER_DB", str(defaults.db_path)))
         subparser.add_argument("--workspace", default=os.getenv("CEO_WORKSPACE", str(defaults.workspace)))
         subparser.add_argument("--corpus-dir", default=os.getenv("CEO_CORPUS_DIR", str(defaults.corpus_dir)))
-        subparser.add_argument("--dry-run", action="store_true", default=_env_bool("CEO_DRY_RUN", defaults.dry_run))
+        subparser.add_argument(
+            "--not-send-message",
+            "--dry-run",
+            dest="dry_run",
+            action="store_true",
+            default=_not_send_message_default(defaults.dry_run),
+            help=(
+                "record decisions without sending DingTalk messages; "
+                "--dry-run is kept as a compatibility alias"
+            ),
+        )
         subparser.add_argument(
             "--poll-interval-seconds",
             type=_positive_int,
@@ -277,7 +293,7 @@ def ensure_live_send_allowed(settings: WorkerSettings) -> None:
 
     blockers = "\n".join(f"- {blocker}" for blocker in LIVE_SEND_BLOCKERS)
     raise SystemExit(
-        "CEO_DRY_RUN=0 is blocked until unresolved live-send blockers are "
+        "CEO_NOT_SEND_MESSAGE=0 is blocked until unresolved live-send blockers are "
         f"explicitly accepted with {LIVE_SEND_GUARD_ENV}=1:\n{blockers}"
     )
 

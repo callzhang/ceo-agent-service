@@ -25,7 +25,8 @@ retrieval, and records every decision in SQLite for audit and feedback.
 - Local SQLite history for reply attempts, send status, errors, feedback, and
   organization cache.
 - Human-handoff state: when a conversation has been handed to the real user,
-  the worker pauses auto-replies and sends a clear local notification instead.
+  the live worker pauses auto-replies and sends a clear local notification
+  instead. Dry-run checks do not repeat that pause notification.
 - FastAPI audit console with feedback and recall hooks.
 - Optional style corpus built from local messages and meeting transcripts.
 - Dry-run and live-send guardrails.
@@ -55,7 +56,8 @@ Common environment variables:
 
 - `CEO_WORKSPACE`: local knowledge workspace used by Codex and graphify.
 - `CEO_WORKER_DB`: SQLite path for local state.
-- `CEO_DRY_RUN`: defaults to `1`; dry-run records decisions but does not send.
+- `CEO_NOT_SEND_MESSAGE`: defaults to `1`; records decisions but does not send
+  DingTalk messages. `CEO_DRY_RUN` is still accepted as a compatibility alias.
 - `CEO_CORPUS_DIR`: optional local style corpus directory.
 - `CEO_DWS_TRANSIENT_RETRY_ATTEMPTS`: retries for transient `dws` discovery or
   network failures; defaults to `3`.
@@ -86,18 +88,18 @@ need their normal local auth state.
 
 ## Run
 
-One dry-run pass:
+One no-send pass:
 
 ```bash
 cd apps/local-service
-CEO_DRY_RUN=1 .venv/bin/ceo-agent run-once
+CEO_NOT_SEND_MESSAGE=1 .venv/bin/ceo-agent run-once --not-send-message
 ```
 
-Continuous dry-run worker:
+Continuous no-send worker:
 
 ```bash
 cd apps/local-service
-CEO_DRY_RUN=1 .venv/bin/ceo-agent run
+CEO_NOT_SEND_MESSAGE=1 .venv/bin/ceo-agent run --not-send-message
 ```
 
 Probe DingTalk/Codex dependencies:
@@ -134,24 +136,25 @@ launchctl kickstart -k "gui/$(id -u)/com.derek.ceo-agent-service.audit-web"
 
 This only starts the audit console; it does not run the auto-reply worker.
 
-To run the auto-reply agent every 30 minutes in dry-run mode, install the
+To run the auto-reply agent every 30 minutes without sending messages, install the
 launchd agent:
 
 ```bash
 scripts/install-hourly-dry-run-agent.sh
 ```
 
-The launchd agent runs `run-once --dry-run`, writes decisions to SQLite, and
-does not live-send replies. Review the generated attempts in the audit console
-or SQLite, then send an approved attempt manually:
+The launchd agent runs `run-once --not-send-message`, writes decisions to SQLite,
+does not live-send replies, and suppresses repeated pause notifications for
+conversations already in human handoff. Review the generated attempts in the
+audit console or SQLite, then send an approved attempt manually:
 
 ```bash
 cd apps/local-service
-CEO_DRY_RUN=0 CEO_LIVE_SEND_BLOCKERS_ACCEPTED=1 .venv/bin/ceo-agent send-attempt --attempt-id 123
+CEO_NOT_SEND_MESSAGE=0 CEO_LIVE_SEND_BLOCKERS_ACCEPTED=1 .venv/bin/ceo-agent send-attempt --attempt-id 123
 ```
 
-The dry-run script uses a lock directory so a slow previous pass is not
-overlapped by the next 30-minute trigger. To stop the dry-run agent:
+The no-send script uses a lock directory so a slow previous pass is not
+overlapped by the next 30-minute trigger. To stop the launchd agent:
 
 ```bash
 launchctl bootout "gui/$(id -u)/com.derek.ceo-agent-service.hourly-dry-run"

@@ -414,7 +414,7 @@ class DingTalkAutoReplyWorker:
                 message=manual_clear_message.content[:120],
             )
             return
-        if unseen_messages:
+        if unseen_messages and not self.dry_run:
             self._notify(
                 title=f"CEO 自动回复已暂停: {conversation.title}",
                 message=(

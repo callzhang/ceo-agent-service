@@ -6,7 +6,7 @@ cd "${repo_root}/apps/local-service"
 
 export CEO_WORKSPACE="${CEO_WORKSPACE:-${HOME}/Documents/memory}"
 export CEO_WORKER_DB="${CEO_WORKER_DB:-${repo_root}/data/auto-reply.sqlite3}"
-export CEO_DRY_RUN="${CEO_DRY_RUN:-1}"
+export CEO_NOT_SEND_MESSAGE="${CEO_NOT_SEND_MESSAGE:-${CEO_DRY_RUN:-1}}"
 export CEO_POLL_INTERVAL_SECONDS="${CEO_POLL_INTERVAL_SECONDS:-30}"
 export CEO_BATCH_SECONDS="${CEO_BATCH_SECONDS:-120}"
 export CEO_CORPUS_DIR="${CEO_CORPUS_DIR:-${repo_root}/corpus}"

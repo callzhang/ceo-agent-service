@@ -60,7 +60,10 @@ decision should be `handoff_to_human`.
 
 Handoff sends a short acknowledgement in DingTalk and uses DING to notify the
 operator. The handoff remains active until the worker observes a real manual
-reply from the operator in the same conversation.
+reply from the operator in the same conversation. Live runs send a local pause
+notification when new unread messages arrive during active handoff; dry-run
+checks suppress that pause notification because they intentionally do not mark
+messages as seen.
 
 ## Audit
 
@@ -80,7 +83,8 @@ not hidden chain of thought.
 
 ## Safety Defaults
 
-- `CEO_DRY_RUN=1` by default.
+- `CEO_NOT_SEND_MESSAGE=1` by default. `CEO_DRY_RUN` remains a compatibility
+  alias for older scripts.
 - Runtime state lives under `data/` and is ignored by Git.
 - Live sends require explicit opt-in.
 - System cards and notification cards are skipped before Codex.
