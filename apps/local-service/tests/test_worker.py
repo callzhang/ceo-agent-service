@@ -392,6 +392,76 @@ def test_structured_approval_card_is_processed_by_codex(tmp_path: Path, monkeypa
     assert worker.store.get_reply_attempt(1).action == "handoff_to_human"
 
 
+def test_automatic_sync_notification_is_skipped_before_codex(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message("AI 自动同步成功：董事会筹备组纪要", single_chat=True)
+    dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该回复")
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+
+    worker.run_once()
+
+    assert codex.calls == []
+    assert dws.sent == []
+    assert worker.store.get_reply_attempt(1).action == "no_reply"
+
+
+def test_file_state_notification_is_skipped_before_codex(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message("文档已更新：董事会材料", single_chat=True)
+    dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该回复")
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+
+    worker.run_once()
+
+    assert codex.calls == []
+    assert dws.sent == []
+    assert worker.store.get_reply_attempt(1).action == "no_reply"
+
+
+def test_project_status_notification_is_skipped_before_codex(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message("项目立项已提交", single_chat=True)
+    dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该回复")
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+
+    worker.run_once()
+
+    assert codex.calls == []
+    assert dws.sent == []
+    assert worker.store.get_reply_attempt(1).action == "no_reply"
+
+
+def test_status_like_message_with_followup_request_is_processed_by_codex(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message("文件已更新，帮忙看一下", single_chat=True)
+    dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
+    codex = FakeCodex(
+        CodexDecision(
+            action=CodexAction.NO_REPLY,
+            reason="test",
+            audit_summary="带请求的文件状态消息需要交给 agent 判断。",
+        )
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+
+    worker.run_once()
+
+    assert len(codex.calls) == 1
+
+
 def test_question_with_link_still_goes_to_codex(tmp_path: Path, monkeypatch):
     trigger = message("这个链接里的方案怎么看？ https://example.com/a", single_chat=True)
     dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})

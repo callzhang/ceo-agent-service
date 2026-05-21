@@ -52,6 +52,22 @@ DINGTALK_APPROVAL_LINK_PATTERN = re.compile(
     r"aflow\.dingtalk\.com|dinghash(?:=|%3D)approval|swfrom(?:=|%3D)oa",
     re.IGNORECASE,
 )
+ORDINARY_EXTERNAL_LINK_PATTERN = re.compile(
+    r"https?://(?![^\s)]*dingtalk\.com)\S+",
+    re.IGNORECASE,
+)
+SYSTEM_STATUS_NOTIFICATION_PATTERN = re.compile(
+    r"""
+    ^\s*(?:
+        (?:AI\s*)?自动同步(?:完成|成功|失败)(?:[:：]\S.*)?
+        |已同步到(?:知识库|文档|项目)(?:[:：]\S.*)
+        |(?:文件|文档)[^\n，,。；;？?]{0,40}(?:已上传|已更新|上传完成|更新完成)(?:[:：]\S.*)?
+        |已更新文档(?:[:：]\S.*)?
+        |(?:项目立项|流程|审批)[^\n，,。；;？?]{0,40}(?:已提交|已通过|被退回|已退回|已撤回|已流转)(?:[:：]\S.*)?
+    )\s*$
+    """,
+    re.VERBOSE,
+)
 QUESTION_MARK_PATTERN = re.compile(r"[?？]")
 FIELD_LINE_PATTERN = re.compile(r"^\s*[^:：\n]{1,60}[:：]\s*\S+")
 MENTION_PATTERN = re.compile(r"@[^\s]+(?:\([^)]+\))?")
@@ -250,7 +266,19 @@ class DingTalkAutoReplyWorker:
             return True
         if DingTalkAutoReplyWorker._is_structured_link_card(content):
             return True
+        if DingTalkAutoReplyWorker._is_system_status_notification(content):
+            return True
         return False
+
+    @staticmethod
+    def _is_system_status_notification(content: str) -> bool:
+        if not SYSTEM_STATUS_NOTIFICATION_PATTERN.match(content):
+            return False
+        if DINGTALK_APPROVAL_LINK_PATTERN.search(content):
+            return False
+        if ORDINARY_EXTERNAL_LINK_PATTERN.search(content):
+            return False
+        return not DingTalkAutoReplyWorker._has_question_outside_links(content)
 
     @staticmethod
     def _is_link_caption_only(content: str) -> bool:
