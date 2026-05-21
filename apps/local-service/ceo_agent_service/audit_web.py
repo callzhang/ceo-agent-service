@@ -410,6 +410,8 @@ def run_audit_web(
             factory=True,
             host=host,
             port=port,
+            loop="asyncio",
+            http="h11",
             reload=True,
             reload_delay=reload_delay_seconds,
             reload_dirs=[str(path) for path in reload_dirs] if reload_dirs else None,
@@ -424,6 +426,8 @@ def run_audit_web(
         ),
         host=host,
         port=port,
+        loop="asyncio",
+        http="h11",
     )
 
 

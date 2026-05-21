@@ -11,6 +11,7 @@ from ceo_agent_service.audit_web import (
     render_codex_session_detail,
     render_codex_session_list,
     render_error_list,
+    run_audit_web,
 )
 from ceo_agent_service.store import AutoReplyStore
 
@@ -469,3 +470,51 @@ def test_render_error_list_shows_recent_errors(tmp_path: Path):
     assert "send" in html
     assert "authorization required" in html
     assert "cid-1" in html
+
+
+def test_run_audit_web_uses_stable_uvicorn_protocols(monkeypatch, tmp_path: Path):
+    calls = {}
+
+    def fake_run(app, **kwargs):
+        calls["app"] = app
+        calls["kwargs"] = kwargs
+
+    monkeypatch.setattr("ceo_agent_service.audit_web.uvicorn.run", fake_run)
+
+    run_audit_web(tmp_path / "worker.sqlite3", host="127.0.0.1", port=8765)
+
+    assert calls["app"] is not None
+    assert calls["kwargs"]["host"] == "127.0.0.1"
+    assert calls["kwargs"]["port"] == 8765
+    assert calls["kwargs"]["loop"] == "asyncio"
+    assert calls["kwargs"]["http"] == "h11"
+
+
+def test_run_audit_web_reload_uses_stable_uvicorn_protocols(
+    monkeypatch,
+    tmp_path: Path,
+):
+    calls = {}
+
+    def fake_run(app, **kwargs):
+        calls["app"] = app
+        calls["kwargs"] = kwargs
+
+    monkeypatch.setenv("CEO_WORKER_DB", "")
+    monkeypatch.delenv("CEO_DING_ROBOT_CODE", raising=False)
+    monkeypatch.delenv("CEO_DING_ROBOT_NAME", raising=False)
+    monkeypatch.setattr("ceo_agent_service.audit_web.uvicorn.run", fake_run)
+
+    run_audit_web(
+        tmp_path / "worker.sqlite3",
+        host="127.0.0.1",
+        port=8765,
+        reload=True,
+        reload_dirs=[tmp_path],
+    )
+
+    assert calls["app"] == "ceo_agent_service.audit_web:create_default_audit_app"
+    assert calls["kwargs"]["factory"] is True
+    assert calls["kwargs"]["reload"] is True
+    assert calls["kwargs"]["loop"] == "asyncio"
+    assert calls["kwargs"]["http"] == "h11"
