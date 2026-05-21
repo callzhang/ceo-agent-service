@@ -2,6 +2,7 @@ from ceo_agent_service.dingtalk_models import DingTalkConversation, DingTalkMess
 from ceo_agent_service.prompt import (
     LinkedDocumentContext,
     build_turn_prompt,
+    ceo_agent_thread_prompt,
     message_lines,
     sanitize_dingtalk_prompt_text,
 )
@@ -94,34 +95,40 @@ def test_build_turn_prompt_sanitizes_quoted_card_without_repeating_assets():
 
 
 def test_thread_prompt_explains_first_person_single_chat_subject():
-    conversation = DingTalkConversation(
-        open_conversation_id="cid-1",
-        title="周俊杰",
-        single_chat=True,
-        unread_point=1,
-    )
-    message = DingTalkMessage(
-        open_conversation_id="cid-1",
-        open_message_id="msg-1",
-        conversation_title="周俊杰",
-        single_chat=True,
-        sender_name="周俊杰",
-        sender_user_id="junjie-user-1",
-        create_time="2026-05-15 13:00:00",
-        content="磊哥，我今天想请一天调休。",
-    )
-
-    prompt = build_turn_prompt(
-        conversation,
-        [message],
-        [message],
-        style_lines=[],
-        include_thread_prompt=True,
-    )
+    prompt = ceo_agent_thread_prompt()
 
     assert "发信人讨论自己的请假、调休" in prompt
     assert "personnel_subject_user_id 必须填写该消息的 sender_user_id" in prompt
     assert "单聊和群聊都适用" in prompt
+
+
+def test_build_turn_prompt_keeps_user_message_separate_from_thread_prompt():
+    prompt = build_turn_prompt(
+        DingTalkConversation(
+            open_conversation_id="cid-1",
+            title="周俊杰",
+            single_chat=True,
+            unread_point=1,
+        ),
+        [
+            DingTalkMessage(
+                open_conversation_id="cid-1",
+                open_message_id="msg-1",
+                conversation_title="周俊杰",
+                single_chat=True,
+                sender_name="周俊杰",
+                sender_user_id="junjie-user-1",
+                create_time="2026-05-15 13:00:00",
+                content="磊哥，我今天想请一天调休。",
+            )
+        ],
+        [],
+        style_lines=[],
+        include_thread_prompt=True,
+    )
+
+    assert prompt.startswith("当前待处理消息:")
+    assert "CEO Agent Prompt" not in prompt
     assert "周俊杰 sender_user_id=junjie-user-1" in prompt
 
 
@@ -156,28 +163,7 @@ def test_build_turn_prompt_includes_known_people_lines():
 
 
 def test_thread_prompt_requires_dws_doc_read_for_alidocs_links():
-    prompt = build_turn_prompt(
-        DingTalkConversation(
-            open_conversation_id="cid-1",
-            title="CEO-2 管理群",
-            single_chat=False,
-            unread_point=1,
-        ),
-        [
-            DingTalkMessage(
-                open_conversation_id="cid-1",
-                open_message_id="msg-1",
-                conversation_title="CEO-2 管理群",
-                single_chat=False,
-                sender_name="张毅倜(ET)",
-                create_time="2026-05-18 00:33:40",
-                content="https://alidocs.dingtalk.com/i/nodes/doc123 @Derek Zen(磊哥) 看下",
-            )
-        ],
-        [],
-        style_lines=[],
-        include_thread_prompt=True,
-    )
+    prompt = ceo_agent_thread_prompt()
 
     assert 'dws doc read --node "<链接>" --format json' in prompt
     assert "禁止用 curl、HTTP API 或浏览器直接读钉钉在线文档" in prompt

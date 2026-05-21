@@ -1,7 +1,35 @@
 from pathlib import Path
 import json
 
-from ceo_agent_service.codex_runner import CODEX_DECISION_SCHEMA_PATH, CodexRunner
+from ceo_agent_service.codex_runner import (
+    CODEX_DECISION_SCHEMA_PATH,
+    CodexRunner,
+    codex_developer_instructions,
+)
+
+
+def _developer_instructions_arg(command: list[str]) -> str:
+    for index, item in enumerate(command):
+        if item != "-c":
+            continue
+        value = command[index + 1]
+        if value.startswith("developer_instructions="):
+            return value
+    raise AssertionError("developer_instructions config missing")
+
+
+def _without_developer_instructions(command: list[str]) -> list[str]:
+    cleaned: list[str] = []
+    skip_next = False
+    for index, item in enumerate(command):
+        if skip_next:
+            skip_next = False
+            continue
+        if item == "-c" and command[index + 1].startswith("developer_instructions="):
+            skip_next = True
+            continue
+        cleaned.append(item)
+    return cleaned
 
 
 def test_builds_new_thread_command(tmp_path: Path):
@@ -9,7 +37,13 @@ def test_builds_new_thread_command(tmp_path: Path):
 
     command = runner.build_command(prompt="hello", session_id=None)
 
-    assert command == [
+    developer_arg = _developer_instructions_arg(command)
+    assert "CEO Agent Prompt" in developer_arg
+    assert "你是 Derek 的钉钉自动回复分身" in developer_arg
+    assert "当前待处理消息" not in developer_arg
+    assert "\\n" in developer_arg
+
+    assert _without_developer_instructions(command) == [
         "codex",
         "exec",
         "--json",
@@ -21,8 +55,6 @@ def test_builds_new_thread_command(tmp_path: Path):
         'approval_policy="untrusted"',
         "-c",
         'approvals_reviewer="auto_review"',
-        "-c",
-        'developer_instructions="You are the local CEO DingTalk reply worker. Inspect the workspace before answering. Return only the requested JSON."',
         "-c",
         'model_reasoning_summary="concise"',
         "-c",
@@ -47,7 +79,12 @@ def test_builds_resume_command(tmp_path: Path):
 
     command = runner.build_command(prompt="next", session_id="abc")
 
-    assert command == [
+    developer_arg = _developer_instructions_arg(command)
+    assert "CEO Agent Prompt" in developer_arg
+    assert "你是 Derek 的钉钉自动回复分身" in developer_arg
+    assert "当前待处理消息" not in developer_arg
+
+    assert _without_developer_instructions(command) == [
         "codex",
         "exec",
         "resume",
@@ -60,8 +97,6 @@ def test_builds_resume_command(tmp_path: Path):
         'approval_policy="untrusted"',
         "-c",
         'approvals_reviewer="auto_review"',
-        "-c",
-        'developer_instructions="You are the local CEO DingTalk reply worker. Inspect the workspace before answering. Return only the requested JSON."',
         "-c",
         'model_reasoning_summary="concise"',
         "-c",
@@ -76,6 +111,19 @@ def test_builds_resume_command(tmp_path: Path):
         "-",
     ]
     assert "next" not in command
+
+
+def test_codex_developer_instructions_hold_thread_prompt_not_turn_message():
+    instructions = codex_developer_instructions()
+
+    assert instructions.startswith("You are the local CEO DingTalk reply worker.")
+    assert "CEO Agent Prompt" in instructions
+    assert "回答任何问题前，先检索本地 workspace" in instructions
+    assert "graphify query" in instructions
+    assert "组织职责包括算法负责人" in instructions
+    assert "只回答“新消息”提出的问题" in instructions
+    assert "必须输出 audit_documents 和 audit_summary" in instructions
+    assert "当前待处理消息" not in instructions
 
 
 def test_codex_decision_schema_file_exists():

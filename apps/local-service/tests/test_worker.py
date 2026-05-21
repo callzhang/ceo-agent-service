@@ -423,27 +423,9 @@ def test_group_mention_sends_signed_reply(tmp_path: Path, monkeypatch):
     assert dws.sent_at_users == [["sender-user-1", "mentioned-user-1"]]
     assert len(codex.calls) == 1
     prompt = codex.calls[0][0]
-    assert "CEO Agent Prompt" in prompt
-    assert "你是 Derek 的钉钉自动回复分身" in prompt
-    assert "先判断是否需要回复" in prompt
-    assert "系统类信息、机器人通知、审批/OA/日程/文件状态/自动同步等通知性消息" in prompt
-    assert "只记录 no_reply，不要代表 Derek 回复" in prompt
-    assert "回答任何问题前，先检索本地 workspace" in prompt
-    assert "graphify-out/GRAPH_REPORT.md" in prompt
-    assert "graphify query" in prompt
-    assert "只回答“新消息”提出的问题" in prompt
-    assert "不要断言已完成或未完成" in prompt
-    assert "不能代 Derek 声称他正在、即将或已经执行现实动作" in prompt
-    assert "应 handoff_to_human" in prompt
-    assert "先让对方把需要审核的文件或链接发出来" in prompt
-    assert "最终定稿或确认必须说明还需要" in prompt
-    assert "本人确认" in prompt
-    assert "必须先检索 workspace 里的岗位要求" in prompt
-    assert "查看上下文提到的简历文件或链接内容" in prompt
-    assert "不能凭一句消息下结论" in prompt
-    assert "必须输出 audit_documents 和 audit_summary" in prompt
-    assert "不要输出逐字思维链" in prompt
-    assert "send_reply、ask_clarifying_question、handoff_to_human、no_reply 或 stop_with_error" in prompt
+    assert prompt.startswith("当前待处理消息:")
+    assert "CEO Agent Prompt" not in prompt
+    assert "你是 Derek 的钉钉自动回复分身" not in prompt
     assert "会话: Friday" in prompt
     assert "@Derek Zen(磊哥) @晓民 这个怎么处理？" in prompt
     assert "引用: 这个ACL表看一下" in prompt
@@ -716,7 +698,7 @@ def test_resume_prompt_only_includes_turn_message_without_repeating_thread_promp
     assert "@Derek Zen(磊哥) 这个怎么处理？" in prompt
 
 
-def test_stale_codex_resume_clears_session_and_retries_with_full_prompt(
+def test_stale_codex_resume_clears_session_and_retries_with_new_user_message(
     tmp_path: Path, monkeypatch
 ):
     class SequencedCodex:
@@ -760,7 +742,8 @@ def test_stale_codex_resume_clears_session_and_retries_with_full_prompt(
 
     assert [session_id for _, session_id in codex.calls] == ["session-1", None]
     assert "CEO Agent Prompt" not in codex.calls[0][0]
-    assert "CEO Agent Prompt" in codex.calls[1][0]
+    assert "CEO Agent Prompt" not in codex.calls[1][0]
+    assert codex.calls[1][0].startswith("当前待处理消息:")
     assert worker.store.get_codex_session_id("cid-1") == "session-2"
     assert worker.store.count_reply_attempts() == 1
     attempt = worker.store.get_reply_attempt(1)
@@ -954,7 +937,8 @@ def test_force_new_rerun_starts_fresh_codex_session(
     worker.rerun_message(conversation(), "msg-1", force_new_decision=True)
 
     assert codex.calls[0][1] is None
-    assert "你是 Derek 的钉钉自动回复分身" in codex.calls[0][0]
+    assert codex.calls[0][0].startswith("当前待处理消息:")
+    assert "你是 Derek 的钉钉自动回复分身" not in codex.calls[0][0]
 
 
 def test_reply_attempt_records_codex_audit_fields(tmp_path: Path, monkeypatch):
@@ -1114,8 +1098,8 @@ def test_algorithm_owner_multi_mention_is_framed_as_derek_responsibility(
         )
     ]
     prompt = codex.calls[0][0]
-    assert "Derek 的组织职责包括算法负责人" in prompt
-    assert "即使同时 @ 了别人，也应视为需要 Derek 回复" in prompt
+    assert "aijam是否可以把算法大神们纳入进来？" in prompt
+    assert prompt.startswith("当前待处理消息:")
 
 
 def test_group_direct_mention_found_in_recent_context_is_queued(
@@ -1287,7 +1271,6 @@ def test_single_chat_old_candidate_context_does_not_become_new_question(
     assert dws.sent == []
     assert len(codex.calls) == 1
     prompt = codex.calls[0][0]
-    assert "只回答“新消息”提出的问题" in prompt
     new_messages_section = prompt.split("新消息:", 1)[1].split(CONTEXT_HEADER, 1)[0]
     context_section = prompt.split(CONTEXT_HEADER, 1)[1]
     assert "好的" in new_messages_section

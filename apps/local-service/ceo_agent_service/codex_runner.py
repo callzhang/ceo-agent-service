@@ -1,14 +1,25 @@
+import json
 import os
 from pathlib import Path
+
+from ceo_agent_service.prompt import ceo_agent_thread_prompt
 
 
 CODEX_DECISION_SCHEMA_PATH = (
     Path(__file__).resolve().parent / "schemas" / "codex_decision.schema.json"
 )
-CODEX_DEVELOPER_INSTRUCTIONS = (
+CODEX_DEVELOPER_INSTRUCTIONS_PREFIX = (
     "You are the local CEO DingTalk reply worker. Inspect the workspace before "
     "answering. Return only the requested JSON."
 )
+
+
+def codex_developer_instructions() -> str:
+    return f"{CODEX_DEVELOPER_INSTRUCTIONS_PREFIX}\n\n{ceo_agent_thread_prompt()}"
+
+
+def _config_string(key: str, value: str) -> str:
+    return f"{key}={json.dumps(value, ensure_ascii=False)}"
 
 
 class CodexRunner:
@@ -31,7 +42,7 @@ class CodexRunner:
             "-c",
             'approvals_reviewer="auto_review"',
             "-c",
-            f'developer_instructions="{CODEX_DEVELOPER_INSTRUCTIONS}"',
+            _config_string("developer_instructions", codex_developer_instructions()),
             "-c",
             'model_reasoning_summary="concise"',
             "-c",

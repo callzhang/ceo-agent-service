@@ -83,8 +83,6 @@ def build_turn_prompt(
     known_people_lines: list[str] | None = None,
 ) -> str:
     lines: list[str] = []
-    if include_thread_prompt:
-        lines.append(ceo_agent_thread_prompt())
     lines.extend(style_lines)
     lines.extend(
         [

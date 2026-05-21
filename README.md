@@ -20,6 +20,8 @@ retrieval, and records every decision in SQLite for audit and feedback.
 - Local workspace retrieval with graphify-first instructions.
 - Structured Codex decision schema with `send_reply`, `no_reply`,
   `ask_clarifying_question`, `handoff_to_human`, and `stop_with_error`.
+- Codex prompt separation: stable CEO reply policy is passed as developer
+  instructions, while each DingTalk turn is sent as the user message payload.
 - Local SQLite history for reply attempts, send status, errors, feedback, and
   organization cache.
 - FastAPI audit console with feedback and recall hooks.
