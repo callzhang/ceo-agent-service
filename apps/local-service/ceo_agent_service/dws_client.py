@@ -3,7 +3,7 @@ import os
 import re
 import subprocess
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 from pydantic import BaseModel
@@ -131,6 +131,17 @@ class DwsClient:
             "json",
         ]
 
+    def build_search_conversations_command(self, query: str) -> list[str]:
+        return [
+            self.dws_bin,
+            "chat",
+            "search",
+            "--query",
+            query,
+            "--format",
+            "json",
+        ]
+
     def build_send_message_command(
         self,
         conversation_id: str | None,
@@ -182,6 +193,35 @@ class DwsClient:
             limit=max(conversation.unread_point, 1),
             forward=True,
         )
+
+    def build_read_mentioned_messages_command(
+        self,
+        conversation: DingTalkConversation,
+        limit: int = 50,
+        cursor: str = "0",
+        lookback_hours: int = 24,
+    ) -> list[str]:
+        local_time_zone = _local_time_zone()
+        end_time = datetime.now(tz=local_time_zone)
+        start_time = end_time - timedelta(hours=lookback_hours)
+        return [
+            self.dws_bin,
+            "chat",
+            "message",
+            "list-mentions",
+            "--group",
+            conversation.open_conversation_id,
+            "--start",
+            start_time.isoformat(),
+            "--end",
+            end_time.isoformat(),
+            "--limit",
+            str(limit),
+            "--cursor",
+            cursor,
+            "--format",
+            "json",
+        ]
 
     def build_message_list_command(
         self,
@@ -364,6 +404,10 @@ class DwsClient:
             )
         )
 
+    def search_conversations(self, query: str) -> list[DingTalkConversation]:
+        payload = self.run_json(self.build_search_conversations_command(query))
+        return self.parse_search_conversations(payload)
+
     def read_recent_messages(
         self, conversation: DingTalkConversation, limit: int = 50
     ) -> list[DingTalkMessage]:
@@ -390,6 +434,27 @@ class DwsClient:
                     single_chat=conversation.single_chat,
                 )
             )
+        )
+
+    def read_mentioned_messages(
+        self,
+        conversation: DingTalkConversation,
+        limit: int = 50,
+        cursor: str = "0",
+        lookback_hours: int = 24,
+    ) -> list[DingTalkMessage]:
+        payload = self.run_json(
+            self.build_read_mentioned_messages_command(
+                conversation,
+                limit=limit,
+                cursor=cursor,
+                lookback_hours=lookback_hours,
+            )
+        )
+        return self.parse_messages(
+            payload,
+            conversation_title=conversation.title,
+            single_chat=conversation.single_chat,
         )
 
     def read_doc(self, node: str) -> dict[str, Any]:
@@ -813,6 +878,25 @@ class DwsClient:
         ]
 
     @staticmethod
+    def parse_search_conversations(payload: dict[str, Any]) -> list[DingTalkConversation]:
+        conversations = payload.get("result", {}).get("value", [])
+        if not isinstance(conversations, list):
+            return []
+        return [
+            DingTalkConversation(
+                open_conversation_id=conversation["openConversationId"],
+                title=conversation["title"],
+                single_chat=False,
+                unread_point=0,
+                last_message_create_at=None,
+            )
+            for conversation in conversations
+            if isinstance(conversation, dict)
+            and conversation.get("openConversationId")
+            and conversation.get("title")
+        ]
+
+    @staticmethod
     def parse_document_search_results(
         payload: dict[str, Any]
     ) -> list[DwsDocumentSearchResult]:
@@ -842,7 +926,16 @@ class DwsClient:
     def parse_messages(
         payload: dict[str, Any], conversation_title: str, single_chat: bool
     ) -> list[DingTalkMessage]:
-        messages = payload.get("result", {}).get("messages", [])
+        result = payload.get("result", {})
+        messages = result.get("messages", [])
+        if not messages and isinstance(result.get("conversationMessagesList"), list):
+            messages = []
+            for conversation_payload in result["conversationMessagesList"]:
+                if not isinstance(conversation_payload, dict):
+                    continue
+                conversation_messages = conversation_payload.get("messages", [])
+                if isinstance(conversation_messages, list):
+                    messages.extend(conversation_messages)
         parsed_messages = []
         for message in messages:
             quoted_message = message.get("quotedMessage") or {}

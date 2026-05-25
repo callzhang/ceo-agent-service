@@ -6,6 +6,7 @@ from ceo_agent_service.audit_web import (
     create_audit_app,
     handle_feedback_post,
     handle_recall_post,
+    handle_reviewed_message_reply,
     render_attempt_detail,
     render_attempt_list,
     render_codex_session_detail,
@@ -13,6 +14,7 @@ from ceo_agent_service.audit_web import (
     render_error_list,
     run_audit_web,
 )
+from ceo_agent_service.dingtalk_models import DingTalkConversation, DingTalkMessage
 from ceo_agent_service.store import AutoReplyStore
 
 
@@ -458,6 +460,89 @@ def test_handle_recall_post_blocks_without_recall_key(tmp_path: Path):
     assert status == 400
     assert headers == {}
     assert "撤销不可用" in html
+
+
+def test_handle_reviewed_message_reply_matches_sender_group_and_text(
+    monkeypatch,
+    tmp_path: Path,
+):
+    class FakeDws:
+        def __init__(self):
+            self.sent_messages = []
+
+        def search_conversations(self, query):
+            assert query == "【招聘】大模型项目经理/大模型数据解决方案专家"
+            return [
+                DingTalkConversation(
+                    open_conversation_id="cid-1",
+                    title="【招聘】大模型项目经理/大模型数据解决方案专家",
+                    single_chat=False,
+                    unread_point=0,
+                )
+            ]
+
+        def read_mentioned_messages(self, conversation, limit=50):
+            assert conversation.open_conversation_id == "cid-1"
+            assert limit == 100
+            return [
+                DingTalkMessage(
+                    open_conversation_id="cid-1",
+                    open_message_id="msg-1",
+                    conversation_title=conversation.title,
+                    single_chat=False,
+                    sender_name="Mina 邹",
+                    sender_user_id="user-mina",
+                    create_time="2026-05-25 13:30:26",
+                    content="@Derek Zen(磊哥) 磊哥分身，大模型项目经理需要具备什么能力",
+                )
+            ]
+
+        def send_message(
+            self,
+            conversation_id,
+            text,
+            at_users=None,
+            user_id=None,
+            open_dingtalk_id=None,
+        ):
+            self.sent_messages.append((conversation_id, text, at_users, user_id))
+            return {"result": {"processQueryKey": "recall-1"}}
+
+    monkeypatch.setattr(
+        "ceo_agent_service.worker.send_macos_notification",
+        lambda **kwargs: None,
+    )
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    dws = FakeDws()
+
+    result = handle_reviewed_message_reply(
+        store,
+        dws,
+        user_name="Mina 邹",
+        group_name="【招聘】大模型项目经理/大模型数据解决方案专家",
+        message_str="@Derek Zen(磊哥) 磊哥分身，大模型项目经理需要具备什么能力",
+        reply_text="这个岗位核心看业务拆解、模型理解、项目推进和学习速度。",
+    )
+
+    attempt = store.get_reply_attempt(result["attempt_id"])
+    sent_reply = store.get_sent_reply("cid-1", "msg-1")
+    assert result["send_status"] == "sent"
+    assert attempt is not None
+    assert attempt.trigger_sender == "Mina 邹"
+    assert attempt.trigger_text == "@Derek Zen(磊哥) 磊哥分身，大模型项目经理需要具备什么能力"
+    assert attempt.final_reply_text is not None
+    assert "> Mina 邹: 磊哥分身，大模型项目经理需要具备什么能力" in attempt.final_reply_text
+    assert "<@user-mina> 这个岗位核心看业务拆解、模型理解、项目推进和学习速度。" in attempt.final_reply_text
+    assert dws.sent_messages == [
+        (
+            "cid-1",
+            attempt.final_reply_text,
+            ["user-mina"],
+            None,
+        )
+    ]
+    assert sent_reply is not None
+    assert sent_reply.recall_key == "recall-1"
 
 
 def test_render_error_list_shows_recent_errors(tmp_path: Path):

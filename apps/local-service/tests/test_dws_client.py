@@ -736,6 +736,82 @@ def test_read_recent_messages_high_level_method_uses_group_command(monkeypatch):
             "json",
         ]
     ]
+
+
+def test_search_conversations_parses_group_results():
+    payload = {
+        "result": {
+            "value": [
+                {
+                    "openConversationId": "cid-1",
+                    "title": "【招聘】大模型项目经理/大模型数据解决方案专家",
+                }
+            ]
+        }
+    }
+    client = RecordingDwsClient(payload)
+
+    conversations = client.search_conversations("大模型项目经理")
+
+    assert client.commands == [
+        [
+            "dws",
+            "chat",
+            "search",
+            "--query",
+            "大模型项目经理",
+            "--format",
+            "json",
+        ]
+    ]
+    assert conversations[0].open_conversation_id == "cid-1"
+    assert conversations[0].title == "【招聘】大模型项目经理/大模型数据解决方案专家"
+
+
+def test_read_mentioned_messages_parses_conversation_messages_list(monkeypatch):
+    monkeypatch.setattr(dws_client, "_local_time_zone", lambda: TEST_LOCAL_TZ)
+    payload = {
+        "result": {
+            "conversationMessagesList": [
+                {
+                    "openConversationId": "cid-1",
+                    "singleChat": False,
+                    "title": "Friday",
+                    "messages": [
+                        {
+                            "openConversationId": "cid-1",
+                            "openMessageId": "msg-1",
+                            "sender": "Mina 邹",
+                            "senderOpenDingTalkId": "open-1",
+                            "createTime": "2026-05-25 13:30:26",
+                            "content": "@Derek Zen(磊哥) 磊哥分身，大模型项目经理需要具备什么能力",
+                        }
+                    ],
+                }
+            ]
+        }
+    }
+    client = RecordingDwsClient(payload)
+    conversation = DingTalkConversation(
+        open_conversation_id="cid-1",
+        title="Friday",
+        single_chat=False,
+        unread_point=0,
+    )
+
+    messages = client.read_mentioned_messages(conversation, limit=100)
+
+    assert client.commands[0][:6] == [
+        "dws",
+        "chat",
+        "message",
+        "list-mentions",
+        "--group",
+        "cid-1",
+    ]
+    assert "--start" in client.commands[0]
+    assert "--end" in client.commands[0]
+    assert messages[0].sender_name == "Mina 邹"
     assert messages[0].open_message_id == "msg-1"
 
 

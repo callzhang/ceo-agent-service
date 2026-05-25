@@ -6,15 +6,17 @@ from urllib.parse import parse_qs
 
 import uvicorn
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 from ceo_agent_service.codex_history import (
     RenderedCodexEvent,
     render_local_codex_session,
 )
 from ceo_agent_service.codex_decision import audit_summary_explains_no_documents
+from ceo_agent_service.dingtalk_models import CodexAction, SensitivityKind
 from ceo_agent_service.dws_client import DwsClient
 from ceo_agent_service.store import AutoReplyStore, ReplyAttempt, SentReply
+from ceo_agent_service.worker import DingTalkAutoReplyWorker
 
 
 CSS = """
@@ -326,6 +328,82 @@ def handle_recall_post(
     return 303, {"Location": f"/attempts/{attempt_id}"}, ""
 
 
+def handle_reviewed_message_reply(
+    store: AutoReplyStore,
+    dws: DwsClient,
+    *,
+    user_name: str,
+    group_name: str,
+    message_str: str,
+    reply_text: str,
+) -> dict[str, object]:
+    conversations = dws.search_conversations(group_name)
+    exact_conversations = [
+        conversation for conversation in conversations if conversation.title == group_name
+    ]
+    if len(exact_conversations) != 1:
+        raise ValueError(
+            f"expected one conversation named {group_name!r}, got {len(exact_conversations)}"
+        )
+    conversation = exact_conversations[0]
+    messages = dws.read_mentioned_messages(conversation, limit=100)
+    matches = [
+        message
+        for message in messages
+        if message.sender_name == user_name and message.content == message_str
+    ]
+    if not matches:
+        raise ValueError("message not found for user_name/group_name/message_str")
+    trigger = matches[0]
+    store.upsert_conversation(
+        conversation_id=conversation.open_conversation_id,
+        title=conversation.title,
+        single_chat=conversation.single_chat,
+        codex_session_id=None,
+    )
+    attempt_id = store.record_reply_attempt(
+        conversation_id=conversation.open_conversation_id,
+        conversation_title=conversation.title,
+        trigger_message_id=trigger.open_message_id,
+        trigger_sender=trigger.sender_name,
+        trigger_text=trigger.content,
+        action=CodexAction.SEND_REPLY.value,
+        sensitivity_kind=SensitivityKind.GENERAL.value,
+        codex_reason="reviewed_message_reply",
+        draft_reply_text=reply_text,
+        audit_tool_events_json=json.dumps(
+            [
+                {
+                    "tool": "audit_web.handle_reviewed_message_reply",
+                    "result": "matched user_name/group_name/message_str",
+                }
+            ],
+            ensure_ascii=False,
+        ),
+        audit_summary="已按发送人、群名、消息原文定位并处理。",
+    )
+    worker = DingTalkAutoReplyWorker(store=store, dws=dws, codex=None, dry_run=False)
+    worker._send_reply(
+        conversation=conversation,
+        trigger=trigger,
+        new_messages=[trigger],
+        reply_text=reply_text,
+        reason="reviewed_message_reply",
+        attempt_id=attempt_id,
+    )
+    attempt = store.get_reply_attempt(attempt_id)
+    if attempt is None:
+        raise ValueError(f"reply attempt disappeared: {attempt_id}")
+    return {
+        "attempt_id": attempt_id,
+        "conversation_title": conversation.title,
+        "trigger_sender": trigger.sender_name,
+        "trigger_text": trigger.content,
+        "send_status": attempt.send_status,
+        "final_reply_text": attempt.final_reply_text,
+    }
+
+
 def create_audit_app(
     db_path: Path,
     ding_robot_code: str | None = None,
@@ -375,6 +453,19 @@ def create_audit_app(
             attempt_id,
         )
         return _fastapi_post_response(status, headers, html)
+
+    @app.post("/messages/reviewed-reply")
+    async def reviewed_reply(request: Request):
+        payload = json.loads((await request.body()).decode("utf-8"))
+        result = handle_reviewed_message_reply(
+            AutoReplyStore(db_path),
+            DwsClient(ding_robot_code=ding_robot_code, ding_robot_name=ding_robot_name),
+            user_name=str(payload["user_name"]),
+            group_name=str(payload["group_name"]),
+            message_str=str(payload["message_str"]),
+            reply_text=str(payload["reply_text"]),
+        )
+        return JSONResponse(result)
 
     return app
 
