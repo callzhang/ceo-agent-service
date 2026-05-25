@@ -346,6 +346,18 @@ def handle_reviewed_message_reply(
     exact_conversations = [
         conversation for conversation in conversations if conversation.title == group_name
     ]
+    stored_single_chat = None
+    if len(exact_conversations) != 1:
+        stored_single_chat = store.find_single_chat_conversation_by_title(group_name)
+    if len(exact_conversations) != 1 and stored_single_chat is not None:
+        exact_conversations = [
+            DingTalkConversation(
+                open_conversation_id=stored_single_chat.conversation_id,
+                title=stored_single_chat.title,
+                single_chat=stored_single_chat.single_chat,
+                unread_point=1,
+            )
+        ]
     if len(exact_conversations) != 1:
         raise ValueError(
             f"expected one conversation named {group_name!r}, got {len(exact_conversations)}"

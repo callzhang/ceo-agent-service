@@ -529,6 +529,30 @@ class AutoReplyStore:
                 codex_session_id=row["codex_session_id"],
             )
 
+    def find_single_chat_conversation_by_title(
+        self, title: str
+    ) -> ConversationRecord | None:
+        with self._connect() as db:
+            rows = db.execute(
+                """
+                select conversation_id, title, single_chat, codex_session_id
+                from conversations
+                where title=? and single_chat=1
+                order by conversation_id
+                limit 2
+                """,
+                (title,),
+            ).fetchall()
+            if len(rows) != 1:
+                return None
+            row = rows[0]
+            return ConversationRecord(
+                conversation_id=row["conversation_id"],
+                title=row["title"],
+                single_chat=bool(row["single_chat"]),
+                codex_session_id=row["codex_session_id"],
+            )
+
     def has_seen(self, message_id: str) -> bool:
         with self._connect() as db:
             row = db.execute(
