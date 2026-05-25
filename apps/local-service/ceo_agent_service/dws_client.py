@@ -196,7 +196,7 @@ class DwsClient:
 
     def build_read_mentioned_messages_command(
         self,
-        conversation: DingTalkConversation,
+        conversation: DingTalkConversation | None = None,
         limit: int = 50,
         cursor: str = "0",
         lookback_hours: int = 24,
@@ -204,24 +204,29 @@ class DwsClient:
         local_time_zone = _local_time_zone()
         end_time = datetime.now(tz=local_time_zone)
         start_time = end_time - timedelta(hours=lookback_hours)
-        return [
+        command = [
             self.dws_bin,
             "chat",
             "message",
             "list-mentions",
-            "--group",
-            conversation.open_conversation_id,
             "--start",
             start_time.isoformat(),
             "--end",
             end_time.isoformat(),
-            "--limit",
-            str(limit),
-            "--cursor",
-            cursor,
-            "--format",
-            "json",
         ]
+        if conversation is not None:
+            command.extend(["--group", conversation.open_conversation_id])
+        command.extend(
+            [
+                "--limit",
+                str(limit),
+                "--cursor",
+                cursor,
+                "--format",
+                "json",
+            ]
+        )
+        return command
 
     def build_message_list_command(
         self,
@@ -438,7 +443,7 @@ class DwsClient:
 
     def read_mentioned_messages(
         self,
-        conversation: DingTalkConversation,
+        conversation: DingTalkConversation | None = None,
         limit: int = 50,
         cursor: str = "0",
         lookback_hours: int = 24,
@@ -453,8 +458,8 @@ class DwsClient:
         )
         return self.parse_messages(
             payload,
-            conversation_title=conversation.title,
-            single_chat=conversation.single_chat,
+            conversation_title=conversation.title if conversation is not None else "",
+            single_chat=conversation.single_chat if conversation is not None else False,
         )
 
     def read_doc(self, node: str) -> dict[str, Any]:
@@ -929,34 +934,59 @@ class DwsClient:
         result = payload.get("result", {})
         messages = result.get("messages", [])
         if not messages and isinstance(result.get("conversationMessagesList"), list):
-            messages = []
+            parsed_messages = []
             for conversation_payload in result["conversationMessagesList"]:
                 if not isinstance(conversation_payload, dict):
                     continue
                 conversation_messages = conversation_payload.get("messages", [])
-                if isinstance(conversation_messages, list):
-                    messages.extend(conversation_messages)
+                if not isinstance(conversation_messages, list):
+                    continue
+                payload_title = str(
+                    conversation_payload.get("title") or conversation_title
+                )
+                payload_single_chat = bool(
+                    conversation_payload.get("singleChat", single_chat)
+                )
+                for message in conversation_messages:
+                    parsed_messages.append(
+                        DwsClient._parse_message(
+                            message,
+                            conversation_title=payload_title,
+                            single_chat=payload_single_chat,
+                        )
+                    )
+            return parsed_messages
         parsed_messages = []
         for message in messages:
-            quoted_message = message.get("quotedMessage") or {}
             parsed_messages.append(
-                DingTalkMessage(
-                    open_conversation_id=message["openConversationId"],
-                    open_message_id=message["openMessageId"],
+                DwsClient._parse_message(
+                    message,
                     conversation_title=conversation_title,
                     single_chat=single_chat,
-                    sender_name=message["sender"],
-                    sender_open_dingtalk_id=message.get("senderOpenDingTalkId"),
-                    sender_user_id=message.get("senderUserId"),
-                    message_type=DwsClient._message_type(message),
-                    create_time=message["createTime"],
-                    content=message["content"],
-                    mentioned_user_ids=DwsClient._mentioned_user_ids(message),
-                    quoted_message_id=quoted_message.get("openMessageId"),
-                    quoted_content=quoted_message.get("content"),
                 )
             )
         return parsed_messages
+
+    @staticmethod
+    def _parse_message(
+        message: dict[str, Any], conversation_title: str, single_chat: bool
+    ) -> DingTalkMessage:
+        quoted_message = message.get("quotedMessage") or {}
+        return DingTalkMessage(
+            open_conversation_id=message["openConversationId"],
+            open_message_id=message["openMessageId"],
+            conversation_title=conversation_title,
+            single_chat=single_chat,
+            sender_name=message["sender"],
+            sender_open_dingtalk_id=message.get("senderOpenDingTalkId"),
+            sender_user_id=message.get("senderUserId"),
+            message_type=DwsClient._message_type(message),
+            create_time=message["createTime"],
+            content=message["content"],
+            mentioned_user_ids=DwsClient._mentioned_user_ids(message),
+            quoted_message_id=quoted_message.get("openMessageId"),
+            quoted_content=quoted_message.get("content"),
+        )
 
     @staticmethod
     def _mentioned_user_ids(message: dict[str, Any]) -> list[str]:

@@ -47,6 +47,7 @@ class FakeDws:
         self.direct_user_ids: list[str | None] = []
         self.send_attempt_count = 0
         self.dings: list[str] = []
+        self.mentioned_messages: dict[str, list[DingTalkMessage]] = {}
         self.user_departments: dict[str, set[str]] = {}
         self.hr_users: set[str] = set()
         self.manager_chains: dict[str, list[str]] = {}
@@ -68,6 +69,21 @@ class FakeDws:
         self, conversation: DingTalkConversation
     ) -> list[DingTalkMessage]:
         return self.unread_messages.get(conversation.open_conversation_id, [])
+
+    def read_mentioned_messages(
+        self,
+        conversation: DingTalkConversation | None = None,
+        limit: int = 50,
+        cursor: str = "0",
+        lookback_hours: int = 24,
+    ) -> list[DingTalkMessage]:
+        if conversation is None:
+            return [
+                message
+                for messages in self.mentioned_messages.values()
+                for message in messages
+            ]
+        return self.mentioned_messages.get(conversation.open_conversation_id, [])
 
     def read_doc(self, node: str) -> dict:
         self.read_doc_calls.append(node)
@@ -1906,8 +1922,37 @@ def test_read_failure_records_error_and_continues_next_conversation(
             "<@sender-user-1> 先按A方案走（by磊哥分身）",
         )
     ]
+
+
+def test_group_mention_from_unread_conversation_is_processed_when_unread_tail_misses_it(
+    tmp_path: Path, monkeypatch
+):
+    unread_tail = message("后续同步进展", message_id="msg-tail")
+    unread_tail.create_time = "2026-05-25 17:53:12"
+    missed_mention = message(
+        "@Derek Zen(磊哥) 要不现在对一下",
+        message_id="msg-mentioned",
+    )
+    missed_mention.create_time = "2026-05-25 16:20:14"
+    conv = conversation()
+    conv.unread_point = 6
+    dws = FakeDws(
+        [conv],
+        {"cid-1": [unread_tail]},
+        unread_messages={"cid-1": [unread_tail]},
+    )
+    dws.mentioned_messages = {"cid-1": [missed_mention]}
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="现在可以对")
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch, dry_run=True)
+
+    worker.run_once()
+
+    attempts = worker.store.list_reply_attempts(limit=10)
     assert len(codex.calls) == 1
-    assert worker.store.count_errors() == 1
+    assert attempts[0].trigger_message_id == "msg-mentioned"
+    assert attempts[0].send_status == "dry_run"
 
 
 def test_internal_personnel_question_missing_subject_asks_clarifying_question(

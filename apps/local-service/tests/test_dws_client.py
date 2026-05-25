@@ -801,18 +801,28 @@ def test_read_mentioned_messages_parses_conversation_messages_list(monkeypatch):
 
     messages = client.read_mentioned_messages(conversation, limit=100)
 
-    assert client.commands[0][:6] == [
-        "dws",
-        "chat",
-        "message",
-        "list-mentions",
-        "--group",
-        "cid-1",
-    ]
+    assert client.commands[0][:4] == ["dws", "chat", "message", "list-mentions"]
+    assert "--group" in client.commands[0]
+    assert client.commands[0][client.commands[0].index("--group") + 1] == "cid-1"
     assert "--start" in client.commands[0]
     assert "--end" in client.commands[0]
     assert messages[0].sender_name == "Mina 邹"
     assert messages[0].open_message_id == "msg-1"
+
+
+def test_read_mentioned_messages_without_conversation_uses_global_mentions(
+    monkeypatch,
+):
+    monkeypatch.setattr(dws_client, "_local_time_zone", lambda: TEST_LOCAL_TZ)
+    payload = {"result": {"conversationMessagesList": []}}
+    client = RecordingDwsClient(payload)
+
+    client.read_mentioned_messages(limit=100)
+
+    command = client.commands[0]
+    assert command[:4] == ["dws", "chat", "message", "list-mentions"]
+    assert "--group" not in command
+    assert command[-6:] == ["--limit", "100", "--cursor", "0", "--format", "json"]
 
 
 def test_build_read_unread_messages_command_reads_forward_from_unread_cursor(

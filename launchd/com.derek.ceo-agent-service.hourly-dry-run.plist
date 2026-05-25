@@ -10,7 +10,7 @@
   <array>
     <string>/bin/zsh</string>
     <string>-lc</string>
-    <string>lock_dir="${TMPDIR:-/tmp}/ceo-agent-service-hourly-dry-run.lock"; if ! mkdir "$lock_dir" 2&gt;/dev/null; then date -u "+%Y-%m-%dT%H:%M:%SZ hourly not-send-message skipped: previous run still active"; exit 0; fi; trap 'rmdir "$lock_dir"' EXIT; cd /Users/derek/Documents/Projects/ceo-agent-service/apps/local-service &amp;&amp; export PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH PYTHONPATH=. CEO_NOT_SEND_MESSAGE=1 CEO_WORKER_DB=/Users/derek/Documents/Projects/ceo-agent-service/data/auto-reply.sqlite3 CEO_WORKSPACE=/Users/derek/Documents/memory CEO_CORPUS_DIR=/Users/derek/Documents/Projects/ceo-agent-service/corpus &amp;&amp; date -u "+%Y-%m-%dT%H:%M:%SZ hourly not-send-message starting" &amp;&amp; .venv/bin/python -m ceo_agent_service.cli run-once --not-send-message --db /Users/derek/Documents/Projects/ceo-agent-service/data/auto-reply.sqlite3 --workspace /Users/derek/Documents/memory --corpus-dir /Users/derek/Documents/Projects/ceo-agent-service/corpus; exit_code=$?; date -u "+%Y-%m-%dT%H:%M:%SZ hourly not-send-message finished status=${exit_code}"; exit $exit_code</string>
+    <string>lock_dir="${TMPDIR:-/tmp}/ceo-agent-service-hourly-dry-run.lock"; if ! mkdir "$lock_dir" 2&gt;/dev/null; then if [ -f "$lock_dir/pid" ] &amp;&amp; kill -0 "$(cat "$lock_dir/pid")" 2&gt;/dev/null; then date -u "+%Y-%m-%dT%H:%M:%SZ hourly not-send-message skipped: previous run still active"; exit 0; fi; rm -rf "$lock_dir"; mkdir "$lock_dir"; fi; printf "%s\n" "$$" &gt; "$lock_dir/pid"; trap 'rm -rf "$lock_dir"' EXIT; cd /Users/derek/Documents/Projects/ceo-agent-service/apps/local-service &amp;&amp; export PATH=/Users/derek/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH PYTHONPATH=. CEO_NOT_SEND_MESSAGE=1 CEO_WORKER_DB=/Users/derek/Documents/Projects/ceo-agent-service/data/auto-reply.sqlite3 CEO_WORKSPACE=/Users/derek/Documents/memory CEO_CORPUS_DIR=/Users/derek/Documents/Projects/ceo-agent-service/corpus &amp;&amp; date -u "+%Y-%m-%dT%H:%M:%SZ hourly not-send-message starting" &amp;&amp; .venv/bin/python -m ceo_agent_service.cli run-once --not-send-message --db /Users/derek/Documents/Projects/ceo-agent-service/data/auto-reply.sqlite3 --workspace /Users/derek/Documents/memory --corpus-dir /Users/derek/Documents/Projects/ceo-agent-service/corpus; exit_code=$?; date -u "+%Y-%m-%dT%H:%M:%SZ hourly not-send-message finished status=${exit_code}"; exit $exit_code</string>
   </array>
 
   <key>WorkingDirectory</key>
@@ -33,7 +33,7 @@
     <key>HOME</key>
     <string>/Users/derek</string>
     <key>PATH</key>
-    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <string>/Users/derek/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
     <key>PYTHONPATH</key>
     <string>.</string>
     <key>CEO_WORKER_DB</key>

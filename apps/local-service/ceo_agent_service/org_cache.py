@@ -84,6 +84,20 @@ class CachedDwsClient:
     def read_unread_messages(self, conversation):
         return self.dws.read_unread_messages(conversation)
 
+    def read_mentioned_messages(
+        self,
+        conversation=None,
+        limit: int = 50,
+        cursor: str = "0",
+        lookback_hours: int = 24,
+    ):
+        return self.dws.read_mentioned_messages(
+            conversation,
+            limit=limit,
+            cursor=cursor,
+            lookback_hours=lookback_hours,
+        )
+
     def read_doc(self, node: str):
         return self.dws.read_doc(node)
 

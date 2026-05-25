@@ -111,6 +111,7 @@ class DingTalkAutoReplyWorker:
     def run_once(self, max_batches: int | None = None) -> None:
         processed_batches = 0
         conversations = self.dws.list_unread_conversations(count=50)
+        mentioned_messages = self._mentioned_messages_by_conversation(conversations)
         for conversation in conversations:
             self.store.upsert_conversation(
                 conversation_id=conversation.open_conversation_id,
@@ -145,6 +146,7 @@ class DingTalkAutoReplyWorker:
                 conversation,
                 context_messages,
                 unread_messages,
+                mentioned_messages.get(conversation.open_conversation_id, []),
             )
             candidates = self._candidate_messages(
                 conversation,
@@ -170,6 +172,24 @@ class DingTalkAutoReplyWorker:
             processed_batches += 1
             if max_batches is not None and processed_batches >= max_batches:
                 return
+
+    def _mentioned_messages_by_conversation(
+        self, conversations: list[DingTalkConversation]
+    ) -> dict[str, list[DingTalkMessage]]:
+        unread_group_ids = {
+            conversation.open_conversation_id
+            for conversation in conversations
+            if not conversation.single_chat
+        }
+        if not unread_group_ids:
+            return {}
+        messages = self.dws.read_mentioned_messages(limit=100)
+        grouped: dict[str, list[DingTalkMessage]] = {}
+        for message in messages:
+            if message.open_conversation_id not in unread_group_ids:
+                continue
+            grouped.setdefault(message.open_conversation_id, []).append(message)
+        return grouped
 
     def rerun_message(
         self,
@@ -346,6 +366,7 @@ class DingTalkAutoReplyWorker:
         conversation: DingTalkConversation,
         context_messages: list[DingTalkMessage],
         unread_messages: list[DingTalkMessage],
+        mentioned_messages: list[DingTalkMessage] | None = None,
     ) -> list[DingTalkMessage]:
         if conversation.single_chat:
             return unread_messages
@@ -365,6 +386,11 @@ class DingTalkAutoReplyWorker:
                 recovery_start_time is None
                 or message.create_time < recovery_start_time
             ):
+                continue
+            seen_message_ids.add(message.open_message_id)
+            result.append(message)
+        for message in sorted(mentioned_messages or [], key=lambda item: item.create_time):
+            if message.open_message_id in seen_message_ids:
                 continue
             seen_message_ids.add(message.open_message_id)
             result.append(message)

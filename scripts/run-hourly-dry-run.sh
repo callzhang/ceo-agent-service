@@ -7,14 +7,19 @@ lock_dir="${CEO_DRY_RUN_LOCK_DIR:-${TMPDIR:-/tmp}/ceo-agent-service-hourly-dry-r
 
 mkdir -p "${log_dir}"
 if ! mkdir "${lock_dir}" 2>/dev/null; then
-  printf '%s hourly dry-run skipped: previous run still active\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  exit 0
+  if [[ -f "${lock_dir}/pid" ]] && kill -0 "$(cat "${lock_dir}/pid")" 2>/dev/null; then
+    printf '%s hourly dry-run skipped: previous run still active\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    exit 0
+  fi
+  rm -rf "${lock_dir}"
+  mkdir "${lock_dir}"
 fi
-trap 'rmdir "${lock_dir}"' EXIT
+printf '%s\n' "$$" > "${lock_dir}/pid"
+trap 'rm -rf "${lock_dir}"' EXIT
 
 cd "${repo_root}/apps/local-service"
 
-export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:${PATH:-}"
+export PATH="${HOME}/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:${PATH:-}"
 export PYTHONPATH="${PYTHONPATH:-.}"
 export CEO_WORKSPACE="${CEO_WORKSPACE:-${HOME}/Documents/memory}"
 export CEO_WORKER_DB="${CEO_WORKER_DB:-${repo_root}/data/auto-reply.sqlite3}"
