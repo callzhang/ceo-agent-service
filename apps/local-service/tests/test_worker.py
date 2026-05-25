@@ -174,6 +174,21 @@ class FakeCodex:
         return self.decision
 
 
+class SequencedFakeCodex:
+    def __init__(self, decisions: list[CodexDecision]):
+        self.decisions = decisions
+        self.calls: list[tuple[str, str | None]] = []
+        self.last_session_id: str | None = None
+        self.last_audit_tool_events: list[dict[str, str]] = []
+        self.last_transcript_start_line = 0
+        self.last_transcript_end_line = 0
+
+    def decide(self, prompt: str, session_id: str | None) -> CodexDecision:
+        self.calls.append((prompt, session_id))
+        self.last_session_id = session_id or self.last_session_id or "session-1"
+        return self.decisions[len(self.calls) - 1]
+
+
 def conversation(single_chat: bool = False) -> DingTalkConversation:
     return DingTalkConversation(
         open_conversation_id="cid-1",
@@ -619,6 +634,43 @@ def test_success_notification_keeps_full_reply_text(tmp_path: Path, monkeypatch)
             "url": None,
         }
     ]
+
+
+def test_leak_check_feedback_regenerates_reply_before_blocking(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message("@Derek Zen(磊哥) 这个怎么处理？")
+    trigger.mentioned_user_ids = ["derek-user-1"]
+    dws = FakeDws([conversation()], {"cid-1": [trigger]})
+    codex = SequencedFakeCodex(
+        [
+            CodexDecision(
+                action=CodexAction.SEND_REPLY,
+                reply_text="参考 [1]，先按A方案推进",
+                audit_summary="只需上下文判断，当前消息已足够确认。",
+            ),
+            CodexDecision(
+                action=CodexAction.SEND_REPLY,
+                reply_text="先按A方案推进",
+                audit_summary="收到安全反馈后，改写为不带来源引用的回复。",
+            ),
+        ]
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch, dry_run=True)
+
+    worker.run_once()
+
+    assert len(codex.calls) == 2
+    assert codex.calls[1][1] == "session-1"
+    assert "发送安全检查拦截" in codex.calls[1][0]
+    assert "不要引用来源" in codex.calls[1][0]
+    assert worker.store.count_errors() == 0
+    attempt = worker.store.get_reply_attempt(1)
+    assert attempt is not None
+    assert attempt.send_status == "dry_run"
+    assert attempt.send_error == ""
+    assert "参考 [1]" not in attempt.final_reply_text
+    assert "先按A方案推进" in attempt.final_reply_text
 
 
 def test_dingtalk_doc_link_is_read_before_codex(tmp_path: Path, monkeypatch):

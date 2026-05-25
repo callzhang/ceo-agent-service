@@ -32,9 +32,17 @@ from ceo_agent_service.notification import send_macos_notification
 from ceo_agent_service.permission import PermissionAction, PermissionGate
 from ceo_agent_service.prompt import LinkedDocumentContext, build_turn_prompt
 from ceo_agent_service.store import AutoReplyStore, ReplyAttempt
+from ceo_agent_service.leak_check import FORBIDDEN_MARKERS
 
 
 HANDOFF_ACK = handoff_ack()
+LEAK_CHECK_REGENERATION_SCHEMA = (
+    'JSON schema: {"action":"send_reply|ask_clarifying_question|handoff_to_human|no_reply|stop_with_error",'
+    '"reply_text":"","reason":"","ding_self":false,"macos_notify":true,'
+    '"sensitivity_kind":"general|internal_personnel|external_candidate",'
+    '"personnel_subject_user_id":null,"candidate_context_known":false,"candidate_department_ids":[],'
+    '"audit_documents":[],"audit_summary":""}'
+)
 SPLIT_PERSON_SIGNATURE = assistant_signature()
 CURRENT_USER_DISPLAY_NAMES = set(current_user_display_names())
 TEXT_MESSAGE_TYPES = {"text"}
@@ -1174,6 +1182,17 @@ class DingTalkAutoReplyWorker:
             reply_text,
             send_at_users,
         )
+        if contains_forbidden_leak(reply_text):
+            regenerated_reply_text = self._regenerate_reply_after_leak_check(
+                blocked_reply_text=reply_text,
+            )
+            if regenerated_reply_text:
+                reply_text = append_signature(regenerated_reply_text)
+                reply_text = self._format_reply_text(
+                    trigger,
+                    reply_text,
+                    send_at_users,
+                )
         self._deliver_final_reply(
             conversation=conversation,
             trigger=trigger,
@@ -1185,6 +1204,37 @@ class DingTalkAutoReplyWorker:
             direct_open_dingtalk_id=trigger.sender_open_dingtalk_id
             if conversation.single_chat
             else None,
+        )
+
+    def _regenerate_reply_after_leak_check(
+        self,
+        *,
+        blocked_reply_text: str,
+    ) -> str:
+        feedback_prompt = self._leak_check_feedback_prompt(blocked_reply_text)
+        decision = self.codex.decide(
+            prompt=feedback_prompt,
+            session_id=getattr(self.codex, "last_session_id", None),
+        )
+        if decision.action not in {
+            CodexAction.SEND_REPLY,
+            CodexAction.ASK_CLARIFYING_QUESTION,
+        }:
+            return ""
+        return decision.reply_text.strip()
+
+    @staticmethod
+    def _leak_check_feedback_prompt(blocked_reply_text: str) -> str:
+        forbidden_terms = "、".join(f"`{marker}`" for marker in FORBIDDEN_MARKERS)
+        return (
+            "上一版 reply_text 被发送安全检查拦截，不能发送。\n"
+            "请基于同一个上下文重新输出合法 JSON，只改写 reply_text，不要解释。\n"
+            "reply_text 不要引用来源、不要加脚注编号、不要写参考文献，"
+            f"也不要出现这些会被发送安全检查拦截的字符串：{forbidden_terms}。\n"
+            "如果业务上需要表达产品能力或判断依据，改用普通中文描述，不要照搬上述字符串。\n"
+            "上一版最终回复如下，仅用于改写，不要原样复制：\n"
+            f"{blocked_reply_text[:1200]}\n"
+            f"{LEAK_CHECK_REGENERATION_SCHEMA}"
         )
 
     def _deliver_final_reply(
