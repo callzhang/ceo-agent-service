@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from ceo_agent_service.dingtalk_models import DingTalkConversation, DingTalkMessage
 
@@ -60,6 +60,28 @@ class DwsDocumentSearchResult(BaseModel):
     content_type: str = ""
     node_type: str = ""
     doc_url: str = ""
+
+
+class DwsCalendarEvent(BaseModel):
+    event_id: str = ""
+    title: str = ""
+    start_time: str = ""
+    end_time: str = ""
+    description: str = ""
+    organizer: str = ""
+    response_status: str = ""
+
+    @property
+    def has_description(self) -> bool:
+        return bool(self.description.strip())
+
+
+class DwsMinutesPermissionRequest(BaseModel):
+    uuids: list[str]
+    member_uids: list[int]
+    policy_id: int = 3
+    role_sub_resource_ids: list[str] = Field(default_factory=list)
+    cover_permission: bool = False
 
 
 class DwsClient:
@@ -228,6 +250,47 @@ class DwsClient:
                 "json",
             ]
         )
+        return command
+
+    def build_list_calendar_events_command(self, start: str, end: str) -> list[str]:
+        return [
+            self.dws_bin,
+            "calendar",
+            "event",
+            "list",
+            "--start",
+            start,
+            "--end",
+            end,
+            "--format",
+            "json",
+        ]
+
+    def build_add_minutes_member_permission_command(
+        self, request: DwsMinutesPermissionRequest
+    ) -> list[str]:
+        command = [
+            self.dws_bin,
+            "mcp",
+            "minutes",
+            "add_member_permission",
+            "--uuids",
+            ",".join(request.uuids),
+            "--memberUids",
+            ",".join(str(uid) for uid in request.member_uids),
+            "--policyId",
+            str(request.policy_id),
+            "--coverPermission",
+            "true" if request.cover_permission else "false",
+        ]
+        if request.role_sub_resource_ids:
+            command.extend(
+                [
+                    "--roleSubResourceIds",
+                    ",".join(request.role_sub_resource_ids),
+                ]
+            )
+        command.extend(["--format", "json", "--yes"])
         return command
 
     def build_message_list_command(
@@ -463,6 +526,29 @@ class DwsClient:
             conversation_title=conversation.title if conversation is not None else "",
             single_chat=conversation.single_chat if conversation is not None else False,
         )
+
+    def calendar_invite_from_message(
+        self, message: DingTalkMessage
+    ) -> DwsCalendarEvent | None:
+        if not message.raw_payload:
+            return None
+        return self._find_calendar_event_in_payload(message.raw_payload)
+
+    def list_calendar_events(self, start: str, end: str) -> list[DwsCalendarEvent]:
+        payload = self.run_json(self.build_list_calendar_events_command(start, end))
+        return self.parse_calendar_events(payload)
+
+    def minutes_permission_request_from_message(
+        self, message: DingTalkMessage
+    ) -> DwsMinutesPermissionRequest | None:
+        if not message.raw_payload:
+            return None
+        return self._find_minutes_permission_request(message.raw_payload)
+
+    def add_minutes_member_permission(
+        self, request: DwsMinutesPermissionRequest
+    ) -> dict[str, Any]:
+        return self.run_json(self.build_add_minutes_member_permission_command(request))
 
     def read_doc(self, node: str) -> dict[str, Any]:
         payload = self.run_json(self.build_read_doc_command(node))
@@ -992,7 +1078,278 @@ class DwsClient:
             mentioned_user_ids=DwsClient._mentioned_user_ids(message),
             quoted_message_id=quoted_message.get("openMessageId"),
             quoted_content=quoted_message.get("content"),
+            raw_payload=message,
         )
+
+    @staticmethod
+    def parse_calendar_events(payload: dict[str, Any]) -> list[DwsCalendarEvent]:
+        records = DwsClient._calendar_event_records(payload)
+        events: list[DwsCalendarEvent] = []
+        for record in records:
+            if not isinstance(record, dict):
+                continue
+            event = DwsClient._parse_calendar_event(record)
+            if event is not None:
+                events.append(event)
+        return events
+
+    @staticmethod
+    def _calendar_event_records(payload: dict[str, Any]) -> list[Any]:
+        result = payload.get("result", payload)
+        if isinstance(result, list):
+            return result
+        if not isinstance(result, dict):
+            return []
+        for key in (
+            "events",
+            "items",
+            "calendarEvents",
+            "eventList",
+            "list",
+            "data",
+        ):
+            value = result.get(key)
+            if isinstance(value, list):
+                return value
+        return []
+
+    @staticmethod
+    def _find_calendar_event_in_payload(payload: Any) -> DwsCalendarEvent | None:
+        if isinstance(payload, dict):
+            event = DwsClient._parse_calendar_event(payload, require_event_id=True)
+            if event is not None:
+                return event
+            for key in (
+                "calendarEvent",
+                "calendar",
+                "event",
+                "schedule",
+                "meeting",
+                "content",
+                "rawContent",
+            ):
+                value = payload.get(key)
+                event = (
+                    DwsClient._parse_calendar_event(value)
+                    if isinstance(value, dict)
+                    else None
+                )
+                if event is None:
+                    event = DwsClient._find_calendar_event_in_payload(value)
+                if event is not None:
+                    return event
+            for value in payload.values():
+                if isinstance(value, (dict, list)):
+                    event = DwsClient._find_calendar_event_in_payload(value)
+                    if event is not None:
+                        return event
+        elif isinstance(payload, list):
+            for value in payload:
+                event = DwsClient._find_calendar_event_in_payload(value)
+                if event is not None:
+                    return event
+        return None
+
+    @staticmethod
+    def _parse_calendar_event(
+        record: dict[str, Any],
+        *,
+        require_event_id: bool = False,
+    ) -> DwsCalendarEvent | None:
+        event_id = DwsClient._first_string(
+            record,
+            "eventId",
+            "eventID",
+            "calendarEventId",
+            "scheduleId",
+            "id",
+            "event_id",
+        )
+        if require_event_id and not event_id:
+            return None
+        start_time = DwsClient._calendar_time(record, "start")
+        end_time = DwsClient._calendar_time(record, "end")
+        if not start_time or not end_time:
+            return None
+        return DwsCalendarEvent(
+            event_id=event_id,
+            title=DwsClient._first_string(
+                record,
+                "summary",
+                "title",
+                "subject",
+                "name",
+            ),
+            start_time=start_time,
+            end_time=end_time,
+            description=DwsClient._first_string(
+                record,
+                "description",
+                "richTextDescription",
+                "body",
+                "content",
+                "remark",
+            ),
+            organizer=DwsClient._calendar_person(record.get("organizer")),
+            response_status=DwsClient._first_string(
+                record,
+                "responseStatus",
+                "status",
+            ),
+        )
+
+    @staticmethod
+    def _calendar_time(record: dict[str, Any], prefix: str) -> str:
+        value = record.get(prefix)
+        if isinstance(value, dict):
+            nested = DwsClient._first_string(
+                value,
+                "dateTime",
+                "date",
+                "time",
+                "value",
+            )
+            if nested:
+                return nested
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+        return DwsClient._first_string(
+            record,
+            f"{prefix}Time",
+            f"{prefix}DateTime",
+            f"{prefix}_time",
+            f"{prefix}_date_time",
+        )
+
+    @staticmethod
+    def _calendar_person(value: Any) -> str:
+        if isinstance(value, str):
+            return value.strip()
+        if isinstance(value, dict):
+            return DwsClient._first_string(
+                value,
+                "displayName",
+                "name",
+                "email",
+                "userId",
+                "id",
+            )
+        return ""
+
+    @staticmethod
+    def _first_string(record: dict[str, Any], *keys: str) -> str:
+        for key in keys:
+            value = record.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        return ""
+
+    @staticmethod
+    def _find_minutes_permission_request(
+        payload: Any,
+    ) -> DwsMinutesPermissionRequest | None:
+        if isinstance(payload, dict):
+            request = DwsClient._parse_minutes_permission_request(payload)
+            if request is not None:
+                return request
+            for value in payload.values():
+                if isinstance(value, (dict, list)):
+                    request = DwsClient._find_minutes_permission_request(value)
+                    if request is not None:
+                        return request
+        elif isinstance(payload, list):
+            for value in payload:
+                request = DwsClient._find_minutes_permission_request(value)
+                if request is not None:
+                    return request
+        return None
+
+    @staticmethod
+    def _parse_minutes_permission_request(
+        record: dict[str, Any],
+    ) -> DwsMinutesPermissionRequest | None:
+        uuids = DwsClient._string_list(
+            record.get("uuids")
+            or record.get("minutesUuids")
+            or record.get("taskUuids")
+            or record.get("minutesIds")
+        )
+        if not uuids:
+            uuid = DwsClient._first_string(
+                record,
+                "uuid",
+                "minutesUuid",
+                "taskUuid",
+                "minutesId",
+            )
+            if uuid:
+                uuids = [uuid]
+        member_uids = DwsClient._int_list(
+            record.get("memberUids")
+            or record.get("memberUid")
+            or record.get("requesterUid")
+            or record.get("applicantUid")
+        )
+        if not uuids or not member_uids:
+            return None
+        role_sub_resource_ids = DwsClient._string_list(
+            record.get("roleSubResourceIds")
+        )
+        return DwsMinutesPermissionRequest(
+            uuids=uuids,
+            member_uids=member_uids,
+            policy_id=DwsClient._int_value(record.get("policyId"), default=3),
+            role_sub_resource_ids=role_sub_resource_ids,
+            cover_permission=DwsClient._bool_value(
+                record.get("coverPermission"),
+                default=False,
+            ),
+        )
+
+    @staticmethod
+    def _string_list(value: Any) -> list[str]:
+        if isinstance(value, str):
+            return [item.strip() for item in value.split(",") if item.strip()]
+        if isinstance(value, list):
+            return [str(item).strip() for item in value if str(item).strip()]
+        return []
+
+    @staticmethod
+    def _int_list(value: Any) -> list[int]:
+        if isinstance(value, list):
+            values = value
+        else:
+            values = [value]
+        result: list[int] = []
+        for item in values:
+            parsed = DwsClient._int_value(item)
+            if parsed is not None:
+                result.append(parsed)
+        return result
+
+    @staticmethod
+    def _int_value(value: Any, default: int | None = None) -> int | None:
+        if isinstance(value, bool) or value is None:
+            return default
+        if isinstance(value, int):
+            return value
+        if isinstance(value, float) and value.is_integer():
+            return int(value)
+        if isinstance(value, str) and value.strip().isdigit():
+            return int(value.strip())
+        return default
+
+    @staticmethod
+    def _bool_value(value: Any, default: bool = False) -> bool:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in {"true", "1", "yes"}:
+                return True
+            if normalized in {"false", "0", "no"}:
+                return False
+        return default
 
     @staticmethod
     def _mentioned_user_ids(message: dict[str, Any]) -> list[str]:

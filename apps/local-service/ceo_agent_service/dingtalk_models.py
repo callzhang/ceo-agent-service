@@ -28,6 +28,7 @@ class DingTalkMessage(BaseModel):
     mentioned_user_ids: list[str] = Field(default_factory=list)
     quoted_message_id: str | None = None
     quoted_content: str | None = None
+    raw_payload: dict = Field(default_factory=dict)
 
     def mentions_derek(self) -> bool:
         return any(mention in self.content for mention in mention_aliases())

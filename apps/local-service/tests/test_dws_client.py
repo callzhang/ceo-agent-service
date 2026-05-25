@@ -12,7 +12,7 @@ from ceo_agent_service.dingtalk_models import (
     DingTalkMessage,
 )
 from ceo_agent_service import dws_client
-from ceo_agent_service.dws_client import DwsClient, DwsError
+from ceo_agent_service.dws_client import DwsClient, DwsError, DwsMinutesPermissionRequest
 
 TEST_LOCAL_TZ = ZoneInfo("Asia/Shanghai")
 
@@ -472,7 +472,202 @@ def test_parse_messages_response_keeps_quoted_message():
         mentioned_user_ids=["derek-user-1", "jun-jie-user-1"],
         quoted_message_id="msg-0",
         quoted_content="这个ACL表看一下",
+        raw_payload=payload["result"]["messages"][0],
     )
+
+
+def test_calendar_invite_from_message_parses_structured_calendar_payload():
+    client = DwsClient(dws_bin="dws")
+    message = DingTalkMessage(
+        open_conversation_id="cid-1",
+        open_message_id="msg-1",
+        conversation_title="Friday",
+        single_chat=True,
+        sender_name="Mina",
+        create_time="2026-05-13 15:16:49",
+        content="[日程]",
+        message_type="calendar",
+        raw_payload={
+            "calendarEvent": {
+                "eventId": "event-1",
+                "summary": "客户升级问题决策",
+                "start": {"dateTime": "2026-05-14T10:00:00+08:00"},
+                "end": {"dateTime": "2026-05-14T11:00:00+08:00"},
+                "description": "客户 CEO 会参加，需要 Derek 决策。",
+                "organizer": {"displayName": "Mina"},
+            }
+        },
+    )
+
+    event = client.calendar_invite_from_message(message)
+
+    assert event is not None
+    assert event.event_id == "event-1"
+    assert event.title == "客户升级问题决策"
+    assert event.start_time == "2026-05-14T10:00:00+08:00"
+    assert event.end_time == "2026-05-14T11:00:00+08:00"
+    assert event.description == "客户 CEO 会参加，需要 Derek 决策。"
+    assert event.organizer == "Mina"
+
+
+def test_calendar_invite_from_message_accepts_nested_event_without_event_id():
+    client = DwsClient(dws_bin="dws")
+    message = DingTalkMessage(
+        open_conversation_id="cid-1",
+        open_message_id="msg-1",
+        conversation_title="Friday",
+        single_chat=True,
+        sender_name="Mina",
+        create_time="2026-05-13 15:16:49",
+        content="[日程]",
+        message_type="calendar",
+        raw_payload={
+            "schedule": {
+                "title": "客户升级问题决策",
+                "startTime": "2026-05-14T10:00:00+08:00",
+                "endTime": "2026-05-14T11:00:00+08:00",
+                "description": "客户 CEO 会参加，需要 Derek 决策。",
+            }
+        },
+    )
+
+    event = client.calendar_invite_from_message(message)
+
+    assert event is not None
+    assert event.event_id == ""
+    assert event.title == "客户升级问题决策"
+    assert event.start_time == "2026-05-14T10:00:00+08:00"
+    assert event.end_time == "2026-05-14T11:00:00+08:00"
+
+
+def test_list_calendar_events_uses_dws_calendar_event_list():
+    client = RecordingDwsClient(
+        {
+            "success": True,
+            "result": {
+                "events": [
+                    {
+                        "id": "event-1",
+                        "title": "产品周会",
+                        "startTime": "2026-05-14T10:30:00+08:00",
+                        "endTime": "2026-05-14T11:30:00+08:00",
+                        "description": "固定例会",
+                    }
+                ]
+            },
+        }
+    )
+
+    events = client.list_calendar_events(
+        "2026-05-14T10:00:00+08:00",
+        "2026-05-14T11:00:00+08:00",
+    )
+
+    assert client.commands == [
+        [
+            "dws",
+            "calendar",
+            "event",
+            "list",
+            "--start",
+            "2026-05-14T10:00:00+08:00",
+            "--end",
+            "2026-05-14T11:00:00+08:00",
+            "--format",
+            "json",
+        ]
+    ]
+    assert len(events) == 1
+    assert events[0].event_id == "event-1"
+    assert events[0].title == "产品周会"
+    assert events[0].description == "固定例会"
+
+
+def test_minutes_permission_request_from_message_parses_structured_payload():
+    client = DwsClient(dws_bin="dws")
+    message = DingTalkMessage(
+        open_conversation_id="cid-1",
+        open_message_id="msg-1",
+        conversation_title="Friday",
+        single_chat=True,
+        sender_name="Mina",
+        create_time="2026-05-13 15:16:49",
+        content="[dingtalk://dingtalkclient/page/flash_minutes_detail?x=1]",
+        raw_payload={
+            "card": {
+                "minutesPermissionRequest": {
+                    "uuids": ["minutes-1"],
+                    "memberUids": [451416406],
+                    "policyId": 3,
+                    "roleSubResourceIds": ["OrigContent", "Summary"],
+                    "coverPermission": "false",
+                }
+            }
+        },
+    )
+
+    request = client.minutes_permission_request_from_message(message)
+
+    assert request == DwsMinutesPermissionRequest(
+        uuids=["minutes-1"],
+        member_uids=[451416406],
+        policy_id=3,
+        role_sub_resource_ids=["OrigContent", "Summary"],
+        cover_permission=False,
+    )
+
+
+def test_minutes_permission_request_does_not_treat_plain_detail_link_as_request():
+    client = DwsClient(dws_bin="dws")
+    message = DingTalkMessage(
+        open_conversation_id="cid-1",
+        open_message_id="msg-1",
+        conversation_title="Friday",
+        single_chat=True,
+        sender_name="Mina",
+        create_time="2026-05-13 15:16:49",
+        content="[dingtalk://dingtalkclient/page/flash_minutes_detail?minutesId=minutes-1&from=8]",
+        raw_payload={
+            "content": "[dingtalk://dingtalkclient/page/flash_minutes_detail?minutesId=minutes-1&from=8]"
+        },
+    )
+
+    assert client.minutes_permission_request_from_message(message) is None
+
+
+def test_add_minutes_member_permission_uses_canonical_mcp_command():
+    client = RecordingDwsClient({"success": True})
+    request = DwsMinutesPermissionRequest(
+        uuids=["minutes-1"],
+        member_uids=[451416406],
+        policy_id=3,
+        role_sub_resource_ids=["OrigContent", "Summary"],
+        cover_permission=False,
+    )
+
+    assert client.add_minutes_member_permission(request) == {"success": True}
+
+    assert client.commands == [
+        [
+            "dws",
+            "mcp",
+            "minutes",
+            "add_member_permission",
+            "--uuids",
+            "minutes-1",
+            "--memberUids",
+            "451416406",
+            "--policyId",
+            "3",
+            "--coverPermission",
+            "false",
+            "--roleSubResourceIds",
+            "OrigContent,Summary",
+            "--format",
+            "json",
+            "--yes",
+        ]
+    ]
 
 
 def test_build_get_user_profiles_command_shape():

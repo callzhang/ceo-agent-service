@@ -2,6 +2,7 @@ import json
 import re
 import urllib.request
 import zipfile
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from io import BytesIO
 from urllib.parse import urlsplit, urlunsplit
@@ -15,7 +16,12 @@ from ceo_agent_service.config import (
     handoff_ack,
     principal_name,
 )
-from ceo_agent_service.dws_client import DwsClient, DwsDocumentSearchResult, DwsError
+from ceo_agent_service.dws_client import (
+    DwsCalendarEvent,
+    DwsClient,
+    DwsDocumentSearchResult,
+    DwsError,
+)
 from ceo_agent_service.corpus import (
     MEDIA_OR_LINK_PATTERN,
     CorpusRecord,
@@ -92,6 +98,12 @@ REFERENCED_FILE_CONTEXT_WINDOW = timedelta(minutes=10)
 DOWNLOADED_FILE_MAX_BYTES = 50 * 1024 * 1024
 DOWNLOAD_TIMEOUT_SECONDS = 30
 PDF_TEXT_PAGE_LIMIT = 30
+
+
+@dataclass(frozen=True)
+class CalendarConflictContext:
+    invite: DwsCalendarEvent
+    conflicts: list[DwsCalendarEvent]
 
 
 class DingTalkAutoReplyWorker:
@@ -221,6 +233,17 @@ class DingTalkAutoReplyWorker:
             context_messages, unread_messages
         )
         trigger = DingTalkMessage.model_validate_json(task.trigger_message_json)
+        if self._handle_minutes_permission_request_if_actionable(
+            conversation,
+            trigger,
+        ):
+            return
+        if self._handle_calendar_invite_if_actionable(
+            conversation,
+            trigger,
+            prompt_context_messages,
+        ):
+            return
         if self._is_system_or_notification_message(trigger):
             self._record_system_or_notification_skip(conversation, trigger)
             self._mark_seen([trigger])
@@ -283,6 +306,19 @@ class DingTalkAutoReplyWorker:
                 f"message not found in recent DingTalk context: {message_id}"
             )
         trigger = candidates[-1]
+        if self._handle_minutes_permission_request_if_actionable(
+            conversation,
+            trigger,
+            ignore_existing_attempt=force_new_decision,
+        ):
+            return trigger.open_message_id
+        if self._handle_calendar_invite_if_actionable(
+            conversation,
+            trigger,
+            prompt_context_messages,
+            ignore_existing_attempt=force_new_decision,
+        ):
+            return trigger.open_message_id
         if self._is_system_or_notification_message(trigger):
             self._record_system_or_notification_skip(conversation, trigger)
             self._mark_seen([trigger])
@@ -304,12 +340,274 @@ class DingTalkAutoReplyWorker:
         skipped = []
         for message in messages:
             if self._is_system_or_notification_message(message):
-                skipped.append(message)
-                self._record_system_or_notification_skip(conversation, message)
+                if self._minutes_permission_request(message) is not None:
+                    remaining.append(message)
+                    continue
+                try:
+                    calendar_context = self._calendar_conflict_context(
+                        conversation, message
+                    )
+                except Exception as exc:
+                    self.store.record_error(
+                        conversation.open_conversation_id,
+                        message.open_message_id,
+                        "calendar_conflict_check",
+                        str(exc),
+                    )
+                    remaining.append(message)
+                    continue
+                if calendar_context is not None:
+                    remaining.append(message)
+                else:
+                    skipped.append(message)
+                    self._record_system_or_notification_skip(conversation, message)
             else:
                 remaining.append(message)
         self._mark_seen(skipped)
         return remaining
+
+    def _handle_minutes_permission_request_if_actionable(
+        self,
+        conversation: DingTalkConversation,
+        trigger: DingTalkMessage,
+        *,
+        ignore_existing_attempt: bool = False,
+    ) -> bool:
+        request = self._minutes_permission_request(trigger)
+        if request is None:
+            return False
+        if not ignore_existing_attempt and self._handle_existing_attempt(
+            conversation,
+            trigger,
+            [trigger],
+        ):
+            return True
+        attempt_id = self.store.record_reply_attempt(
+            conversation_id=conversation.open_conversation_id,
+            conversation_title=conversation.title,
+            trigger_message_id=trigger.open_message_id,
+            trigger_sender=trigger.sender_name,
+            trigger_text=trigger.content,
+            action=CodexAction.NO_REPLY.value,
+            sensitivity_kind="general",
+            codex_reason="ai_minutes_permission_auto_approved",
+            audit_summary="已自动通过 AI 听记权限申请，无需聊天回复。",
+        )
+        if self.dry_run:
+            self.store.update_reply_attempt(attempt_id, send_status="dry_run")
+            return True
+        try:
+            self.dws.add_minutes_member_permission(request)
+        except Exception as exc:
+            self.store.update_reply_attempt(
+                attempt_id,
+                send_status="failed",
+                send_error=str(exc),
+            )
+            self.store.record_error(
+                conversation.open_conversation_id,
+                trigger.open_message_id,
+                "ai_minutes_permission",
+                str(exc),
+            )
+            self._notify(
+                title=f"CEO AI minutes permission failed: {conversation.title}",
+                message=str(exc)[:120],
+            )
+            return True
+        self.store.update_reply_attempt(
+            attempt_id,
+            send_status="skipped",
+            send_error="no_reply",
+        )
+        self._mark_seen([trigger])
+        return True
+
+    def _minutes_permission_request(self, message: DingTalkMessage):
+        minutes_permission_request_from_message = getattr(
+            self.dws,
+            "minutes_permission_request_from_message",
+            None,
+        )
+        if minutes_permission_request_from_message is None:
+            return None
+        return minutes_permission_request_from_message(message)
+
+    def _handle_calendar_invite_if_actionable(
+        self,
+        conversation: DingTalkConversation,
+        trigger: DingTalkMessage,
+        context_messages: list[DingTalkMessage],
+        *,
+        ignore_existing_attempt: bool = False,
+    ) -> bool:
+        calendar_context = self._calendar_conflict_context(conversation, trigger)
+        if calendar_context is None:
+            return False
+        if not ignore_existing_attempt and self._handle_existing_attempt(
+            conversation,
+            trigger,
+            [trigger],
+        ):
+            return True
+        if not calendar_context.invite.has_description:
+            reply_text = self._calendar_missing_description_reply(calendar_context)
+            attempt_id = self.store.record_reply_attempt(
+                conversation_id=conversation.open_conversation_id,
+                conversation_title=conversation.title,
+                trigger_message_id=trigger.open_message_id,
+                trigger_sender=trigger.sender_name,
+                trigger_text=trigger.content,
+                action=CodexAction.ASK_CLARIFYING_QUESTION.value,
+                sensitivity_kind="general",
+                codex_reason="calendar_conflict_missing_description",
+                draft_reply_text=reply_text,
+                audit_summary="日程邀请与已有日程冲突，但会议描述为空；追问参加理由。",
+            )
+            self._send_reply(
+                conversation=conversation,
+                trigger=trigger,
+                new_messages=[trigger],
+                reply_text=reply_text,
+                reason="calendar_conflict_missing_description",
+                attempt_id=attempt_id,
+            )
+            return True
+        self._process_batch(
+            conversation,
+            [trigger],
+            [
+                *context_messages,
+                self._calendar_conflict_prompt_message(conversation, trigger, calendar_context),
+            ],
+            ignore_existing_attempt=True,
+        )
+        return True
+
+    def _calendar_conflict_context(
+        self,
+        conversation: DingTalkConversation,
+        message: DingTalkMessage,
+    ) -> CalendarConflictContext | None:
+        if not self._is_calendar_message(message):
+            return None
+        calendar_invite_from_message = getattr(
+            self.dws,
+            "calendar_invite_from_message",
+            None,
+        )
+        list_calendar_events = getattr(self.dws, "list_calendar_events", None)
+        if calendar_invite_from_message is None or list_calendar_events is None:
+            return None
+        invite = calendar_invite_from_message(message)
+        if invite is None:
+            return None
+        events = list_calendar_events(invite.start_time, invite.end_time)
+        conflicts = [
+            event
+            for event in events
+            if self._calendar_events_conflict(invite, event)
+            and not self._same_calendar_event(invite, event)
+        ]
+        if not conflicts:
+            return None
+        return CalendarConflictContext(invite=invite, conflicts=conflicts)
+
+    @staticmethod
+    def _is_calendar_message(message: DingTalkMessage) -> bool:
+        message_type = (message.message_type or "").strip().lower()
+        return message_type in {"calendar", "schedule"} or message.content.strip().startswith(
+            "[日程]"
+        )
+
+    @staticmethod
+    def _calendar_events_conflict(
+        invite: DwsCalendarEvent,
+        existing: DwsCalendarEvent,
+    ) -> bool:
+        invite_start = DingTalkAutoReplyWorker._parse_calendar_time(invite.start_time)
+        invite_end = DingTalkAutoReplyWorker._parse_calendar_time(invite.end_time)
+        existing_start = DingTalkAutoReplyWorker._parse_calendar_time(
+            existing.start_time
+        )
+        existing_end = DingTalkAutoReplyWorker._parse_calendar_time(existing.end_time)
+        if not all((invite_start, invite_end, existing_start, existing_end)):
+            return False
+        return invite_start < existing_end and existing_start < invite_end
+
+    @staticmethod
+    def _same_calendar_event(left: DwsCalendarEvent, right: DwsCalendarEvent) -> bool:
+        if left.event_id and right.event_id:
+            return left.event_id == right.event_id
+        return (
+            bool(left.title and right.title)
+            and left.title == right.title
+            and left.start_time == right.start_time
+            and left.end_time == right.end_time
+        )
+
+    @staticmethod
+    def _parse_calendar_time(value: str) -> datetime | None:
+        if not value.strip():
+            return None
+        normalized = value.strip()
+        if normalized.endswith("Z"):
+            normalized = f"{normalized[:-1]}+00:00"
+        try:
+            return datetime.fromisoformat(normalized)
+        except ValueError:
+            try:
+                return datetime.strptime(normalized, DINGTALK_TIME_FORMAT)
+            except ValueError:
+                return None
+
+    @staticmethod
+    def _calendar_missing_description_reply(
+        context: CalendarConflictContext,
+    ) -> str:
+        conflict_titles = "、".join(
+            event.title or "未命名日程" for event in context.conflicts[:3]
+        )
+        invite_title = context.invite.title or "这场会议"
+        return (
+            f"我这边看到「{invite_title}」和已有日程「{conflict_titles}」时间冲突，"
+            "但这场会议没有会议描述。请补充一下参加理由、希望我决策或输入的内容，以及为什么需要优先于现有日程。"
+        )
+
+    @staticmethod
+    def _calendar_conflict_prompt_message(
+        conversation: DingTalkConversation,
+        trigger: DingTalkMessage,
+        context: CalendarConflictContext,
+    ) -> DingTalkMessage:
+        lines = [
+            "日历冲突检查：",
+            "有人发来新的日程邀请，且时间已经被已有日程占用。",
+            "请评估这场新会议的描述是否足以优先于重叠会议。",
+            "如果理由充分，回复中说明建议接受这场会议并调整或拒绝哪个重叠会议；如果说明不足以取消另一个重叠会议，回复对方原因并请补充。",
+            "",
+            f"新会议：{context.invite.title or '未命名日程'}",
+            f"时间：{context.invite.start_time} - {context.invite.end_time}",
+            f"组织者：{context.invite.organizer or trigger.sender_name}",
+            f"会议描述：{context.invite.description.strip()}",
+            "重叠会议：",
+        ]
+        for event in context.conflicts:
+            lines.append(
+                "- "
+                f"{event.title or '未命名日程'} | "
+                f"{event.start_time} - {event.end_time} | "
+                f"描述：{event.description.strip() or '无'}"
+            )
+        return DingTalkMessage(
+            open_conversation_id=conversation.open_conversation_id,
+            open_message_id=f"{trigger.open_message_id}:calendar-conflict-context",
+            conversation_title=conversation.title,
+            single_chat=conversation.single_chat,
+            sender_name="CEO系统",
+            create_time=trigger.create_time,
+            content="\n".join(lines),
+        )
 
     def _record_system_or_notification_skip(
         self,

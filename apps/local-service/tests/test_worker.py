@@ -8,7 +8,12 @@ from ceo_agent_service.dingtalk_models import (
     DingTalkMessage,
     SensitivityKind,
 )
-from ceo_agent_service.dws_client import DwsDocumentSearchResult, DwsError
+from ceo_agent_service.dws_client import (
+    DwsCalendarEvent,
+    DwsDocumentSearchResult,
+    DwsError,
+    DwsMinutesPermissionRequest,
+)
 from ceo_agent_service.store import AutoReplyStore
 from ceo_agent_service.worker import HANDOFF_ACK, DingTalkAutoReplyWorker
 
@@ -53,6 +58,12 @@ class FakeDws:
         self.manager_chains: dict[str, list[str]] = {}
         self.resolved_senders: dict[str, str] = {}
         self.current_user_id = "derek-user-1"
+        self.calendar_invites: dict[str, DwsCalendarEvent | None] = {}
+        self.calendar_events: dict[str, list[DwsCalendarEvent]] = {}
+        self.minutes_permission_requests: dict[
+            str, DwsMinutesPermissionRequest | None
+        ] = {}
+        self.added_minutes_permissions: list[DwsMinutesPermissionRequest] = []
 
     def list_unread_conversations(self, count: int) -> list[DingTalkConversation]:
         assert count == 50
@@ -147,6 +158,25 @@ class FakeDws:
         if self.current_user_error:
             raise self.current_user_error
         return message.sender_user_id == self.current_user_id
+
+    def calendar_invite_from_message(
+        self, message: DingTalkMessage
+    ) -> DwsCalendarEvent | None:
+        return self.calendar_invites.get(message.open_message_id)
+
+    def list_calendar_events(self, start: str, end: str) -> list[DwsCalendarEvent]:
+        return self.calendar_events.get(f"{start}|{end}", [])
+
+    def minutes_permission_request_from_message(
+        self, message: DingTalkMessage
+    ) -> DwsMinutesPermissionRequest | None:
+        return self.minutes_permission_requests.get(message.open_message_id)
+
+    def add_minutes_member_permission(
+        self, request: DwsMinutesPermissionRequest
+    ) -> dict:
+        self.added_minutes_permissions.append(request)
+        return {"success": True}
 
 
 class FakeCodex:
@@ -418,6 +448,94 @@ def test_non_text_message_type_is_skipped_before_codex(
     assert worker.store.get_reply_attempt(1).action == "no_reply"
 
 
+def test_calendar_invite_without_description_asks_for_attendance_reason(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message("[日程]", single_chat=True, message_type="calendar")
+    invite = DwsCalendarEvent(
+        event_id="invite-1",
+        title="客户复盘",
+        start_time="2026-05-14T10:00:00+08:00",
+        end_time="2026-05-14T11:00:00+08:00",
+        description="",
+        organizer="Mina",
+    )
+    existing = DwsCalendarEvent(
+        event_id="event-1",
+        title="产品周会",
+        start_time="2026-05-14T10:30:00+08:00",
+        end_time="2026-05-14T11:30:00+08:00",
+        description="固定例会",
+    )
+    dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
+    dws.calendar_invites["msg-1"] = invite
+    dws.calendar_events[f"{invite.start_time}|{invite.end_time}"] = [invite, existing]
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该调用")
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+
+    worker.run_once()
+
+    assert codex.calls == []
+    assert len(dws.sent) == 1
+    assert "客户复盘" in dws.sent[0][1]
+    assert "产品周会" in dws.sent[0][1]
+    assert "请补充" in dws.sent[0][1]
+    assert "参加理由" in dws.sent[0][1]
+    assert worker.store.has_seen("msg-1") is True
+    attempt = worker.store.get_reply_attempt(1)
+    assert attempt.action == "ask_clarifying_question"
+    assert attempt.send_status == "sent"
+
+
+def test_calendar_invite_with_description_asks_codex_to_evaluate_conflict(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message("[日程]", single_chat=True, message_type="calendar")
+    invite = DwsCalendarEvent(
+        event_id="invite-1",
+        title="客户升级问题决策",
+        start_time="2026-05-14T10:00:00+08:00",
+        end_time="2026-05-14T11:00:00+08:00",
+        description="需要 Derek 判断是否承诺本周交付，客户 CEO 会参加。",
+        organizer="Mina",
+    )
+    existing = DwsCalendarEvent(
+        event_id="event-1",
+        title="产品周会",
+        start_time="2026-05-14T10:30:00+08:00",
+        end_time="2026-05-14T11:30:00+08:00",
+        description="固定例会",
+    )
+    dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
+    dws.calendar_invites["msg-1"] = invite
+    dws.calendar_events[f"{invite.start_time}|{invite.end_time}"] = [invite, existing]
+    codex = FakeCodex(
+        CodexDecision(
+            action=CodexAction.SEND_REPLY,
+            reply_text="这个会议和产品周会冲突。按描述看客户升级问题优先级更高，建议接受这场并请产品周会另约。",
+            reason="calendar_conflict_evaluated",
+        )
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+
+    worker.run_once()
+
+    assert len(codex.calls) == 1
+    prompt = codex.calls[0][0]
+    assert "日历冲突检查" in prompt
+    assert "客户升级问题决策" in prompt
+    assert "产品周会" in prompt
+    assert "如果说明不足以取消另一个重叠会议" in prompt
+    assert len(dws.sent) == 1
+    assert "客户升级问题优先级更高" in dws.sent[0][1]
+    assert worker.store.has_seen("msg-1") is True
+    attempt = worker.store.get_reply_attempt(1)
+    assert attempt.action == "send_reply"
+    assert attempt.codex_reason == "calendar_conflict_evaluated"
+
+
 def test_structured_link_card_is_skipped_before_codex(
     tmp_path: Path, monkeypatch
 ):
@@ -605,6 +723,41 @@ def test_bare_dingtalk_internal_link_is_skipped_before_codex(
     assert codex.calls == []
     assert dws.sent == []
     assert worker.store.get_reply_attempt(1).action == "no_reply"
+
+
+def test_ai_minutes_permission_request_is_auto_approved_without_codex_or_reply(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message(
+        "[dingtalk://dingtalkclient/page/flash_minutes_detail?minutesId=minutes-1&from=8]",
+        single_chat=True,
+    )
+    request = DwsMinutesPermissionRequest(
+        uuids=["minutes-1"],
+        member_uids=[451416406],
+        policy_id=3,
+        role_sub_resource_ids=["OrigContent", "Summary"],
+        cover_permission=False,
+    )
+    dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
+    dws.minutes_permission_requests["msg-1"] = request
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该回复")
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+
+    worker.run_once()
+
+    assert codex.calls == []
+    assert dws.sent == []
+    assert dws.added_minutes_permissions == [request]
+    assert worker.store.has_seen("msg-1") is True
+    attempt = worker.store.get_reply_attempt(1)
+    assert attempt is not None
+    assert attempt.action == "no_reply"
+    assert attempt.send_status == "skipped"
+    assert attempt.codex_reason == "ai_minutes_permission_auto_approved"
+    assert "已自动通过 AI 听记权限申请" in attempt.audit_summary
 
 
 def test_ding_approval_reminder_is_processed_by_codex(tmp_path: Path, monkeypatch):
