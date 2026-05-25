@@ -31,7 +31,7 @@ from ceo_agent_service.dingtalk_models import (
 from ceo_agent_service.notification import send_macos_notification
 from ceo_agent_service.permission import PermissionAction, PermissionGate
 from ceo_agent_service.prompt import LinkedDocumentContext, build_turn_prompt
-from ceo_agent_service.store import AutoReplyStore, ReplyAttempt
+from ceo_agent_service.store import AutoReplyStore, ReplyAttempt, ReplyTask
 from ceo_agent_service.leak_check import FORBIDDEN_MARKERS
 
 
@@ -117,7 +117,11 @@ class DingTalkAutoReplyWorker:
         self.permission_gate = PermissionGate(dws)
 
     def run_once(self, max_batches: int | None = None) -> None:
-        processed_batches = 0
+        self.produce_once()
+        self.consume_once(max_tasks=max_batches)
+
+    def produce_once(self, max_tasks: int | None = None) -> int:
+        queued_tasks = 0
         conversations = self.dws.list_unread_conversations(count=50)
         mentioned_messages = self._mentioned_messages_by_conversation(conversations)
         for conversation in conversations:
@@ -173,13 +177,71 @@ class DingTalkAutoReplyWorker:
             )
             if not new_messages:
                 continue
-            prompt_context_messages = self._prompt_context_messages(
-                context_messages, unread_messages
+            if self._enqueue_reply_task(conversation, new_messages[-1]):
+                queued_tasks += 1
+            if max_tasks is not None and queued_tasks >= max_tasks:
+                return queued_tasks
+        return queued_tasks
+
+    def consume_once(self, max_tasks: int | None = None) -> int:
+        limit = max_tasks if max_tasks is not None else 50
+        processed_tasks = 0
+        for task in self.store.claim_reply_tasks(limit):
+            conversation = DingTalkConversation(
+                open_conversation_id=task.conversation_id,
+                title=task.conversation_title,
+                single_chat=task.single_chat,
+                unread_point=1,
             )
-            self._process_batch(conversation, new_messages, prompt_context_messages)
-            processed_batches += 1
-            if max_batches is not None and processed_batches >= max_batches:
-                return
+            try:
+                self._process_queued_task(conversation, task)
+            except Exception as exc:
+                self.store.fail_reply_task(task.id, str(exc))
+                self.store.record_error(
+                    task.conversation_id,
+                    task.trigger_message_id,
+                    "reply_task",
+                    str(exc),
+                )
+                self._notify(
+                    title=f"CEO task failed: {task.conversation_title}",
+                    message=str(exc)[:120],
+                )
+                continue
+            self.store.complete_reply_task(task.id)
+            processed_tasks += 1
+        return processed_tasks
+
+    def _process_queued_task(
+        self, conversation: DingTalkConversation, task: ReplyTask
+    ) -> None:
+        context_messages = self.dws.read_recent_messages(conversation)
+        unread_messages = self.dws.read_unread_messages(conversation)
+        prompt_context_messages = self._prompt_context_messages(
+            context_messages, unread_messages
+        )
+        trigger = DingTalkMessage.model_validate_json(task.trigger_message_json)
+        if self._is_system_or_notification_message(trigger):
+            self._record_system_or_notification_skip(conversation, trigger)
+            self._mark_seen([trigger])
+            return
+        self._process_batch(conversation, [trigger], prompt_context_messages)
+
+    def _enqueue_reply_task(
+        self,
+        conversation: DingTalkConversation,
+        trigger: DingTalkMessage,
+    ) -> bool:
+        return self.store.enqueue_reply_task(
+            conversation_id=conversation.open_conversation_id,
+            conversation_title=conversation.title,
+            single_chat=conversation.single_chat,
+            trigger_message_id=trigger.open_message_id,
+            trigger_create_time=trigger.create_time,
+            trigger_sender=trigger.sender_name,
+            trigger_text=trigger.content,
+            trigger_message_json=trigger.model_dump_json(),
+        )
 
     def _mentioned_messages_by_conversation(
         self, conversations: list[DingTalkConversation]

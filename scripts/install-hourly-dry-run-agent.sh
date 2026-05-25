@@ -2,20 +2,27 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-label="com.derek.ceo-agent-service.hourly-dry-run"
-plist_name="com.derek.ceo-agent-service.hourly-dry-run.plist"
-source_plist="${repo_root}/launchd/${plist_name}"
 target_dir="${HOME}/Library/LaunchAgents"
-target_plist="${target_dir}/${plist_name}"
 log_dir="${HOME}/Library/Logs/ceo-agent-service"
 domain="gui/$(id -u)"
+plist_names=(
+  "com.derek.ceo-agent-service.hourly-dry-run.plist"
+  "com.derek.ceo-agent-service.dry-run-consumer.plist"
+)
 
 mkdir -p "${target_dir}" "${log_dir}"
-cp "${source_plist}" "${target_plist}"
 
-launchctl bootout "${domain}/${label}" 2>/dev/null || true
-launchctl bootout "${domain}" "${target_plist}" 2>/dev/null || true
-launchctl bootstrap "${domain}" "${target_plist}"
-launchctl kickstart -k "${domain}/${label}"
+for plist_name in "${plist_names[@]}"; do
+  label="${plist_name%.plist}"
+  source_plist="${repo_root}/launchd/${plist_name}"
+  target_plist="${target_dir}/${plist_name}"
 
-printf 'installed %s\n' "${target_plist}"
+  cp "${source_plist}" "${target_plist}"
+
+  launchctl bootout "${domain}/${label}" 2>/dev/null || true
+  launchctl bootout "${domain}" "${target_plist}" 2>/dev/null || true
+  launchctl bootstrap "${domain}" "${target_plist}"
+  launchctl kickstart -k "${domain}/${label}"
+
+  printf 'installed %s\n' "${target_plist}"
+done

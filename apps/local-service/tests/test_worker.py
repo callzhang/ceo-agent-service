@@ -301,6 +301,63 @@ def test_group_without_derek_mention_does_not_call_codex_or_send(
     assert dws.sent == []
 
 
+def test_produce_once_enqueues_candidate_without_calling_codex(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message("@Derek Zen(磊哥) 这个怎么处理？")
+    dws = FakeDws([conversation()], {"cid-1": [trigger]})
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该调用")
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+
+    queued = worker.produce_once()
+
+    assert queued == 1
+    assert codex.calls == []
+    assert dws.sent == []
+    assert worker.store.count_reply_tasks(status="pending") == 1
+
+
+def test_repeated_produce_once_does_not_duplicate_pending_task(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message("@Derek Zen(磊哥) 这个怎么处理？")
+    dws = FakeDws([conversation()], {"cid-1": [trigger]})
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该调用")
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+
+    assert worker.produce_once() == 1
+    assert worker.produce_once() == 0
+
+    assert worker.store.count_reply_tasks(status="pending") == 1
+    assert codex.calls == []
+
+
+def test_consume_once_processes_queued_task(tmp_path: Path, monkeypatch):
+    trigger = message("@Derek Zen(磊哥) 这个怎么处理？")
+    dws = FakeDws([conversation()], {"cid-1": [trigger]})
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="先按A方案走")
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+    worker.produce_once()
+
+    processed = worker.consume_once(max_tasks=1)
+
+    assert processed == 1
+    assert worker.store.count_reply_tasks(status="done") == 1
+    assert dws.sent == [
+        (
+            "cid-1",
+            "> 周俊杰: 这个怎么处理？\n\n"
+            "<@sender-user-1> 先按A方案走（by磊哥分身）",
+        )
+    ]
+
+
 def test_unresolvable_non_candidate_sender_does_not_block_conversation(
     tmp_path: Path, monkeypatch
 ):

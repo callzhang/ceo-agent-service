@@ -74,6 +74,24 @@ class ConversationRecord(BaseModel):
     codex_session_id: str | None = None
 
 
+class ReplyTask(BaseModel):
+    id: int
+    conversation_id: str
+    conversation_title: str
+    single_chat: bool
+    trigger_message_id: str
+    trigger_create_time: str
+    trigger_sender: str
+    trigger_text: str
+    trigger_message_json: str = "{}"
+    status: str
+    attempts: int
+    locked_at: str | None = None
+    error: str = ""
+    created_at: str
+    updated_at: str
+
+
 class AutoReplyStore:
     def __init__(self, path: Path):
         self.path = path
@@ -159,6 +177,26 @@ class AutoReplyStore:
                     on reply_attempts(trigger_message_id);
                 create index if not exists idx_reply_attempts_status
                     on reply_attempts(send_status, created_at);
+                create table if not exists reply_tasks (
+                    id integer primary key autoincrement,
+                    conversation_id text not null,
+                    conversation_title text not null,
+                    single_chat integer not null,
+                    trigger_message_id text not null,
+                    trigger_create_time text not null,
+                    trigger_sender text not null,
+                    trigger_text text not null,
+                    trigger_message_json text not null default '{}',
+                    status text not null default 'pending',
+                    attempts integer not null default 0,
+                    locked_at text,
+                    error text not null default '',
+                    created_at text not null default current_timestamp,
+                    updated_at text not null default current_timestamp,
+                    unique(conversation_id, trigger_message_id)
+                );
+                create index if not exists idx_reply_tasks_status
+                    on reply_tasks(status, id);
                 create table if not exists corpus_sources (
                     source_key text primary key,
                     last_collected_at text
@@ -249,6 +287,152 @@ class AutoReplyStore:
                 where send_status='needs_authorization'
                 """
             )
+            reply_task_columns = {
+                row["name"]
+                for row in db.execute("pragma table_info(reply_tasks)").fetchall()
+            }
+            if "trigger_message_json" not in reply_task_columns:
+                db.execute(
+                    "alter table reply_tasks add column trigger_message_json text not null default '{}'"
+                )
+
+    @staticmethod
+    def _reply_task_from_row(row: sqlite3.Row) -> ReplyTask:
+        return ReplyTask(
+            id=row["id"],
+            conversation_id=row["conversation_id"],
+            conversation_title=row["conversation_title"],
+            single_chat=bool(row["single_chat"]),
+            trigger_message_id=row["trigger_message_id"],
+            trigger_create_time=row["trigger_create_time"],
+            trigger_sender=row["trigger_sender"],
+            trigger_text=row["trigger_text"],
+            trigger_message_json=row["trigger_message_json"],
+            status=row["status"],
+            attempts=row["attempts"],
+            locked_at=row["locked_at"],
+            error=row["error"],
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
+
+    def enqueue_reply_task(
+        self,
+        *,
+        conversation_id: str,
+        conversation_title: str,
+        single_chat: bool,
+        trigger_message_id: str,
+        trigger_create_time: str,
+        trigger_sender: str,
+        trigger_text: str,
+        trigger_message_json: str = "{}",
+    ) -> bool:
+        with self._connect() as db:
+            cursor = db.execute(
+                """
+                insert or ignore into reply_tasks (
+                    conversation_id,
+                    conversation_title,
+                    single_chat,
+                    trigger_message_id,
+                    trigger_create_time,
+                    trigger_sender,
+                    trigger_text,
+                    trigger_message_json
+                )
+                values (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    conversation_id,
+                    conversation_title,
+                    int(single_chat),
+                    trigger_message_id,
+                    trigger_create_time,
+                    trigger_sender,
+                    trigger_text,
+                    trigger_message_json,
+                ),
+            )
+            return cursor.rowcount == 1
+
+    def claim_reply_tasks(self, limit: int) -> list[ReplyTask]:
+        if limit <= 0:
+            return []
+        with self._connect() as db:
+            db.execute("begin immediate")
+            rows = db.execute(
+                """
+                select *
+                from reply_tasks
+                where status='pending'
+                order by id
+                limit ?
+                """,
+                (limit,),
+            ).fetchall()
+            task_ids = [row["id"] for row in rows]
+            if not task_ids:
+                return []
+            placeholders = ",".join("?" for _ in task_ids)
+            db.execute(
+                f"""
+                update reply_tasks
+                set status='processing',
+                    attempts=attempts + 1,
+                    locked_at=current_timestamp,
+                    updated_at=current_timestamp
+                where id in ({placeholders})
+                """,
+                task_ids,
+            )
+            claimed_rows = db.execute(
+                f"""
+                select *
+                from reply_tasks
+                where id in ({placeholders})
+                order by id
+                """,
+                task_ids,
+            ).fetchall()
+            return [self._reply_task_from_row(row) for row in claimed_rows]
+
+    def complete_reply_task(self, task_id: int) -> None:
+        with self._connect() as db:
+            db.execute(
+                """
+                update reply_tasks
+                set status='done',
+                    error='',
+                    updated_at=current_timestamp
+                where id=?
+                """,
+                (task_id,),
+            )
+
+    def fail_reply_task(self, task_id: int, error: str) -> None:
+        with self._connect() as db:
+            db.execute(
+                """
+                update reply_tasks
+                set status='failed',
+                    error=?,
+                    updated_at=current_timestamp
+                where id=?
+                """,
+                (error, task_id),
+            )
+
+    def count_reply_tasks(self, status: str | None = None) -> int:
+        with self._connect() as db:
+            if status is None:
+                row = db.execute("select count(*) as count from reply_tasks").fetchone()
+            else:
+                row = db.execute(
+                    "select count(*) as count from reply_tasks where status=?",
+                    (status,),
+                ).fetchone()
+            return int(row["count"])
 
     def upsert_conversation(
         self,

@@ -136,28 +136,33 @@ launchctl kickstart -k "gui/$(id -u)/com.derek.ceo-agent-service.audit-web"
 
 This only starts the audit console; it does not run the auto-reply worker.
 
-To run the auto-reply agent every 30 minutes without sending messages, install the
-launchd agent:
+To run the no-send auto-reply pipeline, install the launchd agents:
 
 ```bash
 scripts/install-hourly-dry-run-agent.sh
 ```
 
-The launchd agent runs `run-once --not-send-message`, writes decisions to SQLite,
-does not live-send replies, and suppresses repeated pause notifications for
-conversations already in human handoff. Review the generated attempts in the
-audit console or SQLite, then send an approved attempt manually:
+The producer launchd agent runs `produce-once --not-send-message` every
+5 minutes and only queues eligible DingTalk messages. The consumer launchd agent
+runs `consume --not-send-message` continuously and claims queued tasks one at a
+time before generating replies. This keeps frequent DingTalk checks from
+starting duplicate generation work when a previous reply is still processing.
+
+Generated decisions are written to SQLite and are not live-sent. Review the
+generated attempts in the audit console or SQLite, then send an approved attempt
+manually:
 
 ```bash
 cd apps/local-service
 CEO_NOT_SEND_MESSAGE=0 CEO_LIVE_SEND_BLOCKERS_ACCEPTED=1 .venv/bin/ceo-agent send-attempt --attempt-id 123
 ```
 
-The no-send script uses a lock directory so a slow previous pass is not
-overlapped by the next 30-minute trigger. To stop the launchd agent:
+The producer script uses a lock directory so a slow previous DingTalk check is
+not overlapped by the next 5-minute trigger. To stop the launchd agents:
 
 ```bash
 launchctl bootout "gui/$(id -u)/com.derek.ceo-agent-service.hourly-dry-run"
+launchctl bootout "gui/$(id -u)/com.derek.ceo-agent-service.dry-run-consumer"
 ```
 
 ## Feedback

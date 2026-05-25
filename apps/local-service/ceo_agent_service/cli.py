@@ -58,7 +58,7 @@ class WorkerSettings(BaseModel):
     db_path: Path = _default_data_dir() / "auto-reply.sqlite3"
     corpus_dir: Path = _default_corpus_dir()
     dry_run: bool = True
-    poll_interval_seconds: PositiveInt = 30
+    poll_interval_seconds: PositiveInt = 300
     batch_seconds: PositiveInt = 120
     ding_robot_code: str | None = None
     ding_robot_name: str | None = DEFAULT_DING_ROBOT_NAME
@@ -118,6 +118,10 @@ def build_parser() -> argparse.ArgumentParser:
         "probe-dws",
         "run-once",
         "run",
+        "produce-once",
+        "produce",
+        "consume-once",
+        "consume",
         "build-corpus",
         "collect-corpus",
         "refresh-org-cache",
@@ -377,6 +381,18 @@ def run_once(settings: WorkerSettings) -> None:
         after_error_id=after_error_id,
     )
     print(json.dumps(summary, ensure_ascii=False), flush=True)
+
+
+def produce_once(settings: WorkerSettings) -> int:
+    queued = create_worker(settings).produce_once(max_tasks=settings.max_batches)
+    print(f"produce-once queued={queued}", flush=True)
+    return queued
+
+
+def consume_once(settings: WorkerSettings) -> int:
+    processed = create_worker(settings).consume_once(max_tasks=settings.max_batches)
+    print(f"consume-once processed={processed}", flush=True)
+    return processed
 
 
 def test_ding_command(settings: WorkerSettings) -> None:
@@ -754,6 +770,28 @@ def run_loop(
         sleep(poll_interval_seconds)
 
 
+def run_producer_loop(
+    worker: DingTalkAutoReplyWorker,
+    poll_interval_seconds: int,
+    max_tasks: int | None = None,
+    sleep: Callable[[int], None] = time.sleep,
+) -> None:
+    while True:
+        worker.produce_once(max_tasks=max_tasks)
+        sleep(poll_interval_seconds)
+
+
+def run_consumer_loop(
+    worker: DingTalkAutoReplyWorker,
+    poll_interval_seconds: int,
+    max_tasks: int | None = None,
+    sleep: Callable[[int], None] = time.sleep,
+) -> None:
+    while True:
+        worker.consume_once(max_tasks=max_tasks)
+        sleep(poll_interval_seconds)
+
+
 def build_style_corpus(workspace: Path, corpus_dir: Path) -> int:
     minutes_dir = workspace / "AI听记"
     corpus_dir.mkdir(parents=True, exist_ok=True)
@@ -870,6 +908,24 @@ def main() -> None:
             create_worker(settings),
             settings.poll_interval_seconds,
             max_batches=settings.max_batches,
+        )
+    elif args.command == "produce-once":
+        produce_once(settings)
+    elif args.command == "produce":
+        run_producer_loop(
+            create_worker(settings),
+            settings.poll_interval_seconds,
+            max_tasks=settings.max_batches,
+        )
+    elif args.command == "consume-once":
+        ensure_live_send_allowed(settings)
+        consume_once(settings)
+    elif args.command == "consume":
+        ensure_live_send_allowed(settings)
+        run_consumer_loop(
+            create_worker(settings),
+            settings.poll_interval_seconds,
+            max_tasks=settings.max_batches,
         )
     elif args.command == "build-corpus":
         build_style_corpus(settings.workspace, settings.corpus_dir)

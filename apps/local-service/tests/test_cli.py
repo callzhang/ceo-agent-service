@@ -17,9 +17,11 @@ from ceo_agent_service.cli import (
     probe_dws,
     rerun_message_command,
     reset_codex_sessions_command,
+    run_consumer_loop,
     record_feedback_command,
     refresh_org_cache_command,
     run_loop,
+    run_producer_loop,
     send_attempt_command,
     settings_from_args,
     test_ding_command as run_test_ding_command,
@@ -108,7 +110,7 @@ def test_settings_defaults_point_to_memory_home():
     assert settings.db_path == repo_root / "data" / "auto-reply.sqlite3"
     assert settings.corpus_dir == repo_root / "corpus"
     assert settings.batch_seconds == 120
-    assert settings.poll_interval_seconds == 30
+    assert settings.poll_interval_seconds == 300
     assert settings.codex_timeout_seconds == 300
     assert settings.max_batches is None
 
@@ -1023,6 +1025,52 @@ def test_run_once_command_calls_worker_once(monkeypatch, tmp_path):
     assert calls == [3]
 
 
+def test_produce_once_command_calls_worker_produce_once(monkeypatch, tmp_path):
+    calls = []
+
+    class FakeWorker:
+        def produce_once(self, max_tasks=None):
+            calls.append(max_tasks)
+            return 2
+
+    monkeypatch.setattr(cli, "create_worker", lambda settings: FakeWorker())
+
+    settings = WorkerSettings(
+        workspace=tmp_path / "workspace",
+        db_path=tmp_path / "worker.sqlite3",
+        corpus_dir=tmp_path / "corpus",
+        max_batches=3,
+    )
+
+    queued = cli.produce_once(settings)
+
+    assert queued == 2
+    assert calls == [3]
+
+
+def test_consume_once_command_calls_worker_consume_once(monkeypatch, tmp_path):
+    calls = []
+
+    class FakeWorker:
+        def consume_once(self, max_tasks=None):
+            calls.append(max_tasks)
+            return 2
+
+    monkeypatch.setattr(cli, "create_worker", lambda settings: FakeWorker())
+
+    settings = WorkerSettings(
+        workspace=tmp_path / "workspace",
+        db_path=tmp_path / "worker.sqlite3",
+        corpus_dir=tmp_path / "corpus",
+        max_batches=3,
+    )
+
+    processed = cli.consume_once(settings)
+
+    assert processed == 2
+    assert calls == [3]
+
+
 def test_run_once_command_prints_attempt_sent_and_error_deltas(
     monkeypatch, tmp_path, capsys
 ):
@@ -1435,6 +1483,40 @@ def test_run_loop_calls_run_once_and_sleeps_once():
         run_loop(FakeWorker(), poll_interval_seconds=7, max_batches=3, sleep=sleep)
 
     assert calls == [3, "sleep:7"]
+
+
+def test_producer_and_consumer_loops_call_separate_methods_once():
+    calls = []
+
+    class StopLoop(Exception):
+        pass
+
+    class FakeWorker:
+        def produce_once(self, max_tasks=None):
+            calls.append(f"produce:{max_tasks}")
+
+        def consume_once(self, max_tasks=None):
+            calls.append(f"consume:{max_tasks}")
+
+    def sleep(seconds):
+        calls.append(f"sleep:{seconds}")
+        raise StopLoop
+
+    with pytest.raises(StopLoop):
+        run_producer_loop(FakeWorker(), poll_interval_seconds=7, max_tasks=3, sleep=sleep)
+    with pytest.raises(StopLoop):
+        run_consumer_loop(FakeWorker(), poll_interval_seconds=11, max_tasks=5, sleep=sleep)
+
+    assert calls == [
+        "produce:3",
+        "sleep:7",
+        "consume:5",
+        "sleep:11",
+    ]
+
+
+def test_default_poll_interval_is_five_minutes():
+    assert WorkerSettings().poll_interval_seconds == 300
 
 
 def test_build_style_corpus_scans_minutes_and_writes_outputs(tmp_path, capsys):

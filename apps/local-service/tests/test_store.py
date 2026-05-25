@@ -18,6 +18,58 @@ def test_conversation_session_persists(tmp_path: Path):
     assert loaded.get_codex_session_id("cid-1") == "session-1"
 
 
+def test_reply_task_queue_dedupes_by_conversation_and_message(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+
+    first_inserted = store.enqueue_reply_task(
+        conversation_id="cid-1",
+        conversation_title="Friday",
+        single_chat=False,
+        trigger_message_id="msg-1",
+        trigger_create_time="2026-05-13 18:00:00",
+        trigger_sender="Mina",
+        trigger_text="@Derek Zen 看一下",
+    )
+    second_inserted = store.enqueue_reply_task(
+        conversation_id="cid-1",
+        conversation_title="Friday",
+        single_chat=False,
+        trigger_message_id="msg-1",
+        trigger_create_time="2026-05-13 18:00:00",
+        trigger_sender="Mina",
+        trigger_text="@Derek Zen 看一下",
+    )
+
+    assert first_inserted is True
+    assert second_inserted is False
+    assert store.count_reply_tasks(status="pending") == 1
+
+
+def test_claim_reply_tasks_marks_tasks_processing_atomically(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="cid-1",
+        conversation_title="Friday",
+        single_chat=False,
+        trigger_message_id="msg-1",
+        trigger_create_time="2026-05-13 18:00:00",
+        trigger_sender="Mina",
+        trigger_text="@Derek Zen 看一下",
+    )
+
+    claimed = store.claim_reply_tasks(limit=1)
+    second_claim = store.claim_reply_tasks(limit=1)
+
+    assert len(claimed) == 1
+    assert claimed[0].conversation_id == "cid-1"
+    assert claimed[0].trigger_message_id == "msg-1"
+    assert claimed[0].status == "processing"
+    assert claimed[0].attempts == 1
+    assert second_claim == []
+    assert store.count_reply_tasks(status="pending") == 0
+    assert store.count_reply_tasks(status="processing") == 1
+
+
 def test_reset_codex_sessions_clears_conversation_mapping_only(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.upsert_conversation("cid-1", "Friday", False, "session-1")
