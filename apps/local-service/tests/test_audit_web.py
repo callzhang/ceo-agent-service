@@ -545,6 +545,94 @@ def test_handle_reviewed_message_reply_matches_sender_group_and_text(
     assert sent_reply.recall_key == "recall-1"
 
 
+def test_handle_reviewed_message_reply_matches_private_message_without_mention(
+    monkeypatch,
+    tmp_path: Path,
+):
+    class FakeDws:
+        def __init__(self):
+            self.sent_messages = []
+            self.read_mentioned_calls = 0
+
+        def search_conversations(self, query):
+            assert query == "Mina 邹"
+            return [
+                DingTalkConversation(
+                    open_conversation_id="cid-private",
+                    title="Mina 邹",
+                    single_chat=True,
+                    unread_point=1,
+                )
+            ]
+
+        def read_mentioned_messages(self, conversation, limit=50):
+            self.read_mentioned_calls += 1
+            raise AssertionError("private lookup should not use mention list")
+
+        def read_recent_messages(self, conversation):
+            assert conversation.open_conversation_id == "cid-private"
+            return [
+                DingTalkMessage(
+                    open_conversation_id="cid-private",
+                    open_message_id="msg-private-1",
+                    conversation_title=conversation.title,
+                    single_chat=True,
+                    sender_name="Mina 邹",
+                    sender_user_id="user-mina",
+                    create_time="2026-05-25 13:40:26",
+                    content="磊哥分身，大模型项目经理需要具备什么能力",
+                )
+            ]
+
+        def read_unread_messages(self, conversation):
+            return []
+
+        def send_message(
+            self,
+            conversation_id,
+            text,
+            at_users=None,
+            user_id=None,
+            open_dingtalk_id=None,
+        ):
+            self.sent_messages.append((conversation_id, text, at_users, user_id))
+            return {"result": {"processQueryKey": "recall-private-1"}}
+
+    monkeypatch.setattr(
+        "ceo_agent_service.worker.send_macos_notification",
+        lambda **kwargs: None,
+    )
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    dws = FakeDws()
+
+    result = handle_reviewed_message_reply(
+        store,
+        dws,
+        user_name="Mina 邹",
+        group_name="Mina 邹",
+        message_str="磊哥分身，大模型项目经理需要具备什么能力",
+        reply_text="这个岗位核心看业务拆解、模型理解、项目推进和学习速度。",
+    )
+
+    attempt = store.get_reply_attempt(result["attempt_id"])
+    sent_reply = store.get_sent_reply("cid-private", "msg-private-1")
+    assert result["send_status"] == "sent"
+    assert attempt is not None
+    assert attempt.trigger_sender == "Mina 邹"
+    assert attempt.trigger_text == "磊哥分身，大模型项目经理需要具备什么能力"
+    assert "> Mina 邹: 磊哥分身，大模型项目经理需要具备什么能力" in attempt.final_reply_text
+    assert dws.sent_messages == [
+        (
+            None,
+            attempt.final_reply_text,
+            [],
+            "user-mina",
+        )
+    ]
+    assert sent_reply is not None
+    assert sent_reply.recall_key == "recall-private-1"
+
+
 def test_render_error_list_shows_recent_errors(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.record_error("cid-1", "msg-1", "send", "authorization required")

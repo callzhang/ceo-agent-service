@@ -13,7 +13,12 @@ from ceo_agent_service.codex_history import (
     render_local_codex_session,
 )
 from ceo_agent_service.codex_decision import audit_summary_explains_no_documents
-from ceo_agent_service.dingtalk_models import CodexAction, SensitivityKind
+from ceo_agent_service.dingtalk_models import (
+    CodexAction,
+    DingTalkConversation,
+    DingTalkMessage,
+    SensitivityKind,
+)
 from ceo_agent_service.dws_client import DwsClient
 from ceo_agent_service.store import AutoReplyStore, ReplyAttempt, SentReply
 from ceo_agent_service.worker import DingTalkAutoReplyWorker
@@ -346,7 +351,7 @@ def handle_reviewed_message_reply(
             f"expected one conversation named {group_name!r}, got {len(exact_conversations)}"
         )
     conversation = exact_conversations[0]
-    messages = dws.read_mentioned_messages(conversation, limit=100)
+    messages = _reviewed_reply_lookup_messages(dws, conversation)
     matches = [
         message
         for message in messages
@@ -402,6 +407,25 @@ def handle_reviewed_message_reply(
         "send_status": attempt.send_status,
         "final_reply_text": attempt.final_reply_text,
     }
+
+
+def _reviewed_reply_lookup_messages(
+    dws: DwsClient,
+    conversation: DingTalkConversation,
+) -> list[DingTalkMessage]:
+    if not conversation.single_chat:
+        return dws.read_mentioned_messages(conversation, limit=100)
+    seen_message_ids: set[str] = set()
+    result: list[DingTalkMessage] = []
+    for message in [
+        *dws.read_recent_messages(conversation),
+        *dws.read_unread_messages(conversation),
+    ]:
+        if message.open_message_id in seen_message_ids:
+            continue
+        seen_message_ids.add(message.open_message_id)
+        result.append(message)
+    return result
 
 
 def create_audit_app(
