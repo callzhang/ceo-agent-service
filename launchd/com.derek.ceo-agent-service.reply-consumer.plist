@@ -4,13 +4,13 @@
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>com.derek.ceo-agent-service.dry-run-consumer</string>
+  <string>com.derek.ceo-agent-service.reply-consumer</string>
 
   <key>ProgramArguments</key>
   <array>
     <string>/bin/zsh</string>
     <string>-lc</string>
-    <string>cd /Users/derek/Documents/Projects/ceo-agent-service/apps/local-service &amp;&amp; export PATH=/Users/derek/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH PYTHONPATH=. CEO_NOT_SEND_MESSAGE=1 CEO_WORKER_DB=/Users/derek/Documents/Projects/ceo-agent-service/data/auto-reply.sqlite3 CEO_WORKSPACE=/Users/derek/Documents/memory CEO_CORPUS_DIR=/Users/derek/Documents/Projects/ceo-agent-service/corpus &amp;&amp; .venv/bin/python -m ceo_agent_service.cli consume --not-send-message --poll-interval-seconds 10 --db /Users/derek/Documents/Projects/ceo-agent-service/data/auto-reply.sqlite3 --workspace /Users/derek/Documents/memory --corpus-dir /Users/derek/Documents/Projects/ceo-agent-service/corpus</string>
+    <string>cd /Users/derek/Documents/Projects/ceo-agent-service/apps/local-service &amp;&amp; export PATH=/Users/derek/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH PYTHONPATH=. CEO_NOT_SEND_MESSAGE=0 CEO_LIVE_SEND_BLOCKERS_ACCEPTED=1 CEO_WORKER_DB=/Users/derek/Documents/Projects/ceo-agent-service/data/auto-reply.sqlite3 CEO_WORKSPACE=/Users/derek/Documents/memory CEO_CORPUS_DIR=/Users/derek/Documents/Projects/ceo-agent-service/corpus &amp;&amp; .venv/bin/python -m ceo_agent_service.cli consume --poll-interval-seconds 10 --db /Users/derek/Documents/Projects/ceo-agent-service/data/auto-reply.sqlite3 --workspace /Users/derek/Documents/memory --corpus-dir /Users/derek/Documents/Projects/ceo-agent-service/corpus</string>
   </array>
 
   <key>WorkingDirectory</key>
@@ -23,10 +23,10 @@
   <true/>
 
   <key>StandardOutPath</key>
-  <string>/Users/derek/Library/Logs/ceo-agent-service/dry-run-consumer.out.log</string>
+  <string>/Users/derek/Library/Logs/ceo-agent-service/reply-consumer.out.log</string>
 
   <key>StandardErrorPath</key>
-  <string>/Users/derek/Library/Logs/ceo-agent-service/dry-run-consumer.err.log</string>
+  <string>/Users/derek/Library/Logs/ceo-agent-service/reply-consumer.err.log</string>
 
   <key>EnvironmentVariables</key>
   <dict>
@@ -43,6 +43,8 @@
     <key>CEO_CORPUS_DIR</key>
     <string>/Users/derek/Documents/Projects/ceo-agent-service/corpus</string>
     <key>CEO_NOT_SEND_MESSAGE</key>
+    <string>0</string>
+    <key>CEO_LIVE_SEND_BLOCKERS_ACCEPTED</key>
     <string>1</string>
   </dict>
 </dict>

@@ -3,12 +3,12 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 log_dir="${CEO_LOG_DIR:-${HOME}/Library/Logs/ceo-agent-service}"
-lock_dir="${CEO_DRY_RUN_LOCK_DIR:-${TMPDIR:-/tmp}/ceo-agent-service-hourly-dry-run.lock}"
+lock_dir="${CEO_REPLY_PRODUCER_LOCK_DIR:-${TMPDIR:-/tmp}/ceo-agent-service-reply-producer.lock}"
 
 mkdir -p "${log_dir}"
 if ! mkdir "${lock_dir}" 2>/dev/null; then
   if [[ -f "${lock_dir}/pid" ]] && kill -0 "$(cat "${lock_dir}/pid")" 2>/dev/null; then
-    printf '%s hourly dry-run skipped: previous run still active\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    printf '%s producer skipped: previous run still active\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     exit 0
   fi
   rm -rf "${lock_dir}"
@@ -24,12 +24,12 @@ export PYTHONPATH="${PYTHONPATH:-.}"
 export CEO_WORKSPACE="${CEO_WORKSPACE:-${HOME}/Documents/memory}"
 export CEO_WORKER_DB="${CEO_WORKER_DB:-${repo_root}/data/auto-reply.sqlite3}"
 export CEO_CORPUS_DIR="${CEO_CORPUS_DIR:-${repo_root}/corpus}"
-export CEO_NOT_SEND_MESSAGE="1"
+export CEO_NOT_SEND_MESSAGE="0"
+export CEO_LIVE_SEND_BLOCKERS_ACCEPTED="1"
 
-printf '%s producer not-send-message starting\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+printf '%s producer live starting\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 .venv/bin/python -m ceo_agent_service.cli produce-once \
-  --not-send-message \
   --db "${CEO_WORKER_DB}" \
   --workspace "${CEO_WORKSPACE}" \
   --corpus-dir "${CEO_CORPUS_DIR}"
-printf '%s producer not-send-message finished\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+printf '%s producer live finished\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
