@@ -123,6 +123,10 @@ def test_codex_developer_instructions_hold_thread_prompt_not_turn_message():
     assert "组织职责包括算法负责人" in instructions
     assert "只回答“新消息”提出的问题" in instructions
     assert "必须输出 audit_documents 和 audit_summary" in instructions
+    assert "reply_text 不要引用来源" in instructions
+    assert "不要加脚注编号" in instructions
+    assert "`workspace`" in instructions
+    assert "`source=`" in instructions
     assert "当前待处理消息" not in instructions
 
 

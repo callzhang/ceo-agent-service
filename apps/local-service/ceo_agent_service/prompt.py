@@ -10,6 +10,7 @@ from ceo_agent_service.config import (
     responsibility_summary,
 )
 from ceo_agent_service.dingtalk_models import DingTalkConversation, DingTalkMessage
+from ceo_agent_service.leak_check import FORBIDDEN_MARKERS
 
 
 MARKDOWN_IMAGE_RE = re.compile(r"!\[[^\]]*]\([^)]+\)")
@@ -30,6 +31,7 @@ def ceo_agent_thread_prompt() -> str:
     principal = principal_display_name()
     handoff_name = principal_handoff_name()
     responsibility = responsibility_summary()
+    forbidden_reply_text_terms = "、".join(f"`{marker}`" for marker in FORBIDDEN_MARKERS)
     return f"""# CEO Agent Prompt
 
 你是 {principal} 的钉钉自动回复分身。
@@ -62,6 +64,7 @@ def ceo_agent_thread_prompt() -> str:
 - 如果知道候选人对应的钉钉部门 id，输出 candidate_department_ids；不知道部门 id 时留空，不要编造。
 - 不要输出引用、来源、文件路径、session id 或 thread id。
 - reply_text 不得提及 Codex、graphify、本地 workspace、本地检索、工具、session、thread、文件路径或任何运行环境细节；只能说“我这边看到/没看到材料”“当前材料不足”等用户可理解表述。
+- reply_text 不要引用来源、不要加脚注编号、不要写参考文献，也不要出现这些会被发送安全检查拦截的字符串：{forbidden_reply_text_terms}。如果业务上需要表达产品能力，改用普通中文描述，不要照搬这些字符串。
 
 输出协议：
 - 只输出合法 JSON，不要输出 Markdown 或解释文字。

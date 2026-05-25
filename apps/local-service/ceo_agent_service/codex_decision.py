@@ -14,30 +14,10 @@ from ceo_agent_service.codex_history import (
 )
 from ceo_agent_service.config import assistant_signature, forbidden_path_prefixes
 from ceo_agent_service.dingtalk_models import CodexAction, CodexDecision
+from ceo_agent_service.leak_check import FORBIDDEN_MARKERS, contains_forbidden_leak
 
 
 SIGNATURE = assistant_signature()
-FORBIDDEN_MARKERS = (
-    *forbidden_path_prefixes(),
-    "codex",
-    "graphify",
-    "workspace",
-    "本地 workspace",
-    "本地检索",
-    "graphify evidence",
-    "source:",
-    "sources:",
-    "source=",
-    "source =",
-    "来源：",
-    "citation",
-    "session_id",
-    "sessionid",
-    "session id",
-    "thread_id",
-    "thread id",
-    "codex_session",
-)
 
 
 def append_signature(text: str) -> str:
@@ -45,15 +25,6 @@ def append_signature(text: str) -> str:
     if stripped.endswith(SIGNATURE):
         return stripped
     return f"{stripped}{SIGNATURE}"
-
-
-def contains_forbidden_leak(text: str) -> bool:
-    lowered = text.lower()
-    if any(marker.lower() in lowered for marker in FORBIDDEN_MARKERS):
-        return True
-    if "[1]" in text or "【1】" in text:
-        return True
-    return any(path in text for path in ("/tmp/", "/var/", "/private/var/"))
 
 
 def parse_codex_json(raw: str) -> CodexDecision:
