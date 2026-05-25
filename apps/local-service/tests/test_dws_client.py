@@ -1,5 +1,5 @@
 import subprocess
-from datetime import datetime
+from datetime import datetime, timedelta
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
@@ -692,7 +692,8 @@ def test_read_recent_messages_high_level_method_uses_group_command(monkeypatch):
     expected_time = datetime.fromtimestamp(
         last_message_create_at / 1000,
         tz=TEST_LOCAL_TZ,
-    ).strftime(
+    ) + timedelta(seconds=1)
+    expected_time = expected_time.strftime(
         "%Y-%m-%d %H:%M:%S",
     )
     payload = {
@@ -825,7 +826,7 @@ def test_read_mentioned_messages_without_conversation_uses_global_mentions(
     assert command[-6:] == ["--limit", "100", "--cursor", "0", "--format", "json"]
 
 
-def test_build_read_unread_messages_command_reads_forward_from_unread_cursor(
+def test_build_read_unread_messages_command_reads_latest_unread_window(
     monkeypatch,
 ):
     monkeypatch.setattr(dws_client, "_local_time_zone", lambda: TEST_LOCAL_TZ)
@@ -833,7 +834,8 @@ def test_build_read_unread_messages_command_reads_forward_from_unread_cursor(
     expected_time = datetime.fromtimestamp(
         last_message_create_at / 1000,
         tz=TEST_LOCAL_TZ,
-    ).strftime(
+    ) + timedelta(seconds=1)
+    expected_time = expected_time.strftime(
         "%Y-%m-%d %H:%M:%S",
     )
     client = DwsClient(dws_bin="dws")
@@ -856,7 +858,7 @@ def test_build_read_unread_messages_command_reads_forward_from_unread_cursor(
         "cid-1",
         "--time",
         expected_time,
-        "--forward=true",
+        "--forward=false",
         "--limit",
         "3",
         "--format",
@@ -895,7 +897,7 @@ def test_build_list_messages_by_sender_command_uses_sender_and_cursor():
     ]
 
 
-def test_read_unread_messages_uses_forward_command_and_returns_chronological_order(
+def test_read_unread_messages_reads_latest_window_and_returns_chronological_order(
     monkeypatch,
 ):
     monkeypatch.setattr(dws_client, "_local_time_zone", lambda: TEST_LOCAL_TZ)
@@ -903,7 +905,8 @@ def test_read_unread_messages_uses_forward_command_and_returns_chronological_ord
     expected_time = datetime.fromtimestamp(
         last_message_create_at / 1000,
         tz=TEST_LOCAL_TZ,
-    ).strftime(
+    ) + timedelta(seconds=1)
+    expected_time = expected_time.strftime(
         "%Y-%m-%d %H:%M:%S",
     )
     payload = {
@@ -947,7 +950,7 @@ def test_read_unread_messages_uses_forward_command_and_returns_chronological_ord
             "cid-1",
             "--time",
             expected_time,
-            "--forward=true",
+            "--forward=false",
             "--limit",
             "2",
             "--format",
@@ -960,18 +963,18 @@ def test_read_unread_messages_uses_forward_command_and_returns_chronological_ord
     ]
 
 
-def test_message_list_time_uses_machine_local_timezone(monkeypatch):
+def test_message_list_time_uses_dingtalk_message_timezone(monkeypatch):
     monkeypatch.setattr(
         dws_client,
         "_local_time_zone",
         lambda: ZoneInfo("America/Los_Angeles"),
     )
 
-    assert DwsClient._message_list_time(1779061565339) == "2026-05-17 16:46:05"
+    assert DwsClient._message_list_time(1779061565339) == "2026-05-18 07:46:06"
 
     monkeypatch.setattr(dws_client, "_local_time_zone", lambda: ZoneInfo("Asia/Shanghai"))
 
-    assert DwsClient._message_list_time(1779061565339) == "2026-05-18 07:46:05"
+    assert DwsClient._message_list_time(1779061565339) == "2026-05-18 07:46:06"
 
 
 def test_read_unread_messages_skips_dws_when_unread_point_is_zero():

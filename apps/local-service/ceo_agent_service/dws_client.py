@@ -5,6 +5,7 @@ import subprocess
 import time
 from datetime import datetime, timedelta
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel
 
@@ -16,6 +17,7 @@ TITLE_WORD_OR_CJK_PATTERN = re.compile(
 )
 TITLE_AT_FILE_ESCAPE_PREFIX = "回复："
 TEXT_AT_FILE_ESCAPE_PREFIX = " "
+DINGTALK_MESSAGE_TIME_ZONE = ZoneInfo("Asia/Shanghai")
 
 
 def _local_time_zone():
@@ -191,7 +193,7 @@ class DwsClient:
         return self.build_message_list_command(
             conversation=conversation,
             limit=max(conversation.unread_point, 1),
-            forward=True,
+            forward=False,
         )
 
     def build_read_mentioned_messages_command(
@@ -859,12 +861,16 @@ class DwsClient:
 
     @staticmethod
     def _message_list_time(last_message_create_at: int | None) -> str:
-        local_time_zone = _local_time_zone()
         if last_message_create_at is None:
-            return datetime.now(tz=local_time_zone).strftime("%Y-%m-%d %H:%M:%S")
-        return datetime.fromtimestamp(
-            last_message_create_at / 1000,
-            tz=local_time_zone,
+            return datetime.now(tz=DINGTALK_MESSAGE_TIME_ZONE).strftime(
+                "%Y-%m-%d %H:%M:%S"
+            )
+        return (
+            datetime.fromtimestamp(
+                last_message_create_at / 1000,
+                tz=DINGTALK_MESSAGE_TIME_ZONE,
+            )
+            + timedelta(seconds=1)
         ).strftime("%Y-%m-%d %H:%M:%S")
 
     @staticmethod
