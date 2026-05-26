@@ -46,6 +46,22 @@
     <string>0</string>
     <key>CEO_LIVE_SEND_BLOCKERS_ACCEPTED</key>
     <string>1</string>
+    <key>CEO_PRINCIPAL_NAME</key>
+    <string>Derek</string>
+    <key>CEO_PRINCIPAL_DISPLAY_NAME</key>
+    <string>Derek</string>
+    <key>CEO_PRINCIPAL_HANDOFF_NAME</key>
+    <string>磊哥</string>
+    <key>CEO_MENTION_ALIASES</key>
+    <string>@Derek Zen,@磊哥</string>
+    <key>CEO_CURRENT_USER_DISPLAY_NAMES</key>
+    <string>磊哥,Derek Zen,Derek,Lei Zhang</string>
+    <key>CEO_STYLE_SPEAKER_NAMES</key>
+    <string>磊哥,Derek</string>
+    <key>CEO_ASSISTANT_SIGNATURE</key>
+    <string>（by磊哥分身）</string>
+    <key>CEO_HANDOFF_ACK</key>
+    <string>我让磊哥本人看一下。（by磊哥分身）</string>
   </dict>
 </dict>
 </plist>

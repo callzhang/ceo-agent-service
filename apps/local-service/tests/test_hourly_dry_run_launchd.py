@@ -17,6 +17,9 @@ def test_hourly_dry_run_script_runs_single_producer_pass_with_lock():
     assert '${HOME}/.local/bin' in content
     assert 'export CEO_NOT_SEND_MESSAGE="0"' in content
     assert 'export CEO_LIVE_SEND_BLOCKERS_ACCEPTED="1"' in content
+    assert 'export CEO_MENTION_ALIASES="${CEO_MENTION_ALIASES:-@Derek Zen,@磊哥}"' in content
+    assert 'export CEO_CURRENT_USER_DISPLAY_NAMES="${CEO_CURRENT_USER_DISPLAY_NAMES:-磊哥,Derek Zen,Derek,Lei Zhang}"' in content
+    assert 'export CEO_ASSISTANT_SIGNATURE="${CEO_ASSISTANT_SIGNATURE:-（by磊哥分身）}"' in content
     assert "produce-once" in content
     assert "run-once" not in content
     assert "--not-send-message" not in content
@@ -41,6 +44,11 @@ def test_reply_producer_launch_agent_runs_every_five_minutes_without_keepalive()
     assert "mkdir \"$lock_dir\"" in command[2]
     assert "CEO_NOT_SEND_MESSAGE=0" in command[2]
     assert "CEO_LIVE_SEND_BLOCKERS_ACCEPTED=1" in command[2]
+    env = plist["EnvironmentVariables"]
+    assert env["CEO_MENTION_ALIASES"] == "@Derek Zen,@磊哥"
+    assert env["CEO_CURRENT_USER_DISPLAY_NAMES"] == "磊哥,Derek Zen,Derek,Lei Zhang"
+    assert env["CEO_ASSISTANT_SIGNATURE"] == "（by磊哥分身）"
+    assert env["CEO_HANDOFF_ACK"] == "我让磊哥本人看一下。（by磊哥分身）"
     assert "/Users/derek/.local/bin" in command[2]
     assert "kill -0" in command[2]
     assert "rm -rf \"$lock_dir\"" in command[2]
@@ -63,6 +71,11 @@ def test_reply_consumer_launch_agent_runs_as_live_keepalive_consumer():
     assert "consume" in command[2]
     assert "CEO_NOT_SEND_MESSAGE=0" in command[2]
     assert "CEO_LIVE_SEND_BLOCKERS_ACCEPTED=1" in command[2]
+    env = plist["EnvironmentVariables"]
+    assert env["CEO_MENTION_ALIASES"] == "@Derek Zen,@磊哥"
+    assert env["CEO_CURRENT_USER_DISPLAY_NAMES"] == "磊哥,Derek Zen,Derek,Lei Zhang"
+    assert env["CEO_ASSISTANT_SIGNATURE"] == "（by磊哥分身）"
+    assert env["CEO_HANDOFF_ACK"] == "我让磊哥本人看一下。（by磊哥分身）"
     assert "--not-send-message" not in command[2]
     assert "--poll-interval-seconds 10" in command[2]
 

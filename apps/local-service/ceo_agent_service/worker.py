@@ -734,6 +734,7 @@ class DingTalkAutoReplyWorker:
             message.create_time
             for message in messages
             if self._is_current_user_message_for_candidate_filter(message)
+            and not self._is_processing_ack_message(message)
         ]
         latest_current_user_message_time = (
             max(current_user_message_times) if current_user_message_times else None
@@ -744,7 +745,7 @@ class DingTalkAutoReplyWorker:
             eligible_messages = [
                 message for message in messages if message.mentions_derek()
             ]
-        return [
+        candidates = [
             message
             for message in eligible_messages
             if not self._is_current_user_message_for_candidate_filter(message)
@@ -753,6 +754,7 @@ class DingTalkAutoReplyWorker:
                 or message.create_time > latest_current_user_message_time
             )
         ]
+        return sorted(candidates, key=lambda message: message.create_time)
 
     @staticmethod
     def _candidate_source_messages(
@@ -814,6 +816,10 @@ class DingTalkAutoReplyWorker:
             return False
 
     @staticmethod
+    def _is_processing_ack_message(message: DingTalkMessage) -> bool:
+        return message.content.strip() == PROCESSING_ACK
+
+    @staticmethod
     def _prompt_context_messages(
         previous_messages: list[DingTalkMessage],
         unread_messages: list[DingTalkMessage],
@@ -828,6 +834,8 @@ class DingTalkAutoReplyWorker:
         result: list[DingTalkMessage] = []
         seen_message_ids: set[str] = set()
         for message in [*previous_messages[-previous_limit:], *unread_messages]:
+            if DingTalkAutoReplyWorker._is_processing_ack_message(message):
+                continue
             if message.open_message_id in seen_message_ids:
                 continue
             seen_message_ids.add(message.open_message_id)

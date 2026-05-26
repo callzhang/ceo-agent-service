@@ -2274,6 +2274,84 @@ def test_group_mention_from_unread_conversation_is_processed_when_unread_tail_mi
     assert attempts[0].send_status == "dry_run"
 
 
+def test_group_mentions_are_processed_by_message_time_not_fetch_order(
+    tmp_path: Path, monkeypatch
+):
+    older_mention = message(
+        "@Derek Zen(磊哥) 怎么规避客户拿给别的 vendor 比价？",
+        message_id="msg-older-mention",
+    )
+    older_mention.create_time = "2026-05-26 07:54:36"
+    newer_mention = message(
+        "@Derek Zen(磊哥) 磊哥请审一下这个文档，给一下意见",
+        message_id="msg-newer-mention",
+    )
+    newer_mention.create_time = "2026-05-26 08:34:57"
+    latest_file = message("[文件] 新版文档.docx", message_id="msg-latest-file")
+    latest_file.create_time = "2026-05-26 08:57:46"
+    dws = FakeDws(
+        [conversation()],
+        {
+            "cid-1": [
+                latest_file,
+                newer_mention,
+                older_mention,
+            ]
+        },
+        unread_messages={"cid-1": [latest_file]},
+    )
+    dws.mentioned_messages = {
+        "cid-1": [
+            older_mention,
+            newer_mention,
+        ]
+    }
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="我看一下")
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch, dry_run=True)
+
+    worker.run_once()
+
+    attempts = worker.store.list_reply_attempts(limit=10)
+    assert len(codex.calls) == 1
+    assert attempts[0].trigger_message_id == "msg-newer-mention"
+    assert "请审一下这个文档" in attempts[0].trigger_text
+
+
+def test_processing_ack_does_not_hide_unanswered_group_mention(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message(
+        "@Derek Zen(磊哥) 磊哥请审一下这个文档，给一下意见",
+        message_id="msg-trigger",
+    )
+    trigger.create_time = "2026-05-26 08:34:57"
+    ack = derek_message(
+        PROCESSING_ACK,
+        message_id="msg-processing-ack",
+        create_time="2026-05-26 09:05:36",
+    )
+    dws = FakeDws(
+        [conversation()],
+        {"cid-1": [ack, trigger]},
+        unread_messages={"cid-1": [ack]},
+    )
+    dws.mentioned_messages = {"cid-1": [trigger]}
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="我看一下")
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch, dry_run=True)
+
+    worker.run_once()
+
+    prompt = codex.calls[0][0]
+    attempts = worker.store.list_reply_attempts(limit=10)
+    assert attempts[0].trigger_message_id == "msg-trigger"
+    assert PROCESSING_ACK not in prompt
+    assert "请审一下这个文档" in prompt
+
+
 def test_internal_personnel_question_missing_subject_asks_clarifying_question(
     tmp_path: Path, monkeypatch
 ):
