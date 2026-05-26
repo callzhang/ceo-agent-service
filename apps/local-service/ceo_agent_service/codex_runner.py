@@ -12,9 +12,10 @@ CODEX_DEVELOPER_INSTRUCTIONS_PREFIX = (
     "You are the local CEO DingTalk reply worker. Inspect the workspace before "
     "answering. Return only the requested JSON."
 )
-# The CEO worker must call DWS; read-only/workspace-write sandboxes can block
-# local auth decryption even when HOME and token files are visible.
-CODEX_SANDBOX_MODE = "danger-full-access"
+# The CEO worker must call DWS and open local authorization flows. Codex exec
+# resume does not support `-s`, so use the explicit bypass flag for both new and
+# resumed decision threads.
+CODEX_BYPASS_APPROVALS_AND_SANDBOX = "--dangerously-bypass-approvals-and-sandbox"
 
 
 def codex_developer_instructions() -> str:
@@ -61,8 +62,7 @@ class CodexRunner:
                 "exec",
                 "resume",
                 *common_options,
-                "-c",
-                _config_string("sandbox_mode", CODEX_SANDBOX_MODE),
+                CODEX_BYPASS_APPROVALS_AND_SANDBOX,
                 session_id,
                 "-",
             ]
@@ -70,8 +70,7 @@ class CodexRunner:
             self.codex_bin,
             "exec",
             *common_options,
-            "-s",
-            CODEX_SANDBOX_MODE,
+            CODEX_BYPASS_APPROVALS_AND_SANDBOX,
             "--output-schema",
             str(CODEX_DECISION_SCHEMA_PATH),
             "--cd",
