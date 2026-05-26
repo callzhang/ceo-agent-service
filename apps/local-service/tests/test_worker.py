@@ -192,6 +192,7 @@ class FakeCodex:
         audit_tool_events: list[dict[str, str]] | None = None,
         transcript_start_line: int = 0,
         transcript_end_line: int = 0,
+        before_decide=None,
     ):
         self.decision = decision
         self.last_session_id = last_session_id
@@ -199,9 +200,12 @@ class FakeCodex:
         self.last_audit_tool_events = audit_tool_events or []
         self.last_transcript_start_line = transcript_start_line
         self.last_transcript_end_line = transcript_end_line
+        self.before_decide = before_decide
         self.calls: list[tuple[str, str | None]] = []
 
     def decide(self, prompt: str, session_id: str | None) -> CodexDecision:
+        if self.before_decide is not None:
+            self.before_decide(prompt, session_id)
         self.calls.append((prompt, session_id))
         if self.next_session_id is not None:
             self.last_session_id = self.next_session_id
@@ -373,7 +377,7 @@ def test_produce_once_enqueues_candidate_without_calling_codex(
     assert worker.store.count_reply_tasks(status="pending") == 1
 
 
-def test_produce_once_sends_processing_ack_for_new_reply_task(
+def test_produce_once_does_not_send_processing_ack_for_new_reply_task(
     tmp_path: Path, monkeypatch
 ):
     trigger = message("@Derek Zen(磊哥) 这个怎么处理？")
@@ -387,10 +391,10 @@ def test_produce_once_sends_processing_ack_for_new_reply_task(
 
     assert queued == 1
     assert codex.calls == []
-    assert dws.sent == [("cid-1", PROCESSING_ACK)]
+    assert dws.sent == []
 
 
-def test_repeated_produce_once_does_not_duplicate_processing_ack(
+def test_repeated_produce_once_does_not_send_processing_ack(
     tmp_path: Path, monkeypatch
 ):
     trigger = message("@Derek Zen(磊哥) 这个怎么处理？")
@@ -403,7 +407,37 @@ def test_repeated_produce_once_does_not_duplicate_processing_ack(
     assert worker.produce_once() == 1
     assert worker.produce_once() == 0
 
-    assert dws.sent == [("cid-1", PROCESSING_ACK)]
+    assert dws.sent == []
+
+
+def test_consume_once_sends_processing_ack_after_prompt_context_is_built(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message("@Derek Zen(磊哥) 这个怎么处理？")
+    dws = FakeDws([conversation()], {"cid-1": [trigger]})
+
+    def before_decide(prompt, _session_id):
+        assert PROCESSING_ACK not in prompt
+        assert dws.sent == [("cid-1", PROCESSING_ACK)]
+
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="先按A方案走"),
+        before_decide=before_decide,
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+    worker.produce_once()
+
+    processed = worker.consume_once(max_tasks=1)
+
+    assert processed == 1
+    assert dws.sent[0] == ("cid-1", PROCESSING_ACK)
+    assert final_sent(dws) == [
+        (
+            "cid-1",
+            "> 周俊杰: 这个怎么处理？\n\n"
+            "<@sender-user-1> 先按A方案走（by磊哥分身）",
+        )
+    ]
 
 
 def test_repeated_produce_once_does_not_duplicate_pending_task(

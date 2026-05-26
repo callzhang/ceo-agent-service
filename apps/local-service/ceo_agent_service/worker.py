@@ -192,7 +192,6 @@ class DingTalkAutoReplyWorker:
             if not new_messages:
                 continue
             if self._enqueue_reply_task(conversation, new_messages[-1]):
-                self._send_processing_ack(conversation, new_messages[-1])
                 queued_tasks += 1
             if max_tasks is not None and queued_tasks >= max_tasks:
                 return queued_tasks
@@ -252,7 +251,12 @@ class DingTalkAutoReplyWorker:
             self._record_system_or_notification_skip(conversation, trigger)
             self._mark_seen([trigger])
             return
-        self._process_batch(conversation, [trigger], prompt_context_messages)
+        self._process_batch(
+            conversation,
+            [trigger],
+            prompt_context_messages,
+            send_processing_ack=True,
+        )
 
     def _enqueue_reply_task(
         self,
@@ -923,6 +927,7 @@ class DingTalkAutoReplyWorker:
         context_messages: list[DingTalkMessage],
         *,
         ignore_existing_attempt: bool = False,
+        send_processing_ack: bool = False,
     ) -> None:
         trigger = new_messages[-1]
         if not ignore_existing_attempt and self._handle_existing_attempt(
@@ -944,6 +949,8 @@ class DingTalkAutoReplyWorker:
             include_thread_prompt=session_id is None,
             linked_documents=linked_documents,
         )
+        if send_processing_ack:
+            self._send_processing_ack(conversation, trigger)
         before_session_id = getattr(self.codex, "last_session_id", None)
         decision = self.codex.decide(prompt=prompt, session_id=session_id)
         if self._is_stale_codex_resume(decision, session_id):
