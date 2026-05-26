@@ -1,9 +1,12 @@
 from pathlib import Path
 
+from ceo_agent_service.corpus import CorpusRecord, write_records
 from ceo_agent_service.work_profile import (
     EvidenceRecord,
     WorkProfile,
     WorkProfileRule,
+    collect_existing_corpus_evidence,
+    collect_local_doc_evidence,
     evidence_id,
     safe_excerpt,
 )
@@ -73,3 +76,51 @@ def test_work_profile_serializes_rules():
     )
 
     assert profile.model_dump()["rules"][0]["id"] == "rule_materials_before_decision"
+
+
+def test_collect_existing_corpus_evidence_reads_style_corpus(tmp_path: Path):
+    csv_path = tmp_path / "corpus" / "derek_style_corpus.csv"
+    write_records(
+        csv_path,
+        [
+            CorpusRecord(
+                source_type="dingtalk",
+                source_title="客户合作群",
+                timestamp="2026-05-26T10:00:00",
+                context="客户问是否能今天给最终方案",
+                derek_reply="先别承诺最终版，先把客户目标和交付边界收敛清楚。",
+                message_id="msg-1",
+                conversation_id="cid-1",
+                speaker_name="Derek",
+                metadata_json="{}",
+            )
+        ],
+    )
+
+    records = collect_existing_corpus_evidence(csv_path)
+
+    assert len(records) == 1
+    assert records[0].source_type == "dingtalk"
+    assert records[0].evidence_strength == "behavior_high"
+    assert "先别承诺最终版" in records[0].excerpt
+
+
+def test_collect_local_doc_evidence_prefers_thinking_and_strategy_dirs(tmp_path: Path):
+    workspace = tmp_path / "memory"
+    thinking = workspace / "Thinking"
+    strategy = workspace / "management" / "strategy"
+    ignored = workspace / ".smart-env"
+    thinking.mkdir(parents=True)
+    strategy.mkdir(parents=True)
+    ignored.mkdir(parents=True)
+    (thinking / "CEO 如何使用agent提效.md").write_text("先把问题拆成目标、证据、下一步。", encoding="utf-8")
+    (strategy / "Q2 strategy.md").write_text("战略判断先看客户价值和交付闭环。", encoding="utf-8")
+    (ignored / "cache.md").write_text("不应该进入 profile。", encoding="utf-8")
+
+    records = collect_local_doc_evidence(workspace)
+
+    assert {record.title for record in records} == {
+        "CEO 如何使用agent提效.md",
+        "Q2 strategy.md",
+    }
+    assert all(record.evidence_strength == "authored_high" for record in records)

@@ -5,8 +5,20 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
+from ceo_agent_service.corpus import load_corpus_records
+
 
 WHITESPACE_RE = re.compile(r"\s+")
+LOCAL_AUTHORED_DIRS = (
+    Path("Thinking"),
+    Path("management") / "strategy",
+    Path("management"),
+    Path("business"),
+    Path("product"),
+)
+LOCAL_TEXT_SUFFIXES = {".md", ".txt"}
+LOCAL_IGNORED_PARTS = {".smart-env", ".dws", ".obsidian", "AI听记"}
+HIGH_CONFIDENCE_AUTHORED_DIRS = {Path("Thinking"), Path("management") / "strategy"}
 
 
 def evidence_id(source_type: str, location: str, text: str) -> str:
@@ -52,6 +64,72 @@ class WorkProfile(BaseModel):
     title: str
     summary: str
     rules: list[WorkProfileRule] = Field(default_factory=list)
+
+
+def collect_existing_corpus_evidence(csv_path: Path) -> list[EvidenceRecord]:
+    records: list[EvidenceRecord] = []
+    for item in load_corpus_records(csv_path):
+        location = f"{item.conversation_id}/{item.message_id}"
+        records.append(
+            EvidenceRecord(
+                id=evidence_id(item.source_type, location, item.derek_reply),
+                source_type=item.source_type,
+                title=item.source_title,
+                timestamp=item.timestamp,
+                location=location,
+                scenario="general",
+                evidence_strength="behavior_high",
+                sensitivity="general",
+                excerpt=safe_excerpt(item.derek_reply),
+                usable_for_profile=True,
+            )
+        )
+    return records
+
+
+def collect_local_doc_evidence(workspace: Path) -> list[EvidenceRecord]:
+    records: list[EvidenceRecord] = []
+    seen_paths: set[Path] = set()
+    for base in LOCAL_AUTHORED_DIRS:
+        root = workspace / base
+        if not root.exists():
+            continue
+        for path in sorted(root.rglob("*")):
+            if not path.is_file():
+                continue
+            relative_path = path.relative_to(workspace)
+            if relative_path in seen_paths:
+                continue
+            if path.suffix.lower() not in LOCAL_TEXT_SUFFIXES:
+                continue
+            if any(part in LOCAL_IGNORED_PARTS for part in relative_path.parts):
+                continue
+            text = path.read_text(encoding="utf-8", errors="ignore").strip()
+            if not text:
+                continue
+
+            seen_paths.add(relative_path)
+            relative = str(relative_path)
+            strength = (
+                "authored_high"
+                if base in HIGH_CONFIDENCE_AUTHORED_DIRS
+                else "authored_assumed"
+            )
+            records.append(
+                EvidenceRecord(
+                    id=evidence_id("local_doc", relative, text[:1000]),
+                    source_type="local_doc",
+                    title=path.name,
+                    timestamp="",
+                    location=relative,
+                    scenario="general",
+                    evidence_strength=strength,
+                    sensitivity="general",
+                    excerpt=safe_excerpt(text),
+                    usable_for_profile=True,
+                )
+            )
+    return records
 
 
 def write_jsonl(path: Path, records: list[EvidenceRecord]) -> None:
