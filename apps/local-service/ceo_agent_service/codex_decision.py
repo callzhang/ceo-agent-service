@@ -125,6 +125,9 @@ def _decision_text_candidates(payload: dict[str, Any]) -> list[str]:
         and isinstance(item.get("text"), str)
     ):
         candidates.append(item["text"])
+    nested_payload = payload.get("payload")
+    if isinstance(nested_payload, dict):
+        candidates.extend(_decision_text_candidates(nested_payload))
     return candidates
 
 

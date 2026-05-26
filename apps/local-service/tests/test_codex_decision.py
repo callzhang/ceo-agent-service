@@ -246,6 +246,36 @@ def test_parse_codex_json_accepts_live_item_completed_agent_message_text():
     assert decision.reason == "live final"
 
 
+def test_parse_codex_json_accepts_event_msg_agent_message_payload():
+    raw = "\n".join(
+        [
+            json.dumps({"type": "thread.started", "thread_id": "thread-1"}),
+            json.dumps(
+                {
+                    "type": "event_msg",
+                    "payload": {
+                        "type": "agent_message",
+                        "message": json.dumps(
+                            {
+                                "action": "send_reply",
+                                "reply_text": "收到",
+                                "audit_summary": "只需上下文判断。",
+                            },
+                            ensure_ascii=False,
+                        ),
+                    },
+                },
+                ensure_ascii=False,
+            ),
+        ]
+    )
+
+    decision = parse_codex_json(raw)
+
+    assert decision.action == CodexAction.SEND_REPLY
+    assert decision.reply_text == "收到"
+
+
 def test_invalid_json_retries_once(tmp_path: Path):
     executor = FakeExecutor(
         [
