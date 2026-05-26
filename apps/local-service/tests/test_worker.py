@@ -1,4 +1,6 @@
+from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from ceo_agent_service.corpus import CorpusRecord
 from ceo_agent_service.dingtalk_models import (
@@ -23,6 +25,10 @@ from ceo_agent_service.worker import (
 
 
 CONTEXT_HEADER = "上下文消息（前 20 条 + 后续到当前）:"
+
+
+def fixed_worker_now() -> datetime:
+    return datetime(2026, 5, 13, 10, 0, 0, tzinfo=ZoneInfo("America/Los_Angeles"))
 
 
 class FakeDws:
@@ -305,14 +311,18 @@ def test_handoff_does_not_clear_on_current_user_message_before_trigger(
         "需要真人",
         handoff_message_create_time="2026-05-13 18:00:00",
     )
-    monkeypatch.setattr("ceo_agent_service.worker.send_macos_notification", lambda **_: None)
+    monkeypatch.setattr(
+        "ceo_agent_service.worker.send_macos_notification", lambda **_: None
+    )
     old_message = derek_message("之前我已经回复过", message_id="old-derek-msg-1")
     old_message.create_time = "2026-05-13 17:59:59"
     dws = FakeDws([conversation()], {"cid-1": [old_message]})
     codex = FakeCodex(
         CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该调用")
     )
-    worker = DingTalkAutoReplyWorker(store=store, dws=dws, codex=codex)
+    worker = DingTalkAutoReplyWorker(
+        store=store, dws=dws, codex=codex, now_provider=fixed_worker_now
+    )
 
     worker.run_once()
 
@@ -331,7 +341,9 @@ def make_worker(
     style_records: list[CorpusRecord] | None = None,
     dry_run: bool = False,
 ) -> DingTalkAutoReplyWorker:
-    monkeypatch.setattr("ceo_agent_service.worker.send_macos_notification", lambda **_: None)
+    monkeypatch.setattr(
+        "ceo_agent_service.worker.send_macos_notification", lambda **_: None
+    )
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.set_current_user_id("derek-user-1")
     return DingTalkAutoReplyWorker(
@@ -341,6 +353,7 @@ def make_worker(
         dry_run=dry_run,
         style_profile=style_profile,
         style_records=style_records,
+        now_provider=fixed_worker_now,
     )
 
 
@@ -348,9 +361,7 @@ def test_group_without_derek_mention_does_not_call_codex_or_send(
     tmp_path: Path, monkeypatch
 ):
     dws = FakeDws([conversation()], {"cid-1": [message("同步一下进展")]})
-    codex = FakeCodex(
-        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="收到")
-    )
+    codex = FakeCodex(CodexDecision(action=CodexAction.SEND_REPLY, reply_text="收到"))
     worker = make_worker(tmp_path, dws, codex, monkeypatch)
 
     worker.run_once()
@@ -394,6 +405,42 @@ def test_produce_once_does_not_send_processing_ack_for_new_reply_task(
     assert dws.sent == []
 
 
+def test_produce_once_skips_messages_older_than_local_24_hour_window(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message("@Derek Zen(磊哥) 这个旧消息不用处理？")
+    trigger.create_time = "2026-05-13 00:59:59"
+    dws = FakeDws([conversation()], {"cid-1": [trigger]})
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该调用")
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+
+    queued = worker.produce_once()
+
+    assert queued == 0
+    assert codex.calls == []
+    assert worker.store.count_reply_tasks(status="pending") == 0
+    assert worker.store.has_seen("msg-1") is True
+
+
+def test_produce_once_uses_beijing_message_time_against_local_24_hour_window(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message("@Derek Zen(磊哥) 这个消息还在24小时内？")
+    trigger.create_time = "2026-05-13 01:00:00"
+    dws = FakeDws([conversation()], {"cid-1": [trigger]})
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该调用")
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+
+    queued = worker.produce_once()
+
+    assert queued == 1
+    assert worker.store.count_reply_tasks(status="pending") == 1
+
+
 def test_repeated_produce_once_does_not_send_processing_ack(
     tmp_path: Path, monkeypatch
 ):
@@ -434,8 +481,7 @@ def test_consume_once_sends_processing_ack_after_prompt_context_is_built(
     assert final_sent(dws) == [
         (
             "cid-1",
-            "> 周俊杰: 这个怎么处理？\n\n"
-            "<@sender-user-1> 先按A方案走（by磊哥分身）",
+            "> 周俊杰: 这个怎么处理？\n\n<@sender-user-1> 先按A方案走（by磊哥分身）",
         )
     ]
 
@@ -473,8 +519,7 @@ def test_consume_once_processes_queued_task(tmp_path: Path, monkeypatch):
     assert final_sent(dws) == [
         (
             "cid-1",
-            "> 周俊杰: 这个怎么处理？\n\n"
-            "<@sender-user-1> 先按A方案走（by磊哥分身）",
+            "> 周俊杰: 这个怎么处理？\n\n<@sender-user-1> 先按A方案走（by磊哥分身）",
         )
     ]
 
@@ -522,9 +567,7 @@ def test_single_chat_rendered_schedule_is_skipped_before_codex(
     assert attempt.codex_reason == "system_or_notification_message"
 
 
-def test_non_text_message_type_is_skipped_before_codex(
-    tmp_path: Path, monkeypatch
-):
+def test_non_text_message_type_is_skipped_before_codex(tmp_path: Path, monkeypatch):
     trigger = message("日程卡片", single_chat=True, message_type="calendar")
     dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
     codex = FakeCodex(
@@ -627,9 +670,7 @@ def test_calendar_invite_with_description_asks_codex_to_evaluate_conflict(
     assert attempt.codex_reason == "calendar_conflict_evaluated"
 
 
-def test_structured_link_card_is_skipped_before_codex(
-    tmp_path: Path, monkeypatch
-):
+def test_structured_link_card_is_skipped_before_codex(tmp_path: Path, monkeypatch):
     trigger = message(
         "\n".join(
             [
@@ -706,9 +747,7 @@ def test_automatic_sync_notification_is_skipped_before_codex(
     assert worker.store.get_reply_attempt(1).action == "no_reply"
 
 
-def test_file_state_notification_is_skipped_before_codex(
-    tmp_path: Path, monkeypatch
-):
+def test_file_state_notification_is_skipped_before_codex(tmp_path: Path, monkeypatch):
     trigger = message("文档已更新：董事会材料", single_chat=True)
     dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
     codex = FakeCodex(
@@ -760,7 +799,9 @@ def test_status_like_message_with_followup_request_is_processed_by_codex(
 
 
 def test_question_with_link_still_goes_to_codex(tmp_path: Path, monkeypatch):
-    trigger = message("这个链接里的方案怎么看？ https://example.com/a", single_chat=True)
+    trigger = message(
+        "这个链接里的方案怎么看？ https://example.com/a", single_chat=True
+    )
     dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
     codex = FakeCodex(
         CodexDecision(
@@ -1404,9 +1445,7 @@ def test_rerun_message_retries_existing_failed_attempt_without_calling_codex(
     assert worker.store.get_reply_attempt(attempt_id).send_status == "sent"
 
 
-def test_rerun_message_can_force_new_codex_decision(
-    tmp_path: Path, monkeypatch
-):
+def test_rerun_message_can_force_new_codex_decision(tmp_path: Path, monkeypatch):
     trigger = message("@Derek Zen(磊哥) 这个怎么处理？")
     dws = FakeDws([conversation()], {"cid-1": [trigger]})
     codex = FakeCodex(
@@ -1432,15 +1471,12 @@ def test_rerun_message_can_force_new_codex_decision(
     assert final_sent(dws) == [
         (
             "cid-1",
-            "> 周俊杰: 这个怎么处理？\n\n"
-            "<@sender-user-1> 改走B方案（by磊哥分身）",
+            "> 周俊杰: 这个怎么处理？\n\n<@sender-user-1> 改走B方案（by磊哥分身）",
         )
     ]
 
 
-def test_force_new_rerun_starts_fresh_codex_session(
-    tmp_path: Path, monkeypatch
-):
+def test_force_new_rerun_starts_fresh_codex_session(tmp_path: Path, monkeypatch):
     trigger = message("@Derek Zen(磊哥) 这个怎么处理？")
     dws = FakeDws([conversation()], {"cid-1": [trigger]})
     codex = FakeCodex(
@@ -1599,7 +1635,9 @@ def test_algorithm_owner_multi_mention_is_framed_as_derek_responsibility(
         },
     )
     codex = FakeCodex(
-        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="可以，算法这边应该参与")
+        CodexDecision(
+            action=CodexAction.SEND_REPLY, reply_text="可以，算法这边应该参与"
+        )
     )
     worker = make_worker(tmp_path, dws, codex, monkeypatch)
 
@@ -1648,8 +1686,7 @@ def test_group_direct_mention_found_in_recent_context_is_queued(
     assert final_sent(dws) == [
         (
             "cid-1",
-            "> 周俊杰: 旧消息看一下\n\n"
-            "<@sender-user-1> 我看一下（by磊哥分身）",
+            "> 周俊杰: 旧消息看一下\n\n<@sender-user-1> 我看一下（by磊哥分身）",
         )
     ]
 
@@ -1703,9 +1740,7 @@ def test_prompt_context_limits_after_sorting_reverse_chronological_history():
     ]
 
 
-def test_build_prompt_includes_known_people_from_org_cache(
-    tmp_path: Path, monkeypatch
-):
+def test_build_prompt_includes_known_people_from_org_cache(tmp_path: Path, monkeypatch):
     dws = FakeDws([conversation(single_chat=True)], {})
     codex = FakeCodex(CodexDecision(action=CodexAction.NO_REPLY))
     worker = make_worker(tmp_path, dws, codex, monkeypatch)
@@ -1832,10 +1867,14 @@ def test_prompt_context_includes_previous_20_plus_unread_tail(
 
 def test_no_reply_action_does_not_send(tmp_path: Path, monkeypatch):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    monkeypatch.setattr("ceo_agent_service.worker.send_macos_notification", lambda **_: None)
+    monkeypatch.setattr(
+        "ceo_agent_service.worker.send_macos_notification", lambda **_: None
+    )
     dws = FakeDws([conversation()], {"cid-1": [message("@Derek Zen(磊哥) cc一下")]})
     codex = FakeCodex(CodexDecision(action=CodexAction.NO_REPLY, reason="cc only"))
-    worker = DingTalkAutoReplyWorker(store=store, dws=dws, codex=codex)
+    worker = DingTalkAutoReplyWorker(
+        store=store, dws=dws, codex=codex, now_provider=fixed_worker_now
+    )
 
     worker.run_once()
 
@@ -1848,24 +1887,23 @@ def test_no_reply_action_does_not_send(tmp_path: Path, monkeypatch):
     assert attempt.codex_reason == "cc only"
 
 
-def test_handoff_sends_ack_dings_self_and_marks_handoff(
-    tmp_path: Path, monkeypatch
-):
+def test_handoff_sends_ack_dings_self_and_marks_handoff(tmp_path: Path, monkeypatch):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    monkeypatch.setattr("ceo_agent_service.worker.send_macos_notification", lambda **_: None)
+    monkeypatch.setattr(
+        "ceo_agent_service.worker.send_macos_notification", lambda **_: None
+    )
     dws = FakeDws(
         [conversation()],
         {"cid-1": [message("@Derek Zen(磊哥) 不要分身，真人看一下")]},
     )
     codex = FakeCodex(CodexDecision(action=CodexAction.HANDOFF_TO_HUMAN))
-    worker = DingTalkAutoReplyWorker(store=store, dws=dws, codex=codex)
+    worker = DingTalkAutoReplyWorker(
+        store=store, dws=dws, codex=codex, now_provider=fixed_worker_now
+    )
 
     worker.run_once()
 
-    expected_ack = (
-        "> 周俊杰: 不要分身，真人看一下\n\n"
-        f"{HANDOFF_ACK}"
-    )
+    expected_ack = f"> 周俊杰: 不要分身，真人看一下\n\n{HANDOFF_ACK}"
     assert final_sent(dws) == [("cid-1", expected_ack)]
     assert len(dws.dings) == 1
     assert "Friday" in dws.dings[0]
@@ -1877,9 +1915,7 @@ def test_handoff_sends_ack_dings_self_and_marks_handoff(
     assert attempt.final_reply_text == expected_ack
 
 
-def test_handoff_clears_when_current_user_replies_manually(
-    tmp_path: Path, monkeypatch
-):
+def test_handoff_clears_when_current_user_replies_manually(tmp_path: Path, monkeypatch):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.upsert_conversation("cid-1", "Friday", False, None)
     store.enter_handoff(
@@ -1888,7 +1924,9 @@ def test_handoff_clears_when_current_user_replies_manually(
         "需要真人",
         handoff_message_create_time="2026-05-13 18:00:00",
     )
-    monkeypatch.setattr("ceo_agent_service.worker.send_macos_notification", lambda **_: None)
+    monkeypatch.setattr(
+        "ceo_agent_service.worker.send_macos_notification", lambda **_: None
+    )
     dws = FakeDws(
         [conversation()],
         {"cid-1": [derek_message("我来看一下", message_id="derek-msg-1")]},
@@ -1896,7 +1934,9 @@ def test_handoff_clears_when_current_user_replies_manually(
     codex = FakeCodex(
         CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该调用")
     )
-    worker = DingTalkAutoReplyWorker(store=store, dws=dws, codex=codex)
+    worker = DingTalkAutoReplyWorker(
+        store=store, dws=dws, codex=codex, now_provider=fixed_worker_now
+    )
 
     worker.run_once()
 
@@ -1906,9 +1946,7 @@ def test_handoff_clears_when_current_user_replies_manually(
     assert store.has_seen("derek-msg-1") is True
 
 
-def test_handoff_does_not_clear_on_split_person_reply(
-    tmp_path: Path, monkeypatch
-):
+def test_handoff_does_not_clear_on_split_person_reply(tmp_path: Path, monkeypatch):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.upsert_conversation("cid-1", "Friday", False, None)
     store.enter_handoff(
@@ -1917,7 +1955,9 @@ def test_handoff_does_not_clear_on_split_person_reply(
         "需要真人",
         handoff_message_create_time="2026-05-13 18:00:00",
     )
-    monkeypatch.setattr("ceo_agent_service.worker.send_macos_notification", lambda **_: None)
+    monkeypatch.setattr(
+        "ceo_agent_service.worker.send_macos_notification", lambda **_: None
+    )
     dws = FakeDws(
         [conversation()],
         {
@@ -1932,7 +1972,9 @@ def test_handoff_does_not_clear_on_split_person_reply(
     codex = FakeCodex(
         CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该调用")
     )
-    worker = DingTalkAutoReplyWorker(store=store, dws=dws, codex=codex)
+    worker = DingTalkAutoReplyWorker(
+        store=store, dws=dws, codex=codex, now_provider=fixed_worker_now
+    )
 
     worker.run_once()
 
@@ -1968,7 +2010,9 @@ def test_active_handoff_notification_explains_auto_reply_is_paused(
         "ceo_agent_service.worker.send_macos_notification",
         lambda **kwargs: notifications.append(kwargs),
     )
-    worker = DingTalkAutoReplyWorker(store=store, dws=dws, codex=codex)
+    worker = DingTalkAutoReplyWorker(
+        store=store, dws=dws, codex=codex, now_provider=fixed_worker_now
+    )
 
     worker.run_once()
 
@@ -2018,6 +2062,7 @@ def test_dry_run_active_handoff_does_not_repeat_pause_notification(
         dws=dws,
         codex=codex,
         dry_run=True,
+        now_provider=fixed_worker_now,
     )
 
     worker.run_once()
@@ -2039,7 +2084,9 @@ def test_handoff_current_user_lookup_failure_records_error_without_marking_seen(
         "需要真人",
         handoff_message_create_time="2026-05-13 18:00:00",
     )
-    monkeypatch.setattr("ceo_agent_service.worker.send_macos_notification", lambda **_: None)
+    monkeypatch.setattr(
+        "ceo_agent_service.worker.send_macos_notification", lambda **_: None
+    )
     dws = FakeDws(
         [conversation()],
         {"cid-1": [derek_message("我来看一下", message_id="derek-msg-1")]},
@@ -2048,7 +2095,9 @@ def test_handoff_current_user_lookup_failure_records_error_without_marking_seen(
     codex = FakeCodex(
         CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该调用")
     )
-    worker = DingTalkAutoReplyWorker(store=store, dws=dws, codex=codex)
+    worker = DingTalkAutoReplyWorker(
+        store=store, dws=dws, codex=codex, now_provider=fixed_worker_now
+    )
 
     worker.run_once()
 
@@ -2058,9 +2107,7 @@ def test_handoff_current_user_lookup_failure_records_error_without_marking_seen(
     assert codex.calls == []
 
 
-def test_single_chat_unread_is_processed_without_mention(
-    tmp_path: Path, monkeypatch
-):
+def test_single_chat_unread_is_processed_without_mention(tmp_path: Path, monkeypatch):
     dws = FakeDws(
         [conversation(single_chat=True)],
         {"cid-1": [message("这个今天能拍吗？", single_chat=True)]},
@@ -2143,9 +2190,7 @@ def test_run_once_max_batches_stops_after_limit(tmp_path: Path, monkeypatch):
             "cid-2": [message("@Derek Zen(磊哥) 第二个问题", message_id="msg-2")],
         },
     )
-    codex = FakeCodex(
-        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="先推进")
-    )
+    codex = FakeCodex(CodexDecision(action=CodexAction.SEND_REPLY, reply_text="先推进"))
     worker = make_worker(tmp_path, dws, codex, monkeypatch)
 
     worker.run_once(max_batches=1)
@@ -2233,7 +2278,10 @@ def test_message_after_current_user_reply_still_calls_codex(
 
     assert len(codex.calls) == 1
     assert "@Derek Zen(磊哥) 我和俊杰聊下" in codex.calls[0][0]
-    assert "这个ACL表" not in codex.calls[0][0].split("新消息:", 1)[1].split(CONTEXT_HEADER, 1)[0]
+    assert (
+        "这个ACL表"
+        not in codex.calls[0][0].split("新消息:", 1)[1].split(CONTEXT_HEADER, 1)[0]
+    )
 
 
 def test_read_failure_records_error_and_continues_next_conversation(
@@ -2271,8 +2319,7 @@ def test_read_failure_records_error_and_continues_next_conversation(
     assert final_sent(dws) == [
         (
             "cid-good",
-            "> 周俊杰: 这个怎么处理？\n\n"
-            "<@sender-user-1> 先按A方案走（by磊哥分身）",
+            "> 周俊杰: 这个怎么处理？\n\n<@sender-user-1> 先按A方案走（by磊哥分身）",
         )
     ]
 
@@ -2407,15 +2454,12 @@ def test_internal_personnel_question_missing_subject_asks_clarifying_question(
     assert final_sent(dws) == [
         (
             "",
-            "> 周俊杰: 这个人后续怎么处理？\n\n"
-            "这个是关于谁的问题？（by磊哥分身）",
+            "> 周俊杰: 这个人后续怎么处理？\n\n这个是关于谁的问题？（by磊哥分身）",
         )
     ]
 
 
-def test_internal_personnel_question_allows_hr_requester(
-    tmp_path: Path, monkeypatch
-):
+def test_internal_personnel_question_allows_hr_requester(tmp_path: Path, monkeypatch):
     dws = FakeDws(
         [conversation(single_chat=True)],
         {"cid-1": [message("张三转正怎么看？", single_chat=True)]},
@@ -2436,8 +2480,7 @@ def test_internal_personnel_question_allows_hr_requester(
     assert final_sent(dws) == [
         (
             "",
-            "> 周俊杰: 张三转正怎么看？\n\n"
-            "建议先观察一个月（by磊哥分身）",
+            "> 周俊杰: 张三转正怎么看？\n\n建议先观察一个月（by磊哥分身）",
         )
     ]
 
@@ -2465,8 +2508,7 @@ def test_internal_personnel_question_allows_subject_manager(
     assert final_sent(dws) == [
         (
             "",
-            "> 周俊杰: 张三绩效怎么定？\n\n"
-            "先按事实反馈（by磊哥分身）",
+            "> 周俊杰: 张三绩效怎么定？\n\n先按事实反馈（by磊哥分身）",
         )
     ]
 
@@ -2551,8 +2593,7 @@ def test_candidate_question_allows_related_department_requester(
     assert final_sent(dws) == [
         (
             "",
-            "> 周俊杰: 这个候选人怎么样？\n\n"
-            "可以推进（by磊哥分身）",
+            "> 周俊杰: 这个候选人怎么样？\n\n可以推进（by磊哥分身）",
         )
     ]
 
@@ -2591,14 +2632,12 @@ def test_permission_lookup_failure_records_error_and_does_not_send(
     tmp_path: Path, monkeypatch
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    monkeypatch.setattr("ceo_agent_service.worker.send_macos_notification", lambda **_: None)
+    monkeypatch.setattr(
+        "ceo_agent_service.worker.send_macos_notification", lambda **_: None
+    )
     dws = FakeDws(
         [conversation(single_chat=True)],
-        {
-            "cid-1": [
-                message("张三绩效怎么定？", single_chat=True, sender_user_id=None)
-            ]
-        },
+        {"cid-1": [message("张三绩效怎么定？", single_chat=True, sender_user_id=None)]},
     )
     codex = FakeCodex(
         CodexDecision(
@@ -2608,7 +2647,9 @@ def test_permission_lookup_failure_records_error_and_does_not_send(
             personnel_subject_user_id="subject-user-1",
         )
     )
-    worker = DingTalkAutoReplyWorker(store=store, dws=dws, codex=codex)
+    worker = DingTalkAutoReplyWorker(
+        store=store, dws=dws, codex=codex, now_provider=fixed_worker_now
+    )
 
     worker.run_once()
 
@@ -2619,12 +2660,18 @@ def test_permission_lookup_failure_records_error_and_does_not_send(
 
 def test_dry_run_does_not_mutate_terminal_state(tmp_path: Path, monkeypatch):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    monkeypatch.setattr("ceo_agent_service.worker.send_macos_notification", lambda **_: None)
-    dws = FakeDws([conversation()], {"cid-1": [message("@Derek Zen(磊哥) 这个怎么处理？")]})
+    monkeypatch.setattr(
+        "ceo_agent_service.worker.send_macos_notification", lambda **_: None
+    )
+    dws = FakeDws(
+        [conversation()], {"cid-1": [message("@Derek Zen(磊哥) 这个怎么处理？")]}
+    )
     codex = FakeCodex(
         CodexDecision(action=CodexAction.SEND_REPLY, reply_text="先按A方案走")
     )
-    worker = DingTalkAutoReplyWorker(store=store, dws=dws, codex=codex, dry_run=True)
+    worker = DingTalkAutoReplyWorker(
+        store=store, dws=dws, codex=codex, dry_run=True, now_provider=fixed_worker_now
+    )
 
     worker.run_once()
 
@@ -2634,11 +2681,11 @@ def test_dry_run_does_not_mutate_terminal_state(tmp_path: Path, monkeypatch):
     assert store.is_in_handoff("cid-1") is False
 
 
-def test_send_failure_records_error_and_does_not_mark_seen(
-    tmp_path: Path, monkeypatch
-):
+def test_send_failure_records_error_and_does_not_mark_seen(tmp_path: Path, monkeypatch):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    monkeypatch.setattr("ceo_agent_service.worker.send_macos_notification", lambda **_: None)
+    monkeypatch.setattr(
+        "ceo_agent_service.worker.send_macos_notification", lambda **_: None
+    )
     dws = FakeDws(
         [conversation()],
         {"cid-1": [message("@Derek Zen(磊哥) 这个怎么处理？")]},
@@ -2647,7 +2694,9 @@ def test_send_failure_records_error_and_does_not_mark_seen(
     codex = FakeCodex(
         CodexDecision(action=CodexAction.SEND_REPLY, reply_text="先按A方案走")
     )
-    worker = DingTalkAutoReplyWorker(store=store, dws=dws, codex=codex)
+    worker = DingTalkAutoReplyWorker(
+        store=store, dws=dws, codex=codex, now_provider=fixed_worker_now
+    )
 
     worker.run_once()
 
@@ -2667,7 +2716,9 @@ def test_pat_authorization_error_is_recorded_as_failed_without_retry_or_url(
     tmp_path: Path, monkeypatch
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    monkeypatch.setattr("ceo_agent_service.worker.send_macos_notification", lambda **_: None)
+    monkeypatch.setattr(
+        "ceo_agent_service.worker.send_macos_notification", lambda **_: None
+    )
     dws = FakeDws(
         [conversation()],
         {"cid-1": [message("@Derek Zen(磊哥) 这个怎么处理？")]},
@@ -2679,7 +2730,9 @@ def test_pat_authorization_error_is_recorded_as_failed_without_retry_or_url(
     codex = FakeCodex(
         CodexDecision(action=CodexAction.SEND_REPLY, reply_text="先按A方案走")
     )
-    worker = DingTalkAutoReplyWorker(store=store, dws=dws, codex=codex)
+    worker = DingTalkAutoReplyWorker(
+        store=store, dws=dws, codex=codex, now_provider=fixed_worker_now
+    )
 
     worker.run_once()
 
@@ -2699,14 +2752,18 @@ def test_handoff_ding_failure_does_not_mark_seen_or_enter_handoff(
     tmp_path: Path, monkeypatch
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    monkeypatch.setattr("ceo_agent_service.worker.send_macos_notification", lambda **_: None)
+    monkeypatch.setattr(
+        "ceo_agent_service.worker.send_macos_notification", lambda **_: None
+    )
     dws = FakeDws(
         [conversation()],
         {"cid-1": [message("@Derek Zen(磊哥) 不要分身，真人看一下")]},
         ding_error=RuntimeError("ding failed"),
     )
     codex = FakeCodex(CodexDecision(action=CodexAction.HANDOFF_TO_HUMAN))
-    worker = DingTalkAutoReplyWorker(store=store, dws=dws, codex=codex)
+    worker = DingTalkAutoReplyWorker(
+        store=store, dws=dws, codex=codex, now_provider=fixed_worker_now
+    )
 
     worker.run_once()
 
@@ -2718,13 +2775,17 @@ def test_handoff_ding_failure_does_not_mark_seen_or_enter_handoff(
 
 def test_persists_codex_last_session_id_after_decision(tmp_path: Path, monkeypatch):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    monkeypatch.setattr("ceo_agent_service.worker.send_macos_notification", lambda **_: None)
+    monkeypatch.setattr(
+        "ceo_agent_service.worker.send_macos_notification", lambda **_: None
+    )
     dws = FakeDws([conversation()], {"cid-1": [message("@Derek Zen(磊哥) cc一下")]})
     codex = FakeCodex(
         CodexDecision(action=CodexAction.NO_REPLY, reason="cc only"),
         next_session_id="session-1",
     )
-    worker = DingTalkAutoReplyWorker(store=store, dws=dws, codex=codex)
+    worker = DingTalkAutoReplyWorker(
+        store=store, dws=dws, codex=codex, now_provider=fixed_worker_now
+    )
 
     worker.run_once()
 
@@ -2733,13 +2794,17 @@ def test_persists_codex_last_session_id_after_decision(tmp_path: Path, monkeypat
 
 def test_stale_codex_last_session_id_is_not_persisted(tmp_path: Path, monkeypatch):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    monkeypatch.setattr("ceo_agent_service.worker.send_macos_notification", lambda **_: None)
+    monkeypatch.setattr(
+        "ceo_agent_service.worker.send_macos_notification", lambda **_: None
+    )
     dws = FakeDws([conversation()], {"cid-1": [message("@Derek Zen(磊哥) cc一下")]})
     codex = FakeCodex(
         CodexDecision(action=CodexAction.NO_REPLY, reason="cc only"),
         last_session_id="stale-session",
     )
-    worker = DingTalkAutoReplyWorker(store=store, dws=dws, codex=codex)
+    worker = DingTalkAutoReplyWorker(
+        store=store, dws=dws, codex=codex, now_provider=fixed_worker_now
+    )
 
     worker.run_once()
 

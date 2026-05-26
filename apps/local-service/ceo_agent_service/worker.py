@@ -2,6 +2,7 @@ import json
 import re
 import urllib.request
 import zipfile
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from io import BytesIO
@@ -17,6 +18,7 @@ from ceo_agent_service.config import (
     principal_name,
 )
 from ceo_agent_service.dws_client import (
+    DINGTALK_MESSAGE_TIME_ZONE,
     DwsCalendarEvent,
     DwsClient,
     DwsDocumentSearchResult,
@@ -90,11 +92,16 @@ MENTION_PATTERN = re.compile(r"@[^\s]+(?:\([^)]+\))?")
 QUOTE_MENTION_PATTERN = re.compile(
     r"@[^\s@()]+(?:\s+[A-Za-z][^\s@()]*)?(?:\((?:[^()]|\([^()]*\))*\))?"
 )
-DINGTALK_DOC_URL_PATTERN = re.compile(r"https://alidocs\.dingtalk\.com/i/nodes/[^\s)\]]+")
+DINGTALK_DOC_URL_PATTERN = re.compile(
+    r"https://alidocs\.dingtalk\.com/i/nodes/[^\s)\]]+"
+)
 FILE_MESSAGE_PATTERN = re.compile(r"^\s*\[文件]\s*(?P<name>.+?)\s*$")
-QUOTE_WORD_OR_CJK_PATTERN = re.compile(r"[A-Za-z0-9]+(?:[-_'][A-Za-z0-9]+)*|[\u4e00-\u9fff]")
+QUOTE_WORD_OR_CJK_PATTERN = re.compile(
+    r"[A-Za-z0-9]+(?:[-_'][A-Za-z0-9]+)*|[\u4e00-\u9fff]"
+)
 DINGTALK_TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
 GROUP_CONTEXT_RECOVERY_WINDOW = timedelta(hours=24)
+RECENT_REPLY_WINDOW = timedelta(hours=24)
 QUOTE_INFORMATION_UNIT_LIMIT = 20
 REFERENCED_FILE_CONTEXT_WINDOW = timedelta(minutes=10)
 DOWNLOADED_FILE_MAX_BYTES = 50 * 1024 * 1024
@@ -119,6 +126,7 @@ class DingTalkAutoReplyWorker:
         style_records: list[CorpusRecord] | None = None,
         style_example_limit: int = 2,
         send_attempts: int = 2,
+        now_provider: Callable[[], datetime] | None = None,
     ):
         self.store = store
         self.dws = dws
@@ -128,6 +136,7 @@ class DingTalkAutoReplyWorker:
         self.style_records = style_records or []
         self.style_example_limit = style_example_limit
         self.send_attempts = send_attempts
+        self.now_provider = now_provider or (lambda: datetime.now().astimezone())
         self.permission_gate = PermissionGate(dws)
 
     def run_once(self, max_batches: int | None = None) -> None:
@@ -185,6 +194,12 @@ class DingTalkAutoReplyWorker:
             ]
             if not new_messages:
                 continue
+            new_messages = self._skip_messages_outside_recent_window(
+                conversation,
+                new_messages,
+            )
+            if not new_messages:
+                continue
             new_messages = self._skip_system_or_notification_messages(
                 conversation,
                 new_messages,
@@ -196,6 +211,36 @@ class DingTalkAutoReplyWorker:
             if max_tasks is not None and queued_tasks >= max_tasks:
                 return queued_tasks
         return queued_tasks
+
+    def _skip_messages_outside_recent_window(
+        self,
+        conversation: DingTalkConversation,
+        messages: list[DingTalkMessage],
+    ) -> list[DingTalkMessage]:
+        remaining = []
+        skipped = []
+        cutoff = self._now() - RECENT_REPLY_WINDOW
+        for message in messages:
+            message_time = self._message_create_time_as_instant(message)
+            if message_time >= cutoff:
+                remaining.append(message)
+                continue
+            skipped.append(message)
+            self._record_stale_message_skip(conversation, message)
+        self._mark_seen(skipped)
+        return remaining
+
+    def _now(self) -> datetime:
+        current = self.now_provider()
+        if current.tzinfo is None:
+            return current.astimezone()
+        return current
+
+    @staticmethod
+    def _message_create_time_as_instant(message: DingTalkMessage) -> datetime:
+        return datetime.strptime(message.create_time, DINGTALK_TIME_FORMAT).replace(
+            tzinfo=DINGTALK_MESSAGE_TIME_ZONE
+        )
 
     def consume_once(self, max_tasks: int | None = None) -> int:
         limit = max_tasks if max_tasks is not None else 50
@@ -509,7 +554,9 @@ class DingTalkAutoReplyWorker:
             [trigger],
             [
                 *context_messages,
-                self._calendar_conflict_prompt_message(conversation, trigger, calendar_context),
+                self._calendar_conflict_prompt_message(
+                    conversation, trigger, calendar_context
+                ),
             ],
             ignore_existing_attempt=True,
         )
@@ -547,9 +594,10 @@ class DingTalkAutoReplyWorker:
     @staticmethod
     def _is_calendar_message(message: DingTalkMessage) -> bool:
         message_type = (message.message_type or "").strip().lower()
-        return message_type in {"calendar", "schedule"} or message.content.strip().startswith(
-            "[日程]"
-        )
+        return message_type in {
+            "calendar",
+            "schedule",
+        } or message.content.strip().startswith("[日程]")
 
     @staticmethod
     def _calendar_events_conflict(
@@ -672,9 +720,44 @@ class DingTalkAutoReplyWorker:
             send_error="no_reply",
         )
 
+    def _record_stale_message_skip(
+        self,
+        conversation: DingTalkConversation,
+        message: DingTalkMessage,
+    ) -> None:
+        existing_attempt = self.store.get_latest_reply_attempt_for_trigger(
+            conversation.open_conversation_id,
+            message.open_message_id,
+        )
+        if (
+            existing_attempt
+            and existing_attempt.action == CodexAction.NO_REPLY.value
+            and existing_attempt.send_status == "skipped"
+        ):
+            return
+        attempt_id = self.store.record_reply_attempt(
+            conversation_id=conversation.open_conversation_id,
+            conversation_title=conversation.title,
+            trigger_message_id=message.open_message_id,
+            trigger_sender=message.sender_name,
+            trigger_text=message.content,
+            action=CodexAction.NO_REPLY.value,
+            sensitivity_kind="general",
+            codex_reason="message_older_than_24h",
+            audit_summary="消息超过最近 24 小时窗口，不自动回复。",
+        )
+        self.store.update_reply_attempt(
+            attempt_id,
+            send_status="skipped",
+            send_error="no_reply",
+        )
+
     @staticmethod
     def _is_system_or_notification_message(message: DingTalkMessage) -> bool:
-        if message.message_type and message.message_type.lower() not in TEXT_MESSAGE_TYPES:
+        if (
+            message.message_type
+            and message.message_type.lower() not in TEXT_MESSAGE_TYPES
+        ):
             return True
         content = message.content.strip()
         if content.startswith(RENDERED_NON_TEXT_PREFIXES):
@@ -729,7 +812,9 @@ class DingTalkAutoReplyWorker:
 
     @staticmethod
     def _has_question_outside_links(content: str) -> bool:
-        return bool(QUESTION_MARK_PATTERN.search(MEDIA_OR_LINK_PATTERN.sub(" ", content)))
+        return bool(
+            QUESTION_MARK_PATTERN.search(MEDIA_OR_LINK_PATTERN.sub(" ", content))
+        )
 
     def _candidate_messages(
         self,
@@ -771,26 +856,24 @@ class DingTalkAutoReplyWorker:
     ) -> list[DingTalkMessage]:
         if conversation.single_chat:
             return unread_messages
-        recovery_start_time = DingTalkAutoReplyWorker._group_context_recovery_start_time(
-            unread_messages
+        recovery_start_time = (
+            DingTalkAutoReplyWorker._group_context_recovery_start_time(unread_messages)
         )
-        unread_message_ids = {
-            message.open_message_id
-            for message in unread_messages
-        }
+        unread_message_ids = {message.open_message_id for message in unread_messages}
         result: list[DingTalkMessage] = []
         seen_message_ids: set[str] = set()
         for message in [*context_messages, *unread_messages]:
             if message.open_message_id in seen_message_ids:
                 continue
             if message.open_message_id not in unread_message_ids and (
-                recovery_start_time is None
-                or message.create_time < recovery_start_time
+                recovery_start_time is None or message.create_time < recovery_start_time
             ):
                 continue
             seen_message_ids.add(message.open_message_id)
             result.append(message)
-        for message in sorted(mentioned_messages or [], key=lambda item: item.create_time):
+        for message in sorted(
+            mentioned_messages or [], key=lambda item: item.create_time
+        ):
             if message.open_message_id in seen_message_ids:
                 continue
             seen_message_ids.add(message.open_message_id)
@@ -935,13 +1018,17 @@ class DingTalkAutoReplyWorker:
         ):
             return
         try:
-            linked_documents = self._read_linked_documents(new_messages, context_messages)
+            linked_documents = self._read_linked_documents(
+                new_messages, context_messages
+            )
         except Exception as exc:
             self._record_linked_document_error(conversation, trigger, str(exc))
             return
         session_id = None
         if not ignore_existing_attempt:
-            session_id = self.store.get_codex_session_id(conversation.open_conversation_id)
+            session_id = self.store.get_codex_session_id(
+                conversation.open_conversation_id
+            )
         prompt = self._build_prompt(
             conversation,
             new_messages,
@@ -1238,7 +1325,10 @@ class DingTalkAutoReplyWorker:
         for message in new_messages:
             add_from_text(message.content)
             add_from_text(message.quoted_content)
-            if message.quoted_message_id and message.quoted_message_id in context_by_message_id:
+            if (
+                message.quoted_message_id
+                and message.quoted_message_id in context_by_message_id
+            ):
                 add_from_text(context_by_message_id[message.quoted_message_id].content)
 
         if trigger is None:
@@ -1250,7 +1340,9 @@ class DingTalkAutoReplyWorker:
             if message.sender_name != trigger.sender_name:
                 continue
             try:
-                message_time = datetime.strptime(message.create_time, DINGTALK_TIME_FORMAT)
+                message_time = datetime.strptime(
+                    message.create_time, DINGTALK_TIME_FORMAT
+                )
             except ValueError:
                 continue
             if window_start <= message_time <= trigger_time:
@@ -1282,7 +1374,9 @@ class DingTalkAutoReplyWorker:
             if markdown.strip():
                 return LinkedDocumentContext(
                     url=match.doc_url,
-                    title=str(payload.get("title") or self._document_display_name(match)),
+                    title=str(
+                        payload.get("title") or self._document_display_name(match)
+                    ),
                     markdown=markdown,
                 )
         payload = self.dws.download_doc(match.node_id)
@@ -1333,7 +1427,9 @@ class DingTalkAutoReplyWorker:
             url,
             headers={str(key): str(value) for key, value in normalized_headers.items()},
         )
-        with urllib.request.urlopen(request, timeout=DOWNLOAD_TIMEOUT_SECONDS) as response:
+        with urllib.request.urlopen(
+            request, timeout=DOWNLOAD_TIMEOUT_SECONDS
+        ) as response:
             content_length = response.headers.get("Content-Length")
             if content_length and int(content_length) > DOWNLOADED_FILE_MAX_BYTES:
                 raise DwsError("dingtalk_file_too_large")
@@ -1510,7 +1606,9 @@ class DingTalkAutoReplyWorker:
         trigger: DingTalkMessage,
         context_messages: list[DingTalkMessage],
     ) -> str:
-        previous_split_reply = self._previous_split_person_reply(context_messages, trigger)
+        previous_split_reply = self._previous_split_person_reply(
+            context_messages, trigger
+        )
         return (
             f"{conversation.title}\n"
             f"{trigger.sender_name}: {trigger.content[:300]}\n"
@@ -1779,7 +1877,9 @@ class DingTalkAutoReplyWorker:
 
     def _reply_at_users(self, trigger: DingTalkMessage) -> list[str]:
         current_user_id = self.store.get_current_user_id()
-        sender_user_id = trigger.sender_user_id or self.dws.resolve_message_sender(trigger)
+        sender_user_id = trigger.sender_user_id or self.dws.resolve_message_sender(
+            trigger
+        )
         users: list[str] = []
         for user_id in [sender_user_id, *trigger.mentioned_user_ids]:
             if not user_id:
@@ -1849,9 +1949,7 @@ class DingTalkAutoReplyWorker:
         )
 
     @staticmethod
-    def _is_stale_codex_resume(
-        decision: CodexDecision, session_id: str | None
-    ) -> bool:
+    def _is_stale_codex_resume(decision: CodexDecision, session_id: str | None) -> bool:
         if not session_id or decision.action != CodexAction.STOP_WITH_ERROR:
             return False
         reason = decision.reason

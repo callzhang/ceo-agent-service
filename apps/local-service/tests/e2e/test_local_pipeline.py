@@ -1,3 +1,6 @@
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
 from ceo_agent_service.dingtalk_models import (
     CodexAction,
     CodexDecision,
@@ -5,10 +8,18 @@ from ceo_agent_service.dingtalk_models import (
     DingTalkMessage,
     SensitivityKind,
 )
-from ceo_agent_service.org_cache import CachedDwsClient, CachedOrgDirectory, refresh_org_cache
+from ceo_agent_service.org_cache import (
+    CachedDwsClient,
+    CachedOrgDirectory,
+    refresh_org_cache,
+)
 from ceo_agent_service.store import AutoReplyStore
 from ceo_agent_service.worker import DingTalkAutoReplyWorker, PROCESSING_ACK
 from ceo_agent_service.dws_client import DwsUserProfile
+
+
+def fixed_worker_now():
+    return datetime(2026, 5, 13, 10, 0, 0, tzinfo=ZoneInfo("America/Los_Angeles"))
 
 
 class FakeDws:
@@ -45,7 +56,9 @@ class FakeDws:
         return {"hr-dept"}
 
     def list_department_member_profiles(self, department_ids):
-        self.org_calls.append(("list_department_member_profiles", tuple(department_ids)))
+        self.org_calls.append(
+            ("list_department_member_profiles", tuple(department_ids))
+        )
         return [
             DwsUserProfile(
                 user_id="hr-user",
@@ -95,11 +108,15 @@ class FakeDws:
         return [self.conversation]
 
     def read_recent_messages(self, conversation, limit=50):
-        self.chat_calls.append(("read_recent_messages", conversation.open_conversation_id, limit))
+        self.chat_calls.append(
+            ("read_recent_messages", conversation.open_conversation_id, limit)
+        )
         return [self.message]
 
     def read_unread_messages(self, conversation):
-        self.chat_calls.append(("read_unread_messages", conversation.open_conversation_id))
+        self.chat_calls.append(
+            ("read_unread_messages", conversation.open_conversation_id)
+        )
         return [self.message]
 
     def send_message(
@@ -146,7 +163,9 @@ def final_sent_at_users(dws: FakeDws):
 def test_local_pipeline_refreshes_org_cache_then_replies_without_runtime_org_calls(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setattr("ceo_agent_service.worker.send_macos_notification", lambda **_: None)
+    monkeypatch.setattr(
+        "ceo_agent_service.worker.send_macos_notification", lambda **_: None
+    )
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     raw_dws = FakeDws()
     refresh_org_cache(store, raw_dws, user_ids={"hr-user", "subject-user"})
@@ -165,6 +184,7 @@ def test_local_pipeline_refreshes_org_cache_then_replies_without_runtime_org_cal
         dws=cached_dws,
         codex=codex,
         dry_run=False,
+        now_provider=fixed_worker_now,
     )
 
     worker.run_once()
@@ -184,7 +204,9 @@ def test_local_pipeline_refreshes_org_cache_then_replies_without_runtime_org_cal
 def test_local_pipeline_handoff_ding_uses_cached_current_user_without_runtime_org_calls(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setattr("ceo_agent_service.worker.send_macos_notification", lambda **_: None)
+    monkeypatch.setattr(
+        "ceo_agent_service.worker.send_macos_notification", lambda **_: None
+    )
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     raw_dws = FakeDws()
     raw_dws.message.content = "不要分身，真人看一下"
@@ -196,6 +218,7 @@ def test_local_pipeline_handoff_ding_uses_cached_current_user_without_runtime_or
         dws=cached_dws,
         codex=FakeCodex(CodexDecision(action=CodexAction.HANDOFF_TO_HUMAN)),
         dry_run=False,
+        now_provider=fixed_worker_now,
     )
 
     worker.run_once()
