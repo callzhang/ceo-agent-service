@@ -5,6 +5,7 @@ from ceo_agent_service.work_profile import (
     EvidenceRecord,
     WorkProfile,
     WorkProfileRule,
+    collect_dingtalk_kb_evidence,
     collect_existing_corpus_evidence,
     collect_local_doc_evidence,
     evidence_id,
@@ -167,3 +168,48 @@ def test_collect_local_doc_evidence_classifies_sensitive_local_docs(tmp_path: Pa
         "绩效.md": "internal_personnel",
         "customer.md": "customer",
     }
+
+
+class FakeDwsForKnowledgeBase:
+    def __init__(self):
+        self.read_nodes = []
+
+    def list_doc_nodes(self, workspace_id=None, folder_id=None, page_token=""):
+        return {
+            "result": {
+                "nodes": [
+                    {
+                        "nodeId": "doc-1",
+                        "name": "战略判断.md",
+                        "nodeType": "file",
+                        "contentType": "ALIDOC",
+                        "extension": "adoc",
+                    }
+                ],
+                "nextToken": None,
+            }
+        }
+
+    def doc_info(self, node):
+        return {"result": {"nodeId": node, "name": "战略判断.md", "creatorName": "Derek"}}
+
+    def read_doc(self, node):
+        self.read_nodes.append(node)
+        return {"result": {"markdown": "判断客户合作先看目标、边界和交付闭环。"}}
+
+
+def test_collect_dingtalk_kb_evidence_reads_online_docs_to_cache(tmp_path: Path):
+    dws = FakeDwsForKnowledgeBase()
+
+    records = collect_dingtalk_kb_evidence(
+        dws=dws,
+        cache_dir=tmp_path / "cache",
+        workspace_id="space-1",
+    )
+
+    assert dws.read_nodes == ["doc-1"]
+    assert len(records) == 1
+    assert records[0].source_type == "dingtalk_kb_live"
+    assert records[0].evidence_strength == "kb_live_doc"
+    assert "客户合作" in records[0].excerpt
+    assert (tmp_path / "cache" / "doc-1.md").exists()

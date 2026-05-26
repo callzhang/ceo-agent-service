@@ -187,6 +187,36 @@ def test_download_doc_command_shape():
     ]
 
 
+def test_build_doc_list_command_uses_read_only_list():
+    client = DwsClient(dws_bin="dws")
+
+    assert client.build_doc_list_command(
+        workspace_id="space-1", folder_id=None, page_token=""
+    ) == [
+        "dws",
+        "doc",
+        "list",
+        "--workspace",
+        "space-1",
+        "--format",
+        "json",
+    ]
+
+
+def test_build_doc_info_command_is_read_only():
+    client = DwsClient(dws_bin="dws")
+
+    assert client.build_doc_info_command("node-1") == [
+        "dws",
+        "doc",
+        "info",
+        "--node",
+        "node-1",
+        "--format",
+        "json",
+    ]
+
+
 def test_message_read_commands_do_not_mark_dingtalk_messages_seen():
     client = DwsClient(dws_bin="dws")
     conversation = DingTalkConversation(

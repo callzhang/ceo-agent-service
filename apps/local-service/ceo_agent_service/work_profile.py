@@ -183,6 +183,78 @@ def collect_local_doc_evidence(workspace: Path) -> list[EvidenceRecord]:
     return records
 
 
+def _doc_nodes_from_payload(payload: dict) -> list[dict]:
+    result = payload.get("result", payload)
+    if isinstance(result, dict):
+        nodes = result.get("nodes") or result.get("items") or result.get("list") or []
+        return [node for node in nodes if isinstance(node, dict)]
+    return []
+
+
+def _doc_markdown_from_payload(payload: dict) -> str:
+    result = payload.get("result", payload)
+    if isinstance(result, dict):
+        markdown = (
+            result.get("markdown")
+            or result.get("content")
+            or result.get("text")
+            or ""
+        )
+        return str(markdown)
+    return ""
+
+
+def collect_dingtalk_kb_evidence(
+    *,
+    dws,
+    cache_dir: Path,
+    workspace_id: str | None = None,
+    folder_id: str | None = None,
+    limit: int = 200,
+) -> list[EvidenceRecord]:
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    records: list[EvidenceRecord] = []
+    payload = dws.list_doc_nodes(workspace_id=workspace_id, folder_id=folder_id)
+    for node in _doc_nodes_from_payload(payload):
+        if len(records) >= limit:
+            break
+        node_id = str(node.get("nodeId") or node.get("dentryUuid") or "")
+        if not node_id:
+            continue
+        extension = str(node.get("extension") or "").lower()
+        content_type = str(node.get("contentType") or "").upper()
+        if extension != "adoc" and content_type != "ALIDOC":
+            continue
+        info = dws.doc_info(node_id)
+        markdown = _doc_markdown_from_payload(dws.read_doc(node_id)).strip()
+        if not markdown:
+            continue
+        cache_path = cache_dir / f"{node_id}.md"
+        cache_path.write_text(markdown, encoding="utf-8")
+        info_result = info.get("result", info) if isinstance(info, dict) else {}
+        title = str(info_result.get("name") or node.get("name") or node_id)
+        location = f"dingtalk-kb:{node_id}"
+        records.append(
+            EvidenceRecord(
+                id=evidence_id("dingtalk_kb_live", location, markdown[:1000]),
+                source_type="dingtalk_kb_live",
+                title=title,
+                timestamp=str(
+                    info_result.get("modifiedTime")
+                    or info_result.get("createdTime")
+                    or ""
+                ),
+                location=location,
+                scenario="general",
+                evidence_strength="kb_live_doc",
+                sensitivity="general",
+                excerpt=safe_excerpt(markdown),
+                usable_for_profile=True,
+            )
+        )
+    return records
+
+
 def write_jsonl(path: Path, records: list[EvidenceRecord]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as file:

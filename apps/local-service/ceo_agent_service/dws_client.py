@@ -391,6 +391,33 @@ class DwsClient:
             "json",
         ]
 
+    def build_doc_list_command(
+        self,
+        workspace_id: str | None = None,
+        folder_id: str | None = None,
+        page_token: str = "",
+    ) -> list[str]:
+        command = [self.dws_bin, "doc", "list"]
+        if workspace_id:
+            command.extend(["--workspace", workspace_id])
+        if folder_id:
+            command.extend(["--folder", folder_id])
+        if page_token:
+            command.extend(["--page-token", page_token])
+        command.extend(["--format", "json"])
+        return command
+
+    def build_doc_info_command(self, node: str) -> list[str]:
+        return [
+            self.dws_bin,
+            "doc",
+            "info",
+            "--node",
+            node,
+            "--format",
+            "json",
+        ]
+
     def build_search_documents_command(
         self, query: str, page_size: int = 5
     ) -> list[str]:
@@ -569,6 +596,29 @@ class DwsClient:
         payload = self.run_json(self.build_read_doc_command(node))
         if not isinstance(payload, dict):
             raise DwsError("invalid doc read response")
+        return payload
+
+    def list_doc_nodes(
+        self,
+        workspace_id: str | None = None,
+        folder_id: str | None = None,
+        page_token: str = "",
+    ) -> dict[str, Any]:
+        payload = self.run_json(
+            self.build_doc_list_command(
+                workspace_id=workspace_id,
+                folder_id=folder_id,
+                page_token=page_token,
+            )
+        )
+        if not isinstance(payload, dict):
+            raise DwsError("invalid doc list response")
+        return payload
+
+    def doc_info(self, node: str) -> dict[str, Any]:
+        payload = self.run_json(self.build_doc_info_command(node))
+        if not isinstance(payload, dict):
+            raise DwsError("invalid doc info response")
         return payload
 
     def search_documents(
