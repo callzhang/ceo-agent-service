@@ -17,6 +17,14 @@ after Codex has returned a decision that will actually attempt a reply. `no_repl
 `stop_with_error`, blocked, and dry-run outcomes do not send the acknowledgement,
 so a conversation is not left with a processing message and no follow-up.
 
+## Mentioned arrangements
+
+When a human mentions Derek in a group and shares an arrangement, process, or
+decision that needs Derek to participate or confirm, the agent should treat it as
+reply-worthy even if the message is phrased as a statement rather than a
+question. It should only skip when the later context shows Derek already
+confirmed the arrangement.
+
 ## Consumer retry behavior
 
 Reply tasks move from `pending` to `processing` when claimed. If task processing

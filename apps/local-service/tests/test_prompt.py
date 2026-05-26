@@ -102,6 +102,13 @@ def test_thread_prompt_explains_first_person_single_chat_subject():
     assert "单聊和群聊都适用" in prompt
 
 
+def test_thread_prompt_treats_mentioned_arrangements_requiring_principal_as_replies():
+    prompt = ceo_agent_thread_prompt()
+
+    assert "需要 Derek 参与或确认的安排" in prompt
+    assert "即使没有问号，也应视为需要回复" in prompt
+
+
 def test_build_turn_prompt_keeps_user_message_separate_from_thread_prompt():
     prompt = build_turn_prompt(
         DingTalkConversation(
