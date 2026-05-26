@@ -12,6 +12,9 @@ CODEX_DEVELOPER_INSTRUCTIONS_PREFIX = (
     "You are the local CEO DingTalk reply worker. Inspect the workspace before "
     "answering. Return only the requested JSON."
 )
+# The CEO worker must call DWS; read-only/workspace-write sandboxes can block
+# local auth decryption even when HOME and token files are visible.
+CODEX_SANDBOX_MODE = "danger-full-access"
 
 
 def codex_developer_instructions() -> str:
@@ -59,7 +62,7 @@ class CodexRunner:
                 "resume",
                 *common_options,
                 "-c",
-                'sandbox_mode="read-only"',
+                _config_string("sandbox_mode", CODEX_SANDBOX_MODE),
                 session_id,
                 "-",
             ]
@@ -68,7 +71,7 @@ class CodexRunner:
             "exec",
             *common_options,
             "-s",
-            "read-only",
+            CODEX_SANDBOX_MODE,
             "--output-schema",
             str(CODEX_DECISION_SCHEMA_PATH),
             "--cd",

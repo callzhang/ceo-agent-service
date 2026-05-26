@@ -64,7 +64,7 @@ def test_builds_new_thread_command(tmp_path: Path):
         "-c",
         "include_environment_context=false",
         "-s",
-        "read-only",
+        "danger-full-access",
         "--output-schema",
         str(CODEX_DECISION_SCHEMA_PATH),
         "--cd",
@@ -106,7 +106,7 @@ def test_builds_resume_command(tmp_path: Path):
         "-c",
         "include_environment_context=false",
         "-c",
-        'sandbox_mode="read-only"',
+        'sandbox_mode="danger-full-access"',
         "abc",
         "-",
     ]
