@@ -2189,7 +2189,7 @@ def test_active_handoff_notification_explains_auto_reply_is_paused(
         handoff_message_create_time="2026-05-13 18:00:00",
     )
     latest = message(
-        "可以东风集团（京东云渠道）",
+        "@Derek Zen(磊哥) 可以东风集团（京东云渠道）",
         message_id="msg-after-handoff",
     )
     latest.create_time = "2026-05-13 18:10:00"
@@ -2217,11 +2217,50 @@ def test_active_handoff_notification_explains_auto_reply_is_paused(
             "title": "CEO 自动回复已暂停: 26年董事会筹备组",
             "message": (
                 "该会话已交给本人处理，本次未生成回复。"
-                "最新消息：可以东风集团（京东云渠道）"
+                "最新消息：@Derek Zen(磊哥) 可以东风集团（京东云渠道）"
             ),
             "url": None,
         }
     ]
+
+
+def test_active_handoff_ignores_group_unread_without_derek_mention(
+    tmp_path: Path, monkeypatch
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.upsert_conversation("cid-1", "MKT core", False, None)
+    store.enter_handoff(
+        "cid-1",
+        "msg-1",
+        "需要真人",
+        handoff_message_create_time="2026-05-13 18:00:00",
+    )
+    latest = message(
+        "［文件】星尘数据B轮融资 BP_20260526.pptx-2.pptx",
+        message_id="file-after-handoff",
+        message_type="file",
+    )
+    latest.create_time = "2026-05-13 18:10:00"
+    dws = FakeDws([conversation()], {"cid-1": [latest]})
+    dws.conversations[0].title = "MKT core"
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该调用")
+    )
+    notifications: list[dict[str, str | None]] = []
+    monkeypatch.setattr(
+        "ceo_agent_service.worker.send_macos_notification",
+        lambda **kwargs: notifications.append(kwargs),
+    )
+    worker = DingTalkAutoReplyWorker(
+        store=store, dws=dws, codex=codex, now_provider=fixed_worker_now
+    )
+
+    worker.run_once()
+
+    assert codex.calls == []
+    assert final_sent(dws) == []
+    assert store.has_seen("file-after-handoff") is False
+    assert notifications == []
 
 
 def test_dry_run_active_handoff_does_not_repeat_pause_notification(

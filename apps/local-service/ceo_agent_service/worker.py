@@ -187,13 +187,6 @@ class DingTalkAutoReplyWorker:
                 for message in unread_messages
                 if not self.store.has_seen(message.open_message_id)
             ]
-            if self.store.is_in_handoff(conversation.open_conversation_id):
-                if self._handle_active_handoff(
-                    conversation,
-                    context_messages,
-                    unseen_context_messages,
-                ):
-                    continue
             candidate_source_messages = self._candidate_source_messages(
                 conversation,
                 context_messages,
@@ -209,6 +202,14 @@ class DingTalkAutoReplyWorker:
                 for message in candidates
                 if not self.store.has_seen(message.open_message_id)
             ]
+            if self.store.is_in_handoff(conversation.open_conversation_id):
+                if self._handle_active_handoff(
+                    conversation,
+                    context_messages,
+                    unseen_context_messages,
+                    actionable_unseen_messages=new_messages,
+                ):
+                    continue
             if not new_messages:
                 continue
             new_messages = self._skip_messages_outside_recent_window(
@@ -1051,7 +1052,13 @@ class DingTalkAutoReplyWorker:
         conversation: DingTalkConversation,
         context_messages: list[DingTalkMessage],
         unseen_messages: list[DingTalkMessage],
+        actionable_unseen_messages: list[DingTalkMessage] | None = None,
     ) -> bool:
+        pause_messages = (
+            unseen_messages
+            if actionable_unseen_messages is None
+            else actionable_unseen_messages
+        )
         try:
             handoff_create_time = self.store.get_handoff_message_create_time(
                 conversation.open_conversation_id
@@ -1087,15 +1094,22 @@ class DingTalkAutoReplyWorker:
                 message=manual_clear_message.content[:120],
             )
             return self.dry_run
-        if unseen_messages and not self.dry_run:
+        current_user_messages = [
+            message
+            for message in unseen_messages
+            if self._is_current_user_message_for_candidate_filter(message)
+        ]
+        if current_user_messages and not self.dry_run:
+            self._mark_seen(current_user_messages)
+        if pause_messages and not self.dry_run:
             self._notify(
                 title=f"CEO 自动回复已暂停: {conversation.title}",
                 message=(
                     "该会话已交给本人处理，本次未生成回复。"
-                    f"最新消息：{unseen_messages[-1].content[:120]}"
+                    f"最新消息：{pause_messages[-1].content[:120]}"
                 ),
             )
-            self._mark_seen(unseen_messages)
+            self._mark_seen(pause_messages)
         return True
 
     def _manual_handoff_clear_message(
