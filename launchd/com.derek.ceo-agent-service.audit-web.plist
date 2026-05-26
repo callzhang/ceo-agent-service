@@ -46,6 +46,8 @@
     <string>127.0.0.1</string>
     <key>CEO_AUDIT_WEB_PORT</key>
     <string>8765</string>
+    <key>CEO_DING_ROBOT_NAME</key>
+    <string>磊哥</string>
   </dict>
 </dict>
 </plist>

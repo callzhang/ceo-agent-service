@@ -62,6 +62,8 @@
     <string>（by磊哥分身）</string>
     <key>CEO_HANDOFF_ACK</key>
     <string>我让磊哥本人看一下。（by磊哥分身）</string>
+    <key>CEO_DING_ROBOT_NAME</key>
+    <string>磊哥</string>
   </dict>
 </dict>
 </plist>

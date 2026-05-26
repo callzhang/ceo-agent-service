@@ -49,6 +49,7 @@ def test_reply_producer_launch_agent_runs_every_five_minutes_without_keepalive()
     assert env["CEO_CURRENT_USER_DISPLAY_NAMES"] == "磊哥,Derek Zen,Derek,Lei Zhang"
     assert env["CEO_ASSISTANT_SIGNATURE"] == "（by磊哥分身）"
     assert env["CEO_HANDOFF_ACK"] == "我让磊哥本人看一下。（by磊哥分身）"
+    assert env["CEO_DING_ROBOT_NAME"] == "磊哥"
     assert "/Users/derek/.local/bin" in command[2]
     assert "kill -0" in command[2]
     assert "rm -rf \"$lock_dir\"" in command[2]
@@ -76,6 +77,7 @@ def test_reply_consumer_launch_agent_runs_as_live_keepalive_consumer():
     assert env["CEO_CURRENT_USER_DISPLAY_NAMES"] == "磊哥,Derek Zen,Derek,Lei Zhang"
     assert env["CEO_ASSISTANT_SIGNATURE"] == "（by磊哥分身）"
     assert env["CEO_HANDOFF_ACK"] == "我让磊哥本人看一下。（by磊哥分身）"
+    assert env["CEO_DING_ROBOT_NAME"] == "磊哥"
     assert "--not-send-message" not in command[2]
     assert "--poll-interval-seconds 10" in command[2]
 
