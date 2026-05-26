@@ -19,6 +19,47 @@ LOCAL_AUTHORED_DIRS = (
 LOCAL_TEXT_SUFFIXES = {".md", ".txt"}
 LOCAL_IGNORED_PARTS = {".smart-env", ".dws", ".obsidian", "AI听记"}
 HIGH_CONFIDENCE_AUTHORED_DIRS = {Path("Thinking"), Path("management") / "strategy"}
+LOCAL_SENSITIVITY_TERMS = (
+    (
+        "internal_personnel",
+        (
+            "HR",
+            "招聘",
+            "候选人",
+            "面试",
+            "人事",
+            "绩效",
+            "转正",
+            "晋升",
+            "staff management",
+            "staff",
+            "employee",
+        ),
+    ),
+    (
+        "approval",
+        (
+            "OA",
+            "审批",
+            "报销",
+            "预算",
+            "合同",
+            "财务",
+            "invoice",
+            "finance",
+        ),
+    ),
+    (
+        "customer",
+        (
+            "客户",
+            "customer",
+            "partner",
+            "合作",
+            "商务",
+        ),
+    ),
+)
 
 
 def evidence_id(source_type: str, location: str, text: str) -> str:
@@ -33,6 +74,16 @@ def safe_excerpt(text: str, limit: int = 240) -> str:
     if len(normalized) <= limit:
         return normalized
     return f"{normalized[:limit]}…"
+
+
+def classify_local_doc_sensitivity(relative: str, text: str) -> str:
+    haystack = f"{relative}\n{text}"
+    haystack_lower = haystack.lower()
+    for sensitivity, terms in LOCAL_SENSITIVITY_TERMS:
+        for term in terms:
+            if term.lower() in haystack_lower:
+                return sensitivity
+    return "general"
 
 
 class EvidenceRecord(BaseModel):
@@ -124,7 +175,7 @@ def collect_local_doc_evidence(workspace: Path) -> list[EvidenceRecord]:
                     location=relative,
                     scenario="general",
                     evidence_strength=strength,
-                    sensitivity="general",
+                    sensitivity=classify_local_doc_sensitivity(relative, text),
                     excerpt=safe_excerpt(text),
                     usable_for_profile=True,
                 )

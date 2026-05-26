@@ -124,3 +124,46 @@ def test_collect_local_doc_evidence_prefers_thinking_and_strategy_dirs(tmp_path:
         "Q2 strategy.md",
     }
     assert all(record.evidence_strength == "authored_high" for record in records)
+
+
+def test_collect_local_doc_evidence_skips_nested_ignored_dirs(tmp_path: Path):
+    workspace = tmp_path / "memory"
+    visible = workspace / "management"
+    ignored = visible / ".smart-env"
+    visible.mkdir(parents=True)
+    ignored.mkdir(parents=True)
+    (visible / "operating.md").write_text("先把项目节奏和责任边界说清楚。", encoding="utf-8")
+    (ignored / "cache.md").write_text("不应该进入 profile。", encoding="utf-8")
+
+    records = collect_local_doc_evidence(workspace)
+
+    assert {record.title for record in records} == {"operating.md"}
+
+
+def test_collect_local_doc_evidence_deduplicates_overlapping_management_roots(tmp_path: Path):
+    workspace = tmp_path / "memory"
+    strategy = workspace / "management" / "strategy"
+    strategy.mkdir(parents=True)
+    (strategy / "Q2 strategy.md").write_text("战略判断先看客户价值和交付闭环。", encoding="utf-8")
+
+    records = collect_local_doc_evidence(workspace)
+
+    assert [record.location for record in records] == ["management/strategy/Q2 strategy.md"]
+
+
+def test_collect_local_doc_evidence_classifies_sensitive_local_docs(tmp_path: Path):
+    workspace = tmp_path / "memory"
+    personnel = workspace / "management" / "staff management"
+    customer = workspace / "business"
+    personnel.mkdir(parents=True)
+    customer.mkdir(parents=True)
+    (personnel / "绩效.md").write_text("员工绩效需要结合目标和过程反馈。", encoding="utf-8")
+    (customer / "customer.md").write_text("客户合作先看商务价值和交付边界。", encoding="utf-8")
+
+    records = collect_local_doc_evidence(workspace)
+
+    sensitivities = {record.title: record.sensitivity for record in records}
+    assert sensitivities == {
+        "绩效.md": "internal_personnel",
+        "customer.md": "customer",
+    }
