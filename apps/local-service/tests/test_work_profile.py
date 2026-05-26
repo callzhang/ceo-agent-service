@@ -5,6 +5,8 @@ from ceo_agent_service.work_profile import (
     EvidenceRecord,
     WorkProfile,
     WorkProfileEvidenceCoverage,
+    WorkProfileExpressionDna,
+    WorkProfileMentalModel,
     WorkProfileRule,
     build_initial_profile,
     collect_dingtalk_kb_evidence,
@@ -459,13 +461,69 @@ def test_render_markdown_profile_contains_required_sections():
 
     assert "# Derek Work Profile" in markdown
     assert "## Core Judgment Order" in markdown
-    assert "## Decision Framework" in markdown
-    assert "## Expression Framework" in markdown
-    assert "## Follow-Up Framework" in markdown
-    assert "## Scenario Playbooks" in markdown
-    assert "## Boundary Framework" in markdown
-    assert "## Honest Boundaries" in markdown
+    assert "## 自动回复硬规则" in markdown
+    assert "### Decision Framework" in markdown
+    assert "### Expression Framework" in markdown
+    assert "### Follow-Up Framework" in markdown
+    assert "### Scenario Playbooks" in markdown
+    assert "### Boundary Framework" in markdown
+    assert "## 诚实边界" in markdown
     assert "材料不足不拍板" in markdown
+
+
+def test_render_markdown_profile_contains_complete_portrait_sections():
+    profile = WorkProfile(
+        title="Derek Work Profile",
+        summary="用于钉钉自动回复的工作判断 profile。",
+        identity=["我是谁：企业执行系统建设者。"],
+        mental_models=[
+            WorkProfileMentalModel(
+                id="model_real_workflow_over_demo",
+                title="真实工作流优先于演示效果",
+                one_liner="demo 不等于生产价值。",
+                evidence=["来自本地文档和钉钉消息。"],
+                application="评估产品和技术路线。",
+                limitation="早期 demo 仍有融资和招聘价值。",
+                evidence_ids=["ev_abc"],
+            )
+        ],
+        decision_heuristics=[],
+        expression_dna=WorkProfileExpressionDna(
+            sentence_style="短句和判断句为主。",
+            vocabulary="agent、workflow、闭环。",
+            rhythm="先结论后下一步。",
+            humor="少量调侃。",
+            certainty="事实不足时谨慎。",
+            response_shape="钉钉回复偏短。",
+        ),
+        values=["真实生产价值。"],
+        anti_patterns=["demo 很漂亮但进不了真实工作流。"],
+        tensions=["张力一：自动化和人工判断并存。"],
+        source_notes=["一手本地文档。"],
+        rules=[
+            WorkProfileRule(
+                id="rule_materials_before_decision",
+                title="材料不足不拍板",
+                category="decision",
+                scenarios=["approval"],
+                trigger="需要判断但材料不完整",
+                do="先追问缺失材料",
+                dont="不要给确定结论",
+                confidence="high",
+                evidence_ids=["ev_abc"],
+            )
+        ],
+    )
+
+    markdown = render_markdown_profile(profile)
+
+    assert "## 身份卡" in markdown
+    assert "## 核心心智模型" in markdown
+    assert "### 模型1: 真实工作流优先于演示效果" in markdown
+    assert "## 表达DNA" in markdown
+    assert "## 价值观与反模式" in markdown
+    assert "## 核心张力" in markdown
+    assert "## 附录：调研来源" in markdown
 
 
 def test_render_markdown_profile_shows_evidence_coverage():
@@ -549,6 +607,12 @@ def test_build_initial_profile_uses_distinct_evidence_sources():
     assert profile.evidence_coverage.referenced_source_counts == {
         source_type: 6 for source_type in source_types
     }
+    assert len(profile.mental_models) == 6
+    assert len(profile.decision_heuristics) == 8
+    assert profile.expression_dna is not None
+    assert profile.values
+    assert profile.anti_patterns
+    assert profile.tensions
     assert len(referenced_ids) == 24
     for rule in profile.rules:
         rule_source_types = {
@@ -567,3 +631,4 @@ def test_render_skill_marks_manual_use_not_runtime_dependency():
     assert "name: derek-perspective" in skill
     assert "not Derek himself" in skill
     assert "Do not use this skill as the automated DingTalk runtime" in skill
+    assert "# Derek Work Profile" in skill
