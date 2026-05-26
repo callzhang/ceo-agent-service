@@ -39,6 +39,8 @@ class FakeDws:
         messages: dict[str, list[DingTalkMessage]],
         unread_messages: dict[str, list[DingTalkMessage]] | None = None,
         read_errors: dict[str, Exception] | None = None,
+        unread_errors: dict[str, Exception] | None = None,
+        list_error: Exception | None = None,
         send_error: Exception | None = None,
         ding_error: Exception | None = None,
         current_user_error: Exception | None = None,
@@ -48,6 +50,8 @@ class FakeDws:
         self.messages = messages
         self.unread_messages = unread_messages or messages
         self.read_errors = read_errors or {}
+        self.unread_errors = unread_errors or {}
+        self.list_error = list_error
         self.send_error = send_error
         self.ding_error = ding_error
         self.current_user_error = current_user_error
@@ -82,6 +86,8 @@ class FakeDws:
 
     def list_unread_conversations(self, count: int) -> list[DingTalkConversation]:
         assert count == 50
+        if self.list_error:
+            raise self.list_error
         return self.conversations
 
     def check_upgrade(self) -> dict:
@@ -106,6 +112,8 @@ class FakeDws:
     def read_unread_messages(
         self, conversation: DingTalkConversation
     ) -> list[DingTalkMessage]:
+        if conversation.open_conversation_id in self.unread_errors:
+            raise self.unread_errors[conversation.open_conversation_id]
         return self.unread_messages.get(conversation.open_conversation_id, [])
 
     def read_mentioned_messages(
@@ -389,6 +397,32 @@ def test_group_without_derek_mention_does_not_call_codex_or_send(
     assert final_sent(dws) == []
 
 
+def test_produce_once_records_list_unread_failure_without_crashing(
+    tmp_path: Path, monkeypatch
+):
+    notifications = []
+    dws = FakeDws([], {}, list_error=DwsError("not authenticated", code="2"))
+    codex = FakeCodex(CodexDecision(action=CodexAction.SEND_REPLY, reply_text="收到"))
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+    monkeypatch.setattr(
+        "ceo_agent_service.worker.send_macos_notification",
+        lambda **kwargs: notifications.append(kwargs),
+    )
+
+    queued = worker.produce_once()
+
+    assert queued == 0
+    assert worker.store.count_errors() == 1
+    assert notifications == [
+        {
+            "title": "CEO read unread conversations failed",
+            "message": "not authenticated",
+            "url": None,
+        }
+    ]
+    assert codex.calls == []
+
+
 def test_produce_once_enqueues_candidate_without_calling_codex(
     tmp_path: Path, monkeypatch
 ):
@@ -564,6 +598,40 @@ def test_repeated_produce_once_does_not_duplicate_pending_task(
     assert worker.produce_once() == 0
 
     assert worker.store.count_reply_tasks(status="pending") == 1
+    assert codex.calls == []
+
+
+def test_produce_once_uses_recent_context_when_unread_read_fails_for_group_mention(
+    tmp_path: Path, monkeypatch
+):
+    notifications = []
+    trigger = message("@Derek Zen(磊哥) 这个怎么处理？")
+    dws = FakeDws(
+        [conversation()],
+        {"cid-1": [trigger]},
+        unread_messages={"cid-1": []},
+        unread_errors={
+            "cid-1": DwsError(
+                "business error: SECURITY_CHECK_INVOKE_FAILED",
+                code="SECURITY_CHECK_INVOKE_FAILED",
+            )
+        },
+    )
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该调用")
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+    monkeypatch.setattr(
+        "ceo_agent_service.worker.send_macos_notification",
+        lambda **kwargs: notifications.append(kwargs),
+    )
+
+    queued = worker.produce_once()
+
+    assert queued == 1
+    assert worker.store.count_reply_tasks(status="pending") == 1
+    assert worker.store.count_errors() == 1
+    assert notifications[0]["title"] == "CEO read unread messages failed: Friday"
     assert codex.calls == []
 
 

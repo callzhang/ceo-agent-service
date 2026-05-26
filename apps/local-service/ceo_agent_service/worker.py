@@ -154,7 +154,15 @@ class DingTalkAutoReplyWorker:
     def produce_once(self, max_tasks: int | None = None) -> int:
         self._maybe_upgrade_dws_once_per_day()
         queued_tasks = 0
-        conversations = self.dws.list_unread_conversations(count=50)
+        try:
+            conversations = self.dws.list_unread_conversations(count=50)
+        except Exception as exc:
+            self.store.record_error(None, None, "list_unread_conversations", str(exc))
+            self._notify(
+                title="CEO read unread conversations failed",
+                message=str(exc)[:120],
+            )
+            return 0
         mentioned_messages = self._mentioned_messages_by_conversation(conversations)
         conversations = self._conversations_with_mentions(
             conversations,
@@ -167,20 +175,44 @@ class DingTalkAutoReplyWorker:
                 single_chat=conversation.single_chat,
                 codex_session_id=None,
             )
+            conversation_mentions = mentioned_messages.get(
+                conversation.open_conversation_id, []
+            )
             try:
                 context_messages = self.dws.read_recent_messages(conversation)
-                unread_messages = self.dws.read_unread_messages(conversation)
             except Exception as exc:
                 self.store.record_error(
                     conversation.open_conversation_id,
                     None,
-                    "read_messages",
+                    "read_recent_messages",
                     str(exc),
                 )
                 self._notify(
-                    title=f"CEO read messages failed: {conversation.title}",
+                    title=f"CEO read recent messages failed: {conversation.title}",
                     message=str(exc)[:120],
                 )
+                context_messages = []
+            try:
+                unread_messages = self.dws.read_unread_messages(conversation)
+                candidate_unread_messages = unread_messages
+            except Exception as exc:
+                self.store.record_error(
+                    conversation.open_conversation_id,
+                    None,
+                    "read_unread_messages",
+                    str(exc),
+                )
+                self._notify(
+                    title=f"CEO read unread messages failed: {conversation.title}",
+                    message=str(exc)[:120],
+                )
+                unread_messages = []
+                candidate_unread_messages = context_messages
+            if (
+                not context_messages
+                and not unread_messages
+                and not conversation_mentions
+            ):
                 continue
             unseen_context_messages = [
                 message
@@ -190,8 +222,8 @@ class DingTalkAutoReplyWorker:
             candidate_source_messages = self._candidate_source_messages(
                 conversation,
                 context_messages,
-                unread_messages,
-                mentioned_messages.get(conversation.open_conversation_id, []),
+                candidate_unread_messages,
+                conversation_mentions,
             )
             candidates = self._candidate_messages(
                 conversation,
