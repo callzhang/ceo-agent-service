@@ -605,3 +605,32 @@ def test_subprocess_nonzero_preserves_thread_id_for_error(tmp_path: Path, monkey
     assert decision.action == CodexAction.STOP_WITH_ERROR
     assert runner.last_session_id == "thread-1"
     assert "fatal schema error" in decision.reason
+
+
+def test_subprocess_nonzero_reports_error_line_before_startup_warning(
+    tmp_path: Path, monkeypatch
+):
+    stderr = "\n".join(
+        [
+            "2026-05-26T20:24:01Z WARN codex_core_plugins::startup_remote_sync: startup remote plugin sync failed; will retry",
+            "2026-05-26T20:24:02Z ERROR codex_api::endpoint::responses_websocket: failed to connect to websocket: HTTP error: 401 Unauthorized",
+            "2026-05-26T20:24:02Z WARN codex_core::session::turn: stream disconnected",
+        ]
+    )
+
+    def fake_run(*args, **kwargs):
+        return SimpleNamespace(
+            returncode=1,
+            stdout=json.dumps({"type": "thread.started", "thread_id": "thread-1"}),
+            stderr=stderr,
+        )
+
+    monkeypatch.setattr("ceo_agent_service.codex_decision.subprocess.run", fake_run)
+    runner = make_runner(tmp_path)
+
+    decision = runner.decide(prompt="decide", session_id=None)
+
+    assert decision.action == CodexAction.STOP_WITH_ERROR
+    assert "ERROR codex_api" in decision.reason
+    assert "401 Unauthorized" in decision.reason
+    assert "startup_remote_sync" not in decision.reason

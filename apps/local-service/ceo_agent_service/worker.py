@@ -89,10 +89,10 @@ SYSTEM_STATUS_NOTIFICATION_PATTERN = re.compile(
 )
 QUESTION_MARK_PATTERN = re.compile(r"[?？]")
 FIELD_LINE_PATTERN = re.compile(r"^\s*[^:：\n]{1,60}[:：]\s*\S+")
-MENTION_PATTERN = re.compile(r"@[^\s]+(?:\([^)]+\))?")
-QUOTE_MENTION_PATTERN = re.compile(
-    r"@[^\s@()]+(?:\s+[A-Za-z][^\s@()]*)?(?:\((?:[^()]|\([^()]*\))*\))?"
+MENTION_PATTERN = re.compile(
+    r"@[^\s@()（）]+(?:\s+[A-Za-z][^\s@()（）]*)?(?:[（(](?:[^()（）]|[（(][^()（）]*[）)])*[）)])?"
 )
+QUOTE_MENTION_PATTERN = MENTION_PATTERN
 DINGTALK_DOC_URL_PATTERN = re.compile(
     r"https://alidocs\.dingtalk\.com/i/nodes/[^\s)\]]+"
 )
@@ -109,6 +109,8 @@ DOWNLOADED_FILE_MAX_BYTES = 50 * 1024 * 1024
 DOWNLOAD_TIMEOUT_SECONDS = 30
 PDF_TEXT_PAGE_LIMIT = 30
 DWS_UPGRADE_CHECKED_DATE_STATE_KEY = "dws_upgrade_checked_date"
+AITABLE_TABLE_PREVIEW_LIMIT = 5
+AITABLE_RECORD_PREVIEW_LIMIT = 10
 
 
 @dataclass(frozen=True)
@@ -463,7 +465,15 @@ class DingTalkAutoReplyWorker:
     def _mentioned_messages_by_conversation(
         self, conversations: list[DingTalkConversation]
     ) -> dict[str, list[DingTalkMessage]]:
-        messages = self.dws.read_mentioned_messages(limit=100)
+        try:
+            messages = self.dws.read_mentioned_messages(limit=100)
+        except Exception as exc:
+            self.store.record_error(None, None, "read_mentioned_messages", str(exc))
+            self._notify(
+                title="CEO read mentioned messages failed",
+                message=str(exc)[:120],
+            )
+            return {}
         grouped: dict[str, list[DingTalkMessage]] = {}
         for message in messages:
             grouped.setdefault(message.open_conversation_id, []).append(message)
@@ -927,6 +937,10 @@ class DingTalkAutoReplyWorker:
             return False
         if not DINGTALK_INTERNAL_OR_RENDERED_MEDIA_PATTERN.search(content):
             return False
+        if DINGTALK_DOC_URL_PATTERN.search(content):
+            return False
+        if DINGTALK_APPROVAL_LINK_PATTERN.search(content):
+            return False
         if DingTalkAutoReplyWorker._has_question_outside_links(content):
             return False
         text_without_links = MEDIA_OR_LINK_PATTERN.sub(" ", content)
@@ -1086,11 +1100,6 @@ class DingTalkAutoReplyWorker:
         unseen_messages: list[DingTalkMessage],
         actionable_unseen_messages: list[DingTalkMessage] | None = None,
     ) -> bool:
-        pause_messages = (
-            unseen_messages
-            if actionable_unseen_messages is None
-            else actionable_unseen_messages
-        )
         try:
             handoff_create_time = self.store.get_handoff_message_create_time(
                 conversation.open_conversation_id
@@ -1113,7 +1122,7 @@ class DingTalkAutoReplyWorker:
                 title=f"CEO handoff clear failed: {conversation.title}",
                 message=str(exc)[:120],
             )
-            return True
+            return False
         if manual_clear_message is not None:
             if not self.dry_run:
                 self.store.clear_handoff(
@@ -1133,16 +1142,7 @@ class DingTalkAutoReplyWorker:
         ]
         if current_user_messages and not self.dry_run:
             self._mark_seen(current_user_messages)
-        if pause_messages and not self.dry_run:
-            self._notify(
-                title=f"CEO 自动回复已暂停: {conversation.title}",
-                message=(
-                    "该会话已交给本人处理，本次未生成回复。"
-                    f"最新消息：{pause_messages[-1].content[:120]}"
-                ),
-            )
-            self._mark_seen(pause_messages)
-        return True
+        return False
 
     def _manual_handoff_clear_message(
         self,
@@ -1392,6 +1392,13 @@ class DingTalkAutoReplyWorker:
         *,
         raise_on_delivery_failure: bool = False,
     ) -> bool:
+        sent_reply = self.store.get_sent_reply(
+            conversation.open_conversation_id,
+            trigger.open_message_id,
+        )
+        if sent_reply is not None:
+            self._mark_seen(new_messages)
+            return True
         attempt = self.store.get_latest_reply_attempt_for_trigger(
             conversation.open_conversation_id,
             trigger.open_message_id,
@@ -1431,23 +1438,83 @@ class DingTalkAutoReplyWorker:
             new_messages, context_messages
         )
         for url in self._dingtalk_doc_urls(referenced_messages):
-            payload = self.dws.read_doc(url)
-            title = str(payload.get("title") or "钉钉文档")
-            markdown = str(payload.get("markdown") or "")
-            if not markdown.strip():
-                raise DwsError(f"DingTalk doc read returned empty markdown: {url}")
-            documents.append(
-                LinkedDocumentContext(
-                    url=url,
-                    title=title,
-                    markdown=markdown,
-                )
-            )
+            documents.append(self._read_linked_alidocs_node(url))
         for file_name in self._referenced_file_names(new_messages, context_messages):
             document = self._read_referenced_file(file_name)
             if document is not None:
                 documents.append(document)
         return documents
+
+    def _read_linked_alidocs_node(self, url: str) -> LinkedDocumentContext:
+        info = self.dws.doc_info(url)
+        extension = str(info.get("extension") or "").lower()
+        content_type = str(info.get("contentType") or "").upper()
+        if content_type == "ALIDOC" and extension == "adoc":
+            payload = self.dws.read_doc(url)
+            title = str(payload.get("title") or info.get("name") or "钉钉文档")
+            markdown = str(payload.get("markdown") or "")
+            if not markdown.strip():
+                raise DwsError(f"DingTalk doc read returned empty markdown: {url}")
+            return LinkedDocumentContext(url=url, title=title, markdown=markdown)
+        if content_type == "ALIDOC" and extension == "able":
+            return self._read_linked_aitable(url, info)
+        return LinkedDocumentContext(
+            url=url,
+            title=str(info.get("name") or "钉钉材料"),
+            markdown=(
+                "该链接不是钉钉在线文档，不能使用文档正文读取。\n"
+                f"材料类型: {content_type or 'unknown'}\n"
+                f"扩展名: {extension or 'unknown'}\n"
+                "如果新消息要求审核或判断该材料正文，需要取得对应类型的可读内容后再回复。"
+            ),
+        )
+
+    def _read_linked_aitable(
+        self, url: str, info: dict[str, object]
+    ) -> LinkedDocumentContext:
+        base_id = str(info.get("nodeId") or self._alidocs_node_id(url))
+        base_payload = self.dws.get_aitable_base(base_id)
+        base_data = self._payload_data(base_payload)
+        base_name = str(base_data.get("baseName") or info.get("name") or "AI表格")
+        table_summaries = self._aitable_tables_from_payload(base_payload)
+        table_ids = [
+            str(table.get("tableId"))
+            for table in table_summaries
+            if table.get("tableId")
+        ][:AITABLE_TABLE_PREVIEW_LIMIT]
+        table_payload = self.dws.get_aitable_tables(base_id, table_ids or None)
+        tables = self._aitable_tables_from_payload(table_payload) or table_summaries
+        lines = [f"AI表格: {base_name}", "说明: 该链接是 AI 表格，不是钉钉在线文档。"]
+        for table in tables[:AITABLE_TABLE_PREVIEW_LIMIT]:
+            table_id = str(table.get("tableId") or "")
+            table_name = str(table.get("tableName") or "未命名数据表")
+            description = str(table.get("description") or table.get("tableDescription") or "")
+            fields = table.get("fields") if isinstance(table.get("fields"), list) else []
+            field_names = [
+                str(field.get("fieldName"))
+                for field in fields
+                if isinstance(field, dict) and field.get("fieldName")
+            ]
+            lines.append(f"\n数据表: {table_name}")
+            if description:
+                lines.append(f"描述: {description}")
+            if field_names:
+                lines.append(f"字段: {', '.join(field_names)}")
+            if table_id:
+                records_payload = self.dws.query_aitable_records(
+                    base_id,
+                    table_id,
+                    limit=AITABLE_RECORD_PREVIEW_LIMIT,
+                )
+                record_lines = self._format_aitable_records(records_payload, fields)
+                if record_lines:
+                    lines.append("记录预览:")
+                    lines.extend(record_lines)
+        return LinkedDocumentContext(
+            url=url,
+            title=base_name,
+            markdown="\n".join(lines),
+        )
 
     @staticmethod
     def _referenced_document_messages(
@@ -1686,6 +1753,96 @@ class DingTalkAutoReplyWorker:
                     seen.add(url)
                     urls.append(url)
         return urls
+
+    @staticmethod
+    def _payload_data(payload: dict[str, object]) -> dict[str, object]:
+        data = payload.get("data")
+        return data if isinstance(data, dict) else payload
+
+    @classmethod
+    def _aitable_tables_from_payload(
+        cls, payload: dict[str, object]
+    ) -> list[dict[str, object]]:
+        data = cls._payload_data(payload)
+        tables = data.get("tables")
+        if isinstance(tables, list):
+            return [table for table in tables if isinstance(table, dict)]
+        table = data.get("table")
+        if isinstance(table, dict):
+            return [table]
+        return []
+
+    @classmethod
+    def _format_aitable_records(
+        cls,
+        payload: dict[str, object],
+        fields: object,
+    ) -> list[str]:
+        data = cls._payload_data(payload)
+        records = data.get("records")
+        if not isinstance(records, list):
+            return []
+        field_names = cls._aitable_field_names(fields)
+        lines: list[str] = []
+        for index, record in enumerate(records[:AITABLE_RECORD_PREVIEW_LIMIT], start=1):
+            if not isinstance(record, dict):
+                continue
+            cells = record.get("cells")
+            if not isinstance(cells, dict) or not cells:
+                continue
+            cell_parts = []
+            for field_id, value in cells.items():
+                name = field_names.get(str(field_id), str(field_id))
+                rendered = cls._render_aitable_cell(value)
+                if rendered:
+                    cell_parts.append(f"{name}: {rendered}")
+            if cell_parts:
+                lines.append(f"- 记录 {index}: " + "；".join(cell_parts))
+        return lines
+
+    @staticmethod
+    def _aitable_field_names(fields: object) -> dict[str, str]:
+        if not isinstance(fields, list):
+            return {}
+        names: dict[str, str] = {}
+        for field in fields:
+            if not isinstance(field, dict):
+                continue
+            field_id = field.get("fieldId")
+            field_name = field.get("fieldName")
+            if field_id and field_name:
+                names[str(field_id)] = str(field_name)
+        return names
+
+    @classmethod
+    def _render_aitable_cell(cls, value: object) -> str:
+        if value is None:
+            return ""
+        if isinstance(value, str):
+            return value
+        if isinstance(value, (bool, int, float)):
+            return str(value)
+        if isinstance(value, dict):
+            if value.get("name"):
+                return str(value["name"])
+            if value.get("text"):
+                return str(value["text"])
+            if value.get("userId") or value.get("corpId"):
+                return "用户"
+            return cls._compact_json(value)
+        if isinstance(value, list):
+            rendered = [cls._render_aitable_cell(item) for item in value]
+            return ", ".join(item for item in rendered if item)
+        return str(value)
+
+    @staticmethod
+    def _compact_json(value: object) -> str:
+        return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+
+    @staticmethod
+    def _alidocs_node_id(url: str) -> str:
+        path = urlsplit(url).path.rstrip("/")
+        return path.rsplit("/", 1)[-1]
 
     @staticmethod
     def _canonical_doc_url(url: str) -> str:

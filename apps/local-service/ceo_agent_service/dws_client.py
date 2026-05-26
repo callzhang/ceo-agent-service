@@ -418,6 +418,52 @@ class DwsClient:
             "json",
         ]
 
+    def build_aitable_base_get_command(self, base_id: str) -> list[str]:
+        return [
+            self.dws_bin,
+            "aitable",
+            "base",
+            "get",
+            "--base-id",
+            base_id,
+            "--format",
+            "json",
+        ]
+
+    def build_aitable_table_get_command(
+        self, base_id: str, table_ids: list[str] | None = None
+    ) -> list[str]:
+        command = [
+            self.dws_bin,
+            "aitable",
+            "table",
+            "get",
+            "--base-id",
+            base_id,
+        ]
+        if table_ids:
+            command.extend(["--table-ids", ",".join(table_ids[:10])])
+        command.extend(["--format", "json"])
+        return command
+
+    def build_aitable_record_query_command(
+        self, base_id: str, table_id: str, limit: int = 10
+    ) -> list[str]:
+        return [
+            self.dws_bin,
+            "aitable",
+            "record",
+            "query",
+            "--base-id",
+            base_id,
+            "--table-id",
+            table_id,
+            "--limit",
+            str(limit),
+            "--format",
+            "json",
+        ]
+
     def build_search_documents_command(
         self, query: str, page_size: int = 5
     ) -> list[str]:
@@ -619,6 +665,30 @@ class DwsClient:
         payload = self.run_json(self.build_doc_info_command(node))
         if not isinstance(payload, dict):
             raise DwsError("invalid doc info response")
+        return payload
+
+    def get_aitable_base(self, base_id: str) -> dict[str, Any]:
+        payload = self.run_json(self.build_aitable_base_get_command(base_id))
+        if not isinstance(payload, dict):
+            raise DwsError("invalid aitable base response")
+        return payload
+
+    def get_aitable_tables(
+        self, base_id: str, table_ids: list[str] | None = None
+    ) -> dict[str, Any]:
+        payload = self.run_json(self.build_aitable_table_get_command(base_id, table_ids))
+        if not isinstance(payload, dict):
+            raise DwsError("invalid aitable table response")
+        return payload
+
+    def query_aitable_records(
+        self, base_id: str, table_id: str, limit: int = 10
+    ) -> dict[str, Any]:
+        payload = self.run_json(
+            self.build_aitable_record_query_command(base_id, table_id, limit)
+        )
+        if not isinstance(payload, dict):
+            raise DwsError("invalid aitable record response")
         return payload
 
     def search_documents(

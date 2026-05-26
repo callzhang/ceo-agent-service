@@ -217,6 +217,47 @@ def test_build_doc_info_command_is_read_only():
     ]
 
 
+def test_build_aitable_read_commands_are_read_only():
+    client = DwsClient(dws_bin="dws")
+
+    assert client.build_aitable_base_get_command("base-1") == [
+        "dws",
+        "aitable",
+        "base",
+        "get",
+        "--base-id",
+        "base-1",
+        "--format",
+        "json",
+    ]
+    assert client.build_aitable_table_get_command("base-1", ["tbl-1"]) == [
+        "dws",
+        "aitable",
+        "table",
+        "get",
+        "--base-id",
+        "base-1",
+        "--table-ids",
+        "tbl-1",
+        "--format",
+        "json",
+    ]
+    assert client.build_aitable_record_query_command("base-1", "tbl-1", 10) == [
+        "dws",
+        "aitable",
+        "record",
+        "query",
+        "--base-id",
+        "base-1",
+        "--table-id",
+        "tbl-1",
+        "--limit",
+        "10",
+        "--format",
+        "json",
+    ]
+
+
 def test_message_read_commands_do_not_mark_dingtalk_messages_seen():
     client = DwsClient(dws_bin="dws")
     conversation = DingTalkConversation(
@@ -1048,6 +1089,7 @@ def test_read_mentioned_messages_parses_conversation_messages_list(monkeypatch):
     assert client.commands[0][client.commands[0].index("--group") + 1] == "cid-1"
     assert "--start" in client.commands[0]
     assert "--end" in client.commands[0]
+    assert client.commands[0][client.commands[0].index("--end") + 2] == "--group"
     assert messages[0].sender_name == "Mina 邹"
     assert messages[0].open_message_id == "msg-1"
 
@@ -1064,6 +1106,7 @@ def test_read_mentioned_messages_without_conversation_uses_global_mentions(
     command = client.commands[0]
     assert command[:4] == ["dws", "chat", "message", "list-mentions"]
     assert "--group" not in command
+    assert command[command.index("--end") + 2] == "--limit"
     assert command[-6:] == ["--limit", "100", "--cursor", "0", "--format", "json"]
 
 

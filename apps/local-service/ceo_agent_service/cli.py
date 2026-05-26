@@ -20,7 +20,12 @@ from ceo_agent_service.corpus import (
     load_corpus_records,
     write_records,
 )
-from ceo_agent_service.dws_client import DwsClient, DwsError, local_time_zone_name
+from ceo_agent_service.dws_client import (
+    DINGTALK_MESSAGE_TIME_ZONE,
+    DwsClient,
+    DwsError,
+    local_time_zone_name,
+)
 from ceo_agent_service.dingtalk_models import CodexAction, DingTalkConversation
 from ceo_agent_service.notification import send_macos_notification
 from ceo_agent_service.org_cache import (
@@ -514,7 +519,7 @@ def _context_time_to_epoch_ms(value: str | None) -> int | None:
             "invalid --context-time; expected YYYY-MM-DD HH:MM:SS or ISO datetime"
         ) from exc
     if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=datetime.now().astimezone().tzinfo)
+        parsed = parsed.replace(tzinfo=DINGTALK_MESSAGE_TIME_ZONE)
     return int(parsed.timestamp() * 1000)
 
 

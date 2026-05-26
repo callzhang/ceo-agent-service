@@ -107,6 +107,18 @@ class CachedDwsClient:
     def read_doc(self, node: str):
         return self.dws.read_doc(node)
 
+    def doc_info(self, node: str):
+        return self.dws.doc_info(node)
+
+    def get_aitable_base(self, base_id: str):
+        return self.dws.get_aitable_base(base_id)
+
+    def get_aitable_tables(self, base_id: str, table_ids: list[str] | None = None):
+        return self.dws.get_aitable_tables(base_id, table_ids)
+
+    def query_aitable_records(self, base_id: str, table_id: str, limit: int = 10):
+        return self.dws.query_aitable_records(base_id, table_id, limit)
+
     def search_documents(self, query: str, page_size: int = 5):
         return self.dws.search_documents(query, page_size=page_size)
 

@@ -172,9 +172,12 @@ def test_build_turn_prompt_includes_known_people_lines():
 def test_thread_prompt_requires_dws_doc_read_for_alidocs_links():
     prompt = ceo_agent_thread_prompt()
 
+    assert 'dws doc info --node "<链接>" --format json' in prompt
     assert 'dws doc read --node "<链接>" --format json' in prompt
-    assert "禁止用 curl、HTTP API 或浏览器直接读钉钉在线文档" in prompt
-    assert "文档读不到，不能凭感觉回复" in prompt
+    assert "extension=able" in prompt
+    assert "dws aitable" in prompt
+    assert "禁止用 curl、HTTP API 或浏览器直接读钉钉材料" in prompt
+    assert "材料读不到，不能凭感觉回复" in prompt
 
 
 def test_thread_prompt_requires_oa_review_principles_for_approval_messages():

@@ -251,6 +251,17 @@ def _short_text(text: str, limit: int = 240) -> str:
     return f"{normalized[:limit]}..."
 
 
+def _subprocess_failure_reason(stderr: str, stdout: str) -> str:
+    stderr_lines = [line.strip() for line in stderr.splitlines() if line.strip()]
+    for line in stderr_lines:
+        if " ERROR " in f" {line} ":
+            return _short_text(line, 1200)
+    for line in stderr_lines:
+        if " WARN " not in f" {line} ":
+            return _short_text(line, 1200)
+    return _short_text(stderr.strip() or stdout, 1200)
+
+
 def audit_summary_explains_no_documents(summary: str) -> bool:
     normalized = " ".join(summary.split())
     no_document_markers = (
@@ -407,7 +418,7 @@ class CodexDecisionRunner:
                     return stdout
                 except (json.JSONDecodeError, ValidationError):
                     pass
-            reason = _short_text(completed.stderr.strip() or stdout, 1200)
+            reason = _subprocess_failure_reason(completed.stderr, stdout)
             stop_error = json.dumps(
                 {
                     "action": "stop_with_error",

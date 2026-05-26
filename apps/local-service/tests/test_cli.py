@@ -1401,6 +1401,38 @@ def test_rerun_message_command_loads_conversation_and_calls_worker(
     assert "rerun-message processed conversation_id=cid-1" in capsys.readouterr().out
 
 
+def test_rerun_message_command_treats_naive_context_time_as_dingtalk_time(
+    monkeypatch, tmp_path, capsys
+):
+    calls = {}
+    settings = WorkerSettings(
+        workspace=tmp_path / "workspace",
+        db_path=tmp_path / "worker.sqlite3",
+        corpus_dir=tmp_path / "corpus",
+    )
+    store = cli.AutoReplyStore(settings.db_path)
+    store.upsert_conversation("cid-1", "Friday", False, "session-1")
+
+    class FakeWorker:
+        def rerun_message(self, conversation, message_id, *, force_new_decision=False):
+            calls["conversation"] = conversation
+            return message_id
+
+    monkeypatch.setattr(cli, "create_worker", lambda settings: FakeWorker())
+
+    rerun_message_command(
+        settings,
+        conversation_id="cid-1",
+        message_id="msg-1",
+        context_time="2026-05-20 09:56:09",
+    )
+
+    assert calls["conversation"].last_message_create_at == int(
+        datetime.fromisoformat("2026-05-20T09:56:09+08:00").timestamp() * 1000
+    )
+    assert "rerun-message processed conversation_id=cid-1" in capsys.readouterr().out
+
+
 def test_rerun_message_command_fails_for_unknown_conversation(tmp_path):
     settings = WorkerSettings(
         workspace=tmp_path / "workspace",

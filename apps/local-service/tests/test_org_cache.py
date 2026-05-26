@@ -110,6 +110,54 @@ def test_cached_dws_client_delegates_message_io_and_uses_cached_org(tmp_path):
     assert cached.is_current_user_message(message(sender_user_id="derek-user")) is True
 
 
+def test_cached_dws_client_delegates_linked_material_reads(tmp_path):
+    class FakeDws:
+        def __init__(self):
+            self.calls = []
+
+        def doc_info(self, node):
+            self.calls.append(("doc_info", node))
+            return {"extension": "able"}
+
+        def read_doc(self, node):
+            self.calls.append(("read_doc", node))
+            return {"markdown": "正文"}
+
+        def get_aitable_base(self, base_id):
+            self.calls.append(("get_aitable_base", base_id))
+            return {"data": {"baseName": "看板"}}
+
+        def get_aitable_tables(self, base_id, table_ids=None):
+            self.calls.append(("get_aitable_tables", base_id, table_ids))
+            return {"data": {"tables": []}}
+
+        def query_aitable_records(self, base_id, table_id, limit=10):
+            self.calls.append(("query_aitable_records", base_id, table_id, limit))
+            return {"data": {"records": []}}
+
+    cached = CachedDwsClient(
+        FakeDws(),
+        CachedOrgDirectory(AutoReplyStore(tmp_path / "worker.sqlite3")),
+    )
+
+    assert cached.doc_info("node-1") == {"extension": "able"}
+    assert cached.read_doc("node-1") == {"markdown": "正文"}
+    assert cached.get_aitable_base("base-1") == {"data": {"baseName": "看板"}}
+    assert cached.get_aitable_tables("base-1", ["tbl-1"]) == {
+        "data": {"tables": []}
+    }
+    assert cached.query_aitable_records("base-1", "tbl-1", 5) == {
+        "data": {"records": []}
+    }
+    assert cached.dws.calls == [
+        ("doc_info", "node-1"),
+        ("read_doc", "node-1"),
+        ("get_aitable_base", "base-1"),
+        ("get_aitable_tables", "base-1", ["tbl-1"]),
+        ("query_aitable_records", "base-1", "tbl-1", 5),
+    ]
+
+
 def test_cached_dws_client_resolves_and_caches_sender_on_cache_miss(tmp_path):
     class FakeDws:
         def __init__(self):

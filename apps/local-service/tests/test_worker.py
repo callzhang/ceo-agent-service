@@ -43,6 +43,7 @@ class FakeDws:
         read_errors: dict[str, Exception] | None = None,
         unread_errors: dict[str, Exception] | None = None,
         list_error: Exception | None = None,
+        mentioned_error: Exception | None = None,
         send_error: Exception | None = None,
         ding_error: Exception | None = None,
         current_user_error: Exception | None = None,
@@ -54,14 +55,23 @@ class FakeDws:
         self.read_errors = read_errors or {}
         self.unread_errors = unread_errors or {}
         self.list_error = list_error
+        self.mentioned_error = mentioned_error
         self.send_error = send_error
         self.ding_error = ding_error
         self.current_user_error = current_user_error
         self.send_result = send_result
         self.docs: dict[str, dict] = {}
+        self.doc_infos: dict[str, dict] = {}
+        self.aitable_bases: dict[str, dict] = {}
+        self.aitable_tables: dict[tuple[str, tuple[str, ...]], dict] = {}
+        self.aitable_records: dict[tuple[str, str], dict] = {}
         self.document_search_results: dict[str, list[DwsDocumentSearchResult]] = {}
         self.download_docs: dict[str, dict | Exception] = {}
+        self.doc_info_calls: list[str] = []
         self.read_doc_calls: list[str] = []
+        self.get_aitable_base_calls: list[str] = []
+        self.get_aitable_tables_calls: list[tuple[str, tuple[str, ...] | None]] = []
+        self.query_aitable_record_calls: list[tuple[str, str, int]] = []
         self.search_document_calls: list[tuple[str, int]] = []
         self.download_doc_calls: list[str] = []
         self.sent: list[tuple[str, str]] = []
@@ -125,6 +135,8 @@ class FakeDws:
         cursor: str = "0",
         lookback_hours: int = 24,
     ) -> list[DingTalkMessage]:
+        if self.mentioned_error:
+            raise self.mentioned_error
         if conversation is None:
             return [
                 message
@@ -138,6 +150,40 @@ class FakeDws:
         if node not in self.docs:
             raise DwsError(f"doc not found: {node}")
         return self.docs[node]
+
+    def doc_info(self, node: str) -> dict:
+        self.doc_info_calls.append(node)
+        if node in self.doc_infos:
+            return self.doc_infos[node]
+        if node in self.docs:
+            return {
+                "contentType": "ALIDOC",
+                "extension": "adoc",
+                "name": self.docs[node].get("title", "钉钉文档"),
+                "nodeId": node.rsplit("/", 1)[-1],
+            }
+        raise DwsError(f"doc info not found: {node}")
+
+    def get_aitable_base(self, base_id: str) -> dict:
+        self.get_aitable_base_calls.append(base_id)
+        if base_id not in self.aitable_bases:
+            raise DwsError(f"aitable base not found: {base_id}")
+        return self.aitable_bases[base_id]
+
+    def get_aitable_tables(
+        self, base_id: str, table_ids: list[str] | None = None
+    ) -> dict:
+        key = (base_id, tuple(table_ids or ()))
+        self.get_aitable_tables_calls.append((base_id, tuple(table_ids) if table_ids else None))
+        if key not in self.aitable_tables:
+            raise DwsError(f"aitable table not found: {base_id}")
+        return self.aitable_tables[key]
+
+    def query_aitable_records(
+        self, base_id: str, table_id: str, limit: int = 10
+    ) -> dict:
+        self.query_aitable_record_calls.append((base_id, table_id, limit))
+        return self.aitable_records.get((base_id, table_id), {"data": {"records": []}})
 
     def search_documents(
         self, query: str, page_size: int = 5
@@ -543,6 +589,40 @@ def test_produce_once_records_list_unread_failure_without_crashing(
         {
             "title": "CEO read unread conversations failed",
             "message": "not authenticated",
+            "url": None,
+        }
+    ]
+    assert codex.calls == []
+
+
+def test_produce_once_continues_when_mention_recovery_fails(
+    tmp_path: Path, monkeypatch
+):
+    notifications = []
+    trigger = message("@Derek Zen(磊哥) 这个怎么处理？")
+    dws = FakeDws(
+        [conversation()],
+        {"cid-1": [trigger]},
+        mentioned_error=DwsError("list mentions failed"),
+    )
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该调用")
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+    monkeypatch.setattr(
+        "ceo_agent_service.worker.send_macos_notification",
+        lambda **kwargs: notifications.append(kwargs),
+    )
+
+    queued = worker.produce_once()
+
+    assert queued == 1
+    assert worker.store.count_errors() == 1
+    assert worker.store.count_reply_tasks(status="pending") == 1
+    assert notifications == [
+        {
+            "title": "CEO read mentioned messages failed",
+            "message": "list mentions failed",
             "url": None,
         }
     ]
@@ -1384,6 +1464,77 @@ def test_dingtalk_doc_link_is_read_before_codex(tmp_path: Path, monkeypatch):
     assert attempt.send_status == "dry_run"
 
 
+def test_dingtalk_aitable_link_is_routed_to_aitable_before_codex(
+    tmp_path: Path, monkeypatch
+):
+    aitable_url = "https://alidocs.dingtalk.com/i/nodes/base123?utm_source=im"
+    canonical_url = "https://alidocs.dingtalk.com/i/nodes/base123"
+    trigger = message(f"{aitable_url} @Derek Zen(磊哥) 看下进展")
+    dws = FakeDws([conversation()], {"cid-1": [trigger]})
+    dws.doc_infos[canonical_url] = {
+        "contentType": "ALIDOC",
+        "extension": "able",
+        "name": "算法迭代看板",
+        "nodeId": "base123",
+    }
+    dws.aitable_bases["base123"] = {
+        "data": {
+            "baseName": "算法迭代看板",
+            "tables": [{"tableId": "tbl-1", "tableName": "算法优化看板"}],
+        }
+    }
+    dws.aitable_tables[("base123", ("tbl-1",))] = {
+        "data": {
+            "tables": [
+                {
+                    "tableId": "tbl-1",
+                    "tableName": "算法优化看板",
+                    "description": "用于跟踪算法优化项目进展。",
+                    "fields": [
+                        {"fieldId": "name", "fieldName": "迭代名称"},
+                        {"fieldId": "status", "fieldName": "优化状态"},
+                        {"fieldId": "plan", "fieldName": "迭代方案"},
+                    ],
+                }
+            ]
+        }
+    }
+    dws.aitable_records[("base123", "tbl-1")] = {
+        "data": {
+            "records": [
+                {
+                    "recordId": "rec-1",
+                    "cells": {
+                        "name": "关系排序优化",
+                        "status": {"name": "待验证"},
+                        "plan": "移除端点重合加分。",
+                    },
+                }
+            ]
+        }
+    }
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="优先验证关系排序")
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch, dry_run=True)
+
+    worker.run_once()
+
+    assert dws.doc_info_calls == [canonical_url]
+    assert dws.read_doc_calls == []
+    assert dws.get_aitable_base_calls == ["base123"]
+    assert dws.get_aitable_tables_calls == [("base123", ("tbl-1",))]
+    assert dws.query_aitable_record_calls == [("base123", "tbl-1", 10)]
+    prompt = codex.calls[0][0]
+    assert "已获取的钉钉材料:" in prompt
+    assert "AI表格: 算法迭代看板" in prompt
+    assert "数据表: 算法优化看板" in prompt
+    assert "迭代名称: 关系排序优化" in prompt
+    attempt = worker.store.get_reply_attempt(1)
+    assert attempt is not None
+    assert attempt.send_status == "dry_run"
+
+
 def test_dingtalk_doc_link_in_context_is_read_before_codex(tmp_path: Path, monkeypatch):
     doc_url = "https://alidocs.dingtalk.com/i/nodes/doc-in-context?utm_source=im"
     canonical_doc_url = "https://alidocs.dingtalk.com/i/nodes/doc-in-context"
@@ -1497,6 +1648,12 @@ def test_dingtalk_doc_read_failure_blocks_codex(tmp_path: Path, monkeypatch):
         "https://alidocs.dingtalk.com/i/nodes/missing @Derek Zen(磊哥) 看下"
     )
     dws = FakeDws([conversation()], {"cid-1": [trigger]})
+    dws.doc_infos["https://alidocs.dingtalk.com/i/nodes/missing"] = {
+        "contentType": "ALIDOC",
+        "extension": "adoc",
+        "name": "缺失文档",
+        "nodeId": "missing",
+    }
     codex = FakeCodex(
         CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该调用")
     )
@@ -1744,6 +1901,44 @@ def test_failed_send_retries_existing_final_reply_without_calling_codex(
     assert attempt is not None
     assert attempt.send_status == "sent"
     assert worker.store.get_sent_reply("cid-1", "msg-1") is not None
+    assert worker.store.has_seen("msg-1") is True
+
+
+def test_sent_reply_prevents_retry_when_latest_attempt_failed(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message("@Derek Zen(磊哥) 这个怎么处理？")
+    dws = FakeDws([conversation()], {"cid-1": [trigger]})
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该重新生成")
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+    worker.store.record_sent_reply(
+        conversation_id="cid-1",
+        trigger_message_id="msg-1",
+        reply_text="已经发过的回复",
+        send_result_json='{"ok": true}',
+    )
+    failed_attempt_id = worker.store.record_reply_attempt(
+        conversation_id="cid-1",
+        conversation_title="Friday",
+        trigger_message_id="msg-1",
+        trigger_sender="周俊杰",
+        trigger_text=trigger.content,
+        action="stop_with_error",
+        sensitivity_kind="general",
+        send_status="failed",
+    )
+    worker.store.update_reply_attempt(
+        failed_attempt_id,
+        send_error="linked document read failed",
+    )
+
+    worker.run_once()
+
+    assert codex.calls == []
+    assert final_sent(dws) == []
+    assert worker.store.count_reply_attempts() == 1
     assert worker.store.has_seen("msg-1") is True
 
 
@@ -2371,7 +2566,7 @@ def test_handoff_does_not_clear_on_split_person_reply(tmp_path: Path, monkeypatc
     assert store.has_seen("split-msg-1") is True
 
 
-def test_active_handoff_notification_explains_auto_reply_is_paused(
+def test_active_handoff_allows_new_derek_mention_to_be_processed(
     tmp_path: Path, monkeypatch
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
@@ -2383,14 +2578,15 @@ def test_active_handoff_notification_explains_auto_reply_is_paused(
         handoff_message_create_time="2026-05-13 18:00:00",
     )
     latest = message(
-        "@Derek Zen(磊哥) 可以东风集团（京东云渠道）",
+        "@Melody Xu（Melody） @Derek Zen（磊哥）请磊哥看一下2026年的战略主线这样写是否合适？[图片消息]",
         message_id="msg-after-handoff",
     )
     latest.create_time = "2026-05-13 18:10:00"
+    latest.sender_name = "Melody"
     dws = FakeDws([conversation()], {"cid-1": [latest]})
     dws.conversations[0].title = "26年董事会筹备组"
     codex = FakeCodex(
-        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该调用")
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="战略主线建议这样调整")
     )
     notifications: list[dict[str, str | None]] = []
     monkeypatch.setattr(
@@ -2403,16 +2599,20 @@ def test_active_handoff_notification_explains_auto_reply_is_paused(
 
     worker.run_once()
 
-    assert codex.calls == []
-    assert final_sent(dws) == []
+    assert codex.calls
+    assert final_sent(dws) == [
+        (
+            "cid-1",
+            "> Melody: 请磊哥看一下2026年的战略主线这样写是否合适...\n\n"
+            "<@sender-user-1> 战略主线建议这样调整（by磊哥分身）",
+        )
+    ]
+    assert store.is_in_handoff("cid-1") is True
     assert store.has_seen("msg-after-handoff") is True
     assert notifications == [
         {
-            "title": "CEO 自动回复已暂停: 26年董事会筹备组",
-            "message": (
-                "该会话已交给本人处理，本次未生成回复。"
-                "最新消息：@Derek Zen(磊哥) 可以东风集团（京东云渠道）"
-            ),
+            "title": "CEO auto reply: 26年董事会筹备组",
+            "message": "> Melody: 请磊哥看一下2026年的战略主线这样写是否合适...\n\n<@sender-user-1> 战略主线建议这样调整（by磊哥分身）",
             "url": None,
         }
     ]
