@@ -19,6 +19,8 @@ LOCAL_AUTHORED_DIRS = (
 LOCAL_TEXT_SUFFIXES = {".md", ".txt"}
 LOCAL_IGNORED_PARTS = {".smart-env", ".dws", ".obsidian", "AI听记"}
 HIGH_CONFIDENCE_AUTHORED_DIRS = {Path("Thinking"), Path("management") / "strategy"}
+PROFILE_EVIDENCE_IDS_PER_RULE = 32
+PROFILE_EVIDENCE_IDS_PER_SOURCE = 8
 LOCAL_SENSITIVITY_TERMS = (
     (
         "internal_personnel",
@@ -401,24 +403,32 @@ def _pick_evidence_ids(
     *,
     preferred_sensitivities: tuple[str, ...] = (),
     preferred_source_types: tuple[str, ...] = (),
-    limit: int = 4,
+    limit: int = PROFILE_EVIDENCE_IDS_PER_RULE,
+    per_source_limit: int = PROFILE_EVIDENCE_IDS_PER_SOURCE,
 ) -> list[str]:
     selected: list[str] = []
+    source_counts: dict[str, int] = {}
 
     def append(record: EvidenceRecord) -> None:
-        if record.usable_for_profile and record.id not in selected:
-            selected.append(record.id)
+        if not record.usable_for_profile:
+            return
+        if record.id in selected:
+            return
+        if source_counts.get(record.source_type, 0) >= per_source_limit:
+            return
+        if len(selected) >= limit:
+            return
+        selected.append(record.id)
+        source_counts[record.source_type] = source_counts.get(record.source_type, 0) + 1
 
     for sensitivity in preferred_sensitivities:
         for record in evidence:
             if record.sensitivity == sensitivity:
                 append(record)
-                break
     for source_type in preferred_source_types:
         for record in evidence:
             if record.source_type == source_type:
                 append(record)
-                break
     for record in evidence:
         append(record)
         if len(selected) >= limit:

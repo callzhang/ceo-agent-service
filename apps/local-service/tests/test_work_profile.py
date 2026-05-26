@@ -421,43 +421,22 @@ def test_build_initial_profile_without_evidence_is_explicit_seed():
 
 
 def test_build_initial_profile_uses_distinct_evidence_sources():
-    evidence = [
-        EvidenceRecord(
-            id="ev_local",
-            source_type="local_doc",
-            title="战略文档",
-            location="Thinking/strategy.md",
-            sensitivity="general",
-            excerpt="本地文档",
-        ),
-        EvidenceRecord(
-            id="ev_minutes",
-            source_type="minutes",
-            title="会议听记",
-            location="AI听记/meeting.md",
-            sensitivity="general",
-            evidence_strength="behavior_high",
-            excerpt="会议发言",
-        ),
-        EvidenceRecord(
-            id="ev_dingtalk",
-            source_type="dingtalk",
-            title="客户群",
-            location="cid/msg",
-            sensitivity="customer",
-            evidence_strength="behavior_high",
-            excerpt="钉钉消息",
-        ),
-        EvidenceRecord(
-            id="ev_kb",
-            source_type="dingtalk_kb_live",
-            title="审批制度",
-            location="dingtalk-kb:node-1",
-            sensitivity="approval",
-            evidence_strength="kb_live_doc",
-            excerpt="知识库文档",
-        ),
-    ]
+    source_types = ("local_doc", "minutes", "dingtalk", "dingtalk_kb_live")
+    evidence = []
+    for source_type in source_types:
+        for index in range(6):
+            sensitivity = ("general", "customer", "approval")[index % 3]
+            evidence.append(
+                EvidenceRecord(
+                    id=f"ev_{source_type}_{index}",
+                    source_type=source_type,
+                    title=f"{source_type}-{index}",
+                    location=f"{source_type}/{index}",
+                    sensitivity=sensitivity,
+                    evidence_strength="behavior_high",
+                    excerpt=f"{source_type} evidence {index}",
+                )
+            )
 
     profile = build_initial_profile(evidence)
     referenced_ids = {
@@ -465,9 +444,17 @@ def test_build_initial_profile_uses_distinct_evidence_sources():
         for rule in profile.rules
         for evidence_id in rule.evidence_ids
     }
+    evidence_by_id = {record.id: record for record in evidence}
 
-    assert "4 usable records across 4 source types" in profile.summary
-    assert referenced_ids == {"ev_local", "ev_minutes", "ev_dingtalk", "ev_kb"}
+    assert "24 usable records across 4 source types" in profile.summary
+    assert len(referenced_ids) == 24
+    for rule in profile.rules:
+        rule_source_types = {
+            evidence_by_id[evidence_id].source_type
+            for evidence_id in rule.evidence_ids
+        }
+        assert len(rule.evidence_ids) == 24
+        assert rule_source_types == set(source_types)
 
 
 def test_render_skill_marks_manual_use_not_runtime_dependency():
