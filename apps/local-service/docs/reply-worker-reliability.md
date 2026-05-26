@@ -34,6 +34,13 @@ reply-worthy even if the message is phrased as a statement rather than a
 question. It should only skip when the later context shows Derek already
 confirmed the arrangement.
 
+Mention discovery starts from the recent global `@Derek` feed, not only from the
+current unread conversation list. A mentioned group can therefore be processed
+after the user opens the conversation and clears the unread badge. Later context
+from the same conversation is used to decide whether Derek already gave a real
+reply; rendered files, images, cards, calendar invites, and processing
+acknowledgements do not count as a real reply.
+
 ## Consumer retry behavior
 
 Reply tasks move from `pending` to `processing` when claimed. If task processing

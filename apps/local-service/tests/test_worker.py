@@ -2454,6 +2454,79 @@ def test_group_mention_from_unread_conversation_is_processed_when_unread_tail_mi
     assert attempts[0].send_status == "dry_run"
 
 
+def test_group_mention_from_read_conversation_is_processed_from_mentions(
+    tmp_path: Path, monkeypatch
+):
+    mentioned = message(
+        "@Derek Zen(磊哥) 磊哥，你的数字分身在你睡着的时候还会运作吗？",
+        message_id="msg-mkt-mention",
+    )
+    mentioned.open_conversation_id = "cid-mkt"
+    mentioned.conversation_title = "MKT core"
+    mentioned.create_time = "2026-05-25 19:21:56"
+    dws = FakeDws(
+        [],
+        {"cid-mkt": [mentioned]},
+        unread_messages={"cid-mkt": []},
+    )
+    dws.mentioned_messages = {"cid-mkt": [mentioned]}
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="会，但只处理需要回复的消息")
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch, dry_run=True)
+
+    worker.run_once()
+
+    attempts = worker.store.list_reply_attempts(limit=10)
+    assert len(codex.calls) == 1
+    assert attempts[0].conversation_title == "MKT core"
+    assert attempts[0].trigger_message_id == "msg-mkt-mention"
+    assert attempts[0].send_status == "dry_run"
+
+
+def test_read_group_mention_is_skipped_when_later_current_user_text_replied(
+    tmp_path: Path, monkeypatch
+):
+    mentioned = message(
+        "@Derek Zen(磊哥) 磊哥，你的数字分身在你睡着的时候还会运作吗？",
+        message_id="msg-mkt-mention",
+    )
+    mentioned.open_conversation_id = "cid-mkt"
+    mentioned.conversation_title = "MKT core"
+    mentioned.create_time = "2026-05-25 19:21:56"
+    manual_reply = derek_message(
+        "会的，晚上也会处理需要回复的消息",
+        message_id="msg-derek-text",
+        create_time="2026-05-25 19:24:00",
+    )
+    manual_reply.open_conversation_id = "cid-mkt"
+    manual_reply.conversation_title = "MKT core"
+
+    class ContextAwareFakeDws(FakeDws):
+        def read_recent_messages(self, conversation: DingTalkConversation):
+            if conversation.open_conversation_id == "cid-mkt":
+                if conversation.last_message_create_at is None:
+                    return [manual_reply, mentioned]
+                return [mentioned]
+            return super().read_recent_messages(conversation)
+
+    dws = ContextAwareFakeDws(
+        [],
+        {"cid-mkt": [manual_reply, mentioned]},
+        unread_messages={"cid-mkt": []},
+    )
+    dws.mentioned_messages = {"cid-mkt": [mentioned]}
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该调用")
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch, dry_run=True)
+
+    worker.run_once()
+
+    assert codex.calls == []
+    assert worker.store.list_reply_attempts(limit=10) == []
+
+
 def test_group_mentions_are_processed_by_message_time_not_fetch_order(
     tmp_path: Path, monkeypatch
 ):
@@ -2497,6 +2570,37 @@ def test_group_mentions_are_processed_by_message_time_not_fetch_order(
     assert len(codex.calls) == 1
     assert attempts[0].trigger_message_id == "msg-newer-mention"
     assert "请审一下这个文档" in attempts[0].trigger_text
+
+
+def test_current_user_file_does_not_hide_unanswered_group_mention(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message(
+        "@Derek Zen(磊哥) 磊哥，你的数字分身在你睡着的时候还会运作吗？",
+        message_id="msg-trigger",
+    )
+    trigger.create_time = "2026-05-25 19:21:56"
+    self_file = derek_message(
+        "[文件] 北京星尘_B轮融资BP_图片版_19页.pdf",
+        message_id="msg-self-file",
+        create_time="2026-05-26 03:49:28",
+    )
+    dws = FakeDws(
+        [conversation()],
+        {"cid-1": [self_file, trigger]},
+        unread_messages={"cid-1": [self_file]},
+    )
+    dws.mentioned_messages = {"cid-1": [trigger]}
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="会，但只处理需要回复的消息")
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch, dry_run=True)
+
+    worker.run_once()
+
+    attempts = worker.store.list_reply_attempts(limit=10)
+    assert len(codex.calls) == 1
+    assert attempts[0].trigger_message_id == "msg-trigger"
 
 
 def test_processing_ack_does_not_hide_unanswered_group_mention(

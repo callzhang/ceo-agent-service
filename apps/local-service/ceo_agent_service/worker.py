@@ -152,6 +152,10 @@ class DingTalkAutoReplyWorker:
         queued_tasks = 0
         conversations = self.dws.list_unread_conversations(count=50)
         mentioned_messages = self._mentioned_messages_by_conversation(conversations)
+        conversations = self._conversations_with_mentions(
+            conversations,
+            mentioned_messages,
+        )
         for conversation in conversations:
             self.store.upsert_conversation(
                 conversation_id=conversation.open_conversation_id,
@@ -391,20 +395,35 @@ class DingTalkAutoReplyWorker:
     def _mentioned_messages_by_conversation(
         self, conversations: list[DingTalkConversation]
     ) -> dict[str, list[DingTalkMessage]]:
-        unread_group_ids = {
-            conversation.open_conversation_id
-            for conversation in conversations
-            if not conversation.single_chat
-        }
-        if not unread_group_ids:
-            return {}
         messages = self.dws.read_mentioned_messages(limit=100)
         grouped: dict[str, list[DingTalkMessage]] = {}
         for message in messages:
-            if message.open_conversation_id not in unread_group_ids:
-                continue
             grouped.setdefault(message.open_conversation_id, []).append(message)
         return grouped
+
+    @staticmethod
+    def _conversations_with_mentions(
+        conversations: list[DingTalkConversation],
+        mentioned_messages: dict[str, list[DingTalkMessage]],
+    ) -> list[DingTalkConversation]:
+        result = list(conversations)
+        known_conversation_ids = {
+            conversation.open_conversation_id for conversation in conversations
+        }
+        for conversation_id, messages in sorted(mentioned_messages.items()):
+            if conversation_id in known_conversation_ids or not messages:
+                continue
+            latest_message = max(messages, key=lambda message: message.create_time)
+            result.append(
+                DingTalkConversation(
+                    open_conversation_id=conversation_id,
+                    title=latest_message.conversation_title or conversation_id,
+                    single_chat=latest_message.single_chat,
+                    unread_point=0,
+                    last_message_create_at=None,
+                )
+            )
+        return result
 
     def rerun_message(
         self,
@@ -872,6 +891,7 @@ class DingTalkAutoReplyWorker:
             for message in messages
             if self._is_current_user_message_for_candidate_filter(message)
             and not self._is_processing_ack_message(message)
+            and not self._is_system_or_notification_message(message)
         ]
         latest_current_user_message_time = (
             max(current_user_message_times) if current_user_message_times else None
@@ -902,6 +922,9 @@ class DingTalkAutoReplyWorker:
     ) -> list[DingTalkMessage]:
         if conversation.single_chat:
             return unread_messages
+        mentioned_message_ids = {
+            message.open_message_id for message in mentioned_messages or []
+        }
         recovery_start_time = (
             DingTalkAutoReplyWorker._group_context_recovery_start_time(unread_messages)
         )
@@ -911,8 +934,13 @@ class DingTalkAutoReplyWorker:
         for message in [*context_messages, *unread_messages]:
             if message.open_message_id in seen_message_ids:
                 continue
-            if message.open_message_id not in unread_message_ids and (
-                recovery_start_time is None or message.create_time < recovery_start_time
+            if (
+                not mentioned_message_ids
+                and message.open_message_id not in unread_message_ids
+                and (
+                    recovery_start_time is None
+                    or message.create_time < recovery_start_time
+                )
             ):
                 continue
             seen_message_ids.add(message.open_message_id)

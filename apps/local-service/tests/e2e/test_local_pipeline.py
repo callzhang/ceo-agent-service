@@ -119,6 +119,16 @@ class FakeDws:
         )
         return [self.message]
 
+    def read_mentioned_messages(
+        self,
+        conversation=None,
+        limit=50,
+        cursor="0",
+        lookback_hours=24,
+    ):
+        self.chat_calls.append(("read_mentioned_messages", limit, cursor, lookback_hours))
+        return []
+
     def send_message(
         self,
         conversation_id,
