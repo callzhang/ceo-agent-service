@@ -15,7 +15,11 @@ from ceo_agent_service.dws_client import (
     DwsMinutesPermissionRequest,
 )
 from ceo_agent_service.store import AutoReplyStore
-from ceo_agent_service.worker import HANDOFF_ACK, DingTalkAutoReplyWorker
+from ceo_agent_service.worker import (
+    HANDOFF_ACK,
+    PROCESSING_ACK,
+    DingTalkAutoReplyWorker,
+)
 
 
 CONTEXT_HEADER = "上下文消息（前 20 条 + 后续到当前）:"
@@ -219,6 +223,26 @@ class SequencedFakeCodex:
         return self.decisions[len(self.calls) - 1]
 
 
+def final_sent(dws: FakeDws) -> list[tuple[str, str]]:
+    return [sent for sent in dws.sent if sent[1] != PROCESSING_ACK]
+
+
+def final_sent_at_users(dws: FakeDws) -> list[list[str]]:
+    return [
+        at_users
+        for sent, at_users in zip(dws.sent, dws.sent_at_users)
+        if sent[1] != PROCESSING_ACK
+    ]
+
+
+def final_direct_user_ids(dws: FakeDws) -> list[str | None]:
+    return [
+        user_id
+        for sent, user_id in zip(dws.sent, dws.direct_user_ids)
+        if sent[1] != PROCESSING_ACK
+    ]
+
+
 def conversation(single_chat: bool = False) -> DingTalkConversation:
     return DingTalkConversation(
         open_conversation_id="cid-1",
@@ -290,7 +314,7 @@ def test_handoff_does_not_clear_on_current_user_message_before_trigger(
 
     assert store.is_in_handoff("cid-1") is True
     assert codex.calls == []
-    assert dws.sent == []
+    assert final_sent(dws) == []
     assert store.has_seen("old-derek-msg-1") is True
 
 
@@ -328,7 +352,7 @@ def test_group_without_derek_mention_does_not_call_codex_or_send(
     worker.run_once()
 
     assert codex.calls == []
-    assert dws.sent == []
+    assert final_sent(dws) == []
 
 
 def test_produce_once_enqueues_candidate_without_calling_codex(
@@ -345,8 +369,41 @@ def test_produce_once_enqueues_candidate_without_calling_codex(
 
     assert queued == 1
     assert codex.calls == []
-    assert dws.sent == []
+    assert final_sent(dws) == []
     assert worker.store.count_reply_tasks(status="pending") == 1
+
+
+def test_produce_once_sends_processing_ack_for_new_reply_task(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message("@Derek Zen(磊哥) 这个怎么处理？")
+    dws = FakeDws([conversation()], {"cid-1": [trigger]})
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该调用")
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+
+    queued = worker.produce_once()
+
+    assert queued == 1
+    assert codex.calls == []
+    assert dws.sent == [("cid-1", PROCESSING_ACK)]
+
+
+def test_repeated_produce_once_does_not_duplicate_processing_ack(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message("@Derek Zen(磊哥) 这个怎么处理？")
+    dws = FakeDws([conversation()], {"cid-1": [trigger]})
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该调用")
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+
+    assert worker.produce_once() == 1
+    assert worker.produce_once() == 0
+
+    assert dws.sent == [("cid-1", PROCESSING_ACK)]
 
 
 def test_repeated_produce_once_does_not_duplicate_pending_task(
@@ -379,7 +436,7 @@ def test_consume_once_processes_queued_task(tmp_path: Path, monkeypatch):
 
     assert processed == 1
     assert worker.store.count_reply_tasks(status="done") == 1
-    assert dws.sent == [
+    assert final_sent(dws) == [
         (
             "cid-1",
             "> 周俊杰: 这个怎么处理？\n\n"
@@ -404,7 +461,7 @@ def test_unresolvable_non_candidate_sender_does_not_block_conversation(
     worker.run_once()
 
     assert codex.calls == []
-    assert dws.sent == []
+    assert final_sent(dws) == []
     assert worker.store.count_errors() == 0
 
 
@@ -421,7 +478,7 @@ def test_single_chat_rendered_schedule_is_skipped_before_codex(
     worker.run_once()
 
     assert codex.calls == []
-    assert dws.sent == []
+    assert final_sent(dws) == []
     assert dws.dings == []
     assert worker.store.has_seen("msg-1") is True
     attempt = worker.store.get_reply_attempt(1)
@@ -444,7 +501,7 @@ def test_non_text_message_type_is_skipped_before_codex(
     worker.run_once()
 
     assert codex.calls == []
-    assert dws.sent == []
+    assert final_sent(dws) == []
     assert worker.store.get_reply_attempt(1).action == "no_reply"
 
 
@@ -478,11 +535,11 @@ def test_calendar_invite_without_description_asks_for_attendance_reason(
     worker.run_once()
 
     assert codex.calls == []
-    assert len(dws.sent) == 1
-    assert "客户复盘" in dws.sent[0][1]
-    assert "产品周会" in dws.sent[0][1]
-    assert "请补充" in dws.sent[0][1]
-    assert "参加理由" in dws.sent[0][1]
+    assert len(final_sent(dws)) == 1
+    assert "客户复盘" in final_sent(dws)[0][1]
+    assert "产品周会" in final_sent(dws)[0][1]
+    assert "请补充" in final_sent(dws)[0][1]
+    assert "参加理由" in final_sent(dws)[0][1]
     assert worker.store.has_seen("msg-1") is True
     attempt = worker.store.get_reply_attempt(1)
     assert attempt.action == "ask_clarifying_question"
@@ -528,8 +585,8 @@ def test_calendar_invite_with_description_asks_codex_to_evaluate_conflict(
     assert "客户升级问题决策" in prompt
     assert "产品周会" in prompt
     assert "如果说明不足以取消另一个重叠会议" in prompt
-    assert len(dws.sent) == 1
-    assert "客户升级问题优先级更高" in dws.sent[0][1]
+    assert len(final_sent(dws)) == 1
+    assert "客户升级问题优先级更高" in final_sent(dws)[0][1]
     assert worker.store.has_seen("msg-1") is True
     attempt = worker.store.get_reply_attempt(1)
     assert attempt.action == "send_reply"
@@ -561,7 +618,7 @@ def test_structured_link_card_is_skipped_before_codex(
     worker.run_once()
 
     assert codex.calls == []
-    assert dws.sent == []
+    assert final_sent(dws) == []
     assert worker.store.get_reply_attempt(1).action == "no_reply"
 
 
@@ -611,7 +668,7 @@ def test_automatic_sync_notification_is_skipped_before_codex(
     worker.run_once()
 
     assert codex.calls == []
-    assert dws.sent == []
+    assert final_sent(dws) == []
     assert worker.store.get_reply_attempt(1).action == "no_reply"
 
 
@@ -628,7 +685,7 @@ def test_file_state_notification_is_skipped_before_codex(
     worker.run_once()
 
     assert codex.calls == []
-    assert dws.sent == []
+    assert final_sent(dws) == []
     assert worker.store.get_reply_attempt(1).action == "no_reply"
 
 
@@ -645,7 +702,7 @@ def test_project_status_notification_is_skipped_before_codex(
     worker.run_once()
 
     assert codex.calls == []
-    assert dws.sent == []
+    assert final_sent(dws) == []
     assert worker.store.get_reply_attempt(1).action == "no_reply"
 
 
@@ -700,7 +757,7 @@ def test_bare_external_link_is_processed_by_codex(tmp_path: Path, monkeypatch):
     worker.run_once()
 
     assert len(codex.calls) == 1
-    assert dws.sent == []
+    assert final_sent(dws) == []
     assert worker.store.get_reply_attempt(1).action == "no_reply"
 
 
@@ -721,7 +778,7 @@ def test_bare_dingtalk_internal_link_is_skipped_before_codex(
     worker.run_once()
 
     assert codex.calls == []
-    assert dws.sent == []
+    assert final_sent(dws) == []
     assert worker.store.get_reply_attempt(1).action == "no_reply"
 
 
@@ -749,7 +806,7 @@ def test_ai_minutes_permission_request_is_auto_approved_without_codex_or_reply(
     worker.run_once()
 
     assert codex.calls == []
-    assert dws.sent == []
+    assert final_sent(dws) == []
     assert dws.added_minutes_permissions == [request]
     assert worker.store.has_seen("msg-1") is True
     attempt = worker.store.get_reply_attempt(1)
@@ -800,14 +857,14 @@ def test_group_mention_sends_signed_reply(tmp_path: Path, monkeypatch):
 
     worker.run_once()
 
-    assert dws.sent == [
+    assert final_sent(dws) == [
         (
             "cid-1",
             "> 周俊杰: 这个怎么处理？\n\n"
             "<@sender-user-1> <@mentioned-user-1> 先按A方案走（by磊哥分身）",
         )
     ]
-    assert dws.sent_at_users == [["sender-user-1", "mentioned-user-1"]]
+    assert final_sent_at_users(dws) == [["sender-user-1", "mentioned-user-1"]]
     assert len(codex.calls) == 1
     prompt = codex.calls[0][0]
     assert prompt.startswith("当前待处理消息:")
@@ -840,7 +897,7 @@ def test_success_notification_keeps_full_reply_text(tmp_path: Path, monkeypatch)
     assert notifications == [
         {
             "title": "CEO auto reply: Friday",
-            "message": dws.sent[0][1],
+            "message": final_sent(dws)[0][1],
             "url": None,
         }
     ]
@@ -903,7 +960,7 @@ def test_dingtalk_doc_link_is_read_before_codex(tmp_path: Path, monkeypatch):
     worker.run_once()
 
     assert dws.read_doc_calls == [canonical_doc_url]
-    assert dws.sent == []
+    assert final_sent(dws) == []
     prompt = codex.calls[0][0]
     assert "已获取的钉钉材料:" in prompt
     assert "数据导入导出业务低效根因和最终解法" in prompt
@@ -1035,7 +1092,7 @@ def test_dingtalk_doc_read_failure_blocks_codex(tmp_path: Path, monkeypatch):
 
     assert dws.read_doc_calls == ["https://alidocs.dingtalk.com/i/nodes/missing"]
     assert codex.calls == []
-    assert dws.sent == []
+    assert final_sent(dws) == []
     attempt = worker.store.get_reply_attempt(1)
     assert attempt is not None
     assert attempt.action == "stop_with_error"
@@ -1062,7 +1119,7 @@ def test_codex_stop_with_error_sends_macos_notification(tmp_path: Path, monkeypa
 
     worker.run_once()
 
-    assert dws.sent == []
+    assert final_sent(dws) == []
     attempt = worker.store.get_reply_attempt(1)
     assert attempt is not None
     assert attempt.action == "stop_with_error"
@@ -1090,7 +1147,7 @@ def test_long_trigger_quote_is_capped_by_twenty_information_units(
 
     worker.run_once()
 
-    sent_text = dws.sent[0][1]
+    sent_text = final_sent(dws)[0][1]
     quote, reply = sent_text.split("\n\n", 1)
     assert quote == "> 周俊杰: 如果是私有化的POC都是走产研评估流程的，如果..."
     assert reply == "<@sender-user-1> 流程方向没问题（by磊哥分身）"
@@ -1226,7 +1283,7 @@ def test_existing_dry_run_attempt_does_not_call_codex_again(
     worker.run_once()
 
     assert codex.calls == []
-    assert dws.sent == []
+    assert final_sent(dws) == []
     assert worker.store.count_reply_attempts() == 1
 
 
@@ -1267,8 +1324,8 @@ def test_failed_send_retries_existing_final_reply_without_calling_codex(
     worker.run_once()
 
     assert codex.calls == []
-    assert dws.sent == [("cid-1", final_reply)]
-    assert dws.sent_at_users == [["sender-user-1"]]
+    assert final_sent(dws) == [("cid-1", final_reply)]
+    assert final_sent_at_users(dws) == [["sender-user-1"]]
     attempt = worker.store.get_reply_attempt(attempt_id)
     assert attempt is not None
     assert attempt.send_status == "sent"
@@ -1309,7 +1366,7 @@ def test_rerun_message_retries_existing_failed_attempt_without_calling_codex(
 
     assert processed == "msg-1"
     assert codex.calls == []
-    assert dws.sent == [("cid-1", final_reply)]
+    assert final_sent(dws) == [("cid-1", final_reply)]
     assert worker.store.get_reply_attempt(attempt_id).send_status == "sent"
 
 
@@ -1338,7 +1395,7 @@ def test_rerun_message_can_force_new_codex_decision(
     assert len(codex.calls) == 1
     assert worker.store.count_reply_attempts() == 2
     assert worker.store.get_reply_attempt(old_attempt_id).send_status == "sent"
-    assert dws.sent == [
+    assert final_sent(dws) == [
         (
             "cid-1",
             "> 周俊杰: 这个怎么处理？\n\n"
@@ -1489,7 +1546,7 @@ def test_group_name_reference_without_direct_at_does_not_queue(
     worker.run_once()
 
     assert codex.calls == []
-    assert dws.sent == []
+    assert final_sent(dws) == []
 
 
 def test_algorithm_owner_multi_mention_is_framed_as_derek_responsibility(
@@ -1514,7 +1571,7 @@ def test_algorithm_owner_multi_mention_is_framed_as_derek_responsibility(
 
     worker.run_once()
 
-    assert dws.sent == [
+    assert final_sent(dws) == [
         (
             "cid-1",
             "> 周俊杰: aijam是否可以把算法大神们纳入进来？\n\n"
@@ -1554,7 +1611,7 @@ def test_group_direct_mention_found_in_recent_context_is_queued(
     worker.run_once()
 
     assert len(codex.calls) == 1
-    assert dws.sent == [
+    assert final_sent(dws) == [
         (
             "cid-1",
             "> 周俊杰: 旧消息看一下\n\n"
@@ -1590,7 +1647,7 @@ def test_group_seen_direct_mention_found_in_recent_context_does_not_queue(
     worker.run_once()
 
     assert codex.calls == []
-    assert dws.sent == []
+    assert final_sent(dws) == []
 
 
 def test_prompt_context_limits_after_sorting_reverse_chronological_history():
@@ -1668,7 +1725,7 @@ def test_group_stale_direct_mention_found_in_recent_context_does_not_queue(
     worker.run_once()
 
     assert codex.calls == []
-    assert dws.sent == []
+    assert final_sent(dws) == []
 
 
 def test_single_chat_old_candidate_context_does_not_become_new_question(
@@ -1692,7 +1749,7 @@ def test_single_chat_old_candidate_context_does_not_become_new_question(
 
     worker.run_once()
 
-    assert dws.sent == []
+    assert final_sent(dws) == []
     assert len(codex.calls) == 1
     prompt = codex.calls[0][0]
     new_messages_section = prompt.split("新消息:", 1)[1].split(CONTEXT_HEADER, 1)[0]
@@ -1725,7 +1782,7 @@ def test_prompt_context_includes_previous_20_plus_unread_tail(
 
     worker.run_once()
 
-    assert dws.sent == []
+    assert final_sent(dws) == []
     assert len(codex.calls) == 1
     prompt = codex.calls[0][0]
     new_messages_section = prompt.split("新消息:", 1)[1].split(CONTEXT_HEADER, 1)[0]
@@ -1748,7 +1805,7 @@ def test_no_reply_action_does_not_send(tmp_path: Path, monkeypatch):
 
     worker.run_once()
 
-    assert dws.sent == []
+    assert final_sent(dws) == []
     assert store.has_seen("msg-1") is True
     attempt = store.get_reply_attempt(1)
     assert attempt is not None
@@ -1775,7 +1832,7 @@ def test_handoff_sends_ack_dings_self_and_marks_handoff(
         "> 周俊杰: 不要分身，真人看一下\n\n"
         f"{HANDOFF_ACK}"
     )
-    assert dws.sent == [("cid-1", expected_ack)]
+    assert final_sent(dws) == [("cid-1", expected_ack)]
     assert len(dws.dings) == 1
     assert "Friday" in dws.dings[0]
     assert "不要分身" in dws.dings[0]
@@ -1811,7 +1868,7 @@ def test_handoff_clears_when_current_user_replies_manually(
 
     assert store.is_in_handoff("cid-1") is False
     assert codex.calls == []
-    assert dws.sent == []
+    assert final_sent(dws) == []
     assert store.has_seen("derek-msg-1") is True
 
 
@@ -1847,7 +1904,7 @@ def test_handoff_does_not_clear_on_split_person_reply(
 
     assert store.is_in_handoff("cid-1") is True
     assert codex.calls == []
-    assert dws.sent == []
+    assert final_sent(dws) == []
     assert store.has_seen("split-msg-1") is True
 
 
@@ -1882,7 +1939,7 @@ def test_active_handoff_notification_explains_auto_reply_is_paused(
     worker.run_once()
 
     assert codex.calls == []
-    assert dws.sent == []
+    assert final_sent(dws) == []
     assert store.has_seen("msg-after-handoff") is True
     assert notifications == [
         {
@@ -1932,7 +1989,7 @@ def test_dry_run_active_handoff_does_not_repeat_pause_notification(
     worker.run_once()
 
     assert codex.calls == []
-    assert dws.sent == []
+    assert final_sent(dws) == []
     assert store.has_seen("msg-after-handoff") is False
     assert notifications == []
 
@@ -1981,14 +2038,14 @@ def test_single_chat_unread_is_processed_without_mention(
 
     worker.run_once()
 
-    assert dws.sent == [
+    assert final_sent(dws) == [
         (
             "",
             "> 周俊杰: 这个今天能拍吗？\n\n可以，先推进（by磊哥分身）",
         )
     ]
-    assert dws.sent_at_users == [[]]
-    assert dws.direct_user_ids == ["sender-user-1"]
+    assert final_sent_at_users(dws) == [[]]
+    assert final_direct_user_ids(dws) == ["sender-user-1"]
     attempt = worker.store.get_reply_attempt(1)
     assert attempt is not None
     assert attempt.send_status == "sent"
@@ -2029,7 +2086,7 @@ def test_single_chat_current_user_message_does_not_call_codex(
     worker.run_once()
 
     assert codex.calls == []
-    assert dws.sent == []
+    assert final_sent(dws) == []
 
 
 def test_run_once_max_batches_stops_after_limit(tmp_path: Path, monkeypatch):
@@ -2060,8 +2117,8 @@ def test_run_once_max_batches_stops_after_limit(tmp_path: Path, monkeypatch):
     worker.run_once(max_batches=1)
 
     assert len(codex.calls) == 1
-    assert len(dws.sent) == 1
-    assert dws.sent[0][0] == "cid-1"
+    assert len(final_sent(dws)) == 1
+    assert final_sent(dws)[0][0] == "cid-1"
     assert worker.store.has_seen("msg-1") is True
     assert worker.store.has_seen("msg-2") is False
 
@@ -2087,7 +2144,7 @@ def test_single_chat_current_user_display_name_does_not_call_codex(
     worker.run_once()
 
     assert codex.calls == []
-    assert dws.sent == []
+    assert final_sent(dws) == []
 
 
 def test_message_before_current_user_reply_does_not_call_codex(
@@ -2115,7 +2172,7 @@ def test_message_before_current_user_reply_does_not_call_codex(
     worker.run_once()
 
     assert codex.calls == []
-    assert dws.sent == []
+    assert final_sent(dws) == []
 
 
 def test_message_after_current_user_reply_still_calls_codex(
@@ -2177,7 +2234,7 @@ def test_read_failure_records_error_and_continues_next_conversation(
 
     worker.run_once()
 
-    assert dws.sent == [
+    assert final_sent(dws) == [
         (
             "cid-good",
             "> 周俊杰: 这个怎么处理？\n\n"
@@ -2235,7 +2292,7 @@ def test_internal_personnel_question_missing_subject_asks_clarifying_question(
 
     worker.run_once()
 
-    assert dws.sent == [
+    assert final_sent(dws) == [
         (
             "",
             "> 周俊杰: 这个人后续怎么处理？\n\n"
@@ -2264,7 +2321,7 @@ def test_internal_personnel_question_allows_hr_requester(
 
     worker.run_once()
 
-    assert dws.sent == [
+    assert final_sent(dws) == [
         (
             "",
             "> 周俊杰: 张三转正怎么看？\n\n"
@@ -2293,7 +2350,7 @@ def test_internal_personnel_question_allows_subject_manager(
 
     worker.run_once()
 
-    assert dws.sent == [
+    assert final_sent(dws) == [
         (
             "",
             "> 周俊杰: 张三绩效怎么定？\n\n"
@@ -2321,7 +2378,7 @@ def test_internal_personnel_question_refuses_unrelated_requester(
 
     worker.run_once()
 
-    assert dws.sent == [
+    assert final_sent(dws) == [
         (
             "",
             "> 周俊杰: 张三绩效怎么定？\n\n"
@@ -2349,7 +2406,7 @@ def test_candidate_question_missing_department_asks_clarifying_question(
 
     worker.run_once()
 
-    assert dws.sent == [
+    assert final_sent(dws) == [
         (
             "",
             "> 周俊杰: 这个候选人怎么样？\n\n"
@@ -2379,7 +2436,7 @@ def test_candidate_question_allows_related_department_requester(
 
     worker.run_once()
 
-    assert dws.sent == [
+    assert final_sent(dws) == [
         (
             "",
             "> 周俊杰: 这个候选人怎么样？\n\n"
@@ -2409,7 +2466,7 @@ def test_candidate_question_refuses_unrelated_department_requester(
 
     worker.run_once()
 
-    assert dws.sent == [
+    assert final_sent(dws) == [
         (
             "",
             "> 周俊杰: 这个候选人怎么样？\n\n"
@@ -2443,7 +2500,7 @@ def test_permission_lookup_failure_records_error_and_does_not_send(
 
     worker.run_once()
 
-    assert dws.sent == []
+    assert final_sent(dws) == []
     assert store.count_errors() == 1
     assert store.has_seen("msg-1") is False
 
@@ -2459,7 +2516,7 @@ def test_dry_run_does_not_mutate_terminal_state(tmp_path: Path, monkeypatch):
 
     worker.run_once()
 
-    assert dws.sent == []
+    assert final_sent(dws) == []
     assert store.has_seen("msg-1") is False
     assert store.count_sent_replies() == 0
     assert store.is_in_handoff("cid-1") is False
@@ -2485,7 +2542,7 @@ def test_send_failure_records_error_and_does_not_mark_seen(
     assert store.has_seen("msg-1") is False
     assert store.count_sent_replies() == 0
     assert store.count_errors() == 1
-    assert dws.send_attempt_count == 2
+    assert dws.send_attempt_count == 3
     attempt = store.get_reply_attempt(1)
     assert attempt is not None
     assert attempt.send_status == "failed"
@@ -2514,7 +2571,7 @@ def test_pat_authorization_error_is_recorded_as_failed_without_retry_or_url(
 
     worker.run_once()
 
-    assert dws.send_attempt_count == 1
+    assert dws.send_attempt_count == 2
     assert store.has_seen("msg-1") is False
     assert store.count_sent_replies() == 0
     attempt = store.get_reply_attempt(1)
@@ -2541,7 +2598,7 @@ def test_handoff_ding_failure_does_not_mark_seen_or_enter_handoff(
 
     worker.run_once()
 
-    assert dws.sent == []
+    assert final_sent(dws) == []
     assert store.has_seen("msg-1") is False
     assert store.is_in_handoff("cid-1") is False
     assert store.count_errors() == 1

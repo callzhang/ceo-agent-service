@@ -7,7 +7,7 @@ from ceo_agent_service.dingtalk_models import (
 )
 from ceo_agent_service.org_cache import CachedDwsClient, CachedOrgDirectory, refresh_org_cache
 from ceo_agent_service.store import AutoReplyStore
-from ceo_agent_service.worker import DingTalkAutoReplyWorker
+from ceo_agent_service.worker import DingTalkAutoReplyWorker, PROCESSING_ACK
 from ceo_agent_service.dws_client import DwsUserProfile
 
 
@@ -131,6 +131,18 @@ class FakeCodex:
         return self.decision
 
 
+def final_sent(dws: FakeDws):
+    return [sent for sent in dws.sent if sent[1] != PROCESSING_ACK]
+
+
+def final_sent_at_users(dws: FakeDws):
+    return [
+        at_users
+        for sent, at_users in zip(dws.sent, dws.sent_at_users)
+        if sent[1] != PROCESSING_ACK
+    ]
+
+
 def test_local_pipeline_refreshes_org_cache_then_replies_without_runtime_org_calls(
     tmp_path, monkeypatch
 ):
@@ -158,13 +170,13 @@ def test_local_pipeline_refreshes_org_cache_then_replies_without_runtime_org_cal
     worker.run_once()
 
     assert raw_dws.org_calls == []
-    assert raw_dws.sent == [
+    assert final_sent(raw_dws) == [
         (
             None,
             "> HR: 张三转正怎么看？\n\n建议先观察一个月（by磊哥分身）",
         )
     ]
-    assert raw_dws.sent_at_users == [[]]
+    assert final_sent_at_users(raw_dws) == [[]]
     assert store.has_seen("msg-1") is True
     assert store.get_codex_session_id("cid-1") == "session-1"
 
@@ -189,7 +201,7 @@ def test_local_pipeline_handoff_ding_uses_cached_current_user_without_runtime_or
     worker.run_once()
 
     assert raw_dws.org_calls == []
-    assert raw_dws.sent == [
+    assert final_sent(raw_dws) == [
         (
             "cid-1",
             "> HR: 不要分身，真人看一下\n\n我让磊哥本人看一下。（by磊哥分身）",

@@ -42,6 +42,7 @@ from ceo_agent_service.leak_check import FORBIDDEN_MARKERS
 
 
 HANDOFF_ACK = handoff_ack()
+PROCESSING_ACK = "稍等，我看看。"
 LEAK_CHECK_REGENERATION_SCHEMA = (
     'JSON schema: {"action":"send_reply|ask_clarifying_question|handoff_to_human|no_reply|stop_with_error",'
     '"reply_text":"","reason":"","ding_self":false,"macos_notify":true,'
@@ -190,6 +191,7 @@ class DingTalkAutoReplyWorker:
             if not new_messages:
                 continue
             if self._enqueue_reply_task(conversation, new_messages[-1]):
+                self._send_processing_ack(conversation, new_messages[-1])
                 queued_tasks += 1
             if max_tasks is not None and queued_tasks >= max_tasks:
                 return queued_tasks
@@ -265,6 +267,29 @@ class DingTalkAutoReplyWorker:
             trigger_text=trigger.content,
             trigger_message_json=trigger.model_dump_json(),
         )
+
+    def _send_processing_ack(
+        self,
+        conversation: DingTalkConversation,
+        trigger: DingTalkMessage,
+    ) -> None:
+        try:
+            if conversation.single_chat:
+                self._send(
+                    None,
+                    PROCESSING_ACK,
+                    user_id=trigger.sender_user_id,
+                    open_dingtalk_id=None
+                    if trigger.sender_user_id
+                    else trigger.sender_open_dingtalk_id,
+                )
+                return
+            self._send(conversation.open_conversation_id, PROCESSING_ACK)
+        except Exception as exc:
+            self._notify(
+                title=f"CEO processing ack failed: {conversation.title}",
+                message=str(exc)[:120],
+            )
 
     def _mentioned_messages_by_conversation(
         self, conversations: list[DingTalkConversation]
