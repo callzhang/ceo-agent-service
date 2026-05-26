@@ -285,6 +285,192 @@ def collect_dingtalk_kb_evidence(
     return records
 
 
+def _rules_by_category(profile: WorkProfile, category: str) -> list[WorkProfileRule]:
+    return [rule for rule in profile.rules if rule.category == category]
+
+
+def _rule_lines(rule: WorkProfileRule) -> list[str]:
+    scenarios = ", ".join(rule.scenarios) if rule.scenarios else "general"
+    return [
+        f"### {rule.title}",
+        "",
+        f"- Rule id: `{rule.id}`",
+        f"- Scenarios: {scenarios}",
+        f"- Trigger: {rule.trigger}",
+        f"- Do: {rule.do}",
+        f"- Do not: {rule.dont}",
+        f"- Confidence: {rule.confidence}",
+        "",
+    ]
+
+
+def render_markdown_profile(profile: WorkProfile) -> str:
+    lines = [
+        "# Derek Work Profile",
+        "",
+        profile.summary,
+        "",
+        "## Scope",
+        "",
+        (
+            "Use this profile for DingTalk auto-reply judgment, business "
+            "communication, product judgment, management coordination, "
+            "recruiting triage, and approval pre-review. It is not Derek's "
+            "final personal decision."
+        ),
+        "",
+        "## Core Judgment Order",
+        "",
+        "1. Decide whether Derek needs to reply.",
+        "2. Check whether the material is complete.",
+        "3. Check hard boundaries before making any commitment.",
+        "4. Reply with conclusion, reason, and next step when enough evidence exists.",
+        "5. Ask a focused follow-up when evidence is missing.",
+        "",
+        "## Decision Framework",
+        "",
+    ]
+    for rule in _rules_by_category(profile, "decision"):
+        lines.extend(_rule_lines(rule))
+    lines.extend(["## Expression Framework", ""])
+    for rule in _rules_by_category(profile, "expression"):
+        lines.extend(_rule_lines(rule))
+    lines.extend(["## Follow-Up Framework", ""])
+    for rule in _rules_by_category(profile, "follow_up"):
+        lines.extend(_rule_lines(rule))
+    lines.extend(["## Boundary Framework", ""])
+    for rule in _rules_by_category(profile, "boundary"):
+        lines.extend(_rule_lines(rule))
+    lines.extend(
+        [
+            "## Honest Boundaries",
+            "",
+            "- This profile is inferred from local work evidence and authored material.",
+            "- It improves draft judgment but does not replace Derek's final decision.",
+            "- It must not override the service's hard safety and privacy guardrails.",
+            "",
+        ]
+    )
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def render_skill(profile: WorkProfile) -> str:
+    return f"""---
+name: derek-perspective
+description: Derek's work perspective for reviewing drafts, decisions, and business communication. Use when the user asks for Derek's angle, Derek work style, or Derek perspective.
+---
+
+# Derek Work Perspective
+
+This skill represents Derek's work perspective based on local evidence. It is not Derek himself and does not authorize final real-world decisions.
+
+Do not use this skill as the automated DingTalk runtime. The runtime reads `profiles/derek_work_profile.md` inside `ceo-agent-service`.
+
+## Scope
+
+{profile.summary}
+
+## Hard Boundaries
+
+- Do not claim Derek has joined a meeting, made a call, checked a message, approved a request, or completed a real-world action.
+- Do not make final personnel, approval, finance, legal, or customer-critical decisions.
+- When material is incomplete, ask for the missing material instead of inventing a conclusion.
+"""
+
+
+def build_initial_profile(evidence: list[EvidenceRecord]) -> WorkProfile:
+    usable_ids = [record.id for record in evidence if record.usable_for_profile]
+    fallback_id = usable_ids[0] if usable_ids else "ev_manual_profile_seed"
+    return WorkProfile(
+        title="Derek Work Profile",
+        summary=(
+            "A work-context profile for Derek's DingTalk auto-reply agent, "
+            "derived from local behavior evidence, authored documents, and "
+            "read-only DingTalk knowledge base material."
+        ),
+        rules=[
+            WorkProfileRule(
+                id="rule_materials_before_decision",
+                title="材料不足不拍板",
+                category="decision",
+                scenarios=[
+                    "approval",
+                    "candidate_review",
+                    "business",
+                    "document_review",
+                ],
+                trigger=(
+                    "A message asks for approval, judgment, confirmation, "
+                    "comments, or finalization but lacks the body, background, "
+                    "budget, owner, role context, resume, attachment, or "
+                    "accessible link."
+                ),
+                do=(
+                    "Ask for the specific missing material and say that a "
+                    "judgment can be made after the material is complete."
+                ),
+                dont=(
+                    "Do not approve, reject, advance, finalize, or evaluate "
+                    "based only on a title or vague request."
+                ),
+                confidence="high",
+                evidence_ids=[fallback_id],
+            ),
+            WorkProfileRule(
+                id="rule_real_world_actions_handoff",
+                title="现实动作不代承诺",
+                category="boundary",
+                scenarios=["daily_coordination", "meeting", "handoff"],
+                trigger=(
+                    "A message asks whether Derek has joined, called, checked, "
+                    "approved, gone onsite, or will immediately do a real-world "
+                    "action."
+                ),
+                do="Hand off to Derek or state that Derek should personally handle it.",
+                dont=(
+                    "Do not claim Derek is doing, will do immediately, or has "
+                    "done the action unless the conversation explicitly proves it."
+                ),
+                confidence="high",
+                evidence_ids=[fallback_id],
+            ),
+            WorkProfileRule(
+                id="rule_short_conclusion_next_step",
+                title="先结论再下一步",
+                category="expression",
+                scenarios=[
+                    "business",
+                    "product",
+                    "management",
+                    "daily_coordination",
+                ],
+                trigger="The agent has enough evidence to reply.",
+                do="Give a concise conclusion, one reason when useful, and the next action.",
+                dont=(
+                    "Do not write long background explanations, citations, "
+                    "local paths, or tool details."
+                ),
+                confidence="medium",
+                evidence_ids=[fallback_id],
+            ),
+            WorkProfileRule(
+                id="rule_focus_follow_up",
+                title="追问要收敛问题",
+                category="follow_up",
+                scenarios=["business", "product", "approval", "candidate_review"],
+                trigger="The user request is broad or missing the key decision variable.",
+                do="Ask one focused question that unlocks the next decision.",
+                dont=(
+                    "Do not ask several broad questions or give generic advice "
+                    "before the key missing fact is known."
+                ),
+                confidence="medium",
+                evidence_ids=[fallback_id],
+            ),
+        ],
+    )
+
+
 def write_jsonl(path: Path, records: list[EvidenceRecord]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as file:

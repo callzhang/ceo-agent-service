@@ -9,6 +9,8 @@ from ceo_agent_service.work_profile import (
     collect_existing_corpus_evidence,
     collect_local_doc_evidence,
     evidence_id,
+    render_markdown_profile,
+    render_skill,
     safe_excerpt,
 )
 
@@ -334,3 +336,41 @@ def test_collect_dingtalk_kb_evidence_classifies_sensitive_docs(tmp_path: Path):
     )
 
     assert records[0].sensitivity == "internal_personnel"
+
+
+def test_render_markdown_profile_contains_required_sections():
+    profile = WorkProfile(
+        title="Derek Work Profile",
+        summary="用于钉钉自动回复的工作判断 profile。",
+        rules=[
+            WorkProfileRule(
+                id="rule_materials_before_decision",
+                title="材料不足不拍板",
+                category="decision",
+                scenarios=["approval", "business"],
+                trigger="需要判断但材料不完整",
+                do="先追问缺失材料",
+                dont="不要给确定结论",
+                confidence="high",
+                evidence_ids=["ev_abc"],
+            )
+        ],
+    )
+
+    markdown = render_markdown_profile(profile)
+
+    assert "# Derek Work Profile" in markdown
+    assert "## Core Judgment Order" in markdown
+    assert "## Decision Framework" in markdown
+    assert "## Boundary Framework" in markdown
+    assert "材料不足不拍板" in markdown
+
+
+def test_render_skill_marks_manual_use_not_runtime_dependency():
+    profile = WorkProfile(title="Derek Work Profile", summary="工作判断 profile。", rules=[])
+
+    skill = render_skill(profile)
+
+    assert "name: derek-perspective" in skill
+    assert "not Derek himself" in skill
+    assert "Do not use this skill as the automated DingTalk runtime" in skill
