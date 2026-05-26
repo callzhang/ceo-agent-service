@@ -467,7 +467,7 @@ def test_consume_once_sends_processing_ack_after_prompt_context_is_built(
 
     def before_decide(prompt, _session_id):
         assert PROCESSING_ACK not in prompt
-        assert dws.sent == [("cid-1", PROCESSING_ACK)]
+        assert dws.sent == []
 
     codex = FakeCodex(
         CodexDecision(action=CodexAction.SEND_REPLY, reply_text="先按A方案走"),
@@ -1916,6 +1916,7 @@ def test_no_reply_action_does_not_send(tmp_path: Path, monkeypatch):
     worker.run_once()
 
     assert final_sent(dws) == []
+    assert dws.sent == []
     assert store.has_seen("msg-1") is True
     attempt = store.get_reply_attempt(1)
     assert attempt is not None

@@ -10,6 +10,13 @@ and retried by the next scheduled run.
 Per-conversation read failures are recorded and notified without blocking other
 conversations in the same producer pass.
 
+## Processing acknowledgement
+
+The worker may send `稍等，我看看。` before a final reply, but only after Codex has
+returned a decision that will actually attempt a reply. `no_reply`,
+`stop_with_error`, blocked, and dry-run outcomes do not send the acknowledgement,
+so a conversation is not left with a processing message and no follow-up.
+
 ## Consumer retry behavior
 
 Reply tasks move from `pending` to `processing` when claimed. If task processing

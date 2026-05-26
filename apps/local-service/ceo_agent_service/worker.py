@@ -1060,8 +1060,6 @@ class DingTalkAutoReplyWorker:
             include_thread_prompt=session_id is None,
             linked_documents=linked_documents,
         )
-        if send_processing_ack:
-            self._send_processing_ack(conversation, trigger)
         before_session_id = getattr(self.codex, "last_session_id", None)
         decision = self.codex.decide(prompt=prompt, session_id=session_id)
         if self._is_stale_codex_resume(decision, session_id):
@@ -1225,6 +1223,7 @@ class DingTalkAutoReplyWorker:
                 reply_text=permission.reply_text,
                 reason=permission.reason,
                 attempt_id=attempt_id,
+                send_processing_ack=send_processing_ack,
             )
             return
 
@@ -1235,6 +1234,7 @@ class DingTalkAutoReplyWorker:
             reply_text=decision.reply_text,
             reason=decision.reason,
             attempt_id=attempt_id,
+            send_processing_ack=send_processing_ack,
         )
 
     def _handle_existing_attempt(
@@ -1661,6 +1661,7 @@ class DingTalkAutoReplyWorker:
         reply_text: str,
         reason: str,
         attempt_id: int,
+        send_processing_ack: bool = False,
     ) -> None:
         if not reply_text.strip():
             self.store.update_reply_attempt(
@@ -1728,6 +1729,7 @@ class DingTalkAutoReplyWorker:
             direct_open_dingtalk_id=trigger.sender_open_dingtalk_id
             if conversation.single_chat
             else None,
+            send_processing_ack=send_processing_ack,
         )
 
     def _regenerate_reply_after_leak_check(
@@ -1771,6 +1773,7 @@ class DingTalkAutoReplyWorker:
         at_users: list[str],
         direct_user_id: str | None,
         direct_open_dingtalk_id: str | None,
+        send_processing_ack: bool = False,
     ) -> None:
         reply_text = final_reply_text
         self.store.update_reply_attempt(
@@ -1805,6 +1808,8 @@ class DingTalkAutoReplyWorker:
             )
             return
         try:
+            if send_processing_ack:
+                self._send_processing_ack(conversation, trigger)
             send_conversation_id = (
                 None if conversation.single_chat else conversation.open_conversation_id
             )
