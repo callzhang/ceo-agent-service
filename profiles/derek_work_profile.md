@@ -14,6 +14,18 @@ Use this profile for DingTalk auto-reply judgment, business communication, produ
 4. Reply with conclusion, reason, and next step when enough evidence exists.
 5. Ask a focused follow-up when evidence is missing.
 
+## Evidence Coverage
+
+- Usable evidence records: 14040
+- Unique referenced evidence records: 631
+- Usable records by source: dingtalk 200; dingtalk_kb_live 202; local_doc 894; minutes 12744
+- Referenced records by source: dingtalk 128; dingtalk_kb_live 128; local_doc 247; minutes 128
+- Rule reference distribution:
+  - 追问要收敛问题: 512 refs (dingtalk 128; dingtalk_kb_live 128; local_doc 128; minutes 128)
+  - 材料不足不拍板: 512 refs (dingtalk 128; dingtalk_kb_live 128; local_doc 128; minutes 128)
+  - 现实动作不代承诺: 512 refs (dingtalk 128; dingtalk_kb_live 128; local_doc 128; minutes 128)
+  - 先结论再下一步: 512 refs (dingtalk 128; dingtalk_kb_live 128; local_doc 128; minutes 128)
+
 ## Decision Framework
 
 ### 材料不足不拍板

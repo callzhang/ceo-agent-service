@@ -4,6 +4,7 @@ from ceo_agent_service.corpus import CorpusRecord, write_records
 from ceo_agent_service.work_profile import (
     EvidenceRecord,
     WorkProfile,
+    WorkProfileEvidenceCoverage,
     WorkProfileRule,
     build_initial_profile,
     collect_dingtalk_kb_evidence,
@@ -467,6 +468,46 @@ def test_render_markdown_profile_contains_required_sections():
     assert "材料不足不拍板" in markdown
 
 
+def test_render_markdown_profile_shows_evidence_coverage():
+    profile = WorkProfile(
+        title="Derek Work Profile",
+        summary="用于钉钉自动回复的工作判断 profile。",
+        evidence_coverage=WorkProfileEvidenceCoverage(
+            usable_records=500,
+            usable_source_counts={"dingtalk": 100, "minutes": 100},
+            referenced_records=200,
+            referenced_source_counts={"dingtalk": 100, "minutes": 100},
+            rule_reference_counts={"rule_materials_before_decision": 200},
+            rule_source_counts={
+                "rule_materials_before_decision": {
+                    "dingtalk": 100,
+                    "minutes": 100,
+                }
+            },
+        ),
+        rules=[
+            WorkProfileRule(
+                id="rule_materials_before_decision",
+                title="材料不足不拍板",
+                category="decision",
+                scenarios=["approval"],
+                trigger="需要判断但材料不完整",
+                do="先追问缺失材料",
+                dont="不要给确定结论",
+                confidence="high",
+                evidence_ids=["ev_abc"],
+            )
+        ],
+    )
+
+    markdown = render_markdown_profile(profile)
+
+    assert "## Evidence Coverage" in markdown
+    assert "Unique referenced evidence records: 200" in markdown
+    assert "Referenced records by source: dingtalk 100; minutes 100" in markdown
+    assert "材料不足不拍板: 200 refs (dingtalk 100; minutes 100)" in markdown
+
+
 def test_build_initial_profile_without_evidence_is_explicit_seed():
     profile = build_initial_profile([])
 
@@ -502,6 +543,12 @@ def test_build_initial_profile_uses_distinct_evidence_sources():
     evidence_by_id = {record.id: record for record in evidence}
 
     assert "24 usable records across 4 source types" in profile.summary
+    assert profile.evidence_coverage is not None
+    assert profile.evidence_coverage.usable_records == 24
+    assert profile.evidence_coverage.referenced_records == 24
+    assert profile.evidence_coverage.referenced_source_counts == {
+        source_type: 6 for source_type in source_types
+    }
     assert len(referenced_ids) == 24
     for rule in profile.rules:
         rule_source_types = {

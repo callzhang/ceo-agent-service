@@ -124,9 +124,19 @@ class WorkProfileRule(BaseModel):
     evidence_ids: list[str] = Field(min_length=1)
 
 
+class WorkProfileEvidenceCoverage(BaseModel):
+    usable_records: int = 0
+    usable_source_counts: dict[str, int] = Field(default_factory=dict)
+    referenced_records: int = 0
+    referenced_source_counts: dict[str, int] = Field(default_factory=dict)
+    rule_reference_counts: dict[str, int] = Field(default_factory=dict)
+    rule_source_counts: dict[str, dict[str, int]] = Field(default_factory=dict)
+
+
 class WorkProfile(BaseModel):
     title: str
     summary: str
+    evidence_coverage: WorkProfileEvidenceCoverage | None = None
     rules: list[WorkProfileRule] = Field(default_factory=list)
 
 
@@ -334,6 +344,43 @@ def _rule_lines(rule: WorkProfileRule) -> list[str]:
     ]
 
 
+def _source_counts_line(source_counts: dict[str, int]) -> str:
+    if not source_counts:
+        return "none"
+    return "; ".join(
+        f"{source_type} {source_counts[source_type]}"
+        for source_type in sorted(source_counts)
+    )
+
+
+def _evidence_coverage_lines(profile: WorkProfile) -> list[str]:
+    coverage = profile.evidence_coverage
+    if coverage is None:
+        return []
+
+    lines = [
+        "## Evidence Coverage",
+        "",
+        f"- Usable evidence records: {coverage.usable_records}",
+        f"- Unique referenced evidence records: {coverage.referenced_records}",
+        f"- Usable records by source: {_source_counts_line(coverage.usable_source_counts)}",
+        (
+            "- Referenced records by source: "
+            f"{_source_counts_line(coverage.referenced_source_counts)}"
+        ),
+        "- Rule reference distribution:",
+    ]
+    rules_by_id = {rule.id: rule for rule in profile.rules}
+    for rule_id in sorted(coverage.rule_reference_counts):
+        rule_title = rules_by_id.get(rule_id).title if rule_id in rules_by_id else rule_id
+        lines.append(
+            f"  - {rule_title}: {coverage.rule_reference_counts[rule_id]} refs "
+            f"({_source_counts_line(coverage.rule_source_counts.get(rule_id, {}))})"
+        )
+    lines.append("")
+    return lines
+
+
 def render_markdown_profile(profile: WorkProfile) -> str:
     lines = [
         "# Derek Work Profile",
@@ -357,9 +404,9 @@ def render_markdown_profile(profile: WorkProfile) -> str:
         "4. Reply with conclusion, reason, and next step when enough evidence exists.",
         "5. Ask a focused follow-up when evidence is missing.",
         "",
-        "## Decision Framework",
-        "",
     ]
+    lines.extend(_evidence_coverage_lines(profile))
+    lines.extend(["## Decision Framework", ""])
     for rule in _rules_by_category(profile, "decision"):
         lines.extend(_rule_lines(rule))
     lines.extend(["## Expression Framework", ""])
@@ -463,6 +510,55 @@ def _pick_evidence_ids(
     return selected[:limit] or ["ev_manual_profile_seed"]
 
 
+def _increment_count(counts: dict[str, int], key: str) -> None:
+    counts[key] = counts.get(key, 0) + 1
+
+
+def _build_evidence_coverage(
+    evidence: list[EvidenceRecord],
+    rules: list[WorkProfileRule],
+) -> WorkProfileEvidenceCoverage:
+    usable_source_counts: dict[str, int] = {}
+    evidence_by_id = {record.id: record for record in evidence}
+    for record in evidence:
+        _increment_count(usable_source_counts, record.source_type)
+
+    referenced_ids = sorted(
+        {
+            evidence_id
+            for rule in rules
+            for evidence_id in rule.evidence_ids
+            if evidence_id in evidence_by_id
+        }
+    )
+    referenced_source_counts: dict[str, int] = {}
+    for evidence_record_id in referenced_ids:
+        _increment_count(
+            referenced_source_counts,
+            evidence_by_id[evidence_record_id].source_type,
+        )
+
+    rule_reference_counts: dict[str, int] = {}
+    rule_source_counts: dict[str, dict[str, int]] = {}
+    for rule in rules:
+        rule_reference_counts[rule.id] = len(rule.evidence_ids)
+        source_counts: dict[str, int] = {}
+        for evidence_record_id in rule.evidence_ids:
+            record = evidence_by_id.get(evidence_record_id)
+            if record is not None:
+                _increment_count(source_counts, record.source_type)
+        rule_source_counts[rule.id] = source_counts
+
+    return WorkProfileEvidenceCoverage(
+        usable_records=len(evidence),
+        usable_source_counts=usable_source_counts,
+        referenced_records=len(referenced_ids),
+        referenced_source_counts=referenced_source_counts,
+        rule_reference_counts=rule_reference_counts,
+        rule_source_counts=rule_source_counts,
+    )
+
+
 def build_initial_profile(evidence: list[EvidenceRecord]) -> WorkProfile:
     usable_evidence = [record for record in evidence if record.usable_for_profile]
     if usable_evidence:
@@ -496,89 +592,91 @@ def build_initial_profile(evidence: list[EvidenceRecord]) -> WorkProfile:
         preferred_sensitivities=("customer", "approval"),
         preferred_source_types=("dingtalk", "minutes", "local_doc", "dingtalk_kb_live"),
     )
+    rules = [
+        WorkProfileRule(
+            id="rule_materials_before_decision",
+            title="材料不足不拍板",
+            category="decision",
+            scenarios=[
+                "approval",
+                "candidate_review",
+                "business",
+                "document_review",
+            ],
+            trigger=(
+                "A message asks for approval, judgment, confirmation, "
+                "comments, or finalization but lacks the body, background, "
+                "budget, owner, role context, resume, attachment, or "
+                "accessible link."
+            ),
+            do=(
+                "Ask for the specific missing material and say that a "
+                "judgment can be made after the material is complete."
+            ),
+            dont=(
+                "Do not approve, reject, advance, finalize, or evaluate "
+                "based only on a title or vague request."
+            ),
+            confidence="high",
+            evidence_ids=decision_evidence_ids,
+        ),
+        WorkProfileRule(
+            id="rule_real_world_actions_handoff",
+            title="现实动作不代承诺",
+            category="boundary",
+            scenarios=["daily_coordination", "meeting", "handoff"],
+            trigger=(
+                "A message asks whether Derek has joined, called, checked, "
+                "approved, gone onsite, or will immediately do a real-world "
+                "action."
+            ),
+            do="Hand off to Derek or state that Derek should personally handle it.",
+            dont=(
+                "Do not claim Derek is doing, will do immediately, or has "
+                "done the action unless the conversation explicitly proves it."
+            ),
+            confidence="high",
+            evidence_ids=handoff_evidence_ids,
+        ),
+        WorkProfileRule(
+            id="rule_short_conclusion_next_step",
+            title="先结论再下一步",
+            category="expression",
+            scenarios=[
+                "business",
+                "product",
+                "management",
+                "daily_coordination",
+            ],
+            trigger="The agent has enough evidence to reply.",
+            do="Give a concise conclusion, one reason when useful, and the next action.",
+            dont=(
+                "Do not write long background explanations, citations, "
+                "local paths, or tool details."
+            ),
+            confidence="medium",
+            evidence_ids=expression_evidence_ids,
+        ),
+        WorkProfileRule(
+            id="rule_focus_follow_up",
+            title="追问要收敛问题",
+            category="follow_up",
+            scenarios=["business", "product", "approval", "candidate_review"],
+            trigger="The user request is broad or missing the key decision variable.",
+            do="Ask one focused question that unlocks the next decision.",
+            dont=(
+                "Do not ask several broad questions or give generic advice "
+                "before the key missing fact is known."
+            ),
+            confidence="medium",
+            evidence_ids=follow_up_evidence_ids,
+        ),
+    ]
     return WorkProfile(
         title="Derek Work Profile",
         summary=summary,
-        rules=[
-            WorkProfileRule(
-                id="rule_materials_before_decision",
-                title="材料不足不拍板",
-                category="decision",
-                scenarios=[
-                    "approval",
-                    "candidate_review",
-                    "business",
-                    "document_review",
-                ],
-                trigger=(
-                    "A message asks for approval, judgment, confirmation, "
-                    "comments, or finalization but lacks the body, background, "
-                    "budget, owner, role context, resume, attachment, or "
-                    "accessible link."
-                ),
-                do=(
-                    "Ask for the specific missing material and say that a "
-                    "judgment can be made after the material is complete."
-                ),
-                dont=(
-                    "Do not approve, reject, advance, finalize, or evaluate "
-                    "based only on a title or vague request."
-                ),
-                confidence="high",
-                evidence_ids=decision_evidence_ids,
-            ),
-            WorkProfileRule(
-                id="rule_real_world_actions_handoff",
-                title="现实动作不代承诺",
-                category="boundary",
-                scenarios=["daily_coordination", "meeting", "handoff"],
-                trigger=(
-                    "A message asks whether Derek has joined, called, checked, "
-                    "approved, gone onsite, or will immediately do a real-world "
-                    "action."
-                ),
-                do="Hand off to Derek or state that Derek should personally handle it.",
-                dont=(
-                    "Do not claim Derek is doing, will do immediately, or has "
-                    "done the action unless the conversation explicitly proves it."
-                ),
-                confidence="high",
-                evidence_ids=handoff_evidence_ids,
-            ),
-            WorkProfileRule(
-                id="rule_short_conclusion_next_step",
-                title="先结论再下一步",
-                category="expression",
-                scenarios=[
-                    "business",
-                    "product",
-                    "management",
-                    "daily_coordination",
-                ],
-                trigger="The agent has enough evidence to reply.",
-                do="Give a concise conclusion, one reason when useful, and the next action.",
-                dont=(
-                    "Do not write long background explanations, citations, "
-                    "local paths, or tool details."
-                ),
-                confidence="medium",
-                evidence_ids=expression_evidence_ids,
-            ),
-            WorkProfileRule(
-                id="rule_focus_follow_up",
-                title="追问要收敛问题",
-                category="follow_up",
-                scenarios=["business", "product", "approval", "candidate_review"],
-                trigger="The user request is broad or missing the key decision variable.",
-                do="Ask one focused question that unlocks the next decision.",
-                dont=(
-                    "Do not ask several broad questions or give generic advice "
-                    "before the key missing fact is known."
-                ),
-                confidence="medium",
-                evidence_ids=follow_up_evidence_ids,
-            ),
-        ],
+        evidence_coverage=_build_evidence_coverage(usable_evidence, rules),
+        rules=rules,
     )
 
 

@@ -1,6 +1,54 @@
 {
   "title": "Derek Work Profile",
   "summary": "A work-context profile for Derek's DingTalk auto-reply agent, seeded from 14040 usable records across 4 source types (dingtalk, dingtalk_kb_live, local_doc, minutes) and ready for continued refinement.",
+  "evidence_coverage": {
+    "usable_records": 14040,
+    "usable_source_counts": {
+      "minutes": 12744,
+      "dingtalk": 200,
+      "local_doc": 894,
+      "dingtalk_kb_live": 202
+    },
+    "referenced_records": 631,
+    "referenced_source_counts": {
+      "minutes": 128,
+      "dingtalk_kb_live": 128,
+      "local_doc": 247,
+      "dingtalk": 128
+    },
+    "rule_reference_counts": {
+      "rule_materials_before_decision": 512,
+      "rule_real_world_actions_handoff": 512,
+      "rule_short_conclusion_next_step": 512,
+      "rule_focus_follow_up": 512
+    },
+    "rule_source_counts": {
+      "rule_materials_before_decision": {
+        "local_doc": 128,
+        "dingtalk_kb_live": 128,
+        "dingtalk": 128,
+        "minutes": 128
+      },
+      "rule_real_world_actions_handoff": {
+        "dingtalk": 128,
+        "minutes": 128,
+        "local_doc": 128,
+        "dingtalk_kb_live": 128
+      },
+      "rule_short_conclusion_next_step": {
+        "dingtalk": 128,
+        "minutes": 128,
+        "local_doc": 128,
+        "dingtalk_kb_live": 128
+      },
+      "rule_focus_follow_up": {
+        "local_doc": 128,
+        "dingtalk_kb_live": 128,
+        "dingtalk": 128,
+        "minutes": 128
+      }
+    }
+  },
   "rules": [
     {
       "id": "rule_materials_before_decision",
