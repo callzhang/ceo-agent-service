@@ -11,7 +11,7 @@ Do not use this skill as the automated DingTalk runtime. The runtime reads `prof
 
 ## Scope
 
-Initial deterministic seed for Derek's DingTalk auto-reply work profile. It defines the first runtime-safe judgment framework and will be replaced or refined as local evidence is collected.
+A work-context profile for Derek's DingTalk auto-reply agent, seeded from 84 usable local evidence records and ready for continued refinement.
 
 ## Hard Boundaries
 
