@@ -442,6 +442,20 @@ class AutoReplyStore:
                 (error, task_id),
             )
 
+    def requeue_reply_task(self, task_id: int, error: str) -> None:
+        with self._connect() as db:
+            db.execute(
+                """
+                update reply_tasks
+                set status='pending',
+                    locked_at=null,
+                    error=?,
+                    updated_at=current_timestamp
+                where id=?
+                """,
+                (error, task_id),
+            )
+
     def count_reply_tasks(self, status: str | None = None) -> int:
         with self._connect() as db:
             if status is None:

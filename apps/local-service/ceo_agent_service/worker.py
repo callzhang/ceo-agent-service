@@ -55,6 +55,7 @@ LEAK_CHECK_REGENERATION_SCHEMA = (
 SPLIT_PERSON_SIGNATURE = assistant_signature()
 CURRENT_USER_DISPLAY_NAMES = set(current_user_display_names())
 STALE_PROCESSING_TASK_SECONDS = 30 * 60
+MAX_REPLY_TASK_ATTEMPTS = 3
 TEXT_MESSAGE_TYPES = {"text"}
 RENDERED_NON_TEXT_PREFIXES = (
     "[文件]",
@@ -126,6 +127,7 @@ class DingTalkAutoReplyWorker:
         style_records: list[CorpusRecord] | None = None,
         style_example_limit: int = 2,
         send_attempts: int = 2,
+        max_task_attempts: int = MAX_REPLY_TASK_ATTEMPTS,
         now_provider: Callable[[], datetime] | None = None,
     ):
         self.store = store
@@ -136,6 +138,7 @@ class DingTalkAutoReplyWorker:
         self.style_records = style_records or []
         self.style_example_limit = style_example_limit
         self.send_attempts = send_attempts
+        self.max_task_attempts = max_task_attempts
         self.now_provider = now_provider or (lambda: datetime.now().astimezone())
         self.permission_gate = PermissionGate(dws)
 
@@ -245,7 +248,14 @@ class DingTalkAutoReplyWorker:
     def consume_once(self, max_tasks: int | None = None) -> int:
         limit = max_tasks if max_tasks is not None else 50
         processed_tasks = 0
-        self.store.reset_stale_processing_reply_tasks(STALE_PROCESSING_TASK_SECONDS)
+        reset_count = self.store.reset_stale_processing_reply_tasks(
+            STALE_PROCESSING_TASK_SECONDS
+        )
+        if reset_count:
+            self._notify(
+                title="CEO task retrying stale tasks",
+                message=f"requeued {reset_count} stale task(s)",
+            )
         for task in self.store.claim_reply_tasks(limit):
             conversation = DingTalkConversation(
                 open_conversation_id=task.conversation_id,
@@ -256,16 +266,30 @@ class DingTalkAutoReplyWorker:
             try:
                 self._process_queued_task(conversation, task)
             except Exception as exc:
-                self.store.fail_reply_task(task.id, str(exc))
+                error = str(exc)
+                if task.attempts < self.max_task_attempts:
+                    self.store.requeue_reply_task(task.id, error)
+                    self.store.record_error(
+                        task.conversation_id,
+                        task.trigger_message_id,
+                        "reply_task_retry",
+                        error,
+                    )
+                    self._notify(
+                        title=f"CEO task retrying: {task.conversation_title}",
+                        message=error[:120],
+                    )
+                    continue
+                self.store.fail_reply_task(task.id, error)
                 self.store.record_error(
                     task.conversation_id,
                     task.trigger_message_id,
                     "reply_task",
-                    str(exc),
+                    error,
                 )
                 self._notify(
                     title=f"CEO task failed: {task.conversation_title}",
-                    message=str(exc)[:120],
+                    message=error[:120],
                 )
                 continue
             self.store.complete_reply_task(task.id)

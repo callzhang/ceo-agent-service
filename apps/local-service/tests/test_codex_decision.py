@@ -26,6 +26,19 @@ class FakeExecutor:
         return self.outputs.pop(0)
 
 
+def make_runner(
+    tmp_path: Path,
+    executor=None,
+    timeout_seconds: int = 120,
+) -> CodexDecisionRunner:
+    return CodexDecisionRunner(
+        workspace=tmp_path,
+        executor=executor,
+        timeout_seconds=timeout_seconds,
+        codex_home=tmp_path / ".codex",
+    )
+
+
 def test_parse_codex_json_accepts_decision_object():
     raw = json.dumps(
         {
@@ -246,7 +259,7 @@ def test_invalid_json_retries_once(tmp_path: Path):
             ),
         ]
     )
-    runner = CodexDecisionRunner(workspace=tmp_path, executor=executor)
+    runner = make_runner(tmp_path, executor=executor)
 
     decision = runner.decide(prompt="decide", session_id="session-1")
 
@@ -291,7 +304,7 @@ def test_runner_tracks_audit_tool_events(tmp_path: Path):
             )
         ]
     )
-    runner = CodexDecisionRunner(workspace=tmp_path, executor=executor)
+    runner = make_runner(tmp_path, executor=executor)
 
     runner.decide(prompt="decide", session_id=None)
 
@@ -313,7 +326,7 @@ def test_empty_reply_for_reply_action_retries_once(tmp_path: Path):
             ),
         ]
     )
-    runner = CodexDecisionRunner(workspace=tmp_path, executor=executor)
+    runner = make_runner(tmp_path, executor=executor)
 
     decision = runner.decide(prompt="decide", session_id="session-1")
 
@@ -342,7 +355,7 @@ def test_first_turn_invalid_json_retries_with_extracted_session_id(tmp_path: Pat
             ),
         ]
     )
-    runner = CodexDecisionRunner(workspace=tmp_path, executor=executor)
+    runner = make_runner(tmp_path, executor=executor)
 
     decision = runner.decide(prompt="decide", session_id=None)
 
@@ -379,7 +392,7 @@ def test_first_turn_invalid_json_retries_with_thread_started_id(tmp_path: Path):
             ),
         ]
     )
-    runner = CodexDecisionRunner(workspace=tmp_path, executor=executor)
+    runner = make_runner(tmp_path, executor=executor)
 
     decision = runner.decide(prompt="decide", session_id=None)
 
@@ -394,7 +407,7 @@ def test_first_turn_invalid_json_retries_with_thread_started_id(tmp_path: Path):
 
 def test_invalid_json_twice_returns_stop_with_error(tmp_path: Path):
     executor = FakeExecutor(["not json", "still not json"])
-    runner = CodexDecisionRunner(workspace=tmp_path, executor=executor)
+    runner = make_runner(tmp_path, executor=executor)
 
     decision = runner.decide(prompt="decide", session_id="session-1")
 
@@ -416,7 +429,7 @@ def test_missing_audit_summary_retries_once(tmp_path: Path):
             ),
         ]
     )
-    runner = CodexDecisionRunner(workspace=tmp_path, executor=executor)
+    runner = make_runner(tmp_path, executor=executor)
 
     decision = runner.decide(prompt="decide", session_id="session-1")
 
@@ -448,7 +461,7 @@ def test_missing_audit_documents_for_reply_retries_once(tmp_path: Path):
             ),
         ]
     )
-    runner = CodexDecisionRunner(workspace=tmp_path, executor=executor)
+    runner = make_runner(tmp_path, executor=executor)
 
     decision = runner.decide(prompt="decide", session_id="session-1")
 
@@ -500,7 +513,7 @@ def test_subprocess_executor_passes_timeout(tmp_path: Path, monkeypatch):
         )
 
     monkeypatch.setattr("ceo_agent_service.codex_decision.subprocess.run", fake_run)
-    runner = CodexDecisionRunner(workspace=tmp_path, timeout_seconds=7)
+    runner = make_runner(tmp_path, timeout_seconds=7)
 
     decision = runner.decide(prompt="decide", session_id=None)
 
@@ -514,7 +527,7 @@ def test_subprocess_timeout_returns_stop_with_error(tmp_path: Path, monkeypatch)
         raise subprocess.TimeoutExpired(cmd=args[0], timeout=kwargs["timeout"])
 
     monkeypatch.setattr("ceo_agent_service.codex_decision.subprocess.run", fake_run)
-    runner = CodexDecisionRunner(workspace=tmp_path, timeout_seconds=7)
+    runner = make_runner(tmp_path, timeout_seconds=7)
 
     decision = runner.decide(prompt="decide", session_id=None)
 
@@ -538,7 +551,7 @@ def test_subprocess_nonzero_keeps_stdout_decision(tmp_path: Path, monkeypatch):
         )
 
     monkeypatch.setattr("ceo_agent_service.codex_decision.subprocess.run", fake_run)
-    runner = CodexDecisionRunner(workspace=tmp_path)
+    runner = make_runner(tmp_path)
 
     decision = runner.decide(prompt="decide", session_id=None)
 
@@ -555,7 +568,7 @@ def test_subprocess_nonzero_preserves_thread_id_for_error(tmp_path: Path, monkey
         )
 
     monkeypatch.setattr("ceo_agent_service.codex_decision.subprocess.run", fake_run)
-    runner = CodexDecisionRunner(workspace=tmp_path)
+    runner = make_runner(tmp_path)
 
     decision = runner.decide(prompt="decide", session_id=None)
 

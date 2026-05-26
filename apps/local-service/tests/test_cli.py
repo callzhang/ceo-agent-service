@@ -1048,6 +1048,41 @@ def test_produce_once_command_calls_worker_produce_once(monkeypatch, tmp_path):
     assert calls == [3]
 
 
+def test_produce_once_records_and_notifies_top_level_failure(monkeypatch, tmp_path):
+    notifications = []
+
+    class FakeWorker:
+        def produce_once(self, max_tasks=None):
+            raise RuntimeError("dws not authenticated")
+
+    monkeypatch.setattr(cli, "create_worker", lambda settings: FakeWorker())
+    monkeypatch.setattr(
+        cli,
+        "send_macos_notification",
+        lambda **kwargs: notifications.append(kwargs),
+        raising=False,
+    )
+    settings = WorkerSettings(
+        workspace=tmp_path / "workspace",
+        db_path=tmp_path / "worker.sqlite3",
+        corpus_dir=tmp_path / "corpus",
+        max_batches=3,
+    )
+
+    with pytest.raises(RuntimeError, match="dws not authenticated"):
+        cli.produce_once(settings)
+
+    errors = cli.AutoReplyStore(settings.db_path).list_errors(limit=1)
+    assert errors[0].kind == "producer"
+    assert "dws not authenticated" in errors[0].detail
+    assert notifications == [
+        {
+            "title": "CEO producer failed",
+            "message": "dws not authenticated",
+        }
+    ]
+
+
 def test_consume_once_command_calls_worker_consume_once(monkeypatch, tmp_path):
     calls = []
 

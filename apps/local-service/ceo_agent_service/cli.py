@@ -21,6 +21,7 @@ from ceo_agent_service.corpus import (
 )
 from ceo_agent_service.dws_client import DwsClient, DwsError, local_time_zone_name
 from ceo_agent_service.dingtalk_models import CodexAction, DingTalkConversation
+from ceo_agent_service.notification import send_macos_notification
 from ceo_agent_service.org_cache import (
     CachedDwsClient,
     CachedOrgDirectory,
@@ -384,15 +385,36 @@ def run_once(settings: WorkerSettings) -> None:
 
 
 def produce_once(settings: WorkerSettings) -> int:
-    queued = create_worker(settings).produce_once(max_tasks=settings.max_batches)
+    try:
+        queued = create_worker(settings).produce_once(max_tasks=settings.max_batches)
+    except Exception as exc:
+        _record_service_failure(settings, "producer", exc)
+        raise
     print(f"produce-once queued={queued}", flush=True)
     return queued
 
 
 def consume_once(settings: WorkerSettings) -> int:
-    processed = create_worker(settings).consume_once(max_tasks=settings.max_batches)
+    try:
+        processed = create_worker(settings).consume_once(max_tasks=settings.max_batches)
+    except Exception as exc:
+        _record_service_failure(settings, "consumer", exc)
+        raise
     print(f"consume-once processed={processed}", flush=True)
     return processed
+
+
+def _record_service_failure(
+    settings: WorkerSettings,
+    component: str,
+    exc: Exception,
+) -> None:
+    message = str(exc)
+    AutoReplyStore(settings.db_path).record_error(None, None, component, message)
+    send_macos_notification(
+        title=f"CEO {component} failed",
+        message=message[:120],
+    )
 
 
 def test_ding_command(settings: WorkerSettings) -> None:
