@@ -52,6 +52,7 @@ LEAK_CHECK_REGENERATION_SCHEMA = (
 )
 SPLIT_PERSON_SIGNATURE = assistant_signature()
 CURRENT_USER_DISPLAY_NAMES = set(current_user_display_names())
+STALE_PROCESSING_TASK_SECONDS = 30 * 60
 TEXT_MESSAGE_TYPES = {"text"}
 RENDERED_NON_TEXT_PREFIXES = (
     "[文件]",
@@ -200,6 +201,7 @@ class DingTalkAutoReplyWorker:
     def consume_once(self, max_tasks: int | None = None) -> int:
         limit = max_tasks if max_tasks is not None else 50
         processed_tasks = 0
+        self.store.reset_stale_processing_reply_tasks(STALE_PROCESSING_TASK_SECONDS)
         for task in self.store.claim_reply_tasks(limit):
             conversation = DingTalkConversation(
                 open_conversation_id=task.conversation_id,

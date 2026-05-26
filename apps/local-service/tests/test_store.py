@@ -70,6 +70,33 @@ def test_claim_reply_tasks_marks_tasks_processing_atomically(tmp_path: Path):
     assert store.count_reply_tasks(status="processing") == 1
 
 
+def test_reset_stale_processing_reply_tasks_requeues_orphans(tmp_path: Path):
+    db_path = tmp_path / "worker.sqlite3"
+    store = AutoReplyStore(db_path)
+    store.enqueue_reply_task(
+        conversation_id="cid-1",
+        conversation_title="Friday",
+        single_chat=False,
+        trigger_message_id="msg-1",
+        trigger_create_time="2026-05-13 18:00:00",
+        trigger_sender="Mina",
+        trigger_text="@Derek Zen 看一下",
+    )
+    claimed = store.claim_reply_tasks(limit=1)
+    with sqlite3.connect(db_path) as db:
+        db.execute(
+            "update reply_tasks set locked_at=datetime('now', '-31 minutes') where id=?",
+            (claimed[0].id,),
+        )
+
+    reset_count = store.reset_stale_processing_reply_tasks(30 * 60)
+    reclaimed = store.claim_reply_tasks(limit=1)
+
+    assert reset_count == 1
+    assert reclaimed[0].id == claimed[0].id
+    assert reclaimed[0].attempts == 2
+
+
 def test_reset_codex_sessions_clears_conversation_mapping_only(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.upsert_conversation("cid-1", "Friday", False, "session-1")

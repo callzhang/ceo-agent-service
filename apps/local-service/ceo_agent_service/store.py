@@ -397,6 +397,25 @@ class AutoReplyStore:
             ).fetchall()
             return [self._reply_task_from_row(row) for row in claimed_rows]
 
+    def reset_stale_processing_reply_tasks(self, max_age_seconds: int) -> int:
+        if max_age_seconds <= 0:
+            return 0
+        with self._connect() as db:
+            cursor = db.execute(
+                """
+                update reply_tasks
+                set status='pending',
+                    locked_at=null,
+                    error='',
+                    updated_at=current_timestamp
+                where status='processing'
+                  and locked_at is not null
+                  and datetime(locked_at) <= datetime('now', ?)
+                """,
+                (f"-{int(max_age_seconds)} seconds",),
+            )
+            return cursor.rowcount
+
     def complete_reply_task(self, task_id: int) -> None:
         with self._connect() as db:
             db.execute(
