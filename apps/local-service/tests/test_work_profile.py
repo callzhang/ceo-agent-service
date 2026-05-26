@@ -173,8 +173,10 @@ def test_collect_local_doc_evidence_classifies_sensitive_local_docs(tmp_path: Pa
 class FakeDwsForKnowledgeBase:
     def __init__(self):
         self.read_nodes = []
+        self.page_tokens = []
 
     def list_doc_nodes(self, workspace_id=None, folder_id=None, page_token=""):
+        self.page_tokens.append(page_token)
         return {
             "result": {
                 "nodes": [
@@ -212,4 +214,123 @@ def test_collect_dingtalk_kb_evidence_reads_online_docs_to_cache(tmp_path: Path)
     assert records[0].source_type == "dingtalk_kb_live"
     assert records[0].evidence_strength == "kb_live_doc"
     assert "客户合作" in records[0].excerpt
-    assert (tmp_path / "cache" / "doc-1.md").exists()
+    assert len(list((tmp_path / "cache").glob("node_*.md"))) == 1
+
+
+class FakePaginatedDwsForKnowledgeBase:
+    def __init__(self):
+        self.page_tokens = []
+
+    def list_doc_nodes(self, workspace_id=None, folder_id=None, page_token=""):
+        self.page_tokens.append(page_token)
+        nodes_by_page = {
+            "": (
+                [
+                    {
+                        "nodeId": "doc-1",
+                        "name": "战略判断.md",
+                        "contentType": "ALIDOC",
+                        "extension": "adoc",
+                    }
+                ],
+                "page-2",
+            ),
+            "page-2": (
+                [
+                    {
+                        "nodeId": "doc-2",
+                        "name": "审批判断.md",
+                        "contentType": "ALIDOC",
+                        "extension": "adoc",
+                    }
+                ],
+                "",
+            ),
+        }
+        nodes, next_token = nodes_by_page[page_token]
+        return {"result": {"nodes": nodes, "nextToken": next_token}}
+
+    def doc_info(self, node):
+        return {"result": {"nodeId": node, "name": f"{node}.md"}}
+
+    def read_doc(self, node):
+        return {"result": {"markdown": f"{node} 内容：先看目标、边界和交付闭环。"}}
+
+
+def test_collect_dingtalk_kb_evidence_follows_doc_list_pagination(tmp_path: Path):
+    dws = FakePaginatedDwsForKnowledgeBase()
+
+    records = collect_dingtalk_kb_evidence(dws=dws, cache_dir=tmp_path / "cache")
+
+    assert dws.page_tokens == ["", "page-2"]
+    assert [record.location for record in records] == [
+        "dingtalk-kb:doc-1",
+        "dingtalk-kb:doc-2",
+    ]
+
+
+class FakePathTraversalDwsForKnowledgeBase:
+    def list_doc_nodes(self, workspace_id=None, folder_id=None, page_token=""):
+        return {
+            "result": {
+                "nodes": [
+                    {
+                        "nodeId": "../escape",
+                        "name": "escape.md",
+                        "contentType": "ALIDOC",
+                        "extension": "adoc",
+                    }
+                ]
+            }
+        }
+
+    def doc_info(self, node):
+        return {"result": {"nodeId": node, "name": "escape.md"}}
+
+    def read_doc(self, node):
+        return {"result": {"markdown": "客户合作先看目标、边界和交付闭环。"}}
+
+
+def test_collect_dingtalk_kb_evidence_hashes_cache_filename(tmp_path: Path):
+    cache_dir = tmp_path / "cache"
+
+    records = collect_dingtalk_kb_evidence(
+        dws=FakePathTraversalDwsForKnowledgeBase(),
+        cache_dir=cache_dir,
+    )
+
+    assert len(records) == 1
+    assert records[0].location == "dingtalk-kb:../escape"
+    assert not (tmp_path / "escape.md").exists()
+    assert len(list(cache_dir.glob("node_*.md"))) == 1
+
+
+class FakeSensitiveDwsForKnowledgeBase:
+    def list_doc_nodes(self, workspace_id=None, folder_id=None, page_token=""):
+        return {
+            "result": {
+                "nodes": [
+                    {
+                        "nodeId": "doc-personnel",
+                        "name": "候选人面试.md",
+                        "contentType": "ALIDOC",
+                        "extension": "adoc",
+                    }
+                ]
+            }
+        }
+
+    def doc_info(self, node):
+        return {"result": {"nodeId": node, "name": "候选人面试.md"}}
+
+    def read_doc(self, node):
+        return {"result": {"markdown": "候选人面试判断需要结合岗位目标和证据。"}}
+
+
+def test_collect_dingtalk_kb_evidence_classifies_sensitive_docs(tmp_path: Path):
+    records = collect_dingtalk_kb_evidence(
+        dws=FakeSensitiveDwsForKnowledgeBase(),
+        cache_dir=tmp_path / "cache",
+    )
+
+    assert records[0].sensitivity == "internal_personnel"

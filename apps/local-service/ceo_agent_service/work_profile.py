@@ -191,6 +191,19 @@ def _doc_nodes_from_payload(payload: dict) -> list[dict]:
     return []
 
 
+def _doc_next_page_token(payload: dict) -> str:
+    result = payload.get("result", payload)
+    if not isinstance(result, dict):
+        return ""
+    token = (
+        result.get("nextPageToken")
+        or result.get("nextToken")
+        or result.get("next_page_token")
+        or ""
+    )
+    return str(token) if token else ""
+
+
 def _doc_markdown_from_payload(payload: dict) -> str:
     result = payload.get("result", payload)
     if isinstance(result, dict):
@@ -204,6 +217,11 @@ def _doc_markdown_from_payload(payload: dict) -> str:
     return ""
 
 
+def _dingtalk_kb_cache_path(cache_dir: Path, node_id: str) -> Path:
+    digest = hashlib.sha256(node_id.encode("utf-8")).hexdigest()[:16]
+    return cache_dir / f"node_{digest}.md"
+
+
 def collect_dingtalk_kb_evidence(
     *,
     dws,
@@ -214,44 +232,56 @@ def collect_dingtalk_kb_evidence(
 ) -> list[EvidenceRecord]:
     cache_dir.mkdir(parents=True, exist_ok=True)
     records: list[EvidenceRecord] = []
-    payload = dws.list_doc_nodes(workspace_id=workspace_id, folder_id=folder_id)
-    for node in _doc_nodes_from_payload(payload):
-        if len(records) >= limit:
-            break
-        node_id = str(node.get("nodeId") or node.get("dentryUuid") or "")
-        if not node_id:
-            continue
-        extension = str(node.get("extension") or "").lower()
-        content_type = str(node.get("contentType") or "").upper()
-        if extension != "adoc" and content_type != "ALIDOC":
-            continue
-        info = dws.doc_info(node_id)
-        markdown = _doc_markdown_from_payload(dws.read_doc(node_id)).strip()
-        if not markdown:
-            continue
-        cache_path = cache_dir / f"{node_id}.md"
-        cache_path.write_text(markdown, encoding="utf-8")
-        info_result = info.get("result", info) if isinstance(info, dict) else {}
-        title = str(info_result.get("name") or node.get("name") or node_id)
-        location = f"dingtalk-kb:{node_id}"
-        records.append(
-            EvidenceRecord(
-                id=evidence_id("dingtalk_kb_live", location, markdown[:1000]),
-                source_type="dingtalk_kb_live",
-                title=title,
-                timestamp=str(
-                    info_result.get("modifiedTime")
-                    or info_result.get("createdTime")
-                    or ""
-                ),
-                location=location,
-                scenario="general",
-                evidence_strength="kb_live_doc",
-                sensitivity="general",
-                excerpt=safe_excerpt(markdown),
-                usable_for_profile=True,
-            )
+    page_token = ""
+    seen_page_tokens: set[str] = set()
+    while len(records) < limit:
+        payload = dws.list_doc_nodes(
+            workspace_id=workspace_id,
+            folder_id=folder_id,
+            page_token=page_token,
         )
+        for node in _doc_nodes_from_payload(payload):
+            if len(records) >= limit:
+                break
+            node_id = str(node.get("nodeId") or node.get("dentryUuid") or "")
+            if not node_id:
+                continue
+            extension = str(node.get("extension") or "").lower()
+            content_type = str(node.get("contentType") or "").upper()
+            if extension != "adoc" and content_type != "ALIDOC":
+                continue
+            info = dws.doc_info(node_id)
+            markdown = _doc_markdown_from_payload(dws.read_doc(node_id)).strip()
+            if not markdown:
+                continue
+            cache_path = _dingtalk_kb_cache_path(cache_dir, node_id)
+            cache_path.write_text(markdown, encoding="utf-8")
+            info_result = info.get("result", info) if isinstance(info, dict) else {}
+            title = str(info_result.get("name") or node.get("name") or node_id)
+            location = f"dingtalk-kb:{node_id}"
+            records.append(
+                EvidenceRecord(
+                    id=evidence_id("dingtalk_kb_live", location, markdown[:1000]),
+                    source_type="dingtalk_kb_live",
+                    title=title,
+                    timestamp=str(
+                        info_result.get("modifiedTime")
+                        or info_result.get("createdTime")
+                        or ""
+                    ),
+                    location=location,
+                    scenario="general",
+                    evidence_strength="kb_live_doc",
+                    sensitivity=classify_local_doc_sensitivity(location, markdown),
+                    excerpt=safe_excerpt(markdown),
+                    usable_for_profile=True,
+                )
+            )
+        next_page_token = _doc_next_page_token(payload)
+        if not next_page_token or next_page_token in seen_page_tokens:
+            break
+        seen_page_tokens.add(next_page_token)
+        page_token = next_page_token
     return records
 
 
