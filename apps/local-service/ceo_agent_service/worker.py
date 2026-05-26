@@ -301,6 +301,19 @@ class DingTalkAutoReplyWorker:
                 self._process_queued_task(conversation, task)
             except Exception as exc:
                 error = str(exc)
+                if self._is_authorization_error(exc):
+                    self.store.defer_reply_task_for_authorization(task.id, error)
+                    self.store.record_error(
+                        task.conversation_id,
+                        task.trigger_message_id,
+                        "reply_task_authorization",
+                        error,
+                    )
+                    self._notify(
+                        title=f"CEO task waiting for authorization: {task.conversation_title}",
+                        message=error[:120],
+                    )
+                    continue
                 if task.attempts < self.max_task_attempts:
                     self.store.requeue_reply_task(task.id, error)
                     self.store.record_error(
@@ -329,6 +342,17 @@ class DingTalkAutoReplyWorker:
             self.store.complete_reply_task(task.id)
             processed_tasks += 1
         return processed_tasks
+
+    @staticmethod
+    def _is_authorization_error(exc: Exception) -> bool:
+        if getattr(exc, "needs_authorization", False):
+            return True
+        cause = exc.__cause__
+        while cause is not None:
+            if getattr(cause, "needs_authorization", False):
+                return True
+            cause = cause.__cause__
+        return False
 
     def _process_queued_task(
         self, conversation: DingTalkConversation, task: ReplyTask

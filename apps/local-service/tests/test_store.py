@@ -118,6 +118,27 @@ def test_requeue_reply_task_keeps_attempt_count_for_retry(tmp_path: Path):
     assert reclaimed[0].error == "temporary dws auth failure"
 
 
+def test_defer_reply_task_for_authorization_refunds_claim_attempt(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="cid-1",
+        conversation_title="Friday",
+        single_chat=False,
+        trigger_message_id="msg-1",
+        trigger_create_time="2026-05-13 18:00:00",
+        trigger_sender="Mina",
+        trigger_text="@Derek Zen 看一下",
+    )
+    claimed = store.claim_reply_tasks(limit=1)
+
+    store.defer_reply_task_for_authorization(claimed[0].id, "authorization required")
+    reclaimed = store.claim_reply_tasks(limit=1)
+
+    assert reclaimed[0].id == claimed[0].id
+    assert reclaimed[0].attempts == 1
+    assert reclaimed[0].error == "authorization required"
+
+
 def test_reset_codex_sessions_clears_conversation_mapping_only(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.upsert_conversation("cid-1", "Friday", False, "session-1")

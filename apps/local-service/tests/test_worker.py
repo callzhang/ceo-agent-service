@@ -1,5 +1,6 @@
 from datetime import datetime
 from pathlib import Path
+import sqlite3
 from zoneinfo import ZoneInfo
 
 from ceo_agent_service.corpus import CorpusRecord
@@ -620,6 +621,52 @@ def test_consume_once_retries_task_failure_before_final_failure(
     assert worker.store.count_errors() == 2
     assert notifications[0]["title"] == "CEO task retrying: Friday"
     assert notifications[-1]["title"] == "CEO task failed: Friday"
+
+
+def test_consume_once_authorization_failure_waits_without_final_failure(
+    tmp_path: Path, monkeypatch
+):
+    notifications = []
+    trigger = message("@Derek Zen(磊哥) 这个怎么处理？")
+    dws = FakeDws(
+        [conversation()],
+        {"cid-1": [trigger]},
+        send_error=DwsError(
+            "PAT_HIGH_RISK_NO_PERMISSION authorization required",
+            code="PAT_HIGH_RISK_NO_PERMISSION",
+        ),
+    )
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="先按A方案走")
+    )
+    worker = make_worker(
+        tmp_path,
+        dws,
+        codex,
+        monkeypatch,
+        max_task_attempts=1,
+    )
+    monkeypatch.setattr(
+        "ceo_agent_service.worker.send_macos_notification",
+        lambda **kwargs: notifications.append(kwargs),
+    )
+    worker.produce_once()
+
+    assert worker.consume_once(max_tasks=1) == 0
+    assert worker.consume_once(max_tasks=1) == 0
+    assert worker.store.count_reply_tasks(status="pending") == 1
+    assert worker.store.count_reply_tasks(status="failed") == 0
+    assert any(
+        notification["title"] == "CEO task waiting for authorization: Friday"
+        for notification in notifications
+    )
+    assert not any(
+        notification["title"] == "CEO task failed: Friday"
+        for notification in notifications
+    )
+    with sqlite3.connect(tmp_path / "worker.sqlite3") as db:
+        attempts = db.execute("select attempts from reply_tasks").fetchone()[0]
+    assert attempts == 0
 
 
 def test_unresolvable_non_candidate_sender_does_not_block_conversation(
