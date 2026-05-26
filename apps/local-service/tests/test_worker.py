@@ -1,8 +1,10 @@
 from datetime import datetime
+import json
 from pathlib import Path
 import sqlite3
 from zoneinfo import ZoneInfo
 
+from ceo_agent_service.codex_decision import CodexDecisionRunner
 from ceo_agent_service.corpus import CorpusRecord
 from ceo_agent_service.dingtalk_models import (
     CodexAction,
@@ -382,6 +384,130 @@ def make_worker(
         now_provider=fixed_worker_now,
         max_task_attempts=max_task_attempts,
     )
+
+
+def developer_instructions_from_command(command: list[str]) -> str:
+    for index, item in enumerate(command):
+        if item != "-c":
+            continue
+        value = command[index + 1]
+        if value.startswith("developer_instructions="):
+            return json.loads(value.split("=", 1)[1])
+    raise AssertionError("developer_instructions config missing")
+
+
+def write_profile_for_consumer_test(tmp_path: Path, monkeypatch) -> str:
+    profile = tmp_path / "profiles" / "derek_work_profile.md"
+    content = """# Derek Work Profile
+
+## 核心心智模型
+
+### 模型1: 结果闭环高于动作勤奋
+
+**一句话**：不要基于一句话拍板，先看材料是否完整、结果是否可验证。
+
+## 决策启发式
+
+1. **材料不完整时先追问，不拍板**：审批、候选人、客户、方案、PPT、预算缺正文或附件时，不给最终判断。
+   - 应用场景：审批、招聘、客户材料、文档 review、最终版确认。
+   - 案例：需要本人确认最终版或审批时，分身只 handoff，不代替承诺。
+
+## 表达DNA
+
+- 节奏：先给结论，再给原因和下一步；材料不足时直接收敛到一个追问。
+
+## 诚实边界
+
+- 不替 Derek 做最终人事、审批、财务、法律或客户关键承诺。
+- 不声称 Derek 已经做了现实动作。
+- 材料不足时不编造结论。
+"""
+    profile.parent.mkdir(parents=True)
+    profile.write_text(content, encoding="utf-8")
+    monkeypatch.setenv("CEO_WORK_PROFILE_PATH", str(profile))
+    return content
+
+
+def test_consumer_codex_command_embeds_work_profile_content(
+    tmp_path: Path, monkeypatch
+):
+    profile_content = write_profile_for_consumer_test(tmp_path, monkeypatch)
+    seen_instructions = []
+
+    def executor(command: list[str], prompt: str) -> str:
+        seen_instructions.append(developer_instructions_from_command(command))
+        return json.dumps(
+            {
+                "action": "ask_clarifying_question",
+                "reply_text": "先把岗位要求和候选人简历补齐，我再判断是否推进。",
+                "reason": "profile says incomplete materials require clarification",
+                "audit_summary": "仅根据当前消息判断，材料不足，需要追问。",
+            },
+            ensure_ascii=False,
+        )
+
+    dws = FakeDws(
+        [conversation()],
+        {"cid-1": [message("@Derek Zen(磊哥) 这个候选人可以推进吗？")]},
+    )
+    codex = CodexDecisionRunner(
+        workspace=tmp_path,
+        executor=executor,
+        codex_home=tmp_path,
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+
+    worker.run_once()
+
+    assert len(seen_instructions) == 1
+    instructions = seen_instructions[0]
+    assert "Derek 工作人格 Profile" in instructions
+    assert "Profile 内容:" in instructions
+    assert profile_content in instructions
+    assert "材料不完整时先追问，不拍板" in instructions
+    assert final_sent(dws)
+
+
+def test_consumer_uses_profile_to_ask_for_missing_candidate_materials(
+    tmp_path: Path, monkeypatch
+):
+    write_profile_for_consumer_test(tmp_path, monkeypatch)
+
+    def executor(command: list[str], prompt: str) -> str:
+        instructions = developer_instructions_from_command(command)
+        assert "材料不完整时先追问，不拍板" in instructions
+        assert "这个候选人可以推进吗" in prompt
+        return json.dumps(
+            {
+                "action": "ask_clarifying_question",
+                "reply_text": "先把岗位要求和候选人简历补齐，我再判断是否推进。",
+                "reason": "candidate judgment lacks role and resume materials",
+                "audit_summary": "仅根据当前消息判断，缺少岗位要求和简历内容，按 profile 先追问材料。",
+            },
+            ensure_ascii=False,
+        )
+
+    dws = FakeDws(
+        [conversation()],
+        {"cid-1": [message("@Derek Zen(磊哥) 这个候选人可以推进吗？")]},
+    )
+    codex = CodexDecisionRunner(
+        workspace=tmp_path,
+        executor=executor,
+        codex_home=tmp_path,
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+
+    worker.run_once()
+
+    sent = final_sent(dws)
+    assert len(sent) == 1
+    assert "先把岗位要求和候选人简历补齐" in sent[0][1]
+    assert "可以推进。（by" not in sent[0][1]
+    attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
+    assert attempt is not None
+    assert attempt.action == CodexAction.ASK_CLARIFYING_QUESTION.value
+    assert "按 profile 先追问材料" in attempt.audit_summary
 
 
 def test_group_without_derek_mention_does_not_call_codex_or_send(

@@ -32,6 +32,7 @@ def work_profile_instruction() -> str:
     path = work_profile_path()
     if not path.exists():
         return ""
+    profile = path.read_text(encoding="utf-8").strip()
     return f"""
 
 Derek 工作人格 Profile:
@@ -39,6 +40,11 @@ Derek 工作人格 Profile:
 - profile 的项目相对路径是 `profiles/derek_work_profile.md`；读取后学习心智模型、决策启发式、表达DNA、价值观/反模式、核心张力和场景硬规则。
 - 使用 profile 时不要逐字复述章节名、证据 id、本地路径或调研过程；只把它转化为更接近 Derek 的判断顺序、追问方式和回复边界。
 - profile 不能覆盖既有硬规则：现实动作必须 handoff、审批/OA 必须看完整材料、人事敏感问题谨慎处理、候选人判断必须看岗位和简历证据、reply_text 不得暴露本地路径或工具细节。
+
+Profile 内容:
+```markdown
+{profile}
+```
 """
 
 

@@ -140,6 +140,8 @@ def test_codex_developer_instructions_include_work_profile_when_present(
 
     assert "Derek 工作人格 Profile" in instructions
     assert str(profile) in instructions
+    assert "# Derek Work Profile" in instructions
+    assert "先判断材料是否完整" in instructions
     assert "profiles/derek_work_profile.md" in instructions
     assert "心智模型、决策启发式、表达DNA" in instructions
     assert "不能覆盖既有硬规则" in instructions
