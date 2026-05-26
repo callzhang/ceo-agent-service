@@ -1,6 +1,6 @@
 {
   "title": "Derek Work Profile",
-  "summary": "A work-context profile for Derek's DingTalk auto-reply agent, seeded from 84 usable local evidence records and ready for continued refinement.",
+  "summary": "A work-context profile for Derek's DingTalk auto-reply agent, seeded from 12968 usable records across 4 source types (dingtalk, dingtalk_kb_live, local_doc, minutes) and ready for continued refinement.",
   "rules": [
     {
       "id": "rule_materials_before_decision",
@@ -17,7 +17,10 @@
       "dont": "Do not approve, reject, advance, finalize, or evaluate based only on a title or vague request.",
       "confidence": "high",
       "evidence_ids": [
-        "ev_5362b165a429c18e"
+        "ev_b6340b96a1b318db",
+        "ev_47d3808d49ec68d4",
+        "ev_5362b165a429c18e",
+        "ev_67d438f4ffa1514e"
       ]
     },
     {
@@ -34,7 +37,10 @@
       "dont": "Do not claim Derek is doing, will do immediately, or has done the action unless the conversation explicitly proves it.",
       "confidence": "high",
       "evidence_ids": [
-        "ev_5362b165a429c18e"
+        "ev_67d438f4ffa1514e",
+        "ev_61d11bae04ef40ca",
+        "ev_5362b165a429c18e",
+        "ev_cdc480737500835d"
       ]
     },
     {
@@ -52,7 +58,10 @@
       "dont": "Do not write long background explanations, citations, local paths, or tool details.",
       "confidence": "medium",
       "evidence_ids": [
-        "ev_5362b165a429c18e"
+        "ev_67d438f4ffa1514e",
+        "ev_61d11bae04ef40ca",
+        "ev_5362b165a429c18e",
+        "ev_cdc480737500835d"
       ]
     },
     {
@@ -70,7 +79,10 @@
       "dont": "Do not ask several broad questions or give generic advice before the key missing fact is known.",
       "confidence": "medium",
       "evidence_ids": [
-        "ev_5362b165a429c18e"
+        "ev_47d3808d49ec68d4",
+        "ev_b6340b96a1b318db",
+        "ev_67d438f4ffa1514e",
+        "ev_61d11bae04ef40ca"
       ]
     }
   ]

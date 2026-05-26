@@ -103,10 +103,44 @@ def test_parser_supports_send_attempt_command():
 def test_build_work_profile_command_is_registered():
     parser = build_parser()
 
-    args = parser.parse_args(["build-work-profile", "--workspace", "/tmp/memory"])
+    args = parser.parse_args(
+        [
+            "build-work-profile",
+            "--workspace",
+            "/tmp/memory",
+            "--include-dingtalk-messages",
+            "--include-dingtalk-kb",
+            "--dingtalk-message-target-count",
+            "25",
+        ]
+    )
 
     assert args.command == "build-work-profile"
     assert args.workspace == "/tmp/memory"
+    assert args.include_dingtalk_messages is True
+    assert args.include_dingtalk_kb is True
+    assert args.dingtalk_message_target_count == 25
+
+
+def test_build_work_profile_command_uses_all_sources_by_default():
+    parser = build_parser()
+
+    args = parser.parse_args(["build-work-profile"])
+
+    assert args.skip_minutes_corpus is False
+    assert args.include_dingtalk_messages is True
+    assert args.include_dingtalk_kb is True
+
+
+def test_build_work_profile_command_can_skip_live_sources_in_parser():
+    parser = build_parser()
+
+    args = parser.parse_args(
+        ["build-work-profile", "--skip-dingtalk-messages", "--skip-dingtalk-kb"]
+    )
+
+    assert args.include_dingtalk_messages is False
+    assert args.include_dingtalk_kb is False
 
 
 def test_build_work_profile_command_writes_repo_assets(tmp_path, monkeypatch):
@@ -121,6 +155,17 @@ def test_build_work_profile_command_writes_repo_assets(tmp_path, monkeypatch):
 
     monkeypatch.setenv("CEO_WORK_PROFILE_PATH", str(profile_path))
     monkeypatch.setenv("CEO_PROFILE_EVIDENCE_DIR", str(evidence_dir))
+    calls = []
+    monkeypatch.setattr(
+        cli,
+        "build_style_corpus",
+        lambda workspace, corpus_dir: calls.append(("minutes", workspace, corpus_dir)) or 2,
+    )
+    monkeypatch.setattr(
+        cli,
+        "collect_corpus",
+        lambda settings, target_count=1000: calls.append(("dingtalk", target_count)) or 3,
+    )
     monkeypatch.setattr(
         cli,
         "collect_existing_corpus_evidence",
@@ -140,17 +185,75 @@ def test_build_work_profile_command_writes_repo_assets(tmp_path, monkeypatch):
         ],
     )
     monkeypatch.setattr(cli, "collect_local_doc_evidence", lambda path: [])
-    monkeypatch.setattr(cli, "collect_dingtalk_kb_evidence", lambda **kwargs: [])
+    monkeypatch.setattr(
+        cli,
+        "collect_dingtalk_kb_evidence",
+        lambda **kwargs: [
+            EvidenceRecord(
+                id="ev_kb",
+                source_type="dingtalk_kb_live",
+                title="知识库",
+                location="dingtalk-kb:node-1",
+                scenario="business",
+                evidence_strength="kb_live_doc",
+                sensitivity="general",
+                excerpt="知识库材料。",
+                usable_for_profile=True,
+            )
+        ],
+    )
 
     settings = WorkerSettings(workspace=workspace, corpus_dir=corpus_dir)
 
-    count = build_work_profile_command(settings, include_dingtalk_kb=False)
+    count = build_work_profile_command(
+        settings,
+        include_dingtalk_messages=True,
+        include_dingtalk_kb=True,
+    )
 
-    assert count == 1
+    assert count == 2
+    assert calls == [
+        ("minutes", workspace, corpus_dir),
+        ("dingtalk", 1000),
+    ]
     assert profile_path.exists()
     assert profile_json.exists()
     assert skill_path.exists()
     assert (evidence_dir / "evidence_index.jsonl").exists()
+
+
+def test_build_work_profile_command_can_skip_live_sources(tmp_path, monkeypatch):
+    calls = []
+    monkeypatch.setenv(
+        "CEO_WORK_PROFILE_PATH",
+        str(tmp_path / "profiles" / "derek_work_profile.md"),
+    )
+    monkeypatch.setenv(
+        "CEO_PROFILE_EVIDENCE_DIR",
+        str(tmp_path / "data" / "profile-evidence"),
+    )
+    monkeypatch.setattr(cli, "build_style_corpus", lambda *args, **kwargs: 0)
+    monkeypatch.setattr(
+        cli,
+        "collect_corpus",
+        lambda *args, **kwargs: calls.append("collect_corpus") or 0,
+    )
+    monkeypatch.setattr(cli, "collect_existing_corpus_evidence", lambda path: [])
+    monkeypatch.setattr(cli, "collect_local_doc_evidence", lambda path: [])
+    monkeypatch.setattr(
+        cli,
+        "collect_dingtalk_kb_evidence",
+        lambda **kwargs: calls.append("collect_dingtalk_kb_evidence") or [],
+    )
+
+    count = build_work_profile_command(
+        WorkerSettings(workspace=tmp_path / "memory", corpus_dir=tmp_path / "corpus"),
+        include_dingtalk_messages=False,
+        include_dingtalk_kb=False,
+    )
+
+    assert count == 0
+    assert calls == []
 
 
 def test_settings_defaults_point_to_memory_home():

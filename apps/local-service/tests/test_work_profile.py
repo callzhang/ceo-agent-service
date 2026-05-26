@@ -339,6 +339,47 @@ def test_collect_dingtalk_kb_evidence_classifies_sensitive_docs(tmp_path: Path):
     assert records[0].sensitivity == "internal_personnel"
 
 
+class FakeMixedFileTypeDwsForKnowledgeBase:
+    def __init__(self):
+        self.read_nodes = []
+
+    def list_doc_nodes(self, workspace_id=None, folder_id=None, page_token=""):
+        return {
+            "result": {
+                "nodes": [
+                    {
+                        "nodeId": "sheet-1",
+                        "name": "表格",
+                        "contentType": "ALIDOC",
+                        "extension": "axls",
+                    },
+                    {
+                        "nodeId": "doc-1",
+                        "name": "文档",
+                        "contentType": "ALIDOC",
+                        "extension": "adoc",
+                    },
+                ]
+            }
+        }
+
+    def doc_info(self, node):
+        return {"result": {"nodeId": node, "name": f"{node}.md"}}
+
+    def read_doc(self, node):
+        self.read_nodes.append(node)
+        return {"result": {"markdown": "文档内容用于判断。"}}
+
+
+def test_collect_dingtalk_kb_evidence_skips_non_adoc_nodes(tmp_path: Path):
+    dws = FakeMixedFileTypeDwsForKnowledgeBase()
+
+    records = collect_dingtalk_kb_evidence(dws=dws, cache_dir=tmp_path / "cache")
+
+    assert dws.read_nodes == ["doc-1"]
+    assert [record.location for record in records] == ["dingtalk-kb:doc-1"]
+
+
 def test_render_markdown_profile_contains_required_sections():
     profile = WorkProfile(
         title="Derek Work Profile",
@@ -377,6 +418,56 @@ def test_build_initial_profile_without_evidence_is_explicit_seed():
     assert "Initial deterministic seed" in profile.summary
     assert "derived from local behavior evidence" not in profile.summary
     assert profile.rules[0].evidence_ids == ["ev_manual_profile_seed"]
+
+
+def test_build_initial_profile_uses_distinct_evidence_sources():
+    evidence = [
+        EvidenceRecord(
+            id="ev_local",
+            source_type="local_doc",
+            title="战略文档",
+            location="Thinking/strategy.md",
+            sensitivity="general",
+            excerpt="本地文档",
+        ),
+        EvidenceRecord(
+            id="ev_minutes",
+            source_type="minutes",
+            title="会议听记",
+            location="AI听记/meeting.md",
+            sensitivity="general",
+            evidence_strength="behavior_high",
+            excerpt="会议发言",
+        ),
+        EvidenceRecord(
+            id="ev_dingtalk",
+            source_type="dingtalk",
+            title="客户群",
+            location="cid/msg",
+            sensitivity="customer",
+            evidence_strength="behavior_high",
+            excerpt="钉钉消息",
+        ),
+        EvidenceRecord(
+            id="ev_kb",
+            source_type="dingtalk_kb_live",
+            title="审批制度",
+            location="dingtalk-kb:node-1",
+            sensitivity="approval",
+            evidence_strength="kb_live_doc",
+            excerpt="知识库文档",
+        ),
+    ]
+
+    profile = build_initial_profile(evidence)
+    referenced_ids = {
+        evidence_id
+        for rule in profile.rules
+        for evidence_id in rule.evidence_ids
+    }
+
+    assert "4 usable records across 4 source types" in profile.summary
+    assert referenced_ids == {"ev_local", "ev_minutes", "ev_dingtalk", "ev_kb"}
 
 
 def test_render_skill_marks_manual_use_not_runtime_dependency():

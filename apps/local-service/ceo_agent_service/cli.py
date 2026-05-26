@@ -253,10 +253,53 @@ def build_parser() -> argparse.ArgumentParser:
         if command == "send-attempt":
             subparser.add_argument("--attempt-id", type=int, required=True)
         if command == "build-work-profile":
+            include_dingtalk_messages_default = not _env_bool(
+                "CEO_PROFILE_SKIP_DINGTALK_MESSAGES", False
+            )
+            include_dingtalk_kb_default = not _env_bool(
+                "CEO_PROFILE_SKIP_DINGTALK_KB", False
+            )
+            subparser.set_defaults(
+                include_dingtalk_messages=include_dingtalk_messages_default,
+                include_dingtalk_kb=include_dingtalk_kb_default,
+            )
+            subparser.add_argument(
+                "--skip-minutes-corpus",
+                action="store_true",
+                default=_env_bool("CEO_PROFILE_SKIP_MINUTES_CORPUS", False),
+                help="skip rebuilding local AI minutes corpus before profile generation",
+            )
+            subparser.add_argument(
+                "--include-dingtalk-messages",
+                dest="include_dingtalk_messages",
+                action="store_true",
+                help="read recent messages sent by Derek through dws in read-only mode",
+            )
+            subparser.add_argument(
+                "--skip-dingtalk-messages",
+                dest="include_dingtalk_messages",
+                action="store_false",
+                help="skip DingTalk sent-message collection",
+            )
+            subparser.add_argument(
+                "--dingtalk-message-target-count",
+                type=_positive_int,
+                default=_positive_int(
+                    os.getenv("CEO_PROFILE_DINGTALK_MESSAGE_TARGET_COUNT", "1000")
+                ),
+                help="maximum DingTalk sent-message records to collect for profile evidence",
+            )
             subparser.add_argument(
                 "--include-dingtalk-kb",
+                dest="include_dingtalk_kb",
                 action="store_true",
                 help="read online DingTalk knowledge base docs in read-only mode",
+            )
+            subparser.add_argument(
+                "--skip-dingtalk-kb",
+                dest="include_dingtalk_kb",
+                action="store_false",
+                help="skip online DingTalk knowledge base collection",
             )
             subparser.add_argument(
                 "--dingtalk-kb-workspace",
@@ -923,11 +966,19 @@ def collect_corpus(settings: WorkerSettings, target_count: int = 1000) -> int:
 def build_work_profile_command(
     settings: WorkerSettings,
     *,
-    include_dingtalk_kb: bool = False,
+    refresh_minutes_corpus: bool = True,
+    include_dingtalk_messages: bool = True,
+    dingtalk_message_target_count: int = 1000,
+    include_dingtalk_kb: bool = True,
     dingtalk_kb_workspace: str = "",
 ) -> int:
     evidence_dir = profile_evidence_dir()
     evidence_dir.mkdir(parents=True, exist_ok=True)
+    if refresh_minutes_corpus:
+        build_style_corpus(settings.workspace, settings.corpus_dir)
+    if include_dingtalk_messages:
+        collect_corpus(settings, target_count=dingtalk_message_target_count)
+
     evidence = []
     evidence.extend(
         collect_existing_corpus_evidence(settings.corpus_dir / "derek_style_corpus.csv")
@@ -1023,6 +1074,9 @@ def main() -> None:
     elif args.command == "build-work-profile":
         build_work_profile_command(
             settings,
+            refresh_minutes_corpus=not args.skip_minutes_corpus,
+            include_dingtalk_messages=args.include_dingtalk_messages,
+            dingtalk_message_target_count=args.dingtalk_message_target_count,
             include_dingtalk_kb=args.include_dingtalk_kb,
             dingtalk_kb_workspace=args.dingtalk_kb_workspace,
         )

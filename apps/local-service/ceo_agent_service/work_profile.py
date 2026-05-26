@@ -248,7 +248,9 @@ def collect_dingtalk_kb_evidence(
                 continue
             extension = str(node.get("extension") or "").lower()
             content_type = str(node.get("contentType") or "").upper()
-            if extension != "adoc" and content_type != "ALIDOC":
+            if extension and extension != "adoc":
+                continue
+            if not extension and content_type != "ALIDOC":
                 continue
             info = dws.doc_info(node_id)
             markdown = _doc_markdown_from_payload(dws.read_doc(node_id)).strip()
@@ -389,14 +391,50 @@ Do not use this skill as the automated DingTalk runtime. The runtime reads `prof
 """
 
 
+def _evidence_source_summary(evidence: list[EvidenceRecord]) -> str:
+    source_types = sorted({record.source_type for record in evidence})
+    return ", ".join(source_types) if source_types else "none"
+
+
+def _pick_evidence_ids(
+    evidence: list[EvidenceRecord],
+    *,
+    preferred_sensitivities: tuple[str, ...] = (),
+    preferred_source_types: tuple[str, ...] = (),
+    limit: int = 4,
+) -> list[str]:
+    selected: list[str] = []
+
+    def append(record: EvidenceRecord) -> None:
+        if record.usable_for_profile and record.id not in selected:
+            selected.append(record.id)
+
+    for sensitivity in preferred_sensitivities:
+        for record in evidence:
+            if record.sensitivity == sensitivity:
+                append(record)
+                break
+    for source_type in preferred_source_types:
+        for record in evidence:
+            if record.source_type == source_type:
+                append(record)
+                break
+    for record in evidence:
+        append(record)
+        if len(selected) >= limit:
+            break
+
+    return selected[:limit] or ["ev_manual_profile_seed"]
+
+
 def build_initial_profile(evidence: list[EvidenceRecord]) -> WorkProfile:
-    usable_ids = [record.id for record in evidence if record.usable_for_profile]
-    fallback_id = usable_ids[0] if usable_ids else "ev_manual_profile_seed"
-    if usable_ids:
+    usable_evidence = [record for record in evidence if record.usable_for_profile]
+    if usable_evidence:
         summary = (
             "A work-context profile for Derek's DingTalk auto-reply agent, "
-            f"seeded from {len(usable_ids)} usable local evidence records and "
-            "ready for continued refinement."
+            f"seeded from {len(usable_evidence)} usable records across "
+            f"{len({record.source_type for record in usable_evidence})} source types "
+            f"({_evidence_source_summary(usable_evidence)}) and ready for continued refinement."
         )
     else:
         summary = (
@@ -404,6 +442,24 @@ def build_initial_profile(evidence: list[EvidenceRecord]) -> WorkProfile:
             "profile. It defines the first runtime-safe judgment framework and "
             "will be replaced or refined as local evidence is collected."
         )
+    decision_evidence_ids = _pick_evidence_ids(
+        usable_evidence,
+        preferred_sensitivities=("approval", "customer", "internal_personnel"),
+        preferred_source_types=("dingtalk", "minutes", "dingtalk_kb_live", "local_doc"),
+    )
+    handoff_evidence_ids = _pick_evidence_ids(
+        usable_evidence,
+        preferred_source_types=("dingtalk", "minutes", "local_doc", "dingtalk_kb_live"),
+    )
+    expression_evidence_ids = _pick_evidence_ids(
+        usable_evidence,
+        preferred_source_types=("dingtalk", "minutes", "local_doc", "dingtalk_kb_live"),
+    )
+    follow_up_evidence_ids = _pick_evidence_ids(
+        usable_evidence,
+        preferred_sensitivities=("customer", "approval"),
+        preferred_source_types=("dingtalk", "minutes", "local_doc", "dingtalk_kb_live"),
+    )
     return WorkProfile(
         title="Derek Work Profile",
         summary=summary,
@@ -433,7 +489,7 @@ def build_initial_profile(evidence: list[EvidenceRecord]) -> WorkProfile:
                     "based only on a title or vague request."
                 ),
                 confidence="high",
-                evidence_ids=[fallback_id],
+                evidence_ids=decision_evidence_ids,
             ),
             WorkProfileRule(
                 id="rule_real_world_actions_handoff",
@@ -451,7 +507,7 @@ def build_initial_profile(evidence: list[EvidenceRecord]) -> WorkProfile:
                     "done the action unless the conversation explicitly proves it."
                 ),
                 confidence="high",
-                evidence_ids=[fallback_id],
+                evidence_ids=handoff_evidence_ids,
             ),
             WorkProfileRule(
                 id="rule_short_conclusion_next_step",
@@ -470,7 +526,7 @@ def build_initial_profile(evidence: list[EvidenceRecord]) -> WorkProfile:
                     "local paths, or tool details."
                 ),
                 confidence="medium",
-                evidence_ids=[fallback_id],
+                evidence_ids=expression_evidence_ids,
             ),
             WorkProfileRule(
                 id="rule_focus_follow_up",
@@ -484,7 +540,7 @@ def build_initial_profile(evidence: list[EvidenceRecord]) -> WorkProfile:
                     "before the key missing fact is known."
                 ),
                 confidence="medium",
-                evidence_ids=[fallback_id],
+                evidence_ids=follow_up_evidence_ids,
             ),
         ],
     )

@@ -1,6 +1,6 @@
 # Derek Work Profile
 
-A work-context profile for Derek's DingTalk auto-reply agent, seeded from 84 usable local evidence records and ready for continued refinement.
+A work-context profile for Derek's DingTalk auto-reply agent, seeded from 12968 usable records across 4 source types (dingtalk, dingtalk_kb_live, local_doc, minutes) and ready for continued refinement.
 
 ## Scope
 
