@@ -117,6 +117,10 @@ class CalendarConflictContext:
     conflicts: list[DwsCalendarEvent]
 
 
+class ReplyDeliveryError(RuntimeError):
+    """Raised after recording a delivery failure so queued tasks can retry."""
+
+
 class DingTalkAutoReplyWorker:
     def __init__(
         self,
@@ -334,12 +338,14 @@ class DingTalkAutoReplyWorker:
         if self._handle_minutes_permission_request_if_actionable(
             conversation,
             trigger,
+            raise_on_delivery_failure=True,
         ):
             return
         if self._handle_calendar_invite_if_actionable(
             conversation,
             trigger,
             prompt_context_messages,
+            raise_on_delivery_failure=True,
         ):
             return
         if self._is_system_or_notification_message(trigger):
@@ -351,6 +357,7 @@ class DingTalkAutoReplyWorker:
             [trigger],
             prompt_context_messages,
             send_processing_ack=True,
+            raise_on_delivery_failure=True,
         )
 
     def _enqueue_reply_task(
@@ -513,6 +520,7 @@ class DingTalkAutoReplyWorker:
         trigger: DingTalkMessage,
         *,
         ignore_existing_attempt: bool = False,
+        raise_on_delivery_failure: bool = False,
     ) -> bool:
         request = self._minutes_permission_request(trigger)
         if request is None:
@@ -555,6 +563,8 @@ class DingTalkAutoReplyWorker:
                 title=f"CEO AI minutes permission failed: {conversation.title}",
                 message=str(exc)[:120],
             )
+            if raise_on_delivery_failure:
+                raise ReplyDeliveryError(str(exc)) from exc
             return True
         self.store.update_reply_attempt(
             attempt_id,
@@ -581,6 +591,7 @@ class DingTalkAutoReplyWorker:
         context_messages: list[DingTalkMessage],
         *,
         ignore_existing_attempt: bool = False,
+        raise_on_delivery_failure: bool = False,
     ) -> bool:
         calendar_context = self._calendar_conflict_context(conversation, trigger)
         if calendar_context is None:
@@ -612,6 +623,7 @@ class DingTalkAutoReplyWorker:
                 reply_text=reply_text,
                 reason="calendar_conflict_missing_description",
                 attempt_id=attempt_id,
+                raise_on_delivery_failure=raise_on_delivery_failure,
             )
             return True
         self._process_batch(
@@ -624,6 +636,7 @@ class DingTalkAutoReplyWorker:
                 ),
             ],
             ignore_existing_attempt=True,
+            raise_on_delivery_failure=raise_on_delivery_failure,
         )
         return True
 
@@ -1085,10 +1098,14 @@ class DingTalkAutoReplyWorker:
         *,
         ignore_existing_attempt: bool = False,
         send_processing_ack: bool = False,
+        raise_on_delivery_failure: bool = False,
     ) -> None:
         trigger = new_messages[-1]
         if not ignore_existing_attempt and self._handle_existing_attempt(
-            conversation, trigger, new_messages
+            conversation,
+            trigger,
+            new_messages,
+            raise_on_delivery_failure=raise_on_delivery_failure,
         ):
             return
         try:
@@ -1223,6 +1240,8 @@ class DingTalkAutoReplyWorker:
                     title=f"CEO handoff failed: {conversation.title}",
                     message=str(exc)[:120],
                 )
+                if raise_on_delivery_failure:
+                    raise ReplyDeliveryError(str(exc)) from exc
                 return
             self.store.enter_handoff(
                 conversation.open_conversation_id,
@@ -1274,6 +1293,7 @@ class DingTalkAutoReplyWorker:
                 reason=permission.reason,
                 attempt_id=attempt_id,
                 send_processing_ack=send_processing_ack,
+                raise_on_delivery_failure=raise_on_delivery_failure,
             )
             return
 
@@ -1285,6 +1305,7 @@ class DingTalkAutoReplyWorker:
             reason=decision.reason,
             attempt_id=attempt_id,
             send_processing_ack=send_processing_ack,
+            raise_on_delivery_failure=raise_on_delivery_failure,
         )
 
     def _handle_existing_attempt(
@@ -1292,6 +1313,8 @@ class DingTalkAutoReplyWorker:
         conversation: DingTalkConversation,
         trigger: DingTalkMessage,
         new_messages: list[DingTalkMessage],
+        *,
+        raise_on_delivery_failure: bool = False,
     ) -> bool:
         attempt = self.store.get_latest_reply_attempt_for_trigger(
             conversation.open_conversation_id,
@@ -1310,6 +1333,7 @@ class DingTalkAutoReplyWorker:
                 trigger,
                 new_messages,
                 attempt,
+                raise_on_delivery_failure=raise_on_delivery_failure,
             )
         if attempt.send_status in {"failed", "pending"}:
             return self._retry_existing_reply_attempt(
@@ -1317,6 +1341,7 @@ class DingTalkAutoReplyWorker:
                 trigger,
                 new_messages,
                 attempt,
+                raise_on_delivery_failure=raise_on_delivery_failure,
             )
         return False
 
@@ -1631,6 +1656,8 @@ class DingTalkAutoReplyWorker:
         trigger: DingTalkMessage,
         new_messages: list[DingTalkMessage],
         attempt: ReplyAttempt,
+        *,
+        raise_on_delivery_failure: bool = False,
     ) -> bool:
         if attempt.action not in {
             CodexAction.SEND_REPLY.value,
@@ -1657,6 +1684,8 @@ class DingTalkAutoReplyWorker:
                 title=f"CEO reply recipient failed: {conversation.title}",
                 message=str(exc)[:120],
             )
+            if raise_on_delivery_failure:
+                raise ReplyDeliveryError(str(exc)) from exc
             return True
         direct_user_id = at_users[0] if conversation.single_chat and at_users else None
         send_at_users = [] if conversation.single_chat else at_users
@@ -1671,6 +1700,7 @@ class DingTalkAutoReplyWorker:
             direct_open_dingtalk_id=trigger.sender_open_dingtalk_id
             if conversation.single_chat
             else None,
+            raise_on_delivery_failure=raise_on_delivery_failure,
         )
         return True
 
@@ -1712,6 +1742,7 @@ class DingTalkAutoReplyWorker:
         reason: str,
         attempt_id: int,
         send_processing_ack: bool = False,
+        raise_on_delivery_failure: bool = False,
     ) -> None:
         if not reply_text.strip():
             self.store.update_reply_attempt(
@@ -1748,6 +1779,8 @@ class DingTalkAutoReplyWorker:
                 title=f"CEO reply recipient failed: {conversation.title}",
                 message=str(exc)[:120],
             )
+            if raise_on_delivery_failure:
+                raise ReplyDeliveryError(str(exc)) from exc
             return
         direct_user_id = at_users[0] if conversation.single_chat and at_users else None
         send_at_users = [] if conversation.single_chat else at_users
@@ -1780,6 +1813,7 @@ class DingTalkAutoReplyWorker:
             if conversation.single_chat
             else None,
             send_processing_ack=send_processing_ack,
+            raise_on_delivery_failure=raise_on_delivery_failure,
         )
 
     def _regenerate_reply_after_leak_check(
@@ -1824,6 +1858,7 @@ class DingTalkAutoReplyWorker:
         direct_user_id: str | None,
         direct_open_dingtalk_id: str | None,
         send_processing_ack: bool = False,
+        raise_on_delivery_failure: bool = False,
     ) -> None:
         reply_text = final_reply_text
         self.store.update_reply_attempt(
@@ -1891,6 +1926,8 @@ class DingTalkAutoReplyWorker:
                 title=f"CEO auto reply failed: {conversation.title}",
                 message=str(exc)[:120],
             )
+            if raise_on_delivery_failure:
+                raise ReplyDeliveryError(str(exc)) from exc
             return
         self.store.update_reply_attempt(
             attempt_id,

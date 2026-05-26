@@ -2905,7 +2905,8 @@ def test_send_failure_records_error_and_does_not_mark_seen(tmp_path: Path, monke
 
     assert store.has_seen("msg-1") is False
     assert store.count_sent_replies() == 0
-    assert store.count_errors() == 1
+    assert store.count_errors() == 2
+    assert store.count_reply_tasks(status="pending") == 1
     assert dws.send_attempt_count == 3
     attempt = store.get_reply_attempt(1)
     assert attempt is not None
@@ -2913,6 +2914,39 @@ def test_send_failure_records_error_and_does_not_mark_seen(tmp_path: Path, monke
     assert attempt.retry_count == 1
     assert "attempt 1: send failed" in attempt.send_error
     assert "attempt 2: send failed" in attempt.send_error
+
+
+def test_send_failure_requeues_reply_task_for_consumer_retry(
+    tmp_path: Path, monkeypatch
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    monkeypatch.setattr(
+        "ceo_agent_service.worker.send_macos_notification", lambda **_: None
+    )
+    dws = FakeDws(
+        [conversation()],
+        {"cid-1": [message("@Derek Zen(磊哥) 这个怎么处理？")]},
+        send_error=RuntimeError("send failed"),
+    )
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="先按A方案走")
+    )
+    worker = DingTalkAutoReplyWorker(
+        store=store, dws=dws, codex=codex, now_provider=fixed_worker_now
+    )
+
+    worker.run_once()
+
+    assert store.has_seen("msg-1") is False
+    assert store.count_sent_replies() == 0
+    assert store.count_reply_tasks(status="pending") == 1
+    assert store.count_reply_tasks(status="done") == 0
+    retried = store.claim_reply_tasks(limit=1)
+    assert retried[0].attempts == 2
+    assert "send failed" in retried[0].error
+    attempt = store.get_reply_attempt(1)
+    assert attempt is not None
+    assert attempt.send_status == "failed"
 
 
 def test_pat_authorization_error_is_recorded_as_failed_without_retry_or_url(
@@ -2973,7 +3007,8 @@ def test_handoff_ding_failure_does_not_mark_seen_or_enter_handoff(
     assert final_sent(dws) == []
     assert store.has_seen("msg-1") is False
     assert store.is_in_handoff("cid-1") is False
-    assert store.count_errors() == 1
+    assert store.count_errors() == 2
+    assert store.count_reply_tasks(status="pending") == 1
 
 
 def test_persists_codex_last_session_id_after_decision(tmp_path: Path, monkeypatch):

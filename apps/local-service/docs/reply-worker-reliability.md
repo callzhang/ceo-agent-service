@@ -48,6 +48,10 @@ raises an exception, the consumer records a retry error, sends a local
 notification, and moves the task back to `pending` until the task reaches the
 maximum attempt count. The default maximum is three claimed attempts.
 
+Delivery failures for an otherwise sendable reply are treated as task processing
+failures after the reply attempt has recorded the failed send. This keeps the
+original message retryable instead of completing the task with a failed attempt.
+
 When the maximum is reached, the task is marked `failed`, the final error is
 recorded, and a local notification is sent.
 
