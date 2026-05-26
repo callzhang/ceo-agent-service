@@ -116,8 +116,10 @@ def test_codex_developer_instructions_hold_thread_prompt_not_turn_message():
 
     assert instructions.startswith("You are the local CEO DingTalk reply worker.")
     assert "CEO Agent Prompt" in instructions
-    assert "回答任何问题前，先检索本地 workspace" in instructions
+    assert "若这些材料已经足以判断是否回复和回复内容，不要再做本地 workspace 或 graphify 检索" in instructions
+    assert "检索必须围绕缺失事实，优先 1-3 个精确查询或文件读取" in instructions
     assert "graphify query" in instructions
+    assert "回答任何问题前，先检索本地 workspace" not in instructions
     assert "组织职责包括算法负责人" in instructions
     assert "只回答“新消息”提出的问题" in instructions
     assert "必须输出 audit_documents 和 audit_summary" in instructions
@@ -139,10 +141,11 @@ def test_codex_developer_instructions_include_work_profile_when_present(
     instructions = codex_developer_instructions()
 
     assert "Derek 工作人格 Profile" in instructions
-    assert str(profile) in instructions
+    assert str(profile) not in instructions
     assert "# Derek Work Profile" in instructions
     assert "先判断材料是否完整" in instructions
     assert "profiles/derek_work_profile.md" in instructions
+    assert "不要为了读取 profile 再打开本地文件" in instructions
     assert "心智模型、决策启发式、表达DNA" in instructions
     assert "不能覆盖既有硬规则" in instructions
 

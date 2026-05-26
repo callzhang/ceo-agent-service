@@ -180,6 +180,23 @@ def test_thread_prompt_requires_dws_doc_read_for_alidocs_links():
     assert "材料读不到，不能凭感觉回复" in prompt
 
 
+def test_thread_prompt_bounds_local_retrieval_when_prompt_context_is_sufficient():
+    prompt = ceo_agent_thread_prompt()
+
+    assert "若这些材料已经足以判断是否回复和回复内容，不要再做本地 workspace 或 graphify 检索" in prompt
+    assert "检索必须围绕缺失事实，优先 1-3 个精确查询或文件读取" in prompt
+    assert "回答任何问题前，先检索本地 workspace" not in prompt
+    assert "本 thread 必须主动使用 graphify" not in prompt
+
+
+def test_thread_prompt_uses_injected_profile_without_reopening_file():
+    prompt = ceo_agent_thread_prompt()
+
+    assert "下面的 profile 内容已注入本 prompt" in prompt
+    assert "不要为了读取 profile 再打开本地文件" in prompt
+    assert "必须先读取这个 profile" not in prompt
+
+
 def test_thread_prompt_requires_oa_review_principles_for_approval_messages():
     prompt = ceo_agent_thread_prompt()
 
