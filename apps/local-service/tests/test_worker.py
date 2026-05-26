@@ -2045,6 +2045,53 @@ def test_handoff_clears_when_current_user_replies_manually(tmp_path: Path, monke
     assert store.has_seen("derek-msg-1") is True
 
 
+def test_handoff_clear_uses_context_message_and_then_processes_mention(
+    tmp_path: Path, monkeypatch
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.upsert_conversation("cid-1", "Friday", False, None)
+    store.enter_handoff(
+        "cid-1",
+        "handoff-msg-1",
+        "需要真人",
+        handoff_message_create_time="2026-05-13 18:00:00",
+    )
+    monkeypatch.setattr(
+        "ceo_agent_service.worker.send_macos_notification", lambda **_: None
+    )
+    manual = derek_message(
+        "我已经在群里回复了",
+        message_id="derek-msg-1",
+        create_time="2026-05-13 18:05:00",
+    )
+    mention = message("@Derek Zen(磊哥) 这个后续怎么处理？", message_id="mention-1")
+    mention.create_time = "2026-05-13 18:10:00"
+    dws = FakeDws(
+        [conversation()],
+        {"cid-1": [manual, mention]},
+        unread_messages={"cid-1": []},
+    )
+    dws.mentioned_messages = {"cid-1": [mention]}
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="按A方案处理")
+    )
+    worker = DingTalkAutoReplyWorker(
+        store=store, dws=dws, codex=codex, now_provider=fixed_worker_now
+    )
+
+    worker.run_once()
+
+    assert store.is_in_handoff("cid-1") is False
+    assert store.has_seen("mention-1") is True
+    assert final_sent(dws) == [
+        (
+            "cid-1",
+            "> 周俊杰: 这个后续怎么处理？\n\n"
+            "<@sender-user-1> 按A方案处理（by磊哥分身）",
+        )
+    ]
+
+
 def test_handoff_does_not_clear_on_split_person_reply(tmp_path: Path, monkeypatch):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.upsert_conversation("cid-1", "Friday", False, None)

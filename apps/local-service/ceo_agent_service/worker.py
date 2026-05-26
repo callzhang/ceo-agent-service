@@ -188,8 +188,12 @@ class DingTalkAutoReplyWorker:
                 if not self.store.has_seen(message.open_message_id)
             ]
             if self.store.is_in_handoff(conversation.open_conversation_id):
-                self._handle_active_handoff(conversation, unseen_context_messages)
-                continue
+                if self._handle_active_handoff(
+                    conversation,
+                    context_messages,
+                    unseen_context_messages,
+                ):
+                    continue
             candidate_source_messages = self._candidate_source_messages(
                 conversation,
                 context_messages,
@@ -1021,14 +1025,15 @@ class DingTalkAutoReplyWorker:
     def _handle_active_handoff(
         self,
         conversation: DingTalkConversation,
+        context_messages: list[DingTalkMessage],
         unseen_messages: list[DingTalkMessage],
-    ) -> None:
+    ) -> bool:
         try:
             handoff_create_time = self.store.get_handoff_message_create_time(
                 conversation.open_conversation_id
             )
             manual_clear_message = self._manual_handoff_clear_message(
-                unseen_messages,
+                context_messages,
                 handoff_create_time=handoff_create_time,
             )
         except Exception as exc:
@@ -1045,7 +1050,7 @@ class DingTalkAutoReplyWorker:
                 title=f"CEO handoff clear failed: {conversation.title}",
                 message=str(exc)[:120],
             )
-            return
+            return True
         if manual_clear_message is not None:
             if not self.dry_run:
                 self.store.clear_handoff(
@@ -1057,7 +1062,7 @@ class DingTalkAutoReplyWorker:
                 title=f"CEO handoff cleared: {conversation.title}",
                 message=manual_clear_message.content[:120],
             )
-            return
+            return self.dry_run
         if unseen_messages and not self.dry_run:
             self._notify(
                 title=f"CEO 自动回复已暂停: {conversation.title}",
@@ -1067,6 +1072,7 @@ class DingTalkAutoReplyWorker:
                 ),
             )
             self._mark_seen(unseen_messages)
+        return True
 
     def _manual_handoff_clear_message(
         self,
