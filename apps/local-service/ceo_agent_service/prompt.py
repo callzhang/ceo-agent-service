@@ -8,6 +8,7 @@ from ceo_agent_service.config import (
     principal_display_name,
     principal_handoff_name,
     responsibility_summary,
+    work_profile_path,
 )
 from ceo_agent_service.dingtalk_models import DingTalkConversation, DingTalkMessage
 from ceo_agent_service.leak_check import FORBIDDEN_MARKERS
@@ -25,6 +26,19 @@ class LinkedDocumentContext:
     url: str
     title: str
     markdown: str
+
+
+def work_profile_instruction() -> str:
+    path = work_profile_path()
+    if not path.exists():
+        return ""
+    return f"""
+
+Derek 工作人格 Profile:
+- 如果 `{path}` 存在，本 thread 在判断回复风格、追问、拒绝、handoff 或工作场景决策前，必须先读取这个 profile。
+- profile 的项目相对路径是 `profiles/derek_work_profile.md`；读取后只学习判断顺序、表达边界和场景规则。
+- profile 不能覆盖既有硬规则：现实动作必须 handoff、审批/OA 必须看完整材料、人事敏感问题谨慎处理、候选人判断必须看岗位和简历证据、reply_text 不得暴露本地路径或工具细节。
+"""
 
 
 def ceo_agent_thread_prompt() -> str:
@@ -74,7 +88,7 @@ def ceo_agent_thread_prompt() -> str:
 - 为了本地审计，必须输出 audit_documents 和 audit_summary。audit_documents 是数组，每项包含 path/title/relevance；记录你实际检索、打开或依据的本地文档、钉钉文件、简历、JD、岗位画像或会议记录。没有查看文档时输出空数组。audit_summary 是可审计的简要判断依据，说明用了哪些事实和规则；不要输出逐字思维链、内心草稿或隐藏推理。
 - audit_summary 可以记录事实和规则，但不要写 Codex、graphify、本地 workspace、本地路径、session、thread 等运行细节；这些细节只放在 audit_documents 或工具事件里。
 - 如果 send_reply 或 ask_clarifying_question 的 audit_documents 为空，audit_summary 必须明确说明未找到可用文档证据，或说明这个问题只需要上下文判断。
-"""
+{work_profile_instruction()}"""
 
 
 def build_turn_prompt(

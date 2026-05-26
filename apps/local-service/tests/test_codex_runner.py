@@ -130,6 +130,33 @@ def test_codex_developer_instructions_hold_thread_prompt_not_turn_message():
     assert "当前待处理消息" not in instructions
 
 
+def test_codex_developer_instructions_include_work_profile_when_present(
+    tmp_path: Path, monkeypatch
+):
+    profile = tmp_path / "profiles" / "derek_work_profile.md"
+    profile.parent.mkdir(parents=True)
+    profile.write_text("# Derek Work Profile\n\n- 先判断材料是否完整。", encoding="utf-8")
+    monkeypatch.setenv("CEO_WORK_PROFILE_PATH", str(profile))
+
+    instructions = codex_developer_instructions()
+
+    assert "Derek 工作人格 Profile" in instructions
+    assert str(profile) in instructions
+    assert "profiles/derek_work_profile.md" in instructions
+    assert "不能覆盖既有硬规则" in instructions
+
+
+def test_codex_developer_instructions_skip_work_profile_when_missing(
+    tmp_path: Path, monkeypatch
+):
+    monkeypatch.setenv("CEO_WORK_PROFILE_PATH", str(tmp_path / "profiles" / "missing.md"))
+
+    instructions = codex_developer_instructions()
+
+    assert "Derek 工作人格 Profile" not in instructions
+    assert "profiles/derek_work_profile.md" not in instructions
+
+
 def test_codex_decision_schema_file_exists():
     assert CODEX_DECISION_SCHEMA_PATH.exists()
     text = CODEX_DECISION_SCHEMA_PATH.read_text(encoding="utf-8")

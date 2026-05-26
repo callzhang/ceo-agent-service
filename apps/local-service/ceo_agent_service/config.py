@@ -2,6 +2,28 @@ import os
 from pathlib import Path
 
 
+def repo_root() -> Path:
+    return Path(__file__).resolve().parents[3]
+
+
+def work_profile_path() -> Path:
+    return Path(
+        os.getenv(
+            "CEO_WORK_PROFILE_PATH",
+            str(repo_root() / "profiles" / "derek_work_profile.md"),
+        )
+    )
+
+
+def profile_evidence_dir() -> Path:
+    return Path(
+        os.getenv(
+            "CEO_PROFILE_EVIDENCE_DIR",
+            str(repo_root() / "data" / "profile-evidence"),
+        )
+    )
+
+
 def env_csv(name: str, default: tuple[str, ...]) -> tuple[str, ...]:
     value = os.getenv(name)
     if value is None:
