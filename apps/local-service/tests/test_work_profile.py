@@ -5,6 +5,7 @@ from ceo_agent_service.work_profile import (
     EvidenceRecord,
     WorkProfile,
     WorkProfileRule,
+    build_initial_profile,
     collect_dingtalk_kb_evidence,
     collect_existing_corpus_evidence,
     collect_local_doc_evidence,
@@ -362,8 +363,20 @@ def test_render_markdown_profile_contains_required_sections():
     assert "# Derek Work Profile" in markdown
     assert "## Core Judgment Order" in markdown
     assert "## Decision Framework" in markdown
+    assert "## Expression Framework" in markdown
+    assert "## Follow-Up Framework" in markdown
+    assert "## Scenario Playbooks" in markdown
     assert "## Boundary Framework" in markdown
+    assert "## Honest Boundaries" in markdown
     assert "材料不足不拍板" in markdown
+
+
+def test_build_initial_profile_without_evidence_is_explicit_seed():
+    profile = build_initial_profile([])
+
+    assert "Initial deterministic seed" in profile.summary
+    assert "derived from local behavior evidence" not in profile.summary
+    assert profile.rules[0].evidence_ids == ["ev_manual_profile_seed"]
 
 
 def test_render_skill_marks_manual_use_not_runtime_dependency():

@@ -338,6 +338,17 @@ def render_markdown_profile(profile: WorkProfile) -> str:
     lines.extend(["## Follow-Up Framework", ""])
     for rule in _rules_by_category(profile, "follow_up"):
         lines.extend(_rule_lines(rule))
+    lines.extend(
+        [
+            "## Scenario Playbooks",
+            "",
+            "- Approval: verify body, budget, owner, project context, and attachment before giving a view.",
+            "- Candidate review: require role context, resume evidence, and interview material before judging fit.",
+            "- Business or product judgment: identify customer value, boundary, owner, and next step.",
+            "- Daily coordination: reply only when the next action is clear; hand off real-world actions to Derek.",
+            "",
+        ]
+    )
     lines.extend(["## Boundary Framework", ""])
     for rule in _rules_by_category(profile, "boundary"):
         lines.extend(_rule_lines(rule))
@@ -381,13 +392,21 @@ Do not use this skill as the automated DingTalk runtime. The runtime reads `prof
 def build_initial_profile(evidence: list[EvidenceRecord]) -> WorkProfile:
     usable_ids = [record.id for record in evidence if record.usable_for_profile]
     fallback_id = usable_ids[0] if usable_ids else "ev_manual_profile_seed"
+    if usable_ids:
+        summary = (
+            "A work-context profile for Derek's DingTalk auto-reply agent, "
+            f"seeded from {len(usable_ids)} usable local evidence records and "
+            "ready for continued refinement."
+        )
+    else:
+        summary = (
+            "Initial deterministic seed for Derek's DingTalk auto-reply work "
+            "profile. It defines the first runtime-safe judgment framework and "
+            "will be replaced or refined as local evidence is collected."
+        )
     return WorkProfile(
         title="Derek Work Profile",
-        summary=(
-            "A work-context profile for Derek's DingTalk auto-reply agent, "
-            "derived from local behavior evidence, authored documents, and "
-            "read-only DingTalk knowledge base material."
-        ),
+        summary=summary,
         rules=[
             WorkProfileRule(
                 id="rule_materials_before_decision",

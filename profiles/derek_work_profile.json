@@ -1,6 +1,6 @@
 {
   "title": "Derek Work Profile",
-  "summary": "A work-context profile for Derek's DingTalk auto-reply agent, derived from local behavior evidence, authored documents, and read-only DingTalk knowledge base material.",
+  "summary": "Initial deterministic seed for Derek's DingTalk auto-reply work profile. It defines the first runtime-safe judgment framework and will be replaced or refined as local evidence is collected.",
   "rules": [
     {
       "id": "rule_materials_before_decision",
