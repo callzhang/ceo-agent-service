@@ -1,10 +1,13 @@
 import json
+from time import perf_counter
 from pathlib import Path
 
 from ceo_agent_service.codex_history import (
+    count_codex_session_lines,
     extract_codex_audit_events_from_session,
     find_codex_session_path,
     render_local_codex_session,
+    refresh_codex_session_path_index,
 )
 
 
@@ -112,6 +115,72 @@ def test_find_codex_session_path_uses_local_codex_home(tmp_path: Path):
     session_path = write_session(tmp_path, session_id)
 
     assert find_codex_session_path(session_id, codex_home=tmp_path) == session_path
+
+
+def test_find_codex_session_path_does_not_inspect_all_files_on_miss(
+    tmp_path: Path, monkeypatch
+):
+    session_dir = tmp_path / "sessions" / "2026" / "05" / "14"
+    session_dir.mkdir(parents=True)
+    for index in range(5):
+        (session_dir / f"unrelated-{index}.jsonl").write_text(
+            json.dumps(
+                {
+                    "type": "session_meta",
+                    "payload": {"id": f"session-{index}"},
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    def fail_if_file_is_opened(_path):
+        raise AssertionError("request path must not inspect transcript contents")
+
+    monkeypatch.setattr(
+        "ceo_agent_service.codex_history._file_session_id",
+        fail_if_file_is_opened,
+    )
+
+    assert find_codex_session_path("missing-session", codex_home=tmp_path) is None
+
+
+def test_find_codex_session_path_miss_stays_under_one_second(tmp_path: Path):
+    session_dir = tmp_path / "sessions" / "2026" / "05" / "14"
+    session_dir.mkdir(parents=True)
+    for index in range(1000):
+        (session_dir / f"unrelated-{index}.jsonl").write_text(
+            '{"type":"session_meta","payload":{"id":"unrelated"}}\n',
+            encoding="utf-8",
+        )
+
+    started = perf_counter()
+    path = find_codex_session_path("missing-session", codex_home=tmp_path)
+    elapsed = perf_counter() - started
+
+    assert path is None
+    assert elapsed < 1
+
+
+def test_find_codex_session_path_uses_refreshed_path_index(tmp_path: Path):
+    session_id = "019e2c00-test-session"
+    session_path = tmp_path / "sessions" / "legacy-name.jsonl"
+    session_path.parent.mkdir(parents=True)
+    session_path.write_text(
+        json.dumps(
+            {
+                "type": "session_meta",
+                "payload": {"id": session_id},
+            }
+        )
+        + "\n"
+        + json.dumps({"type": "response_item", "payload": {"type": "message"}}),
+        encoding="utf-8",
+    )
+
+    refresh_codex_session_path_index(tmp_path)
+
+    assert find_codex_session_path(session_id, codex_home=tmp_path) == session_path
+    assert count_codex_session_lines(session_id, codex_home=tmp_path) == 2
 
 
 def test_render_local_codex_session_renders_reasoning_summary_and_skips_system_events(tmp_path: Path):

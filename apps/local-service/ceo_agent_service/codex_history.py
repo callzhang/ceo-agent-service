@@ -1,5 +1,6 @@
 import json
 from dataclasses import dataclass
+from itertools import islice
 from pathlib import Path
 from typing import Any
 
@@ -8,6 +9,7 @@ from ceo_agent_service.config import forbidden_path_prefixes
 
 DEFAULT_CODEX_HOME = Path.home() / ".codex"
 MAX_EVENT_BODY_CHARS = 20_000
+SESSION_PATH_INDEX = "session_path_index.jsonl"
 
 
 @dataclass(frozen=True)
@@ -64,10 +66,16 @@ def count_codex_session_lines(
     session_id: str,
     codex_home: Path | None = None,
 ) -> int:
-    path = find_codex_session_path(session_id, codex_home=codex_home)
+    root = codex_home or DEFAULT_CODEX_HOME
+    indexed = _indexed_session(session_id, root)
+    if indexed and indexed.line_count is not None:
+        return indexed.line_count
+    path = find_codex_session_path(session_id, codex_home=root)
     if path is None:
         return 0
-    return len(path.read_text(encoding="utf-8").splitlines())
+    line_count = _count_file_lines(path)
+    _append_session_path_index(root, session_id, path, line_count=line_count)
+    return line_count
 
 
 def extract_codex_audit_events_from_session(
@@ -81,9 +89,7 @@ def extract_codex_audit_events_from_session(
     if path is None:
         return []
     events: list[dict[str, str]] = []
-    lines = path.read_text(encoding="utf-8").splitlines()
-    selected = lines[start_line:end_line]
-    for line in selected:
+    for line in _iter_file_lines(path, start_line=start_line, end_line=end_line):
         try:
             payload = json.loads(line)
         except json.JSONDecodeError:
@@ -103,21 +109,147 @@ def find_codex_session_path(
     if not _valid_session_id(session_id):
         return None
     root = codex_home or DEFAULT_CODEX_HOME
+    indexed = _indexed_session(session_id, root)
+    if indexed:
+        return indexed.path
     search_roots = [root / "sessions", root / "archived_sessions"]
     for search_root in search_roots:
         if not search_root.exists():
             continue
         matches = sorted(search_root.rglob(f"*{session_id}.jsonl"))
         if matches:
-            return matches[-1]
+            path = matches[-1]
+            _append_session_path_index(root, session_id, path)
+            return path
+    return None
 
-    for search_root in search_roots:
+
+@dataclass(frozen=True)
+class IndexedCodexSession:
+    path: Path
+    line_count: int | None = None
+
+
+def refresh_codex_session_path_index(codex_home: Path | None = None) -> int:
+    root = codex_home or DEFAULT_CODEX_HOME
+    records: dict[str, dict[str, Any]] = {}
+    for search_root in (root / "sessions", root / "archived_sessions"):
         if not search_root.exists():
             continue
         for path in search_root.rglob("*.jsonl"):
-            if _file_session_id(path) == session_id:
-                return path
+            session_id = _file_session_id(path)
+            if not session_id:
+                continue
+            records[session_id] = _session_path_index_record(
+                root,
+                session_id,
+                path,
+                line_count=_count_file_lines(path),
+            )
+    index_path = root / SESSION_PATH_INDEX
+    index_path.parent.mkdir(parents=True, exist_ok=True)
+    index_path.write_text(
+        "\n".join(json.dumps(record, ensure_ascii=False) for record in records.values()),
+        encoding="utf-8",
+    )
+    return len(records)
+
+
+def _indexed_session(session_id: str, root: Path) -> IndexedCodexSession | None:
+    index_path = root / SESSION_PATH_INDEX
+    if not index_path.exists():
+        return None
+    try:
+        lines = index_path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return None
+    for line in reversed(lines):
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if record.get("session_id") != session_id:
+            continue
+        path_text = record.get("path")
+        if not isinstance(path_text, str):
+            continue
+        path = Path(path_text)
+        if not path.is_absolute():
+            path = root / path
+        if not _session_index_record_matches_file(record, path):
+            continue
+        line_count = record.get("line_count")
+        return IndexedCodexSession(
+            path=path,
+            line_count=line_count if isinstance(line_count, int) else None,
+        )
     return None
+
+
+def _append_session_path_index(
+    root: Path,
+    session_id: str,
+    path: Path,
+    line_count: int | None = None,
+) -> None:
+    index_path = root / SESSION_PATH_INDEX
+    index_path.parent.mkdir(parents=True, exist_ok=True)
+    record = _session_path_index_record(
+        root,
+        session_id,
+        path,
+        line_count=line_count,
+    )
+    with index_path.open("a", encoding="utf-8") as file:
+        file.write(json.dumps(record, ensure_ascii=False))
+        file.write("\n")
+
+
+def _session_path_index_record(
+    root: Path,
+    session_id: str,
+    path: Path,
+    line_count: int | None = None,
+) -> dict[str, Any]:
+    stat = path.stat()
+    try:
+        path_text = str(path.relative_to(root))
+    except ValueError:
+        path_text = str(path)
+    record: dict[str, Any] = {
+        "session_id": session_id,
+        "path": path_text,
+        "mtime_ns": stat.st_mtime_ns,
+        "size": stat.st_size,
+    }
+    if line_count is not None:
+        record["line_count"] = line_count
+    return record
+
+
+def _session_index_record_matches_file(record: dict[str, Any], path: Path) -> bool:
+    try:
+        stat = path.stat()
+    except OSError:
+        return False
+    return (
+        record.get("mtime_ns") == stat.st_mtime_ns
+        and record.get("size") == stat.st_size
+    )
+
+
+def _count_file_lines(path: Path) -> int:
+    with path.open("r", encoding="utf-8") as file:
+        return sum(1 for _ in file)
+
+
+def _iter_file_lines(
+    path: Path,
+    start_line: int = 0,
+    end_line: int | None = None,
+):
+    with path.open("r", encoding="utf-8") as file:
+        yield from islice(file, start_line, end_line)
 
 
 def _valid_session_id(session_id: str) -> bool:
@@ -128,7 +260,8 @@ def _valid_session_id(session_id: str) -> bool:
 
 def _file_session_id(path: Path) -> str:
     try:
-        first_line = path.read_text(encoding="utf-8").splitlines()[0]
+        with path.open("r", encoding="utf-8") as file:
+            first_line = file.readline()
     except (OSError, IndexError, UnicodeDecodeError):
         return ""
     try:
