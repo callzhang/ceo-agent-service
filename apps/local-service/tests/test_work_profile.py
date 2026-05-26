@@ -9,6 +9,7 @@ from ceo_agent_service.work_profile import (
     collect_dingtalk_kb_evidence,
     collect_existing_corpus_evidence,
     collect_local_doc_evidence,
+    evidence_chunks,
     evidence_id,
     render_markdown_profile,
     render_skill,
@@ -30,6 +31,12 @@ def test_safe_excerpt_collapses_whitespace_and_limits_length():
     assert "\n" not in excerpt
     assert len(excerpt) <= 31
     assert excerpt.endswith("…")
+
+
+def test_evidence_chunks_splits_long_text():
+    chunks = evidence_chunks("一" * 2500, chunk_size=1000)
+
+    assert [len(chunk) for chunk in chunks] == [1000, 1000, 500]
 
 
 def test_work_profile_rule_requires_evidence_ids():
@@ -171,6 +178,20 @@ def test_collect_local_doc_evidence_classifies_sensitive_local_docs(tmp_path: Pa
         "绩效.md": "internal_personnel",
         "customer.md": "customer",
     }
+
+
+def test_collect_local_doc_evidence_chunks_long_docs(tmp_path: Path):
+    workspace = tmp_path / "memory"
+    thinking = workspace / "Thinking"
+    thinking.mkdir(parents=True)
+    (thinking / "long.md").write_text("战略判断" * 400, encoding="utf-8")
+
+    records = collect_local_doc_evidence(workspace)
+
+    assert len(records) > 1
+    assert records[0].location == "Thinking/long.md#chunk-1"
+    assert records[1].location == "Thinking/long.md#chunk-2"
+    assert len({record.id for record in records}) == len(records)
 
 
 class FakeDwsForKnowledgeBase:
@@ -378,6 +399,40 @@ def test_collect_dingtalk_kb_evidence_skips_non_adoc_nodes(tmp_path: Path):
 
     assert dws.read_nodes == ["doc-1"]
     assert [record.location for record in records] == ["dingtalk-kb:doc-1"]
+
+
+class FakeLongDwsForKnowledgeBase:
+    def list_doc_nodes(self, workspace_id=None, folder_id=None, page_token=""):
+        return {
+            "result": {
+                "nodes": [
+                    {
+                        "nodeId": "doc-long",
+                        "name": "长文档",
+                        "contentType": "ALIDOC",
+                        "extension": "adoc",
+                    }
+                ]
+            }
+        }
+
+    def doc_info(self, node):
+        return {"result": {"nodeId": node, "name": "长文档.md"}}
+
+    def read_doc(self, node):
+        return {"result": {"markdown": "知识库判断" * 400}}
+
+
+def test_collect_dingtalk_kb_evidence_chunks_long_docs(tmp_path: Path):
+    records = collect_dingtalk_kb_evidence(
+        dws=FakeLongDwsForKnowledgeBase(),
+        cache_dir=tmp_path / "cache",
+    )
+
+    assert len(records) > 1
+    assert records[0].location == "dingtalk-kb:doc-long#chunk-1"
+    assert records[1].location == "dingtalk-kb:doc-long#chunk-2"
+    assert len({record.id for record in records}) == len(records)
 
 
 def test_render_markdown_profile_contains_required_sections():

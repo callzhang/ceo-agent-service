@@ -19,8 +19,9 @@ LOCAL_AUTHORED_DIRS = (
 LOCAL_TEXT_SUFFIXES = {".md", ".txt"}
 LOCAL_IGNORED_PARTS = {".smart-env", ".dws", ".obsidian", "AI听记"}
 HIGH_CONFIDENCE_AUTHORED_DIRS = {Path("Thinking"), Path("management") / "strategy"}
-PROFILE_EVIDENCE_IDS_PER_RULE = 32
-PROFILE_EVIDENCE_IDS_PER_SOURCE = 8
+EVIDENCE_CHUNK_CHARACTERS = 1000
+PROFILE_EVIDENCE_IDS_PER_RULE = 512
+PROFILE_EVIDENCE_IDS_PER_SOURCE = 128
 LOCAL_SENSITIVITY_TERMS = (
     (
         "internal_personnel",
@@ -76,6 +77,16 @@ def safe_excerpt(text: str, limit: int = 240) -> str:
     if len(normalized) <= limit:
         return normalized
     return f"{normalized[:limit]}…"
+
+
+def evidence_chunks(text: str, chunk_size: int = EVIDENCE_CHUNK_CHARACTERS) -> list[str]:
+    normalized = WHITESPACE_RE.sub(" ", text).strip()
+    if not normalized:
+        return []
+    return [
+        normalized[index : index + chunk_size]
+        for index in range(0, len(normalized), chunk_size)
+    ]
 
 
 def classify_local_doc_sensitivity(relative: str, text: str) -> str:
@@ -168,20 +179,28 @@ def collect_local_doc_evidence(workspace: Path) -> list[EvidenceRecord]:
                 if base in HIGH_CONFIDENCE_AUTHORED_DIRS
                 else "authored_assumed"
             )
-            records.append(
-                EvidenceRecord(
-                    id=evidence_id("local_doc", relative, text[:1000]),
-                    source_type="local_doc",
-                    title=path.name,
-                    timestamp="",
-                    location=relative,
-                    scenario="general",
-                    evidence_strength=strength,
-                    sensitivity=classify_local_doc_sensitivity(relative, text),
-                    excerpt=safe_excerpt(text),
-                    usable_for_profile=True,
+            chunks = evidence_chunks(text)
+            sensitivity = classify_local_doc_sensitivity(relative, text)
+            for chunk_index, chunk in enumerate(chunks):
+                chunk_location = (
+                    relative
+                    if len(chunks) == 1
+                    else f"{relative}#chunk-{chunk_index + 1}"
                 )
-            )
+                records.append(
+                    EvidenceRecord(
+                        id=evidence_id("local_doc", chunk_location, chunk),
+                        source_type="local_doc",
+                        title=path.name,
+                        timestamp="",
+                        location=chunk_location,
+                        scenario="general",
+                        evidence_strength=strength,
+                        sensitivity=sensitivity,
+                        excerpt=safe_excerpt(chunk),
+                        usable_for_profile=True,
+                    )
+                )
     return records
 
 
@@ -263,24 +282,31 @@ def collect_dingtalk_kb_evidence(
             info_result = info.get("result", info) if isinstance(info, dict) else {}
             title = str(info_result.get("name") or node.get("name") or node_id)
             location = f"dingtalk-kb:{node_id}"
-            records.append(
-                EvidenceRecord(
-                    id=evidence_id("dingtalk_kb_live", location, markdown[:1000]),
-                    source_type="dingtalk_kb_live",
-                    title=title,
-                    timestamp=str(
-                        info_result.get("modifiedTime")
-                        or info_result.get("createdTime")
-                        or ""
-                    ),
-                    location=location,
-                    scenario="general",
-                    evidence_strength="kb_live_doc",
-                    sensitivity=classify_local_doc_sensitivity(location, markdown),
-                    excerpt=safe_excerpt(markdown),
-                    usable_for_profile=True,
-                )
+            chunks = evidence_chunks(markdown)
+            sensitivity = classify_local_doc_sensitivity(location, markdown)
+            timestamp = str(
+                info_result.get("modifiedTime") or info_result.get("createdTime") or ""
             )
+            for chunk_index, chunk in enumerate(chunks):
+                chunk_location = (
+                    location
+                    if len(chunks) == 1
+                    else f"{location}#chunk-{chunk_index + 1}"
+                )
+                records.append(
+                    EvidenceRecord(
+                        id=evidence_id("dingtalk_kb_live", chunk_location, chunk),
+                        source_type="dingtalk_kb_live",
+                        title=title,
+                        timestamp=timestamp,
+                        location=chunk_location,
+                        scenario="general",
+                        evidence_strength="kb_live_doc",
+                        sensitivity=sensitivity,
+                        excerpt=safe_excerpt(chunk),
+                        usable_for_profile=True,
+                    )
+                )
         next_page_token = _doc_next_page_token(payload)
         if not next_page_token or next_page_token in seen_page_tokens:
             break
