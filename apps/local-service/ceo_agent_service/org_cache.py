@@ -78,6 +78,12 @@ class CachedDwsClient:
     def list_unread_conversations(self, count: int):
         return self.dws.list_unread_conversations(count)
 
+    def check_upgrade(self):
+        return self.dws.check_upgrade()
+
+    def upgrade(self):
+        return self.dws.upgrade()
+
     def read_recent_messages(self, conversation, limit: int = 50):
         return self.dws.read_recent_messages(conversation, limit)
 

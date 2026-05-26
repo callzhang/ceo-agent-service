@@ -10,6 +10,15 @@ and retried by the next scheduled run.
 Per-conversation read failures are recorded and notified without blocking other
 conversations in the same producer pass.
 
+## DWS upgrade check
+
+The producer checks for `dws` updates inside the normal CEO system pass, once per
+local day. It uses the existing five-minute producer cadence instead of adding a
+separate system-level timer. If an update is available, the producer runs the
+upgrade before reading DingTalk messages. Upgrade check or install failures are
+recorded locally and notified, but they do not block message discovery for that
+producer pass.
+
 ## Processing acknowledgement
 
 The worker may send `收到，我正在处理（by 分身）` before a final reply, but only

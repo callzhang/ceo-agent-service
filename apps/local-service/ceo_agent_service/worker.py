@@ -108,6 +108,7 @@ REFERENCED_FILE_CONTEXT_WINDOW = timedelta(minutes=10)
 DOWNLOADED_FILE_MAX_BYTES = 50 * 1024 * 1024
 DOWNLOAD_TIMEOUT_SECONDS = 30
 PDF_TEXT_PAGE_LIMIT = 30
+DWS_UPGRADE_CHECKED_DATE_STATE_KEY = "dws_upgrade_checked_date"
 
 
 @dataclass(frozen=True)
@@ -147,6 +148,7 @@ class DingTalkAutoReplyWorker:
         self.consume_once(max_tasks=max_batches)
 
     def produce_once(self, max_tasks: int | None = None) -> int:
+        self._maybe_upgrade_dws_once_per_day()
         queued_tasks = 0
         conversations = self.dws.list_unread_conversations(count=50)
         mentioned_messages = self._mentioned_messages_by_conversation(conversations)
@@ -214,6 +216,26 @@ class DingTalkAutoReplyWorker:
             if max_tasks is not None and queued_tasks >= max_tasks:
                 return queued_tasks
         return queued_tasks
+
+    def _maybe_upgrade_dws_once_per_day(self) -> None:
+        today = self._now().date().isoformat()
+        if self.store.get_service_state(DWS_UPGRADE_CHECKED_DATE_STATE_KEY) == today:
+            return
+        try:
+            upgrade_check = self.dws.check_upgrade()
+            if upgrade_check.get("needs_upgrade") is True:
+                current_version = str(upgrade_check.get("current_version") or "")
+                latest_version = str(upgrade_check.get("latest_version") or "")
+                self.dws.upgrade()
+                message = latest_version or "latest version"
+                if current_version and latest_version:
+                    message = f"{current_version} -> {latest_version}"
+                self._notify(title="CEO DWS upgraded", message=message)
+        except Exception as exc:
+            self.store.record_error(None, None, "dws_upgrade", str(exc))
+            self._notify(title="CEO DWS upgrade failed", message=str(exc)[:120])
+        finally:
+            self.store.set_service_state(DWS_UPGRADE_CHECKED_DATE_STATE_KEY, today)
 
     def _skip_messages_outside_recent_window(
         self,

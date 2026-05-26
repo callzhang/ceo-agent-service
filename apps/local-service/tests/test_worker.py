@@ -74,10 +74,26 @@ class FakeDws:
             str, DwsMinutesPermissionRequest | None
         ] = {}
         self.added_minutes_permissions: list[DwsMinutesPermissionRequest] = []
+        self.upgrade_check_response: dict = {"needs_upgrade": False}
+        self.upgrade_error: Exception | None = None
+        self.upgrade_check_calls = 0
+        self.upgrade_calls = 0
 
     def list_unread_conversations(self, count: int) -> list[DingTalkConversation]:
         assert count == 50
         return self.conversations
+
+    def check_upgrade(self) -> dict:
+        self.upgrade_check_calls += 1
+        if self.upgrade_error:
+            raise self.upgrade_error
+        return self.upgrade_check_response
+
+    def upgrade(self) -> str:
+        self.upgrade_calls += 1
+        if self.upgrade_error:
+            raise self.upgrade_error
+        return "upgraded"
 
     def read_recent_messages(
         self, conversation: DingTalkConversation
@@ -405,6 +421,51 @@ def test_produce_once_does_not_send_processing_ack_for_new_reply_task(
     assert queued == 1
     assert codex.calls == []
     assert dws.sent == []
+
+
+def test_produce_once_checks_dws_upgrade_once_per_local_day(
+    tmp_path: Path, monkeypatch
+):
+    dws = FakeDws([], {})
+    dws.upgrade_check_response = {
+        "current_version": "v1.0.26",
+        "latest_version": "v1.0.32",
+        "needs_upgrade": True,
+    }
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该调用")
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+
+    assert worker.produce_once() == 0
+    assert worker.produce_once() == 0
+
+    assert dws.upgrade_check_calls == 1
+    assert dws.upgrade_calls == 1
+    assert worker.store.get_service_state("dws_upgrade_checked_date") == "2026-05-13"
+
+
+def test_produce_once_records_dws_upgrade_failure_without_blocking_messages(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message("@Derek Zen(磊哥) 这个怎么处理？")
+    dws = FakeDws([conversation()], {"cid-1": [trigger]})
+    dws.upgrade_error = RuntimeError("upgrade service unavailable")
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该调用")
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+
+    assert worker.produce_once() == 1
+    assert worker.produce_once() == 0
+
+    assert dws.upgrade_check_calls == 1
+    assert worker.store.count_reply_tasks(status="pending") == 1
+    errors = worker.store.list_errors()
+    assert len(errors) == 1
+    assert errors[0].kind == "dws_upgrade"
+    assert "upgrade service unavailable" in errors[0].detail
+    assert worker.store.get_service_state("dws_upgrade_checked_date") == "2026-05-13"
 
 
 def test_produce_once_skips_messages_older_than_local_24_hour_window(

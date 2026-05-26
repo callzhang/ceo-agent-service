@@ -569,3 +569,18 @@ def test_org_cache_metadata_round_trip(tmp_path: Path):
 
     assert store.get_current_user_id() == "derek-user-1"
     assert store.get_hr_department_ids() == {"hr-dept-1"}
+
+
+def test_service_state_round_trip(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+
+    store.set_service_state("dws_upgrade_checked_date", "2026-05-25")
+    loaded = AutoReplyStore(tmp_path / "worker.sqlite3")
+
+    assert loaded.get_service_state("dws_upgrade_checked_date") == "2026-05-25"
+
+
+def test_missing_service_state_returns_none(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+
+    assert store.get_service_state("missing") is None

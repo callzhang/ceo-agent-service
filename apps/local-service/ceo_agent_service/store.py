@@ -218,6 +218,11 @@ class AutoReplyStore:
                     value_json text not null,
                     updated_at text not null default current_timestamp
                 );
+                create table if not exists service_state (
+                    key text primary key,
+                    value text not null,
+                    updated_at text not null default current_timestamp
+                );
                 """
             )
             columns = {
@@ -1079,6 +1084,27 @@ class AutoReplyStore:
         with self._connect() as db:
             row = db.execute("select count(*) as count from errors").fetchone()
             return int(row["count"])
+
+    def set_service_state(self, key: str, value: str) -> None:
+        with self._connect() as db:
+            db.execute(
+                """
+                insert into service_state (key, value, updated_at)
+                values (?, ?, current_timestamp)
+                on conflict(key) do update set
+                    value=excluded.value,
+                    updated_at=current_timestamp
+                """,
+                (key, value),
+            )
+
+    def get_service_state(self, key: str) -> str | None:
+        with self._connect() as db:
+            row = db.execute(
+                "select value from service_state where key=?",
+                (key,),
+            ).fetchone()
+            return None if row is None else row["value"]
 
     def upsert_org_user_profile(
         self,

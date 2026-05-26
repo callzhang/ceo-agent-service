@@ -116,6 +116,22 @@ def test_list_unread_conversations_command_shape():
     ]
 
 
+def test_dws_upgrade_check_command_shape():
+    client = DwsClient(dws_bin="dws")
+
+    command = client.build_upgrade_check_command()
+
+    assert command == ["dws", "upgrade", "--check", "--format", "json"]
+
+
+def test_dws_upgrade_command_shape():
+    client = DwsClient(dws_bin="dws")
+
+    command = client.build_upgrade_command()
+
+    assert command == ["dws", "upgrade", "-y", "--format", "json"]
+
+
 def test_read_doc_command_shape():
     client = DwsClient(dws_bin="dws")
 
@@ -1632,6 +1648,35 @@ def test_run_json_raises_dws_error_on_invalid_json(monkeypatch):
 
     with pytest.raises(DwsError, match="invalid JSON"):
         DwsClient().run_json(["dws", "probe"])
+
+
+def test_run_text_returns_stdout_on_success(monkeypatch):
+    def fake_run(command, text, capture_output, check, timeout):
+        assert command == ["dws", "upgrade", "-y", "--format", "json"]
+        assert text is True
+        assert capture_output is True
+        assert check is False
+        assert timeout == 11
+        return SimpleNamespace(returncode=0, stdout="upgraded", stderr="")
+
+    monkeypatch.setattr("ceo_agent_service.dws_client.subprocess.run", fake_run)
+
+    assert (
+        DwsClient(timeout_seconds=11).run_text(
+            ["dws", "upgrade", "-y", "--format", "json"]
+        )
+        == "upgraded"
+    )
+
+
+def test_run_text_raises_dws_error_on_nonzero_exit(monkeypatch):
+    def fake_run(command, text, capture_output, check, timeout):
+        return SimpleNamespace(returncode=1, stdout="", stderr="permission denied")
+
+    monkeypatch.setattr("ceo_agent_service.dws_client.subprocess.run", fake_run)
+
+    with pytest.raises(DwsError, match="exit code 1"):
+        DwsClient().run_text(["dws", "upgrade", "-y"])
 
 
 def test_run_json_raises_dws_error_on_timeout(monkeypatch):

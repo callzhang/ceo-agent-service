@@ -128,6 +128,12 @@ class DwsClient:
             "json",
         ]
 
+    def build_upgrade_check_command(self) -> list[str]:
+        return [self.dws_bin, "upgrade", "--check", "--format", "json"]
+
+    def build_upgrade_command(self) -> list[str]:
+        return [self.dws_bin, "upgrade", "-y", "--format", "json"]
+
     def build_list_messages_by_sender_command(
         self,
         sender_user_id: str,
@@ -455,6 +461,15 @@ class DwsClient:
     def list_unread_conversations(self, count: int) -> list[DingTalkConversation]:
         payload = self.run_json(self.build_list_unread_conversations_command(count))
         return self.parse_unread_conversations(payload)
+
+    def check_upgrade(self) -> dict[str, Any]:
+        payload = self.run_json(self.build_upgrade_check_command())
+        if not isinstance(payload, dict):
+            raise DwsError("invalid dws upgrade check response")
+        return payload
+
+    def upgrade(self) -> str:
+        return self.run_text(self.build_upgrade_command())
 
     def list_messages_by_sender(
         self,
@@ -789,6 +804,31 @@ class DwsClient:
             return json.loads(result.stdout)
         except json.JSONDecodeError as exc:
             raise DwsError("dws command returned invalid JSON") from exc
+
+    def run_text(self, command: list[str]) -> str:
+        try:
+            result = subprocess.run(
+                command,
+                text=True,
+                capture_output=True,
+                check=False,
+                timeout=self.timeout_seconds,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise DwsError(
+                f"dws command timed out after {self.timeout_seconds} seconds"
+            ) from exc
+        if result.returncode != 0:
+            code = (
+                self._error_code(result.stderr)
+                or self._error_code(result.stdout)
+                or self._process_error_code(result.returncode)
+            )
+            raise DwsError(
+                self._format_command_error(command, result, code),
+                code=code,
+            )
+        return result.stdout.strip()
 
     def _sleep_before_retry(self, attempt_index: int) -> None:
         if self.transient_retry_delay_seconds <= 0:
