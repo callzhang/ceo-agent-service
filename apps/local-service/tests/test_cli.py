@@ -8,6 +8,7 @@ import pytest
 from ceo_agent_service import cli
 from ceo_agent_service.cli import (
     WorkerSettings,
+    build_work_profile_command,
     build_parser,
     build_style_corpus,
     collect_corpus,
@@ -97,6 +98,59 @@ def test_parser_supports_send_attempt_command():
 
     assert args.command == "send-attempt"
     assert args.attempt_id == 42
+
+
+def test_build_work_profile_command_is_registered():
+    parser = build_parser()
+
+    args = parser.parse_args(["build-work-profile", "--workspace", "/tmp/memory"])
+
+    assert args.command == "build-work-profile"
+    assert args.workspace == "/tmp/memory"
+
+
+def test_build_work_profile_command_writes_repo_assets(tmp_path, monkeypatch):
+    from ceo_agent_service.work_profile import EvidenceRecord
+
+    workspace = tmp_path / "memory"
+    corpus_dir = tmp_path / "corpus"
+    evidence_dir = tmp_path / "data" / "profile-evidence"
+    profile_path = tmp_path / "profiles" / "derek_work_profile.md"
+    profile_json = tmp_path / "profiles" / "derek_work_profile.json"
+    skill_path = tmp_path / "profiles" / "derek-skill" / "SKILL.md"
+
+    monkeypatch.setenv("CEO_WORK_PROFILE_PATH", str(profile_path))
+    monkeypatch.setenv("CEO_PROFILE_EVIDENCE_DIR", str(evidence_dir))
+    monkeypatch.setattr(
+        cli,
+        "collect_existing_corpus_evidence",
+        lambda path: [
+            EvidenceRecord(
+                id="ev_abc",
+                source_type="dingtalk",
+                title="客户群",
+                timestamp="2026-05-26T10:00:00",
+                location="cid/msg",
+                scenario="business",
+                evidence_strength="behavior_high",
+                sensitivity="general",
+                excerpt="先收敛目标和边界。",
+                usable_for_profile=True,
+            )
+        ],
+    )
+    monkeypatch.setattr(cli, "collect_local_doc_evidence", lambda path: [])
+    monkeypatch.setattr(cli, "collect_dingtalk_kb_evidence", lambda **kwargs: [])
+
+    settings = WorkerSettings(workspace=workspace, corpus_dir=corpus_dir)
+
+    count = build_work_profile_command(settings, include_dingtalk_kb=False)
+
+    assert count == 1
+    assert profile_path.exists()
+    assert profile_json.exists()
+    assert skill_path.exists()
+    assert (evidence_dir / "evidence_index.jsonl").exists()
 
 
 def test_settings_defaults_point_to_memory_home():

@@ -11,6 +11,7 @@ from pydantic import BaseModel, PositiveInt
 
 from ceo_agent_service.codex_decision import contains_forbidden_leak
 from ceo_agent_service.codex_decision import CodexDecisionRunner
+from ceo_agent_service.config import profile_evidence_dir, work_profile_path
 from ceo_agent_service.corpus import (
     append_records,
     build_dingtalk_records_from_sender_payload,
@@ -28,6 +29,15 @@ from ceo_agent_service.org_cache import (
     refresh_org_cache,
 )
 from ceo_agent_service.store import AutoReplyStore
+from ceo_agent_service.work_profile import (
+    build_initial_profile,
+    collect_dingtalk_kb_evidence,
+    collect_existing_corpus_evidence,
+    collect_local_doc_evidence,
+    render_markdown_profile,
+    render_skill,
+    write_jsonl,
+)
 from ceo_agent_service.worker import DingTalkAutoReplyWorker
 
 LIVE_SEND_BLOCKERS = (
@@ -133,6 +143,7 @@ def build_parser() -> argparse.ArgumentParser:
         "rerun-message",
         "send-attempt",
         "reset-codex-sessions",
+        "build-work-profile",
     ):
         subparser = subparsers.add_parser(command)
         subparser.add_argument("--db", default=os.getenv("CEO_WORKER_DB", str(defaults.db_path)))
@@ -241,6 +252,20 @@ def build_parser() -> argparse.ArgumentParser:
             )
         if command == "send-attempt":
             subparser.add_argument("--attempt-id", type=int, required=True)
+        if command == "build-work-profile":
+            subparser.add_argument(
+                "--include-dingtalk-kb",
+                action="store_true",
+                help="read online DingTalk knowledge base docs in read-only mode",
+            )
+            subparser.add_argument(
+                "--dingtalk-kb-workspace",
+                default=os.getenv("CEO_DINGTALK_KB_WORKSPACE", ""),
+                help=(
+                    "DingTalk knowledge base workspace id or URL for read-only "
+                    "profile evidence"
+                ),
+            )
 
     return parser
 
@@ -895,6 +920,48 @@ def collect_corpus(settings: WorkerSettings, target_count: int = 1000) -> int:
     return len(collected_records)
 
 
+def build_work_profile_command(
+    settings: WorkerSettings,
+    *,
+    include_dingtalk_kb: bool = False,
+    dingtalk_kb_workspace: str = "",
+) -> int:
+    evidence_dir = profile_evidence_dir()
+    evidence_dir.mkdir(parents=True, exist_ok=True)
+    evidence = []
+    evidence.extend(
+        collect_existing_corpus_evidence(settings.corpus_dir / "derek_style_corpus.csv")
+    )
+    evidence.extend(collect_local_doc_evidence(settings.workspace))
+    if include_dingtalk_kb:
+        evidence.extend(
+            collect_dingtalk_kb_evidence(
+                dws=DwsClient(),
+                cache_dir=evidence_dir / "dingtalk_kb_cache",
+                workspace_id=dingtalk_kb_workspace or None,
+            )
+        )
+
+    write_jsonl(evidence_dir / "evidence_index.jsonl", evidence)
+    profile = build_initial_profile(evidence)
+    profile_path = work_profile_path()
+    profile_path.parent.mkdir(parents=True, exist_ok=True)
+    profile_path.write_text(render_markdown_profile(profile), encoding="utf-8")
+    profile_path.with_suffix(".json").write_text(
+        json.dumps(profile.model_dump(), ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    skill_path = profile_path.parent / "derek-skill" / "SKILL.md"
+    skill_path.parent.mkdir(parents=True, exist_ok=True)
+    skill_path.write_text(render_skill(profile), encoding="utf-8")
+    print(
+        f"build-work-profile evidence={len(evidence)} "
+        f"profile={profile_path} skill={skill_path}",
+        flush=True,
+    )
+    return len(evidence)
+
+
 def probe_dws() -> int:
     dws = DwsClient()
     blocked = False
@@ -953,6 +1020,12 @@ def main() -> None:
         build_style_corpus(settings.workspace, settings.corpus_dir)
     elif args.command == "collect-corpus":
         collect_corpus(settings)
+    elif args.command == "build-work-profile":
+        build_work_profile_command(
+            settings,
+            include_dingtalk_kb=args.include_dingtalk_kb,
+            dingtalk_kb_workspace=args.dingtalk_kb_workspace,
+        )
     elif args.command == "probe-dws":
         raise SystemExit(probe_dws())
     elif args.command == "refresh-org-cache":
