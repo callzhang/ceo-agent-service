@@ -12,8 +12,8 @@ conversations in the same producer pass.
 
 ## Processing acknowledgement
 
-The worker may send `稍等，我看看。` before a final reply, but only after Codex has
-returned a decision that will actually attempt a reply. `no_reply`,
+The worker may send `收到，我正在处理（by 分身）` before a final reply, but only
+after Codex has returned a decision that will actually attempt a reply. `no_reply`,
 `stop_with_error`, blocked, and dry-run outcomes do not send the acknowledgement,
 so a conversation is not left with a processing message and no follow-up.
 

@@ -44,7 +44,7 @@ from ceo_agent_service.leak_check import FORBIDDEN_MARKERS
 
 
 HANDOFF_ACK = handoff_ack()
-PROCESSING_ACK = "稍等，我看看。"
+PROCESSING_ACK = "收到，我正在处理（by 分身）"
 LEAK_CHECK_REGENERATION_SCHEMA = (
     'JSON schema: {"action":"send_reply|ask_clarifying_question|handoff_to_human|no_reply|stop_with_error",'
     '"reply_text":"","reason":"","ding_self":false,"macos_notify":true,'
