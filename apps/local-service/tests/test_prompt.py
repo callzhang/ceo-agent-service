@@ -185,6 +185,15 @@ def test_thread_prompt_requires_oa_review_principles_for_approval_messages():
     assert "缺任何实质材料时不能给批准、退回或拒绝结论" in prompt
 
 
+def test_thread_prompt_requires_witty_reply_for_direct_jokes():
+    prompt = ceo_agent_thread_prompt()
+
+    assert "不要因为“只是玩笑”而 no_reply" in prompt
+    assert "简短、机智、克制的玩笑" in prompt
+    assert "体现 CEO 的判断力和幽默感" in prompt
+    assert "不要写成流程说明或机制解释" in prompt
+
+
 def test_build_turn_prompt_includes_prefetched_dingtalk_document():
     prompt = build_turn_prompt(
         DingTalkConversation(
