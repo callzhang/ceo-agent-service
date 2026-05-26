@@ -35,7 +35,7 @@ def make_runner(
         workspace=tmp_path,
         executor=executor,
         timeout_seconds=timeout_seconds,
-        codex_home=tmp_path / ".codex",
+        codex_home=tmp_path,
     )
 
 
