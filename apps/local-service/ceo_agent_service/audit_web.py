@@ -346,15 +346,15 @@ def handle_reviewed_message_reply(
     exact_conversations = [
         conversation for conversation in conversations if conversation.title == group_name
     ]
-    stored_single_chat = None
+    stored_conversation = None
     if len(exact_conversations) != 1:
-        stored_single_chat = store.find_single_chat_conversation_by_title(group_name)
-    if len(exact_conversations) != 1 and stored_single_chat is not None:
+        stored_conversation = store.find_conversation_by_title(group_name)
+    if len(exact_conversations) != 1 and stored_conversation is not None:
         exact_conversations = [
             DingTalkConversation(
-                open_conversation_id=stored_single_chat.conversation_id,
-                title=stored_single_chat.title,
-                single_chat=stored_single_chat.single_chat,
+                open_conversation_id=stored_conversation.conversation_id,
+                title=stored_conversation.title,
+                single_chat=stored_conversation.single_chat,
                 unread_point=1,
             )
         ]
@@ -425,14 +425,18 @@ def _reviewed_reply_lookup_messages(
     dws: DwsClient,
     conversation: DingTalkConversation,
 ) -> list[DingTalkMessage]:
-    if not conversation.single_chat:
-        return dws.read_mentioned_messages(conversation, limit=100)
     seen_message_ids: set[str] = set()
     result: list[DingTalkMessage] = []
-    for message in [
-        *dws.read_recent_messages(conversation),
-        *dws.read_unread_messages(conversation),
-    ]:
+    lookup_batches = []
+    if not conversation.single_chat:
+        lookup_batches.append(dws.read_mentioned_messages(conversation, limit=100))
+    lookup_batches.extend(
+        [
+            dws.read_recent_messages(conversation),
+            dws.read_unread_messages(conversation),
+        ]
+    )
+    for message in [message for batch in lookup_batches for message in batch]:
         if message.open_message_id in seen_message_ids:
             continue
         seen_message_ids.add(message.open_message_id)

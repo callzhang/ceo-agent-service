@@ -530,6 +530,12 @@ def test_handle_reviewed_message_reply_matches_sender_group_and_text(
                 )
             ]
 
+        def read_recent_messages(self, conversation):
+            return []
+
+        def read_unread_messages(self, conversation):
+            return []
+
         def send_message(
             self,
             conversation_id,
@@ -589,6 +595,89 @@ def test_handle_reviewed_message_reply_matches_sender_group_and_text(
     ]
     assert sent_reply is not None
     assert sent_reply.recall_key == "recall-1"
+
+
+def test_handle_reviewed_message_reply_uses_stored_group_and_recent_message(
+    monkeypatch,
+    tmp_path: Path,
+):
+    class FakeDws:
+        def __init__(self):
+            self.reply_messages = []
+
+        def search_conversations(self, query):
+            assert query == "官网迭代群"
+            return []
+
+        def read_mentioned_messages(self, conversation, limit=50):
+            return []
+
+        def read_recent_messages(self, conversation):
+            assert conversation.open_conversation_id == "cid-site"
+            assert conversation.single_chat is False
+            return [
+                DingTalkMessage(
+                    open_conversation_id="cid-site",
+                    open_message_id="msg-site-1",
+                    conversation_title=conversation.title,
+                    single_chat=False,
+                    sender_name="Claire",
+                    sender_open_dingtalk_id="open-claire",
+                    sender_user_id="user-claire",
+                    create_time="2026-05-28 04:04:53",
+                    content="@All 新的官网更新一共16页，请大家打开每一个的html文档",
+                )
+            ]
+
+        def read_unread_messages(self, conversation):
+            return []
+
+        def reply_message(
+            self,
+            conversation_id,
+            ref_message_id,
+            ref_sender_open_dingtalk_id,
+            text,
+        ):
+            self.reply_messages.append(
+                (conversation_id, ref_message_id, ref_sender_open_dingtalk_id, text)
+            )
+            return {"result": {"processQueryKey": "recall-site-1"}}
+
+    monkeypatch.setattr(
+        "ceo_agent_service.worker.send_macos_notification",
+        lambda **kwargs: None,
+    )
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.upsert_conversation(
+        "cid-site",
+        title="官网迭代群",
+        single_chat=False,
+        codex_session_id=None,
+    )
+    dws = FakeDws()
+
+    result = handle_reviewed_message_reply(
+        store,
+        dws,
+        user_name="Claire",
+        group_name="官网迭代群",
+        message_str="@All 新的官网更新一共16页，请大家打开每一个的html文档",
+        reply_text="我已经完成审核，会把核心 comment 补到 tracker。",
+    )
+
+    attempt = store.get_reply_attempt(result["attempt_id"])
+    assert result["send_status"] == "sent"
+    assert attempt is not None
+    assert "> Claire: 新的官网更新一共16页，请大家打开每一个的html..." in attempt.final_reply_text
+    assert dws.reply_messages == [
+        (
+            "cid-site",
+            "msg-site-1",
+            "open-claire",
+            attempt.final_reply_text,
+        )
+    ]
 
 
 def test_handle_reviewed_message_reply_matches_private_message_without_mention(
