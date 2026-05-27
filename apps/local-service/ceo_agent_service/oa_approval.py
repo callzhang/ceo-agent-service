@@ -169,10 +169,20 @@ class OaApprovalCodexRunner:
         return result
 
     def handle(
-        self, trigger_text: str, context_text: str, oa_url: str
+        self,
+        trigger_text: str,
+        context_text: str,
+        oa_url: str,
+        execute: bool = True,
     ) -> OaApprovalResult:
+        mode = (
+            "执行模式：可以在完整审阅并确认 taskId 后执行通过、拒绝或退回。"
+            if execute
+            else "只读审阅模式：不得执行通过、拒绝、退回或评论；只输出建议动作和建议留言，action_result 填 {}。"
+        )
         prompt = (
             "请审阅并处理下面这条 DingTalk OA 审批消息。\n\n"
+            f"{mode}\n\n"
             f"OA URL:\n{oa_url}\n\n"
             f"触发消息:\n{trigger_text}\n\n"
             f"会话上下文:\n{context_text}"

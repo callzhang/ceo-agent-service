@@ -72,6 +72,9 @@ DINGTALK_APPROVAL_LINK_PATTERN = re.compile(
     r"aflow\.dingtalk\.com|dinghash(?:=|%3D)approval|swfrom(?:=|%3D)oa",
     re.IGNORECASE,
 )
+DINGTALK_APPROVAL_REMINDER_PATTERN = re.compile(
+    r"^\s*\[Ding]\S{1,40}提醒您审批", re.IGNORECASE
+)
 ORDINARY_EXTERNAL_LINK_PATTERN = re.compile(
     r"https?://(?![^\s)]*dingtalk\.com)\S+",
     re.IGNORECASE,
@@ -681,7 +684,7 @@ class DingTalkAutoReplyWorker:
     ) -> bool:
         if self.oa_approval_runner is None:
             return False
-        if not DINGTALK_APPROVAL_LINK_PATTERN.search(trigger.content):
+        if not self._is_oa_approval_message(trigger):
             return False
         if not ignore_existing_attempt and self._handle_existing_attempt(
             conversation,
@@ -690,12 +693,11 @@ class DingTalkAutoReplyWorker:
         ):
             return True
         oa_url = extract_oa_url(trigger.content)
-        if not oa_url:
-            return False
         result = self.oa_approval_runner.handle(
             trigger_text=trigger.content,
             context_text=self._oa_approval_context_text(context_messages),
             oa_url=oa_url,
+            execute=not self.dry_run,
         )
         attempt_id = self.store.record_reply_attempt(
             conversation_id=conversation.open_conversation_id,
@@ -733,7 +735,7 @@ class DingTalkAutoReplyWorker:
                 result.action_result,
                 ensure_ascii=False,
             ),
-            send_status="skipped",
+            send_status="dry_run" if self.dry_run else "skipped",
         )
         self.store.update_reply_attempt(
             attempt_id,
@@ -750,6 +752,14 @@ class DingTalkAutoReplyWorker:
                 f"{message.create_time} {message.sender_name}: {message.content}"
             )
         return "\n".join(lines)
+
+    @staticmethod
+    def _is_oa_approval_message(message: DingTalkMessage) -> bool:
+        content = message.content.strip()
+        return bool(
+            DINGTALK_APPROVAL_LINK_PATTERN.search(content)
+            or DINGTALK_APPROVAL_REMINDER_PATTERN.search(content)
+        )
 
     def _handle_calendar_invite_if_actionable(
         self,
@@ -1005,6 +1015,8 @@ class DingTalkAutoReplyWorker:
         ):
             return True
         content = message.content.strip()
+        if DINGTALK_APPROVAL_LINK_PATTERN.search(content):
+            return False
         if content.startswith(RENDERED_NON_TEXT_PREFIXES):
             return True
         if content.startswith("[dingtalk://"):
