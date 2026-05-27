@@ -592,6 +592,7 @@ def _attempt_detail_body(
         f"{_review_panel(attempt)}"
         f"<section class=\"card compact-card\"><div class=\"grid\">{rows}</div></section>"
         f"{_quality_warning_card(attempt)}"
+        f"{_oa_metadata_card(attempt)}"
         f"{_recall_card(attempt, sent_reply)}"
         f"{_codex_session_card(codex_session_id, attempt)}"
         f"{_text_card('Trigger', attempt.trigger_text)}"
@@ -656,6 +657,36 @@ def _quality_warning_card(attempt: ReplyAttempt) -> str:
     return (
         "<section class=\"card quality-warning\"><h2>Audit quality warnings</h2>"
         f"<ul>{items}</ul></section>"
+    )
+
+
+def _oa_metadata_card(attempt: ReplyAttempt) -> str:
+    if not any(
+        value.strip()
+        for value in (
+            attempt.oa_process_instance_id,
+            attempt.oa_task_id,
+            attempt.oa_url,
+            attempt.oa_action,
+            attempt.oa_remark,
+            attempt.oa_action_result_json,
+        )
+    ):
+        return ""
+    rows = "".join(
+        f"<div class=\"muted\">{escape(label)}</div><div>{escape(value)}</div>"
+        for label, value in (
+            ("process instance", attempt.oa_process_instance_id),
+            ("task id", attempt.oa_task_id),
+            ("url", attempt.oa_url),
+            ("action", attempt.oa_action),
+            ("remark", attempt.oa_remark),
+        )
+    )
+    return (
+        "<section class=\"card compact-card\"><h2>OA approval</h2>"
+        f"<div class=\"grid\">{rows}</div></section>"
+        f"{_json_card('OA action result', attempt.oa_action_result_json)}"
     )
 
 

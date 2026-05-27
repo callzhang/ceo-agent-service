@@ -37,6 +37,7 @@ from ceo_agent_service.dingtalk_models import (
     DingTalkMessage,
 )
 from ceo_agent_service.notification import send_macos_notification
+from ceo_agent_service.oa_approval import extract_oa_url
 from ceo_agent_service.permission import PermissionAction, PermissionGate
 from ceo_agent_service.prompt import LinkedDocumentContext, build_turn_prompt
 from ceo_agent_service.store import AutoReplyStore, ReplyAttempt, ReplyTask
@@ -70,6 +71,9 @@ DINGTALK_INTERNAL_OR_RENDERED_MEDIA_PATTERN = re.compile(
 DINGTALK_APPROVAL_LINK_PATTERN = re.compile(
     r"aflow\.dingtalk\.com|dinghash(?:=|%3D)approval|swfrom(?:=|%3D)oa",
     re.IGNORECASE,
+)
+DINGTALK_APPROVAL_REMINDER_PATTERN = re.compile(
+    r"^\s*\[Ding]\S{1,40}提醒您审批", re.IGNORECASE
 )
 ORDINARY_EXTERNAL_LINK_PATTERN = re.compile(
     r"https?://(?![^\s)]*dingtalk\.com)\S+",
@@ -136,6 +140,7 @@ class DingTalkAutoReplyWorker:
         send_attempts: int = 2,
         max_task_attempts: int = MAX_REPLY_TASK_ATTEMPTS,
         now_provider: Callable[[], datetime] | None = None,
+        oa_approval_runner=None,
     ):
         self.store = store
         self.dws = dws
@@ -148,6 +153,7 @@ class DingTalkAutoReplyWorker:
         self.max_task_attempts = max_task_attempts
         self.now_provider = now_provider or (lambda: datetime.now().astimezone())
         self.permission_gate = PermissionGate(dws)
+        self.oa_approval_runner = oa_approval_runner
 
     def run_once(self, max_batches: int | None = None) -> None:
         self.produce_once()
@@ -333,7 +339,7 @@ class DingTalkAutoReplyWorker:
                 unread_point=1,
             )
             try:
-                self._process_queued_task(conversation, task)
+                should_complete_task = self._process_queued_task(conversation, task)
             except Exception as exc:
                 error = str(exc)
                 if self._is_authorization_error(exc):
@@ -374,8 +380,11 @@ class DingTalkAutoReplyWorker:
                     message=error[:120],
                 )
                 continue
-            self.store.complete_reply_task(task.id)
-            processed_tasks += 1
+            if should_complete_task:
+                self.store.complete_reply_task(task.id)
+                processed_tasks += 1
+            else:
+                self.store.defer_reply_task(task.id, "dry_run")
         return processed_tasks
 
     @staticmethod
@@ -391,7 +400,7 @@ class DingTalkAutoReplyWorker:
 
     def _process_queued_task(
         self, conversation: DingTalkConversation, task: ReplyTask
-    ) -> None:
+    ) -> bool:
         context_messages = self.dws.read_recent_messages(conversation)
         unread_messages = self.dws.read_unread_messages(conversation)
         prompt_context_messages = self._prompt_context_messages(
@@ -403,18 +412,24 @@ class DingTalkAutoReplyWorker:
             trigger,
             raise_on_delivery_failure=True,
         ):
-            return
+            return True
         if self._handle_calendar_invite_if_actionable(
             conversation,
             trigger,
             prompt_context_messages,
             raise_on_delivery_failure=True,
         ):
-            return
+            return True
+        if self._handle_oa_approval_if_actionable(
+            conversation,
+            trigger,
+            prompt_context_messages,
+        ):
+            return not self.dry_run
         if self._is_system_or_notification_message(trigger):
             self._record_system_or_notification_skip(conversation, trigger)
             self._mark_seen([trigger])
-            return
+            return True
         self._process_batch(
             conversation,
             [trigger],
@@ -422,6 +437,7 @@ class DingTalkAutoReplyWorker:
             send_processing_ack=True,
             raise_on_delivery_failure=True,
         )
+        return True
 
     def _enqueue_reply_task(
         self,
@@ -532,6 +548,13 @@ class DingTalkAutoReplyWorker:
         ):
             return trigger.open_message_id
         if self._handle_calendar_invite_if_actionable(
+            conversation,
+            trigger,
+            prompt_context_messages,
+            ignore_existing_attempt=force_new_decision,
+        ):
+            return trigger.open_message_id
+        if self._handle_oa_approval_if_actionable(
             conversation,
             trigger,
             prompt_context_messages,
@@ -654,6 +677,93 @@ class DingTalkAutoReplyWorker:
         if minutes_permission_request_from_message is None:
             return None
         return minutes_permission_request_from_message(message)
+
+    def _handle_oa_approval_if_actionable(
+        self,
+        conversation: DingTalkConversation,
+        trigger: DingTalkMessage,
+        context_messages: list[DingTalkMessage],
+        *,
+        ignore_existing_attempt: bool = False,
+    ) -> bool:
+        if self.oa_approval_runner is None:
+            return False
+        if not self._is_oa_approval_message(trigger):
+            return False
+        if not ignore_existing_attempt and self._handle_existing_attempt(
+            conversation,
+            trigger,
+            [trigger],
+        ):
+            return True
+        oa_url = extract_oa_url(trigger.content)
+        result = self.oa_approval_runner.handle(
+            trigger_text=trigger.content,
+            context_text=self._oa_approval_context_text(context_messages),
+            oa_url=oa_url,
+            execute=not self.dry_run,
+        )
+        attempt_id = self.store.record_reply_attempt(
+            conversation_id=conversation.open_conversation_id,
+            conversation_title=conversation.title,
+            trigger_message_id=trigger.open_message_id,
+            trigger_sender=trigger.sender_name,
+            trigger_text=trigger.content,
+            action="oa_approval",
+            sensitivity_kind="internal_personnel",
+            codex_reason=result.oa_action,
+            draft_reply_text=result.oa_remark,
+            codex_session_id=getattr(self.oa_approval_runner, "last_session_id", "")
+            or "",
+            codex_transcript_start_line=getattr(
+                self.oa_approval_runner, "last_transcript_start_line", 0
+            ),
+            codex_transcript_end_line=getattr(
+                self.oa_approval_runner, "last_transcript_end_line", 0
+            ),
+            audit_documents_json=json.dumps(
+                result.audit_documents,
+                ensure_ascii=False,
+            ),
+            audit_tool_events_json=json.dumps(
+                getattr(self.oa_approval_runner, "last_audit_tool_events", []),
+                ensure_ascii=False,
+            ),
+            audit_summary=result.audit_summary,
+            oa_process_instance_id=result.process_instance_id,
+            oa_task_id=result.task_id,
+            oa_url=result.oa_url,
+            oa_action=result.oa_action,
+            oa_remark=result.oa_remark,
+            oa_action_result_json=json.dumps(
+                result.action_result,
+                ensure_ascii=False,
+            ),
+            send_status="dry_run" if self.dry_run else "skipped",
+        )
+        self.store.update_reply_attempt(
+            attempt_id,
+            final_reply_text=result.oa_remark,
+        )
+        self._mark_seen([trigger])
+        return True
+
+    @staticmethod
+    def _oa_approval_context_text(messages: list[DingTalkMessage]) -> str:
+        lines = []
+        for message in messages:
+            lines.append(
+                f"{message.create_time} {message.sender_name}: {message.content}"
+            )
+        return "\n".join(lines)
+
+    @staticmethod
+    def _is_oa_approval_message(message: DingTalkMessage) -> bool:
+        content = message.content.strip()
+        return bool(
+            DINGTALK_APPROVAL_LINK_PATTERN.search(content)
+            or DINGTALK_APPROVAL_REMINDER_PATTERN.search(content)
+        )
 
     def _handle_calendar_invite_if_actionable(
         self,
@@ -909,6 +1019,8 @@ class DingTalkAutoReplyWorker:
         ):
             return True
         content = message.content.strip()
+        if DINGTALK_APPROVAL_LINK_PATTERN.search(content):
+            return False
         if content.startswith(RENDERED_NON_TEXT_PREFIXES):
             return True
         if content.startswith("[dingtalk://"):

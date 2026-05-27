@@ -28,6 +28,7 @@ from ceo_agent_service.dws_client import (
 )
 from ceo_agent_service.dingtalk_models import CodexAction, DingTalkConversation
 from ceo_agent_service.notification import send_macos_notification
+from ceo_agent_service.oa_approval import OaApprovalCodexRunner
 from ceo_agent_service.org_cache import (
     CachedDwsClient,
     CachedOrgDirectory,
@@ -351,9 +352,13 @@ def create_worker(settings: WorkerSettings) -> DingTalkAutoReplyWorker:
         workspace=settings.workspace,
         timeout_seconds=settings.codex_timeout_seconds,
     )
+    oa_approval_runner = OaApprovalCodexRunner(
+        workspace=settings.workspace,
+        timeout_seconds=settings.codex_timeout_seconds,
+    )
     style_profile = _load_style_profile(settings.corpus_dir)
     style_records = load_corpus_records(settings.corpus_dir / "derek_style_corpus.csv")
-    return DingTalkAutoReplyWorker(
+    worker = DingTalkAutoReplyWorker(
         store=store,
         dws=cached_dws,
         codex=codex,
@@ -361,6 +366,8 @@ def create_worker(settings: WorkerSettings) -> DingTalkAutoReplyWorker:
         style_profile=style_profile,
         style_records=style_records,
     )
+    worker.oa_approval_runner = oa_approval_runner
+    return worker
 
 
 def ensure_live_send_allowed(settings: WorkerSettings) -> None:
