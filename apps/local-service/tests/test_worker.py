@@ -3368,6 +3368,29 @@ def test_group_mention_from_unread_conversation_is_processed_when_unread_tail_mi
     assert attempts[0].send_status == "dry_run"
 
 
+def test_group_all_mention_from_unread_conversation_is_processed(
+    tmp_path: Path, monkeypatch
+):
+    all_mention = message("@所有人 今天需要同步一下项目风险", message_id="msg-all")
+    all_mention.create_time = "2026-05-25 17:53:12"
+    dws = FakeDws(
+        [conversation()],
+        {"cid-1": [all_mention]},
+        unread_messages={"cid-1": [all_mention]},
+    )
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="我看一下风险点")
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch, dry_run=True)
+
+    worker.run_once()
+
+    attempts = worker.store.list_reply_attempts(limit=10)
+    assert len(codex.calls) == 1
+    assert attempts[0].trigger_message_id == "msg-all"
+    assert attempts[0].send_status == "dry_run"
+
+
 def test_group_mention_from_read_conversation_is_processed_from_mentions(
     tmp_path: Path, monkeypatch
 ):

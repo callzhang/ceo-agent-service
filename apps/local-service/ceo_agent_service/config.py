@@ -47,6 +47,10 @@ def mention_aliases() -> tuple[str, ...]:
     return env_csv("CEO_MENTION_ALIASES", ("@CEO",))
 
 
+def broadcast_mention_aliases() -> tuple[str, ...]:
+    return env_csv("CEO_BROADCAST_MENTION_ALIASES", ("@所有人", "@all"))
+
+
 def current_user_display_names() -> tuple[str, ...]:
     return env_csv("CEO_CURRENT_USER_DISPLAY_NAMES", (principal_display_name(),))
 

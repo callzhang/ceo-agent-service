@@ -2,7 +2,7 @@ from enum import StrEnum
 
 from pydantic import BaseModel, Field
 
-from ceo_agent_service.config import mention_aliases
+from ceo_agent_service.config import broadcast_mention_aliases, mention_aliases
 
 
 class DingTalkConversation(BaseModel):
@@ -32,6 +32,12 @@ class DingTalkMessage(BaseModel):
 
     def mentions_derek(self) -> bool:
         return any(mention in self.content for mention in mention_aliases())
+
+    def mentions_all(self) -> bool:
+        return any(mention in self.content for mention in broadcast_mention_aliases())
+
+    def addresses_principal(self) -> bool:
+        return self.mentions_derek() or self.mentions_all()
 
 
 class CodexAction(StrEnum):

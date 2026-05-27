@@ -1117,7 +1117,7 @@ class DingTalkAutoReplyWorker:
             eligible_messages = messages
         else:
             eligible_messages = [
-                message for message in messages if message.mentions_derek()
+                message for message in messages if message.addresses_principal()
             ]
         candidates = [
             message
