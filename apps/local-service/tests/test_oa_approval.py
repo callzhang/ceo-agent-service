@@ -101,6 +101,15 @@ def test_extract_oa_url_ignores_outer_wrapper_params_and_trailing_punctuation():
     )
 
 
+def test_extract_oa_url_strips_sentence_period_from_direct_url():
+    text = "请处理 https://aflow.dingtalk.com/detail?procInstId=proc-1&taskId=task-1."
+
+    assert (
+        extract_oa_url(text)
+        == "https://aflow.dingtalk.com/detail?procInstId=proc-1&taskId=task-1"
+    )
+
+
 def test_runner_injects_skill_uses_schema_parses_result_and_records_session(
     tmp_path: Path, monkeypatch
 ):

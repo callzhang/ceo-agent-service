@@ -30,7 +30,7 @@ DEFAULT_OA_APPROVAL_SKILL_PATH = (
     Path.home() / ".agents" / "skills" / "dingtalk-oa-approval" / "SKILL.md"
 )
 AFLOW_HOST = "aflow.dingtalk.com"
-URL_TRAILING_CHARS = "\"'`>,。；;，"
+URL_TRAILING_CHARS = "\"'`>,.。；;，"
 SECRET_PATTERNS = (
     re.compile(r"access_token=[^\s&]+", re.IGNORECASE),
     re.compile(r"appsecret=[^\s&]+", re.IGNORECASE),
