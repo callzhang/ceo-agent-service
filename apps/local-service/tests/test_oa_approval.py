@@ -6,6 +6,7 @@ import pytest
 from pydantic import ValidationError
 
 import ceo_agent_service.oa_approval as oa_approval
+from ceo_agent_service.codex_runner import CODEX_BYPASS_APPROVALS_AND_SANDBOX
 from ceo_agent_service.oa_approval import (
     OA_APPROVAL_SCHEMA_PATH,
     OaApprovalCodexRunner,
@@ -170,6 +171,7 @@ def test_runner_injects_skill_uses_schema_parses_result_and_records_session(
     developer_arg = _developer_instructions_arg(command)
     assert "# OA Skill" in developer_arg
     assert "审批前先审阅。" in developer_arg
+    assert CODEX_BYPASS_APPROVALS_AND_SANDBOX in command
     assert "--output-schema" in command
     assert command[command.index("--output-schema") + 1] == str(OA_APPROVAL_SCHEMA_PATH)
     assert runner.runner.build_env()["HOME"] == "/Users/derek"
@@ -219,6 +221,108 @@ def test_resume_command_also_uses_output_schema(tmp_path: Path):
     assert command[:3] == ["codex", "exec", "resume"]
     assert "--output-schema" in command
     assert command[command.index("--output-schema") + 1] == str(OA_APPROVAL_SCHEMA_PATH)
+
+
+def test_read_only_handle_uses_hard_sandbox_and_requires_empty_action_result(
+    tmp_path: Path,
+):
+    skill_path = tmp_path / "skill.md"
+    skill_path.write_text("# OA Skill", encoding="utf-8")
+    calls: list[list[str]] = []
+
+    def fake_executor(command: list[str], prompt: str) -> str:
+        calls.append(command)
+        return json.dumps(
+            {
+                "process_instance_id": "proc-1",
+                "task_id": "task-1",
+                "oa_url": "https://aflow.dingtalk.com/detail?procInstId=proc-1",
+                "oa_action": "退回",
+                "oa_remark": "请补充材料。",
+                "action_result": {},
+                "audit_summary": "只读审阅，未执行审批动作。",
+                "audit_documents": [],
+            },
+            ensure_ascii=False,
+        )
+
+    runner = OaApprovalCodexRunner(
+        workspace=tmp_path,
+        executor=fake_executor,
+        skill_path=skill_path,
+    )
+
+    result = runner.handle("触发消息", "", "", execute=False)
+
+    command = calls[0]
+    assert result.action_result == {}
+    assert CODEX_BYPASS_APPROVALS_AND_SANDBOX not in command
+    assert 'approval_policy="never"' in command
+    assert 'sandbox_mode="read-only"' in command
+
+
+def test_read_only_handle_rejects_mutating_result_or_tool_event(tmp_path: Path):
+    skill_path = tmp_path / "skill.md"
+    skill_path.write_text("# OA Skill", encoding="utf-8")
+
+    def nonempty_action_result(command: list[str], prompt: str) -> str:
+        return json.dumps(
+            {
+                "process_instance_id": "proc-1",
+                "task_id": "task-1",
+                "oa_url": "https://aflow.dingtalk.com/detail?procInstId=proc-1",
+                "oa_action": "通过",
+                "oa_remark": "同意。",
+                "action_result": {"errcode": 0},
+                "audit_summary": "不应被接受。",
+                "audit_documents": [],
+            },
+            ensure_ascii=False,
+        )
+
+    runner = OaApprovalCodexRunner(
+        workspace=tmp_path,
+        executor=nonempty_action_result,
+        skill_path=skill_path,
+    )
+    with pytest.raises(RuntimeError, match="action_result"):
+        runner.handle("触发消息", "", "", execute=False)
+
+    def mutating_tool_event(command: list[str], prompt: str) -> str:
+        return "\n".join(
+            [
+                json.dumps(
+                    {
+                        "item": {
+                            "type": "tool_call",
+                            "tool_name": "functions.exec_command",
+                            "cmd": "dws oa approval approve --instance-id proc-1 --task-id task-1 --yes",
+                        }
+                    }
+                ),
+                json.dumps(
+                    {
+                        "process_instance_id": "proc-1",
+                        "task_id": "task-1",
+                        "oa_url": "https://aflow.dingtalk.com/detail?procInstId=proc-1",
+                        "oa_action": "通过",
+                        "oa_remark": "同意。",
+                        "action_result": {},
+                        "audit_summary": "不应被接受。",
+                        "audit_documents": [],
+                    },
+                    ensure_ascii=False,
+                ),
+            ]
+        )
+
+    runner = OaApprovalCodexRunner(
+        workspace=tmp_path,
+        executor=mutating_tool_event,
+        skill_path=skill_path,
+    )
+    with pytest.raises(RuntimeError, match="mutating"):
+        runner.handle("触发消息", "", "", execute=False)
 
 
 def test_subprocess_failure_redacts_sensitive_stderr(tmp_path: Path, monkeypatch):

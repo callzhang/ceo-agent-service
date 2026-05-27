@@ -339,7 +339,7 @@ class DingTalkAutoReplyWorker:
                 unread_point=1,
             )
             try:
-                self._process_queued_task(conversation, task)
+                should_complete_task = self._process_queued_task(conversation, task)
             except Exception as exc:
                 error = str(exc)
                 if self._is_authorization_error(exc):
@@ -380,8 +380,11 @@ class DingTalkAutoReplyWorker:
                     message=error[:120],
                 )
                 continue
-            self.store.complete_reply_task(task.id)
-            processed_tasks += 1
+            if should_complete_task:
+                self.store.complete_reply_task(task.id)
+                processed_tasks += 1
+            else:
+                self.store.defer_reply_task(task.id, "dry_run")
         return processed_tasks
 
     @staticmethod
@@ -397,7 +400,7 @@ class DingTalkAutoReplyWorker:
 
     def _process_queued_task(
         self, conversation: DingTalkConversation, task: ReplyTask
-    ) -> None:
+    ) -> bool:
         context_messages = self.dws.read_recent_messages(conversation)
         unread_messages = self.dws.read_unread_messages(conversation)
         prompt_context_messages = self._prompt_context_messages(
@@ -409,24 +412,24 @@ class DingTalkAutoReplyWorker:
             trigger,
             raise_on_delivery_failure=True,
         ):
-            return
+            return True
         if self._handle_calendar_invite_if_actionable(
             conversation,
             trigger,
             prompt_context_messages,
             raise_on_delivery_failure=True,
         ):
-            return
+            return True
         if self._handle_oa_approval_if_actionable(
             conversation,
             trigger,
             prompt_context_messages,
         ):
-            return
+            return not self.dry_run
         if self._is_system_or_notification_message(trigger):
             self._record_system_or_notification_skip(conversation, trigger)
             self._mark_seen([trigger])
-            return
+            return True
         self._process_batch(
             conversation,
             [trigger],
@@ -434,6 +437,7 @@ class DingTalkAutoReplyWorker:
             send_processing_ack=True,
             raise_on_delivery_failure=True,
         )
+        return True
 
     def _enqueue_reply_task(
         self,

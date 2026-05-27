@@ -1445,6 +1445,31 @@ def test_oa_approval_dry_run_uses_review_only_mode_and_keeps_live_retry_open(
     assert attempt is not None
     assert attempt.action == "oa_approval"
     assert attempt.send_status == "dry_run"
+    assert worker.store.count_reply_tasks(status="pending") == 1
+    assert worker.store.count_reply_tasks(status="done") == 0
+
+    live_runner = FakeOaApprovalRunner()
+    live_worker = DingTalkAutoReplyWorker(
+        store=worker.store,
+        dws=dws,
+        codex=codex,
+        dry_run=False,
+        now_provider=fixed_worker_now,
+        oa_approval_runner=live_runner,
+    )
+
+    live_worker.run_once()
+
+    assert len(live_runner.calls) == 1
+    assert live_runner.calls[0][3] is True
+    assert worker.store.has_seen("msg-1") is True
+    assert worker.store.count_reply_attempts() == 2
+    assert worker.store.count_reply_tasks(status="pending") == 0
+    assert worker.store.count_reply_tasks(status="done") == 1
+    live_attempt = worker.store.get_reply_attempt(2)
+    assert live_attempt is not None
+    assert live_attempt.action == "oa_approval"
+    assert live_attempt.send_status == "skipped"
 
 
 def test_bare_dingtalk_approval_wrapper_is_not_skipped_before_oa_runner(

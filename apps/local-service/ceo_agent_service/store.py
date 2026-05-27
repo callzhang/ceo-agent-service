@@ -479,7 +479,7 @@ class AutoReplyStore:
                 (error, task_id),
             )
 
-    def defer_reply_task_for_authorization(self, task_id: int, error: str) -> None:
+    def defer_reply_task(self, task_id: int, error: str) -> None:
         with self._connect() as db:
             db.execute(
                 """
@@ -493,6 +493,9 @@ class AutoReplyStore:
                 """,
                 (error, task_id),
             )
+
+    def defer_reply_task_for_authorization(self, task_id: int, error: str) -> None:
+        self.defer_reply_task(task_id, error)
 
     def count_reply_tasks(self, status: str | None = None) -> int:
         with self._connect() as db:

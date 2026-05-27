@@ -38,6 +38,10 @@ SECRET_PATTERNS = (
     re.compile(r"cookie[:=][^\s]+", re.IGNORECASE),
     re.compile(r"oauth[_-]?code=[^\s&]+", re.IGNORECASE),
 )
+OA_MUTATING_COMMAND_PATTERN = re.compile(
+    r"\bdws\s+oa\s+approval\s+(?:approve|reject|return)\b",
+    re.IGNORECASE,
+)
 
 
 class OaApprovalResult(BaseModel):
@@ -154,18 +158,32 @@ class OaApprovalCodexRunner:
         self.last_transcript_start_line: int = 0
         self.last_transcript_end_line: int = 0
 
-    def run(self, prompt: str, session_id: str | None = None) -> OaApprovalResult:
+    def run(
+        self,
+        prompt: str,
+        session_id: str | None = None,
+        allow_side_effects: bool = True,
+    ) -> OaApprovalResult:
         raw_outputs: list[str] = []
         self.last_audit_tool_events = []
         self.last_session_id = session_id
         self.last_transcript_start_line = self._session_line_count(session_id)
         self.last_transcript_end_line = self.last_transcript_start_line
 
-        raw = self.executor(self.runner.build_command(prompt, session_id), prompt)
+        raw = self.executor(
+            self.runner.build_command(
+                prompt,
+                session_id,
+                allow_side_effects=allow_side_effects,
+            ),
+            prompt,
+        )
         raw_outputs.append(raw)
         self._remember_session_id(raw)
         result = parse_oa_approval_json(raw)
         self._remember_audit_tool_events(raw_outputs)
+        if not allow_side_effects:
+            _validate_read_only_result(result, self.last_audit_tool_events)
         return result
 
     def handle(
@@ -187,7 +205,7 @@ class OaApprovalCodexRunner:
             f"触发消息:\n{trigger_text}\n\n"
             f"会话上下文:\n{context_text}"
         )
-        return self.run(prompt, session_id=None)
+        return self.run(prompt, session_id=None, allow_side_effects=execute)
 
     def _remember_session_id(self, raw: str) -> None:
         session_id = extract_codex_session_id(raw)
@@ -238,17 +256,36 @@ class _OaApprovalCommandBuilder:
     def build_env(self) -> dict[str, str]:
         return os.environ.copy()
 
-    def build_command(self, prompt: str, session_id: str | None) -> list[str]:
+    def build_command(
+        self,
+        prompt: str,
+        session_id: str | None,
+        *,
+        allow_side_effects: bool = True,
+    ) -> list[str]:
+        if allow_side_effects:
+            safety_options = [
+                "-c",
+                'approval_policy="untrusted"',
+                "-c",
+                'approvals_reviewer="auto_review"',
+            ]
+            bypass_options = [CODEX_BYPASS_APPROVALS_AND_SANDBOX]
+        else:
+            safety_options = [
+                "-c",
+                'approval_policy="never"',
+                "-c",
+                'sandbox_mode="read-only"',
+            ]
+            bypass_options = []
         common_options = [
             "--json",
             "-m",
             "gpt-5.5",
             "--ignore-user-config",
             "--ignore-rules",
-            "-c",
-            'approval_policy="untrusted"',
-            "-c",
-            'approvals_reviewer="auto_review"',
+            *safety_options,
             "-c",
             _config_string("developer_instructions", self._developer_instructions()),
             "-c",
@@ -266,7 +303,7 @@ class _OaApprovalCommandBuilder:
                 "exec",
                 "resume",
                 *common_options,
-                CODEX_BYPASS_APPROVALS_AND_SANDBOX,
+                *bypass_options,
                 "--output-schema",
                 str(OA_APPROVAL_SCHEMA_PATH),
                 session_id,
@@ -276,7 +313,7 @@ class _OaApprovalCommandBuilder:
             self.codex_bin,
             "exec",
             *common_options,
-            CODEX_BYPASS_APPROVALS_AND_SANDBOX,
+            *bypass_options,
             "--output-schema",
             str(OA_APPROVAL_SCHEMA_PATH),
             "--cd",
@@ -294,6 +331,18 @@ class _OaApprovalCommandBuilder:
             "# Injected dingtalk-oa-approval skill\n\n"
             f"{skill_text}"
         )
+
+
+def _validate_read_only_result(
+    result: OaApprovalResult,
+    audit_tool_events: list[dict[str, str]],
+) -> None:
+    if result.action_result:
+        raise RuntimeError("read-only OA approval review returned action_result")
+    for event in audit_tool_events:
+        command = str(event.get("command") or event.get("cmd") or "")
+        if OA_MUTATING_COMMAND_PATTERN.search(command):
+            raise RuntimeError("read-only OA approval review attempted a mutating action")
 
 
 def _subprocess_failure_reason(stderr: str) -> str:
