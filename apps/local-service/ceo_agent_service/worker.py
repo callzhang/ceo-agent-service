@@ -4,7 +4,7 @@ import urllib.request
 import zipfile
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from io import BytesIO
 from urllib.parse import urlsplit, urlunsplit
 
@@ -122,6 +122,8 @@ PDF_TEXT_PAGE_LIMIT = 30
 DWS_UPGRADE_CHECKED_DATE_STATE_KEY = "dws_upgrade_checked_date"
 AITABLE_TABLE_PREVIEW_LIMIT = 5
 AITABLE_RECORD_PREVIEW_LIMIT = 10
+SINGLE_CHAT_READ_RECOVERY_WINDOW = timedelta(hours=24)
+SINGLE_CHAT_READ_RECOVERY_LIMIT = 50
 
 
 @dataclass(frozen=True)
@@ -182,6 +184,9 @@ class DingTalkAutoReplyWorker:
         conversations = self._conversations_with_mentions(
             conversations,
             mentioned_messages,
+        )
+        conversations = self._conversations_with_recent_single_chat_recovery(
+            conversations,
         )
         for conversation in conversations:
             self.store.upsert_conversation(
@@ -276,6 +281,35 @@ class DingTalkAutoReplyWorker:
             if max_tasks is not None and queued_tasks >= max_tasks:
                 return queued_tasks
         return queued_tasks
+
+    def _conversations_with_recent_single_chat_recovery(
+        self,
+        conversations: list[DingTalkConversation],
+    ) -> list[DingTalkConversation]:
+        existing_ids = {
+            conversation.open_conversation_id for conversation in conversations
+        }
+        since_utc = (
+            self.now_provider().astimezone(timezone.utc)
+            - SINGLE_CHAT_READ_RECOVERY_WINDOW
+        ).strftime("%Y-%m-%d %H:%M:%S")
+        recovered = []
+        for record in self.store.list_recent_single_chat_conversations(
+            since_utc,
+            limit=SINGLE_CHAT_READ_RECOVERY_LIMIT,
+        ):
+            if record.conversation_id in existing_ids:
+                continue
+            existing_ids.add(record.conversation_id)
+            recovered.append(
+                DingTalkConversation(
+                    open_conversation_id=record.conversation_id,
+                    title=record.title,
+                    single_chat=True,
+                    unread_point=0,
+                )
+            )
+        return [*conversations, *recovered]
 
     def _maybe_upgrade_dws_once_per_day(self) -> None:
         today = self._now().date().isoformat()

@@ -2650,7 +2650,7 @@ def test_single_chat_recent_context_after_seen_is_processed_when_unread_empty(
     )
     latest_peer_message.create_time = "2026-05-13 17:50:01"
     dws = FakeDws(
-        [conversation(single_chat=True)],
+        [],
         {
             "cid-1": [
                 handled,
@@ -2665,6 +2665,7 @@ def test_single_chat_recent_context_after_seen_is_processed_when_unread_empty(
         CodexDecision(action=CodexAction.SEND_REPLY, reply_text="我倾向先推 HSW。")
     )
     worker = make_worker(tmp_path, dws, codex, monkeypatch)
+    worker.store.upsert_conversation("cid-1", "Friday", True, None)
     worker.store.mark_seen("msg-handled", "cid-1")
 
     worker.run_once()
