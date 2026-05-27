@@ -2296,7 +2296,9 @@ class DingTalkAutoReplyWorker:
                 None,
                 text,
                 user_id=user_id,
-                open_dingtalk_id=open_dingtalk_id or trigger.sender_open_dingtalk_id,
+                open_dingtalk_id=None
+                if user_id
+                else open_dingtalk_id or trigger.sender_open_dingtalk_id,
             )
         return self.dws.reply_message(
             conversation.open_conversation_id,

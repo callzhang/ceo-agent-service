@@ -81,6 +81,7 @@ class FakeDws:
         self.reply_messages: list[tuple[str, str, str, str]] = []
         self.sent_at_users: list[list[str]] = []
         self.direct_user_ids: list[str | None] = []
+        self.direct_open_dingtalk_ids: list[str | None] = []
         self.send_attempt_count = 0
         self.dings: list[str] = []
         self.mentioned_messages: dict[str, list[DingTalkMessage]] = {}
@@ -216,6 +217,7 @@ class FakeDws:
         self.sent.append((conversation_id or "", text))
         self.sent_at_users.append(at_users or [])
         self.direct_user_ids.append(user_id)
+        self.direct_open_dingtalk_ids.append(open_dingtalk_id)
         return self.send_result
 
     def reply_message(
@@ -234,6 +236,7 @@ class FakeDws:
         self.sent.append((conversation_id, text))
         self.sent_at_users.append([])
         self.direct_user_ids.append(None)
+        self.direct_open_dingtalk_ids.append(None)
         return self.send_result
 
     def ding_self(self, text: str) -> None:
@@ -373,6 +376,14 @@ def final_direct_user_ids(dws: FakeDws) -> list[str | None]:
     return [
         user_id
         for sent, user_id in zip(dws.sent, dws.direct_user_ids)
+        if sent[1] != PROCESSING_ACK
+    ]
+
+
+def final_direct_open_dingtalk_ids(dws: FakeDws) -> list[str | None]:
+    return [
+        open_dingtalk_id
+        for sent, open_dingtalk_id in zip(dws.sent, dws.direct_open_dingtalk_ids)
         if sent[1] != PROCESSING_ACK
     ]
 
@@ -2964,6 +2975,7 @@ def test_single_chat_unread_is_processed_without_mention(tmp_path: Path, monkeyp
     ]
     assert final_sent_at_users(dws) == [[]]
     assert final_direct_user_ids(dws) == ["sender-user-1"]
+    assert final_direct_open_dingtalk_ids(dws) == [None]
     assert dws.reply_messages == []
     attempt = worker.store.get_reply_attempt(1)
     assert attempt is not None
