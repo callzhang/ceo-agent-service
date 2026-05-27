@@ -37,6 +37,7 @@ from ceo_agent_service.dingtalk_models import (
     DingTalkMessage,
 )
 from ceo_agent_service.notification import send_macos_notification
+from ceo_agent_service.oa_approval import extract_oa_url
 from ceo_agent_service.permission import PermissionAction, PermissionGate
 from ceo_agent_service.prompt import LinkedDocumentContext, build_turn_prompt
 from ceo_agent_service.store import AutoReplyStore, ReplyAttempt, ReplyTask
@@ -136,6 +137,7 @@ class DingTalkAutoReplyWorker:
         send_attempts: int = 2,
         max_task_attempts: int = MAX_REPLY_TASK_ATTEMPTS,
         now_provider: Callable[[], datetime] | None = None,
+        oa_approval_runner=None,
     ):
         self.store = store
         self.dws = dws
@@ -148,6 +150,7 @@ class DingTalkAutoReplyWorker:
         self.max_task_attempts = max_task_attempts
         self.now_provider = now_provider or (lambda: datetime.now().astimezone())
         self.permission_gate = PermissionGate(dws)
+        self.oa_approval_runner = oa_approval_runner
 
     def run_once(self, max_batches: int | None = None) -> None:
         self.produce_once()
@@ -411,6 +414,12 @@ class DingTalkAutoReplyWorker:
             raise_on_delivery_failure=True,
         ):
             return
+        if self._handle_oa_approval_if_actionable(
+            conversation,
+            trigger,
+            prompt_context_messages,
+        ):
+            return
         if self._is_system_or_notification_message(trigger):
             self._record_system_or_notification_skip(conversation, trigger)
             self._mark_seen([trigger])
@@ -538,6 +547,13 @@ class DingTalkAutoReplyWorker:
             ignore_existing_attempt=force_new_decision,
         ):
             return trigger.open_message_id
+        if self._handle_oa_approval_if_actionable(
+            conversation,
+            trigger,
+            prompt_context_messages,
+            ignore_existing_attempt=force_new_decision,
+        ):
+            return trigger.open_message_id
         if self._is_system_or_notification_message(trigger):
             self._record_system_or_notification_skip(conversation, trigger)
             self._mark_seen([trigger])
@@ -654,6 +670,86 @@ class DingTalkAutoReplyWorker:
         if minutes_permission_request_from_message is None:
             return None
         return minutes_permission_request_from_message(message)
+
+    def _handle_oa_approval_if_actionable(
+        self,
+        conversation: DingTalkConversation,
+        trigger: DingTalkMessage,
+        context_messages: list[DingTalkMessage],
+        *,
+        ignore_existing_attempt: bool = False,
+    ) -> bool:
+        if self.oa_approval_runner is None:
+            return False
+        if not DINGTALK_APPROVAL_LINK_PATTERN.search(trigger.content):
+            return False
+        if not ignore_existing_attempt and self._handle_existing_attempt(
+            conversation,
+            trigger,
+            [trigger],
+        ):
+            return True
+        oa_url = extract_oa_url(trigger.content)
+        if not oa_url:
+            return False
+        result = self.oa_approval_runner.handle(
+            trigger_text=trigger.content,
+            context_text=self._oa_approval_context_text(context_messages),
+            oa_url=oa_url,
+        )
+        attempt_id = self.store.record_reply_attempt(
+            conversation_id=conversation.open_conversation_id,
+            conversation_title=conversation.title,
+            trigger_message_id=trigger.open_message_id,
+            trigger_sender=trigger.sender_name,
+            trigger_text=trigger.content,
+            action="oa_approval",
+            sensitivity_kind="internal_personnel",
+            codex_reason=result.oa_action,
+            draft_reply_text=result.oa_remark,
+            codex_session_id=getattr(self.oa_approval_runner, "last_session_id", "")
+            or "",
+            codex_transcript_start_line=getattr(
+                self.oa_approval_runner, "last_transcript_start_line", 0
+            ),
+            codex_transcript_end_line=getattr(
+                self.oa_approval_runner, "last_transcript_end_line", 0
+            ),
+            audit_documents_json=json.dumps(
+                result.audit_documents,
+                ensure_ascii=False,
+            ),
+            audit_tool_events_json=json.dumps(
+                getattr(self.oa_approval_runner, "last_audit_tool_events", []),
+                ensure_ascii=False,
+            ),
+            audit_summary=result.audit_summary,
+            oa_process_instance_id=result.process_instance_id,
+            oa_task_id=result.task_id,
+            oa_url=result.oa_url,
+            oa_action=result.oa_action,
+            oa_remark=result.oa_remark,
+            oa_action_result_json=json.dumps(
+                result.action_result,
+                ensure_ascii=False,
+            ),
+            send_status="skipped",
+        )
+        self.store.update_reply_attempt(
+            attempt_id,
+            final_reply_text=result.oa_remark,
+        )
+        self._mark_seen([trigger])
+        return True
+
+    @staticmethod
+    def _oa_approval_context_text(messages: list[DingTalkMessage]) -> str:
+        lines = []
+        for message in messages:
+            lines.append(
+                f"{message.create_time} {message.sender_name}: {message.content}"
+            )
+        return "\n".join(lines)
 
     def _handle_calendar_invite_if_actionable(
         self,

@@ -168,6 +168,17 @@ class OaApprovalCodexRunner:
         self._remember_audit_tool_events(raw_outputs)
         return result
 
+    def handle(
+        self, trigger_text: str, context_text: str, oa_url: str
+    ) -> OaApprovalResult:
+        prompt = (
+            "请审阅并处理下面这条 DingTalk OA 审批消息。\n\n"
+            f"OA URL:\n{oa_url}\n\n"
+            f"触发消息:\n{trigger_text}\n\n"
+            f"会话上下文:\n{context_text}"
+        )
+        return self.run(prompt, session_id=None)
+
     def _remember_session_id(self, raw: str) -> None:
         session_id = extract_codex_session_id(raw)
         if session_id:
