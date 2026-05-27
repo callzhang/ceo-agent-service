@@ -2960,6 +2960,18 @@ def test_fake_quote_removes_links_and_mentions_before_truncating():
     assert "@Shawn" not in quote
 
 
+def test_fake_quote_keeps_text_after_compact_assistant_mention():
+    trigger = message(
+        "@磊哥分身，请你按照一曲线、二曲线、三曲线的流程和节点，分析缺乏owner的地方。"
+    )
+
+    quote = DingTalkAutoReplyWorker._fake_quote(trigger)
+
+    assert quote == "> 周俊杰: 请你按照一曲线、二曲线、三曲线的流程和节点，分..."
+    assert "原消息" not in quote
+    assert "@磊哥分身" not in quote
+
+
 def test_single_chat_current_user_message_does_not_call_codex(
     tmp_path: Path, monkeypatch
 ):

@@ -96,7 +96,9 @@ SYSTEM_STATUS_NOTIFICATION_PATTERN = re.compile(
 QUESTION_MARK_PATTERN = re.compile(r"[?？]")
 FIELD_LINE_PATTERN = re.compile(r"^\s*[^:：\n]{1,60}[:：]\s*\S+")
 MENTION_PATTERN = re.compile(
-    r"@[^\s@()（）]+(?:\s+[A-Za-z][^\s@()（）]*)?(?:[（(](?:[^()（）]|[（(][^()（）]*[）)])*[）)])?"
+    r"@[^\s@()（），,。；;：:、?？!！]+"
+    r"(?:\s+[A-Za-z][^\s@()（），,。；;：:、?？!！]*)?"
+    r"(?:[（(](?:[^()（）]|[（(][^()（）]*[）)])*[）)])?"
 )
 QUOTE_MENTION_PATTERN = MENTION_PATTERN
 DINGTALK_DOC_URL_PATTERN = re.compile(
@@ -2344,7 +2346,7 @@ class DingTalkAutoReplyWorker:
     def _quote_source_text(text: str) -> str:
         without_links = MEDIA_OR_LINK_PATTERN.sub(" ", text)
         without_mentions = QUOTE_MENTION_PATTERN.sub(" ", without_links)
-        normalized = " ".join(without_mentions.split())
+        normalized = " ".join(without_mentions.split()).lstrip("，,。；;：:、?？!！")
         return normalized or "原消息"
 
     @staticmethod

@@ -109,6 +109,14 @@ def test_thread_prompt_treats_mentioned_arrangements_requiring_principal_as_repl
     assert "即使没有问号，也应视为需要回复" in prompt
 
 
+def test_thread_prompt_requires_direct_structured_output_for_analysis_requests():
+    prompt = ceo_agent_thread_prompt()
+
+    assert "写出列表" in prompt
+    assert "直接给出可用的结构化初版" in prompt
+    assert "不要只回复“可以、我会整理、先出一版”" in prompt
+
+
 def test_build_turn_prompt_keeps_user_message_separate_from_thread_prompt():
     prompt = build_turn_prompt(
         DingTalkConversation(

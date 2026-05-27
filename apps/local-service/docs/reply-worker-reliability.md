@@ -38,6 +38,13 @@ Historical acknowledgement messages are still recognized and filtered from promp
 context and unanswered-mention checks, so earlier processing messages do not hide
 messages that still need a real reply.
 
+## Reply quote fallback
+
+Final replies include a short text quote built from the trigger message. Compact
+assistant mentions such as `@磊哥分身，请...` are stripped only up to the first
+message punctuation, so the remaining request text is preserved in the quote
+instead of falling back to `原消息`.
+
 ## Mentioned arrangements
 
 When a human mentions Derek in a group and shares an arrangement, process, or
