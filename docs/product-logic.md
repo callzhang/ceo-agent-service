@@ -89,11 +89,14 @@ not hidden chain of thought.
 - Live sends require explicit opt-in.
 - DingTalk media/calendar placeholders and DingTalk internal link-only cards are
   skipped before Codex, except approval/OA links.
-- Ordinary external links and DING approval reminders are sent to Codex for
-  context-aware handling. Approval and OA reminders or cards must follow
-  `management/OA/钉钉审批审阅原则.md`: do not execute or promise an approval
-  action, and do not recommend approval, return, or rejection until all
-  substantive approval materials have been read.
+- OA approval cards and reminders are routed to a dedicated OA approval agent.
+  The service injects the `dingtalk-oa-approval` skill into that agent, records
+  the Codex session, tool events, approval URL, approval action, approval remark,
+  and action result on the existing reply attempt audit row, and does not create
+  a separate OA audit page.
+- The OA agent may use authorized DingTalk OA API detail reads when DWS does not
+  return complete approval detail. Secrets and signed URLs must not be written
+  to logs, SQLite, audit summaries, reports, or DingTalk replies.
 - See `docs/message-routing-rules.md` for the full message-type inventory,
   implemented regexes, candidate regexes, and message types that should remain
   agent-reviewed.
