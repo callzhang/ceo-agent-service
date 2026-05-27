@@ -391,6 +391,40 @@ def test_reply_attempt_tracing_and_feedback_round_trip(tmp_path: Path):
     assert attempt.corrected_reply_text == "先明确负责人和时间点。"
 
 
+def test_reply_attempt_records_oa_metadata(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+
+    attempt_id = store.record_reply_attempt(
+        conversation_id="cid-1",
+        conversation_title="审批通知",
+        trigger_message_id="msg-1",
+        trigger_sender="工作通知",
+        trigger_text="[Ding]张静提醒您审批他的录用申请",
+        action="oa_approval",
+        sensitivity_kind="internal_personnel",
+        codex_reason="oa approval handled by dingtalk-oa-approval skill",
+        codex_session_id="session-1",
+        oa_process_instance_id="proc-1",
+        oa_task_id="task-1",
+        oa_url="https://aflow.dingtalk.com/dingtalk/mobile/query/formService#/detail?procInstId=proc-1",
+        oa_action="退回",
+        oa_remark="请补充试用期考核标准和完整面试记录后再提交。",
+        oa_action_result_json='{"errcode":0,"errmsg":"ok"}',
+        send_status="skipped",
+    )
+
+    loaded = store.get_reply_attempt(attempt_id)
+
+    assert loaded is not None
+    assert loaded.action == "oa_approval"
+    assert loaded.oa_process_instance_id == "proc-1"
+    assert loaded.oa_task_id == "task-1"
+    assert loaded.oa_url.startswith("https://aflow.dingtalk.com/")
+    assert loaded.oa_action == "退回"
+    assert loaded.oa_remark == "请补充试用期考核标准和完整面试记录后再提交。"
+    assert loaded.oa_action_result_json == '{"errcode":0,"errmsg":"ok"}'
+
+
 def test_get_latest_reply_attempt_for_trigger(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     first_id = store.record_reply_attempt(

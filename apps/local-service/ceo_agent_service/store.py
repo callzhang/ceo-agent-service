@@ -32,6 +32,12 @@ class ReplyAttempt(BaseModel):
     audit_documents_json: str = "[]"
     audit_tool_events_json: str = "[]"
     audit_summary: str = ""
+    oa_process_instance_id: str = ""
+    oa_task_id: str = ""
+    oa_url: str = ""
+    oa_action: str = ""
+    oa_remark: str = ""
+    oa_action_result_json: str = ""
     final_reply_text: str
     permission_action: str
     permission_reason: str
@@ -161,6 +167,12 @@ class AutoReplyStore:
                     audit_documents_json text not null default '[]',
                     audit_tool_events_json text not null default '[]',
                     audit_summary text not null default '',
+                    oa_process_instance_id text not null default '',
+                    oa_task_id text not null default '',
+                    oa_url text not null default '',
+                    oa_action text not null default '',
+                    oa_remark text not null default '',
+                    oa_action_result_json text not null default '',
                     final_reply_text text not null default '',
                     permission_action text not null default '',
                     permission_reason text not null default '',
@@ -265,6 +277,12 @@ class AutoReplyStore:
                 ("audit_documents_json", "text not null default '[]'"),
                 ("audit_tool_events_json", "text not null default '[]'"),
                 ("audit_summary", "text not null default ''"),
+                ("oa_process_instance_id", "text not null default ''"),
+                ("oa_task_id", "text not null default ''"),
+                ("oa_url", "text not null default ''"),
+                ("oa_action", "text not null default ''"),
+                ("oa_remark", "text not null default ''"),
+                ("oa_action_result_json", "text not null default ''"),
             ):
                 if column not in reply_attempt_columns:
                     try:
@@ -801,6 +819,12 @@ class AutoReplyStore:
         audit_documents_json: str = "[]",
         audit_tool_events_json: str = "[]",
         audit_summary: str = "",
+        oa_process_instance_id: str = "",
+        oa_task_id: str = "",
+        oa_url: str = "",
+        oa_action: str = "",
+        oa_remark: str = "",
+        oa_action_result_json: str = "",
         send_status: str = "pending",
     ) -> int:
         with self._connect() as db:
@@ -824,9 +848,15 @@ class AutoReplyStore:
                     audit_documents_json,
                     audit_tool_events_json,
                     audit_summary,
+                    oa_process_instance_id,
+                    oa_task_id,
+                    oa_url,
+                    oa_action,
+                    oa_remark,
+                    oa_action_result_json,
                     send_status
                 )
-                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     conversation_id,
@@ -846,6 +876,12 @@ class AutoReplyStore:
                     audit_documents_json,
                     audit_tool_events_json,
                     audit_summary,
+                    oa_process_instance_id,
+                    oa_task_id,
+                    oa_url,
+                    oa_action,
+                    oa_remark,
+                    oa_action_result_json,
                     send_status,
                 ),
             )
@@ -860,6 +896,12 @@ class AutoReplyStore:
         permission_reason: str | None = None,
         direct_user_id: str | None = None,
         direct_open_dingtalk_id: str | None = None,
+        oa_process_instance_id: str | None = None,
+        oa_task_id: str | None = None,
+        oa_url: str | None = None,
+        oa_action: str | None = None,
+        oa_remark: str | None = None,
+        oa_action_result_json: str | None = None,
         send_status: str | None = None,
         send_error: str | None = None,
         retry_count: int | None = None,
@@ -872,6 +914,12 @@ class AutoReplyStore:
             ("permission_reason", permission_reason),
             ("direct_user_id", direct_user_id),
             ("direct_open_dingtalk_id", direct_open_dingtalk_id),
+            ("oa_process_instance_id", oa_process_instance_id),
+            ("oa_task_id", oa_task_id),
+            ("oa_url", oa_url),
+            ("oa_action", oa_action),
+            ("oa_remark", oa_remark),
+            ("oa_action_result_json", oa_action_result_json),
             ("send_status", send_status),
             ("send_error", send_error),
             ("retry_count", retry_count),
