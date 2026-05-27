@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "CEO Agent OA Approval Result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "process_instance_id",
+    "task_id",
+    "oa_url",
+    "oa_action",
+    "oa_remark",
+    "action_result",
+    "audit_summary",
+    "audit_documents"
+  ],
+  "properties": {
+    "process_instance_id": {
+      "type": "string"
+    },
+    "task_id": {
+      "type": "string"
+    },
+    "oa_url": {
+      "type": "string"
+    },
+    "oa_action": {
+      "type": "string",
+      "enum": [
+        "通过",
+        "拒绝",
+        "退回"
+      ]
+    },
+    "oa_remark": {
+      "type": "string"
+    },
+    "action_result": {
+      "type": "object"
+    },
+    "audit_summary": {
+      "type": "string",
+      "minLength": 1
+    },
+    "audit_documents": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}
