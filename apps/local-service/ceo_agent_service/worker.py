@@ -13,6 +13,7 @@ from pypdf import PdfReader
 from ceo_agent_service.codex_decision import append_signature
 from ceo_agent_service.config import (
     assistant_signature,
+    broadcast_mention_aliases,
     current_user_display_names,
     handoff_ack,
     principal_name,
@@ -181,9 +182,14 @@ class DingTalkAutoReplyWorker:
             )
             return 0
         mentioned_messages = self._mentioned_messages_by_conversation(conversations)
+        broadcast_messages = self._broadcast_messages_by_conversation()
+        addressed_messages = self._merge_message_groups(
+            mentioned_messages,
+            broadcast_messages,
+        )
         conversations = self._conversations_with_mentions(
             conversations,
-            mentioned_messages,
+            addressed_messages,
         )
         conversations = self._conversations_with_recent_single_chat_recovery(
             conversations,
@@ -195,7 +201,7 @@ class DingTalkAutoReplyWorker:
                 single_chat=conversation.single_chat,
                 codex_session_id=None,
             )
-            conversation_mentions = mentioned_messages.get(
+            conversation_mentions = addressed_messages.get(
                 conversation.open_conversation_id, []
             )
             try:
@@ -511,6 +517,40 @@ class DingTalkAutoReplyWorker:
         for message in messages:
             grouped.setdefault(message.open_conversation_id, []).append(message)
         return grouped
+
+    def _broadcast_messages_by_conversation(self) -> dict[str, list[DingTalkMessage]]:
+        try:
+            messages = self.dws.read_broadcast_messages(
+                broadcast_mention_aliases(),
+                limit=100,
+                lookback_hours=24,
+            )
+        except Exception as exc:
+            self.store.record_error(None, None, "read_broadcast_messages", str(exc))
+            self._notify(
+                title="CEO read broadcast messages failed",
+                message=str(exc)[:120],
+            )
+            return {}
+        grouped: dict[str, list[DingTalkMessage]] = {}
+        for message in messages:
+            grouped.setdefault(message.open_conversation_id, []).append(message)
+        return grouped
+
+    @staticmethod
+    def _merge_message_groups(
+        *groups: dict[str, list[DingTalkMessage]],
+    ) -> dict[str, list[DingTalkMessage]]:
+        result: dict[str, list[DingTalkMessage]] = {}
+        seen_message_ids: set[str] = set()
+        for group in groups:
+            for conversation_id, messages in group.items():
+                for message in messages:
+                    if message.open_message_id in seen_message_ids:
+                        continue
+                    seen_message_ids.add(message.open_message_id)
+                    result.setdefault(conversation_id, []).append(message)
+        return result
 
     @staticmethod
     def _conversations_with_mentions(

@@ -161,6 +161,33 @@ class DwsClient:
             "json",
         ]
 
+    def build_search_messages_command(
+        self,
+        keyword: str,
+        start: str,
+        end: str,
+        limit: int,
+        cursor: str,
+    ) -> list[str]:
+        return [
+            self.dws_bin,
+            "chat",
+            "message",
+            "search",
+            "--keyword",
+            keyword,
+            "--start",
+            start,
+            "--end",
+            end,
+            "--limit",
+            str(limit),
+            "--cursor",
+            cursor,
+            "--format",
+            "json",
+        ]
+
     def build_search_conversations_command(self, query: str) -> list[str]:
         return [
             self.dws_bin,
@@ -589,6 +616,25 @@ class DwsClient:
             )
         )
 
+    def search_messages(
+        self,
+        keyword: str,
+        start: str,
+        end: str,
+        limit: int,
+        cursor: str = "0",
+    ) -> list[DingTalkMessage]:
+        payload = self.run_json(
+            self.build_search_messages_command(
+                keyword=keyword,
+                start=start,
+                end=end,
+                limit=limit,
+                cursor=cursor,
+            )
+        )
+        return self.parse_messages(payload, conversation_title="", single_chat=False)
+
     def search_conversations(self, query: str) -> list[DingTalkConversation]:
         payload = self.run_json(self.build_search_conversations_command(query))
         return self.parse_search_conversations(payload)
@@ -641,6 +687,32 @@ class DwsClient:
             conversation_title=conversation.title if conversation is not None else "",
             single_chat=conversation.single_chat if conversation is not None else False,
         )
+
+    def read_broadcast_messages(
+        self,
+        aliases: tuple[str, ...],
+        limit: int = 100,
+        lookback_hours: int = 24,
+    ) -> list[DingTalkMessage]:
+        local_time_zone = _local_time_zone()
+        end_time = datetime.now(tz=local_time_zone)
+        start_time = end_time - timedelta(hours=lookback_hours)
+        result: list[DingTalkMessage] = []
+        seen_message_ids: set[str] = set()
+        for alias in aliases:
+            for message in self.search_messages(
+                keyword=alias,
+                start=start_time.isoformat(),
+                end=end_time.isoformat(),
+                limit=limit,
+            ):
+                if message.open_message_id in seen_message_ids:
+                    continue
+                if not message.addresses_principal():
+                    continue
+                seen_message_ids.add(message.open_message_id)
+                result.append(message)
+        return sorted(result, key=lambda message: message.create_time)
 
     def calendar_invite_from_message(
         self, message: DingTalkMessage

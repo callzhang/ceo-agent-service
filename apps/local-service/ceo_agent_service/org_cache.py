@@ -104,6 +104,18 @@ class CachedDwsClient:
             lookback_hours=lookback_hours,
         )
 
+    def read_broadcast_messages(
+        self,
+        aliases: tuple[str, ...],
+        limit: int = 100,
+        lookback_hours: int = 24,
+    ):
+        return self.dws.read_broadcast_messages(
+            aliases,
+            limit=limit,
+            lookback_hours=lookback_hours,
+        )
+
     def read_doc(self, node: str):
         return self.dws.read_doc(node)
 

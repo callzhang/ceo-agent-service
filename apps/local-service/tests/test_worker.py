@@ -85,6 +85,7 @@ class FakeDws:
         self.send_attempt_count = 0
         self.dings: list[str] = []
         self.mentioned_messages: dict[str, list[DingTalkMessage]] = {}
+        self.broadcast_messages: dict[str, list[DingTalkMessage]] = {}
         self.user_departments: dict[str, set[str]] = {}
         self.hr_users: set[str] = set()
         self.manager_chains: dict[str, list[str]] = {}
@@ -149,6 +150,19 @@ class FakeDws:
                 for message in messages
             ]
         return self.mentioned_messages.get(conversation.open_conversation_id, [])
+
+    def read_broadcast_messages(
+        self,
+        aliases: tuple[str, ...],
+        limit: int = 100,
+        lookback_hours: int = 24,
+    ) -> list[DingTalkMessage]:
+        del aliases, limit, lookback_hours
+        return [
+            message
+            for messages in self.broadcast_messages.values()
+            for message in messages
+        ]
 
     def read_doc(self, node: str) -> dict:
         self.read_doc_calls.append(node)
@@ -3441,6 +3455,36 @@ def test_group_mention_from_read_conversation_is_processed_from_mentions(
     assert len(codex.calls) == 1
     assert attempts[0].conversation_title == "MKT core"
     assert attempts[0].trigger_message_id == "msg-mkt-mention"
+    assert attempts[0].send_status == "dry_run"
+
+
+def test_group_all_mention_from_read_conversation_is_processed_from_broadcast_search(
+    tmp_path: Path, monkeypatch
+):
+    broadcast = message(
+        "@All 新的官网更新一共16页，请大家打开每一个html文档",
+        message_id="msg-website-all",
+    )
+    broadcast.open_conversation_id = "cid-website"
+    broadcast.conversation_title = "官网迭代群"
+    broadcast.create_time = "2026-05-28 04:04:53"
+    dws = FakeDws(
+        [],
+        {"cid-website": [broadcast]},
+        unread_messages={"cid-website": []},
+    )
+    dws.broadcast_messages = {"cid-website": [broadcast]}
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="我看一下官网内容")
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch, dry_run=True)
+
+    worker.run_once()
+
+    attempts = worker.store.list_reply_attempts(limit=10)
+    assert len(codex.calls) == 1
+    assert attempts[0].conversation_title == "官网迭代群"
+    assert attempts[0].trigger_message_id == "msg-website-all"
     assert attempts[0].send_status == "dry_run"
 
 
