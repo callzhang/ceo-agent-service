@@ -1191,14 +1191,19 @@ class DingTalkAutoReplyWorker:
         for message in unread_messages:
             add(message)
 
-        last_seen_context_index: int | None = None
-        for index, message in enumerate(context_messages):
+        latest_seen_context_time: str | None = None
+        for message in context_messages:
             if self.store.has_seen(message.open_message_id):
-                last_seen_context_index = index
-        if last_seen_context_index is None:
+                latest_seen_context_time = max(
+                    latest_seen_context_time or message.create_time,
+                    message.create_time,
+                )
+        if latest_seen_context_time is None:
             return sorted(result, key=lambda message: message.create_time)
 
-        for message in context_messages[last_seen_context_index + 1 :]:
+        for message in context_messages:
+            if message.create_time <= latest_seen_context_time:
+                continue
             if self.store.has_seen(message.open_message_id):
                 continue
             add(message)

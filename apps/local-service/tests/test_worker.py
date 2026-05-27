@@ -2653,10 +2653,10 @@ def test_single_chat_recent_context_after_seen_is_processed_when_unread_empty(
         [],
         {
             "cid-1": [
-                handled,
-                sent_reply,
-                new_peer_message,
                 latest_peer_message,
+                new_peer_message,
+                sent_reply,
+                handled,
             ]
         },
         unread_messages={"cid-1": []},
