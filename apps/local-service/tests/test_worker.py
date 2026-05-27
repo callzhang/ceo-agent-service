@@ -2357,6 +2357,49 @@ def test_prompt_includes_style_profile_and_similar_corpus_examples(
     assert "Friday" in prompt
 
 
+def test_prompt_includes_similar_human_feedback_examples(tmp_path: Path, monkeypatch):
+    dws = FakeDws(
+        [conversation(single_chat=True)],
+        {
+            "cid-1": [
+                message(
+                    "磊哥，这个本地工具我跑通过，你先安装试试。",
+                    single_chat=True,
+                )
+            ]
+        },
+    )
+    codex = FakeCodex(CodexDecision(action=CodexAction.NO_REPLY, reason="dry run"))
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+    attempt_id = worker.store.record_reply_attempt(
+        conversation_id="cid-old",
+        conversation_title="Mina 邹",
+        trigger_message_id="msg-old",
+        trigger_sender="Mina 邹",
+        trigger_text="你先安装试试这个本地工具",
+        action="handoff_to_human",
+        sensitivity_kind="general",
+        codex_reason="要求 Derek 安装本地工具，应交给本人。",
+    )
+    worker.store.record_reply_feedback(
+        attempt_id,
+        feedback=(
+            "这类请求不要直接交给本人；先推动可交接动作，要求对方先提交代码或整理材料。"
+        ),
+        corrected_reply_text="你把代码提交一下，然后代码提交了，就可以让别人帮你看了",
+    )
+
+    worker.run_once()
+
+    prompt = codex.calls[0][0]
+    assert "相似人工纠偏样本" in prompt
+    assert "优先学习 Derek 对错误回复的修正方向" in prompt
+    assert "不要直接交给本人" in prompt
+    assert "你把代码提交一下" in prompt
+    assert "msg-old" not in prompt
+    assert "cid-old" not in prompt
+
+
 def test_group_name_reference_without_direct_at_does_not_queue(
     tmp_path: Path, monkeypatch
 ):

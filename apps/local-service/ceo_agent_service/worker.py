@@ -2549,7 +2549,63 @@ class DingTalkAutoReplyWorker:
                 lines.append(
                     f"- 例{index}: {self._style_example_text(example.derek_reply)}"
                 )
+
+        feedback_examples = self._review_feedback_prompt_lines(
+            self._style_query(conversation, new_messages, context_messages)
+        )
+        lines.extend(feedback_examples)
         return lines
+
+    def _review_feedback_prompt_lines(
+        self, query: str, *, limit: int = 3, candidate_limit: int = 50
+    ) -> list[str]:
+        examples = self._retrieve_review_feedback_examples(
+            query,
+            self.store.list_reviewed_reply_attempts(limit=candidate_limit),
+            limit=limit,
+        )
+        if not examples:
+            return []
+
+        lines = [
+            "相似人工纠偏样本（优先学习 Derek 对错误回复的修正方向；不要复用人名、项目名、客户名、凭证、数字或旧事实；只有当前场景一致时才复用动作边界）:"
+        ]
+        for index, attempt in enumerate(examples, start=1):
+            feedback = self._style_example_text(attempt.reviewer_feedback, 160)
+            corrected = self._style_example_text(attempt.corrected_reply_text, 160)
+            if corrected:
+                lines.append(f"- 纠偏{index}: {feedback} 建议回复: {corrected}")
+            else:
+                lines.append(f"- 纠偏{index}: {feedback}")
+        return lines
+
+    @staticmethod
+    def _retrieve_review_feedback_examples(
+        query: str, attempts: list[ReplyAttempt], *, limit: int
+    ) -> list[ReplyAttempt]:
+        query_chars = set(query)
+        scored: list[tuple[int, ReplyAttempt]] = []
+        for attempt in attempts:
+            haystack = "\n".join(
+                [
+                    attempt.conversation_title,
+                    attempt.trigger_sender,
+                    attempt.trigger_text,
+                    attempt.codex_reason,
+                    attempt.reviewer_feedback,
+                    attempt.corrected_reply_text,
+                ]
+            )
+            score = len(query_chars & set(haystack))
+            if score > 0:
+                scored.append((score, attempt))
+
+        scored.sort(key=lambda item: item[0], reverse=True)
+        if not scored:
+            return []
+
+        minimum_score = max(3, int(scored[0][0] * 0.35))
+        return [attempt for score, attempt in scored[:limit] if score >= minimum_score]
 
     def _style_query(
         self,
