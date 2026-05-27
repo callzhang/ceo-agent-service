@@ -3734,6 +3734,41 @@ def test_send_failure_requeues_reply_task_for_consumer_retry(
     assert attempt.send_status == "failed"
 
 
+def test_consumer_send_failure_emits_one_failure_notification(
+    tmp_path: Path, monkeypatch
+):
+    notifications = []
+    dws = FakeDws(
+        [conversation()],
+        {"cid-1": [message("@Derek Zen(磊哥) 这个怎么处理？")]},
+        send_error=RuntimeError("send failed"),
+    )
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="先按A方案走")
+    )
+    worker = make_worker(
+        tmp_path,
+        dws,
+        codex,
+        monkeypatch,
+        max_task_attempts=1,
+    )
+    monkeypatch.setattr(
+        "ceo_agent_service.worker.send_macos_notification",
+        lambda **kwargs: notifications.append(kwargs),
+    )
+    worker.produce_once()
+
+    worker.consume_once(max_tasks=1)
+
+    failure_titles = [
+        notification["title"]
+        for notification in notifications
+        if "failed" in notification["title"]
+    ]
+    assert failure_titles == ["CEO task failed: Friday"]
+
+
 def test_pat_authorization_error_is_recorded_as_failed_without_retry_or_url(
     tmp_path: Path, monkeypatch
 ):

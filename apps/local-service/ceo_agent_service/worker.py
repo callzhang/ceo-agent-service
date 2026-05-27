@@ -2242,12 +2242,12 @@ class DingTalkAutoReplyWorker:
                 "send",
                 str(exc),
             )
+            if raise_on_delivery_failure:
+                raise ReplyDeliveryError(str(exc)) from exc
             self._notify(
                 title=f"CEO auto reply failed: {conversation.title}",
                 message=str(exc)[:120],
             )
-            if raise_on_delivery_failure:
-                raise ReplyDeliveryError(str(exc)) from exc
             return
         self.store.update_reply_attempt(
             attempt_id,
