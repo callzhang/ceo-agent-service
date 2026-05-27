@@ -664,12 +664,20 @@ def test_handle_reviewed_message_reply_uses_stored_group_and_recent_message(
         group_name="官网迭代群",
         message_str="@All 新的官网更新一共16页，请大家打开每一个的html文档",
         reply_text="我已经完成审核，会把核心 comment 补到 tracker。",
+        reviewer_feedback=(
+            "官网是 marketing 重要内容，CEO 直接相关；这类消息需要审核并回复。"
+        ),
     )
 
     attempt = store.get_reply_attempt(result["attempt_id"])
     assert result["send_status"] == "sent"
     assert attempt is not None
     assert "> Claire: 新的官网更新一共16页，请大家打开每一个的html..." in attempt.final_reply_text
+    assert (
+        attempt.reviewer_feedback
+        == "官网是 marketing 重要内容，CEO 直接相关；这类消息需要审核并回复。"
+    )
+    assert attempt.corrected_reply_text == "我已经完成审核，会把核心 comment 补到 tracker。"
     assert dws.reply_messages == [
         (
             "cid-site",

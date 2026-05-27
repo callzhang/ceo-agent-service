@@ -341,6 +341,7 @@ def handle_reviewed_message_reply(
     group_name: str,
     message_str: str,
     reply_text: str,
+    reviewer_feedback: str = "",
 ) -> dict[str, object]:
     conversations = dws.search_conversations(group_name)
     exact_conversations = [
@@ -408,6 +409,12 @@ def handle_reviewed_message_reply(
         reason="reviewed_message_reply",
         attempt_id=attempt_id,
     )
+    if reviewer_feedback.strip():
+        store.record_reply_feedback(
+            attempt_id,
+            feedback=reviewer_feedback,
+            corrected_reply_text=reply_text,
+        )
     attempt = store.get_reply_attempt(attempt_id)
     if attempt is None:
         raise ValueError(f"reply attempt disappeared: {attempt_id}")
@@ -418,6 +425,7 @@ def handle_reviewed_message_reply(
         "trigger_text": trigger.content,
         "send_status": attempt.send_status,
         "final_reply_text": attempt.final_reply_text,
+        "reviewer_feedback": attempt.reviewer_feedback,
     }
 
 
@@ -504,6 +512,9 @@ def create_audit_app(
             group_name=str(payload["group_name"]),
             message_str=str(payload["message_str"]),
             reply_text=str(payload["reply_text"]),
+            reviewer_feedback=str(
+                payload.get("reviewer_feedback") or payload.get("feedback") or ""
+            ),
         )
         return JSONResponse(result)
 
