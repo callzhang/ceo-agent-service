@@ -1392,7 +1392,12 @@ class DingTalkAutoReplyWorker:
                         context_messages=context_messages,
                     )
                 )
-                self._send(conversation.open_conversation_id, handoff_reply_text)
+                self._send_reply_to_trigger(
+                    conversation,
+                    trigger,
+                    handoff_reply_text,
+                    open_dingtalk_id=trigger.sender_open_dingtalk_id,
+                )
             except Exception as exc:
                 self.store.update_reply_attempt(
                     attempt_id,
@@ -2215,17 +2220,12 @@ class DingTalkAutoReplyWorker:
             )
             return
         try:
-            send_conversation_id = (
-                None if conversation.single_chat else conversation.open_conversation_id
-            )
-            retry_count, send_result = self._send_with_retry(
-                send_conversation_id,
+            retry_count, send_result = self._send_reply_to_trigger_with_retry(
+                conversation,
+                trigger,
                 reply_text,
-                at_users=at_users,
                 user_id=direct_user_id,
-                open_dingtalk_id=direct_open_dingtalk_id
-                if conversation.single_chat and not direct_user_id
-                else None,
+                open_dingtalk_id=direct_open_dingtalk_id,
             )
         except Exception as exc:
             self.store.update_reply_attempt(
@@ -2280,6 +2280,55 @@ class DingTalkAutoReplyWorker:
             user_id=user_id,
             open_dingtalk_id=open_dingtalk_id,
         )
+
+    def _send_reply_to_trigger(
+        self,
+        conversation: DingTalkConversation,
+        trigger: DingTalkMessage,
+        text: str,
+        user_id: str | None = None,
+        open_dingtalk_id: str | None = None,
+    ):
+        if self.dry_run:
+            return None
+        if conversation.single_chat:
+            return self._send(
+                None,
+                text,
+                user_id=user_id,
+                open_dingtalk_id=open_dingtalk_id or trigger.sender_open_dingtalk_id,
+            )
+        return self.dws.reply_message(
+            conversation.open_conversation_id,
+            trigger.open_message_id,
+            trigger.sender_open_dingtalk_id,
+            text,
+        )
+
+    def _send_reply_to_trigger_with_retry(
+        self,
+        conversation: DingTalkConversation,
+        trigger: DingTalkMessage,
+        text: str,
+        user_id: str | None = None,
+        open_dingtalk_id: str | None = None,
+    ) -> tuple[int, dict | None]:
+        errors: list[str] = []
+        for attempt_number in range(1, self.send_attempts + 1):
+            try:
+                send_result = self._send_reply_to_trigger(
+                    conversation,
+                    trigger,
+                    text,
+                    user_id=user_id,
+                    open_dingtalk_id=open_dingtalk_id,
+                )
+                return attempt_number - 1, send_result
+            except Exception as exc:
+                if getattr(exc, "needs_authorization", False):
+                    raise exc
+                errors.append(f"attempt {attempt_number}: {exc}")
+        raise RuntimeError(" | ".join(errors))
 
     def _send_with_retry(
         self,

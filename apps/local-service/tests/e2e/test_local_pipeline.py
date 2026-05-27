@@ -236,7 +236,7 @@ def test_local_pipeline_handoff_ding_uses_cached_current_user_without_runtime_or
     assert raw_dws.org_calls == []
     assert final_sent(raw_dws) == [
         (
-            "cid-1",
+            None,
             "> HR: 不要分身，真人看一下\n\n我让磊哥本人看一下。（by磊哥分身）",
         )
     ]

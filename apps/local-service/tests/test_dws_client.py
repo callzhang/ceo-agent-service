@@ -364,6 +364,35 @@ def test_send_message_command_supports_direct_user_target():
     ]
 
 
+def test_reply_message_command_shape():
+    client = DwsClient(dws_bin="dws")
+
+    command = client.build_reply_message_command(
+        conversation_id="cid-1",
+        ref_message_id="msg-1",
+        ref_sender_open_dingtalk_id="open-1",
+        text="收到（by磊哥分身）",
+    )
+
+    assert command == [
+        "dws",
+        "chat",
+        "message",
+        "reply",
+        "--conversation-id",
+        "cid-1",
+        "--ref-msg-id",
+        "msg-1",
+        "--ref-sender",
+        "open-1",
+        "--text",
+        "收到（by磊哥分身）",
+        "--format",
+        "json",
+        "--yes",
+    ]
+
+
 def test_send_message_title_uses_reply_body_after_fake_quote():
     client = DwsClient(dws_bin="dws")
 
@@ -1002,6 +1031,7 @@ def test_read_recent_messages_high_level_method_uses_group_command(monkeypatch):
 
     messages = client.read_recent_messages(conversation, limit=7)
 
+    assert [message.open_message_id for message in messages] == ["msg-1"]
     assert client.commands == [
         [
             "dws",

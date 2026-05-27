@@ -206,6 +206,33 @@ class DwsClient:
         command.extend(["--text", self._literal_cli_value(text), "--format", "json", "--yes"])
         return command
 
+    def build_reply_message_command(
+        self,
+        conversation_id: str,
+        ref_message_id: str,
+        ref_sender_open_dingtalk_id: str,
+        text: str,
+    ) -> list[str]:
+        if not conversation_id or not ref_message_id or not ref_sender_open_dingtalk_id:
+            raise ValueError("conversation id, ref message id, and ref sender are required")
+        return [
+            self.dws_bin,
+            "chat",
+            "message",
+            "reply",
+            "--conversation-id",
+            conversation_id,
+            "--ref-msg-id",
+            ref_message_id,
+            "--ref-sender",
+            ref_sender_open_dingtalk_id,
+            "--text",
+            self._literal_cli_value(text),
+            "--format",
+            "json",
+            "--yes",
+        ]
+
     def build_read_recent_messages_command(
         self, conversation: DingTalkConversation, limit: int = 50
     ) -> list[str]:
@@ -718,6 +745,22 @@ class DwsClient:
                 at_users,
                 user_id=user_id,
                 open_dingtalk_id=open_dingtalk_id,
+            )
+        )
+
+    def reply_message(
+        self,
+        conversation_id: str,
+        ref_message_id: str,
+        ref_sender_open_dingtalk_id: str,
+        text: str,
+    ) -> dict[str, Any]:
+        return self.run_json(
+            self.build_reply_message_command(
+                conversation_id,
+                ref_message_id,
+                ref_sender_open_dingtalk_id,
+                text,
             )
         )
 

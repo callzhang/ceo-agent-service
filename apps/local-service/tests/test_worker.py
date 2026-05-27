@@ -78,6 +78,7 @@ class FakeDws:
         self.search_document_calls: list[tuple[str, int]] = []
         self.download_doc_calls: list[str] = []
         self.sent: list[tuple[str, str]] = []
+        self.reply_messages: list[tuple[str, str, str, str]] = []
         self.sent_at_users: list[list[str]] = []
         self.direct_user_ids: list[str | None] = []
         self.send_attempt_count = 0
@@ -215,6 +216,24 @@ class FakeDws:
         self.sent.append((conversation_id or "", text))
         self.sent_at_users.append(at_users or [])
         self.direct_user_ids.append(user_id)
+        return self.send_result
+
+    def reply_message(
+        self,
+        conversation_id: str,
+        ref_message_id: str,
+        ref_sender_open_dingtalk_id: str,
+        text: str,
+    ) -> None:
+        self.send_attempt_count += 1
+        if self.send_error:
+            raise self.send_error
+        self.reply_messages.append(
+            (conversation_id, ref_message_id, ref_sender_open_dingtalk_id, text)
+        )
+        self.sent.append((conversation_id, text))
+        self.sent_at_users.append([])
+        self.direct_user_ids.append(None)
         return self.send_result
 
     def ding_self(self, text: str) -> None:
@@ -1532,7 +1551,16 @@ def test_group_mention_sends_signed_reply(tmp_path: Path, monkeypatch):
             "<@sender-user-1> <@mentioned-user-1> 先按A方案走（by磊哥分身）",
         )
     ]
-    assert final_sent_at_users(dws) == [["sender-user-1", "mentioned-user-1"]]
+    assert final_sent_at_users(dws) == [[]]
+    assert dws.reply_messages == [
+        (
+            "cid-1",
+            "msg-1",
+            "sender-1",
+            "> 周俊杰: 这个怎么处理？\n\n"
+            "<@sender-user-1> <@mentioned-user-1> 先按A方案走（by磊哥分身）",
+        )
+    ]
     assert len(codex.calls) == 1
     prompt = codex.calls[0][0]
     assert prompt.startswith("当前待处理消息:")
@@ -2078,7 +2106,8 @@ def test_failed_send_retries_existing_final_reply_without_calling_codex(
 
     assert codex.calls == []
     assert final_sent(dws) == [("cid-1", final_reply)]
-    assert final_sent_at_users(dws) == [["sender-user-1"]]
+    assert final_sent_at_users(dws) == [[]]
+    assert dws.reply_messages == [("cid-1", "msg-1", "sender-1", final_reply)]
     attempt = worker.store.get_reply_attempt(attempt_id)
     assert attempt is not None
     assert attempt.send_status == "sent"
@@ -2935,6 +2964,7 @@ def test_single_chat_unread_is_processed_without_mention(tmp_path: Path, monkeyp
     ]
     assert final_sent_at_users(dws) == [[]]
     assert final_direct_user_ids(dws) == ["sender-user-1"]
+    assert dws.reply_messages == []
     attempt = worker.store.get_reply_attempt(1)
     assert attempt is not None
     assert attempt.send_status == "sent"

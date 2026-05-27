@@ -500,6 +500,7 @@ def test_handle_reviewed_message_reply_matches_sender_group_and_text(
     class FakeDws:
         def __init__(self):
             self.sent_messages = []
+            self.reply_messages = []
 
         def search_conversations(self, query):
             assert query == "【招聘】大模型项目经理/大模型数据解决方案专家"
@@ -522,6 +523,7 @@ def test_handle_reviewed_message_reply_matches_sender_group_and_text(
                     conversation_title=conversation.title,
                     single_chat=False,
                     sender_name="Mina 邹",
+                    sender_open_dingtalk_id="open-mina",
                     sender_user_id="user-mina",
                     create_time="2026-05-25 13:30:26",
                     content="@Derek Zen(磊哥) 磊哥分身，大模型项目经理需要具备什么能力",
@@ -537,6 +539,18 @@ def test_handle_reviewed_message_reply_matches_sender_group_and_text(
             open_dingtalk_id=None,
         ):
             self.sent_messages.append((conversation_id, text, at_users, user_id))
+            return {"result": {"processQueryKey": "recall-1"}}
+
+        def reply_message(
+            self,
+            conversation_id,
+            ref_message_id,
+            ref_sender_open_dingtalk_id,
+            text,
+        ):
+            self.reply_messages.append(
+                (conversation_id, ref_message_id, ref_sender_open_dingtalk_id, text)
+            )
             return {"result": {"processQueryKey": "recall-1"}}
 
     monkeypatch.setattr(
@@ -564,12 +578,13 @@ def test_handle_reviewed_message_reply_matches_sender_group_and_text(
     assert attempt.final_reply_text is not None
     assert "> Mina 邹: 磊哥分身，大模型项目经理需要具备什么能力" in attempt.final_reply_text
     assert "<@user-mina> 这个岗位核心看业务拆解、模型理解、项目推进和学习速度。" in attempt.final_reply_text
-    assert dws.sent_messages == [
+    assert dws.sent_messages == []
+    assert dws.reply_messages == [
         (
             "cid-1",
+            "msg-1",
+            "open-mina",
             attempt.final_reply_text,
-            ["user-mina"],
-            None,
         )
     ]
     assert sent_reply is not None
@@ -656,7 +671,7 @@ def test_handle_reviewed_message_reply_matches_private_message_without_mention(
         (
             None,
             attempt.final_reply_text,
-            [],
+            None,
             "user-mina",
         )
     ]
@@ -736,7 +751,7 @@ def test_handle_reviewed_message_reply_uses_stored_private_conversation_when_sea
         (
             None,
             attempt.final_reply_text,
-            [],
+            None,
             "user-mina",
         )
     ]
