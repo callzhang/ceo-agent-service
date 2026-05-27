@@ -15,13 +15,16 @@
   ],
   "properties": {
     "process_instance_id": {
-      "type": "string"
+      "type": "string",
+      "minLength": 1
     },
     "task_id": {
-      "type": "string"
+      "type": "string",
+      "minLength": 1
     },
     "oa_url": {
-      "type": "string"
+      "type": "string",
+      "minLength": 1
     },
     "oa_action": {
       "type": "string",
@@ -32,7 +35,8 @@
       ]
     },
     "oa_remark": {
-      "type": "string"
+      "type": "string",
+      "minLength": 1
     },
     "action_result": {
       "type": "object"
@@ -45,8 +49,22 @@
       "type": "array",
       "items": {
         "type": "object",
-        "additionalProperties": {
-          "type": "string"
+        "additionalProperties": false,
+        "required": [
+          "title",
+          "url",
+          "relevance"
+        ],
+        "properties": {
+          "title": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          },
+          "relevance": {
+            "type": "string"
+          }
         }
       }
     }

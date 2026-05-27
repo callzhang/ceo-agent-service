@@ -1,12 +1,13 @@
 import json
 import os
+import re
 import subprocess
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import parse_qs, unquote, urlparse
 
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, Field, ValidationError, model_validator
 
 from ceo_agent_service.codex_decision import (
     extract_codex_audit_events,
@@ -29,41 +30,74 @@ DEFAULT_OA_APPROVAL_SKILL_PATH = (
     Path.home() / ".agents" / "skills" / "dingtalk-oa-approval" / "SKILL.md"
 )
 AFLOW_HOST = "aflow.dingtalk.com"
+URL_TRAILING_CHARS = "\"'`>,。；;，"
+SECRET_PATTERNS = (
+    re.compile(r"access_token=[^\s&]+", re.IGNORECASE),
+    re.compile(r"appsecret=[^\s&]+", re.IGNORECASE),
+    re.compile(r"appkey=[^\s&]+", re.IGNORECASE),
+    re.compile(r"cookie[:=][^\s]+", re.IGNORECASE),
+    re.compile(r"oauth[_-]?code=[^\s&]+", re.IGNORECASE),
+)
 
 
 class OaApprovalResult(BaseModel):
-    process_instance_id: str
-    task_id: str
-    oa_url: str
+    process_instance_id: str = Field(min_length=1)
+    task_id: str = Field(min_length=1)
+    oa_url: str = Field(min_length=1)
     oa_action: Literal["通过", "拒绝", "退回"]
-    oa_remark: str
+    oa_remark: str = Field(min_length=1)
     action_result: dict[str, Any]
-    audit_summary: str
+    audit_summary: str = Field(min_length=1)
     audit_documents: list[dict[str, str]]
+
+    @model_validator(mode="after")
+    def validate_oa_identifiers(self) -> "OaApprovalResult":
+        parsed = urlparse(self.oa_url)
+        if parsed.netloc != AFLOW_HOST:
+            raise ValueError("oa_url must be an aflow.dingtalk.com URL")
+        query = parse_qs(parsed.query)
+        process_values = {
+            value
+            for key in ("procInstId", "processInstanceId", "process_instance_id")
+            for value in query.get(key, [])
+        }
+        if process_values and self.process_instance_id not in process_values:
+            raise ValueError("process_instance_id does not match oa_url")
+        task_values = {
+            value
+            for key in ("taskId", "task_id")
+            for value in query.get(key, [])
+        }
+        if task_values and self.task_id not in task_values:
+            raise ValueError("task_id does not match oa_url")
+        return self
 
 
 def extract_oa_url(text: str) -> str:
     for candidate in _urlish_candidates(text):
+        nested = _nested_aflow_url(candidate)
+        if nested:
+            return nested
         direct = _aflow_url(candidate)
         if direct:
             return direct
         decoded = unquote(candidate)
+        nested = _nested_aflow_url(decoded)
+        if nested:
+            return nested
         direct = _aflow_url(decoded)
         if direct:
             return direct
-        nested = _nested_aflow_url(candidate)
-        if nested:
-            return nested
     return ""
 
 
 def _urlish_candidates(text: str) -> list[str]:
     candidates: list[str] = []
     text = text.replace("\\/", "/").replace("\\u0026", "&")
-    for separator in ('"', "'", " ", "\n", "\t", "\r", "<", ">", ","):
+    for separator in ('"', "'", " ", "\n", "\t", "\r", "<", ">"):
         text = text.replace(separator, "\n")
     for raw in text.splitlines():
-        candidate = raw.strip()
+        candidate = raw.strip().strip("()[]{}")
         if candidate:
             candidates.append(candidate)
     return candidates
@@ -75,10 +109,11 @@ def _aflow_url(value: str) -> str:
     if start < 0:
         return ""
     url = value[start:]
-    for delimiter in ("&quot;", "\\u0026quot;", "}", "]"):
+    for delimiter in ("&quot;", "\\u0026quot;", "}", "]", ")"):
         position = url.find(delimiter)
         if position >= 0:
             url = url[:position]
+    url = url.rstrip(URL_TRAILING_CHARS)
     parsed = urlparse(url)
     if parsed.netloc != AFLOW_HOST:
         return ""
@@ -164,7 +199,7 @@ class OaApprovalCodexRunner:
             timeout=self.timeout_seconds,
         )
         if completed.returncode != 0 and not completed.stdout.strip():
-            raise RuntimeError(completed.stderr.strip())
+            raise RuntimeError(_subprocess_failure_reason(completed.stderr))
         return completed.stdout.strip()
 
     def _session_line_count(self, session_id: str | None) -> int:
@@ -211,6 +246,8 @@ class _OaApprovalCommandBuilder:
                 "resume",
                 *common_options,
                 CODEX_BYPASS_APPROVALS_AND_SANDBOX,
+                "--output-schema",
+                str(OA_APPROVAL_SCHEMA_PATH),
                 session_id,
                 "-",
             ]
@@ -230,10 +267,23 @@ class _OaApprovalCommandBuilder:
         skill_text = self.skill_path.read_text(encoding="utf-8")
         return (
             "You are the local DingTalk OA approval runner. Follow the injected "
-            "dingtalk-oa-approval skill exactly. Return only the requested JSON.\n\n"
+            "dingtalk-oa-approval skill exactly. Return only the requested JSON. "
+            "Do not expose tokens, AppKey, AppSecret, cookies, OAuth codes, "
+            "signed URLs, or local credential paths.\n\n"
             "# Injected dingtalk-oa-approval skill\n\n"
             f"{skill_text}"
         )
+
+
+def _subprocess_failure_reason(stderr: str) -> str:
+    normalized = " ".join(line.strip() for line in stderr.splitlines() if line.strip())
+    if not normalized:
+        return "codex exec failed without stderr"
+    for pattern in SECRET_PATTERNS:
+        normalized = pattern.sub("[REDACTED]", normalized)
+    if len(normalized) <= 1200:
+        return normalized
+    return f"{normalized[:1200]}..."
 
 
 def parse_oa_approval_json(raw: str) -> OaApprovalResult:

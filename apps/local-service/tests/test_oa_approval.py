@@ -1,6 +1,11 @@
 from pathlib import Path
 import json
+from types import SimpleNamespace
 
+import pytest
+from pydantic import ValidationError
+
+import ceo_agent_service.oa_approval as oa_approval
 from ceo_agent_service.oa_approval import (
     OA_APPROVAL_SCHEMA_PATH,
     OaApprovalCodexRunner,
@@ -28,11 +33,43 @@ def test_valid_result_accepts_approve_action_and_stores_remark():
         oa_remark="同意，预算归属清晰。",
         action_result={"ok": True},
         audit_summary="已核对申请正文和审批记录。",
-        audit_documents=[{"source": "detail", "summary": "预算归属清晰"}],
+        audit_documents=[
+            {
+                "title": "审批详情",
+                "url": "https://aflow.dingtalk.com/dingtalk/mobile/homepage.htm?procInstId=proc-1",
+                "relevance": "预算归属清晰",
+            }
+        ],
     )
 
     assert result.oa_action == "通过"
     assert result.oa_remark == "同意，预算归属清晰。"
+
+
+def test_result_rejects_non_aflow_url_and_mismatched_process_id():
+    with pytest.raises(ValidationError):
+        OaApprovalResult(
+            process_instance_id="proc-1",
+            task_id="task-1",
+            oa_url="https://example.com/detail?procInstId=proc-1",
+            oa_action="通过",
+            oa_remark="同意。",
+            action_result={},
+            audit_summary="已审阅。",
+            audit_documents=[],
+        )
+
+    with pytest.raises(ValidationError):
+        OaApprovalResult(
+            process_instance_id="proc-1",
+            task_id="task-1",
+            oa_url="https://aflow.dingtalk.com/detail?procInstId=other",
+            oa_action="退回",
+            oa_remark="请补材料。",
+            action_result={},
+            audit_summary="已审阅。",
+            audit_documents=[],
+        )
 
 
 def test_extract_oa_url_decodes_encoded_aflow_url_inside_dingtalk_card():
@@ -41,6 +78,22 @@ def test_extract_oa_url_decodes_encoded_aflow_url_inside_dingtalk_card():
         "%3FprocInstId%3Dproc-1%26taskId%3Dtask-1"
     )
     text = f'{{"pcLink":"dingtalk://dingtalkclient/page/link?url={encoded_url}"}}'
+
+    assert extract_oa_url(text) == (
+        "https://aflow.dingtalk.com/dingtalk/mobile/homepage.htm"
+        "?procInstId=proc-1&taskId=task-1"
+    )
+
+
+def test_extract_oa_url_ignores_outer_wrapper_params_and_trailing_punctuation():
+    encoded_url = (
+        "https%3A%2F%2Faflow.dingtalk.com%2Fdingtalk%2Fmobile%2Fhomepage.htm"
+        "%3FprocInstId%3Dproc-1%26taskId%3Dtask-1"
+    )
+    text = (
+        f"(dingtalk://dingtalkclient/page/link?url={encoded_url}"
+        "&pc_slide=false)"
+    )
 
     assert extract_oa_url(text) == (
         "https://aflow.dingtalk.com/dingtalk/mobile/homepage.htm"
@@ -82,7 +135,13 @@ def test_runner_injects_skill_uses_schema_parses_result_and_records_session(
                         "oa_remark": "同意。",
                         "action_result": {"success": True},
                         "audit_summary": "已审阅并通过。",
-                        "audit_documents": [{"source": "records", "summary": "审批链完整"}],
+                        "audit_documents": [
+                            {
+                                "title": "审批流水",
+                                "url": "https://aflow.dingtalk.com/dingtalk/mobile/homepage.htm?procInstId=proc-1",
+                                "relevance": "审批链完整",
+                            }
+                        ],
                     },
                     ensure_ascii=False,
                 ),
@@ -116,3 +175,65 @@ def test_runner_injects_skill_uses_schema_parses_result_and_records_session(
             "command": "dws oa approval detail proc-1",
         }
     ]
+
+
+def test_resume_command_also_uses_output_schema(tmp_path: Path):
+    skill_path = tmp_path / "skill.md"
+    skill_path.write_text("# OA Skill", encoding="utf-8")
+    calls: list[list[str]] = []
+
+    def fake_executor(command: list[str], prompt: str) -> str:
+        calls.append(command)
+        return json.dumps(
+            {
+                "process_instance_id": "proc-1",
+                "task_id": "task-1",
+                "oa_url": "https://aflow.dingtalk.com/detail?procInstId=proc-1",
+                "oa_action": "拒绝",
+                "oa_remark": "依据不足，拒绝。",
+                "action_result": {},
+                "audit_summary": "已审阅。",
+                "audit_documents": [],
+            },
+            ensure_ascii=False,
+        )
+
+    runner = OaApprovalCodexRunner(
+        workspace=tmp_path,
+        executor=fake_executor,
+        skill_path=skill_path,
+    )
+
+    runner.run("继续处理", session_id="session-1")
+
+    command = calls[0]
+    assert command[:3] == ["codex", "exec", "resume"]
+    assert "--output-schema" in command
+    assert command[command.index("--output-schema") + 1] == str(OA_APPROVAL_SCHEMA_PATH)
+
+
+def test_subprocess_failure_redacts_sensitive_stderr(tmp_path: Path, monkeypatch):
+    skill_path = tmp_path / "skill.md"
+    skill_path.write_text("# OA Skill", encoding="utf-8")
+
+    def fake_run(*args, **kwargs):
+        return SimpleNamespace(
+            returncode=1,
+            stdout="",
+            stderr=(
+                "failed access_token=secret-token "
+                "appsecret=secret-value cookie:session-id"
+            ),
+        )
+
+    monkeypatch.setattr(oa_approval.subprocess, "run", fake_run)
+    runner = OaApprovalCodexRunner(workspace=tmp_path, skill_path=skill_path)
+
+    with pytest.raises(RuntimeError) as excinfo:
+        runner.run("处理审批")
+
+    message = str(excinfo.value)
+    assert "secret-token" not in message
+    assert "secret-value" not in message
+    assert "session-id" not in message
+    assert "[REDACTED]" in message
