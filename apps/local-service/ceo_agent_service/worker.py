@@ -2303,8 +2303,14 @@ class DingTalkAutoReplyWorker:
             return False
         reason = decision.reason
         return (
-            "thread/resume failed" in reason
-            and "no rollout found for thread id" in reason
+            (
+                "thread/resume failed" in reason
+                and "no rollout found for thread id" in reason
+            )
+            or (
+                "codex_rollout::list" in reason
+                and "state db returned stale rollout path" in reason
+            )
         )
 
     def _build_prompt(

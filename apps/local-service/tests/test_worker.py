@@ -4,6 +4,8 @@ from pathlib import Path
 import sqlite3
 from zoneinfo import ZoneInfo
 
+import pytest
+
 from ceo_agent_service.codex_decision import CodexDecisionRunner
 from ceo_agent_service.corpus import CorpusRecord
 from ceo_agent_service.dingtalk_models import (
@@ -1750,8 +1752,19 @@ def test_resume_prompt_only_includes_turn_message_without_repeating_thread_promp
     assert "@Derek Zen(磊哥) 这个怎么处理？" in prompt
 
 
+@pytest.mark.parametrize(
+    "stale_reason",
+    [
+        "thread/resume failed: no rollout found for thread id session-1 (code -32600)",
+        (
+            "2026-05-27T02:03:54.663595Z ERROR codex_rollout::list: "
+            "state db returned stale rollout path for thread session-1: "
+            "/Users/derek/.codex/sessions/2026/05/18/rollout-session-1.jsonl"
+        ),
+    ],
+)
 def test_stale_codex_resume_clears_session_and_retries_with_new_user_message(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, monkeypatch, stale_reason: str
 ):
     class SequencedCodex:
         def __init__(self):
@@ -1767,10 +1780,7 @@ def test_stale_codex_resume_clears_session_and_retries_with_new_user_message(
             if len(self.calls) == 1:
                 return CodexDecision(
                     action=CodexAction.STOP_WITH_ERROR,
-                    reason=(
-                        "thread/resume failed: no rollout found for thread id "
-                        "session-1 (code -32600)"
-                    ),
+                    reason=stale_reason,
                 )
             self.last_session_id = "session-2"
             return CodexDecision(
