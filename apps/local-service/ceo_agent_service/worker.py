@@ -1096,15 +1096,18 @@ class DingTalkAutoReplyWorker:
         ]
         return sorted(candidates, key=lambda message: message.create_time)
 
-    @staticmethod
     def _candidate_source_messages(
+        self,
         conversation: DingTalkConversation,
         context_messages: list[DingTalkMessage],
         unread_messages: list[DingTalkMessage],
         mentioned_messages: list[DingTalkMessage] | None = None,
     ) -> list[DingTalkMessage]:
         if conversation.single_chat:
-            return unread_messages
+            return self._single_chat_candidate_source_messages(
+                context_messages,
+                unread_messages,
+            )
         mentioned_message_ids = {
             message.open_message_id for message in mentioned_messages or []
         }
@@ -1136,6 +1139,36 @@ class DingTalkAutoReplyWorker:
             seen_message_ids.add(message.open_message_id)
             result.append(message)
         return result
+
+    def _single_chat_candidate_source_messages(
+        self,
+        context_messages: list[DingTalkMessage],
+        unread_messages: list[DingTalkMessage],
+    ) -> list[DingTalkMessage]:
+        result: list[DingTalkMessage] = []
+        seen_message_ids: set[str] = set()
+
+        def add(message: DingTalkMessage) -> None:
+            if message.open_message_id in seen_message_ids:
+                return
+            seen_message_ids.add(message.open_message_id)
+            result.append(message)
+
+        for message in unread_messages:
+            add(message)
+
+        last_seen_context_index: int | None = None
+        for index, message in enumerate(context_messages):
+            if self.store.has_seen(message.open_message_id):
+                last_seen_context_index = index
+        if last_seen_context_index is None:
+            return sorted(result, key=lambda message: message.create_time)
+
+        for message in context_messages[last_seen_context_index + 1 :]:
+            if self.store.has_seen(message.open_message_id):
+                continue
+            add(message)
+        return sorted(result, key=lambda message: message.create_time)
 
     @staticmethod
     def _group_context_recovery_start_time(

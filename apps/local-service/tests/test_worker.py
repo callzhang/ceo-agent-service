@@ -2627,6 +2627,79 @@ def test_single_chat_old_candidate_context_does_not_become_new_question(
     assert "这个候选人怎么样？" in context_section
 
 
+def test_single_chat_recent_context_after_seen_is_processed_when_unread_empty(
+    tmp_path: Path, monkeypatch
+):
+    handled = message("paper是不是也要开始准备了？", message_id="msg-handled", single_chat=True)
+    handled.create_time = "2026-05-13 17:44:34"
+    sent_reply = derek_message(
+        "对，paper不要等所有数据都齐了再启动。",
+        message_id="msg-derek-reply",
+        create_time="2026-05-13 17:45:31",
+    )
+    new_peer_message = message(
+        "我比较想先把hsw弄出来，目前的novelty更强一点",
+        message_id="msg-new-peer-1",
+        single_chat=True,
+    )
+    new_peer_message.create_time = "2026-05-13 17:47:44"
+    latest_peer_message = message(
+        "如果他们确实比较感兴趣的话能拉他们弄点合作或者挂个名之类的就更好一些",
+        message_id="msg-new-peer-2",
+        single_chat=True,
+    )
+    latest_peer_message.create_time = "2026-05-13 17:50:01"
+    dws = FakeDws(
+        [conversation(single_chat=True)],
+        {
+            "cid-1": [
+                handled,
+                sent_reply,
+                new_peer_message,
+                latest_peer_message,
+            ]
+        },
+        unread_messages={"cid-1": []},
+    )
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="我倾向先推 HSW。")
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+    worker.store.mark_seen("msg-handled", "cid-1")
+
+    worker.run_once()
+
+    assert len(codex.calls) == 1
+    prompt = codex.calls[0][0]
+    new_messages_section = prompt.split("新消息:", 1)[1].split(CONTEXT_HEADER, 1)[0]
+    context_section = prompt.split(CONTEXT_HEADER, 1)[1]
+    assert "我比较想先把hsw弄出来" in context_section
+    assert "拉他们弄点合作或者挂个名" in new_messages_section
+    assert len(final_sent(dws)) == 1
+    assert "我倾向先推 HSW。" in final_sent(dws)[0][1]
+    attempts = worker.store.list_reply_attempts(limit=10)
+    assert attempts[0].trigger_message_id == "msg-new-peer-2"
+
+
+def test_single_chat_empty_unread_without_seen_anchor_does_not_process_old_context(
+    tmp_path: Path, monkeypatch
+):
+    old_message = message("这个候选人怎么样？", message_id="msg-old", single_chat=True)
+    old_message.create_time = "2026-05-13 17:00:00"
+    dws = FakeDws(
+        [conversation(single_chat=True)],
+        {"cid-1": [old_message]},
+        unread_messages={"cid-1": []},
+    )
+    codex = FakeCodex(CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该回复"))
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+
+    worker.run_once()
+
+    assert codex.calls == []
+    assert final_sent(dws) == []
+
+
 def test_prompt_context_includes_previous_20_plus_unread_tail(
     tmp_path: Path, monkeypatch
 ):
