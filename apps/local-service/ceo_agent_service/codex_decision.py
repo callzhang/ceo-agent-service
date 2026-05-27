@@ -1,6 +1,7 @@
 import json
 import shlex
 import subprocess
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -11,13 +12,15 @@ from ceo_agent_service.codex_runner import CodexRunner
 from ceo_agent_service.codex_history import (
     count_codex_session_lines,
     extract_codex_audit_events_from_session,
+    find_codex_session_path,
 )
 from ceo_agent_service.config import assistant_signature, forbidden_path_prefixes
 from ceo_agent_service.dingtalk_models import CodexAction, CodexDecision
-from ceo_agent_service.leak_check import FORBIDDEN_MARKERS, contains_forbidden_leak
 
 
 SIGNATURE = assistant_signature()
+CODEX_TIMEOUT_REASON_PREFIX = "codex exec timed out after"
+TIMEOUT_SESSION_DECISION_GRACE_SECONDS = 90
 
 
 def append_signature(text: str) -> str:
@@ -262,6 +265,14 @@ def _subprocess_failure_reason(stderr: str, stdout: str) -> str:
     return _short_text(stderr.strip() or stdout, 1200)
 
 
+def _timeout_output_text(output: bytes | str | None) -> str:
+    if output is None:
+        return ""
+    if isinstance(output, bytes):
+        return output.decode("utf-8", errors="replace").strip()
+    return output.strip()
+
+
 def audit_summary_explains_no_documents(summary: str) -> bool:
     normalized = " ".join(summary.split())
     no_document_markers = (
@@ -311,10 +322,22 @@ class CodexDecisionRunner:
         self._remember_session_id(first_raw)
         try:
             decision = parse_codex_json(first_raw)
+            timeout_session_decision = self._timeout_session_decision(decision)
+            if timeout_session_decision is not None:
+                self._remember_audit_tool_events(raw_outputs)
+                return timeout_session_decision
             self._validate_decision(decision)
             self._remember_audit_tool_events(raw_outputs)
             return decision
         except (json.JSONDecodeError, ValidationError, ValueError):
+            session_decision = self._current_session_decision()
+            if session_decision is not None:
+                try:
+                    self._validate_decision(session_decision)
+                    self._remember_audit_tool_events(raw_outputs)
+                    return session_decision
+                except ValueError:
+                    pass
             retry_session_id = session_id or self.last_session_id
             repair_prompt = (
                 "上一次输出不是合法 JSON，或 action 需要回复但 reply_text 为空。"
@@ -336,10 +359,22 @@ class CodexDecisionRunner:
             self._remember_session_id(second_raw)
             try:
                 decision = parse_codex_json(second_raw)
+                timeout_session_decision = self._timeout_session_decision(decision)
+                if timeout_session_decision is not None:
+                    self._remember_audit_tool_events(raw_outputs)
+                    return timeout_session_decision
                 self._validate_decision(decision)
                 self._remember_audit_tool_events(raw_outputs)
                 return decision
             except (json.JSONDecodeError, ValidationError, ValueError):
+                session_decision = self._current_session_decision()
+                if session_decision is not None:
+                    try:
+                        self._validate_decision(session_decision)
+                        self._remember_audit_tool_events(raw_outputs)
+                        return session_decision
+                    except ValueError:
+                        pass
                 self._remember_audit_tool_events(raw_outputs)
                 return CodexDecision(
                     action=CodexAction.STOP_WITH_ERROR,
@@ -351,6 +386,51 @@ class CodexDecisionRunner:
         session_id = extract_codex_session_id(raw)
         if session_id:
             self.last_session_id = session_id
+
+    def _timeout_session_decision(self, decision: CodexDecision) -> CodexDecision | None:
+        if (
+            decision.action != CodexAction.STOP_WITH_ERROR
+            or CODEX_TIMEOUT_REASON_PREFIX not in decision.reason
+        ):
+            return None
+        session_decision = self._current_session_decision(
+            wait_seconds=TIMEOUT_SESSION_DECISION_GRACE_SECONDS
+        )
+        if session_decision is None:
+            return None
+        try:
+            self._validate_decision(session_decision)
+        except ValueError:
+            return None
+        return session_decision
+
+    def _current_session_decision(self, wait_seconds: int = 0) -> CodexDecision | None:
+        if not self.last_session_id:
+            return None
+        deadline = time.monotonic() + wait_seconds
+        while True:
+            decision = self._read_current_session_decision()
+            if decision is not None:
+                return decision
+            if time.monotonic() >= deadline:
+                return None
+            time.sleep(5)
+
+    def _read_current_session_decision(self) -> CodexDecision | None:
+        session_id = self.last_session_id
+        if not session_id:
+            return None
+        path = find_codex_session_path(session_id, codex_home=self.codex_home)
+        if path is None:
+            return None
+        lines = path.read_text(encoding="utf-8").splitlines()
+        current_turn = "\n".join(lines[self.last_transcript_start_line :])
+        if not current_turn.strip():
+            return None
+        try:
+            return parse_codex_json(current_turn)
+        except (json.JSONDecodeError, ValidationError):
+            return None
 
     def _remember_audit_tool_events(self, raw_outputs: list[str]) -> None:
         session_id = self.last_session_id
@@ -401,15 +481,19 @@ class CodexDecisionRunner:
                 env=self.runner.build_env(),
                 timeout=self.timeout_seconds,
             )
-        except subprocess.TimeoutExpired:
-            return json.dumps(
+        except subprocess.TimeoutExpired as exc:
+            stdout = _timeout_output_text(exc.stdout or exc.output)
+            stop_error = json.dumps(
                 {
                     "action": "stop_with_error",
-                    "reason": f"codex exec timed out after {self.timeout_seconds} seconds",
+                    "reason": f"{CODEX_TIMEOUT_REASON_PREFIX} {self.timeout_seconds} seconds",
                     "macos_notify": True,
                 },
                 ensure_ascii=False,
             )
+            if stdout:
+                return f"{stdout}\n{stop_error}"
+            return stop_error
         if completed.returncode != 0:
             stdout = completed.stdout.strip()
             if stdout:

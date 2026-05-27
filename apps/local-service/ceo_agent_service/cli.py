@@ -9,7 +9,6 @@ from pathlib import Path
 
 from pydantic import BaseModel, PositiveInt
 
-from ceo_agent_service.codex_decision import contains_forbidden_leak
 from ceo_agent_service.codex_decision import CodexDecisionRunner
 from ceo_agent_service.config import profile_evidence_dir, work_profile_path
 from ceo_agent_service.corpus import (
@@ -26,6 +25,7 @@ from ceo_agent_service.dws_client import (
     DwsError,
     local_time_zone_name,
 )
+from ceo_agent_service.leak_check import contains_forbidden_leak
 from ceo_agent_service.dingtalk_models import CodexAction, DingTalkConversation
 from ceo_agent_service.notification import send_macos_notification
 from ceo_agent_service.oa_approval import OaApprovalCodexRunner
@@ -82,7 +82,7 @@ class WorkerSettings(BaseModel):
     ding_receiver_user_id: str | None = None
     dws_transient_retry_attempts: PositiveInt = 3
     dws_transient_retry_delay_seconds: float = 1.0
-    codex_timeout_seconds: PositiveInt = 300
+    codex_timeout_seconds: PositiveInt = 420
     max_batches: PositiveInt | None = None
 
 

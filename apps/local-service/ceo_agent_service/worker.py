@@ -10,7 +10,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 from pypdf import PdfReader
 
-from ceo_agent_service.codex_decision import append_signature, contains_forbidden_leak
+from ceo_agent_service.codex_decision import append_signature
 from ceo_agent_service.config import (
     assistant_signature,
     current_user_display_names,
@@ -36,13 +36,16 @@ from ceo_agent_service.dingtalk_models import (
     DingTalkConversation,
     DingTalkMessage,
 )
+from ceo_agent_service.leak_check import (
+    FORBIDDEN_MARKERS,
+    contains_forbidden_leak,
+    redact_forbidden_leak_markers,
+)
 from ceo_agent_service.notification import send_macos_notification
 from ceo_agent_service.oa_approval import extract_oa_url
 from ceo_agent_service.permission import PermissionAction, PermissionGate
 from ceo_agent_service.prompt import LinkedDocumentContext, build_turn_prompt
 from ceo_agent_service.store import AutoReplyStore, ReplyAttempt, ReplyTask
-from ceo_agent_service.leak_check import FORBIDDEN_MARKERS
-
 
 HANDOFF_ACK = handoff_ack()
 # Historical auto-ack marker. Keep filtering it from context, but do not send
@@ -2336,6 +2339,7 @@ class DingTalkAutoReplyWorker:
     @staticmethod
     def _fake_quote(trigger: DingTalkMessage) -> str:
         normalized = DingTalkAutoReplyWorker._quote_source_text(trigger.content)
+        normalized = redact_forbidden_leak_markers(normalized)
         excerpt = DingTalkAutoReplyWorker._truncate_quote_text(
             normalized,
             unit_limit=QUOTE_INFORMATION_UNIT_LIMIT,

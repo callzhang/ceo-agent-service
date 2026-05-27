@@ -6,12 +6,12 @@ from types import SimpleNamespace
 from ceo_agent_service.codex_decision import (
     CodexDecisionRunner,
     append_signature,
-    contains_forbidden_leak,
     extract_codex_audit_events,
     extract_codex_session_id,
     parse_codex_json,
 )
 from ceo_agent_service.dingtalk_models import CodexAction, CodexDecision
+from ceo_agent_service.leak_check import contains_forbidden_leak
 
 
 class FakeExecutor:
@@ -304,6 +304,62 @@ def test_invalid_json_retries_once(tmp_path: Path):
     assert "audit_documents" in executor.prompts[1]
 
 
+def test_runner_reads_current_session_when_stdout_has_no_decision(tmp_path: Path):
+    session_id = "thread-1"
+    session_path = (
+        tmp_path
+        / "sessions"
+        / "2026"
+        / "05"
+        / "27"
+        / f"rollout-2026-05-27T06-51-23-{session_id}.jsonl"
+    )
+    session_path.parent.mkdir(parents=True)
+    session_path.write_text(
+        "\n".join(
+            [
+                json.dumps({"type": "session_meta", "payload": {"id": session_id}}),
+                json.dumps(
+                    {
+                        "type": "response_item",
+                        "payload": {
+                            "type": "message",
+                            "role": "assistant",
+                            "content": [
+                                {
+                                    "type": "output_text",
+                                    "text": json.dumps(
+                                        {
+                                            "action": "send_reply",
+                                            "reply_text": "今晚只放一个主目标。",
+                                            "audit_summary": "只需上下文判断。",
+                                        },
+                                        ensure_ascii=False,
+                                    ),
+                                }
+                            ],
+                        },
+                    },
+                    ensure_ascii=False,
+                ),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    executor = FakeExecutor(
+        [json.dumps({"type": "thread.started", "thread_id": session_id})]
+    )
+    runner = make_runner(tmp_path, executor=executor)
+
+    decision = runner.decide(prompt="decide", session_id=None)
+
+    assert decision.action == CodexAction.SEND_REPLY
+    assert decision.reply_text == "今晚只放一个主目标。"
+    assert runner.last_session_id == session_id
+    assert len(executor.commands) == 1
+
+
 def test_runner_tracks_audit_tool_events(tmp_path: Path):
     executor = FakeExecutor(
         [
@@ -563,6 +619,70 @@ def test_subprocess_timeout_returns_stop_with_error(tmp_path: Path, monkeypatch)
 
     assert decision.action == CodexAction.STOP_WITH_ERROR
     assert "timed out" in decision.reason
+
+
+def test_subprocess_timeout_uses_finished_session_decision(
+    tmp_path: Path, monkeypatch
+):
+    session_id = "thread-timeout-1"
+    session_path = (
+        tmp_path
+        / "sessions"
+        / "2026"
+        / "05"
+        / "27"
+        / f"rollout-2026-05-27T07-21-00-{session_id}.jsonl"
+    )
+    session_path.parent.mkdir(parents=True)
+    session_path.write_text(
+        "\n".join(
+            [
+                json.dumps({"type": "session_meta", "payload": {"id": session_id}}),
+                json.dumps(
+                    {
+                        "type": "event_msg",
+                        "payload": {
+                            "type": "agent_message",
+                            "message": json.dumps(
+                                {
+                                    "action": "send_reply",
+                                    "reply_text": "这版可以先发，先改四个硬伤。",
+                                    "audit_summary": "已查看材料并给出反馈。",
+                                    "audit_documents": [
+                                        {
+                                            "path": "tmp/bp.pdf",
+                                            "title": "BP",
+                                            "relevance": "用于审核反馈。",
+                                        }
+                                    ],
+                                },
+                                ensure_ascii=False,
+                            ),
+                        },
+                    },
+                    ensure_ascii=False,
+                ),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    def fake_run(*args, **kwargs):
+        raise subprocess.TimeoutExpired(
+            cmd=args[0],
+            timeout=kwargs["timeout"],
+            output=json.dumps({"type": "thread.started", "thread_id": session_id}),
+        )
+
+    monkeypatch.setattr("ceo_agent_service.codex_decision.subprocess.run", fake_run)
+    runner = make_runner(tmp_path, timeout_seconds=7)
+
+    decision = runner.decide(prompt="decide", session_id=None)
+
+    assert decision.action == CodexAction.SEND_REPLY
+    assert decision.reply_text == "这版可以先发，先改四个硬伤。"
+    assert runner.last_session_id == session_id
 
 
 def test_subprocess_nonzero_keeps_stdout_decision(tmp_path: Path, monkeypatch):

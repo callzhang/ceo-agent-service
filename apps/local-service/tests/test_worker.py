@@ -2972,6 +2972,40 @@ def test_fake_quote_keeps_text_after_compact_assistant_mention():
     assert "@磊哥分身" not in quote
 
 
+def test_fake_quote_redacts_runtime_terms_from_user_text():
+    trigger = message("磊哥，你是怎么解决codex上下文压缩失败的问题的？")
+
+    quote = DingTalkAutoReplyWorker._fake_quote(trigger)
+
+    assert quote == "> 周俊杰: 磊哥，你是怎么解决相关内容上下文压缩失败的..."
+    assert "codex" not in quote.lower()
+    assert "原消息" not in quote
+
+
+def test_user_runtime_term_in_trigger_quote_does_not_block_safe_reply(
+    tmp_path: Path, monkeypatch
+):
+    dws = FakeDws(
+        [conversation(single_chat=True)],
+        {"cid-1": [message("磊哥，你是怎么解决codex上下文压缩失败的问题的？", single_chat=True)]},
+    )
+    codex = FakeCodex(
+        CodexDecision(
+            action=CodexAction.SEND_REPLY,
+            reply_text="我会把长任务拆小，每一步都留清楚验收口径。",
+            audit_summary="只需上下文判断。",
+        )
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+
+    worker.run_once()
+
+    sent_text = final_sent(dws)[0][1]
+    assert "codex" not in sent_text.lower()
+    assert "相关内容上下文压缩失败" in sent_text
+    assert worker.store.get_reply_attempt(1).send_status == "sent"
+
+
 def test_single_chat_current_user_message_does_not_call_codex(
     tmp_path: Path, monkeypatch
 ):
