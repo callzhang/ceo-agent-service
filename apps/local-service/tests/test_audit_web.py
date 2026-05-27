@@ -168,6 +168,37 @@ def test_render_attempt_detail_suppresses_quality_warnings_for_skipped_attempts(
     assert "missing codex_session_id" not in detail_html
 
 
+def test_attempt_detail_renders_oa_metadata(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    attempt_id = store.record_reply_attempt(
+        conversation_id="cid-1",
+        conversation_title="审批通知",
+        trigger_message_id="msg-1",
+        trigger_sender="工作通知",
+        trigger_text="[Ding]审批提醒",
+        action="oa_approval",
+        sensitivity_kind="internal_personnel",
+        codex_reason="oa approval handled by dingtalk-oa-approval skill",
+        oa_process_instance_id="proc-1",
+        oa_task_id="task-1",
+        oa_url="https://aflow.dingtalk.com/detail?procInstId=proc-1",
+        oa_action="通过",
+        oa_remark="材料完整，同意。",
+        oa_action_result_json='{"errcode":0,"errmsg":"ok"}',
+        send_status="skipped",
+    )
+
+    status, html = render_attempt_detail(store, attempt_id)
+
+    assert status == 200
+    assert "OA approval" in html
+    assert "proc-1" in html
+    assert "task-1" in html
+    assert "通过" in html
+    assert "材料完整，同意。" in html
+    assert "https://aflow.dingtalk.com/detail?procInstId=proc-1" in html
+
+
 def test_render_attempt_list_uses_distinct_action_and_status_pill_classes(
     tmp_path: Path,
 ):
