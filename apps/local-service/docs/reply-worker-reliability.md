@@ -32,10 +32,11 @@ dir succeeds, while an empty file keychain dir fails with `not_authenticated`.
 
 ## Processing acknowledgement
 
-The worker may send `收到，我正在处理（by 分身）` before a final reply, but only
-after Codex has returned a decision that will actually attempt a reply. `no_reply`,
-`stop_with_error`, blocked, and dry-run outcomes do not send the acknowledgement,
-so a conversation is not left with a processing message and no follow-up.
+The worker no longer sends `收到，我正在处理（by 分身）` before a final reply. Final
+reply delivery is usually close enough that the extra acknowledgement adds noise.
+Historical acknowledgement messages are still recognized and filtered from prompt
+context and unanswered-mention checks, so earlier processing messages do not hide
+messages that still need a real reply.
 
 ## Mentioned arrangements
 

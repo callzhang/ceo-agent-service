@@ -45,6 +45,8 @@ from ceo_agent_service.leak_check import FORBIDDEN_MARKERS
 
 
 HANDOFF_ACK = handoff_ack()
+# Historical auto-ack marker. Keep filtering it from context, but do not send
+# new processing acknowledgements before final replies.
 PROCESSING_ACK = "收到，我正在处理（by 分身）"
 LEAK_CHECK_REGENERATION_SCHEMA = (
     'JSON schema: {"action":"send_reply|ask_clarifying_question|handoff_to_human|no_reply|stop_with_error",'
@@ -434,7 +436,6 @@ class DingTalkAutoReplyWorker:
             conversation,
             [trigger],
             prompt_context_messages,
-            send_processing_ack=True,
             raise_on_delivery_failure=True,
         )
         return True
@@ -454,29 +455,6 @@ class DingTalkAutoReplyWorker:
             trigger_text=trigger.content,
             trigger_message_json=trigger.model_dump_json(),
         )
-
-    def _send_processing_ack(
-        self,
-        conversation: DingTalkConversation,
-        trigger: DingTalkMessage,
-    ) -> None:
-        try:
-            if conversation.single_chat:
-                self._send(
-                    None,
-                    PROCESSING_ACK,
-                    user_id=trigger.sender_user_id,
-                    open_dingtalk_id=None
-                    if trigger.sender_user_id
-                    else trigger.sender_open_dingtalk_id,
-                )
-                return
-            self._send(conversation.open_conversation_id, PROCESSING_ACK)
-        except Exception as exc:
-            self._notify(
-                title=f"CEO processing ack failed: {conversation.title}",
-                message=str(exc)[:120],
-            )
 
     def _mentioned_messages_by_conversation(
         self, conversations: list[DingTalkConversation]
@@ -1285,7 +1263,6 @@ class DingTalkAutoReplyWorker:
         context_messages: list[DingTalkMessage],
         *,
         ignore_existing_attempt: bool = False,
-        send_processing_ack: bool = False,
         raise_on_delivery_failure: bool = False,
     ) -> None:
         trigger = new_messages[-1]
@@ -1480,7 +1457,6 @@ class DingTalkAutoReplyWorker:
                 reply_text=permission.reply_text,
                 reason=permission.reason,
                 attempt_id=attempt_id,
-                send_processing_ack=send_processing_ack,
                 raise_on_delivery_failure=raise_on_delivery_failure,
             )
             return
@@ -1492,7 +1468,6 @@ class DingTalkAutoReplyWorker:
             reply_text=decision.reply_text,
             reason=decision.reason,
             attempt_id=attempt_id,
-            send_processing_ack=send_processing_ack,
             raise_on_delivery_failure=raise_on_delivery_failure,
         )
 
@@ -2086,7 +2061,6 @@ class DingTalkAutoReplyWorker:
         reply_text: str,
         reason: str,
         attempt_id: int,
-        send_processing_ack: bool = False,
         raise_on_delivery_failure: bool = False,
     ) -> None:
         if not reply_text.strip():
@@ -2157,7 +2131,6 @@ class DingTalkAutoReplyWorker:
             direct_open_dingtalk_id=trigger.sender_open_dingtalk_id
             if conversation.single_chat
             else None,
-            send_processing_ack=send_processing_ack,
             raise_on_delivery_failure=raise_on_delivery_failure,
         )
 
@@ -2202,7 +2175,6 @@ class DingTalkAutoReplyWorker:
         at_users: list[str],
         direct_user_id: str | None,
         direct_open_dingtalk_id: str | None,
-        send_processing_ack: bool = False,
         raise_on_delivery_failure: bool = False,
     ) -> None:
         reply_text = final_reply_text
@@ -2238,8 +2210,6 @@ class DingTalkAutoReplyWorker:
             )
             return
         try:
-            if send_processing_ack:
-                self._send_processing_ack(conversation, trigger)
             send_conversation_id = (
                 None if conversation.single_chat else conversation.open_conversation_id
             )

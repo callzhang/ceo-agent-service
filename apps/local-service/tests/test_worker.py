@@ -795,7 +795,7 @@ def test_repeated_produce_once_does_not_send_processing_ack(
     assert dws.sent == []
 
 
-def test_consume_once_sends_processing_ack_after_prompt_context_is_built(
+def test_consume_once_does_not_send_processing_ack(
     tmp_path: Path, monkeypatch
 ):
     trigger = message("@Derek Zen(磊哥) 这个怎么处理？")
@@ -815,8 +815,7 @@ def test_consume_once_sends_processing_ack_after_prompt_context_is_built(
     processed = worker.consume_once(max_tasks=1)
 
     assert processed == 1
-    assert dws.sent[0] == ("cid-1", PROCESSING_ACK)
-    assert final_sent(dws) == [
+    assert dws.sent == [
         (
             "cid-1",
             "> 周俊杰: 这个怎么处理？\n\n<@sender-user-1> 先按A方案走（by磊哥分身）",
@@ -3617,7 +3616,7 @@ def test_send_failure_records_error_and_does_not_mark_seen(tmp_path: Path, monke
     assert store.count_sent_replies() == 0
     assert store.count_errors() == 2
     assert store.count_reply_tasks(status="pending") == 1
-    assert dws.send_attempt_count == 3
+    assert dws.send_attempt_count == 2
     attempt = store.get_reply_attempt(1)
     assert attempt is not None
     assert attempt.send_status == "failed"
@@ -3683,7 +3682,7 @@ def test_pat_authorization_error_is_recorded_as_failed_without_retry_or_url(
 
     worker.run_once()
 
-    assert dws.send_attempt_count == 2
+    assert dws.send_attempt_count == 1
     assert store.has_seen("msg-1") is False
     assert store.count_sent_replies() == 0
     attempt = store.get_reply_attempt(1)
