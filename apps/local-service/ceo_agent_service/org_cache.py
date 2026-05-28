@@ -4,6 +4,8 @@ from ceo_agent_service.dingtalk_models import DingTalkMessage
 from ceo_agent_service.dws_client import DwsError, DwsUserProfile
 from ceo_agent_service.store import AutoReplyStore, OrgUserProfile
 
+ORG_PROFILE_FETCH_BATCH_SIZE = 20
+
 
 class CachedOrgDirectory:
     def __init__(self, store: AutoReplyStore):
@@ -257,7 +259,7 @@ def refresh_org_cache(
     pending = set(requested_user_ids)
     seen: set[str] = set()
     while pending:
-        batch = sorted(pending - seen)
+        batch = sorted(pending - seen)[:ORG_PROFILE_FETCH_BATCH_SIZE]
         if not batch:
             break
         seen.update(batch)

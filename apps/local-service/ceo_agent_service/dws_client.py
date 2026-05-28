@@ -922,7 +922,10 @@ class DwsClient:
         if not user_ids:
             return []
         payload = self.run_json(self.build_get_user_profiles_command(user_ids))
-        return self.parse_user_profiles(payload)
+        return [
+            self._enrich_user_profile_from_search(profile)
+            for profile in self.parse_user_profiles(payload)
+        ]
 
     def get_user_profile(self, user_id: str) -> DwsUserProfile:
         profiles = self.get_user_profiles([user_id])
@@ -941,6 +944,8 @@ class DwsClient:
     def _enrich_user_profile_from_search(
         self, profile: DwsUserProfile
     ) -> DwsUserProfile:
+        if profile.title or not profile.name:
+            return profile
         search_matches = [
             item
             for item in self.search_user_profiles(profile.name)

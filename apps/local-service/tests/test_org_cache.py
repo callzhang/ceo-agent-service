@@ -332,3 +332,42 @@ def test_refresh_org_cache_updates_current_user_hr_departments_and_known_users(t
     assert store.get_org_user_profile("subject").manager_user_id == "manager-1"
     assert store.get_org_user_profile("manager-1") is not None
     assert store.get_org_user_profile("hr-user") is not None
+
+
+def test_refresh_org_cache_fetches_known_users_in_bounded_batches(tmp_path):
+    class FakeDws:
+        def __init__(self):
+            self.requested_user_ids = []
+
+        def get_current_user_id(self):
+            return "derek-user"
+
+        def search_department_ids(self, query):
+            assert query == "人力资源"
+            return {"hr-dept"}
+
+        def list_department_member_profiles(self, department_ids):
+            assert department_ids == ["hr-dept"]
+            return []
+
+        def get_user_profiles(self, user_ids):
+            self.requested_user_ids.append(list(user_ids))
+            return [
+                DwsUserProfile(
+                    user_id=user_id,
+                    name=user_id,
+                    manager_user_id=None,
+                    department_ids={"dept-1"},
+                )
+                for user_id in user_ids
+            ]
+
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    dws = FakeDws()
+    user_ids = {f"user-{index:02d}" for index in range(45)}
+
+    refreshed = refresh_org_cache(store, dws, user_ids=user_ids)
+
+    assert refreshed == 46
+    assert len(dws.requested_user_ids) == 3
+    assert all(len(batch) <= 20 for batch in dws.requested_user_ids)

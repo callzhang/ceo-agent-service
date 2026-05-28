@@ -904,6 +904,50 @@ def test_get_user_profile_enriches_missing_title_from_contact_search():
     ]
 
 
+def test_get_user_profiles_enriches_missing_titles_from_contact_search():
+    client = SequenceRecordingDwsClient(
+        [
+            {
+                "result": [
+                    {
+                        "orgEmployeeModel": {
+                            "orgUserId": "user-1",
+                            "orgUserName": "邹婧玮",
+                        }
+                    },
+                    {
+                        "orgEmployeeModel": {
+                            "orgUserId": "user-2",
+                            "orgUserName": "张三",
+                            "title": "产品经理",
+                        }
+                    },
+                ]
+            },
+            {
+                "result": [
+                    {
+                        "userId": "user-1",
+                        "name": "邹婧玮",
+                        "title": "首席人力资源专家兼HRVP",
+                    }
+                ]
+            },
+        ]
+    )
+
+    profiles = client.get_user_profiles(["user-1", "user-2"])
+
+    assert [profile.title for profile in profiles] == [
+        "首席人力资源专家兼HRVP",
+        "产品经理",
+    ]
+    assert client.commands == [
+        client.build_get_user_profiles_command(["user-1", "user-2"]),
+        client.build_search_user_command("邹婧玮"),
+    ]
+
+
 def test_resolve_message_sender_uses_sender_user_id_without_search():
     client = RecordingDwsClient(payload={})
     msg = make_message("hi")
