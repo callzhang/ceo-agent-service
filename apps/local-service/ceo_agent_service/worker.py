@@ -137,6 +137,10 @@ class ReplyDeliveryError(RuntimeError):
     """Raised after recording a delivery failure so queued tasks can retry."""
 
 
+class ReplyTaskProcessingError(RuntimeError):
+    """Raised after recording a processing failure so queued tasks can retry."""
+
+
 class DingTalkAutoReplyWorker:
     def __init__(
         self,
@@ -1396,6 +1400,8 @@ class DingTalkAutoReplyWorker:
             )
         except Exception as exc:
             self._record_linked_document_error(conversation, trigger, str(exc))
+            if raise_on_delivery_failure:
+                raise ReplyTaskProcessingError(str(exc)) from exc
             return
         session_id = None
         if not ignore_existing_attempt:
@@ -1482,6 +1488,8 @@ class DingTalkAutoReplyWorker:
                 title=f"CEO agent error: {conversation.title}",
                 message=decision.reason[:120],
             )
+            if raise_on_delivery_failure:
+                raise ReplyTaskProcessingError(decision.reason)
             return
         if decision.action == CodexAction.HANDOFF_TO_HUMAN:
             handoff_reply_text = self._format_reply_text(trigger, HANDOFF_ACK, [])

@@ -1922,13 +1922,40 @@ def test_codex_stop_with_error_sends_macos_notification(tmp_path: Path, monkeypa
     assert attempt is not None
     assert attempt.action == "stop_with_error"
     assert attempt.send_status == "failed"
-    assert notifications == [
-        {
-            "title": "CEO agent error: Friday",
-            "message": "codex exec failed",
-            "url": None,
-        }
-    ]
+    assert notifications[0] == {
+        "title": "CEO agent error: Friday",
+        "message": "codex exec failed",
+        "url": None,
+    }
+
+
+def test_codex_stop_with_error_keeps_queued_task_retryable(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message("@Derek Zen(磊哥) 这个怎么处理？")
+    dws = FakeDws([conversation()], {"cid-1": [trigger]})
+    codex = FakeCodex(
+        CodexDecision(
+            action=CodexAction.STOP_WITH_ERROR,
+            reason="codex exec timed out after 300 seconds",
+        )
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+    monkeypatch.setattr(
+        "ceo_agent_service.worker.send_macos_notification",
+        lambda **_: None,
+    )
+
+    worker.run_once()
+
+    assert worker.store.count_reply_tasks(status="pending") == 1
+    assert worker.store.count_reply_tasks(status="done") == 0
+    retried = worker.store.claim_reply_tasks(limit=1)
+    assert retried[0].attempts == 2
+    assert "codex exec timed out" in retried[0].error
+    attempt = worker.store.get_reply_attempt(1)
+    assert attempt is not None
+    assert attempt.send_status == "failed"
 
 
 def test_long_trigger_quote_is_capped_by_twenty_information_units(
