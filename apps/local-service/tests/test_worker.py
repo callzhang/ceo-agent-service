@@ -859,12 +859,7 @@ def test_consume_once_does_not_send_processing_ack(
     processed = worker.consume_once(max_tasks=1)
 
     assert processed == 1
-    assert dws.sent == [
-        (
-            "cid-1",
-            "> 周俊杰: 这个怎么处理？\n\n<@sender-user-1> 先按A方案走（by磊哥分身）",
-        )
-    ]
+    assert dws.sent == [("cid-1", "先按A方案走（by磊哥分身）")]
 
 
 def test_repeated_produce_once_does_not_duplicate_pending_task(
@@ -931,12 +926,7 @@ def test_consume_once_processes_queued_task(tmp_path: Path, monkeypatch):
 
     assert processed == 1
     assert worker.store.count_reply_tasks(status="done") == 1
-    assert final_sent(dws) == [
-        (
-            "cid-1",
-            "> 周俊杰: 这个怎么处理？\n\n<@sender-user-1> 先按A方案走（by磊哥分身）",
-        )
-    ]
+    assert final_sent(dws) == [("cid-1", "先按A方案走（by磊哥分身）")]
 
 
 def test_consume_once_retries_task_failure_before_final_failure(
@@ -1572,8 +1562,7 @@ def test_group_mention_sends_signed_reply(tmp_path: Path, monkeypatch):
     assert final_sent(dws) == [
         (
             "cid-1",
-            "> 周俊杰: 这个怎么处理？\n\n"
-            "<@sender-user-1> <@mentioned-user-1> 先按A方案走（by磊哥分身）",
+            "先按A方案走（by磊哥分身）",
         )
     ]
     assert final_sent_at_users(dws) == [[]]
@@ -1582,8 +1571,7 @@ def test_group_mention_sends_signed_reply(tmp_path: Path, monkeypatch):
             "cid-1",
             "msg-1",
             "sender-1",
-            "> 周俊杰: 这个怎么处理？\n\n"
-            "<@sender-user-1> <@mentioned-user-1> 先按A方案走（by磊哥分身）",
+            "先按A方案走（by磊哥分身）",
         )
     ]
     assert len(codex.calls) == 1
@@ -1964,15 +1952,13 @@ def test_long_trigger_quote_is_capped_by_twenty_information_units(
     trigger = message(
         "@Derek Zen(磊哥) 如果是私有化的POC都是走产研评估流程的，如果是VOC需求也都是PRD评审后走我们正常Sprint迭代流程的",
     )
-    dws = FakeDws([conversation()], {"cid-1": [trigger]})
-    codex = FakeCodex(
-        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="流程方向没问题")
+
+    sent_text = DingTalkAutoReplyWorker._format_reply_text(
+        trigger,
+        "流程方向没问题（by磊哥分身）",
+        ["sender-user-1"],
     )
-    worker = make_worker(tmp_path, dws, codex, monkeypatch)
 
-    worker.run_once()
-
-    sent_text = final_sent(dws)[0][1]
     quote, reply = sent_text.split("\n\n", 1)
     assert quote == "> 周俊杰: 如果是私有化的POC都是走产研评估流程的，如果..."
     assert reply == "<@sender-user-1> 流程方向没问题（by磊哥分身）"
@@ -2157,9 +2143,11 @@ def test_failed_send_retries_existing_final_reply_without_calling_codex(
     worker.run_once()
 
     assert codex.calls == []
-    assert final_sent(dws) == [("cid-1", final_reply)]
+    assert final_sent(dws) == [("cid-1", "先按A方案走（by磊哥分身）")]
     assert final_sent_at_users(dws) == [[]]
-    assert dws.reply_messages == [("cid-1", "msg-1", "sender-1", final_reply)]
+    assert dws.reply_messages == [
+        ("cid-1", "msg-1", "sender-1", "先按A方案走（by磊哥分身）")
+    ]
     attempt = worker.store.get_reply_attempt(attempt_id)
     assert attempt is not None
     assert attempt.send_status == "sent"
@@ -2238,8 +2226,47 @@ def test_rerun_message_retries_existing_failed_attempt_without_calling_codex(
 
     assert processed == "msg-1"
     assert codex.calls == []
-    assert final_sent(dws) == [("cid-1", final_reply)]
+    assert final_sent(dws) == [("cid-1", "先按A方案走（by磊哥分身）")]
     assert worker.store.get_reply_attempt(attempt_id).send_status == "sent"
+
+
+def test_rerun_message_cleans_legacy_group_reply_wrappers(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message("@Derek Zen(磊哥) 这个怎么处理？")
+    dws = FakeDws([conversation()], {"cid-1": [trigger]})
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该重新生成")
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+    attempt_id = worker.store.record_reply_attempt(
+        conversation_id="cid-1",
+        conversation_title="Friday",
+        trigger_message_id="msg-1",
+        trigger_sender="周俊杰",
+        trigger_text=trigger.content,
+        action="send_reply",
+        sensitivity_kind="general",
+        send_status="failed",
+    )
+    worker.store.update_reply_attempt(
+        attempt_id,
+        final_reply_text=(
+            "> 周俊杰: 这个怎么处理？\n\n"
+            "<@sender-user-1> 先按A方案走（by磊哥分身）"
+        ),
+        send_error="network",
+    )
+
+    processed = worker.rerun_message(conversation(), "msg-1")
+
+    assert processed == "msg-1"
+    assert codex.calls == []
+    assert final_sent(dws) == [("cid-1", "先按A方案走（by磊哥分身）")]
+    attempt = worker.store.get_reply_attempt(attempt_id)
+    assert attempt is not None
+    assert attempt.final_reply_text == "先按A方案走（by磊哥分身）"
+    assert attempt.send_status == "sent"
 
 
 def test_rerun_message_can_force_new_codex_decision(tmp_path: Path, monkeypatch):
@@ -2268,7 +2295,7 @@ def test_rerun_message_can_force_new_codex_decision(tmp_path: Path, monkeypatch)
     assert final_sent(dws) == [
         (
             "cid-1",
-            "> 周俊杰: 这个怎么处理？\n\n<@sender-user-1> 改走B方案（by磊哥分身）",
+            "改走B方案（by磊哥分身）",
         )
     ]
 
@@ -2483,13 +2510,7 @@ def test_algorithm_owner_multi_mention_is_framed_as_derek_responsibility(
 
     worker.run_once()
 
-    assert final_sent(dws) == [
-        (
-            "cid-1",
-            "> 周俊杰: aijam是否可以把算法大神们纳入进来？\n\n"
-            "<@sender-user-1> 可以，算法这边应该参与（by磊哥分身）",
-        )
-    ]
+    assert final_sent(dws) == [("cid-1", "可以，算法这边应该参与（by磊哥分身）")]
     prompt = codex.calls[0][0]
     assert "aijam是否可以把算法大神们纳入进来？" in prompt
     assert prompt.startswith("当前待处理消息:")
@@ -2523,12 +2544,7 @@ def test_group_direct_mention_found_in_recent_context_is_queued(
     worker.run_once()
 
     assert len(codex.calls) == 1
-    assert final_sent(dws) == [
-        (
-            "cid-1",
-            "> 周俊杰: 旧消息看一下\n\n<@sender-user-1> 我看一下（by磊哥分身）",
-        )
-    ]
+    assert final_sent(dws) == [("cid-1", "我看一下（by磊哥分身）")]
 
 
 def test_group_seen_direct_mention_found_in_recent_context_does_not_queue(
@@ -2818,7 +2834,7 @@ def test_handoff_sends_ack_dings_self_and_marks_handoff(tmp_path: Path, monkeypa
 
     worker.run_once()
 
-    expected_ack = f"> 周俊杰: 不要分身，真人看一下\n\n{HANDOFF_ACK}"
+    expected_ack = HANDOFF_ACK
     assert final_sent(dws) == [("cid-1", expected_ack)]
     assert len(dws.dings) == 1
     assert "Friday" in dws.dings[0]
@@ -2899,13 +2915,7 @@ def test_handoff_clear_uses_context_message_and_then_processes_mention(
 
     assert store.is_in_handoff("cid-1") is False
     assert store.has_seen("mention-1") is True
-    assert final_sent(dws) == [
-        (
-            "cid-1",
-            "> 周俊杰: 这个后续怎么处理？\n\n"
-            "<@sender-user-1> 按A方案处理（by磊哥分身）",
-        )
-    ]
+    assert final_sent(dws) == [("cid-1", "按A方案处理（by磊哥分身）")]
 
 
 def test_handoff_does_not_clear_on_split_person_reply(tmp_path: Path, monkeypatch):
@@ -2980,19 +2990,13 @@ def test_active_handoff_allows_new_derek_mention_to_be_processed(
     worker.run_once()
 
     assert codex.calls
-    assert final_sent(dws) == [
-        (
-            "cid-1",
-            "> Melody: 请磊哥看一下2026年的战略主线这样写是否合适...\n\n"
-            "<@sender-user-1> 战略主线建议这样调整（by磊哥分身）",
-        )
-    ]
+    assert final_sent(dws) == [("cid-1", "战略主线建议这样调整（by磊哥分身）")]
     assert store.is_in_handoff("cid-1") is True
     assert store.has_seen("msg-after-handoff") is True
     assert notifications == [
         {
             "title": "CEO auto reply: 26年董事会筹备组",
-            "message": "> Melody: 请磊哥看一下2026年的战略主线这样写是否合适...\n\n<@sender-user-1> 战略主线建议这样调整（by磊哥分身）",
+            "message": "战略主线建议这样调整（by磊哥分身）",
             "url": None,
         }
     ]
@@ -3373,7 +3377,7 @@ def test_read_failure_records_error_and_continues_next_conversation(
     assert final_sent(dws) == [
         (
             "cid-good",
-            "> 周俊杰: 这个怎么处理？\n\n<@sender-user-1> 先按A方案走（by磊哥分身）",
+            "先按A方案走（by磊哥分身）",
         )
     ]
 

@@ -581,9 +581,10 @@ def test_handle_reviewed_message_reply_matches_sender_group_and_text(
     assert attempt is not None
     assert attempt.trigger_sender == "Mina 邹"
     assert attempt.trigger_text == "@Derek Zen(磊哥) 磊哥分身，大模型项目经理需要具备什么能力"
-    assert attempt.final_reply_text is not None
-    assert "> Mina 邹: 磊哥分身，大模型项目经理需要具备什么能力" in attempt.final_reply_text
-    assert "<@user-mina> 这个岗位核心看业务拆解、模型理解、项目推进和学习速度。" in attempt.final_reply_text
+    assert (
+        attempt.final_reply_text
+        == "这个岗位核心看业务拆解、模型理解、项目推进和学习速度。（by磊哥分身）"
+    )
     assert dws.sent_messages == []
     assert dws.reply_messages == [
         (
@@ -672,7 +673,10 @@ def test_handle_reviewed_message_reply_uses_stored_group_and_recent_message(
     attempt = store.get_reply_attempt(result["attempt_id"])
     assert result["send_status"] == "sent"
     assert attempt is not None
-    assert "> Claire: 新的官网更新一共16页，请大家打开每一个的html..." in attempt.final_reply_text
+    assert (
+        attempt.final_reply_text
+        == "我已经完成审核，会把核心 comment 补到 tracker。（by磊哥分身）"
+    )
     assert (
         attempt.reviewer_feedback
         == "官网是 marketing 重要内容，CEO 直接相关；这类消息需要审核并回复。"

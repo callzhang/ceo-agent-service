@@ -1492,7 +1492,12 @@ class DingTalkAutoReplyWorker:
                 raise ReplyTaskProcessingError(decision.reason)
             return
         if decision.action == CodexAction.HANDOFF_TO_HUMAN:
-            handoff_reply_text = self._format_reply_text(trigger, HANDOFF_ACK, [])
+            handoff_reply_text = self._format_reply_delivery_text(
+                conversation,
+                trigger,
+                HANDOFF_ACK,
+                [],
+            )
             if self.dry_run:
                 self.store.update_reply_attempt(
                     attempt_id,
@@ -2139,12 +2144,18 @@ class DingTalkAutoReplyWorker:
             return True
         direct_user_id = at_users[0] if conversation.single_chat and at_users else None
         send_at_users = [] if conversation.single_chat else at_users
+        final_reply_text = self._format_reply_delivery_text(
+            conversation,
+            trigger,
+            attempt.final_reply_text,
+            send_at_users,
+        )
         self._deliver_final_reply(
             conversation=conversation,
             trigger=trigger,
             new_messages=new_messages,
             attempt_id=attempt.id,
-            final_reply_text=attempt.final_reply_text,
+            final_reply_text=final_reply_text,
             at_users=send_at_users,
             direct_user_id=direct_user_id,
             direct_open_dingtalk_id=trigger.sender_open_dingtalk_id
@@ -2234,7 +2245,8 @@ class DingTalkAutoReplyWorker:
         direct_user_id = at_users[0] if conversation.single_chat and at_users else None
         send_at_users = [] if conversation.single_chat else at_users
         reply_text = append_signature(reply_text)
-        reply_text = self._format_reply_text(
+        reply_text = self._format_reply_delivery_text(
+            conversation,
             trigger,
             reply_text,
             send_at_users,
@@ -2245,7 +2257,8 @@ class DingTalkAutoReplyWorker:
             )
             if regenerated_reply_text:
                 reply_text = append_signature(regenerated_reply_text)
-                reply_text = self._format_reply_text(
+                reply_text = self._format_reply_delivery_text(
+                    conversation,
                     trigger,
                     reply_text,
                     send_at_users,
@@ -2506,6 +2519,34 @@ class DingTalkAutoReplyWorker:
         if placeholders:
             return f"{quote}\n\n{placeholders} {reply_text}"
         return f"{quote}\n\n{reply_text}"
+
+    @staticmethod
+    def _format_reply_delivery_text(
+        conversation: DingTalkConversation,
+        trigger: DingTalkMessage,
+        reply_text: str,
+        at_users: list[str],
+    ) -> str:
+        if conversation.single_chat:
+            return DingTalkAutoReplyWorker._format_reply_text(
+                trigger,
+                reply_text,
+                at_users,
+            )
+        return DingTalkAutoReplyWorker._native_reply_body(reply_text)
+
+    @staticmethod
+    def _native_reply_body(reply_text: str) -> str:
+        stripped = reply_text.strip()
+        lines = stripped.splitlines()
+        if len(lines) >= 3 and lines[0].startswith("> ") and not lines[1].strip():
+            stripped = "\n".join(lines[2:]).lstrip()
+        while stripped.startswith("<@"):
+            end = stripped.find(">")
+            if end < 0:
+                break
+            stripped = stripped[end + 1 :].lstrip()
+        return stripped
 
     @staticmethod
     def _fake_quote(trigger: DingTalkMessage) -> str:
