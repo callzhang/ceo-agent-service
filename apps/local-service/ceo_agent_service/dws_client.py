@@ -89,6 +89,7 @@ class DwsClient:
     # TLS handshake timeouts before the request reaches a business API.
     RETRYABLE_ERROR_CODES = {"TIMEOUT_ERROR", "6"}
     DISCOVERY_CACHE_REFRESH_CODES = {"6"}
+    DOC_READ_RETRYABLE_ERROR_CODES = {"internalError"}
     SENSITIVE_COMMAND_FLAGS = {
         "--robot-code",
         "--webhook",
@@ -1024,7 +1025,7 @@ class DwsClient:
                 or self._error_code(result.stdout)
                 or self._process_error_code(result.returncode)
             )
-            if code in self.RETRYABLE_ERROR_CODES and remaining_retries > 0:
+            if self._is_retryable_error(command, code) and remaining_retries > 0:
                 if code in self.DISCOVERY_CACHE_REFRESH_CODES:
                     self._refresh_cache()
                 self._sleep_before_retry(attempt_index)
@@ -1069,6 +1070,16 @@ class DwsClient:
         if self.transient_retry_delay_seconds <= 0:
             return
         time.sleep(self.transient_retry_delay_seconds * (attempt_index + 1))
+
+    @classmethod
+    def _is_retryable_error(cls, command: list[str], code: str | None) -> bool:
+        if code in cls.RETRYABLE_ERROR_CODES:
+            return True
+        return (
+            code in cls.DOC_READ_RETRYABLE_ERROR_CODES
+            and len(command) >= 3
+            and command[1:3] == ["doc", "read"]
+        )
 
     def _refresh_cache(self) -> None:
         try:

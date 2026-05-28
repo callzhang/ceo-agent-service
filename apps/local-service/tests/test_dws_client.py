@@ -1666,6 +1666,57 @@ def test_run_json_still_retries_when_discovery_cache_refresh_times_out(monkeypat
     assert sleeps == [1.0]
 
 
+def test_run_json_retries_doc_read_internal_error(monkeypatch):
+    calls = []
+    sleeps = []
+    internal_error_payload = (
+        '{"error":{"code":1,"server_error_code":"internalError",'
+        '"message":"文档内容尚未就绪，请稍后重试。","reason":"business_error"}}'
+    )
+    command = [
+        "dws",
+        "doc",
+        "read",
+        "--node",
+        "https://alidocs.dingtalk.com/i/nodes/doc123",
+        "--format",
+        "json",
+    ]
+
+    def fake_run(command_arg, text, capture_output, check, timeout):
+        calls.append(command_arg)
+        if len(calls) == 1:
+            return SimpleNamespace(returncode=1, stdout="", stderr=internal_error_payload)
+        return SimpleNamespace(returncode=0, stdout='{"ok":true}', stderr="")
+
+    monkeypatch.setattr("ceo_agent_service.dws_client.subprocess.run", fake_run)
+    monkeypatch.setattr("ceo_agent_service.dws_client.time.sleep", sleeps.append)
+
+    assert DwsClient().run_json(command) == {"ok": True}
+    assert calls == [command, command]
+    assert sleeps == [1.0]
+
+
+def test_run_json_does_not_retry_send_internal_error(monkeypatch):
+    calls = []
+    internal_error_payload = (
+        '{"error":{"code":1,"server_error_code":"internalError",'
+        '"message":"send failed","reason":"business_error"}}'
+    )
+    command = ["dws", "chat", "message", "send", "--group", "cid-1"]
+
+    def fake_run(command_arg, text, capture_output, check, timeout):
+        calls.append(command_arg)
+        return SimpleNamespace(returncode=1, stdout="", stderr=internal_error_payload)
+
+    monkeypatch.setattr("ceo_agent_service.dws_client.subprocess.run", fake_run)
+    monkeypatch.setattr("ceo_agent_service.dws_client.time.sleep", lambda seconds: None)
+
+    with pytest.raises(DwsError, match="internalError"):
+        DwsClient().run_json(command)
+    assert calls == [command]
+
+
 def test_run_json_uses_process_exit_code_when_dws_stderr_is_not_json(monkeypatch):
     calls = []
     sleeps = []
