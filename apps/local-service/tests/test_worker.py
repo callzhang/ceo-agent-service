@@ -3621,6 +3621,31 @@ def test_group_all_mention_from_read_conversation_is_processed_from_broadcast_se
     assert attempts[0].send_status == "dry_run"
 
 
+def test_current_user_all_mention_is_filtered_from_broadcast_search(
+    tmp_path: Path, monkeypatch
+):
+    broadcast = message(
+        "@所有人 我已经更新完了",
+        message_id="msg-self-all",
+        sender_user_id="derek-user-1",
+    )
+    broadcast.open_conversation_id = "cid-website"
+    broadcast.conversation_title = "官网迭代群"
+    broadcast.create_time = "2026-05-28 04:04:53"
+    dws = FakeDws(
+        [],
+        {"cid-website": [broadcast]},
+        unread_messages={"cid-website": []},
+    )
+    dws.broadcast_messages = {"cid-website": [broadcast]}
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该调用")
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch, dry_run=True)
+
+    assert worker._broadcast_messages_by_conversation() == {}
+
+
 def test_read_group_mention_is_skipped_when_later_current_user_text_replied(
     tmp_path: Path, monkeypatch
 ):

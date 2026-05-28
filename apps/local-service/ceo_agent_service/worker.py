@@ -602,6 +602,8 @@ class DingTalkAutoReplyWorker:
             return {}
         grouped: dict[str, list[DingTalkMessage]] = {}
         for message in messages:
+            if self._is_current_user_message_for_candidate_filter(message):
+                continue
             grouped.setdefault(message.open_conversation_id, []).append(message)
         return grouped
 
