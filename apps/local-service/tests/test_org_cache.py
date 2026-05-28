@@ -83,6 +83,7 @@ def test_cached_dws_client_delegates_message_io_and_uses_cached_org(tmp_path):
     class FakeDws:
         def __init__(self):
             self.sent = []
+            self.replies = []
             self.dings = []
 
         def send_message(
@@ -95,6 +96,17 @@ def test_cached_dws_client_delegates_message_io_and_uses_cached_org(tmp_path):
         ):
             self.sent.append((conversation_id, text, at_users or []))
 
+        def reply_message(
+            self,
+            conversation_id,
+            ref_message_id,
+            ref_sender_open_dingtalk_id,
+            text,
+        ):
+            self.replies.append(
+                (conversation_id, ref_message_id, ref_sender_open_dingtalk_id, text)
+            )
+
         def ding_user(self, user_id, text):
             self.dings.append((user_id, text))
 
@@ -103,9 +115,11 @@ def test_cached_dws_client_delegates_message_io_and_uses_cached_org(tmp_path):
     cached = CachedDwsClient(FakeDws(), CachedOrgDirectory(store))
 
     cached.send_message("cid-1", "ok", at_users=["user-1"])
+    cached.reply_message("cid-1", "msg-1", "open-1", "reply")
     cached.ding_self("handoff")
 
     assert cached.dws.sent == [("cid-1", "ok", ["user-1"])]
+    assert cached.dws.replies == [("cid-1", "msg-1", "open-1", "reply")]
     assert cached.dws.dings == [("derek-user", "handoff")]
     assert cached.is_current_user_message(message(sender_user_id="derek-user")) is True
 

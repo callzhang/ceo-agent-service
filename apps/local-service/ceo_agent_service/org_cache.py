@@ -153,6 +153,20 @@ class CachedDwsClient:
             open_dingtalk_id=open_dingtalk_id,
         )
 
+    def reply_message(
+        self,
+        conversation_id: str,
+        ref_message_id: str,
+        ref_sender_open_dingtalk_id: str,
+        text: str,
+    ):
+        return self.dws.reply_message(
+            conversation_id,
+            ref_message_id,
+            ref_sender_open_dingtalk_id,
+            text,
+        )
+
     def recall_bot_message(self, conversation_id: str | None, process_query_key: str):
         return self.dws.recall_bot_message(conversation_id, process_query_key)
 
