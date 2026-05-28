@@ -20,7 +20,13 @@ from ceo_agent_service.dingtalk_models import (
     SensitivityKind,
 )
 from ceo_agent_service.dws_client import DwsClient
-from ceo_agent_service.store import AutoReplyStore, ReplyAttempt, ReplyTask, SentReply
+from ceo_agent_service.store import (
+    AutoReplyStore,
+    ReplyAttempt,
+    ReplyError,
+    ReplyTask,
+    SentReply,
+)
 from ceo_agent_service.worker import DingTalkAutoReplyWorker
 
 
@@ -67,9 +73,10 @@ th{background:var(--surface-soft);color:var(--steel);font-size:12px;font-weight:
 .action-handoff_to_human{background:rgba(195,125,13,.12);color:#8a5a08;border-color:rgba(195,125,13,.24)}
 .action-stop_with_error{background:rgba(212,86,86,.12);color:#9a2f2f;border-color:rgba(212,86,86,.24)}
 .status-sent{background:rgba(0,212,164,.12);color:#006b55;border-color:rgba(0,180,138,.28)}
+.status-resolved{background:rgba(0,212,164,.12);color:#006b55;border-color:rgba(0,180,138,.28)}
 .status-pending,.status-processing{background:rgba(55,114,207,.10);color:#245aa5;border-color:rgba(55,114,207,.24)}
 .status-skipped{background:var(--surface);color:var(--stone)}
-.status-failed,.status-blocked{background:rgba(212,86,86,.12);color:#9a2f2f;border-color:rgba(212,86,86,.24)}
+.status-failed,.status-blocked,.status-active{background:rgba(212,86,86,.12);color:#9a2f2f;border-color:rgba(212,86,86,.24)}
 .quality-warning{border-color:rgba(212,86,86,.28);background:rgba(212,86,86,.08)}
 .quality-warning ul{margin:8px 0 0;padding-left:20px;color:#8a2626}
 .card{background:var(--canvas);border:1px solid var(--hairline);border-radius:8px;padding:24px;margin:16px 0}
@@ -304,6 +311,12 @@ def render_codex_session_detail(
 def render_error_list(store: AutoReplyStore, limit: int | None = None) -> str:
     rows = []
     for error in store.list_errors(limit=limit):
+        resolution = _error_resolution_label(store, error)
+        status_class = (
+            "status-resolved"
+            if resolution.startswith("resolved")
+            else "status-active"
+        )
         rows.append(
             "<tr>"
             f"<td>#{error.id}</td>"
@@ -311,16 +324,31 @@ def render_error_list(store: AutoReplyStore, limit: int | None = None) -> str:
             f"<td>{escape(error.conversation_id or '')}</td>"
             f"<td>{escape(error.message_id or '')}</td>"
             f"<td><span class=\"pill status-failed\">{escape(error.kind)}</span></td>"
+            f"<td><span class=\"pill {status_class}\">{escape(resolution)}</span></td>"
             f"<td>{escape(error.detail)}</td>"
             "</tr>"
         )
     table = (
         "<table><thead><tr><th>ID</th><th>Time</th><th>Conversation</th>"
-        "<th>Message</th><th>Kind</th><th>Detail</th></tr></thead><tbody>"
+        "<th>Message</th><th>Kind</th><th>Status</th><th>Detail</th></tr></thead><tbody>"
         + "".join(rows)
         + "</tbody></table>"
     )
     return render_page("Errors", table)
+
+
+def _error_resolution_label(store: AutoReplyStore, error: ReplyError) -> str:
+    if not error.conversation_id or not error.message_id:
+        return "active"
+    if store.get_sent_reply(error.conversation_id, error.message_id):
+        return "resolved: sent"
+    attempt = store.get_latest_reply_attempt_for_trigger(
+        error.conversation_id,
+        error.message_id,
+    )
+    if attempt and attempt.send_status == "sent":
+        return "resolved: sent"
+    return "active"
 
 
 def handle_feedback_post(

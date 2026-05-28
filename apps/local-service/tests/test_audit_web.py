@@ -932,6 +932,38 @@ def test_render_error_list_shows_recent_errors(tmp_path: Path):
     assert "send" in html
     assert "authorization required" in html
     assert "cid-1" in html
+    assert "active" in html
+
+
+def test_render_error_list_marks_sent_trigger_errors_resolved(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.record_error(
+        "cid-1",
+        "msg-1",
+        "send",
+        "'CachedDwsClient' object has no attribute 'reply_message'",
+    )
+    attempt_id = store.record_reply_attempt(
+        conversation_id="cid-1",
+        conversation_title="国内外融资群",
+        trigger_message_id="msg-1",
+        trigger_sender="Lily",
+        trigger_text="@Derek Zen 这个怎么看？",
+        action="send_reply",
+        sensitivity_kind="general",
+        draft_reply_text="先按这个口径回复。",
+    )
+    store.update_reply_attempt(
+        attempt_id,
+        final_reply_text="先按这个口径回复。",
+        send_status="sent",
+    )
+    store.record_sent_reply("cid-1", "msg-1", "先按这个口径回复。")
+
+    html = render_error_list(store)
+
+    assert "resolved: sent" in html
+    assert '<span class="pill status-active">active</span>' not in html
 
 
 def test_run_audit_web_uses_stable_uvicorn_protocols(monkeypatch, tmp_path: Path):
