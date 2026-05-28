@@ -286,6 +286,29 @@ def test_render_attempt_detail_allows_explained_empty_documents(tmp_path: Path):
     assert "send_reply has no audit documents" not in html
 
 
+def test_render_attempt_detail_allows_explained_empty_tool_events(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    attempt_id = store.record_reply_attempt(
+        conversation_id="cid-1",
+        conversation_title="技术部",
+        trigger_message_id="msg-1",
+        trigger_sender="Xiaomin",
+        trigger_text="@Derek Zen 这个怎么处理？",
+        action="send_reply",
+        sensitivity_kind="general",
+        draft_reply_text="先按A方案走",
+        codex_session_id="session-1",
+        audit_documents_json="[]",
+        audit_tool_events_json="[]",
+        audit_summary="只需上下文判断，当前消息已经足够确认处理方式。",
+    )
+
+    status, html = render_attempt_detail(store, attempt_id)
+
+    assert status == 200
+    assert "send_reply has no audit tool events" not in html
+
+
 def test_fastapi_app_serves_history_routes(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     attempt_id = seed_attempt(store)

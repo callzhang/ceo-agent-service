@@ -759,7 +759,10 @@ def _quality_warnings(attempt: ReplyAttempt) -> list[str]:
     if not attempt.codex_session_id.strip():
         warnings.append("missing codex_session_id")
     if attempt.action in {"send_reply", "ask_clarifying_question"}:
-        if not _json_array_has_items(attempt.audit_tool_events_json):
+        if (
+            not _json_array_has_items(attempt.audit_tool_events_json)
+            and not audit_summary_explains_no_documents(attempt.audit_summary)
+        ):
             warnings.append(f"{attempt.action} has no audit tool events")
         if (
             not _json_array_has_items(attempt.audit_documents_json)
