@@ -3118,6 +3118,45 @@ def test_handoff_clears_when_current_user_replies_manually(tmp_path: Path, monke
     assert store.has_seen("derek-msg-1") is True
 
 
+def test_handoff_does_not_clear_when_current_user_uploads_file(
+    tmp_path: Path, monkeypatch
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.upsert_conversation("cid-1", "CEO-2 管理群", False, None)
+    store.enter_handoff(
+        "cid-1",
+        "handoff-msg-1",
+        "需要真人",
+        handoff_message_create_time="2026-05-13 18:00:00",
+    )
+    notifications: list[dict[str, str | None]] = []
+    monkeypatch.setattr(
+        "ceo_agent_service.worker.send_macos_notification",
+        lambda **kwargs: notifications.append(kwargs),
+    )
+    uploaded_file = derek_message(
+        "［文件］2026_5月全员大会_BP分享_图片版_去财务_含督换页.pdf fileId：7QG4Yx2JpL4QIZj0HgqM3IrMJ9dEq3XD",
+        message_id="file-msg-1",
+        create_time="2026-05-13 18:05:00",
+    )
+    dws = FakeDws([conversation()], {"cid-1": [uploaded_file]})
+    dws.conversations[0].title = "CEO-2 管理群"
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该调用")
+    )
+    worker = DingTalkAutoReplyWorker(
+        store=store, dws=dws, codex=codex, now_provider=fixed_worker_now
+    )
+
+    worker.run_once()
+
+    assert store.is_in_handoff("cid-1") is True
+    assert codex.calls == []
+    assert final_sent(dws) == []
+    assert notifications == []
+    assert store.has_seen("file-msg-1") is True
+
+
 def test_handoff_clear_uses_context_message_and_then_processes_mention(
     tmp_path: Path, monkeypatch
 ):

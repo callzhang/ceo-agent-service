@@ -75,6 +75,10 @@ RENDERED_NON_TEXT_PREFIXES = (
     "[视频]",
     "[日程]",
 )
+RENDERED_NON_TEXT_PREFIX_PATTERN = re.compile(
+    r"^\s*[\[［【]\s*(?:文件|图片|视频|日程)\s*[\]］】]",
+    re.IGNORECASE,
+)
 DINGTALK_INTERNAL_OR_RENDERED_MEDIA_PATTERN = re.compile(
     r"dingtalk://|https?://[^\s)]*dingtalk\.com|\[(?:文件|图片|视频|日程)\]",
     re.IGNORECASE,
@@ -1185,7 +1189,7 @@ class DingTalkAutoReplyWorker:
         content = message.content.strip()
         if DINGTALK_APPROVAL_LINK_PATTERN.search(content):
             return False
-        if content.startswith(RENDERED_NON_TEXT_PREFIXES):
+        if DingTalkAutoReplyWorker._has_rendered_non_text_prefix(content):
             return True
         if content.startswith("[dingtalk://"):
             return True
@@ -1206,6 +1210,12 @@ class DingTalkAutoReplyWorker:
         if ORDINARY_EXTERNAL_LINK_PATTERN.search(content):
             return False
         return not DingTalkAutoReplyWorker._has_question_outside_links(content)
+
+    @staticmethod
+    def _has_rendered_non_text_prefix(content: str) -> bool:
+        return content.startswith(
+            RENDERED_NON_TEXT_PREFIXES
+        ) or RENDERED_NON_TEXT_PREFIX_PATTERN.match(content) is not None
 
     @staticmethod
     def _is_link_caption_only(content: str) -> bool:
@@ -1467,6 +1477,8 @@ class DingTalkAutoReplyWorker:
             if not self._message_after_handoff(message, handoff_create_time):
                 continue
             if SPLIT_PERSON_SIGNATURE in message.content:
+                continue
+            if self._is_system_or_notification_message(message):
                 continue
             if self.dws.is_current_user_message(message):
                 return message
