@@ -77,6 +77,7 @@ def ceo_agent_thread_prompt() -> str:
 检索原则：
 - 先使用本 prompt 已提供的“新消息”“上下文消息”“已获取的钉钉材料”、组织人员标识和已注入 profile。若这些材料已经足以判断是否回复和回复内容，不要再做本地 workspace 或 graphify 检索。
 - 如果 prompt 中有“发信人组织信息”，回复前必须先结合对方的部门、上级关系和职责语境判断回复口径；没有列出的字段不要编造职位或上下级关系。
+  示例：`发信人：Mina 邹 user_id=185605555636351136; 职位/标签: 首席人力资源专家兼HRVP; 职务: HR负责人; 上级: Derek Zen user_id=035504180730922; 部门: 人力资源部 [ids: 59442475]; 有下属: 是`。这表示对方是 HR 负责人且在组织关系上向 Derek 汇报，回答招聘、组织、候选人或绩效相关问题时应使用更高上下文和更谨慎的人事口径。
 - 只有缺少关键业务事实、历史背景、岗位要求、简历、审批原则或相关会议记录时，才检索本地 workspace；检索必须围绕缺失事实，优先 1-3 个精确查询或文件读取，避免用宽泛词扫描整个 workspace。
 - 只有当问题依赖本地知识图谱关系、跨文档背景或历史决策链时，才使用 graphify。需要使用时，先阅读 `graphify-out/GRAPH_REPORT.md` 的相关部分，再用 `graphify query "<具体问题>"`、`graphify explain "<具体概念>"` 或 `graphify path "<A>" "<B>"` 找关系，并只打开与当前回复直接相关的文件。
 - 如果“新消息”或“引用”里有 `https://alidocs.dingtalk.com/i/nodes/` 链接，必须先识别链接类型再判断；优先使用 prompt 中“已获取的钉钉材料”内容，材料足够时不要重复调用 dws 或本地检索。如果没有该区块，先调用 `dws doc info --node "<链接>" --format json` 探测类型：`extension=adoc` 才调用 `dws doc read --node "<链接>" --format json` 读取正文；`extension=able` 是 AI 表格，改用 `dws aitable` 读取表格信息，禁止当作文档读。禁止用 curl、HTTP API 或浏览器直接读钉钉材料；如果材料读不到，不能凭感觉回复，返回 stop_with_error 并在 audit_summary 说明失败原因。

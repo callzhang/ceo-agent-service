@@ -2,15 +2,20 @@ import sqlite3
 import json
 from pathlib import Path
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class OrgUserProfile(BaseModel):
     user_id: str
     name: str = ""
+    title: str = ""
     open_dingtalk_id: str | None = None
     manager_user_id: str | None = None
+    manager_name: str = ""
     department_ids: set[str] = set()
+    department_names: set[str] = set()
+    org_labels: list[str] = Field(default_factory=list)
+    has_subordinate: bool | None = None
 
 
 class ReplyAttempt(BaseModel):
@@ -216,9 +221,14 @@ class AutoReplyStore:
                 create table if not exists org_user_profiles (
                     user_id text primary key,
                     name text not null default '',
+                    title text not null default '',
                     open_dingtalk_id text,
                     manager_user_id text,
+                    manager_name text not null default '',
                     department_ids_json text not null,
+                    department_names_json text not null default '[]',
+                    org_labels_json text not null default '[]',
+                    has_subordinate integer,
                     fetched_at text not null default current_timestamp
                 );
                 create index if not exists idx_org_user_profiles_open_dingtalk_id
@@ -318,6 +328,21 @@ class AutoReplyStore:
                 db.execute(
                     "alter table reply_tasks add column trigger_message_json text not null default '{}'"
                 )
+            org_user_profile_columns = {
+                row["name"]
+                for row in db.execute("pragma table_info(org_user_profiles)").fetchall()
+            }
+            for column, definition in (
+                ("title", "text not null default ''"),
+                ("manager_name", "text not null default ''"),
+                ("department_names_json", "text not null default '[]'"),
+                ("org_labels_json", "text not null default '[]'"),
+                ("has_subordinate", "integer"),
+            ):
+                if column not in org_user_profile_columns:
+                    db.execute(
+                        f"alter table org_user_profiles add column {column} {definition}"
+                    )
 
     @staticmethod
     def _reply_task_from_row(row: sqlite3.Row) -> ReplyTask:
@@ -1234,32 +1259,54 @@ class AutoReplyStore:
         open_dingtalk_id: str | None,
         manager_user_id: str | None,
         department_ids: set[str],
+        title: str = "",
+        manager_name: str = "",
+        department_names: set[str] | None = None,
+        org_labels: list[str] | None = None,
+        has_subordinate: bool | None = None,
     ) -> None:
+        department_names = department_names or set()
+        org_labels = org_labels or []
         with self._connect() as db:
             db.execute(
                 """
                 insert into org_user_profiles (
                     user_id,
                     name,
+                    title,
                     open_dingtalk_id,
                     manager_user_id,
+                    manager_name,
                     department_ids_json,
+                    department_names_json,
+                    org_labels_json,
+                    has_subordinate,
                     fetched_at
                 )
-                values (?, ?, ?, ?, ?, current_timestamp)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, current_timestamp)
                 on conflict(user_id) do update set
                     name=excluded.name,
+                    title=excluded.title,
                     open_dingtalk_id=excluded.open_dingtalk_id,
                     manager_user_id=excluded.manager_user_id,
+                    manager_name=excluded.manager_name,
                     department_ids_json=excluded.department_ids_json,
+                    department_names_json=excluded.department_names_json,
+                    org_labels_json=excluded.org_labels_json,
+                    has_subordinate=excluded.has_subordinate,
                     fetched_at=current_timestamp
                 """,
                 (
                     user_id,
                     name,
+                    title,
                     open_dingtalk_id,
                     manager_user_id,
+                    manager_name,
                     json.dumps(sorted(department_ids), ensure_ascii=False),
+                    json.dumps(sorted(department_names), ensure_ascii=False),
+                    json.dumps(org_labels, ensure_ascii=False),
+                    None if has_subordinate is None else int(has_subordinate),
                 ),
             )
 
@@ -1348,7 +1395,16 @@ class AutoReplyStore:
         return OrgUserProfile(
             user_id=row["user_id"],
             name=row["name"],
+            title=row["title"],
             open_dingtalk_id=row["open_dingtalk_id"],
             manager_user_id=row["manager_user_id"],
+            manager_name=row["manager_name"],
             department_ids=set(json.loads(row["department_ids_json"])),
+            department_names=set(json.loads(row["department_names_json"])),
+            org_labels=list(json.loads(row["org_labels_json"])),
+            has_subordinate=(
+                None
+                if row["has_subordinate"] is None
+                else bool(row["has_subordinate"])
+            ),
         )

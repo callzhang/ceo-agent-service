@@ -28,6 +28,17 @@ class RecordingDwsClient(DwsClient):
         return self.payload
 
 
+class SequenceRecordingDwsClient(DwsClient):
+    def __init__(self, payloads: list[dict]):
+        super().__init__(dws_bin="dws")
+        self.payloads = list(payloads)
+        self.commands: list[list[str]] = []
+
+    def run_json(self, command: list[str]):
+        self.commands.append(command)
+        return self.payloads.pop(0)
+
+
 def make_message(content: str) -> DingTalkMessage:
     return DingTalkMessage(
         open_conversation_id="cid-1",
@@ -812,7 +823,16 @@ def test_parse_user_profiles_response():
                     "orgUserName": "张三",
                     "openDingTalkId": "open-1",
                     "orgMasterUserId": "manager-1",
-                    "depts": [{"deptId": "dept-1"}, {"id": "dept-2"}],
+                    "orgMasterDisplayName": "李四",
+                    "depts": [
+                        {"deptId": "dept-1", "deptName": "产品部"},
+                        {"id": "dept-2", "name": "售前解决方案部"},
+                    ],
+                    "labels": [
+                        {"groupName": "职务", "name": "产品负责人"},
+                        {"groupName": "岗位", "name": "管理层"},
+                    ],
+                    "hasSubordinate": True,
                 }
             }
         ]
@@ -825,7 +845,63 @@ def test_parse_user_profiles_response():
     assert users[0].name == "张三"
     assert users[0].open_dingtalk_id == "open-1"
     assert users[0].manager_user_id == "manager-1"
+    assert users[0].manager_name == "李四"
     assert users[0].department_ids == {"dept-1", "dept-2"}
+    assert users[0].department_names == {"产品部", "售前解决方案部"}
+    assert users[0].org_labels == ["职务: 产品负责人", "岗位: 管理层"]
+    assert users[0].has_subordinate is True
+
+
+def test_parse_user_profiles_keeps_search_result_title():
+    payload = {
+        "result": [
+            {
+                "userId": "user-1",
+                "name": "邹婧玮",
+                "nick": "Mina 邹",
+                "openDingTalkId": "open-1",
+                "title": "首席人力资源专家兼HRVP",
+            }
+        ]
+    }
+
+    users = DwsClient.parse_user_profiles(payload)
+
+    assert users[0].title == "首席人力资源专家兼HRVP"
+
+
+def test_get_user_profile_enriches_missing_title_from_contact_search():
+    client = SequenceRecordingDwsClient(
+        [
+            {
+                "result": [
+                    {
+                        "orgEmployeeModel": {
+                            "orgUserId": "user-1",
+                            "orgUserName": "邹婧玮",
+                        }
+                    }
+                ]
+            },
+            {
+                "result": [
+                    {
+                        "userId": "user-1",
+                        "name": "邹婧玮",
+                        "title": "首席人力资源专家兼HRVP",
+                    }
+                ]
+            },
+        ]
+    )
+
+    profile = client.get_user_profile("user-1")
+
+    assert profile.title == "首席人力资源专家兼HRVP"
+    assert client.commands == [
+        client.build_get_user_profiles_command(["user-1"]),
+        client.build_search_user_command("邹婧玮"),
+    ]
 
 
 def test_resolve_message_sender_uses_sender_user_id_without_search():

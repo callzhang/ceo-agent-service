@@ -188,10 +188,15 @@ class CachedDwsClient:
             self.org_directory.store.upsert_org_user_profile(
                 user_id=profile.user_id,
                 name=profile.name or message.sender_name,
+                title=profile.title,
                 open_dingtalk_id=profile.open_dingtalk_id
                 or message.sender_open_dingtalk_id,
                 manager_user_id=profile.manager_user_id,
+                manager_name=profile.manager_name,
                 department_ids=profile.department_ids,
+                department_names=profile.department_names,
+                org_labels=profile.org_labels,
+                has_subordinate=profile.has_subordinate,
             )
             return user_id
 
@@ -203,9 +208,14 @@ class CachedDwsClient:
             self.org_directory.store.upsert_org_user_profile(
                 user_id=profile.user_id,
                 name=profile.name,
+                title=profile.title,
                 open_dingtalk_id=profile.open_dingtalk_id,
                 manager_user_id=profile.manager_user_id,
+                manager_name=profile.manager_name,
                 department_ids=profile.department_ids,
+                department_names=profile.department_names,
+                org_labels=profile.org_labels,
+                has_subordinate=profile.has_subordinate,
             )
             return self.dws.is_hr_user(user_id)
 
@@ -265,9 +275,14 @@ def _cache_profiles(store: AutoReplyStore, profiles: Iterable[DwsUserProfile]) -
         store.upsert_org_user_profile(
             user_id=profile.user_id,
             name=profile.name,
+            title=profile.title,
             open_dingtalk_id=profile.open_dingtalk_id,
             manager_user_id=profile.manager_user_id,
+            manager_name=profile.manager_name,
             department_ids=profile.department_ids,
+            department_names=profile.department_names,
+            org_labels=profile.org_labels,
+            has_subordinate=profile.has_subordinate,
         )
         count += 1
     return count

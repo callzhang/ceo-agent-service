@@ -601,6 +601,11 @@ def test_org_user_profile_cache_round_trip(tmp_path: Path):
         open_dingtalk_id="open-1",
         manager_user_id="manager-1",
         department_ids={"dept-1", "dept-2"},
+        title="产品负责人",
+        manager_name="李四",
+        department_names={"产品部", "售前解决方案部"},
+        org_labels=["职务: 产品负责人", "岗位: 管理层"],
+        has_subordinate=True,
     )
 
     profile = store.get_org_user_profile("user-1")
@@ -610,7 +615,12 @@ def test_org_user_profile_cache_round_trip(tmp_path: Path):
     assert profile.name == "张三"
     assert profile.open_dingtalk_id == "open-1"
     assert profile.manager_user_id == "manager-1"
+    assert profile.manager_name == "李四"
     assert profile.department_ids == {"dept-1", "dept-2"}
+    assert profile.department_names == {"产品部", "售前解决方案部"}
+    assert profile.title == "产品负责人"
+    assert profile.org_labels == ["职务: 产品负责人", "岗位: 管理层"]
+    assert profile.has_subordinate is True
     assert store.find_org_user_by_open_dingtalk_id("open-1").user_id == "user-1"
     assert [user.user_id for user in store.find_org_users_by_name("张三")] == ["user-1"]
     assert store.list_org_user_ids() == ["user-1"]

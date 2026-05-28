@@ -2732,6 +2732,12 @@ class DingTalkAutoReplyWorker:
 
             display_name = profile.name or message.sender_name or user_id
             line = f"- {display_name} user_id={profile.user_id}"
+            role_parts = []
+            if profile.title:
+                role_parts.append(profile.title)
+            role_parts.extend(profile.org_labels)
+            if role_parts:
+                line += f"; 职位/标签: {'; '.join(role_parts)}"
             if profile.manager_user_id:
                 manager_profile = self.store.get_org_user_profile(profile.manager_user_id)
                 if manager_profile is not None and manager_profile.name:
@@ -2739,10 +2745,17 @@ class DingTalkAutoReplyWorker:
                         f"; 上级: {manager_profile.name} "
                         f"user_id={manager_profile.user_id}"
                     )
+                elif profile.manager_name:
+                    line += (
+                        f"; 上级: {profile.manager_name} "
+                        f"user_id={profile.manager_user_id}"
+                    )
                 else:
                     line += f"; 上级 user_id={profile.manager_user_id}"
             if profile.department_ids:
-                line += f"; 部门: {', '.join(sorted(profile.department_ids))}"
+                line += f"; 部门: {self._format_department_context(profile)}"
+            if profile.has_subordinate is not None:
+                line += f"; 有下属: {'是' if profile.has_subordinate else '否'}"
             lines.append(line)
             if len(lines) >= limit:
                 break
@@ -2771,12 +2784,28 @@ class DingTalkAutoReplyWorker:
         self.store.upsert_org_user_profile(
             user_id=fetched_profile.user_id,
             name=fetched_profile.name or message.sender_name,
+            title=fetched_profile.title,
             open_dingtalk_id=fetched_profile.open_dingtalk_id
             or message.sender_open_dingtalk_id,
             manager_user_id=fetched_profile.manager_user_id,
+            manager_name=fetched_profile.manager_name,
             department_ids=fetched_profile.department_ids,
+            department_names=fetched_profile.department_names,
+            org_labels=fetched_profile.org_labels,
+            has_subordinate=fetched_profile.has_subordinate,
         )
         return self.store.get_org_user_profile(user_id)
+
+    @staticmethod
+    def _format_department_context(profile) -> str:
+        department_ids = sorted(profile.department_ids)
+        department_names = sorted(profile.department_names)
+        if department_names:
+            return (
+                f"{', '.join(department_names)} "
+                f"[ids: {', '.join(department_ids)}]"
+            )
+        return ", ".join(department_ids)
 
     def _known_people_prompt_lines(
         self,

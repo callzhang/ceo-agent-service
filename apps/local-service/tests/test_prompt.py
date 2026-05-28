@@ -201,12 +201,13 @@ def test_build_turn_prompt_includes_sender_org_lines():
         style_lines=[],
         include_thread_prompt=True,
         sender_org_lines=[
-            "- Mina 邹 user_id=sender-user-1; 上级: Derek Zen user_id=derek-user-1; 部门: dept-hr"
+            "- Mina 邹 user_id=sender-user-1; 职位/标签: 首席人力资源专家兼HRVP; 职务: HR负责人; 上级: Derek Zen user_id=derek-user-1; 部门: 人力资源部(dept-hr); 有下属: 是"
         ],
     )
 
     assert "发信人组织信息" in prompt
     assert "Mina 邹 user_id=sender-user-1" in prompt
+    assert "职位/标签: 首席人力资源专家兼HRVP; 职务: HR负责人" in prompt
     assert "上级: Derek Zen user_id=derek-user-1" in prompt
 
 
@@ -232,6 +233,8 @@ def test_thread_prompt_requires_sender_org_context_when_available():
     prompt = ceo_agent_thread_prompt()
 
     assert "发信人组织信息" in prompt
+    assert "职位/标签" in prompt
+    assert "发信人：Mina 邹 user_id=185605555636351136" in prompt
     assert "不要编造职位" in prompt
     assert "回答任何问题前，先检索本地 workspace" not in prompt
     assert "本 thread 必须主动使用 graphify" not in prompt

@@ -2698,8 +2698,13 @@ def test_build_prompt_includes_sender_org_context(tmp_path: Path, monkeypatch):
     dws.user_profiles["sender-user-1"] = DwsUserProfile(
         user_id="sender-user-1",
         name="Mina 邹",
+        title="首席人力资源专家兼HRVP",
+        manager_name="Derek Zen",
         manager_user_id="derek-user-1",
         department_ids={"dept-hr", "dept-recruiting"},
+        department_names={"人力资源部", "招聘组"},
+        org_labels=["职务: HR负责人", "岗位: 管理层"],
+        has_subordinate=True,
     )
     codex = FakeCodex(CodexDecision(action=CodexAction.NO_REPLY))
     worker = make_worker(tmp_path, dws, codex, monkeypatch)
@@ -2726,8 +2731,10 @@ def test_build_prompt_includes_sender_org_context(tmp_path: Path, monkeypatch):
     assert dws.user_profile_calls == ["sender-user-1"]
     assert "发信人组织信息" in prompt
     assert "- Mina 邹 user_id=sender-user-1" in prompt
+    assert "职位/标签: 首席人力资源专家兼HRVP; 职务: HR负责人; 岗位: 管理层" in prompt
     assert "上级: Derek Zen user_id=derek-user-1" in prompt
-    assert "部门: dept-hr, dept-recruiting" in prompt
+    assert "部门: 人力资源部, 招聘组 [ids: dept-hr, dept-recruiting]" in prompt
+    assert "有下属: 是" in prompt
 
 
 def test_group_stale_direct_mention_found_in_recent_context_does_not_queue(

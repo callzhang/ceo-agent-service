@@ -48,9 +48,14 @@ class DwsError(RuntimeError):
 class DwsUserProfile(BaseModel):
     user_id: str
     name: str = ""
+    title: str = ""
     open_dingtalk_id: str | None = None
     manager_user_id: str | None = None
+    manager_name: str = ""
     department_ids: set[str] = set()
+    department_names: set[str] = set()
+    org_labels: list[str] = Field(default_factory=list)
+    has_subordinate: bool | None = None
 
 
 class DwsDocumentSearchResult(BaseModel):
@@ -924,11 +929,33 @@ class DwsClient:
         matches = [profile for profile in profiles if profile.user_id == user_id]
         if len(matches) != 1:
             raise DwsError(f"expected one user profile for {user_id}, got {len(matches)}")
-        return matches[0]
+        profile = matches[0]
+        if not profile.title and profile.name:
+            profile = self._enrich_user_profile_from_search(profile)
+        return profile
 
     def search_user_profiles(self, query: str) -> list[DwsUserProfile]:
         payload = self.run_json(self.build_search_user_command(query))
         return self.parse_user_profiles(payload)
+
+    def _enrich_user_profile_from_search(
+        self, profile: DwsUserProfile
+    ) -> DwsUserProfile:
+        search_matches = [
+            item
+            for item in self.search_user_profiles(profile.name)
+            if item.user_id == profile.user_id
+        ]
+        if len(search_matches) != 1:
+            return profile
+        search_profile = search_matches[0]
+        return profile.model_copy(
+            update={
+                "title": search_profile.title or profile.title,
+                "open_dingtalk_id": profile.open_dingtalk_id
+                or search_profile.open_dingtalk_id,
+            }
+        )
 
     def resolve_message_sender(self, message: DingTalkMessage) -> str:
         if message.sender_user_id:
@@ -1694,13 +1721,28 @@ class DwsClient:
                         or user_payload.get("nick")
                         or ""
                     ),
+                    title=str(
+                        user_payload.get("title")
+                        or user_payload.get("position")
+                        or user_payload.get("jobTitle")
+                        or ""
+                    ),
                     open_dingtalk_id=user_payload.get("openDingTalkId")
                     or user_payload.get("openConversationId")
                     or user_payload.get("openId"),
                     manager_user_id=user_payload.get("orgMasterUserId")
                     or user_payload.get("managerUserId")
                     or user_payload.get("masterUserId"),
+                    manager_name=str(
+                        user_payload.get("orgMasterDisplayName")
+                        or user_payload.get("managerName")
+                        or user_payload.get("masterName")
+                        or ""
+                    ),
                     department_ids=DwsClient._department_ids(user_payload),
+                    department_names=DwsClient._department_names(user_payload),
+                    org_labels=DwsClient._org_labels(user_payload),
+                    has_subordinate=DwsClient._has_subordinate(user_payload),
                 )
             )
         return profiles
@@ -1769,3 +1811,40 @@ class DwsClient:
                 elif dept:
                     department_ids.add(str(dept))
         return department_ids
+
+    @staticmethod
+    def _department_names(user_payload: dict[str, Any]) -> set[str]:
+        department_names = set()
+        depts = user_payload.get("depts") or user_payload.get("departments") or []
+        if isinstance(depts, list):
+            for dept in depts:
+                if not isinstance(dept, dict):
+                    continue
+                dept_name = dept.get("deptName") or dept.get("name")
+                if dept_name:
+                    department_names.add(str(dept_name))
+        return department_names
+
+    @staticmethod
+    def _org_labels(user_payload: dict[str, Any]) -> list[str]:
+        labels = user_payload.get("labels") or []
+        if not isinstance(labels, list):
+            return []
+        result = []
+        for label in labels:
+            if not isinstance(label, dict):
+                continue
+            group_name = str(label.get("groupName") or "").strip()
+            name = str(label.get("name") or "").strip()
+            if group_name and name:
+                result.append(f"{group_name}: {name}")
+            elif name:
+                result.append(name)
+        return result
+
+    @staticmethod
+    def _has_subordinate(user_payload: dict[str, Any]) -> bool | None:
+        value = user_payload.get("hasSubordinate")
+        if isinstance(value, bool):
+            return value
+        return None
