@@ -313,18 +313,6 @@ def test_seen_messages_are_deduplicated(tmp_path: Path):
     assert store.mark_seen("msg-1", "cid-1") is False
 
 
-def test_handoff_lifecycle(tmp_path: Path):
-    store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    store.enter_handoff("cid-1", "msg-1", "分身答错了", handoff_message_create_time="2026-05-13 18:00:00")
-
-    assert store.is_in_handoff("cid-1") is True
-    assert store.get_handoff_message_create_time("cid-1") == "2026-05-13 18:00:00"
-
-    store.clear_handoff("cid-1", "msg-2")
-
-    assert store.is_in_handoff("cid-1") is False
-
-
 def test_records_sent_reply_and_error(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
 

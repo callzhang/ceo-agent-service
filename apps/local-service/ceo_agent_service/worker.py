@@ -255,11 +255,6 @@ class DingTalkAutoReplyWorker:
                 and not conversation_mentions
             ):
                 continue
-            unseen_context_messages = [
-                message
-                for message in unread_messages
-                if not self.store.has_seen(message.open_message_id)
-            ]
             candidate_source_messages = self._candidate_source_messages(
                 conversation,
                 context_messages,
@@ -275,14 +270,6 @@ class DingTalkAutoReplyWorker:
                 for message in candidates
                 if not self.store.has_seen(message.open_message_id)
             ]
-            if self.store.is_in_handoff(conversation.open_conversation_id):
-                if self._handle_active_handoff(
-                    conversation,
-                    context_messages,
-                    unseen_context_messages,
-                    actionable_unseen_messages=new_messages,
-                ):
-                    continue
             if not new_messages:
                 continue
             new_messages = self._skip_messages_outside_recent_window(
@@ -1417,81 +1404,6 @@ class DingTalkAutoReplyWorker:
             result.append(message)
         return result
 
-    def _handle_active_handoff(
-        self,
-        conversation: DingTalkConversation,
-        context_messages: list[DingTalkMessage],
-        unseen_messages: list[DingTalkMessage],
-        actionable_unseen_messages: list[DingTalkMessage] | None = None,
-    ) -> bool:
-        try:
-            handoff_create_time = self.store.get_handoff_message_create_time(
-                conversation.open_conversation_id
-            )
-            manual_clear_message = self._manual_handoff_clear_message(
-                context_messages,
-                handoff_create_time=handoff_create_time,
-            )
-        except Exception as exc:
-            trigger_message_id = (
-                unseen_messages[-1].open_message_id if unseen_messages else None
-            )
-            self.store.record_error(
-                conversation.open_conversation_id,
-                trigger_message_id,
-                "handoff_clear",
-                str(exc),
-            )
-            self._notify(
-                title=f"CEO handoff clear failed: {conversation.title}",
-                message=str(exc)[:120],
-            )
-            return False
-        if manual_clear_message is not None:
-            if not self.dry_run:
-                self.store.clear_handoff(
-                    conversation.open_conversation_id,
-                    manual_clear_message.open_message_id,
-                )
-            self._mark_seen(unseen_messages)
-            self._notify(
-                title=f"CEO handoff cleared: {conversation.title}",
-                message=manual_clear_message.content[:120],
-            )
-            return self.dry_run
-        current_user_messages = [
-            message
-            for message in unseen_messages
-            if self._is_current_user_message_for_candidate_filter(message)
-        ]
-        if current_user_messages and not self.dry_run:
-            self._mark_seen(current_user_messages)
-        return False
-
-    def _manual_handoff_clear_message(
-        self,
-        messages: list[DingTalkMessage],
-        handoff_create_time: str | None,
-    ) -> DingTalkMessage | None:
-        for message in messages:
-            if not self._message_after_handoff(message, handoff_create_time):
-                continue
-            if SPLIT_PERSON_SIGNATURE in message.content:
-                continue
-            if self._is_system_or_notification_message(message):
-                continue
-            if self.dws.is_current_user_message(message):
-                return message
-        return None
-
-    @staticmethod
-    def _message_after_handoff(
-        message: DingTalkMessage, handoff_create_time: str | None
-    ) -> bool:
-        if handoff_create_time is None:
-            return False
-        return message.create_time > handoff_create_time
-
     def _process_batch(
         self,
         conversation: DingTalkConversation,
@@ -1666,11 +1578,11 @@ class DingTalkAutoReplyWorker:
                 if raise_on_delivery_failure:
                     raise ReplyDeliveryError(str(exc)) from exc
                 return
-            self.store.enter_handoff(
+            self.store.record_error(
                 conversation.open_conversation_id,
                 trigger.open_message_id,
+                "handoff",
                 decision.reason,
-                handoff_message_create_time=trigger.create_time,
             )
             self.store.update_reply_attempt(
                 attempt_id,

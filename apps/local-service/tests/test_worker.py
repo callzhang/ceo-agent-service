@@ -489,38 +489,6 @@ def derek_message(
     return msg
 
 
-def test_handoff_does_not_clear_on_current_user_message_before_trigger(
-    tmp_path: Path, monkeypatch
-):
-    store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    store.upsert_conversation("cid-1", "Friday", False, None)
-    store.enter_handoff(
-        "cid-1",
-        "trigger-msg-1",
-        "需要真人",
-        handoff_message_create_time="2026-05-13 18:00:00",
-    )
-    monkeypatch.setattr(
-        "ceo_agent_service.worker.send_macos_notification", lambda **_: None
-    )
-    old_message = derek_message("之前我已经回复过", message_id="old-derek-msg-1")
-    old_message.create_time = "2026-05-13 17:59:59"
-    dws = FakeDws([conversation()], {"cid-1": [old_message]})
-    codex = FakeCodex(
-        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该调用")
-    )
-    worker = DingTalkAutoReplyWorker(
-        store=store, dws=dws, codex=codex, now_provider=fixed_worker_now
-    )
-
-    worker.run_once()
-
-    assert store.is_in_handoff("cid-1") is True
-    assert codex.calls == []
-    assert final_sent(dws) == []
-    assert store.has_seen("old-derek-msg-1") is True
-
-
 def make_worker(
     tmp_path: Path,
     dws: FakeDws,
@@ -3059,7 +3027,9 @@ def test_no_reply_action_does_not_send(tmp_path: Path, monkeypatch):
     assert attempt.codex_reason == "cc only"
 
 
-def test_handoff_sends_ack_dings_self_and_marks_handoff(tmp_path: Path, monkeypatch):
+def test_handoff_sends_ack_dings_self_and_records_message_result(
+    tmp_path: Path, monkeypatch
+):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     monkeypatch.setattr(
         "ceo_agent_service.worker.send_macos_notification", lambda **_: None
@@ -3081,172 +3051,16 @@ def test_handoff_sends_ack_dings_self_and_marks_handoff(tmp_path: Path, monkeypa
     assert "Friday" in dws.dings[0]
     assert "不要分身" in dws.dings[0]
     assert "previous split-person reply: none" in dws.dings[0]
-    assert store.is_in_handoff("cid-1") is True
     attempt = store.get_reply_attempt(1)
     assert attempt is not None
     assert attempt.final_reply_text == expected_ack
 
 
-def test_handoff_clears_when_current_user_replies_manually(tmp_path: Path, monkeypatch):
-    store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    store.upsert_conversation("cid-1", "Friday", False, None)
-    store.enter_handoff(
-        "cid-1",
-        "msg-1",
-        "需要真人",
-        handoff_message_create_time="2026-05-13 18:00:00",
-    )
-    monkeypatch.setattr(
-        "ceo_agent_service.worker.send_macos_notification", lambda **_: None
-    )
-    dws = FakeDws(
-        [conversation()],
-        {"cid-1": [derek_message("我来看一下", message_id="derek-msg-1")]},
-    )
-    codex = FakeCodex(
-        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该调用")
-    )
-    worker = DingTalkAutoReplyWorker(
-        store=store, dws=dws, codex=codex, now_provider=fixed_worker_now
-    )
-
-    worker.run_once()
-
-    assert store.is_in_handoff("cid-1") is False
-    assert codex.calls == []
-    assert final_sent(dws) == []
-    assert store.has_seen("derek-msg-1") is True
-
-
-def test_handoff_does_not_clear_when_current_user_uploads_file(
-    tmp_path: Path, monkeypatch
-):
-    store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    store.upsert_conversation("cid-1", "CEO-2 管理群", False, None)
-    store.enter_handoff(
-        "cid-1",
-        "handoff-msg-1",
-        "需要真人",
-        handoff_message_create_time="2026-05-13 18:00:00",
-    )
-    notifications: list[dict[str, str | None]] = []
-    monkeypatch.setattr(
-        "ceo_agent_service.worker.send_macos_notification",
-        lambda **kwargs: notifications.append(kwargs),
-    )
-    uploaded_file = derek_message(
-        "［文件］2026_5月全员大会_BP分享_图片版_去财务_含督换页.pdf fileId：7QG4Yx2JpL4QIZj0HgqM3IrMJ9dEq3XD",
-        message_id="file-msg-1",
-        create_time="2026-05-13 18:05:00",
-    )
-    dws = FakeDws([conversation()], {"cid-1": [uploaded_file]})
-    dws.conversations[0].title = "CEO-2 管理群"
-    codex = FakeCodex(
-        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该调用")
-    )
-    worker = DingTalkAutoReplyWorker(
-        store=store, dws=dws, codex=codex, now_provider=fixed_worker_now
-    )
-
-    worker.run_once()
-
-    assert store.is_in_handoff("cid-1") is True
-    assert codex.calls == []
-    assert final_sent(dws) == []
-    assert notifications == []
-    assert store.has_seen("file-msg-1") is True
-
-
-def test_handoff_clear_uses_context_message_and_then_processes_mention(
-    tmp_path: Path, monkeypatch
-):
-    store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    store.upsert_conversation("cid-1", "Friday", False, None)
-    store.enter_handoff(
-        "cid-1",
-        "handoff-msg-1",
-        "需要真人",
-        handoff_message_create_time="2026-05-13 18:00:00",
-    )
-    monkeypatch.setattr(
-        "ceo_agent_service.worker.send_macos_notification", lambda **_: None
-    )
-    manual = derek_message(
-        "我已经在群里回复了",
-        message_id="derek-msg-1",
-        create_time="2026-05-13 18:05:00",
-    )
-    mention = message("@Derek Zen(磊哥) 这个后续怎么处理？", message_id="mention-1")
-    mention.create_time = "2026-05-13 18:10:00"
-    dws = FakeDws(
-        [conversation()],
-        {"cid-1": [manual, mention]},
-        unread_messages={"cid-1": []},
-    )
-    dws.mentioned_messages = {"cid-1": [mention]}
-    codex = FakeCodex(
-        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="按A方案处理")
-    )
-    worker = DingTalkAutoReplyWorker(
-        store=store, dws=dws, codex=codex, now_provider=fixed_worker_now
-    )
-
-    worker.run_once()
-
-    assert store.is_in_handoff("cid-1") is False
-    assert store.has_seen("mention-1") is True
-    assert final_sent(dws) == [("cid-1", "按A方案处理（by磊哥分身）")]
-
-
-def test_handoff_does_not_clear_on_split_person_reply(tmp_path: Path, monkeypatch):
-    store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    store.upsert_conversation("cid-1", "Friday", False, None)
-    store.enter_handoff(
-        "cid-1",
-        "msg-1",
-        "需要真人",
-        handoff_message_create_time="2026-05-13 18:00:00",
-    )
-    monkeypatch.setattr(
-        "ceo_agent_service.worker.send_macos_notification", lambda **_: None
-    )
-    dws = FakeDws(
-        [conversation()],
-        {
-            "cid-1": [
-                derek_message(
-                    "我让磊哥本人看一下。（by磊哥分身）",
-                    message_id="split-msg-1",
-                )
-            ]
-        },
-    )
-    codex = FakeCodex(
-        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该调用")
-    )
-    worker = DingTalkAutoReplyWorker(
-        store=store, dws=dws, codex=codex, now_provider=fixed_worker_now
-    )
-
-    worker.run_once()
-
-    assert store.is_in_handoff("cid-1") is True
-    assert codex.calls == []
-    assert final_sent(dws) == []
-    assert store.has_seen("split-msg-1") is True
-
-
-def test_active_handoff_allows_new_derek_mention_to_be_processed(
+def test_new_derek_mention_is_processed(
     tmp_path: Path, monkeypatch
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.upsert_conversation("cid-1", "26年董事会筹备组", False, None)
-    store.enter_handoff(
-        "cid-1",
-        "msg-1",
-        "需要真人",
-        handoff_message_create_time="2026-05-13 18:00:00",
-    )
     latest = message(
         "@Melody Xu（Melody） @Derek Zen（磊哥）请磊哥看一下2026年的战略主线这样写是否合适？[图片消息]",
         message_id="msg-after-handoff",
@@ -3271,7 +3085,6 @@ def test_active_handoff_allows_new_derek_mention_to_be_processed(
 
     assert codex.calls
     assert final_sent(dws) == [("cid-1", "战略主线建议这样调整（by磊哥分身）")]
-    assert store.is_in_handoff("cid-1") is True
     assert store.has_seen("msg-after-handoff") is True
     assert notifications == [
         {
@@ -3282,17 +3095,11 @@ def test_active_handoff_allows_new_derek_mention_to_be_processed(
     ]
 
 
-def test_active_handoff_ignores_group_unread_without_derek_mention(
+def test_group_unread_without_derek_mention_is_ignored(
     tmp_path: Path, monkeypatch
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.upsert_conversation("cid-1", "MKT core", False, None)
-    store.enter_handoff(
-        "cid-1",
-        "msg-1",
-        "需要真人",
-        handoff_message_create_time="2026-05-13 18:00:00",
-    )
     latest = message(
         "［文件】星尘数据B轮融资 BP_20260526.pptx-2.pptx",
         message_id="file-after-handoff",
@@ -3321,17 +3128,11 @@ def test_active_handoff_ignores_group_unread_without_derek_mention(
     assert notifications == []
 
 
-def test_dry_run_active_handoff_does_not_repeat_pause_notification(
+def test_dry_run_group_unread_without_derek_mention_is_ignored(
     tmp_path: Path, monkeypatch
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.upsert_conversation("cid-1", "26年董事会筹备组", False, None)
-    store.enter_handoff(
-        "cid-1",
-        "msg-1",
-        "需要真人",
-        handoff_message_create_time="2026-05-13 18:00:00",
-    )
     latest = message(
         "可以东风集团（京东云渠道）",
         message_id="msg-after-handoff",
@@ -3361,40 +3162,6 @@ def test_dry_run_active_handoff_does_not_repeat_pause_notification(
     assert final_sent(dws) == []
     assert store.has_seen("msg-after-handoff") is False
     assert notifications == []
-
-
-def test_handoff_current_user_lookup_failure_records_error_without_marking_seen(
-    tmp_path: Path, monkeypatch
-):
-    store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    store.upsert_conversation("cid-1", "Friday", False, None)
-    store.enter_handoff(
-        "cid-1",
-        "msg-1",
-        "需要真人",
-        handoff_message_create_time="2026-05-13 18:00:00",
-    )
-    monkeypatch.setattr(
-        "ceo_agent_service.worker.send_macos_notification", lambda **_: None
-    )
-    dws = FakeDws(
-        [conversation()],
-        {"cid-1": [derek_message("我来看一下", message_id="derek-msg-1")]},
-        current_user_error=RuntimeError("current user lookup failed"),
-    )
-    codex = FakeCodex(
-        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该调用")
-    )
-    worker = DingTalkAutoReplyWorker(
-        store=store, dws=dws, codex=codex, now_provider=fixed_worker_now
-    )
-
-    worker.run_once()
-
-    assert store.is_in_handoff("cid-1") is True
-    assert store.has_seen("derek-msg-1") is False
-    assert store.count_errors() == 2
-    assert codex.calls == []
 
 
 def test_single_chat_unread_is_processed_without_mention(tmp_path: Path, monkeypatch):
@@ -4263,7 +4030,6 @@ def test_dry_run_does_not_mutate_terminal_state(tmp_path: Path, monkeypatch):
     assert final_sent(dws) == []
     assert store.has_seen("msg-1") is False
     assert store.count_sent_replies() == 0
-    assert store.is_in_handoff("cid-1") is False
 
 
 def test_send_failure_records_error_and_does_not_mark_seen(tmp_path: Path, monkeypatch):
@@ -4402,7 +4168,7 @@ def test_pat_authorization_error_is_recorded_as_failed_without_retry_or_url(
     assert "open-dev.dingtalk.com" not in attempt.send_error
 
 
-def test_handoff_ding_failure_does_not_mark_seen_or_enter_handoff(
+def test_handoff_ding_failure_does_not_mark_seen(
     tmp_path: Path, monkeypatch
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
@@ -4423,7 +4189,6 @@ def test_handoff_ding_failure_does_not_mark_seen_or_enter_handoff(
 
     assert final_sent(dws) == []
     assert store.has_seen("msg-1") is False
-    assert store.is_in_handoff("cid-1") is False
     assert store.count_errors() == 2
     assert store.count_reply_tasks(status="pending") == 1
 

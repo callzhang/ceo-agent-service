@@ -246,4 +246,3 @@ def test_local_pipeline_handoff_ding_uses_cached_current_user_without_runtime_or
             "HR direct\nHR: 不要分身，真人看一下\nprevious split-person reply: none",
         )
     ]
-    assert store.is_in_handoff("cid-1") is True

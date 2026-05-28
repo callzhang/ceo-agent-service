@@ -122,11 +122,7 @@ class AutoReplyStore:
                     conversation_id text primary key,
                     title text not null,
                     single_chat integer not null,
-                    codex_session_id text,
-                    in_handoff integer not null default 0,
-                    handoff_message_id text,
-                    handoff_message_create_time text,
-                    manual_clear_message_id text
+                    codex_session_id text
                 );
                 create table if not exists seen_messages (
                     message_id text primary key,
@@ -247,14 +243,6 @@ class AutoReplyStore:
                 );
                 """
             )
-            columns = {
-                row["name"]
-                for row in db.execute("pragma table_info(conversations)").fetchall()
-            }
-            if "handoff_message_create_time" not in columns:
-                db.execute(
-                    "alter table conversations add column handoff_message_create_time text"
-                )
             sent_reply_columns = {
                 row["name"]
                 for row in db.execute("pragma table_info(sent_replies)").fetchall()
@@ -747,79 +735,6 @@ class AutoReplyStore:
                 (message_id, conversation_id),
             )
             return cursor.rowcount == 1
-
-    def enter_handoff(
-        self,
-        conversation_id: str,
-        message_id: str,
-        reason: str,
-        handoff_message_create_time: str | None = None,
-    ) -> None:
-        with self._connect() as db:
-            db.execute(
-                """
-                insert into conversations (
-                    conversation_id,
-                    title,
-                    single_chat,
-                    in_handoff,
-                    handoff_message_id,
-                    handoff_message_create_time,
-                    manual_clear_message_id
-                )
-                values (?, ?, ?, 1, ?, ?, null)
-                on conflict(conversation_id) do update set
-                    in_handoff=1,
-                    handoff_message_id=excluded.handoff_message_id,
-                    handoff_message_create_time=excluded.handoff_message_create_time,
-                    manual_clear_message_id=null
-                """,
-                (
-                    conversation_id,
-                    conversation_id,
-                    0,
-                    message_id,
-                    handoff_message_create_time,
-                ),
-            )
-            db.execute(
-                """
-                insert into errors (conversation_id, message_id, kind, detail)
-                values (?, ?, ?, ?)
-                """,
-                (conversation_id, message_id, "handoff", reason),
-            )
-
-    def get_handoff_message_create_time(self, conversation_id: str) -> str | None:
-        with self._connect() as db:
-            row = db.execute(
-                """
-                select handoff_message_create_time
-                from conversations
-                where conversation_id=?
-                """,
-                (conversation_id,),
-            ).fetchone()
-            return None if row is None else row["handoff_message_create_time"]
-
-    def clear_handoff(self, conversation_id: str, manual_message_id: str) -> None:
-        with self._connect() as db:
-            db.execute(
-                """
-                update conversations
-                set in_handoff=0, manual_clear_message_id=?
-                where conversation_id=?
-                """,
-                (manual_message_id, conversation_id),
-            )
-
-    def is_in_handoff(self, conversation_id: str) -> bool:
-        with self._connect() as db:
-            row = db.execute(
-                "select in_handoff from conversations where conversation_id=?",
-                (conversation_id,),
-            ).fetchone()
-            return bool(row and row["in_handoff"])
 
     def record_sent_reply(
         self,
