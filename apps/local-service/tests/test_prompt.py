@@ -177,6 +177,39 @@ def test_build_turn_prompt_includes_known_people_lines():
     assert "- 张晓民: user_id=subject-user-1" in prompt
 
 
+def test_build_turn_prompt_includes_sender_org_lines():
+    conversation = DingTalkConversation(
+        open_conversation_id="cid-1",
+        title="Mina 邹",
+        single_chat=True,
+        unread_point=1,
+    )
+    message = DingTalkMessage(
+        open_conversation_id="cid-1",
+        open_message_id="msg-1",
+        conversation_title="Mina 邹",
+        single_chat=True,
+        sender_name="Mina 邹",
+        create_time="2026-05-15 13:00:00",
+        content="磊哥，晓民的转正时间快到了。",
+    )
+
+    prompt = build_turn_prompt(
+        conversation,
+        [message],
+        [message],
+        style_lines=[],
+        include_thread_prompt=True,
+        sender_org_lines=[
+            "- Mina 邹 user_id=sender-user-1; 上级: Derek Zen user_id=derek-user-1; 部门: dept-hr"
+        ],
+    )
+
+    assert "发信人组织信息" in prompt
+    assert "Mina 邹 user_id=sender-user-1" in prompt
+    assert "上级: Derek Zen user_id=derek-user-1" in prompt
+
+
 def test_thread_prompt_requires_dws_doc_read_for_alidocs_links():
     prompt = ceo_agent_thread_prompt()
 
@@ -193,6 +226,13 @@ def test_thread_prompt_bounds_local_retrieval_when_prompt_context_is_sufficient(
 
     assert "若这些材料已经足以判断是否回复和回复内容，不要再做本地 workspace 或 graphify 检索" in prompt
     assert "检索必须围绕缺失事实，优先 1-3 个精确查询或文件读取" in prompt
+
+
+def test_thread_prompt_requires_sender_org_context_when_available():
+    prompt = ceo_agent_thread_prompt()
+
+    assert "发信人组织信息" in prompt
+    assert "不要编造职位" in prompt
     assert "回答任何问题前，先检索本地 workspace" not in prompt
     assert "本 thread 必须主动使用 graphify" not in prompt
 

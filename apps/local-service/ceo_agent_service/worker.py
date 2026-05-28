@@ -2711,7 +2711,72 @@ class DingTalkAutoReplyWorker:
                 new_messages,
                 context_messages,
             ),
+            sender_org_lines=self._sender_org_prompt_lines(new_messages),
         )
+
+    def _sender_org_prompt_lines(
+        self,
+        new_messages: list[DingTalkMessage],
+        limit: int = 10,
+    ) -> list[str]:
+        lines: list[str] = []
+        seen: set[str] = set()
+        for message in new_messages:
+            user_id = self._resolve_sender_user_id_for_prompt(message)
+            if not user_id or user_id in seen:
+                continue
+            seen.add(user_id)
+            profile = self._get_or_cache_org_profile_for_prompt(user_id, message)
+            if profile is None:
+                continue
+
+            display_name = profile.name or message.sender_name or user_id
+            line = f"- {display_name} user_id={profile.user_id}"
+            if profile.manager_user_id:
+                manager_profile = self.store.get_org_user_profile(profile.manager_user_id)
+                if manager_profile is not None and manager_profile.name:
+                    line += (
+                        f"; 上级: {manager_profile.name} "
+                        f"user_id={manager_profile.user_id}"
+                    )
+                else:
+                    line += f"; 上级 user_id={profile.manager_user_id}"
+            if profile.department_ids:
+                line += f"; 部门: {', '.join(sorted(profile.department_ids))}"
+            lines.append(line)
+            if len(lines) >= limit:
+                break
+        return lines
+
+    def _resolve_sender_user_id_for_prompt(self, message: DingTalkMessage) -> str | None:
+        if message.sender_user_id:
+            return message.sender_user_id
+        try:
+            return self.dws.resolve_message_sender(message)
+        except Exception:
+            return None
+
+    def _get_or_cache_org_profile_for_prompt(
+        self,
+        user_id: str,
+        message: DingTalkMessage,
+    ):
+        profile = self.store.get_org_user_profile(user_id)
+        if profile is not None:
+            return profile
+        try:
+            fetched_profile = self.dws.get_user_profile(user_id)
+        except Exception:
+            return None
+        self.store.upsert_org_user_profile(
+            user_id=fetched_profile.user_id,
+            name=fetched_profile.name or message.sender_name,
+            open_dingtalk_id=fetched_profile.open_dingtalk_id
+            or message.sender_open_dingtalk_id,
+            manager_user_id=fetched_profile.manager_user_id,
+            department_ids=fetched_profile.department_ids,
+        )
+        return self.store.get_org_user_profile(user_id)
 
     def _known_people_prompt_lines(
         self,

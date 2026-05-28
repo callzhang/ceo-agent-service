@@ -134,6 +134,9 @@ class CachedDwsClient:
     def search_documents(self, query: str, page_size: int = 5):
         return self.dws.search_documents(query, page_size=page_size)
 
+    def get_user_profile(self, user_id: str) -> DwsUserProfile:
+        return self.dws.get_user_profile(user_id)
+
     def download_doc(self, node: str):
         return self.dws.download_doc(node)
 

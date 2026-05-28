@@ -20,6 +20,7 @@ from ceo_agent_service.dws_client import (
     DwsDocumentSearchResult,
     DwsError,
     DwsMinutesPermissionRequest,
+    DwsUserProfile,
 )
 from ceo_agent_service.oa_approval import OaApprovalResult
 from ceo_agent_service.store import AutoReplyStore
@@ -87,6 +88,8 @@ class FakeDws:
         self.mentioned_messages: dict[str, list[DingTalkMessage]] = {}
         self.broadcast_messages: dict[str, list[DingTalkMessage]] = {}
         self.user_departments: dict[str, set[str]] = {}
+        self.user_profiles: dict[str, DwsUserProfile] = {}
+        self.user_profile_calls: list[str] = []
         self.hr_users: set[str] = set()
         self.manager_chains: dict[str, list[str]] = {}
         self.resolved_senders: dict[str, str] = {}
@@ -264,6 +267,12 @@ class FakeDws:
         if message.sender_open_dingtalk_id in self.resolved_senders:
             return self.resolved_senders[message.sender_open_dingtalk_id]
         raise RuntimeError("sender not resolved")
+
+    def get_user_profile(self, user_id: str) -> DwsUserProfile:
+        self.user_profile_calls.append(user_id)
+        if user_id not in self.user_profiles:
+            raise DwsError(f"user profile not found: {user_id}")
+        return self.user_profiles[user_id]
 
     def is_hr_user(self, user_id: str) -> bool:
         return user_id in self.hr_users
@@ -2682,6 +2691,43 @@ def test_build_prompt_includes_known_people_from_org_cache(tmp_path: Path, monke
     )
 
     assert "- 张晓民: user_id=subject-user-1" in prompt
+
+
+def test_build_prompt_includes_sender_org_context(tmp_path: Path, monkeypatch):
+    dws = FakeDws([conversation(single_chat=True)], {})
+    dws.user_profiles["sender-user-1"] = DwsUserProfile(
+        user_id="sender-user-1",
+        name="Mina 邹",
+        manager_user_id="derek-user-1",
+        department_ids={"dept-hr", "dept-recruiting"},
+    )
+    codex = FakeCodex(CodexDecision(action=CodexAction.NO_REPLY))
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+    worker.store.upsert_org_user_profile(
+        user_id="derek-user-1",
+        name="Derek Zen",
+        open_dingtalk_id=None,
+        manager_user_id=None,
+        department_ids={"dept-exec"},
+    )
+    trigger = message(
+        "磊哥，晓民的转正时间快到了。",
+        single_chat=True,
+        message_id="msg-personnel",
+        sender_user_id="sender-user-1",
+    )
+
+    prompt = worker._build_prompt(
+        conversation(single_chat=True),
+        [trigger],
+        [trigger],
+    )
+
+    assert dws.user_profile_calls == ["sender-user-1"]
+    assert "发信人组织信息" in prompt
+    assert "- Mina 邹 user_id=sender-user-1" in prompt
+    assert "上级: Derek Zen user_id=derek-user-1" in prompt
+    assert "部门: dept-hr, dept-recruiting" in prompt
 
 
 def test_group_stale_direct_mention_found_in_recent_context_does_not_queue(
