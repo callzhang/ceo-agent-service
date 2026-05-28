@@ -86,6 +86,44 @@ Persona variables:
 Keep the real user `HOME`; do not point `HOME` at the workspace. Codex and `dws`
 need their normal local auth state.
 
+## Style Corpus
+
+The local style corpus is stored under `CEO_CORPUS_DIR` and is not committed to
+Git. The main file is `derek_style_corpus.csv`; `build-corpus` also writes a
+derived `style_profile.md` in the same directory.
+
+Build the corpus from local AI meeting-note Markdown files:
+
+```bash
+cd apps/local-service
+.venv/bin/ceo-agent build-corpus \
+  --workspace /Users/derek/Documents/memory \
+  --corpus-dir /Users/derek/Documents/Projects/ceo-agent-service/corpus
+```
+
+This scans `AI听记/**/*.md` under `--workspace`, extracts Derek-style speaker
+records, rewrites `derek_style_corpus.csv`, and refreshes `style_profile.md`.
+
+Append recent DingTalk messages sent by the current `dws` user:
+
+```bash
+cd apps/local-service
+.venv/bin/ceo-agent collect-corpus \
+  --workspace /Users/derek/Documents/memory \
+  --corpus-dir /Users/derek/Documents/Projects/ceo-agent-service/corpus
+```
+
+This uses authenticated `dws` read APIs, looks back 183 days, and appends
+eligible sent-message records to `derek_style_corpus.csv`.
+
+`build-work-profile` uses the same corpus by default: it rebuilds the local
+AI-meeting corpus, appends DingTalk sent-message samples, then builds profile
+evidence. Use `--skip-minutes-corpus` or `--skip-dingtalk-messages` when you
+need to keep either corpus source unchanged for that run.
+
+For the full profile distillation workflow, see
+`docs/work-profile-distillation-tutorial.md`.
+
 ## Run
 
 One no-send pass:
@@ -196,6 +234,9 @@ They may read real DingTalk messages or send externally visible test messages.
 
 - `docs/product-logic.md`: message handling, privacy, handoff, and audit logic.
 - `docs/dws-capabilities.md`: DingTalk `dws` capabilities used by this project.
+- `docs/work-profile-distillation-tutorial.md`: how to regenerate the local
+  Derek work profile from corpus, local documents, and read-only DingTalk
+  knowledge base evidence.
 - `SECURITY.md`: security policy and secret-handling expectations.
 
 ## License
