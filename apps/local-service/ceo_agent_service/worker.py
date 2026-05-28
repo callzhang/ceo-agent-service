@@ -63,6 +63,7 @@ SPLIT_PERSON_SIGNATURE = assistant_signature()
 CURRENT_USER_DISPLAY_NAMES = set(current_user_display_names())
 STALE_PROCESSING_TASK_SECONDS = 30 * 60
 MAX_REPLY_TASK_ATTEMPTS = 3
+STALE_CODEX_RESUME_ATTEMPTS = 2
 TEXT_MESSAGE_TYPES = {"text"}
 RENDERED_NON_TEXT_PREFIXES = (
     "[文件]",
@@ -1480,6 +1481,14 @@ class DingTalkAutoReplyWorker:
         )
         before_session_id = getattr(self.codex, "last_session_id", None)
         decision = self.codex.decide(prompt=prompt, session_id=session_id)
+        resume_attempts = 1
+        while (
+            resume_attempts < STALE_CODEX_RESUME_ATTEMPTS
+            and self._is_stale_codex_resume(decision, session_id)
+        ):
+            resume_attempts += 1
+            before_session_id = getattr(self.codex, "last_session_id", None)
+            decision = self.codex.decide(prompt=prompt, session_id=session_id)
         if self._is_stale_codex_resume(decision, session_id):
             self.store.clear_codex_session(conversation.open_conversation_id)
             session_id = None

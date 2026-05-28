@@ -1990,6 +1990,63 @@ def test_resume_prompt_only_includes_turn_message_without_repeating_thread_promp
     assert "@Derek Zen(磊哥) 这个怎么处理？" in prompt
 
 
+def test_stale_codex_resume_retries_same_thread_before_opening_new_thread(
+    tmp_path: Path, monkeypatch
+):
+    class SequencedCodex:
+        def __init__(self):
+            self.calls: list[tuple[str, str | None]] = []
+            self.last_session_id: str | None = None
+            self.last_audit_tool_events: list[dict[str, str]] = []
+            self.last_transcript_start_line = 0
+            self.last_transcript_end_line = 0
+
+        def decide(self, prompt: str, session_id: str | None) -> CodexDecision:
+            self.calls.append((prompt, session_id))
+            self.last_session_id = session_id
+            if len(self.calls) == 1:
+                return CodexDecision(
+                    action=CodexAction.STOP_WITH_ERROR,
+                    reason=(
+                        "thread/resume failed: no rollout found for thread id "
+                        "session-1 (code -32600)"
+                    ),
+                )
+            return CodexDecision(
+                action=CodexAction.NO_REPLY,
+                reason="already handled",
+                audit_summary="只需上下文判断，不需要回复。",
+            )
+
+    trigger = message("@Derek Zen(磊哥) 这个怎么处理？")
+    dws = FakeDws([conversation()], {"cid-1": [trigger]})
+    codex = SequencedCodex()
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+    worker.store.upsert_conversation(
+        "cid-1",
+        title="Friday",
+        single_chat=False,
+        codex_session_id="session-1",
+    )
+
+    worker.run_once()
+
+    assert [session_id for _, session_id in codex.calls] == [
+        "session-1",
+        "session-1",
+    ]
+    assert codex.calls[1][0] == codex.calls[0][0]
+    assert "CEO Agent Prompt" not in codex.calls[0][0]
+    assert "你是 Derek 的钉钉自动回复分身" not in codex.calls[0][0]
+    assert worker.store.get_codex_session_id("cid-1") == "session-1"
+    assert worker.store.count_reply_attempts() == 1
+    attempt = worker.store.get_reply_attempt(1)
+    assert attempt is not None
+    assert attempt.action == "no_reply"
+    assert "thread/resume failed" not in attempt.codex_reason
+    assert worker.store.count_errors() == 0
+
+
 @pytest.mark.parametrize(
     "stale_reason",
     [
@@ -2015,7 +2072,7 @@ def test_stale_codex_resume_clears_session_and_retries_with_new_user_message(
         def decide(self, prompt: str, session_id: str | None) -> CodexDecision:
             self.calls.append((prompt, session_id))
             self.last_session_id = session_id
-            if len(self.calls) == 1:
+            if len(self.calls) <= 2:
                 return CodexDecision(
                     action=CodexAction.STOP_WITH_ERROR,
                     reason=stale_reason,
@@ -2040,10 +2097,15 @@ def test_stale_codex_resume_clears_session_and_retries_with_new_user_message(
 
     worker.run_once()
 
-    assert [session_id for _, session_id in codex.calls] == ["session-1", None]
+    assert [session_id for _, session_id in codex.calls] == [
+        "session-1",
+        "session-1",
+        None,
+    ]
+    assert codex.calls[1][0] == codex.calls[0][0]
     assert "CEO Agent Prompt" not in codex.calls[0][0]
-    assert "CEO Agent Prompt" not in codex.calls[1][0]
-    assert codex.calls[1][0].startswith("当前待处理消息:")
+    assert "CEO Agent Prompt" not in codex.calls[2][0]
+    assert codex.calls[2][0].startswith("当前待处理消息:")
     assert worker.store.get_codex_session_id("cid-1") == "session-2"
     assert worker.store.count_reply_attempts() == 1
     attempt = worker.store.get_reply_attempt(1)
