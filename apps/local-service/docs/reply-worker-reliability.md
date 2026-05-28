@@ -30,14 +30,15 @@ not block message discovery for that producer pass.
 
 ## DWS auth environment
 
-The LaunchAgents run with `HOME=/Users/derek/Documents/memory` and force DWS onto
-its file-backed credential store with `DWS_DISABLE_KEYCHAIN=1` plus
+The LaunchAgents keep work data under `CEO_WORKSPACE=/Users/derek/Documents/memory`,
+but run with `HOME=/Users/derek` so DWS can decrypt the authenticated file-backed
+credential store selected by `DWS_DISABLE_KEYCHAIN=1` plus
 `DWS_KEYCHAIN_DIR=/Users/derek/Documents/memory/Library/Application Support/dws-cli`.
-Without those DWS variables, a process under the memory home can report
-`not_authenticated` even when the user's interactive shell still has a valid DWS
-login. The diagnostic script `scripts/check-dws-auth-env.sh` reproduces the safe
-boundary without touching the macOS native keychain: the correct file keychain
-dir succeeds, while an empty file keychain dir fails with `not_authenticated`.
+Using the memory directory as `HOME` can report `not_authenticated` even when
+the same token directory is valid from the normal user home. The diagnostic
+script `scripts/check-dws-auth-env.sh` reproduces the boundary: the correct
+service home plus file keychain dir succeeds, while an empty file keychain dir
+fails with `not_authenticated`.
 
 ## Processing acknowledgement
 

@@ -31,7 +31,7 @@
   <key>EnvironmentVariables</key>
   <dict>
     <key>HOME</key>
-    <string>/Users/derek/Documents/memory</string>
+    <string>/Users/derek</string>
     <key>CODEX_HOME</key>
     <string>/Users/derek/.codex</string>
     <key>PATH</key>

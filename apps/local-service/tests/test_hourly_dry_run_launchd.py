@@ -16,6 +16,7 @@ def test_hourly_dry_run_script_runs_single_producer_pass_with_lock():
     assert "trap 'rm -rf \"${lock_dir}\"' EXIT" in content
     assert '/Users/derek/.local/bin' in content
     assert 'export CODEX_HOME="${CODEX_HOME:-/Users/derek/.codex}"' in content
+    assert 'export HOME="${CEO_SERVICE_HOME:-/Users/derek}"' in content
     assert 'export CEO_WORKSPACE="${CEO_WORKSPACE:-/Users/derek/Documents/memory}"' in content
     assert 'export CEO_NOT_SEND_MESSAGE="0"' in content
     assert 'export CEO_LIVE_SEND_BLOCKERS_ACCEPTED="1"' in content
@@ -49,7 +50,7 @@ def test_reply_producer_launch_agent_runs_every_five_minutes_without_keepalive()
     assert "CEO_NOT_SEND_MESSAGE=0" in command[2]
     assert "CEO_LIVE_SEND_BLOCKERS_ACCEPTED=1" in command[2]
     env = plist["EnvironmentVariables"]
-    assert env["HOME"] == "/Users/derek/Documents/memory"
+    assert env["HOME"] == "/Users/derek"
     assert env["CODEX_HOME"] == "/Users/derek/.codex"
     assert env["DWS_DISABLE_KEYCHAIN"] == "1"
     assert env["DWS_KEYCHAIN_DIR"] == "/Users/derek/Documents/memory/Library/Application Support/dws-cli"
@@ -81,7 +82,7 @@ def test_reply_consumer_launch_agent_runs_as_live_keepalive_consumer():
     assert "CEO_NOT_SEND_MESSAGE=0" in command[2]
     assert "CEO_LIVE_SEND_BLOCKERS_ACCEPTED=1" in command[2]
     env = plist["EnvironmentVariables"]
-    assert env["HOME"] == "/Users/derek/Documents/memory"
+    assert env["HOME"] == "/Users/derek"
     assert env["CODEX_HOME"] == "/Users/derek/.codex"
     assert env["DWS_DISABLE_KEYCHAIN"] == "1"
     assert env["DWS_KEYCHAIN_DIR"] == "/Users/derek/Documents/memory/Library/Application Support/dws-cli"
@@ -119,4 +120,5 @@ def test_dws_auth_env_probe_reproduces_file_keychain_boundary_without_native_key
     assert "wrong-file-keychain" in content
     assert "DWS_DISABLE_KEYCHAIN=\"${disable_keychain}\"" in content
     assert "DWS_KEYCHAIN_DIR=\"${keychain}\"" in content
+    assert "CEO_SERVICE_HOME" in content
     assert "--include-native-keychain" in content

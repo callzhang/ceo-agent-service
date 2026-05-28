@@ -2,6 +2,7 @@
 set -euo pipefail
 
 workspace="${CEO_WORKSPACE:-/Users/derek/Documents/memory}"
+service_home="${CEO_SERVICE_HOME:-/Users/derek}"
 keychain_dir="${DWS_KEYCHAIN_DIR:-${workspace}/Library/Application Support/dws-cli}"
 dws_bin="${DWS_BIN:-dws}"
 path_value="/Users/derek/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
@@ -51,10 +52,10 @@ PY
 bad_keychain_dir="$(mktemp -d)"
 trap 'rm -rf "${bad_keychain_dir}"' EXIT
 
-run_unread_probe "correct-file-keychain" "${workspace}" "1" "${keychain_dir}"
+run_unread_probe "correct-file-keychain" "${service_home}" "1" "${keychain_dir}"
 run_unread_probe "wrong-file-keychain" "${workspace}" "1" "${bad_keychain_dir}"
 
 if [[ "${1:-}" == "--include-native-keychain" ]]; then
   printf '%s\n' "native-keychain probe may trigger a macOS Keychain dialog."
-  run_unread_probe "native-keychain" "${workspace}" "0" "${keychain_dir}"
+  run_unread_probe "native-keychain" "${service_home}" "0" "${keychain_dir}"
 fi

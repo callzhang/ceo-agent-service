@@ -20,6 +20,7 @@ trap 'rm -rf "${lock_dir}"' EXIT
 cd "${repo_root}/apps/local-service"
 
 export PATH="/Users/derek/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:${PATH:-}"
+export HOME="${CEO_SERVICE_HOME:-/Users/derek}"
 export PYTHONPATH="${PYTHONPATH:-.}"
 export CODEX_HOME="${CODEX_HOME:-/Users/derek/.codex}"
 export CEO_WORKSPACE="${CEO_WORKSPACE:-/Users/derek/Documents/memory}"

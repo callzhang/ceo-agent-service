@@ -5,6 +5,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${repo_root}/apps/local-service"
 
 export PATH="/Users/derek/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:${PATH:-}"
+export HOME="${CEO_SERVICE_HOME:-/Users/derek}"
 export CODEX_HOME="${CODEX_HOME:-/Users/derek/.codex}"
 export CEO_WORKER_DB="${CEO_WORKER_DB:-${repo_root}/data/auto-reply.sqlite3}"
 export CEO_WORKSPACE="${CEO_WORKSPACE:-/Users/derek/Documents/memory}"
