@@ -1,10 +1,12 @@
 from collections.abc import Iterable
+from datetime import datetime
 
 from ceo_agent_service.dingtalk_models import DingTalkMessage
 from ceo_agent_service.dws_client import DwsError, DwsUserProfile
 from ceo_agent_service.store import AutoReplyStore, OrgUserProfile
 
 ORG_PROFILE_FETCH_BATCH_SIZE = 20
+ORG_CACHE_REFRESHED_DATE_STATE_KEY = "org_cache_refreshed_date"
 
 
 class CachedOrgDirectory:
@@ -85,6 +87,20 @@ class CachedDwsClient:
 
     def upgrade(self):
         return self.dws.upgrade()
+
+    def get_current_user_id(self) -> str:
+        return self.dws.get_current_user_id()
+
+    def search_department_ids(self, query: str) -> set[str]:
+        return self.dws.search_department_ids(query)
+
+    def list_department_member_profiles(
+        self, department_ids: list[str]
+    ) -> list[DwsUserProfile]:
+        return self.dws.list_department_member_profiles(department_ids)
+
+    def get_user_profiles(self, user_ids: list[str]) -> list[DwsUserProfile]:
+        return self.dws.get_user_profiles(user_ids)
 
     def read_recent_messages(self, conversation, limit: int = 50):
         return self.dws.read_recent_messages(conversation, limit)
@@ -268,6 +284,10 @@ def refresh_org_cache(
         for profile in profiles:
             if profile.manager_user_id and profile.manager_user_id not in seen:
                 pending.add(profile.manager_user_id)
+    store.set_service_state(
+        ORG_CACHE_REFRESHED_DATE_STATE_KEY,
+        datetime.now().astimezone().date().isoformat(),
+    )
     return refreshed
 
 

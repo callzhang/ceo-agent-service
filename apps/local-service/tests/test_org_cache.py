@@ -2,7 +2,12 @@ import pytest
 
 from ceo_agent_service.dingtalk_models import DingTalkMessage
 from ceo_agent_service.dws_client import DwsError, DwsUserProfile
-from ceo_agent_service.org_cache import CachedDwsClient, CachedOrgDirectory, refresh_org_cache
+from ceo_agent_service.org_cache import (
+    ORG_CACHE_REFRESHED_DATE_STATE_KEY,
+    CachedDwsClient,
+    CachedOrgDirectory,
+    refresh_org_cache,
+)
 from ceo_agent_service.store import AutoReplyStore
 
 
@@ -332,6 +337,7 @@ def test_refresh_org_cache_updates_current_user_hr_departments_and_known_users(t
     assert store.get_org_user_profile("subject").manager_user_id == "manager-1"
     assert store.get_org_user_profile("manager-1") is not None
     assert store.get_org_user_profile("hr-user") is not None
+    assert store.get_service_state(ORG_CACHE_REFRESHED_DATE_STATE_KEY)
 
 
 def test_refresh_org_cache_fetches_known_users_in_bounded_batches(tmp_path):

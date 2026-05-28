@@ -6,6 +6,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
+import ceo_agent_service.worker as worker_module
 from ceo_agent_service.codex_decision import CodexDecisionRunner
 from ceo_agent_service.corpus import CorpusRecord
 from ceo_agent_service.dingtalk_models import (
@@ -122,6 +123,36 @@ class FakeDws:
         if self.upgrade_error:
             raise self.upgrade_error
         return "upgraded"
+
+    def get_current_user_id(self) -> str:
+        return self.current_user_id
+
+    def search_department_ids(self, query: str) -> set[str]:
+        del query
+        return {"hr-dept"}
+
+    def list_department_member_profiles(
+        self, department_ids: list[str]
+    ) -> list[DwsUserProfile]:
+        del department_ids
+        return [
+            profile
+            for profile in self.user_profiles.values()
+            if "hr-dept" in profile.department_ids
+        ]
+
+    def get_user_profiles(self, user_ids: list[str]) -> list[DwsUserProfile]:
+        return [
+            self.user_profiles.get(
+                user_id,
+                DwsUserProfile(
+                    user_id=user_id,
+                    name=user_id,
+                    department_ids={"dept-1"},
+                ),
+            )
+            for user_id in user_ids
+        ]
 
     def read_recent_messages(
         self, conversation: DingTalkConversation
@@ -794,6 +825,101 @@ def test_produce_once_records_dws_upgrade_failure_without_blocking_messages(
     assert errors[0].kind == "dws_upgrade"
     assert "upgrade service unavailable" in errors[0].detail
     assert worker.store.get_service_state("dws_upgrade_checked_date") == "2026-05-13"
+
+
+def test_produce_once_refreshes_org_cache_once_per_seven_days(
+    tmp_path: Path, monkeypatch
+):
+    calls = []
+
+    def fake_refresh_org_cache(store, dws):
+        calls.append((store, dws))
+        return 3
+
+    monkeypatch.setattr(worker_module, "refresh_org_cache", fake_refresh_org_cache)
+    dws = FakeDws([], {})
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该调用")
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+
+    assert worker.produce_once() == 0
+    assert worker.produce_once() == 0
+
+    assert len(calls) == 1
+    assert calls[0][1] is dws
+    assert worker.store.get_service_state("org_cache_refreshed_date") == "2026-05-13"
+
+
+def test_produce_once_refreshes_org_cache_after_seven_days(
+    tmp_path: Path, monkeypatch
+):
+    calls = []
+
+    def fake_refresh_org_cache(store, dws):
+        calls.append((store, dws))
+        return 3
+
+    monkeypatch.setattr(worker_module, "refresh_org_cache", fake_refresh_org_cache)
+    dws = FakeDws([], {})
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该调用")
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+    worker.store.set_service_state("org_cache_refreshed_date", "2026-05-06")
+
+    assert worker.produce_once() == 0
+
+    assert len(calls) == 1
+    assert worker.store.get_service_state("org_cache_refreshed_date") == "2026-05-13"
+
+
+def test_produce_once_refreshes_org_cache_when_refresh_date_is_invalid(
+    tmp_path: Path, monkeypatch
+):
+    calls = []
+
+    def fake_refresh_org_cache(store, dws):
+        calls.append((store, dws))
+        return 3
+
+    monkeypatch.setattr(worker_module, "refresh_org_cache", fake_refresh_org_cache)
+    dws = FakeDws([], {})
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该调用")
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+    worker.store.set_service_state("org_cache_refreshed_date", "invalid")
+
+    assert worker.produce_once() == 0
+
+    assert len(calls) == 1
+    assert worker.store.get_service_state("org_cache_refreshed_date") == "2026-05-13"
+
+
+def test_produce_once_records_org_cache_refresh_failure_without_blocking_messages(
+    tmp_path: Path, monkeypatch
+):
+    def fake_refresh_org_cache(store, dws):
+        raise RuntimeError("contact service unavailable")
+
+    monkeypatch.setattr(worker_module, "refresh_org_cache", fake_refresh_org_cache)
+    trigger = message("@Derek Zen(磊哥) 这个怎么处理？")
+    dws = FakeDws([conversation()], {"cid-1": [trigger]})
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该调用")
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+
+    assert worker.produce_once() == 1
+    assert worker.produce_once() == 0
+
+    assert worker.store.count_reply_tasks(status="pending") == 1
+    errors = worker.store.list_errors()
+    assert len(errors) == 1
+    assert errors[0].kind == "org_cache_refresh"
+    assert "contact service unavailable" in errors[0].detail
+    assert worker.store.get_service_state("org_cache_refreshed_date") == "2026-05-13"
 
 
 def test_produce_once_skips_messages_older_than_local_24_hour_window(

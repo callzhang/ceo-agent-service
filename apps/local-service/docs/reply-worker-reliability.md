@@ -19,6 +19,15 @@ upgrade before reading DingTalk messages. Upgrade check or install failures are
 recorded locally and notified, but they do not block message discovery for that
 producer pass.
 
+## Org cache refresh
+
+The producer refreshes the DingTalk organization cache inside the normal CEO
+system pass when the last successful refresh is older than seven local days. The
+refresh shares the same service state as the manual `refresh-org-cache` command,
+so a manual refresh prevents an immediate duplicate refresh from the next
+producer pass. Refresh failures are recorded locally and notified, but they do
+not block message discovery for that producer pass.
+
 ## DWS auth environment
 
 The LaunchAgents run with `HOME=/Users/derek/Documents/memory` and force DWS onto

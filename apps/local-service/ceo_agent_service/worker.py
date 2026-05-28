@@ -44,6 +44,10 @@ from ceo_agent_service.leak_check import (
 )
 from ceo_agent_service.notification import send_macos_notification
 from ceo_agent_service.oa_approval import extract_oa_url
+from ceo_agent_service.org_cache import (
+    ORG_CACHE_REFRESHED_DATE_STATE_KEY,
+    refresh_org_cache,
+)
 from ceo_agent_service.permission import PermissionAction, PermissionGate
 from ceo_agent_service.prompt import LinkedDocumentContext, build_turn_prompt
 from ceo_agent_service.store import AutoReplyStore, ReplyAttempt, ReplyTask
@@ -122,6 +126,7 @@ DOWNLOADED_FILE_MAX_BYTES = 50 * 1024 * 1024
 DOWNLOAD_TIMEOUT_SECONDS = 30
 PDF_TEXT_PAGE_LIMIT = 30
 DWS_UPGRADE_CHECKED_DATE_STATE_KEY = "dws_upgrade_checked_date"
+ORG_CACHE_REFRESH_INTERVAL = timedelta(days=7)
 AITABLE_TABLE_PREVIEW_LIMIT = 5
 AITABLE_RECORD_PREVIEW_LIMIT = 10
 SINGLE_CHAT_READ_RECOVERY_WINDOW = timedelta(hours=24)
@@ -176,6 +181,7 @@ class DingTalkAutoReplyWorker:
 
     def produce_once(self, max_tasks: int | None = None) -> int:
         self._maybe_upgrade_dws_once_per_day()
+        self._maybe_refresh_org_cache_once_per_week()
         queued_tasks = 0
         try:
             conversations = self.dws.list_unread_conversations(count=50)
@@ -346,6 +352,37 @@ class DingTalkAutoReplyWorker:
             self._notify(title="CEO DWS upgrade failed", message=str(exc)[:120])
         finally:
             self.store.set_service_state(DWS_UPGRADE_CHECKED_DATE_STATE_KEY, today)
+
+    def _maybe_refresh_org_cache_once_per_week(self) -> None:
+        today = self._now().date()
+        last_refreshed_date = self.store.get_service_state(
+            ORG_CACHE_REFRESHED_DATE_STATE_KEY
+        )
+        if last_refreshed_date:
+            try:
+                refreshed_date = datetime.strptime(
+                    last_refreshed_date, "%Y-%m-%d"
+                ).date()
+            except ValueError:
+                refreshed_date = None
+            if (
+                refreshed_date is not None
+                and today - refreshed_date < ORG_CACHE_REFRESH_INTERVAL
+            ):
+                return
+        try:
+            refresh_org_cache(store=self.store, dws=self.dws)
+        except Exception as exc:
+            self.store.record_error(None, None, "org_cache_refresh", str(exc))
+            self._notify(
+                title="CEO org cache refresh failed",
+                message=str(exc)[:120],
+            )
+        finally:
+            self.store.set_service_state(
+                ORG_CACHE_REFRESHED_DATE_STATE_KEY,
+                today.isoformat(),
+            )
 
     def _skip_messages_outside_recent_window(
         self,
