@@ -3413,6 +3413,46 @@ def test_group_mention_from_unread_conversation_is_processed_when_unread_tail_mi
     assert attempts[0].send_status == "dry_run"
 
 
+def test_produce_once_coalesces_consecutive_group_mentions_from_same_sender(
+    tmp_path: Path, monkeypatch
+):
+    first = message(
+        "@Derek Zen(磊哥) 先看第一点",
+        message_id="msg-mentioned-1",
+    )
+    first.create_time = "2026-05-28 13:21:54"
+    second = message(
+        "@曹宇航(Yuhang Cao) @Derek Zen(磊哥) 再看第二点",
+        message_id="msg-mentioned-2",
+    )
+    second.create_time = "2026-05-28 13:24:02"
+    third = message(
+        "@Derek Zen(磊哥) @曹宇航(Yuhang Cao) 最后总结一下",
+        message_id="msg-mentioned-3",
+    )
+    third.create_time = "2026-05-28 13:27:41"
+    dws = FakeDws(
+        [conversation()],
+        {"cid-1": [first, second, third]},
+        unread_messages={"cid-1": [first, second, third]},
+    )
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该调用")
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch, dry_run=True)
+
+    queued = worker.produce_once()
+
+    tasks = worker.store.claim_reply_tasks(limit=10)
+    assert queued == 1
+    assert len(tasks) == 1
+    assert tasks[0].trigger_message_id == "msg-mentioned-3"
+    assert "@Derek Zen(磊哥) 先看第一点" in tasks[0].trigger_text
+    assert "@曹宇航(Yuhang Cao) @Derek Zen(磊哥) 再看第二点" in tasks[0].trigger_text
+    assert "@Derek Zen(磊哥) @曹宇航(Yuhang Cao) 最后总结一下" in tasks[0].trigger_text
+    assert codex.calls == []
+
+
 def test_group_all_mention_from_unread_conversation_is_processed(
     tmp_path: Path, monkeypatch
 ):
@@ -3603,7 +3643,9 @@ def test_group_mentions_are_processed_by_message_time_not_fetch_order(
 
     attempts = worker.store.list_reply_attempts(limit=10)
     assert len(codex.calls) == 1
+    assert len(attempts) == 1
     assert attempts[0].trigger_message_id == "msg-newer-mention"
+    assert "怎么规避客户拿给别的 vendor 比价" in attempts[0].trigger_text
     assert "请审一下这个文档" in attempts[0].trigger_text
 
 

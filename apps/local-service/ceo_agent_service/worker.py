@@ -286,10 +286,15 @@ class DingTalkAutoReplyWorker:
             )
             if not new_messages:
                 continue
-            if self._enqueue_reply_task(conversation, new_messages[-1]):
-                queued_tasks += 1
-            if max_tasks is not None and queued_tasks >= max_tasks:
-                return queued_tasks
+            trigger_messages = self._reply_task_trigger_messages(
+                conversation,
+                new_messages,
+            )
+            for message in trigger_messages:
+                if self._enqueue_reply_task(conversation, message):
+                    queued_tasks += 1
+                if max_tasks is not None and queued_tasks >= max_tasks:
+                    return queued_tasks
         return queued_tasks
 
     def _conversations_with_recent_single_chat_recovery(
@@ -503,6 +508,64 @@ class DingTalkAutoReplyWorker:
             trigger_sender=trigger.sender_name,
             trigger_text=trigger.content,
             trigger_message_json=trigger.model_dump_json(),
+        )
+
+    @staticmethod
+    def _reply_task_trigger_messages(
+        conversation: DingTalkConversation,
+        messages: list[DingTalkMessage],
+    ) -> list[DingTalkMessage]:
+        if not messages:
+            return []
+        if conversation.single_chat:
+            return [messages[-1]]
+        return DingTalkAutoReplyWorker._coalesce_consecutive_messages_by_sender(
+            messages
+        )
+
+    @staticmethod
+    def _coalesce_consecutive_messages_by_sender(
+        messages: list[DingTalkMessage],
+    ) -> list[DingTalkMessage]:
+        grouped: list[list[DingTalkMessage]] = []
+        for message in messages:
+            sender_key = DingTalkAutoReplyWorker._message_sender_key(message)
+            if grouped and DingTalkAutoReplyWorker._message_sender_key(
+                grouped[-1][-1]
+            ) == sender_key:
+                grouped[-1].append(message)
+            else:
+                grouped.append([message])
+        return [
+            DingTalkAutoReplyWorker._coalesced_message(group)
+            for group in grouped
+        ]
+
+    @staticmethod
+    def _message_sender_key(message: DingTalkMessage) -> str:
+        return (
+            message.sender_user_id
+            or message.sender_open_dingtalk_id
+            or message.sender_name
+        )
+
+    @staticmethod
+    def _coalesced_message(messages: list[DingTalkMessage]) -> DingTalkMessage:
+        if len(messages) == 1:
+            return messages[0]
+        latest = messages[-1]
+        content = "\n\n".join(
+            f"[{message.create_time}] {message.content}" for message in messages
+        )
+        raw_payload = dict(latest.raw_payload)
+        raw_payload["coalesced_message_ids"] = [
+            message.open_message_id for message in messages
+        ]
+        return latest.model_copy(
+            update={
+                "content": content,
+                "raw_payload": raw_payload,
+            }
         )
 
     def _mentioned_messages_by_conversation(
