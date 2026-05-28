@@ -1071,13 +1071,16 @@ class DwsClient:
         time.sleep(self.transient_retry_delay_seconds * (attempt_index + 1))
 
     def _refresh_cache(self) -> None:
-        subprocess.run(
-            [self.dws_bin, "cache", "refresh", "--format", "json"],
-            text=True,
-            capture_output=True,
-            check=False,
-            timeout=self.timeout_seconds,
-        )
+        try:
+            subprocess.run(
+                [self.dws_bin, "cache", "refresh", "--format", "json"],
+                text=True,
+                capture_output=True,
+                check=False,
+                timeout=self.timeout_seconds,
+            )
+        except subprocess.TimeoutExpired:
+            return
 
     @classmethod
     def _format_command_error(
