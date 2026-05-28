@@ -97,6 +97,47 @@ def test_empty_attempt_list_shows_db_path(tmp_path: Path):
     assert str(db_path) in html
 
 
+def test_render_attempt_list_shows_pending_reply_tasks(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="cid-1",
+        conversation_title="HR管理",
+        single_chat=False,
+        trigger_message_id="msg-queued",
+        trigger_create_time="2026-05-28 18:00:00",
+        trigger_sender="Mina",
+        trigger_text="@Derek Zen(磊哥) 这个候选人怎么看？",
+    )
+
+    html = render_attempt_list(store)
+
+    assert "Queued / processing" in html
+    assert "#task-1" in html
+    assert "HR管理" in html
+    assert "Mina" in html
+    assert "pending" in html
+    assert "@Derek Zen(磊哥) 这个候选人怎么看？" in html
+
+
+def test_render_attempt_list_shows_processing_reply_tasks(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="cid-1",
+        conversation_title="HR管理",
+        single_chat=False,
+        trigger_message_id="msg-queued",
+        trigger_create_time="2026-05-28 18:00:00",
+        trigger_sender="Mina",
+        trigger_text="@Derek Zen(磊哥) 这个候选人怎么看？",
+    )
+    store.claim_reply_tasks(limit=1)
+
+    html = render_attempt_list(store)
+
+    assert "#task-1" in html
+    assert "processing" in html
+
+
 def test_render_attempt_list_uses_attempt_codex_session_over_conversation(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     attempt_id = seed_attempt(store)

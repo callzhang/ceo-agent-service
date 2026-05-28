@@ -20,7 +20,7 @@ from ceo_agent_service.dingtalk_models import (
     SensitivityKind,
 )
 from ceo_agent_service.dws_client import DwsClient
-from ceo_agent_service.store import AutoReplyStore, ReplyAttempt, SentReply
+from ceo_agent_service.store import AutoReplyStore, ReplyAttempt, ReplyTask, SentReply
 from ceo_agent_service.worker import DingTalkAutoReplyWorker
 
 
@@ -67,6 +67,7 @@ th{background:var(--surface-soft);color:var(--steel);font-size:12px;font-weight:
 .action-handoff_to_human{background:rgba(195,125,13,.12);color:#8a5a08;border-color:rgba(195,125,13,.24)}
 .action-stop_with_error{background:rgba(212,86,86,.12);color:#9a2f2f;border-color:rgba(212,86,86,.24)}
 .status-sent{background:rgba(0,212,164,.12);color:#006b55;border-color:rgba(0,180,138,.28)}
+.status-pending,.status-processing{background:rgba(55,114,207,.10);color:#245aa5;border-color:rgba(55,114,207,.24)}
 .status-skipped{background:var(--surface);color:var(--stone)}
 .status-failed,.status-blocked{background:rgba(212,86,86,.12);color:#9a2f2f;border-color:rgba(212,86,86,.24)}
 .quality-warning{border-color:rgba(212,86,86,.28);background:rgba(212,86,86,.08)}
@@ -137,6 +138,11 @@ def render_page(title: str, body: str) -> str:
 
 def render_attempt_list(store: AutoReplyStore, limit: int | None = None) -> str:
     items = []
+    for task in store.list_reply_tasks(
+        statuses=("pending", "processing", "failed"),
+        limit=limit,
+    ):
+        items.append(_reply_task_item(task))
     for attempt in store.list_reply_attempts(limit=limit):
         codex_session_id = attempt.codex_session_id or store.get_codex_session_id(
             attempt.conversation_id
@@ -180,6 +186,45 @@ def render_attempt_list(store: AutoReplyStore, limit: int | None = None) -> str:
     else:
         body = "<section class=\"attempt-feed\">" + "".join(items) + "</section>"
     return render_page("CEO Agent Audit", body)
+
+
+def _reply_task_item(task: ReplyTask) -> str:
+    error_html = (
+        f"<div class=\"attempt-foot\"><span class=\"attempt-warning\">{escape(task.error)}</span></div>"
+        if task.error
+        else ""
+    )
+    return (
+        "<article class=\"attempt-item\">"
+        "<div class=\"attempt-head\">"
+        "<div class=\"attempt-title\">"
+        f"<span class=\"attempt-id\">#task-{task.id}</span>"
+        "<span class=\"pill action-send_reply\">Queued / processing</span>"
+        f"<span class=\"pill status-{escape(task.status)}\">{escape(task.status)}</span>"
+        f"<div class=\"attempt-main\">{escape(task.conversation_title)}</div>"
+        f"<div class=\"attempt-meta\">{escape(task.trigger_sender)}</div>"
+        "</div>"
+        "<div class=\"attempt-side\">"
+        f"<time class=\"attempt-time\">{escape(task.updated_at)}</time>"
+        "</div>"
+        "</div>"
+        "<div class=\"attempt-lines\">"
+        f"{_attempt_text_line('问', task.trigger_text, 260)}"
+        f"{_attempt_text_line('进', _reply_task_progress_text(task), 320)}"
+        "</div>"
+        f"{error_html}"
+        "</article>"
+    )
+
+
+def _reply_task_progress_text(task: ReplyTask) -> str:
+    if task.status == "pending":
+        return "已进入处理队列，等待分身生成回复"
+    if task.status == "processing":
+        return "分身正在处理"
+    if task.error:
+        return task.error
+    return "任务尚未完成"
 
 
 def render_attempt_detail(store: AutoReplyStore, attempt_id: int) -> tuple[int, str]:

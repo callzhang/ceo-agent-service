@@ -533,6 +533,28 @@ class AutoReplyStore:
                 ).fetchone()
             return int(row["count"])
 
+    def list_reply_tasks(
+        self,
+        statuses: tuple[str, ...] | None = None,
+        limit: int | None = None,
+    ) -> list[ReplyTask]:
+        with self._connect() as db:
+            query = """
+                select *
+                from reply_tasks
+            """
+            args: list[str | int] = []
+            if statuses:
+                placeholders = ",".join("?" for _ in statuses)
+                query = f"{query} where status in ({placeholders})"
+                args.extend(statuses)
+            query = f"{query} order by id desc"
+            if limit is not None:
+                query = f"{query} limit ?"
+                args.append(limit)
+            rows = db.execute(query, args).fetchall()
+            return [self._reply_task_from_row(row) for row in rows]
+
     def upsert_conversation(
         self,
         conversation_id: str,

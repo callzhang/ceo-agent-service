@@ -70,6 +70,34 @@ def test_claim_reply_tasks_marks_tasks_processing_atomically(tmp_path: Path):
     assert store.count_reply_tasks(status="processing") == 1
 
 
+def test_list_reply_tasks_filters_statuses_newest_first(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="cid-1",
+        conversation_title="Friday",
+        single_chat=False,
+        trigger_message_id="msg-1",
+        trigger_create_time="2026-05-13 18:00:00",
+        trigger_sender="Mina",
+        trigger_text="@Derek Zen 看一下",
+    )
+    store.enqueue_reply_task(
+        conversation_id="cid-2",
+        conversation_title="HR管理",
+        single_chat=False,
+        trigger_message_id="msg-2",
+        trigger_create_time="2026-05-13 18:01:00",
+        trigger_sender="Phina",
+        trigger_text="@Derek Zen 再看一下",
+    )
+    claimed = store.claim_reply_tasks(limit=1)
+    store.complete_reply_task(claimed[0].id)
+
+    tasks = store.list_reply_tasks(statuses=("pending", "processing", "failed"))
+
+    assert [task.trigger_message_id for task in tasks] == ["msg-2"]
+
+
 def test_reset_stale_processing_reply_tasks_requeues_orphans(tmp_path: Path):
     db_path = tmp_path / "worker.sqlite3"
     store = AutoReplyStore(db_path)
