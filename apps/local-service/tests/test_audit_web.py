@@ -85,6 +85,8 @@ def test_render_page_includes_favicon_for_browser_tabs(tmp_path: Path):
     assert 'rel="icon"' in html
     assert 'href="data:image/svg+xml,' in html
     assert "%2300d4a4" in html
+    assert 'http-equiv="refresh"' in html
+    assert 'content="15"' in html
 
 
 def test_empty_attempt_list_shows_db_path(tmp_path: Path):

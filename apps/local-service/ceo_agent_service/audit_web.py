@@ -129,6 +129,7 @@ def render_page(title: str, body: str) -> str:
     return (
         "<!doctype html><html><head><meta charset=\"utf-8\">"
         "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
+        "<meta http-equiv=\"refresh\" content=\"15\">"
         f"<title>{escape(title)}</title>"
         f"<link rel=\"icon\" href=\"{FAVICON_HREF}\">"
         f"<style>{CSS}</style></head><body>"
