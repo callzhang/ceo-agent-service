@@ -136,6 +136,8 @@ AITABLE_TABLE_PREVIEW_LIMIT = 5
 AITABLE_RECORD_PREVIEW_LIMIT = 10
 SINGLE_CHAT_READ_RECOVERY_WINDOW = timedelta(hours=24)
 SINGLE_CHAT_READ_RECOVERY_LIMIT = 50
+GROUP_READ_RECOVERY_WINDOW = timedelta(hours=24)
+GROUP_READ_RECOVERY_LIMIT = 20
 
 
 @dataclass(frozen=True)
@@ -210,6 +212,7 @@ class DingTalkAutoReplyWorker:
         conversations = self._conversations_with_recent_single_chat_recovery(
             conversations,
         )
+        conversations = self._conversations_with_recent_group_recovery(conversations)
         for conversation in conversations:
             self.store.upsert_conversation(
                 conversation_id=conversation.open_conversation_id,
@@ -316,6 +319,34 @@ class DingTalkAutoReplyWorker:
                     open_conversation_id=record.conversation_id,
                     title=record.title,
                     single_chat=True,
+                    unread_point=0,
+                )
+            )
+        return [*conversations, *recovered]
+
+    def _conversations_with_recent_group_recovery(
+        self,
+        conversations: list[DingTalkConversation],
+    ) -> list[DingTalkConversation]:
+        existing_ids = {
+            conversation.open_conversation_id for conversation in conversations
+        }
+        since_utc = (
+            self.now_provider().astimezone(timezone.utc) - GROUP_READ_RECOVERY_WINDOW
+        ).strftime("%Y-%m-%d %H:%M:%S")
+        recovered = []
+        for record in self.store.list_recent_group_conversations(
+            since_utc,
+            limit=GROUP_READ_RECOVERY_LIMIT,
+        ):
+            if record.conversation_id in existing_ids:
+                continue
+            existing_ids.add(record.conversation_id)
+            recovered.append(
+                DingTalkConversation(
+                    open_conversation_id=record.conversation_id,
+                    title=record.title,
+                    single_chat=False,
                     unread_point=0,
                 )
             )
@@ -1509,6 +1540,8 @@ class DingTalkAutoReplyWorker:
                 context_messages,
                 unread_messages,
             )
+        if not unread_messages and not mentioned_messages:
+            return self._group_recovered_candidate_source_messages(context_messages)
         mentioned_message_ids = {
             message.open_message_id for message in mentioned_messages or []
         }
@@ -1540,6 +1573,29 @@ class DingTalkAutoReplyWorker:
             seen_message_ids.add(message.open_message_id)
             result.append(message)
         return result
+
+    def _group_recovered_candidate_source_messages(
+        self,
+        context_messages: list[DingTalkMessage],
+    ) -> list[DingTalkMessage]:
+        latest_seen_context_time: str | None = None
+        for message in context_messages:
+            if self.store.has_seen(message.open_message_id):
+                latest_seen_context_time = max(
+                    latest_seen_context_time or message.create_time,
+                    message.create_time,
+                )
+        if latest_seen_context_time is None:
+            return []
+        return sorted(
+            [
+                message
+                for message in context_messages
+                if message.create_time > latest_seen_context_time
+                and not self.store.has_seen(message.open_message_id)
+            ],
+            key=lambda message: message.create_time,
+        )
 
     def _single_chat_candidate_source_messages(
         self,

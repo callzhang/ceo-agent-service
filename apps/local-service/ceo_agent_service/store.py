@@ -689,6 +689,39 @@ class AutoReplyStore:
                 for row in rows
             ]
 
+    def list_recent_group_conversations(
+        self,
+        since_utc: str,
+        limit: int,
+    ) -> list[ConversationRecord]:
+        with self._connect() as db:
+            rows = db.execute(
+                """
+                select
+                    c.conversation_id,
+                    c.title,
+                    c.single_chat,
+                    c.codex_session_id,
+                    max(s.seen_at) as latest_seen_at
+                from conversations c
+                join seen_messages s on s.conversation_id=c.conversation_id
+                where c.single_chat=0 and s.seen_at >= ?
+                group by c.conversation_id, c.title, c.single_chat, c.codex_session_id
+                order by latest_seen_at desc
+                limit ?
+                """,
+                (since_utc, limit),
+            ).fetchall()
+            return [
+                ConversationRecord(
+                    conversation_id=row["conversation_id"],
+                    title=row["title"],
+                    single_chat=bool(row["single_chat"]),
+                    codex_session_id=row["codex_session_id"],
+                )
+                for row in rows
+            ]
+
     def get_conversation(self, conversation_id: str) -> ConversationRecord | None:
         with self._connect() as db:
             row = db.execute(

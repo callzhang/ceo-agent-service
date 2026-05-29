@@ -4028,6 +4028,67 @@ def test_read_group_mention_is_skipped_when_later_current_user_text_replied(
     assert worker.store.list_reply_attempts(limit=10) == []
 
 
+def test_read_group_mention_after_seen_message_is_recovered_from_recent_context(
+    tmp_path: Path, monkeypatch
+):
+    handled = message(
+        "@Derek Zen(磊哥) 客户问 Hyperion 怎么讲？",
+        message_id="msg-handled",
+    )
+    handled.open_conversation_id = "cid-hyperion"
+    handled.conversation_title = "奔驰北美-Hyperion需求"
+    handled.create_time = "2026-05-29 14:19:12"
+    bot_reply = derek_message(
+        "不能讲成 persona 报告，要讲成 marketing 决策盲区。",
+        message_id="msg-bot-reply",
+        create_time="2026-05-29 14:32:48",
+    )
+    bot_reply.open_conversation_id = "cid-hyperion"
+    bot_reply.conversation_title = "奔驰北美-Hyperion需求"
+    follow_up = message(
+        "@Derek Zen(磊哥) 这个好。@何耘光(Jack He(Yunguang He)) 我喜欢磊哥分身的答案，更抓客户胃口",
+        message_id="msg-follow-up",
+    )
+    follow_up.open_conversation_id = "cid-hyperion"
+    follow_up.conversation_title = "奔驰北美-Hyperion需求"
+    follow_up.create_time = "2026-05-29 14:35:51"
+    conversation_record = conversation()
+    conversation_record.open_conversation_id = "cid-hyperion"
+    conversation_record.title = "奔驰北美-Hyperion需求"
+    conversation_record.unread_point = 0
+
+    class RecentGroupFakeDws(FakeDws):
+        def read_recent_messages(self, conversation: DingTalkConversation):
+            if conversation.open_conversation_id == "cid-hyperion":
+                return [handled, bot_reply, follow_up]
+            return super().read_recent_messages(conversation)
+
+    dws = RecentGroupFakeDws(
+        [],
+        {"cid-hyperion": [handled, bot_reply, follow_up]},
+        unread_messages={"cid-hyperion": []},
+    )
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该调用")
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch, dry_run=True)
+    worker.store.upsert_conversation(
+        "cid-hyperion",
+        "奔驰北美-Hyperion需求",
+        False,
+        None,
+    )
+    worker.store.mark_seen("msg-handled", "cid-hyperion")
+
+    queued = worker.produce_once()
+
+    tasks = worker.store.claim_reply_tasks(limit=10)
+    assert queued == 1
+    assert len(tasks) == 1
+    assert tasks[0].trigger_message_id == "msg-follow-up"
+    assert "我喜欢磊哥分身的答案" in tasks[0].trigger_text
+
+
 def test_group_mentions_are_processed_by_message_time_not_fetch_order(
     tmp_path: Path, monkeypatch
 ):
