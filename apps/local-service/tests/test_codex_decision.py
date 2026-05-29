@@ -493,6 +493,76 @@ def test_first_turn_invalid_json_retries_with_thread_started_id(tmp_path: Path):
     assert executor.commands[1][-2] == "thread-1"
 
 
+def test_parse_codex_json_accepts_item_completed_message_output_text():
+    raw = "\n".join(
+        [
+            json.dumps({"type": "thread.started", "thread_id": "thread-1"}),
+            json.dumps({"type": "turn.started"}),
+            json.dumps(
+                {
+                    "type": "item.completed",
+                    "item": {
+                        "type": "message",
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "type": "output_text",
+                                "text": json.dumps(
+                                    {
+                                        "action": "send_reply",
+                                        "reply_text": "按这个口径推进。",
+                                        "reason": "direct business follow-up",
+                                        "audit_documents": [],
+                                        "audit_summary": "只需上下文判断，当前消息足够确认回复。",
+                                    },
+                                    ensure_ascii=False,
+                                ),
+                            }
+                        ],
+                    },
+                },
+                ensure_ascii=False,
+            ),
+        ]
+    )
+
+    decision = parse_codex_json(raw)
+
+    assert decision.action == CodexAction.SEND_REPLY
+    assert decision.reply_text == "按这个口径推进。"
+    assert decision.audit_summary.startswith("只需上下文判断")
+
+
+def test_parse_codex_json_accepts_task_complete_last_agent_message():
+    raw = "\n".join(
+        [
+            json.dumps({"type": "thread.started", "thread_id": "thread-1"}),
+            json.dumps(
+                {
+                    "type": "event_msg",
+                    "payload": {
+                        "type": "task_complete",
+                        "last_agent_message": json.dumps(
+                            {
+                                "action": "no_reply",
+                                "reason": "ack only",
+                                "audit_summary": "对方只是确认收到，无需回复。",
+                            },
+                            ensure_ascii=False,
+                        ),
+                    },
+                },
+                ensure_ascii=False,
+            ),
+        ]
+    )
+
+    decision = parse_codex_json(raw)
+
+    assert decision.action == CodexAction.NO_REPLY
+    assert decision.audit_summary == "对方只是确认收到，无需回复。"
+
+
 def test_invalid_json_twice_returns_stop_with_error(tmp_path: Path):
     executor = FakeExecutor(["not json", "still not json"])
     runner = make_runner(tmp_path, executor=executor)

@@ -114,6 +114,9 @@ def _decision_text_candidates(payload: dict[str, Any]) -> list[str]:
     message = payload.get("message")
     if isinstance(message, str):
         candidates.append(message)
+    last_agent_message = payload.get("last_agent_message")
+    if isinstance(last_agent_message, str):
+        candidates.append(last_agent_message)
     content = payload.get("content")
     if isinstance(content, str):
         candidates.append(content)
@@ -128,6 +131,8 @@ def _decision_text_candidates(payload: dict[str, Any]) -> list[str]:
         and isinstance(item.get("text"), str)
     ):
         candidates.append(item["text"])
+    elif isinstance(item, dict):
+        candidates.extend(_decision_text_candidates(item))
     nested_payload = payload.get("payload")
     if isinstance(nested_payload, dict):
         candidates.extend(_decision_text_candidates(nested_payload))
