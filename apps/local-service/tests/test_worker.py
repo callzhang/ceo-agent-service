@@ -3441,6 +3441,50 @@ def test_sent_reply_prevents_retry_when_latest_attempt_failed(
     assert worker.store.has_seen("msg-1") is True
 
 
+def test_existing_sent_reply_backfills_memory_event_without_sending_again(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message("@Derek Zen(磊哥) 这个怎么处理？")
+    dws = FakeDws([conversation()], {"cid-1": [trigger]})
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该重新生成")
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+    attempt_id = worker.store.record_reply_attempt(
+        conversation_id="cid-1",
+        conversation_title="Friday",
+        trigger_message_id="msg-1",
+        trigger_sender="周俊杰",
+        trigger_text=trigger.content,
+        action="send_reply",
+        sensitivity_kind="general",
+        draft_reply_text="先按A方案走",
+        send_status="sent",
+    )
+    worker.store.update_reply_attempt(
+        attempt_id,
+        final_reply_text="先按A方案走（by磊哥分身）",
+    )
+    worker.store.record_sent_reply(
+        conversation_id="cid-1",
+        trigger_message_id="msg-1",
+        reply_text="先按A方案走（by磊哥分身）",
+        send_result_json='{"result": {"processQueryKey": "key-1"}}',
+        recall_key="key-1",
+    )
+
+    worker.run_once()
+
+    assert codex.calls == []
+    assert final_sent(dws) == []
+    assert dws.send_attempt_count == 0
+    events = worker.store.get_memory_write_events_for_attempt(attempt_id)
+    assert len(events) == 1
+    payload = json.loads(events[0].payload_json)
+    assert payload["event"] == "reply_sent"
+    assert payload["provenance"]["recall_key"] == "key-1"
+
+
 def test_rerun_message_retries_existing_failed_attempt_without_calling_codex(
     tmp_path: Path, monkeypatch
 ):
@@ -4209,6 +4253,7 @@ def test_handoff_sends_ack_dings_self_and_records_message_result(
     dws = FakeDws(
         [conversation()],
         {"cid-1": [message("@Derek Zen(磊哥) 不要分身，真人看一下")]},
+        send_result={"result": {"processQueryKey": "handoff-key"}},
     )
     codex = FakeCodex(CodexDecision(action=CodexAction.HANDOFF_TO_HUMAN))
     worker = DingTalkAutoReplyWorker(
@@ -4226,6 +4271,10 @@ def test_handoff_sends_ack_dings_self_and_records_message_result(
     attempt = store.get_reply_attempt(1)
     assert attempt is not None
     assert attempt.final_reply_text == expected_ack
+    sent_reply = store.get_sent_reply("cid-1", "msg-1")
+    assert sent_reply is not None
+    assert sent_reply.reply_text == expected_ack
+    assert sent_reply.recall_key == "handoff-key"
     events = store.get_memory_write_events_for_attempt(1)
     assert len(events) == 1
     assert events[0].event_type == "reply_sent"
@@ -4233,6 +4282,9 @@ def test_handoff_sends_ack_dings_self_and_records_message_result(
     assert payload["event"] == "reply_sent"
     assert payload["result"]["final_reply_text"] == expected_ack
     assert payload["decision"]["action"] == "handoff_to_human"
+    assert payload["provenance"]["sent_reply_id"] == sent_reply.id
+    assert payload["provenance"]["recall_key"] == "handoff-key"
+    assert payload["provenance"]["send_result_available"] is True
 
 
 def test_new_derek_mention_is_processed(

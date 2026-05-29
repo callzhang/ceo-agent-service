@@ -2136,7 +2136,7 @@ class DingTalkAutoReplyWorker:
                         context_messages=context_messages,
                     )
                 )
-                self._send_reply_to_trigger(
+                send_result = self._send_reply_to_trigger(
                     conversation,
                     trigger,
                     handoff_reply_text,
@@ -2172,6 +2172,13 @@ class DingTalkAutoReplyWorker:
                 attempt_id,
                 final_reply_text=handoff_reply_text,
                 send_status="sent",
+            )
+            self.store.record_sent_reply(
+                conversation.open_conversation_id,
+                trigger.open_message_id,
+                handoff_reply_text,
+                send_result_json=json.dumps(send_result or {}, ensure_ascii=False),
+                recall_key=DwsClient.extract_recall_key(send_result),
             )
             self._mark_seen(new_messages)
             self._enqueue_reply_sent_memory_event(attempt_id)
@@ -2240,6 +2247,12 @@ class DingTalkAutoReplyWorker:
             trigger.open_message_id,
         )
         if sent_reply is not None:
+            attempt = self.store.get_latest_reply_attempt_for_trigger(
+                conversation.open_conversation_id,
+                trigger.open_message_id,
+            )
+            if attempt is not None and attempt.send_status == "sent":
+                self._enqueue_reply_sent_memory_event(attempt.id)
             self._mark_seen(new_messages)
             return True
         attempt = self.store.get_latest_reply_attempt_for_trigger(
@@ -2254,7 +2267,11 @@ class DingTalkAutoReplyWorker:
             and attempt.codex_reason == "system_or_notification_message"
         ):
             return False
-        if attempt.send_status in {"sent", "skipped", "blocked"}:
+        if attempt.send_status == "sent":
+            self._enqueue_reply_sent_memory_event(attempt.id)
+            self._mark_seen(new_messages)
+            return True
+        if attempt.send_status in {"skipped", "blocked"}:
             self._mark_seen(new_messages)
             return True
         if attempt.send_status == "dry_run":
