@@ -3284,6 +3284,43 @@ def test_sent_reply_records_recall_key_from_send_result(tmp_path: Path, monkeypa
     assert '"processQueryKey": "key-1"' in sent_reply.send_result_json
 
 
+def test_sent_reply_creates_reply_sent_memory_event(tmp_path: Path, monkeypatch):
+    trigger = message("@Derek Zen(磊哥) 这个怎么处理？")
+    dws = FakeDws(
+        [conversation()],
+        {"cid-1": [trigger]},
+        send_result={"result": {"processQueryKey": "key-1"}},
+    )
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="先按A方案走")
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+
+    worker.run_once()
+
+    events = worker.store.get_memory_write_events_for_attempt(1)
+    assert len(events) == 1
+    assert events[0].event_type == "reply_sent"
+    payload = json.loads(events[0].payload_json)
+    assert payload["event"] == "reply_sent"
+    assert payload["result"]["final_reply_text"] == "先按A方案走（by磊哥分身）"
+    assert payload["provenance"]["recall_key"] == "key-1"
+
+
+def test_dry_run_reply_does_not_create_memory_event(tmp_path: Path, monkeypatch):
+    trigger = message("@Derek Zen(磊哥) 这个怎么处理？")
+    dws = FakeDws([conversation()], {"cid-1": [trigger]})
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="先按A方案走")
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch, dry_run=True)
+
+    worker.run_once()
+
+    events = worker.store.get_memory_write_events_for_attempt(1)
+    assert events == []
+
+
 def test_existing_dry_run_attempt_does_not_call_codex_again(
     tmp_path: Path, monkeypatch
 ):
@@ -4189,6 +4226,13 @@ def test_handoff_sends_ack_dings_self_and_records_message_result(
     attempt = store.get_reply_attempt(1)
     assert attempt is not None
     assert attempt.final_reply_text == expected_ack
+    events = store.get_memory_write_events_for_attempt(1)
+    assert len(events) == 1
+    assert events[0].event_type == "reply_sent"
+    payload = json.loads(events[0].payload_json)
+    assert payload["event"] == "reply_sent"
+    assert payload["result"]["final_reply_text"] == expected_ack
+    assert payload["decision"]["action"] == "handoff_to_human"
 
 
 def test_new_derek_mention_is_processed(

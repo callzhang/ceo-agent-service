@@ -43,6 +43,10 @@ from ceo_agent_service.leak_check import (
     contains_forbidden_leak,
     redact_forbidden_leak_markers,
 )
+from ceo_agent_service.memory_events import (
+    build_reply_sent_memory_payload,
+    memory_payload_json,
+)
 from ceo_agent_service.notification import send_macos_notification
 from ceo_agent_service.oa_approval import extract_oa_url
 from ceo_agent_service.org_cache import (
@@ -186,6 +190,21 @@ class DingTalkAutoReplyWorker:
         self.now_provider = now_provider or (lambda: datetime.now().astimezone())
         self.permission_gate = PermissionGate(dws)
         self.oa_approval_runner = oa_approval_runner
+
+    def _enqueue_reply_sent_memory_event(self, attempt_id: int) -> None:
+        attempt = self.store.get_reply_attempt(attempt_id)
+        if attempt is None or attempt.send_status != "sent":
+            return
+        sent_reply = self.store.get_sent_reply(
+            attempt.conversation_id,
+            attempt.trigger_message_id,
+        )
+        payload = build_reply_sent_memory_payload(attempt, sent_reply)
+        self.store.enqueue_memory_write_event(
+            attempt_id=attempt.id,
+            event_type="reply_sent",
+            payload_json=memory_payload_json(payload),
+        )
 
     def run_once(self, max_batches: int | None = None) -> None:
         self.produce_once()
@@ -2155,6 +2174,7 @@ class DingTalkAutoReplyWorker:
                 send_status="sent",
             )
             self._mark_seen(new_messages)
+            self._enqueue_reply_sent_memory_event(attempt_id)
             self._notify(
                 title=f"CEO handoff: {conversation.title}",
                 message=trigger.content[:120],
@@ -3208,6 +3228,7 @@ class DingTalkAutoReplyWorker:
             recall_key=DwsClient.extract_recall_key(send_result),
         )
         self._mark_seen(new_messages)
+        self._enqueue_reply_sent_memory_event(attempt_id)
 
     def _send(
         self,
