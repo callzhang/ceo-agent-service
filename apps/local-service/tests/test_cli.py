@@ -269,6 +269,7 @@ def test_settings_defaults_point_to_memory_home():
     assert settings.batch_seconds == 120
     assert settings.poll_interval_seconds == 300
     assert settings.codex_timeout_seconds == 420
+    assert settings.codex_idle_timeout_seconds == 180
     assert settings.max_batches is None
 
 
@@ -1059,10 +1060,19 @@ def test_parser_supports_dws_transient_retry_options():
 def test_parser_supports_codex_timeout_option():
     parser = build_parser()
 
-    args = parser.parse_args(["run-once", "--codex-timeout-seconds", "480"])
+    args = parser.parse_args(
+        [
+            "run-once",
+            "--codex-timeout-seconds",
+            "480",
+            "--codex-idle-timeout-seconds",
+            "180",
+        ]
+    )
     settings = settings_from_args(args)
 
     assert settings.codex_timeout_seconds == 480
+    assert settings.codex_idle_timeout_seconds == 180
 
 
 def test_create_worker_wires_store_dws_codex_and_dry_run(monkeypatch, tmp_path):
@@ -1086,9 +1096,10 @@ def test_create_worker_wires_store_dws_codex_and_dry_run(monkeypatch, tmp_path):
             constructed["cached_dws_args"] = (dws, org_directory)
 
     class FakeCodex:
-        def __init__(self, workspace, timeout_seconds):
+        def __init__(self, workspace, timeout_seconds, idle_timeout_seconds):
             constructed["codex_workspace"] = workspace
             constructed["codex_timeout_seconds"] = timeout_seconds
+            constructed["codex_idle_timeout_seconds"] = idle_timeout_seconds
 
     class FakeWorker:
         def __init__(
@@ -1118,6 +1129,7 @@ def test_create_worker_wires_store_dws_codex_and_dry_run(monkeypatch, tmp_path):
         corpus_dir=tmp_path / "corpus",
         dry_run=True,
         codex_timeout_seconds=480,
+        codex_idle_timeout_seconds=180,
     )
     settings.corpus_dir.mkdir()
     (settings.corpus_dir / "style_profile.md").write_text(
@@ -1155,6 +1167,7 @@ def test_create_worker_wires_store_dws_codex_and_dry_run(monkeypatch, tmp_path):
     assert constructed["cached_dws_args"][0] is constructed["dws"]
     assert constructed["codex_workspace"] == settings.workspace
     assert constructed["codex_timeout_seconds"] == 480
+    assert constructed["codex_idle_timeout_seconds"] == 180
     assert constructed["worker_args"][3] is True
     assert "先结论" in constructed["style_profile"]
     assert len(constructed["style_records"]) == 1

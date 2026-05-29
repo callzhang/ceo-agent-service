@@ -83,6 +83,7 @@ class WorkerSettings(BaseModel):
     dws_transient_retry_attempts: PositiveInt = 3
     dws_transient_retry_delay_seconds: float = 1.0
     codex_timeout_seconds: PositiveInt = 420
+    codex_idle_timeout_seconds: PositiveInt = 180
     max_batches: PositiveInt | None = None
 
 
@@ -212,6 +213,17 @@ def build_parser() -> argparse.ArgumentParser:
             ),
             help="maximum seconds to wait for one Codex decision",
         )
+        subparser.add_argument(
+            "--codex-idle-timeout-seconds",
+            type=_positive_int,
+            default=_positive_int(
+                os.getenv(
+                    "CEO_CODEX_IDLE_TIMEOUT_SECONDS",
+                    str(defaults.codex_idle_timeout_seconds),
+                )
+            ),
+            help="maximum seconds to wait without Codex stdout/stderr output",
+        )
         if command == "refresh-org-cache":
             subparser.add_argument("--user-id", action="append", default=[])
         if command == "feedback":
@@ -334,6 +346,7 @@ def settings_from_args(args: argparse.Namespace) -> WorkerSettings:
         dws_transient_retry_attempts=args.dws_transient_retry_attempts,
         dws_transient_retry_delay_seconds=args.dws_transient_retry_delay_seconds,
         codex_timeout_seconds=args.codex_timeout_seconds,
+        codex_idle_timeout_seconds=args.codex_idle_timeout_seconds,
         max_batches=args.max_batches,
     )
 
@@ -351,10 +364,12 @@ def create_worker(settings: WorkerSettings) -> DingTalkAutoReplyWorker:
     codex = CodexDecisionRunner(
         workspace=settings.workspace,
         timeout_seconds=settings.codex_timeout_seconds,
+        idle_timeout_seconds=settings.codex_idle_timeout_seconds,
     )
     oa_approval_runner = OaApprovalCodexRunner(
         workspace=settings.workspace,
         timeout_seconds=settings.codex_timeout_seconds,
+        idle_timeout_seconds=settings.codex_idle_timeout_seconds,
     )
     style_profile = _load_style_profile(settings.corpus_dir)
     style_records = load_corpus_records(settings.corpus_dir / "derek_style_corpus.csv")

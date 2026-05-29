@@ -1085,6 +1085,50 @@ def test_consume_once_retries_task_failure_before_final_failure(
     ]
 
 
+def test_consume_once_records_stale_processing_tasks_before_requeue(
+    tmp_path: Path, monkeypatch
+):
+    notifications = []
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="cid-1",
+        conversation_title="Friday",
+        single_chat=False,
+        trigger_message_id="msg-1",
+        trigger_create_time="2026-05-29 11:26:41",
+        trigger_sender="ET",
+        trigger_text="@Derek Zen 这个怎么处理？",
+    )
+    claimed = store.claim_reply_tasks(limit=1)
+    assert claimed[0].status == "processing"
+    with store._connect() as db:
+        db.execute(
+            "update reply_tasks set locked_at=datetime('now', '-31 minutes') where id=?",
+            (claimed[0].id,),
+        )
+    dws = FakeDws([conversation()], {"cid-1": []})
+    codex = FakeCodex(CodexDecision(action=CodexAction.NO_REPLY, audit_summary="无需回复。"))
+    worker = DingTalkAutoReplyWorker(
+        store=store,
+        dws=dws,
+        codex=codex,
+        now_provider=fixed_worker_now,
+    )
+    monkeypatch.setattr(
+        "ceo_agent_service.worker.send_macos_notification",
+        lambda **kwargs: notifications.append(kwargs),
+    )
+
+    worker.consume_once(max_tasks=1)
+
+    errors = store.list_errors()
+    assert any(error.kind == "reply_task_stale" for error in errors)
+    stale_error = next(error for error in errors if error.kind == "reply_task_stale")
+    assert "Friday" in stale_error.detail
+    assert "msg-1" in stale_error.detail
+    assert notifications[0]["title"] == "CEO task retrying stale tasks"
+
+
 def test_consume_once_authorization_failure_waits_without_final_failure(
     tmp_path: Path, monkeypatch
 ):

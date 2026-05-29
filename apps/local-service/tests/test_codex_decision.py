@@ -1,8 +1,7 @@
 import json
-import subprocess
 from pathlib import Path
-from types import SimpleNamespace
 
+import ceo_agent_service.codex_decision as codex_decision
 from ceo_agent_service.codex_decision import (
     CodexDecisionRunner,
     append_signature,
@@ -12,6 +11,7 @@ from ceo_agent_service.codex_decision import (
 )
 from ceo_agent_service.dingtalk_models import CodexAction, CodexDecision
 from ceo_agent_service.leak_check import contains_forbidden_leak
+from ceo_agent_service.process_runner import ProcessRunResult
 
 
 class FakeExecutor:
@@ -30,11 +30,13 @@ def make_runner(
     tmp_path: Path,
     executor=None,
     timeout_seconds: int = 120,
+    idle_timeout_seconds: int = 180,
 ) -> CodexDecisionRunner:
     return CodexDecisionRunner(
         workspace=tmp_path,
         executor=executor,
         timeout_seconds=timeout_seconds,
+        idle_timeout_seconds=idle_timeout_seconds,
         codex_home=tmp_path,
     )
 
@@ -587,9 +589,9 @@ def test_detects_forbidden_leaks():
 def test_subprocess_executor_passes_timeout(tmp_path: Path, monkeypatch):
     calls = []
 
-    def fake_run(*args, **kwargs):
-        calls.append((args, kwargs))
-        return SimpleNamespace(
+    def fake_run(command, **kwargs):
+        calls.append((command, kwargs))
+        return ProcessRunResult(
             returncode=0,
             stdout=json.dumps(
                 {"action": "no_reply", "audit_summary": "无需回复。"},
@@ -598,27 +600,55 @@ def test_subprocess_executor_passes_timeout(tmp_path: Path, monkeypatch):
             stderr="",
         )
 
-    monkeypatch.setattr("ceo_agent_service.codex_decision.subprocess.run", fake_run)
-    runner = make_runner(tmp_path, timeout_seconds=7)
+    monkeypatch.setattr(codex_decision, "run_process_with_idle_timeout", fake_run)
+    runner = make_runner(tmp_path, timeout_seconds=7, idle_timeout_seconds=3)
 
     decision = runner.decide(prompt="decide", session_id=None)
 
     assert decision.action == CodexAction.NO_REPLY
-    assert calls[0][1]["timeout"] == 7
-    assert calls[0][1]["input"] == "decide"
+    assert calls[0][1]["total_timeout_seconds"] == 7
+    assert calls[0][1]["idle_timeout_seconds"] == 3
+    assert calls[0][1]["prompt"] == "decide"
 
 
 def test_subprocess_timeout_returns_stop_with_error(tmp_path: Path, monkeypatch):
-    def fake_run(*args, **kwargs):
-        raise subprocess.TimeoutExpired(cmd=args[0], timeout=kwargs["timeout"])
+    def fake_run(command, **kwargs):
+        return ProcessRunResult(
+            returncode=-15,
+            stdout="",
+            stderr="",
+            timed_out=True,
+            timeout_kind="total",
+            timeout_reason="process timed out after 7 seconds",
+        )
 
-    monkeypatch.setattr("ceo_agent_service.codex_decision.subprocess.run", fake_run)
+    monkeypatch.setattr(codex_decision, "run_process_with_idle_timeout", fake_run)
     runner = make_runner(tmp_path, timeout_seconds=7)
 
     decision = runner.decide(prompt="decide", session_id=None)
 
     assert decision.action == CodexAction.STOP_WITH_ERROR
     assert "timed out" in decision.reason
+
+
+def test_subprocess_idle_timeout_returns_stop_with_error(tmp_path: Path, monkeypatch):
+    def fake_run(command, **kwargs):
+        return ProcessRunResult(
+            returncode=-15,
+            stdout="",
+            stderr="",
+            timed_out=True,
+            timeout_kind="idle",
+            timeout_reason="process produced no output for 3 seconds",
+        )
+
+    monkeypatch.setattr(codex_decision, "run_process_with_idle_timeout", fake_run)
+    runner = make_runner(tmp_path, timeout_seconds=7, idle_timeout_seconds=3)
+
+    decision = runner.decide(prompt="decide", session_id=None)
+
+    assert decision.action == CodexAction.STOP_WITH_ERROR
+    assert decision.reason == "process produced no output for 3 seconds"
 
 
 def test_subprocess_timeout_uses_finished_session_decision(
@@ -668,14 +698,17 @@ def test_subprocess_timeout_uses_finished_session_decision(
         encoding="utf-8",
     )
 
-    def fake_run(*args, **kwargs):
-        raise subprocess.TimeoutExpired(
-            cmd=args[0],
-            timeout=kwargs["timeout"],
-            output=json.dumps({"type": "thread.started", "thread_id": session_id}),
+    def fake_run(command, **kwargs):
+        return ProcessRunResult(
+            returncode=-15,
+            stdout=json.dumps({"type": "thread.started", "thread_id": session_id}),
+            stderr="",
+            timed_out=True,
+            timeout_kind="total",
+            timeout_reason="process timed out after 7 seconds",
         )
 
-    monkeypatch.setattr("ceo_agent_service.codex_decision.subprocess.run", fake_run)
+    monkeypatch.setattr(codex_decision, "run_process_with_idle_timeout", fake_run)
     runner = make_runner(tmp_path, timeout_seconds=7)
 
     decision = runner.decide(prompt="decide", session_id=None)
@@ -686,8 +719,8 @@ def test_subprocess_timeout_uses_finished_session_decision(
 
 
 def test_subprocess_nonzero_keeps_stdout_decision(tmp_path: Path, monkeypatch):
-    def fake_run(*args, **kwargs):
-        return SimpleNamespace(
+    def fake_run(command, **kwargs):
+        return ProcessRunResult(
             returncode=1,
             stdout=json.dumps(
                 {
@@ -700,7 +733,7 @@ def test_subprocess_nonzero_keeps_stdout_decision(tmp_path: Path, monkeypatch):
             stderr="warning only",
         )
 
-    monkeypatch.setattr("ceo_agent_service.codex_decision.subprocess.run", fake_run)
+    monkeypatch.setattr(codex_decision, "run_process_with_idle_timeout", fake_run)
     runner = make_runner(tmp_path)
 
     decision = runner.decide(prompt="decide", session_id=None)
@@ -710,14 +743,14 @@ def test_subprocess_nonzero_keeps_stdout_decision(tmp_path: Path, monkeypatch):
 
 
 def test_subprocess_nonzero_preserves_thread_id_for_error(tmp_path: Path, monkeypatch):
-    def fake_run(*args, **kwargs):
-        return SimpleNamespace(
+    def fake_run(command, **kwargs):
+        return ProcessRunResult(
             returncode=1,
             stdout=json.dumps({"type": "thread.started", "thread_id": "thread-1"}),
             stderr="fatal schema error",
         )
 
-    monkeypatch.setattr("ceo_agent_service.codex_decision.subprocess.run", fake_run)
+    monkeypatch.setattr(codex_decision, "run_process_with_idle_timeout", fake_run)
     runner = make_runner(tmp_path)
 
     decision = runner.decide(prompt="decide", session_id=None)
@@ -738,14 +771,14 @@ def test_subprocess_nonzero_reports_error_line_before_startup_warning(
         ]
     )
 
-    def fake_run(*args, **kwargs):
-        return SimpleNamespace(
+    def fake_run(command, **kwargs):
+        return ProcessRunResult(
             returncode=1,
             stdout=json.dumps({"type": "thread.started", "thread_id": "thread-1"}),
             stderr=stderr,
         )
 
-    monkeypatch.setattr("ceo_agent_service.codex_decision.subprocess.run", fake_run)
+    monkeypatch.setattr(codex_decision, "run_process_with_idle_timeout", fake_run)
     runner = make_runner(tmp_path)
 
     decision = runner.decide(prompt="decide", session_id=None)

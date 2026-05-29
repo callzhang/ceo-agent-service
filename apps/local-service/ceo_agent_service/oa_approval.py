@@ -1,7 +1,6 @@
 import json
 import os
 import re
-import subprocess
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Literal
@@ -21,6 +20,7 @@ from ceo_agent_service.codex_runner import (
     CODEX_BYPASS_APPROVALS_AND_SANDBOX,
     _config_string,
 )
+from ceo_agent_service.process_runner import run_process_with_idle_timeout
 
 
 OA_APPROVAL_SCHEMA_PATH = (
@@ -142,6 +142,7 @@ class OaApprovalCodexRunner:
         codex_bin: str = "codex",
         executor: Callable[[list[str], str], str] | None = None,
         timeout_seconds: int = 120,
+        idle_timeout_seconds: int = 180,
         codex_home: Path | None = None,
         skill_path: Path | None = None,
     ):
@@ -152,6 +153,7 @@ class OaApprovalCodexRunner:
         )
         self.executor = executor or self._subprocess_executor
         self.timeout_seconds = timeout_seconds
+        self.idle_timeout_seconds = idle_timeout_seconds
         self.codex_home = codex_home
         self.last_session_id: str | None = None
         self.last_audit_tool_events: list[dict[str, str]] = []
@@ -266,15 +268,15 @@ class OaApprovalCodexRunner:
         )
 
     def _subprocess_executor(self, command: list[str], prompt: str) -> str:
-        completed = subprocess.run(
+        completed = run_process_with_idle_timeout(
             command,
-            text=True,
-            capture_output=True,
-            check=False,
-            input=prompt,
+            prompt=prompt,
             env=self.runner.build_env(),
-            timeout=self.timeout_seconds,
+            total_timeout_seconds=self.timeout_seconds,
+            idle_timeout_seconds=self.idle_timeout_seconds,
         )
+        if completed.timed_out:
+            raise RuntimeError(completed.timeout_reason)
         if completed.returncode != 0 and not completed.stdout.strip():
             raise RuntimeError(_subprocess_failure_reason(completed.stderr))
         return completed.stdout.strip()

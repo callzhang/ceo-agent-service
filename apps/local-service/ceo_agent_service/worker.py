@@ -408,10 +408,26 @@ class DingTalkAutoReplyWorker:
     def consume_once(self, max_tasks: int | None = None) -> int:
         limit = max_tasks if max_tasks is not None else 50
         processed_tasks = 0
+        stale_tasks = self.store.list_stale_processing_reply_tasks(
+            STALE_PROCESSING_TASK_SECONDS
+        )
         reset_count = self.store.reset_stale_processing_reply_tasks(
             STALE_PROCESSING_TASK_SECONDS
         )
         if reset_count:
+            for stale_task in stale_tasks:
+                self.store.record_error(
+                    stale_task.conversation_id,
+                    stale_task.trigger_message_id,
+                    "reply_task_stale",
+                    (
+                        "requeued stale processing task: "
+                        f"task={stale_task.id} "
+                        f"conversation={stale_task.conversation_title} "
+                        f"message={stale_task.trigger_message_id} "
+                        f"locked_at={stale_task.locked_at}"
+                    ),
+                )
             self._notify(
                 title="CEO task retrying stale tasks",
                 message=f"requeued {reset_count} stale task(s)",

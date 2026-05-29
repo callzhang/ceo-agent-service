@@ -1,6 +1,5 @@
 import json
 import shlex
-import subprocess
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -8,14 +7,15 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from ceo_agent_service.codex_runner import CodexRunner
 from ceo_agent_service.codex_history import (
     count_codex_session_lines,
     extract_codex_audit_events_from_session,
     find_codex_session_path,
 )
+from ceo_agent_service.codex_runner import CodexRunner
 from ceo_agent_service.config import assistant_signature, forbidden_path_prefixes
 from ceo_agent_service.dingtalk_models import CodexAction, CodexDecision
+from ceo_agent_service.process_runner import run_process_with_idle_timeout
 
 
 SIGNATURE = assistant_signature()
@@ -300,11 +300,13 @@ class CodexDecisionRunner:
         codex_bin: str = "codex",
         executor: Callable[[list[str], str], str] | None = None,
         timeout_seconds: int = 120,
+        idle_timeout_seconds: int = 180,
         codex_home: Path | None = None,
     ):
         self.runner = CodexRunner(workspace=workspace, codex_bin=codex_bin)
         self.executor = executor or self._subprocess_executor
         self.timeout_seconds = timeout_seconds
+        self.idle_timeout_seconds = idle_timeout_seconds
         self.codex_home = codex_home
         self.last_session_id: str | None = None
         self.last_audit_tool_events: list[dict[str, str]] = []
@@ -471,22 +473,23 @@ class CodexDecisionRunner:
             )
 
     def _subprocess_executor(self, command: list[str], prompt: str) -> str:
-        try:
-            completed = subprocess.run(
-                command,
-                text=True,
-                capture_output=True,
-                check=False,
-                input=prompt,
-                env=self.runner.build_env(),
-                timeout=self.timeout_seconds,
-            )
-        except subprocess.TimeoutExpired as exc:
-            stdout = _timeout_output_text(exc.stdout or exc.output)
+        completed = run_process_with_idle_timeout(
+            command,
+            prompt=prompt,
+            env=self.runner.build_env(),
+            total_timeout_seconds=self.timeout_seconds,
+            idle_timeout_seconds=self.idle_timeout_seconds,
+        )
+        if completed.timed_out:
+            stdout = _timeout_output_text(completed.stdout)
             stop_error = json.dumps(
                 {
                     "action": "stop_with_error",
-                    "reason": f"{CODEX_TIMEOUT_REASON_PREFIX} {self.timeout_seconds} seconds",
+                    "reason": (
+                        completed.timeout_reason
+                        if completed.timeout_kind == "idle"
+                        else f"{CODEX_TIMEOUT_REASON_PREFIX} {self.timeout_seconds} seconds"
+                    ),
                     "macos_notify": True,
                 },
                 ensure_ascii=False,

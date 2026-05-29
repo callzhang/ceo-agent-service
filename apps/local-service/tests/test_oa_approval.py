@@ -1,6 +1,5 @@
 from pathlib import Path
 import json
-from types import SimpleNamespace
 
 import pytest
 from pydantic import ValidationError
@@ -13,6 +12,7 @@ from ceo_agent_service.oa_approval import (
     OaApprovalResult,
     extract_oa_url,
 )
+from ceo_agent_service.process_runner import ProcessRunResult
 
 
 def _developer_instructions_arg(command: list[str]) -> str:
@@ -365,8 +365,8 @@ def test_subprocess_failure_redacts_sensitive_stderr(tmp_path: Path, monkeypatch
     skill_path = tmp_path / "skill.md"
     skill_path.write_text("# OA Skill", encoding="utf-8")
 
-    def fake_run(*args, **kwargs):
-        return SimpleNamespace(
+    def fake_run(command, **kwargs):
+        return ProcessRunResult(
             returncode=1,
             stdout="",
             stderr=(
@@ -375,7 +375,7 @@ def test_subprocess_failure_redacts_sensitive_stderr(tmp_path: Path, monkeypatch
             ),
         )
 
-    monkeypatch.setattr(oa_approval.subprocess, "run", fake_run)
+    monkeypatch.setattr(oa_approval, "run_process_with_idle_timeout", fake_run)
     runner = OaApprovalCodexRunner(workspace=tmp_path, skill_path=skill_path)
 
     with pytest.raises(RuntimeError) as excinfo:
