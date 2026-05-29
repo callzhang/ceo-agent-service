@@ -1965,12 +1965,9 @@ class DingTalkAutoReplyWorker:
                 raise_on_delivery_failure=raise_on_delivery_failure,
             ):
                 return True
-            if (
-                raise_on_delivery_failure
-                and attempt.action == CodexAction.STOP_WITH_ERROR.value
-            ):
+            if raise_on_delivery_failure:
                 raise ReplyTaskProcessingError(
-                    attempt.send_error or attempt.codex_reason or "stop_with_error"
+                    attempt.send_error or attempt.codex_reason or attempt.action
                 )
             return False
         return False

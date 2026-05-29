@@ -2372,6 +2372,50 @@ def test_queued_stop_with_error_retry_does_not_create_duplicate_attempt(
     assert len(codex.calls) == 1
 
 
+def test_queued_failed_non_send_attempt_does_not_create_duplicate_attempt(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message("@Derek Zen(磊哥) 这个怎么处理？")
+    dws = FakeDws([conversation()], {"cid-1": [trigger]})
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该重新生成")
+    )
+    worker = make_worker(
+        tmp_path,
+        dws,
+        codex,
+        monkeypatch,
+        max_task_attempts=1,
+    )
+    worker.store.enqueue_reply_task(
+        conversation_id="cid-1",
+        conversation_title="Friday",
+        single_chat=False,
+        trigger_message_id="msg-1",
+        trigger_create_time=trigger.create_time,
+        trigger_sender="周俊杰",
+        trigger_text=trigger.content,
+        trigger_message_json=trigger.model_dump_json(),
+    )
+    worker.store.record_reply_attempt(
+        conversation_id="cid-1",
+        conversation_title="Friday",
+        trigger_message_id="msg-1",
+        trigger_sender="周俊杰",
+        trigger_text=trigger.content,
+        action="handoff_to_human",
+        sensitivity_kind="general",
+        send_status="failed",
+        codex_reason="handoff delivery failed",
+    )
+
+    assert worker.consume_once(max_tasks=1) == 0
+
+    assert worker.store.count_reply_tasks(status="failed") == 1
+    assert worker.store.count_reply_attempts() == 1
+    assert codex.calls == []
+
+
 def test_long_trigger_quote_is_capped_by_twenty_information_units(
     tmp_path: Path, monkeypatch
 ):
