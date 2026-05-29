@@ -195,16 +195,27 @@ class DingTalkAutoReplyWorker:
         attempt = self.store.get_reply_attempt(attempt_id)
         if attempt is None or attempt.send_status != "sent":
             return
-        sent_reply = self.store.get_sent_reply(
-            attempt.conversation_id,
-            attempt.trigger_message_id,
-        )
-        payload = build_reply_sent_memory_payload(attempt, sent_reply)
-        self.store.enqueue_memory_write_event(
-            attempt_id=attempt.id,
-            event_type="reply_sent",
-            payload_json=memory_payload_json(payload),
-        )
+        try:
+            sent_reply = self.store.get_sent_reply(
+                attempt.conversation_id,
+                attempt.trigger_message_id,
+            )
+            payload = build_reply_sent_memory_payload(attempt, sent_reply)
+            self.store.enqueue_memory_write_event(
+                attempt_id=attempt.id,
+                event_type="reply_sent",
+                payload_json=memory_payload_json(payload),
+            )
+        except Exception as exc:
+            try:
+                self.store.record_error(
+                    attempt.conversation_id,
+                    attempt.trigger_message_id,
+                    "memory_outbox",
+                    str(exc),
+                )
+            except Exception:
+                pass
 
     def run_once(self, max_batches: int | None = None) -> None:
         self.produce_once()

@@ -3307,6 +3307,44 @@ def test_sent_reply_creates_reply_sent_memory_event(tmp_path: Path, monkeypatch)
     assert payload["provenance"]["recall_key"] == "key-1"
 
 
+def test_memory_event_enqueue_failure_does_not_fail_sent_reply(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message("@Derek Zen(磊哥) 这个怎么处理？")
+    dws = FakeDws(
+        [conversation()],
+        {"cid-1": [trigger]},
+        send_result={"result": {"processQueryKey": "key-1"}},
+    )
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="先按A方案走")
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+
+    def fail_enqueue(*_, **__):
+        raise RuntimeError("outbox locked")
+
+    monkeypatch.setattr(worker.store, "enqueue_memory_write_event", fail_enqueue)
+
+    worker._process_batch(
+        conversation(),
+        [trigger],
+        [trigger],
+        raise_on_delivery_failure=True,
+    )
+
+    attempt = worker.store.get_reply_attempt(1)
+    assert attempt is not None
+    assert attempt.send_status == "sent"
+    assert worker.store.get_sent_reply("cid-1", "msg-1") is not None
+    errors = worker.store.list_errors()
+    assert len(errors) == 1
+    assert errors[0].conversation_id == "cid-1"
+    assert errors[0].message_id == "msg-1"
+    assert errors[0].kind == "memory_outbox"
+    assert "outbox locked" in errors[0].detail
+
+
 def test_dry_run_reply_does_not_create_memory_event(tmp_path: Path, monkeypatch):
     trigger = message("@Derek Zen(磊哥) 这个怎么处理？")
     dws = FakeDws([conversation()], {"cid-1": [trigger]})
