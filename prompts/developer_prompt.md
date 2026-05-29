@@ -30,6 +30,7 @@ calendar_rules_path = /Users/derek/Documents/memory/management/OA/日历规则.m
 
 检索原则：
 - 默认不了解当前业务背景；除非问题只是寒暄、确认收到、简单排期或上下文事实已经完整，否则先检索必要背景再判断。检索优先级是：本地文件、dws aisearch、dws 知识库；同时善用 dws 工具获取审批、日程、文档、链接、图片等材料。
+- memory_connector MCP is available for durable project/person/decision/event recall. Use it when durable memory would materially improve the reply; recall is optional and not required for trivial replies. Calls to user_get, memory_recall, memory_write, or document_upload must pass user_id="derek".
 - 如果 prompt 中有“发信人组织信息(JSON)”，回复前必须先结合对方的 title、org_labels、manager、departments 和 has_subordinate 判断回复口径；没有列出的字段不要编造职位或上下级关系。
 - 检索必须围绕当前问题需要的事实，优先 1-3 个精确查询或文件读取，避免用宽泛词扫描整个 workspace。
 - 当问题依赖本地知识图谱关系、跨文档背景或历史决策链时，可以使用 graphify。先阅读 `graphify-out/GRAPH_REPORT.md` 的相关部分，再用 `graphify query "<具体问题>"`、`graphify explain "<具体概念>"` 或 `graphify path "<A>" "<B>"` 找关系，并只打开与当前回复直接相关的文件。

@@ -52,15 +52,23 @@ def _sent_reply() -> SentReply:
 
 
 def test_build_reply_sent_memory_payload_uses_sent_reply_details():
-    payload = build_reply_sent_memory_payload(_reply_attempt(), _sent_reply())
+    payload = build_reply_sent_memory_payload(
+        _reply_attempt(),
+        _sent_reply(),
+        single_chat=False,
+        trigger_created_at="2026-05-29 10:05:00",
+    )
 
     assert payload["event"] == "reply_sent"
     assert payload["conversation"] == {
         "conversation_id": "cid-1",
         "title": "产品讨论",
+        "single_chat": False,
     }
     assert payload["trigger"]["message_id"] == "msg-1"
+    assert payload["trigger"]["sender"] == "Mina"
     assert payload["trigger"]["text"] == "@Derek Zen 看一下这个方案"
+    assert payload["trigger"]["created_at"] == "2026-05-29 10:05:00"
     assert payload["decision"]["codex_reason"] == "用户需要明确答复"
     assert payload["decision"]["audit_summary"] == "已检查上下文"
     assert payload["result"] == {
@@ -72,6 +80,10 @@ def test_build_reply_sent_memory_payload_uses_sent_reply_details():
     assert payload["provenance"]["sent_reply_id"] == 7
     assert payload["provenance"]["recall_key"] == "recall-1"
     assert payload["provenance"]["send_result_available"] is True
+    assert payload["provenance"]["send_result"] == {
+        "message_id": "reply-1",
+        "ok": True,
+    }
     assert "send_result_json" not in payload["provenance"]
     assert "send_result_json" not in memory_payload_json(payload)
 
@@ -79,17 +91,25 @@ def test_build_reply_sent_memory_payload_uses_sent_reply_details():
 def test_build_reply_sent_memory_payload_without_sent_reply_uses_attempt_timestamp():
     payload = build_reply_sent_memory_payload(_reply_attempt())
 
+    assert payload["conversation"]["single_chat"] is None
+    assert payload["trigger"]["created_at"] is None
     assert payload["result"]["final_reply_text"] == "最终回复"
     assert payload["result"]["sent_at"] == "2026-05-29 10:20:00"
     assert "sent_reply_id" not in payload["provenance"]
 
 
 def test_build_review_correction_memory_payload_includes_original_and_review():
-    payload = build_review_correction_memory_payload(_reply_attempt())
+    payload = build_review_correction_memory_payload(
+        _reply_attempt(),
+        single_chat=True,
+        trigger_created_at="2026-05-29 10:05:00",
+    )
 
     assert payload["event"] == "review_correction"
     assert payload["conversation"]["title"] == "产品讨论"
+    assert payload["conversation"]["single_chat"] is True
     assert payload["trigger"]["sender"] == "Mina"
+    assert payload["trigger"]["created_at"] == "2026-05-29 10:05:00"
     assert payload["original"] == {
         "action": "send_reply",
         "sensitivity_kind": "normal",
@@ -109,6 +129,40 @@ def test_build_review_correction_memory_payload_includes_original_and_review():
         "codex_transcript_start_line": 10,
         "codex_transcript_end_line": 24,
     }
+
+
+def test_send_result_metadata_is_compact_bounded_and_non_sensitive():
+    send_result = {
+        "ok": True,
+        "access_token": "secret",
+        "result": {
+            "processQueryKey": "query-1",
+            "open_message_id": "open-reply-1",
+            "conversationId": "cid-ignored",
+            "nested": {"not": "included"},
+        },
+        "data": {
+            "messageId": "reply-2",
+            "taskId": "task-1",
+            "long": "x" * 300,
+        },
+    }
+    sent_reply = _sent_reply().model_copy(
+        update={"send_result_json": json.dumps(send_result, ensure_ascii=False)}
+    )
+
+    payload = build_reply_sent_memory_payload(_reply_attempt(), sent_reply)
+
+    assert payload["provenance"]["send_result"] == {
+        "ok": True,
+        "processQueryKey": "query-1",
+        "open_message_id": "open-reply-1",
+        "messageId": "reply-2",
+        "taskId": "task-1",
+    }
+    assert "access_token" not in memory_payload_json(payload)
+    assert "cid-ignored" not in memory_payload_json(payload)
+    assert "x" * 100 not in memory_payload_json(payload)
 
 
 def test_memory_payload_json_sorts_keys_and_preserves_chinese_text():
