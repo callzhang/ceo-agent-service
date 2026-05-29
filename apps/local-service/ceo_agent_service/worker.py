@@ -448,10 +448,6 @@ class DingTalkAutoReplyWorker:
                         "reply_task_retry",
                         error,
                     )
-                    self._notify(
-                        title=f"CEO task retrying: {task.conversation_title}",
-                        message=error[:120],
-                    )
                     continue
                 self.store.fail_reply_task(task.id, error)
                 self.store.record_error(

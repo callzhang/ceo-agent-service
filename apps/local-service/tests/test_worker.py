@@ -1080,8 +1080,9 @@ def test_consume_once_retries_task_failure_before_final_failure(
     assert worker.store.count_reply_tasks(status="pending") == 0
     assert worker.store.count_reply_tasks(status="failed") == 1
     assert worker.store.count_errors() == 2
-    assert notifications[0]["title"] == "CEO task retrying: Friday"
-    assert notifications[-1]["title"] == "CEO task failed: Friday"
+    assert [notification["title"] for notification in notifications] == [
+        "CEO task failed: Friday"
+    ]
 
 
 def test_consume_once_authorization_failure_waits_without_final_failure(
