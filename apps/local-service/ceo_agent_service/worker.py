@@ -43,10 +43,6 @@ from ceo_agent_service.leak_check import (
     contains_forbidden_leak,
     redact_forbidden_leak_markers,
 )
-from ceo_agent_service.memory_events import (
-    build_reply_sent_memory_payload,
-    memory_payload_json,
-)
 from ceo_agent_service.notification import send_macos_notification
 from ceo_agent_service.oa_approval import extract_oa_url
 from ceo_agent_service.org_cache import (
@@ -190,32 +186,6 @@ class DingTalkAutoReplyWorker:
         self.now_provider = now_provider or (lambda: datetime.now().astimezone())
         self.permission_gate = PermissionGate(dws)
         self.oa_approval_runner = oa_approval_runner
-
-    def _enqueue_reply_sent_memory_event(self, attempt_id: int) -> None:
-        attempt = self.store.get_reply_attempt(attempt_id)
-        if attempt is None or attempt.send_status != "sent":
-            return
-        try:
-            sent_reply = self.store.get_sent_reply(
-                attempt.conversation_id,
-                attempt.trigger_message_id,
-            )
-            payload = build_reply_sent_memory_payload(attempt, sent_reply)
-            self.store.enqueue_memory_write_event(
-                attempt_id=attempt.id,
-                event_type="reply_sent",
-                payload_json=memory_payload_json(payload),
-            )
-        except Exception as exc:
-            try:
-                self.store.record_error(
-                    attempt.conversation_id,
-                    attempt.trigger_message_id,
-                    "memory_outbox",
-                    str(exc),
-                )
-            except Exception:
-                pass
 
     def run_once(self, max_batches: int | None = None) -> None:
         self.produce_once()
@@ -2147,7 +2117,7 @@ class DingTalkAutoReplyWorker:
                         context_messages=context_messages,
                     )
                 )
-                send_result = self._send_reply_to_trigger(
+                self._send_reply_to_trigger(
                     conversation,
                     trigger,
                     handoff_reply_text,
@@ -2184,15 +2154,7 @@ class DingTalkAutoReplyWorker:
                 final_reply_text=handoff_reply_text,
                 send_status="sent",
             )
-            self.store.record_sent_reply(
-                conversation.open_conversation_id,
-                trigger.open_message_id,
-                handoff_reply_text,
-                send_result_json=json.dumps(send_result or {}, ensure_ascii=False),
-                recall_key=DwsClient.extract_recall_key(send_result),
-            )
             self._mark_seen(new_messages)
-            self._enqueue_reply_sent_memory_event(attempt_id)
             self._notify(
                 title=f"CEO handoff: {conversation.title}",
                 message=trigger.content[:120],
@@ -2258,12 +2220,6 @@ class DingTalkAutoReplyWorker:
             trigger.open_message_id,
         )
         if sent_reply is not None:
-            attempt = self.store.get_latest_reply_attempt_for_trigger(
-                conversation.open_conversation_id,
-                trigger.open_message_id,
-            )
-            if attempt is not None and attempt.send_status == "sent":
-                self._enqueue_reply_sent_memory_event(attempt.id)
             self._mark_seen(new_messages)
             return True
         attempt = self.store.get_latest_reply_attempt_for_trigger(
@@ -2278,11 +2234,7 @@ class DingTalkAutoReplyWorker:
             and attempt.codex_reason == "system_or_notification_message"
         ):
             return False
-        if attempt.send_status == "sent":
-            self._enqueue_reply_sent_memory_event(attempt.id)
-            self._mark_seen(new_messages)
-            return True
-        if attempt.send_status in {"skipped", "blocked"}:
+        if attempt.send_status in {"sent", "skipped", "blocked"}:
             self._mark_seen(new_messages)
             return True
         if attempt.send_status == "dry_run":
@@ -3256,7 +3208,6 @@ class DingTalkAutoReplyWorker:
             recall_key=DwsClient.extract_recall_key(send_result),
         )
         self._mark_seen(new_messages)
-        self._enqueue_reply_sent_memory_event(attempt_id)
 
     def _send(
         self,

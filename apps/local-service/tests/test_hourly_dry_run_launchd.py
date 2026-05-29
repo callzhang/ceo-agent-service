@@ -95,29 +95,6 @@ def test_reply_consumer_launch_agent_runs_as_live_keepalive_consumer():
     assert "--poll-interval-seconds 10" in command[2]
 
 
-def test_memory_flush_launch_agent_runs_independently_every_minute():
-    plist_path = REPO_ROOT / "launchd" / "com.derek.ceo-agent-service.memory-flush.plist"
-
-    with plist_path.open("rb") as file:
-        plist = plistlib.load(file)
-
-    assert plist["Label"] == "com.derek.ceo-agent-service.memory-flush"
-    assert plist["RunAtLoad"] is True
-    assert plist["StartInterval"] == 60
-    assert "KeepAlive" not in plist
-    assert plist["StandardOutPath"].endswith("/memory-flush.out.log")
-    assert plist["StandardErrorPath"].endswith("/memory-flush.err.log")
-    command = plist["ProgramArguments"]
-    assert command[:2] == ["/bin/zsh", "-lc"]
-    assert "memory_connector.env" in command[2]
-    assert "flush-memory-events" in command[2]
-    assert "--db /Users/derek/Documents/Projects/ceo-agent-service/data/auto-reply.sqlite3" in command[2]
-    assert "--workspace /Users/derek/Documents/memory" in command[2]
-    assert "--corpus-dir /Users/derek/Documents/Projects/ceo-agent-service/corpus" in command[2]
-    assert "--limit 20" in command[2]
-    assert "consume" not in command[2]
-
-
 def test_hourly_dry_run_install_script_installs_and_kickstarts_launch_agent():
     script = REPO_ROOT / "scripts" / "install-auto-reply-agents.sh"
 
@@ -125,9 +102,9 @@ def test_hourly_dry_run_install_script_installs_and_kickstarts_launch_agent():
 
     assert "com.derek.ceo-agent-service.reply-producer.plist" in content
     assert "com.derek.ceo-agent-service.reply-consumer.plist" in content
-    assert "com.derek.ceo-agent-service.memory-flush.plist" in content
     assert "com.derek.ceo-agent-service.hourly-dry-run" in content
     assert "com.derek.ceo-agent-service.dry-run-consumer" in content
+    assert "com.derek.ceo-agent-service.memory-flush" in content
     assert "launchctl bootout" in content
     assert "launchctl bootstrap" in content
     assert "launchctl kickstart -k" in content

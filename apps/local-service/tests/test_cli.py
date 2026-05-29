@@ -68,62 +68,6 @@ def test_parser_supports_reset_codex_sessions_command():
     assert args.db == "/tmp/worker.sqlite3"
 
 
-def test_parser_supports_flush_memory_events_command():
-    parser = build_parser()
-
-    args = parser.parse_args(["flush-memory-events", "--limit", "5"])
-
-    assert args.command == "flush-memory-events"
-    assert args.limit == 5
-
-
-def test_flush_memory_events_command_loads_memory_connector_env_file(
-    monkeypatch, tmp_path, capsys
-):
-    codex_home = tmp_path / ".codex"
-    codex_home.mkdir()
-    (codex_home / "memory_connector.env").write_text(
-        "\n".join(
-            [
-                "export CONNECTOR_API_KEY='file-token'",
-                "export MEMORY_CONNECTOR_URL='https://memory.example/mcp/'",
-                "export MEMORY_CONNECTOR_USER_ID='derek'",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    monkeypatch.setenv("CODEX_HOME", str(codex_home))
-    monkeypatch.delenv("CONNECTOR_API_KEY", raising=False)
-    monkeypatch.delenv("MEMORY_CONNECTOR_URL", raising=False)
-    monkeypatch.delenv("MEMORY_CONNECTOR_USER_ID", raising=False)
-    observed = {}
-
-    def fake_flush(store, client, limit):
-        observed["client_url"] = client.url
-        observed["client_token"] = client.token
-        observed["client_user_id"] = client.user_id
-        observed["limit"] = limit
-        return 3
-
-    monkeypatch.setattr(cli, "flush_memory_events", fake_flush)
-    settings = WorkerSettings(
-        workspace=tmp_path / "workspace",
-        db_path=tmp_path / "worker.sqlite3",
-        corpus_dir=tmp_path / "corpus",
-    )
-
-    sent_count = cli.flush_memory_events_command(settings, limit=5)
-
-    assert sent_count == 3
-    assert observed == {
-        "client_url": "https://memory.example/mcp/",
-        "client_token": "file-token",
-        "client_user_id": "derek",
-        "limit": 5,
-    }
-    assert capsys.readouterr().out == "flush-memory-events sent=3\n"
-
-
 def test_parser_supports_rerun_message_command():
     parser = build_parser()
 
@@ -1677,80 +1621,7 @@ def test_record_feedback_command_updates_reply_attempt(tmp_path, capsys):
     assert attempt is not None
     assert attempt.reviewer_feedback == "需要更严谨"
     assert attempt.corrected_reply_text == "先看材料再判断。"
-    events = store.get_memory_write_events_for_attempt(attempt_id)
-    assert len(events) == 1
-    assert events[0].event_type == "review_correction"
-    payload = json.loads(events[0].payload_json)
-    assert payload["event"] == "review_correction"
-    assert payload["review"]["reviewer_feedback"] == "需要更严谨"
-    assert payload["review"]["corrected_reply_text"] == "先看材料再判断。"
     assert "feedback recorded attempt_id=1" in capsys.readouterr().out
-
-
-def test_record_feedback_command_skips_memory_event_for_blank_review(tmp_path):
-    settings = WorkerSettings(
-        workspace=tmp_path / "workspace",
-        db_path=tmp_path / "worker.sqlite3",
-        corpus_dir=tmp_path / "corpus",
-    )
-    store = cli.AutoReplyStore(settings.db_path)
-    attempt_id = store.record_reply_attempt(
-        conversation_id="cid-1",
-        conversation_title="技术部",
-        trigger_message_id="msg-1",
-        trigger_sender="Xiaomin",
-        trigger_text="@Derek Zen 这个怎么处理？",
-        action="send_reply",
-        sensitivity_kind="general",
-    )
-
-    record_feedback_command(
-        settings,
-        attempt_id=attempt_id,
-        feedback="   ",
-        corrected_reply="",
-    )
-
-    assert store.get_memory_write_events_for_attempt(attempt_id) == []
-
-
-def test_record_feedback_command_keeps_feedback_when_memory_enqueue_fails(
-    monkeypatch, tmp_path, capsys
-):
-    settings = WorkerSettings(
-        workspace=tmp_path / "workspace",
-        db_path=tmp_path / "worker.sqlite3",
-        corpus_dir=tmp_path / "corpus",
-    )
-    store = cli.AutoReplyStore(settings.db_path)
-    attempt_id = store.record_reply_attempt(
-        conversation_id="cid-1",
-        conversation_title="技术部",
-        trigger_message_id="msg-1",
-        trigger_sender="Xiaomin",
-        trigger_text="@Derek Zen 这个怎么处理？",
-        action="send_reply",
-        sensitivity_kind="general",
-    )
-
-    def fail_enqueue(store, attempt_id):
-        raise RuntimeError("outbox unavailable")
-
-    monkeypatch.setattr(cli, "enqueue_review_correction_memory_event", fail_enqueue)
-
-    record_feedback_command(
-        settings,
-        attempt_id=attempt_id,
-        feedback="需要更严谨",
-        corrected_reply="先看材料再判断。",
-    )
-
-    attempt = store.get_reply_attempt(attempt_id)
-    output = capsys.readouterr()
-    assert attempt is not None
-    assert attempt.reviewer_feedback == "需要更严谨"
-    assert attempt.corrected_reply_text == "先看材料再判断。"
-    assert "feedback recorded attempt_id=1" in output.out
 
 
 def test_record_feedback_command_fails_when_attempt_is_missing(tmp_path):

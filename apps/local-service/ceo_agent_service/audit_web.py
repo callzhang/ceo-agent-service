@@ -36,10 +36,8 @@ from ceo_agent_service.dingtalk_models import (
     SensitivityKind,
 )
 from ceo_agent_service.dws_client import DwsClient
-from ceo_agent_service.memory_events import enqueue_review_correction_memory_event
 from ceo_agent_service.store import (
     AutoReplyStore,
-    MemoryWriteEvent,
     ReplyAttempt,
     ReplyError,
     ReplyTask,
@@ -307,10 +305,9 @@ def render_attempt_detail(store: AutoReplyStore, attempt_id: int) -> tuple[int, 
     codex_session_id = attempt.codex_session_id or store.get_codex_session_id(
         attempt.conversation_id
     )
-    memory_events = store.get_memory_write_events_for_attempt(attempt.id)
     return 200, render_page(
         f"Attempt #{attempt.id}",
-        _attempt_detail_body(attempt, sent_reply, codex_session_id, memory_events),
+        _attempt_detail_body(attempt, sent_reply, codex_session_id),
     )
 
 
@@ -593,15 +590,6 @@ def _error_resolution_label(store: AutoReplyStore, error: ReplyError) -> str:
     return "active"
 
 
-def _try_enqueue_review_correction_memory_event(
-    store: AutoReplyStore, attempt_id: int
-) -> None:
-    try:
-        enqueue_review_correction_memory_event(store, attempt_id)
-    except Exception:
-        return
-
-
 def handle_feedback_post(
     store: AutoReplyStore, attempt_id: int, body: bytes
 ) -> tuple[int, dict[str, str], str]:
@@ -614,7 +602,6 @@ def handle_feedback_post(
         corrected_reply_text=corrected_reply,
     ):
         return 404, {}, render_page("Attempt not found", "Attempt not found")
-    _try_enqueue_review_correction_memory_event(store, attempt_id)
     return 303, {"Location": f"/attempts/{attempt_id}"}, ""
 
 
@@ -766,7 +753,6 @@ def handle_reviewed_message_reply(
             feedback=reviewer_feedback,
             corrected_reply_text=reply_text,
         )
-        _try_enqueue_review_correction_memory_event(store, attempt_id)
     attempt = store.get_reply_attempt(attempt_id)
     if attempt is None:
         raise ValueError(f"reply attempt disappeared: {attempt_id}")
@@ -950,7 +936,6 @@ def _attempt_detail_body(
     attempt: ReplyAttempt,
     sent_reply: SentReply | None,
     codex_session_id: str | None,
-    memory_events: list[MemoryWriteEvent],
 ) -> str:
     fields = [
         ("conversation", attempt.conversation_title),
@@ -977,7 +962,6 @@ def _attempt_detail_body(
         f"{_quality_warning_card(attempt)}"
         f"{_context_only_info_card(attempt)}"
         f"{_oa_metadata_card(attempt)}"
-        f"{_memory_write_state_card(memory_events)}"
         f"{_recall_card(attempt, sent_reply)}"
         f"{_codex_session_card(codex_session_id, attempt)}"
         f"{_text_card('Trigger', attempt.trigger_text)}"
@@ -987,41 +971,6 @@ def _attempt_detail_body(
         f"{_collapsible_json_card('Audit tool events', attempt.audit_tool_events_json)}"
         f"{_text_card('Draft reply (raw Codex reply)', attempt.draft_reply_text)}"
         f"{_text_card('Final reply (send-ready text)', attempt.final_reply_text)}"
-    )
-
-
-def _memory_write_state_card(events: list[MemoryWriteEvent]) -> str:
-    if not events:
-        return (
-            "<section class=\"card compact-card\"><h2>Memory write</h2>"
-            "<p class=\"muted\">No memory write event recorded for this attempt.</p>"
-            "</section>"
-        )
-    event_sections = []
-    for event in events:
-        fields = [
-            ("event type", event.event_type),
-            ("status", event.status),
-            ("attempts", str(event.attempts)),
-            ("last error", event.last_error),
-            ("memory episode id", event.memory_episode_id),
-            ("updated", event.updated_at),
-        ]
-        rows = "".join(
-            f"<div class=\"muted\">{escape(label)}</div><div>{escape(value)}</div>"
-            for label, value in fields
-        )
-        event_sections.append(
-            "<div class=\"reply-meta\">"
-            f"<span class=\"pill\">{escape(event.event_type)}</span>"
-            f"<span class=\"pill status-{escape(event.status)}\">{escape(event.status)}</span>"
-            "</div>"
-            f"<div class=\"grid\">{rows}</div>"
-        )
-    return (
-        "<section class=\"card compact-card\"><h2>Memory write</h2>"
-        + "".join(event_sections)
-        + "</section>"
     )
 
 

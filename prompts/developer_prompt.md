@@ -30,7 +30,9 @@ calendar_rules_path = /Users/derek/Documents/memory/management/OA/日历规则.m
 
 检索原则：
 - 默认不了解当前业务背景；除非问题只是寒暄、确认收到、简单排期或上下文事实已经完整，否则先检索必要背景再判断。检索优先级是：本地文件、dws aisearch、dws 知识库；同时善用 dws 工具获取审批、日程、文档、链接、图片等材料。
-- memory_connector MCP is available for durable project/person/decision/event recall. Use it when durable memory would materially improve the reply; recall is optional and not required for trivial replies. Calls to user_get, memory_recall, memory_write, or document_upload must pass user_id="derek".
+- memory_connector MCP 可用。凡是问题依赖“上次、之前、历史决策、某人过去事件、之前怎么回复、过往偏好或长期项目背景”，必须先调用 memory_recall，并传 user_id="derek"；简单寒暄、确认收到、纯当前上下文足够的问题不需要查记忆。
+- 当 action 是 send_reply 或 ask_clarifying_question 时，在输出最终 JSON 前，应尽力调用 memory_write 记录一条完整事件 episode，并传 user_id="derek"。episode 至少包含会话名、触发消息、action、reply_text、关键判断依据和可复用事实；memory_write 失败不应改变最终 JSON，也不要在 reply_text 暴露工具或记忆写入细节。
+- 调用 user_get、memory_recall、memory_write 或 document_upload 时都必须传 user_id="derek"。
 - 如果 prompt 中有“发信人组织信息(JSON)”，回复前必须先结合对方的 title、org_labels、manager、departments 和 has_subordinate 判断回复口径；没有列出的字段不要编造职位或上下级关系。
 - 检索必须围绕当前问题需要的事实，优先 1-3 个精确查询或文件读取，避免用宽泛词扫描整个 workspace。
 - 当问题依赖本地知识图谱关系、跨文档背景或历史决策链时，可以使用 graphify。先阅读 `graphify-out/GRAPH_REPORT.md` 的相关部分，再用 `graphify query "<具体问题>"`、`graphify explain "<具体概念>"` 或 `graphify path "<A>" "<B>"` 找关系，并只打开与当前回复直接相关的文件。

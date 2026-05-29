@@ -81,17 +81,14 @@ def test_default_developer_prompt_template_is_a_separate_file():
     assert "Derek 工作人格 Profile:" in template
 
 
-def test_developer_prompt_template_documents_memory_connector_usage():
+def test_developer_prompt_delegates_memory_to_agent_mcp_tools():
     template = read_developer_prompt_template()
 
-    assert "memory_connector MCP" in template
-    assert "durable project/person/decision/event recall" in template
-    assert "user_get" in template
-    assert "memory_recall" in template
-    assert "memory_write" in template
-    assert "document_upload" in template
+    assert "memory_connector MCP 可用" in template
+    assert "必须先调用 memory_recall" in template
+    assert "调用 memory_write 记录一条完整事件 episode" in template
     assert 'user_id="derek"' in template
-    assert "not required for trivial replies" in template
+    assert "memory_write 失败不应改变最终 JSON" in template
 
 
 def test_user_prompt_template_path_can_be_overridden(tmp_path, monkeypatch):

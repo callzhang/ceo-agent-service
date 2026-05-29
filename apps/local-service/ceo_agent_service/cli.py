@@ -2,7 +2,6 @@ import argparse
 import json
 import os
 import re
-import sys
 import time
 from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
@@ -28,9 +27,6 @@ from ceo_agent_service.dws_client import (
 )
 from ceo_agent_service.leak_check import contains_forbidden_leak
 from ceo_agent_service.dingtalk_models import CodexAction, DingTalkConversation
-from ceo_agent_service.memory_connector import MemoryConnectorClient
-from ceo_agent_service.memory_events import enqueue_review_correction_memory_event
-from ceo_agent_service.memory_flush import flush_memory_events
 from ceo_agent_service.notification import send_macos_notification
 from ceo_agent_service.oa_approval import OaApprovalCodexRunner
 from ceo_agent_service.org_cache import (
@@ -131,19 +127,6 @@ def _non_negative_float(value: str) -> float:
     return parsed
 
 
-def _try_enqueue_review_correction_memory_event(
-    store: AutoReplyStore, attempt_id: int
-) -> None:
-    try:
-        enqueue_review_correction_memory_event(store, attempt_id)
-    except Exception as exc:
-        print(
-            f"warning: review correction memory enqueue failed: {exc}",
-            file=sys.stderr,
-            flush=True,
-        )
-
-
 def build_parser() -> argparse.ArgumentParser:
     defaults = WorkerSettings()
     parser = argparse.ArgumentParser(prog="ceo-agent")
@@ -168,7 +151,6 @@ def build_parser() -> argparse.ArgumentParser:
         "send-attempt",
         "reset-codex-sessions",
         "build-work-profile",
-        "flush-memory-events",
     ):
         subparser = subparsers.add_parser(command)
         subparser.add_argument("--db", default=os.getenv("CEO_WORKER_DB", str(defaults.db_path)))
@@ -296,8 +278,6 @@ def build_parser() -> argparse.ArgumentParser:
             )
         if command == "send-attempt":
             subparser.add_argument("--attempt-id", type=int, required=True)
-        if command == "flush-memory-events":
-            subparser.add_argument("--limit", type=_positive_int, default=20)
         if command == "build-work-profile":
             include_dingtalk_messages_default = not _env_bool(
                 "CEO_PROFILE_SKIP_DINGTALK_MESSAGES", False
@@ -837,7 +817,6 @@ def record_feedback_command(
     )
     if not updated:
         raise SystemExit(f"reply attempt not found: {attempt_id}")
-    _try_enqueue_review_correction_memory_event(store, attempt_id)
     print(f"feedback recorded attempt_id={attempt_id}", flush=True)
 
 
@@ -1072,14 +1051,6 @@ def build_work_profile_command(
     return len(evidence)
 
 
-def flush_memory_events_command(settings: WorkerSettings, limit: int) -> int:
-    store = AutoReplyStore(settings.db_path)
-    client = MemoryConnectorClient()
-    sent_count = flush_memory_events(store, client, limit)
-    print(f"flush-memory-events sent={sent_count}", flush=True)
-    return sent_count
-
-
 def probe_dws() -> int:
     dws = DwsClient()
     blocked = False
@@ -1147,8 +1118,6 @@ def main() -> None:
             include_dingtalk_kb=args.include_dingtalk_kb,
             dingtalk_kb_workspace=args.dingtalk_kb_workspace,
         )
-    elif args.command == "flush-memory-events":
-        flush_memory_events_command(settings, args.limit)
     elif args.command == "probe-dws":
         raise SystemExit(probe_dws())
     elif args.command == "refresh-org-cache":

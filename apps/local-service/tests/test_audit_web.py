@@ -1,4 +1,3 @@
-import json
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -621,13 +620,6 @@ def test_fastapi_app_records_feedback_and_redirects(tmp_path: Path):
     assert attempt is not None
     assert attempt.reviewer_feedback == "需要更严谨"
     assert attempt.corrected_reply_text == "先看材料"
-    events = store.get_memory_write_events_for_attempt(attempt_id)
-    assert len(events) == 1
-    assert events[0].event_type == "review_correction"
-    payload = json.loads(events[0].payload_json)
-    assert payload["event"] == "review_correction"
-    assert payload["review"]["reviewer_feedback"] == "需要更严谨"
-    assert payload["review"]["corrected_reply_text"] == "先看材料"
 
 
 def test_render_attempt_detail_shows_full_decision_and_feedback_form(tmp_path: Path):
@@ -671,54 +663,6 @@ def test_render_attempt_detail_shows_full_decision_and_feedback_form(tmp_path: P
     assert "撤销发送" in html
     assert "撤销不可用" in html
     assert "当前发送方式不支持" in html
-
-
-def test_render_attempt_detail_shows_memory_write_state(tmp_path: Path):
-    store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    attempt_id = seed_attempt(store)
-
-    status, html = render_attempt_detail(store, attempt_id)
-
-    assert status == 200
-    assert "Memory write" in html
-    assert "No memory write event recorded for this attempt." in html
-
-    pending_id = store.enqueue_memory_write_event(
-        attempt_id=attempt_id,
-        event_type="reply_sent",
-        payload_json='{"event":"reply_sent"}',
-    )
-    status, html = render_attempt_detail(store, attempt_id)
-
-    assert status == 200
-    assert "reply_sent" in html
-    assert "pending" in html
-    assert "attempts" in html
-    assert "memory episode id" in html
-    assert "updated" in html
-
-    processing_event = store.claim_memory_write_events(limit=1)[0]
-    status, html = render_attempt_detail(store, attempt_id)
-
-    assert processing_event.id == pending_id
-    assert status == 200
-    assert "processing" in html
-    assert "attempts" in html
-    assert ">1<" in html
-
-    store.mark_memory_write_event_failed(processing_event.id, "backend 502")
-    status, html = render_attempt_detail(store, attempt_id)
-
-    assert status == 200
-    assert "failed" in html
-    assert "backend 502" in html
-
-    store.mark_memory_write_event_sent(processing_event.id, "episode-123")
-    status, html = render_attempt_detail(store, attempt_id)
-
-    assert status == 200
-    assert "sent" in html
-    assert "episode-123" in html
 
 
 def test_attempt_list_uses_single_review_feedback_entrypoint(tmp_path: Path):
@@ -868,42 +812,6 @@ def test_handle_feedback_post_updates_attempt_and_redirects(tmp_path: Path):
         "feedback=%E9%9C%80%E8%A6%81%E6%9B%B4%E4%B8%A5%E8%B0%A8"
         "&corrected_reply=%E5%85%88%E7%9C%8B%E6%9D%90%E6%96%99"
     ).encode()
-
-    status, headers, html = handle_feedback_post(store, attempt_id, body)
-
-    attempt = store.get_reply_attempt(attempt_id)
-    assert status == 303
-    assert headers["Location"] == f"/attempts/{attempt_id}"
-    assert html == ""
-    assert attempt is not None
-    assert attempt.reviewer_feedback == "需要更严谨"
-    assert attempt.corrected_reply_text == "先看材料"
-    events = store.get_memory_write_events_for_attempt(attempt_id)
-    assert len(events) == 1
-    assert events[0].event_type == "review_correction"
-    payload = json.loads(events[0].payload_json)
-    assert payload["event"] == "review_correction"
-    assert payload["review"]["reviewer_feedback"] == "需要更严谨"
-    assert payload["review"]["corrected_reply_text"] == "先看材料"
-
-
-def test_handle_feedback_post_redirects_when_memory_enqueue_fails(
-    monkeypatch, tmp_path: Path
-):
-    store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    attempt_id = seed_attempt(store)
-    body = (
-        "feedback=%E9%9C%80%E8%A6%81%E6%9B%B4%E4%B8%A5%E8%B0%A8"
-        "&corrected_reply=%E5%85%88%E7%9C%8B%E6%9D%90%E6%96%99"
-    ).encode()
-
-    def fail_enqueue(store, attempt_id):
-        raise RuntimeError("outbox unavailable")
-
-    monkeypatch.setattr(
-        "ceo_agent_service.audit_web.enqueue_review_correction_memory_event",
-        fail_enqueue,
-    )
 
     status, headers, html = handle_feedback_post(store, attempt_id, body)
 
@@ -1152,17 +1060,6 @@ def test_handle_reviewed_message_reply_uses_stored_group_and_recent_message(
         == "官网是 marketing 重要内容，CEO 直接相关；这类消息需要审核并回复。"
     )
     assert attempt.corrected_reply_text == "我已经完成审核，会把核心 comment 补到 tracker。"
-    events = store.get_memory_write_events_for_attempt(result["attempt_id"])
-    assert len(events) == 2
-    review_events = [event for event in events if event.event_type == "review_correction"]
-    assert len(review_events) == 1
-    payload = json.loads(review_events[0].payload_json)
-    assert payload["event"] == "review_correction"
-    assert (
-        payload["review"]["reviewer_feedback"]
-        == "官网是 marketing 重要内容，CEO 直接相关；这类消息需要审核并回复。"
-    )
-    assert payload["review"]["corrected_reply_text"] == "我已经完成审核，会把核心 comment 补到 tracker。"
     assert dws.reply_messages == [
         (
             "cid-site",
@@ -1171,91 +1068,6 @@ def test_handle_reviewed_message_reply_uses_stored_group_and_recent_message(
             attempt.final_reply_text,
         )
     ]
-
-
-def test_handle_reviewed_message_reply_keeps_success_when_memory_enqueue_fails(
-    monkeypatch,
-    tmp_path: Path,
-):
-    class FakeDws:
-        def __init__(self):
-            self.reply_messages = []
-
-        def search_conversations(self, query):
-            return []
-
-        def read_mentioned_messages(self, conversation, limit=50):
-            return []
-
-        def read_recent_messages(self, conversation):
-            return [
-                DingTalkMessage(
-                    open_conversation_id="cid-site",
-                    open_message_id="msg-site-1",
-                    conversation_title=conversation.title,
-                    single_chat=False,
-                    sender_name="Claire",
-                    sender_open_dingtalk_id="open-claire",
-                    sender_user_id="user-claire",
-                    create_time="2026-05-28 04:04:53",
-                    content="@All 新的官网更新一共16页，请大家打开每一个的html文档",
-                )
-            ]
-
-        def read_unread_messages(self, conversation):
-            return []
-
-        def reply_message(
-            self,
-            conversation_id,
-            ref_message_id,
-            ref_sender_open_dingtalk_id,
-            text,
-        ):
-            self.reply_messages.append(
-                (conversation_id, ref_message_id, ref_sender_open_dingtalk_id, text)
-            )
-            return {"result": {"processQueryKey": "recall-site-1"}}
-
-    def fail_enqueue(store, attempt_id):
-        raise RuntimeError("outbox unavailable")
-
-    monkeypatch.setattr(
-        "ceo_agent_service.worker.send_macos_notification",
-        lambda **kwargs: None,
-    )
-    monkeypatch.setattr(
-        "ceo_agent_service.audit_web.enqueue_review_correction_memory_event",
-        fail_enqueue,
-    )
-    store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    store.upsert_conversation(
-        "cid-site",
-        title="官网迭代群",
-        single_chat=False,
-        codex_session_id=None,
-    )
-
-    result = handle_reviewed_message_reply(
-        store,
-        FakeDws(),
-        user_name="Claire",
-        group_name="官网迭代群",
-        message_str="@All 新的官网更新一共16页，请大家打开每一个的html文档",
-        reply_text="我已经完成审核，会把核心 comment 补到 tracker。",
-        reviewer_feedback=(
-            "官网是 marketing 重要内容，CEO 直接相关；这类消息需要审核并回复。"
-        ),
-    )
-
-    attempt = store.get_reply_attempt(result["attempt_id"])
-    assert result["send_status"] == "sent"
-    assert attempt is not None
-    assert (
-        attempt.reviewer_feedback
-        == "官网是 marketing 重要内容，CEO 直接相关；这类消息需要审核并回复。"
-    )
-    assert attempt.corrected_reply_text == "我已经完成审核，会把核心 comment 补到 tracker。"
 
 
 def test_handle_reviewed_message_reply_matches_private_message_without_mention(
