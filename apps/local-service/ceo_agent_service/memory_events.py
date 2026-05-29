@@ -99,6 +99,14 @@ def build_reply_sent_memory_payload(
     single_chat: bool | None = None,
     trigger_created_at: str | None = None,
 ) -> dict:
+    effective_single_chat = (
+        attempt.conversation_single_chat if single_chat is None else single_chat
+    )
+    effective_trigger_created_at = (
+        trigger_created_at
+        if trigger_created_at is not None
+        else attempt.trigger_create_time or None
+    )
     final_reply_text = _memory_text(attempt.final_reply_text)
     sent_at = attempt.updated_at
     provenance = _attempt_provenance_payload(attempt)
@@ -119,8 +127,8 @@ def build_reply_sent_memory_payload(
 
     return {
         "event": "reply_sent",
-        "conversation": _conversation_payload(attempt, single_chat),
-        "trigger": _trigger_payload(attempt, trigger_created_at),
+        "conversation": _conversation_payload(attempt, effective_single_chat),
+        "trigger": _trigger_payload(attempt, effective_trigger_created_at),
         "decision": {
             "action": attempt.action,
             "sensitivity_kind": attempt.sensitivity_kind,
@@ -142,10 +150,18 @@ def build_review_correction_memory_payload(
     single_chat: bool | None = None,
     trigger_created_at: str | None = None,
 ) -> dict:
+    effective_single_chat = (
+        attempt.conversation_single_chat if single_chat is None else single_chat
+    )
+    effective_trigger_created_at = (
+        trigger_created_at
+        if trigger_created_at is not None
+        else attempt.trigger_create_time or None
+    )
     return {
         "event": "review_correction",
-        "conversation": _conversation_payload(attempt, single_chat),
-        "trigger": _trigger_payload(attempt, trigger_created_at),
+        "conversation": _conversation_payload(attempt, effective_single_chat),
+        "trigger": _trigger_payload(attempt, effective_trigger_created_at),
         "original": {
             "action": attempt.action,
             "sensitivity_kind": attempt.sensitivity_kind,

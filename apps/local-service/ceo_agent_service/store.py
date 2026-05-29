@@ -22,7 +22,9 @@ class ReplyAttempt(BaseModel):
     id: int
     conversation_id: str
     conversation_title: str
+    conversation_single_chat: bool | None = None
     trigger_message_id: str
+    trigger_create_time: str = ""
     trigger_sender: str
     trigger_text: str
     action: str
@@ -166,7 +168,9 @@ class AutoReplyStore:
                     id integer primary key autoincrement,
                     conversation_id text not null,
                     conversation_title text not null,
+                    conversation_single_chat integer,
                     trigger_message_id text not null,
+                    trigger_create_time text not null default '',
                     trigger_sender text not null,
                     trigger_text text not null,
                     action text not null,
@@ -296,6 +300,8 @@ class AutoReplyStore:
             }
             for column, definition in (
                 ("codex_session_id", "text not null default ''"),
+                ("conversation_single_chat", "integer"),
+                ("trigger_create_time", "text not null default ''"),
                 ("direct_user_id", "text not null default ''"),
                 ("direct_open_dingtalk_id", "text not null default ''"),
                 ("codex_transcript_start_line", "integer not null default 0"),
@@ -1096,6 +1102,8 @@ class AutoReplyStore:
         trigger_text: str,
         action: str,
         sensitivity_kind: str,
+        conversation_single_chat: bool | None = None,
+        trigger_create_time: str = "",
         codex_reason: str = "",
         draft_reply_text: str = "",
         direct_user_id: str = "",
@@ -1120,7 +1128,9 @@ class AutoReplyStore:
                 insert into reply_attempts (
                     conversation_id,
                     conversation_title,
+                    conversation_single_chat,
                     trigger_message_id,
+                    trigger_create_time,
                     trigger_sender,
                     trigger_text,
                     action,
@@ -1143,12 +1153,18 @@ class AutoReplyStore:
                     oa_action_result_json,
                     send_status
                 )
-                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     conversation_id,
                     conversation_title,
+                    (
+                        None
+                        if conversation_single_chat is None
+                        else int(conversation_single_chat)
+                    ),
                     trigger_message_id,
+                    trigger_create_time,
                     trigger_sender,
                     trigger_text,
                     action,
@@ -1184,6 +1200,8 @@ class AutoReplyStore:
         trigger_text: str,
         action: str,
         sensitivity_kind: str,
+        conversation_single_chat: bool | None = None,
+        trigger_create_time: str = "",
         codex_reason: str = "",
         draft_reply_text: str = "",
         direct_user_id: str = "",
@@ -1202,6 +1220,22 @@ class AutoReplyStore:
         oa_action_result_json: str = "",
         send_status: str = "pending",
     ) -> int:
+        if conversation_single_chat is None or not trigger_create_time:
+            with self._connect() as db:
+                task_row = db.execute(
+                    """
+                    select single_chat, trigger_create_time
+                    from reply_tasks
+                    where conversation_id=? and trigger_message_id=?
+                    limit 1
+                    """,
+                    (conversation_id, trigger_message_id),
+                ).fetchone()
+            if task_row is not None:
+                if conversation_single_chat is None:
+                    conversation_single_chat = bool(task_row["single_chat"])
+                if not trigger_create_time:
+                    trigger_create_time = task_row["trigger_create_time"]
         existing_attempt = self.get_latest_reply_attempt_for_trigger(
             conversation_id, trigger_message_id
         )
@@ -1209,7 +1243,9 @@ class AutoReplyStore:
             return self.record_reply_attempt(
                 conversation_id=conversation_id,
                 conversation_title=conversation_title,
+                conversation_single_chat=conversation_single_chat,
                 trigger_message_id=trigger_message_id,
+                trigger_create_time=trigger_create_time,
                 trigger_sender=trigger_sender,
                 trigger_text=trigger_text,
                 action=action,
@@ -1238,7 +1274,9 @@ class AutoReplyStore:
                 update reply_attempts
                 set conversation_id=?,
                     conversation_title=?,
+                    conversation_single_chat=?,
                     trigger_message_id=?,
+                    trigger_create_time=?,
                     trigger_sender=?,
                     trigger_text=?,
                     action=?,
@@ -1271,7 +1309,13 @@ class AutoReplyStore:
                 (
                     conversation_id,
                     conversation_title,
+                    (
+                        None
+                        if conversation_single_chat is None
+                        else int(conversation_single_chat)
+                    ),
                     trigger_message_id,
+                    trigger_create_time,
                     trigger_sender,
                     trigger_text,
                     action,

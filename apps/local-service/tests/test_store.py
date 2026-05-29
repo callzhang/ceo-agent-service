@@ -634,6 +634,38 @@ def test_record_reply_attempt_for_trigger_reuses_existing_attempt_id(
     assert attempt.retry_count == 0
 
 
+def test_record_reply_attempt_for_trigger_copies_trigger_metadata_from_task(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="cid-1",
+        conversation_title="技术部",
+        single_chat=True,
+        trigger_message_id="msg-1",
+        trigger_create_time="2026-05-29 10:05:00",
+        trigger_sender="Xiaomin",
+        trigger_text="@Derek Zen 这个怎么处理？",
+    )
+
+    attempt_id = store.record_reply_attempt_for_trigger(
+        conversation_id="cid-1",
+        conversation_title="技术部",
+        trigger_message_id="msg-1",
+        trigger_sender="Xiaomin",
+        trigger_text="@Derek Zen 这个怎么处理？",
+        action="send_reply",
+        sensitivity_kind="general",
+        send_status="sent",
+    )
+
+    attempt = store.get_reply_attempt(attempt_id)
+
+    assert attempt is not None
+    assert attempt.conversation_single_chat is True
+    assert attempt.trigger_create_time == "2026-05-29 10:05:00"
+
+
 def test_get_latest_reply_attempt_for_trigger(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     first_id = store.record_reply_attempt(

@@ -14,7 +14,9 @@ def _reply_attempt() -> ReplyAttempt:
         id=42,
         conversation_id="cid-1",
         conversation_title="产品讨论",
+        conversation_single_chat=False,
         trigger_message_id="msg-1",
+        trigger_create_time="2026-05-29 10:05:00",
         trigger_sender="Mina",
         trigger_text="@Derek Zen 看一下这个方案",
         action="send_reply",
@@ -91,8 +93,8 @@ def test_build_reply_sent_memory_payload_uses_sent_reply_details():
 def test_build_reply_sent_memory_payload_without_sent_reply_uses_attempt_timestamp():
     payload = build_reply_sent_memory_payload(_reply_attempt())
 
-    assert payload["conversation"]["single_chat"] is None
-    assert payload["trigger"]["created_at"] is None
+    assert payload["conversation"]["single_chat"] is False
+    assert payload["trigger"]["created_at"] == "2026-05-29 10:05:00"
     assert payload["result"]["final_reply_text"] == "最终回复"
     assert payload["result"]["sent_at"] == "2026-05-29 10:20:00"
     assert "sent_reply_id" not in payload["provenance"]

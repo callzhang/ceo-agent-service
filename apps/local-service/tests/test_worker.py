@@ -3303,8 +3303,11 @@ def test_sent_reply_creates_reply_sent_memory_event(tmp_path: Path, monkeypatch)
     assert events[0].event_type == "reply_sent"
     payload = json.loads(events[0].payload_json)
     assert payload["event"] == "reply_sent"
+    assert payload["conversation"]["single_chat"] is False
+    assert payload["trigger"]["created_at"] == "2026-05-13 18:00:00"
     assert payload["result"]["final_reply_text"] == "先按A方案走（by磊哥分身）"
     assert payload["provenance"]["recall_key"] == "key-1"
+    assert payload["provenance"]["send_result"] == {"processQueryKey": "key-1"}
 
 
 def test_memory_event_enqueue_failure_does_not_fail_sent_reply(
