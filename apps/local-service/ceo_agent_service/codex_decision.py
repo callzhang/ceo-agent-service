@@ -21,6 +21,7 @@ from ceo_agent_service.process_runner import run_process_with_idle_timeout
 SIGNATURE = assistant_signature()
 CODEX_TIMEOUT_REASON_PREFIX = "codex exec timed out after"
 TIMEOUT_SESSION_DECISION_GRACE_SECONDS = 90
+SESSION_DECISION_GRACE_SECONDS = 15
 
 
 def append_signature(text: str) -> str:
@@ -336,8 +337,15 @@ class CodexDecisionRunner:
             self._validate_decision(decision)
             self._remember_audit_tool_events(raw_outputs)
             return decision
-        except (json.JSONDecodeError, ValidationError, ValueError):
-            session_decision = self._current_session_decision()
+        except (json.JSONDecodeError, ValidationError, ValueError) as exc:
+            wait_seconds = (
+                0
+                if not isinstance(exc, (json.JSONDecodeError, ValidationError))
+                else SESSION_DECISION_GRACE_SECONDS
+            )
+            session_decision = self._current_session_decision(
+                wait_seconds=wait_seconds
+            )
             if session_decision is not None:
                 try:
                     self._validate_decision(session_decision)
@@ -373,8 +381,15 @@ class CodexDecisionRunner:
                 self._validate_decision(decision)
                 self._remember_audit_tool_events(raw_outputs)
                 return decision
-            except (json.JSONDecodeError, ValidationError, ValueError):
-                session_decision = self._current_session_decision()
+            except (json.JSONDecodeError, ValidationError, ValueError) as exc:
+                wait_seconds = (
+                    0
+                    if not isinstance(exc, (json.JSONDecodeError, ValidationError))
+                    else SESSION_DECISION_GRACE_SECONDS
+                )
+                session_decision = self._current_session_decision(
+                    wait_seconds=wait_seconds
+                )
                 if session_decision is not None:
                     try:
                         self._validate_decision(session_decision)

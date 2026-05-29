@@ -563,9 +563,50 @@ def test_parse_codex_json_accepts_task_complete_last_agent_message():
     assert decision.audit_summary == "对方只是确认收到，无需回复。"
 
 
+def test_invalid_json_waits_for_session_decision_before_repair(tmp_path: Path):
+    executor = FakeExecutor(
+        [
+            "\n".join(
+                [
+                    json.dumps({"type": "thread.started", "thread_id": "thread-1"}),
+                    json.dumps({"type": "turn.started"}),
+                    json.dumps(
+                        {
+                            "type": "item.completed",
+                            "item": {"type": "reasoning", "text": "thinking"},
+                        }
+                    ),
+                ]
+            )
+        ]
+    )
+    runner = make_runner(tmp_path, executor=executor)
+    waits: list[int] = []
+    session_decision = CodexDecision(
+        action=CodexAction.SEND_REPLY,
+        reply_text="按这个口径推进。",
+        audit_documents=[],
+        audit_summary="只需上下文判断，当前消息足够确认回复。",
+    )
+
+    def fake_current_session_decision(wait_seconds: int = 0):
+        waits.append(wait_seconds)
+        return session_decision if wait_seconds > 0 else None
+
+    runner._current_session_decision = fake_current_session_decision  # type: ignore[method-assign]
+
+    decision = runner.decide(prompt="decide", session_id="thread-1")
+
+    assert decision.action == CodexAction.SEND_REPLY
+    assert decision.reply_text == "按这个口径推进。"
+    assert waits == [15]
+    assert len(executor.commands) == 1
+
+
 def test_invalid_json_twice_returns_stop_with_error(tmp_path: Path):
     executor = FakeExecutor(["not json", "still not json"])
     runner = make_runner(tmp_path, executor=executor)
+    runner._current_session_decision = lambda wait_seconds=0: None  # type: ignore[method-assign]
 
     decision = runner.decide(prompt="decide", session_id="session-1")
 
