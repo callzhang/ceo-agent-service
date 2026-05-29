@@ -477,6 +477,15 @@ def test_thread_prompt_does_not_default_oa_calendar_to_no_reply():
     assert "不能因为通知格式默认 no_reply" in prompt
 
 
+def test_thread_prompt_references_calendar_rules():
+    prompt = ceo_agent_thread_prompt()
+
+    assert "/Users/derek/Documents/memory/management/OA/日历规则.md" in prompt
+    assert "请直接@我文档让我批阅即可，只有存疑再约会。" in prompt
+    assert "描述明确" in prompt
+    assert "可以接受日程" in prompt
+
+
 def test_thread_prompt_requires_witty_reply_for_direct_jokes():
     prompt = ceo_agent_thread_prompt()
 

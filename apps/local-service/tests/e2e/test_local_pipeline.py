@@ -129,6 +129,18 @@ class FakeDws:
         self.chat_calls.append(("read_mentioned_messages", limit, cursor, lookback_hours))
         return []
 
+    def minutes_permission_request_from_message(self, message):
+        self.chat_calls.append(("minutes_permission_request_from_message", message.open_message_id))
+        return None
+
+    def calendar_invite_from_message(self, message):
+        self.chat_calls.append(("calendar_invite_from_message", message.open_message_id))
+        return None
+
+    def list_calendar_events(self, start, end):
+        self.chat_calls.append(("list_calendar_events", start, end))
+        return []
+
     def send_message(
         self,
         conversation_id,

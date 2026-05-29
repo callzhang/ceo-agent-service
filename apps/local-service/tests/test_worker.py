@@ -107,6 +107,8 @@ class FakeDws:
         self.current_user_checks: list[str] = []
         self.calendar_invites: dict[str, DwsCalendarEvent | None] = {}
         self.calendar_events: dict[str, list[DwsCalendarEvent]] = {}
+        self.calendar_responses: list[tuple[str, str]] = []
+        self.calendar_response_error: Exception | None = None
         self.minutes_permission_requests: dict[
             str, DwsMinutesPermissionRequest | None
         ] = {}
@@ -373,6 +375,12 @@ class FakeDws:
 
     def list_calendar_events(self, start: str, end: str) -> list[DwsCalendarEvent]:
         return self.calendar_events.get(f"{start}|{end}", [])
+
+    def respond_calendar_event(self, event_id: str, response_status: str) -> dict:
+        self.calendar_responses.append((event_id, response_status))
+        if self.calendar_response_error:
+            raise self.calendar_response_error
+        return {"success": True}
 
     def minutes_permission_request_from_message(
         self, message: DingTalkMessage
@@ -1339,7 +1347,7 @@ def test_unresolvable_non_candidate_sender_does_not_block_conversation(
     assert worker.store.count_errors() == 0
 
 
-def test_single_chat_rendered_schedule_is_skipped_before_codex(
+def test_single_chat_rendered_schedule_asks_for_readable_calendar_detail(
     tmp_path: Path, monkeypatch
 ):
     trigger = message("[日程]", single_chat=True)
@@ -1352,17 +1360,21 @@ def test_single_chat_rendered_schedule_is_skipped_before_codex(
     worker.run_once()
 
     assert codex.calls == []
-    assert final_sent(dws) == []
+    assert len(final_sent(dws)) == 1
+    assert "只看到日程卡片" in final_sent(dws)[0][1]
+    assert "请补充" in final_sent(dws)[0][1]
     assert dws.dings == []
     assert worker.store.has_seen("msg-1") is True
     attempt = worker.store.get_reply_attempt(1)
     assert attempt is not None
-    assert attempt.action == "no_reply"
-    assert attempt.send_status == "skipped"
-    assert attempt.codex_reason == "system_or_notification_message"
+    assert attempt.action == "ask_clarifying_question"
+    assert attempt.send_status == "sent"
+    assert attempt.codex_reason == "calendar_detail_unreadable"
 
 
-def test_non_text_message_type_is_skipped_before_codex(tmp_path: Path, monkeypatch):
+def test_non_text_calendar_without_detail_asks_for_readable_calendar_detail(
+    tmp_path: Path, monkeypatch
+):
     trigger = message("日程卡片", single_chat=True, message_type="calendar")
     dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
     codex = FakeCodex(
@@ -1373,8 +1385,11 @@ def test_non_text_message_type_is_skipped_before_codex(tmp_path: Path, monkeypat
     worker.run_once()
 
     assert codex.calls == []
-    assert final_sent(dws) == []
-    assert worker.store.get_reply_attempt(1).action == "no_reply"
+    assert len(final_sent(dws)) == 1
+    assert "只看到日程卡片" in final_sent(dws)[0][1]
+    attempt = worker.store.get_reply_attempt(1)
+    assert attempt.action == "ask_clarifying_question"
+    assert attempt.codex_reason == "calendar_detail_unreadable"
 
 
 def test_calendar_invite_without_description_asks_for_attendance_reason(
@@ -1416,6 +1431,38 @@ def test_calendar_invite_without_description_asks_for_attendance_reason(
     attempt = worker.store.get_reply_attempt(1)
     assert attempt.action == "ask_clarifying_question"
     assert attempt.send_status == "sent"
+
+
+def test_calendar_invite_without_description_asks_even_without_conflict(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message("[日程]", single_chat=True, message_type="calendar")
+    invite = DwsCalendarEvent(
+        event_id="invite-1",
+        title="客户复盘",
+        start_time="2026-05-14T10:00:00+08:00",
+        end_time="2026-05-14T11:00:00+08:00",
+        description="",
+        organizer="Mina",
+    )
+    dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
+    dws.calendar_invites["msg-1"] = invite
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该调用")
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+
+    worker.run_once()
+
+    assert codex.calls == []
+    assert len(final_sent(dws)) == 1
+    assert "客户复盘" in final_sent(dws)[0][1]
+    assert "请补充" in final_sent(dws)[0][1]
+    assert "为什么需要我参加" in final_sent(dws)[0][1]
+    assert dws.calendar_responses == []
+    attempt = worker.store.get_reply_attempt(1)
+    assert attempt.action == "ask_clarifying_question"
+    assert attempt.codex_reason == "calendar_missing_description"
 
 
 def test_calendar_invite_with_description_asks_codex_to_evaluate_conflict(
@@ -1463,6 +1510,107 @@ def test_calendar_invite_with_description_asks_codex_to_evaluate_conflict(
     attempt = worker.store.get_reply_attempt(1)
     assert attempt.action == "send_reply"
     assert attempt.codex_reason == "calendar_conflict_evaluated"
+
+
+def test_calendar_invite_for_document_review_replies_to_use_document_comment(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message("[日程]", single_chat=True, message_type="calendar")
+    invite = DwsCalendarEvent(
+        event_id="invite-1",
+        title="官网文档批阅",
+        start_time="2026-05-14T10:00:00+08:00",
+        end_time="2026-05-14T11:00:00+08:00",
+        description="请 Derek 批阅官网文档并反馈修改意见。",
+        organizer="Mina",
+    )
+    dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
+    dws.calendar_invites["msg-1"] = invite
+    codex = FakeCodex(
+        CodexDecision(
+            action=CodexAction.SEND_REPLY,
+            reply_text="请直接@我文档让我批阅即可，只有存疑再约会。",
+            reason="calendar_document_review_redirect",
+        )
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+
+    worker.run_once()
+
+    assert len(codex.calls) == 1
+    prompt = codex.calls[0][0]
+    assert "日历规则判断" in prompt
+    assert "请直接@我文档让我批阅即可，只有存疑再约会。" in prompt
+    assert "请直接@我文档让我批阅即可，只有存疑再约会。" in final_sent(dws)[0][1]
+    assert dws.calendar_responses == []
+
+
+def test_calendar_invite_with_clear_value_auto_accepts_without_chat_reply(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message("[日程]", single_chat=True, message_type="calendar")
+    invite = DwsCalendarEvent(
+        event_id="invite-1",
+        title="关键客户交付决策",
+        start_time="2026-05-14T10:00:00+08:00",
+        end_time="2026-05-14T11:00:00+08:00",
+        description="客户 CEO 参加，需要 Derek 判断本周交付承诺。",
+        organizer="Mina",
+    )
+    dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
+    dws.calendar_invites["msg-1"] = invite
+    codex = FakeCodex(
+        CodexDecision(
+            action=CodexAction.NO_REPLY,
+            reason="calendar_auto_accept: Derek 参与有明确业务价值",
+            audit_summary="日程描述明确，且需要 Derek 做关键客户交付判断。",
+        )
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+
+    worker.run_once()
+
+    assert len(codex.calls) == 1
+    assert dws.calendar_responses == [("invite-1", "accepted")]
+    assert final_sent(dws) == []
+    assert worker.store.has_seen("msg-1") is True
+    attempt = worker.store.get_reply_attempt(1)
+    assert attempt.action == "no_reply"
+    assert attempt.codex_reason.startswith("calendar_auto_accept")
+    assert attempt.send_status == "skipped"
+    assert attempt.send_error == ""
+
+
+def test_calendar_invite_no_reply_without_auto_accept_reason_does_not_accept(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message("[日程]", single_chat=True, message_type="calendar")
+    invite = DwsCalendarEvent(
+        event_id="invite-1",
+        title="同步会",
+        start_time="2026-05-14T10:00:00+08:00",
+        end_time="2026-05-14T11:00:00+08:00",
+        description="同步信息。",
+        organizer="Mina",
+    )
+    dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
+    dws.calendar_invites["msg-1"] = invite
+    codex = FakeCodex(
+        CodexDecision(
+            action=CodexAction.NO_REPLY,
+            reason="not relevant",
+            audit_summary="不需要处理。",
+        )
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+
+    worker.run_once()
+
+    assert dws.calendar_responses == []
+    attempt = worker.store.get_reply_attempt(1)
+    assert attempt.action == "no_reply"
+    assert attempt.send_status == "skipped"
+    assert attempt.send_error == "no_reply"
 
 
 def test_structured_link_card_is_skipped_before_codex(tmp_path: Path, monkeypatch):

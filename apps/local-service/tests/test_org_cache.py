@@ -154,6 +154,28 @@ def test_cached_dws_client_delegates_linked_material_reads(tmp_path):
             self.calls.append(("query_aitable_records", base_id, table_id, limit))
             return {"data": {"records": []}}
 
+        def get_resource_download_url(
+            self,
+            open_conversation_id,
+            open_message_id,
+            resource_id,
+            resource_type,
+        ):
+            self.calls.append(
+                (
+                    "get_resource_download_url",
+                    open_conversation_id,
+                    open_message_id,
+                    resource_id,
+                    resource_type,
+                )
+            )
+            return {"downloadUrl": "https://example.test/image.png"}
+
+        def download_robot_message_file(self, download_code):
+            self.calls.append(("download_robot_message_file", download_code))
+            return {"downloadUrl": "https://example.test/file.png"}
+
     cached = CachedDwsClient(
         FakeDws(),
         CachedOrgDirectory(AutoReplyStore(tmp_path / "worker.sqlite3")),
@@ -168,12 +190,74 @@ def test_cached_dws_client_delegates_linked_material_reads(tmp_path):
     assert cached.query_aitable_records("base-1", "tbl-1", 5) == {
         "data": {"records": []}
     }
+    assert cached.get_resource_download_url("cid-1", "msg-1", "res-1", "image") == {
+        "downloadUrl": "https://example.test/image.png"
+    }
+    assert cached.download_robot_message_file("download-code-1") == {
+        "downloadUrl": "https://example.test/file.png"
+    }
     assert cached.dws.calls == [
         ("doc_info", "node-1"),
         ("read_doc", "node-1"),
         ("get_aitable_base", "base-1"),
         ("get_aitable_tables", "base-1", ["tbl-1"]),
         ("query_aitable_records", "base-1", "tbl-1", 5),
+        (
+            "get_resource_download_url",
+            "cid-1",
+            "msg-1",
+            "res-1",
+            "image",
+        ),
+        ("download_robot_message_file", "download-code-1"),
+    ]
+
+
+def test_cached_dws_client_delegates_calendar_and_minutes_helpers(tmp_path):
+    request = object()
+    event = object()
+
+    class FakeDws:
+        def __init__(self):
+            self.calls = []
+
+        def minutes_permission_request_from_message(self, msg):
+            self.calls.append(("minutes_permission_request_from_message", msg))
+            return request
+
+        def add_minutes_member_permission(self, permission_request):
+            self.calls.append(("add_minutes_member_permission", permission_request))
+            return {"success": True}
+
+        def calendar_invite_from_message(self, msg):
+            self.calls.append(("calendar_invite_from_message", msg))
+            return event
+
+        def list_calendar_events(self, start, end):
+            self.calls.append(("list_calendar_events", start, end))
+            return [event]
+
+        def respond_calendar_event(self, event_id, response_status):
+            self.calls.append(("respond_calendar_event", event_id, response_status))
+            return {"success": True}
+
+    cached = CachedDwsClient(
+        FakeDws(),
+        CachedOrgDirectory(AutoReplyStore(tmp_path / "worker.sqlite3")),
+    )
+    msg = message()
+
+    assert cached.minutes_permission_request_from_message(msg) is request
+    assert cached.add_minutes_member_permission(request) == {"success": True}
+    assert cached.calendar_invite_from_message(msg) is event
+    assert cached.list_calendar_events("start", "end") == [event]
+    assert cached.respond_calendar_event("event-1", "accepted") == {"success": True}
+    assert cached.dws.calls == [
+        ("minutes_permission_request_from_message", msg),
+        ("add_minutes_member_permission", request),
+        ("calendar_invite_from_message", msg),
+        ("list_calendar_events", "start", "end"),
+        ("respond_calendar_event", "event-1", "accepted"),
     ]
 
 

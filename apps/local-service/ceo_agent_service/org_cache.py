@@ -158,6 +158,38 @@ class CachedDwsClient:
     def download_doc(self, node: str):
         return self.dws.download_doc(node)
 
+    def get_resource_download_url(
+        self,
+        open_conversation_id: str,
+        open_message_id: str,
+        resource_id: str,
+        resource_type: str,
+    ):
+        return self.dws.get_resource_download_url(
+            open_conversation_id,
+            open_message_id,
+            resource_id,
+            resource_type,
+        )
+
+    def download_robot_message_file(self, download_code: str):
+        return self.dws.download_robot_message_file(download_code)
+
+    def minutes_permission_request_from_message(self, message: DingTalkMessage):
+        return self.dws.minutes_permission_request_from_message(message)
+
+    def add_minutes_member_permission(self, request):
+        return self.dws.add_minutes_member_permission(request)
+
+    def calendar_invite_from_message(self, message: DingTalkMessage):
+        return self.dws.calendar_invite_from_message(message)
+
+    def list_calendar_events(self, start: str, end: str):
+        return self.dws.list_calendar_events(start, end)
+
+    def respond_calendar_event(self, event_id: str, response_status: str):
+        return self.dws.respond_calendar_event(event_id, response_status)
+
     def execute_oa_approval_action(
         self,
         process_instance_id: str,

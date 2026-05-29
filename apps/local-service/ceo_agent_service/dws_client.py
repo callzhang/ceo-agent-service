@@ -345,6 +345,32 @@ class DwsClient:
             "json",
         ]
 
+    def build_respond_calendar_event_command(
+        self,
+        event_id: str,
+        response_status: str,
+    ) -> list[str]:
+        if response_status not in {
+            "needsAction",
+            "accepted",
+            "declined",
+            "tentative",
+        }:
+            raise ValueError(f"unsupported calendar response status: {response_status}")
+        return [
+            self.dws_bin,
+            "mcp",
+            "calendar",
+            "respond",
+            "--eventId",
+            event_id,
+            "--responseStatus",
+            response_status,
+            "--format",
+            "json",
+            "--yes",
+        ]
+
     def build_add_minutes_member_permission_command(
         self, request: DwsMinutesPermissionRequest
     ) -> list[str]:
@@ -870,6 +896,15 @@ class DwsClient:
     def list_calendar_events(self, start: str, end: str) -> list[DwsCalendarEvent]:
         payload = self.run_json(self.build_list_calendar_events_command(start, end))
         return self.parse_calendar_events(payload)
+
+    def respond_calendar_event(
+        self,
+        event_id: str,
+        response_status: str,
+    ) -> dict:
+        return self.run_json(
+            self.build_respond_calendar_event_command(event_id, response_status)
+        )
 
     def minutes_permission_request_from_message(
         self, message: DingTalkMessage

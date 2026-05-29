@@ -81,8 +81,11 @@ th{background:var(--surface-soft);color:var(--steel);font-size:12px;font-weight:
 .attempt-foot{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:6px;flex-wrap:wrap}
 .attempt-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .attempt-warning{color:#8a2626;font-size:12px;line-height:1.4}
-.attempt-info{display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border:1px solid #7a8696;border-radius:50%;color:#536071;background:#fff;font-size:11px;font-weight:700;line-height:1;cursor:help}
-.attempt-info:hover{background:#f1f5f9;border-color:#536071}
+.attempt-info{position:relative;display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border:1px solid #7a8696;border-radius:50%;color:#536071;background:#fff;font-size:11px;font-weight:700;line-height:1;cursor:help}
+.attempt-info:hover,.attempt-info:focus{background:#f1f5f9;border-color:#536071;outline:0}
+.attempt-info::after{content:attr(data-tooltip);display:none;position:absolute;right:0;bottom:calc(100% + 8px);z-index:30;width:max-content;max-width:320px;padding:7px 9px;border-radius:6px;background:#1f2937;color:#fff;box-shadow:0 8px 24px rgba(15,23,42,.18);font-size:12px;font-weight:500;line-height:1.4;text-align:left;white-space:normal}
+.attempt-info::before{content:"";display:none;position:absolute;right:4px;bottom:calc(100% + 3px);z-index:31;border:5px solid transparent;border-top-color:#1f2937}
+.attempt-info:hover::after,.attempt-info:focus::after,.attempt-info:hover::before,.attempt-info:focus::before{display:block}
 .nav{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .nav a{display:inline-flex;align-items:center;height:36px;padding:0 14px;border:1px solid var(--hairline);border-radius:999px;background:var(--canvas);color:var(--steel);font-size:14px;font-weight:500}
 .nav a:hover{color:var(--ink);text-decoration:none;border-color:var(--ink)}
@@ -159,6 +162,12 @@ FAVICON_HREF = (
 CONTEXT_ONLY_TOOLTIP = (
     "No tools were used; this answer was generated from conversation context only."
 )
+NO_AUDIT_DOCUMENTS_TOOLTIP = (
+    "No audit documents were attached; this answer was generated without document evidence."
+)
+NO_AUDIT_CONTEXT_TOOLTIP = (
+    "No audit documents or tool events were attached; this answer was generated from conversation context only."
+)
 
 
 def render_page(title: str, body: str, *, auto_refresh: bool = False) -> str:
@@ -202,6 +211,7 @@ def render_attempt_list(store: AutoReplyStore, limit: int | None = None) -> str:
         )
         info_html = _attempt_info_icon(attempt)
         foot_html = warning_html + info_html
+        foot_section = f'<div class="attempt-foot">{foot_html}</div>' if foot_html else ""
         items.append(
             "<article class=\"attempt-item\">"
             "<div class=\"attempt-head\">"
@@ -224,7 +234,7 @@ def render_attempt_list(store: AutoReplyStore, limit: int | None = None) -> str:
             f"{_attempt_text_line('问', attempt.trigger_text, 260)}"
             f"{_attempt_text_line('答', _reply_preview_text(attempt), 320)}"
             "</div>"
-            f"{'<div class=\"attempt-foot\">' + foot_html + '</div>' if foot_html else ''}"
+            f"{foot_section}"
             "</article>"
         )
     if not items:
@@ -330,6 +340,18 @@ def render_codex_session_detail(
 ) -> tuple[int, str]:
     rendered = render_local_codex_session(session_id, codex_home=codex_home)
     if rendered.missing:
+        related_attempts = (
+            store.list_reply_attempts_for_codex_session(session_id) if store else []
+        )
+        if related_attempts:
+            body = (
+                "<section class=\"card\"><h2>Codex session unavailable</h2>"
+                "<p class=\"muted\">The local Codex transcript file for this session "
+                "is no longer available on this machine.</p>"
+                f"<p class=\"muted\">{escape(session_id)}</p></section>"
+                f"{_related_history_card(related_attempts)}"
+            )
+            return 200, render_page("Codex session unavailable", body)
         return 404, render_page(
             "Codex session not found",
             f"<p>Codex session not found: {escape(session_id)}</p>",
@@ -1053,12 +1075,6 @@ def _quality_warnings(attempt: ReplyAttempt) -> list[str]:
         warnings.append("missing audit_summary")
     if not attempt.codex_session_id.strip():
         warnings.append("missing codex_session_id")
-    if attempt.action in {"send_reply", "ask_clarifying_question"}:
-        if (
-            not _json_array_has_items(attempt.audit_documents_json)
-            and not audit_summary_explains_no_documents(attempt.audit_summary)
-        ):
-            warnings.append(f"{attempt.action} has no audit documents")
     return warnings
 
 
@@ -1072,20 +1088,33 @@ def _attempt_warning_summary(attempt: ReplyAttempt) -> str:
 
 
 def _attempt_info_icon(attempt: ReplyAttempt) -> str:
-    if not _context_only_answer(attempt):
+    tooltip = _attempt_info_tooltip(attempt)
+    if not tooltip:
         return ""
+    escaped_tooltip = escape(tooltip)
     return (
-        f"<span class=\"attempt-info\" title=\"{escape(CONTEXT_ONLY_TOOLTIP)}\" "
-        "aria-label=\"Context-only answer\">i</span>"
+        f"<span class=\"attempt-info\" data-tooltip=\"{escaped_tooltip}\" "
+        f"aria-label=\"{escaped_tooltip}\" tabindex=\"0\">i</span>"
     )
 
 
-def _context_only_answer(attempt: ReplyAttempt) -> bool:
-    return (
-        attempt.send_status != "skipped"
-        and attempt.action in {"send_reply", "ask_clarifying_question"}
-        and not _json_array_has_items(attempt.audit_tool_events_json)
-    )
+def _attempt_info_tooltip(attempt: ReplyAttempt) -> str:
+    if attempt.send_status == "skipped" or attempt.action not in {
+        "send_reply",
+        "ask_clarifying_question",
+    }:
+        return ""
+    has_documents = _json_array_has_items(
+        attempt.audit_documents_json
+    ) or audit_summary_explains_no_documents(attempt.audit_summary)
+    has_tool_events = _json_array_has_items(attempt.audit_tool_events_json)
+    if not has_documents and not has_tool_events:
+        return NO_AUDIT_CONTEXT_TOOLTIP
+    if not has_documents:
+        return NO_AUDIT_DOCUMENTS_TOOLTIP
+    if not has_tool_events:
+        return CONTEXT_ONLY_TOOLTIP
+    return ""
 
 
 def _json_array_has_items(text: str) -> bool:
