@@ -433,6 +433,27 @@ class FakeOaApprovalRunner:
         )
 
 
+class MissingTargetOaApprovalRunner(FakeOaApprovalRunner):
+    def handle(
+        self,
+        trigger_text: str,
+        context_text: str,
+        oa_url: str,
+        execute: bool = True,
+    ) -> OaApprovalResult:
+        self.calls.append((trigger_text, context_text, oa_url, execute))
+        return OaApprovalResult(
+            process_instance_id="",
+            task_id="",
+            oa_url="",
+            oa_action="退回",
+            oa_remark="材料不足，暂不执行审批动作。",
+            action_result={},
+            audit_summary="未取得审批详情，只记录材料不足。",
+            audit_documents=[],
+        )
+
+
 def final_sent(dws: FakeDws) -> list[tuple[str, str]]:
     return [sent for sent in dws.sent if sent[1] != PROCESSING_ACK]
 
@@ -1629,6 +1650,36 @@ def test_ding_approval_reminder_is_processed_by_oa_runner(
     assert worker.store.has_seen("msg-1") is True
     assert worker.store.count_reply_attempts() == 1
     assert worker.store.get_reply_attempt(1).action == "oa_approval"
+
+
+def test_oa_approval_missing_target_records_review_without_executing_action(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message("[Ding]刘瑞安提醒您审批他的录用申请", single_chat=True)
+    dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该走聊天回复")
+    )
+    oa_runner = MissingTargetOaApprovalRunner()
+    worker = make_worker(
+        tmp_path,
+        dws,
+        codex,
+        monkeypatch,
+        oa_approval_runner=oa_runner,
+    )
+
+    worker.run_once()
+
+    assert dws.oa_approval_actions == []
+    attempt = worker.store.get_reply_attempt(1)
+    assert attempt is not None
+    assert attempt.action == "oa_approval"
+    assert attempt.send_status == "skipped"
+    assert attempt.oa_process_instance_id == ""
+    assert attempt.oa_task_id == ""
+    assert attempt.final_reply_text == "材料不足，暂不执行审批动作。"
+    assert attempt.send_error == "missing_oa_approval_target"
 
 
 def test_oa_approval_dry_run_uses_review_only_mode_and_keeps_live_retry_open(

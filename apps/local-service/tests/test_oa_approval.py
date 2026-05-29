@@ -73,6 +73,23 @@ def test_result_rejects_non_aflow_url_and_mismatched_process_id():
         )
 
 
+def test_result_accepts_missing_identifiers_for_material_insufficient_review():
+    result = OaApprovalResult(
+        process_instance_id="",
+        task_id="",
+        oa_url="",
+        oa_action="退回",
+        oa_remark="材料不足，暂不处理。",
+        action_result={},
+        audit_summary="未取得审批详情，不能执行审批动作。",
+        audit_documents=[],
+    )
+
+    assert result.process_instance_id == ""
+    assert result.task_id == ""
+    assert result.oa_url == ""
+
+
 def test_extract_oa_url_decodes_encoded_aflow_url_inside_dingtalk_card():
     encoded_url = (
         "https%3A%2F%2Faflow.dingtalk.com%2Fdingtalk%2Fmobile%2Fhomepage.htm"

@@ -15,16 +15,13 @@
   ],
   "properties": {
     "process_instance_id": {
-      "type": "string",
-      "minLength": 1
+      "type": "string"
     },
     "task_id": {
-      "type": "string",
-      "minLength": 1
+      "type": "string"
     },
     "oa_url": {
-      "type": "string",
-      "minLength": 1
+      "type": "string"
     },
     "oa_action": {
       "type": "string",

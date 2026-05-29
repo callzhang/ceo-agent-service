@@ -45,9 +45,9 @@ OA_MUTATING_COMMAND_PATTERN = re.compile(
 
 
 class OaApprovalResult(BaseModel):
-    process_instance_id: str = Field(min_length=1)
-    task_id: str = Field(min_length=1)
-    oa_url: str = Field(min_length=1)
+    process_instance_id: str = ""
+    task_id: str = ""
+    oa_url: str = ""
     oa_action: Literal["通过", "拒绝", "退回"]
     oa_remark: str = Field(min_length=1)
     action_result: dict[str, Any]
@@ -56,6 +56,8 @@ class OaApprovalResult(BaseModel):
 
     @model_validator(mode="after")
     def validate_oa_identifiers(self) -> "OaApprovalResult":
+        if not self.oa_url:
+            return self
         parsed = urlparse(self.oa_url)
         if parsed.netloc != AFLOW_HOST:
             raise ValueError("oa_url must be an aflow.dingtalk.com URL")
@@ -199,6 +201,7 @@ class OaApprovalCodexRunner:
                     "上一次输出不是合法 OA 审批 JSON。不得执行通过、拒绝、退回或评论。"
                     "只输出合法 JSON，不要解释。action_result 必须是空对象 {}。"
                     "oa_action 只能是 通过、拒绝、退回 之一；oa_remark、audit_summary 必须非空。"
+                    "如果无法取得 process_instance_id、task_id 或 oa_url，对应字段填空字符串。"
                 )
                 second_raw = self.executor(
                     self.runner.build_command(

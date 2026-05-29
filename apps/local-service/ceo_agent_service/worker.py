@@ -874,17 +874,24 @@ class DingTalkAutoReplyWorker:
         send_status = "dry_run"
         send_error = ""
         if not self.dry_run:
-            try:
-                action_result = self.dws.execute_oa_approval_action(
-                    result.process_instance_id,
-                    result.task_id,
-                    result.oa_action,
-                    result.oa_remark,
-                )
+            has_approval_target = bool(
+                result.process_instance_id.strip() and result.task_id.strip()
+            )
+            if has_approval_target:
+                try:
+                    action_result = self.dws.execute_oa_approval_action(
+                        result.process_instance_id,
+                        result.task_id,
+                        result.oa_action,
+                        result.oa_remark,
+                    )
+                    send_status = "skipped"
+                except Exception as exc:
+                    send_status = "failed"
+                    send_error = str(exc)
+            else:
                 send_status = "skipped"
-            except Exception as exc:
-                send_status = "failed"
-                send_error = str(exc)
+                send_error = "missing_oa_approval_target"
         attempt_id = self.store.record_reply_attempt(
             conversation_id=conversation.open_conversation_id,
             conversation_title=conversation.title,
@@ -928,7 +935,7 @@ class DingTalkAutoReplyWorker:
             final_reply_text=result.oa_remark,
             send_error=send_error,
         )
-        if send_error:
+        if send_error and send_error != "missing_oa_approval_target":
             self.store.record_error(
                 conversation.open_conversation_id,
                 trigger.open_message_id,
