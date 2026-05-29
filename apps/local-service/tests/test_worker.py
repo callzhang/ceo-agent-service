@@ -1601,8 +1601,10 @@ def test_calendar_retry_ignores_old_system_notification_skip(
     assert "客户复盘" in final_sent(dws)[0][1]
     latest = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
     assert latest is not None
+    assert latest.id == old_attempt_id
     assert latest.action == "ask_clarifying_question"
     assert latest.codex_reason == "calendar_missing_description"
+    assert worker.store.count_reply_attempts() == 1
 
 
 def test_calendar_invite_without_description_asks_for_attendance_reason(
@@ -2309,10 +2311,10 @@ def test_oa_approval_dry_run_uses_review_only_mode_and_keeps_live_retry_open(
         )
     ]
     assert worker.store.has_seen("msg-1") is True
-    assert worker.store.count_reply_attempts() == 2
+    assert worker.store.count_reply_attempts() == 1
     assert worker.store.count_reply_tasks(status="pending") == 0
     assert worker.store.count_reply_tasks(status="done") == 1
-    live_attempt = worker.store.get_reply_attempt(2)
+    live_attempt = worker.store.get_reply_attempt(1)
     assert live_attempt is not None
     assert live_attempt.action == "oa_approval"
     assert live_attempt.send_status == "skipped"
@@ -3365,8 +3367,12 @@ def test_rerun_message_can_force_new_codex_decision(tmp_path: Path, monkeypatch)
     worker.rerun_message(conversation(), "msg-1", force_new_decision=True)
 
     assert len(codex.calls) == 1
-    assert worker.store.count_reply_attempts() == 2
-    assert worker.store.get_reply_attempt(old_attempt_id).send_status == "sent"
+    assert worker.store.count_reply_attempts() == 1
+    attempt = worker.store.get_reply_attempt(old_attempt_id)
+    assert attempt is not None
+    assert attempt.send_status == "sent"
+    assert attempt.draft_reply_text == "改走B方案"
+    assert attempt.final_reply_text == "改走B方案（by磊哥分身）"
     assert final_sent(dws) == [
         (
             "cid-1",

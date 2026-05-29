@@ -463,6 +463,64 @@ def test_reply_attempt_records_oa_metadata(tmp_path: Path):
     assert loaded.oa_action_result_json == '{"errcode":0,"errmsg":"ok"}'
 
 
+def test_record_reply_attempt_for_trigger_reuses_existing_attempt_id(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+
+    first_id = store.record_reply_attempt_for_trigger(
+        conversation_id="cid-1",
+        conversation_title="技术部",
+        trigger_message_id="msg-1",
+        trigger_sender="Xiaomin",
+        trigger_text="@Derek Zen 这个怎么处理？",
+        action="no_reply",
+        sensitivity_kind="general",
+        codex_reason="system_or_notification_message",
+        send_status="skipped",
+    )
+    store.update_reply_attempt(
+        first_id,
+        final_reply_text="旧回复",
+        send_error="no_reply",
+        retry_count=2,
+    )
+
+    second_id = store.record_reply_attempt_for_trigger(
+        conversation_id="cid-1",
+        conversation_title="技术部",
+        trigger_message_id="msg-1",
+        trigger_sender="Xiaomin",
+        trigger_text="@Derek Zen 这个怎么处理？",
+        action="send_reply",
+        sensitivity_kind="general",
+        codex_reason="direct ask",
+        draft_reply_text="先按A方案走",
+        codex_session_id="session-1",
+        audit_documents_json='[{"title":"chat"}]',
+        audit_tool_events_json='[{"tool":"dws"}]',
+        audit_summary="已重新判断，需要回复。",
+        send_status="pending",
+    )
+
+    attempt = store.get_reply_attempt(first_id)
+
+    assert second_id == first_id
+    assert store.count_reply_attempts() == 1
+    assert attempt is not None
+    assert attempt.action == "send_reply"
+    assert attempt.codex_reason == "direct ask"
+    assert attempt.draft_reply_text == "先按A方案走"
+    assert attempt.codex_session_id == "session-1"
+    assert attempt.audit_documents_json == '[{"title":"chat"}]'
+    assert attempt.audit_tool_events_json == '[{"tool":"dws"}]'
+    assert attempt.audit_summary == "已重新判断，需要回复。"
+    assert attempt.final_reply_text == ""
+    assert attempt.send_status == "pending"
+    assert attempt.send_error == ""
+    assert attempt.retry_count == 0
+
+
 def test_get_latest_reply_attempt_for_trigger(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     first_id = store.record_reply_attempt(

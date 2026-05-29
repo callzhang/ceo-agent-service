@@ -831,7 +831,7 @@ class DingTalkAutoReplyWorker:
             ignore_system_notification_skip=True,
         ):
             return True
-        attempt_id = self.store.record_reply_attempt(
+        attempt_id = self.store.record_reply_attempt_for_trigger(
             conversation_id=conversation.open_conversation_id,
             conversation_title=conversation.title,
             trigger_message_id=trigger.open_message_id,
@@ -944,7 +944,7 @@ class DingTalkAutoReplyWorker:
             else:
                 send_status = "skipped"
                 send_error = target_error or "missing_oa_approval_target"
-        attempt_id = self.store.record_reply_attempt(
+        attempt_id = self.store.record_reply_attempt_for_trigger(
             conversation_id=conversation.open_conversation_id,
             conversation_title=conversation.title,
             trigger_message_id=trigger.open_message_id,
@@ -1204,7 +1204,7 @@ class DingTalkAutoReplyWorker:
                 ):
                     return True
                 reply_text = self._calendar_unreadable_reply()
-                attempt_id = self.store.record_reply_attempt(
+                attempt_id = self.store.record_reply_attempt_for_trigger(
                     conversation_id=conversation.open_conversation_id,
                     conversation_title=conversation.title,
                     trigger_message_id=trigger.open_message_id,
@@ -1236,7 +1236,7 @@ class DingTalkAutoReplyWorker:
             return True
         if not calendar_context.invite.has_description:
             reply_text = self._calendar_missing_description_reply(calendar_context)
-            attempt_id = self.store.record_reply_attempt(
+            attempt_id = self.store.record_reply_attempt_for_trigger(
                 conversation_id=conversation.open_conversation_id,
                 conversation_title=conversation.title,
                 trigger_message_id=trigger.open_message_id,
@@ -1624,7 +1624,7 @@ class DingTalkAutoReplyWorker:
             and existing_attempt.send_status == "skipped"
         ):
             return
-        attempt_id = self.store.record_reply_attempt(
+        attempt_id = self.store.record_reply_attempt_for_trigger(
             conversation_id=conversation.open_conversation_id,
             conversation_title=conversation.title,
             trigger_message_id=message.open_message_id,
@@ -1656,7 +1656,7 @@ class DingTalkAutoReplyWorker:
             and existing_attempt.send_status == "skipped"
         ):
             return
-        attempt_id = self.store.record_reply_attempt(
+        attempt_id = self.store.record_reply_attempt_for_trigger(
             conversation_id=conversation.open_conversation_id,
             conversation_title=conversation.title,
             trigger_message_id=message.open_message_id,
@@ -2034,7 +2034,7 @@ class DingTalkAutoReplyWorker:
             after_session_id=after_session_id,
         )
         attempt_session_id = after_session_id or session_id or ""
-        attempt_id = self.store.record_reply_attempt(
+        attempt_id = self.store.record_reply_attempt_for_trigger(
             conversation_id=conversation.open_conversation_id,
             conversation_title=conversation.title,
             trigger_message_id=trigger.open_message_id,
@@ -2903,7 +2903,7 @@ class DingTalkAutoReplyWorker:
         error: str,
     ) -> None:
         reason = f"linked_dingtalk_doc_read_failed: {error}"
-        attempt_id = self.store.record_reply_attempt(
+        attempt_id = self.store.record_reply_attempt_for_trigger(
             conversation_id=conversation.open_conversation_id,
             conversation_title=conversation.title,
             trigger_message_id=trigger.open_message_id,

@@ -350,7 +350,11 @@ def test_render_attempt_detail_shows_quality_warnings(tmp_path: Path):
     assert status == 200
     assert "Audit quality warnings" in html
     assert "missing audit_summary" in html
-    assert "missing codex_session_id" in html
+    assert "missing codex_session_id" not in html
+    assert (
+        "No Codex session is linked; review this attempt using the stored audit fields only."
+        in html
+    )
     assert "send_reply has no audit documents" not in html
     assert (
         "No audit documents or tool events were attached; this answer was generated from conversation context only."
@@ -510,6 +514,13 @@ def test_render_attempt_list_shows_context_only_info_icon_instead_of_warning(
     assert "data-tooltip=" in html
     assert "title=" not in html
     assert ".attempt-info::after" in html
+    assert "left:0;bottom:calc(100% + 8px)" in html
+    assert "background:#fff3c4" in html
+    assert (
+        html.index('href="/attempts/1">#1</a>')
+        < html.index('class="attempt-info"')
+        < html.index('class="pill action-send_reply"')
+    )
     assert "No tools were used; this answer was generated from conversation context only." in html
 
 
@@ -542,6 +553,35 @@ def test_render_attempt_list_shows_missing_documents_info_icon_instead_of_warnin
     assert ".attempt-info::after" in html
     assert (
         "No audit documents were attached; this answer was generated without document evidence."
+        in html
+    )
+
+
+def test_render_attempt_list_shows_missing_codex_session_info_icon_instead_of_warning(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.record_reply_attempt(
+        conversation_id="cid-1",
+        conversation_title="技术部",
+        trigger_message_id="msg-1",
+        trigger_sender="Xiaomin",
+        trigger_text="@Derek Zen 这个怎么处理？",
+        action="send_reply",
+        sensitivity_kind="general",
+        draft_reply_text="先按A方案走",
+        audit_documents_json='[{"path":"chat","relevance":"直接上下文"}]',
+        audit_tool_events_json='[{"tool":"exec_command","command":"rg 上下文"}]',
+        audit_summary="已根据当前对话上下文生成回复。",
+    )
+
+    html = render_attempt_list(store)
+
+    assert "Quality warning" not in html
+    assert "missing codex_session_id" not in html
+    assert 'class="attempt-info"' in html
+    assert (
+        "No Codex session is linked; review this attempt using the stored audit fields only."
         in html
     )
 
