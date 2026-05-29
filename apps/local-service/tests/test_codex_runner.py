@@ -1,11 +1,23 @@
 from pathlib import Path
 import json
 
+import pytest
+
 from ceo_agent_service.codex_runner import (
     CODEX_DECISION_SCHEMA_PATH,
     CodexRunner,
     codex_developer_instructions,
 )
+
+
+@pytest.fixture(autouse=True)
+def _isolate_memory_connector_env(tmp_path: Path, monkeypatch):
+    codex_home = tmp_path / "codex-home"
+    codex_home.mkdir()
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+    monkeypatch.delenv("CONNECTOR_API_KEY", raising=False)
+    monkeypatch.delenv("MEMORY_CONNECTOR_URL", raising=False)
+    monkeypatch.delenv("MEMORY_CONNECTOR_USER_ID", raising=False)
 
 
 def _developer_instructions_arg(command: list[str]) -> str:
@@ -30,6 +42,58 @@ def _without_developer_instructions(command: list[str]) -> list[str]:
             continue
         cleaned.append(item)
     return cleaned
+
+
+def test_codex_command_exposes_memory_connector_mcp(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("MEMORY_CONNECTOR_URL", "https://memory.example/mcp/")
+    monkeypatch.setenv("CONNECTOR_API_KEY", "secret-token")
+    monkeypatch.setenv("MEMORY_CONNECTOR_USER_ID", "derek")
+    runner = CodexRunner(workspace=tmp_path, codex_bin="codex")
+
+    command = runner.build_command(prompt="hello", session_id=None)
+
+    assert "--ignore-user-config" in command
+    assert command[command.index("--disable") + 1] == "plugins"
+    assert (
+        'mcp_servers.memory_connector.url="https://memory.example/mcp/"'
+        in command
+    )
+    assert (
+        'mcp_servers.memory_connector.bearer_token_env_var="CONNECTOR_API_KEY"'
+        in command
+    )
+    assert (
+        'mcp_servers.memory_connector.env_http_headers={"x-memory-user-id" = "MEMORY_CONNECTOR_USER_ID"}'
+        in command
+    )
+
+
+def test_codex_runner_env_loads_memory_connector_env_file(
+    tmp_path: Path, monkeypatch
+):
+    codex_home = tmp_path / ".codex"
+    codex_home.mkdir()
+    (codex_home / "memory_connector.env").write_text(
+        "\n".join(
+            [
+                "export CONNECTOR_API_KEY='secret-token'",
+                "export MEMORY_CONNECTOR_URL='https://memory.example/mcp/'",
+                "export MEMORY_CONNECTOR_USER_ID='derek'",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+    monkeypatch.delenv("CONNECTOR_API_KEY", raising=False)
+    monkeypatch.delenv("MEMORY_CONNECTOR_URL", raising=False)
+    monkeypatch.delenv("MEMORY_CONNECTOR_USER_ID", raising=False)
+    runner = CodexRunner(workspace=tmp_path, codex_bin="codex")
+
+    env = runner.build_env()
+
+    assert env["CONNECTOR_API_KEY"] == "secret-token"
+    assert env["MEMORY_CONNECTOR_URL"] == "https://memory.example/mcp/"
+    assert env["MEMORY_CONNECTOR_USER_ID"] == "derek"
 
 
 def test_builds_new_thread_command(tmp_path: Path):
