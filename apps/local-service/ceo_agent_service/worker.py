@@ -1234,30 +1234,6 @@ class DingTalkAutoReplyWorker:
             ignore_system_notification_skip=True,
         ):
             return True
-        if not calendar_context.invite.has_description:
-            reply_text = self._calendar_missing_description_reply(calendar_context)
-            attempt_id = self.store.record_reply_attempt_for_trigger(
-                conversation_id=conversation.open_conversation_id,
-                conversation_title=conversation.title,
-                trigger_message_id=trigger.open_message_id,
-                trigger_sender=trigger.sender_name,
-                trigger_text=trigger.content,
-                action=CodexAction.ASK_CLARIFYING_QUESTION.value,
-                sensitivity_kind="general",
-                codex_reason="calendar_missing_description",
-                draft_reply_text=reply_text,
-                audit_summary="日程邀请缺少会议描述；追问参加理由。",
-            )
-            self._send_reply(
-                conversation=conversation,
-                trigger=trigger,
-                new_messages=[trigger],
-                reply_text=reply_text,
-                reason="calendar_missing_description",
-                attempt_id=attempt_id,
-                raise_on_delivery_failure=raise_on_delivery_failure,
-            )
-            return True
         if not calendar_context.conflicts:
             self._process_batch(
                 conversation,
