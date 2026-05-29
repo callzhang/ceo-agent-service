@@ -8,6 +8,7 @@ domain="gui/$(id -u)"
 plist_names=(
   "com.derek.ceo-agent-service.reply-producer.plist"
   "com.derek.ceo-agent-service.reply-consumer.plist"
+  "com.derek.ceo-agent-service.memory-flush.plist"
 )
 legacy_labels=(
   "com.derek.ceo-agent-service.hourly-dry-run"
