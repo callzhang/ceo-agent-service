@@ -229,10 +229,6 @@ class DingTalkAutoReplyWorker:
                     "read_recent_messages",
                     str(exc),
                 )
-                self._notify(
-                    title=f"CEO read recent messages failed: {conversation.title}",
-                    message=str(exc)[:120],
-                )
                 context_messages = []
             try:
                 unread_messages = self.dws.read_unread_messages(conversation)

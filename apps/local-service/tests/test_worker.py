@@ -1088,6 +1088,35 @@ def test_produce_once_uses_recent_context_when_unread_read_fails_for_group_menti
     assert codex.calls == []
 
 
+def test_produce_once_does_not_notify_when_only_recent_context_read_fails(
+    tmp_path: Path, monkeypatch
+):
+    notifications = []
+    trigger = message("@Derek Zen(磊哥) 这个怎么处理？")
+    dws = FakeDws(
+        [conversation()],
+        {"cid-1": []},
+        unread_messages={"cid-1": [trigger]},
+        read_errors={"cid-1": DwsError("temporary SYSTEM_ERROR", code="SYSTEM_ERROR")},
+    )
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该调用")
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+    monkeypatch.setattr(
+        "ceo_agent_service.worker.send_macos_notification",
+        lambda **kwargs: notifications.append(kwargs),
+    )
+
+    queued = worker.produce_once()
+
+    assert queued == 1
+    assert worker.store.count_reply_tasks(status="pending") == 1
+    assert worker.store.count_errors() == 1
+    assert notifications == []
+    assert codex.calls == []
+
+
 def test_consume_once_processes_queued_task(tmp_path: Path, monkeypatch):
     trigger = message("@Derek Zen(磊哥) 这个怎么处理？")
     dws = FakeDws([conversation()], {"cid-1": [trigger]})
