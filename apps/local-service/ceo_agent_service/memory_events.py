@@ -1,6 +1,6 @@
 import json
 
-from ceo_agent_service.store import ReplyAttempt, SentReply
+from ceo_agent_service.store import AutoReplyStore, ReplyAttempt, SentReply
 
 
 MEMORY_TEXT_LIMIT = 1200
@@ -95,6 +95,22 @@ def build_review_correction_memory_payload(attempt: ReplyAttempt) -> dict:
         },
         "provenance": _attempt_provenance_payload(attempt),
     }
+
+
+def enqueue_review_correction_memory_event(
+    store: AutoReplyStore, attempt_id: int
+) -> bool:
+    attempt = store.get_reply_attempt(attempt_id)
+    if attempt is None:
+        return False
+    if not attempt.reviewer_feedback.strip() and not attempt.corrected_reply_text.strip():
+        return False
+    store.enqueue_memory_write_event(
+        attempt_id,
+        "review_correction",
+        memory_payload_json(build_review_correction_memory_payload(attempt)),
+    )
+    return True
 
 
 def memory_payload_json(payload: dict) -> str:

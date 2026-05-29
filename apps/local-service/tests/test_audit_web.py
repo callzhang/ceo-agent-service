@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -620,6 +621,13 @@ def test_fastapi_app_records_feedback_and_redirects(tmp_path: Path):
     assert attempt is not None
     assert attempt.reviewer_feedback == "需要更严谨"
     assert attempt.corrected_reply_text == "先看材料"
+    events = store.get_memory_write_events_for_attempt(attempt_id)
+    assert len(events) == 1
+    assert events[0].event_type == "review_correction"
+    payload = json.loads(events[0].payload_json)
+    assert payload["event"] == "review_correction"
+    assert payload["review"]["reviewer_feedback"] == "需要更严谨"
+    assert payload["review"]["corrected_reply_text"] == "先看材料"
 
 
 def test_render_attempt_detail_shows_full_decision_and_feedback_form(tmp_path: Path):
@@ -822,6 +830,13 @@ def test_handle_feedback_post_updates_attempt_and_redirects(tmp_path: Path):
     assert attempt is not None
     assert attempt.reviewer_feedback == "需要更严谨"
     assert attempt.corrected_reply_text == "先看材料"
+    events = store.get_memory_write_events_for_attempt(attempt_id)
+    assert len(events) == 1
+    assert events[0].event_type == "review_correction"
+    payload = json.loads(events[0].payload_json)
+    assert payload["event"] == "review_correction"
+    assert payload["review"]["reviewer_feedback"] == "需要更严谨"
+    assert payload["review"]["corrected_reply_text"] == "先看材料"
 
 
 def test_handle_recall_post_calls_dws_and_records_success(tmp_path: Path):
@@ -1060,6 +1075,17 @@ def test_handle_reviewed_message_reply_uses_stored_group_and_recent_message(
         == "官网是 marketing 重要内容，CEO 直接相关；这类消息需要审核并回复。"
     )
     assert attempt.corrected_reply_text == "我已经完成审核，会把核心 comment 补到 tracker。"
+    events = store.get_memory_write_events_for_attempt(result["attempt_id"])
+    assert len(events) == 2
+    review_events = [event for event in events if event.event_type == "review_correction"]
+    assert len(review_events) == 1
+    payload = json.loads(review_events[0].payload_json)
+    assert payload["event"] == "review_correction"
+    assert (
+        payload["review"]["reviewer_feedback"]
+        == "官网是 marketing 重要内容，CEO 直接相关；这类消息需要审核并回复。"
+    )
+    assert payload["review"]["corrected_reply_text"] == "我已经完成审核，会把核心 comment 补到 tracker。"
     assert dws.reply_messages == [
         (
             "cid-site",

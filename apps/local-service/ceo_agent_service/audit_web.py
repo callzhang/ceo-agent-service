@@ -36,6 +36,7 @@ from ceo_agent_service.dingtalk_models import (
     SensitivityKind,
 )
 from ceo_agent_service.dws_client import DwsClient
+from ceo_agent_service.memory_events import enqueue_review_correction_memory_event
 from ceo_agent_service.store import (
     AutoReplyStore,
     ReplyAttempt,
@@ -602,6 +603,7 @@ def handle_feedback_post(
         corrected_reply_text=corrected_reply,
     ):
         return 404, {}, render_page("Attempt not found", "Attempt not found")
+    enqueue_review_correction_memory_event(store, attempt_id)
     return 303, {"Location": f"/attempts/{attempt_id}"}, ""
 
 
@@ -753,6 +755,7 @@ def handle_reviewed_message_reply(
             feedback=reviewer_feedback,
             corrected_reply_text=reply_text,
         )
+        enqueue_review_correction_memory_event(store, attempt_id)
     attempt = store.get_reply_attempt(attempt_id)
     if attempt is None:
         raise ValueError(f"reply attempt disappeared: {attempt_id}")

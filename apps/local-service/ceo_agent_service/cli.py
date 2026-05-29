@@ -27,6 +27,7 @@ from ceo_agent_service.dws_client import (
 )
 from ceo_agent_service.leak_check import contains_forbidden_leak
 from ceo_agent_service.dingtalk_models import CodexAction, DingTalkConversation
+from ceo_agent_service.memory_events import enqueue_review_correction_memory_event
 from ceo_agent_service.notification import send_macos_notification
 from ceo_agent_service.oa_approval import OaApprovalCodexRunner
 from ceo_agent_service.org_cache import (
@@ -817,6 +818,7 @@ def record_feedback_command(
     )
     if not updated:
         raise SystemExit(f"reply attempt not found: {attempt_id}")
+    enqueue_review_correction_memory_event(store, attempt_id)
     print(f"feedback recorded attempt_id={attempt_id}", flush=True)
 
 

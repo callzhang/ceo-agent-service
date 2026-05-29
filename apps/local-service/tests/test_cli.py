@@ -1621,7 +1621,41 @@ def test_record_feedback_command_updates_reply_attempt(tmp_path, capsys):
     assert attempt is not None
     assert attempt.reviewer_feedback == "需要更严谨"
     assert attempt.corrected_reply_text == "先看材料再判断。"
+    events = store.get_memory_write_events_for_attempt(attempt_id)
+    assert len(events) == 1
+    assert events[0].event_type == "review_correction"
+    payload = json.loads(events[0].payload_json)
+    assert payload["event"] == "review_correction"
+    assert payload["review"]["reviewer_feedback"] == "需要更严谨"
+    assert payload["review"]["corrected_reply_text"] == "先看材料再判断。"
     assert "feedback recorded attempt_id=1" in capsys.readouterr().out
+
+
+def test_record_feedback_command_skips_memory_event_for_blank_review(tmp_path):
+    settings = WorkerSettings(
+        workspace=tmp_path / "workspace",
+        db_path=tmp_path / "worker.sqlite3",
+        corpus_dir=tmp_path / "corpus",
+    )
+    store = cli.AutoReplyStore(settings.db_path)
+    attempt_id = store.record_reply_attempt(
+        conversation_id="cid-1",
+        conversation_title="技术部",
+        trigger_message_id="msg-1",
+        trigger_sender="Xiaomin",
+        trigger_text="@Derek Zen 这个怎么处理？",
+        action="send_reply",
+        sensitivity_kind="general",
+    )
+
+    record_feedback_command(
+        settings,
+        attempt_id=attempt_id,
+        feedback="   ",
+        corrected_reply="",
+    )
+
+    assert store.get_memory_write_events_for_attempt(attempt_id) == []
 
 
 def test_record_feedback_command_fails_when_attempt_is_missing(tmp_path):
