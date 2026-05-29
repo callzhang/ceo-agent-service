@@ -856,8 +856,23 @@ class DingTalkAutoReplyWorker:
             trigger_text=trigger.content,
             context_text=self._oa_approval_context_text(context_messages),
             oa_url=oa_url,
-            execute=not self.dry_run,
+            execute=False,
         )
+        action_result = {}
+        send_status = "dry_run"
+        send_error = ""
+        if not self.dry_run:
+            try:
+                action_result = self.dws.execute_oa_approval_action(
+                    result.process_instance_id,
+                    result.task_id,
+                    result.oa_action,
+                    result.oa_remark,
+                )
+                send_status = "skipped"
+            except Exception as exc:
+                send_status = "failed"
+                send_error = str(exc)
         attempt_id = self.store.record_reply_attempt(
             conversation_id=conversation.open_conversation_id,
             conversation_title=conversation.title,
@@ -891,15 +906,28 @@ class DingTalkAutoReplyWorker:
             oa_action=result.oa_action,
             oa_remark=result.oa_remark,
             oa_action_result_json=json.dumps(
-                result.action_result,
+                action_result,
                 ensure_ascii=False,
             ),
-            send_status="dry_run" if self.dry_run else "skipped",
+            send_status=send_status,
         )
         self.store.update_reply_attempt(
             attempt_id,
             final_reply_text=result.oa_remark,
+            send_error=send_error,
         )
+        if send_error:
+            self.store.record_error(
+                conversation.open_conversation_id,
+                trigger.open_message_id,
+                "oa_approval_action",
+                send_error,
+            )
+            self._notify(
+                title=f"CEO OA approval action failed: {conversation.title}",
+                message=send_error[:120],
+            )
+            raise ReplyDeliveryError(send_error)
         self._mark_seen([trigger])
         return True
 

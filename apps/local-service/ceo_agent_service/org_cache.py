@@ -158,6 +158,20 @@ class CachedDwsClient:
     def download_doc(self, node: str):
         return self.dws.download_doc(node)
 
+    def execute_oa_approval_action(
+        self,
+        process_instance_id: str,
+        task_id: str,
+        action: str,
+        remark: str,
+    ):
+        return self.dws.execute_oa_approval_action(
+            process_instance_id,
+            task_id,
+            action,
+            remark,
+        )
+
     def send_message(
         self,
         conversation_id: str | None,

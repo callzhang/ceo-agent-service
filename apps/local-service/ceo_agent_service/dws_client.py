@@ -360,6 +360,35 @@ class DwsClient:
         command.extend(["--format", "json", "--yes"])
         return command
 
+    def build_oa_approval_action_command(
+        self,
+        process_instance_id: str,
+        task_id: str,
+        action: str,
+        remark: str,
+    ) -> list[str]:
+        if action == "通过":
+            command_action = "approve"
+        elif action in {"拒绝", "退回"}:
+            command_action = "reject"
+        else:
+            raise ValueError(f"unsupported OA approval action: {action}")
+        return [
+            self.dws_bin,
+            "oa",
+            "approval",
+            command_action,
+            "--instance-id",
+            process_instance_id,
+            "--task-id",
+            task_id,
+            "--remark",
+            self._literal_cli_value(remark),
+            "--format",
+            "json",
+            "--yes",
+        ]
+
     def build_message_list_command(
         self,
         conversation: DingTalkConversation,
@@ -743,6 +772,22 @@ class DwsClient:
         self, request: DwsMinutesPermissionRequest
     ) -> dict[str, Any]:
         return self.run_json(self.build_add_minutes_member_permission_command(request))
+
+    def execute_oa_approval_action(
+        self,
+        process_instance_id: str,
+        task_id: str,
+        action: str,
+        remark: str,
+    ) -> dict[str, Any]:
+        return self.run_json(
+            self.build_oa_approval_action_command(
+                process_instance_id,
+                task_id,
+                action,
+                remark,
+            )
+        )
 
     def read_doc(self, node: str) -> dict[str, Any]:
         payload = self.run_json(self.build_read_doc_command(node))

@@ -180,7 +180,45 @@ class OaApprovalCodexRunner:
         )
         raw_outputs.append(raw)
         self._remember_session_id(raw)
-        result = parse_oa_approval_json(raw)
+        try:
+            result = parse_oa_approval_json(raw)
+        except (json.JSONDecodeError, ValidationError):
+            session_result = self._current_session_result()
+            if session_result is not None:
+                result = session_result
+            elif allow_side_effects:
+                self._remember_audit_tool_events(raw_outputs)
+                raise RuntimeError(
+                    f"invalid OA approval JSON: {raw[:200]}"
+                ) from None
+            else:
+                retry_session_id = session_id or self.last_session_id
+                repair_prompt = (
+                    "上一次输出不是合法 OA 审批 JSON。不得执行通过、拒绝、退回或评论。"
+                    "只输出合法 JSON，不要解释。action_result 必须是空对象 {}。"
+                    "oa_action 只能是 通过、拒绝、退回 之一；oa_remark、audit_summary 必须非空。"
+                )
+                second_raw = self.executor(
+                    self.runner.build_command(
+                        repair_prompt,
+                        retry_session_id,
+                        allow_side_effects=False,
+                    ),
+                    repair_prompt,
+                )
+                raw_outputs.append(second_raw)
+                self._remember_session_id(second_raw)
+                try:
+                    result = parse_oa_approval_json(second_raw)
+                except (json.JSONDecodeError, ValidationError):
+                    session_result = self._current_session_result()
+                    if session_result is None:
+                        self._remember_audit_tool_events(raw_outputs)
+                        raise RuntimeError(
+                            "invalid OA approval JSON twice: "
+                            f"{raw[:200]} | {second_raw[:200]}"
+                        ) from None
+                    result = session_result
         self._remember_audit_tool_events(raw_outputs)
         if not allow_side_effects:
             _validate_read_only_result(result, self.last_audit_tool_events)
@@ -245,6 +283,27 @@ class OaApprovalCodexRunner:
         if not session_id:
             return 0
         return count_codex_session_lines(session_id, codex_home=self.codex_home)
+
+    def _current_session_result(self) -> OaApprovalResult | None:
+        session_id = self.last_session_id
+        if not session_id:
+            return None
+        from ceo_agent_service.codex_history import find_codex_session_path
+
+        path = find_codex_session_path(session_id, codex_home=self.codex_home)
+        if path is None:
+            return None
+        current_turn = "\n".join(
+            path.read_text(encoding="utf-8").splitlines()[
+                self.last_transcript_start_line :
+            ]
+        )
+        if not current_turn.strip():
+            return None
+        try:
+            return parse_oa_approval_json(current_turn)
+        except (json.JSONDecodeError, ValidationError):
+            return None
 
 
 class _OaApprovalCommandBuilder:

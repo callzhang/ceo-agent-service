@@ -101,6 +101,9 @@ class FakeDws:
             str, DwsMinutesPermissionRequest | None
         ] = {}
         self.added_minutes_permissions: list[DwsMinutesPermissionRequest] = []
+        self.oa_approval_actions: list[tuple[str, str, str, str]] = []
+        self.oa_approval_action_result: dict = {"errcode": 0, "errmsg": "ok"}
+        self.oa_approval_action_error: Exception | None = None
         self.upgrade_check_response: dict = {"needs_upgrade": False}
         self.upgrade_error: Exception | None = None
         self.upgrade_check_calls = 0
@@ -340,6 +343,20 @@ class FakeDws:
         self.added_minutes_permissions.append(request)
         return {"success": True}
 
+    def execute_oa_approval_action(
+        self,
+        process_instance_id: str,
+        task_id: str,
+        action: str,
+        remark: str,
+    ) -> dict:
+        self.oa_approval_actions.append(
+            (process_instance_id, task_id, action, remark)
+        )
+        if self.oa_approval_action_error:
+            raise self.oa_approval_action_error
+        return self.oa_approval_action_result
+
 
 class FakeCodex:
     def __init__(
@@ -408,7 +425,7 @@ class FakeOaApprovalRunner:
             or "https://aflow.dingtalk.com/dingtalk/pc/query/pchomepage.htm?procInstId=proc-1&taskId=task-1",
             oa_action="退回",
             oa_remark="请补充预算来源和项目归属后重新提交。",
-            action_result={"errcode": 0, "errmsg": "ok"},
+            action_result={},
             audit_summary="缺少预算来源和项目归属，按审批规则退回补充。",
             audit_documents=[{"title": "OA 审批单", "url": oa_url}],
         )
@@ -1350,6 +1367,15 @@ def test_structured_approval_card_is_processed_by_oa_runner(
     assert attempt.oa_url.startswith("https://aflow.dingtalk.com/")
     assert attempt.oa_action == "退回"
     assert attempt.oa_remark == "请补充预算来源和项目归属后重新提交。"
+    assert oa_runner.calls[0][3] is False
+    assert dws.oa_approval_actions == [
+        (
+            "proc-1",
+            "task-1",
+            "退回",
+            "请补充预算来源和项目归属后重新提交。",
+        )
+    ]
     assert json.loads(attempt.oa_action_result_json) == {
         "errcode": 0,
         "errmsg": "ok",
@@ -1544,7 +1570,15 @@ def test_ding_approval_reminder_is_processed_by_oa_runner(
     assert codex.calls == []
     assert len(oa_runner.calls) == 1
     assert oa_runner.calls[0][2] == ""
-    assert oa_runner.calls[0][3] is True
+    assert oa_runner.calls[0][3] is False
+    assert dws.oa_approval_actions == [
+        (
+            "proc-1",
+            "task-1",
+            "退回",
+            "请补充预算来源和项目归属后重新提交。",
+        )
+    ]
     assert worker.store.has_seen("msg-1") is True
     assert worker.store.count_reply_attempts() == 1
     assert worker.store.get_reply_attempt(1).action == "oa_approval"
@@ -1597,7 +1631,15 @@ def test_oa_approval_dry_run_uses_review_only_mode_and_keeps_live_retry_open(
     live_worker.run_once()
 
     assert len(live_runner.calls) == 1
-    assert live_runner.calls[0][3] is True
+    assert live_runner.calls[0][3] is False
+    assert dws.oa_approval_actions == [
+        (
+            "proc-1",
+            "task-1",
+            "退回",
+            "请补充预算来源和项目归属后重新提交。",
+        )
+    ]
     assert worker.store.has_seen("msg-1") is True
     assert worker.store.count_reply_attempts() == 2
     assert worker.store.count_reply_tasks(status="pending") == 0

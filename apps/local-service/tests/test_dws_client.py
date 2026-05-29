@@ -375,6 +375,54 @@ def test_send_message_command_supports_direct_user_target():
     ]
 
 
+def test_oa_approval_action_command_maps_review_action_to_dws_command():
+    client = DwsClient(dws_bin="dws")
+
+    approve = client.build_oa_approval_action_command(
+        process_instance_id="proc-1",
+        task_id="task-1",
+        action="通过",
+        remark="同意。",
+    )
+    reject = client.build_oa_approval_action_command(
+        process_instance_id="proc-1",
+        task_id="task-1",
+        action="退回",
+        remark="请补材料。",
+    )
+
+    assert approve == [
+        "dws",
+        "oa",
+        "approval",
+        "approve",
+        "--instance-id",
+        "proc-1",
+        "--task-id",
+        "task-1",
+        "--remark",
+        "同意。",
+        "--format",
+        "json",
+        "--yes",
+    ]
+    assert reject == [
+        "dws",
+        "oa",
+        "approval",
+        "reject",
+        "--instance-id",
+        "proc-1",
+        "--task-id",
+        "task-1",
+        "--remark",
+        "请补材料。",
+        "--format",
+        "json",
+        "--yes",
+    ]
+
+
 def test_reply_message_command_shape():
     client = DwsClient(dws_bin="dws")
 

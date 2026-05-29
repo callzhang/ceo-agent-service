@@ -325,6 +325,42 @@ def test_read_only_handle_rejects_mutating_result_or_tool_event(tmp_path: Path):
         runner.handle("触发消息", "", "", execute=False)
 
 
+def test_read_only_runner_repairs_empty_stdout_once(tmp_path: Path):
+    skill_path = tmp_path / "skill.md"
+    skill_path.write_text("# OA Skill", encoding="utf-8")
+    calls: list[list[str]] = []
+
+    def fake_executor(command: list[str], prompt: str) -> str:
+        calls.append(command)
+        if len(calls) == 1:
+            return ""
+        return json.dumps(
+            {
+                "process_instance_id": "proc-1",
+                "task_id": "task-1",
+                "oa_url": "https://aflow.dingtalk.com/detail?procInstId=proc-1",
+                "oa_action": "退回",
+                "oa_remark": "请补充材料。",
+                "action_result": {},
+                "audit_summary": "已审阅，材料不足。",
+                "audit_documents": [],
+            },
+            ensure_ascii=False,
+        )
+
+    runner = OaApprovalCodexRunner(
+        workspace=tmp_path,
+        executor=fake_executor,
+        skill_path=skill_path,
+    )
+
+    result = runner.run("处理审批", allow_side_effects=False)
+
+    assert result.oa_action == "退回"
+    assert len(calls) == 2
+    assert 'approval_policy="never"' in calls[1]
+
+
 def test_subprocess_failure_redacts_sensitive_stderr(tmp_path: Path, monkeypatch):
     skill_path = tmp_path / "skill.md"
     skill_path.write_text("# OA Skill", encoding="utf-8")
