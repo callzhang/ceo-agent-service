@@ -95,6 +95,7 @@ class FakeDws:
         self.manager_chains: dict[str, list[str]] = {}
         self.resolved_senders: dict[str, str] = {}
         self.current_user_id = "derek-user-1"
+        self.current_user_checks: list[str] = []
         self.calendar_invites: dict[str, DwsCalendarEvent | None] = {}
         self.calendar_events: dict[str, list[DwsCalendarEvent]] = {}
         self.minutes_permission_requests: dict[
@@ -320,6 +321,7 @@ class FakeDws:
         return self.user_departments[user_id]
 
     def is_current_user_message(self, message: DingTalkMessage) -> bool:
+        self.current_user_checks.append(message.sender_name)
         if self.current_user_error:
             raise self.current_user_error
         return message.sender_user_id == self.current_user_id
@@ -3716,6 +3718,29 @@ def test_current_user_all_mention_is_filtered_from_broadcast_search(
     worker = make_worker(tmp_path, dws, codex, monkeypatch, dry_run=True)
 
     assert worker._broadcast_messages_by_conversation() == {}
+
+
+def test_broadcast_filter_does_not_resolve_sender_without_stable_identity(
+    tmp_path: Path, monkeypatch
+):
+    broadcast = message(
+        "@所有人 系统通知",
+        message_id="msg-system-all",
+    )
+    broadcast.sender_name = "数据小蜜"
+    broadcast.sender_user_id = None
+    broadcast.sender_open_dingtalk_id = None
+    broadcast.open_conversation_id = "cid-website"
+    broadcast.conversation_title = "官网迭代群"
+    dws = FakeDws([], {"cid-website": [broadcast]})
+    dws.broadcast_messages = {"cid-website": [broadcast]}
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.NO_REPLY, reason="not relevant")
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch, dry_run=True)
+
+    assert worker._broadcast_messages_by_conversation() == {"cid-website": [broadcast]}
+    assert dws.current_user_checks == []
 
 
 def test_read_group_mention_is_skipped_when_later_current_user_text_replied(

@@ -1412,6 +1412,8 @@ class DingTalkAutoReplyWorker:
     ) -> bool:
         if message.sender_name.strip() in CURRENT_USER_DISPLAY_NAMES:
             return True
+        if not message.sender_user_id and not message.sender_open_dingtalk_id:
+            return False
         try:
             return self.dws.is_current_user_message(message)
         except Exception:
