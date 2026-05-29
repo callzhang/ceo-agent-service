@@ -95,6 +95,7 @@ class DwsClient:
     RETRYABLE_ERROR_CODES = {"TIMEOUT_ERROR", "6"}
     DISCOVERY_CACHE_REFRESH_CODES = {"6"}
     DOC_READ_RETRYABLE_ERROR_CODES = {"internalError"}
+    MESSAGE_LIST_RETRYABLE_ERROR_CODES = {"SYSTEM_ERROR"}
     SENSITIVE_COMMAND_FLAGS = {
         "--robot-code",
         "--webhook",
@@ -1106,6 +1107,12 @@ class DwsClient:
     @classmethod
     def _is_retryable_error(cls, command: list[str], code: str | None) -> bool:
         if code in cls.RETRYABLE_ERROR_CODES:
+            return True
+        if (
+            code in cls.MESSAGE_LIST_RETRYABLE_ERROR_CODES
+            and len(command) >= 4
+            and command[1:4] == ["chat", "message", "list"]
+        ):
             return True
         return (
             code in cls.DOC_READ_RETRYABLE_ERROR_CODES
