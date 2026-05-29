@@ -1317,6 +1317,7 @@ class DingTalkAutoReplyWorker:
             if self._calendar_events_conflict(invite, event)
             and not self._same_calendar_event(invite, event)
             and event.status != "cancelled"
+            and self._calendar_event_blocks_time(event)
         ]
         return CalendarConflictContext(invite=invite, conflicts=conflicts)
 
@@ -1421,6 +1422,17 @@ class DingTalkAutoReplyWorker:
         if not all((invite_start, invite_end, existing_start, existing_end)):
             return False
         return invite_start < existing_end and existing_start < invite_end
+
+    @staticmethod
+    def _calendar_event_blocks_time(event: DwsCalendarEvent) -> bool:
+        self_response_status = event.self_response_status.strip().lower()
+        return self_response_status not in {
+            "declined",
+            "rejected",
+            "needsaction",
+            "needs_action",
+            "needs-action",
+        }
 
     @staticmethod
     def _same_calendar_event(left: DwsCalendarEvent, right: DwsCalendarEvent) -> bool:

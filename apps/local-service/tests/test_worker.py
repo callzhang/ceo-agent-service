@@ -1625,6 +1625,7 @@ def test_calendar_invite_without_description_asks_for_attendance_reason(
         start_time="2026-05-14T10:30:00+08:00",
         end_time="2026-05-14T11:30:00+08:00",
         description="固定例会",
+        self_response_status="accepted",
     )
     dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
     dws.calendar_invites["msg-1"] = invite
@@ -1646,6 +1647,88 @@ def test_calendar_invite_without_description_asks_for_attendance_reason(
     attempt = worker.store.get_reply_attempt(1)
     assert attempt.action == "ask_clarifying_question"
     assert attempt.send_status == "sent"
+
+
+def test_calendar_invite_ignores_declined_overlapping_event(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message("[日程]", single_chat=True, message_type="calendar")
+    invite = DwsCalendarEvent(
+        event_id="invite-1",
+        title="Mike项目结项会",
+        start_time="2026-06-05T10:30:00+08:00",
+        end_time="2026-06-05T11:30:00+08:00",
+        description="",
+        organizer="王天浩",
+    )
+    declined_existing = DwsCalendarEvent(
+        event_id="event-1",
+        title="销售周会",
+        start_time="2026-06-05T10:00:00+08:00",
+        end_time="2026-06-05T12:00:00+08:00",
+        description="到期续约",
+        status="confirmed",
+        self_response_status="declined",
+    )
+    dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
+    dws.calendar_invites["msg-1"] = invite
+    dws.calendar_events[f"{invite.start_time}|{invite.end_time}"] = [
+        invite,
+        declined_existing,
+    ]
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该调用")
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+
+    worker.run_once()
+
+    assert codex.calls == []
+    assert len(final_sent(dws)) == 1
+    assert "Mike项目结项会" in final_sent(dws)[0][1]
+    assert "销售周会" not in final_sent(dws)[0][1]
+    assert "时间冲突" not in final_sent(dws)[0][1]
+    assert "为什么需要我参加" in final_sent(dws)[0][1]
+
+
+def test_calendar_invite_ignores_pending_overlapping_event(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message("[日程]", single_chat=True, message_type="calendar")
+    invite = DwsCalendarEvent(
+        event_id="invite-1",
+        title="客户复盘",
+        start_time="2026-05-14T10:00:00+08:00",
+        end_time="2026-05-14T11:00:00+08:00",
+        description="",
+        organizer="Mina",
+    )
+    pending_existing = DwsCalendarEvent(
+        event_id="event-1",
+        title="待确认会议",
+        start_time="2026-05-14T10:30:00+08:00",
+        end_time="2026-05-14T11:30:00+08:00",
+        description="待确认",
+        status="confirmed",
+        self_response_status="needsAction",
+    )
+    dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
+    dws.calendar_invites["msg-1"] = invite
+    dws.calendar_events[f"{invite.start_time}|{invite.end_time}"] = [
+        invite,
+        pending_existing,
+    ]
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该调用")
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+
+    worker.run_once()
+
+    assert len(final_sent(dws)) == 1
+    assert "待确认会议" not in final_sent(dws)[0][1]
+    assert "时间冲突" not in final_sent(dws)[0][1]
+    assert "为什么需要我参加" in final_sent(dws)[0][1]
 
 
 def test_calendar_invite_without_description_asks_even_without_conflict(
@@ -1698,6 +1781,7 @@ def test_calendar_invite_with_description_asks_codex_to_evaluate_conflict(
         start_time="2026-05-14T10:30:00+08:00",
         end_time="2026-05-14T11:30:00+08:00",
         description="固定例会",
+        self_response_status="accepted",
     )
     dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
     dws.calendar_invites["msg-1"] = invite
