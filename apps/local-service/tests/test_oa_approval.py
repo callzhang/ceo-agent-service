@@ -223,6 +223,24 @@ def test_resume_command_also_uses_output_schema(tmp_path: Path):
     assert command[command.index("--output-schema") + 1] == str(OA_APPROVAL_SCHEMA_PATH)
 
 
+def test_output_schema_uses_strict_object_shapes_required_by_codex():
+    schema = json.loads(OA_APPROVAL_SCHEMA_PATH.read_text(encoding="utf-8"))
+
+    def assert_strict_objects(node):
+        if not isinstance(node, dict):
+            return
+        if node.get("type") == "object":
+            assert node.get("additionalProperties") is False
+        for value in node.values():
+            if isinstance(value, dict):
+                assert_strict_objects(value)
+            elif isinstance(value, list):
+                for item in value:
+                    assert_strict_objects(item)
+
+    assert_strict_objects(schema)
+
+
 def test_read_only_handle_uses_hard_sandbox_and_requires_empty_action_result(
     tmp_path: Path,
 ):
@@ -386,3 +404,40 @@ def test_subprocess_failure_redacts_sensitive_stderr(tmp_path: Path, monkeypatch
     assert "secret-value" not in message
     assert "session-id" not in message
     assert "[REDACTED]" in message
+
+
+def test_subprocess_failure_reports_codex_json_stdout_error(
+    tmp_path: Path, monkeypatch
+):
+    skill_path = tmp_path / "skill.md"
+    skill_path.write_text("# OA Skill", encoding="utf-8")
+
+    def fake_run(command, **kwargs):
+        return ProcessRunResult(
+            returncode=1,
+            stdout="\n".join(
+                [
+                    json.dumps({"type": "thread.started", "thread_id": "thread-1"}),
+                    json.dumps(
+                        {
+                            "type": "error",
+                            "message": json.dumps(
+                                {
+                                    "error": {
+                                        "code": "invalid_json_schema",
+                                        "message": "Invalid schema",
+                                    }
+                                }
+                            ),
+                        }
+                    ),
+                ]
+            ),
+            stderr="",
+        )
+
+    monkeypatch.setattr(oa_approval, "run_process_with_idle_timeout", fake_run)
+    runner = OaApprovalCodexRunner(workspace=tmp_path, skill_path=skill_path)
+
+    with pytest.raises(RuntimeError, match="invalid_json_schema: Invalid schema"):
+        runner.run("处理审批")

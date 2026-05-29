@@ -277,8 +277,11 @@ class OaApprovalCodexRunner:
         )
         if completed.timed_out:
             raise RuntimeError(completed.timeout_reason)
-        if completed.returncode != 0 and not completed.stdout.strip():
-            raise RuntimeError(_subprocess_failure_reason(completed.stderr))
+        if completed.returncode != 0:
+            raise RuntimeError(
+                _codex_stdout_error_reason(completed.stdout)
+                or _subprocess_failure_reason(completed.stderr)
+            )
         return completed.stdout.strip()
 
     def _session_line_count(self, session_id: str | None) -> int:
@@ -410,6 +413,38 @@ def _subprocess_failure_reason(stderr: str) -> str:
     normalized = " ".join(line.strip() for line in stderr.splitlines() if line.strip())
     if not normalized:
         return "codex exec failed without stderr"
+    for pattern in SECRET_PATTERNS:
+        normalized = pattern.sub("[REDACTED]", normalized)
+    if len(normalized) <= 1200:
+        return normalized
+    return f"{normalized[:1200]}..."
+
+
+def _codex_stdout_error_reason(stdout: str) -> str:
+    for payload in reversed(_iter_json_payloads(stdout)):
+        if not isinstance(payload, dict) or payload.get("type") != "error":
+            continue
+        message = payload.get("message")
+        if not isinstance(message, str):
+            continue
+        code = ""
+        detail = message
+        try:
+            parsed = json.loads(message)
+        except json.JSONDecodeError:
+            parsed = None
+        if isinstance(parsed, dict):
+            error = parsed.get("error")
+            if isinstance(error, dict):
+                code = str(error.get("code") or "")
+                detail = str(error.get("message") or detail)
+        normalized = f"{code}: {detail}" if code else detail
+        return _redact_failure_reason(normalized)
+    return ""
+
+
+def _redact_failure_reason(reason: str) -> str:
+    normalized = " ".join(line.strip() for line in reason.splitlines() if line.strip())
     for pattern in SECRET_PATTERNS:
         normalized = pattern.sub("[REDACTED]", normalized)
     if len(normalized) <= 1200:
