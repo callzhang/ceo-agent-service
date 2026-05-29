@@ -70,6 +70,28 @@ def test_claim_reply_tasks_marks_tasks_processing_atomically(tmp_path: Path):
     assert store.count_reply_tasks(status="processing") == 1
 
 
+def test_complete_reply_task_for_message_marks_matching_task_done(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="cid-1",
+        conversation_title="Friday",
+        single_chat=False,
+        trigger_message_id="msg-1",
+        trigger_create_time="2026-05-13 18:00:00",
+        trigger_sender="Mina",
+        trigger_text="@Derek Zen 看一下",
+    )
+    claimed = store.claim_reply_tasks(limit=1)[0]
+    store.fail_reply_task(claimed.id, "old failure")
+
+    updated = store.complete_reply_task_for_message("cid-1", "msg-1")
+
+    tasks = store.list_reply_tasks(limit=1)
+    assert updated == 1
+    assert tasks[0].status == "done"
+    assert tasks[0].error == ""
+
+
 def test_list_reply_tasks_filters_statuses_newest_first(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.enqueue_reply_task(

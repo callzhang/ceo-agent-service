@@ -570,6 +570,7 @@ def rerun_message_command(
             message_id,
             force_new_decision=force_new_decision,
         )
+        store.complete_reply_task_for_message(conversation_id, processed_message_id)
     except ValueError as exc:
         raise SystemExit(str(exc)) from exc
     print(

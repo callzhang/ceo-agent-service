@@ -484,6 +484,24 @@ class AutoReplyStore:
                 (task_id,),
             )
 
+    def complete_reply_task_for_message(
+        self, conversation_id: str, trigger_message_id: str
+    ) -> int:
+        with self._connect() as db:
+            cursor = db.execute(
+                """
+                update reply_tasks
+                set status='done',
+                    locked_at=null,
+                    error='',
+                    updated_at=current_timestamp
+                where conversation_id=?
+                  and trigger_message_id=?
+                """,
+                (conversation_id, trigger_message_id),
+            )
+            return cursor.rowcount
+
     def fail_reply_task(self, task_id: int, error: str) -> None:
         with self._connect() as db:
             db.execute(

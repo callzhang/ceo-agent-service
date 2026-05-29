@@ -1414,6 +1414,48 @@ def test_rerun_message_command_loads_conversation_and_calls_worker(
     assert "rerun-message processed conversation_id=cid-1" in capsys.readouterr().out
 
 
+def test_rerun_message_command_marks_matching_failed_task_done(
+    monkeypatch, tmp_path, capsys
+):
+    settings = WorkerSettings(
+        workspace=tmp_path / "workspace",
+        db_path=tmp_path / "worker.sqlite3",
+        corpus_dir=tmp_path / "corpus",
+    )
+    store = cli.AutoReplyStore(settings.db_path)
+    store.upsert_conversation("cid-1", "Friday", False, "session-1")
+    store.enqueue_reply_task(
+        conversation_id="cid-1",
+        conversation_title="Friday",
+        single_chat=False,
+        trigger_message_id="msg-1",
+        trigger_create_time="2026-05-20 09:56:09",
+        trigger_sender="Claire",
+        trigger_text="@Derek 这个怎么处理？",
+    )
+    task = store.claim_reply_tasks(1)[0]
+    store.fail_reply_task(task.id, "old failure")
+
+    class FakeWorker:
+        def rerun_message(self, conversation, message_id, *, force_new_decision=False):
+            return message_id
+
+    monkeypatch.setattr(cli, "create_worker", lambda settings: FakeWorker())
+
+    rerun_message_command(
+        settings,
+        conversation_id="cid-1",
+        message_id="msg-1",
+        force_new_decision=True,
+    )
+
+    loaded = cli.AutoReplyStore(settings.db_path)
+    tasks = loaded.list_reply_tasks(limit=1)
+    assert tasks[0].status == "done"
+    assert tasks[0].error == ""
+    assert "rerun-message processed conversation_id=cid-1" in capsys.readouterr().out
+
+
 def test_rerun_message_command_treats_naive_context_time_as_dingtalk_time(
     monkeypatch, tmp_path, capsys
 ):
