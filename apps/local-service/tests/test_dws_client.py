@@ -1,5 +1,6 @@
 import subprocess
 from datetime import datetime, timedelta
+import json
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
@@ -201,6 +202,54 @@ def test_download_doc_command_shape():
         "--format",
         "json",
     ]
+
+
+def test_get_resource_download_url_command_uses_mcp_chat_surface():
+    client = DwsClient(dws_bin="dws")
+
+    command = client.build_get_resource_download_url_command(
+        open_conversation_id="cid-1",
+        open_message_id="msg-1",
+        resource_id="@img-token-1",
+        resource_type="image",
+    )
+
+    assert command == [
+        "dws",
+        "mcp",
+        "chat",
+        "get_resource_download_url",
+        "--openConversationId",
+        "cid-1",
+        "--openMessageId",
+        "msg-1",
+        "--resourceId",
+        " @img-token-1",
+        "--resourceType",
+        "image",
+        "--format",
+        "json",
+    ]
+
+
+def test_download_robot_message_file_command_uses_official_download_api(monkeypatch):
+    monkeypatch.setenv("CEO_DING_ROBOT_CODE", "ding-robot-1")
+    client = DwsClient(dws_bin="dws")
+
+    command = client.build_download_robot_message_file_command("download-code-1")
+
+    assert command[:4] == [
+        "dws",
+        "api",
+        "POST",
+        "/v1.0/robot/messageFiles/download",
+    ]
+    data_index = command.index("--data")
+    assert json.loads(command[data_index + 1]) == {
+        "downloadCode": "download-code-1",
+        "robotCode": "ding-robot-1",
+    }
+    assert command[-2:] == ["--format", "json"]
 
 
 def test_build_doc_list_command_uses_read_only_list():

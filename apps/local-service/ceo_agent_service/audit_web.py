@@ -1,5 +1,6 @@
 import json
 from html import escape
+from itertools import zip_longest
 import os
 from pathlib import Path
 from urllib.parse import parse_qs
@@ -13,6 +14,21 @@ from ceo_agent_service.codex_history import (
     render_local_codex_session,
 )
 from ceo_agent_service.codex_decision import audit_summary_explains_no_documents
+from ceo_agent_service.developer_prompt import (
+    DeveloperPromptTemplateError,
+    developer_prompt_template_path,
+    developer_prompt_variable_pairs,
+    format_developer_prompt_variables,
+    merge_developer_prompt_template,
+    read_developer_prompt_template,
+    read_user_prompt_template,
+    render_developer_prompt_template,
+    render_user_prompt_template,
+    split_developer_prompt_template,
+    user_prompt_template_path,
+    write_developer_prompt_template,
+    write_user_prompt_template,
+)
 from ceo_agent_service.dingtalk_models import (
     CodexAction,
     DingTalkConversation,
@@ -27,6 +43,7 @@ from ceo_agent_service.store import (
     ReplyTask,
     SentReply,
 )
+from ceo_agent_service.user_prompt_blocks import USER_PROMPT_BLOCKS
 from ceo_agent_service.worker import DingTalkAutoReplyWorker
 
 
@@ -69,6 +86,10 @@ th{background:var(--surface-soft);color:var(--steel);font-size:12px;font-weight:
 .nav{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .nav a{display:inline-flex;align-items:center;height:36px;padding:0 14px;border:1px solid var(--hairline);border-radius:999px;background:var(--canvas);color:var(--steel);font-size:14px;font-weight:500}
 .nav a:hover{color:var(--ink);text-decoration:none;border-color:var(--ink)}
+.prompt-tabs{display:inline-flex;align-items:center;gap:6px;padding:4px;border:1px solid var(--hairline);border-radius:999px;background:var(--surface-soft);margin:0 0 12px}
+.prompt-tab{display:inline-flex;align-items:center;height:32px;padding:0 13px;border-radius:999px;color:var(--steel);font-size:13px;font-weight:600}
+.prompt-tab:hover{text-decoration:none;color:var(--ink)}
+.prompt-tab.active{background:var(--ink);color:#fff}
 .pill{display:inline-flex;align-items:center;min-height:24px;padding:3px 9px;border-radius:999px;background:var(--surface);color:var(--steel);border:1px solid var(--hairline);font-family:"Geist Mono","SF Mono",Menlo,Consolas,monospace;font-size:12px;line-height:1.3;white-space:nowrap}
 .action-no_reply{background:rgba(55,114,207,.10);color:#245aa5;border-color:rgba(55,114,207,.24)}
 .action-send_reply,.action-ask_clarifying_question{background:rgba(0,212,164,.10);color:#006b55;border-color:rgba(0,180,138,.24)}
@@ -89,8 +110,16 @@ th{background:var(--surface-soft);color:var(--steel);font-size:12px;font-weight:
 .review-grid .card{margin:0}
 .reply-pre{min-height:188px;background:var(--surface-soft);border-color:var(--hairline);font-size:14px;line-height:1.55}
 .reply-meta{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
+.trigger-pre{min-height:0;margin:0 0 14px;background:var(--surface-soft);border-color:var(--hairline);font-size:14px;line-height:1.55}
 .compact-card{padding:16px}
 .compact-card h2{font-size:16px;margin-bottom:10px}
+.collapsible-card{padding:0;overflow:hidden}
+.collapsible-card summary{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:16px 24px;cursor:pointer}
+.collapsible-card summary h2{margin:0;font-size:18px}
+.collapsible-card summary::after{content:"Show";color:var(--steel);font-size:12px;font-weight:600}
+.collapsible-card[open] summary{border-bottom:1px solid var(--hairline)}
+.collapsible-card[open] summary::after{content:"Hide"}
+.collapsible-card pre{border:0;border-radius:0;margin:0}
 .event{background:var(--canvas);border:1px solid var(--hairline);border-radius:8px;margin:16px 0;overflow:hidden}
 .event summary{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:14px 16px;cursor:pointer;list-style:none}
 .event summary::-webkit-details-marker{display:none}
@@ -107,8 +136,9 @@ pre{white-space:pre-wrap;background:var(--surface);border:1px solid var(--hairli
 .json-number{color:#9a5b00}
 .json-bool{color:#1f5fbf}
 .json-null{color:#8a2626}
-textarea{width:100%;min-height:104px;box-sizing:border-box;background:var(--canvas);color:var(--ink);border:1px solid var(--hairline);border-radius:8px;padding:12px 14px;font:inherit;resize:vertical}
-textarea:focus{outline:0;border-color:var(--mint);box-shadow:0 0 0 3px rgba(0,212,164,.16)}
+textarea,input[type="text"]{width:100%;box-sizing:border-box;background:var(--canvas);color:var(--ink);border:1px solid var(--hairline);border-radius:8px;padding:12px 14px;font:inherit}
+textarea{min-height:104px;resize:vertical}
+textarea:focus,input[type="text"]:focus{outline:0;border-color:var(--mint);box-shadow:0 0 0 3px rgba(0,212,164,.16)}
 button{background:var(--ink);color:#fff;border:0;border-radius:999px;padding:10px 18px;font-size:14px;font-weight:500;line-height:1.3}
 label{display:block;margin:14px 0 7px;color:var(--slate);font-size:13px;font-weight:600}
 .review-link{display:inline-flex;align-items:center;height:30px;padding:0 12px;border:1px solid var(--hairline);border-radius:999px;background:var(--canvas);color:var(--ink);font-size:13px;font-weight:500;white-space:nowrap}
@@ -131,11 +161,14 @@ CONTEXT_ONLY_TOOLTIP = (
 )
 
 
-def render_page(title: str, body: str) -> str:
+def render_page(title: str, body: str, *, auto_refresh: bool = False) -> str:
+    refresh_meta = (
+        "<meta http-equiv=\"refresh\" content=\"15\">" if auto_refresh else ""
+    )
     return (
         "<!doctype html><html><head><meta charset=\"utf-8\">"
         "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
-        "<meta http-equiv=\"refresh\" content=\"15\">"
+        f"{refresh_meta}"
         f"<title>{escape(title)}</title>"
         f"<link rel=\"icon\" href=\"{FAVICON_HREF}\">"
         f"<style>{CSS}</style></head><body>"
@@ -144,7 +177,7 @@ def render_page(title: str, body: str) -> str:
         f"<h1>{escape(title)}</h1><div class=\"eyebrow\">Local audit console</div>"
         "</div></div><nav class=\"nav\">"
         "<a href=\"/\">History</a><a href=\"/codex\">Codex Sessions</a>"
-        "<a href=\"/errors\">Errors</a>"
+        "<a href=\"/developer-prompt\">Prompts</a><a href=\"/errors\">Errors</a>"
         "</nav></div></header><main>"
         f"{body}</main></body></html>"
     )
@@ -153,7 +186,7 @@ def render_page(title: str, body: str) -> str:
 def render_attempt_list(store: AutoReplyStore, limit: int | None = None) -> str:
     items = []
     for task in store.list_reply_tasks(
-        statuses=("pending", "processing", "failed"),
+        statuses=("pending", "processing"),
         limit=limit,
     ):
         items.append(_reply_task_item(task))
@@ -201,7 +234,7 @@ def render_attempt_list(store: AutoReplyStore, limit: int | None = None) -> str:
         )
     else:
         body = "<section class=\"attempt-feed\">" + "".join(items) + "</section>"
-    return render_page("CEO Agent Audit", body)
+    return render_page("CEO Agent Audit", body, auto_refresh=True)
 
 
 def _reply_task_item(task: ReplyTask) -> str:
@@ -346,6 +379,176 @@ def render_error_list(store: AutoReplyStore, limit: int | None = None) -> str:
     return render_page("Errors", table)
 
 
+def _developer_prompt_variable_inputs(variable_definitions: str) -> str:
+    pairs = developer_prompt_variable_pairs(variable_definitions)
+    rows = [
+        "<tr><th>Key</th><th>Value</th></tr>",
+        *[
+            "<tr>"
+            f"<td><input type=\"text\" name=\"variable_key\" value=\"{escape(key)}\"></td>"
+            f"<td><input type=\"text\" name=\"variable_value\" value=\"{escape(value)}\"></td>"
+            "</tr>"
+            for key, value in pairs
+        ],
+        (
+            "<tr>"
+            "<td><input type=\"text\" name=\"variable_key\" value=\"\" "
+            "placeholder=\"new_key\"></td>"
+            "<td><input type=\"text\" name=\"variable_value\" value=\"\" "
+            "placeholder=\"value\"></td>"
+            "</tr>"
+        ),
+    ]
+    return "<table>" + "".join(rows) + "</table>"
+
+
+def _prompt_tabs(active_tab: str) -> str:
+    developer_class = (
+        "prompt-tab active" if active_tab == "developer" else "prompt-tab"
+    )
+    user_class = "prompt-tab active" if active_tab == "user" else "prompt-tab"
+    return (
+        "<nav class=\"prompt-tabs\" aria-label=\"Prompt sections\">"
+        f"<a class=\"{developer_class}\" href=\"/developer-prompt?tab=developer\">"
+        "Developer Prompt</a>"
+        f"<a class=\"{user_class}\" href=\"/developer-prompt?tab=user\">"
+        "User Prompt</a>"
+        "</nav>"
+    )
+
+
+def render_developer_prompt_editor(
+    *,
+    active_tab: str = "developer",
+    saved: bool = False,
+) -> str:
+    if active_tab == "user":
+        return _render_user_prompt_editor(saved=saved)
+    template_path = developer_prompt_template_path()
+    error_html = ""
+    try:
+        template = read_developer_prompt_template()
+    except OSError as exc:
+        template = ""
+        error_html = (
+            "<p class=\"attempt-warning\">"
+            f"Cannot read template: {escape(str(exc))}"
+            "</p>"
+        )
+    variable_definitions, body_template = split_developer_prompt_template(template)
+    try:
+        variable_inputs = _developer_prompt_variable_inputs(variable_definitions)
+    except DeveloperPromptTemplateError as exc:
+        variable_inputs = ""
+        error_html = (
+            "<p class=\"attempt-warning\">"
+            f"Template variable error: {escape(str(exc))}"
+            "</p>"
+        )
+    try:
+        preview = render_developer_prompt_template(template) if template else ""
+    except DeveloperPromptTemplateError as exc:
+        preview = ""
+        error_html = (
+            "<p class=\"attempt-warning\">"
+            f"Template render error: {escape(str(exc))}"
+            "</p>"
+        )
+    saved_html = "<p class=\"muted\">Saved.</p>" if saved else ""
+    body = (
+        f"{_prompt_tabs('developer')}"
+        "<section class=\"card\">"
+        "<div class=\"grid\">"
+        "<div class=\"muted\">template path</div>"
+        f"<div>{escape(str(template_path))}</div>"
+        "<div class=\"muted\">syntax</div>"
+        "<div><code>&lt;var: principal&gt;</code>, "
+        "<code>&lt;file: profiles/derek_work_profile.md&gt;</code></div>"
+        "</div>"
+        f"{saved_html}{error_html}"
+        "<form method=\"post\" action=\"/developer-prompt\">"
+        "<label>Variable definitions</label>"
+        f"{variable_inputs}"
+        "<label for=\"template\">Template</label>"
+        f"<textarea id=\"template\" name=\"template\" style=\"min-height:520px\">{escape(body_template)}</textarea>"
+        "<p><button type=\"submit\">Save template</button></p>"
+        "</form>"
+        "</section>"
+        "<section class=\"card\">"
+        "<h2>Rendered preview</h2>"
+        f"<pre>{escape(preview)}</pre>"
+        "</section>"
+    )
+    return render_page("Prompt", body)
+
+
+def _render_user_prompt_editor(*, saved: bool = False) -> str:
+    template_path = user_prompt_template_path()
+    error_html = ""
+    try:
+        template = read_user_prompt_template()
+    except OSError as exc:
+        template = ""
+        error_html = (
+            "<p class=\"attempt-warning\">"
+            f"Cannot read template: {escape(str(exc))}"
+            "</p>"
+        )
+    try:
+        preview = render_user_prompt_template(template, {}) if template else ""
+    except DeveloperPromptTemplateError as exc:
+        preview = ""
+        error_html = (
+            "<p class=\"attempt-warning\">"
+            f"Template render error: {escape(str(exc))}"
+            "</p>"
+        )
+    saved_html = "<p class=\"muted\">Saved.</p>" if saved else ""
+    body = (
+        f"{_prompt_tabs('user')}"
+        "<section class=\"card\">"
+        "<div class=\"grid\">"
+        "<div class=\"muted\">template path</div>"
+        f"<div>{escape(str(template_path))}</div>"
+        "<div class=\"muted\">dynamic functions</div>"
+        "<div><code>&lt;code: ceo_agent_service.user_prompt_blocks:current_message_block()&gt;</code>, "
+        "<code>&lt;code: ceo_agent_service.user_prompt_blocks:context_messages_block()&gt;</code></div>"
+        "</div>"
+        f"{saved_html}{error_html}"
+        "<form method=\"post\" action=\"/developer-prompt?tab=user\">"
+        "<label for=\"template\">Template</label>"
+        f"<textarea id=\"template\" name=\"template\" style=\"min-height:520px\">{escape(template)}</textarea>"
+        "<p><button type=\"submit\">Save template</button></p>"
+        "</form>"
+        "</section>"
+        "<section class=\"card\">"
+        "<h2>Dynamic functions</h2>"
+        f"{_user_prompt_dynamic_function_table()}"
+        "</section>"
+        "<section class=\"card\">"
+        "<h2>Rendered preview</h2>"
+        f"<pre>{escape(preview)}</pre>"
+        "</section>"
+    )
+    return render_page("Prompt", body)
+
+
+def _user_prompt_dynamic_function_table() -> str:
+    rows = [
+        "<tr><th>Function</th><th>Description</th><th>Default preview</th></tr>",
+        *[
+            "<tr>"
+            f"<td><code>{escape(block.name)}()</code><br>"
+            f"<code>&lt;code: {escape(block.expression)}&gt;</code></td>"
+            f"<td>{escape(block.description)}</td>"
+            f"<td><pre>{escape(block.default)}</pre></td>"
+            "</tr>"
+            for block in USER_PROMPT_BLOCKS
+        ],
+    ]
+    return "<table>" + "".join(rows) + "</table>"
+
+
 def _error_resolution_label(store: AutoReplyStore, error: ReplyError) -> str:
     if not error.conversation_id or not error.message_id:
         return "active"
@@ -373,6 +576,32 @@ def handle_feedback_post(
     ):
         return 404, {}, render_page("Attempt not found", "Attempt not found")
     return 303, {"Location": f"/attempts/{attempt_id}"}, ""
+
+
+def handle_developer_prompt_post(body: bytes) -> tuple[int, dict[str, str], str]:
+    parsed = parse_qs(body.decode("utf-8"), keep_blank_values=True)
+    template = parsed.get("template", [""])[0]
+    variables = format_developer_prompt_variables(
+        [
+            (key, value)
+            for key, value in zip_longest(
+                parsed.get("variable_key", []),
+                parsed.get("variable_value", []),
+                fillvalue="",
+            )
+        ]
+    )
+    write_developer_prompt_template(
+        merge_developer_prompt_template(variables, template)
+    )
+    return 303, {"Location": "/developer-prompt?saved=1"}, ""
+
+
+def handle_user_prompt_post(body: bytes) -> tuple[int, dict[str, str], str]:
+    parsed = parse_qs(body.decode("utf-8"), keep_blank_values=True)
+    template = parsed.get("template", [""])[0]
+    write_user_prompt_template(template)
+    return 303, {"Location": "/developer-prompt?tab=user&saved=1"}, ""
 
 
 def handle_recall_post(
@@ -561,6 +790,13 @@ def create_audit_app(
         )
         return HTMLResponse(html, status_code=status)
 
+    @app.get("/developer-prompt", response_class=HTMLResponse)
+    def developer_prompt_editor(request: Request) -> str:
+        return render_developer_prompt_editor(
+            active_tab=request.query_params.get("tab", "developer"),
+            saved=request.query_params.get("saved") == "1",
+        )
+
     @app.get("/attempts/{attempt_id}", response_class=HTMLResponse)
     def attempt_detail(attempt_id: int) -> HTMLResponse:
         status, html = render_attempt_detail(AutoReplyStore(db_path), attempt_id)
@@ -573,6 +809,14 @@ def create_audit_app(
             attempt_id,
             await request.body(),
         )
+        return _fastapi_post_response(status, headers, html)
+
+    @app.post("/developer-prompt")
+    async def developer_prompt_save(request: Request):
+        if request.query_params.get("tab") == "user":
+            status, headers, html = handle_user_prompt_post(await request.body())
+        else:
+            status, headers, html = handle_developer_prompt_post(await request.body())
         return _fastapi_post_response(status, headers, html)
 
     @app.post("/attempts/{attempt_id}/recall")
@@ -696,10 +940,10 @@ def _attempt_detail_body(
         f"{_text_card('Trigger', attempt.trigger_text)}"
         f"{_text_card('Codex reason', attempt.codex_reason)}"
         f"{_text_card('Audit summary', attempt.audit_summary)}"
-        f"{_json_card('Audit documents', attempt.audit_documents_json)}"
-        f"{_json_card('Audit tool events', attempt.audit_tool_events_json)}"
-        f"{_text_card('Draft reply', attempt.draft_reply_text)}"
-        f"{_text_card('Final reply', attempt.final_reply_text)}"
+        f"{_collapsible_json_card('Audit documents', attempt.audit_documents_json)}"
+        f"{_collapsible_json_card('Audit tool events', attempt.audit_tool_events_json)}"
+        f"{_text_card('Draft reply (raw Codex reply)', attempt.draft_reply_text)}"
+        f"{_text_card('Final reply (send-ready text)', attempt.final_reply_text)}"
     )
 
 
@@ -714,6 +958,8 @@ def _review_panel(attempt: ReplyAttempt) -> str:
         f"<span class=\"pill action-{escape(attempt.action)}\">{escape(attempt.action)}</span>"
         f"<span class=\"pill status-{escape(attempt.send_status)}\">{escape(attempt.send_status)}</span>"
         "</div>"
+        "<h2>Trigger</h2>"
+        f"<pre class=\"trigger-pre\">{escape(_trigger_text(attempt))}</pre>"
         "<h2>生成回复</h2>"
         f"<pre class=\"reply-pre\">{escape(reply_text)}</pre>"
         "</div>"
@@ -985,6 +1231,20 @@ def _json_card(title: str, text: str) -> str:
         f"<section class=\"card\"><h2>{escape(title)}</h2>"
         f"<pre class=\"json-pre\">{_json_html(text)}</pre></section>"
     )
+
+
+def _collapsible_json_card(title: str, text: str) -> str:
+    return (
+        "<details class=\"card collapsible-card\">"
+        f"<summary><h2>{escape(title)}</h2></summary>"
+        f"<pre class=\"json-pre\">{_json_html(text)}</pre></details>"
+    )
+
+
+def _trigger_text(attempt: ReplyAttempt) -> str:
+    if attempt.trigger_sender.strip():
+        return f"{attempt.trigger_sender}: {attempt.trigger_text}"
+    return attempt.trigger_text
 
 
 def _json_html(text: str) -> str:

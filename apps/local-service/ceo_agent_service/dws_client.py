@@ -125,7 +125,11 @@ class DwsClient:
     ):
         self.dws_bin = dws_bin
         self.timeout_seconds = timeout_seconds
-        self.ding_robot_code = ding_robot_code or os.getenv("DINGTALK_DING_ROBOT_CODE")
+        self.ding_robot_code = (
+            ding_robot_code
+            or os.getenv("DINGTALK_DING_ROBOT_CODE")
+            or os.getenv("CEO_DING_ROBOT_CODE")
+        )
         self.ding_robot_name = ding_robot_name
         self.ding_receiver_user_id = ding_receiver_user_id
         self.transient_retry_attempts = transient_retry_attempts
@@ -642,6 +646,50 @@ class DwsClient:
             "json",
         ]
 
+    def build_get_resource_download_url_command(
+        self,
+        open_conversation_id: str,
+        open_message_id: str,
+        resource_id: str,
+        resource_type: str,
+    ) -> list[str]:
+        return [
+            self.dws_bin,
+            "mcp",
+            "chat",
+            "get_resource_download_url",
+            "--openConversationId",
+            open_conversation_id,
+            "--openMessageId",
+            open_message_id,
+            "--resourceId",
+            self._literal_cli_value(resource_id),
+            "--resourceType",
+            resource_type,
+            "--format",
+            "json",
+        ]
+
+    def build_download_robot_message_file_command(self, download_code: str) -> list[str]:
+        robot_code = self._ding_robot_code()
+        if not robot_code:
+            raise DwsError(
+                "DING robot code is not configured; set DINGTALK_DING_ROBOT_CODE, CEO_DING_ROBOT_CODE, or CEO_DING_ROBOT_NAME"
+            )
+        return [
+            self.dws_bin,
+            "api",
+            "POST",
+            "/v1.0/robot/messageFiles/download",
+            "--data",
+            json.dumps(
+                {"downloadCode": download_code, "robotCode": robot_code},
+                ensure_ascii=False,
+            ),
+            "--format",
+            "json",
+        ]
+
     def build_ding_self_command(self, receiver_user_id: str, text: str) -> list[str]:
         robot_code = self._ding_robot_code()
         if not robot_code:
@@ -973,6 +1021,31 @@ class DwsClient:
         payload = self.run_json(self.build_download_doc_command(node))
         if not isinstance(payload, dict):
             raise DwsError("invalid doc download response")
+        return payload
+
+    def get_resource_download_url(
+        self,
+        open_conversation_id: str,
+        open_message_id: str,
+        resource_id: str,
+        resource_type: str,
+    ) -> dict[str, Any]:
+        payload = self.run_json(
+            self.build_get_resource_download_url_command(
+                open_conversation_id,
+                open_message_id,
+                resource_id,
+                resource_type,
+            )
+        )
+        if not isinstance(payload, dict):
+            raise DwsError("invalid resource download response")
+        return payload
+
+    def download_robot_message_file(self, download_code: str) -> dict[str, Any]:
+        payload = self.run_json(self.build_download_robot_message_file_command(download_code))
+        if not isinstance(payload, dict):
+            raise DwsError("invalid robot message file download response")
         return payload
 
     def send_message(

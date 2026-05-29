@@ -34,8 +34,18 @@ class CodexRunner:
     def build_env(self) -> dict[str, str]:
         return os.environ.copy()
 
-    def build_command(self, prompt: str, session_id: str | None) -> list[str]:
+    def build_command(
+        self,
+        prompt: str,
+        session_id: str | None,
+        image_paths: list[Path] | None = None,
+    ) -> list[str]:
+        image_options: list[str] = []
+        for image_path in image_paths or []:
+            image_options.extend(["--image", str(image_path)])
         common_options = [
+            "--disable",
+            "plugins",
             "--json",
             "-m",
             "gpt-5.5",
@@ -63,6 +73,7 @@ class CodexRunner:
                 "resume",
                 *common_options,
                 CODEX_BYPASS_APPROVALS_AND_SANDBOX,
+                *image_options,
                 session_id,
                 "-",
             ]
@@ -73,6 +84,7 @@ class CodexRunner:
             CODEX_BYPASS_APPROVALS_AND_SANDBOX,
             "--output-schema",
             str(CODEX_DECISION_SCHEMA_PATH),
+            *image_options,
             "--cd",
             str(self.workspace),
             "-",

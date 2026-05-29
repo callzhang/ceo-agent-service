@@ -319,13 +319,21 @@ class CodexDecisionRunner:
         self.last_transcript_start_line: int = 0
         self.last_transcript_end_line: int = 0
 
-    def decide(self, prompt: str, session_id: str | None) -> CodexDecision:
+    def decide(
+        self,
+        prompt: str,
+        session_id: str | None,
+        image_paths: list[Path] | None = None,
+    ) -> CodexDecision:
         raw_outputs: list[str] = []
         self.last_audit_tool_events = []
         self.last_session_id = session_id
         self.last_transcript_start_line = self._session_line_count(session_id)
         self.last_transcript_end_line = self.last_transcript_start_line
-        first_raw = self.executor(self.runner.build_command(prompt, session_id), prompt)
+        first_raw = self.executor(
+            self.runner.build_command(prompt, session_id, image_paths=image_paths),
+            prompt,
+        )
         raw_outputs.append(first_raw)
         self._remember_session_id(first_raw)
         try:
@@ -367,7 +375,11 @@ class CodexDecisionRunner:
                 '"audit_documents":[],"audit_summary":""}'
             )
             second_raw = self.executor(
-                self.runner.build_command(repair_prompt, retry_session_id),
+                self.runner.build_command(
+                    repair_prompt,
+                    retry_session_id,
+                    image_paths=image_paths,
+                ),
                 repair_prompt,
             )
             raw_outputs.append(second_raw)

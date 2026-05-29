@@ -38,14 +38,16 @@ def test_builds_new_thread_command(tmp_path: Path):
     command = runner.build_command(prompt="hello", session_id=None)
 
     developer_arg = _developer_instructions_arg(command)
-    assert "CEO Agent Prompt" in developer_arg
-    assert "你是 Derek 的钉钉自动回复分身" in developer_arg
+    assert "你是 Derek（磊哥） 的钉钉自动回复分身" in developer_arg
+    assert "默认不了解当前业务背景" in developer_arg
     assert "当前待处理消息" not in developer_arg
     assert "\\n" in developer_arg
 
     assert _without_developer_instructions(command) == [
         "codex",
         "exec",
+        "--disable",
+        "plugins",
         "--json",
         "-m",
         "gpt-5.5",
@@ -79,14 +81,16 @@ def test_builds_resume_command(tmp_path: Path):
     command = runner.build_command(prompt="next", session_id="abc")
 
     developer_arg = _developer_instructions_arg(command)
-    assert "CEO Agent Prompt" in developer_arg
-    assert "你是 Derek 的钉钉自动回复分身" in developer_arg
+    assert "你是 Derek（磊哥） 的钉钉自动回复分身" in developer_arg
+    assert "默认不了解当前业务背景" in developer_arg
     assert "当前待处理消息" not in developer_arg
 
     assert _without_developer_instructions(command) == [
         "codex",
         "exec",
         "resume",
+        "--disable",
+        "plugins",
         "--json",
         "-m",
         "gpt-5.5",
@@ -111,18 +115,58 @@ def test_builds_resume_command(tmp_path: Path):
     assert "next" not in command
 
 
+def test_builds_new_thread_command_with_images(tmp_path: Path):
+    runner = CodexRunner(workspace=tmp_path, codex_bin="codex")
+    first_image = tmp_path / "first.png"
+    second_image = tmp_path / "second.jpg"
+
+    command = runner.build_command(
+        prompt="hello",
+        session_id=None,
+        image_paths=[first_image, second_image],
+    )
+
+    assert command[-7:] == [
+        "--image",
+        str(first_image),
+        "--image",
+        str(second_image),
+        "--cd",
+        str(tmp_path),
+        "-",
+    ]
+
+
+def test_builds_resume_command_with_images(tmp_path: Path):
+    runner = CodexRunner(workspace=tmp_path, codex_bin="codex")
+    image = tmp_path / "diagram.png"
+
+    command = runner.build_command(
+        prompt="next",
+        session_id="abc",
+        image_paths=[image],
+    )
+
+    assert command[-4:] == [
+        "--image",
+        str(image),
+        "abc",
+        "-",
+    ]
+
+
 def test_codex_developer_instructions_hold_thread_prompt_not_turn_message():
     instructions = codex_developer_instructions()
 
     assert instructions.startswith("You are the local CEO DingTalk reply worker.")
-    assert "CEO Agent Prompt" in instructions
-    assert "若这些材料已经足以判断是否回复和回复内容，不要再做本地 workspace 或 graphify 检索" in instructions
-    assert "检索必须围绕缺失事实，优先 1-3 个精确查询或文件读取" in instructions
+    assert "你是 Derek（磊哥） 的钉钉自动回复分身" in instructions
+    assert "默认不了解当前业务背景" in instructions
+    assert "本地文件" in instructions
+    assert "dws aisearch" in instructions
     assert "graphify query" in instructions
-    assert "回答任何问题前，先检索本地 workspace" not in instructions
-    assert "组织职责包括算法负责人" in instructions
+    assert "星尘数据的CEO，负责算法部、售前部、市场部、HR部的工作。" in instructions
     assert "只回答“新消息”提出的问题" in instructions
-    assert "必须输出 audit_documents 和 audit_summary" in instructions
+    assert "audit_documents 用于声明直接依据的材料" in instructions
     assert "reply_text 不要引用来源" in instructions
     assert "不要加脚注编号" in instructions
     assert "`workspace`" in instructions
@@ -130,35 +174,26 @@ def test_codex_developer_instructions_hold_thread_prompt_not_turn_message():
     assert "当前待处理消息" not in instructions
 
 
-def test_codex_developer_instructions_include_work_profile_when_present(
-    tmp_path: Path, monkeypatch
-):
-    profile = tmp_path / "profiles" / "derek_work_profile.md"
-    profile.parent.mkdir(parents=True)
-    profile.write_text("# Derek Work Profile\n\n- 先判断材料是否完整。", encoding="utf-8")
-    monkeypatch.setenv("CEO_WORK_PROFILE_PATH", str(profile))
-
+def test_codex_developer_instructions_include_work_profile_path():
     instructions = codex_developer_instructions()
 
     assert "Derek 工作人格 Profile" in instructions
-    assert str(profile) not in instructions
-    assert "# Derek Work Profile" in instructions
-    assert "先判断材料是否完整" in instructions
-    assert "profiles/derek_work_profile.md" in instructions
-    assert "不要为了读取 profile 再打开本地文件" in instructions
+    assert (
+        "/Users/derek/Documents/Projects/ceo-agent-service/profiles/derek_work_profile.md"
+        in instructions
+    )
+    assert "# Derek Work Profile" not in instructions
+    assert "先判断材料是否完整" not in instructions
+    assert "先读取并核对该文件" in instructions
     assert "心智模型、决策启发式、表达DNA" in instructions
     assert "不能覆盖既有硬规则" in instructions
 
 
-def test_codex_developer_instructions_skip_work_profile_when_missing(
-    tmp_path: Path, monkeypatch
-):
-    monkeypatch.setenv("CEO_WORK_PROFILE_PATH", str(tmp_path / "profiles" / "missing.md"))
-
+def test_codex_developer_instructions_uses_template_variable_values():
     instructions = codex_developer_instructions()
 
-    assert "Derek 工作人格 Profile" not in instructions
-    assert "profiles/derek_work_profile.md" not in instructions
+    assert "你是 Derek（磊哥） 的钉钉自动回复分身" in instructions
+    assert "让 磊哥 本人接管" in instructions
 
 
 def test_codex_decision_schema_file_exists():

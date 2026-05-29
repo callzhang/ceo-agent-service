@@ -297,10 +297,24 @@ def test_invalid_json_retries_once(tmp_path: Path):
 
     assert decision.action == CodexAction.NO_REPLY
     assert len(executor.commands) == 2
-    assert executor.commands[0][:4] == ["codex", "exec", "resume", "--json"]
+    assert executor.commands[0][:6] == [
+        "codex",
+        "exec",
+        "resume",
+        "--disable",
+        "plugins",
+        "--json",
+    ]
     assert executor.commands[0][-2:] == ["session-1", "-"]
     assert 'approvals_reviewer="auto_review"' in executor.commands[0]
-    assert executor.commands[1][:4] == ["codex", "exec", "resume", "--json"]
+    assert executor.commands[1][:6] == [
+        "codex",
+        "exec",
+        "resume",
+        "--disable",
+        "plugins",
+        "--json",
+    ]
     assert executor.commands[1][-2] == "session-1"
     assert "只输出合法 JSON" in executor.prompts[1]
     assert "audit_documents" in executor.prompts[1]
@@ -424,6 +438,34 @@ def test_empty_reply_for_reply_action_retries_once(tmp_path: Path):
     assert "reply_text 必须非空" in executor.prompts[1]
 
 
+def test_decide_forwards_images_to_initial_and_repair_turns(tmp_path: Path):
+    image = tmp_path / "diagram.png"
+    executor = FakeExecutor(
+        [
+            json.dumps({"action": "send_reply", "reply_text": ""}),
+            json.dumps(
+                {
+                    "action": "send_reply",
+                    "reply_text": "这张图可以放官网。",
+                    "audit_summary": "只需当前消息判断，并结合图片内容；未找到文档证据。",
+                },
+                ensure_ascii=False,
+            ),
+        ]
+    )
+    runner = make_runner(tmp_path, executor=executor)
+
+    decision = runner.decide(
+        prompt="decide",
+        session_id="session-1",
+        image_paths=[image],
+    )
+
+    assert decision.reply_text == "这张图可以放官网。"
+    assert executor.commands[0][-4:] == ["--image", str(image), "session-1", "-"]
+    assert executor.commands[1][-4:] == ["--image", str(image), "session-1", "-"]
+
+
 def test_first_turn_invalid_json_retries_with_extracted_session_id(tmp_path: Path):
     executor = FakeExecutor(
         [
@@ -449,10 +491,23 @@ def test_first_turn_invalid_json_retries_with_extracted_session_id(tmp_path: Pat
 
     assert decision.action == CodexAction.NO_REPLY
     assert runner.last_session_id == "new-session"
-    assert executor.commands[0][:3] == ["codex", "exec", "--json"]
+    assert executor.commands[0][:5] == [
+        "codex",
+        "exec",
+        "--disable",
+        "plugins",
+        "--json",
+    ]
     assert executor.commands[0][-3:] == ["--cd", str(tmp_path), "-"]
     assert 'approvals_reviewer="auto_review"' in executor.commands[0]
-    assert executor.commands[1][:4] == ["codex", "exec", "resume", "--json"]
+    assert executor.commands[1][:6] == [
+        "codex",
+        "exec",
+        "resume",
+        "--disable",
+        "plugins",
+        "--json",
+    ]
     assert executor.commands[1][-2] == "new-session"
 
 
@@ -486,10 +541,23 @@ def test_first_turn_invalid_json_retries_with_thread_started_id(tmp_path: Path):
 
     assert decision.action == CodexAction.NO_REPLY
     assert runner.last_session_id == "thread-1"
-    assert executor.commands[0][:3] == ["codex", "exec", "--json"]
+    assert executor.commands[0][:5] == [
+        "codex",
+        "exec",
+        "--disable",
+        "plugins",
+        "--json",
+    ]
     assert executor.commands[0][-3:] == ["--cd", str(tmp_path), "-"]
     assert 'approvals_reviewer="auto_review"' in executor.commands[0]
-    assert executor.commands[1][:4] == ["codex", "exec", "resume", "--json"]
+    assert executor.commands[1][:6] == [
+        "codex",
+        "exec",
+        "resume",
+        "--disable",
+        "plugins",
+        "--json",
+    ]
     assert executor.commands[1][-2] == "thread-1"
 
 

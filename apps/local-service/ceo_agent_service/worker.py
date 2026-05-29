@@ -6,6 +6,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from io import BytesIO
+from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse, urlsplit, urlunsplit
 
@@ -17,7 +18,6 @@ from ceo_agent_service.config import (
     broadcast_mention_aliases,
     current_user_display_names,
     handoff_ack,
-    principal_name,
 )
 from ceo_agent_service.dws_client import (
     DINGTALK_MESSAGE_TIME_ZONE,
@@ -119,6 +119,8 @@ DINGTALK_DOC_URL_PATTERN = re.compile(
     r"https://alidocs\.dingtalk\.com/i/nodes/[^\s)\]]+"
 )
 FILE_MESSAGE_PATTERN = re.compile(r"^\s*\[文件]\s*(?P<name>.+?)\s*$")
+IMAGE_MESSAGE_MEDIA_ID_PATTERN = re.compile(r"\[图片消息]\(mediaId=(?P<media_id>[^)]+)\)")
+MARKDOWN_IMAGE_URL_PATTERN = re.compile(r"!\[[^\]]*]\((?P<url>https?://[^)]+)\)")
 QUOTE_WORD_OR_CJK_PATTERN = re.compile(
     r"[A-Za-z0-9]+(?:[-_'][A-Za-z0-9]+)*|[\u4e00-\u9fff]"
 )
@@ -128,6 +130,7 @@ RECENT_REPLY_WINDOW = timedelta(hours=24)
 QUOTE_INFORMATION_UNIT_LIMIT = 20
 REFERENCED_FILE_CONTEXT_WINDOW = timedelta(minutes=10)
 DOWNLOADED_FILE_MAX_BYTES = 50 * 1024 * 1024
+DOWNLOADED_IMAGE_MAX_BYTES = 20 * 1024 * 1024
 DOWNLOAD_TIMEOUT_SECONDS = 30
 PDF_TEXT_PAGE_LIMIT = 30
 DWS_UPGRADE_CHECKED_DATE_STATE_KEY = "dws_upgrade_checked_date"
@@ -1706,6 +1709,10 @@ class DingTalkAutoReplyWorker:
             linked_documents = self._read_linked_documents(
                 new_messages, context_messages
             )
+            image_paths, image_download_errors = self._collect_image_paths(
+                new_messages,
+                context_messages,
+            )
         except Exception as exc:
             self._record_linked_document_error(conversation, trigger, str(exc))
             if raise_on_delivery_failure:
@@ -1716,15 +1723,25 @@ class DingTalkAutoReplyWorker:
             session_id = self.store.get_codex_session_id(
                 conversation.open_conversation_id
             )
+        prompt_context_messages = (
+            self._resume_prompt_context_messages(context_messages, new_messages)
+            if session_id
+            else context_messages
+        )
         prompt = self._build_prompt(
             conversation,
             new_messages,
-            context_messages,
+            prompt_context_messages,
             include_thread_prompt=session_id is None,
             linked_documents=linked_documents,
+            image_download_errors=image_download_errors,
         )
         before_session_id = getattr(self.codex, "last_session_id", None)
-        decision = self.codex.decide(prompt=prompt, session_id=session_id)
+        decision = self.codex.decide(
+            prompt=prompt,
+            session_id=session_id,
+            image_paths=image_paths,
+        )
         resume_attempts = 1
         while (
             resume_attempts < STALE_CODEX_RESUME_ATTEMPTS
@@ -1732,7 +1749,11 @@ class DingTalkAutoReplyWorker:
         ):
             resume_attempts += 1
             before_session_id = getattr(self.codex, "last_session_id", None)
-            decision = self.codex.decide(prompt=prompt, session_id=session_id)
+            decision = self.codex.decide(
+                prompt=prompt,
+                session_id=session_id,
+                image_paths=image_paths,
+            )
         if self._is_stale_codex_resume(decision, session_id):
             self.store.clear_codex_session(conversation.open_conversation_id)
             session_id = None
@@ -1742,9 +1763,14 @@ class DingTalkAutoReplyWorker:
                 context_messages,
                 include_thread_prompt=True,
                 linked_documents=linked_documents,
+                image_download_errors=image_download_errors,
             )
             before_session_id = getattr(self.codex, "last_session_id", None)
-            decision = self.codex.decide(prompt=prompt, session_id=None)
+            decision = self.codex.decide(
+                prompt=prompt,
+                session_id=None,
+                image_paths=image_paths,
+            )
         after_session_id = getattr(self.codex, "last_session_id", None)
         self._persist_codex_session_id(
             conversation,
@@ -1989,6 +2015,184 @@ class DingTalkAutoReplyWorker:
                 documents.append(document)
         return documents
 
+    def _collect_image_paths(
+        self,
+        new_messages: list[DingTalkMessage],
+        context_messages: list[DingTalkMessage],
+    ) -> tuple[list[Path], list[str]]:
+        image_paths: list[Path] = []
+        image_download_errors: list[str] = []
+        seen_sources: set[str] = set()
+        for message in self._referenced_document_messages(new_messages, context_messages):
+            for source_key, payload in self._message_image_sources(message):
+                if source_key in seen_sources:
+                    continue
+                seen_sources.add(source_key)
+                try:
+                    image_path = self._download_message_image(message, payload)
+                except Exception as exc:
+                    detail = self._image_download_error_detail(message, payload, str(exc))
+                    self.store.record_error(
+                        message.open_conversation_id,
+                        message.open_message_id,
+                        "image_download",
+                        detail,
+                    )
+                    image_download_errors.append(detail)
+                    continue
+                if image_path is None:
+                    detail = self._image_download_error_detail(
+                        message,
+                        payload,
+                        "no download URL returned",
+                    )
+                    self.store.record_error(
+                        message.open_conversation_id,
+                        message.open_message_id,
+                        "image_download",
+                        detail,
+                    )
+                    image_download_errors.append(detail)
+                    continue
+                image_paths.append(image_path)
+        return image_paths, image_download_errors
+
+    @staticmethod
+    def _image_download_error_detail(
+        message: DingTalkMessage,
+        payload: dict[str, str],
+        error: str,
+    ) -> str:
+        source = payload.get("media_id") or payload.get("download_code") or payload.get("url")
+        source_text = f" resource {source}" if source else ""
+        return f"{message.open_message_id}:{source_text} error {error}"
+
+    def _message_image_sources(
+        self,
+        message: DingTalkMessage,
+    ) -> list[tuple[str, dict[str, str]]]:
+        sources: list[tuple[str, dict[str, str]]] = []
+        for text in (message.content, message.quoted_content or ""):
+            for match in IMAGE_MESSAGE_MEDIA_ID_PATTERN.finditer(text):
+                media_id = match.group("media_id").strip()
+                if media_id:
+                    sources.append(
+                        (
+                            f"media:{message.open_message_id}:{media_id}",
+                            {"kind": "media_id", "media_id": media_id},
+                        )
+                    )
+            for match in MARKDOWN_IMAGE_URL_PATTERN.finditer(text):
+                url = match.group("url").strip()
+                if url:
+                    sources.append(
+                        (
+                            f"url:{url}",
+                            {"kind": "url", "url": url},
+                        )
+                    )
+        for download_code in self._download_codes_from_payload(message.raw_payload):
+            sources.append(
+                (
+                    f"download_code:{message.open_message_id}:{download_code}",
+                    {"kind": "download_code", "download_code": download_code},
+                )
+            )
+        return sources
+
+    def _download_message_image(
+        self,
+        message: DingTalkMessage,
+        payload: dict[str, str],
+    ) -> Path | None:
+        kind = payload.get("kind")
+        if kind == "url":
+            url = payload["url"]
+        elif kind == "media_id":
+            download_payload = self.dws.get_resource_download_url(
+                message.open_conversation_id,
+                message.open_message_id,
+                payload["media_id"],
+                "image",
+            )
+            url = self._download_url_from_payload(download_payload)
+        elif kind == "download_code":
+            download_payload = self.dws.download_robot_message_file(
+                payload["download_code"]
+            )
+            url = self._download_url_from_payload(download_payload)
+        else:
+            return None
+        if not url:
+            return None
+        data = self._download_image_bytes(url)
+        return self._write_message_image(message, url, data)
+
+    @classmethod
+    def _download_codes_from_payload(cls, payload: object) -> list[str]:
+        codes: list[str] = []
+
+        def walk(value: object) -> None:
+            if isinstance(value, dict):
+                code = value.get("downloadCode") or value.get("pictureDownloadCode")
+                if isinstance(code, str) and code.strip():
+                    codes.append(code.strip())
+                for child in value.values():
+                    walk(child)
+            elif isinstance(value, list):
+                for item in value:
+                    walk(item)
+
+        walk(payload)
+        return codes
+
+    @staticmethod
+    def _download_url_from_payload(payload: dict) -> str:
+        for key in ("downloadUrl", "resourceUrl", "url"):
+            value = payload.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        result = payload.get("result")
+        if isinstance(result, dict):
+            return DingTalkAutoReplyWorker._download_url_from_payload(result)
+        return ""
+
+    def _download_image_bytes(self, url: str) -> bytes:
+        data = self._download_resource_bytes(url, {})
+        if len(data) > DOWNLOADED_IMAGE_MAX_BYTES:
+            raise DwsError("dingtalk_image_too_large")
+        return data
+
+    def _write_message_image(
+        self,
+        message: DingTalkMessage,
+        url: str,
+        data: bytes,
+    ) -> Path:
+        image_dir = self.store.path.parent / "image-attachments"
+        image_dir.mkdir(parents=True, exist_ok=True)
+        suffix = self._image_suffix(url, data)
+        safe_message_id = re.sub(r"[^A-Za-z0-9_.-]+", "_", message.open_message_id)
+        path = image_dir / f"{safe_message_id}_{len(data)}{suffix}"
+        path.write_bytes(data)
+        return path
+
+    @staticmethod
+    def _image_suffix(url: str, data: bytes) -> str:
+        path = urlsplit(url).path.lower()
+        for suffix in (".png", ".jpg", ".jpeg", ".webp", ".gif"):
+            if path.endswith(suffix):
+                return suffix
+        if data.startswith(b"\x89PNG\r\n\x1a\n"):
+            return ".png"
+        if data.startswith(b"\xff\xd8\xff"):
+            return ".jpg"
+        if data.startswith(b"RIFF") and data[8:12] == b"WEBP":
+            return ".webp"
+        if data.startswith(b"GIF87a") or data.startswith(b"GIF89a"):
+            return ".gif"
+        return ".img"
+
     def _read_linked_alidocs_node(self, url: str) -> LinkedDocumentContext:
         info = self.dws.doc_info(url)
         extension = str(info.get("extension") or "").lower()
@@ -2083,6 +2287,28 @@ class DingTalkAutoReplyWorker:
                 result.append(quoted)
                 seen_message_ids.add(quoted.open_message_id)
         return result
+
+    def _resume_prompt_context_messages(
+        self,
+        context_messages: list[DingTalkMessage],
+        new_messages: list[DingTalkMessage],
+        limit: int = 20,
+    ) -> list[DingTalkMessage]:
+        latest_seen_time: str | None = None
+        for message in context_messages:
+            if self.store.has_seen(message.open_message_id):
+                latest_seen_time = max(
+                    latest_seen_time or message.create_time,
+                    message.create_time,
+                )
+        if latest_seen_time is None:
+            return self._prompt_context_messages(context_messages, new_messages, limit)
+        candidates = [
+            message
+            for message in [*context_messages, *new_messages]
+            if message.create_time > latest_seen_time
+        ]
+        return self._prompt_context_messages([], candidates, limit)
 
     @classmethod
     def _referenced_file_names(
@@ -2943,6 +3169,7 @@ class DingTalkAutoReplyWorker:
         *,
         include_thread_prompt: bool = True,
         linked_documents: list[LinkedDocumentContext] | None = None,
+        image_download_errors: list[str] | None = None,
     ) -> str:
         return build_turn_prompt(
             conversation,
@@ -2955,6 +3182,7 @@ class DingTalkAutoReplyWorker:
             ),
             include_thread_prompt=include_thread_prompt,
             linked_documents=linked_documents,
+            image_download_errors=image_download_errors,
             known_people_lines=self._known_people_prompt_lines(
                 new_messages,
                 context_messages,
@@ -2978,33 +3206,33 @@ class DingTalkAutoReplyWorker:
             if profile is None:
                 continue
 
-            display_name = profile.name or message.sender_name or user_id
-            line = f"- {display_name} user_id={profile.user_id}"
-            role_parts = []
+            record: dict[str, Any] = {
+                "name": profile.name or message.sender_name or user_id,
+                "user_id": profile.user_id,
+            }
             if profile.title:
-                role_parts.append(profile.title)
-            role_parts.extend(profile.org_labels)
-            if role_parts:
-                line += f"; 职位/标签: {'; '.join(role_parts)}"
+                record["title"] = profile.title
+            if profile.org_labels:
+                record["org_labels"] = sorted(profile.org_labels)
             if profile.manager_user_id:
                 manager_profile = self.store.get_org_user_profile(profile.manager_user_id)
                 if manager_profile is not None and manager_profile.name:
-                    line += (
-                        f"; 上级: {manager_profile.name} "
-                        f"user_id={manager_profile.user_id}"
-                    )
+                    record["manager"] = {
+                        "name": manager_profile.name,
+                        "user_id": manager_profile.user_id,
+                    }
                 elif profile.manager_name:
-                    line += (
-                        f"; 上级: {profile.manager_name} "
-                        f"user_id={profile.manager_user_id}"
-                    )
+                    record["manager"] = {
+                        "name": profile.manager_name,
+                        "user_id": profile.manager_user_id,
+                    }
                 else:
-                    line += f"; 上级 user_id={profile.manager_user_id}"
+                    record["manager"] = {"user_id": profile.manager_user_id}
             if profile.department_ids:
-                line += f"; 部门: {self._format_department_context(profile)}"
+                record["departments"] = self._department_context_records(profile)
             if profile.has_subordinate is not None:
-                line += f"; 有下属: {'是' if profile.has_subordinate else '否'}"
-            lines.append(line)
+                record["has_subordinate"] = profile.has_subordinate
+            lines.extend(json.dumps(record, ensure_ascii=False, indent=2).splitlines())
             if len(lines) >= limit:
                 break
         return lines
@@ -3054,6 +3282,20 @@ class DingTalkAutoReplyWorker:
                 f"[ids: {', '.join(department_ids)}]"
             )
         return ", ".join(department_ids)
+
+    @staticmethod
+    def _department_context_records(profile) -> list[dict[str, str]]:
+        department_ids = sorted(profile.department_ids)
+        department_names = sorted(profile.department_names)
+        if not department_names:
+            return [{"id": department_id} for department_id in department_ids]
+        records: list[dict[str, str]] = []
+        for index, department_id in enumerate(department_ids):
+            record = {"id": department_id}
+            if index < len(department_names):
+                record["name"] = department_names[index]
+            records.append(record)
+        return records
 
     def _known_people_prompt_lines(
         self,
@@ -3107,12 +3349,6 @@ class DingTalkAutoReplyWorker:
         context_messages: list[DingTalkMessage],
     ) -> list[str]:
         lines: list[str] = []
-        if self.style_profile:
-            lines.append(f"{principal_name()} 语气规则:")
-            lines.extend(
-                line for line in self.style_profile.splitlines() if line.strip()
-            )
-
         examples = retrieve_similar_examples(
             self._style_query(conversation, new_messages, context_messages),
             self.style_records,

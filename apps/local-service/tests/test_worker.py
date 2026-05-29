@@ -9,6 +9,7 @@ import pytest
 import ceo_agent_service.worker as worker_module
 from ceo_agent_service.codex_decision import CodexDecisionRunner
 from ceo_agent_service.corpus import CorpusRecord
+from ceo_agent_service.developer_prompt import read_developer_prompt_template
 from ceo_agent_service.dingtalk_models import (
     CodexAction,
     CodexDecision,
@@ -33,7 +34,7 @@ from ceo_agent_service.worker import (
 )
 
 
-CONTEXT_HEADER = "上下文消息（前 20 条 + 后续到当前）:"
+CONTEXT_HEADER = "上下文消息（自上次回复后的新信息，最多 20 条）:"
 
 
 def fixed_worker_now() -> datetime:
@@ -73,6 +74,11 @@ class FakeDws:
         self.aitable_records: dict[tuple[str, str], dict] = {}
         self.document_search_results: dict[str, list[DwsDocumentSearchResult]] = {}
         self.download_docs: dict[str, dict | Exception] = {}
+        self.resource_download_urls: dict[
+            tuple[str, str, str, str],
+            dict | Exception,
+        ] = {}
+        self.robot_message_file_downloads: dict[str, dict | Exception] = {}
         self.doc_info_calls: list[str] = []
         self.read_doc_calls: list[str] = []
         self.get_aitable_base_calls: list[str] = []
@@ -80,6 +86,8 @@ class FakeDws:
         self.query_aitable_record_calls: list[tuple[str, str, int]] = []
         self.search_document_calls: list[tuple[str, int]] = []
         self.download_doc_calls: list[str] = []
+        self.resource_download_url_calls: list[tuple[str, str, str, str]] = []
+        self.robot_message_file_download_calls: list[str] = []
         self.sent: list[tuple[str, str]] = []
         self.reply_messages: list[tuple[str, str, str, str]] = []
         self.sent_at_users: list[list[str]] = []
@@ -261,6 +269,32 @@ class FakeDws:
             raise result
         return result or {}
 
+    def get_resource_download_url(
+        self,
+        open_conversation_id: str,
+        open_message_id: str,
+        resource_id: str,
+        resource_type: str,
+    ) -> dict:
+        key = (
+            open_conversation_id,
+            open_message_id,
+            resource_id,
+            resource_type,
+        )
+        self.resource_download_url_calls.append(key)
+        result = self.resource_download_urls.get(key)
+        if isinstance(result, Exception):
+            raise result
+        return result or {}
+
+    def download_robot_message_file(self, download_code: str) -> dict:
+        self.robot_message_file_download_calls.append(download_code)
+        result = self.robot_message_file_downloads.get(download_code)
+        if isinstance(result, Exception):
+            raise result
+        return result or {}
+
     def send_message(
         self,
         conversation_id: str | None,
@@ -405,12 +439,17 @@ class FakeCodex:
         self.last_transcript_start_line = transcript_start_line
         self.last_transcript_end_line = transcript_end_line
         self.before_decide = before_decide
-        self.calls: list[tuple[str, str | None]] = []
+        self.calls: list[tuple[str, str | None, list[Path]]] = []
 
-    def decide(self, prompt: str, session_id: str | None) -> CodexDecision:
+    def decide(
+        self,
+        prompt: str,
+        session_id: str | None,
+        image_paths: list[Path] | None = None,
+    ) -> CodexDecision:
         if self.before_decide is not None:
             self.before_decide(prompt, session_id)
-        self.calls.append((prompt, session_id))
+        self.calls.append((prompt, session_id, image_paths or []))
         if self.next_session_id is not None:
             self.last_session_id = self.next_session_id
         return self.decision
@@ -419,14 +458,19 @@ class FakeCodex:
 class SequencedFakeCodex:
     def __init__(self, decisions: list[CodexDecision]):
         self.decisions = decisions
-        self.calls: list[tuple[str, str | None]] = []
+        self.calls: list[tuple[str, str | None, list[Path]]] = []
         self.last_session_id: str | None = None
         self.last_audit_tool_events: list[dict[str, str]] = []
         self.last_transcript_start_line = 0
         self.last_transcript_end_line = 0
 
-    def decide(self, prompt: str, session_id: str | None) -> CodexDecision:
-        self.calls.append((prompt, session_id))
+    def decide(
+        self,
+        prompt: str,
+        session_id: str | None,
+        image_paths: list[Path] | None = None,
+    ) -> CodexDecision:
+        self.calls.append((prompt, session_id, image_paths or []))
         self.last_session_id = session_id or self.last_session_id or "session-1"
         return self.decisions[len(self.calls) - 1]
 
@@ -629,13 +673,24 @@ def write_profile_for_consumer_test(tmp_path: Path, monkeypatch) -> str:
     profile.parent.mkdir(parents=True)
     profile.write_text(content, encoding="utf-8")
     monkeypatch.setenv("CEO_WORK_PROFILE_PATH", str(profile))
+    template = read_developer_prompt_template()
+    template_lines = [
+        f"work_profile_path = {profile}"
+        if line.startswith("work_profile_path = ")
+        else line
+        for line in template.splitlines()
+    ]
+    template_path = tmp_path / "developer_prompt.md"
+    template_path.write_text("\n".join(template_lines), encoding="utf-8")
+    monkeypatch.setenv("CEO_DEVELOPER_PROMPT_TEMPLATE_PATH", str(template_path))
     return content
 
 
-def test_consumer_codex_command_embeds_work_profile_content(
+def test_consumer_codex_command_points_to_work_profile_path(
     tmp_path: Path, monkeypatch
 ):
     profile_content = write_profile_for_consumer_test(tmp_path, monkeypatch)
+    profile_path = (tmp_path / "profiles" / "derek_work_profile.md").resolve()
     seen_instructions = []
 
     def executor(command: list[str], prompt: str) -> str:
@@ -666,9 +721,10 @@ def test_consumer_codex_command_embeds_work_profile_content(
     assert len(seen_instructions) == 1
     instructions = seen_instructions[0]
     assert "Derek 工作人格 Profile" in instructions
-    assert "Profile 内容:" in instructions
-    assert profile_content in instructions
-    assert "材料不完整时先追问，不拍板" in instructions
+    assert "Profile 内容:" not in instructions
+    assert profile_content not in instructions
+    assert str(profile_path) in instructions
+    assert "材料不完整时先追问，不拍板" not in instructions
     assert final_sent(dws)
 
 
@@ -676,10 +732,14 @@ def test_consumer_uses_profile_to_ask_for_missing_candidate_materials(
     tmp_path: Path, monkeypatch
 ):
     write_profile_for_consumer_test(tmp_path, monkeypatch)
+    profile_path = (tmp_path / "profiles" / "derek_work_profile.md").resolve()
 
     def executor(command: list[str], prompt: str) -> str:
         instructions = developer_instructions_from_command(command)
-        assert "材料不完整时先追问，不拍板" in instructions
+        assert str(profile_path) in instructions
+        assert "材料不完整时先追问，不拍板" in profile_path.read_text(
+            encoding="utf-8"
+        )
         assert "这个候选人可以推进吗" in prompt
         return json.dumps(
             {
@@ -1968,7 +2028,7 @@ def test_group_mention_sends_signed_reply(tmp_path: Path, monkeypatch):
     ]
     assert len(codex.calls) == 1
     prompt = codex.calls[0][0]
-    assert prompt.startswith("当前待处理消息:")
+    assert "当前待处理消息:" in prompt
     assert "CEO Agent Prompt" not in prompt
     assert "你是 Derek 的钉钉自动回复分身" not in prompt
     assert "会话: Friday" in prompt
@@ -2250,6 +2310,118 @@ def test_referenced_file_metadata_does_not_expose_download_credentials(
     assert "authorizationUrl" not in prompt
 
 
+def test_media_id_image_is_downloaded_and_passed_to_codex(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message(
+        "@Derek Zen(磊哥) 看下这个图[图片消息](mediaId=@img-token-1)",
+        message_id="msg-image-1",
+    )
+    dws = FakeDws([conversation()], {"cid-1": [trigger]})
+    dws.resource_download_urls[
+        ("cid-1", "msg-image-1", "@img-token-1", "image")
+    ] = {"downloadUrl": "https://signed.example/message-image.png"}
+    codex = FakeCodex(
+        CodexDecision(
+            action=CodexAction.NO_REPLY,
+            reason="image reviewed",
+            audit_summary="只需上下文判断，不需要回复。",
+        )
+    )
+    monkeypatch.setattr(
+        DingTalkAutoReplyWorker,
+        "_download_resource_bytes",
+        staticmethod(lambda url, headers: b"\x89PNG\r\n\x1a\nimage-bytes"),
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+
+    worker.run_once()
+
+    assert dws.resource_download_url_calls == [
+        ("cid-1", "msg-image-1", "@img-token-1", "image")
+    ]
+    image_paths = codex.calls[0][2]
+    assert len(image_paths) == 1
+    assert image_paths[0].suffix == ".png"
+    assert image_paths[0].read_bytes() == b"\x89PNG\r\n\x1a\nimage-bytes"
+
+
+def test_robot_download_code_image_is_downloaded_and_passed_to_codex(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message(
+        "@Derek Zen(磊哥) 看下这个图",
+        message_id="msg-image-1",
+    )
+    trigger.raw_payload = {
+        "msgtype": "picture",
+        "content": {"downloadCode": "download-code-1"},
+    }
+    dws = FakeDws([conversation()], {"cid-1": [trigger]})
+    dws.robot_message_file_downloads["download-code-1"] = {
+        "downloadUrl": "https://signed.example/message-image.jpeg"
+    }
+    codex = FakeCodex(
+        CodexDecision(
+            action=CodexAction.NO_REPLY,
+            reason="image reviewed",
+            audit_summary="只需上下文判断，不需要回复。",
+        )
+    )
+    monkeypatch.setattr(
+        DingTalkAutoReplyWorker,
+        "_download_resource_bytes",
+        staticmethod(lambda url, headers: b"\xff\xd8\xffimage-bytes"),
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+
+    worker.run_once()
+
+    assert dws.robot_message_file_download_calls == ["download-code-1"]
+    image_paths = codex.calls[0][2]
+    assert len(image_paths) == 1
+    assert image_paths[0].suffix == ".jpeg"
+    assert image_paths[0].read_bytes() == b"\xff\xd8\xffimage-bytes"
+
+
+def test_image_download_failure_is_passed_to_codex_prompt(tmp_path: Path, monkeypatch):
+    trigger = message(
+        "@Derek Zen(磊哥) 看下这个图[图片消息](mediaId=@img-token-1)",
+        message_id="msg-image-1",
+    )
+    dws = FakeDws([conversation()], {"cid-1": [trigger]})
+    dws.resource_download_urls[
+        ("cid-1", "msg-image-1", "@img-token-1", "image")
+    ] = DwsError("unsupported resourceType: image")
+    codex = FakeCodex(
+        CodexDecision(
+            action=CodexAction.ASK_CLARIFYING_QUESTION,
+            reply_text="我这边图片读取失败，你发一个可查看版本我再看。",
+        )
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+
+    worker.run_once()
+
+    assert dws.resource_download_url_calls == [
+        ("cid-1", "msg-image-1", "@img-token-1", "image")
+    ]
+    assert len(codex.calls) == 1
+    prompt, _session_id, image_paths = codex.calls[0]
+    assert image_paths == []
+    assert "图片读取状态:" in prompt
+    assert "msg-image-1" in prompt
+    assert "unsupported resourceType: image" in prompt
+    assert "如果当前问题依赖图片内容，不能臆测图片细节" in prompt
+    attempts = worker.store.list_reply_attempts()
+    assert len(attempts) == 1
+    assert attempts[0].action == CodexAction.ASK_CLARIFYING_QUESTION.value
+    assert attempts[0].send_status == "sent"
+    errors = worker.store.list_errors()
+    image_error = next(error for error in errors if error.kind == "image_download")
+    assert "unsupported resourceType: image" in image_error.detail
+
+
 def test_dingtalk_doc_read_failure_blocks_codex(tmp_path: Path, monkeypatch):
     trigger = message(
         "https://alidocs.dingtalk.com/i/nodes/missing @Derek Zen(磊哥) 看下"
@@ -2450,7 +2622,7 @@ def test_resume_prompt_only_includes_turn_message_without_repeating_thread_promp
 
     worker.run_once()
 
-    prompt, session_id = codex.calls[0]
+    prompt, session_id, _image_paths = codex.calls[0]
     assert session_id == "session-1"
     assert "当前待处理消息" in prompt
     assert "CEO Agent Prompt" not in prompt
@@ -2465,14 +2637,19 @@ def test_stale_codex_resume_retries_same_thread_before_opening_new_thread(
 ):
     class SequencedCodex:
         def __init__(self):
-            self.calls: list[tuple[str, str | None]] = []
+            self.calls: list[tuple[str, str | None, list[Path]]] = []
             self.last_session_id: str | None = None
             self.last_audit_tool_events: list[dict[str, str]] = []
             self.last_transcript_start_line = 0
             self.last_transcript_end_line = 0
 
-        def decide(self, prompt: str, session_id: str | None) -> CodexDecision:
-            self.calls.append((prompt, session_id))
+        def decide(
+            self,
+            prompt: str,
+            session_id: str | None,
+            image_paths: list[Path] | None = None,
+        ) -> CodexDecision:
+            self.calls.append((prompt, session_id, image_paths or []))
             self.last_session_id = session_id
             if len(self.calls) == 1:
                 return CodexDecision(
@@ -2501,7 +2678,7 @@ def test_stale_codex_resume_retries_same_thread_before_opening_new_thread(
 
     worker.run_once()
 
-    assert [session_id for _, session_id in codex.calls] == [
+    assert [session_id for _, session_id, _ in codex.calls] == [
         "session-1",
         "session-1",
     ]
@@ -2533,14 +2710,19 @@ def test_stale_codex_resume_clears_session_and_retries_with_new_user_message(
 ):
     class SequencedCodex:
         def __init__(self):
-            self.calls: list[tuple[str, str | None]] = []
+            self.calls: list[tuple[str, str | None, list[Path]]] = []
             self.last_session_id: str | None = None
             self.last_audit_tool_events: list[dict[str, str]] = []
             self.last_transcript_start_line = 0
             self.last_transcript_end_line = 0
 
-        def decide(self, prompt: str, session_id: str | None) -> CodexDecision:
-            self.calls.append((prompt, session_id))
+        def decide(
+            self,
+            prompt: str,
+            session_id: str | None,
+            image_paths: list[Path] | None = None,
+        ) -> CodexDecision:
+            self.calls.append((prompt, session_id, image_paths or []))
             self.last_session_id = session_id
             if len(self.calls) <= 2:
                 return CodexDecision(
@@ -2567,7 +2749,7 @@ def test_stale_codex_resume_clears_session_and_retries_with_new_user_message(
 
     worker.run_once()
 
-    assert [session_id for _, session_id in codex.calls] == [
+    assert [session_id for _, session_id, _ in codex.calls] == [
         "session-1",
         "session-1",
         None,
@@ -2575,7 +2757,7 @@ def test_stale_codex_resume_clears_session_and_retries_with_new_user_message(
     assert codex.calls[1][0] == codex.calls[0][0]
     assert "CEO Agent Prompt" not in codex.calls[0][0]
     assert "CEO Agent Prompt" not in codex.calls[2][0]
-    assert codex.calls[2][0].startswith("当前待处理消息:")
+    assert "当前待处理消息:" in codex.calls[2][0]
     assert worker.store.get_codex_session_id("cid-1") == "session-2"
     assert worker.store.count_reply_attempts() == 1
     attempt = worker.store.get_reply_attempt(1)
@@ -2844,7 +3026,7 @@ def test_force_new_rerun_starts_fresh_codex_session(tmp_path: Path, monkeypatch)
     worker.rerun_message(conversation(), "msg-1", force_new_decision=True)
 
     assert codex.calls[0][1] is None
-    assert codex.calls[0][0].startswith("当前待处理消息:")
+    assert "当前待处理消息:" in codex.calls[0][0]
     assert "你是 Derek 的钉钉自动回复分身" not in codex.calls[0][0]
 
 
@@ -2932,7 +3114,7 @@ def test_reply_attempt_records_codex_audit_fields(tmp_path: Path, monkeypatch):
     assert attempt.codex_transcript_end_line == 12
 
 
-def test_prompt_includes_style_profile_and_similar_corpus_examples(
+def test_prompt_includes_dynamic_similar_corpus_examples_without_static_style_profile(
     tmp_path: Path, monkeypatch
 ):
     dws = FakeDws(
@@ -2987,8 +3169,8 @@ def test_prompt_includes_style_profile_and_similar_corpus_examples(
     worker.run_once()
 
     prompt = codex.calls[0][0]
-    assert "Derek 语气规则:" in prompt
-    assert "- 先结论，再解释原因。" in prompt
+    assert "Derek 语气规则:" not in prompt
+    assert "- 先结论，再解释原因。" not in prompt
     assert "相似历史回复风格例子" in prompt
     assert "只学习语气、判断顺序和句式结构" in prompt
     assert "不要复用例子里的事实、人名、项目名、客户名、数字或结论" in prompt
@@ -3087,7 +3269,7 @@ def test_algorithm_owner_multi_mention_is_framed_as_derek_responsibility(
     assert final_sent(dws) == [("cid-1", "可以，算法这边应该参与（by磊哥分身）")]
     prompt = codex.calls[0][0]
     assert "aijam是否可以把算法大神们纳入进来？" in prompt
-    assert prompt.startswith("当前待处理消息:")
+    assert "当前待处理消息:" in prompt
 
 
 def test_group_direct_mention_found_in_recent_context_is_queued(
@@ -3232,12 +3414,18 @@ def test_build_prompt_includes_sender_org_context(tmp_path: Path, monkeypatch):
     )
 
     assert dws.user_profile_calls == ["sender-user-1"]
-    assert "发信人组织信息" in prompt
-    assert "- Mina 邹 user_id=sender-user-1" in prompt
-    assert "职位/标签: 首席人力资源专家兼HRVP; 职务: HR负责人; 岗位: 管理层" in prompt
-    assert "上级: Derek Zen user_id=derek-user-1" in prompt
-    assert "部门: 人力资源部, 招聘组 [ids: dept-hr, dept-recruiting]" in prompt
-    assert "有下属: 是" in prompt
+    assert "发信人组织信息(JSON):" in prompt
+    assert '"name": "Mina 邹"' in prompt
+    assert '"user_id": "sender-user-1"' in prompt
+    assert '"title": "首席人力资源专家兼HRVP"' in prompt
+    assert '"org_labels": [' in prompt
+    assert '"职务: HR负责人"' in prompt
+    assert '"岗位: 管理层"' in prompt
+    assert '"manager": {' in prompt
+    assert '"name": "Derek Zen"' in prompt
+    assert '"departments": [' in prompt
+    assert '"name": "人力资源部"' in prompt
+    assert '"has_subordinate": true' in prompt
 
 
 def test_group_stale_direct_mention_found_in_recent_context_does_not_queue(
@@ -3376,7 +3564,7 @@ def test_single_chat_empty_unread_without_seen_anchor_does_not_process_old_conte
     assert final_sent(dws) == []
 
 
-def test_prompt_context_includes_previous_20_plus_unread_tail(
+def test_initial_prompt_context_includes_previous_20_plus_unread_tail(
     tmp_path: Path, monkeypatch
 ):
     old_messages = [
@@ -3411,6 +3599,43 @@ def test_prompt_context_includes_previous_20_plus_unread_tail(
     assert "我已经处理好了" not in new_messages_section
     assert "@Derek Zen(磊哥) 这个需要你看一下" in context_section
     assert "我已经处理好了" in context_section
+
+
+def test_resumed_prompt_context_only_includes_messages_after_last_seen(
+    tmp_path: Path, monkeypatch
+):
+    before_seen = message("旧上下文，不应重复", message_id="old-before")
+    before_seen.create_time = "2026-05-13 17:00:00"
+    last_seen = message("上次已经处理到这里", message_id="old-seen")
+    last_seen.create_time = "2026-05-13 17:10:00"
+    after_seen = message("上次回复后的补充信息", message_id="after-seen")
+    after_seen.create_time = "2026-05-13 17:20:00"
+    trigger = message("@Derek Zen(磊哥) 结合上面的补充再看一下", message_id="trigger-msg")
+    trigger.create_time = "2026-05-13 18:00:00"
+    dws = FakeDws(
+        [conversation()],
+        {"cid-1": [before_seen, last_seen, after_seen]},
+        unread_messages={"cid-1": [trigger]},
+    )
+    codex = FakeCodex(CodexDecision(action=CodexAction.NO_REPLY, reason="handled"))
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+    worker.store.upsert_conversation(
+        "cid-1",
+        title="Friday",
+        single_chat=False,
+        codex_session_id="session-1",
+    )
+    worker.store.mark_seen("old-seen", "cid-1")
+
+    worker.run_once()
+
+    prompt, session_id, _image_paths = codex.calls[0]
+    context_section = prompt.split(CONTEXT_HEADER, 1)[1]
+    assert session_id == "session-1"
+    assert "旧上下文，不应重复" not in context_section
+    assert "上次已经处理到这里" not in context_section
+    assert "上次回复后的补充信息" in context_section
+    assert "结合上面的补充再看一下" in context_section
 
 
 def test_no_reply_action_does_not_send(tmp_path: Path, monkeypatch):

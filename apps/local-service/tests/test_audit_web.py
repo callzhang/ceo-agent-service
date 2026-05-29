@@ -4,6 +4,8 @@ from fastapi.testclient import TestClient
 
 from ceo_agent_service.audit_web import (
     create_audit_app,
+    handle_developer_prompt_post,
+    handle_user_prompt_post,
     handle_feedback_post,
     handle_recall_post,
     handle_reviewed_message_reply,
@@ -11,6 +13,7 @@ from ceo_agent_service.audit_web import (
     render_attempt_list,
     render_codex_session_detail,
     render_codex_session_list,
+    render_developer_prompt_editor,
     render_error_list,
     run_audit_web,
 )
@@ -76,7 +79,7 @@ def test_render_attempt_list_shows_history_rows(tmp_path: Path):
     assert "/codex/session-1" in html
 
 
-def test_render_page_includes_favicon_for_browser_tabs(tmp_path: Path):
+def test_render_history_page_includes_favicon_and_refresh(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     seed_attempt(store)
 
@@ -87,6 +90,153 @@ def test_render_page_includes_favicon_for_browser_tabs(tmp_path: Path):
     assert "%2300d4a4" in html
     assert 'http-equiv="refresh"' in html
     assert 'content="15"' in html
+
+
+def test_non_history_pages_do_not_auto_refresh(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    attempt_id = seed_attempt(store)
+    codex_home = tmp_path / ".codex"
+    session_path = (
+        codex_home
+        / "sessions"
+        / "2026"
+        / "05"
+        / "14"
+        / "rollout-2026-05-14T12-00-00-session-1.jsonl"
+    )
+    session_path.parent.mkdir(parents=True)
+    session_path.write_text(
+        '{"timestamp":"2026-05-14T12:00:00Z","type":"session_meta","payload":{"id":"session-1"}}',
+        encoding="utf-8",
+    )
+
+    _, attempt_html = render_attempt_detail(store, attempt_id)
+    codex_list_html = render_codex_session_list(store)
+    _, codex_detail_html = render_codex_session_detail(
+        "session-1",
+        codex_home=codex_home,
+        store=store,
+    )
+    error_html = render_error_list(store)
+    developer_prompt_html = render_developer_prompt_editor()
+
+    assert 'http-equiv="refresh"' not in attempt_html
+    assert 'http-equiv="refresh"' not in codex_list_html
+    assert 'http-equiv="refresh"' not in codex_detail_html
+    assert 'http-equiv="refresh"' not in error_html
+    assert 'http-equiv="refresh"' not in developer_prompt_html
+
+
+def test_render_developer_prompt_editor_shows_template_and_preview(
+    tmp_path: Path,
+    monkeypatch,
+):
+    template_path = tmp_path / "developer.md"
+    template_path.write_text(
+        "\n".join(
+                [
+                    "<vars>",
+                    "principal = Derek",
+                    "</vars>",
+                "",
+                "# Editable",
+                "",
+                "Hi <var: principal>",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CEO_DEVELOPER_PROMPT_TEMPLATE_PATH", str(template_path))
+    monkeypatch.setenv("CEO_PRINCIPAL_DISPLAY_NAME", "Derek")
+
+    html = render_developer_prompt_editor(saved=True)
+
+    assert "Developer Prompt" in html
+    assert str(template_path) in html
+    assert 'name="variables"' not in html
+    assert 'name="variable_key"' in html
+    assert 'name="variable_value"' in html
+    assert 'name="template"' in html
+    assert "Variable definitions" in html
+    assert "&lt;var: principal&gt;" in html
+    assert "&lt;file: profiles/derek_work_profile.md&gt;" in html
+    assert "&lt;code: ceo_agent_service.config:principal_display_name()&gt;" not in html
+    assert 'value="principal"' in html
+    assert 'value="Derek"' in html
+    assert "Hi Derek" in html
+    assert "Saved." in html
+
+
+def test_render_prompt_editor_shows_user_prompt_tab(tmp_path: Path, monkeypatch):
+    template_path = tmp_path / "user.md"
+    template_path.write_text(
+        "USER <code: ceo_agent_service.user_prompt_blocks:current_message_block()>",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CEO_USER_PROMPT_TEMPLATE_PATH", str(template_path))
+
+    html = render_developer_prompt_editor(active_tab="user", saved=True)
+
+    assert "Prompt" in html
+    assert "Developer Prompt" in html
+    assert "User Prompt" in html
+    assert 'class="prompt-tab active"' in html
+    assert str(template_path) in html
+    assert 'name="variables"' not in html
+    assert 'name="variable_key"' not in html
+    assert 'name="template"' in html
+    assert "&lt;code: ceo_agent_service.user_prompt_blocks:current_message_block()&gt;" in html
+    assert "Dynamic functions" in html
+    assert "相似历史回复风格例子" in html
+    assert "先定优先级，再确认谁负责" in html
+    assert "current_message_block()" in html
+    assert "sender_org_block()" in html
+    assert "Default preview" in html
+    assert "会话: 示例群" in html
+    assert "&quot;open_message_id&quot;: &quot;ctx-1&quot;" in html
+    assert "&quot;sender&quot;: {" in html
+    assert "&quot;quoted&quot;: {" in html
+    assert "USER 当前待处理消息:" in html
+    assert "Saved." in html
+
+
+def test_handle_developer_prompt_post_saves_template(tmp_path: Path, monkeypatch):
+    template_path = tmp_path / "developer.md"
+    monkeypatch.setenv("CEO_DEVELOPER_PROMPT_TEMPLATE_PATH", str(template_path))
+    body = (
+        "variable_key=principal"
+        "&variable_value=Derek"
+        "&variable_key="
+        "&variable_value="
+        "&template=%23+Updated%0AHi+%3Cvar%3A+principal%3E"
+    ).encode()
+
+    status, headers, html = handle_developer_prompt_post(body)
+
+    assert status == 303
+    assert headers["Location"] == "/developer-prompt?saved=1"
+    assert html == ""
+    assert template_path.read_text(encoding="utf-8") == (
+        "<vars>\nprincipal = Derek\n</vars>\n\n# Updated\nHi <var: principal>"
+    )
+
+
+def test_handle_user_prompt_post_saves_template(tmp_path: Path, monkeypatch):
+    template_path = tmp_path / "user.md"
+    monkeypatch.setenv("CEO_USER_PROMPT_TEMPLATE_PATH", str(template_path))
+    body = (
+        "template=USER+%3Ccode%3A+"
+        "ceo_agent_service.user_prompt_blocks%3Acurrent_message_block%28%29%3E"
+    ).encode()
+
+    status, headers, html = handle_user_prompt_post(body)
+
+    assert status == 303
+    assert headers["Location"] == "/developer-prompt?tab=user&saved=1"
+    assert html == ""
+    assert template_path.read_text(encoding="utf-8") == (
+        "USER <code: ceo_agent_service.user_prompt_blocks:current_message_block()>"
+    )
 
 
 def test_empty_attempt_list_shows_db_path(tmp_path: Path):
@@ -138,6 +288,25 @@ def test_render_attempt_list_shows_processing_reply_tasks(tmp_path: Path):
 
     assert "#task-1" in html
     assert "processing" in html
+
+
+def test_render_attempt_list_does_not_pin_failed_reply_tasks(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="cid-1",
+        conversation_title="HR管理",
+        single_chat=False,
+        trigger_message_id="msg-failed",
+        trigger_create_time="2026-05-28 18:00:00",
+        trigger_sender="Mina",
+        trigger_text="@Derek Zen(磊哥) 这个候选人怎么看？",
+    )
+    store.fail_reply_task(1, "delivery failed")
+
+    html = render_attempt_list(store)
+
+    assert "#task-1" not in html
+    assert "Queued / processing" not in html
 
 
 def test_render_attempt_list_uses_attempt_codex_session_over_conversation(tmp_path: Path):
@@ -382,8 +551,8 @@ def test_render_attempt_detail_shows_full_decision_and_feedback_form(tmp_path: P
     status, html = render_attempt_detail(store, attempt_id)
 
     assert status == 200
-    assert html.index("生成回复") < html.index("Trigger")
-    assert html.index("先按A方案走（by磊哥分身）") < html.index("Trigger")
+    assert html.index("Trigger") < html.index("生成回复")
+    assert html.index("Trigger") < html.index("先按A方案走（by磊哥分身）")
     assert "review-grid" in html
     assert "reply-pre" in html
     assert "@Derek Zen 这个怎么处理？" in html
@@ -391,14 +560,19 @@ def test_render_attempt_detail_shows_full_decision_and_feedback_form(tmp_path: P
     assert "Audit summary" in html
     assert "查看岗位画像后建议先按A方案走" in html
     assert "Audit documents" in html
+    assert '<details class="card collapsible-card">' in html
+    assert html.index("Audit documents") < html.index("面试/岗位画像.md")
     assert "面试/岗位画像.md" in html
     assert "Audit tool events" in html
+    assert html.index("Audit tool events") < html.index("rg 岗位")
     assert "rg 岗位" in html
     assert "json-pre" in html
     assert "json-key" in html
     assert "json-string" in html
     assert "\n  " in html
     assert "先按A方案走" in html
+    assert "Draft reply (raw Codex reply)" in html
+    assert "Final reply (send-ready text)" in html
     assert "permission" in html
     assert "记录反馈 / 修改意见" in html
     assert "反馈意见" in html

@@ -152,8 +152,8 @@ class FakeCodex:
         self.calls = []
         self.last_session_id = None
 
-    def decide(self, prompt, session_id):
-        self.calls.append((prompt, session_id))
+    def decide(self, prompt, session_id, image_paths=None):
+        self.calls.append((prompt, session_id, image_paths or []))
         self.last_session_id = "session-1"
         return self.decision
 

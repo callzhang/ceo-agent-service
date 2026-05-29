@@ -55,6 +55,15 @@ assistant mentions such as `@磊哥分身，请...` are stripped only up to the 
 message punctuation, so the remaining request text is preserved in the quote
 instead of falling back to `原消息`.
 
+## Image attachments
+
+When a message references an image, the worker attempts to download it before
+calling Codex and passes successfully downloaded files through `image_paths`. If
+DWS cannot return a usable image URL or the binary download fails, the worker
+records an `image_download` error and still calls Codex. The prompt includes a
+`图片读取状态` section with the failed image details and explicitly tells Codex not
+to guess visual content when the question depends on the missing image.
+
 ## Mentioned arrangements
 
 When a human mentions Derek in a group and shares an arrangement, process, or
