@@ -172,6 +172,21 @@ class CachedDwsClient:
             remark,
         )
 
+    def list_pending_oa_approvals(self, page: int = 1, size: int = 30):
+        return self.dws.list_pending_oa_approvals(page=page, size=size)
+
+    def read_oa_approval_detail(self, process_instance_id: str):
+        return self.dws.read_oa_approval_detail(process_instance_id)
+
+    def read_oa_approval_records(self, process_instance_id: str):
+        return self.dws.read_oa_approval_records(process_instance_id)
+
+    def read_oa_approval_tasks(self, process_instance_id: str):
+        return self.dws.read_oa_approval_tasks(process_instance_id)
+
+    def read_oa_process_instance_openapi(self, process_instance_id: str):
+        return self.dws.read_oa_process_instance_openapi(process_instance_id)
+
     def send_message(
         self,
         conversation_id: str | None,

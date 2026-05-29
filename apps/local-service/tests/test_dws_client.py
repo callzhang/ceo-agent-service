@@ -12,7 +12,12 @@ from ceo_agent_service.dingtalk_models import (
     DingTalkMessage,
 )
 from ceo_agent_service import dws_client
-from ceo_agent_service.dws_client import DwsClient, DwsError, DwsMinutesPermissionRequest
+from ceo_agent_service.dws_client import (
+    DwsClient,
+    DwsError,
+    DwsMinutesPermissionRequest,
+    DwsOaApprovalCandidate,
+)
 
 TEST_LOCAL_TZ = ZoneInfo("Asia/Shanghai")
 
@@ -420,6 +425,45 @@ def test_oa_approval_action_command_maps_review_action_to_dws_command():
         "--format",
         "json",
         "--yes",
+    ]
+
+
+def test_list_pending_oa_approvals_command_and_parser():
+    client = DwsClient(dws_bin="dws")
+
+    command = client.build_list_pending_oa_approvals_command(page=2, size=10)
+    approvals = DwsClient.parse_pending_oa_approvals(
+        {
+            "result": {
+                "list": [
+                    {
+                        "processInstanceId": "proc-1",
+                        "processInstanceTitle": "刘瑞安提交的录用申请",
+                        "processName": "录用申请",
+                    }
+                ]
+            }
+        }
+    )
+
+    assert command == [
+        "dws",
+        "oa",
+        "approval",
+        "list-pending",
+        "--page",
+        "2",
+        "--size",
+        "10",
+        "--format",
+        "json",
+    ]
+    assert approvals == [
+        DwsOaApprovalCandidate(
+            process_instance_id="proc-1",
+            title="刘瑞安提交的录用申请",
+            process_name="录用申请",
+        )
     ]
 
 

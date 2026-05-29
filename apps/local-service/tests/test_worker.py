@@ -21,6 +21,7 @@ from ceo_agent_service.dws_client import (
     DwsDocumentSearchResult,
     DwsError,
     DwsMinutesPermissionRequest,
+    DwsOaApprovalCandidate,
     DwsUserProfile,
 )
 from ceo_agent_service.oa_approval import OaApprovalResult
@@ -105,6 +106,11 @@ class FakeDws:
         self.oa_approval_actions: list[tuple[str, str, str, str]] = []
         self.oa_approval_action_result: dict = {"errcode": 0, "errmsg": "ok"}
         self.oa_approval_action_error: Exception | None = None
+        self.pending_oa_approvals: list[DwsOaApprovalCandidate] = []
+        self.oa_approval_details: dict[str, dict] = {}
+        self.oa_approval_records: dict[str, dict] = {}
+        self.oa_approval_tasks: dict[str, dict] = {}
+        self.openapi_oa_details: dict[str, dict] = {}
         self.upgrade_check_response: dict = {"needs_upgrade": False}
         self.upgrade_error: Exception | None = None
         self.upgrade_check_calls = 0
@@ -359,6 +365,27 @@ class FakeDws:
             raise self.oa_approval_action_error
         return self.oa_approval_action_result
 
+    def list_pending_oa_approvals(
+        self, page: int = 1, size: int = 30
+    ) -> list[DwsOaApprovalCandidate]:
+        del page, size
+        return self.pending_oa_approvals
+
+    def read_oa_approval_detail(self, process_instance_id: str) -> dict:
+        return self.oa_approval_details.get(
+            process_instance_id,
+            {"result": {"formValueVOS": [{"details": []}]}},
+        )
+
+    def read_oa_approval_records(self, process_instance_id: str) -> dict:
+        return self.oa_approval_records.get(process_instance_id, {})
+
+    def read_oa_approval_tasks(self, process_instance_id: str) -> dict:
+        return self.oa_approval_tasks.get(process_instance_id, {})
+
+    def read_oa_process_instance_openapi(self, process_instance_id: str) -> dict:
+        return self.openapi_oa_details.get(process_instance_id, {})
+
 
 class FakeCodex:
     def __init__(
@@ -407,6 +434,7 @@ class SequencedFakeCodex:
 class FakeOaApprovalRunner:
     def __init__(self):
         self.calls: list[tuple[str, str, str, bool]] = []
+        self.approval_detail_texts: list[str] = []
         self.last_session_id = "oa-session-1"
         self.last_transcript_start_line = 12
         self.last_transcript_end_line = 34
@@ -417,9 +445,11 @@ class FakeOaApprovalRunner:
         trigger_text: str,
         context_text: str,
         oa_url: str,
+        approval_detail_text: str = "",
         execute: bool = True,
     ) -> OaApprovalResult:
         self.calls.append((trigger_text, context_text, oa_url, execute))
+        self.approval_detail_texts.append(approval_detail_text)
         return OaApprovalResult(
             process_instance_id="proc-1",
             task_id="task-1",
@@ -439,9 +469,11 @@ class MissingTargetOaApprovalRunner(FakeOaApprovalRunner):
         trigger_text: str,
         context_text: str,
         oa_url: str,
+        approval_detail_text: str = "",
         execute: bool = True,
     ) -> OaApprovalResult:
         self.calls.append((trigger_text, context_text, oa_url, execute))
+        self.approval_detail_texts.append(approval_detail_text)
         return OaApprovalResult(
             process_instance_id="",
             task_id="",
@@ -1680,6 +1712,53 @@ def test_oa_approval_missing_target_records_review_without_executing_action(
     assert attempt.oa_task_id == ""
     assert attempt.final_reply_text == "材料不足，暂不执行审批动作。"
     assert attempt.send_error == "missing_oa_approval_target"
+
+
+def test_ding_approval_reminder_injects_openapi_detail_when_dws_form_is_empty(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message("[Ding]刘瑞安提醒您审批他的录用申请", single_chat=True)
+    dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
+    dws.pending_oa_approvals = [
+        DwsOaApprovalCandidate(
+            process_instance_id="proc-1",
+            title="刘瑞安提交的录用申请",
+            process_name="录用申请",
+        )
+    ]
+    dws.oa_approval_details["proc-1"] = {
+        "result": {"formValueVOS": [{"details": []}]}
+    }
+    dws.oa_approval_records["proc-1"] = {"result": {"operationRecords": []}}
+    dws.oa_approval_tasks["proc-1"] = {"result": {"taskIdList": [{"taskId": 1}]}}
+    dws.openapi_oa_details["proc-1"] = {
+        "process_instance": {
+            "title": "刘瑞安提交的录用申请",
+            "form_component_values": [
+                {"name": "试用期工作内容和转正要求", "value": "3个月内完成 Friday 场景闭环"}
+            ],
+            "tasks": [
+                {"taskid": "task-1", "task_status": "RUNNING", "userid": "derek"}
+            ],
+        }
+    }
+    codex = FakeCodex(CodexDecision(action=CodexAction.NO_REPLY))
+    oa_runner = FakeOaApprovalRunner()
+    worker = make_worker(
+        tmp_path,
+        dws,
+        codex,
+        monkeypatch,
+        oa_approval_runner=oa_runner,
+    )
+
+    worker.run_once()
+
+    detail_text = oa_runner.approval_detail_texts[0]
+    assert "\"process_instance_id\": \"proc-1\"" in detail_text
+    assert "openapi_detail" in detail_text
+    assert "试用期工作内容和转正要求" in detail_text
+    assert "3个月内完成 Friday 场景闭环" in detail_text
 
 
 def test_oa_approval_dry_run_uses_review_only_mode_and_keeps_live_retry_open(

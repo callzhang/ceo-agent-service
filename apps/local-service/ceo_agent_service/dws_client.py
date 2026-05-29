@@ -5,6 +5,8 @@ import subprocess
 import time
 from datetime import datetime, timedelta
 from typing import Any
+from urllib.parse import urlencode
+from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, Field
@@ -87,6 +89,12 @@ class DwsMinutesPermissionRequest(BaseModel):
     policy_id: int = 3
     role_sub_resource_ids: list[str] = Field(default_factory=list)
     cover_permission: bool = False
+
+
+class DwsOaApprovalCandidate(BaseModel):
+    process_instance_id: str
+    title: str = ""
+    process_name: str = ""
 
 
 class DwsClient:
@@ -387,6 +395,60 @@ class DwsClient:
             "--format",
             "json",
             "--yes",
+        ]
+
+    def build_list_pending_oa_approvals_command(
+        self, page: int = 1, size: int = 30
+    ) -> list[str]:
+        return [
+            self.dws_bin,
+            "oa",
+            "approval",
+            "list-pending",
+            "--page",
+            str(page),
+            "--size",
+            str(size),
+            "--format",
+            "json",
+        ]
+
+    def build_read_oa_approval_detail_command(self, process_instance_id: str) -> list[str]:
+        return [
+            self.dws_bin,
+            "oa",
+            "approval",
+            "detail",
+            "--instance-id",
+            process_instance_id,
+            "--format",
+            "json",
+        ]
+
+    def build_read_oa_approval_records_command(
+        self, process_instance_id: str
+    ) -> list[str]:
+        return [
+            self.dws_bin,
+            "oa",
+            "approval",
+            "records",
+            "--instance-id",
+            process_instance_id,
+            "--format",
+            "json",
+        ]
+
+    def build_read_oa_approval_tasks_command(self, process_instance_id: str) -> list[str]:
+        return [
+            self.dws_bin,
+            "oa",
+            "approval",
+            "tasks",
+            "--instance-id",
+            process_instance_id,
+            "--format",
+            "json",
         ]
 
     def build_message_list_command(
@@ -787,6 +849,65 @@ class DwsClient:
                 action,
                 remark,
             )
+        )
+
+    def list_pending_oa_approvals(
+        self, page: int = 1, size: int = 30
+    ) -> list[DwsOaApprovalCandidate]:
+        payload = self.run_json(self.build_list_pending_oa_approvals_command(page, size))
+        return self.parse_pending_oa_approvals(payload)
+
+    def read_oa_approval_detail(self, process_instance_id: str) -> dict[str, Any]:
+        payload = self.run_json(
+            self.build_read_oa_approval_detail_command(process_instance_id)
+        )
+        if not isinstance(payload, dict):
+            raise DwsError("invalid OA approval detail response")
+        return payload
+
+    def read_oa_approval_records(self, process_instance_id: str) -> dict[str, Any]:
+        payload = self.run_json(
+            self.build_read_oa_approval_records_command(process_instance_id)
+        )
+        if not isinstance(payload, dict):
+            raise DwsError("invalid OA approval records response")
+        return payload
+
+    def read_oa_approval_tasks(self, process_instance_id: str) -> dict[str, Any]:
+        payload = self.run_json(
+            self.build_read_oa_approval_tasks_command(process_instance_id)
+        )
+        if not isinstance(payload, dict):
+            raise DwsError("invalid OA approval tasks response")
+        return payload
+
+    def read_oa_process_instance_openapi(
+        self,
+        process_instance_id: str,
+        *,
+        config_path: str | None = None,
+    ) -> dict[str, Any]:
+        credentials = self._read_dingtalk_skill_credentials(config_path)
+        token_payload = self._http_json(
+            "GET",
+            "https://oapi.dingtalk.com/gettoken?"
+            + urlencode(
+                {
+                    "appkey": credentials["DINGTALK_APP_KEY"],
+                    "appsecret": credentials["DINGTALK_APP_SECRET"],
+                }
+            ),
+        )
+        token = token_payload.get("access_token")
+        if not isinstance(token, str) or not token:
+            raise DwsError("DingTalk OpenAPI token response did not include access_token")
+        return self._http_json(
+            "POST",
+            "https://oapi.dingtalk.com/topapi/processinstance/get?"
+            + urlencode({"access_token": token}),
+            {
+                "process_instance_id": process_instance_id,
+            },
         )
 
     def read_doc(self, node: str) -> dict[str, Any]:
@@ -1819,6 +1940,43 @@ class DwsClient:
         return DwsClient.parse_user_profiles({"result": records})
 
     @staticmethod
+    def parse_pending_oa_approvals(
+        payload: dict[str, Any],
+    ) -> list[DwsOaApprovalCandidate]:
+        result = payload.get("result", {})
+        records = []
+        if isinstance(result, dict):
+            for key in ("list", "items", "processInstances"):
+                if isinstance(result.get(key), list):
+                    records = result[key]
+                    break
+        elif isinstance(result, list):
+            records = result
+        approvals = []
+        for record in records:
+            if not isinstance(record, dict):
+                continue
+            process_instance_id = (
+                record.get("processInstanceId")
+                or record.get("process_instance_id")
+                or record.get("instanceId")
+            )
+            if not process_instance_id:
+                continue
+            approvals.append(
+                DwsOaApprovalCandidate(
+                    process_instance_id=str(process_instance_id),
+                    title=str(
+                        record.get("processInstanceTitle")
+                        or record.get("title")
+                        or ""
+                    ),
+                    process_name=str(record.get("processName") or ""),
+                )
+            )
+        return approvals
+
+    @staticmethod
     def parse_department_ids(payload: dict[str, Any]) -> set[str]:
         records = payload.get("result", [])
         if not records:
@@ -1905,3 +2063,49 @@ class DwsClient:
         if isinstance(value, bool):
             return value
         return None
+
+    @staticmethod
+    def _read_dingtalk_skill_credentials(
+        config_path: str | None = None,
+    ) -> dict[str, str]:
+        path = config_path or os.path.expanduser("~/.dingtalk-skills/config")
+        values: dict[str, str] = {}
+        with open(path, encoding="utf-8") as file:
+            for line in file:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, value = line.split("=", 1)
+                values[key.strip()] = value.strip().strip("\"'")
+        missing = [
+            key
+            for key in ("DINGTALK_APP_KEY", "DINGTALK_APP_SECRET")
+            if not values.get(key)
+        ]
+        if missing:
+            raise DwsError("DingTalk OpenAPI config is missing required credentials")
+        return values
+
+    @staticmethod
+    def _http_json(
+        method: str,
+        url: str,
+        payload: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        data = None
+        headers = {"Content-Type": "application/json"}
+        if payload is not None:
+            data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        request = Request(url, data=data, method=method, headers=headers)
+        try:
+            with urlopen(request, timeout=30) as response:
+                raw = response.read().decode("utf-8")
+        except Exception as exc:
+            raise DwsError("DingTalk OpenAPI request failed") from exc
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise DwsError("DingTalk OpenAPI returned non-JSON response") from exc
+        if not isinstance(parsed, dict):
+            raise DwsError("DingTalk OpenAPI returned invalid JSON response")
+        return parsed

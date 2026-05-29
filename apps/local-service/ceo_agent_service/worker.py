@@ -6,7 +6,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from io import BytesIO
-from urllib.parse import urlsplit, urlunsplit
+from typing import Any
+from urllib.parse import parse_qs, urlparse, urlsplit, urlunsplit
 
 from pypdf import PdfReader
 
@@ -864,10 +865,12 @@ class DingTalkAutoReplyWorker:
         ):
             return True
         oa_url = extract_oa_url(trigger.content)
+        approval_detail_text = self._oa_approval_detail_text(trigger, oa_url)
         result = self.oa_approval_runner.handle(
             trigger_text=trigger.content,
             context_text=self._oa_approval_context_text(context_messages),
             oa_url=oa_url,
+            approval_detail_text=approval_detail_text,
             execute=False,
         )
         action_result = {}
@@ -958,6 +961,98 @@ class DingTalkAutoReplyWorker:
                 f"{message.create_time} {message.sender_name}: {message.content}"
             )
         return "\n".join(lines)
+
+    def _oa_approval_detail_text(self, trigger: DingTalkMessage, oa_url: str) -> str:
+        process_instance_id = self._oa_process_instance_id_from_url(oa_url)
+        if not process_instance_id:
+            process_instance_id = self._find_pending_oa_process_instance_id(trigger)
+        if not process_instance_id:
+            return "未能从消息或待办列表定位审批实例。"
+        documents: dict[str, Any] = {"process_instance_id": process_instance_id}
+        for key, reader in (
+            ("dws_detail", self.dws.read_oa_approval_detail),
+            ("dws_records", self.dws.read_oa_approval_records),
+            ("dws_tasks", self.dws.read_oa_approval_tasks),
+        ):
+            try:
+                documents[key] = reader(process_instance_id)
+            except Exception as exc:
+                documents[key] = {"error": str(exc)}
+        if self._oa_detail_has_empty_form(documents.get("dws_detail")):
+            try:
+                documents["openapi_detail"] = self.dws.read_oa_process_instance_openapi(
+                    process_instance_id
+                )
+            except Exception as exc:
+                documents["openapi_detail"] = {"error": str(exc)}
+        return json.dumps(documents, ensure_ascii=False)
+
+    @staticmethod
+    def _oa_process_instance_id_from_url(oa_url: str) -> str:
+        if not oa_url:
+            return ""
+        parsed = urlparse(oa_url)
+        query = parse_qs(parsed.query)
+        for key in ("procInstId", "processInstanceId", "process_instance_id"):
+            values = query.get(key)
+            if values:
+                return values[0]
+        return ""
+
+    def _find_pending_oa_process_instance_id(self, trigger: DingTalkMessage) -> str:
+        try:
+            candidates = self.dws.list_pending_oa_approvals(page=1, size=30)
+        except Exception:
+            return ""
+        trigger_units = self._oa_matching_units(
+            " ".join((trigger.sender_name, trigger.content))
+        )
+        best_score = 0
+        best_process_instance_id = ""
+        for candidate in candidates:
+            candidate_units = self._oa_matching_units(
+                " ".join((candidate.title, candidate.process_name))
+            )
+            score = len(trigger_units & candidate_units)
+            if score > best_score:
+                best_score = score
+                best_process_instance_id = candidate.process_instance_id
+        return best_process_instance_id if best_score else ""
+
+    @staticmethod
+    def _oa_matching_units(text: str) -> set[str]:
+        units = set()
+        current = []
+        for char in text:
+            if char.isascii() and char.isalnum():
+                current.append(char.lower())
+                continue
+            if current:
+                units.add("".join(current))
+                current = []
+            if "\u4e00" <= char <= "\u9fff":
+                units.add(char)
+        if current:
+            units.add("".join(current))
+        return {unit for unit in units if unit}
+
+    @staticmethod
+    def _oa_detail_has_empty_form(payload: Any) -> bool:
+        if not isinstance(payload, dict):
+            return True
+        result = payload.get("result")
+        if not isinstance(result, dict):
+            return True
+        form_values = result.get("formValueVOS")
+        if not isinstance(form_values, list) or not form_values:
+            return True
+        for item in form_values:
+            if not isinstance(item, dict):
+                continue
+            details = item.get("details")
+            if isinstance(details, list) and details:
+                return False
+        return True
 
     @staticmethod
     def _is_oa_approval_message(message: DingTalkMessage) -> bool:

@@ -234,6 +234,7 @@ class OaApprovalCodexRunner:
         trigger_text: str,
         context_text: str,
         oa_url: str,
+        approval_detail_text: str = "",
         execute: bool = True,
     ) -> OaApprovalResult:
         mode = (
@@ -246,6 +247,7 @@ class OaApprovalCodexRunner:
             f"{mode}\n\n"
             f"OA URL:\n{oa_url}\n\n"
             f"触发消息:\n{trigger_text}\n\n"
+            f"服务侧已读取的审批 API 详情:\n{approval_detail_text}\n\n"
             f"会话上下文:\n{context_text}"
         )
         return self.run(prompt, session_id=None, allow_side_effects=execute)
