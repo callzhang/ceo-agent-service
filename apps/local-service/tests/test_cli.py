@@ -68,6 +68,15 @@ def test_parser_supports_reset_codex_sessions_command():
     assert args.db == "/tmp/worker.sqlite3"
 
 
+def test_parser_supports_flush_memory_events_command():
+    parser = build_parser()
+
+    args = parser.parse_args(["flush-memory-events", "--limit", "5"])
+
+    assert args.command == "flush-memory-events"
+    assert args.limit == 5
+
+
 def test_parser_supports_rerun_message_command():
     parser = build_parser()
 
