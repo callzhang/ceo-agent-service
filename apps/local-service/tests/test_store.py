@@ -189,6 +189,81 @@ def test_defer_reply_task_for_authorization_refunds_claim_attempt(tmp_path: Path
     assert reclaimed[0].error == "authorization required"
 
 
+def test_memory_write_event_round_trip_and_dedupes_by_attempt_and_type(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+
+    first_id = store.enqueue_memory_write_event(
+        attempt_id=12,
+        event_type="reply_sent",
+        payload_json='{"text":"old"}',
+    )
+    store.mark_memory_write_event_failed(first_id, "temporary memory error")
+    second_id = store.enqueue_memory_write_event(
+        attempt_id=12,
+        event_type="reply_sent",
+        payload_json='{"text":"new"}',
+    )
+
+    events = store.list_memory_write_events()
+    attempt_events = store.get_memory_write_events_for_attempt(12)
+
+    assert second_id == first_id
+    assert [event.id for event in events] == [first_id]
+    assert [event.id for event in attempt_events] == [first_id]
+    assert events[0].attempt_id == 12
+    assert events[0].event_type == "reply_sent"
+    assert events[0].payload_json == '{"text":"new"}'
+    assert events[0].status == "pending"
+    assert events[0].attempts == 0
+    assert events[0].last_error == ""
+    assert events[0].memory_episode_id == ""
+    assert events[0].created_at
+    assert events[0].updated_at
+
+
+def test_claim_memory_write_events_marks_processing_and_prevents_second_claim(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    first_id = store.enqueue_memory_write_event(1, "reply_sent", '{"n":1}')
+    second_id = store.enqueue_memory_write_event(2, "reply_sent", '{"n":2}')
+
+    claimed = store.claim_memory_write_events(limit=1)
+    second_claim = store.claim_memory_write_events(limit=2)
+
+    assert [event.id for event in claimed] == [first_id]
+    assert claimed[0].status == "processing"
+    assert claimed[0].attempts == 1
+    assert [event.id for event in second_claim] == [second_id]
+    assert second_claim[0].status == "processing"
+    assert store.list_memory_write_events(statuses=("pending",)) == []
+    assert [event.id for event in store.list_memory_write_events(statuses=("processing",))] == [
+        first_id,
+        second_id,
+    ]
+
+
+def test_memory_write_event_success_and_failure_status_updates(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    sent_id = store.enqueue_memory_write_event(1, "reply_sent", '{"n":1}')
+    failed_id = store.enqueue_memory_write_event(2, "reply_failed", '{"n":2}')
+
+    store.mark_memory_write_event_sent(sent_id, "episode-1")
+    store.mark_memory_write_event_failed(failed_id, "memory timeout")
+
+    sent = store.list_memory_write_events(statuses=("sent",))[0]
+    failed = store.list_memory_write_events(statuses=("failed",))[0]
+
+    assert sent.id == sent_id
+    assert sent.memory_episode_id == "episode-1"
+    assert sent.last_error == ""
+    assert failed.id == failed_id
+    assert failed.last_error == "memory timeout"
+    assert failed.memory_episode_id == ""
+
+
 def test_reset_codex_sessions_clears_conversation_mapping_only(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.upsert_conversation("cid-1", "Friday", False, "session-1")

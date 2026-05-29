@@ -103,6 +103,19 @@ class ReplyTask(BaseModel):
     updated_at: str
 
 
+class MemoryWriteEvent(BaseModel):
+    id: int
+    attempt_id: int
+    event_type: str
+    payload_json: str
+    status: str
+    attempts: int
+    last_error: str = ""
+    memory_episode_id: str = ""
+    created_at: str
+    updated_at: str
+
+
 class AutoReplyStore:
     def __init__(self, path: Path):
         self.path = path
@@ -210,6 +223,21 @@ class AutoReplyStore:
                 );
                 create index if not exists idx_reply_tasks_status
                     on reply_tasks(status, id);
+                create table if not exists memory_write_events (
+                    id integer primary key autoincrement,
+                    attempt_id integer not null,
+                    event_type text not null,
+                    payload_json text not null,
+                    status text not null default 'pending',
+                    attempts integer not null default 0,
+                    last_error text not null default '',
+                    memory_episode_id text not null default '',
+                    created_at text not null default current_timestamp,
+                    updated_at text not null default current_timestamp,
+                    unique(attempt_id, event_type)
+                );
+                create index if not exists idx_memory_write_events_status
+                    on memory_write_events(status, id);
                 create table if not exists corpus_sources (
                     source_key text primary key,
                     last_collected_at text
@@ -348,6 +376,21 @@ class AutoReplyStore:
             attempts=row["attempts"],
             locked_at=row["locked_at"],
             error=row["error"],
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
+
+    @staticmethod
+    def _memory_write_event_from_row(row: sqlite3.Row) -> MemoryWriteEvent:
+        return MemoryWriteEvent(
+            id=row["id"],
+            attempt_id=row["attempt_id"],
+            event_type=row["event_type"],
+            payload_json=row["payload_json"],
+            status=row["status"],
+            attempts=row["attempts"],
+            last_error=row["last_error"],
+            memory_episode_id=row["memory_episode_id"],
             created_at=row["created_at"],
             updated_at=row["updated_at"],
         )
@@ -579,6 +622,143 @@ class AutoReplyStore:
                 args.append(limit)
             rows = db.execute(query, args).fetchall()
             return [self._reply_task_from_row(row) for row in rows]
+
+    def enqueue_memory_write_event(
+        self, attempt_id: int, event_type: str, payload_json: str
+    ) -> int:
+        with self._connect() as db:
+            db.execute(
+                """
+                insert into memory_write_events (
+                    attempt_id,
+                    event_type,
+                    payload_json
+                )
+                values (?, ?, ?)
+                on conflict(attempt_id, event_type) do update set
+                    payload_json=excluded.payload_json,
+                    status='pending',
+                    last_error='',
+                    updated_at=current_timestamp
+                """,
+                (attempt_id, event_type, payload_json),
+            )
+            row = db.execute(
+                """
+                select id
+                from memory_write_events
+                where attempt_id=?
+                  and event_type=?
+                """,
+                (attempt_id, event_type),
+            ).fetchone()
+            return int(row["id"])
+
+    def list_memory_write_events(
+        self,
+        statuses: tuple[str, ...] | None = None,
+        limit: int | None = None,
+    ) -> list[MemoryWriteEvent]:
+        with self._connect() as db:
+            query = """
+                select *
+                from memory_write_events
+            """
+            args: list[str | int] = []
+            if statuses:
+                placeholders = ",".join("?" for _ in statuses)
+                query = f"{query} where status in ({placeholders})"
+                args.extend(statuses)
+            query = f"{query} order by id asc"
+            if limit is not None:
+                query = f"{query} limit ?"
+                args.append(limit)
+            rows = db.execute(query, args).fetchall()
+            return [self._memory_write_event_from_row(row) for row in rows]
+
+    def get_memory_write_events_for_attempt(
+        self, attempt_id: int
+    ) -> list[MemoryWriteEvent]:
+        with self._connect() as db:
+            rows = db.execute(
+                """
+                select *
+                from memory_write_events
+                where attempt_id=?
+                order by id asc
+                """,
+                (attempt_id,),
+            ).fetchall()
+            return [self._memory_write_event_from_row(row) for row in rows]
+
+    def claim_memory_write_events(self, limit: int) -> list[MemoryWriteEvent]:
+        if limit <= 0:
+            return []
+        with self._connect() as db:
+            db.execute("begin immediate")
+            rows = db.execute(
+                """
+                select *
+                from memory_write_events
+                where status in ('pending', 'failed')
+                order by id
+                limit ?
+                """,
+                (limit,),
+            ).fetchall()
+            event_ids = [row["id"] for row in rows]
+            if not event_ids:
+                return []
+            placeholders = ",".join("?" for _ in event_ids)
+            db.execute(
+                f"""
+                update memory_write_events
+                set status='processing',
+                    attempts=attempts + 1,
+                    updated_at=current_timestamp
+                where id in ({placeholders})
+                """,
+                event_ids,
+            )
+            claimed_rows = db.execute(
+                f"""
+                select *
+                from memory_write_events
+                where id in ({placeholders})
+                order by id asc
+                """,
+                event_ids,
+            ).fetchall()
+            return [self._memory_write_event_from_row(row) for row in claimed_rows]
+
+    def mark_memory_write_event_sent(
+        self, event_id: int, memory_episode_id: str
+    ) -> None:
+        with self._connect() as db:
+            db.execute(
+                """
+                update memory_write_events
+                set status='sent',
+                    memory_episode_id=?,
+                    last_error='',
+                    updated_at=current_timestamp
+                where id=?
+                """,
+                (memory_episode_id, event_id),
+            )
+
+    def mark_memory_write_event_failed(self, event_id: int, error: str) -> None:
+        with self._connect() as db:
+            db.execute(
+                """
+                update memory_write_events
+                set status='failed',
+                    last_error=?,
+                    updated_at=current_timestamp
+                where id=?
+                """,
+                (error, event_id),
+            )
 
     def upsert_conversation(
         self,
