@@ -2,6 +2,7 @@ import argparse
 import json
 import os
 import re
+import sys
 import time
 from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
@@ -126,6 +127,19 @@ def _non_negative_float(value: str) -> float:
     if parsed < 0:
         raise argparse.ArgumentTypeError("must be a non-negative number")
     return parsed
+
+
+def _try_enqueue_review_correction_memory_event(
+    store: AutoReplyStore, attempt_id: int
+) -> None:
+    try:
+        enqueue_review_correction_memory_event(store, attempt_id)
+    except Exception as exc:
+        print(
+            f"warning: review correction memory enqueue failed: {exc}",
+            file=sys.stderr,
+            flush=True,
+        )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -818,7 +832,7 @@ def record_feedback_command(
     )
     if not updated:
         raise SystemExit(f"reply attempt not found: {attempt_id}")
-    enqueue_review_correction_memory_event(store, attempt_id)
+    _try_enqueue_review_correction_memory_event(store, attempt_id)
     print(f"feedback recorded attempt_id={attempt_id}", flush=True)
 
 
