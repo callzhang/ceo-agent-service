@@ -22,6 +22,11 @@ MEMORY_CONNECTOR_URL_ENV = "MEMORY_CONNECTOR_URL"
 MEMORY_CONNECTOR_API_KEY_ENV = "CONNECTOR_API_KEY"
 MEMORY_CONNECTOR_USER_ID_ENV = "MEMORY_CONNECTOR_USER_ID"
 DEFAULT_MEMORY_CONNECTOR_USER_ID = "derek"
+MEMORY_CONNECTOR_ENV_KEYS = {
+    MEMORY_CONNECTOR_API_KEY_ENV,
+    MEMORY_CONNECTOR_URL_ENV,
+    MEMORY_CONNECTOR_USER_ID_ENV,
+}
 
 
 def codex_developer_instructions() -> str:
@@ -57,7 +62,10 @@ def _parse_export_env_file(path: Path) -> dict[str, str]:
 
 def _memory_connector_env() -> dict[str, str]:
     file_env = _parse_export_env_file(_codex_home() / MEMORY_CONNECTOR_ENV_FILE)
-    env = {**file_env, **os.environ}
+    whitelisted_file_env = {
+        key: value for key, value in file_env.items() if key in MEMORY_CONNECTOR_ENV_KEYS
+    }
+    env = {**whitelisted_file_env, **os.environ}
     env.setdefault(MEMORY_CONNECTOR_USER_ID_ENV, DEFAULT_MEMORY_CONNECTOR_USER_ID)
     return env
 

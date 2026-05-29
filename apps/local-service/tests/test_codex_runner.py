@@ -79,6 +79,7 @@ def test_codex_runner_env_loads_memory_connector_env_file(
                 "export CONNECTOR_API_KEY='secret-token'",
                 "export MEMORY_CONNECTOR_URL='https://memory.example/mcp/'",
                 "export MEMORY_CONNECTOR_USER_ID='derek'",
+                "export UNRELATED_SECRET='do-not-forward'",
             ]
         ),
         encoding="utf-8",
@@ -94,6 +95,44 @@ def test_codex_runner_env_loads_memory_connector_env_file(
     assert env["CONNECTOR_API_KEY"] == "secret-token"
     assert env["MEMORY_CONNECTOR_URL"] == "https://memory.example/mcp/"
     assert env["MEMORY_CONNECTOR_USER_ID"] == "derek"
+    assert "UNRELATED_SECRET" not in env
+
+
+def test_codex_command_reads_memory_connector_mcp_url_from_env_file(
+    tmp_path: Path, monkeypatch
+):
+    codex_home = tmp_path / ".codex"
+    codex_home.mkdir()
+    (codex_home / "memory_connector.env").write_text(
+        "\n".join(
+            [
+                "export CONNECTOR_API_KEY='secret-token'",
+                "export MEMORY_CONNECTOR_URL='https://memory.example/mcp/'",
+                "export MEMORY_CONNECTOR_USER_ID='derek'",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+    monkeypatch.delenv("CONNECTOR_API_KEY", raising=False)
+    monkeypatch.delenv("MEMORY_CONNECTOR_URL", raising=False)
+    monkeypatch.delenv("MEMORY_CONNECTOR_USER_ID", raising=False)
+    runner = CodexRunner(workspace=tmp_path, codex_bin="codex")
+
+    command = runner.build_command(prompt="hello", session_id=None)
+
+    assert (
+        'mcp_servers.memory_connector.url="https://memory.example/mcp/"'
+        in command
+    )
+    assert (
+        'mcp_servers.memory_connector.bearer_token_env_var="CONNECTOR_API_KEY"'
+        in command
+    )
+    assert (
+        'mcp_servers.memory_connector.env_http_headers={"x-memory-user-id" = "MEMORY_CONNECTOR_USER_ID"}'
+        in command
+    )
 
 
 def test_builds_new_thread_command(tmp_path: Path):
