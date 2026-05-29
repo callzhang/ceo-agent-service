@@ -1,6 +1,7 @@
 import json
 
 from ceo_agent_service.memory_events import (
+    MEMORY_TEXT_LIMIT,
     build_reply_sent_memory_payload,
     build_review_correction_memory_payload,
     memory_payload_json,
@@ -70,9 +71,9 @@ def test_build_reply_sent_memory_payload_uses_sent_reply_details():
     assert payload["provenance"]["attempt_id"] == 42
     assert payload["provenance"]["sent_reply_id"] == 7
     assert payload["provenance"]["recall_key"] == "recall-1"
-    assert payload["provenance"]["send_result_json"] == (
-        '{"ok": true, "message_id": "reply-1"}'
-    )
+    assert payload["provenance"]["send_result_available"] is True
+    assert "send_result_json" not in payload["provenance"]
+    assert "send_result_json" not in memory_payload_json(payload)
 
 
 def test_build_reply_sent_memory_payload_without_sent_reply_uses_attempt_timestamp():
@@ -115,3 +116,32 @@ def test_memory_payload_json_sorts_keys_and_preserves_chinese_text():
 
     assert encoded == '{"a": "中文", "z": "后"}'
     assert json.loads(encoded) == {"a": "中文", "z": "后"}
+
+
+def test_memory_payload_text_fields_are_truncated_with_chinese_text_intact():
+    long_text = "中文" * MEMORY_TEXT_LIMIT
+    attempt = _reply_attempt().model_copy(
+        update={
+            "trigger_text": long_text,
+            "codex_reason": long_text,
+            "draft_reply_text": long_text,
+            "audit_summary": long_text,
+            "final_reply_text": long_text,
+            "reviewer_feedback": long_text,
+            "corrected_reply_text": long_text,
+        }
+    )
+    sent_reply = _sent_reply().model_copy(update={"reply_text": long_text})
+    expected = f"{long_text[:MEMORY_TEXT_LIMIT]}[truncated]"
+
+    reply_sent_payload = build_reply_sent_memory_payload(attempt, sent_reply)
+    review_payload = build_review_correction_memory_payload(attempt)
+
+    assert reply_sent_payload["trigger"]["text"] == expected
+    assert reply_sent_payload["decision"]["codex_reason"] == expected
+    assert reply_sent_payload["decision"]["audit_summary"] == expected
+    assert reply_sent_payload["result"]["final_reply_text"] == expected
+    assert review_payload["original"]["draft_reply_text"] == expected
+    assert review_payload["original"]["final_reply_text"] == expected
+    assert review_payload["review"]["reviewer_feedback"] == expected
+    assert review_payload["review"]["corrected_reply_text"] == expected
