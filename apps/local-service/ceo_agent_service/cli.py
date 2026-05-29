@@ -257,6 +257,14 @@ def build_parser() -> argparse.ArgumentParser:
             subparser.add_argument("--conversation-id", required=True)
             subparser.add_argument("--message-id", required=True)
             subparser.add_argument(
+                "--oa-url",
+                default="",
+                help=(
+                    "explicit DingTalk OA approval URL for rerunning approval "
+                    "reminders that do not include an instance id"
+                ),
+            )
+            subparser.add_argument(
                 "--context-time",
                 help=(
                     "anchor time for historical message lookup; accepts "
@@ -552,6 +560,7 @@ def rerun_message_command(
     *,
     force_new_decision: bool = False,
     context_time: str | None = None,
+    oa_url: str = "",
 ) -> None:
     store = AutoReplyStore(settings.db_path)
     record = store.get_conversation(conversation_id)
@@ -569,6 +578,7 @@ def rerun_message_command(
             ),
             message_id,
             force_new_decision=force_new_decision,
+            oa_url=oa_url,
         )
         store.complete_reply_task_for_message(conversation_id, processed_message_id)
     except ValueError as exc:
@@ -1143,6 +1153,7 @@ def main() -> None:
             message_id=args.message_id,
             force_new_decision=args.force_new_decision,
             context_time=args.context_time,
+            oa_url=args.oa_url,
         )
     elif args.command == "send-attempt":
         ensure_live_send_allowed(settings)

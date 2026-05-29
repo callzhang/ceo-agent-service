@@ -1743,6 +1743,47 @@ def test_oa_approval_missing_target_records_review_without_executing_action(
     assert attempt.send_error == "missing_oa_approval_target"
 
 
+def test_oa_approval_does_not_execute_task_that_is_not_current_user(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message(
+        "[Ding]刘瑞安提醒您审批他的录用申请 "
+        "https://aflow.dingtalk.com/detail?procInstId=proc-1&taskId=task-1",
+        single_chat=True,
+    )
+    dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
+    dws.openapi_oa_details["proc-1"] = {
+        "process_instance": {
+            "tasks": [
+                {"taskid": "task-1", "task_status": "CANCELED", "userid": "derek-user-1"},
+                {"taskid": "task-2", "task_status": "RUNNING", "userid": "other-user"},
+            ]
+        }
+    }
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该走聊天回复")
+    )
+    oa_runner = FakeOaApprovalRunner()
+    worker = make_worker(
+        tmp_path,
+        dws,
+        codex,
+        monkeypatch,
+        dry_run=False,
+        oa_approval_runner=oa_runner,
+    )
+
+    worker.run_once()
+
+    assert dws.oa_approval_actions == []
+    attempt = worker.store.get_reply_attempt(1)
+    assert attempt is not None
+    assert attempt.send_status == "skipped"
+    assert attempt.oa_process_instance_id == "proc-1"
+    assert attempt.oa_task_id == ""
+    assert attempt.send_error == "oa_task_not_current_user"
+
+
 def test_ding_approval_reminder_injects_openapi_detail_when_dws_form_is_empty(
     tmp_path: Path, monkeypatch
 ):
@@ -1767,7 +1808,7 @@ def test_ding_approval_reminder_injects_openapi_detail_when_dws_form_is_empty(
                 {"name": "试用期工作内容和转正要求", "value": "3个月内完成 Friday 场景闭环"}
             ],
             "tasks": [
-                {"taskid": "task-1", "task_status": "RUNNING", "userid": "derek"}
+                {"taskid": "task-1", "task_status": "RUNNING", "userid": "derek-user-1"}
             ],
         }
     }
@@ -2727,6 +2768,48 @@ def test_force_new_rerun_starts_fresh_codex_session(tmp_path: Path, monkeypatch)
     assert codex.calls[0][1] is None
     assert codex.calls[0][0].startswith("当前待处理消息:")
     assert "你是 Derek 的钉钉自动回复分身" not in codex.calls[0][0]
+
+
+def test_rerun_message_uses_explicit_oa_url_when_trigger_has_no_link(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message("[Ding]刘瑞安提醒您审批他的录用申请", single_chat=True)
+    dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
+    dws.openapi_oa_details["proc-1"] = {
+        "process_instance": {
+            "title": "刘瑞安提交的录用申请",
+            "form_component_values": [
+                {"name": "试用期工作内容和转正要求", "value": "完成 PM 关键项目交付"}
+            ],
+            "tasks": [
+                {"taskid": "task-1", "task_status": "RUNNING", "userid": "derek-user-1"}
+            ],
+        }
+    }
+    codex = FakeCodex(CodexDecision(action=CodexAction.NO_REPLY))
+    oa_runner = FakeOaApprovalRunner()
+    worker = make_worker(
+        tmp_path,
+        dws,
+        codex,
+        monkeypatch,
+        oa_approval_runner=oa_runner,
+    )
+
+    worker.rerun_message(
+        conversation(single_chat=True),
+        "msg-1",
+        force_new_decision=True,
+        oa_url="https://aflow.dingtalk.com/detail?procInstId=proc-1&taskId=task-1",
+    )
+
+    assert len(oa_runner.calls) == 1
+    assert oa_runner.calls[0][2] == (
+        "https://aflow.dingtalk.com/detail?procInstId=proc-1&taskId=task-1"
+    )
+    assert "\"current_user_id\": \"derek-user-1\"" in oa_runner.approval_detail_texts[0]
+    assert "\"process_instance_id\": \"proc-1\"" in oa_runner.approval_detail_texts[0]
+    assert "完成 PM 关键项目交付" in oa_runner.approval_detail_texts[0]
 
 
 def test_reply_attempt_records_codex_audit_fields(tmp_path: Path, monkeypatch):

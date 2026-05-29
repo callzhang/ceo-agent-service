@@ -689,6 +689,7 @@ class DingTalkAutoReplyWorker:
         message_id: str,
         *,
         force_new_decision: bool = False,
+        oa_url: str = "",
     ) -> str:
         context_messages = self.dws.read_recent_messages(conversation)
         unread_messages = self.dws.read_unread_messages(conversation)
@@ -723,6 +724,7 @@ class DingTalkAutoReplyWorker:
             trigger,
             prompt_context_messages,
             ignore_existing_attempt=force_new_decision,
+            oa_url_override=oa_url,
         ):
             return trigger.open_message_id
         if self._is_system_or_notification_message(trigger):
@@ -849,6 +851,7 @@ class DingTalkAutoReplyWorker:
         context_messages: list[DingTalkMessage],
         *,
         ignore_existing_attempt: bool = False,
+        oa_url_override: str = "",
     ) -> bool:
         if self.oa_approval_runner is None:
             return False
@@ -860,7 +863,7 @@ class DingTalkAutoReplyWorker:
             [trigger],
         ):
             return True
-        oa_url = extract_oa_url(trigger.content)
+        oa_url = oa_url_override.strip() or extract_oa_url(trigger.content)
         approval_detail_text = self._oa_approval_detail_text(trigger, oa_url)
         result = self.oa_approval_runner.handle(
             trigger_text=trigger.content,
@@ -869,18 +872,27 @@ class DingTalkAutoReplyWorker:
             approval_detail_text=approval_detail_text,
             execute=False,
         )
+        target_status = self._oa_target_status_for_current_user(
+            approval_detail_text,
+            result.task_id,
+        )
+        effective_oa_task_id = result.task_id
+        target_error = ""
+        if target_status is False:
+            effective_oa_task_id = ""
+            target_error = "oa_task_not_current_user"
         action_result = {}
         send_status = "dry_run"
         send_error = ""
         if not self.dry_run:
             has_approval_target = bool(
-                result.process_instance_id.strip() and result.task_id.strip()
+                result.process_instance_id.strip() and effective_oa_task_id.strip()
             )
             if has_approval_target:
                 try:
                     action_result = self.dws.execute_oa_approval_action(
                         result.process_instance_id,
-                        result.task_id,
+                        effective_oa_task_id,
                         result.oa_action,
                         result.oa_remark,
                     )
@@ -890,7 +902,7 @@ class DingTalkAutoReplyWorker:
                     send_error = str(exc)
             else:
                 send_status = "skipped"
-                send_error = "missing_oa_approval_target"
+                send_error = target_error or "missing_oa_approval_target"
         attempt_id = self.store.record_reply_attempt(
             conversation_id=conversation.open_conversation_id,
             conversation_title=conversation.title,
@@ -919,7 +931,7 @@ class DingTalkAutoReplyWorker:
             ),
             audit_summary=result.audit_summary,
             oa_process_instance_id=result.process_instance_id,
-            oa_task_id=result.task_id,
+            oa_task_id=effective_oa_task_id,
             oa_url=result.oa_url,
             oa_action=result.oa_action,
             oa_remark=result.oa_remark,
@@ -932,9 +944,12 @@ class DingTalkAutoReplyWorker:
         self.store.update_reply_attempt(
             attempt_id,
             final_reply_text=result.oa_remark,
-            send_error=send_error,
+            send_error=send_error or target_error,
         )
-        if send_error and send_error != "missing_oa_approval_target":
+        if send_error and send_error not in {
+            "missing_oa_approval_target",
+            "oa_task_not_current_user",
+        }:
             self.store.record_error(
                 conversation.open_conversation_id,
                 trigger.open_message_id,
@@ -948,6 +963,72 @@ class DingTalkAutoReplyWorker:
             raise ReplyDeliveryError(send_error)
         self._mark_seen([trigger])
         return True
+
+    @staticmethod
+    def _oa_target_status_for_current_user(
+        approval_detail_text: str,
+        task_id: str,
+    ) -> bool | None:
+        if not task_id:
+            return None
+        try:
+            documents = json.loads(approval_detail_text)
+        except json.JSONDecodeError:
+            return None
+        if not isinstance(documents, dict):
+            return None
+        current_user_id = str(documents.get("current_user_id") or "")
+        if not current_user_id:
+            return None
+        tasks = DingTalkAutoReplyWorker._oa_detail_tasks(documents)
+        if not tasks:
+            return None
+        for task in tasks:
+            candidate_task_id = str(
+                task.get("taskid")
+                or task.get("taskId")
+                or task.get("task_id")
+                or task.get("id")
+                or ""
+            )
+            if candidate_task_id != task_id:
+                continue
+            status = str(
+                task.get("task_status")
+                or task.get("taskStatus")
+                or task.get("status")
+                or ""
+            ).upper()
+            user_id = str(
+                task.get("userid")
+                or task.get("userId")
+                or task.get("user_id")
+                or ""
+            )
+            return status == "RUNNING" and user_id == current_user_id
+        return False
+
+    @staticmethod
+    def _oa_detail_tasks(documents: dict[str, Any]) -> list[dict[str, Any]]:
+        tasks: list[dict[str, Any]] = []
+        openapi_process = documents.get("openapi_detail")
+        if isinstance(openapi_process, dict):
+            process = openapi_process.get("process_instance")
+            if isinstance(process, dict):
+                openapi_tasks = process.get("tasks")
+                if isinstance(openapi_tasks, list):
+                    tasks.extend(
+                        task for task in openapi_tasks if isinstance(task, dict)
+                    )
+        dws_tasks = documents.get("dws_tasks")
+        if isinstance(dws_tasks, dict):
+            result = dws_tasks.get("result")
+            if isinstance(result, dict):
+                for key in ("tasks", "taskList", "taskIdList"):
+                    values = result.get(key)
+                    if isinstance(values, list):
+                        tasks.extend(task for task in values if isinstance(task, dict))
+        return tasks
 
     @staticmethod
     def _oa_approval_context_text(messages: list[DingTalkMessage]) -> str:
@@ -965,6 +1046,10 @@ class DingTalkAutoReplyWorker:
         if not process_instance_id:
             return "未能从消息或待办列表定位审批实例。"
         documents: dict[str, Any] = {"process_instance_id": process_instance_id}
+        try:
+            documents["current_user_id"] = self.dws.get_current_user_id()
+        except Exception as exc:
+            documents["current_user_id_error"] = str(exc)
         for key, reader in (
             ("dws_detail", self.dws.read_oa_approval_detail),
             ("dws_records", self.dws.read_oa_approval_records),

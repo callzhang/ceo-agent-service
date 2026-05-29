@@ -80,6 +80,8 @@ def test_parser_supports_rerun_message_command():
             "msg-1",
             "--context-time",
             "2026-05-20 09:56:09",
+            "--oa-url",
+            "https://aflow.dingtalk.com/detail?procInstId=proc-1&taskId=task-1",
             "--force-new-decision",
         ]
     )
@@ -88,6 +90,7 @@ def test_parser_supports_rerun_message_command():
     assert args.conversation_id == "cid-1"
     assert args.message_id == "msg-1"
     assert args.context_time == "2026-05-20 09:56:09"
+    assert args.oa_url == "https://aflow.dingtalk.com/detail?procInstId=proc-1&taskId=task-1"
     assert args.force_new_decision is True
 
 
@@ -1388,10 +1391,18 @@ def test_rerun_message_command_loads_conversation_and_calls_worker(
     store.upsert_conversation("cid-1", "Friday", False, "session-1")
 
     class FakeWorker:
-        def rerun_message(self, conversation, message_id, *, force_new_decision=False):
+        def rerun_message(
+            self,
+            conversation,
+            message_id,
+            *,
+            force_new_decision=False,
+            oa_url=None,
+        ):
             calls["conversation"] = conversation
             calls["message_id"] = message_id
             calls["force_new_decision"] = force_new_decision
+            calls["oa_url"] = oa_url
             return message_id
 
     monkeypatch.setattr(cli, "create_worker", lambda settings: FakeWorker())
@@ -1402,6 +1413,7 @@ def test_rerun_message_command_loads_conversation_and_calls_worker(
         message_id="msg-1",
         force_new_decision=True,
         context_time="2026-05-20T09:56:09+08:00",
+        oa_url="https://aflow.dingtalk.com/detail?procInstId=proc-1&taskId=task-1",
     )
 
     assert calls["conversation"].open_conversation_id == "cid-1"
@@ -1411,6 +1423,7 @@ def test_rerun_message_command_loads_conversation_and_calls_worker(
     )
     assert calls["message_id"] == "msg-1"
     assert calls["force_new_decision"] is True
+    assert calls["oa_url"] == "https://aflow.dingtalk.com/detail?procInstId=proc-1&taskId=task-1"
     assert "rerun-message processed conversation_id=cid-1" in capsys.readouterr().out
 
 
@@ -1437,7 +1450,14 @@ def test_rerun_message_command_marks_matching_failed_task_done(
     store.fail_reply_task(task.id, "old failure")
 
     class FakeWorker:
-        def rerun_message(self, conversation, message_id, *, force_new_decision=False):
+        def rerun_message(
+            self,
+            conversation,
+            message_id,
+            *,
+            force_new_decision=False,
+            oa_url=None,
+        ):
             return message_id
 
     monkeypatch.setattr(cli, "create_worker", lambda settings: FakeWorker())
@@ -1469,7 +1489,14 @@ def test_rerun_message_command_treats_naive_context_time_as_dingtalk_time(
     store.upsert_conversation("cid-1", "Friday", False, "session-1")
 
     class FakeWorker:
-        def rerun_message(self, conversation, message_id, *, force_new_decision=False):
+        def rerun_message(
+            self,
+            conversation,
+            message_id,
+            *,
+            force_new_decision=False,
+            oa_url=None,
+        ):
             calls["conversation"] = conversation
             return message_id
 
@@ -1513,7 +1540,14 @@ def test_rerun_message_command_reports_missing_message(monkeypatch, tmp_path):
     store.upsert_conversation("cid-1", "Friday", False, "session-1")
 
     class FakeWorker:
-        def rerun_message(self, conversation, message_id, *, force_new_decision=False):
+        def rerun_message(
+            self,
+            conversation,
+            message_id,
+            *,
+            force_new_decision=False,
+            oa_url=None,
+        ):
             raise ValueError("message not found in recent DingTalk context: msg-1")
 
     monkeypatch.setattr(cli, "create_worker", lambda settings: FakeWorker())
