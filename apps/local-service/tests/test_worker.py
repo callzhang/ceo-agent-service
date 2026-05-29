@@ -1392,6 +1392,89 @@ def test_non_text_calendar_without_detail_asks_for_readable_calendar_detail(
     assert attempt.codex_reason == "calendar_detail_unreadable"
 
 
+def test_calendar_link_message_is_handled_as_calendar_invite(tmp_path: Path, monkeypatch):
+    trigger = message(
+        "好的磊哥 dingtalk://dingtalkclient/action/open_mini_app?"
+        "page=pages%2Fdetail%2Findex%3FuniqueId%3Dinvite-1%26recurrenceId%3D",
+        single_chat=True,
+    )
+    invite = DwsCalendarEvent(
+        event_id="invite-1",
+        title="国寿Demo思路",
+        start_time="2026-05-30T14:00:00+08:00",
+        end_time="2026-05-30T15:00:00+08:00",
+        description="",
+        organizer="韩露",
+    )
+    dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
+    dws.calendar_invites["msg-1"] = invite
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该调用")
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+
+    worker.run_once()
+
+    assert codex.calls == []
+    assert len(final_sent(dws)) == 1
+    assert "国寿Demo思路" in final_sent(dws)[0][1]
+    assert "请补充" in final_sent(dws)[0][1]
+    attempt = worker.store.get_reply_attempt(1)
+    assert attempt.action == "ask_clarifying_question"
+    assert attempt.codex_reason == "calendar_missing_description"
+
+
+def test_calendar_retry_ignores_old_system_notification_skip(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message("[日程]", single_chat=True, message_type="calendar")
+    invite = DwsCalendarEvent(
+        event_id="invite-1",
+        title="客户复盘",
+        start_time="2026-05-14T10:00:00+08:00",
+        end_time="2026-05-14T11:00:00+08:00",
+        description="",
+        organizer="Mina",
+    )
+    dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
+    dws.calendar_invites["msg-1"] = invite
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该调用")
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+    old_attempt_id = worker.store.record_reply_attempt(
+        conversation_id="cid-1",
+        conversation_title="Chat",
+        trigger_message_id="msg-1",
+        trigger_sender="sender",
+        trigger_text="[日程]",
+        action=CodexAction.NO_REPLY.value,
+        sensitivity_kind="general",
+        codex_reason="system_or_notification_message",
+        send_status="skipped",
+    )
+    worker.store.update_reply_attempt(old_attempt_id, send_error="no_reply")
+
+    worker.store.enqueue_reply_task(
+        conversation_id="cid-1",
+        conversation_title="Chat",
+        single_chat=True,
+        trigger_message_id="msg-1",
+        trigger_create_time=trigger.create_time,
+        trigger_sender=trigger.sender_name,
+        trigger_text=trigger.content,
+        trigger_message_json=trigger.model_dump_json(),
+    )
+    worker.consume_once()
+
+    assert len(final_sent(dws)) == 1
+    assert "客户复盘" in final_sent(dws)[0][1]
+    latest = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
+    assert latest is not None
+    assert latest.action == "ask_clarifying_question"
+    assert latest.codex_reason == "calendar_missing_description"
+
+
 def test_calendar_invite_without_description_asks_for_attendance_reason(
     tmp_path: Path, monkeypatch
 ):

@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 from io import BytesIO
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qs, urlparse, urlsplit, urlunsplit
+from urllib.parse import parse_qs, unquote, urlparse, urlsplit, urlunsplit
 
 from pypdf import PdfReader
 
@@ -826,6 +826,7 @@ class DingTalkAutoReplyWorker:
             conversation,
             trigger,
             [trigger],
+            ignore_system_notification_skip=True,
         ):
             return True
         attempt_id = self.store.record_reply_attempt(
@@ -898,6 +899,7 @@ class DingTalkAutoReplyWorker:
             conversation,
             trigger,
             [trigger],
+            ignore_system_notification_skip=True,
         ):
             return True
         oa_url = oa_url_override.strip() or extract_oa_url(trigger.content)
@@ -1196,6 +1198,7 @@ class DingTalkAutoReplyWorker:
                     conversation,
                     trigger,
                     [trigger],
+                    ignore_system_notification_skip=True,
                 ):
                     return True
                 reply_text = self._calendar_unreadable_reply()
@@ -1226,6 +1229,7 @@ class DingTalkAutoReplyWorker:
             conversation,
             trigger,
             [trigger],
+            ignore_system_notification_skip=True,
         ):
             return True
         if not calendar_context.invite.has_description:
@@ -1305,6 +1309,7 @@ class DingTalkAutoReplyWorker:
             for event in events
             if self._calendar_events_conflict(invite, event)
             and not self._same_calendar_event(invite, event)
+            and event.status != "cancelled"
         ]
         return CalendarConflictContext(invite=invite, conflicts=conflicts)
 
@@ -1321,10 +1326,19 @@ class DingTalkAutoReplyWorker:
     @staticmethod
     def _is_calendar_message(message: DingTalkMessage) -> bool:
         message_type = (message.message_type or "").strip().lower()
+        content = message.content.strip()
+        decoded_content = unquote(content)
         return message_type in {
             "calendar",
             "schedule",
-        } or message.content.strip().startswith("[日程]")
+        } or content.startswith("[日程]") or any(
+            marker in decoded_content
+            for marker in (
+                "newCalendar=1",
+                "calendarDetail",
+                "uniqueId=",
+            )
+        )
 
     @staticmethod
     def _calendar_events_conflict(
@@ -2143,6 +2157,7 @@ class DingTalkAutoReplyWorker:
         trigger: DingTalkMessage,
         new_messages: list[DingTalkMessage],
         *,
+        ignore_system_notification_skip: bool = False,
         raise_on_delivery_failure: bool = False,
     ) -> bool:
         sent_reply = self.store.get_sent_reply(
@@ -2157,6 +2172,12 @@ class DingTalkAutoReplyWorker:
             trigger.open_message_id,
         )
         if attempt is None:
+            return False
+        if (
+            ignore_system_notification_skip
+            and attempt.send_status == "skipped"
+            and attempt.codex_reason == "system_or_notification_message"
+        ):
             return False
         if attempt.send_status in {"sent", "skipped", "blocked"}:
             self._mark_seen(new_messages)

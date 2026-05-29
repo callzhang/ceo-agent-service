@@ -5,7 +5,7 @@ import subprocess
 import time
 from datetime import datetime, timedelta
 from typing import Any
-from urllib.parse import urlencode
+from urllib.parse import parse_qs, unquote, urlencode
 from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
 
@@ -77,6 +77,8 @@ class DwsCalendarEvent(BaseModel):
     description: str = ""
     organizer: str = ""
     response_status: str = ""
+    attendees: list[str] = Field(default_factory=list)
+    status: str = ""
 
     @property
     def has_description(self) -> bool:
@@ -341,6 +343,18 @@ class DwsClient:
             start,
             "--end",
             end,
+            "--format",
+            "json",
+        ]
+
+    def build_get_calendar_event_command(self, event_id: str) -> list[str]:
+        return [
+            self.dws_bin,
+            "calendar",
+            "event",
+            "get",
+            "--id",
+            event_id,
             "--format",
             "json",
         ]
@@ -889,13 +903,25 @@ class DwsClient:
     def calendar_invite_from_message(
         self, message: DingTalkMessage
     ) -> DwsCalendarEvent | None:
-        if not message.raw_payload:
+        if message.raw_payload:
+            event = self._find_calendar_event_in_payload(message.raw_payload)
+            if event is not None:
+                return event
+        event_id = self._calendar_event_id_from_message(message)
+        if not event_id:
             return None
-        return self._find_calendar_event_in_payload(message.raw_payload)
+        return self.get_calendar_event(event_id)
 
     def list_calendar_events(self, start: str, end: str) -> list[DwsCalendarEvent]:
         payload = self.run_json(self.build_list_calendar_events_command(start, end))
         return self.parse_calendar_events(payload)
+
+    def get_calendar_event(self, event_id: str) -> DwsCalendarEvent | None:
+        payload = self.run_json(self.build_get_calendar_event_command(event_id))
+        result = payload.get("result", payload)
+        if not isinstance(result, dict):
+            return None
+        return self._parse_calendar_event(result, require_event_id=True)
 
     def respond_calendar_event(
         self,
@@ -1753,6 +1779,77 @@ class DwsClient:
         return None
 
     @staticmethod
+    def _calendar_event_id_from_message(message: DingTalkMessage) -> str:
+        for value in DwsClient._string_values(
+            {
+                "content": message.content,
+                "raw_payload": message.raw_payload,
+            }
+        ):
+            event_id = DwsClient._calendar_event_id_from_text(value)
+            if event_id:
+                return event_id
+        return ""
+
+    @staticmethod
+    def _string_values(value: Any) -> list[str]:
+        if isinstance(value, str):
+            return [value]
+        if isinstance(value, dict):
+            result: list[str] = []
+            for child in value.values():
+                result.extend(DwsClient._string_values(child))
+            return result
+        if isinstance(value, list):
+            result = []
+            for child in value:
+                result.extend(DwsClient._string_values(child))
+            return result
+        return []
+
+    @staticmethod
+    def _calendar_event_id_from_text(value: str) -> str:
+        texts = [value]
+        for _ in range(3):
+            decoded = unquote(texts[-1])
+            if decoded == texts[-1]:
+                break
+            texts.append(decoded)
+        for text in texts:
+            for event_id in DwsClient._calendar_event_ids_from_query_text(text):
+                return event_id
+        return ""
+
+    @staticmethod
+    def _calendar_event_ids_from_query_text(text: str) -> list[str]:
+        result: list[str] = []
+        keys = ("uniqueId", "eventId", "calendarEventId")
+        query_values = [text]
+        if "?" in text:
+            query_values.append(text.split("?", 1)[1])
+        for query in query_values:
+            parsed = parse_qs(query, keep_blank_values=False)
+            for key in keys:
+                for value in parsed.get(key, []):
+                    if value.strip():
+                        result.append(value.strip())
+            for key in keys:
+                token = f"{key}="
+                start = query.find(token)
+                if start < 0:
+                    continue
+                start += len(token)
+                end = len(query)
+                for separator in ("&", ")", "]", " ", "\n", "\t"):
+                    index = query.find(separator, start)
+                    if index >= 0:
+                        end = min(end, index)
+                value = query[start:end].strip()
+                if value:
+                    result.append(value)
+        return result
+
+    @staticmethod
     def _parse_calendar_event(
         record: dict[str, Any],
         *,
@@ -1798,6 +1895,8 @@ class DwsClient:
                 "responseStatus",
                 "status",
             ),
+            attendees=DwsClient._calendar_attendees(record.get("attendees")),
+            status=DwsClient._first_string(record, "status"),
         )
 
     @staticmethod
@@ -1837,6 +1936,17 @@ class DwsClient:
                 "id",
             )
         return ""
+
+    @staticmethod
+    def _calendar_attendees(value: Any) -> list[str]:
+        if not isinstance(value, list):
+            return []
+        result = []
+        for item in value:
+            person = DwsClient._calendar_person(item)
+            if person:
+                result.append(person)
+        return result
 
     @staticmethod
     def _first_string(record: dict[str, Any], *keys: str) -> str:

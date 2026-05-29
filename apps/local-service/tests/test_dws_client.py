@@ -808,6 +808,58 @@ def test_calendar_invite_from_message_accepts_nested_event_without_event_id():
     assert event.end_time == "2026-05-14T11:00:00+08:00"
 
 
+def test_calendar_invite_from_message_fetches_detail_from_calendar_link():
+    client = RecordingDwsClient(
+        {
+            "success": True,
+            "result": {
+                "id": "event-1",
+                "summary": "国寿Demo思路",
+                "start": {"dateTime": "2026-05-30T14:00:00+08:00"},
+                "end": {"dateTime": "2026-05-30T15:00:00+08:00"},
+                "description": "需要 Derek 参与 Demo 判断。",
+                "organizer": {"displayName": "韩露"},
+                "attendees": [{"displayName": "磊哥", "self": True}],
+                "status": "confirmed",
+            },
+        }
+    )
+    message = DingTalkMessage(
+        open_conversation_id="cid-1",
+        open_message_id="msg-1",
+        conversation_title="韩露",
+        single_chat=True,
+        sender_name="韩露",
+        create_time="2026-05-29 17:26:25",
+        content=(
+            "好的磊哥\n"
+            "dingtalk://dingtalkclient/action/open_mini_app?"
+            "page=pages%2Fdetail%2Findex%3FuniqueId%3Devent-1%26recurrenceId%3D"
+        ),
+    )
+
+    event = client.calendar_invite_from_message(message)
+
+    assert event is not None
+    assert event.event_id == "event-1"
+    assert event.title == "国寿Demo思路"
+    assert event.description == "需要 Derek 参与 Demo 判断。"
+    assert event.attendees == ["磊哥"]
+    assert event.status == "confirmed"
+    assert client.commands == [
+        [
+            "dws",
+            "calendar",
+            "event",
+            "get",
+            "--id",
+            "event-1",
+            "--format",
+            "json",
+        ]
+    ]
+
+
 def test_list_calendar_events_uses_dws_calendar_event_list():
     client = RecordingDwsClient(
         {
