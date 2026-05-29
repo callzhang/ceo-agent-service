@@ -639,7 +639,9 @@ class AutoReplyStore:
                     payload_json=excluded.payload_json,
                     status='pending',
                     last_error='',
+                    memory_episode_id='',
                     updated_at=current_timestamp
+                where memory_write_events.status in ('pending', 'failed')
                 """,
                 (attempt_id, event_type, payload_json),
             )

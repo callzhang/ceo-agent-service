@@ -223,6 +223,44 @@ def test_memory_write_event_round_trip_and_dedupes_by_attempt_and_type(
     assert events[0].updated_at
 
 
+def test_memory_write_event_duplicate_enqueue_does_not_mutate_sent_row(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    event_id = store.enqueue_memory_write_event(12, "reply_sent", '{"text":"old"}')
+    store.mark_memory_write_event_sent(event_id, "episode-1")
+
+    duplicate_id = store.enqueue_memory_write_event(12, "reply_sent", '{"text":"new"}')
+
+    events = store.list_memory_write_events()
+    assert duplicate_id == event_id
+    assert len(events) == 1
+    assert events[0].status == "sent"
+    assert events[0].payload_json == '{"text":"old"}'
+    assert events[0].memory_episode_id == "episode-1"
+    assert events[0].last_error == ""
+
+
+def test_memory_write_event_duplicate_enqueue_does_not_mutate_processing_row(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    event_id = store.enqueue_memory_write_event(12, "reply_sent", '{"text":"old"}')
+    claimed = store.claim_memory_write_events(limit=1)
+
+    duplicate_id = store.enqueue_memory_write_event(12, "reply_sent", '{"text":"new"}')
+
+    events = store.list_memory_write_events()
+    assert [event.id for event in claimed] == [event_id]
+    assert duplicate_id == event_id
+    assert len(events) == 1
+    assert events[0].status == "processing"
+    assert events[0].payload_json == '{"text":"old"}'
+    assert events[0].attempts == 1
+    assert events[0].memory_episode_id == ""
+    assert events[0].last_error == ""
+
+
 def test_claim_memory_write_events_marks_processing_and_prevents_second_claim(
     tmp_path: Path,
 ):
