@@ -77,8 +77,11 @@ class DwsCalendarEvent(BaseModel):
     description: str = ""
     organizer: str = ""
     response_status: str = ""
+    self_response_status: str = ""
     attendees: list[str] = Field(default_factory=list)
     status: str = ""
+    created_ms: int = 0
+    updated_ms: int = 0
 
     @property
     def has_description(self) -> bool:
@@ -1895,8 +1898,13 @@ class DwsClient:
                 "responseStatus",
                 "status",
             ),
+            self_response_status=DwsClient._calendar_self_response_status(
+                record.get("attendees")
+            ),
             attendees=DwsClient._calendar_attendees(record.get("attendees")),
             status=DwsClient._first_string(record, "status"),
+            created_ms=DwsClient._first_int(record, "created", "createTime"),
+            updated_ms=DwsClient._first_int(record, "updated", "updateTime"),
         )
 
     @staticmethod
@@ -1949,12 +1957,36 @@ class DwsClient:
         return result
 
     @staticmethod
+    def _calendar_self_response_status(value: Any) -> str:
+        if not isinstance(value, list):
+            return ""
+        for item in value:
+            if not isinstance(item, dict) or item.get("self") is not True:
+                continue
+            return DwsClient._first_string(item, "responseStatus", "status")
+        return ""
+
+    @staticmethod
     def _first_string(record: dict[str, Any], *keys: str) -> str:
         for key in keys:
             value = record.get(key)
             if isinstance(value, str) and value.strip():
                 return value.strip()
         return ""
+
+    @staticmethod
+    def _first_int(record: dict[str, Any], *keys: str) -> int:
+        for key in keys:
+            value = record.get(key)
+            if isinstance(value, bool):
+                continue
+            if isinstance(value, int):
+                return value
+            if isinstance(value, float):
+                return int(value)
+            if isinstance(value, str) and value.strip().isdigit():
+                return int(value.strip())
+        return 0
 
     @staticmethod
     def _find_minutes_permission_request(

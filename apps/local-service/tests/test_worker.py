@@ -1424,6 +1424,136 @@ def test_calendar_link_message_is_handled_as_calendar_invite(tmp_path: Path, mon
     assert attempt.codex_reason == "calendar_missing_description"
 
 
+def test_bare_calendar_card_uses_unique_pending_invite_from_sender(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message("[日程]", single_chat=True, message_type="calendar")
+    invite = DwsCalendarEvent(
+        event_id="invite-1",
+        title="Preseen x Walmart",
+        start_time="2026-05-16T09:00:00+08:00",
+        end_time="2026-05-16T10:00:00+08:00",
+        description="",
+        organizer=trigger.sender_name,
+        self_response_status="needsAction",
+        status="confirmed",
+    )
+    dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
+    dws.calendar_events[
+        "2026-05-13T17:00:00+08:00|2026-05-27T17:00:00+08:00"
+    ] = [invite]
+    dws.calendar_events[f"{invite.start_time}|{invite.end_time}"] = [invite]
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该调用")
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+
+    worker.run_once()
+
+    assert codex.calls == []
+    assert len(final_sent(dws)) == 1
+    assert "Preseen x Walmart" in final_sent(dws)[0][1]
+    assert "请补充" in final_sent(dws)[0][1]
+    attempt = worker.store.get_reply_attempt(1)
+    assert attempt.action == "ask_clarifying_question"
+    assert attempt.codex_reason == "calendar_missing_description"
+
+
+def test_bare_calendar_card_does_not_guess_multiple_pending_invites(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message("[日程]", single_chat=True, message_type="calendar")
+    dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
+    dws.calendar_events[
+        "2026-05-13T17:00:00+08:00|2026-05-27T17:00:00+08:00"
+    ] = [
+        DwsCalendarEvent(
+            event_id="invite-1",
+            title="客户会 A",
+            start_time="2026-05-16T09:00:00+08:00",
+            end_time="2026-05-16T10:00:00+08:00",
+            organizer=trigger.sender_name,
+            self_response_status="needsAction",
+            status="confirmed",
+        ),
+        DwsCalendarEvent(
+            event_id="invite-2",
+            title="客户会 B",
+            start_time="2026-05-17T09:00:00+08:00",
+            end_time="2026-05-17T10:00:00+08:00",
+            organizer=trigger.sender_name,
+            self_response_status="needsAction",
+            status="confirmed",
+        ),
+    ]
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该调用")
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+
+    worker.run_once()
+
+    assert codex.calls == []
+    assert len(final_sent(dws)) == 1
+    assert "只看到日程卡片" in final_sent(dws)[0][1]
+    assert "客户会 A" not in final_sent(dws)[0][1]
+    assert "客户会 B" not in final_sent(dws)[0][1]
+    attempt = worker.store.get_reply_attempt(1)
+    assert attempt.action == "ask_clarifying_question"
+    assert attempt.codex_reason == "calendar_detail_unreadable"
+
+
+def test_bare_calendar_card_uses_pending_invite_created_near_message(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message("[日程]", single_chat=True, message_type="calendar")
+    message_time_ms = int(
+        datetime(2026, 5, 13, 18, 0, 0, tzinfo=ZoneInfo("Asia/Shanghai")).timestamp()
+        * 1000
+    )
+    older_invite = DwsCalendarEvent(
+        event_id="invite-1",
+        title="客户会 A",
+        start_time="2026-05-16T09:00:00+08:00",
+        end_time="2026-05-16T10:00:00+08:00",
+        organizer=trigger.sender_name,
+        self_response_status="needsAction",
+        status="confirmed",
+        created_ms=message_time_ms - 2 * 24 * 60 * 60 * 1000,
+    )
+    matched_invite = DwsCalendarEvent(
+        event_id="invite-2",
+        title="Mike项目结项会",
+        start_time="2026-05-17T09:00:00+08:00",
+        end_time="2026-05-17T10:00:00+08:00",
+        organizer=trigger.sender_name,
+        self_response_status="needsAction",
+        status="confirmed",
+        created_ms=message_time_ms - 1000,
+    )
+    dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
+    dws.calendar_events[
+        "2026-05-13T17:00:00+08:00|2026-05-27T17:00:00+08:00"
+    ] = [older_invite, matched_invite]
+    dws.calendar_events[
+        f"{matched_invite.start_time}|{matched_invite.end_time}"
+    ] = [matched_invite]
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该调用")
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+
+    worker.run_once()
+
+    assert codex.calls == []
+    assert len(final_sent(dws)) == 1
+    assert "Mike项目结项会" in final_sent(dws)[0][1]
+    assert "客户会 A" not in final_sent(dws)[0][1]
+    attempt = worker.store.get_reply_attempt(1)
+    assert attempt.action == "ask_clarifying_question"
+    assert attempt.codex_reason == "calendar_missing_description"
+
+
 def test_calendar_retry_ignores_old_system_notification_skip(
     tmp_path: Path, monkeypatch
 ):

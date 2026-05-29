@@ -819,7 +819,15 @@ def test_calendar_invite_from_message_fetches_detail_from_calendar_link():
                 "end": {"dateTime": "2026-05-30T15:00:00+08:00"},
                 "description": "需要 Derek 参与 Demo 判断。",
                 "organizer": {"displayName": "韩露"},
-                "attendees": [{"displayName": "磊哥", "self": True}],
+                "created": 1780045392000,
+                "updated": 1780046750260,
+                "attendees": [
+                    {
+                        "displayName": "磊哥",
+                        "responseStatus": "needsAction",
+                        "self": True,
+                    }
+                ],
                 "status": "confirmed",
             },
         }
@@ -845,7 +853,10 @@ def test_calendar_invite_from_message_fetches_detail_from_calendar_link():
     assert event.title == "国寿Demo思路"
     assert event.description == "需要 Derek 参与 Demo 判断。"
     assert event.attendees == ["磊哥"]
+    assert event.self_response_status == "needsAction"
     assert event.status == "confirmed"
+    assert event.created_ms == 1780045392000
+    assert event.updated_ms == 1780046750260
     assert client.commands == [
         [
             "dws",

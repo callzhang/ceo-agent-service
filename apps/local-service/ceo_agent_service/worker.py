@@ -69,6 +69,8 @@ CURRENT_USER_DISPLAY_NAMES = set(current_user_display_names())
 STALE_PROCESSING_TASK_SECONDS = 30 * 60
 MAX_REPLY_TASK_ATTEMPTS = 3
 STALE_CODEX_RESUME_ATTEMPTS = 2
+CALENDAR_PENDING_INVITE_LOOKAHEAD_DAYS = 14
+CALENDAR_PENDING_INVITE_EVENT_MATCH_SECONDS = 30 * 60
 TEXT_MESSAGE_TYPES = {"text"}
 RENDERED_NON_TEXT_PREFIXES = (
     "[文件]",
@@ -1302,7 +1304,12 @@ class DingTalkAutoReplyWorker:
             return None
         invite = calendar_invite_from_message(message)
         if invite is None:
-            return None
+            invite = self._calendar_pending_invite_from_sender(
+                message,
+                list_calendar_events,
+            )
+            if invite is None:
+                return None
         events = list_calendar_events(invite.start_time, invite.end_time)
         conflicts = [
             event
@@ -1312,6 +1319,66 @@ class DingTalkAutoReplyWorker:
             and event.status != "cancelled"
         ]
         return CalendarConflictContext(invite=invite, conflicts=conflicts)
+
+    def _calendar_pending_invite_from_sender(
+        self,
+        message: DingTalkMessage,
+        list_calendar_events: Callable[[str, str], list[DwsCalendarEvent]],
+    ) -> DwsCalendarEvent | None:
+        sender_name = message.sender_name.strip()
+        if not sender_name:
+            return None
+        start, end = self._calendar_pending_invite_search_window(message)
+        events = list_calendar_events(start, end)
+        candidates = [
+            event
+            for event in events
+            if event.organizer.strip() == sender_name
+            and event.status == "confirmed"
+            and event.self_response_status == "needsAction"
+        ]
+        time_matched_candidates = [
+            event
+            for event in candidates
+            if self._calendar_event_changed_near_message(event, message)
+        ]
+        if len(time_matched_candidates) == 1:
+            return time_matched_candidates[0]
+        if len(candidates) != 1:
+            return None
+        return candidates[0]
+
+    @staticmethod
+    def _calendar_event_changed_near_message(
+        event: DwsCalendarEvent,
+        message: DingTalkMessage,
+    ) -> bool:
+        message_time_ms = int(
+            DingTalkAutoReplyWorker._message_create_time_as_instant(
+                message
+            ).timestamp()
+            * 1000
+        )
+        tolerance_ms = CALENDAR_PENDING_INVITE_EVENT_MATCH_SECONDS * 1000
+        return any(
+            event_time_ms > 0 and abs(event_time_ms - message_time_ms) <= tolerance_ms
+            for event_time_ms in (event.created_ms, event.updated_ms)
+        )
+
+    def _calendar_pending_invite_search_window(
+        self,
+        message: DingTalkMessage,
+    ) -> tuple[str, str]:
+        message_time = self._message_create_time_as_instant(message).astimezone(
+            DINGTALK_MESSAGE_TIME_ZONE
+        )
+        now = self._now().astimezone(DINGTALK_MESSAGE_TIME_ZONE)
+        start = min(message_time, now) - timedelta(hours=1)
+        end = start + timedelta(days=CALENDAR_PENDING_INVITE_LOOKAHEAD_DAYS)
+        return (
+            start.isoformat(timespec="seconds"),
+            end.isoformat(timespec="seconds"),
+        )
 
     def _calendar_conflict_context(
         self,
