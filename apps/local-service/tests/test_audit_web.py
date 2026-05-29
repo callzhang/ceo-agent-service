@@ -673,6 +673,54 @@ def test_render_attempt_detail_shows_full_decision_and_feedback_form(tmp_path: P
     assert "当前发送方式不支持" in html
 
 
+def test_render_attempt_detail_shows_memory_write_state(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    attempt_id = seed_attempt(store)
+
+    status, html = render_attempt_detail(store, attempt_id)
+
+    assert status == 200
+    assert "Memory write" in html
+    assert "No memory write event recorded for this attempt." in html
+
+    pending_id = store.enqueue_memory_write_event(
+        attempt_id=attempt_id,
+        event_type="reply_sent",
+        payload_json='{"event":"reply_sent"}',
+    )
+    status, html = render_attempt_detail(store, attempt_id)
+
+    assert status == 200
+    assert "reply_sent" in html
+    assert "pending" in html
+    assert "attempts" in html
+    assert "memory episode id" in html
+    assert "updated" in html
+
+    processing_event = store.claim_memory_write_events(limit=1)[0]
+    status, html = render_attempt_detail(store, attempt_id)
+
+    assert processing_event.id == pending_id
+    assert status == 200
+    assert "processing" in html
+    assert "attempts" in html
+    assert ">1<" in html
+
+    store.mark_memory_write_event_failed(processing_event.id, "backend 502")
+    status, html = render_attempt_detail(store, attempt_id)
+
+    assert status == 200
+    assert "failed" in html
+    assert "backend 502" in html
+
+    store.mark_memory_write_event_sent(processing_event.id, "episode-123")
+    status, html = render_attempt_detail(store, attempt_id)
+
+    assert status == 200
+    assert "sent" in html
+    assert "episode-123" in html
+
+
 def test_attempt_list_uses_single_review_feedback_entrypoint(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     attempt_id = seed_attempt(store)
