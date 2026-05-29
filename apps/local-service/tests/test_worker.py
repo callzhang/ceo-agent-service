@@ -4540,6 +4540,62 @@ def test_read_group_mention_after_seen_message_is_recovered_from_recent_context(
     assert "我喜欢磊哥分身的答案" in tasks[0].trigger_text
 
 
+def test_split_person_auto_reply_does_not_hide_unanswered_group_mention(
+    tmp_path: Path, monkeypatch
+):
+    handled = message(
+        "@Derek Zen(磊哥) 和我迭代一下材料",
+        message_id="msg-handled",
+    )
+    handled.open_conversation_id = "cid-iter"
+    handled.conversation_title = "迭代群"
+    handled.create_time = "2026-05-29 21:53:36"
+    missed = message(
+        "@Derek Zen(磊哥) 这个分身能读群历史和群文件吗？",
+        message_id="msg-missed",
+    )
+    missed.open_conversation_id = "cid-iter"
+    missed.conversation_title = "迭代群"
+    missed.create_time = "2026-05-29 21:55:10"
+    auto_reply = derek_message(
+        "可以，别先把我屏蔽了。（by磊哥分身）",
+        message_id="msg-auto-reply",
+        create_time="2026-05-29 21:55:41",
+    )
+    auto_reply.open_conversation_id = "cid-iter"
+    auto_reply.conversation_title = "迭代群"
+    conversation_record = conversation()
+    conversation_record.open_conversation_id = "cid-iter"
+    conversation_record.title = "迭代群"
+    conversation_record.unread_point = 0
+
+    class RecentGroupFakeDws(FakeDws):
+        def read_recent_messages(self, conversation: DingTalkConversation):
+            if conversation.open_conversation_id == "cid-iter":
+                return [handled, missed, auto_reply]
+            return super().read_recent_messages(conversation)
+
+    dws = RecentGroupFakeDws(
+        [],
+        {"cid-iter": [handled, missed, auto_reply]},
+        unread_messages={"cid-iter": []},
+    )
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该调用")
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch, dry_run=True)
+    worker.store.upsert_conversation("cid-iter", "迭代群", False, None)
+    worker.store.mark_seen("msg-handled", "cid-iter")
+
+    queued = worker.produce_once()
+
+    tasks = worker.store.claim_reply_tasks(limit=10)
+    assert queued == 1
+    assert len(tasks) == 1
+    assert tasks[0].trigger_message_id == "msg-missed"
+    assert "能读群历史和群文件吗" in tasks[0].trigger_text
+
+
 def test_group_mentions_are_processed_by_message_time_not_fetch_order(
     tmp_path: Path, monkeypatch
 ):

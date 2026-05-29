@@ -1677,6 +1677,7 @@ class DingTalkAutoReplyWorker:
             message.create_time
             for message in messages
             if self._is_current_user_message_for_candidate_filter(message)
+            and not self._is_split_person_auto_reply_message(message)
             and not self._is_processing_ack_message(message)
             and not self._is_system_or_notification_message(message)
         ]
@@ -1829,6 +1830,10 @@ class DingTalkAutoReplyWorker:
             return self.dws.is_current_user_message(message)
         except Exception:
             return False
+
+    @staticmethod
+    def _is_split_person_auto_reply_message(message: DingTalkMessage) -> bool:
+        return SPLIT_PERSON_SIGNATURE in message.content
 
     @staticmethod
     def _is_processing_ack_message(message: DingTalkMessage) -> bool:
