@@ -16,14 +16,14 @@ def _memory_text(text: str) -> str:
 def _conversation_payload(attempt: ReplyAttempt) -> dict:
     return {
         "conversation_id": attempt.conversation_id,
-        "title": attempt.conversation_title,
+        "title": _memory_text(attempt.conversation_title),
     }
 
 
 def _trigger_payload(attempt: ReplyAttempt) -> dict:
     return {
         "message_id": attempt.trigger_message_id,
-        "sender": attempt.trigger_sender,
+        "sender": _memory_text(attempt.trigger_sender),
         "text": _memory_text(attempt.trigger_text),
     }
 

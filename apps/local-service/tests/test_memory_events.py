@@ -122,6 +122,8 @@ def test_memory_payload_text_fields_are_truncated_with_chinese_text_intact():
     long_text = "中文" * MEMORY_TEXT_LIMIT
     attempt = _reply_attempt().model_copy(
         update={
+            "conversation_title": long_text,
+            "trigger_sender": long_text,
             "trigger_text": long_text,
             "codex_reason": long_text,
             "draft_reply_text": long_text,
@@ -137,6 +139,8 @@ def test_memory_payload_text_fields_are_truncated_with_chinese_text_intact():
     reply_sent_payload = build_reply_sent_memory_payload(attempt, sent_reply)
     review_payload = build_review_correction_memory_payload(attempt)
 
+    assert reply_sent_payload["conversation"]["title"] == expected
+    assert reply_sent_payload["trigger"]["sender"] == expected
     assert reply_sent_payload["trigger"]["text"] == expected
     assert reply_sent_payload["decision"]["codex_reason"] == expected
     assert reply_sent_payload["decision"]["audit_summary"] == expected
