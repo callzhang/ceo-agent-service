@@ -182,8 +182,8 @@ def test_render_attempt_detail_shows_quality_warnings(tmp_path: Path):
     assert "Audit quality warnings" in html
     assert "missing audit_summary" in html
     assert "missing codex_session_id" in html
-    assert "send_reply has no audit tool events" in html
     assert "send_reply has no audit documents" in html
+    assert "No tools were used; this answer was generated from conversation context only." in html
 
 
 def test_render_attempt_detail_suppresses_quality_warnings_for_skipped_attempts(
@@ -309,6 +309,33 @@ def test_render_attempt_detail_allows_explained_empty_tool_events(tmp_path: Path
 
     assert status == 200
     assert "send_reply has no audit tool events" not in html
+
+
+def test_render_attempt_list_shows_context_only_info_icon_instead_of_warning(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.record_reply_attempt(
+        conversation_id="cid-1",
+        conversation_title="技术部",
+        trigger_message_id="msg-1",
+        trigger_sender="Xiaomin",
+        trigger_text="@Derek Zen 这个怎么处理？",
+        action="send_reply",
+        sensitivity_kind="general",
+        draft_reply_text="先按A方案走",
+        codex_session_id="session-1",
+        audit_documents_json='[{"path":"chat","relevance":"直接上下文"}]',
+        audit_tool_events_json="[]",
+        audit_summary="已根据当前对话上下文生成回复。",
+    )
+
+    html = render_attempt_list(store)
+
+    assert "Quality warning" not in html
+    assert "send_reply has no audit tool events" not in html
+    assert 'class="attempt-info"' in html
+    assert "No tools were used; this answer was generated from conversation context only." in html
 
 
 def test_fastapi_app_serves_history_routes(tmp_path: Path):

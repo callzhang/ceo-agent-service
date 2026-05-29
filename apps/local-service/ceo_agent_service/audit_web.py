@@ -64,6 +64,8 @@ th{background:var(--surface-soft);color:var(--steel);font-size:12px;font-weight:
 .attempt-foot{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:6px;flex-wrap:wrap}
 .attempt-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .attempt-warning{color:#8a2626;font-size:12px;line-height:1.4}
+.attempt-info{display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border:1px solid #7a8696;border-radius:50%;color:#536071;background:#fff;font-size:11px;font-weight:700;line-height:1;cursor:help}
+.attempt-info:hover{background:#f1f5f9;border-color:#536071}
 .nav{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .nav a{display:inline-flex;align-items:center;height:36px;padding:0 14px;border:1px solid var(--hairline);border-radius:999px;background:var(--canvas);color:var(--steel);font-size:14px;font-weight:500}
 .nav a:hover{color:var(--ink);text-decoration:none;border-color:var(--ink)}
@@ -79,6 +81,7 @@ th{background:var(--surface-soft);color:var(--steel);font-size:12px;font-weight:
 .status-failed,.status-blocked,.status-active{background:rgba(212,86,86,.12);color:#9a2f2f;border-color:rgba(212,86,86,.24)}
 .quality-warning{border-color:rgba(212,86,86,.28);background:rgba(212,86,86,.08)}
 .quality-warning ul{margin:8px 0 0;padding-left:20px;color:#8a2626}
+.context-only-info{display:inline-flex;align-items:center;gap:8px}
 .card{background:var(--canvas);border:1px solid var(--hairline);border-radius:8px;padding:24px;margin:16px 0}
 .card h2{margin:0 0 14px;color:var(--ink);font-size:18px;font-weight:600;line-height:1.4;letter-spacing:0}
 .card p{margin:8px 0}
@@ -123,6 +126,9 @@ FAVICON_HREF = (
     "%3Crect x='8' y='42' width='48' height='10' rx='5' fill='%2300d4a4'/%3E"
     "%3C/svg%3E"
 )
+CONTEXT_ONLY_TOOLTIP = (
+    "No tools were used; this answer was generated from conversation context only."
+)
 
 
 def render_page(title: str, body: str) -> str:
@@ -161,6 +167,8 @@ def render_attempt_list(store: AutoReplyStore, limit: int | None = None) -> str:
             if warning_text
             else ""
         )
+        info_html = _attempt_info_icon(attempt)
+        foot_html = warning_html + info_html
         items.append(
             "<article class=\"attempt-item\">"
             "<div class=\"attempt-head\">"
@@ -183,7 +191,7 @@ def render_attempt_list(store: AutoReplyStore, limit: int | None = None) -> str:
             f"{_attempt_text_line('问', attempt.trigger_text, 260)}"
             f"{_attempt_text_line('答', _reply_preview_text(attempt), 320)}"
             "</div>"
-            f"{'<div class=\"attempt-foot\">' + warning_html + '</div>' if warning_html else ''}"
+            f"{'<div class=\"attempt-foot\">' + foot_html + '</div>' if foot_html else ''}"
             "</article>"
         )
     if not items:
@@ -681,6 +689,7 @@ def _attempt_detail_body(
         f"{_review_panel(attempt)}"
         f"<section class=\"card compact-card\"><div class=\"grid\">{rows}</div></section>"
         f"{_quality_warning_card(attempt)}"
+        f"{_context_only_info_card(attempt)}"
         f"{_oa_metadata_card(attempt)}"
         f"{_recall_card(attempt, sent_reply)}"
         f"{_codex_session_card(codex_session_id, attempt)}"
@@ -749,6 +758,17 @@ def _quality_warning_card(attempt: ReplyAttempt) -> str:
     )
 
 
+def _context_only_info_card(attempt: ReplyAttempt) -> str:
+    info_icon = _attempt_info_icon(attempt)
+    if not info_icon:
+        return ""
+    return (
+        "<section class=\"card compact-card\">"
+        f"<h2 class=\"context-only-info\">Audit context {info_icon}</h2>"
+        "</section>"
+    )
+
+
 def _oa_metadata_card(attempt: ReplyAttempt) -> str:
     if not any(
         value.strip()
@@ -789,11 +809,6 @@ def _quality_warnings(attempt: ReplyAttempt) -> list[str]:
         warnings.append("missing codex_session_id")
     if attempt.action in {"send_reply", "ask_clarifying_question"}:
         if (
-            not _json_array_has_items(attempt.audit_tool_events_json)
-            and not audit_summary_explains_no_documents(attempt.audit_summary)
-        ):
-            warnings.append(f"{attempt.action} has no audit tool events")
-        if (
             not _json_array_has_items(attempt.audit_documents_json)
             and not audit_summary_explains_no_documents(attempt.audit_summary)
         ):
@@ -808,6 +823,23 @@ def _attempt_warning_summary(attempt: ReplyAttempt) -> str:
     if len(warnings) == 1:
         return f"Quality warning: {warnings[0]}"
     return f"Quality warnings: {len(warnings)}"
+
+
+def _attempt_info_icon(attempt: ReplyAttempt) -> str:
+    if not _context_only_answer(attempt):
+        return ""
+    return (
+        f"<span class=\"attempt-info\" title=\"{escape(CONTEXT_ONLY_TOOLTIP)}\" "
+        "aria-label=\"Context-only answer\">i</span>"
+    )
+
+
+def _context_only_answer(attempt: ReplyAttempt) -> bool:
+    return (
+        attempt.send_status != "skipped"
+        and attempt.action in {"send_reply", "ask_clarifying_question"}
+        and not _json_array_has_items(attempt.audit_tool_events_json)
+    )
 
 
 def _json_array_has_items(text: str) -> bool:
