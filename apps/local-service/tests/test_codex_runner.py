@@ -52,8 +52,8 @@ def test_codex_command_exposes_memory_connector_mcp(tmp_path: Path, monkeypatch)
 
     command = runner.build_command(prompt="hello", session_id=None)
 
-    assert "--ignore-user-config" in command
-    assert command[command.index("--disable") + 1] == "plugins"
+    assert "--ignore-user-config" not in command
+    assert "--disable" not in command
     assert (
         'mcp_servers.memory_connector.url="https://memory.example/mcp/"'
         in command
@@ -145,16 +145,15 @@ def test_builds_new_thread_command(tmp_path: Path):
     assert "默认不了解当前业务背景" in developer_arg
     assert "当前待处理消息" not in developer_arg
     assert "\\n" in developer_arg
+    assert "memory_connector MCP 可用" in developer_arg
+    assert "memory_write 记录一条完整事件 episode" in developer_arg
 
     assert _without_developer_instructions(command) == [
         "codex",
         "exec",
-        "--disable",
-        "plugins",
         "--json",
         "-m",
         "gpt-5.5",
-        "--ignore-user-config",
         "--ignore-rules",
         "-c",
         'approval_policy="untrusted"',
@@ -192,12 +191,9 @@ def test_builds_resume_command(tmp_path: Path):
         "codex",
         "exec",
         "resume",
-        "--disable",
-        "plugins",
         "--json",
         "-m",
         "gpt-5.5",
-        "--ignore-user-config",
         "--ignore-rules",
         "-c",
         'approval_policy="untrusted"',

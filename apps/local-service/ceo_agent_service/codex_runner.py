@@ -110,12 +110,9 @@ class CodexRunner:
         for image_path in image_paths or []:
             image_options.extend(["--image", str(image_path)])
         common_options = [
-            "--disable",
-            "plugins",
             "--json",
             "-m",
             "gpt-5.5",
-            "--ignore-user-config",
             "--ignore-rules",
             *memory_connector_config_options(),
             "-c",

@@ -297,22 +297,18 @@ def test_invalid_json_retries_once(tmp_path: Path):
 
     assert decision.action == CodexAction.NO_REPLY
     assert len(executor.commands) == 2
-    assert executor.commands[0][:6] == [
+    assert executor.commands[0][:4] == [
         "codex",
         "exec",
         "resume",
-        "--disable",
-        "plugins",
         "--json",
     ]
     assert executor.commands[0][-2:] == ["session-1", "-"]
     assert 'approvals_reviewer="auto_review"' in executor.commands[0]
-    assert executor.commands[1][:6] == [
+    assert executor.commands[1][:4] == [
         "codex",
         "exec",
         "resume",
-        "--disable",
-        "plugins",
         "--json",
     ]
     assert executor.commands[1][-2] == "session-1"
@@ -491,21 +487,17 @@ def test_first_turn_invalid_json_retries_with_extracted_session_id(tmp_path: Pat
 
     assert decision.action == CodexAction.NO_REPLY
     assert runner.last_session_id == "new-session"
-    assert executor.commands[0][:5] == [
+    assert executor.commands[0][:3] == [
         "codex",
         "exec",
-        "--disable",
-        "plugins",
         "--json",
     ]
     assert executor.commands[0][-3:] == ["--cd", str(tmp_path), "-"]
     assert 'approvals_reviewer="auto_review"' in executor.commands[0]
-    assert executor.commands[1][:6] == [
+    assert executor.commands[1][:4] == [
         "codex",
         "exec",
         "resume",
-        "--disable",
-        "plugins",
         "--json",
     ]
     assert executor.commands[1][-2] == "new-session"
@@ -541,21 +533,17 @@ def test_first_turn_invalid_json_retries_with_thread_started_id(tmp_path: Path):
 
     assert decision.action == CodexAction.NO_REPLY
     assert runner.last_session_id == "thread-1"
-    assert executor.commands[0][:5] == [
+    assert executor.commands[0][:3] == [
         "codex",
         "exec",
-        "--disable",
-        "plugins",
         "--json",
     ]
     assert executor.commands[0][-3:] == ["--cd", str(tmp_path), "-"]
     assert 'approvals_reviewer="auto_review"' in executor.commands[0]
-    assert executor.commands[1][:6] == [
+    assert executor.commands[1][:4] == [
         "codex",
         "exec",
         "resume",
-        "--disable",
-        "plugins",
         "--json",
     ]
     assert executor.commands[1][-2] == "thread-1"
