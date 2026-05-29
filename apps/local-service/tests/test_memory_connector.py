@@ -21,15 +21,43 @@ def test_extract_memory_episode_id_supports_common_shapes():
     assert extract_memory_episode_id({"result": {}}) == ""
 
 
+def test_memory_connector_config_loads_installed_env_file(tmp_path, monkeypatch):
+    codex_home = tmp_path / ".codex"
+    codex_home.mkdir()
+    (codex_home / "memory_connector.env").write_text(
+        "\n".join(
+            [
+                "export CONNECTOR_API_KEY='file-token'",
+                "export MEMORY_CONNECTOR_URL='https://memory.example/mcp/'",
+                "export MEMORY_CONNECTOR_USER_ID='derek-file'",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+    monkeypatch.delenv("CONNECTOR_API_KEY", raising=False)
+    monkeypatch.delenv("MEMORY_CONNECTOR_URL", raising=False)
+    monkeypatch.delenv("MEMORY_CONNECTOR_USER_ID", raising=False)
+
+    client = MemoryConnectorClient()
+
+    assert client.url == "https://memory.example/mcp/"
+    assert client.token == "file-token"
+    assert client.user_id == "derek-file"
+
+
 def test_memory_write_posts_json_rpc_and_parses_json_response(monkeypatch):
     requests = []
 
     class FakeResponse:
+        def __init__(self, payload, headers=None):
+            self.payload = payload
+            self.headers = headers or {}
+
         status = 200
-        headers = {"Content-Type": "application/json"}
 
         def read(self):
-            return json.dumps({"result": {"episode_uuid": "ep-json"}}).encode()
+            return json.dumps(self.payload).encode()
 
         def __enter__(self):
             return self
@@ -39,7 +67,15 @@ def test_memory_write_posts_json_rpc_and_parses_json_response(monkeypatch):
 
     def fake_urlopen(request, timeout):
         requests.append((request, timeout))
-        return FakeResponse()
+        call_index = len(requests)
+        if call_index == 1:
+            return FakeResponse(
+                {"result": {"protocolVersion": "2025-03-26"}},
+                {"mcp-session-id": "session-1"},
+            )
+        if call_index == 2:
+            return FakeResponse({})
+        return FakeResponse({"result": {"episode_uuid": "ep-json"}})
 
     monkeypatch.setattr("ceo_agent_service.memory_connector.request.urlopen", fake_urlopen)
 
@@ -57,11 +93,24 @@ def test_memory_write_posts_json_rpc_and_parses_json_response(monkeypatch):
     )
 
     assert payload == {"episode_uuid": "ep-json"}
-    request_obj, timeout = requests[0]
+    assert len(requests) == 3
+    initialize_request, timeout = requests[0]
     assert timeout == 30
-    assert request_obj.full_url == "http://memory.local/mcp"
-    assert request_obj.headers["Authorization"] == "Bearer secret"
-    body = json.loads(request_obj.data.decode())
+    assert initialize_request.full_url == "http://memory.local/mcp"
+    assert initialize_request.headers["Authorization"] == "Bearer secret"
+    assert initialize_request.headers["X-memory-user-id"] == "derek"
+    initialize_body = json.loads(initialize_request.data.decode())
+    assert initialize_body["method"] == "initialize"
+    assert initialize_body["params"]["protocolVersion"] == "2025-03-26"
+
+    initialized_request, _ = requests[1]
+    initialized_body = json.loads(initialized_request.data.decode())
+    assert initialized_body["method"] == "notifications/initialized"
+    assert initialized_request.headers["Mcp-session-id"] == "session-1"
+
+    call_request, _ = requests[2]
+    assert call_request.headers["Mcp-session-id"] == "session-1"
+    body = json.loads(call_request.data.decode())
     assert body["method"] == "tools/call"
     assert body["params"]["name"] == "memory_write"
     assert body["params"]["arguments"]["wait_for_processing"] is False
@@ -70,15 +119,14 @@ def test_memory_write_posts_json_rpc_and_parses_json_response(monkeypatch):
 
 def test_memory_write_parses_text_event_stream_response(monkeypatch):
     class FakeResponse:
+        def __init__(self, payload):
+            self.payload = payload
+
         status = 200
         headers = {"Content-Type": "text/event-stream"}
 
         def read(self):
-            return (
-                b'event: message\n'
-                b'data: {"result":{"episode_uuid":"ep-sse"}}\n\n'
-                b'data: [DONE]\n\n'
-            )
+            return self.payload
 
         def __enter__(self):
             return self
@@ -88,7 +136,15 @@ def test_memory_write_parses_text_event_stream_response(monkeypatch):
 
     monkeypatch.setattr(
         "ceo_agent_service.memory_connector.request.urlopen",
-        lambda request, timeout: FakeResponse(),
+        lambda request, timeout: FakeResponse(
+            (
+                b'event: message\n'
+                b'data: {"result":{"episode_uuid":"ep-sse"}}\n\n'
+                b'data: [DONE]\n\n'
+            )
+            if json.loads(request.data.decode()).get("method") == "tools/call"
+            else b"{}\n"
+        ),
     )
 
     payload = MemoryConnectorClient(

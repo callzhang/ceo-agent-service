@@ -693,11 +693,26 @@ class AutoReplyStore:
             ).fetchall()
             return [self._memory_write_event_from_row(row) for row in rows]
 
-    def claim_memory_write_events(self, limit: int) -> list[MemoryWriteEvent]:
+    def claim_memory_write_events(
+        self, limit: int, processing_stale_seconds: int = 900
+    ) -> list[MemoryWriteEvent]:
         if limit <= 0:
             return []
+        if processing_stale_seconds <= 0:
+            processing_stale_seconds = 900
         with self._connect() as db:
             db.execute("begin immediate")
+            db.execute(
+                """
+                update memory_write_events
+                set status='failed',
+                    last_error='stale processing event recovered',
+                    updated_at=current_timestamp
+                where status='processing'
+                  and updated_at <= datetime('now', ?)
+                """,
+                (f"-{processing_stale_seconds} seconds",),
+            )
             rows = db.execute(
                 """
                 select *

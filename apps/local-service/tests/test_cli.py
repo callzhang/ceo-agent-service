@@ -77,6 +77,53 @@ def test_parser_supports_flush_memory_events_command():
     assert args.limit == 5
 
 
+def test_flush_memory_events_command_loads_memory_connector_env_file(
+    monkeypatch, tmp_path, capsys
+):
+    codex_home = tmp_path / ".codex"
+    codex_home.mkdir()
+    (codex_home / "memory_connector.env").write_text(
+        "\n".join(
+            [
+                "export CONNECTOR_API_KEY='file-token'",
+                "export MEMORY_CONNECTOR_URL='https://memory.example/mcp/'",
+                "export MEMORY_CONNECTOR_USER_ID='derek'",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+    monkeypatch.delenv("CONNECTOR_API_KEY", raising=False)
+    monkeypatch.delenv("MEMORY_CONNECTOR_URL", raising=False)
+    monkeypatch.delenv("MEMORY_CONNECTOR_USER_ID", raising=False)
+    observed = {}
+
+    def fake_flush(store, client, limit):
+        observed["client_url"] = client.url
+        observed["client_token"] = client.token
+        observed["client_user_id"] = client.user_id
+        observed["limit"] = limit
+        return 3
+
+    monkeypatch.setattr(cli, "flush_memory_events", fake_flush)
+    settings = WorkerSettings(
+        workspace=tmp_path / "workspace",
+        db_path=tmp_path / "worker.sqlite3",
+        corpus_dir=tmp_path / "corpus",
+    )
+
+    sent_count = cli.flush_memory_events_command(settings, limit=5)
+
+    assert sent_count == 3
+    assert observed == {
+        "client_url": "https://memory.example/mcp/",
+        "client_token": "file-token",
+        "client_user_id": "derek",
+        "limit": 5,
+    }
+    assert capsys.readouterr().out == "flush-memory-events sent=3\n"
+
+
 def test_parser_supports_rerun_message_command():
     parser = build_parser()
 

@@ -82,3 +82,33 @@ def test_flush_memory_events_marks_failure_and_does_not_touch_reply_attempts(tmp
     attempt = store.get_reply_attempt(attempt_id)
     assert attempt is not None
     assert attempt.send_status == "pending"
+
+
+def test_claim_memory_write_events_recovers_stale_processing_without_second_claim(
+    tmp_path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    event_id = store.enqueue_memory_write_event(1, "reply_sent", '{"n":1}')
+    first_claim = store.claim_memory_write_events(limit=1, processing_stale_seconds=60)
+    second_claim = store.claim_memory_write_events(limit=1, processing_stale_seconds=60)
+
+    assert [event.id for event in first_claim] == [event_id]
+    assert second_claim == []
+
+    with store._connect() as db:
+        db.execute(
+            """
+            update memory_write_events
+            set updated_at=datetime('now', '-2 hours')
+            where id=?
+            """,
+            (event_id,),
+        )
+
+    recovered_claim = store.claim_memory_write_events(
+        limit=1, processing_stale_seconds=60
+    )
+
+    assert [event.id for event in recovered_claim] == [event_id]
+    assert recovered_claim[0].status == "processing"
+    assert recovered_claim[0].attempts == 2
