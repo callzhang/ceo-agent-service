@@ -1957,13 +1957,22 @@ class DingTalkAutoReplyWorker:
                 raise_on_delivery_failure=raise_on_delivery_failure,
             )
         if attempt.send_status in {"failed", "pending"}:
-            return self._retry_existing_reply_attempt(
+            if self._retry_existing_reply_attempt(
                 conversation,
                 trigger,
                 new_messages,
                 attempt,
                 raise_on_delivery_failure=raise_on_delivery_failure,
-            )
+            ):
+                return True
+            if (
+                raise_on_delivery_failure
+                and attempt.action == CodexAction.STOP_WITH_ERROR.value
+            ):
+                raise ReplyTaskProcessingError(
+                    attempt.send_error or attempt.codex_reason or "stop_with_error"
+                )
+            return False
         return False
 
     def _read_linked_documents(

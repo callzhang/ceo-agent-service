@@ -2338,6 +2338,40 @@ def test_codex_stop_with_error_keeps_queued_task_retryable(
     assert attempt.send_status == "failed"
 
 
+def test_queued_stop_with_error_retry_does_not_create_duplicate_attempt(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message("@Derek Zen(磊哥) 这个怎么处理？")
+    dws = FakeDws([conversation()], {"cid-1": [trigger]})
+    codex = FakeCodex(
+        CodexDecision(
+            action=CodexAction.STOP_WITH_ERROR,
+            reason="codex exec timed out after 300 seconds",
+        )
+    )
+    worker = make_worker(
+        tmp_path,
+        dws,
+        codex,
+        monkeypatch,
+        max_task_attempts=2,
+    )
+    monkeypatch.setattr(
+        "ceo_agent_service.worker.send_macos_notification",
+        lambda **_: None,
+    )
+    worker.produce_once()
+
+    assert worker.consume_once(max_tasks=1) == 0
+    assert worker.store.count_reply_tasks(status="pending") == 1
+    assert worker.store.count_reply_attempts() == 1
+
+    assert worker.consume_once(max_tasks=1) == 0
+    assert worker.store.count_reply_tasks(status="failed") == 1
+    assert worker.store.count_reply_attempts() == 1
+    assert len(codex.calls) == 1
+
+
 def test_long_trigger_quote_is_capped_by_twenty_information_units(
     tmp_path: Path, monkeypatch
 ):
