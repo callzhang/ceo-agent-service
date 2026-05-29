@@ -1,6 +1,7 @@
 import json
 import os
 import re
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Literal
@@ -42,6 +43,7 @@ OA_MUTATING_COMMAND_PATTERN = re.compile(
     r"\bdws\s+oa\s+approval\s+(?:approve|reject|return)\b",
     re.IGNORECASE,
 )
+SESSION_OA_RESULT_GRACE_SECONDS = 15
 
 
 class OaApprovalResult(BaseModel):
@@ -187,7 +189,9 @@ class OaApprovalCodexRunner:
         try:
             result = parse_oa_approval_json(raw)
         except (json.JSONDecodeError, ValidationError):
-            session_result = self._current_session_result()
+            session_result = self._current_session_result(
+                wait_seconds=SESSION_OA_RESULT_GRACE_SECONDS
+            )
             if session_result is not None:
                 result = session_result
             elif allow_side_effects:
@@ -216,7 +220,9 @@ class OaApprovalCodexRunner:
                 try:
                     result = parse_oa_approval_json(second_raw)
                 except (json.JSONDecodeError, ValidationError):
-                    session_result = self._current_session_result()
+                    session_result = self._current_session_result(
+                        wait_seconds=SESSION_OA_RESULT_GRACE_SECONDS
+                    )
                     if session_result is None:
                         self._remember_audit_tool_events(raw_outputs)
                         raise RuntimeError(
@@ -294,7 +300,22 @@ class OaApprovalCodexRunner:
             return 0
         return count_codex_session_lines(session_id, codex_home=self.codex_home)
 
-    def _current_session_result(self) -> OaApprovalResult | None:
+    def _current_session_result(
+        self,
+        wait_seconds: int = 0,
+    ) -> OaApprovalResult | None:
+        if not self.last_session_id:
+            return None
+        deadline = time.monotonic() + wait_seconds
+        while True:
+            result = self._read_current_session_result()
+            if result is not None:
+                return result
+            if time.monotonic() >= deadline:
+                return None
+            time.sleep(5)
+
+    def _read_current_session_result(self) -> OaApprovalResult | None:
         session_id = self.last_session_id
         if not session_id:
             return None
@@ -508,6 +529,9 @@ def _result_text_candidates(payload: dict[str, Any]) -> list[str]:
     message = payload.get("message")
     if isinstance(message, str):
         candidates.append(message)
+    last_agent_message = payload.get("last_agent_message")
+    if isinstance(last_agent_message, str):
+        candidates.append(last_agent_message)
     content = payload.get("content")
     if isinstance(content, str):
         candidates.append(content)
@@ -522,6 +546,8 @@ def _result_text_candidates(payload: dict[str, Any]) -> list[str]:
         and isinstance(item.get("text"), str)
     ):
         candidates.append(item["text"])
+    elif isinstance(item, dict):
+        candidates.extend(_result_text_candidates(item))
     nested_payload = payload.get("payload")
     if isinstance(nested_payload, dict):
         candidates.extend(_result_text_candidates(nested_payload))

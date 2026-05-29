@@ -240,6 +240,133 @@ def test_resume_command_also_uses_output_schema(tmp_path: Path):
     assert command[command.index("--output-schema") + 1] == str(OA_APPROVAL_SCHEMA_PATH)
 
 
+def test_parse_oa_approval_json_accepts_item_completed_message_output_text():
+    result_json = {
+        "process_instance_id": "proc-1",
+        "task_id": "task-1",
+        "oa_url": "https://aflow.dingtalk.com/detail?procInstId=proc-1",
+        "oa_action": "退回",
+        "oa_remark": "请补充付款依据、预算归属和验收材料。",
+        "action_result": {},
+        "audit_summary": "已审阅审批详情、流水和付款材料，材料不足。",
+        "audit_documents": [],
+    }
+    raw = "\n".join(
+        [
+            json.dumps({"type": "thread.started", "thread_id": "thread-1"}),
+            json.dumps({"type": "turn.started"}),
+            json.dumps(
+                {
+                    "type": "item.completed",
+                    "item": {
+                        "type": "message",
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "type": "output_text",
+                                "text": json.dumps(result_json, ensure_ascii=False),
+                            }
+                        ],
+                    },
+                },
+                ensure_ascii=False,
+            ),
+        ]
+    )
+
+    result = oa_approval.parse_oa_approval_json(raw)
+
+    assert result.process_instance_id == "proc-1"
+    assert result.oa_action == "退回"
+    assert result.oa_remark.startswith("请补充付款依据")
+
+
+def test_parse_oa_approval_json_accepts_task_complete_last_agent_message():
+    result_json = {
+        "process_instance_id": "proc-1",
+        "task_id": "task-1",
+        "oa_url": "https://aflow.dingtalk.com/detail?procInstId=proc-1",
+        "oa_action": "通过",
+        "oa_remark": "同意。",
+        "action_result": {},
+        "audit_summary": "已审阅审批详情和流水。",
+        "audit_documents": [],
+    }
+    raw = "\n".join(
+        [
+            json.dumps({"type": "thread.started", "thread_id": "thread-1"}),
+            json.dumps(
+                {
+                    "type": "event_msg",
+                    "payload": {
+                        "type": "task_complete",
+                        "last_agent_message": json.dumps(
+                            result_json,
+                            ensure_ascii=False,
+                        ),
+                    },
+                },
+                ensure_ascii=False,
+            ),
+        ]
+    )
+
+    result = oa_approval.parse_oa_approval_json(raw)
+
+    assert result.oa_action == "通过"
+    assert result.audit_summary == "已审阅审批详情和流水。"
+
+
+def test_invalid_oa_json_waits_for_session_result_before_repair(tmp_path: Path):
+    skill_path = tmp_path / "skill.md"
+    skill_path.write_text("# OA Skill", encoding="utf-8")
+    calls: list[list[str]] = []
+
+    def fake_executor(command: list[str], prompt: str) -> str:
+        calls.append(command)
+        return "\n".join(
+            [
+                json.dumps({"type": "thread.started", "thread_id": "thread-1"}),
+                json.dumps({"type": "turn.started"}),
+                json.dumps(
+                    {
+                        "type": "item.completed",
+                        "item": {"type": "reasoning", "text": "thinking"},
+                    }
+                ),
+            ]
+        )
+
+    runner = OaApprovalCodexRunner(
+        workspace=tmp_path,
+        executor=fake_executor,
+        skill_path=skill_path,
+    )
+    waits: list[int] = []
+    session_result = OaApprovalResult(
+        process_instance_id="proc-1",
+        task_id="task-1",
+        oa_url="https://aflow.dingtalk.com/detail?procInstId=proc-1",
+        oa_action="退回",
+        oa_remark="请补充材料。",
+        action_result={},
+        audit_summary="已审阅，材料不足。",
+        audit_documents=[],
+    )
+
+    def fake_current_session_result(wait_seconds: int = 0):
+        waits.append(wait_seconds)
+        return session_result if wait_seconds > 0 else None
+
+    runner._current_session_result = fake_current_session_result  # type: ignore[method-assign]
+
+    result = runner.run("处理审批", allow_side_effects=False)
+
+    assert result.oa_action == "退回"
+    assert waits == [15]
+    assert len(calls) == 1
+
+
 def test_output_schema_uses_strict_object_shapes_required_by_codex():
     schema = json.loads(OA_APPROVAL_SCHEMA_PATH.read_text(encoding="utf-8"))
 
