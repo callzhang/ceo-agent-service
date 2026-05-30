@@ -117,7 +117,6 @@ cp .env.example .env
 | `CEO_LIVE_SEND_BLOCKERS_ACCEPTED` | live send 的显式确认开关 |
 | `CEO_CORPUS_DIR` | 本地风格语料目录 |
 | `CEO_MENTION_ALIASES` | 群聊中触发本人的 @ 别名 |
-| `CEO_CURRENT_USER_DISPLAY_NAMES` | 识别真人本人消息，避免 agent 回复自己 |
 | `CEO_ASSISTANT_SIGNATURE` | 自动回复签名 |
 | `CEO_HANDOFF_ACK` | 交给真人时发送的确认文本 |
 

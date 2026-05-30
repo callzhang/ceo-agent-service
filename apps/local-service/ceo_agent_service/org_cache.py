@@ -65,7 +65,14 @@ class CachedOrgDirectory:
         current_user_id = self.store.get_current_user_id()
         if not current_user_id:
             raise DwsError("current user cache is empty")
-        return self.resolve_message_sender(message) == current_user_id
+        if message.sender_user_id:
+            return message.sender_user_id == current_user_id
+        if message.sender_open_dingtalk_id:
+            profile = self.store.find_org_user_by_open_dingtalk_id(
+                message.sender_open_dingtalk_id
+            )
+            return profile is not None and profile.user_id == current_user_id
+        return False
 
     def _require_profile(self, user_id: str) -> OrgUserProfile:
         profile = self.store.get_org_user_profile(user_id)
@@ -310,6 +317,10 @@ class CachedDwsClient:
         current_user_id = self.org_directory.store.get_current_user_id()
         if not current_user_id:
             raise DwsError("current user cache is empty")
+        if message.sender_user_id:
+            return message.sender_user_id == current_user_id
+        if not message.sender_open_dingtalk_id:
+            return False
         return self.resolve_message_sender(message) == current_user_id
 
 

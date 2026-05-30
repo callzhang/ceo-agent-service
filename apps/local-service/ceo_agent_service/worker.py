@@ -16,7 +16,6 @@ from ceo_agent_service.codex_decision import append_signature
 from ceo_agent_service.config import (
     assistant_signature,
     broadcast_mention_aliases,
-    current_user_display_names,
     group_read_recovery_limit,
     group_read_recovery_window,
     handoff_ack,
@@ -71,7 +70,6 @@ LEAK_CHECK_REGENERATION_SCHEMA = (
     '"audit_documents":[],"audit_summary":""}'
 )
 SPLIT_PERSON_SIGNATURE = assistant_signature()
-CURRENT_USER_DISPLAY_NAMES = set(current_user_display_names())
 STALE_PROCESSING_TASK_SECONDS = 30 * 60
 MAX_REPLY_TASK_ATTEMPTS = 3
 STALE_CODEX_RESUME_ATTEMPTS = 2
@@ -2009,8 +2007,6 @@ class DingTalkAutoReplyWorker:
     def _is_current_user_message_for_candidate_filter(
         self, message: DingTalkMessage
     ) -> bool:
-        if message.sender_name.strip() in CURRENT_USER_DISPLAY_NAMES:
-            return True
         current_user_id = self.store.get_current_user_id()
         if current_user_id and message.sender_user_id:
             return message.sender_user_id == current_user_id

@@ -4678,27 +4678,25 @@ def test_run_once_max_batches_stops_after_limit(tmp_path: Path, monkeypatch):
     assert worker.store.has_seen("msg-2") is False
 
 
-def test_single_chat_current_user_display_name_does_not_call_codex(
+def test_single_chat_same_display_name_without_current_user_id_still_calls_codex(
     tmp_path: Path, monkeypatch
 ):
-    self_message = message(
-        "AI自动抓取，用于会议纪要整理",
+    same_name_message = message(
+        "这个事情你怎么看？",
         single_chat=True,
         sender_user_id=None,
     )
-    self_message.sender_name = "磊哥"
+    same_name_message.sender_name = "磊哥"
     dws = FakeDws(
         [conversation(single_chat=True)],
-        {"cid-1": [self_message]},
+        {"cid-1": [same_name_message]},
     )
-    codex = FakeCodex(
-        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该回复")
-    )
+    codex = FakeCodex(CodexDecision(action=CodexAction.NO_REPLY, reason="handled"))
     worker = make_worker(tmp_path, dws, codex, monkeypatch)
 
     worker.run_once()
 
-    assert codex.calls == []
+    assert len(codex.calls) == 1
     assert final_sent(dws) == []
 
 

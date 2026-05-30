@@ -1894,6 +1894,19 @@ def test_is_current_user_message_compares_resolved_sender():
     assert client.is_current_user_message(msg) is True
 
 
+def test_is_current_user_message_does_not_use_display_name_without_sender_id():
+    client = RecordingDwsClient(
+        {"result": [{"orgEmployeeModel": {"userId": "self-user-1", "name": "磊哥"}}]}
+    )
+    msg = make_message("我来处理")
+    msg.sender_name = "磊哥"
+    msg.sender_user_id = None
+    msg.sender_open_dingtalk_id = None
+
+    assert client.is_current_user_message(msg) is False
+    assert client.commands == []
+
+
 def test_run_json_raises_dws_error_on_nonzero_exit(monkeypatch):
     def fake_run(command, text, capture_output, check, timeout):
         assert command == ["dws", "probe"]

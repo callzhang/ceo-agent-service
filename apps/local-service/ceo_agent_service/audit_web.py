@@ -17,7 +17,6 @@ from ceo_agent_service.codex_decision import audit_summary_explains_no_documents
 from ceo_agent_service.config import (
     assistant_signature,
     broadcast_mention_aliases,
-    current_user_display_names,
     env_file_path,
     forbidden_path_prefixes,
     group_read_recovery_limit,
@@ -349,7 +348,6 @@ def _render_config_info() -> str:
 def _system_config_rows() -> list[tuple[str, str, str]]:
     mention_text = _csv_label(mention_aliases())
     broadcast_text = _csv_label(broadcast_mention_aliases())
-    current_user_text = _csv_label(current_user_display_names())
     style_speaker_text = _csv_label(style_speaker_names())
     forbidden_path_text = _csv_label(forbidden_path_prefixes())
     return [
@@ -377,11 +375,6 @@ def _system_config_rows() -> list[tuple[str, str, str]]:
             "CEO_BROADCAST_MENTION_ALIASES",
             broadcast_text,
             "识别 @所有人、@all 等广播消息；群聊广播也会进入候选判断。",
-        ),
-        (
-            "CEO_CURRENT_USER_DISPLAY_NAMES",
-            current_user_text,
-            "用于识别当前账号或本人消息，避免把本人已发送内容再次送进 agent。",
         ),
         (
             "CEO_STYLE_SPEAKER_NAMES",
@@ -494,7 +487,6 @@ def _editable_system_config_keys() -> set[str]:
         "CEO_PRINCIPAL_HANDOFF_NAME",
         "CEO_MENTION_ALIASES",
         "CEO_BROADCAST_MENTION_ALIASES",
-        "CEO_CURRENT_USER_DISPLAY_NAMES",
         "CEO_STYLE_SPEAKER_NAMES",
         "CEO_ASSISTANT_SIGNATURE",
         "CEO_HANDOFF_ACK",

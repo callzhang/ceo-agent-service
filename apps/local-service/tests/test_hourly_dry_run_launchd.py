@@ -23,7 +23,6 @@ def test_hourly_dry_run_script_runs_single_producer_pass_with_lock():
     assert 'export DWS_DISABLE_KEYCHAIN="${DWS_DISABLE_KEYCHAIN:-1}"' in content
     assert 'export DWS_KEYCHAIN_DIR="${DWS_KEYCHAIN_DIR:-${CEO_WORKSPACE}/Library/Application Support/dws-cli}"' in content
     assert 'export CEO_MENTION_ALIASES="${CEO_MENTION_ALIASES:-@Derek Zen,@磊哥}"' in content
-    assert 'export CEO_CURRENT_USER_DISPLAY_NAMES="${CEO_CURRENT_USER_DISPLAY_NAMES:-磊哥,Derek Zen,Derek,Lei Zhang}"' in content
     assert 'export CEO_ASSISTANT_SIGNATURE="${CEO_ASSISTANT_SIGNATURE:-（by磊哥分身）}"' in content
     assert "produce-once" in content
     assert "run-once" not in content
@@ -55,7 +54,7 @@ def test_reply_producer_launch_agent_runs_every_five_minutes_without_keepalive()
     assert env["DWS_DISABLE_KEYCHAIN"] == "1"
     assert env["DWS_KEYCHAIN_DIR"] == "/Users/derek/Documents/memory/Library/Application Support/dws-cli"
     assert env["CEO_MENTION_ALIASES"] == "@Derek Zen,@磊哥"
-    assert env["CEO_CURRENT_USER_DISPLAY_NAMES"] == "磊哥,Derek Zen,Derek,Lei Zhang"
+    assert "CEO_CURRENT_USER_DISPLAY_NAMES" not in env
     assert env["CEO_ASSISTANT_SIGNATURE"] == "（by磊哥分身）"
     assert env["CEO_HANDOFF_ACK"] == "我让磊哥本人看一下。（by磊哥分身）"
     assert env["CEO_DING_ROBOT_NAME"] == "磊哥"
@@ -87,7 +86,7 @@ def test_reply_consumer_launch_agent_runs_as_live_keepalive_consumer():
     assert env["DWS_DISABLE_KEYCHAIN"] == "1"
     assert env["DWS_KEYCHAIN_DIR"] == "/Users/derek/Documents/memory/Library/Application Support/dws-cli"
     assert env["CEO_MENTION_ALIASES"] == "@Derek Zen,@磊哥"
-    assert env["CEO_CURRENT_USER_DISPLAY_NAMES"] == "磊哥,Derek Zen,Derek,Lei Zhang"
+    assert "CEO_CURRENT_USER_DISPLAY_NAMES" not in env
     assert env["CEO_ASSISTANT_SIGNATURE"] == "（by磊哥分身）"
     assert env["CEO_HANDOFF_ACK"] == "我让磊哥本人看一下。（by磊哥分身）"
     assert env["CEO_DING_ROBOT_NAME"] == "磊哥"

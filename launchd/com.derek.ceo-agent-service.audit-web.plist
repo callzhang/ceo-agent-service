@@ -62,8 +62,6 @@
     <string>磊哥</string>
     <key>CEO_MENTION_ALIASES</key>
     <string>@Derek Zen,@磊哥</string>
-    <key>CEO_CURRENT_USER_DISPLAY_NAMES</key>
-    <string>磊哥,Derek Zen,Derek,Lei Zhang</string>
     <key>CEO_STYLE_SPEAKER_NAMES</key>
     <string>磊哥,Derek</string>
     <key>CEO_ASSISTANT_SIGNATURE</key>

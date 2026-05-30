@@ -231,15 +231,11 @@ def test_render_config_page_shows_system_config_tab_with_descriptions():
     assert "CEO_MENTION_ALIASES" in html
     assert "群聊/消息触发时识别点名" in html
     assert "每次慢路径兜底扫描之间至少间隔多久" in html
-    assert "CEO_CURRENT_USER_DISPLAY_NAMES" in html
-    assert "识别当前账号或本人消息" in html
     assert "CEO_STYLE_SPEAKER_NAMES" in html
     assert "抽取风格语料" in html
     assert "CEO_FORBIDDEN_PATH_PREFIXES" in html
     assert "按路径前缀识别本机路径泄漏" in html
-    assert html.index("CEO_CURRENT_USER_DISPLAY_NAMES") < html.index(
-        "CEO_STYLE_SPEAKER_NAMES"
-    )
+    assert "CEO_CURRENT_USER_DISPLAY_NAMES" not in html
     assert "CEO_FORBIDDEN_PATH_PREFIXES" in html
     system_section = html.split("<h2>系统运行参数</h2>", 1)[1]
     assert "forbidden_reply_text_terms" not in system_section

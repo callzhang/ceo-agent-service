@@ -11,14 +11,18 @@ from ceo_agent_service.org_cache import (
 from ceo_agent_service.store import AutoReplyStore
 
 
-def message(sender_user_id: str | None = None) -> DingTalkMessage:
+def message(
+    sender_user_id: str | None = None,
+    sender_open_dingtalk_id: str | None = "open-1",
+    sender_name: str = "张三",
+) -> DingTalkMessage:
     return DingTalkMessage(
         open_conversation_id="cid-1",
         open_message_id="msg-1",
         conversation_title="Friday",
         single_chat=True,
-        sender_name="张三",
-        sender_open_dingtalk_id="open-1",
+        sender_name=sender_name,
+        sender_open_dingtalk_id=sender_open_dingtalk_id,
         sender_user_id=sender_user_id,
         create_time="2026-05-13 18:00:00",
         content="hi",
@@ -82,6 +86,30 @@ def test_cached_directory_current_user_uses_cache_metadata(tmp_path):
     directory = CachedOrgDirectory(store)
 
     assert directory.is_current_user_message(message(sender_user_id="derek-user")) is True
+
+
+def test_cached_directory_current_user_does_not_use_display_name(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.set_current_user_id("derek-user")
+    store.upsert_org_user_profile(
+        user_id="derek-user",
+        name="磊哥",
+        open_dingtalk_id="derek-open-id",
+        manager_user_id=None,
+        department_ids=set(),
+    )
+    directory = CachedOrgDirectory(store)
+
+    assert (
+        directory.is_current_user_message(
+            message(
+                sender_user_id=None,
+                sender_open_dingtalk_id=None,
+                sender_name="磊哥",
+            )
+        )
+        is False
+    )
 
 
 def test_cached_dws_client_delegates_message_io_and_uses_cached_org(tmp_path):

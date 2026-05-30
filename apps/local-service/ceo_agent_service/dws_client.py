@@ -1285,6 +1285,10 @@ class DwsClient:
         return matches[0].user_id
 
     def is_current_user_message(self, message: DingTalkMessage) -> bool:
+        if message.sender_user_id:
+            return message.sender_user_id == self.get_current_user_id()
+        if not message.sender_open_dingtalk_id:
+            return False
         return self.resolve_message_sender(message) == self.get_current_user_id()
 
     def get_user_department_ids(self, user_id: str) -> set[str]:
