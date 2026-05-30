@@ -40,7 +40,7 @@ def test_reply_producer_launch_agent_runs_every_five_minutes_without_keepalive()
 
     assert plist["Label"] == "com.derek.ceo-agent-service.reply-producer"
     assert plist["RunAtLoad"] is True
-    assert plist["StartInterval"] == 300
+    assert plist["StartInterval"] == 60
     assert "KeepAlive" not in plist
     assert plist["StandardOutPath"].endswith("/reply-producer.out.log")
     assert plist["StandardErrorPath"].endswith("/reply-producer.err.log")

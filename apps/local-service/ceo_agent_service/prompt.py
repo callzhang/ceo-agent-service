@@ -6,6 +6,7 @@ from html import unescape
 from urllib.parse import urlsplit, urlunsplit
 
 from ceo_agent_service.config import (
+    principal_display_name,
     work_profile_path,
 )
 from ceo_agent_service.developer_prompt import render_user_prompt
@@ -30,15 +31,20 @@ def work_profile_instruction() -> str:
     path = work_profile_path()
     if not path.exists():
         return ""
-    profile_path = path.resolve()
+    profile = path.read_text(encoding="utf-8").strip()
+    if not profile:
+        return ""
+    principal = principal_display_name()
     return f"""
 
-Derek 工作人格 Profile:
-- 判断回复风格、追问、拒绝、handoff 或工作场景决策前，先读取并核对该文件：`{profile_path}`。
-- 该文件不在当前工作区时也要使用绝对路径读取；不要假设 Codex 当前 workspace 是代码仓库。
+{principal} 工作人格 Profile:
+- 以下 profile 内容已由服务端注入；不要再尝试读取 profile 文件路径。
 - 学习其中的心智模型、决策启发式、表达DNA、价值观/反模式、核心张力和场景硬规则。
-- 使用 profile 时不要逐字复述章节名、证据 id、本地路径或调研过程；只把它转化为更接近 Derek 的判断顺序、追问方式和回复边界。
+- 使用 profile 时不要逐字复述章节名、证据 id、本地路径或调研过程；只把它转化为更接近 {principal} 的判断顺序、追问方式和回复边界。
 - profile 不能覆盖既有硬规则：现实动作必须 handoff、审批/OA 必须看完整材料、人事敏感问题谨慎处理、候选人判断必须看岗位和简历证据、reply_text 不得暴露本地路径或工具细节。
+
+Profile 内容:
+{profile}
 """
 
 

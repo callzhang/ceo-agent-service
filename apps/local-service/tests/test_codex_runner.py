@@ -8,6 +8,7 @@ from ceo_agent_service.codex_runner import (
     CodexRunner,
     codex_developer_instructions,
 )
+from ceo_agent_service.config import repo_root
 
 
 @pytest.fixture(autouse=True)
@@ -141,7 +142,7 @@ def test_builds_new_thread_command(tmp_path: Path):
     command = runner.build_command(prompt="hello", session_id=None)
 
     developer_arg = _developer_instructions_arg(command)
-    assert "你是 Derek（磊哥） 的钉钉自动回复分身" in developer_arg
+    assert "你是 磊哥 的钉钉自动回复分身" in developer_arg
     assert "默认不了解当前业务背景" in developer_arg
     assert "当前待处理消息" not in developer_arg
     assert "\\n" in developer_arg
@@ -183,7 +184,7 @@ def test_builds_resume_command(tmp_path: Path):
     command = runner.build_command(prompt="next", session_id="abc")
 
     developer_arg = _developer_instructions_arg(command)
-    assert "你是 Derek（磊哥） 的钉钉自动回复分身" in developer_arg
+    assert "你是 磊哥 的钉钉自动回复分身" in developer_arg
     assert "默认不了解当前业务背景" in developer_arg
     assert "当前待处理消息" not in developer_arg
 
@@ -258,7 +259,7 @@ def test_codex_developer_instructions_hold_thread_prompt_not_turn_message():
     instructions = codex_developer_instructions()
 
     assert instructions.startswith("You are the local CEO DingTalk reply worker.")
-    assert "你是 Derek（磊哥） 的钉钉自动回复分身" in instructions
+    assert "你是 磊哥 的钉钉自动回复分身" in instructions
     assert "默认不了解当前业务背景" in instructions
     assert "本地文件" in instructions
     assert "dws aisearch" in instructions
@@ -273,17 +274,24 @@ def test_codex_developer_instructions_hold_thread_prompt_not_turn_message():
     assert "当前待处理消息" not in instructions
 
 
-def test_codex_developer_instructions_include_work_profile_path():
+def test_codex_developer_instructions_inject_work_profile_content_without_path(
+    monkeypatch,
+):
+    monkeypatch.setenv(
+        "CEO_WORK_PROFILE_PATH",
+        str(repo_root() / "profiles" / "derek_work_profile.md"),
+    )
+
     instructions = codex_developer_instructions()
 
     assert "Derek 工作人格 Profile" in instructions
     assert (
         "/Users/derek/Documents/Projects/ceo-agent-service/profiles/derek_work_profile.md"
-        in instructions
+        not in instructions
     )
-    assert "# Derek Work Profile" not in instructions
-    assert "先判断材料是否完整" not in instructions
-    assert "先读取并核对该文件" in instructions
+    assert "# Derek Work Profile" in instructions
+    assert "Core Judgment Order" in instructions
+    assert "不要再尝试读取 profile 文件路径" in instructions
     assert "心智模型、决策启发式、表达DNA" in instructions
     assert "不能覆盖既有硬规则" in instructions
 
@@ -291,8 +299,8 @@ def test_codex_developer_instructions_include_work_profile_path():
 def test_codex_developer_instructions_uses_template_variable_values():
     instructions = codex_developer_instructions()
 
-    assert "你是 Derek（磊哥） 的钉钉自动回复分身" in instructions
-    assert "让 磊哥 本人接管" in instructions
+    assert "你是 磊哥 的钉钉自动回复分身" in instructions
+    assert "让 Derek 本人接管" in instructions
 
 
 def test_codex_decision_schema_file_exists():

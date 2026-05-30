@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -5,6 +6,8 @@ from fastapi.testclient import TestClient
 from ceo_agent_service.audit_web import (
     create_audit_app,
     handle_developer_prompt_post,
+    handle_prompt_variables_post,
+    handle_system_config_post,
     handle_user_prompt_post,
     handle_feedback_post,
     handle_recall_post,
@@ -13,10 +16,13 @@ from ceo_agent_service.audit_web import (
     render_attempt_list,
     render_codex_session_detail,
     render_codex_session_list,
+    render_config_page,
     render_developer_prompt_editor,
     render_error_list,
     run_audit_web,
 )
+from ceo_agent_service.developer_prompt import read_developer_prompt_template
+from ceo_agent_service.config import load_env_file
 from ceo_agent_service.dingtalk_models import DingTalkConversation, DingTalkMessage
 from ceo_agent_service.store import AutoReplyStore
 
@@ -92,6 +98,29 @@ def test_render_history_page_includes_favicon_and_refresh(tmp_path: Path):
     assert 'content="15"' in html
 
 
+def test_top_nav_highlights_current_page_and_disables_current_link(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    seed_attempt(store)
+
+    history_html = render_attempt_list(store)
+    config_html = render_config_page()
+    codex_html = render_codex_session_list(store)
+    errors_html = render_error_list(store)
+
+    assert '<span class="nav-item active" aria-current="page">History</span>' in history_html
+    assert '<a class="nav-item" href="/">History</a>' not in history_html
+    assert '<a class="nav-item" href="/config">Config</a>' in history_html
+
+    assert '<span class="nav-item active" aria-current="page">Config</span>' in config_html
+    assert '<a class="nav-item" href="/config">Config</a>' not in config_html
+
+    assert '<span class="nav-item active" aria-current="page">Codex Sessions</span>' in codex_html
+    assert '<a class="nav-item" href="/codex">Codex Sessions</a>' not in codex_html
+
+    assert '<span class="nav-item active" aria-current="page">Errors</span>' in errors_html
+    assert '<a class="nav-item" href="/errors">Errors</a>' not in errors_html
+
+
 def test_non_history_pages_do_not_auto_refresh(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     attempt_id = seed_attempt(store)
@@ -119,12 +148,176 @@ def test_non_history_pages_do_not_auto_refresh(tmp_path: Path):
     )
     error_html = render_error_list(store)
     developer_prompt_html = render_developer_prompt_editor()
+    config_html = render_config_page()
 
     assert 'http-equiv="refresh"' not in attempt_html
     assert 'http-equiv="refresh"' not in codex_list_html
     assert 'http-equiv="refresh"' not in codex_detail_html
     assert 'http-equiv="refresh"' not in error_html
     assert 'http-equiv="refresh"' not in developer_prompt_html
+    assert 'http-equiv="refresh"' not in config_html
+
+
+def test_render_config_page_shows_message_routing_logic():
+    html = render_config_page()
+
+    assert "Prompt config" in html
+    assert "Producer routing config" not in html
+    assert "Template syntax" not in html
+    assert html.index("Prompt config") < html.index('aria-label="Config sections"')
+    assert "Runtime config" not in html
+    assert "Variable definitions" not in html
+    assert html.index("Config variables") < html.index('aria-label="Config sections"')
+    assert html.index("Dynamic functions") < html.index('aria-label="Config sections"')
+    assert '<details class="config-collapse">' in html
+    assert '<summary><h3>Config variables</h3></summary>' in html
+    assert '<summary><h3>Dynamic functions</h3></summary>' in html
+    assert '<details class="config-collapse" open>' not in html
+    assert "&lt;code: ceo_agent_service.user_prompt_blocks:current_message_block()&gt;" in html
+    assert "work_profile_instruction()" in html
+    assert "&lt;code: ceo_agent_service.prompt:work_profile_instruction()&gt;" in html
+    assert "Info" in html
+    assert 'class="prompt-tab active"' in html
+    assert "markdown-doc" not in html
+    assert "| `CEO_MENTION_ALIASES` |" not in html
+    assert "<pre># Producer routing config" not in html
+    assert '<table class="config-variable-table">' in html
+    assert 'class="config-key-input"' in html
+    assert 'class="config-value-input"' in html
+    assert "<h3>快路径</h3>" in html
+    assert "Producer 路由配置" in html
+    assert "每次 producer 运行都会调用" in html
+    assert 'value="CEO_MENTION_ALIASES"' not in html
+    assert 'value="@Derek Zen, @磊哥"' not in html
+    assert 'value="principal"' in html
+    assert 'value="handoff_name"' in html
+    assert 'value="responsibility_summary"' in html
+    assert 'value="MESSAGE_RECOVERY_INTERVAL"' not in html
+    assert 'value="CEO_CURRENT_USER_DISPLAY_NAMES"' not in html
+    assert 'value="CEO_STYLE_SPEAKER_NAMES"' not in html
+    assert 'value="CEO_FORBIDDEN_PATH_PREFIXES"' not in html
+    assert 'value="CEO_PRINCIPAL_NAME"' not in html
+    assert 'value="CEO_PRINCIPAL_DISPLAY_NAME"' not in html
+    assert 'value="CEO_PRINCIPAL_HANDOFF_NAME"' not in html
+    assert 'value="CEO_RESPONSIBILITY_SUMMARY"' not in html
+    assert '<code class="config-token">read_mentioned_messages</code>' in html
+    assert '<code class="config-token">@Derek Zen/@磊哥</code>' in html
+    assert "Fast path" not in html
+    assert "Slow path" not in html
+    assert "Group chat" not in html
+    assert "Direct chat" not in html
+    assert "快路径" in html
+    assert "慢路径" in html
+    assert "群聊" in html
+    assert "私聊" in html
+    assert "list_unread_conversations" in html
+    assert "read_mentioned_messages" in html
+    assert "@Derek Zen/@磊哥" in html
+    assert "私聊文档会进入 agent 判断" in html
+    assert "/config" in html
+
+
+def test_render_config_page_shows_system_config_tab_with_descriptions():
+    html = render_config_page(active_tab="system")
+
+    assert "System Config" in html
+    assert "系统运行参数" in html
+    assert 'method="post" action="/config/system"' in html
+    assert 'name="system_key"' in html
+    assert 'name="system_value"' in html
+    assert 'class="prompt-tab active"' in html
+    assert "不写入 Prompt" in html
+    assert "MESSAGE_RECOVERY_INTERVAL" in html
+    assert "CEO_MENTION_ALIASES" in html
+    assert "群聊/消息触发时识别点名" in html
+    assert "每次慢路径兜底扫描之间至少间隔多久" in html
+    assert "CEO_CURRENT_USER_DISPLAY_NAMES" in html
+    assert "识别当前账号或本人消息" in html
+    assert "CEO_STYLE_SPEAKER_NAMES" in html
+    assert "抽取风格语料" in html
+    assert "CEO_FORBIDDEN_PATH_PREFIXES" in html
+    assert "按路径前缀识别本机路径泄漏" in html
+    assert "forbidden_reply_text_terms" in html
+    assert "提醒 agent 不要在 reply_text 写出的词" in html
+    assert html.index("CEO_CURRENT_USER_DISPLAY_NAMES") < html.index(
+        "CEO_STYLE_SPEAKER_NAMES"
+    )
+    assert "CEO_FORBIDDEN_PATH_PREFIXES" in html
+    assert "forbidden_reply_text_terms" in html
+
+
+def test_handle_system_config_post_saves_runtime_params_to_env_file(
+    tmp_path: Path,
+    monkeypatch,
+):
+    env_path = tmp_path / ".env"
+    env_path.write_text("CEO_WORKSPACE=/tmp/memory\n", encoding="utf-8")
+    monkeypatch.setenv("CEO_ENV_FILE", str(env_path))
+
+    body = (
+        "system_key=MESSAGE_RECOVERY_INTERVAL"
+        "&system_value=30m"
+        "&system_key=SINGLE_CHAT_READ_RECOVERY_WINDOW"
+        "&system_value=12h"
+        "&system_key=SINGLE_CHAT_READ_RECOVERY_LIMIT"
+        "&system_value=25"
+        "&system_key=GROUP_READ_RECOVERY_WINDOW"
+        "&system_value=6h"
+        "&system_key=GROUP_READ_RECOVERY_LIMIT"
+        "&system_value=2"
+    ).encode()
+
+    status, headers, html = handle_system_config_post(body)
+
+    assert status == 303
+    assert headers["Location"] == "/config?tab=system&saved=1"
+    assert html == ""
+    env_text = env_path.read_text(encoding="utf-8")
+    assert "CEO_WORKSPACE=/tmp/memory" in env_text
+    assert "MESSAGE_RECOVERY_INTERVAL=30m" in env_text
+    assert "SINGLE_CHAT_READ_RECOVERY_WINDOW=12h" in env_text
+    assert "SINGLE_CHAT_READ_RECOVERY_LIMIT=25" in env_text
+    assert "GROUP_READ_RECOVERY_WINDOW=6h" in env_text
+    assert "GROUP_READ_RECOVERY_LIMIT=2" in env_text
+    assert "MESSAGE_RECOVERY_INTERVAL" not in read_developer_prompt_template()
+
+
+def test_env_file_overrides_existing_environment(tmp_path: Path, monkeypatch):
+    env_path = tmp_path / ".env"
+    env_path.write_text("MESSAGE_RECOVERY_INTERVAL=45m\n", encoding="utf-8")
+    monkeypatch.setenv("MESSAGE_RECOVERY_INTERVAL", "1h")
+
+    load_env_file(env_path)
+
+    assert "MESSAGE_RECOVERY_INTERVAL" in env_path.read_text(encoding="utf-8")
+    assert os.environ["MESSAGE_RECOVERY_INTERVAL"] == "45m"
+
+
+def test_render_config_dynamic_functions_do_not_hardcode_principal_name(monkeypatch):
+    monkeypatch.setenv("CEO_PRINCIPAL_DISPLAY_NAME", "Alex")
+
+    html = render_config_page()
+
+    assert "work_profile_instruction()" in html
+    assert "读取并注入工作人格 Profile；通常用于 Developer Prompt。" in html
+    assert "Derek 工作人格 Profile" not in html
+
+
+def test_config_route_is_available(tmp_path: Path):
+    app = create_audit_app(tmp_path / "worker.sqlite3")
+    client = TestClient(app)
+
+    response = client.get("/config")
+
+    assert response.status_code == 200
+    assert "Producer 路由配置" in response.text
+    assert "/config?tab=developer" in response.text
+
+
+def test_render_page_brand_links_to_history():
+    html = render_config_page()
+
+    assert '<a class="brand brand-home" href="/" aria-label="History home">' in html
 
 
 def test_render_developer_prompt_editor_shows_template_and_preview(
@@ -149,20 +342,29 @@ def test_render_developer_prompt_editor_shows_template_and_preview(
     monkeypatch.setenv("CEO_DEVELOPER_PROMPT_TEMPLATE_PATH", str(template_path))
     monkeypatch.setenv("CEO_PRINCIPAL_DISPLAY_NAME", "Derek")
 
-    html = render_developer_prompt_editor(saved=True)
+    html = render_config_page(active_tab="developer", saved=True)
 
+    assert "Prompt config" in html
     assert "Developer Prompt" in html
+    assert "User Prompt" in html
+    assert "/config?tab=info" in html
+    assert "/config?tab=developer" in html
+    assert "/config?tab=user" in html
+    assert 'class="prompt-tab active"' in html
+    assert "Template syntax" not in html
+    assert html.index("Prompt config") < html.index('aria-label="Config sections"')
     assert str(template_path) in html
     assert 'name="variables"' not in html
     assert 'name="variable_key"' in html
     assert 'name="variable_value"' in html
     assert 'name="template"' in html
-    assert "Variable definitions" in html
+    assert "Config variables" in html
     assert "&lt;var: principal&gt;" in html
-    assert "&lt;file: profiles/derek_work_profile.md&gt;" in html
     assert "&lt;code: ceo_agent_service.config:principal_display_name()&gt;" not in html
     assert 'value="principal"' in html
     assert 'value="Derek"' in html
+    assert 'value="CEO_PRINCIPAL_NAME"' not in html
+    assert 'value="CEO_PRINCIPAL_DISPLAY_NAME"' not in html
     assert "Hi Derek" in html
     assert "Saved." in html
 
@@ -175,18 +377,25 @@ def test_render_prompt_editor_shows_user_prompt_tab(tmp_path: Path, monkeypatch)
     )
     monkeypatch.setenv("CEO_USER_PROMPT_TEMPLATE_PATH", str(template_path))
 
-    html = render_developer_prompt_editor(active_tab="user", saved=True)
+    html = render_config_page(active_tab="user", saved=True)
 
+    assert "Prompt config" in html
     assert "Prompt" in html
+    assert "Info" in html
     assert "Developer Prompt" in html
     assert "User Prompt" in html
     assert 'class="prompt-tab active"' in html
+    assert "Template syntax" not in html
+    assert html.index("Prompt config") < html.index('aria-label="Config sections"')
     assert str(template_path) in html
     assert 'name="variables"' not in html
-    assert 'name="variable_key"' not in html
+    assert 'name="variable_key"' in html
     assert 'name="template"' in html
     assert "&lt;code: ceo_agent_service.user_prompt_blocks:current_message_block()&gt;" in html
+    assert "work_profile_instruction()" in html
+    assert "&lt;code: ceo_agent_service.prompt:work_profile_instruction()&gt;" in html
     assert "Dynamic functions" in html
+    assert "dynamic-preview" in html
     assert "相似历史回复风格例子" in html
     assert "先定优先级，再确认谁负责" in html
     assert "current_message_block()" in html
@@ -202,22 +411,50 @@ def test_render_prompt_editor_shows_user_prompt_tab(tmp_path: Path, monkeypatch)
 
 def test_handle_developer_prompt_post_saves_template(tmp_path: Path, monkeypatch):
     template_path = tmp_path / "developer.md"
+    template_path.write_text(
+        "<vars>\nprincipal = Derek\n</vars>\n\n# Old\nHi <var: principal>",
+        encoding="utf-8",
+    )
     monkeypatch.setenv("CEO_DEVELOPER_PROMPT_TEMPLATE_PATH", str(template_path))
-    body = (
-        "variable_key=principal"
-        "&variable_value=Derek"
-        "&variable_key="
-        "&variable_value="
-        "&template=%23+Updated%0AHi+%3Cvar%3A+principal%3E"
-    ).encode()
+    body = "template=%23+Updated%0AHi+%3Cvar%3A+principal%3E".encode()
 
     status, headers, html = handle_developer_prompt_post(body)
 
     assert status == 303
-    assert headers["Location"] == "/developer-prompt?saved=1"
+    assert headers["Location"] == "/config?tab=developer&saved=1"
     assert html == ""
     assert template_path.read_text(encoding="utf-8") == (
         "<vars>\nprincipal = Derek\n</vars>\n\n# Updated\nHi <var: principal>"
+    )
+
+
+def test_handle_prompt_variables_post_saves_variables_without_changing_template(
+    tmp_path: Path,
+    monkeypatch,
+):
+    template_path = tmp_path / "developer.md"
+    template_path.write_text(
+        "<vars>\nprincipal = Derek\n</vars>\n\n# Body\nHi <var: principal>",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CEO_DEVELOPER_PROMPT_TEMPLATE_PATH", str(template_path))
+    body = (
+        "active_tab=user"
+        "&variable_key=CEO_MENTION_ALIASES"
+        "&variable_value=%40Derek+Zen%2C+%40%E7%A3%8A%E5%93%A5"
+        "&variable_key=principal"
+        "&variable_value=%E7%A3%8A%E5%93%A5"
+        "&variable_key="
+        "&variable_value="
+    ).encode()
+
+    status, headers, html = handle_prompt_variables_post(body)
+
+    assert status == 303
+    assert headers["Location"] == "/config?tab=user&saved=1"
+    assert html == ""
+    assert template_path.read_text(encoding="utf-8") == (
+        "<vars>\nCEO_MENTION_ALIASES = @Derek Zen, @磊哥\nprincipal = 磊哥\n</vars>\n\n# Body\nHi <var: principal>"
     )
 
 
@@ -232,7 +469,7 @@ def test_handle_user_prompt_post_saves_template(tmp_path: Path, monkeypatch):
     status, headers, html = handle_user_prompt_post(body)
 
     assert status == 303
-    assert headers["Location"] == "/developer-prompt?tab=user&saved=1"
+    assert headers["Location"] == "/config?tab=user&saved=1"
     assert html == ""
     assert template_path.read_text(encoding="utf-8") == (
         "USER <code: ceo_agent_service.user_prompt_blocks:current_message_block()>"

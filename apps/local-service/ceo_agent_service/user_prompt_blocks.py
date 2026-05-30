@@ -41,7 +41,7 @@ USER_PROMPT_BLOCKS = [
             "会话类型: 群聊\n"
             "新消息:\n"
             "- Mina sender_user_id=sender-user-1 2026-05-29 09:00:00: "
-            "@Derek Zen(磊哥) 看下这个问题"
+            "@CEO 看下这个问题"
         ),
     ),
     UserPromptBlock(
@@ -100,7 +100,7 @@ USER_PROMPT_BLOCKS = [
                         },
                         "message_type": "text",
                         "content": "上文背景",
-                        "mentioned_user_ids": ["derek-user-1"],
+                        "mentioned_user_ids": ["principal-user-1"],
                         "quoted": {
                             "open_message_id": "quoted-1",
                             "content": "引用背景",

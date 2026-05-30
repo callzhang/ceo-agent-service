@@ -1,4 +1,6 @@
 from datetime import datetime
+from datetime import timedelta
+import importlib
 import json
 from pathlib import Path
 import sqlite3
@@ -39,6 +41,31 @@ CONTEXT_HEADER = "上下文消息（自上次回复后的新信息，最多 20 �
 
 def fixed_worker_now() -> datetime:
     return datetime(2026, 5, 13, 10, 0, 0, tzinfo=ZoneInfo("America/Los_Angeles"))
+
+
+def test_worker_recovery_runtime_config_reads_environment(monkeypatch):
+    monkeypatch.setenv("MESSAGE_RECOVERY_INTERVAL", "15m")
+    monkeypatch.setenv("SINGLE_CHAT_READ_RECOVERY_WINDOW", "6h")
+    monkeypatch.setenv("SINGLE_CHAT_READ_RECOVERY_LIMIT", "11")
+    monkeypatch.setenv("GROUP_READ_RECOVERY_WINDOW", "45m")
+    monkeypatch.setenv("GROUP_READ_RECOVERY_LIMIT", "4")
+
+    importlib.reload(worker_module)
+
+    assert worker_module.MESSAGE_RECOVERY_INTERVAL == timedelta(minutes=15)
+    assert worker_module.SINGLE_CHAT_READ_RECOVERY_WINDOW == timedelta(hours=6)
+    assert worker_module.SINGLE_CHAT_READ_RECOVERY_LIMIT == 11
+    assert worker_module.GROUP_READ_RECOVERY_WINDOW == timedelta(minutes=45)
+    assert worker_module.GROUP_READ_RECOVERY_LIMIT == 4
+    for name in (
+        "MESSAGE_RECOVERY_INTERVAL",
+        "SINGLE_CHAT_READ_RECOVERY_WINDOW",
+        "SINGLE_CHAT_READ_RECOVERY_LIMIT",
+        "GROUP_READ_RECOVERY_WINDOW",
+        "GROUP_READ_RECOVERY_LIMIT",
+    ):
+        monkeypatch.delenv(name)
+    importlib.reload(worker_module)
 
 
 class FakeDws:
@@ -100,6 +127,8 @@ class FakeDws:
         self.user_departments: dict[str, set[str]] = {}
         self.user_profiles: dict[str, DwsUserProfile] = {}
         self.user_profile_calls: list[str] = []
+        self.recent_message_reads: list[str] = []
+        self.unread_message_reads: list[str] = []
         self.hr_users: set[str] = set()
         self.manager_chains: dict[str, list[str]] = {}
         self.resolved_senders: dict[str, str] = {}
@@ -177,6 +206,7 @@ class FakeDws:
     def read_recent_messages(
         self, conversation: DingTalkConversation
     ) -> list[DingTalkMessage]:
+        self.recent_message_reads.append(conversation.open_conversation_id)
         if conversation.open_conversation_id in self.read_errors:
             raise self.read_errors[conversation.open_conversation_id]
         return self.messages.get(conversation.open_conversation_id, [])
@@ -184,6 +214,7 @@ class FakeDws:
     def read_unread_messages(
         self, conversation: DingTalkConversation
     ) -> list[DingTalkMessage]:
+        self.unread_message_reads.append(conversation.open_conversation_id)
         if conversation.open_conversation_id in self.unread_errors:
             raise self.unread_errors[conversation.open_conversation_id]
         return self.unread_messages.get(conversation.open_conversation_id, [])
@@ -681,24 +712,13 @@ def write_profile_for_consumer_test(tmp_path: Path, monkeypatch) -> str:
     profile.parent.mkdir(parents=True)
     profile.write_text(content, encoding="utf-8")
     monkeypatch.setenv("CEO_WORK_PROFILE_PATH", str(profile))
-    template = read_developer_prompt_template()
-    template_lines = [
-        f"work_profile_path = {profile}"
-        if line.startswith("work_profile_path = ")
-        else line
-        for line in template.splitlines()
-    ]
-    template_path = tmp_path / "developer_prompt.md"
-    template_path.write_text("\n".join(template_lines), encoding="utf-8")
-    monkeypatch.setenv("CEO_DEVELOPER_PROMPT_TEMPLATE_PATH", str(template_path))
     return content
 
 
-def test_consumer_codex_command_points_to_work_profile_path(
+def test_consumer_codex_command_injects_work_profile_content(
     tmp_path: Path, monkeypatch
 ):
     profile_content = write_profile_for_consumer_test(tmp_path, monkeypatch)
-    profile_path = (tmp_path / "profiles" / "derek_work_profile.md").resolve()
     seen_instructions = []
 
     def executor(command: list[str], prompt: str) -> str:
@@ -729,10 +749,10 @@ def test_consumer_codex_command_points_to_work_profile_path(
     assert len(seen_instructions) == 1
     instructions = seen_instructions[0]
     assert "Derek 工作人格 Profile" in instructions
-    assert "Profile 内容:" not in instructions
-    assert profile_content not in instructions
-    assert str(profile_path) in instructions
-    assert "材料不完整时先追问，不拍板" not in instructions
+    assert "Profile 内容:" in instructions
+    assert profile_content in instructions
+    assert str(tmp_path / "profiles" / "derek_work_profile.md") not in instructions
+    assert "材料不完整时先追问，不拍板" in instructions
     assert final_sent(dws)
 
 
@@ -740,14 +760,11 @@ def test_consumer_uses_profile_to_ask_for_missing_candidate_materials(
     tmp_path: Path, monkeypatch
 ):
     write_profile_for_consumer_test(tmp_path, monkeypatch)
-    profile_path = (tmp_path / "profiles" / "derek_work_profile.md").resolve()
 
     def executor(command: list[str], prompt: str) -> str:
         instructions = developer_instructions_from_command(command)
-        assert str(profile_path) in instructions
-        assert "材料不完整时先追问，不拍板" in profile_path.read_text(
-            encoding="utf-8"
-        )
+        assert "Profile 内容:" in instructions
+        assert "材料不完整时先追问，不拍板" in instructions
         assert "这个候选人可以推进吗" in prompt
         return json.dumps(
             {
@@ -888,6 +905,182 @@ def test_produce_once_does_not_send_processing_ack_for_new_reply_task(
     assert queued == 1
     assert codex.calls == []
     assert dws.sent == []
+
+
+def test_produce_once_fast_path_reads_only_unread_messages_without_recent_context(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message("@Derek Zen(磊哥) 这个怎么处理？", message_id="msg-unread")
+    dws = FakeDws(
+        [conversation()],
+        {"cid-1": [message("历史上下文", message_id="msg-context")]},
+    )
+    dws.unread_messages = {"cid-1": [trigger]}
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该调用")
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+    worker.store.set_service_state(
+        "message_recovery_checked_at",
+        "2026-05-13T16:30:00+00:00",
+    )
+
+    queued = worker.produce_once()
+
+    assert queued == 1
+    assert dws.unread_message_reads == ["cid-1"]
+    assert dws.recent_message_reads == []
+    assert worker.store.count_reply_tasks(status="pending") == 1
+
+
+def test_produce_once_fast_path_skips_unread_conversations_unchanged_since_last_check(
+    tmp_path: Path, monkeypatch
+):
+    old_conversation = DingTalkConversation(
+        open_conversation_id="cid-old",
+        title="旧未读",
+        single_chat=False,
+        unread_point=2,
+        last_message_create_at=1778662800000,
+    )
+    new_conversation = DingTalkConversation(
+        open_conversation_id="cid-new",
+        title="新未读",
+        single_chat=False,
+        unread_point=1,
+        last_message_create_at=1778666400000,
+    )
+    new_trigger = message(
+        "@Derek Zen(磊哥) 新问题",
+        message_id="msg-new",
+    )
+    new_trigger.open_conversation_id = "cid-new"
+    dws = FakeDws(
+        [old_conversation, new_conversation],
+        {
+            "cid-old": [message("@Derek Zen(磊哥) 旧问题", message_id="msg-old")],
+            "cid-new": [new_trigger],
+        },
+        unread_messages={"cid-new": [new_trigger]},
+    )
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该调用")
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+    worker.store.set_service_state(
+        "message_recovery_checked_at",
+        "2026-05-13T16:30:00+00:00",
+    )
+    worker.store.set_service_state(
+        "message_fast_path_checked_at",
+        "2026-05-13T09:30:00+00:00",
+    )
+
+    queued = worker.produce_once()
+
+    assert queued == 1
+    assert dws.unread_message_reads == ["cid-new"]
+    assert dws.recent_message_reads == []
+
+
+def test_produce_once_skips_recent_conversation_recovery_between_hourly_fallbacks(
+    tmp_path: Path, monkeypatch
+):
+    recovered_conversation = DingTalkConversation(
+        open_conversation_id="cid-recovered",
+        title="最近处理过的单聊",
+        single_chat=True,
+        unread_point=0,
+    )
+    dws = FakeDws([], {"cid-recovered": [message("补充一下", message_id="msg-new")]})
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该调用")
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+    worker.store.upsert_conversation(
+        conversation_id=recovered_conversation.open_conversation_id,
+        title=recovered_conversation.title,
+        single_chat=True,
+        codex_session_id=None,
+    )
+    worker.store.mark_seen("msg-seen", recovered_conversation.open_conversation_id)
+    worker.store.set_service_state(
+        "message_recovery_checked_at",
+        "2026-05-13T16:30:00+00:00",
+    )
+
+    queued = worker.produce_once()
+
+    assert queued == 0
+    assert dws.recent_message_reads == []
+    assert dws.unread_message_reads == []
+    assert worker.store.count_reply_tasks(status="pending") == 0
+
+
+def test_produce_once_runs_recent_conversation_recovery_once_per_hour(
+    tmp_path: Path, monkeypatch
+):
+    recovered_conversation = DingTalkConversation(
+        open_conversation_id="cid-recovered",
+        title="最近处理过的单聊",
+        single_chat=True,
+        unread_point=0,
+    )
+    old_message = message("之前处理过", message_id="msg-seen", single_chat=True)
+    new_message = message("补充一下", message_id="msg-new", single_chat=True)
+    new_message.create_time = "2026-05-13 18:05:00"
+    dws = FakeDws([], {"cid-recovered": [old_message, new_message]})
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该调用")
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+    worker.store.upsert_conversation(
+        conversation_id=recovered_conversation.open_conversation_id,
+        title=recovered_conversation.title,
+        single_chat=True,
+        codex_session_id=None,
+    )
+    worker.store.mark_seen("msg-seen", recovered_conversation.open_conversation_id)
+    worker.store.set_service_state(
+        "message_recovery_checked_at",
+        "2026-05-13T15:30:00+00:00",
+    )
+
+    queued = worker.produce_once()
+
+    assert queued == 1
+    assert dws.recent_message_reads == ["cid-recovered"]
+    assert dws.unread_message_reads == ["cid-recovered"]
+    assert worker.store.count_reply_tasks(status="pending") == 1
+    assert (
+        worker.store.get_service_state("message_recovery_checked_at")
+        == "2026-05-13T17:00:00+00:00"
+    )
+
+
+def test_current_user_candidate_filter_uses_only_local_identity_cache(
+    tmp_path: Path, monkeypatch
+):
+    dws = FakeDws([], {}, current_user_error=RuntimeError("remote lookup"))
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该调用")
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+    current_user_message = message(
+        "我自己发的",
+        sender_user_id="derek-user-1",
+    )
+    unknown_sender_message = message(
+        "未知 sender",
+        sender_user_id=None,
+    )
+
+    assert worker._is_current_user_message_for_candidate_filter(current_user_message)
+    assert (
+        worker._is_current_user_message_for_candidate_filter(unknown_sender_message)
+        is False
+    )
+    assert dws.current_user_checks == []
 
 
 def test_produce_once_checks_dws_upgrade_once_per_local_day(
@@ -1987,6 +2180,49 @@ def test_structured_link_card_is_skipped_before_codex(tmp_path: Path, monkeypatc
     assert codex.calls == []
     assert final_sent(dws) == []
     assert worker.store.get_reply_attempt(1).action == "no_reply"
+
+
+def test_single_chat_alidocs_card_reaches_codex(tmp_path: Path, monkeypatch):
+    doc_url = "https://alidocs.dingtalk.com/i/nodes/weekly123?utm_source=im"
+    canonical_doc_url = "https://alidocs.dingtalk.com/i/nodes/weekly123"
+    trigger = message(
+        "\n".join(
+            [
+                "总裁办每周讨论-20260531",
+                "![image](https://gw.alicdn.com/imgextra/i4/example.png)",
+                "字段一: A",
+                "字段二: B",
+                f"[{doc_url}]({doc_url})",
+            ]
+        ),
+        single_chat=True,
+    )
+    dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
+    dws.doc_infos[canonical_doc_url] = {
+        "contentType": "ALIDOC",
+        "extension": "adoc",
+        "name": "总裁办每周讨论",
+    }
+    dws.docs[canonical_doc_url] = {
+        "title": "总裁办每周讨论",
+        "markdown": "本周重点：处理项目 owner 和延期问题。",
+    }
+    codex = FakeCodex(
+        CodexDecision(
+            action=CodexAction.NO_REPLY,
+            audit_summary="私聊文档卡片已进入 agent 判断。",
+        )
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+
+    worker.run_once()
+
+    assert len(codex.calls) == 1
+    assert dws.read_doc_calls == [canonical_doc_url]
+    attempt = worker.store.get_reply_attempt(1)
+    assert attempt.action == "no_reply"
+    assert attempt.codex_reason == ""
+    assert attempt.audit_summary == "私聊文档卡片已进入 agent 判断。"
 
 
 def test_structured_approval_card_is_processed_by_oa_runner(

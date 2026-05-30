@@ -14,6 +14,27 @@ from ceo_agent_service.codex_history import (
     render_local_codex_session,
 )
 from ceo_agent_service.codex_decision import audit_summary_explains_no_documents
+from ceo_agent_service.config import (
+    assistant_signature,
+    broadcast_mention_aliases,
+    current_user_display_names,
+    env_file_path,
+    forbidden_path_prefixes,
+    group_read_recovery_limit,
+    group_read_recovery_window,
+    handoff_ack,
+    mention_aliases,
+    message_recovery_interval,
+    principal_display_name,
+    principal_handoff_name,
+    principal_name,
+    responsibility_summary,
+    single_chat_read_recovery_limit,
+    single_chat_read_recovery_window,
+    style_speaker_names,
+    write_env_values,
+    work_profile_path,
+)
 from ceo_agent_service.developer_prompt import (
     DeveloperPromptTemplateError,
     developer_prompt_template_path,
@@ -43,7 +64,7 @@ from ceo_agent_service.store import (
     ReplyTask,
     SentReply,
 )
-from ceo_agent_service.user_prompt_blocks import USER_PROMPT_BLOCKS
+from ceo_agent_service.user_prompt_blocks import USER_PROMPT_BLOCKS, UserPromptBlock
 from ceo_agent_service.worker import DingTalkAutoReplyWorker
 
 
@@ -55,6 +76,7 @@ header{position:sticky;top:0;z-index:10;background:rgba(255,255,255,.94);border-
 .shell{width:100%;margin:0 auto;padding:0 24px}
 .topbar{display:flex;align-items:center;justify-content:space-between;gap:24px;min-height:72px}
 .brand{display:flex;align-items:center;gap:12px;min-width:0}
+.brand-home:hover{text-decoration:none}
 .brand-mark{width:28px;height:28px;border-radius:8px;background:var(--ink);box-shadow:inset 0 -8px 0 rgba(0,212,164,.26)}
 h1{margin:0;color:var(--ink);font-size:18px;font-weight:600;line-height:1.35;letter-spacing:0}
 .eyebrow{margin-top:2px;color:var(--steel);font-size:12px;font-weight:500;line-height:1.4}
@@ -65,6 +87,31 @@ table{width:100%;border-collapse:separate;border-spacing:0;background:var(--canv
 th,td{border-bottom:1px solid var(--hairline-soft);padding:12px 14px;text-align:left;vertical-align:top;font-size:14px;line-height:1.45}
 tr:last-child td{border-bottom:0}
 th{background:var(--surface-soft);color:var(--steel);font-size:12px;font-weight:600;line-height:1.4}
+.config-variable-table th,.config-variable-table td{padding:5px 8px}
+.config-variable-table th:first-child,.config-variable-table td:first-child{width:260px}
+.config-variable-table input[type="text"]{height:28px;padding:4px 7px;border-radius:6px;font-size:12px;line-height:1.35}
+.config-key-input{font-family:"Geist Mono","SF Mono",Menlo,Consolas,monospace;color:var(--steel);background:var(--surface-soft)}
+.config-value-input{font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+.config-value{display:inline-flex;max-width:100%;padding:4px 8px;border-radius:7px;background:var(--surface);border:1px solid var(--hairline-soft);color:var(--charcoal);font-family:"Geist Mono","SF Mono",Menlo,Consolas,monospace;font-size:12px;line-height:1.45;white-space:pre-wrap;word-break:break-word}
+.config-token{display:inline-flex;max-width:100%;padding:3px 7px;border-radius:6px;background:#ddfff6;border:1px solid rgba(0,180,138,.55);color:#005b49;font-family:"Geist Mono","SF Mono",Menlo,Consolas,monospace;font-size:12px;font-weight:700;line-height:1.4;white-space:pre-wrap;word-break:break-word;box-shadow:0 0 0 2px rgba(0,212,164,.12)}
+.system-config-table th:first-child,.system-config-table td:first-child{width:260px}
+.system-config-table th:nth-child(2),.system-config-table td:nth-child(2){width:280px}
+.config-collapse{border:1px solid var(--hairline);border-radius:8px;background:var(--surface-soft);margin:10px 0;overflow:hidden}
+.config-collapse summary{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;cursor:pointer;list-style:none}
+.config-collapse summary::-webkit-details-marker{display:none}
+.config-collapse summary h3{margin:0;font-size:14px;line-height:1.35}
+.config-collapse summary::after{content:"Show";color:var(--steel);font-size:12px;font-weight:600}
+.config-collapse[open] summary{border-bottom:1px solid var(--hairline)}
+.config-collapse[open] summary::after{content:"Hide"}
+.config-collapse table{border:0;border-radius:0}
+.config-collapse form{padding:0 0 10px}
+.dynamic-preview{max-height:56px;margin:0;padding:7px 9px;font-size:12px;line-height:1.35}
+.logic-list{display:grid;gap:14px}
+.logic-section{border:1px solid var(--hairline);border-radius:8px;padding:16px;background:var(--surface-soft)}
+.logic-section h3{margin:0 0 10px;color:var(--ink);font-size:16px;font-weight:600;line-height:1.4}
+.logic-section dl{display:grid;gap:9px;margin:0}
+.logic-section dt{color:var(--steel);font-size:12px;font-weight:700;line-height:1.4}
+.logic-section dd{margin:2px 0 0;color:var(--charcoal);font-size:14px;line-height:1.5}
 .attempt-feed{display:grid;gap:8px}
 .attempt-item{background:var(--canvas);border:1px solid var(--hairline);border-radius:8px;padding:10px 12px}
 .attempt-head{display:flex;align-items:center;justify-content:space-between;gap:12px;min-width:0}
@@ -87,8 +134,9 @@ th{background:var(--surface-soft);color:var(--steel);font-size:12px;font-weight:
 .attempt-info::before{content:"";display:none;position:absolute;left:4px;bottom:calc(100% + 3px);z-index:31;border:5px solid transparent;border-top-color:#1f2937}
 .attempt-info:hover::after,.attempt-info:focus::after,.attempt-info:hover::before,.attempt-info:focus::before{display:block}
 .nav{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
-.nav a{display:inline-flex;align-items:center;height:36px;padding:0 14px;border:1px solid var(--hairline);border-radius:999px;background:var(--canvas);color:var(--steel);font-size:14px;font-weight:500}
-.nav a:hover{color:var(--ink);text-decoration:none;border-color:var(--ink)}
+.nav-item{display:inline-flex;align-items:center;height:36px;padding:0 14px;border:1px solid var(--hairline);border-radius:999px;background:var(--canvas);color:var(--steel);font-size:14px;font-weight:500}
+a.nav-item:hover{color:var(--ink);text-decoration:none;border-color:var(--ink)}
+.nav-item.active{background:var(--ink);border-color:var(--ink);color:#fff;cursor:default}
 .prompt-tabs{display:inline-flex;align-items:center;gap:6px;padding:4px;border:1px solid var(--hairline);border-radius:999px;background:var(--surface-soft);margin:0 0 12px}
 .prompt-tab{display:inline-flex;align-items:center;height:32px;padding:0 13px;border-radius:999px;color:var(--steel);font-size:13px;font-weight:600}
 .prompt-tab:hover{text-decoration:none;color:var(--ink)}
@@ -173,10 +221,17 @@ NO_CODEX_SESSION_TOOLTIP = (
 )
 
 
-def render_page(title: str, body: str, *, auto_refresh: bool = False) -> str:
+def render_page(
+    title: str,
+    body: str,
+    *,
+    auto_refresh: bool = False,
+    active_nav: str | None = None,
+) -> str:
     refresh_meta = (
         "<meta http-equiv=\"refresh\" content=\"15\">" if auto_refresh else ""
     )
+    nav_html = _top_nav(active_nav)
     return (
         "<!doctype html><html><head><meta charset=\"utf-8\">"
         "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
@@ -184,15 +239,449 @@ def render_page(title: str, body: str, *, auto_refresh: bool = False) -> str:
         f"<title>{escape(title)}</title>"
         f"<link rel=\"icon\" href=\"{FAVICON_HREF}\">"
         f"<style>{CSS}</style></head><body>"
-        "<header><div class=\"shell topbar\"><div class=\"brand\">"
+        "<header><div class=\"shell topbar\"><a class=\"brand brand-home\" href=\"/\" aria-label=\"History home\">"
         "<div class=\"brand-mark\"></div><div>"
         f"<h1>{escape(title)}</h1><div class=\"eyebrow\">Local audit console</div>"
-        "</div></div><nav class=\"nav\">"
-        "<a href=\"/\">History</a><a href=\"/codex\">Codex Sessions</a>"
-        "<a href=\"/developer-prompt\">Prompts</a><a href=\"/errors\">Errors</a>"
-        "</nav></div></header><main>"
+        "</div></a>"
+        f"{nav_html}"
+        "</div></header><main>"
         f"{body}</main></body></html>"
     )
+
+
+def _top_nav(active_nav: str | None) -> str:
+    items = [
+        ("history", "History", "/"),
+        ("codex", "Codex Sessions", "/codex"),
+        ("config", "Config", "/config"),
+        ("errors", "Errors", "/errors"),
+    ]
+    item_html = "".join(
+        (
+            f"<span class=\"nav-item active\" aria-current=\"page\">{escape(label)}</span>"
+            if key == active_nav
+            else f"<a class=\"nav-item\" href=\"{escape(href)}\">{escape(label)}</a>"
+        )
+        for key, label, href in items
+    )
+    return f"<nav class=\"nav\">{item_html}</nav>"
+
+
+def render_config_page(
+    *,
+    active_tab: str = "info",
+    saved: bool = False,
+) -> str:
+    if active_tab == "developer":
+        content = _render_developer_prompt_editor_content(saved=saved)
+    elif active_tab == "user":
+        content = _render_user_prompt_editor_content(saved=saved)
+    elif active_tab == "system":
+        content = _render_system_config()
+    else:
+        active_tab = "info"
+        content = _render_config_info()
+    body = f"{_prompt_config_card(active_tab)}{_config_tabs(active_tab)}{content}"
+    return render_page("Config", body, active_nav="config")
+
+
+def _prompt_config_card(active_tab: str) -> str:
+    return (
+        "<section class=\"card\">"
+        "<h2>Prompt config</h2>"
+        "<p class=\"muted\">Shared configuration used while rendering Developer Prompt "
+        "and User Prompt.</p>"
+        "<details class=\"config-collapse\">"
+        "<summary><h3>Config variables</h3></summary>"
+        f"{_config_variable_form(active_tab)}"
+        "</details>"
+        "<details class=\"config-collapse\">"
+        "<summary><h3>Dynamic functions</h3></summary>"
+        f"{_user_prompt_dynamic_function_table()}"
+        "</details>"
+        "</section>"
+    )
+
+
+def _config_variable_form(active_tab: str) -> str:
+    try:
+        variable_definitions, _ = split_developer_prompt_template(
+            read_developer_prompt_template()
+        )
+        variable_inputs = _config_variable_inputs(variable_definitions)
+        error_html = ""
+    except (OSError, DeveloperPromptTemplateError) as exc:
+        variable_inputs = ""
+        error_html = (
+            "<p class=\"attempt-warning\">"
+            f"Cannot load variables: {escape(str(exc))}"
+            "</p>"
+        )
+    return (
+        f"{error_html}"
+        "<form method=\"post\" action=\"/config/variables\">"
+        f"<input type=\"hidden\" name=\"active_tab\" value=\"{escape(active_tab)}\">"
+        f"{variable_inputs}"
+        "<p><button type=\"submit\">Save variables</button></p>"
+        "</form>"
+    )
+
+
+def _render_config_info() -> str:
+    logic_sections = _config_logic_sections()
+    logic_html = "".join(
+        "<section class=\"logic-section\">"
+        f"<h3>{escape(title)}</h3>"
+        "<dl>"
+        + "".join(
+            f"<div><dt>{escape(label)}</dt><dd>{_highlight_logic_text(description)}</dd></div>"
+            for label, description in rows
+        )
+        + "</dl>"
+        "</section>"
+        for title, rows in logic_sections
+    )
+    return (
+        "<section class=\"card\">"
+        "<h2>Producer 路由配置</h2>"
+        "<p class=\"muted\">这里展示 producer 如何把钉钉消息变成 reply task。</p>"
+        f"<div class=\"logic-list\">{logic_html}</div>"
+        "</section>"
+    )
+
+
+def _system_config_rows() -> list[tuple[str, str, str]]:
+    mention_text = _csv_label(mention_aliases())
+    broadcast_text = _csv_label(broadcast_mention_aliases())
+    current_user_text = _csv_label(current_user_display_names())
+    style_speaker_text = _csv_label(style_speaker_names())
+    forbidden_path_text = _csv_label(forbidden_path_prefixes())
+    prompt_variables = _developer_prompt_variable_map()
+    forbidden_terms = prompt_variables.get("forbidden_reply_text_terms", "")
+    return [
+        (
+            "CEO_PRINCIPAL_NAME",
+            principal_name(),
+            "系统级代理对象名称；Prompt 里的 principal 变量可以单独覆盖最终提示词文案。",
+        ),
+        (
+            "CEO_PRINCIPAL_DISPLAY_NAME",
+            principal_display_name(),
+            "系统展示名；用于运行时生成日历、profile 等系统文案。",
+        ),
+        (
+            "CEO_PRINCIPAL_HANDOFF_NAME",
+            principal_handoff_name(),
+            "需要真人接管时使用的称呼。",
+        ),
+        (
+            "CEO_MENTION_ALIASES",
+            mention_text,
+            "群聊/消息触发时识别点名 principal 的别名；影响 producer 候选生成。",
+        ),
+        (
+            "CEO_BROADCAST_MENTION_ALIASES",
+            broadcast_text,
+            "识别 @所有人、@all 等广播消息；群聊广播也会进入候选判断。",
+        ),
+        (
+            "CEO_CURRENT_USER_DISPLAY_NAMES",
+            current_user_text,
+            "用于识别当前账号或本人消息，避免把本人已发送内容再次送进 agent。",
+        ),
+        (
+            "CEO_STYLE_SPEAKER_NAMES",
+            style_speaker_text,
+            "用于从会议纪要和语料中抽取风格语料；可以和当前账号显示名不同。",
+        ),
+        (
+            "CEO_ASSISTANT_SIGNATURE",
+            assistant_signature(),
+            "服务发送回复时追加的分身签名。",
+        ),
+        (
+            "CEO_HANDOFF_ACK",
+            handoff_ack(),
+            "系统需要交给真人处理时的默认提示文案。",
+        ),
+        (
+            "CEO_RESPONSIBILITY_SUMMARY",
+            responsibility_summary(),
+            "系统级职责摘要；Prompt 里的 responsibility_summary 可单独编辑。",
+        ),
+        (
+            "CEO_WORK_PROFILE_PATH",
+            str(work_profile_path()),
+            "work_profile_instruction() 读取这个文件并注入 Developer Prompt。",
+        ),
+        (
+            "CEO_FORBIDDEN_PATH_PREFIXES",
+            forbidden_path_text,
+            "系统安全检查使用：按路径前缀识别本机路径泄漏。",
+        ),
+        (
+            "forbidden_reply_text_terms",
+            forbidden_terms,
+            "Prompt 变量：提醒 agent 不要在 reply_text 写出的词；不是路径前缀列表。",
+        ),
+        (
+            "MESSAGE_RECOVERY_INTERVAL",
+            _duration_label(message_recovery_interval()),
+            "每次慢路径兜底扫描之间至少间隔多久。",
+        ),
+        (
+            "SINGLE_CHAT_READ_RECOVERY_WINDOW",
+            _duration_label(single_chat_read_recovery_window()),
+            "慢路径私聊恢复扫描回看多长时间内的会话。",
+        ),
+        (
+            "SINGLE_CHAT_READ_RECOVERY_LIMIT",
+            str(single_chat_read_recovery_limit()),
+            "慢路径私聊恢复扫描最多读取多少个会话。",
+        ),
+        (
+            "GROUP_READ_RECOVERY_WINDOW",
+            _duration_label(group_read_recovery_window()),
+            "慢路径群聊恢复扫描回看多长时间内的会话。",
+        ),
+        (
+            "GROUP_READ_RECOVERY_LIMIT",
+            str(group_read_recovery_limit()),
+            "慢路径群聊恢复扫描最多读取多少个会话。",
+        ),
+    ]
+
+
+def _config_variable_inputs(variable_definitions: str) -> str:
+    rows: list[str] = ["<tr><th>Key</th><th>Value</th></tr>"]
+    for key, value in developer_prompt_variable_pairs(variable_definitions):
+        rows.append(_variable_input_row(key, value))
+    rows.append(
+        "<tr>"
+        "<td><input class=\"config-key-input\" type=\"text\" name=\"variable_key\" value=\"\" "
+        "placeholder=\"new_key\"></td>"
+        "<td><input class=\"config-value-input\" type=\"text\" name=\"variable_value\" value=\"\" "
+        "placeholder=\"value\"></td>"
+        "</tr>"
+    )
+    return "<table class=\"config-variable-table\">" + "".join(rows) + "</table>"
+
+
+def _variable_input_row(key: str, value: str) -> str:
+    return (
+        "<tr>"
+        f"<td><input class=\"config-key-input\" type=\"text\" name=\"variable_key\" value=\"{escape(key)}\"></td>"
+        f"<td><input class=\"config-value-input\" type=\"text\" name=\"variable_value\" value=\"{escape(value)}\"></td>"
+        "</tr>"
+    )
+
+
+def _developer_prompt_variable_map() -> dict[str, str]:
+    try:
+        variable_definitions, _ = split_developer_prompt_template(
+            read_developer_prompt_template()
+        )
+        return dict(developer_prompt_variable_pairs(variable_definitions))
+    except (OSError, DeveloperPromptTemplateError):
+        return {}
+
+
+def _render_system_config() -> str:
+    editable_keys = _editable_system_config_keys()
+    rows = [
+        "<tr><th>Key</th><th>Current value</th><th>说明</th></tr>",
+        *[
+            "<tr>"
+            f"<td>{_system_config_key_cell(key, key in editable_keys)}</td>"
+            f"<td>{_system_config_value_cell(key, value, key in editable_keys)}</td>"
+            f"<td>{escape(description)}</td>"
+            "</tr>"
+            for key, value, description in _system_config_rows()
+        ],
+    ]
+    return (
+        "<section class=\"card\">"
+        "<h2>系统运行参数</h2>"
+        "<p class=\"muted\">这些值来自环境变量或代码常量，用于服务运行；"
+        "不写入 Prompt，也不会保存到 Developer Prompt 的 &lt;vars&gt;。"
+        f"保存位置：<code>{escape(str(env_file_path()))}</code></p>"
+        "<form method=\"post\" action=\"/config/system\">"
+        "<table class=\"system-config-table\">"
+        + "".join(rows)
+        + "</table>"
+        "<p><button type=\"submit\">Save system config</button></p>"
+        "</form>"
+        "</section>"
+    )
+
+
+def _editable_system_config_keys() -> set[str]:
+    return {
+        "CEO_PRINCIPAL_NAME",
+        "CEO_PRINCIPAL_DISPLAY_NAME",
+        "CEO_PRINCIPAL_HANDOFF_NAME",
+        "CEO_MENTION_ALIASES",
+        "CEO_BROADCAST_MENTION_ALIASES",
+        "CEO_CURRENT_USER_DISPLAY_NAMES",
+        "CEO_STYLE_SPEAKER_NAMES",
+        "CEO_ASSISTANT_SIGNATURE",
+        "CEO_HANDOFF_ACK",
+        "CEO_RESPONSIBILITY_SUMMARY",
+        "CEO_WORK_PROFILE_PATH",
+        "CEO_FORBIDDEN_PATH_PREFIXES",
+        "MESSAGE_RECOVERY_INTERVAL",
+        "SINGLE_CHAT_READ_RECOVERY_WINDOW",
+        "SINGLE_CHAT_READ_RECOVERY_LIMIT",
+        "GROUP_READ_RECOVERY_WINDOW",
+        "GROUP_READ_RECOVERY_LIMIT",
+    }
+
+
+def _system_config_key_cell(key: str, editable: bool) -> str:
+    if not editable:
+        return f"<code class=\"config-value\">{escape(key)}</code>"
+    return (
+        f"<code class=\"config-value\">{escape(key)}</code>"
+        f"<input type=\"hidden\" name=\"system_key\" value=\"{escape(key)}\">"
+    )
+
+
+def _system_config_value_cell(key: str, value: str, editable: bool) -> str:
+    if not editable:
+        return f"<code class=\"config-value\">{escape(value)}</code>"
+    return (
+        "<input class=\"config-value-input\" type=\"text\" "
+        f"name=\"system_value\" value=\"{escape(value)}\" "
+        f"aria-label=\"{escape(key)}\">"
+    )
+
+
+def _highlight_logic_text(text: str) -> str:
+    highlighted = escape(text)
+    terms = [
+        _slash_label(mention_aliases()),
+        _slash_label(broadcast_mention_aliases()),
+        "list_unread_conversations(count=50)",
+        "message_fast_path_checked_at",
+        "read_unread_messages",
+        "read_mentioned_messages",
+        "addresses_principal",
+        "seen_messages",
+        "reply_tasks",
+        _duration_label(message_recovery_interval()),
+        _duration_label(single_chat_read_recovery_window()),
+        _duration_label(group_read_recovery_window()),
+    ]
+    for term in sorted({item for item in terms if item}, key=len, reverse=True):
+        escaped_term = escape(term)
+        highlighted = highlighted.replace(
+            escaped_term,
+            f"<code class=\"config-token\">{escaped_term}</code>",
+        )
+    return highlighted
+
+
+def _config_logic_sections() -> list[tuple[str, list[tuple[str, str]]]]:
+    mention_example = _slash_label(mention_aliases())
+    broadcast_example = _slash_label(broadcast_mention_aliases())
+    fast_path_rows = [
+        (
+            "入口",
+            "每次 producer 运行都会调用 list_unread_conversations(count=50)。"
+            "慢路径未到点时，会过滤早于 message_fast_path_checked_at 的会话。",
+        ),
+        (
+            "读取",
+            "未读会话使用 read_unread_messages。producer 也会调用 "
+            f"read_mentioned_messages 和广播 mention 查询，所以即使未读状态不完整，"
+            f"也能找到 {mention_example}、{broadcast_example} 这类点名或广播消息。",
+        ),
+        (
+            "输出",
+            "候选消息会经过过滤、按 seen_messages 去重、检查过期窗口；"
+            "之后要么作为通知/系统消息跳过，要么进入 reply_tasks。",
+        ),
+    ]
+    slow_path_rows = [
+        (
+            "周期",
+            f"每 {_duration_label(message_recovery_interval())} 运行一次。",
+        ),
+        (
+            "私聊恢复",
+            "从本地 DB 加入最近 "
+            f"{_duration_label(single_chat_read_recovery_window())} 内的私聊会话，最多 "
+            f"{single_chat_read_recovery_limit()} 个。它会读取最近消息和未读消息，"
+            "再处理 latest seen message 之后的新消息。",
+        ),
+        (
+            "群聊恢复",
+            "从本地 DB 加入最近 "
+            f"{_duration_label(group_read_recovery_window())} 内的群聊会话，最多 "
+            f"{group_read_recovery_limit()} 个。群聊候选仍然必须点名 "
+            f"{principal_display_name()} 或配置的广播别名，才会进入队列。",
+        ),
+    ]
+    group_rows = [
+        (
+            "触发",
+            "群聊候选必须通过 addresses_principal："
+            f"包含 {mention_example}，或包含 {broadcast_example} 这类广播别名。"
+            "没有这些点名信息的群聊消息，快路径和慢路径都不会处理。",
+        ),
+        (
+            "文档",
+            "群聊文档卡片只有先满足上面的群聊触发规则，才会进入 agent 判断。"
+            f"没有 {mention_example} 的普通群聊文档分享不会创建 reply task。",
+        ),
+        (
+            "合并",
+            "同一发送人的连续候选消息会先合并再入队，所以一个 reply_task "
+            "可以代表一小段相关群聊消息。",
+        ),
+    ]
+    direct_rows = [
+        (
+            "触发",
+            f"私聊不要求 {mention_example}。经过未读/恢复选择和系统通知过滤后，"
+            "最新一条剩余私聊消息会进入 agent 判断。",
+        ),
+        (
+            "文档",
+            "私聊文档会进入 agent 判断；不能因为文档卡片渲染成图片/链接卡片，"
+            "就直接当作 no_reply。",
+        ),
+        (
+            "系统过滤",
+            "预过滤仍会跳过明确的系统/状态通知、本人消息、过期且已 seen 的消息，"
+            "以及不可处理的渲染媒体。日历、OA 审批、会议纪要权限消息会绕过通用通知跳过逻辑，进入各自的专门处理器。",
+        ),
+    ]
+    return [
+        ("快路径", fast_path_rows),
+        ("慢路径", slow_path_rows),
+        ("群聊", group_rows),
+        ("私聊", direct_rows),
+    ]
+
+
+def _csv_label(values: tuple[str, ...]) -> str:
+    return ", ".join(values)
+
+
+def _slash_label(values: tuple[str, ...]) -> str:
+    return "/".join(values)
+
+
+def _duration_label(value) -> str:
+    total_seconds = int(value.total_seconds())
+    if total_seconds % 3600 == 0:
+        hours = total_seconds // 3600
+        return f"{hours}h"
+    if total_seconds % 60 == 0:
+        minutes = total_seconds // 60
+        return f"{minutes}m"
+    return f"{total_seconds}s"
 
 
 def render_attempt_list(store: AutoReplyStore, limit: int | None = None) -> str:
@@ -249,7 +738,12 @@ def render_attempt_list(store: AutoReplyStore, limit: int | None = None) -> str:
         )
     else:
         body = "<section class=\"attempt-feed\">" + "".join(items) + "</section>"
-    return render_page("CEO Agent Audit", body, auto_refresh=True)
+    return render_page(
+        "CEO Agent Audit",
+        body,
+        auto_refresh=True,
+        active_nav="history",
+    )
 
 
 def _reply_task_item(task: ReplyTask) -> str:
@@ -308,6 +802,7 @@ def render_attempt_detail(store: AutoReplyStore, attempt_id: int) -> tuple[int, 
     return 200, render_page(
         f"Attempt #{attempt.id}",
         _attempt_detail_body(attempt, sent_reply, codex_session_id),
+        active_nav="history",
     )
 
 
@@ -335,7 +830,7 @@ def render_codex_session_list(store: AutoReplyStore) -> str:
         + "".join(rows)
         + "</tbody></table>"
     )
-    return render_page("Codex Sessions", table)
+    return render_page("Codex Sessions", table, active_nav="codex")
 
 
 def render_codex_session_detail(
@@ -356,10 +851,15 @@ def render_codex_session_detail(
                 f"<p class=\"muted\">{escape(session_id)}</p></section>"
                 f"{_related_history_card(related_attempts)}"
             )
-            return 200, render_page("Codex session unavailable", body)
+            return 200, render_page(
+                "Codex session unavailable",
+                body,
+                active_nav="codex",
+            )
         return 404, render_page(
             "Codex session not found",
             f"<p>Codex session not found: {escape(session_id)}</p>",
+            active_nav="codex",
         )
     events = "".join(_codex_event_card(event) for event in rendered.events)
     related_history = _related_history_card(
@@ -374,7 +874,7 @@ def render_codex_session_detail(
         f"{related_history}"
         f"{events}"
     )
-    return 200, render_page(f"Codex Session {session_id}", body)
+    return 200, render_page(f"Codex Session {session_id}", body, active_nav="codex")
 
 
 def render_error_list(store: AutoReplyStore, limit: int | None = None) -> str:
@@ -403,42 +903,24 @@ def render_error_list(store: AutoReplyStore, limit: int | None = None) -> str:
         + "".join(rows)
         + "</tbody></table>"
     )
-    return render_page("Errors", table)
+    return render_page("Errors", table, active_nav="errors")
 
 
-def _developer_prompt_variable_inputs(variable_definitions: str) -> str:
-    pairs = developer_prompt_variable_pairs(variable_definitions)
-    rows = [
-        "<tr><th>Key</th><th>Value</th></tr>",
-        *[
-            "<tr>"
-            f"<td><input type=\"text\" name=\"variable_key\" value=\"{escape(key)}\"></td>"
-            f"<td><input type=\"text\" name=\"variable_value\" value=\"{escape(value)}\"></td>"
-            "</tr>"
-            for key, value in pairs
-        ],
-        (
-            "<tr>"
-            "<td><input type=\"text\" name=\"variable_key\" value=\"\" "
-            "placeholder=\"new_key\"></td>"
-            "<td><input type=\"text\" name=\"variable_value\" value=\"\" "
-            "placeholder=\"value\"></td>"
-            "</tr>"
-        ),
-    ]
-    return "<table>" + "".join(rows) + "</table>"
-
-
-def _prompt_tabs(active_tab: str) -> str:
+def _config_tabs(active_tab: str) -> str:
+    info_class = "prompt-tab active" if active_tab == "info" else "prompt-tab"
+    system_class = "prompt-tab active" if active_tab == "system" else "prompt-tab"
     developer_class = (
         "prompt-tab active" if active_tab == "developer" else "prompt-tab"
     )
     user_class = "prompt-tab active" if active_tab == "user" else "prompt-tab"
     return (
-        "<nav class=\"prompt-tabs\" aria-label=\"Prompt sections\">"
-        f"<a class=\"{developer_class}\" href=\"/developer-prompt?tab=developer\">"
+        "<nav class=\"prompt-tabs\" aria-label=\"Config sections\">"
+        f"<a class=\"{info_class}\" href=\"/config?tab=info\">Info</a>"
+        f"<a class=\"{system_class}\" href=\"/config?tab=system\">"
+        "System Config</a>"
+        f"<a class=\"{developer_class}\" href=\"/config?tab=developer\">"
         "Developer Prompt</a>"
-        f"<a class=\"{user_class}\" href=\"/developer-prompt?tab=user\">"
+        f"<a class=\"{user_class}\" href=\"/config?tab=user\">"
         "User Prompt</a>"
         "</nav>"
     )
@@ -449,8 +931,12 @@ def render_developer_prompt_editor(
     active_tab: str = "developer",
     saved: bool = False,
 ) -> str:
-    if active_tab == "user":
-        return _render_user_prompt_editor(saved=saved)
+    if active_tab not in {"developer", "user"}:
+        active_tab = "developer"
+    return render_config_page(active_tab=active_tab, saved=saved)
+
+
+def _render_developer_prompt_editor_content(*, saved: bool = False) -> str:
     template_path = developer_prompt_template_path()
     error_html = ""
     try:
@@ -462,16 +948,7 @@ def render_developer_prompt_editor(
             f"Cannot read template: {escape(str(exc))}"
             "</p>"
         )
-    variable_definitions, body_template = split_developer_prompt_template(template)
-    try:
-        variable_inputs = _developer_prompt_variable_inputs(variable_definitions)
-    except DeveloperPromptTemplateError as exc:
-        variable_inputs = ""
-        error_html = (
-            "<p class=\"attempt-warning\">"
-            f"Template variable error: {escape(str(exc))}"
-            "</p>"
-        )
+    _, body_template = split_developer_prompt_template(template)
     try:
         preview = render_developer_prompt_template(template) if template else ""
     except DeveloperPromptTemplateError as exc:
@@ -482,20 +959,14 @@ def render_developer_prompt_editor(
             "</p>"
         )
     saved_html = "<p class=\"muted\">Saved.</p>" if saved else ""
-    body = (
-        f"{_prompt_tabs('developer')}"
+    return (
         "<section class=\"card\">"
         "<div class=\"grid\">"
         "<div class=\"muted\">template path</div>"
         f"<div>{escape(str(template_path))}</div>"
-        "<div class=\"muted\">syntax</div>"
-        "<div><code>&lt;var: principal&gt;</code>, "
-        "<code>&lt;file: profiles/derek_work_profile.md&gt;</code></div>"
         "</div>"
         f"{saved_html}{error_html}"
-        "<form method=\"post\" action=\"/developer-prompt\">"
-        "<label>Variable definitions</label>"
-        f"{variable_inputs}"
+        "<form method=\"post\" action=\"/config?tab=developer\">"
         "<label for=\"template\">Template</label>"
         f"<textarea id=\"template\" name=\"template\" style=\"min-height:520px\">{escape(body_template)}</textarea>"
         "<p><button type=\"submit\">Save template</button></p>"
@@ -506,10 +977,9 @@ def render_developer_prompt_editor(
         f"<pre>{escape(preview)}</pre>"
         "</section>"
     )
-    return render_page("Prompt", body)
 
 
-def _render_user_prompt_editor(*, saved: bool = False) -> str:
+def _render_user_prompt_editor_content(*, saved: bool = False) -> str:
     template_path = user_prompt_template_path()
     error_html = ""
     try:
@@ -531,36 +1001,40 @@ def _render_user_prompt_editor(*, saved: bool = False) -> str:
             "</p>"
         )
     saved_html = "<p class=\"muted\">Saved.</p>" if saved else ""
-    body = (
-        f"{_prompt_tabs('user')}"
+    return (
         "<section class=\"card\">"
         "<div class=\"grid\">"
         "<div class=\"muted\">template path</div>"
         f"<div>{escape(str(template_path))}</div>"
-        "<div class=\"muted\">dynamic functions</div>"
-        "<div><code>&lt;code: ceo_agent_service.user_prompt_blocks:current_message_block()&gt;</code>, "
-        "<code>&lt;code: ceo_agent_service.user_prompt_blocks:context_messages_block()&gt;</code></div>"
         "</div>"
         f"{saved_html}{error_html}"
-        "<form method=\"post\" action=\"/developer-prompt?tab=user\">"
+        "<form method=\"post\" action=\"/config?tab=user\">"
         "<label for=\"template\">Template</label>"
         f"<textarea id=\"template\" name=\"template\" style=\"min-height:520px\">{escape(template)}</textarea>"
         "<p><button type=\"submit\">Save template</button></p>"
         "</form>"
         "</section>"
         "<section class=\"card\">"
-        "<h2>Dynamic functions</h2>"
-        f"{_user_prompt_dynamic_function_table()}"
-        "</section>"
-        "<section class=\"card\">"
         "<h2>Rendered preview</h2>"
         f"<pre>{escape(preview)}</pre>"
         "</section>"
     )
-    return render_page("Prompt", body)
 
 
 def _user_prompt_dynamic_function_table() -> str:
+    blocks = [
+        UserPromptBlock(
+            name="work_profile_instruction",
+            expression="ceo_agent_service.prompt:work_profile_instruction()",
+            description="读取并注入工作人格 Profile；通常用于 Developer Prompt。",
+            default=(
+                "工作人格 Profile:\n"
+                "- 由服务端注入；不要再尝试读取 profile 文件路径。\n"
+                "- 用于学习判断顺序、追问方式和回复边界。"
+            ),
+        ),
+        *USER_PROMPT_BLOCKS,
+    ]
     rows = [
         "<tr><th>Function</th><th>Description</th><th>Default preview</th></tr>",
         *[
@@ -568,9 +1042,9 @@ def _user_prompt_dynamic_function_table() -> str:
             f"<td><code>{escape(block.name)}()</code><br>"
             f"<code>&lt;code: {escape(block.expression)}&gt;</code></td>"
             f"<td>{escape(block.description)}</td>"
-            f"<td><pre>{escape(block.default)}</pre></td>"
+            f"<td><pre class=\"dynamic-preview\">{escape(block.default)}</pre></td>"
             "</tr>"
-            for block in USER_PROMPT_BLOCKS
+            for block in blocks
         ],
     ]
     return "<table>" + "".join(rows) + "</table>"
@@ -608,6 +1082,20 @@ def handle_feedback_post(
 def handle_developer_prompt_post(body: bytes) -> tuple[int, dict[str, str], str]:
     parsed = parse_qs(body.decode("utf-8"), keep_blank_values=True)
     template = parsed.get("template", [""])[0]
+    variable_definitions, _ = split_developer_prompt_template(
+        read_developer_prompt_template()
+    )
+    write_developer_prompt_template(
+        merge_developer_prompt_template(variable_definitions, template)
+    )
+    return 303, {"Location": "/config?tab=developer&saved=1"}, ""
+
+
+def handle_prompt_variables_post(body: bytes) -> tuple[int, dict[str, str], str]:
+    parsed = parse_qs(body.decode("utf-8"), keep_blank_values=True)
+    active_tab = parsed.get("active_tab", ["info"])[0]
+    if active_tab not in {"info", "system", "developer", "user"}:
+        active_tab = "info"
     variables = format_developer_prompt_variables(
         [
             (key, value)
@@ -618,17 +1106,34 @@ def handle_developer_prompt_post(body: bytes) -> tuple[int, dict[str, str], str]
             )
         ]
     )
+    _, template = split_developer_prompt_template(read_developer_prompt_template())
     write_developer_prompt_template(
         merge_developer_prompt_template(variables, template)
     )
-    return 303, {"Location": "/developer-prompt?saved=1"}, ""
+    return 303, {"Location": f"/config?tab={active_tab}&saved=1"}, ""
+
+
+def handle_system_config_post(body: bytes) -> tuple[int, dict[str, str], str]:
+    parsed = parse_qs(body.decode("utf-8"), keep_blank_values=True)
+    editable_keys = _editable_system_config_keys()
+    updates = {
+        key: value
+        for key, value in zip_longest(
+            parsed.get("system_key", []),
+            parsed.get("system_value", []),
+            fillvalue="",
+        )
+        if key in editable_keys
+    }
+    write_env_values(updates)
+    return 303, {"Location": "/config?tab=system&saved=1"}, ""
 
 
 def handle_user_prompt_post(body: bytes) -> tuple[int, dict[str, str], str]:
     parsed = parse_qs(body.decode("utf-8"), keep_blank_values=True)
     template = parsed.get("template", [""])[0]
     write_user_prompt_template(template)
-    return 303, {"Location": "/developer-prompt?tab=user&saved=1"}, ""
+    return 303, {"Location": "/config?tab=user&saved=1"}, ""
 
 
 def handle_recall_post(
@@ -819,8 +1324,14 @@ def create_audit_app(
 
     @app.get("/developer-prompt", response_class=HTMLResponse)
     def developer_prompt_editor(request: Request) -> str:
-        return render_developer_prompt_editor(
-            active_tab=request.query_params.get("tab", "developer"),
+        tab = request.query_params.get("tab", "developer")
+        saved_suffix = "&saved=1" if request.query_params.get("saved") == "1" else ""
+        return RedirectResponse(f"/config?tab={tab}{saved_suffix}", status_code=303)
+
+    @app.get("/config", response_class=HTMLResponse)
+    def config_page(request: Request) -> str:
+        return render_config_page(
+            active_tab=request.query_params.get("tab", "info"),
             saved=request.query_params.get("saved") == "1",
         )
 
@@ -844,6 +1355,24 @@ def create_audit_app(
             status, headers, html = handle_user_prompt_post(await request.body())
         else:
             status, headers, html = handle_developer_prompt_post(await request.body())
+        return _fastapi_post_response(status, headers, html)
+
+    @app.post("/config")
+    async def config_save(request: Request):
+        if request.query_params.get("tab") == "user":
+            status, headers, html = handle_user_prompt_post(await request.body())
+        else:
+            status, headers, html = handle_developer_prompt_post(await request.body())
+        return _fastapi_post_response(status, headers, html)
+
+    @app.post("/config/variables")
+    async def config_variables_save(request: Request):
+        status, headers, html = handle_prompt_variables_post(await request.body())
+        return _fastapi_post_response(status, headers, html)
+
+    @app.post("/config/system")
+    async def config_system_save(request: Request):
+        status, headers, html = handle_system_config_post(await request.body())
         return _fastapi_post_response(status, headers, html)
 
     @app.post("/attempts/{attempt_id}/recall")

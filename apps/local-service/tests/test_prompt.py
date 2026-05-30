@@ -2,6 +2,7 @@ import json
 
 from ceo_agent_service.dingtalk_models import DingTalkConversation, DingTalkMessage
 from ceo_agent_service.config import repo_root
+from ceo_agent_service.config import work_profile_path
 from ceo_agent_service.developer_prompt import (
     developer_prompt_template_path,
     read_developer_prompt_template,
@@ -15,6 +16,7 @@ from ceo_agent_service.prompt import (
     ceo_agent_thread_prompt,
     message_lines,
     sanitize_dingtalk_prompt_text,
+    work_profile_instruction,
 )
 
 
@@ -72,13 +74,14 @@ def test_default_developer_prompt_template_is_a_separate_file():
     template = read_developer_prompt_template()
 
     assert template.startswith("<vars>")
-    assert "principal = Derek" in template
-    assert "handoff_name = 磊哥" in template
+    assert "principal = 磊哥" in template
+    assert "handoff_name = Derek" in template
     variable_block = template.split("</vars>", 1)[0]
     assert "<code:" not in variable_block
     assert "<var: principal>" in template
-    assert "<code: ceo_agent_service.prompt:work_profile_instruction()>" not in template
-    assert "Derek 工作人格 Profile:" in template
+    assert "<code: ceo_agent_service.prompt:work_profile_instruction()>" in template
+    assert "work_profile_path" not in template
+    assert "Derek 工作人格 Profile:" not in template
 
 
 def test_developer_prompt_delegates_memory_to_agent_mcp_tools():
@@ -89,6 +92,28 @@ def test_developer_prompt_delegates_memory_to_agent_mcp_tools():
     assert "调用 memory_write 记录一条完整事件 episode" in template
     assert 'user_id="derek"' in template
     assert "memory_write 失败不应改变最终 JSON" in template
+
+
+def test_work_profile_path_default_is_not_user_specific(monkeypatch):
+    monkeypatch.delenv("CEO_WORK_PROFILE_PATH", raising=False)
+
+    assert work_profile_path() == repo_root() / "profiles" / "work_profile.md"
+
+
+def test_work_profile_instruction_uses_configured_principal_name(
+    tmp_path, monkeypatch
+):
+    profile = tmp_path / "profile.md"
+    profile.write_text("# Generic Profile\n\n- Keep replies concise.", encoding="utf-8")
+    monkeypatch.setenv("CEO_WORK_PROFILE_PATH", str(profile))
+    monkeypatch.setenv("CEO_PRINCIPAL_DISPLAY_NAME", "Alex")
+
+    instruction = work_profile_instruction()
+
+    assert "Alex 工作人格 Profile" in instruction
+    assert "Derek 工作人格 Profile" not in instruction
+    assert "更接近 Alex 的判断顺序" in instruction
+    assert "更接近 Derek 的判断顺序" not in instruction
 
 
 def test_user_prompt_template_path_can_be_overridden(tmp_path, monkeypatch):
@@ -315,7 +340,7 @@ def test_thread_prompt_explains_first_person_single_chat_subject():
 def test_thread_prompt_treats_mentioned_arrangements_requiring_principal_as_replies():
     prompt = ceo_agent_thread_prompt()
 
-    assert "需要 Derek（磊哥） 参与或确认的安排" in prompt
+    assert "需要 磊哥 参与或确认的安排" in prompt
     assert "即使没有问号，也应视为需要回复" in prompt
 
 
@@ -455,17 +480,23 @@ def test_thread_prompt_requires_sender_org_context_when_available():
     assert "本 thread 必须主动使用 graphify" not in prompt
 
 
-def test_thread_prompt_points_to_template_work_profile_path_without_injecting_content():
+def test_thread_prompt_injects_work_profile_without_exposing_path(monkeypatch):
+    monkeypatch.setenv(
+        "CEO_WORK_PROFILE_PATH",
+        str(repo_root() / "profiles" / "derek_work_profile.md"),
+    )
+
     prompt = ceo_agent_thread_prompt()
 
     assert "Derek 工作人格 Profile" in prompt
     assert (
         "/Users/derek/Documents/Projects/ceo-agent-service/profiles/derek_work_profile.md"
-        in prompt
+        not in prompt
     )
-    assert "先读取并核对该文件" in prompt
-    assert "Profile 内容:" not in prompt
-    assert "先判断材料是否完整" not in prompt
+    assert "不要再尝试读取 profile 文件路径" in prompt
+    assert "Profile 内容:" in prompt
+    assert "# Derek Work Profile" in prompt
+    assert "Core Judgment Order" in prompt
 
 
 def test_thread_prompt_requires_oa_review_principles_for_approval_messages():
@@ -490,7 +521,7 @@ def test_thread_prompt_does_not_default_oa_calendar_to_no_reply():
 def test_thread_prompt_references_calendar_rules():
     prompt = ceo_agent_thread_prompt()
 
-    assert "/Users/derek/Documents/memory/management/OA/日历规则.md" in prompt
+    assert "management/OA/日历规则.md" in prompt
     assert "请直接@我文档让我批阅即可，只有存疑再约会。" in prompt
     assert "描述明确" in prompt
     assert "可以接受日程" in prompt
@@ -499,7 +530,7 @@ def test_thread_prompt_references_calendar_rules():
 def test_thread_prompt_requires_witty_reply_for_direct_jokes():
     prompt = ceo_agent_thread_prompt()
 
-    assert "真人直接 @ Derek（磊哥） 或分身开玩笑" in prompt
+    assert "真人直接 @磊哥 或分身开玩笑" in prompt
     assert "简短、机智、克制的玩笑" in prompt
     assert "体现判断力和幽默感" in prompt
     assert "不要写成流程说明或机制解释" in prompt

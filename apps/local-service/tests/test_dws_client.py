@@ -57,28 +57,28 @@ def make_message(content: str) -> DingTalkMessage:
     )
 
 
-def test_dingtalk_message_mentions_derek_for_english_name():
+def test_dingtalk_message_mentions_principal_for_english_name():
     message = make_message("@Derek Zen(磊哥) 这个看一下")
 
-    assert message.mentions_derek() is True
+    assert message.mentions_principal() is True
 
 
-def test_dingtalk_message_mentions_derek_for_chinese_name():
+def test_dingtalk_message_mentions_principal_for_chinese_name():
     message = make_message("@磊哥 这个看一下")
 
-    assert message.mentions_derek() is True
+    assert message.mentions_principal() is True
 
 
-def test_dingtalk_message_mentions_derek_false_for_name_without_at():
+def test_dingtalk_message_mentions_principal_false_for_name_without_at():
     message = make_message("这个要和磊哥对一下")
 
-    assert message.mentions_derek() is False
+    assert message.mentions_principal() is False
 
 
-def test_dingtalk_message_mentions_derek_false_for_unrelated_content():
+def test_dingtalk_message_mentions_principal_false_for_unrelated_content():
     message = make_message("这个请俊杰看一下")
 
-    assert message.mentions_derek() is False
+    assert message.mentions_principal() is False
 
 
 def test_codex_action_values_match_output_protocol():

@@ -30,14 +30,14 @@ class DingTalkMessage(BaseModel):
     quoted_content: str | None = None
     raw_payload: dict = Field(default_factory=dict)
 
-    def mentions_derek(self) -> bool:
+    def mentions_principal(self) -> bool:
         return self._contains_mention_alias(mention_aliases())
 
     def mentions_all(self) -> bool:
         return self._contains_mention_alias(broadcast_mention_aliases())
 
     def addresses_principal(self) -> bool:
-        return self.mentions_derek() or self.mentions_all()
+        return self.mentions_principal() or self.mentions_all()
 
     def _contains_mention_alias(self, aliases: tuple[str, ...]) -> bool:
         content = self.content.casefold()

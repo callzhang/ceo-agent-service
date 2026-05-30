@@ -17,7 +17,13 @@ from ceo_agent_service.config import (
     assistant_signature,
     broadcast_mention_aliases,
     current_user_display_names,
+    group_read_recovery_limit,
+    group_read_recovery_window,
     handoff_ack,
+    principal_display_name,
+    message_recovery_interval,
+    single_chat_read_recovery_limit,
+    single_chat_read_recovery_window,
 )
 from ceo_agent_service.dws_client import (
     DINGTALK_MESSAGE_TIME_ZONE,
@@ -136,13 +142,16 @@ DOWNLOADED_IMAGE_MAX_BYTES = 20 * 1024 * 1024
 DOWNLOAD_TIMEOUT_SECONDS = 30
 PDF_TEXT_PAGE_LIMIT = 30
 DWS_UPGRADE_CHECKED_DATE_STATE_KEY = "dws_upgrade_checked_date"
+MESSAGE_RECOVERY_CHECKED_AT_STATE_KEY = "message_recovery_checked_at"
+MESSAGE_FAST_PATH_CHECKED_AT_STATE_KEY = "message_fast_path_checked_at"
 ORG_CACHE_REFRESH_INTERVAL = timedelta(days=7)
 AITABLE_TABLE_PREVIEW_LIMIT = 5
 AITABLE_RECORD_PREVIEW_LIMIT = 10
-SINGLE_CHAT_READ_RECOVERY_WINDOW = timedelta(hours=24)
-SINGLE_CHAT_READ_RECOVERY_LIMIT = 50
-GROUP_READ_RECOVERY_WINDOW = timedelta(hours=24)
-GROUP_READ_RECOVERY_LIMIT = 3
+MESSAGE_RECOVERY_INTERVAL = message_recovery_interval()
+SINGLE_CHAT_READ_RECOVERY_WINDOW = single_chat_read_recovery_window()
+SINGLE_CHAT_READ_RECOVERY_LIMIT = single_chat_read_recovery_limit()
+GROUP_READ_RECOVERY_WINDOW = group_read_recovery_window()
+GROUP_READ_RECOVERY_LIMIT = group_read_recovery_limit()
 
 
 @dataclass(frozen=True)
@@ -194,6 +203,8 @@ class DingTalkAutoReplyWorker:
     def produce_once(self, max_tasks: int | None = None) -> int:
         self._maybe_upgrade_dws_once_per_day()
         self._maybe_refresh_org_cache_once_per_week()
+        fast_path_checked_at = self._now().astimezone(timezone.utc)
+        recovery_due = self._should_run_recent_message_recovery()
         queued_tasks = 0
         try:
             conversations = self.dws.list_unread_conversations(count=50)
@@ -204,6 +215,13 @@ class DingTalkAutoReplyWorker:
                 message=str(exc)[:120],
             )
             return 0
+        if not recovery_due:
+            conversations = self._conversations_updated_since_fast_path_check(
+                conversations
+            )
+        unread_conversation_ids = {
+            conversation.open_conversation_id for conversation in conversations
+        }
         mentioned_messages = self._mentioned_messages_by_conversation(conversations)
         broadcast_messages = self._broadcast_messages_by_conversation()
         addressed_messages = self._merge_message_groups(
@@ -214,10 +232,12 @@ class DingTalkAutoReplyWorker:
             conversations,
             addressed_messages,
         )
-        conversations = self._conversations_with_recent_single_chat_recovery(
-            conversations,
+        conversations, recovery_conversation_ids = (
+            self._conversations_with_due_recent_recovery(
+                conversations,
+                recovery_due=recovery_due,
+            )
         )
-        conversations = self._conversations_with_recent_group_recovery(conversations)
         for conversation in conversations:
             self.store.upsert_conversation(
                 conversation_id=conversation.open_conversation_id,
@@ -228,32 +248,39 @@ class DingTalkAutoReplyWorker:
             conversation_mentions = addressed_messages.get(
                 conversation.open_conversation_id, []
             )
-            try:
-                context_messages = self.dws.read_recent_messages(conversation)
-            except Exception as exc:
-                self.store.record_error(
-                    conversation.open_conversation_id,
-                    None,
-                    "read_recent_messages",
-                    str(exc),
-                )
-                context_messages = []
-            try:
-                unread_messages = self.dws.read_unread_messages(conversation)
-                candidate_unread_messages = unread_messages
-            except Exception as exc:
-                self.store.record_error(
-                    conversation.open_conversation_id,
-                    None,
-                    "read_unread_messages",
-                    str(exc),
-                )
-                self._notify(
-                    title=f"CEO read unread messages failed: {conversation.title}",
-                    message=str(exc)[:120],
-                )
-                unread_messages = []
-                candidate_unread_messages = context_messages
+            context_messages = []
+            if conversation.open_conversation_id in recovery_conversation_ids:
+                try:
+                    context_messages = self.dws.read_recent_messages(conversation)
+                except Exception as exc:
+                    self.store.record_error(
+                        conversation.open_conversation_id,
+                        None,
+                        "read_recent_messages",
+                        str(exc),
+                    )
+            unread_messages = []
+            candidate_unread_messages = []
+            should_read_unread = (
+                recovery_due
+                or conversation.open_conversation_id in unread_conversation_ids
+            )
+            if should_read_unread:
+                try:
+                    unread_messages = self.dws.read_unread_messages(conversation)
+                    candidate_unread_messages = unread_messages
+                except Exception as exc:
+                    self.store.record_error(
+                        conversation.open_conversation_id,
+                        None,
+                        "read_unread_messages",
+                        str(exc),
+                    )
+                    self._notify(
+                        title=f"CEO read unread messages failed: {conversation.title}",
+                        message=str(exc)[:120],
+                    )
+                    candidate_unread_messages = context_messages
             if (
                 not context_messages
                 and not unread_messages
@@ -297,7 +324,15 @@ class DingTalkAutoReplyWorker:
                 if self._enqueue_reply_task(conversation, message):
                     queued_tasks += 1
                 if max_tasks is not None and queued_tasks >= max_tasks:
+                    self.store.set_service_state(
+                        MESSAGE_FAST_PATH_CHECKED_AT_STATE_KEY,
+                        fast_path_checked_at.isoformat(),
+                    )
                     return queued_tasks
+        self.store.set_service_state(
+            MESSAGE_FAST_PATH_CHECKED_AT_STATE_KEY,
+            fast_path_checked_at.isoformat(),
+        )
         return queued_tasks
 
     def _conversations_with_recent_single_chat_recovery(
@@ -328,6 +363,87 @@ class DingTalkAutoReplyWorker:
                 )
             )
         return [*conversations, *recovered]
+
+    def _conversations_with_due_recent_recovery(
+        self,
+        conversations: list[DingTalkConversation],
+        *,
+        recovery_due: bool | None = None,
+    ) -> tuple[list[DingTalkConversation], set[str]]:
+        should_recover = (
+            self._should_run_recent_message_recovery()
+            if recovery_due is None
+            else recovery_due
+        )
+        if not should_recover:
+            return conversations, set()
+        recovered = self._conversations_with_recent_single_chat_recovery(conversations)
+        recovered = self._conversations_with_recent_group_recovery(recovered)
+        recovery_conversation_ids = {
+            conversation.open_conversation_id
+            for conversation in recovered
+        }
+        self.store.set_service_state(
+            MESSAGE_RECOVERY_CHECKED_AT_STATE_KEY,
+            self._now().astimezone(timezone.utc).isoformat(),
+        )
+        return recovered, recovery_conversation_ids
+
+    def _conversations_updated_since_fast_path_check(
+        self,
+        conversations: list[DingTalkConversation],
+    ) -> list[DingTalkConversation]:
+        checked_at = self._service_state_datetime(
+            MESSAGE_FAST_PATH_CHECKED_AT_STATE_KEY
+        )
+        if checked_at is None:
+            return conversations
+        return [
+            conversation
+            for conversation in conversations
+            if self._conversation_updated_after(conversation, checked_at)
+        ]
+
+    @staticmethod
+    def _conversation_updated_after(
+        conversation: DingTalkConversation,
+        checked_at: datetime,
+    ) -> bool:
+        if conversation.last_message_create_at is None:
+            return True
+        updated_at = datetime.fromtimestamp(
+            conversation.last_message_create_at / 1000,
+            timezone.utc,
+        )
+        return updated_at > checked_at.astimezone(timezone.utc)
+
+    def _service_state_datetime(self, key: str) -> datetime | None:
+        value = self.store.get_service_state(key)
+        if not value:
+            return None
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        if parsed.tzinfo is None:
+            return parsed.replace(tzinfo=timezone.utc)
+        return parsed
+
+    def _should_run_recent_message_recovery(self) -> bool:
+        checked_at = self.store.get_service_state(MESSAGE_RECOVERY_CHECKED_AT_STATE_KEY)
+        if not checked_at:
+            return True
+        try:
+            last_checked = datetime.fromisoformat(
+                checked_at.replace("Z", "+00:00")
+            )
+        except ValueError:
+            return True
+        if last_checked.tzinfo is None:
+            last_checked = last_checked.replace(tzinfo=timezone.utc)
+        return (
+            self._now().astimezone(timezone.utc) - last_checked.astimezone(timezone.utc)
+        ) >= MESSAGE_RECOVERY_INTERVAL
 
     def _conversations_with_recent_group_recovery(
         self,
@@ -1507,7 +1623,7 @@ class DingTalkAutoReplyWorker:
             "有人发来新的日程邀请，当前未发现同时间段已有日程冲突。",
             "请按日历规则判断是否需要聊天回复，或是否可以接受日程。",
             "如果日程是在要求审批、批阅、review、反馈或评论某个文档内容，reply_text 必须是：请直接@我文档让我批阅即可，只有存疑再约会。",
-            "如果日程描述明确，且 Derek 本人参与对业务判断、关键客户、关键产品、核心人事或跨部门决策有明确价值，action 输出 no_reply，reason 说明 calendar_auto_accept。",
+            f"如果日程描述明确，且 {principal_display_name()} 本人参与对业务判断、关键客户、关键产品、核心人事或跨部门决策有明确价值，action 输出 no_reply，reason 说明 calendar_auto_accept。",
             "如果描述或价值不明确，不要输出 no_reply；应追问补充信息或 handoff。",
             "",
             f"新会议：{context.invite.title or '未命名日程'}",
@@ -1721,6 +1837,8 @@ class DingTalkAutoReplyWorker:
             return False
         if not DINGTALK_INTERNAL_OR_RENDERED_MEDIA_PATTERN.search(content):
             return False
+        if DINGTALK_DOC_URL_PATTERN.search(content):
+            return False
         if DINGTALK_APPROVAL_LINK_PATTERN.search(content):
             return False
         if DingTalkAutoReplyWorker._has_question_outside_links(content):
@@ -1893,12 +2011,15 @@ class DingTalkAutoReplyWorker:
     ) -> bool:
         if message.sender_name.strip() in CURRENT_USER_DISPLAY_NAMES:
             return True
-        if not message.sender_user_id and not message.sender_open_dingtalk_id:
-            return False
-        try:
-            return self.dws.is_current_user_message(message)
-        except Exception:
-            return False
+        current_user_id = self.store.get_current_user_id()
+        if current_user_id and message.sender_user_id:
+            return message.sender_user_id == current_user_id
+        if current_user_id and message.sender_open_dingtalk_id:
+            profile = self.store.find_org_user_by_open_dingtalk_id(
+                message.sender_open_dingtalk_id
+            )
+            return profile is not None and profile.user_id == current_user_id
+        return False
 
     @staticmethod
     def _is_split_person_auto_reply_message(message: DingTalkMessage) -> bool:
@@ -3646,7 +3767,7 @@ class DingTalkAutoReplyWorker:
             return []
 
         lines = [
-            "相似人工纠偏样本（优先学习 Derek 对错误回复的修正方向；不要复用人名、项目名、客户名、凭证、数字或旧事实；只有当前场景一致时才复用动作边界）:"
+            f"相似人工纠偏样本（优先学习 {principal_display_name()} 对错误回复的修正方向；不要复用人名、项目名、客户名、凭证、数字或旧事实；只有当前场景一致时才复用动作边界）:"
         ]
         for index, attempt in enumerate(examples, start=1):
             feedback = self._style_example_text(attempt.reviewer_feedback, 160)

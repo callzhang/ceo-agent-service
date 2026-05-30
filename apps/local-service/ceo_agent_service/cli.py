@@ -10,7 +10,11 @@ from pathlib import Path
 from pydantic import BaseModel, PositiveInt
 
 from ceo_agent_service.codex_decision import CodexDecisionRunner
-from ceo_agent_service.config import profile_evidence_dir, work_profile_path
+from ceo_agent_service.config import (
+    principal_display_name,
+    profile_evidence_dir,
+    work_profile_path,
+)
 from ceo_agent_service.corpus import (
     append_records,
     build_dingtalk_records_from_sender_payload,
@@ -101,6 +105,8 @@ def _env_bool(name: str, default: bool) -> bool:
 
 
 def _not_send_message_default(default: bool) -> bool:
+    if os.getenv("CEO_DRY_RUN") is not None:
+        _env_bool("CEO_DRY_RUN", default)
     if os.getenv("CEO_NOT_SEND_MESSAGE") is not None:
         return _env_bool("CEO_NOT_SEND_MESSAGE", default)
     return _env_bool("CEO_DRY_RUN", default)
@@ -299,7 +305,10 @@ def build_parser() -> argparse.ArgumentParser:
                 "--include-dingtalk-messages",
                 dest="include_dingtalk_messages",
                 action="store_true",
-                help="read recent messages sent by Derek through dws in read-only mode",
+                help=(
+                    "read recent messages sent by "
+                    f"{principal_display_name()} through dws in read-only mode"
+                ),
             )
             subparser.add_argument(
                 "--skip-dingtalk-messages",
