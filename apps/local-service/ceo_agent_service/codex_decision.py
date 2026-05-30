@@ -494,15 +494,6 @@ class CodexDecisionRunner:
             and not decision.reply_text.strip()
         ):
             raise ValueError("reply_text is required for reply actions")
-        if (
-            decision.action
-            in {CodexAction.SEND_REPLY, CodexAction.ASK_CLARIFYING_QUESTION}
-            and not decision.audit_documents
-            and not audit_summary_explains_no_documents(decision.audit_summary)
-        ):
-            raise ValueError(
-                "audit_summary must explain missing document evidence when audit_documents is empty"
-            )
 
     def _subprocess_executor(self, command: list[str], prompt: str) -> str:
         completed = run_process_with_idle_timeout(

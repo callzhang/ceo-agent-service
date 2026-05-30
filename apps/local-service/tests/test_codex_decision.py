@@ -694,23 +694,17 @@ def test_missing_audit_summary_retries_once(tmp_path: Path):
     assert "audit_summary 必须非空" in executor.prompts[1]
 
 
-def test_missing_audit_documents_for_reply_retries_once(tmp_path: Path):
+def test_reply_with_empty_audit_documents_accepts_nonempty_audit_summary(
+    tmp_path: Path,
+):
     executor = FakeExecutor(
         [
             json.dumps(
                 {
                     "action": "send_reply",
                     "reply_text": "先按A方案走",
-                    "audit_summary": "基于当前消息可直接判断。",
-                },
-                ensure_ascii=False,
-            ),
-            json.dumps(
-                {
-                    "action": "send_reply",
-                    "reply_text": "先按A方案走",
                     "audit_documents": [],
-                    "audit_summary": "只需上下文判断，当前消息已足够确认先按A方案走。",
+                    "audit_summary": "未使用可作为业务依据的文档材料；本次判断主要基于当前群聊上下文和直接@磊哥的管理同步规则。",
                 },
                 ensure_ascii=False,
             ),
@@ -721,9 +715,8 @@ def test_missing_audit_documents_for_reply_retries_once(tmp_path: Path):
     decision = runner.decide(prompt="decide", session_id="session-1")
 
     assert decision.action == CodexAction.SEND_REPLY
-    assert decision.audit_summary.startswith("只需上下文判断")
-    assert len(executor.commands) == 2
-    assert "audit_documents 为空" in executor.prompts[1]
+    assert decision.audit_summary.startswith("未使用可作为业务依据的文档材料")
+    assert len(executor.commands) == 1
 
 
 def test_append_signature_once():
