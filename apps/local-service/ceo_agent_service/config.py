@@ -137,13 +137,6 @@ def handoff_ack() -> str:
     )
 
 
-def responsibility_summary() -> str:
-    return os.getenv(
-        "CEO_RESPONSIBILITY_SUMMARY",
-        "Use the configured organization responsibility rules to decide whether the principal should reply.",
-    )
-
-
 def style_speaker_names() -> tuple[str, ...]:
     return env_csv("CEO_STYLE_SPEAKER_NAMES", (principal_display_name(),))
 

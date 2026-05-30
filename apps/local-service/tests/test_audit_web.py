@@ -182,16 +182,16 @@ def test_render_config_page_shows_message_routing_logic():
     assert "| `CEO_MENTION_ALIASES` |" not in html
     assert "<pre># Producer routing config" not in html
     assert '<table class="config-variable-table">' in html
-    assert 'class="config-key-input"' in html
     assert 'class="config-value-input"' in html
     assert "<h3>快路径</h3>" in html
     assert "Producer 路由配置" in html
     assert "每次 producer 运行都会调用" in html
     assert 'value="CEO_MENTION_ALIASES"' not in html
     assert 'value="@Derek Zen, @磊哥"' not in html
-    assert 'value="principal"' in html
-    assert 'value="handoff_name"' in html
+    assert 'value="principal"' not in html
+    assert 'value="handoff_name"' not in html
     assert 'value="responsibility_summary"' in html
+    assert "CEO_PROMPT_VAR_RESPONSIBILITY_SUMMARY" in html
     assert 'value="MESSAGE_RECOVERY_INTERVAL"' not in html
     assert 'value="CEO_CURRENT_USER_DISPLAY_NAMES"' not in html
     assert 'value="CEO_STYLE_SPEAKER_NAMES"' not in html
@@ -237,13 +237,13 @@ def test_render_config_page_shows_system_config_tab_with_descriptions():
     assert "抽取风格语料" in html
     assert "CEO_FORBIDDEN_PATH_PREFIXES" in html
     assert "按路径前缀识别本机路径泄漏" in html
-    assert "forbidden_reply_text_terms" in html
-    assert "提醒 agent 不要在 reply_text 写出的词" in html
     assert html.index("CEO_CURRENT_USER_DISPLAY_NAMES") < html.index(
         "CEO_STYLE_SPEAKER_NAMES"
     )
     assert "CEO_FORBIDDEN_PATH_PREFIXES" in html
-    assert "forbidden_reply_text_terms" in html
+    system_section = html.split("<h2>系统运行参数</h2>", 1)[1]
+    assert "forbidden_reply_text_terms" not in system_section
+    assert "CEO_PROMPT_VAR_FORBIDDEN_REPLY_TEXT_TERMS" not in system_section
 
 
 def test_handle_system_config_post_saves_runtime_params_to_env_file(
@@ -361,8 +361,8 @@ def test_render_developer_prompt_editor_shows_template_and_preview(
     assert "Config variables" in html
     assert "&lt;var: principal&gt;" in html
     assert "&lt;code: ceo_agent_service.config:principal_display_name()&gt;" not in html
-    assert 'value="principal"' in html
-    assert 'value="Derek"' in html
+    assert 'value="principal"' not in html
+    assert "CEO_PROMPT_VAR_RESPONSIBILITY_SUMMARY" in html
     assert 'value="CEO_PRINCIPAL_NAME"' not in html
     assert 'value="CEO_PRINCIPAL_DISPLAY_NAME"' not in html
     assert "Hi Derek" in html
@@ -424,7 +424,7 @@ def test_handle_developer_prompt_post_saves_template(tmp_path: Path, monkeypatch
     assert headers["Location"] == "/config?tab=developer&saved=1"
     assert html == ""
     assert template_path.read_text(encoding="utf-8") == (
-        "<vars>\nprincipal = Derek\n</vars>\n\n# Updated\nHi <var: principal>"
+        "# Updated\nHi <var: principal>"
     )
 
 
@@ -438,12 +438,13 @@ def test_handle_prompt_variables_post_saves_variables_without_changing_template(
         encoding="utf-8",
     )
     monkeypatch.setenv("CEO_DEVELOPER_PROMPT_TEMPLATE_PATH", str(template_path))
+    monkeypatch.setenv("CEO_ENV_FILE", str(tmp_path / ".env"))
     body = (
         "active_tab=user"
-        "&variable_key=CEO_MENTION_ALIASES"
-        "&variable_value=%40Derek+Zen%2C+%40%E7%A3%8A%E5%93%A5"
-        "&variable_key=principal"
-        "&variable_value=%E7%A3%8A%E5%93%A5"
+        "&variable_key=responsibility_summary"
+        "&variable_value=%E7%AE%97%E6%B3%95%E5%9B%A2%E9%98%9F%E8%81%8C%E8%B4%A3"
+        "&variable_key=oa_approval_rules"
+        "&variable_value=management%2FOA%2F%E9%92%89%E9%92%89%E5%AE%A1%E6%89%B9%E5%AE%A1%E9%98%85%E5%8E%9F%E5%88%99.md"
         "&variable_key="
         "&variable_value="
     ).encode()
@@ -454,8 +455,11 @@ def test_handle_prompt_variables_post_saves_variables_without_changing_template(
     assert headers["Location"] == "/config?tab=user&saved=1"
     assert html == ""
     assert template_path.read_text(encoding="utf-8") == (
-        "<vars>\nCEO_MENTION_ALIASES = @Derek Zen, @磊哥\nprincipal = 磊哥\n</vars>\n\n# Body\nHi <var: principal>"
+        "<vars>\nprincipal = Derek\n</vars>\n\n# Body\nHi <var: principal>"
     )
+    env_text = (tmp_path / ".env").read_text(encoding="utf-8")
+    assert "CEO_PROMPT_VAR_RESPONSIBILITY_SUMMARY" in env_text
+    assert "算法团队职责" in env_text
 
 
 def test_handle_user_prompt_post_saves_template(tmp_path: Path, monkeypatch):

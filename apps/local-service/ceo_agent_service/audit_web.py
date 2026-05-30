@@ -28,7 +28,6 @@ from ceo_agent_service.config import (
     principal_display_name,
     principal_handoff_name,
     principal_name,
-    responsibility_summary,
     single_chat_read_recovery_limit,
     single_chat_read_recovery_window,
     style_speaker_names,
@@ -36,11 +35,10 @@ from ceo_agent_service.config import (
     work_profile_path,
 )
 from ceo_agent_service.developer_prompt import (
+    configurable_prompt_variable_pairs,
     DeveloperPromptTemplateError,
     developer_prompt_template_path,
-    developer_prompt_variable_pairs,
-    format_developer_prompt_variables,
-    merge_developer_prompt_template,
+    prompt_variable_env_key,
     read_developer_prompt_template,
     read_user_prompt_template,
     render_developer_prompt_template,
@@ -48,6 +46,7 @@ from ceo_agent_service.developer_prompt import (
     split_developer_prompt_template,
     user_prompt_template_path,
     write_developer_prompt_template,
+    write_configurable_prompt_variables,
     write_user_prompt_template,
 )
 from ceo_agent_service.dingtalk_models import (
@@ -305,10 +304,7 @@ def _prompt_config_card(active_tab: str) -> str:
 
 def _config_variable_form(active_tab: str) -> str:
     try:
-        variable_definitions, _ = split_developer_prompt_template(
-            read_developer_prompt_template()
-        )
-        variable_inputs = _config_variable_inputs(variable_definitions)
+        variable_inputs = _config_variable_inputs()
         error_html = ""
     except (OSError, DeveloperPromptTemplateError) as exc:
         variable_inputs = ""
@@ -356,13 +352,11 @@ def _system_config_rows() -> list[tuple[str, str, str]]:
     current_user_text = _csv_label(current_user_display_names())
     style_speaker_text = _csv_label(style_speaker_names())
     forbidden_path_text = _csv_label(forbidden_path_prefixes())
-    prompt_variables = _developer_prompt_variable_map()
-    forbidden_terms = prompt_variables.get("forbidden_reply_text_terms", "")
     return [
         (
             "CEO_PRINCIPAL_NAME",
             principal_name(),
-            "系统级代理对象名称；Prompt 里的 principal 变量可以单独覆盖最终提示词文案。",
+            "代理对象账号名称；用于系统识别和派生 Prompt 里的 principal/handoff_name。",
         ),
         (
             "CEO_PRINCIPAL_DISPLAY_NAME",
@@ -405,11 +399,6 @@ def _system_config_rows() -> list[tuple[str, str, str]]:
             "系统需要交给真人处理时的默认提示文案。",
         ),
         (
-            "CEO_RESPONSIBILITY_SUMMARY",
-            responsibility_summary(),
-            "系统级职责摘要；Prompt 里的 responsibility_summary 可单独编辑。",
-        ),
-        (
             "CEO_WORK_PROFILE_PATH",
             str(work_profile_path()),
             "work_profile_instruction() 读取这个文件并注入 Developer Prompt。",
@@ -418,11 +407,6 @@ def _system_config_rows() -> list[tuple[str, str, str]]:
             "CEO_FORBIDDEN_PATH_PREFIXES",
             forbidden_path_text,
             "系统安全检查使用：按路径前缀识别本机路径泄漏。",
-        ),
-        (
-            "forbidden_reply_text_terms",
-            forbidden_terms,
-            "Prompt 变量：提醒 agent 不要在 reply_text 写出的词；不是路径前缀列表。",
         ),
         (
             "MESSAGE_RECOVERY_INTERVAL",
@@ -452,38 +436,26 @@ def _system_config_rows() -> list[tuple[str, str, str]]:
     ]
 
 
-def _config_variable_inputs(variable_definitions: str) -> str:
-    rows: list[str] = ["<tr><th>Key</th><th>Value</th></tr>"]
-    for key, value in developer_prompt_variable_pairs(variable_definitions):
+def _config_variable_inputs() -> str:
+    rows: list[str] = ["<tr><th>Key</th><th>Value</th><th>.env key</th></tr>"]
+    for key, value in configurable_prompt_variable_pairs():
         rows.append(_variable_input_row(key, value))
-    rows.append(
-        "<tr>"
-        "<td><input class=\"config-key-input\" type=\"text\" name=\"variable_key\" value=\"\" "
-        "placeholder=\"new_key\"></td>"
-        "<td><input class=\"config-value-input\" type=\"text\" name=\"variable_value\" value=\"\" "
-        "placeholder=\"value\"></td>"
-        "</tr>"
-    )
     return "<table class=\"config-variable-table\">" + "".join(rows) + "</table>"
 
 
 def _variable_input_row(key: str, value: str) -> str:
     return (
         "<tr>"
-        f"<td><input class=\"config-key-input\" type=\"text\" name=\"variable_key\" value=\"{escape(key)}\"></td>"
+        f"<td><code class=\"config-value\">{escape(key)}</code>"
+        f"<input type=\"hidden\" name=\"variable_key\" value=\"{escape(key)}\"></td>"
         f"<td><input class=\"config-value-input\" type=\"text\" name=\"variable_value\" value=\"{escape(value)}\"></td>"
+        f"<td><code class=\"config-value\">{escape(prompt_variable_env_key(key))}</code></td>"
         "</tr>"
     )
 
 
 def _developer_prompt_variable_map() -> dict[str, str]:
-    try:
-        variable_definitions, _ = split_developer_prompt_template(
-            read_developer_prompt_template()
-        )
-        return dict(developer_prompt_variable_pairs(variable_definitions))
-    except (OSError, DeveloperPromptTemplateError):
-        return {}
+    return dict(configurable_prompt_variable_pairs())
 
 
 def _render_system_config() -> str:
@@ -526,7 +498,6 @@ def _editable_system_config_keys() -> set[str]:
         "CEO_STYLE_SPEAKER_NAMES",
         "CEO_ASSISTANT_SIGNATURE",
         "CEO_HANDOFF_ACK",
-        "CEO_RESPONSIBILITY_SUMMARY",
         "CEO_WORK_PROFILE_PATH",
         "CEO_FORBIDDEN_PATH_PREFIXES",
         "MESSAGE_RECOVERY_INTERVAL",
@@ -1082,12 +1053,7 @@ def handle_feedback_post(
 def handle_developer_prompt_post(body: bytes) -> tuple[int, dict[str, str], str]:
     parsed = parse_qs(body.decode("utf-8"), keep_blank_values=True)
     template = parsed.get("template", [""])[0]
-    variable_definitions, _ = split_developer_prompt_template(
-        read_developer_prompt_template()
-    )
-    write_developer_prompt_template(
-        merge_developer_prompt_template(variable_definitions, template)
-    )
+    write_developer_prompt_template(template.strip())
     return 303, {"Location": "/config?tab=developer&saved=1"}, ""
 
 
@@ -1096,7 +1062,7 @@ def handle_prompt_variables_post(body: bytes) -> tuple[int, dict[str, str], str]
     active_tab = parsed.get("active_tab", ["info"])[0]
     if active_tab not in {"info", "system", "developer", "user"}:
         active_tab = "info"
-    variables = format_developer_prompt_variables(
+    write_configurable_prompt_variables(
         [
             (key, value)
             for key, value in zip_longest(
@@ -1105,10 +1071,6 @@ def handle_prompt_variables_post(body: bytes) -> tuple[int, dict[str, str], str]
                 fillvalue="",
             )
         ]
-    )
-    _, template = split_developer_prompt_template(read_developer_prompt_template())
-    write_developer_prompt_template(
-        merge_developer_prompt_template(variables, template)
     )
     return 303, {"Location": f"/config?tab={active_tab}&saved=1"}, ""
 

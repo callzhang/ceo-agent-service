@@ -255,7 +255,11 @@ def test_builds_resume_command_with_images(tmp_path: Path):
     ]
 
 
-def test_codex_developer_instructions_hold_thread_prompt_not_turn_message():
+def test_codex_developer_instructions_hold_thread_prompt_not_turn_message(monkeypatch):
+    monkeypatch.setenv(
+        "CEO_PROMPT_VAR_RESPONSIBILITY_SUMMARY",
+        "星尘数据的CEO，负责算法部、售前部、市场部、HR部的工作。",
+    )
     instructions = codex_developer_instructions()
 
     assert instructions.startswith("You are the local CEO DingTalk reply worker.")

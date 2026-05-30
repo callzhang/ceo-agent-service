@@ -73,11 +73,10 @@ def test_developer_prompt_template_renders_vars_files_and_code(tmp_path, monkeyp
 def test_default_developer_prompt_template_is_a_separate_file():
     template = read_developer_prompt_template()
 
-    assert template.startswith("<vars>")
-    assert "principal = 磊哥" in template
-    assert "handoff_name = Derek" in template
-    variable_block = template.split("</vars>", 1)[0]
-    assert "<code:" not in variable_block
+    assert not template.startswith("<vars>")
+    assert "principal = 磊哥" not in template
+    assert "handoff_name = Derek" not in template
+    assert "<vars>" not in template
     assert "<var: principal>" in template
     assert "<code: ceo_agent_service.prompt:work_profile_instruction()>" in template
     assert "work_profile_path" not in template

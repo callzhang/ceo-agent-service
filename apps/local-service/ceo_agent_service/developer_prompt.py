@@ -7,7 +7,10 @@ from pathlib import Path
 from types import ModuleType
 
 from ceo_agent_service.config import (
+    principal_display_name,
+    principal_handoff_name,
     repo_root,
+    write_env_values,
 )
 from ceo_agent_service.leak_check import FORBIDDEN_MARKERS
 
@@ -21,6 +24,16 @@ VARIABLE_BLOCK_RE = re.compile(r"\A\s*<vars>\s*\n(?P<body>.*?)\n</vars>\s*", re.
 VARIABLE_DEFINITION_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$")
 DEFAULT_DEVELOPER_PROMPT_TEMPLATE = repo_root() / "prompts" / "developer_prompt.md"
 DEFAULT_USER_PROMPT_TEMPLATE = repo_root() / "prompts" / "user_prompt.md"
+PROMPT_VARIABLE_ENV_PREFIX = "CEO_PROMPT_VAR_"
+CONFIGURABLE_PROMPT_VARIABLE_DEFAULTS = {
+    "responsibility_summary": (
+        "Use the configured organization responsibility rules to decide whether "
+        "the principal should reply."
+    ),
+    "forbidden_reply_text_terms": "",
+    "oa_approval_rules": "management/OA/钉钉审批审阅原则.md",
+    "calendar_rules_path": "management/OA/日历规则.md",
+}
 
 
 class DeveloperPromptTemplateError(ValueError):
@@ -82,7 +95,8 @@ def render_user_prompt(
 
 def render_developer_prompt_template(template: str) -> str:
     variable_definitions, body = split_developer_prompt_template(template)
-    variables = parse_developer_prompt_variables(variable_definitions)
+    variables = prompt_template_variables()
+    variables.update(parse_developer_prompt_variables(variable_definitions))
 
     return _render_template_tags(body, variables)
 
@@ -94,7 +108,8 @@ def render_user_prompt_template(
     from ceo_agent_service.user_prompt_blocks import user_prompt_block_context
 
     variable_definitions, body = split_developer_prompt_template(template)
-    variables = parse_developer_prompt_variables(variable_definitions)
+    variables = prompt_template_variables()
+    variables.update(parse_developer_prompt_variables(variable_definitions))
     variables.update(runtime_variables)
 
     if not runtime_variables:
@@ -144,6 +159,45 @@ def format_developer_prompt_variables(pairs: list[tuple[str, str]]) -> str:
             raise DeveloperPromptTemplateError(f"invalid variable name: {name}")
         lines.append(f"{name} = {text}")
     return "\n".join(lines)
+
+
+def configurable_prompt_variable_pairs() -> list[tuple[str, str]]:
+    variables = prompt_template_variables()
+    return [
+        (key, variables.get(key, ""))
+        for key in CONFIGURABLE_PROMPT_VARIABLE_DEFAULTS
+    ]
+
+
+def prompt_variable_env_key(name: str) -> str:
+    return f"{PROMPT_VARIABLE_ENV_PREFIX}{name.upper()}"
+
+
+def write_configurable_prompt_variables(pairs: list[tuple[str, str]]) -> None:
+    updates: dict[str, str] = {}
+    allowed_keys = set(CONFIGURABLE_PROMPT_VARIABLE_DEFAULTS)
+    for key, value in pairs:
+        name = key.strip()
+        if not name and not value.strip():
+            continue
+        if name not in allowed_keys:
+            raise DeveloperPromptTemplateError(
+                f"unsupported config variable: {name}"
+            )
+        updates[prompt_variable_env_key(name)] = value.strip()
+    write_env_values(updates)
+
+
+def prompt_template_variables() -> dict[str, str]:
+    variables = {
+        "principal": principal_handoff_name(),
+        "handoff_name": principal_display_name(),
+    }
+    for key, default in CONFIGURABLE_PROMPT_VARIABLE_DEFAULTS.items():
+        variables[key] = os.getenv(prompt_variable_env_key(key), default)
+    if not variables["forbidden_reply_text_terms"]:
+        variables["forbidden_reply_text_terms"] = forbidden_reply_text_terms()
+    return variables
 
 
 def parse_developer_prompt_variables(variable_definitions: str) -> dict[str, str]:
