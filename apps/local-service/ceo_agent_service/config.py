@@ -106,12 +106,16 @@ def principal_name() -> str:
     return os.getenv("CEO_PRINCIPAL_NAME", "the principal")
 
 
+def user_alias() -> str:
+    return os.getenv("USER_ALIAS", principal_name())
+
+
 def principal_display_name() -> str:
-    return os.getenv("CEO_PRINCIPAL_DISPLAY_NAME", principal_name())
+    return user_alias()
 
 
 def principal_handoff_name() -> str:
-    return os.getenv("CEO_PRINCIPAL_HANDOFF_NAME", principal_display_name())
+    return user_alias()
 
 
 def memory_connector_user_id() -> str:
@@ -137,8 +141,8 @@ def handoff_ack() -> str:
     )
 
 
-def style_speaker_names() -> tuple[str, ...]:
-    return env_csv("CEO_STYLE_SPEAKER_NAMES", (principal_display_name(),))
+def document_extraction_ids() -> tuple[str, ...]:
+    return env_csv("DOCUMENT_EXTRACTION_IDS", (user_alias(),))
 
 
 def forbidden_path_prefixes() -> tuple[str, ...]:

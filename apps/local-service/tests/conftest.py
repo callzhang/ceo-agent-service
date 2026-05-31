@@ -2,10 +2,9 @@ import os
 
 
 os.environ.setdefault("CEO_PRINCIPAL_NAME", "Derek")
-os.environ.setdefault("CEO_PRINCIPAL_DISPLAY_NAME", "Derek")
-os.environ.setdefault("CEO_PRINCIPAL_HANDOFF_NAME", "磊哥")
+os.environ.setdefault("USER_ALIAS", "磊哥")
 os.environ.setdefault("CEO_MENTION_ALIASES", "@Derek Zen,@磊哥")
-os.environ.setdefault("CEO_STYLE_SPEAKER_NAMES", "磊哥,Derek")
+os.environ.setdefault("DOCUMENT_EXTRACTION_IDS", "磊哥,Derek")
 os.environ.setdefault("CEO_ASSISTANT_SIGNATURE", "（by磊哥分身）")
 os.environ.setdefault("CEO_HANDOFF_ACK", "我让磊哥本人看一下。（by磊哥分身）")
 os.environ.setdefault(

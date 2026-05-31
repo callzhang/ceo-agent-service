@@ -8,8 +8,8 @@ from pydantic import BaseModel
 
 from ceo_agent_service.config import (
     assistant_signature,
+    document_extraction_ids,
     principal_name,
-    style_speaker_names,
 )
 
 SIGNATURE = assistant_signature()
@@ -86,7 +86,7 @@ def extract_minutes_records(path: Path, source_title: str) -> list[CorpusRecord]
         if index + 2 < len(lines) and _looks_like_timestamp(lines[index + 1]):
             timestamp = lines[index + 1]
             text = lines[index + 2]
-            if speaker in set(style_speaker_names()) and is_informative_reply(text):
+            if speaker in set(document_extraction_ids()) and is_informative_reply(text):
                 records.append(
                     CorpusRecord(
                         source_type="minutes",

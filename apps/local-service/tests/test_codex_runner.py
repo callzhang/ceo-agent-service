@@ -299,7 +299,7 @@ def test_codex_developer_instructions_inject_work_profile_content_without_path(
 
     instructions = codex_developer_instructions()
 
-    assert "Derek 工作人格 Profile" in instructions
+    assert "磊哥 工作人格 Profile" in instructions
     assert (
         "/Users/derek/Documents/Projects/ceo-agent-service/profiles/derek_work_profile.md"
         not in instructions
@@ -315,7 +315,7 @@ def test_codex_developer_instructions_uses_template_variable_values():
     instructions = codex_developer_instructions()
 
     assert "你是 磊哥 的钉钉自动回复分身" in instructions
-    assert "让 Derek 本人接管" in instructions
+    assert "让 磊哥 本人接管" in instructions
 
 
 def test_codex_decision_schema_file_exists():

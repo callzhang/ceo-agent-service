@@ -238,8 +238,10 @@ def test_render_config_page_shows_system_config_tab_with_descriptions():
     assert "CEO_MENTION_ALIASES" in html
     assert "群聊/消息触发时识别点名" in html
     assert "每次慢路径兜底扫描之间至少间隔多久" in html
-    assert "CEO_STYLE_SPEAKER_NAMES" in html
-    assert "抽取风格语料" in html
+    assert "USER_ALIAS" in html
+    assert "用户别名" in html
+    assert "DOCUMENT_EXTRACTION_IDS" in html
+    assert "抽取该身份的发言或材料" in html
     assert "CEO_FORBIDDEN_PATH_PREFIXES" in html
     assert "按路径前缀识别本机路径泄漏" in html
     assert "CEO_CURRENT_USER_DISPLAY_NAMES" not in html
@@ -297,7 +299,7 @@ def test_env_file_overrides_existing_environment(tmp_path: Path, monkeypatch):
 
 
 def test_render_config_dynamic_functions_do_not_hardcode_principal_name(monkeypatch):
-    monkeypatch.setenv("CEO_PRINCIPAL_DISPLAY_NAME", "Alex")
+    monkeypatch.setenv("USER_ALIAS", "Alex")
 
     html = render_config_page()
 
@@ -343,7 +345,7 @@ def test_render_developer_prompt_editor_shows_template_and_preview(
         encoding="utf-8",
     )
     monkeypatch.setenv("CEO_DEVELOPER_PROMPT_TEMPLATE_PATH", str(template_path))
-    monkeypatch.setenv("CEO_PRINCIPAL_DISPLAY_NAME", "Derek")
+    monkeypatch.setenv("USER_ALIAS", "Derek")
 
     html = render_config_page(active_tab="developer", saved=True)
 
@@ -363,11 +365,12 @@ def test_render_developer_prompt_editor_shows_template_and_preview(
     assert 'name="template"' in html
     assert "Config variables" in html
     assert "&lt;var: principal&gt;" in html
-    assert "&lt;code: ceo_agent_service.config:principal_display_name()&gt;" not in html
+    assert "&lt;code: ceo_agent_service.config:user_alias()&gt;" not in html
     assert 'value="principal"' not in html
     assert "CEO_PROMPT_VAR_RESPONSIBILITY_SUMMARY" in html
     assert 'value="CEO_PRINCIPAL_NAME"' not in html
     assert 'value="CEO_PRINCIPAL_DISPLAY_NAME"' not in html
+    assert 'value="CEO_PRINCIPAL_HANDOFF_NAME"' not in html
     assert "Hi Derek" in html
     assert "Saved." in html
 

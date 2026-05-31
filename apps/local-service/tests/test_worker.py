@@ -748,7 +748,7 @@ def test_consumer_codex_command_injects_work_profile_content(
 
     assert len(seen_instructions) == 1
     instructions = seen_instructions[0]
-    assert "Derek 工作人格 Profile" in instructions
+    assert "磊哥 工作人格 Profile" in instructions
     assert "Profile 内容:" in instructions
     assert profile_content in instructions
     assert str(tmp_path / "profiles" / "derek_work_profile.md") not in instructions
@@ -3954,7 +3954,7 @@ def test_prompt_includes_similar_human_feedback_examples(tmp_path: Path, monkeyp
 
     prompt = codex.calls[0][0]
     assert "相似人工纠偏样本" in prompt
-    assert "优先学习 Derek 对错误回复的修正方向" in prompt
+    assert "优先学习 磊哥 对错误回复的修正方向" in prompt
     assert "不要直接交给本人" in prompt
     assert "你把代码提交一下" in prompt
     assert "msg-old" not in prompt

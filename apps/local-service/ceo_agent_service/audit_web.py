@@ -17,6 +17,7 @@ from ceo_agent_service.codex_decision import audit_summary_explains_no_documents
 from ceo_agent_service.config import (
     assistant_signature,
     broadcast_mention_aliases,
+    document_extraction_ids,
     env_file_path,
     forbidden_path_prefixes,
     group_read_recovery_limit,
@@ -25,12 +26,10 @@ from ceo_agent_service.config import (
     memory_connector_user_id,
     mention_aliases,
     message_recovery_interval,
-    principal_display_name,
-    principal_handoff_name,
     principal_name,
     single_chat_read_recovery_limit,
     single_chat_read_recovery_window,
-    style_speaker_names,
+    user_alias,
     write_env_values,
     work_profile_path,
 )
@@ -350,23 +349,18 @@ def _render_config_info() -> str:
 def _system_config_rows() -> list[tuple[str, str, str]]:
     mention_text = _csv_label(mention_aliases())
     broadcast_text = _csv_label(broadcast_mention_aliases())
-    style_speaker_text = _csv_label(style_speaker_names())
+    document_extraction_text = _csv_label(document_extraction_ids())
     forbidden_path_text = _csv_label(forbidden_path_prefixes())
     return [
         (
             "CEO_PRINCIPAL_NAME",
             principal_name(),
-            "代理对象账号名称；用于系统识别和派生 Prompt 里的 principal/handoff_name。",
+            "代理对象账号名称；用于系统内部识别 principal。",
         ),
         (
-            "CEO_PRINCIPAL_DISPLAY_NAME",
-            principal_display_name(),
-            "系统展示名；用于运行时生成日历、profile 等系统文案。",
-        ),
-        (
-            "CEO_PRINCIPAL_HANDOFF_NAME",
-            principal_handoff_name(),
-            "需要真人接管时使用的称呼。",
+            "USER_ALIAS",
+            user_alias(),
+            "用户别名；用于展示、handoff 文案、日历/profile 等运行时文案。",
         ),
         (
             "MEMORY_CONNECTOR_USER_ID",
@@ -384,9 +378,9 @@ def _system_config_rows() -> list[tuple[str, str, str]]:
             "识别 @所有人、@all 等广播消息；群聊广播也会进入候选判断。",
         ),
         (
-            "CEO_STYLE_SPEAKER_NAMES",
-            style_speaker_text,
-            "用于从会议纪要和语料中抽取风格语料；可以和当前账号显示名不同。",
+            "DOCUMENT_EXTRACTION_IDS",
+            document_extraction_text,
+            "用于从会议纪要和文档语料中抽取该身份的发言或材料。",
         ),
         (
             "CEO_ASSISTANT_SIGNATURE",
@@ -520,12 +514,11 @@ def _runtime_identity_cache_html(db_path: Path | None) -> str:
 def _editable_system_config_keys() -> set[str]:
     return {
         "CEO_PRINCIPAL_NAME",
-        "CEO_PRINCIPAL_DISPLAY_NAME",
-        "CEO_PRINCIPAL_HANDOFF_NAME",
+        "USER_ALIAS",
         "MEMORY_CONNECTOR_USER_ID",
         "CEO_MENTION_ALIASES",
         "CEO_BROADCAST_MENTION_ALIASES",
-        "CEO_STYLE_SPEAKER_NAMES",
+        "DOCUMENT_EXTRACTION_IDS",
         "CEO_ASSISTANT_SIGNATURE",
         "CEO_HANDOFF_ACK",
         "CEO_WORK_PROFILE_PATH",
@@ -620,7 +613,7 @@ def _config_logic_sections() -> list[tuple[str, list[tuple[str, str]]]]:
             "从本地 DB 加入最近 "
             f"{_duration_label(group_read_recovery_window())} 内的群聊会话，最多 "
             f"{group_read_recovery_limit()} 个。群聊候选仍然必须点名 "
-            f"{principal_display_name()} 或配置的广播别名，才会进入队列。",
+            f"{user_alias()} 或配置的广播别名，才会进入队列。",
         ),
     ]
     group_rows = [

@@ -43,15 +43,14 @@ def test_developer_prompt_template_renders_vars_files_and_code(tmp_path, monkeyp
         "    return 'runtime rule from code'\n",
         encoding="utf-8",
     )
-    monkeypatch.setenv("CEO_PRINCIPAL_DISPLAY_NAME", "Derek")
-    monkeypatch.setenv("CEO_PRINCIPAL_HANDOFF_NAME", "Derek")
+    monkeypatch.setenv("USER_ALIAS", "Derek")
     try:
         rendered = render_developer_prompt_template(
             "\n".join(
                 [
                     "<vars>",
-                    "principal = <code: ceo_agent_service.config:principal_display_name()>",
-                    "handoff = <code: ceo_agent_service.config:principal_handoff_name()>",
+                    "principal = <code: ceo_agent_service.config:user_alias()>",
+                    "handoff = <code: ceo_agent_service.config:user_alias()>",
                     "</vars>",
                     "",
                     "principal=<var: principal>",
@@ -105,7 +104,7 @@ def test_work_profile_instruction_uses_configured_principal_name(
     profile = tmp_path / "profile.md"
     profile.write_text("# Generic Profile\n\n- Keep replies concise.", encoding="utf-8")
     monkeypatch.setenv("CEO_WORK_PROFILE_PATH", str(profile))
-    monkeypatch.setenv("CEO_PRINCIPAL_DISPLAY_NAME", "Alex")
+    monkeypatch.setenv("USER_ALIAS", "Alex")
 
     instruction = work_profile_instruction()
 
@@ -487,7 +486,7 @@ def test_thread_prompt_injects_work_profile_without_exposing_path(monkeypatch):
 
     prompt = ceo_agent_thread_prompt()
 
-    assert "Derek 工作人格 Profile" in prompt
+    assert "磊哥 工作人格 Profile" in prompt
     assert (
         "/Users/derek/Documents/Projects/ceo-agent-service/profiles/derek_work_profile.md"
         not in prompt
