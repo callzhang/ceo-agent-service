@@ -1428,6 +1428,33 @@ def test_search_conversations_parses_group_results():
     assert conversations[0].title == "【招聘】大模型项目经理/大模型数据解决方案专家"
 
 
+def test_client_conversation_id_uses_conversation_info():
+    payload = {
+        "result": {
+            "conversationInfo": {
+                "openConversationId": "cid-open",
+                "clientCid": "75217569357",
+            }
+        }
+    }
+    client = RecordingDwsClient(payload)
+
+    client_cid = client.client_conversation_id("cid-open")
+
+    assert client.commands == [
+        [
+            "dws",
+            "chat",
+            "conversation-info",
+            "--group",
+            "cid-open",
+            "--format",
+            "json",
+        ]
+    ]
+    assert client_cid == "75217569357"
+
+
 def test_read_mentioned_messages_parses_conversation_messages_list(monkeypatch):
     monkeypatch.setattr(dws_client, "_local_time_zone", lambda: TEST_LOCAL_TZ)
     payload = {

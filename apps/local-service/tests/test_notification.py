@@ -7,6 +7,7 @@ def test_notification_uses_valid_escaped_applescript_literals(monkeypatch):
         "ceo_agent_service.notification.subprocess.run",
         lambda command, check: commands.append((command, check)),
     )
+    monkeypatch.setattr("ceo_agent_service.notification.shutil.which", lambda _: None)
 
     send_macos_notification(
         title='CEO "urgent"',
@@ -19,8 +20,42 @@ def test_notification_uses_valid_escaped_applescript_literals(monkeypatch):
             [
                 "osascript",
                 "-e",
-                'display notification "Question with \\"quotes\\"" with title "CEO \\"urgent\\""\n'
-                'open location "https://ceo.stardust.ai/threads/thread-1?q=\\"question-1\\""',
+                'display notification "Question with \\"quotes\\"" with title "CEO \\"urgent\\""',
+            ],
+            False,
+        )
+    ]
+
+
+def test_notification_binds_click_url_with_terminal_notifier(monkeypatch):
+    commands = []
+    monkeypatch.setattr(
+        "ceo_agent_service.notification.subprocess.run",
+        lambda command, check: commands.append((command, check)),
+    )
+    monkeypatch.setattr(
+        "ceo_agent_service.notification.shutil.which",
+        lambda command: "/opt/homebrew/bin/terminal-notifier"
+        if command == "terminal-notifier"
+        else None,
+    )
+
+    send_macos_notification(
+        title="CEO auto reply",
+        message="已回复",
+        url="dingtalk://dingtalkclient/page/conversation?cid=75217569357",
+    )
+
+    assert commands == [
+        (
+            [
+                "/opt/homebrew/bin/terminal-notifier",
+                "-title",
+                "CEO auto reply",
+                "-message",
+                "已回复",
+                "-open",
+                "dingtalk://dingtalkclient/page/conversation?cid=75217569357",
             ],
             False,
         )
@@ -33,6 +68,7 @@ def test_notification_keeps_unicode_literals_for_applescript(monkeypatch):
         "ceo_agent_service.notification.subprocess.run",
         lambda command, check: commands.append((command, check)),
     )
+    monkeypatch.setattr("ceo_agent_service.notification.shutil.which", lambda _: None)
 
     send_macos_notification(
         title="CEO question",

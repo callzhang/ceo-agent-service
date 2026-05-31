@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 from io import BytesIO
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qs, unquote, urlparse, urlsplit, urlunsplit
+from urllib.parse import parse_qs, quote, unquote, urlparse, urlsplit, urlunsplit
 
 from pypdf import PdfReader
 
@@ -150,6 +150,7 @@ SINGLE_CHAT_READ_RECOVERY_WINDOW = single_chat_read_recovery_window()
 SINGLE_CHAT_READ_RECOVERY_LIMIT = single_chat_read_recovery_limit()
 GROUP_READ_RECOVERY_WINDOW = group_read_recovery_window()
 GROUP_READ_RECOVERY_LIMIT = group_read_recovery_limit()
+DINGTALK_CONVERSATION_DEEPLINK = "dingtalk://dingtalkclient/page/conversation"
 
 
 @dataclass(frozen=True)
@@ -193,6 +194,7 @@ class DingTalkAutoReplyWorker:
         self.now_provider = now_provider or (lambda: datetime.now().astimezone())
         self.permission_gate = PermissionGate(dws)
         self.oa_approval_runner = oa_approval_runner
+        self._client_conversation_id_cache: dict[str, str] = {}
 
     def run_once(self, max_batches: int | None = None) -> None:
         self.produce_once()
@@ -277,6 +279,7 @@ class DingTalkAutoReplyWorker:
                     self._notify(
                         title=f"CEO read unread messages failed: {conversation.title}",
                         message=str(exc)[:120],
+                        conversation=conversation,
                     )
                     candidate_unread_messages = context_messages
             if (
@@ -601,6 +604,7 @@ class DingTalkAutoReplyWorker:
                     self._notify(
                         title=f"CEO task waiting for authorization: {task.conversation_title}",
                         message=error[:120],
+                        conversation=conversation,
                     )
                     continue
                 if task.attempts < self.max_task_attempts:
@@ -622,6 +626,7 @@ class DingTalkAutoReplyWorker:
                 self._notify(
                     title=f"CEO task failed: {task.conversation_title}",
                     message=error[:120],
+                    conversation=conversation,
                 )
                 continue
             if should_complete_task:
@@ -976,6 +981,7 @@ class DingTalkAutoReplyWorker:
             self._notify(
                 title=f"CEO AI minutes permission failed: {conversation.title}",
                 message=str(exc)[:120],
+                conversation=conversation,
             )
             if raise_on_delivery_failure:
                 raise ReplyDeliveryError(str(exc)) from exc
@@ -1114,6 +1120,7 @@ class DingTalkAutoReplyWorker:
             self._notify(
                 title=f"CEO OA approval action failed: {conversation.title}",
                 message=send_error[:120],
+                conversation=conversation,
             )
             raise ReplyDeliveryError(send_error)
         self._mark_seen([trigger])
@@ -1666,6 +1673,7 @@ class DingTalkAutoReplyWorker:
             self._notify(
                 title=f"CEO calendar accept failed: {conversation.title}",
                 message=error,
+                conversation=conversation,
             )
             if raise_on_delivery_failure:
                 raise ReplyDeliveryError(error)
@@ -1693,6 +1701,7 @@ class DingTalkAutoReplyWorker:
             self._notify(
                 title=f"CEO calendar accept failed: {conversation.title}",
                 message=str(exc)[:120],
+                conversation=conversation,
             )
             if raise_on_delivery_failure:
                 raise ReplyDeliveryError(str(exc)) from exc
@@ -2204,6 +2213,7 @@ class DingTalkAutoReplyWorker:
             self._notify(
                 title=f"CEO agent error: {conversation.title}",
                 message=decision.reason[:120],
+                conversation=conversation,
             )
             if raise_on_delivery_failure:
                 raise ReplyTaskProcessingError(decision.reason)
@@ -2224,6 +2234,7 @@ class DingTalkAutoReplyWorker:
                 self._notify(
                     title=f"CEO handoff: {conversation.title}",
                     message=trigger.content[:120],
+                    conversation=conversation,
                 )
                 return
             try:
@@ -2256,6 +2267,7 @@ class DingTalkAutoReplyWorker:
                 self._notify(
                     title=f"CEO handoff failed: {conversation.title}",
                     message=str(exc)[:120],
+                    conversation=conversation,
                 )
                 if raise_on_delivery_failure:
                     raise ReplyDeliveryError(str(exc)) from exc
@@ -2275,6 +2287,7 @@ class DingTalkAutoReplyWorker:
             self._notify(
                 title=f"CEO handoff: {conversation.title}",
                 message=trigger.content[:120],
+                conversation=conversation,
             )
             return
 
@@ -2299,6 +2312,7 @@ class DingTalkAutoReplyWorker:
             self._notify(
                 title=f"CEO permission error: {conversation.title}",
                 message=permission.reason[:120],
+                conversation=conversation,
             )
             return
         if permission.action == PermissionAction.REPLY:
@@ -3033,6 +3047,7 @@ class DingTalkAutoReplyWorker:
         self._notify(
             title=f"CEO doc read failed: {conversation.title}",
             message=error[:120],
+            conversation=conversation,
         )
 
     def _retry_existing_reply_attempt(
@@ -3068,6 +3083,7 @@ class DingTalkAutoReplyWorker:
             self._notify(
                 title=f"CEO reply recipient failed: {conversation.title}",
                 message=str(exc)[:120],
+                conversation=conversation,
             )
             if raise_on_delivery_failure:
                 raise ReplyDeliveryError(str(exc)) from exc
@@ -3149,6 +3165,7 @@ class DingTalkAutoReplyWorker:
             self._notify(
                 title=f"CEO agent empty reply: {conversation.title}",
                 message=reason[:120],
+                conversation=conversation,
             )
             return
         try:
@@ -3168,6 +3185,7 @@ class DingTalkAutoReplyWorker:
             self._notify(
                 title=f"CEO reply recipient failed: {conversation.title}",
                 message=str(exc)[:120],
+                conversation=conversation,
             )
             if raise_on_delivery_failure:
                 raise ReplyDeliveryError(str(exc)) from exc
@@ -3272,10 +3290,15 @@ class DingTalkAutoReplyWorker:
             self._notify(
                 title=f"CEO agent blocked leak: {conversation.title}",
                 message=reply_text[:120],
+                conversation=conversation,
             )
             return
 
-        self._notify(title=f"CEO auto reply: {conversation.title}", message=reply_text)
+        self._notify(
+            title=f"CEO auto reply: {conversation.title}",
+            message=reply_text,
+            conversation=conversation,
+        )
         if self.dry_run:
             self.store.update_reply_attempt(
                 attempt_id,
@@ -3310,6 +3333,7 @@ class DingTalkAutoReplyWorker:
             self._notify(
                 title=f"CEO auto reply failed: {conversation.title}",
                 message=str(exc)[:120],
+                conversation=conversation,
             )
             return
         self.store.update_reply_attempt(
@@ -3503,8 +3527,52 @@ class DingTalkAutoReplyWorker:
         end_index = matches[unit_limit - 1].end()
         return f"{text[:end_index].rstrip()}..."
 
-    def _notify(self, title: str, message: str) -> None:
-        send_macos_notification(title=title, message=message, url=None)
+    def _notify(
+        self,
+        title: str,
+        message: str,
+        conversation: DingTalkConversation | None = None,
+    ) -> None:
+        send_macos_notification(
+            title=title,
+            message=message,
+            url=self._notification_url(conversation),
+        )
+
+    def _notification_url(self, conversation: DingTalkConversation | None) -> str | None:
+        if conversation is None:
+            return None
+        client_conversation_id = self._client_conversation_id(
+            conversation.open_conversation_id
+        )
+        if not client_conversation_id:
+            return None
+        return (
+            f"{DINGTALK_CONVERSATION_DEEPLINK}"
+            f"?cid={quote(client_conversation_id, safe='')}"
+        )
+
+    def _client_conversation_id(self, open_conversation_id: str) -> str:
+        if open_conversation_id in self._client_conversation_id_cache:
+            return self._client_conversation_id_cache[open_conversation_id]
+        resolver = getattr(self.dws, "client_conversation_id", None)
+        if not callable(resolver):
+            self._client_conversation_id_cache[open_conversation_id] = ""
+            return ""
+        try:
+            client_conversation_id = str(resolver(open_conversation_id) or "")
+        except Exception as exc:
+            self.store.record_error(
+                open_conversation_id,
+                None,
+                "dingtalk_client_cid",
+                str(exc),
+            )
+            client_conversation_id = ""
+        self._client_conversation_id_cache[open_conversation_id] = (
+            client_conversation_id
+        )
+        return client_conversation_id
 
     def _mark_seen(self, messages: list[DingTalkMessage]) -> None:
         if self.dry_run:

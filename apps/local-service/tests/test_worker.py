@@ -82,6 +82,7 @@ class FakeDws:
         ding_error: Exception | None = None,
         current_user_error: Exception | None = None,
         send_result: dict | None = None,
+        client_cids: dict[str, str] | None = None,
     ):
         self.conversations = conversations
         self.messages = messages
@@ -154,6 +155,8 @@ class FakeDws:
         self.upgrade_error: Exception | None = None
         self.upgrade_check_calls = 0
         self.upgrade_calls = 0
+        self.client_cids = client_cids or {}
+        self.client_cid_calls: list[str] = []
 
     def list_unread_conversations(self, count: int) -> list[DingTalkConversation]:
         assert count == 50
@@ -179,6 +182,10 @@ class FakeDws:
     def search_department_ids(self, query: str) -> set[str]:
         del query
         return {"hr-dept"}
+
+    def client_conversation_id(self, open_conversation_id: str) -> str:
+        self.client_cid_calls.append(open_conversation_id)
+        return self.client_cids.get(open_conversation_id, "")
 
     def list_department_member_profiles(
         self, department_ids: list[str]
@@ -2795,6 +2802,34 @@ def test_success_notification_keeps_full_reply_text(tmp_path: Path, monkeypatch)
             "url": None,
         }
     ]
+
+
+def test_success_notification_prepares_dingtalk_conversation_url(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message("@Derek Zen(磊哥) 请给一下你的看法")
+    trigger.mentioned_user_ids = ["derek-user-1"]
+    dws = FakeDws(
+        [conversation()],
+        {"cid-1": [trigger]},
+        client_cids={"cid-1": "75217569357"},
+    )
+    codex = FakeCodex(CodexDecision(action=CodexAction.SEND_REPLY, reply_text="收到"))
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+    notifications: list[dict[str, str | None]] = []
+    monkeypatch.setattr(
+        "ceo_agent_service.worker.send_macos_notification",
+        lambda **kwargs: notifications.append(kwargs),
+    )
+
+    worker.run_once()
+
+    assert dws.client_cid_calls == ["cid-1"]
+    assert notifications[0] == {
+        "title": "CEO auto reply: Friday",
+        "message": final_sent(dws)[0][1],
+        "url": "dingtalk://dingtalkclient/page/conversation?cid=75217569357",
+    }
 
 
 def test_leak_check_feedback_regenerates_reply_before_blocking(

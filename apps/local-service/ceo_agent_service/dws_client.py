@@ -223,6 +223,17 @@ class DwsClient:
             "json",
         ]
 
+    def build_conversation_info_command(self, open_conversation_id: str) -> list[str]:
+        return [
+            self.dws_bin,
+            "chat",
+            "conversation-info",
+            "--group",
+            open_conversation_id,
+            "--format",
+            "json",
+        ]
+
     def build_send_message_command(
         self,
         conversation_id: str | None,
@@ -827,6 +838,10 @@ class DwsClient:
     def search_conversations(self, query: str) -> list[DingTalkConversation]:
         payload = self.run_json(self.build_search_conversations_command(query))
         return self.parse_search_conversations(payload)
+
+    def client_conversation_id(self, open_conversation_id: str) -> str:
+        payload = self.run_json(self.build_conversation_info_command(open_conversation_id))
+        return self.parse_client_conversation_id(payload, open_conversation_id)
 
     def read_recent_messages(
         self, conversation: DingTalkConversation, limit: int = 50
@@ -1627,6 +1642,20 @@ class DwsClient:
             and conversation.get("openConversationId")
             and conversation.get("title")
         ]
+
+    @staticmethod
+    def parse_client_conversation_id(
+        payload: dict[str, Any],
+        open_conversation_id: str,
+    ) -> str:
+        info = payload.get("result", {}).get("conversationInfo", {})
+        if not isinstance(info, dict):
+            return ""
+        for key in ("clientCid", "cid", "conversationId"):
+            value = info.get(key)
+            if value is not None and str(value) != open_conversation_id:
+                return str(value)
+        return ""
 
     @staticmethod
     def parse_document_search_results(

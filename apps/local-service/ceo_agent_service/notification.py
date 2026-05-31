@@ -1,11 +1,18 @@
 import json
+import shutil
 import subprocess
 
 
 def send_macos_notification(title: str, message: str, url: str | None = None) -> None:
+    terminal_notifier = shutil.which("terminal-notifier")
+    if url and terminal_notifier:
+        subprocess.run(
+            [terminal_notifier, "-title", title, "-message", message, "-open", url],
+            check=False,
+        )
+        return
+
     script = f"display notification {_applescript_string(message)} with title {_applescript_string(title)}"
-    if url:
-        script = f"{script}\nopen location {_applescript_string(url)}"
     subprocess.run(["osascript", "-e", script], check=False)
 
 
