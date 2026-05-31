@@ -23,6 +23,7 @@ from ceo_agent_service.cli import (
     refresh_org_cache_command,
     run_loop,
     run_producer_loop,
+    run_service,
     send_attempt_command,
     settings_from_args,
     test_ding_command as run_test_ding_command,
@@ -42,6 +43,32 @@ def test_parser_supports_worker_commands():
     assert args.command == "run-once"
     assert args.dry_run is True
     assert args.db == "/tmp/worker.sqlite3"
+
+
+def test_parser_supports_single_service_command(monkeypatch):
+    monkeypatch.setenv("CEO_PRODUCER_INTERVAL_SECONDS", "60")
+    monkeypatch.setenv("CEO_CONSUMER_POLL_INTERVAL_SECONDS", "10")
+    parser = build_parser()
+
+    args = parser.parse_args(
+        [
+            "service",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            "8765",
+            "--producer-interval-seconds",
+            "61",
+            "--consumer-poll-interval-seconds",
+            "11",
+        ]
+    )
+
+    assert args.command == "service"
+    assert args.host == "127.0.0.1"
+    assert args.port == 8765
+    assert args.producer_interval_seconds == 61
+    assert args.consumer_poll_interval_seconds == 11
 
 
 def test_parser_keeps_dry_run_as_not_send_message_alias():
@@ -1826,6 +1853,83 @@ def test_producer_and_consumer_loops_call_separate_methods_once():
         "consume:5",
         "sleep:11",
     ]
+
+
+def test_run_service_starts_web_producer_and_consumer(monkeypatch, tmp_path):
+    calls = []
+    failures = []
+    exits = []
+
+    class FakeThread:
+        def __init__(self, target, name, daemon):
+            self.target = target
+            self.name = name
+            self.daemon = daemon
+
+        def start(self):
+            calls.append(("start", self.name, self.daemon))
+            self.target()
+
+    def stop(component):
+        raise RuntimeError(f"stop {component}")
+
+    monkeypatch.setattr(cli, "create_worker", lambda settings: object())
+    monkeypatch.setattr(
+        cli,
+        "run_producer_loop",
+        lambda worker, poll_interval_seconds, max_tasks=None: calls.append(
+            ("producer", poll_interval_seconds, max_tasks)
+        )
+        or stop("producer"),
+    )
+    monkeypatch.setattr(
+        cli,
+        "run_consumer_loop",
+        lambda worker, poll_interval_seconds, max_tasks=None: calls.append(
+            ("consumer", poll_interval_seconds, max_tasks)
+        )
+        or stop("consumer"),
+    )
+    monkeypatch.setattr(
+        cli,
+        "run_audit_web_command",
+        lambda settings, host, port, reload=False: calls.append(
+            ("audit-web", host, port, reload)
+        )
+        or stop("audit-web"),
+    )
+    monkeypatch.setattr(
+        cli,
+        "_record_service_failure",
+        lambda settings, component, exc: failures.append((component, str(exc))),
+    )
+
+    run_service(
+        WorkerSettings(db_path=tmp_path / "worker.sqlite3", max_batches=4),
+        host="127.0.0.1",
+        port=8765,
+        producer_interval_seconds=60,
+        consumer_poll_interval_seconds=10,
+        thread_factory=FakeThread,
+        wait=lambda: calls.append(("wait",)),
+        exit_process=lambda status: exits.append(status),
+    )
+
+    assert calls == [
+        ("start", "ceo-agent-service-producer", True),
+        ("producer", 60, 4),
+        ("start", "ceo-agent-service-consumer", True),
+        ("consumer", 10, 4),
+        ("start", "ceo-agent-service-audit-web", True),
+        ("audit-web", "127.0.0.1", 8765, False),
+        ("wait",),
+    ]
+    assert failures == [
+        ("producer", "stop producer"),
+        ("consumer", "stop consumer"),
+        ("audit-web", "stop audit-web"),
+    ]
+    assert exits == [1, 1, 1]
 
 
 def test_default_poll_interval_is_five_minutes():

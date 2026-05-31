@@ -163,9 +163,9 @@ scripts/install-auto-reply-agents.sh
 
 运行模型：
 
-- `reply-producer`：每分钟运行一次 `produce-once`，只负责发现消息和入队。
-- `reply-consumer`：常驻运行 `consume`，逐个领取任务、调用 agent、执行发送或跳过。
-- `audit-web`：本地审计页面。
+- `com.ceo-agent-service.main`：单个 launchd 主服务，常驻运行 8765 审计页面、producer loop 和 consumer loop。
+- producer loop：按 `CEO_PRODUCER_INTERVAL_SECONDS` 间隔发现消息并入队，默认 60 秒。
+- consumer loop：按 `CEO_CONSUMER_POLL_INTERVAL_SECONDS` 间隔领取任务、调用 agent、执行发送或跳过，默认 10 秒。
 
 手动发送已审阅 attempt：
 

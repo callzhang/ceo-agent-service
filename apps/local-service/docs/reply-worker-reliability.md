@@ -3,9 +3,10 @@
 ## Failure visibility
 
 `produce-once` and `consume-once` record top-level failures in the `errors` table
-and raise a local macOS notification before exiting non-zero. Launchd keeps the
-five-minute producer schedule, so transient producer failures are visible locally
-and retried by the next scheduled run.
+and raise a local macOS notification before exiting non-zero. Launchd keeps one
+main service alive; that process runs the audit web server, producer loop, and
+consumer loop. If any component stops unexpectedly, the process exits so launchd
+can restart the whole service.
 
 Per-conversation read failures are recorded and notified without blocking other
 conversations in the same producer pass.
@@ -28,7 +29,7 @@ available through the browser bridge when an audit page is open.
 ## DWS upgrade check
 
 The producer checks for `dws` updates inside the normal CEO system pass, once per
-local day. It uses the existing five-minute producer cadence instead of adding a
+local day. It uses the existing producer loop cadence instead of adding a
 separate system-level timer. If an update is available, the producer runs the
 upgrade before reading DingTalk messages. Upgrade check or install failures are
 recorded locally and notified, but they do not block message discovery for that

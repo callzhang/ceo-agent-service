@@ -238,7 +238,7 @@ def test_render_config_page_shows_system_config_tab_with_descriptions():
     assert 'class="prompt-tab active"' in html
     assert "不写入 Prompt" in html
     assert "CEO_PRODUCER_INTERVAL_SECONDS" in html
-    assert "快路径 producer 运行间隔" in html
+    assert "主服务内 producer loop 的运行间隔" in html
     assert "CEO_CONSUMER_POLL_INTERVAL_SECONDS" in html
     assert "CEO_POLL_INTERVAL_SECONDS" in html
     assert "CEO_BATCH_SECONDS" in html

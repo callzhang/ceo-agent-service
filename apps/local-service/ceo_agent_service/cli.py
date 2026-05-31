@@ -2,6 +2,7 @@ import argparse
 import json
 import os
 import re
+import threading
 import time
 from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
@@ -11,7 +12,9 @@ from pydantic import BaseModel, PositiveInt
 
 from ceo_agent_service.codex_decision import CodexDecisionRunner
 from ceo_agent_service.config import (
+    consumer_poll_interval_seconds,
     principal_display_name,
+    producer_interval_seconds,
     profile_evidence_dir,
     work_profile_path,
 )
@@ -142,6 +145,7 @@ def build_parser() -> argparse.ArgumentParser:
         "probe-dws",
         "run-once",
         "run",
+        "service",
         "produce-once",
         "produce",
         "consume-once",
@@ -249,6 +253,23 @@ def build_parser() -> argparse.ArgumentParser:
                 "--reload-interval-seconds",
                 type=_positive_int,
                 default=_positive_int(os.getenv("CEO_AUDIT_WEB_RELOAD_INTERVAL_SECONDS", "1")),
+            )
+        if command == "service":
+            subparser.add_argument("--host", default=os.getenv("CEO_AUDIT_WEB_HOST", "127.0.0.1"))
+            subparser.add_argument(
+                "--port",
+                type=_positive_int,
+                default=_positive_int(os.getenv("CEO_AUDIT_WEB_PORT", "8765")),
+            )
+            subparser.add_argument(
+                "--producer-interval-seconds",
+                type=_positive_int,
+                default=producer_interval_seconds(),
+            )
+            subparser.add_argument(
+                "--consumer-poll-interval-seconds",
+                type=_positive_int,
+                default=consumer_poll_interval_seconds(),
             )
         if command == "export-feedback":
             subparser.add_argument(
@@ -929,6 +950,82 @@ def run_consumer_loop(
         sleep(poll_interval_seconds)
 
 
+def run_service(
+    settings: WorkerSettings,
+    *,
+    host: str,
+    port: int,
+    producer_interval_seconds: int,
+    consumer_poll_interval_seconds: int,
+    thread_factory: Callable[..., threading.Thread] = threading.Thread,
+    wait: Callable[[], None] | None = None,
+    exit_process: Callable[[int], None] = os._exit,
+) -> None:
+    components = (
+        (
+            "producer",
+            lambda: run_producer_loop(
+                create_worker(settings),
+                producer_interval_seconds,
+                max_tasks=settings.max_batches,
+            ),
+        ),
+        (
+            "consumer",
+            lambda: run_consumer_loop(
+                create_worker(settings),
+                consumer_poll_interval_seconds,
+                max_tasks=settings.max_batches,
+            ),
+        ),
+        (
+            "audit-web",
+            lambda: run_audit_web_command(settings, host=host, port=port, reload=False),
+        ),
+    )
+    for component, target in components:
+        thread = thread_factory(
+            target=_service_component_target(
+                settings=settings,
+                component=component,
+                target=target,
+                exit_process=exit_process,
+            ),
+            name=f"ceo-agent-service-{component}",
+            daemon=True,
+        )
+        thread.start()
+    if wait is None:
+        wait_event = threading.Event()
+        wait_event.wait()
+        return
+    wait()
+
+
+def _service_component_target(
+    *,
+    settings: WorkerSettings,
+    component: str,
+    target: Callable[[], None],
+    exit_process: Callable[[int], None],
+) -> Callable[[], None]:
+    def run_component() -> None:
+        try:
+            target()
+        except Exception as exc:
+            _record_service_failure(settings, component, exc)
+            exit_process(1)
+            return
+        _record_service_failure(
+            settings,
+            component,
+            RuntimeError(f"{component} stopped unexpectedly"),
+        )
+        exit_process(1)
+
+    return run_component
+
+
 def build_style_corpus(workspace: Path, corpus_dir: Path) -> int:
     minutes_dir = workspace / "AI听记"
     corpus_dir.mkdir(parents=True, exist_ok=True)
@@ -1095,6 +1192,15 @@ def main() -> None:
             create_worker(settings),
             settings.poll_interval_seconds,
             max_batches=settings.max_batches,
+        )
+    elif args.command == "service":
+        ensure_live_send_allowed(settings)
+        run_service(
+            settings,
+            host=args.host,
+            port=args.port,
+            producer_interval_seconds=args.producer_interval_seconds,
+            consumer_poll_interval_seconds=args.consumer_poll_interval_seconds,
         )
     elif args.command == "produce-once":
         produce_once(settings)

@@ -630,7 +630,7 @@ def _system_config_rows() -> list[tuple[str, str, str]]:
         (
             "CEO_PRODUCER_INTERVAL_SECONDS",
             str(producer_interval_seconds()),
-            "快路径 producer 运行间隔；launchd 安装脚本会写入 StartInterval。",
+            "主服务内 producer loop 的运行间隔。",
         ),
         (
             "CEO_CONSUMER_POLL_INTERVAL_SECONDS",
