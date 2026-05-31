@@ -477,7 +477,6 @@ def _top_nav(active_nav: str | None) -> str:
         ("history", "History", "/"),
         ("codex", "Codex Sessions", "/codex"),
         ("config", "Config", "/config"),
-        ("notifications", "Notifications", "/notifications"),
         ("errors", "Errors", "/errors"),
     ]
     item_html = "".join(

@@ -11,10 +11,12 @@ Per-conversation read failures are recorded and notified without blocking other
 conversations in the same producer pass.
 
 Local notifications first try the browser bridge exposed by the audit web
-service. Keep `http://127.0.0.1:8765/notifications` open in Chrome and grant
-notification permission; the page keeps an SSE connection to 8765 and displays
-incoming worker notifications with Chrome's Web Notification API. Clicking the
-Chrome notification opens the local URL
+service. Keep any `http://127.0.0.1:8765/` audit page open in Chrome after
+granting notification permission; the page keeps an SSE connection to 8765 and
+displays incoming worker notifications with Chrome's Web Notification API.
+`http://127.0.0.1:8765/notifications` remains available as a hidden
+authorization and diagnostics page, but it is not required for normal operation.
+Clicking the Chrome notification opens the local URL
 `http://127.0.0.1:8765/open-dingtalk?cid=...`; the audit web service then runs
 `/usr/bin/open dingtalk://dingtalkclient/page/conversation?...`.
 

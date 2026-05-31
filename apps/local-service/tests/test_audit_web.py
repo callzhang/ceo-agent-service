@@ -350,7 +350,8 @@ def test_browser_notifications_page_is_available(tmp_path: Path):
     assert 'await fetch(payload.url, { method: "GET", keepalive: true })' in response.text
     assert "granted connected" in response.text
     assert "granted standby" in response.text
-    assert '<span class="nav-item active" aria-current="page">Notifications</span>' in response.text
+    assert '<span class="nav-item active" aria-current="page">Notifications</span>' not in response.text
+    assert '<a class="nav-item" href="/notifications">Notifications</a>' not in response.text
 
 
 def test_browser_notification_post_reports_no_subscribers(tmp_path: Path):
