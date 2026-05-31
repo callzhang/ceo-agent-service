@@ -195,6 +195,12 @@ def batch_seconds() -> int:
     return env_int("CEO_BATCH_SECONDS", 120)
 
 
+def notification_bridge_base_url() -> str:
+    return os.getenv("CEO_NOTIFICATION_BRIDGE_BASE_URL", "http://127.0.0.1:8765").rstrip(
+        "/"
+    )
+
+
 def message_recovery_interval() -> timedelta:
     return env_duration("MESSAGE_RECOVERY_INTERVAL", timedelta(hours=1))
 

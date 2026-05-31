@@ -1,13 +1,16 @@
 import json
+import asyncio
+from collections import deque
 from html import escape
-from itertools import zip_longest
+from itertools import count, zip_longest
 import os
 from pathlib import Path
-from urllib.parse import parse_qs
+import subprocess
+from urllib.parse import parse_qs, quote
 
 import uvicorn
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 
 from ceo_agent_service.codex_history import (
     RenderedCodexEvent,
@@ -115,6 +118,8 @@ th{background:var(--surface-soft);color:var(--steel);font-size:12px;font-weight:
 .logic-section dl{display:grid;gap:9px;margin:0}
 .logic-section dt{color:var(--steel);font-size:12px;font-weight:700;line-height:1.4}
 .logic-section dd{margin:2px 0 0;color:var(--charcoal);font-size:14px;line-height:1.5}
+.notification-panel{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:12px 0}
+.notification-log{max-height:260px}
 .attempt-feed{display:grid;gap:8px}
 .attempt-item{background:var(--canvas);border:1px solid var(--hairline);border-radius:8px;padding:10px 12px}
 .attempt-head{display:flex;align-items:center;justify-content:space-between;gap:12px;min-width:0}
@@ -222,6 +227,9 @@ NO_AUDIT_CONTEXT_TOOLTIP = (
 NO_CODEX_SESSION_TOOLTIP = (
     "No Codex session is linked; review this attempt using the stored audit fields only."
 )
+_BROWSER_NOTIFICATION_SUBSCRIBERS: set[asyncio.Queue[dict[str, str]]] = set()
+_BROWSER_NOTIFICATION_HISTORY: deque[dict[str, str]] = deque(maxlen=20)
+_BROWSER_NOTIFICATION_SEQUENCE = count(1)
 
 
 def render_page(
@@ -252,11 +260,134 @@ def render_page(
     )
 
 
+def render_browser_notifications_page() -> str:
+    body = """
+<section class="card">
+<h2>Chrome 通知</h2>
+<p class="muted">打开这个页面并允许通知后，CEO 服务会优先通过 Chrome 弹出通知。点击通知会打开对应的钉钉会话。</p>
+<div class="notification-panel">
+  <button type="button" id="enable-notifications">允许 Chrome 通知</button>
+  <span class="pill" id="notification-state">checking</span>
+</div>
+<pre class="notification-log" id="notification-log">等待连接...</pre>
+</section>
+<script>
+const stateEl = document.getElementById("notification-state");
+const logEl = document.getElementById("notification-log");
+const enableButton = document.getElementById("enable-notifications");
+
+function logLine(text) {
+  const timestamp = new Date().toLocaleTimeString();
+  logEl.textContent = `[${timestamp}] ${text}\n` + logEl.textContent;
+}
+
+function setState(text) {
+  stateEl.textContent = text;
+}
+
+function refreshPermission() {
+  if (!("Notification" in window)) {
+    setState("not supported");
+    enableButton.disabled = true;
+    return;
+  }
+  setState(Notification.permission);
+}
+
+async function requestNotificationPermission() {
+  if (!("Notification" in window)) {
+    refreshPermission();
+    return;
+  }
+  const permission = await Notification.requestPermission();
+  refreshPermission();
+  logLine(`permission: ${permission}`);
+}
+
+function showBrowserNotification(payload) {
+  logLine(`${payload.title}: ${payload.message}`);
+  if (!("Notification" in window) || Notification.permission !== "granted") {
+    return;
+  }
+  const notification = new Notification(payload.title, {
+    body: payload.message,
+    tag: payload.id,
+    renotify: true,
+  });
+  notification.onclick = async () => {
+    if (payload.url) {
+      try {
+        await fetch(payload.url, { method: "GET", keepalive: true });
+      } catch (error) {
+        window.open(payload.url, "_blank", "noopener");
+      }
+    }
+    notification.close();
+  };
+}
+
+refreshPermission();
+enableButton.addEventListener("click", requestNotificationPermission);
+const events = new EventSource("/notifications/events");
+events.onopen = () => logLine("connected to 8765 notification stream");
+events.onerror = () => logLine("notification stream reconnecting");
+events.onmessage = (event) => showBrowserNotification(JSON.parse(event.data));
+</script>
+"""
+    return render_page("Notifications", body, active_nav="notifications")
+
+
+def _browser_notification_event(
+    *,
+    title: str,
+    message: str,
+    url: str,
+) -> dict[str, str]:
+    return {
+        "id": f"ceo-agent-service-{next(_BROWSER_NOTIFICATION_SEQUENCE)}",
+        "title": title,
+        "message": message,
+        "url": url,
+    }
+
+
+def _publish_browser_notification(event: dict[str, str]) -> bool:
+    _BROWSER_NOTIFICATION_HISTORY.append(event)
+    subscribers = list(_BROWSER_NOTIFICATION_SUBSCRIBERS)
+    for queue in subscribers:
+        queue.put_nowait(event)
+    return bool(subscribers)
+
+
+def _browser_notification_event_stream() -> StreamingResponse:
+    async def event_stream():
+        queue: asyncio.Queue[dict[str, str]] = asyncio.Queue()
+        _BROWSER_NOTIFICATION_SUBSCRIBERS.add(queue)
+        try:
+            yield ": connected\n\n"
+            while True:
+                event = await queue.get()
+                data = json.dumps(event, ensure_ascii=False)
+                yield f"data: {data}\n\n"
+        finally:
+            _BROWSER_NOTIFICATION_SUBSCRIBERS.discard(queue)
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
 def _top_nav(active_nav: str | None) -> str:
     items = [
         ("history", "History", "/"),
         ("codex", "Codex Sessions", "/codex"),
         ("config", "Config", "/config"),
+        ("notifications", "Notifications", "/notifications"),
         ("errors", "Errors", "/errors"),
     ]
     item_html = "".join(
@@ -1348,6 +1479,47 @@ def create_audit_app(
             active_tab=request.query_params.get("tab", "info"),
             saved=request.query_params.get("saved") == "1",
             db_path=db_path,
+        )
+
+    @app.get("/notifications", response_class=HTMLResponse)
+    def browser_notifications() -> str:
+        return render_browser_notifications_page()
+
+    @app.get("/notifications/events")
+    def browser_notification_events() -> StreamingResponse:
+        return _browser_notification_event_stream()
+
+    @app.post("/browser-notifications")
+    async def browser_notification_post(request: Request) -> JSONResponse:
+        payload = await request.json()
+        event = _browser_notification_event(
+            title=str(payload.get("title") or "CEO Agent"),
+            message=str(payload.get("message") or ""),
+            url=str(payload.get("url") or ""),
+        )
+        delivered = _publish_browser_notification(event)
+        return JSONResponse(
+            {
+                "ok": True,
+                "delivered": delivered,
+                "subscribers": len(_BROWSER_NOTIFICATION_SUBSCRIBERS),
+            }
+        )
+
+    @app.get("/open-dingtalk", response_class=HTMLResponse)
+    def open_dingtalk(cid: str) -> HTMLResponse:
+        cleaned_cid = cid.strip()
+        if not cleaned_cid:
+            return HTMLResponse("missing cid", status_code=400)
+        dingtalk_url = (
+            "dingtalk://dingtalkclient/page/conversation"
+            f"?cid={quote(cleaned_cid, safe='')}"
+        )
+        subprocess.run(["/usr/bin/open", dingtalk_url], check=False)
+        return HTMLResponse(
+            "<!doctype html><title>Opening DingTalk</title>"
+            "<p>Opening DingTalk conversation...</p>",
+            status_code=200,
         )
 
     @app.get("/attempts/{attempt_id}", response_class=HTMLResponse)

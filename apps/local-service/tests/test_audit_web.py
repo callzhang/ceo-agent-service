@@ -299,6 +299,71 @@ def test_handle_system_config_post_saves_runtime_params_to_env_file(
     assert "MESSAGE_RECOVERY_INTERVAL" not in read_developer_prompt_template()
 
 
+def test_open_dingtalk_bridge_opens_conversation_url(tmp_path: Path, monkeypatch):
+    commands = []
+    monkeypatch.setattr(
+        "ceo_agent_service.audit_web.subprocess.run",
+        lambda command, check: commands.append((command, check)),
+    )
+    client = TestClient(create_audit_app(tmp_path / "worker.sqlite3"))
+
+    response = client.get("/open-dingtalk?cid=75217569357")
+
+    assert response.status_code == 200
+    assert commands == [
+        (
+            [
+                "/usr/bin/open",
+                "dingtalk://dingtalkclient/page/conversation?cid=75217569357",
+            ],
+            False,
+        )
+    ]
+
+
+def test_open_dingtalk_bridge_rejects_missing_cid(tmp_path: Path, monkeypatch):
+    commands = []
+    monkeypatch.setattr(
+        "ceo_agent_service.audit_web.subprocess.run",
+        lambda command, check: commands.append((command, check)),
+    )
+    client = TestClient(create_audit_app(tmp_path / "worker.sqlite3"))
+
+    response = client.get("/open-dingtalk?cid=")
+
+    assert response.status_code == 400
+    assert commands == []
+
+
+def test_browser_notifications_page_is_available(tmp_path: Path):
+    client = TestClient(create_audit_app(tmp_path / "worker.sqlite3"))
+
+    response = client.get("/notifications")
+
+    assert response.status_code == 200
+    assert "Chrome 通知" in response.text
+    assert "Notification.requestPermission" in response.text
+    assert 'new EventSource("/notifications/events")' in response.text
+    assert 'await fetch(payload.url, { method: "GET", keepalive: true })' in response.text
+    assert '<span class="nav-item active" aria-current="page">Notifications</span>' in response.text
+
+
+def test_browser_notification_post_reports_no_subscribers(tmp_path: Path):
+    client = TestClient(create_audit_app(tmp_path / "worker.sqlite3"))
+
+    response = client.post(
+        "/browser-notifications",
+        json={
+            "title": "CEO auto reply",
+            "message": "已回复",
+            "url": "http://127.0.0.1:8765/open-dingtalk?cid=75217569357",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": True, "delivered": False, "subscribers": 0}
+
+
 def test_env_file_overrides_existing_environment(tmp_path: Path, monkeypatch):
     env_path = tmp_path / ".env"
     env_path.write_text("MESSAGE_RECOVERY_INTERVAL=45m\n", encoding="utf-8")

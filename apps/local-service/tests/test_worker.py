@@ -2828,7 +2828,7 @@ def test_success_notification_prepares_dingtalk_conversation_url(
     assert notifications[0] == {
         "title": "CEO auto reply: Friday",
         "message": final_sent(dws)[0][1],
-        "url": "dingtalk://dingtalkclient/page/conversation?cid=75217569357",
+        "url": "http://127.0.0.1:8765/open-dingtalk?cid=75217569357",
     }
 
 

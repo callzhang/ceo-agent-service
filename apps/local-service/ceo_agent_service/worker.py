@@ -19,8 +19,9 @@ from ceo_agent_service.config import (
     group_read_recovery_limit,
     group_read_recovery_window,
     handoff_ack,
-    principal_display_name,
     message_recovery_interval,
+    notification_bridge_base_url,
+    principal_display_name,
     single_chat_read_recovery_limit,
     single_chat_read_recovery_window,
 )
@@ -150,7 +151,6 @@ SINGLE_CHAT_READ_RECOVERY_WINDOW = single_chat_read_recovery_window()
 SINGLE_CHAT_READ_RECOVERY_LIMIT = single_chat_read_recovery_limit()
 GROUP_READ_RECOVERY_WINDOW = group_read_recovery_window()
 GROUP_READ_RECOVERY_LIMIT = group_read_recovery_limit()
-DINGTALK_CONVERSATION_DEEPLINK = "dingtalk://dingtalkclient/page/conversation"
 
 
 @dataclass(frozen=True)
@@ -3548,7 +3548,7 @@ class DingTalkAutoReplyWorker:
         if not client_conversation_id:
             return None
         return (
-            f"{DINGTALK_CONVERSATION_DEEPLINK}"
+            f"{notification_bridge_base_url()}/open-dingtalk"
             f"?cid={quote(client_conversation_id, safe='')}"
         )
 
