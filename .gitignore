@@ -3,6 +3,7 @@
 .env.*
 !.env.example
 node_modules/
+.worktrees/
 .next/
 dist/
 coverage/
