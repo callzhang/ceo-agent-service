@@ -126,6 +126,8 @@ def test_hourly_dry_run_install_script_installs_and_kickstarts_launch_agent():
     assert "com.ceo-agent-service.reply-producer.plist" in content
     assert "com.ceo-agent-service.reply-consumer.plist" in content
     assert "com.ceo-agent-service.audit-web.plist" in content
+    assert "CEO_PRODUCER_INTERVAL_SECONDS" in content
+    assert "PlistBuddy -c \"Set :StartInterval ${producer_interval_seconds}\"" in content
     assert "legacy_label_prefix=\"com.$(id -un).ceo-agent-service\"" in content
     assert "${legacy_label_prefix}.reply-producer" in content
     assert "${legacy_label_prefix}.reply-consumer" in content

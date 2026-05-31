@@ -179,6 +179,22 @@ def env_int(name: str, default: int) -> int:
     return int(text)
 
 
+def producer_interval_seconds() -> int:
+    return env_int("CEO_PRODUCER_INTERVAL_SECONDS", 60)
+
+
+def consumer_poll_interval_seconds() -> int:
+    return env_int("CEO_CONSUMER_POLL_INTERVAL_SECONDS", 10)
+
+
+def poll_interval_seconds() -> int:
+    return env_int("CEO_POLL_INTERVAL_SECONDS", 30)
+
+
+def batch_seconds() -> int:
+    return env_int("CEO_BATCH_SECONDS", 120)
+
+
 def message_recovery_interval() -> timedelta:
     return env_duration("MESSAGE_RECOVERY_INTERVAL", timedelta(hours=1))
 

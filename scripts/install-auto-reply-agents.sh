@@ -27,6 +27,23 @@ legacy_plist_names=(
   "${legacy_label_prefix}.dry-run-consumer.plist"
   "${legacy_label_prefix}.memory-flush.plist"
 )
+env_file="${CEO_ENV_FILE:-${repo_root}/.env}"
+producer_interval_seconds="${CEO_PRODUCER_INTERVAL_SECONDS:-}"
+if [[ -z "${producer_interval_seconds}" && -f "${env_file}" ]]; then
+  producer_interval_seconds="$(
+    awk -F= '$1 == "CEO_PRODUCER_INTERVAL_SECONDS" {
+      value = substr($0, index($0, "=") + 1)
+      gsub(/^[ \t"'"'"']+|[ \t"'"'"']+$/, "", value)
+      print value
+      exit
+    }' "${env_file}"
+  )"
+fi
+producer_interval_seconds="${producer_interval_seconds:-60}"
+if [[ ! "${producer_interval_seconds}" =~ ^[1-9][0-9]*$ ]]; then
+  printf 'invalid CEO_PRODUCER_INTERVAL_SECONDS: %s\n' "${producer_interval_seconds}" >&2
+  exit 2
+fi
 
 mkdir -p "${target_dir}" "${log_dir}"
 
@@ -43,6 +60,9 @@ for plist_name in "${plist_names[@]}"; do
   target_plist="${target_dir}/${plist_name}"
 
   cp "${source_plist}" "${target_plist}"
+  if [[ "${plist_name}" == "com.ceo-agent-service.reply-producer.plist" ]]; then
+    /usr/libexec/PlistBuddy -c "Set :StartInterval ${producer_interval_seconds}" "${target_plist}"
+  fi
 
   launchctl bootout "${domain}/${label}" 2>/dev/null || true
   launchctl bootout "${domain}" "${target_plist}" 2>/dev/null || true

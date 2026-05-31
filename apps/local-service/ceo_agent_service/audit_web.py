@@ -16,7 +16,9 @@ from ceo_agent_service.codex_history import (
 from ceo_agent_service.codex_decision import audit_summary_explains_no_documents
 from ceo_agent_service.config import (
     assistant_signature,
+    batch_seconds,
     broadcast_mention_aliases,
+    consumer_poll_interval_seconds,
     document_extraction_ids,
     env_file_path,
     forbidden_path_prefixes,
@@ -26,7 +28,9 @@ from ceo_agent_service.config import (
     memory_connector_user_id,
     mention_aliases,
     message_recovery_interval,
+    poll_interval_seconds,
     principal_name,
+    producer_interval_seconds,
     single_chat_read_recovery_limit,
     single_chat_read_recovery_window,
     user_alias,
@@ -403,6 +407,26 @@ def _system_config_rows() -> list[tuple[str, str, str]]:
             "系统安全检查使用：按路径前缀识别本机路径泄漏。",
         ),
         (
+            "CEO_PRODUCER_INTERVAL_SECONDS",
+            str(producer_interval_seconds()),
+            "快路径 producer 运行间隔；launchd 安装脚本会写入 StartInterval。",
+        ),
+        (
+            "CEO_CONSUMER_POLL_INTERVAL_SECONDS",
+            str(consumer_poll_interval_seconds()),
+            "consumer 检查 pending reply task 的间隔秒数。",
+        ),
+        (
+            "CEO_POLL_INTERVAL_SECONDS",
+            str(poll_interval_seconds()),
+            "本地 run 模式下，快路径轮询未读会话的间隔秒数。",
+        ),
+        (
+            "CEO_BATCH_SECONDS",
+            str(batch_seconds()),
+            "本地 run 模式下，每个消息发现批次覆盖的时间窗口秒数。",
+        ),
+        (
             "MESSAGE_RECOVERY_INTERVAL",
             _duration_label(message_recovery_interval()),
             "每次慢路径兜底扫描之间至少间隔多久。",
@@ -523,6 +547,10 @@ def _editable_system_config_keys() -> set[str]:
         "CEO_HANDOFF_ACK",
         "CEO_WORK_PROFILE_PATH",
         "CEO_FORBIDDEN_PATH_PREFIXES",
+        "CEO_PRODUCER_INTERVAL_SECONDS",
+        "CEO_CONSUMER_POLL_INTERVAL_SECONDS",
+        "CEO_POLL_INTERVAL_SECONDS",
+        "CEO_BATCH_SECONDS",
         "MESSAGE_RECOVERY_INTERVAL",
         "SINGLE_CHAT_READ_RECOVERY_WINDOW",
         "SINGLE_CHAT_READ_RECOVERY_LIMIT",
