@@ -11,7 +11,6 @@ def test_notification_uses_valid_escaped_applescript_literals(monkeypatch):
         "ceo_agent_service.notification.subprocess.run",
         lambda command, check: commands.append((command, check)),
     )
-    monkeypatch.setattr("ceo_agent_service.notification.shutil.which", lambda _: None)
 
     send_macos_notification(
         title='CEO "urgent"',
@@ -31,7 +30,7 @@ def test_notification_uses_valid_escaped_applescript_literals(monkeypatch):
     ]
 
 
-def test_notification_binds_click_url_with_terminal_notifier(tmp_path, monkeypatch):
+def test_notification_falls_back_to_applescript_when_no_browser_page(monkeypatch):
     commands = []
     monkeypatch.setattr(
         "ceo_agent_service.notification._send_browser_notification",
@@ -40,150 +39,20 @@ def test_notification_binds_click_url_with_terminal_notifier(tmp_path, monkeypat
     monkeypatch.setattr(
         "ceo_agent_service.notification.subprocess.run",
         lambda command, check: commands.append((command, check)),
-    )
-    monkeypatch.setattr(
-        "ceo_agent_service.notification.shutil.which",
-        lambda command: "/opt/homebrew/bin/terminal-notifier"
-        if command == "terminal-notifier"
-        else None,
-    )
-    monkeypatch.setattr(
-        "ceo_agent_service.notification.DEFAULT_NOTIFICATION_ICON_PATH",
-        tmp_path / "missing-logo.png",
-    )
-    monkeypatch.setattr(
-        "ceo_agent_service.notification._notification_group_id",
-        lambda: "ceo-agent-service-test",
     )
 
     send_macos_notification(
         title="CEO auto reply",
         message="已回复",
-        url="dingtalk://dingtalkclient/page/conversation?cid=75217569357",
+        url="http://127.0.0.1:8765/open-dingtalk?cid=75217569357",
     )
 
     assert commands == [
         (
             [
-                "/opt/homebrew/bin/terminal-notifier",
-                "-title",
-                "CEO auto reply",
-                "-message",
-                "已回复",
-                "-group",
-                "ceo-agent-service-test",
-                "-sound",
-                "default",
-                "-subtitle",
-                "点击打开钉钉",
-                "-open",
-                "dingtalk://dingtalkclient/page/conversation?cid=75217569357",
-            ],
-            False,
-        )
-    ]
-
-
-def test_notification_uses_logo_as_terminal_notifier_icon(tmp_path, monkeypatch):
-    commands = []
-    icon_path = tmp_path / "logo.png"
-    icon_path.write_bytes(b"png")
-    monkeypatch.setattr(
-        "ceo_agent_service.notification._send_browser_notification",
-        lambda **_: False,
-    )
-    monkeypatch.setattr(
-        "ceo_agent_service.notification.subprocess.run",
-        lambda command, check: commands.append((command, check)),
-    )
-    monkeypatch.setattr(
-        "ceo_agent_service.notification.shutil.which",
-        lambda command: "/opt/homebrew/bin/terminal-notifier"
-        if command == "terminal-notifier"
-        else None,
-    )
-    monkeypatch.setattr(
-        "ceo_agent_service.notification.DEFAULT_NOTIFICATION_ICON_PATH",
-        icon_path,
-    )
-    monkeypatch.setattr(
-        "ceo_agent_service.notification._notification_group_id",
-        lambda: "ceo-agent-service-test",
-    )
-
-    send_macos_notification(
-        title="CEO auto reply",
-        message="已回复",
-        url="dingtalk://dingtalkclient/page/conversation?cid=75217569357",
-    )
-
-    assert commands == [
-        (
-            [
-                "/opt/homebrew/bin/terminal-notifier",
-                "-title",
-                "CEO auto reply",
-                "-message",
-                "已回复",
-                "-group",
-                "ceo-agent-service-test",
-                "-sound",
-                "default",
-                "-appIcon",
-                str(icon_path),
-                "-subtitle",
-                "点击打开钉钉",
-                "-open",
-                "dingtalk://dingtalkclient/page/conversation?cid=75217569357",
-            ],
-            False,
-        )
-    ]
-
-
-def test_notification_uses_terminal_notifier_without_click_url(tmp_path, monkeypatch):
-    commands = []
-    icon_path = tmp_path / "logo.png"
-    icon_path.write_bytes(b"png")
-    monkeypatch.setattr(
-        "ceo_agent_service.notification._send_browser_notification",
-        lambda **_: False,
-    )
-    monkeypatch.setattr(
-        "ceo_agent_service.notification.subprocess.run",
-        lambda command, check: commands.append((command, check)),
-    )
-    monkeypatch.setattr(
-        "ceo_agent_service.notification.shutil.which",
-        lambda command: "/opt/homebrew/bin/terminal-notifier"
-        if command == "terminal-notifier"
-        else None,
-    )
-    monkeypatch.setattr(
-        "ceo_agent_service.notification.DEFAULT_NOTIFICATION_ICON_PATH",
-        icon_path,
-    )
-    monkeypatch.setattr(
-        "ceo_agent_service.notification._notification_group_id",
-        lambda: "ceo-agent-service-test",
-    )
-
-    send_macos_notification(title="CEO auto reply", message="已回复")
-
-    assert commands == [
-        (
-            [
-                "/opt/homebrew/bin/terminal-notifier",
-                "-title",
-                "CEO auto reply",
-                "-message",
-                "已回复",
-                "-group",
-                "ceo-agent-service-test",
-                "-sound",
-                "default",
-                "-appIcon",
-                str(icon_path),
+                "osascript",
+                "-e",
+                'display notification "已回复" with title "CEO auto reply"',
             ],
             False,
         )
@@ -200,7 +69,6 @@ def test_notification_keeps_unicode_literals_for_applescript(monkeypatch):
         "ceo_agent_service.notification.subprocess.run",
         lambda command, check: commands.append((command, check)),
     )
-    monkeypatch.setattr("ceo_agent_service.notification.shutil.which", lambda _: None)
 
     send_macos_notification(
         title="CEO question",

@@ -20,10 +20,10 @@ Clicking the Chrome notification opens the local URL
 `http://127.0.0.1:8765/open-dingtalk?cid=...`; the audit web service then runs
 `/usr/bin/open dingtalk://dingtalkclient/page/conversation?...`.
 
-If no browser notification page is connected, the worker falls back to
-`terminal-notifier` when it is installed, using sound and the project `logo.png`
-icon. That fallback keeps the same local HTTP click URL so DingTalk handoff stays
-inside the 8765 service.
+If no browser notification page is connected, the worker falls back to an
+AppleScript `display notification` call. That fallback is only a visibility path:
+it does not bind a click action to DingTalk, so conversation jump remains
+available through the browser bridge when an audit page is open.
 
 ## DWS upgrade check
 
