@@ -2,7 +2,7 @@ from enum import StrEnum
 
 from pydantic import BaseModel
 
-from ceo_agent_service.dingtalk_models import (
+from app.dingtalk_models import (
     CodexDecision,
     DingTalkMessage,
     SensitivityKind,

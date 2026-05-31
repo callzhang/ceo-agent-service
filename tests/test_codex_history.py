@@ -2,7 +2,7 @@ import json
 from time import perf_counter
 from pathlib import Path
 
-from ceo_agent_service.codex_history import (
+from app.codex_history import (
     count_codex_session_lines,
     extract_codex_audit_events_from_session,
     find_codex_session_path,
@@ -137,7 +137,7 @@ def test_find_codex_session_path_does_not_inspect_all_files_on_miss(
         raise AssertionError("request path must not inspect transcript contents")
 
     monkeypatch.setattr(
-        "ceo_agent_service.codex_history._file_session_id",
+        "app.codex_history._file_session_id",
         fail_if_file_is_opened,
     )
 

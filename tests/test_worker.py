@@ -8,18 +8,18 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-import ceo_agent_service.worker as worker_module
-from ceo_agent_service.codex_decision import CodexDecisionRunner
-from ceo_agent_service.corpus import CorpusRecord
-from ceo_agent_service.developer_prompt import read_developer_prompt_template
-from ceo_agent_service.dingtalk_models import (
+import app.worker as worker_module
+from app.codex_decision import CodexDecisionRunner
+from app.corpus import CorpusRecord
+from app.developer_prompt import read_developer_prompt_template
+from app.dingtalk_models import (
     CodexAction,
     CodexDecision,
     DingTalkConversation,
     DingTalkMessage,
     SensitivityKind,
 )
-from ceo_agent_service.dws_client import (
+from app.dws_client import (
     DwsCalendarEvent,
     DwsDocumentSearchResult,
     DwsError,
@@ -27,9 +27,9 @@ from ceo_agent_service.dws_client import (
     DwsOaApprovalCandidate,
     DwsUserProfile,
 )
-from ceo_agent_service.oa_approval import OaApprovalResult
-from ceo_agent_service.store import AutoReplyStore
-from ceo_agent_service.worker import (
+from app.oa_approval import OaApprovalResult
+from app.store import AutoReplyStore
+from app.worker import (
     HANDOFF_ACK,
     PROCESSING_ACK,
     DingTalkAutoReplyWorker,
@@ -668,10 +668,10 @@ def make_worker(
     fast_path_unread_backoff: timedelta = timedelta(0),
 ) -> DingTalkAutoReplyWorker:
     monkeypatch.setattr(
-        "ceo_agent_service.worker.send_macos_notification", lambda **_: None
+        "app.worker.send_macos_notification", lambda **_: None
     )
     monkeypatch.setattr(
-        "ceo_agent_service.worker.FAST_PATH_UNREAD_BACKOFF",
+        "app.worker.FAST_PATH_UNREAD_BACKOFF",
         fast_path_unread_backoff,
     )
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
@@ -836,7 +836,7 @@ def test_produce_once_records_list_unread_failure_without_crashing(
     codex = FakeCodex(CodexDecision(action=CodexAction.SEND_REPLY, reply_text="收到"))
     worker = make_worker(tmp_path, dws, codex, monkeypatch)
     monkeypatch.setattr(
-        "ceo_agent_service.worker.send_macos_notification",
+        "app.worker.send_macos_notification",
         lambda **kwargs: notifications.append(kwargs),
     )
 
@@ -869,7 +869,7 @@ def test_produce_once_continues_when_mention_recovery_fails(
     )
     worker = make_worker(tmp_path, dws, codex, monkeypatch)
     monkeypatch.setattr(
-        "ceo_agent_service.worker.send_macos_notification",
+        "app.worker.send_macos_notification",
         lambda **kwargs: notifications.append(kwargs),
     )
 
@@ -1453,7 +1453,7 @@ def test_produce_once_uses_recent_context_when_unread_read_fails_for_group_menti
     )
     worker = make_worker(tmp_path, dws, codex, monkeypatch)
     monkeypatch.setattr(
-        "ceo_agent_service.worker.send_macos_notification",
+        "app.worker.send_macos_notification",
         lambda **kwargs: notifications.append(kwargs),
     )
 
@@ -1482,7 +1482,7 @@ def test_produce_once_does_not_notify_when_only_recent_context_read_fails(
     )
     worker = make_worker(tmp_path, dws, codex, monkeypatch)
     monkeypatch.setattr(
-        "ceo_agent_service.worker.send_macos_notification",
+        "app.worker.send_macos_notification",
         lambda **kwargs: notifications.append(kwargs),
     )
 
@@ -1528,7 +1528,7 @@ def test_consume_once_retries_task_failure_before_final_failure(
         max_task_attempts=2,
     )
     monkeypatch.setattr(
-        "ceo_agent_service.worker.send_macos_notification",
+        "app.worker.send_macos_notification",
         lambda **kwargs: notifications.append(kwargs),
     )
     worker.produce_once()
@@ -1577,7 +1577,7 @@ def test_consume_once_records_stale_processing_tasks_before_requeue(
         now_provider=fixed_worker_now,
     )
     monkeypatch.setattr(
-        "ceo_agent_service.worker.send_macos_notification",
+        "app.worker.send_macos_notification",
         lambda **kwargs: notifications.append(kwargs),
     )
 
@@ -1615,7 +1615,7 @@ def test_consume_once_authorization_failure_waits_without_final_failure(
         max_task_attempts=1,
     )
     monkeypatch.setattr(
-        "ceo_agent_service.worker.send_macos_notification",
+        "app.worker.send_macos_notification",
         lambda **kwargs: notifications.append(kwargs),
     )
     worker.produce_once()
@@ -2898,7 +2898,7 @@ def test_success_notification_keeps_full_reply_text(tmp_path: Path, monkeypatch)
     worker = make_worker(tmp_path, dws, codex, monkeypatch)
     notifications: list[dict[str, str | None]] = []
     monkeypatch.setattr(
-        "ceo_agent_service.worker.send_macos_notification",
+        "app.worker.send_macos_notification",
         lambda **kwargs: notifications.append(kwargs),
     )
 
@@ -2928,7 +2928,7 @@ def test_success_notification_prepares_dingtalk_conversation_url(
     worker = make_worker(tmp_path, dws, codex, monkeypatch)
     notifications: list[dict[str, str | None]] = []
     monkeypatch.setattr(
-        "ceo_agent_service.worker.send_macos_notification",
+        "app.worker.send_macos_notification",
         lambda **kwargs: notifications.append(kwargs),
     )
 
@@ -3341,7 +3341,7 @@ def test_codex_stop_with_error_sends_macos_notification(tmp_path: Path, monkeypa
     worker = make_worker(tmp_path, dws, codex, monkeypatch, dry_run=True)
     notifications: list[dict[str, str | None]] = []
     monkeypatch.setattr(
-        "ceo_agent_service.worker.send_macos_notification",
+        "app.worker.send_macos_notification",
         lambda **kwargs: notifications.append(kwargs),
     )
 
@@ -3372,7 +3372,7 @@ def test_codex_stop_with_error_keeps_queued_task_retryable(
     )
     worker = make_worker(tmp_path, dws, codex, monkeypatch)
     monkeypatch.setattr(
-        "ceo_agent_service.worker.send_macos_notification",
+        "app.worker.send_macos_notification",
         lambda **_: None,
     )
 
@@ -3407,7 +3407,7 @@ def test_queued_stop_with_error_retry_does_not_create_duplicate_attempt(
         max_task_attempts=2,
     )
     monkeypatch.setattr(
-        "ceo_agent_service.worker.send_macos_notification",
+        "app.worker.send_macos_notification",
         lambda **_: None,
     )
     worker.produce_once()
@@ -4523,7 +4523,7 @@ def test_resumed_prompt_context_only_includes_messages_after_last_seen(
 def test_no_reply_action_does_not_send(tmp_path: Path, monkeypatch):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     monkeypatch.setattr(
-        "ceo_agent_service.worker.send_macos_notification", lambda **_: None
+        "app.worker.send_macos_notification", lambda **_: None
     )
     dws = FakeDws([conversation()], {"cid-1": [message("@Alex Chen(明哥) cc一下")]})
     codex = FakeCodex(CodexDecision(action=CodexAction.NO_REPLY, reason="cc only"))
@@ -4548,7 +4548,7 @@ def test_handoff_sends_ack_dings_self_and_records_message_result(
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     monkeypatch.setattr(
-        "ceo_agent_service.worker.send_macos_notification", lambda **_: None
+        "app.worker.send_macos_notification", lambda **_: None
     )
     dws = FakeDws(
         [conversation()],
@@ -4590,7 +4590,7 @@ def test_new_principal_mention_is_processed(
     )
     notifications: list[dict[str, str | None]] = []
     monkeypatch.setattr(
-        "ceo_agent_service.worker.send_macos_notification",
+        "app.worker.send_macos_notification",
         lambda **kwargs: notifications.append(kwargs),
     )
     worker = DingTalkAutoReplyWorker(
@@ -4629,7 +4629,7 @@ def test_group_unread_without_principal_mention_is_ignored(
     )
     notifications: list[dict[str, str | None]] = []
     monkeypatch.setattr(
-        "ceo_agent_service.worker.send_macos_notification",
+        "app.worker.send_macos_notification",
         lambda **kwargs: notifications.append(kwargs),
     )
     worker = DingTalkAutoReplyWorker(
@@ -4661,7 +4661,7 @@ def test_dry_run_group_unread_without_principal_mention_is_ignored(
     )
     notifications: list[dict[str, str | None]] = []
     monkeypatch.setattr(
-        "ceo_agent_service.worker.send_macos_notification",
+        "app.worker.send_macos_notification",
         lambda **kwargs: notifications.append(kwargs),
     )
     worker = DingTalkAutoReplyWorker(
@@ -5639,7 +5639,7 @@ def test_permission_lookup_failure_records_error_and_does_not_send(
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     monkeypatch.setattr(
-        "ceo_agent_service.worker.send_macos_notification", lambda **_: None
+        "app.worker.send_macos_notification", lambda **_: None
     )
     dws = FakeDws(
         [conversation(single_chat=True)],
@@ -5667,7 +5667,7 @@ def test_permission_lookup_failure_records_error_and_does_not_send(
 def test_dry_run_does_not_mutate_terminal_state(tmp_path: Path, monkeypatch):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     monkeypatch.setattr(
-        "ceo_agent_service.worker.send_macos_notification", lambda **_: None
+        "app.worker.send_macos_notification", lambda **_: None
     )
     dws = FakeDws(
         [conversation()], {"cid-1": [message("@Alex Chen(明哥) 这个怎么处理？")]}
@@ -5689,7 +5689,7 @@ def test_dry_run_does_not_mutate_terminal_state(tmp_path: Path, monkeypatch):
 def test_send_failure_records_error_and_does_not_mark_seen(tmp_path: Path, monkeypatch):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     monkeypatch.setattr(
-        "ceo_agent_service.worker.send_macos_notification", lambda **_: None
+        "app.worker.send_macos_notification", lambda **_: None
     )
     dws = FakeDws(
         [conversation()],
@@ -5723,7 +5723,7 @@ def test_send_failure_requeues_reply_task_for_consumer_retry(
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     monkeypatch.setattr(
-        "ceo_agent_service.worker.send_macos_notification", lambda **_: None
+        "app.worker.send_macos_notification", lambda **_: None
     )
     dws = FakeDws(
         [conversation()],
@@ -5771,7 +5771,7 @@ def test_consumer_send_failure_emits_one_failure_notification(
         max_task_attempts=1,
     )
     monkeypatch.setattr(
-        "ceo_agent_service.worker.send_macos_notification",
+        "app.worker.send_macos_notification",
         lambda **kwargs: notifications.append(kwargs),
     )
     worker.produce_once()
@@ -5791,7 +5791,7 @@ def test_pat_authorization_error_is_recorded_as_failed_without_retry_or_url(
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     monkeypatch.setattr(
-        "ceo_agent_service.worker.send_macos_notification", lambda **_: None
+        "app.worker.send_macos_notification", lambda **_: None
     )
     dws = FakeDws(
         [conversation()],
@@ -5827,7 +5827,7 @@ def test_handoff_ding_failure_does_not_mark_seen(
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     monkeypatch.setattr(
-        "ceo_agent_service.worker.send_macos_notification", lambda **_: None
+        "app.worker.send_macos_notification", lambda **_: None
     )
     dws = FakeDws(
         [conversation()],
@@ -5850,7 +5850,7 @@ def test_handoff_ding_failure_does_not_mark_seen(
 def test_persists_codex_last_session_id_after_decision(tmp_path: Path, monkeypatch):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     monkeypatch.setattr(
-        "ceo_agent_service.worker.send_macos_notification", lambda **_: None
+        "app.worker.send_macos_notification", lambda **_: None
     )
     dws = FakeDws([conversation()], {"cid-1": [message("@Alex Chen(明哥) cc一下")]})
     codex = FakeCodex(
@@ -5869,7 +5869,7 @@ def test_persists_codex_last_session_id_after_decision(tmp_path: Path, monkeypat
 def test_stale_codex_last_session_id_is_not_persisted(tmp_path: Path, monkeypatch):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     monkeypatch.setattr(
-        "ceo_agent_service.worker.send_macos_notification", lambda **_: None
+        "app.worker.send_macos_notification", lambda **_: None
     )
     dws = FakeDws([conversation()], {"cid-1": [message("@Alex Chen(明哥) cc一下")]})
     codex = FakeCodex(

@@ -9,19 +9,19 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 from pydantic import BaseModel, Field, ValidationError, model_validator
 
-from ceo_agent_service.codex_decision import (
+from app.codex_decision import (
     extract_codex_audit_events,
     extract_codex_session_id,
 )
-from ceo_agent_service.codex_history import (
+from app.codex_history import (
     count_codex_session_lines,
     extract_codex_audit_events_from_session,
 )
-from ceo_agent_service.codex_runner import (
+from app.codex_runner import (
     CODEX_BYPASS_APPROVALS_AND_SANDBOX,
     _config_string,
 )
-from ceo_agent_service.process_runner import run_process_with_idle_timeout
+from app.process_runner import run_process_with_idle_timeout
 
 
 OA_APPROVAL_SCHEMA_PATH = (
@@ -319,7 +319,7 @@ class OaApprovalCodexRunner:
         session_id = self.last_session_id
         if not session_id:
             return None
-        from ceo_agent_service.codex_history import find_codex_session_path
+        from app.codex_history import find_codex_session_path
 
         path = find_codex_session_path(session_id, codex_home=self.codex_home)
         if path is None:

@@ -5,12 +5,12 @@ from dataclasses import dataclass
 from html import unescape
 from urllib.parse import urlsplit, urlunsplit
 
-from ceo_agent_service.config import (
+from app.config import (
     principal_display_name,
     work_profile_path,
 )
-from ceo_agent_service.developer_prompt import render_user_prompt
-from ceo_agent_service.dingtalk_models import DingTalkConversation, DingTalkMessage
+from app.developer_prompt import render_user_prompt
+from app.dingtalk_models import DingTalkConversation, DingTalkMessage
 
 
 MARKDOWN_IMAGE_RE = re.compile(r"!\[[^\]]*]\([^)]+\)")
@@ -49,7 +49,7 @@ Profile 内容:
 
 
 def ceo_agent_thread_prompt() -> str:
-    from ceo_agent_service.developer_prompt import render_developer_prompt
+    from app.developer_prompt import render_developer_prompt
 
     return render_developer_prompt()
 

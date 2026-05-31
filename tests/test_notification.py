@@ -1,14 +1,14 @@
-from ceo_agent_service.notification import send_macos_notification
+from app.notification import send_macos_notification
 
 
 def test_notification_uses_valid_escaped_applescript_literals(monkeypatch):
     commands = []
     monkeypatch.setattr(
-        "ceo_agent_service.notification._send_browser_notification",
+        "app.notification._send_browser_notification",
         lambda **_: False,
     )
     monkeypatch.setattr(
-        "ceo_agent_service.notification.subprocess.run",
+        "app.notification.subprocess.run",
         lambda command, check: commands.append((command, check)),
     )
 
@@ -33,11 +33,11 @@ def test_notification_uses_valid_escaped_applescript_literals(monkeypatch):
 def test_notification_falls_back_to_applescript_when_no_browser_page(monkeypatch):
     commands = []
     monkeypatch.setattr(
-        "ceo_agent_service.notification._send_browser_notification",
+        "app.notification._send_browser_notification",
         lambda **_: False,
     )
     monkeypatch.setattr(
-        "ceo_agent_service.notification.subprocess.run",
+        "app.notification.subprocess.run",
         lambda command, check: commands.append((command, check)),
     )
 
@@ -62,11 +62,11 @@ def test_notification_falls_back_to_applescript_when_no_browser_page(monkeypatch
 def test_notification_keeps_unicode_literals_for_applescript(monkeypatch):
     commands = []
     monkeypatch.setattr(
-        "ceo_agent_service.notification._send_browser_notification",
+        "app.notification._send_browser_notification",
         lambda **_: False,
     )
     monkeypatch.setattr(
-        "ceo_agent_service.notification.subprocess.run",
+        "app.notification.subprocess.run",
         lambda command, check: commands.append((command, check)),
     )
 
@@ -82,11 +82,11 @@ def test_notification_prefers_browser_notification(monkeypatch):
     commands = []
     browser_payloads = []
     monkeypatch.setattr(
-        "ceo_agent_service.notification._send_browser_notification",
+        "app.notification._send_browser_notification",
         lambda **kwargs: browser_payloads.append(kwargs) or True,
     )
     monkeypatch.setattr(
-        "ceo_agent_service.notification.subprocess.run",
+        "app.notification.subprocess.run",
         lambda command, check: commands.append((command, check)),
     )
 

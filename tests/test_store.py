@@ -1,7 +1,7 @@
 from pathlib import Path
 import sqlite3
 
-from ceo_agent_service.store import AutoReplyStore
+from app.store import AutoReplyStore
 
 
 def test_conversation_session_persists(tmp_path: Path):

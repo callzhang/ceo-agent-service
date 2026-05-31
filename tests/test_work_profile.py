@@ -1,7 +1,7 @@
 from pathlib import Path
 
-from ceo_agent_service.corpus import CorpusRecord, write_records
-from ceo_agent_service.work_profile import (
+from app.corpus import CorpusRecord, write_records
+from app.work_profile import (
     EvidenceRecord,
     WorkProfile,
     WorkProfileEvidenceCoverage,

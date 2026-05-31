@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from ceo_agent_service.corpus import (
+from app.corpus import (
     CorpusRecord,
     append_records,
     build_dingtalk_records_from_sender_payload,

@@ -3,12 +3,12 @@ import json
 
 import pytest
 
-from ceo_agent_service.codex_runner import (
+from app.codex_runner import (
     CODEX_DECISION_SCHEMA_PATH,
     CodexRunner,
     codex_developer_instructions,
 )
-from ceo_agent_service.config import repo_root
+from app.config import repo_root
 
 
 @pytest.fixture(autouse=True)

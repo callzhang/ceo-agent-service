@@ -11,7 +11,7 @@ from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, Field
 
-from ceo_agent_service.dingtalk_models import DingTalkConversation, DingTalkMessage
+from app.dingtalk_models import DingTalkConversation, DingTalkMessage
 
 TITLE_INFORMATION_UNIT_LIMIT = 20
 TITLE_WORD_OR_CJK_PATTERN = re.compile(

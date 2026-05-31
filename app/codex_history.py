@@ -4,7 +4,7 @@ from itertools import islice
 from pathlib import Path
 from typing import Any
 
-from ceo_agent_service.config import forbidden_path_prefixes
+from app.config import forbidden_path_prefixes
 
 
 DEFAULT_CODEX_HOME = Path.home() / ".codex"

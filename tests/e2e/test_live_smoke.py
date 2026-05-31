@@ -3,9 +3,9 @@ from pathlib import Path
 
 import pytest
 
-from ceo_agent_service.codex_decision import CodexDecisionRunner
-from ceo_agent_service.dingtalk_models import CodexAction
-from ceo_agent_service.dws_client import DwsClient
+from app.codex_decision import CodexDecisionRunner
+from app.dingtalk_models import CodexAction
+from app.dws_client import DwsClient
 
 
 def _enabled(name: str) -> bool:

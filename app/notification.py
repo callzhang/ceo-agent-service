@@ -3,7 +3,7 @@ from pathlib import Path
 import subprocess
 from urllib import error, request
 
-from ceo_agent_service.config import notification_bridge_base_url
+from app.config import notification_bridge_base_url
 
 
 DEFAULT_NOTIFICATION_ICON_PATH = Path(__file__).resolve().parents[1] / "logo.png"

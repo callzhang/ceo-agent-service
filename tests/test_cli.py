@@ -5,8 +5,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from ceo_agent_service import cli
-from ceo_agent_service.cli import (
+from app import cli
+from app.cli import (
     WorkerSettings,
     build_work_profile_command,
     build_parser,
@@ -29,8 +29,8 @@ from ceo_agent_service.cli import (
     test_ding_command as run_test_ding_command,
     run_audit_web_command,
 )
-from ceo_agent_service.corpus import CorpusRecord, append_records
-from ceo_agent_service.dws_client import DwsError
+from app.corpus import CorpusRecord, append_records
+from app.dws_client import DwsError
 
 
 def test_parser_supports_worker_commands():
@@ -174,7 +174,7 @@ def test_build_work_profile_command_can_skip_live_sources_in_parser():
 
 
 def test_build_work_profile_command_writes_repo_assets(tmp_path, monkeypatch):
-    from ceo_agent_service.work_profile import EvidenceRecord
+    from app.work_profile import EvidenceRecord
 
     workspace = tmp_path / "memory"
     corpus_dir = tmp_path / "corpus"
@@ -1710,7 +1710,7 @@ def test_run_audit_web_command_uses_db_host_and_port(monkeypatch, tmp_path):
         False,
     )
     assert calls["args"][6] == 1
-    assert calls["args"][7][0].name == "ceo_agent_service"
+    assert calls["args"][7][0].name == "app"
 
 
 def test_run_audit_web_command_forwards_uvicorn_reload(monkeypatch, tmp_path):
@@ -1761,7 +1761,7 @@ def test_run_audit_web_command_forwards_uvicorn_reload(monkeypatch, tmp_path):
         True,
     )
     assert calls["args"][6] == 2
-    assert calls["args"][7][0].name == "ceo_agent_service"
+    assert calls["args"][7][0].name == "app"
 
 
 def test_export_feedback_command_writes_reviewed_attempts_jsonl(tmp_path, capsys):

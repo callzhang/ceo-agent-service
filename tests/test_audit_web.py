@@ -3,7 +3,7 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from ceo_agent_service.audit_web import (
+from app.audit_web import (
     create_audit_app,
     handle_developer_prompt_post,
     handle_prompt_variables_post,
@@ -21,10 +21,10 @@ from ceo_agent_service.audit_web import (
     render_error_list,
     run_audit_web,
 )
-from ceo_agent_service.developer_prompt import read_developer_prompt_template
-from ceo_agent_service.config import load_env_file
-from ceo_agent_service.dingtalk_models import DingTalkConversation, DingTalkMessage
-from ceo_agent_service.store import AutoReplyStore
+from app.developer_prompt import read_developer_prompt_template
+from app.config import load_env_file
+from app.dingtalk_models import DingTalkConversation, DingTalkMessage
+from app.store import AutoReplyStore
 
 
 def seed_attempt(store: AutoReplyStore) -> int:
@@ -176,9 +176,9 @@ def test_render_config_page_shows_message_routing_logic():
     assert '<summary><h3>Config variables</h3></summary>' in html
     assert '<summary><h3>Dynamic functions</h3></summary>' in html
     assert '<details class="config-collapse" open>' not in html
-    assert "&lt;code: ceo_agent_service.user_prompt_blocks:current_message_block()&gt;" in html
+    assert "&lt;code: app.user_prompt_blocks:current_message_block()&gt;" in html
     assert "work_profile_instruction()" in html
-    assert "&lt;code: ceo_agent_service.prompt:work_profile_instruction()&gt;" in html
+    assert "&lt;code: app.prompt:work_profile_instruction()&gt;" in html
     assert "Info" in html
     assert 'class="prompt-tab active"' in html
     assert "markdown-doc" not in html
@@ -310,7 +310,7 @@ def test_handle_system_config_post_saves_runtime_params_to_env_file(
 def test_open_dingtalk_bridge_opens_conversation_url(tmp_path: Path, monkeypatch):
     commands = []
     monkeypatch.setattr(
-        "ceo_agent_service.audit_web.subprocess.run",
+        "app.audit_web.subprocess.run",
         lambda command, check: commands.append((command, check)),
     )
     client = TestClient(create_audit_app(tmp_path / "worker.sqlite3"))
@@ -332,7 +332,7 @@ def test_open_dingtalk_bridge_opens_conversation_url(tmp_path: Path, monkeypatch
 def test_open_dingtalk_bridge_rejects_missing_cid(tmp_path: Path, monkeypatch):
     commands = []
     monkeypatch.setattr(
-        "ceo_agent_service.audit_web.subprocess.run",
+        "app.audit_web.subprocess.run",
         lambda command, check: commands.append((command, check)),
     )
     client = TestClient(create_audit_app(tmp_path / "worker.sqlite3"))
@@ -453,7 +453,7 @@ def test_render_developer_prompt_editor_shows_template_and_preview(
     assert 'name="template"' in html
     assert "Config variables" in html
     assert "&lt;var: principal&gt;" in html
-    assert "&lt;code: ceo_agent_service.config:user_alias()&gt;" not in html
+    assert "&lt;code: app.config:user_alias()&gt;" not in html
     assert 'value="principal"' not in html
     assert 'value="responsibility_summary"' not in html
     assert 'value="CEO_PROMPT_VAR_RESPONSIBILITY_SUMMARY"' in html
@@ -468,7 +468,7 @@ def test_render_developer_prompt_editor_shows_template_and_preview(
 def test_render_prompt_editor_shows_user_prompt_tab(tmp_path: Path, monkeypatch):
     template_path = tmp_path / "user.md"
     template_path.write_text(
-        "USER <code: ceo_agent_service.user_prompt_blocks:current_message_block()>",
+        "USER <code: app.user_prompt_blocks:current_message_block()>",
         encoding="utf-8",
     )
     monkeypatch.setenv("CEO_USER_PROMPT_TEMPLATE_PATH", str(template_path))
@@ -487,9 +487,9 @@ def test_render_prompt_editor_shows_user_prompt_tab(tmp_path: Path, monkeypatch)
     assert 'name="variables"' not in html
     assert 'name="variable_key"' in html
     assert 'name="template"' in html
-    assert "&lt;code: ceo_agent_service.user_prompt_blocks:current_message_block()&gt;" in html
+    assert "&lt;code: app.user_prompt_blocks:current_message_block()&gt;" in html
     assert "work_profile_instruction()" in html
-    assert "&lt;code: ceo_agent_service.prompt:work_profile_instruction()&gt;" in html
+    assert "&lt;code: app.prompt:work_profile_instruction()&gt;" in html
     assert "Dynamic functions" in html
     assert "dynamic-preview" in html
     assert "相似历史回复风格例子" in html
@@ -563,7 +563,7 @@ def test_handle_user_prompt_post_saves_template(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("CEO_USER_PROMPT_TEMPLATE_PATH", str(template_path))
     body = (
         "template=USER+%3Ccode%3A+"
-        "ceo_agent_service.user_prompt_blocks%3Acurrent_message_block%28%29%3E"
+        "app.user_prompt_blocks%3Acurrent_message_block%28%29%3E"
     ).encode()
 
     status, headers, html = handle_user_prompt_post(body)
@@ -572,7 +572,7 @@ def test_handle_user_prompt_post_saves_template(tmp_path: Path, monkeypatch):
     assert headers["Location"] == "/config?tab=user&saved=1"
     assert html == ""
     assert template_path.read_text(encoding="utf-8") == (
-        "USER <code: ceo_agent_service.user_prompt_blocks:current_message_block()>"
+        "USER <code: app.user_prompt_blocks:current_message_block()>"
     )
 
 
@@ -1275,7 +1275,7 @@ def test_handle_reviewed_message_reply_matches_sender_group_and_text(
             return {"result": {"processQueryKey": "recall-1"}}
 
     monkeypatch.setattr(
-        "ceo_agent_service.worker.send_macos_notification",
+        "app.worker.send_macos_notification",
         lambda **kwargs: None,
     )
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
@@ -1361,7 +1361,7 @@ def test_handle_reviewed_message_reply_uses_stored_group_and_recent_message(
             return {"result": {"processQueryKey": "recall-site-1"}}
 
     monkeypatch.setattr(
-        "ceo_agent_service.worker.send_macos_notification",
+        "app.worker.send_macos_notification",
         lambda **kwargs: None,
     )
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
@@ -1461,7 +1461,7 @@ def test_handle_reviewed_message_reply_matches_private_message_without_mention(
             return {"result": {"processQueryKey": "recall-private-1"}}
 
     monkeypatch.setattr(
-        "ceo_agent_service.worker.send_macos_notification",
+        "app.worker.send_macos_notification",
         lambda **kwargs: None,
     )
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
@@ -1538,7 +1538,7 @@ def test_handle_reviewed_message_reply_uses_stored_private_conversation_when_sea
             return {"result": {"processQueryKey": "recall-private-1"}}
 
     monkeypatch.setattr(
-        "ceo_agent_service.worker.send_macos_notification",
+        "app.worker.send_macos_notification",
         lambda **kwargs: None,
     )
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
@@ -1624,7 +1624,7 @@ def test_run_audit_web_uses_stable_uvicorn_protocols(monkeypatch, tmp_path: Path
         calls["app"] = app
         calls["kwargs"] = kwargs
 
-    monkeypatch.setattr("ceo_agent_service.audit_web.uvicorn.run", fake_run)
+    monkeypatch.setattr("app.audit_web.uvicorn.run", fake_run)
 
     run_audit_web(tmp_path / "worker.sqlite3", host="127.0.0.1", port=8765)
 
@@ -1648,7 +1648,7 @@ def test_run_audit_web_reload_uses_stable_uvicorn_protocols(
     monkeypatch.setenv("CEO_WORKER_DB", "")
     monkeypatch.delenv("CEO_DING_ROBOT_CODE", raising=False)
     monkeypatch.delenv("CEO_DING_ROBOT_NAME", raising=False)
-    monkeypatch.setattr("ceo_agent_service.audit_web.uvicorn.run", fake_run)
+    monkeypatch.setattr("app.audit_web.uvicorn.run", fake_run)
 
     run_audit_web(
         tmp_path / "worker.sqlite3",
@@ -1658,7 +1658,7 @@ def test_run_audit_web_reload_uses_stable_uvicorn_protocols(
         reload_dirs=[tmp_path],
     )
 
-    assert calls["app"] == "ceo_agent_service.audit_web:create_default_audit_app"
+    assert calls["app"] == "app.audit_web:create_default_audit_app"
     assert calls["kwargs"]["factory"] is True
     assert calls["kwargs"]["reload"] is True
     assert calls["kwargs"]["loop"] == "asyncio"

@@ -1,14 +1,14 @@
 import pytest
 
-from ceo_agent_service.dingtalk_models import DingTalkMessage
-from ceo_agent_service.dws_client import DwsError, DwsUserProfile
-from ceo_agent_service.org_cache import (
+from app.dingtalk_models import DingTalkMessage
+from app.dws_client import DwsError, DwsUserProfile
+from app.org_cache import (
     ORG_CACHE_REFRESHED_DATE_STATE_KEY,
     CachedDwsClient,
     CachedOrgDirectory,
     refresh_org_cache,
 )
-from ceo_agent_service.store import AutoReplyStore
+from app.store import AutoReplyStore
 
 
 def message(

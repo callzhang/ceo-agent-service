@@ -5,12 +5,12 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
-from ceo_agent_service.config import (
+from app.config import (
     principal_display_name,
     principal_handoff_name,
     principal_name,
 )
-from ceo_agent_service.corpus import load_corpus_records
+from app.corpus import load_corpus_records
 
 
 WHITESPACE_RE = re.compile(r"\s+")

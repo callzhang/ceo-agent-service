@@ -198,7 +198,7 @@ CEO_NOT_SEND_MESSAGE=1 .venv/bin/ceo-agent run-once --not-send-message
 
 ```bash
 cd apps/local-service
-.venv/bin/python -m ceo_agent_service.cli audit-web --reload --host 127.0.0.1 --port 8765
+.venv/bin/python -m app.cli audit-web --reload --host 127.0.0.1 --port 8765
 ```
 
 打开：

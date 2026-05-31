@@ -6,7 +6,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from ceo_agent_service.config import (
+from app.config import (
     assistant_signature,
     document_extraction_ids,
     principal_name,

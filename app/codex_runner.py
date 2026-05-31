@@ -3,8 +3,8 @@ import os
 import shlex
 from pathlib import Path
 
-from ceo_agent_service.prompt import ceo_agent_thread_prompt
-from ceo_agent_service.config import memory_connector_user_id
+from app.prompt import ceo_agent_thread_prompt
+from app.config import memory_connector_user_id
 
 
 CODEX_DECISION_SCHEMA_PATH = (

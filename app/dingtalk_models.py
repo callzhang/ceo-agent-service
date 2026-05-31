@@ -2,7 +2,7 @@ from enum import StrEnum
 
 from pydantic import BaseModel, Field
 
-from ceo_agent_service.config import broadcast_mention_aliases, mention_aliases
+from app.config import broadcast_mention_aliases, mention_aliases
 
 
 class DingTalkConversation(BaseModel):

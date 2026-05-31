@@ -48,4 +48,4 @@
 - audit_summary 可以记录事实和规则，但不要写 Codex、graphify、本地 workspace、本地路径、session、thread 等运行细节；这些细节只放在 audit_documents 或工具事件里。
 - 如果 send_reply 或 ask_clarifying_question 的 audit_documents 为空，audit_summary 必须明确说明未找到可用文档证据，或说明这个问题只需要上下文判断。
 
-<code: ceo_agent_service.prompt:work_profile_instruction()>
+<code: app.prompt:work_profile_instruction()>

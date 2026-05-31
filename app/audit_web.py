@@ -12,12 +12,12 @@ import uvicorn
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 
-from ceo_agent_service.codex_history import (
+from app.codex_history import (
     RenderedCodexEvent,
     render_local_codex_session,
 )
-from ceo_agent_service.codex_decision import audit_summary_explains_no_documents
-from ceo_agent_service.config import (
+from app.codex_decision import audit_summary_explains_no_documents
+from app.config import (
     assistant_signature,
     batch_seconds,
     broadcast_mention_aliases,
@@ -41,7 +41,7 @@ from ceo_agent_service.config import (
     write_env_values,
     work_profile_path,
 )
-from ceo_agent_service.developer_prompt import (
+from app.developer_prompt import (
     configurable_prompt_variable_pairs,
     DeveloperPromptTemplateError,
     developer_prompt_template_path,
@@ -56,22 +56,22 @@ from ceo_agent_service.developer_prompt import (
     write_configurable_prompt_variables,
     write_user_prompt_template,
 )
-from ceo_agent_service.dingtalk_models import (
+from app.dingtalk_models import (
     CodexAction,
     DingTalkConversation,
     DingTalkMessage,
     SensitivityKind,
 )
-from ceo_agent_service.dws_client import DwsClient
-from ceo_agent_service.store import (
+from app.dws_client import DwsClient
+from app.store import (
     AutoReplyStore,
     ReplyAttempt,
     ReplyError,
     ReplyTask,
     SentReply,
 )
-from ceo_agent_service.user_prompt_blocks import USER_PROMPT_BLOCKS, UserPromptBlock
-from ceo_agent_service.worker import DingTalkAutoReplyWorker
+from app.user_prompt_blocks import USER_PROMPT_BLOCKS, UserPromptBlock
+from app.worker import DingTalkAutoReplyWorker
 
 
 CSS = """
@@ -1278,7 +1278,7 @@ def _user_prompt_dynamic_function_table() -> str:
     blocks = [
         UserPromptBlock(
             name="work_profile_instruction",
-            expression="ceo_agent_service.prompt:work_profile_instruction()",
+            expression="app.prompt:work_profile_instruction()",
             description="读取并注入工作人格 Profile；通常用于 Developer Prompt。",
             default=(
                 "工作人格 Profile:\n"
@@ -1716,7 +1716,7 @@ def run_audit_web(
         if ding_robot_name:
             os.environ["CEO_DING_ROBOT_NAME"] = ding_robot_name
         uvicorn.run(
-            "ceo_agent_service.audit_web:create_default_audit_app",
+            "app.audit_web:create_default_audit_app",
             factory=True,
             host=host,
             port=port,

@@ -1,10 +1,10 @@
-from ceo_agent_service.dingtalk_models import (
+from app.dingtalk_models import (
     CodexAction,
     CodexDecision,
     DingTalkMessage,
     SensitivityKind,
 )
-from ceo_agent_service.permission import PermissionAction, PermissionGate
+from app.permission import PermissionAction, PermissionGate
 
 
 def trigger() -> DingTalkMessage:

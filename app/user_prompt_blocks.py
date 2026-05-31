@@ -22,7 +22,7 @@ _BLOCKS: ContextVar[dict[str, str] | None] = ContextVar(
 USER_PROMPT_BLOCKS = [
     UserPromptBlock(
         name="style_lines",
-        expression="ceo_agent_service.user_prompt_blocks:style_lines()",
+        expression="app.user_prompt_blocks:style_lines()",
         description="相似历史回复风格例子等动态风格上下文。",
         default=(
             "相似历史回复风格例子（只学习语气、判断顺序和句式结构；"
@@ -33,7 +33,7 @@ USER_PROMPT_BLOCKS = [
     ),
     UserPromptBlock(
         name="current_message_block",
-        expression="ceo_agent_service.user_prompt_blocks:current_message_block()",
+        expression="app.user_prompt_blocks:current_message_block()",
         description="当前待处理的新消息、会话名和会话类型。",
         default=(
             "当前待处理消息:\n"
@@ -46,13 +46,13 @@ USER_PROMPT_BLOCKS = [
     ),
     UserPromptBlock(
         name="sender_org_block",
-        expression="ceo_agent_service.user_prompt_blocks:sender_org_block()",
+        expression="app.user_prompt_blocks:sender_org_block()",
         description="发信人组织信息 JSON；没有可用组织信息时为空。",
         default='发信人组织信息(JSON):\n{"name": "Mina", "user_id": "sender-user-1"}',
     ),
     UserPromptBlock(
         name="known_people_block",
-        expression="ceo_agent_service.user_prompt_blocks:known_people_block()",
+        expression="app.user_prompt_blocks:known_people_block()",
         description="可用组织人员标识；没有相关人员时为空。",
         default=(
             "可用组织人员标识（如内部人员问题对象匹配这些人，"
@@ -62,7 +62,7 @@ USER_PROMPT_BLOCKS = [
     ),
     UserPromptBlock(
         name="linked_documents_block",
-        expression="ceo_agent_service.user_prompt_blocks:linked_documents_block()",
+        expression="app.user_prompt_blocks:linked_documents_block()",
         description="已读取的钉钉文档、普通文件正文或摘要；没有材料时为空。",
         default=(
             "已获取的钉钉材料:\n"
@@ -73,7 +73,7 @@ USER_PROMPT_BLOCKS = [
     ),
     UserPromptBlock(
         name="image_download_block",
-        expression="ceo_agent_service.user_prompt_blocks:image_download_block()",
+        expression="app.user_prompt_blocks:image_download_block()",
         description="图片下载失败状态；图片都成功下载或没有图片时为空。",
         default=(
             "图片读取状态:\n"
@@ -84,7 +84,7 @@ USER_PROMPT_BLOCKS = [
     ),
     UserPromptBlock(
         name="context_messages_block",
-        expression="ceo_agent_service.user_prompt_blocks:context_messages_block()",
+        expression="app.user_prompt_blocks:context_messages_block()",
         description="自上次回复后的上下文消息，最多 20 条。",
         default=(
             "上下文消息（自上次回复后的新信息，最多 20 条）:\n"

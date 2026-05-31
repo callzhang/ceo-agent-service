@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from ceo_agent_service.registry import ThreadRegistry
+from app.registry import ThreadRegistry
 
 
 def test_registry_persists_thread_session_mapping(tmp_path: Path):

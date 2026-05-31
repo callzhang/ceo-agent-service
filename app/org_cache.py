@@ -1,9 +1,9 @@
 from collections.abc import Iterable
 from datetime import datetime
 
-from ceo_agent_service.dingtalk_models import DingTalkMessage
-from ceo_agent_service.dws_client import DwsError, DwsUserProfile
-from ceo_agent_service.store import AutoReplyStore, OrgUserProfile
+from app.dingtalk_models import DingTalkMessage
+from app.dws_client import DwsError, DwsUserProfile
+from app.store import AutoReplyStore, OrgUserProfile
 
 ORG_PROFILE_FETCH_BATCH_SIZE = 20
 ORG_CACHE_REFRESHED_DATE_STATE_KEY = "org_cache_refreshed_date"

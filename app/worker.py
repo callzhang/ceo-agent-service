@@ -12,8 +12,8 @@ from urllib.parse import parse_qs, quote, unquote, urlparse, urlsplit, urlunspli
 
 from pypdf import PdfReader
 
-from ceo_agent_service.codex_decision import append_signature
-from ceo_agent_service.config import (
+from app.codex_decision import append_signature
+from app.config import (
     assistant_signature,
     broadcast_mention_aliases,
     fast_path_unread_backoff_duration,
@@ -26,39 +26,39 @@ from ceo_agent_service.config import (
     single_chat_read_recovery_limit,
     single_chat_read_recovery_window,
 )
-from ceo_agent_service.dws_client import (
+from app.dws_client import (
     DINGTALK_MESSAGE_TIME_ZONE,
     DwsCalendarEvent,
     DwsClient,
     DwsDocumentSearchResult,
     DwsError,
 )
-from ceo_agent_service.corpus import (
+from app.corpus import (
     MEDIA_OR_LINK_PATTERN,
     CorpusRecord,
     count_information_units,
     retrieve_similar_examples,
 )
-from ceo_agent_service.dingtalk_models import (
+from app.dingtalk_models import (
     CodexAction,
     CodexDecision,
     DingTalkConversation,
     DingTalkMessage,
 )
-from ceo_agent_service.leak_check import (
+from app.leak_check import (
     FORBIDDEN_MARKERS,
     contains_forbidden_leak,
     redact_forbidden_leak_markers,
 )
-from ceo_agent_service.notification import send_macos_notification
-from ceo_agent_service.oa_approval import extract_oa_url
-from ceo_agent_service.org_cache import (
+from app.notification import send_macos_notification
+from app.oa_approval import extract_oa_url
+from app.org_cache import (
     ORG_CACHE_REFRESHED_DATE_STATE_KEY,
     refresh_org_cache,
 )
-from ceo_agent_service.permission import PermissionAction, PermissionGate
-from ceo_agent_service.prompt import LinkedDocumentContext, build_turn_prompt
-from ceo_agent_service.store import AutoReplyStore, ReplyAttempt, ReplyTask
+from app.permission import PermissionAction, PermissionGate
+from app.prompt import LinkedDocumentContext, build_turn_prompt
+from app.store import AutoReplyStore, ReplyAttempt, ReplyTask
 
 HANDOFF_ACK = handoff_ack()
 # Historical auto-ack marker. Keep filtering it from context, but do not send

@@ -7,15 +7,15 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from ceo_agent_service.codex_history import (
+from app.codex_history import (
     count_codex_session_lines,
     extract_codex_audit_events_from_session,
     find_codex_session_path,
 )
-from ceo_agent_service.codex_runner import CodexRunner
-from ceo_agent_service.config import assistant_signature, forbidden_path_prefixes
-from ceo_agent_service.dingtalk_models import CodexAction, CodexDecision
-from ceo_agent_service.process_runner import run_process_with_idle_timeout
+from app.codex_runner import CodexRunner
+from app.config import assistant_signature, forbidden_path_prefixes
+from app.dingtalk_models import CodexAction, CodexDecision
+from app.process_runner import run_process_with_idle_timeout
 
 
 SIGNATURE = assistant_signature()

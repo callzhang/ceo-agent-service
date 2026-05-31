@@ -4,15 +4,15 @@ import json
 import pytest
 from pydantic import ValidationError
 
-import ceo_agent_service.oa_approval as oa_approval
-from ceo_agent_service.codex_runner import CODEX_BYPASS_APPROVALS_AND_SANDBOX
-from ceo_agent_service.oa_approval import (
+import app.oa_approval as oa_approval
+from app.codex_runner import CODEX_BYPASS_APPROVALS_AND_SANDBOX
+from app.oa_approval import (
     OA_APPROVAL_SCHEMA_PATH,
     OaApprovalCodexRunner,
     OaApprovalResult,
     extract_oa_url,
 )
-from ceo_agent_service.process_runner import ProcessRunResult
+from app.process_runner import ProcessRunResult
 
 
 def _developer_instructions_arg(command: list[str]) -> str:

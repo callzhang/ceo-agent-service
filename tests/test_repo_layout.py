@@ -11,7 +11,7 @@ def test_repo_uses_direct_app_package_layout():
     assert (REPO_ROOT / "tests").is_dir()
     assert (REPO_ROOT / "pyproject.toml").is_file()
     assert not (REPO_ROOT / "apps" / "local-service").exists()
-    assert not (REPO_ROOT / "apps" / "local-service" / "ceo_agent_service").exists()
+    assert not (REPO_ROOT / "apps" / "local-service" / "app").exists()
 
 
 def test_repo_root_helpers_resolve_repository_root():

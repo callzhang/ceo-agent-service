@@ -18,7 +18,7 @@ export CEO_CORPUS_DIR="${CEO_CORPUS_DIR:-${repo_root}/corpus}"
 export DWS_DISABLE_KEYCHAIN="${DWS_DISABLE_KEYCHAIN:-1}"
 export DWS_KEYCHAIN_DIR="${DWS_KEYCHAIN_DIR:-${CEO_WORKSPACE}/Library/Application Support/dws-cli}"
 
-ceo_agent_cmd=(.venv/bin/python -c 'from ceo_agent_service.cli import main; main()')
+ceo_agent_cmd=(.venv/bin/python -c 'from app.cli import main; main()')
 if [[ -x .venv/bin/ceo-agent ]]; then
   ceo_agent_cmd=(.venv/bin/ceo-agent)
 fi

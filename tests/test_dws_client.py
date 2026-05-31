@@ -6,14 +6,14 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from ceo_agent_service.dingtalk_models import (
+from app.dingtalk_models import (
     CodexAction,
     CodexDecision,
     DingTalkConversation,
     DingTalkMessage,
 )
-from ceo_agent_service import dws_client
-from ceo_agent_service.dws_client import (
+from app import dws_client
+from app.dws_client import (
     DwsClient,
     DwsError,
     DwsMinutesPermissionRequest,
@@ -1943,7 +1943,7 @@ def test_run_json_raises_dws_error_on_nonzero_exit(monkeypatch):
         assert timeout == 7
         return SimpleNamespace(returncode=1, stdout="", stderr="not logged in")
 
-    monkeypatch.setattr("ceo_agent_service.dws_client.subprocess.run", fake_run)
+    monkeypatch.setattr("app.dws_client.subprocess.run", fake_run)
 
     with pytest.raises(DwsError, match="exit code 1"):
         DwsClient(timeout_seconds=7).run_json(["dws", "probe"])
@@ -1965,8 +1965,8 @@ def test_run_json_extracts_error_code_from_stdout_and_retries_transient_timeout(
             return SimpleNamespace(returncode=1, stdout=timeout_payload, stderr="1")
         return SimpleNamespace(returncode=0, stdout='{"ok":true}', stderr="")
 
-    monkeypatch.setattr("ceo_agent_service.dws_client.subprocess.run", fake_run)
-    monkeypatch.setattr("ceo_agent_service.dws_client.time.sleep", sleeps.append)
+    monkeypatch.setattr("app.dws_client.subprocess.run", fake_run)
+    monkeypatch.setattr("app.dws_client.time.sleep", sleeps.append)
 
     assert DwsClient().run_json(["dws", "chat", "message", "list"]) == {"ok": True}
     assert calls == [
@@ -1991,8 +1991,8 @@ def test_run_json_prefers_specific_server_error_code_over_generic_nested_code(
             return SimpleNamespace(returncode=1, stdout="", stderr=timeout_payload)
         return SimpleNamespace(returncode=0, stdout='{"ok":true}', stderr="")
 
-    monkeypatch.setattr("ceo_agent_service.dws_client.subprocess.run", fake_run)
-    monkeypatch.setattr("ceo_agent_service.dws_client.time.sleep", lambda seconds: None)
+    monkeypatch.setattr("app.dws_client.subprocess.run", fake_run)
+    monkeypatch.setattr("app.dws_client.time.sleep", lambda seconds: None)
 
     assert DwsClient().run_json(["dws", "chat", "message", "list"]) == {"ok": True}
     assert len(calls) == 2
@@ -2016,8 +2016,8 @@ def test_run_json_refreshes_cache_before_retrying_dws_discovery_code(monkeypatch
             return SimpleNamespace(returncode=0, stdout='{"refreshed":true}', stderr="")
         return SimpleNamespace(returncode=0, stdout='{"ok":true}', stderr="")
 
-    monkeypatch.setattr("ceo_agent_service.dws_client.subprocess.run", fake_run)
-    monkeypatch.setattr("ceo_agent_service.dws_client.time.sleep", sleeps.append)
+    monkeypatch.setattr("app.dws_client.subprocess.run", fake_run)
+    monkeypatch.setattr("app.dws_client.time.sleep", sleeps.append)
 
     assert DwsClient().run_json(["dws", "chat", "message", "list"]) == {"ok": True}
     assert calls == [
@@ -2041,8 +2041,8 @@ def test_run_json_still_retries_when_discovery_cache_refresh_times_out(monkeypat
             raise subprocess.TimeoutExpired(command, timeout)
         return SimpleNamespace(returncode=0, stdout='{"ok":true}', stderr="")
 
-    monkeypatch.setattr("ceo_agent_service.dws_client.subprocess.run", fake_run)
-    monkeypatch.setattr("ceo_agent_service.dws_client.time.sleep", sleeps.append)
+    monkeypatch.setattr("app.dws_client.subprocess.run", fake_run)
+    monkeypatch.setattr("app.dws_client.time.sleep", sleeps.append)
 
     assert DwsClient().run_json(["dws", "chat", "message", "list"]) == {"ok": True}
     assert calls == [
@@ -2076,8 +2076,8 @@ def test_run_json_retries_doc_read_internal_error(monkeypatch):
             return SimpleNamespace(returncode=1, stdout="", stderr=internal_error_payload)
         return SimpleNamespace(returncode=0, stdout='{"ok":true}', stderr="")
 
-    monkeypatch.setattr("ceo_agent_service.dws_client.subprocess.run", fake_run)
-    monkeypatch.setattr("ceo_agent_service.dws_client.time.sleep", sleeps.append)
+    monkeypatch.setattr("app.dws_client.subprocess.run", fake_run)
+    monkeypatch.setattr("app.dws_client.time.sleep", sleeps.append)
 
     assert DwsClient().run_json(command) == {"ok": True}
     assert calls == [command, command]
@@ -2096,8 +2096,8 @@ def test_run_json_does_not_retry_send_internal_error(monkeypatch):
         calls.append(command_arg)
         return SimpleNamespace(returncode=1, stdout="", stderr=internal_error_payload)
 
-    monkeypatch.setattr("ceo_agent_service.dws_client.subprocess.run", fake_run)
-    monkeypatch.setattr("ceo_agent_service.dws_client.time.sleep", lambda seconds: None)
+    monkeypatch.setattr("app.dws_client.subprocess.run", fake_run)
+    monkeypatch.setattr("app.dws_client.time.sleep", lambda seconds: None)
 
     with pytest.raises(DwsError, match="internalError"):
         DwsClient().run_json(command)
@@ -2128,8 +2128,8 @@ def test_run_json_retries_chat_message_list_system_error(monkeypatch):
             return SimpleNamespace(returncode=1, stdout="", stderr=system_error_payload)
         return SimpleNamespace(returncode=0, stdout='{"ok":true}', stderr="")
 
-    monkeypatch.setattr("ceo_agent_service.dws_client.subprocess.run", fake_run)
-    monkeypatch.setattr("ceo_agent_service.dws_client.time.sleep", sleeps.append)
+    monkeypatch.setattr("app.dws_client.subprocess.run", fake_run)
+    monkeypatch.setattr("app.dws_client.time.sleep", sleeps.append)
 
     assert DwsClient().run_json(command) == {"ok": True}
     assert calls == [command, command]
@@ -2148,8 +2148,8 @@ def test_run_json_does_not_retry_chat_message_send_system_error(monkeypatch):
         calls.append(command_arg)
         return SimpleNamespace(returncode=1, stdout="", stderr=system_error_payload)
 
-    monkeypatch.setattr("ceo_agent_service.dws_client.subprocess.run", fake_run)
-    monkeypatch.setattr("ceo_agent_service.dws_client.time.sleep", lambda seconds: None)
+    monkeypatch.setattr("app.dws_client.subprocess.run", fake_run)
+    monkeypatch.setattr("app.dws_client.time.sleep", lambda seconds: None)
 
     with pytest.raises(DwsError, match="SYSTEM_ERROR"):
         DwsClient().run_json(command)
@@ -2175,8 +2175,8 @@ def test_run_json_uses_process_exit_code_when_dws_stderr_is_not_json(monkeypatch
             return SimpleNamespace(returncode=0, stdout='{"refreshed":true}', stderr="")
         return SimpleNamespace(returncode=0, stdout='{"ok":true}', stderr="")
 
-    monkeypatch.setattr("ceo_agent_service.dws_client.subprocess.run", fake_run)
-    monkeypatch.setattr("ceo_agent_service.dws_client.time.sleep", sleeps.append)
+    monkeypatch.setattr("app.dws_client.subprocess.run", fake_run)
+    monkeypatch.setattr("app.dws_client.time.sleep", sleeps.append)
 
     assert DwsClient().run_json(["dws", "chat", "message", "list"]) == {"ok": True}
     assert calls == [
@@ -2198,8 +2198,8 @@ def test_run_json_uses_configured_retry_count_and_linear_backoff(monkeypatch):
             return SimpleNamespace(returncode=6, stdout="", stderr=timeout_payload)
         return SimpleNamespace(returncode=0, stdout='{"ok":true}', stderr="")
 
-    monkeypatch.setattr("ceo_agent_service.dws_client.subprocess.run", fake_run)
-    monkeypatch.setattr("ceo_agent_service.dws_client.time.sleep", sleeps.append)
+    monkeypatch.setattr("app.dws_client.subprocess.run", fake_run)
+    monkeypatch.setattr("app.dws_client.time.sleep", sleeps.append)
 
     client = DwsClient(
         transient_retry_attempts=3,
@@ -2220,7 +2220,7 @@ def test_run_json_error_includes_sanitized_command_and_output_previews(monkeypat
     def fake_run(command, text, capture_output, check, timeout):
         return SimpleNamespace(returncode=1, stdout="raw stdout", stderr="raw stderr")
 
-    monkeypatch.setattr("ceo_agent_service.dws_client.subprocess.run", fake_run)
+    monkeypatch.setattr("app.dws_client.subprocess.run", fake_run)
 
     with pytest.raises(DwsError) as exc_info:
         DwsClient().run_json(
@@ -2244,7 +2244,7 @@ def test_run_json_sanitizes_pat_authorization_error(monkeypatch):
     def fake_run(command, text, capture_output, check, timeout):
         return SimpleNamespace(returncode=4, stdout="", stderr=stderr)
 
-    monkeypatch.setattr("ceo_agent_service.dws_client.subprocess.run", fake_run)
+    monkeypatch.setattr("app.dws_client.subprocess.run", fake_run)
 
     with pytest.raises(DwsError) as exc_info:
         DwsClient().run_json(["dws", "chat", "message", "send"])
@@ -2262,7 +2262,7 @@ def test_run_json_raises_dws_error_on_invalid_json(monkeypatch):
         assert timeout == 30
         return SimpleNamespace(returncode=0, stdout="not json", stderr="")
 
-    monkeypatch.setattr("ceo_agent_service.dws_client.subprocess.run", fake_run)
+    monkeypatch.setattr("app.dws_client.subprocess.run", fake_run)
 
     with pytest.raises(DwsError, match="invalid JSON"):
         DwsClient().run_json(["dws", "probe"])
@@ -2277,7 +2277,7 @@ def test_run_text_returns_stdout_on_success(monkeypatch):
         assert timeout == 11
         return SimpleNamespace(returncode=0, stdout="upgraded", stderr="")
 
-    monkeypatch.setattr("ceo_agent_service.dws_client.subprocess.run", fake_run)
+    monkeypatch.setattr("app.dws_client.subprocess.run", fake_run)
 
     assert (
         DwsClient(timeout_seconds=11).run_text(
@@ -2291,7 +2291,7 @@ def test_run_text_raises_dws_error_on_nonzero_exit(monkeypatch):
     def fake_run(command, text, capture_output, check, timeout):
         return SimpleNamespace(returncode=1, stdout="", stderr="permission denied")
 
-    monkeypatch.setattr("ceo_agent_service.dws_client.subprocess.run", fake_run)
+    monkeypatch.setattr("app.dws_client.subprocess.run", fake_run)
 
     with pytest.raises(DwsError, match="exit code 1"):
         DwsClient().run_text(["dws", "upgrade", "-y"])
@@ -2301,8 +2301,8 @@ def test_run_json_raises_dws_error_on_timeout(monkeypatch):
     def fake_run(command, text, capture_output, check, timeout):
         raise subprocess.TimeoutExpired(command, timeout)
 
-    monkeypatch.setattr("ceo_agent_service.dws_client.subprocess.run", fake_run)
-    monkeypatch.setattr("ceo_agent_service.dws_client.time.sleep", lambda seconds: None)
+    monkeypatch.setattr("app.dws_client.subprocess.run", fake_run)
+    monkeypatch.setattr("app.dws_client.time.sleep", lambda seconds: None)
 
     with pytest.raises(DwsError, match="timed out"):
         DwsClient(timeout_seconds=3).run_json(["dws", "probe"])

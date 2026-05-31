@@ -1,17 +1,17 @@
 import json
 from pathlib import Path
 
-import ceo_agent_service.codex_decision as codex_decision
-from ceo_agent_service.codex_decision import (
+import app.codex_decision as codex_decision
+from app.codex_decision import (
     CodexDecisionRunner,
     append_signature,
     extract_codex_audit_events,
     extract_codex_session_id,
     parse_codex_json,
 )
-from ceo_agent_service.dingtalk_models import CodexAction, CodexDecision
-from ceo_agent_service.leak_check import contains_forbidden_leak
-from ceo_agent_service.process_runner import ProcessRunResult
+from app.dingtalk_models import CodexAction, CodexDecision
+from app.leak_check import contains_forbidden_leak
+from app.process_runner import ProcessRunResult
 
 
 class FakeExecutor:

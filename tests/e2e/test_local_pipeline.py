@@ -1,21 +1,21 @@
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from ceo_agent_service.dingtalk_models import (
+from app.dingtalk_models import (
     CodexAction,
     CodexDecision,
     DingTalkConversation,
     DingTalkMessage,
     SensitivityKind,
 )
-from ceo_agent_service.org_cache import (
+from app.org_cache import (
     CachedDwsClient,
     CachedOrgDirectory,
     refresh_org_cache,
 )
-from ceo_agent_service.store import AutoReplyStore
-from ceo_agent_service.worker import DingTalkAutoReplyWorker, PROCESSING_ACK
-from ceo_agent_service.dws_client import DwsUserProfile
+from app.store import AutoReplyStore
+from app.worker import DingTalkAutoReplyWorker, PROCESSING_ACK
+from app.dws_client import DwsUserProfile
 
 
 def fixed_worker_now():
@@ -186,7 +186,7 @@ def test_local_pipeline_refreshes_org_cache_then_replies_without_runtime_org_cal
     tmp_path, monkeypatch
 ):
     monkeypatch.setattr(
-        "ceo_agent_service.worker.send_macos_notification", lambda **_: None
+        "app.worker.send_macos_notification", lambda **_: None
     )
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     raw_dws = FakeDws()
@@ -227,7 +227,7 @@ def test_local_pipeline_handoff_ding_uses_cached_current_user_without_runtime_or
     tmp_path, monkeypatch
 ):
     monkeypatch.setattr(
-        "ceo_agent_service.worker.send_macos_notification", lambda **_: None
+        "app.worker.send_macos_notification", lambda **_: None
     )
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     raw_dws = FakeDws()

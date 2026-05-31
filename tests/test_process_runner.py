@@ -1,6 +1,6 @@
 import sys
 
-from ceo_agent_service.process_runner import run_process_with_idle_timeout
+from app.process_runner import run_process_with_idle_timeout
 
 
 def test_process_runner_kills_child_after_idle_timeout():

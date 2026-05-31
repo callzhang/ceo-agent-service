@@ -10,15 +10,15 @@ from pathlib import Path
 
 from pydantic import BaseModel, PositiveInt
 
-from ceo_agent_service.codex_decision import CodexDecisionRunner
-from ceo_agent_service.config import (
+from app.codex_decision import CodexDecisionRunner
+from app.config import (
     consumer_poll_interval_seconds,
     principal_display_name,
     producer_interval_seconds,
     profile_evidence_dir,
     work_profile_path,
 )
-from ceo_agent_service.corpus import (
+from app.corpus import (
     append_records,
     build_dingtalk_records_from_sender_payload,
     build_style_profile,
@@ -26,23 +26,23 @@ from ceo_agent_service.corpus import (
     load_corpus_records,
     write_records,
 )
-from ceo_agent_service.dws_client import (
+from app.dws_client import (
     DINGTALK_MESSAGE_TIME_ZONE,
     DwsClient,
     DwsError,
     local_time_zone_name,
 )
-from ceo_agent_service.leak_check import contains_forbidden_leak
-from ceo_agent_service.dingtalk_models import CodexAction, DingTalkConversation
-from ceo_agent_service.notification import send_macos_notification
-from ceo_agent_service.oa_approval import OaApprovalCodexRunner
-from ceo_agent_service.org_cache import (
+from app.leak_check import contains_forbidden_leak
+from app.dingtalk_models import CodexAction, DingTalkConversation
+from app.notification import send_macos_notification
+from app.oa_approval import OaApprovalCodexRunner
+from app.org_cache import (
     CachedDwsClient,
     CachedOrgDirectory,
     refresh_org_cache,
 )
-from ceo_agent_service.store import AutoReplyStore
-from ceo_agent_service.work_profile import (
+from app.store import AutoReplyStore
+from app.work_profile import (
     build_initial_profile,
     collect_dingtalk_kb_evidence,
     collect_existing_corpus_evidence,
@@ -51,7 +51,7 @@ from ceo_agent_service.work_profile import (
     render_skill,
     write_jsonl,
 )
-from ceo_agent_service.worker import DingTalkAutoReplyWorker
+from app.worker import DingTalkAutoReplyWorker
 
 LIVE_SEND_BLOCKERS = (
     "deterministic personnel/candidate permission gates",
@@ -859,7 +859,7 @@ def run_audit_web_command(
 ) -> None:
     audit_web_runner = run_audit_web
     if audit_web_runner is None:
-        from ceo_agent_service.audit_web import run_audit_web as audit_web_runner
+        from app.audit_web import run_audit_web as audit_web_runner
 
     audit_web_runner(
         settings.db_path,

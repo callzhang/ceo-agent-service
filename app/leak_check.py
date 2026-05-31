@@ -1,4 +1,4 @@
-from ceo_agent_service.config import forbidden_path_prefixes
+from app.config import forbidden_path_prefixes
 
 
 FORBIDDEN_MARKERS = (

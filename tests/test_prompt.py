@@ -1,16 +1,16 @@
 import json
 
-from ceo_agent_service.dingtalk_models import DingTalkConversation, DingTalkMessage
-from ceo_agent_service.config import repo_root
-from ceo_agent_service.config import work_profile_path
-from ceo_agent_service.developer_prompt import (
+from app.dingtalk_models import DingTalkConversation, DingTalkMessage
+from app.config import repo_root
+from app.config import work_profile_path
+from app.developer_prompt import (
     developer_prompt_template_path,
     read_developer_prompt_template,
     read_user_prompt_template,
     render_developer_prompt_template,
     user_prompt_template_path,
 )
-from ceo_agent_service.prompt import (
+from app.prompt import (
     LinkedDocumentContext,
     build_turn_prompt,
     ceo_agent_thread_prompt,
@@ -49,8 +49,8 @@ def test_developer_prompt_template_renders_vars_files_and_code(tmp_path, monkeyp
             "\n".join(
                 [
                     "<vars>",
-                    "principal = <code: ceo_agent_service.config:user_alias()>",
-                    "handoff = <code: ceo_agent_service.config:user_alias()>",
+                    "principal = <code: app.config:user_alias()>",
+                    "handoff = <code: app.config:user_alias()>",
                     "</vars>",
                     "",
                     "principal=<var: principal>",
@@ -77,7 +77,7 @@ def test_default_developer_prompt_template_is_a_separate_file():
     assert "handoff_name = Alex" not in template
     assert "<vars>" not in template
     assert "<var: principal>" in template
-    assert "<code: ceo_agent_service.prompt:work_profile_instruction()>" in template
+    assert "<code: app.prompt:work_profile_instruction()>" in template
     assert "work_profile_path" not in template
     assert "Alex 工作人格 Profile:" not in template
 
@@ -124,18 +124,18 @@ def test_user_prompt_template_path_can_be_overridden(tmp_path, monkeypatch):
 def test_default_user_prompt_template_is_a_separate_file():
     template = read_user_prompt_template()
     code_tags = [
-        "<code: ceo_agent_service.user_prompt_blocks:style_lines()>",
-        "<code: ceo_agent_service.user_prompt_blocks:current_message_block()>",
-        "<code: ceo_agent_service.user_prompt_blocks:sender_org_block()>",
-        "<code: ceo_agent_service.user_prompt_blocks:known_people_block()>",
-        "<code: ceo_agent_service.user_prompt_blocks:linked_documents_block()>",
-        "<code: ceo_agent_service.user_prompt_blocks:image_download_block()>",
-        "<code: ceo_agent_service.user_prompt_blocks:context_messages_block()>",
+        "<code: app.user_prompt_blocks:style_lines()>",
+        "<code: app.user_prompt_blocks:current_message_block()>",
+        "<code: app.user_prompt_blocks:sender_org_block()>",
+        "<code: app.user_prompt_blocks:known_people_block()>",
+        "<code: app.user_prompt_blocks:linked_documents_block()>",
+        "<code: app.user_prompt_blocks:image_download_block()>",
+        "<code: app.user_prompt_blocks:context_messages_block()>",
     ]
 
     assert template.strip() == "\n---\n".join(code_tags)
-    assert "<code: ceo_agent_service.user_prompt_blocks:current_message_block()>" in template
-    assert "<code: ceo_agent_service.user_prompt_blocks:context_messages_block()>" in template
+    assert "<code: app.user_prompt_blocks:current_message_block()>" in template
+    assert "<code: app.user_prompt_blocks:context_messages_block()>" in template
     assert "<var: current_message_block>" not in template
     assert "CEO Agent Prompt" not in template
 
@@ -146,9 +146,9 @@ def test_build_turn_prompt_uses_user_prompt_template_override(tmp_path, monkeypa
         "\n".join(
             [
                 "CUSTOM USER PROMPT",
-                "<code: ceo_agent_service.user_prompt_blocks:current_message_block()>",
-                "<code: ceo_agent_service.user_prompt_blocks:image_download_block()>",
-                "<code: ceo_agent_service.user_prompt_blocks:context_messages_block()>",
+                "<code: app.user_prompt_blocks:current_message_block()>",
+                "<code: app.user_prompt_blocks:image_download_block()>",
+                "<code: app.user_prompt_blocks:context_messages_block()>",
             ]
         ),
         encoding="utf-8",

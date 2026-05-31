@@ -6,13 +6,13 @@ import sys
 from pathlib import Path
 from types import ModuleType
 
-from ceo_agent_service.config import (
+from app.config import (
     memory_connector_user_id,
     repo_root,
     user_alias,
     write_env_values,
 )
-from ceo_agent_service.leak_check import FORBIDDEN_MARKERS
+from app.leak_check import FORBIDDEN_MARKERS
 
 
 TAG_RE = re.compile(r"<(file|code|var):\s*([^>]+?)\s*>")
@@ -105,7 +105,7 @@ def render_user_prompt_template(
     template: str,
     runtime_variables: dict[str, str],
 ) -> str:
-    from ceo_agent_service.user_prompt_blocks import user_prompt_block_context
+    from app.user_prompt_blocks import user_prompt_block_context
 
     variable_definitions, body = split_developer_prompt_template(template)
     variables = prompt_template_variables()
@@ -254,7 +254,7 @@ def _run_template_code(expression: str) -> str:
     match = CODE_RE.match(expression)
     if not match:
         raise DeveloperPromptTemplateError(
-            "code tag must look like <code: ceo_agent_service.module:function()> "
+            "code tag must look like <code: app.module:function()> "
             "or <code: scripts/file.py:function()>"
         )
     target, function_name = match.groups()
@@ -269,9 +269,9 @@ def _run_template_code(expression: str) -> str:
 def _load_template_module(target: str) -> ModuleType:
     if target.endswith(".py") or "/" in target:
         return _load_template_file_module(target)
-    if not target.startswith("ceo_agent_service."):
+    if not target.startswith("app."):
         raise DeveloperPromptTemplateError(
-            "module code tags are restricted to ceo_agent_service.* modules"
+            "module code tags are restricted to app.* modules"
         )
     return importlib.import_module(target)
 
