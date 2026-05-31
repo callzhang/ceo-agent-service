@@ -224,8 +224,10 @@ def test_render_config_page_shows_system_config_tab_with_descriptions():
     assert "系统运行参数" in html
     assert "运行时身份缓存" in html
     assert "current_user_id" in html
-    assert "sender_open_dingtalk_id" in html
+    assert "message field" not in html
+    assert "org profile field" not in html
     assert "不从 .env 手填" in html
+    assert "只展示本人身份真值" in html
     assert 'method="post" action="/config/system"' in html
     assert 'name="system_key"' in html
     assert 'name="system_value"' in html

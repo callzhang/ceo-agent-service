@@ -494,39 +494,23 @@ def _runtime_identity_cache_html(db_path: Path | None) -> str:
     current_user_id = ""
     if store_path is not None and store_path.exists():
         current_user_id = AutoReplyStore(store_path).get_current_user_id() or ""
-    rows = [
-        (
-            "current_user_id",
-            current_user_id or "not cached",
-            "DWS 当前登录账号写入 DB 的只读缓存；用于识别本人消息，不从 .env 手填。",
-        ),
-        (
-            "sender_user_id",
-            "message field",
-            "钉钉消息自带字段；每条消息不同，不是系统参数。",
-        ),
-        (
-            "sender_open_dingtalk_id",
-            "message field",
-            "钉钉消息自带字段；只用于映射到组织 user_id，不是系统参数。",
-        ),
-        (
-            "user_id",
-            "org profile field",
-            "组织通讯录中的人员 id；来自 DWS/组织缓存，不在代码里写死。",
-        ),
-    ]
     table = "".join(
         "<tr>"
         f"<td><code class=\"config-value\">{escape(key)}</code></td>"
         f"<td><code class=\"config-value\">{escape(value)}</code></td>"
         f"<td>{escape(description)}</td>"
         "</tr>"
-        for key, value, description in rows
+        for key, value, description in [
+            (
+                "current_user_id",
+                current_user_id or "not cached",
+                "DWS 当前登录账号写入 DB 的只读缓存；用于识别本人消息，不从 .env 手填。",
+            )
+        ]
     )
     return (
         "<h3>运行时身份缓存</h3>"
-        "<p class=\"muted\">这些值参与本人消息判断，但不是用户可编辑配置。</p>"
+        "<p class=\"muted\">只展示本人身份真值；消息字段和组织字段不在这里配置。</p>"
         "<table class=\"system-config-table\">"
         "<tr><th>Key</th><th>Current value</th><th>说明</th></tr>"
         f"{table}</table>"
