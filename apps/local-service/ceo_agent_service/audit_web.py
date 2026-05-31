@@ -24,6 +24,7 @@ from ceo_agent_service.config import (
     consumer_poll_interval_seconds,
     document_extraction_ids,
     env_file_path,
+    fast_path_unread_backoff_duration,
     forbidden_path_prefixes,
     group_read_recovery_limit,
     group_read_recovery_window,
@@ -648,6 +649,11 @@ def _system_config_rows() -> list[tuple[str, str, str]]:
             "本地 run 模式下，每个消息发现批次覆盖的时间窗口秒数。",
         ),
         (
+            "FAST_PATH_UNREAD_BACKOFF",
+            _duration_label(fast_path_unread_backoff_duration()),
+            "快路径扫描到未读会话后等待多久再读取，给真人先回复或清未读的时间。",
+        ),
+        (
             "MESSAGE_RECOVERY_INTERVAL",
             _duration_label(message_recovery_interval()),
             "每次慢路径兜底扫描之间至少间隔多久。",
@@ -772,6 +778,7 @@ def _editable_system_config_keys() -> set[str]:
         "CEO_CONSUMER_POLL_INTERVAL_SECONDS",
         "CEO_POLL_INTERVAL_SECONDS",
         "CEO_BATCH_SECONDS",
+        "FAST_PATH_UNREAD_BACKOFF",
         "MESSAGE_RECOVERY_INTERVAL",
         "SINGLE_CHAT_READ_RECOVERY_WINDOW",
         "SINGLE_CHAT_READ_RECOVERY_LIMIT",
@@ -806,6 +813,7 @@ def _highlight_logic_text(text: str) -> str:
         _slash_label(broadcast_mention_aliases()),
         "list_unread_conversations(count=50)",
         "message_fast_path_checked_at",
+        _duration_label(fast_path_unread_backoff_duration()),
         "read_unread_messages",
         "read_mentioned_messages",
         "addresses_principal",
@@ -831,11 +839,13 @@ def _config_logic_sections() -> list[tuple[str, list[tuple[str, str]]]]:
         (
             "入口",
             "每次 producer 运行都会调用 list_unread_conversations(count=50)。"
+            "快路径首次扫描到未读会话后，会先等待 "
+            f"{_duration_label(fast_path_unread_backoff_duration())}，再重新查看；"
             "慢路径未到点时，会过滤早于 message_fast_path_checked_at 的会话。",
         ),
         (
             "读取",
-            "未读会话使用 read_unread_messages。producer 也会调用 "
+            "未读会话等待窗口结束后才使用 read_unread_messages。producer 也会调用 "
             f"read_mentioned_messages 和广播 mention 查询，所以即使未读状态不完整，"
             f"也能找到 {mention_example}、{broadcast_example} 这类点名或广播消息。",
         ),

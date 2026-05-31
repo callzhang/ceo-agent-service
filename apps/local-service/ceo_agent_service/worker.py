@@ -16,6 +16,7 @@ from ceo_agent_service.codex_decision import append_signature
 from ceo_agent_service.config import (
     assistant_signature,
     broadcast_mention_aliases,
+    fast_path_unread_backoff_duration,
     group_read_recovery_limit,
     group_read_recovery_window,
     handoff_ack,
@@ -143,10 +144,12 @@ PDF_TEXT_PAGE_LIMIT = 30
 DWS_UPGRADE_CHECKED_DATE_STATE_KEY = "dws_upgrade_checked_date"
 MESSAGE_RECOVERY_CHECKED_AT_STATE_KEY = "message_recovery_checked_at"
 MESSAGE_FAST_PATH_CHECKED_AT_STATE_KEY = "message_fast_path_checked_at"
+MESSAGE_FAST_PATH_UNREAD_BACKOFF_STATE_PREFIX = "message_fast_path_unread_backoff:"
 ORG_CACHE_REFRESH_INTERVAL = timedelta(days=7)
 AITABLE_TABLE_PREVIEW_LIMIT = 5
 AITABLE_RECORD_PREVIEW_LIMIT = 10
 MESSAGE_RECOVERY_INTERVAL = message_recovery_interval()
+FAST_PATH_UNREAD_BACKOFF = fast_path_unread_backoff_duration()
 SINGLE_CHAT_READ_RECOVERY_WINDOW = single_chat_read_recovery_window()
 SINGLE_CHAT_READ_RECOVERY_LIMIT = single_chat_read_recovery_limit()
 GROUP_READ_RECOVERY_WINDOW = group_read_recovery_window()
@@ -215,10 +218,20 @@ class DingTalkAutoReplyWorker:
                 message=str(exc)[:120],
             )
             return 0
+        original_unread_conversation_ids = {
+            conversation.open_conversation_id for conversation in conversations
+        }
+        delayed_unread_conversation_ids: set[str] = set()
         if not recovery_due:
-            conversations = self._conversations_updated_since_fast_path_check(
+            conversations = self._conversations_due_for_fast_path(conversations)
+        else:
+            conversations = self._conversations_after_fast_path_unread_backoff(
                 conversations
             )
+        if FAST_PATH_UNREAD_BACKOFF > timedelta(0):
+            delayed_unread_conversation_ids = original_unread_conversation_ids - {
+                conversation.open_conversation_id for conversation in conversations
+            }
         unread_conversation_ids = {
             conversation.open_conversation_id for conversation in conversations
         }
@@ -228,6 +241,12 @@ class DingTalkAutoReplyWorker:
             mentioned_messages,
             broadcast_messages,
         )
+        if delayed_unread_conversation_ids:
+            addressed_messages = {
+                conversation_id: messages
+                for conversation_id, messages in addressed_messages.items()
+                if conversation_id not in delayed_unread_conversation_ids
+            }
         conversations = self._conversations_with_mentions(
             conversations,
             addressed_messages,
@@ -417,6 +436,108 @@ class DingTalkAutoReplyWorker:
             timezone.utc,
         )
         return updated_at > checked_at.astimezone(timezone.utc)
+
+    def _conversations_due_for_fast_path(
+        self,
+        conversations: list[DingTalkConversation],
+    ) -> list[DingTalkConversation]:
+        if FAST_PATH_UNREAD_BACKOFF <= timedelta(0):
+            return self._conversations_updated_since_fast_path_check(conversations)
+        return self._conversations_after_fast_path_unread_backoff(conversations)
+
+    def _conversations_after_fast_path_unread_backoff(
+        self,
+        conversations: list[DingTalkConversation],
+    ) -> list[DingTalkConversation]:
+        if FAST_PATH_UNREAD_BACKOFF <= timedelta(0):
+            return conversations
+        return [
+            conversation
+            for conversation in conversations
+            if self._fast_path_unread_backoff_ready(conversation)
+        ]
+
+    def _fast_path_unread_backoff_ready(
+        self,
+        conversation: DingTalkConversation,
+    ) -> bool:
+        now = self._now().astimezone(timezone.utc)
+        key = self._fast_path_unread_backoff_state_key(conversation)
+        signature = self._fast_path_unread_signature(conversation)
+        raw_state = self.store.get_service_state(key)
+        first_seen_at = self._fast_path_unread_backoff_first_seen_at(
+            raw_state,
+            signature,
+        )
+        if first_seen_at is None:
+            self.store.set_service_state(
+                key,
+                json.dumps(
+                    {
+                        "signature": signature,
+                        "first_seen_at": now.isoformat(),
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
+                ),
+            )
+            return False
+        if now - first_seen_at.astimezone(timezone.utc) < FAST_PATH_UNREAD_BACKOFF:
+            return False
+        self.store.set_service_state(
+            key,
+            json.dumps(
+                {
+                    "signature": signature,
+                    "first_seen_at": now.isoformat(),
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            ),
+        )
+        return True
+
+    @staticmethod
+    def _fast_path_unread_backoff_first_seen_at(
+        raw_state: str | None,
+        signature: str,
+    ) -> datetime | None:
+        if not raw_state:
+            return None
+        try:
+            state = json.loads(raw_state)
+        except json.JSONDecodeError:
+            return None
+        if state.get("signature") != signature:
+            return None
+        first_seen_at = state.get("first_seen_at")
+        if not isinstance(first_seen_at, str):
+            return None
+        try:
+            parsed = datetime.fromisoformat(first_seen_at.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        if parsed.tzinfo is None:
+            return parsed.replace(tzinfo=timezone.utc)
+        return parsed
+
+    @staticmethod
+    def _fast_path_unread_backoff_state_key(
+        conversation: DingTalkConversation,
+    ) -> str:
+        return (
+            MESSAGE_FAST_PATH_UNREAD_BACKOFF_STATE_PREFIX
+            + conversation.open_conversation_id
+        )
+
+    @staticmethod
+    def _fast_path_unread_signature(conversation: DingTalkConversation) -> str:
+        return ":".join(
+            [
+                str(conversation.unread_point),
+                str(conversation.last_message_create_at or ""),
+            ]
+        )
 
     def _service_state_datetime(self, key: str) -> datetime | None:
         value = self.store.get_service_state(key)

@@ -13,3 +13,4 @@ os.environ.setdefault(
 )
 os.environ.setdefault("CEO_DING_ROBOT_NAME", "极简云机器人")
 os.environ.setdefault("CEO_FORBIDDEN_PATH_PREFIXES", "/Users/derek/,/home/derek/")
+os.environ.setdefault("FAST_PATH_UNREAD_BACKOFF", "0s")

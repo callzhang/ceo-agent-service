@@ -242,6 +242,8 @@ def test_render_config_page_shows_system_config_tab_with_descriptions():
     assert "CEO_CONSUMER_POLL_INTERVAL_SECONDS" in html
     assert "CEO_POLL_INTERVAL_SECONDS" in html
     assert "CEO_BATCH_SECONDS" in html
+    assert "FAST_PATH_UNREAD_BACKOFF" in html
+    assert "快路径扫描到未读会话后等待多久再读取" in html
     assert "MESSAGE_RECOVERY_INTERVAL" in html
     assert "MEMORY_CONNECTOR_USER_ID" in html
     assert "CEO_MENTION_ALIASES" in html
@@ -273,6 +275,8 @@ def test_handle_system_config_post_saves_runtime_params_to_env_file(
         "&system_value=60"
         "&system_key=CEO_CONSUMER_POLL_INTERVAL_SECONDS"
         "&system_value=10"
+        "&system_key=FAST_PATH_UNREAD_BACKOFF"
+        "&system_value=5m"
         "&system_key=MESSAGE_RECOVERY_INTERVAL"
         "&system_value=30m"
         "&system_key=SINGLE_CHAT_READ_RECOVERY_WINDOW"
@@ -294,6 +298,7 @@ def test_handle_system_config_post_saves_runtime_params_to_env_file(
     assert "CEO_WORKSPACE=/tmp/memory" in env_text
     assert "CEO_PRODUCER_INTERVAL_SECONDS=60" in env_text
     assert "CEO_CONSUMER_POLL_INTERVAL_SECONDS=10" in env_text
+    assert "FAST_PATH_UNREAD_BACKOFF=5m" in env_text
     assert "MESSAGE_RECOVERY_INTERVAL=30m" in env_text
     assert "SINGLE_CHAT_READ_RECOVERY_WINDOW=12h" in env_text
     assert "SINGLE_CHAT_READ_RECOVERY_LIMIT=25" in env_text

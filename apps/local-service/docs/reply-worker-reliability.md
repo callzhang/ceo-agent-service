@@ -97,6 +97,13 @@ from the same conversation is used to decide whether the principal already gave 
 reply; rendered files, images, cards, calendar invites, and processing
 acknowledgements do not count as a real reply.
 
+Fast-path unread discovery has a short human-reply backoff before it reads
+message contents or creates a reply task. When the producer first sees an unread
+conversation, it records that unread signature and waits for
+`FAST_PATH_UNREAD_BACKOFF` before checking it again. If the principal has opened
+or replied to the conversation during that window and it is no longer unread, no
+task enters the consumer queue.
+
 ## Consumer retry behavior
 
 Reply tasks move from `pending` to `processing` when claimed. If task processing

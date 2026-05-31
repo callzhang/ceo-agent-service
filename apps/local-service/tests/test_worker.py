@@ -45,6 +45,7 @@ def fixed_worker_now() -> datetime:
 
 def test_worker_recovery_runtime_config_reads_environment(monkeypatch):
     monkeypatch.setenv("MESSAGE_RECOVERY_INTERVAL", "15m")
+    monkeypatch.setenv("FAST_PATH_UNREAD_BACKOFF", "2m")
     monkeypatch.setenv("SINGLE_CHAT_READ_RECOVERY_WINDOW", "6h")
     monkeypatch.setenv("SINGLE_CHAT_READ_RECOVERY_LIMIT", "11")
     monkeypatch.setenv("GROUP_READ_RECOVERY_WINDOW", "45m")
@@ -53,18 +54,21 @@ def test_worker_recovery_runtime_config_reads_environment(monkeypatch):
     importlib.reload(worker_module)
 
     assert worker_module.MESSAGE_RECOVERY_INTERVAL == timedelta(minutes=15)
+    assert worker_module.FAST_PATH_UNREAD_BACKOFF == timedelta(minutes=2)
     assert worker_module.SINGLE_CHAT_READ_RECOVERY_WINDOW == timedelta(hours=6)
     assert worker_module.SINGLE_CHAT_READ_RECOVERY_LIMIT == 11
     assert worker_module.GROUP_READ_RECOVERY_WINDOW == timedelta(minutes=45)
     assert worker_module.GROUP_READ_RECOVERY_LIMIT == 4
     for name in (
         "MESSAGE_RECOVERY_INTERVAL",
+        "FAST_PATH_UNREAD_BACKOFF",
         "SINGLE_CHAT_READ_RECOVERY_WINDOW",
         "SINGLE_CHAT_READ_RECOVERY_LIMIT",
         "GROUP_READ_RECOVERY_WINDOW",
         "GROUP_READ_RECOVERY_LIMIT",
     ):
         monkeypatch.delenv(name)
+    monkeypatch.setenv("FAST_PATH_UNREAD_BACKOFF", "0s")
     importlib.reload(worker_module)
 
 
@@ -661,9 +665,14 @@ def make_worker(
     dry_run: bool = False,
     max_task_attempts: int = 3,
     oa_approval_runner=None,
+    fast_path_unread_backoff: timedelta = timedelta(0),
 ) -> DingTalkAutoReplyWorker:
     monkeypatch.setattr(
         "ceo_agent_service.worker.send_macos_notification", lambda **_: None
+    )
+    monkeypatch.setattr(
+        "ceo_agent_service.worker.FAST_PATH_UNREAD_BACKOFF",
+        fast_path_unread_backoff,
     )
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.set_current_user_id("derek-user-1")
@@ -884,6 +893,7 @@ def test_produce_once_enqueues_candidate_without_calling_codex(
 ):
     trigger = message("@Derek Zen(磊哥) 这个怎么处理？")
     dws = FakeDws([conversation()], {"cid-1": [trigger]})
+    dws.mentioned_messages = {"cid-1": [trigger]}
     codex = FakeCodex(
         CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该调用")
     )
@@ -938,6 +948,106 @@ def test_produce_once_fast_path_reads_only_unread_messages_without_recent_contex
     assert dws.unread_message_reads == ["cid-1"]
     assert dws.recent_message_reads == []
     assert worker.store.count_reply_tasks(status="pending") == 1
+
+
+def test_produce_once_fast_path_waits_before_reading_unread_messages(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message("@Derek Zen(磊哥) 这个怎么处理？", message_id="msg-unread")
+    dws = FakeDws([conversation()], {"cid-1": [trigger]})
+    dws.mentioned_messages = {"cid-1": [trigger]}
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该调用")
+    )
+    worker = make_worker(
+        tmp_path,
+        dws,
+        codex,
+        monkeypatch,
+        fast_path_unread_backoff=timedelta(minutes=5),
+    )
+    worker.store.set_service_state(
+        "message_recovery_checked_at",
+        "2026-05-13T16:30:00+00:00",
+    )
+
+    queued = worker.produce_once()
+
+    assert queued == 0
+    assert dws.unread_message_reads == []
+    assert worker.store.count_reply_tasks(status="pending") == 0
+    state = worker.store.get_service_state(
+        worker._fast_path_unread_backoff_state_key(conversation())
+    )
+    assert state is not None
+    assert json.loads(state)["signature"] == "1:"
+
+
+def test_produce_once_fast_path_reads_unread_messages_after_backoff(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message("@Derek Zen(磊哥) 这个怎么处理？", message_id="msg-unread")
+    conv = conversation()
+    dws = FakeDws([conv], {"cid-1": [trigger]})
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该调用")
+    )
+    worker = make_worker(
+        tmp_path,
+        dws,
+        codex,
+        monkeypatch,
+        fast_path_unread_backoff=timedelta(minutes=5),
+    )
+    worker.store.set_service_state(
+        "message_recovery_checked_at",
+        "2026-05-13T16:30:00+00:00",
+    )
+    worker.store.set_service_state(
+        worker._fast_path_unread_backoff_state_key(conv),
+        json.dumps(
+            {
+                "signature": worker._fast_path_unread_signature(conv),
+                "first_seen_at": (
+                    fixed_worker_now() - timedelta(minutes=6)
+                ).isoformat(),
+            }
+        ),
+    )
+
+    queued = worker.produce_once()
+
+    assert queued == 1
+    assert dws.unread_message_reads == ["cid-1"]
+    assert worker.store.count_reply_tasks(status="pending") == 1
+
+
+def test_produce_once_fast_path_does_not_queue_when_unread_clears_during_backoff(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message("@Derek Zen(磊哥) 这个怎么处理？", message_id="msg-unread")
+    dws = FakeDws([conversation()], {"cid-1": [trigger]})
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该调用")
+    )
+    worker = make_worker(
+        tmp_path,
+        dws,
+        codex,
+        monkeypatch,
+        fast_path_unread_backoff=timedelta(minutes=5),
+    )
+    worker.store.set_service_state(
+        "message_recovery_checked_at",
+        "2026-05-13T16:30:00+00:00",
+    )
+
+    assert worker.produce_once() == 0
+    dws.conversations = []
+    assert worker.produce_once() == 0
+
+    assert dws.unread_message_reads == []
+    assert worker.store.count_reply_tasks(status="pending") == 0
 
 
 def test_produce_once_fast_path_skips_unread_conversations_unchanged_since_last_check(

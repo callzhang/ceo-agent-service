@@ -205,6 +205,10 @@ def message_recovery_interval() -> timedelta:
     return env_duration("MESSAGE_RECOVERY_INTERVAL", timedelta(hours=1))
 
 
+def fast_path_unread_backoff_duration() -> timedelta:
+    return env_duration("FAST_PATH_UNREAD_BACKOFF", timedelta(minutes=5))
+
+
 def single_chat_read_recovery_window() -> timedelta:
     return env_duration("SINGLE_CHAT_READ_RECOVERY_WINDOW", timedelta(hours=24))
 
