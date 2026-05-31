@@ -90,7 +90,8 @@ th,td{border-bottom:1px solid var(--hairline-soft);padding:12px 14px;text-align:
 tr:last-child td{border-bottom:0}
 th{background:var(--surface-soft);color:var(--steel);font-size:12px;font-weight:600;line-height:1.4}
 .config-variable-table th,.config-variable-table td{padding:5px 8px}
-.config-variable-table th:first-child,.config-variable-table td:first-child{width:260px}
+.config-variable-table th:first-child,.config-variable-table td:first-child{width:360px}
+.config-variable-table td:first-child .config-value{white-space:nowrap;word-break:normal}
 .config-variable-table input[type="text"]{height:28px;padding:4px 7px;border-radius:6px;font-size:12px;line-height:1.35}
 .config-key-input{font-family:"Geist Mono","SF Mono",Menlo,Consolas,monospace;color:var(--steel);background:var(--surface-soft)}
 .config-value-input{font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
