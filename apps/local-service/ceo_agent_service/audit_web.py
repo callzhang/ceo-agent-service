@@ -256,7 +256,7 @@ def render_page(
         "</div></a>"
         f"{nav_html}"
         "</div></header><main>"
-        f"{body}</main></body></html>"
+        f"{body}</main>{_browser_notification_client_script()}</body></html>"
     )
 
 
@@ -271,70 +271,160 @@ def render_browser_notifications_page() -> str:
 </div>
 <pre class="notification-log" id="notification-log">等待连接...</pre>
 </section>
-<script>
-const stateEl = document.getElementById("notification-state");
-const logEl = document.getElementById("notification-log");
-const enableButton = document.getElementById("enable-notifications");
-
-function logLine(text) {
-  const timestamp = new Date().toLocaleTimeString();
-  logEl.textContent = `[${timestamp}] ${text}\n` + logEl.textContent;
-}
-
-function setState(text) {
-  stateEl.textContent = text;
-}
-
-function refreshPermission() {
-  if (!("Notification" in window)) {
-    setState("not supported");
-    enableButton.disabled = true;
-    return;
-  }
-  setState(Notification.permission);
-}
-
-async function requestNotificationPermission() {
-  if (!("Notification" in window)) {
-    refreshPermission();
-    return;
-  }
-  const permission = await Notification.requestPermission();
-  refreshPermission();
-  logLine(`permission: ${permission}`);
-}
-
-function showBrowserNotification(payload) {
-  logLine(`${payload.title}: ${payload.message}`);
-  if (!("Notification" in window) || Notification.permission !== "granted") {
-    return;
-  }
-  const notification = new Notification(payload.title, {
-    body: payload.message,
-    tag: payload.id,
-    renotify: true,
-  });
-  notification.onclick = async () => {
-    if (payload.url) {
-      try {
-        await fetch(payload.url, { method: "GET", keepalive: true });
-      } catch (error) {
-        window.open(payload.url, "_blank", "noopener");
-      }
-    }
-    notification.close();
-  };
-}
-
-refreshPermission();
-enableButton.addEventListener("click", requestNotificationPermission);
-const events = new EventSource("/notifications/events");
-events.onopen = () => logLine("connected to 8765 notification stream");
-events.onerror = () => logLine("notification stream reconnecting");
-events.onmessage = (event) => showBrowserNotification(JSON.parse(event.data));
-</script>
 """
     return render_page("Notifications", body, active_nav="notifications")
+
+
+def _browser_notification_client_script() -> str:
+    return """
+<script>
+(() => {
+  const lockKey = "ceo-agent-service-notification-leader";
+  const lockTtlMs = 5000;
+  const heartbeatMs = 2000;
+  const tabId = crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`;
+  const stateEl = document.getElementById("notification-state");
+  const logEl = document.getElementById("notification-log");
+  const enableButton = document.getElementById("enable-notifications");
+  let events = null;
+
+  function logLine(text) {
+    if (!logEl) {
+      return;
+    }
+    const timestamp = new Date().toLocaleTimeString();
+    logEl.textContent = `[${timestamp}] ${text}\n` + logEl.textContent;
+  }
+
+  function setState(text) {
+    if (stateEl) {
+      stateEl.textContent = text;
+    }
+  }
+
+  function canNotify() {
+    return "Notification" in window && Notification.permission === "granted";
+  }
+
+  function readLock() {
+    try {
+      return JSON.parse(localStorage.getItem(lockKey) || "null");
+    } catch (error) {
+      return null;
+    }
+  }
+
+  function writeLock() {
+    localStorage.setItem(lockKey, JSON.stringify({ id: tabId, ts: Date.now() }));
+  }
+
+  function ownsFreshLock() {
+    const lock = readLock();
+    return lock && lock.id === tabId && Date.now() - Number(lock.ts || 0) < lockTtlMs;
+  }
+
+  function releaseLock() {
+    if (ownsFreshLock()) {
+      localStorage.removeItem(lockKey);
+    }
+  }
+
+  function showBrowserNotification(payload) {
+    logLine(`${payload.title}: ${payload.message}`);
+    if (!canNotify()) {
+      return;
+    }
+    const notification = new Notification(payload.title, {
+      body: payload.message,
+      tag: payload.id,
+      renotify: true,
+    });
+    notification.onclick = async () => {
+      if (payload.url) {
+        try {
+          await fetch(payload.url, { method: "GET", keepalive: true });
+        } catch (error) {
+          window.open(payload.url, "_blank", "noopener");
+        }
+      }
+      notification.close();
+    };
+  }
+
+  function stopEvents() {
+    if (events) {
+      events.close();
+      events = null;
+    }
+  }
+
+  function startEvents() {
+    if (events) {
+      return;
+    }
+    events = new EventSource("/notifications/events");
+    events.onopen = () => logLine("connected to 8765 notification stream");
+    events.onerror = () => logLine("notification stream reconnecting");
+    events.onmessage = (event) => showBrowserNotification(JSON.parse(event.data));
+  }
+
+  function refreshPermission() {
+    if (!("Notification" in window)) {
+      setState("not supported");
+      if (enableButton) {
+        enableButton.disabled = true;
+      }
+      return;
+    }
+    setState(Notification.permission);
+  }
+
+  function electLeader() {
+    refreshPermission();
+    if (!canNotify()) {
+      releaseLock();
+      stopEvents();
+      return;
+    }
+    const lock = readLock();
+    const lockIsStale = !lock || Date.now() - Number(lock.ts || 0) > lockTtlMs;
+    if (lockIsStale || lock.id === tabId) {
+      writeLock();
+      startEvents();
+      setState("granted connected");
+      return;
+    }
+    stopEvents();
+    setState("granted standby");
+  }
+
+  async function requestNotificationPermission() {
+    if (!("Notification" in window)) {
+      refreshPermission();
+      return;
+    }
+    const permission = await Notification.requestPermission();
+    logLine(`permission: ${permission}`);
+    electLeader();
+  }
+
+  if (enableButton) {
+    enableButton.addEventListener("click", requestNotificationPermission);
+  }
+  window.addEventListener("storage", (event) => {
+    if (event.key === lockKey) {
+      electLeader();
+    }
+  });
+  window.addEventListener("beforeunload", () => {
+    releaseLock();
+    stopEvents();
+  });
+  setInterval(electLeader, heartbeatMs);
+  electLeader();
+})();
+</script>
+"""
 
 
 def _browser_notification_event(
