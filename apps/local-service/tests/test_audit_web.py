@@ -190,7 +190,8 @@ def test_render_config_page_shows_message_routing_logic():
     assert 'value="@Derek Zen, @磊哥"' not in html
     assert 'value="principal"' not in html
     assert 'value="handoff_name"' not in html
-    assert 'value="responsibility_summary"' in html
+    assert 'value="responsibility_summary"' not in html
+    assert 'value="CEO_PROMPT_VAR_RESPONSIBILITY_SUMMARY"' in html
     assert "CEO_PROMPT_VAR_RESPONSIBILITY_SUMMARY" in html
     assert 'value="MESSAGE_RECOVERY_INTERVAL"' not in html
     assert 'value="CEO_CURRENT_USER_DISPLAY_NAMES"' not in html
@@ -378,6 +379,8 @@ def test_render_developer_prompt_editor_shows_template_and_preview(
     assert "&lt;var: principal&gt;" in html
     assert "&lt;code: ceo_agent_service.config:user_alias()&gt;" not in html
     assert 'value="principal"' not in html
+    assert 'value="responsibility_summary"' not in html
+    assert 'value="CEO_PROMPT_VAR_RESPONSIBILITY_SUMMARY"' in html
     assert "CEO_PROMPT_VAR_RESPONSIBILITY_SUMMARY" in html
     assert 'value="CEO_PRINCIPAL_NAME"' not in html
     assert 'value="CEO_PRINCIPAL_DISPLAY_NAME"' not in html
@@ -458,9 +461,9 @@ def test_handle_prompt_variables_post_saves_variables_without_changing_template(
     monkeypatch.setenv("CEO_ENV_FILE", str(tmp_path / ".env"))
     body = (
         "active_tab=user"
-        "&variable_key=responsibility_summary"
+        "&variable_key=CEO_PROMPT_VAR_RESPONSIBILITY_SUMMARY"
         "&variable_value=%E7%AE%97%E6%B3%95%E5%9B%A2%E9%98%9F%E8%81%8C%E8%B4%A3"
-        "&variable_key=oa_approval_rules"
+        "&variable_key=CEO_PROMPT_VAR_OA_APPROVAL_RULES"
         "&variable_value=management%2FOA%2F%E9%92%89%E9%92%89%E5%AE%A1%E6%89%B9%E5%AE%A1%E9%98%85%E5%8E%9F%E5%88%99.md"
         "&variable_key="
         "&variable_value="

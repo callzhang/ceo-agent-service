@@ -176,10 +176,14 @@ def prompt_variable_env_key(name: str) -> str:
 def write_configurable_prompt_variables(pairs: list[tuple[str, str]]) -> None:
     updates: dict[str, str] = {}
     allowed_keys = set(CONFIGURABLE_PROMPT_VARIABLE_DEFAULTS)
+    env_key_to_template_key = {
+        prompt_variable_env_key(key): key for key in allowed_keys
+    }
     for key, value in pairs:
         name = key.strip()
         if not name and not value.strip():
             continue
+        name = env_key_to_template_key.get(name, name)
         if name not in allowed_keys:
             raise DeveloperPromptTemplateError(
                 f"unsupported config variable: {name}"

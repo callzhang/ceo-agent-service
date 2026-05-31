@@ -455,19 +455,19 @@ def _system_config_rows() -> list[tuple[str, str, str]]:
 
 
 def _config_variable_inputs() -> str:
-    rows: list[str] = ["<tr><th>Key</th><th>Value</th><th>.env key</th></tr>"]
+    rows: list[str] = ["<tr><th>Key</th><th>Value</th></tr>"]
     for key, value in configurable_prompt_variable_pairs():
         rows.append(_variable_input_row(key, value))
     return "<table class=\"config-variable-table\">" + "".join(rows) + "</table>"
 
 
 def _variable_input_row(key: str, value: str) -> str:
+    env_key = prompt_variable_env_key(key)
     return (
         "<tr>"
-        f"<td><code class=\"config-value\">{escape(key)}</code>"
-        f"<input type=\"hidden\" name=\"variable_key\" value=\"{escape(key)}\"></td>"
+        f"<td><code class=\"config-value\">{escape(env_key)}</code>"
+        f"<input type=\"hidden\" name=\"variable_key\" value=\"{escape(env_key)}\"></td>"
         f"<td><input class=\"config-value-input\" type=\"text\" name=\"variable_value\" value=\"{escape(value)}\"></td>"
-        f"<td><code class=\"config-value\">{escape(prompt_variable_env_key(key))}</code></td>"
         "</tr>"
     )
 
