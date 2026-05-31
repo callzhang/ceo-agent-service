@@ -49,7 +49,7 @@
 - Modify `apps/local-service/ceo_agent_service/cli.py`
   - Wire the OA runner into `create_worker()` with the skill path default.
 
-- Modify `/Users/derek/.agents/skills/dingtalk-oa-approval/SKILL.md`
+- Modify `/Users/principal/.agents/skills/dingtalk-oa-approval/SKILL.md`
   - Replace the DWS-only constraint with DWS-first plus authorized OA API fallback.
   - Add `--yes` to approval action examples.
   - State that service logs must not contain tokens, AppKey, AppSecret, cookies, OAuth code, or signed URLs.
@@ -121,7 +121,7 @@ def test_reply_attempt_records_oa_metadata(tmp_path: Path):
 Run:
 
 ```bash
-cd /Users/derek/Documents/Projects/ceo-agent-service/apps/local-service
+cd /Users/principal/Documents/Projects/ceo-agent-service/apps/local-service
 .venv/bin/python -m pytest tests/test_store.py::test_reply_attempt_records_oa_metadata -v
 ```
 
@@ -230,7 +230,7 @@ Add them to the `(column, value)` loop:
 Run:
 
 ```bash
-cd /Users/derek/Documents/Projects/ceo-agent-service/apps/local-service
+cd /Users/principal/Documents/Projects/ceo-agent-service/apps/local-service
 .venv/bin/python -m pytest tests/test_store.py::test_reply_attempt_records_oa_metadata -v
 ```
 
@@ -241,7 +241,7 @@ Expected: PASS.
 Run:
 
 ```bash
-cd /Users/derek/Documents/Projects/ceo-agent-service/apps/local-service
+cd /Users/principal/Documents/Projects/ceo-agent-service/apps/local-service
 .venv/bin/python -m pytest tests/test_store.py -v
 ```
 
@@ -250,7 +250,7 @@ Expected: PASS.
 - [ ] **Step 9: Commit**
 
 ```bash
-cd /Users/derek/Documents/Projects/ceo-agent-service
+cd /Users/principal/Documents/Projects/ceo-agent-service
 git add apps/local-service/ceo_agent_service/store.py apps/local-service/tests/test_store.py
 git commit -m "feat: record OA approval metadata on reply attempts"
 ```
@@ -374,7 +374,7 @@ def test_oa_runner_injects_skill_and_schema(tmp_path: Path):
 Run:
 
 ```bash
-cd /Users/derek/Documents/Projects/ceo-agent-service/apps/local-service
+cd /Users/principal/Documents/Projects/ceo-agent-service/apps/local-service
 .venv/bin/python -m pytest tests/test_oa_approval.py -v
 ```
 
@@ -713,7 +713,7 @@ class OaApprovalCodexRunner:
 Run:
 
 ```bash
-cd /Users/derek/Documents/Projects/ceo-agent-service/apps/local-service
+cd /Users/principal/Documents/Projects/ceo-agent-service/apps/local-service
 .venv/bin/python -m pytest tests/test_oa_approval.py -v
 ```
 
@@ -722,7 +722,7 @@ Expected: PASS.
 - [ ] **Step 6: Commit**
 
 ```bash
-cd /Users/derek/Documents/Projects/ceo-agent-service
+cd /Users/principal/Documents/Projects/ceo-agent-service
 git add apps/local-service/ceo_agent_service/oa_approval.py apps/local-service/ceo_agent_service/schemas/oa_approval.schema.json apps/local-service/tests/test_oa_approval.py
 git commit -m "feat: add OA approval agent runner"
 ```
@@ -834,7 +834,7 @@ def test_structured_approval_card_is_processed_by_oa_runner(tmp_path: Path, monk
 Run:
 
 ```bash
-cd /Users/derek/Documents/Projects/ceo-agent-service/apps/local-service
+cd /Users/principal/Documents/Projects/ceo-agent-service/apps/local-service
 .venv/bin/python -m pytest tests/test_worker.py::test_structured_approval_card_is_processed_by_oa_runner -v
 ```
 
@@ -988,7 +988,7 @@ Pass it to the worker constructor:
 Run:
 
 ```bash
-cd /Users/derek/Documents/Projects/ceo-agent-service/apps/local-service
+cd /Users/principal/Documents/Projects/ceo-agent-service/apps/local-service
 .venv/bin/python -m pytest tests/test_worker.py::test_structured_approval_card_is_processed_by_oa_runner -v
 ```
 
@@ -999,7 +999,7 @@ Expected: PASS.
 Run:
 
 ```bash
-cd /Users/derek/Documents/Projects/ceo-agent-service/apps/local-service
+cd /Users/principal/Documents/Projects/ceo-agent-service/apps/local-service
 .venv/bin/python -m pytest \
   tests/test_worker.py::test_structured_approval_card_is_processed_by_oa_runner \
   tests/test_worker.py::test_structured_link_card_is_skipped_before_codex \
@@ -1012,7 +1012,7 @@ Expected: PASS. If `test_ding_approval_reminder_is_processed_by_codex` now route
 - [ ] **Step 8: Commit**
 
 ```bash
-cd /Users/derek/Documents/Projects/ceo-agent-service
+cd /Users/principal/Documents/Projects/ceo-agent-service
 git add apps/local-service/ceo_agent_service/worker.py apps/local-service/ceo_agent_service/cli.py apps/local-service/tests/test_worker.py
 git commit -m "feat: route OA approval cards through skill agent"
 ```
@@ -1066,7 +1066,7 @@ def test_attempt_detail_renders_oa_metadata(tmp_path: Path):
 Run:
 
 ```bash
-cd /Users/derek/Documents/Projects/ceo-agent-service/apps/local-service
+cd /Users/principal/Documents/Projects/ceo-agent-service/apps/local-service
 .venv/bin/python -m pytest tests/test_audit_web.py::test_attempt_detail_renders_oa_metadata -v
 ```
 
@@ -1119,7 +1119,7 @@ In `_attempt_detail_body()`, insert the OA card after `_quality_warning_card(att
 Run:
 
 ```bash
-cd /Users/derek/Documents/Projects/ceo-agent-service/apps/local-service
+cd /Users/principal/Documents/Projects/ceo-agent-service/apps/local-service
 .venv/bin/python -m pytest tests/test_audit_web.py::test_attempt_detail_renders_oa_metadata -v
 ```
 
@@ -1130,7 +1130,7 @@ Expected: PASS.
 Run:
 
 ```bash
-cd /Users/derek/Documents/Projects/ceo-agent-service/apps/local-service
+cd /Users/principal/Documents/Projects/ceo-agent-service/apps/local-service
 .venv/bin/python -m pytest tests/test_audit_web.py -v
 ```
 
@@ -1139,7 +1139,7 @@ Expected: PASS.
 - [ ] **Step 6: Commit**
 
 ```bash
-cd /Users/derek/Documents/Projects/ceo-agent-service
+cd /Users/principal/Documents/Projects/ceo-agent-service
 git add apps/local-service/ceo_agent_service/audit_web.py apps/local-service/tests/test_audit_web.py
 git commit -m "feat: show OA approval metadata in audit detail"
 ```
@@ -1149,11 +1149,11 @@ git commit -m "feat: show OA approval metadata in audit detail"
 ### Task 5: Align The OA Skill With Current API Reality
 
 **Files:**
-- Modify: `/Users/derek/.agents/skills/dingtalk-oa-approval/SKILL.md`
+- Modify: `/Users/principal/.agents/skills/dingtalk-oa-approval/SKILL.md`
 
 - [ ] **Step 1: Update the DWS/OpenAPI rule text**
 
-In `/Users/derek/.agents/skills/dingtalk-oa-approval/SKILL.md`, replace the `OpenAPI 详情补读` intro line with:
+In `/Users/principal/.agents/skills/dingtalk-oa-approval/SKILL.md`, replace the `OpenAPI 详情补读` intro line with:
 
 ```markdown
 当 DWS 详情为空、字段丢失、或任务归属异常时，允许调用已授权的钉钉 OA OpenAPI/API 作为补充事实源。当前 OA 详情不完整时不能强行只用 DWS；以后如果 DWS 新增完整详情能力，再优先收敛到 DWS。前提是用户已授权，且应用已开通 `qyapi_aflow` 权限。
@@ -1186,7 +1186,7 @@ dws oa approval reject --instance-id <processInstanceId> --task-id <taskId> --re
 Run:
 
 ```bash
-rg -n "允许调用已授权的钉钉 OA OpenAPI|不得写入 SQLite|--format json --yes" /Users/derek/.agents/skills/dingtalk-oa-approval/SKILL.md
+rg -n "允许调用已授权的钉钉 OA OpenAPI|不得写入 SQLite|--format json --yes" /Users/principal/.agents/skills/dingtalk-oa-approval/SKILL.md
 ```
 
 Expected: three matching lines or more.
@@ -1244,7 +1244,7 @@ Replace the route requirements list with:
 Run:
 
 ```bash
-cd /Users/derek/Documents/Projects/ceo-agent-service/apps/local-service
+cd /Users/principal/Documents/Projects/ceo-agent-service/apps/local-service
 .venv/bin/python -m pytest \
   tests/test_store.py \
   tests/test_oa_approval.py \
@@ -1260,7 +1260,7 @@ Expected: PASS.
 Run:
 
 ```bash
-cd /Users/derek/Documents/Projects/ceo-agent-service/apps/local-service
+cd /Users/principal/Documents/Projects/ceo-agent-service/apps/local-service
 .venv/bin/python -m pytest -v
 ```
 
@@ -1269,7 +1269,7 @@ Expected: PASS. If the full suite is too slow for the current run, finish with t
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /Users/derek/Documents/Projects/ceo-agent-service
+cd /Users/principal/Documents/Projects/ceo-agent-service
 git add docs/product-logic.md docs/message-routing-rules.md
 git commit -m "docs: document OA approval agent route"
 ```

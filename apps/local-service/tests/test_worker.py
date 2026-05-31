@@ -137,7 +137,7 @@ class FakeDws:
         self.hr_users: set[str] = set()
         self.manager_chains: dict[str, list[str]] = {}
         self.resolved_senders: dict[str, str] = {}
-        self.current_user_id = "derek-user-1"
+        self.current_user_id = "principal-user-1"
         self.current_user_checks: list[str] = []
         self.calendar_invites: dict[str, DwsCalendarEvent | None] = {}
         self.calendar_events: dict[str, list[DwsCalendarEvent]] = {}
@@ -641,15 +641,15 @@ def message(
     )
 
 
-def derek_message(
+def principal_message(
     content: str,
-    message_id: str = "derek-msg-1",
+    message_id: str = "principal-msg-1",
     create_time: str = "2026-05-13 18:00:01",
 ) -> DingTalkMessage:
     msg = message(
         content=content,
         message_id=message_id,
-        sender_user_id="derek-user-1",
+        sender_user_id="principal-user-1",
     )
     msg.create_time = create_time
     return msg
@@ -675,7 +675,7 @@ def make_worker(
         fast_path_unread_backoff,
     )
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    store.set_current_user_id("derek-user-1")
+    store.set_current_user_id("principal-user-1")
     return DingTalkAutoReplyWorker(
         store=store,
         dws=dws,
@@ -700,8 +700,8 @@ def developer_instructions_from_command(command: list[str]) -> str:
 
 
 def write_profile_for_consumer_test(tmp_path: Path, monkeypatch) -> str:
-    profile = tmp_path / "profiles" / "derek_work_profile.md"
-    content = """# Derek Work Profile
+    profile = tmp_path / "profiles" / "work_profile.md"
+    content = """# Alex Work Profile
 
 ## 核心心智模型
 
@@ -721,8 +721,8 @@ def write_profile_for_consumer_test(tmp_path: Path, monkeypatch) -> str:
 
 ## 诚实边界
 
-- 不替 Derek 做最终人事、审批、财务、法律或客户关键承诺。
-- 不声称 Derek 已经做了现实动作。
+- 不替 Alex 做最终人事、审批、财务、法律或客户关键承诺。
+- 不声称 Alex 已经做了现实动作。
 - 材料不足时不编造结论。
 """
     profile.parent.mkdir(parents=True)
@@ -751,7 +751,7 @@ def test_consumer_codex_command_injects_work_profile_content(
 
     dws = FakeDws(
         [conversation()],
-        {"cid-1": [message("@Derek Zen(磊哥) 这个候选人可以推进吗？")]},
+        {"cid-1": [message("@Alex Chen(明哥) 这个候选人可以推进吗？")]},
     )
     codex = CodexDecisionRunner(
         workspace=tmp_path,
@@ -764,10 +764,10 @@ def test_consumer_codex_command_injects_work_profile_content(
 
     assert len(seen_instructions) == 1
     instructions = seen_instructions[0]
-    assert "磊哥 工作人格 Profile" in instructions
+    assert "明哥 工作人格 Profile" in instructions
     assert "Profile 内容:" in instructions
     assert profile_content in instructions
-    assert str(tmp_path / "profiles" / "derek_work_profile.md") not in instructions
+    assert str(tmp_path / "profiles" / "work_profile.md") not in instructions
     assert "材料不完整时先追问，不拍板" in instructions
     assert final_sent(dws)
 
@@ -794,7 +794,7 @@ def test_consumer_uses_profile_to_ask_for_missing_candidate_materials(
 
     dws = FakeDws(
         [conversation()],
-        {"cid-1": [message("@Derek Zen(磊哥) 这个候选人可以推进吗？")]},
+        {"cid-1": [message("@Alex Chen(明哥) 这个候选人可以推进吗？")]},
     )
     codex = CodexDecisionRunner(
         workspace=tmp_path,
@@ -815,7 +815,7 @@ def test_consumer_uses_profile_to_ask_for_missing_candidate_materials(
     assert "按 profile 先追问材料" in attempt.audit_summary
 
 
-def test_group_without_derek_mention_does_not_call_codex_or_send(
+def test_group_without_principal_mention_does_not_call_codex_or_send(
     tmp_path: Path, monkeypatch
 ):
     dws = FakeDws([conversation()], {"cid-1": [message("同步一下进展")]})
@@ -858,7 +858,7 @@ def test_produce_once_continues_when_mention_recovery_fails(
     tmp_path: Path, monkeypatch
 ):
     notifications = []
-    trigger = message("@Derek Zen(磊哥) 这个怎么处理？")
+    trigger = message("@Alex Chen(明哥) 这个怎么处理？")
     dws = FakeDws(
         [conversation()],
         {"cid-1": [trigger]},
@@ -891,7 +891,7 @@ def test_produce_once_continues_when_mention_recovery_fails(
 def test_produce_once_enqueues_candidate_without_calling_codex(
     tmp_path: Path, monkeypatch
 ):
-    trigger = message("@Derek Zen(磊哥) 这个怎么处理？")
+    trigger = message("@Alex Chen(明哥) 这个怎么处理？")
     dws = FakeDws([conversation()], {"cid-1": [trigger]})
     dws.mentioned_messages = {"cid-1": [trigger]}
     codex = FakeCodex(
@@ -910,7 +910,7 @@ def test_produce_once_enqueues_candidate_without_calling_codex(
 def test_produce_once_does_not_send_processing_ack_for_new_reply_task(
     tmp_path: Path, monkeypatch
 ):
-    trigger = message("@Derek Zen(磊哥) 这个怎么处理？")
+    trigger = message("@Alex Chen(明哥) 这个怎么处理？")
     dws = FakeDws([conversation()], {"cid-1": [trigger]})
     codex = FakeCodex(
         CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该调用")
@@ -927,7 +927,7 @@ def test_produce_once_does_not_send_processing_ack_for_new_reply_task(
 def test_produce_once_fast_path_reads_only_unread_messages_without_recent_context(
     tmp_path: Path, monkeypatch
 ):
-    trigger = message("@Derek Zen(磊哥) 这个怎么处理？", message_id="msg-unread")
+    trigger = message("@Alex Chen(明哥) 这个怎么处理？", message_id="msg-unread")
     dws = FakeDws(
         [conversation()],
         {"cid-1": [message("历史上下文", message_id="msg-context")]},
@@ -953,7 +953,7 @@ def test_produce_once_fast_path_reads_only_unread_messages_without_recent_contex
 def test_produce_once_fast_path_waits_before_reading_unread_messages(
     tmp_path: Path, monkeypatch
 ):
-    trigger = message("@Derek Zen(磊哥) 这个怎么处理？", message_id="msg-unread")
+    trigger = message("@Alex Chen(明哥) 这个怎么处理？", message_id="msg-unread")
     dws = FakeDws([conversation()], {"cid-1": [trigger]})
     dws.mentioned_messages = {"cid-1": [trigger]}
     codex = FakeCodex(
@@ -986,7 +986,7 @@ def test_produce_once_fast_path_waits_before_reading_unread_messages(
 def test_produce_once_fast_path_reads_unread_messages_after_backoff(
     tmp_path: Path, monkeypatch
 ):
-    trigger = message("@Derek Zen(磊哥) 这个怎么处理？", message_id="msg-unread")
+    trigger = message("@Alex Chen(明哥) 这个怎么处理？", message_id="msg-unread")
     conv = conversation()
     dws = FakeDws([conv], {"cid-1": [trigger]})
     codex = FakeCodex(
@@ -1025,7 +1025,7 @@ def test_produce_once_fast_path_reads_unread_messages_after_backoff(
 def test_produce_once_fast_path_does_not_queue_when_unread_clears_during_backoff(
     tmp_path: Path, monkeypatch
 ):
-    trigger = message("@Derek Zen(磊哥) 这个怎么处理？", message_id="msg-unread")
+    trigger = message("@Alex Chen(明哥) 这个怎么处理？", message_id="msg-unread")
     dws = FakeDws([conversation()], {"cid-1": [trigger]})
     codex = FakeCodex(
         CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该调用")
@@ -1068,14 +1068,14 @@ def test_produce_once_fast_path_skips_unread_conversations_unchanged_since_last_
         last_message_create_at=1778666400000,
     )
     new_trigger = message(
-        "@Derek Zen(磊哥) 新问题",
+        "@Alex Chen(明哥) 新问题",
         message_id="msg-new",
     )
     new_trigger.open_conversation_id = "cid-new"
     dws = FakeDws(
         [old_conversation, new_conversation],
         {
-            "cid-old": [message("@Derek Zen(磊哥) 旧问题", message_id="msg-old")],
+            "cid-old": [message("@Alex Chen(明哥) 旧问题", message_id="msg-old")],
             "cid-new": [new_trigger],
         },
         unread_messages={"cid-new": [new_trigger]},
@@ -1185,7 +1185,7 @@ def test_current_user_candidate_filter_uses_only_local_identity_cache(
     worker = make_worker(tmp_path, dws, codex, monkeypatch)
     current_user_message = message(
         "我自己发的",
-        sender_user_id="derek-user-1",
+        sender_user_id="principal-user-1",
     )
     unknown_sender_message = message(
         "未知 sender",
@@ -1225,7 +1225,7 @@ def test_produce_once_checks_dws_upgrade_once_per_local_day(
 def test_produce_once_records_dws_upgrade_failure_without_blocking_messages(
     tmp_path: Path, monkeypatch
 ):
-    trigger = message("@Derek Zen(磊哥) 这个怎么处理？")
+    trigger = message("@Alex Chen(明哥) 这个怎么处理？")
     dws = FakeDws([conversation()], {"cid-1": [trigger]})
     dws.upgrade_error = RuntimeError("upgrade service unavailable")
     codex = FakeCodex(
@@ -1322,7 +1322,7 @@ def test_produce_once_records_org_cache_refresh_failure_without_blocking_message
         raise RuntimeError("contact service unavailable")
 
     monkeypatch.setattr(worker_module, "refresh_org_cache", fake_refresh_org_cache)
-    trigger = message("@Derek Zen(磊哥) 这个怎么处理？")
+    trigger = message("@Alex Chen(明哥) 这个怎么处理？")
     dws = FakeDws([conversation()], {"cid-1": [trigger]})
     codex = FakeCodex(
         CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该调用")
@@ -1343,7 +1343,7 @@ def test_produce_once_records_org_cache_refresh_failure_without_blocking_message
 def test_produce_once_skips_messages_older_than_local_24_hour_window(
     tmp_path: Path, monkeypatch
 ):
-    trigger = message("@Derek Zen(磊哥) 这个旧消息不用处理？")
+    trigger = message("@Alex Chen(明哥) 这个旧消息不用处理？")
     trigger.create_time = "2026-05-13 00:59:59"
     dws = FakeDws([conversation()], {"cid-1": [trigger]})
     codex = FakeCodex(
@@ -1362,7 +1362,7 @@ def test_produce_once_skips_messages_older_than_local_24_hour_window(
 def test_produce_once_uses_beijing_message_time_against_local_24_hour_window(
     tmp_path: Path, monkeypatch
 ):
-    trigger = message("@Derek Zen(磊哥) 这个消息还在24小时内？")
+    trigger = message("@Alex Chen(明哥) 这个消息还在24小时内？")
     trigger.create_time = "2026-05-13 01:00:00"
     dws = FakeDws([conversation()], {"cid-1": [trigger]})
     codex = FakeCodex(
@@ -1379,7 +1379,7 @@ def test_produce_once_uses_beijing_message_time_against_local_24_hour_window(
 def test_repeated_produce_once_does_not_send_processing_ack(
     tmp_path: Path, monkeypatch
 ):
-    trigger = message("@Derek Zen(磊哥) 这个怎么处理？")
+    trigger = message("@Alex Chen(明哥) 这个怎么处理？")
     dws = FakeDws([conversation()], {"cid-1": [trigger]})
     codex = FakeCodex(
         CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该调用")
@@ -1395,7 +1395,7 @@ def test_repeated_produce_once_does_not_send_processing_ack(
 def test_consume_once_does_not_send_processing_ack(
     tmp_path: Path, monkeypatch
 ):
-    trigger = message("@Derek Zen(磊哥) 这个怎么处理？")
+    trigger = message("@Alex Chen(明哥) 这个怎么处理？")
     dws = FakeDws([conversation()], {"cid-1": [trigger]})
 
     def before_decide(prompt, _session_id):
@@ -1412,13 +1412,13 @@ def test_consume_once_does_not_send_processing_ack(
     processed = worker.consume_once(max_tasks=1)
 
     assert processed == 1
-    assert dws.sent == [("cid-1", "先按A方案走（by磊哥分身）")]
+    assert dws.sent == [("cid-1", "先按A方案走（by明哥分身）")]
 
 
 def test_repeated_produce_once_does_not_duplicate_pending_task(
     tmp_path: Path, monkeypatch
 ):
-    trigger = message("@Derek Zen(磊哥) 这个怎么处理？")
+    trigger = message("@Alex Chen(明哥) 这个怎么处理？")
     dws = FakeDws([conversation()], {"cid-1": [trigger]})
     codex = FakeCodex(
         CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该调用")
@@ -1436,7 +1436,7 @@ def test_produce_once_uses_recent_context_when_unread_read_fails_for_group_menti
     tmp_path: Path, monkeypatch
 ):
     notifications = []
-    trigger = message("@Derek Zen(磊哥) 这个怎么处理？")
+    trigger = message("@Alex Chen(明哥) 这个怎么处理？")
     dws = FakeDws(
         [conversation()],
         {"cid-1": [trigger]},
@@ -1470,7 +1470,7 @@ def test_produce_once_does_not_notify_when_only_recent_context_read_fails(
     tmp_path: Path, monkeypatch
 ):
     notifications = []
-    trigger = message("@Derek Zen(磊哥) 这个怎么处理？")
+    trigger = message("@Alex Chen(明哥) 这个怎么处理？")
     dws = FakeDws(
         [conversation()],
         {"cid-1": []},
@@ -1496,7 +1496,7 @@ def test_produce_once_does_not_notify_when_only_recent_context_read_fails(
 
 
 def test_consume_once_processes_queued_task(tmp_path: Path, monkeypatch):
-    trigger = message("@Derek Zen(磊哥) 这个怎么处理？")
+    trigger = message("@Alex Chen(明哥) 这个怎么处理？")
     dws = FakeDws([conversation()], {"cid-1": [trigger]})
     codex = FakeCodex(
         CodexDecision(action=CodexAction.SEND_REPLY, reply_text="先按A方案走")
@@ -1508,14 +1508,14 @@ def test_consume_once_processes_queued_task(tmp_path: Path, monkeypatch):
 
     assert processed == 1
     assert worker.store.count_reply_tasks(status="done") == 1
-    assert final_sent(dws) == [("cid-1", "先按A方案走（by磊哥分身）")]
+    assert final_sent(dws) == [("cid-1", "先按A方案走（by明哥分身）")]
 
 
 def test_consume_once_retries_task_failure_before_final_failure(
     tmp_path: Path, monkeypatch
 ):
     notifications = []
-    trigger = message("@Derek Zen(磊哥) 这个怎么处理？")
+    trigger = message("@Alex Chen(明哥) 这个怎么处理？")
     dws = FakeDws([conversation()], {"cid-1": [trigger]})
     codex = FakeCodex(
         CodexDecision(action=CodexAction.SEND_REPLY, reply_text="先按A方案走")
@@ -1559,7 +1559,7 @@ def test_consume_once_records_stale_processing_tasks_before_requeue(
         trigger_message_id="msg-1",
         trigger_create_time="2026-05-29 11:26:41",
         trigger_sender="ET",
-        trigger_text="@Derek Zen 这个怎么处理？",
+        trigger_text="@Alex Chen 这个怎么处理？",
     )
     claimed = store.claim_reply_tasks(limit=1)
     assert claimed[0].status == "processing"
@@ -1595,7 +1595,7 @@ def test_consume_once_authorization_failure_waits_without_final_failure(
     tmp_path: Path, monkeypatch
 ):
     notifications = []
-    trigger = message("@Derek Zen(磊哥) 这个怎么处理？")
+    trigger = message("@Alex Chen(明哥) 这个怎么处理？")
     dws = FakeDws(
         [conversation()],
         {"cid-1": [trigger]},
@@ -1704,7 +1704,7 @@ def test_non_text_calendar_without_detail_asks_for_readable_calendar_detail(
 
 def test_calendar_link_message_is_handled_as_calendar_invite(tmp_path: Path, monkeypatch):
     trigger = message(
-        "好的磊哥 dingtalk://dingtalkclient/action/open_mini_app?"
+        "好的明哥 dingtalk://dingtalkclient/action/open_mini_app?"
         "page=pages%2Fdetail%2Findex%3FuniqueId%3Dinvite-1%26recurrenceId%3D",
         single_chat=True,
     )
@@ -2132,7 +2132,7 @@ def test_calendar_invite_with_description_asks_codex_to_evaluate_conflict(
         title="客户升级问题决策",
         start_time="2026-05-14T10:00:00+08:00",
         end_time="2026-05-14T11:00:00+08:00",
-        description="需要 Derek 判断是否承诺本周交付，客户 CEO 会参加。",
+        description="需要 Alex 判断是否承诺本周交付，客户 CEO 会参加。",
         organizer="Mina",
     )
     existing = DwsCalendarEvent(
@@ -2180,7 +2180,7 @@ def test_calendar_invite_for_document_review_replies_to_use_document_comment(
         title="官网文档批阅",
         start_time="2026-05-14T10:00:00+08:00",
         end_time="2026-05-14T11:00:00+08:00",
-        description="请 Derek 批阅官网文档并反馈修改意见。",
+        description="请 Alex 批阅官网文档并反馈修改意见。",
         organizer="Mina",
     )
     dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
@@ -2213,7 +2213,7 @@ def test_calendar_invite_with_clear_value_auto_accepts_without_chat_reply(
         title="关键客户交付决策",
         start_time="2026-05-14T10:00:00+08:00",
         end_time="2026-05-14T11:00:00+08:00",
-        description="客户 CEO 参加，需要 Derek 判断本周交付承诺。",
+        description="客户 CEO 参加，需要 Alex 判断本周交付承诺。",
         organizer="Mina",
     )
     dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
@@ -2221,8 +2221,8 @@ def test_calendar_invite_with_clear_value_auto_accepts_without_chat_reply(
     codex = FakeCodex(
         CodexDecision(
             action=CodexAction.NO_REPLY,
-            reason="calendar_auto_accept: Derek 参与有明确业务价值",
-            audit_summary="日程描述明确，且需要 Derek 做关键客户交付判断。",
+            reason="calendar_auto_accept: Alex 参与有明确业务价值",
+            audit_summary="日程描述明确，且需要 Alex 做关键客户交付判断。",
         )
     )
     worker = make_worker(tmp_path, dws, codex, monkeypatch)
@@ -2509,7 +2509,7 @@ def test_question_with_link_still_goes_to_codex(tmp_path: Path, monkeypatch):
 
 
 def test_bare_external_link_is_processed_by_codex(tmp_path: Path, monkeypatch):
-    trigger = message("@磊哥 https://example.com/a", single_chat=True)
+    trigger = message("@明哥 https://example.com/a", single_chat=True)
     dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
     codex = FakeCodex(
         CodexDecision(
@@ -2531,7 +2531,7 @@ def test_bare_dingtalk_internal_link_is_skipped_before_codex(
     tmp_path: Path, monkeypatch
 ):
     trigger = message(
-        "@磊哥 [dingtalk://dingtalkclient/page/flash_minutes_detail?x=1]"
+        "@明哥 [dingtalk://dingtalkclient/page/flash_minutes_detail?x=1]"
         "(dingtalk://dingtalkclient/page/flash_minutes_detail?x=1)",
         single_chat=True,
     )
@@ -2665,7 +2665,7 @@ def test_oa_approval_does_not_execute_task_that_is_not_current_user(
     dws.openapi_oa_details["proc-1"] = {
         "process_instance": {
             "tasks": [
-                {"taskid": "task-1", "task_status": "CANCELED", "userid": "derek-user-1"},
+                {"taskid": "task-1", "task_status": "CANCELED", "userid": "principal-user-1"},
                 {"taskid": "task-2", "task_status": "RUNNING", "userid": "other-user"},
             ]
         }
@@ -2718,7 +2718,7 @@ def test_ding_approval_reminder_injects_openapi_detail_when_dws_form_is_empty(
                 {"name": "试用期工作内容和转正要求", "value": "3个月内完成 Friday 场景闭环"}
             ],
             "tasks": [
-                {"taskid": "task-1", "task_status": "RUNNING", "userid": "derek-user-1"}
+                {"taskid": "task-1", "task_status": "RUNNING", "userid": "principal-user-1"}
             ],
         }
     }
@@ -2841,10 +2841,10 @@ def test_bare_dingtalk_approval_wrapper_is_not_skipped_before_oa_runner(
 
 def test_group_mention_sends_signed_reply(tmp_path: Path, monkeypatch):
     trigger = message(
-        "@Derek Zen(磊哥) @晓民 这个怎么处理？",
+        "@Alex Chen(明哥) @晓民 这个怎么处理？",
         quoted_content="这个ACL表看一下",
     )
-    trigger.mentioned_user_ids = ["derek-user-1", "mentioned-user-1"]
+    trigger.mentioned_user_ids = ["principal-user-1", "mentioned-user-1"]
     dws = FakeDws(
         [conversation()],
         {
@@ -2864,7 +2864,7 @@ def test_group_mention_sends_signed_reply(tmp_path: Path, monkeypatch):
     assert final_sent(dws) == [
         (
             "cid-1",
-            "先按A方案走（by磊哥分身）",
+            "先按A方案走（by明哥分身）",
         )
     ]
     assert final_sent_at_users(dws) == [[]]
@@ -2873,23 +2873,23 @@ def test_group_mention_sends_signed_reply(tmp_path: Path, monkeypatch):
             "cid-1",
             "msg-1",
             "sender-1",
-            "先按A方案走（by磊哥分身）",
+            "先按A方案走（by明哥分身）",
         )
     ]
     assert len(codex.calls) == 1
     prompt = codex.calls[0][0]
     assert "当前待处理消息:" in prompt
     assert "CEO Agent Prompt" not in prompt
-    assert "你是 Derek 的钉钉自动回复分身" not in prompt
+    assert "你是 Alex 的钉钉自动回复分身" not in prompt
     assert "会话: Friday" in prompt
-    assert "@Derek Zen(磊哥) @晓民 这个怎么处理？" in prompt
+    assert "@Alex Chen(明哥) @晓民 这个怎么处理？" in prompt
     assert "引用: 这个ACL表看一下" in prompt
     assert "前面上下文" in prompt
 
 
 def test_success_notification_keeps_full_reply_text(tmp_path: Path, monkeypatch):
-    trigger = message("@Derek Zen(磊哥) 请给一下你的看法")
-    trigger.mentioned_user_ids = ["derek-user-1"]
+    trigger = message("@Alex Chen(明哥) 请给一下你的看法")
+    trigger.mentioned_user_ids = ["principal-user-1"]
     dws = FakeDws([conversation()], {"cid-1": [trigger]})
     reply_body = "我倾向于按这个方向收敛：" + "先看行业经验和交付闭环，" * 12
     codex = FakeCodex(
@@ -2917,8 +2917,8 @@ def test_success_notification_keeps_full_reply_text(tmp_path: Path, monkeypatch)
 def test_success_notification_prepares_dingtalk_conversation_url(
     tmp_path: Path, monkeypatch
 ):
-    trigger = message("@Derek Zen(磊哥) 请给一下你的看法")
-    trigger.mentioned_user_ids = ["derek-user-1"]
+    trigger = message("@Alex Chen(明哥) 请给一下你的看法")
+    trigger.mentioned_user_ids = ["principal-user-1"]
     dws = FakeDws(
         [conversation()],
         {"cid-1": [trigger]},
@@ -2945,8 +2945,8 @@ def test_success_notification_prepares_dingtalk_conversation_url(
 def test_leak_check_feedback_regenerates_reply_before_blocking(
     tmp_path: Path, monkeypatch
 ):
-    trigger = message("@Derek Zen(磊哥) 这个怎么处理？")
-    trigger.mentioned_user_ids = ["derek-user-1"]
+    trigger = message("@Alex Chen(明哥) 这个怎么处理？")
+    trigger.mentioned_user_ids = ["principal-user-1"]
     dws = FakeDws([conversation()], {"cid-1": [trigger]})
     codex = SequencedFakeCodex(
         [
@@ -2982,7 +2982,7 @@ def test_leak_check_feedback_regenerates_reply_before_blocking(
 def test_dingtalk_doc_link_is_read_before_codex(tmp_path: Path, monkeypatch):
     doc_url = "https://alidocs.dingtalk.com/i/nodes/doc123?utm_source=im"
     canonical_doc_url = "https://alidocs.dingtalk.com/i/nodes/doc123"
-    trigger = message(f"{doc_url} @Derek Zen(磊哥) 看下根因和解法")
+    trigger = message(f"{doc_url} @Alex Chen(明哥) 看下根因和解法")
     dws = FakeDws([conversation()], {"cid-1": [trigger]})
     dws.docs[canonical_doc_url] = {
         "title": "数据导入导出业务低效根因和最终解法",
@@ -3014,7 +3014,7 @@ def test_dingtalk_aitable_link_is_routed_to_aitable_before_codex(
 ):
     aitable_url = "https://alidocs.dingtalk.com/i/nodes/base123?utm_source=im"
     canonical_url = "https://alidocs.dingtalk.com/i/nodes/base123"
-    trigger = message(f"{aitable_url} @Derek Zen(磊哥) 看下进展")
+    trigger = message(f"{aitable_url} @Alex Chen(明哥) 看下进展")
     dws = FakeDws([conversation()], {"cid-1": [trigger]})
     dws.doc_infos[canonical_url] = {
         "contentType": "ALIDOC",
@@ -3088,7 +3088,7 @@ def test_dingtalk_doc_link_in_context_is_read_before_codex(tmp_path: Path, monke
         message_id="doc-msg-1",
     )
     trigger = message(
-        "@Derek Zen(磊哥) 磊哥comments一下",
+        "@Alex Chen(明哥) 明哥comments一下",
         message_id="msg-2",
         quoted_content=f"[文档] 方案: {doc_url}",
     )
@@ -3116,7 +3116,7 @@ def test_referenced_file_message_is_located_before_codex(tmp_path: Path, monkeyp
         message_id="file-msg-1",
     )
     trigger = message(
-        "@Derek Zen(磊哥) 磊哥comments一下",
+        "@Alex Chen(明哥) 明哥comments一下",
         message_id="msg-2",
         quoted_content="[文件] 02_下一步推进建议.md",
     )
@@ -3154,7 +3154,7 @@ def test_referenced_file_metadata_does_not_expose_download_credentials(
     tmp_path: Path, monkeypatch
 ):
     trigger = message(
-        "@Derek Zen(磊哥) 磊哥comments一下",
+        "@Alex Chen(明哥) 明哥comments一下",
         quoted_content="[文件] 02_下一步推进建议.md",
     )
     dws = FakeDws([conversation()], {"cid-1": [trigger]})
@@ -3192,7 +3192,7 @@ def test_media_id_image_is_downloaded_and_passed_to_codex(
     tmp_path: Path, monkeypatch
 ):
     trigger = message(
-        "@Derek Zen(磊哥) 看下这个图[图片消息](mediaId=@img-token-1)",
+        "@Alex Chen(明哥) 看下这个图[图片消息](mediaId=@img-token-1)",
         message_id="msg-image-1",
     )
     dws = FakeDws([conversation()], {"cid-1": [trigger]})
@@ -3228,7 +3228,7 @@ def test_robot_download_code_image_is_downloaded_and_passed_to_codex(
     tmp_path: Path, monkeypatch
 ):
     trigger = message(
-        "@Derek Zen(磊哥) 看下这个图",
+        "@Alex Chen(明哥) 看下这个图",
         message_id="msg-image-1",
     )
     trigger.raw_payload = {
@@ -3264,7 +3264,7 @@ def test_robot_download_code_image_is_downloaded_and_passed_to_codex(
 
 def test_image_download_failure_is_passed_to_codex_prompt(tmp_path: Path, monkeypatch):
     trigger = message(
-        "@Derek Zen(磊哥) 看下这个图[图片消息](mediaId=@img-token-1)",
+        "@Alex Chen(明哥) 看下这个图[图片消息](mediaId=@img-token-1)",
         message_id="msg-image-1",
     )
     dws = FakeDws([conversation()], {"cid-1": [trigger]})
@@ -3302,7 +3302,7 @@ def test_image_download_failure_is_passed_to_codex_prompt(tmp_path: Path, monkey
 
 def test_dingtalk_doc_read_failure_blocks_codex(tmp_path: Path, monkeypatch):
     trigger = message(
-        "https://alidocs.dingtalk.com/i/nodes/missing @Derek Zen(磊哥) 看下"
+        "https://alidocs.dingtalk.com/i/nodes/missing @Alex Chen(明哥) 看下"
     )
     dws = FakeDws([conversation()], {"cid-1": [trigger]})
     dws.doc_infos["https://alidocs.dingtalk.com/i/nodes/missing"] = {
@@ -3329,7 +3329,7 @@ def test_dingtalk_doc_read_failure_blocks_codex(tmp_path: Path, monkeypatch):
 
 
 def test_codex_stop_with_error_sends_macos_notification(tmp_path: Path, monkeypatch):
-    trigger = message("@Derek Zen(磊哥) 这个怎么处理？")
+    trigger = message("@Alex Chen(明哥) 这个怎么处理？")
     dws = FakeDws([conversation()], {"cid-1": [trigger]})
     codex = FakeCodex(
         CodexDecision(
@@ -3362,7 +3362,7 @@ def test_codex_stop_with_error_sends_macos_notification(tmp_path: Path, monkeypa
 def test_codex_stop_with_error_keeps_queued_task_retryable(
     tmp_path: Path, monkeypatch
 ):
-    trigger = message("@Derek Zen(磊哥) 这个怎么处理？")
+    trigger = message("@Alex Chen(明哥) 这个怎么处理？")
     dws = FakeDws([conversation()], {"cid-1": [trigger]})
     codex = FakeCodex(
         CodexDecision(
@@ -3391,7 +3391,7 @@ def test_codex_stop_with_error_keeps_queued_task_retryable(
 def test_queued_stop_with_error_retry_does_not_create_duplicate_attempt(
     tmp_path: Path, monkeypatch
 ):
-    trigger = message("@Derek Zen(磊哥) 这个怎么处理？")
+    trigger = message("@Alex Chen(明哥) 这个怎么处理？")
     dws = FakeDws([conversation()], {"cid-1": [trigger]})
     codex = FakeCodex(
         CodexDecision(
@@ -3425,7 +3425,7 @@ def test_queued_stop_with_error_retry_does_not_create_duplicate_attempt(
 def test_queued_failed_non_send_attempt_does_not_create_duplicate_attempt(
     tmp_path: Path, monkeypatch
 ):
-    trigger = message("@Derek Zen(磊哥) 这个怎么处理？")
+    trigger = message("@Alex Chen(明哥) 这个怎么处理？")
     dws = FakeDws([conversation()], {"cid-1": [trigger]})
     codex = FakeCodex(
         CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该重新生成")
@@ -3470,24 +3470,24 @@ def test_long_trigger_quote_is_capped_by_twenty_information_units(
     tmp_path: Path, monkeypatch
 ):
     trigger = message(
-        "@Derek Zen(磊哥) 如果是私有化的POC都是走产研评估流程的，如果是VOC需求也都是PRD评审后走我们正常Sprint迭代流程的",
+        "@Alex Chen(明哥) 如果是私有化的POC都是走产研评估流程的，如果是VOC需求也都是PRD评审后走我们正常Sprint迭代流程的",
     )
 
     sent_text = DingTalkAutoReplyWorker._format_reply_text(
         trigger,
-        "流程方向没问题（by磊哥分身）",
+        "流程方向没问题（by明哥分身）",
         ["sender-user-1"],
     )
 
     quote, reply = sent_text.split("\n\n", 1)
     assert quote == "> 周俊杰: 如果是私有化的POC都是走产研评估流程的，如果..."
-    assert reply == "<@sender-user-1> 流程方向没问题（by磊哥分身）"
+    assert reply == "<@sender-user-1> 流程方向没问题（by明哥分身）"
 
 
 def test_resume_prompt_only_includes_turn_message_without_repeating_thread_prompt(
     tmp_path: Path, monkeypatch
 ):
-    trigger = message("@Derek Zen(磊哥) 这个怎么处理？")
+    trigger = message("@Alex Chen(明哥) 这个怎么处理？")
     dws = FakeDws([conversation()], {"cid-1": [trigger]})
     codex = FakeCodex(CodexDecision(action=CodexAction.NO_REPLY, reason="handled"))
     worker = make_worker(tmp_path, dws, codex, monkeypatch)
@@ -3504,10 +3504,10 @@ def test_resume_prompt_only_includes_turn_message_without_repeating_thread_promp
     assert session_id == "session-1"
     assert "当前待处理消息" in prompt
     assert "CEO Agent Prompt" not in prompt
-    assert "你是 Derek 的钉钉自动回复分身" not in prompt
+    assert "你是 Alex 的钉钉自动回复分身" not in prompt
     assert "回答任何问题前，先检索本地 workspace" not in prompt
     assert "graphify query" not in prompt
-    assert "@Derek Zen(磊哥) 这个怎么处理？" in prompt
+    assert "@Alex Chen(明哥) 这个怎么处理？" in prompt
 
 
 def test_stale_codex_resume_retries_same_thread_before_opening_new_thread(
@@ -3543,7 +3543,7 @@ def test_stale_codex_resume_retries_same_thread_before_opening_new_thread(
                 audit_summary="只需上下文判断，不需要回复。",
             )
 
-    trigger = message("@Derek Zen(磊哥) 这个怎么处理？")
+    trigger = message("@Alex Chen(明哥) 这个怎么处理？")
     dws = FakeDws([conversation()], {"cid-1": [trigger]})
     codex = SequencedCodex()
     worker = make_worker(tmp_path, dws, codex, monkeypatch)
@@ -3562,7 +3562,7 @@ def test_stale_codex_resume_retries_same_thread_before_opening_new_thread(
     ]
     assert codex.calls[1][0] == codex.calls[0][0]
     assert "CEO Agent Prompt" not in codex.calls[0][0]
-    assert "你是 Derek 的钉钉自动回复分身" not in codex.calls[0][0]
+    assert "你是 Alex 的钉钉自动回复分身" not in codex.calls[0][0]
     assert worker.store.get_codex_session_id("cid-1") == "session-1"
     assert worker.store.count_reply_attempts() == 1
     attempt = worker.store.get_reply_attempt(1)
@@ -3579,7 +3579,7 @@ def test_stale_codex_resume_retries_same_thread_before_opening_new_thread(
         (
             "2026-05-27T02:03:54.663595Z ERROR codex_rollout::list: "
             "state db returned stale rollout path for thread session-1: "
-            "/Users/derek/.codex/sessions/2026/05/18/rollout-session-1.jsonl"
+            "/Users/principal/.codex/sessions/2026/05/18/rollout-session-1.jsonl"
         ),
     ],
 )
@@ -3614,7 +3614,7 @@ def test_stale_codex_resume_clears_session_and_retries_with_new_user_message(
                 audit_summary="只需上下文判断，不需要回复。",
             )
 
-    trigger = message("@Derek Zen(磊哥) 这个怎么处理？")
+    trigger = message("@Alex Chen(明哥) 这个怎么处理？")
     dws = FakeDws([conversation()], {"cid-1": [trigger]})
     codex = SequencedCodex()
     worker = make_worker(tmp_path, dws, codex, monkeypatch)
@@ -3646,7 +3646,7 @@ def test_stale_codex_resume_clears_session_and_retries_with_new_user_message(
 
 
 def test_sent_reply_records_recall_key_from_send_result(tmp_path: Path, monkeypatch):
-    trigger = message("@Derek Zen(磊哥) 这个怎么处理？")
+    trigger = message("@Alex Chen(明哥) 这个怎么处理？")
     dws = FakeDws(
         [conversation()],
         {"cid-1": [trigger]},
@@ -3668,7 +3668,7 @@ def test_sent_reply_records_recall_key_from_send_result(tmp_path: Path, monkeypa
 def test_existing_dry_run_attempt_does_not_call_codex_again(
     tmp_path: Path, monkeypatch
 ):
-    trigger = message("@Derek Zen(磊哥) 这个怎么处理？")
+    trigger = message("@Alex Chen(明哥) 这个怎么处理？")
     dws = FakeDws([conversation()], {"cid-1": [trigger]})
     codex = FakeCodex(
         CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该重新生成")
@@ -3687,8 +3687,8 @@ def test_existing_dry_run_attempt_does_not_call_codex_again(
     )
     worker.store.update_reply_attempt(
         attempt_id,
-        final_reply_text="> 周俊杰: @Derek Zen(磊哥) 这个怎么处理？\n\n"
-        "<@sender-user-1> 先按A方案走（by磊哥分身）",
+        final_reply_text="> 周俊杰: @Alex Chen(明哥) 这个怎么处理？\n\n"
+        "<@sender-user-1> 先按A方案走（by明哥分身）",
     )
 
     worker.run_once()
@@ -3701,7 +3701,7 @@ def test_existing_dry_run_attempt_does_not_call_codex_again(
 def test_failed_send_retries_existing_final_reply_without_calling_codex(
     tmp_path: Path, monkeypatch
 ):
-    trigger = message("@Derek Zen(磊哥) 这个怎么处理？")
+    trigger = message("@Alex Chen(明哥) 这个怎么处理？")
     dws = FakeDws(
         [conversation()],
         {"cid-1": [trigger]},
@@ -3712,8 +3712,8 @@ def test_failed_send_retries_existing_final_reply_without_calling_codex(
     )
     worker = make_worker(tmp_path, dws, codex, monkeypatch)
     final_reply = (
-        "> 周俊杰: @Derek Zen(磊哥) 这个怎么处理？\n\n"
-        "<@sender-user-1> 先按A方案走（by磊哥分身）"
+        "> 周俊杰: @Alex Chen(明哥) 这个怎么处理？\n\n"
+        "<@sender-user-1> 先按A方案走（by明哥分身）"
     )
     attempt_id = worker.store.record_reply_attempt(
         conversation_id="cid-1",
@@ -3735,10 +3735,10 @@ def test_failed_send_retries_existing_final_reply_without_calling_codex(
     worker.run_once()
 
     assert codex.calls == []
-    assert final_sent(dws) == [("cid-1", "先按A方案走（by磊哥分身）")]
+    assert final_sent(dws) == [("cid-1", "先按A方案走（by明哥分身）")]
     assert final_sent_at_users(dws) == [[]]
     assert dws.reply_messages == [
-        ("cid-1", "msg-1", "sender-1", "先按A方案走（by磊哥分身）")
+        ("cid-1", "msg-1", "sender-1", "先按A方案走（by明哥分身）")
     ]
     attempt = worker.store.get_reply_attempt(attempt_id)
     assert attempt is not None
@@ -3750,7 +3750,7 @@ def test_failed_send_retries_existing_final_reply_without_calling_codex(
 def test_sent_reply_prevents_retry_when_latest_attempt_failed(
     tmp_path: Path, monkeypatch
 ):
-    trigger = message("@Derek Zen(磊哥) 这个怎么处理？")
+    trigger = message("@Alex Chen(明哥) 这个怎么处理？")
     dws = FakeDws([conversation()], {"cid-1": [trigger]})
     codex = FakeCodex(
         CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该重新生成")
@@ -3788,15 +3788,15 @@ def test_sent_reply_prevents_retry_when_latest_attempt_failed(
 def test_rerun_message_retries_existing_failed_attempt_without_calling_codex(
     tmp_path: Path, monkeypatch
 ):
-    trigger = message("@Derek Zen(磊哥) 这个怎么处理？")
+    trigger = message("@Alex Chen(明哥) 这个怎么处理？")
     dws = FakeDws([conversation()], {"cid-1": [trigger]})
     codex = FakeCodex(
         CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该重新生成")
     )
     worker = make_worker(tmp_path, dws, codex, monkeypatch)
     final_reply = (
-        "> 周俊杰: @Derek Zen(磊哥) 这个怎么处理？\n\n"
-        "<@sender-user-1> 先按A方案走（by磊哥分身）"
+        "> 周俊杰: @Alex Chen(明哥) 这个怎么处理？\n\n"
+        "<@sender-user-1> 先按A方案走（by明哥分身）"
     )
     attempt_id = worker.store.record_reply_attempt(
         conversation_id="cid-1",
@@ -3818,14 +3818,14 @@ def test_rerun_message_retries_existing_failed_attempt_without_calling_codex(
 
     assert processed == "msg-1"
     assert codex.calls == []
-    assert final_sent(dws) == [("cid-1", "先按A方案走（by磊哥分身）")]
+    assert final_sent(dws) == [("cid-1", "先按A方案走（by明哥分身）")]
     assert worker.store.get_reply_attempt(attempt_id).send_status == "sent"
 
 
 def test_rerun_message_cleans_legacy_group_reply_wrappers(
     tmp_path: Path, monkeypatch
 ):
-    trigger = message("@Derek Zen(磊哥) 这个怎么处理？")
+    trigger = message("@Alex Chen(明哥) 这个怎么处理？")
     dws = FakeDws([conversation()], {"cid-1": [trigger]})
     codex = FakeCodex(
         CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该重新生成")
@@ -3845,7 +3845,7 @@ def test_rerun_message_cleans_legacy_group_reply_wrappers(
         attempt_id,
         final_reply_text=(
             "> 周俊杰: 这个怎么处理？\n\n"
-            "<@sender-user-1> 先按A方案走（by磊哥分身）"
+            "<@sender-user-1> 先按A方案走（by明哥分身）"
         ),
         send_error="network",
     )
@@ -3854,15 +3854,15 @@ def test_rerun_message_cleans_legacy_group_reply_wrappers(
 
     assert processed == "msg-1"
     assert codex.calls == []
-    assert final_sent(dws) == [("cid-1", "先按A方案走（by磊哥分身）")]
+    assert final_sent(dws) == [("cid-1", "先按A方案走（by明哥分身）")]
     attempt = worker.store.get_reply_attempt(attempt_id)
     assert attempt is not None
-    assert attempt.final_reply_text == "先按A方案走（by磊哥分身）"
+    assert attempt.final_reply_text == "先按A方案走（by明哥分身）"
     assert attempt.send_status == "sent"
 
 
 def test_rerun_message_can_force_new_codex_decision(tmp_path: Path, monkeypatch):
-    trigger = message("@Derek Zen(磊哥) 这个怎么处理？")
+    trigger = message("@Alex Chen(明哥) 这个怎么处理？")
     dws = FakeDws([conversation()], {"cid-1": [trigger]})
     codex = FakeCodex(
         CodexDecision(action=CodexAction.SEND_REPLY, reply_text="改走B方案")
@@ -3887,17 +3887,17 @@ def test_rerun_message_can_force_new_codex_decision(tmp_path: Path, monkeypatch)
     assert attempt is not None
     assert attempt.send_status == "sent"
     assert attempt.draft_reply_text == "改走B方案"
-    assert attempt.final_reply_text == "改走B方案（by磊哥分身）"
+    assert attempt.final_reply_text == "改走B方案（by明哥分身）"
     assert final_sent(dws) == [
         (
             "cid-1",
-            "改走B方案（by磊哥分身）",
+            "改走B方案（by明哥分身）",
         )
     ]
 
 
 def test_force_new_rerun_starts_fresh_codex_session(tmp_path: Path, monkeypatch):
-    trigger = message("@Derek Zen(磊哥) 这个怎么处理？")
+    trigger = message("@Alex Chen(明哥) 这个怎么处理？")
     dws = FakeDws([conversation()], {"cid-1": [trigger]})
     codex = FakeCodex(
         CodexDecision(action=CodexAction.NO_REPLY),
@@ -3909,7 +3909,7 @@ def test_force_new_rerun_starts_fresh_codex_session(tmp_path: Path, monkeypatch)
 
     assert codex.calls[0][1] is None
     assert "当前待处理消息:" in codex.calls[0][0]
-    assert "你是 Derek 的钉钉自动回复分身" not in codex.calls[0][0]
+    assert "你是 Alex 的钉钉自动回复分身" not in codex.calls[0][0]
 
 
 def test_rerun_message_uses_explicit_oa_url_when_trigger_has_no_link(
@@ -3924,7 +3924,7 @@ def test_rerun_message_uses_explicit_oa_url_when_trigger_has_no_link(
                 {"name": "试用期工作内容和转正要求", "value": "完成 PM 关键项目交付"}
             ],
             "tasks": [
-                {"taskid": "task-1", "task_status": "RUNNING", "userid": "derek-user-1"}
+                {"taskid": "task-1", "task_status": "RUNNING", "userid": "principal-user-1"}
             ],
         }
     }
@@ -3949,7 +3949,7 @@ def test_rerun_message_uses_explicit_oa_url_when_trigger_has_no_link(
     assert oa_runner.calls[0][2] == (
         "https://aflow.dingtalk.com/detail?procInstId=proc-1&taskId=task-1"
     )
-    assert "\"current_user_id\": \"derek-user-1\"" in oa_runner.approval_detail_texts[0]
+    assert "\"current_user_id\": \"principal-user-1\"" in oa_runner.approval_detail_texts[0]
     assert "\"process_instance_id\": \"proc-1\"" in oa_runner.approval_detail_texts[0]
     assert "完成 PM 关键项目交付" in oa_runner.approval_detail_texts[0]
 
@@ -3957,7 +3957,7 @@ def test_rerun_message_uses_explicit_oa_url_when_trigger_has_no_link(
 def test_reply_attempt_records_codex_audit_fields(tmp_path: Path, monkeypatch):
     dws = FakeDws(
         [conversation()],
-        {"cid-1": [message("@Derek Zen(磊哥) 这个候选人是否推进？")]},
+        {"cid-1": [message("@Alex Chen(明哥) 这个候选人是否推进？")]},
     )
     codex = FakeCodex(
         CodexDecision(
@@ -3975,7 +3975,7 @@ def test_reply_attempt_records_codex_audit_fields(tmp_path: Path, monkeypatch):
         audit_tool_events=[
             {
                 "tool": "exec_command",
-                "command": "rg -n 岗位 /Users/derek/Documents/memory/面试",
+                "command": "rg -n 岗位 /Users/principal/Documents/memory/面试",
             }
         ],
         next_session_id="session-1",
@@ -4001,7 +4001,7 @@ def test_prompt_includes_dynamic_similar_corpus_examples_without_static_style_pr
 ):
     dws = FakeDws(
         [conversation()],
-        {"cid-1": [message("@Derek Zen(磊哥) 这个项目排期怎么处理？")]},
+        {"cid-1": [message("@Alex Chen(明哥) 这个项目排期怎么处理？")]},
     )
     codex = FakeCodex(CodexDecision(action=CodexAction.NO_REPLY, reason="dry run"))
     style_records = [
@@ -4010,10 +4010,10 @@ def test_prompt_includes_dynamic_similar_corpus_examples_without_static_style_pr
             source_title="Friday",
             timestamp="2026-05-13",
             context="项目排期要不要改",
-            derek_reply="先定优先级，再确认谁负责、什么时候交付、怎么验收。",
+            principal_reply="先定优先级，再确认谁负责、什么时候交付、怎么验收。",
             message_id="style-1",
             conversation_id="cid-style-1",
-            speaker_name="磊哥",
+            speaker_name="明哥",
             metadata_json="{}",
         ),
         CorpusRecord(
@@ -4021,10 +4021,10 @@ def test_prompt_includes_dynamic_similar_corpus_examples_without_static_style_pr
             source_title="HR",
             timestamp="2026-05-13",
             context="候选人怎么样",
-            derek_reply="先看岗位匹配，再看负责范围和是否真正承担过结果。",
+            principal_reply="先看岗位匹配，再看负责范围和是否真正承担过结果。",
             message_id="style-2",
             conversation_id="cid-style-2",
-            speaker_name="磊哥",
+            speaker_name="明哥",
             metadata_json="{}",
         ),
         CorpusRecord(
@@ -4032,10 +4032,10 @@ def test_prompt_includes_dynamic_similar_corpus_examples_without_static_style_pr
             source_title="技术部",
             timestamp="2026-05-13",
             context="项目排期风险",
-            derek_reply="先把风险拆成产品、算法和交付三类，每类只留一个负责人和一个截止时间。",
+            principal_reply="先把风险拆成产品、算法和交付三类，每类只留一个负责人和一个截止时间。",
             message_id="style-3",
             conversation_id="cid-style-3",
-            speaker_name="磊哥",
+            speaker_name="明哥",
             metadata_json="{}",
         ),
     ]
@@ -4044,14 +4044,14 @@ def test_prompt_includes_dynamic_similar_corpus_examples_without_static_style_pr
         dws,
         codex,
         monkeypatch,
-        style_profile="# Derek Style Profile\n- 先结论，再解释原因。",
+        style_profile="# Alex Style Profile\n- 先结论，再解释原因。",
         style_records=style_records,
     )
 
     worker.run_once()
 
     prompt = codex.calls[0][0]
-    assert "Derek 语气规则:" not in prompt
+    assert "Alex 语气规则:" not in prompt
     assert "- 先结论，再解释原因。" not in prompt
     assert "相似历史回复风格例子" in prompt
     assert "只学习语气、判断顺序和句式结构" in prompt
@@ -4069,7 +4069,7 @@ def test_prompt_includes_similar_human_feedback_examples(tmp_path: Path, monkeyp
         {
             "cid-1": [
                 message(
-                    "磊哥，这个本地工具我跑通过，你先安装试试。",
+                    "明哥，这个本地工具我跑通过，你先安装试试。",
                     single_chat=True,
                 )
             ]
@@ -4085,7 +4085,7 @@ def test_prompt_includes_similar_human_feedback_examples(tmp_path: Path, monkeyp
         trigger_text="你先安装试试这个本地工具",
         action="handoff_to_human",
         sensitivity_kind="general",
-        codex_reason="要求 Derek 安装本地工具，应交给本人。",
+        codex_reason="要求 Alex 安装本地工具，应交给本人。",
     )
     worker.store.record_reply_feedback(
         attempt_id,
@@ -4099,7 +4099,7 @@ def test_prompt_includes_similar_human_feedback_examples(tmp_path: Path, monkeyp
 
     prompt = codex.calls[0][0]
     assert "相似人工纠偏样本" in prompt
-    assert "优先学习 磊哥 对错误回复的修正方向" in prompt
+    assert "优先学习 明哥 对错误回复的修正方向" in prompt
     assert "不要直接交给本人" in prompt
     assert "你把代码提交一下" in prompt
     assert "msg-old" not in prompt
@@ -4111,7 +4111,7 @@ def test_group_name_reference_without_direct_at_does_not_queue(
 ):
     dws = FakeDws(
         [conversation()],
-        {"cid-1": [message("@张晓民(Xiaomin张晓民) 这个和磊哥预期一致")]},
+        {"cid-1": [message("@张晓民(Xiaomin张晓民) 这个和明哥预期一致")]},
     )
     codex = FakeCodex(
         CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该回复")
@@ -4124,7 +4124,7 @@ def test_group_name_reference_without_direct_at_does_not_queue(
     assert final_sent(dws) == []
 
 
-def test_algorithm_owner_multi_mention_is_framed_as_derek_responsibility(
+def test_algorithm_owner_multi_mention_is_framed_as_principal_responsibility(
     tmp_path: Path, monkeypatch
 ):
     dws = FakeDws(
@@ -4132,7 +4132,7 @@ def test_algorithm_owner_multi_mention_is_framed_as_derek_responsibility(
         {
             "cid-1": [
                 message(
-                    "@ET(张毅倜(ET)) @Derek Zen(磊哥) "
+                    "@ET(张毅倜(ET)) @Alex Chen(明哥) "
                     "aijam是否可以把算法大神们纳入进来？",
                     message_id="msg-algo-owner",
                 )
@@ -4148,7 +4148,7 @@ def test_algorithm_owner_multi_mention_is_framed_as_derek_responsibility(
 
     worker.run_once()
 
-    assert final_sent(dws) == [("cid-1", "可以，算法这边应该参与（by磊哥分身）")]
+    assert final_sent(dws) == [("cid-1", "可以，算法这边应该参与（by明哥分身）")]
     prompt = codex.calls[0][0]
     assert "aijam是否可以把算法大神们纳入进来？" in prompt
     assert "当前待处理消息:" in prompt
@@ -4158,7 +4158,7 @@ def test_group_direct_mention_found_in_recent_context_is_queued(
     tmp_path: Path, monkeypatch
 ):
     old_direct_mention = message(
-        "@Derek Zen(磊哥) 旧消息看一下",
+        "@Alex Chen(明哥) 旧消息看一下",
         message_id="msg-old",
     )
     old_direct_mention.create_time = "2026-05-15 18:34:47"
@@ -4182,14 +4182,14 @@ def test_group_direct_mention_found_in_recent_context_is_queued(
     worker.run_once()
 
     assert len(codex.calls) == 1
-    assert final_sent(dws) == [("cid-1", "我看一下（by磊哥分身）")]
+    assert final_sent(dws) == [("cid-1", "我看一下（by明哥分身）")]
 
 
 def test_group_seen_direct_mention_found_in_recent_context_does_not_queue(
     tmp_path: Path, monkeypatch
 ):
     old_direct_mention = message(
-        "@Derek Zen(磊哥) 旧消息看一下",
+        "@Alex Chen(明哥) 旧消息看一下",
         message_id="msg-old",
     )
     latest_unread = message("最新未读只是同步进展", message_id="msg-new")
@@ -4246,7 +4246,7 @@ def test_build_prompt_includes_known_people_from_org_cache(tmp_path: Path, monke
         department_ids=set(),
     )
     trigger = message(
-        "磊哥，晓民的转正时间快到了。",
+        "明哥，晓民的转正时间快到了。",
         single_chat=True,
         message_id="msg-personnel",
     )
@@ -4266,8 +4266,8 @@ def test_build_prompt_includes_sender_org_context(tmp_path: Path, monkeypatch):
         user_id="sender-user-1",
         name="Mina 邹",
         title="首席人力资源专家兼HRVP",
-        manager_name="Derek Zen",
-        manager_user_id="derek-user-1",
+        manager_name="Alex Chen",
+        manager_user_id="principal-user-1",
         department_ids={"dept-hr", "dept-recruiting"},
         department_names={"人力资源部", "招聘组"},
         org_labels=["职务: HR负责人", "岗位: 管理层"],
@@ -4276,14 +4276,14 @@ def test_build_prompt_includes_sender_org_context(tmp_path: Path, monkeypatch):
     codex = FakeCodex(CodexDecision(action=CodexAction.NO_REPLY))
     worker = make_worker(tmp_path, dws, codex, monkeypatch)
     worker.store.upsert_org_user_profile(
-        user_id="derek-user-1",
-        name="Derek Zen",
+        user_id="principal-user-1",
+        name="Alex Chen",
         open_dingtalk_id=None,
         manager_user_id=None,
         department_ids={"dept-exec"},
     )
     trigger = message(
-        "磊哥，晓民的转正时间快到了。",
+        "明哥，晓民的转正时间快到了。",
         single_chat=True,
         message_id="msg-personnel",
         sender_user_id="sender-user-1",
@@ -4304,7 +4304,7 @@ def test_build_prompt_includes_sender_org_context(tmp_path: Path, monkeypatch):
     assert '"职务: HR负责人"' in prompt
     assert '"岗位: 管理层"' in prompt
     assert '"manager": {' in prompt
-    assert '"name": "Derek Zen"' in prompt
+    assert '"name": "Alex Chen"' in prompt
     assert '"departments": [' in prompt
     assert '"name": "人力资源部"' in prompt
     assert '"has_subordinate": true' in prompt
@@ -4314,7 +4314,7 @@ def test_group_stale_direct_mention_found_in_recent_context_does_not_queue(
     tmp_path: Path, monkeypatch
 ):
     stale_direct_mention = message(
-        "@Derek Zen(磊哥) 旧消息看一下",
+        "@Alex Chen(明哥) 旧消息看一下",
         message_id="msg-old",
     )
     stale_direct_mention.create_time = "2026-04-30 17:34:59"
@@ -4377,9 +4377,9 @@ def test_single_chat_recent_context_after_seen_is_processed_when_unread_empty(
 ):
     handled = message("paper是不是也要开始准备了？", message_id="msg-handled", single_chat=True)
     handled.create_time = "2026-05-13 17:44:34"
-    sent_reply = derek_message(
+    sent_reply = principal_message(
         "对，paper不要等所有数据都齐了再启动。",
-        message_id="msg-derek-reply",
+        message_id="msg-principal-reply",
         create_time="2026-05-13 17:45:31",
     )
     new_peer_message = message(
@@ -4455,7 +4455,7 @@ def test_initial_prompt_context_includes_previous_20_plus_unread_tail(
     ]
     for index, old_message in enumerate(old_messages):
         old_message.create_time = f"2026-05-13 17:{index:02d}:00"
-    trigger = message("@Derek Zen(磊哥) 这个需要你看一下", message_id="trigger-msg")
+    trigger = message("@Alex Chen(明哥) 这个需要你看一下", message_id="trigger-msg")
     trigger.create_time = "2026-05-13 18:00:00"
     downstream = message("我已经处理好了", message_id="downstream-msg")
     downstream.create_time = "2026-05-13 18:01:00"
@@ -4477,9 +4477,9 @@ def test_initial_prompt_context_includes_previous_20_plus_unread_tail(
     assert "历史上下文 04" not in context_section
     assert "历史上下文 05" in context_section
     assert "历史上下文 24" in context_section
-    assert "@Derek Zen(磊哥) 这个需要你看一下" in new_messages_section
+    assert "@Alex Chen(明哥) 这个需要你看一下" in new_messages_section
     assert "我已经处理好了" not in new_messages_section
-    assert "@Derek Zen(磊哥) 这个需要你看一下" in context_section
+    assert "@Alex Chen(明哥) 这个需要你看一下" in context_section
     assert "我已经处理好了" in context_section
 
 
@@ -4492,7 +4492,7 @@ def test_resumed_prompt_context_only_includes_messages_after_last_seen(
     last_seen.create_time = "2026-05-13 17:10:00"
     after_seen = message("上次回复后的补充信息", message_id="after-seen")
     after_seen.create_time = "2026-05-13 17:20:00"
-    trigger = message("@Derek Zen(磊哥) 结合上面的补充再看一下", message_id="trigger-msg")
+    trigger = message("@Alex Chen(明哥) 结合上面的补充再看一下", message_id="trigger-msg")
     trigger.create_time = "2026-05-13 18:00:00"
     dws = FakeDws(
         [conversation()],
@@ -4525,7 +4525,7 @@ def test_no_reply_action_does_not_send(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(
         "ceo_agent_service.worker.send_macos_notification", lambda **_: None
     )
-    dws = FakeDws([conversation()], {"cid-1": [message("@Derek Zen(磊哥) cc一下")]})
+    dws = FakeDws([conversation()], {"cid-1": [message("@Alex Chen(明哥) cc一下")]})
     codex = FakeCodex(CodexDecision(action=CodexAction.NO_REPLY, reason="cc only"))
     worker = DingTalkAutoReplyWorker(
         store=store, dws=dws, codex=codex, now_provider=fixed_worker_now
@@ -4552,7 +4552,7 @@ def test_handoff_sends_ack_dings_self_and_records_message_result(
     )
     dws = FakeDws(
         [conversation()],
-        {"cid-1": [message("@Derek Zen(磊哥) 不要分身，真人看一下")]},
+        {"cid-1": [message("@Alex Chen(明哥) 不要分身，真人看一下")]},
     )
     codex = FakeCodex(CodexDecision(action=CodexAction.HANDOFF_TO_HUMAN))
     worker = DingTalkAutoReplyWorker(
@@ -4572,13 +4572,13 @@ def test_handoff_sends_ack_dings_self_and_records_message_result(
     assert attempt.final_reply_text == expected_ack
 
 
-def test_new_derek_mention_is_processed(
+def test_new_principal_mention_is_processed(
     tmp_path: Path, monkeypatch
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.upsert_conversation("cid-1", "26年董事会筹备组", False, None)
     latest = message(
-        "@Melody Xu（Melody） @Derek Zen（磊哥）请磊哥看一下2026年的战略主线这样写是否合适？[图片消息]",
+        "@Melody Xu（Melody） @Alex Chen（明哥）请明哥看一下2026年的战略主线这样写是否合适？[图片消息]",
         message_id="msg-after-handoff",
     )
     latest.create_time = "2026-05-13 18:10:00"
@@ -4600,18 +4600,18 @@ def test_new_derek_mention_is_processed(
     worker.run_once()
 
     assert codex.calls
-    assert final_sent(dws) == [("cid-1", "战略主线建议这样调整（by磊哥分身）")]
+    assert final_sent(dws) == [("cid-1", "战略主线建议这样调整（by明哥分身）")]
     assert store.has_seen("msg-after-handoff") is True
     assert notifications == [
         {
             "title": "CEO auto reply: 26年董事会筹备组",
-            "message": "战略主线建议这样调整（by磊哥分身）",
+            "message": "战略主线建议这样调整（by明哥分身）",
             "url": None,
         }
     ]
 
 
-def test_group_unread_without_derek_mention_is_ignored(
+def test_group_unread_without_principal_mention_is_ignored(
     tmp_path: Path, monkeypatch
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
@@ -4644,7 +4644,7 @@ def test_group_unread_without_derek_mention_is_ignored(
     assert notifications == []
 
 
-def test_dry_run_group_unread_without_derek_mention_is_ignored(
+def test_dry_run_group_unread_without_principal_mention_is_ignored(
     tmp_path: Path, monkeypatch
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
@@ -4695,7 +4695,7 @@ def test_single_chat_unread_is_processed_without_mention(tmp_path: Path, monkeyp
     assert final_sent(dws) == [
         (
             "",
-            "> 周俊杰: 这个今天能拍吗？\n\n可以，先推进（by磊哥分身）",
+            "> 周俊杰: 这个今天能拍吗？\n\n可以，先推进（by明哥分身）",
         )
     ]
     assert final_sent_at_users(dws) == [[]]
@@ -4708,14 +4708,14 @@ def test_single_chat_unread_is_processed_without_mention(tmp_path: Path, monkeyp
     assert attempt.direct_user_id == "sender-user-1"
     assert attempt.direct_open_dingtalk_id == "sender-1"
     assert attempt.final_reply_text == (
-        "> 周俊杰: 这个今天能拍吗？\n\n可以，先推进（by磊哥分身）"
+        "> 周俊杰: 这个今天能拍吗？\n\n可以，先推进（by明哥分身）"
     )
 
 
 def test_fake_quote_removes_links_and_mentions_before_truncating():
     trigger = message(
         "https://alidocs.dingtalk.com/i/nodes/doc123 "
-        "@Derek Zen(磊哥) @Shawn Hou(侯光焕) @Xingzu Liu(刘兴祖) "
+        "@Alex Chen(明哥) @Shawn Hou(侯光焕) @Xingzu Liu(刘兴祖) "
         "@张晓民(Xiaomin张晓民) 数据导入导出业务的根因和解法"
     )
 
@@ -4723,28 +4723,28 @@ def test_fake_quote_removes_links_and_mentions_before_truncating():
 
     assert quote == "> 周俊杰: 数据导入导出业务的根因和解法"
     assert "http" not in quote
-    assert "@Derek" not in quote
+    assert "@Alex" not in quote
     assert "@Shawn" not in quote
 
 
 def test_fake_quote_keeps_text_after_compact_assistant_mention():
     trigger = message(
-        "@磊哥分身，请你按照一曲线、二曲线、三曲线的流程和节点，分析缺乏owner的地方。"
+        "@明哥分身，请你按照一曲线、二曲线、三曲线的流程和节点，分析缺乏owner的地方。"
     )
 
     quote = DingTalkAutoReplyWorker._fake_quote(trigger)
 
     assert quote == "> 周俊杰: 请你按照一曲线、二曲线、三曲线的流程和节点，分..."
     assert "原消息" not in quote
-    assert "@磊哥分身" not in quote
+    assert "@明哥分身" not in quote
 
 
 def test_fake_quote_redacts_runtime_terms_from_user_text():
-    trigger = message("磊哥，你是怎么解决codex上下文压缩失败的问题的？")
+    trigger = message("明哥，你是怎么解决codex上下文压缩失败的问题的？")
 
     quote = DingTalkAutoReplyWorker._fake_quote(trigger)
 
-    assert quote == "> 周俊杰: 磊哥，你是怎么解决相关内容上下文压缩失败的..."
+    assert quote == "> 周俊杰: 明哥，你是怎么解决相关内容上下文压缩失败的..."
     assert "codex" not in quote.lower()
     assert "原消息" not in quote
 
@@ -4754,7 +4754,7 @@ def test_user_runtime_term_in_trigger_quote_does_not_block_safe_reply(
 ):
     dws = FakeDws(
         [conversation(single_chat=True)],
-        {"cid-1": [message("磊哥，你是怎么解决codex上下文压缩失败的问题的？", single_chat=True)]},
+        {"cid-1": [message("明哥，你是怎么解决codex上下文压缩失败的问题的？", single_chat=True)]},
     )
     codex = FakeCodex(
         CodexDecision(
@@ -4778,7 +4778,7 @@ def test_single_chat_current_user_message_does_not_call_codex(
 ):
     dws = FakeDws(
         [conversation(single_chat=True)],
-        {"cid-1": [derek_message("AI自动抓取，用于会议纪要整理")]},
+        {"cid-1": [principal_message("AI自动抓取，用于会议纪要整理")]},
     )
     codex = FakeCodex(
         CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该回复")
@@ -4807,8 +4807,8 @@ def test_run_once_max_batches_stops_after_limit(tmp_path: Path, monkeypatch):
     dws = FakeDws(
         [conv_1, conv_2],
         {
-            "cid-1": [message("@Derek Zen(磊哥) 第一个问题", message_id="msg-1")],
-            "cid-2": [message("@Derek Zen(磊哥) 第二个问题", message_id="msg-2")],
+            "cid-1": [message("@Alex Chen(明哥) 第一个问题", message_id="msg-1")],
+            "cid-2": [message("@Alex Chen(明哥) 第二个问题", message_id="msg-2")],
         },
     )
     codex = FakeCodex(CodexDecision(action=CodexAction.SEND_REPLY, reply_text="先推进"))
@@ -4831,7 +4831,7 @@ def test_single_chat_same_display_name_without_current_user_id_still_calls_codex
         single_chat=True,
         sender_user_id=None,
     )
-    same_name_message.sender_name = "磊哥"
+    same_name_message.sender_name = "明哥"
     dws = FakeDws(
         [conversation(single_chat=True)],
         {"cid-1": [same_name_message]},
@@ -4849,11 +4849,11 @@ def test_message_before_current_user_reply_does_not_call_codex(
     tmp_path: Path, monkeypatch
 ):
     requester = message(
-        "@Derek Zen(磊哥) push了",
+        "@Alex Chen(明哥) push了",
         message_id="msg-before-self",
     )
     requester.create_time = "2026-05-13 08:45:50"
-    manual_reply = derek_message(
+    manual_reply = principal_message(
         "@周俊杰(周俊杰) 我merge了",
         message_id="msg-self-after",
         create_time="2026-05-13 11:00:03",
@@ -4876,13 +4876,13 @@ def test_message_before_current_user_reply_does_not_call_codex(
 def test_message_after_current_user_reply_still_calls_codex(
     tmp_path: Path, monkeypatch
 ):
-    manual_reply = derek_message(
+    manual_reply = principal_message(
         "这个ACL表@张晓民(Xiaomin张晓民) 看一下",
         message_id="msg-self-before",
         create_time="2026-05-13 15:15:14",
     )
     requester = message(
-        "@Derek Zen(磊哥) 我和俊杰聊下",
+        "@Alex Chen(明哥) 我和俊杰聊下",
         message_id="msg-after-self",
     )
     requester.create_time = "2026-05-13 15:16:49"
@@ -4896,7 +4896,7 @@ def test_message_after_current_user_reply_still_calls_codex(
     worker.run_once()
 
     assert len(codex.calls) == 1
-    assert "@Derek Zen(磊哥) 我和俊杰聊下" in codex.calls[0][0]
+    assert "@Alex Chen(明哥) 我和俊杰聊下" in codex.calls[0][0]
     assert (
         "这个ACL表"
         not in codex.calls[0][0].split("新消息:", 1)[1].split(CONTEXT_HEADER, 1)[0]
@@ -4919,7 +4919,7 @@ def test_read_failure_records_error_and_continues_next_conversation(
         unread_point=1,
     )
     good_message = message(
-        "@Derek Zen(磊哥) 这个怎么处理？",
+        "@Alex Chen(明哥) 这个怎么处理？",
         message_id="msg-good",
     )
     good_message.open_conversation_id = "cid-good"
@@ -4938,7 +4938,7 @@ def test_read_failure_records_error_and_continues_next_conversation(
     assert final_sent(dws) == [
         (
             "cid-good",
-            "先按A方案走（by磊哥分身）",
+            "先按A方案走（by明哥分身）",
         )
     ]
 
@@ -4949,7 +4949,7 @@ def test_group_mention_from_unread_conversation_is_processed_when_unread_tail_mi
     unread_tail = message("后续同步进展", message_id="msg-tail")
     unread_tail.create_time = "2026-05-25 17:53:12"
     missed_mention = message(
-        "@Derek Zen(磊哥) 要不现在对一下",
+        "@Alex Chen(明哥) 要不现在对一下",
         message_id="msg-mentioned",
     )
     missed_mention.create_time = "2026-05-25 16:20:14"
@@ -4978,17 +4978,17 @@ def test_produce_once_coalesces_consecutive_group_mentions_from_same_sender(
     tmp_path: Path, monkeypatch
 ):
     first = message(
-        "@Derek Zen(磊哥) 先看第一点",
+        "@Alex Chen(明哥) 先看第一点",
         message_id="msg-mentioned-1",
     )
     first.create_time = "2026-05-28 13:21:54"
     second = message(
-        "@曹宇航(Yuhang Cao) @Derek Zen(磊哥) 再看第二点",
+        "@曹宇航(Yuhang Cao) @Alex Chen(明哥) 再看第二点",
         message_id="msg-mentioned-2",
     )
     second.create_time = "2026-05-28 13:24:02"
     third = message(
-        "@Derek Zen(磊哥) @曹宇航(Yuhang Cao) 最后总结一下",
+        "@Alex Chen(明哥) @曹宇航(Yuhang Cao) 最后总结一下",
         message_id="msg-mentioned-3",
     )
     third.create_time = "2026-05-28 13:27:41"
@@ -5008,9 +5008,9 @@ def test_produce_once_coalesces_consecutive_group_mentions_from_same_sender(
     assert queued == 1
     assert len(tasks) == 1
     assert tasks[0].trigger_message_id == "msg-mentioned-3"
-    assert "@Derek Zen(磊哥) 先看第一点" in tasks[0].trigger_text
-    assert "@曹宇航(Yuhang Cao) @Derek Zen(磊哥) 再看第二点" in tasks[0].trigger_text
-    assert "@Derek Zen(磊哥) @曹宇航(Yuhang Cao) 最后总结一下" in tasks[0].trigger_text
+    assert "@Alex Chen(明哥) 先看第一点" in tasks[0].trigger_text
+    assert "@曹宇航(Yuhang Cao) @Alex Chen(明哥) 再看第二点" in tasks[0].trigger_text
+    assert "@Alex Chen(明哥) @曹宇航(Yuhang Cao) 最后总结一下" in tasks[0].trigger_text
     assert codex.calls == []
 
 
@@ -5064,7 +5064,7 @@ def test_group_mention_from_read_conversation_is_processed_from_mentions(
     tmp_path: Path, monkeypatch
 ):
     mentioned = message(
-        "@Derek Zen(磊哥) 磊哥，你的数字分身在你睡着的时候还会运作吗？",
+        "@Alex Chen(明哥) 明哥，你的数字分身在你睡着的时候还会运作吗？",
         message_id="msg-mkt-mention",
     )
     mentioned.open_conversation_id = "cid-mkt"
@@ -5126,7 +5126,7 @@ def test_current_user_all_mention_is_filtered_from_broadcast_search(
     broadcast = message(
         "@所有人 我已经更新完了",
         message_id="msg-self-all",
-        sender_user_id="derek-user-1",
+        sender_user_id="principal-user-1",
     )
     broadcast.open_conversation_id = "cid-website"
     broadcast.conversation_title = "官网迭代群"
@@ -5172,15 +5172,15 @@ def test_read_group_mention_is_skipped_when_later_current_user_text_replied(
     tmp_path: Path, monkeypatch
 ):
     mentioned = message(
-        "@Derek Zen(磊哥) 磊哥，你的数字分身在你睡着的时候还会运作吗？",
+        "@Alex Chen(明哥) 明哥，你的数字分身在你睡着的时候还会运作吗？",
         message_id="msg-mkt-mention",
     )
     mentioned.open_conversation_id = "cid-mkt"
     mentioned.conversation_title = "MKT core"
     mentioned.create_time = "2026-05-25 19:21:56"
-    manual_reply = derek_message(
+    manual_reply = principal_message(
         "会的，晚上也会处理需要回复的消息",
-        message_id="msg-derek-text",
+        message_id="msg-principal-text",
         create_time="2026-05-25 19:24:00",
     )
     manual_reply.open_conversation_id = "cid-mkt"
@@ -5215,13 +5215,13 @@ def test_read_group_mention_after_seen_message_is_recovered_from_recent_context(
     tmp_path: Path, monkeypatch
 ):
     handled = message(
-        "@Derek Zen(磊哥) 客户问 Hyperion 怎么讲？",
+        "@Alex Chen(明哥) 客户问 Hyperion 怎么讲？",
         message_id="msg-handled",
     )
     handled.open_conversation_id = "cid-hyperion"
     handled.conversation_title = "奔驰北美-Hyperion需求"
     handled.create_time = "2026-05-29 14:19:12"
-    bot_reply = derek_message(
+    bot_reply = principal_message(
         "不能讲成 persona 报告，要讲成 marketing 决策盲区。",
         message_id="msg-bot-reply",
         create_time="2026-05-29 14:32:48",
@@ -5229,7 +5229,7 @@ def test_read_group_mention_after_seen_message_is_recovered_from_recent_context(
     bot_reply.open_conversation_id = "cid-hyperion"
     bot_reply.conversation_title = "奔驰北美-Hyperion需求"
     follow_up = message(
-        "@Derek Zen(磊哥) 这个好。@何耘光(Jack He(Yunguang He)) 我喜欢磊哥分身的答案，更抓客户胃口",
+        "@Alex Chen(明哥) 这个好。@何耘光(Jack He(Yunguang He)) 我喜欢明哥分身的答案，更抓客户胃口",
         message_id="msg-follow-up",
     )
     follow_up.open_conversation_id = "cid-hyperion"
@@ -5269,28 +5269,28 @@ def test_read_group_mention_after_seen_message_is_recovered_from_recent_context(
     assert queued == 1
     assert len(tasks) == 1
     assert tasks[0].trigger_message_id == "msg-follow-up"
-    assert "我喜欢磊哥分身的答案" in tasks[0].trigger_text
+    assert "我喜欢明哥分身的答案" in tasks[0].trigger_text
 
 
 def test_split_person_auto_reply_does_not_hide_unanswered_group_mention(
     tmp_path: Path, monkeypatch
 ):
     handled = message(
-        "@Derek Zen(磊哥) 和我迭代一下材料",
+        "@Alex Chen(明哥) 和我迭代一下材料",
         message_id="msg-handled",
     )
     handled.open_conversation_id = "cid-iter"
     handled.conversation_title = "迭代群"
     handled.create_time = "2026-05-29 21:53:36"
     missed = message(
-        "@Derek Zen(磊哥) 这个分身能读群历史和群文件吗？",
+        "@Alex Chen(明哥) 这个分身能读群历史和群文件吗？",
         message_id="msg-missed",
     )
     missed.open_conversation_id = "cid-iter"
     missed.conversation_title = "迭代群"
     missed.create_time = "2026-05-29 21:55:10"
-    auto_reply = derek_message(
-        "可以，别先把我屏蔽了。（by磊哥分身）",
+    auto_reply = principal_message(
+        "可以，别先把我屏蔽了。（by明哥分身）",
         message_id="msg-auto-reply",
         create_time="2026-05-29 21:55:41",
     )
@@ -5332,12 +5332,12 @@ def test_group_mentions_are_processed_by_message_time_not_fetch_order(
     tmp_path: Path, monkeypatch
 ):
     older_mention = message(
-        "@Derek Zen(磊哥) 怎么规避客户拿给别的 vendor 比价？",
+        "@Alex Chen(明哥) 怎么规避客户拿给别的 vendor 比价？",
         message_id="msg-older-mention",
     )
     older_mention.create_time = "2026-05-26 07:54:36"
     newer_mention = message(
-        "@Derek Zen(磊哥) 磊哥请审一下这个文档，给一下意见",
+        "@Alex Chen(明哥) 明哥请审一下这个文档，给一下意见",
         message_id="msg-newer-mention",
     )
     newer_mention.create_time = "2026-05-26 08:34:57"
@@ -5379,11 +5379,11 @@ def test_current_user_file_does_not_hide_unanswered_group_mention(
     tmp_path: Path, monkeypatch
 ):
     trigger = message(
-        "@Derek Zen(磊哥) 磊哥，你的数字分身在你睡着的时候还会运作吗？",
+        "@Alex Chen(明哥) 明哥，你的数字分身在你睡着的时候还会运作吗？",
         message_id="msg-trigger",
     )
     trigger.create_time = "2026-05-25 19:21:56"
-    self_file = derek_message(
+    self_file = principal_message(
         "[文件] 北京星尘_B轮融资BP_图片版_19页.pdf",
         message_id="msg-self-file",
         create_time="2026-05-26 03:49:28",
@@ -5410,11 +5410,11 @@ def test_processing_ack_does_not_hide_unanswered_group_mention(
     tmp_path: Path, monkeypatch
 ):
     trigger = message(
-        "@Derek Zen(磊哥) 磊哥请审一下这个文档，给一下意见",
+        "@Alex Chen(明哥) 明哥请审一下这个文档，给一下意见",
         message_id="msg-trigger",
     )
     trigger.create_time = "2026-05-26 08:34:57"
-    ack = derek_message(
+    ack = principal_message(
         PROCESSING_ACK,
         message_id="msg-processing-ack",
         create_time="2026-05-26 09:05:36",
@@ -5460,7 +5460,7 @@ def test_internal_personnel_question_missing_subject_asks_clarifying_question(
     assert final_sent(dws) == [
         (
             "",
-            "> 周俊杰: 这个人后续怎么处理？\n\n这个是关于谁的问题？（by磊哥分身）",
+            "> 周俊杰: 这个人后续怎么处理？\n\n这个是关于谁的问题？（by明哥分身）",
         )
     ]
 
@@ -5486,7 +5486,7 @@ def test_internal_personnel_question_allows_hr_requester(tmp_path: Path, monkeyp
     assert final_sent(dws) == [
         (
             "",
-            "> 周俊杰: 张三转正怎么看？\n\n建议先观察一个月（by磊哥分身）",
+            "> 周俊杰: 张三转正怎么看？\n\n建议先观察一个月（by明哥分身）",
         )
     ]
 
@@ -5514,7 +5514,7 @@ def test_internal_personnel_question_allows_subject_manager(
     assert final_sent(dws) == [
         (
             "",
-            "> 周俊杰: 张三绩效怎么定？\n\n先按事实反馈（by磊哥分身）",
+            "> 周俊杰: 张三绩效怎么定？\n\n先按事实反馈（by明哥分身）",
         )
     ]
 
@@ -5542,7 +5542,7 @@ def test_internal_personnel_question_refuses_unrelated_requester(
         (
             "",
             "> 周俊杰: 张三绩效怎么定？\n\n"
-            "这个涉及内部人事隐私，我不能回答。（by磊哥分身）",
+            "这个涉及内部人事隐私，我不能回答。（by明哥分身）",
         )
     ]
 
@@ -5570,7 +5570,7 @@ def test_candidate_question_missing_department_asks_clarifying_question(
         (
             "",
             "> 周俊杰: 这个候选人怎么样？\n\n"
-            "这个候选人是哪个岗位/部门的？（by磊哥分身）",
+            "这个候选人是哪个岗位/部门的？（by明哥分身）",
         )
     ]
 
@@ -5599,7 +5599,7 @@ def test_candidate_question_allows_related_department_requester(
     assert final_sent(dws) == [
         (
             "",
-            "> 周俊杰: 这个候选人怎么样？\n\n可以推进（by磊哥分身）",
+            "> 周俊杰: 这个候选人怎么样？\n\n可以推进（by明哥分身）",
         )
     ]
 
@@ -5629,7 +5629,7 @@ def test_candidate_question_refuses_unrelated_department_requester(
         (
             "",
             "> 周俊杰: 这个候选人怎么样？\n\n"
-            "这个候选人信息只回答相关部门的人。（by磊哥分身）",
+            "这个候选人信息只回答相关部门的人。（by明哥分身）",
         )
     ]
 
@@ -5670,7 +5670,7 @@ def test_dry_run_does_not_mutate_terminal_state(tmp_path: Path, monkeypatch):
         "ceo_agent_service.worker.send_macos_notification", lambda **_: None
     )
     dws = FakeDws(
-        [conversation()], {"cid-1": [message("@Derek Zen(磊哥) 这个怎么处理？")]}
+        [conversation()], {"cid-1": [message("@Alex Chen(明哥) 这个怎么处理？")]}
     )
     codex = FakeCodex(
         CodexDecision(action=CodexAction.SEND_REPLY, reply_text="先按A方案走")
@@ -5693,7 +5693,7 @@ def test_send_failure_records_error_and_does_not_mark_seen(tmp_path: Path, monke
     )
     dws = FakeDws(
         [conversation()],
-        {"cid-1": [message("@Derek Zen(磊哥) 这个怎么处理？")]},
+        {"cid-1": [message("@Alex Chen(明哥) 这个怎么处理？")]},
         send_error=RuntimeError("send failed"),
     )
     codex = FakeCodex(
@@ -5727,7 +5727,7 @@ def test_send_failure_requeues_reply_task_for_consumer_retry(
     )
     dws = FakeDws(
         [conversation()],
-        {"cid-1": [message("@Derek Zen(磊哥) 这个怎么处理？")]},
+        {"cid-1": [message("@Alex Chen(明哥) 这个怎么处理？")]},
         send_error=RuntimeError("send failed"),
     )
     codex = FakeCodex(
@@ -5757,7 +5757,7 @@ def test_consumer_send_failure_emits_one_failure_notification(
     notifications = []
     dws = FakeDws(
         [conversation()],
-        {"cid-1": [message("@Derek Zen(磊哥) 这个怎么处理？")]},
+        {"cid-1": [message("@Alex Chen(明哥) 这个怎么处理？")]},
         send_error=RuntimeError("send failed"),
     )
     codex = FakeCodex(
@@ -5795,7 +5795,7 @@ def test_pat_authorization_error_is_recorded_as_failed_without_retry_or_url(
     )
     dws = FakeDws(
         [conversation()],
-        {"cid-1": [message("@Derek Zen(磊哥) 这个怎么处理？")]},
+        {"cid-1": [message("@Alex Chen(明哥) 这个怎么处理？")]},
         send_error=DwsError(
             "dws command failed with exit code 4: PAT_HIGH_RISK_NO_PERMISSION",
             code="PAT_HIGH_RISK_NO_PERMISSION",
@@ -5831,7 +5831,7 @@ def test_handoff_ding_failure_does_not_mark_seen(
     )
     dws = FakeDws(
         [conversation()],
-        {"cid-1": [message("@Derek Zen(磊哥) 不要分身，真人看一下")]},
+        {"cid-1": [message("@Alex Chen(明哥) 不要分身，真人看一下")]},
         ding_error=RuntimeError("ding failed"),
     )
     codex = FakeCodex(CodexDecision(action=CodexAction.HANDOFF_TO_HUMAN))
@@ -5852,7 +5852,7 @@ def test_persists_codex_last_session_id_after_decision(tmp_path: Path, monkeypat
     monkeypatch.setattr(
         "ceo_agent_service.worker.send_macos_notification", lambda **_: None
     )
-    dws = FakeDws([conversation()], {"cid-1": [message("@Derek Zen(磊哥) cc一下")]})
+    dws = FakeDws([conversation()], {"cid-1": [message("@Alex Chen(明哥) cc一下")]})
     codex = FakeCodex(
         CodexDecision(action=CodexAction.NO_REPLY, reason="cc only"),
         next_session_id="session-1",
@@ -5871,7 +5871,7 @@ def test_stale_codex_last_session_id_is_not_persisted(tmp_path: Path, monkeypatc
     monkeypatch.setattr(
         "ceo_agent_service.worker.send_macos_notification", lambda **_: None
     )
-    dws = FakeDws([conversation()], {"cid-1": [message("@Derek Zen(磊哥) cc一下")]})
+    dws = FakeDws([conversation()], {"cid-1": [message("@Alex Chen(明哥) cc一下")]})
     codex = FakeCodex(
         CodexDecision(action=CodexAction.NO_REPLY, reason="cc only"),
         last_session_id="stale-session",

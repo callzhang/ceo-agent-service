@@ -48,10 +48,10 @@ Add explicit config equivalent to:
 The runner environment should expose:
 
 - `CONNECTOR_API_KEY`
-- `MEMORY_CONNECTOR_USER_ID=derek`
+- `MEMORY_CONNECTOR_USER_ID=principal`
 - `MEMORY_CONNECTOR_URL`, if needed by local hooks or diagnostics
 
-The user id must be passed as `derek` when the agent calls `user_get`, `memory_recall`, `memory_write`, or `document_upload`.
+The user id must be passed as `principal` when the agent calls `user_get`, `memory_recall`, `memory_write`, or `document_upload`.
 
 The developer prompt should state that memory MCP is available for durable project, person, decision, and event recall, but it should not require recall for every trivial reply.
 
@@ -132,7 +132,7 @@ Behavior:
 
 - Select `pending` and retryable `failed` events.
 - Mark each selected row `processing` before calling memory.
-- Call `memory_write(type="json", user_id="derek", data=payload_json, created_at=event created_at, source_description=..., source_metadata=..., provenance_metadata=...)`.
+- Call `memory_write(type="json", user_id="principal", data=payload_json, created_at=event created_at, source_description=..., source_metadata=..., provenance_metadata=...)`.
 - On success, mark `sent` and store returned episode id if available.
 - On failure, increment `attempts`, store `last_error`, and mark `failed`.
 - Never send or resend DingTalk messages.

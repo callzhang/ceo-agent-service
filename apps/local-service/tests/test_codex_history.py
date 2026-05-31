@@ -27,7 +27,7 @@ def write_session(codex_home: Path, session_id: str) -> Path:
             "type": "session_meta",
             "payload": {
                 "id": session_id,
-                "cwd": "/Users/derek/Documents/memory",
+                "cwd": "/Users/principal/Documents/memory",
                 "originator": "codex exec",
                 "cli_version": "0.1",
             },
@@ -41,7 +41,7 @@ def write_session(codex_home: Path, session_id: str) -> Path:
                 "content": [
                     {
                         "type": "input_text",
-                        "text": "# AGENTS.md instructions for /Users/derek/Documents/memory",
+                        "text": "# AGENTS.md instructions for /Users/principal/Documents/memory",
                     }
                 ],
             },
@@ -62,7 +62,7 @@ def write_session(codex_home: Path, session_id: str) -> Path:
                 "type": "function_call",
                 "name": "exec_command",
                 "arguments": json.dumps(
-                    {"cmd": "rg -n 岗位 /Users/derek/Documents/memory/面试"},
+                    {"cmd": "rg -n 岗位 /Users/principal/Documents/memory/面试"},
                     ensure_ascii=False,
                 ),
             },
@@ -225,8 +225,8 @@ def test_extract_codex_audit_events_from_session_respects_line_range(tmp_path: P
         {
             "event_type": "response_item",
             "tool": "exec_command",
-            "command": "rg -n 岗位 /Users/derek/Documents/memory/面试",
-            "path": "/Users/derek/Documents/memory/面试",
+            "command": "rg -n 岗位 /Users/principal/Documents/memory/面试",
+            "path": "/Users/principal/Documents/memory/面试",
         },
         {
             "event_type": "response_item",

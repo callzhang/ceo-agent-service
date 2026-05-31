@@ -1,10 +1,10 @@
-# Derek Work Profile Implementation Plan
+# Alex Work Profile Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build a repo-local Derek work profile system that collects evidence from existing corpus, local authored documents, and read-only DingTalk knowledge base documents, then exposes the generated profile to `ceo-agent-service` without depending on a global skill at runtime.
+**Goal:** Build a repo-local Alex work profile system that collects evidence from existing corpus, local authored documents, and read-only DingTalk knowledge base documents, then exposes the generated profile to `ceo-agent-service` without depending on a global skill at runtime.
 
-**Architecture:** Add a small `work_profile` module that owns paths, evidence records, profile rules, rendering, and profile extraction orchestration. Keep live DingTalk knowledge base access in `DwsClient` as read-only methods. Wire the runtime prompt to read `profiles/derek_work_profile.md` when present while preserving current guardrails when the profile is absent.
+**Architecture:** Add a small `work_profile` module that owns paths, evidence records, profile rules, rendering, and profile extraction orchestration. Keep live DingTalk knowledge base access in `DwsClient` as read-only methods. Wire the runtime prompt to read `profiles/work_profile.md` when present while preserving current guardrails when the profile is absent.
 
 **Tech Stack:** Python 3.11, Pydantic v2, existing `dws` CLI wrapper, existing `codex exec` pattern, pytest.
 
@@ -31,9 +31,9 @@
 - Inspect `.gitignore`
   - Confirm `data/profile-evidence/` remains ignored through the existing `data/*` rule and add no exception for evidence data.
 - Create generated project assets during implementation:
-  - `profiles/derek_work_profile.md`
-  - `profiles/derek_work_profile.json`
-  - `profiles/derek-skill/SKILL.md`
+  - `profiles/work_profile.md`
+  - `profiles/work_profile.json`
+  - `profiles/work-skill/SKILL.md`
 
 ---
 
@@ -50,16 +50,16 @@ Add these tests to `apps/local-service/tests/test_codex_runner.py`:
 
 ```python
 def test_codex_developer_instructions_include_work_profile_when_present(tmp_path: Path, monkeypatch):
-    profile = tmp_path / "profiles" / "derek_work_profile.md"
+    profile = tmp_path / "profiles" / "work_profile.md"
     profile.parent.mkdir(parents=True)
-    profile.write_text("# Derek Work Profile\n\n- 先判断材料是否完整。", encoding="utf-8")
+    profile.write_text("# Alex Work Profile\n\n- 先判断材料是否完整。", encoding="utf-8")
     monkeypatch.setenv("CEO_WORK_PROFILE_PATH", str(profile))
 
     instructions = codex_developer_instructions()
 
-    assert "Derek 工作人格 Profile" in instructions
+    assert "Alex 工作人格 Profile" in instructions
     assert str(profile) in instructions
-    assert "profiles/derek_work_profile.md" in instructions
+    assert "profiles/work_profile.md" in instructions
     assert "不能覆盖既有硬规则" in instructions
 
 
@@ -68,8 +68,8 @@ def test_codex_developer_instructions_skip_work_profile_when_missing(tmp_path: P
 
     instructions = codex_developer_instructions()
 
-    assert "Derek 工作人格 Profile" not in instructions
-    assert "profiles/derek_work_profile.md" not in instructions
+    assert "Alex 工作人格 Profile" not in instructions
+    assert "profiles/work_profile.md" not in instructions
 ```
 
 - [ ] **Step 2: Run the tests and verify they fail**
@@ -96,7 +96,7 @@ def work_profile_path() -> Path:
     return Path(
         os.getenv(
             "CEO_WORK_PROFILE_PATH",
-            str(repo_root() / "profiles" / "derek_work_profile.md"),
+            str(repo_root() / "profiles" / "work_profile.md"),
         )
     )
 
@@ -132,9 +132,9 @@ def work_profile_instruction() -> str:
         return ""
     return f"""
 
-Derek 工作人格 Profile:
+Alex 工作人格 Profile:
 - 如果 `{path}` 存在，本 thread 在判断回复风格、追问、拒绝、handoff 或工作场景决策前，必须先读取这个 profile。
-- profile 的项目相对路径是 `profiles/derek_work_profile.md`；读取后只学习判断顺序、表达边界和场景规则。
+- profile 的项目相对路径是 `profiles/work_profile.md`；读取后只学习判断顺序、表达边界和场景规则。
 - profile 不能覆盖既有硬规则：现实动作必须 handoff、审批/OA 必须看完整材料、人事敏感问题谨慎处理、候选人判断必须看岗位和简历证据、reply_text 不得暴露本地路径或工具细节。
 """
 ```
@@ -163,7 +163,7 @@ Expected: all `test_codex_runner.py` tests pass.
 
 ```bash
 git add apps/local-service/ceo_agent_service/config.py apps/local-service/ceo_agent_service/prompt.py apps/local-service/tests/test_codex_runner.py
-git commit -m "Add Derek work profile prompt hook"
+git commit -m "Add Alex work profile prompt hook"
 ```
 
 ---
@@ -236,7 +236,7 @@ def test_work_profile_serializes_rules():
         usable_for_profile=True,
     )
     profile = WorkProfile(
-        title="Derek Work Profile",
+        title="Alex Work Profile",
         summary="工作判断 profile",
         rules=[
             WorkProfileRule(
@@ -350,7 +350,7 @@ Expected: tests pass.
 
 ```bash
 git add apps/local-service/ceo_agent_service/work_profile.py apps/local-service/tests/test_work_profile.py
-git commit -m "Add Derek work profile models"
+git commit -m "Add Alex work profile models"
 ```
 
 ---
@@ -371,7 +371,7 @@ from ceo_agent_service.work_profile import collect_existing_corpus_evidence, col
 
 
 def test_collect_existing_corpus_evidence_reads_style_corpus(tmp_path: Path):
-    csv_path = tmp_path / "corpus" / "derek_style_corpus.csv"
+    csv_path = tmp_path / "corpus" / "style_corpus.csv"
     write_records(
         csv_path,
         [
@@ -380,10 +380,10 @@ def test_collect_existing_corpus_evidence_reads_style_corpus(tmp_path: Path):
                 source_title="客户合作群",
                 timestamp="2026-05-26T10:00:00",
                 context="客户问是否能今天给最终方案",
-                derek_reply="先别承诺最终版，先把客户目标和交付边界收敛清楚。",
+                principal_reply="先别承诺最终版，先把客户目标和交付边界收敛清楚。",
                 message_id="msg-1",
                 conversation_id="cid-1",
-                speaker_name="Derek",
+                speaker_name="Alex",
                 metadata_json="{}",
             )
         ],
@@ -454,7 +454,7 @@ def collect_existing_corpus_evidence(csv_path: Path) -> list[EvidenceRecord]:
         location = f"{item.conversation_id}/{item.message_id}"
         records.append(
             EvidenceRecord(
-                id=evidence_id(item.source_type, location, item.derek_reply),
+                id=evidence_id(item.source_type, location, item.principal_reply),
                 source_type=item.source_type,
                 title=item.source_title,
                 timestamp=item.timestamp,
@@ -462,7 +462,7 @@ def collect_existing_corpus_evidence(csv_path: Path) -> list[EvidenceRecord]:
                 scenario="general",
                 evidence_strength="behavior_high",
                 sensitivity="general",
-                excerpt=safe_excerpt(item.derek_reply),
+                excerpt=safe_excerpt(item.principal_reply),
                 usable_for_profile=True,
             )
         )
@@ -519,7 +519,7 @@ Expected: all work profile tests pass.
 
 ```bash
 git add apps/local-service/ceo_agent_service/work_profile.py apps/local-service/tests/test_work_profile.py
-git commit -m "Collect local Derek profile evidence"
+git commit -m "Collect local Alex profile evidence"
 ```
 
 ---
@@ -664,7 +664,7 @@ class FakeDwsForKnowledgeBase:
         }
 
     def doc_info(self, node):
-        return {"result": {"nodeId": node, "name": "战略判断.md", "creatorName": "Derek"}}
+        return {"result": {"nodeId": node, "name": "战略判断.md", "creatorName": "Alex"}}
 
     def read_doc(self, node):
         self.read_nodes.append(node)
@@ -781,9 +781,9 @@ git commit -m "Collect DingTalk knowledge base profile evidence"
 **Files:**
 - Modify: `apps/local-service/ceo_agent_service/work_profile.py`
 - Modify: `apps/local-service/tests/test_work_profile.py`
-- Create: `profiles/derek_work_profile.md`
-- Create: `profiles/derek_work_profile.json`
-- Create: `profiles/derek-skill/SKILL.md`
+- Create: `profiles/work_profile.md`
+- Create: `profiles/work_profile.json`
+- Create: `profiles/work-skill/SKILL.md`
 
 - [ ] **Step 1: Write failing renderer test**
 
@@ -795,7 +795,7 @@ from ceo_agent_service.work_profile import render_markdown_profile, render_skill
 
 def test_render_markdown_profile_contains_required_sections():
     profile = WorkProfile(
-        title="Derek Work Profile",
+        title="Alex Work Profile",
         summary="用于钉钉自动回复的工作判断 profile。",
         rules=[
             WorkProfileRule(
@@ -814,7 +814,7 @@ def test_render_markdown_profile_contains_required_sections():
 
     markdown = render_markdown_profile(profile)
 
-    assert "# Derek Work Profile" in markdown
+    assert "# Alex Work Profile" in markdown
     assert "## Core Judgment Order" in markdown
     assert "## Decision Framework" in markdown
     assert "## Boundary Framework" in markdown
@@ -822,12 +822,12 @@ def test_render_markdown_profile_contains_required_sections():
 
 
 def test_render_skill_marks_manual_use_not_runtime_dependency():
-    profile = WorkProfile(title="Derek Work Profile", summary="工作判断 profile。", rules=[])
+    profile = WorkProfile(title="Alex Work Profile", summary="工作判断 profile。", rules=[])
 
     skill = render_skill(profile)
 
-    assert "name: derek-perspective" in skill
-    assert "not Derek himself" in skill
+    assert "name: work-perspective" in skill
+    assert "not Alex himself" in skill
     assert "Do not use this skill as the automated DingTalk runtime" in skill
 ```
 
@@ -868,17 +868,17 @@ def _rule_lines(rule: WorkProfileRule) -> list[str]:
 
 def render_markdown_profile(profile: WorkProfile) -> str:
     lines = [
-        "# Derek Work Profile",
+        "# Alex Work Profile",
         "",
         profile.summary,
         "",
         "## Scope",
         "",
-        "Use this profile for DingTalk auto-reply judgment, business communication, product judgment, management coordination, recruiting triage, and approval pre-review. It is not Derek's final personal decision.",
+        "Use this profile for DingTalk auto-reply judgment, business communication, product judgment, management coordination, recruiting triage, and approval pre-review. It is not Alex's final personal decision.",
         "",
         "## Core Judgment Order",
         "",
-        "1. Decide whether Derek needs to reply.",
+        "1. Decide whether Alex needs to reply.",
         "2. Check whether the material is complete.",
         "3. Check hard boundaries before making any commitment.",
         "4. Reply with conclusion, reason, and next step when enough evidence exists.",
@@ -903,7 +903,7 @@ def render_markdown_profile(profile: WorkProfile) -> str:
             "## Honest Boundaries",
             "",
             "- This profile is inferred from local work evidence and authored material.",
-            "- It improves draft judgment but does not replace Derek's final decision.",
+            "- It improves draft judgment but does not replace Alex's final decision.",
             "- It must not override the service's hard safety and privacy guardrails.",
             "",
         ]
@@ -913,15 +913,15 @@ def render_markdown_profile(profile: WorkProfile) -> str:
 
 def render_skill(profile: WorkProfile) -> str:
     return f"""---
-name: derek-perspective
-description: Derek's work perspective for reviewing drafts, decisions, and business communication. Use when the user asks for Derek's angle, Derek work style, or Derek perspective.
+name: work-perspective
+description: Alex's work perspective for reviewing drafts, decisions, and business communication. Use when the user asks for Alex's angle, Alex work style, or Alex perspective.
 ---
 
-# Derek Work Perspective
+# Alex Work Perspective
 
-This skill represents Derek's work perspective based on local evidence. It is not Derek himself and does not authorize final real-world decisions.
+This skill represents Alex's work perspective based on local evidence. It is not Alex himself and does not authorize final real-world decisions.
 
-Do not use this skill as the automated DingTalk runtime. The runtime reads `profiles/derek_work_profile.md` inside `ceo-agent-service`.
+Do not use this skill as the automated DingTalk runtime. The runtime reads `profiles/work_profile.md` inside `ceo-agent-service`.
 
 ## Scope
 
@@ -929,7 +929,7 @@ Do not use this skill as the automated DingTalk runtime. The runtime reads `prof
 
 ## Hard Boundaries
 
-- Do not claim Derek has joined a meeting, made a call, checked a message, approved a request, or completed a real-world action.
+- Do not claim Alex has joined a meeting, made a call, checked a message, approved a request, or completed a real-world action.
 - Do not make final personnel, approval, finance, legal, or customer-critical decisions.
 - When material is incomplete, ask for the missing material instead of inventing a conclusion.
 """
@@ -944,8 +944,8 @@ def build_initial_profile(evidence: list[EvidenceRecord]) -> WorkProfile:
     usable_ids = [record.id for record in evidence if record.usable_for_profile]
     fallback_id = usable_ids[0] if usable_ids else "ev_manual_profile_seed"
     return WorkProfile(
-        title="Derek Work Profile",
-        summary="A work-context profile for Derek's DingTalk auto-reply agent, derived from local behavior evidence, authored documents, and read-only DingTalk knowledge base material.",
+        title="Alex Work Profile",
+        summary="A work-context profile for Alex's DingTalk auto-reply agent, derived from local behavior evidence, authored documents, and read-only DingTalk knowledge base material.",
         rules=[
             WorkProfileRule(
                 id="rule_materials_before_decision",
@@ -963,9 +963,9 @@ def build_initial_profile(evidence: list[EvidenceRecord]) -> WorkProfile:
                 title="现实动作不代承诺",
                 category="boundary",
                 scenarios=["daily_coordination", "meeting", "handoff"],
-                trigger="A message asks whether Derek has joined, called, checked, approved, gone onsite, or will immediately do a real-world action.",
-                do="Hand off to Derek or state that Derek should personally handle it.",
-                dont="Do not claim Derek is doing, will do immediately, or has done the action unless the conversation explicitly proves it.",
+                trigger="A message asks whether Alex has joined, called, checked, approved, gone onsite, or will immediately do a real-world action.",
+                do="Hand off to Alex or state that Alex should personally handle it.",
+                dont="Do not claim Alex is doing, will do immediately, or has done the action unless the conversation explicitly proves it.",
                 confidence="high",
                 evidence_ids=[fallback_id],
             ),
@@ -1008,19 +1008,19 @@ from ceo_agent_service.work_profile import build_initial_profile, render_markdow
 
 repo = Path.cwd().parents[1]
 profile = build_initial_profile([])
-(repo / "profiles" / "derek-skill").mkdir(parents=True, exist_ok=True)
-(repo / "profiles" / "derek_work_profile.md").write_text(render_markdown_profile(profile), encoding="utf-8")
-(repo / "profiles" / "derek_work_profile.json").write_text(json.dumps(profile.model_dump(), ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-(repo / "profiles" / "derek-skill" / "SKILL.md").write_text(render_skill(profile), encoding="utf-8")
+(repo / "profiles" / "work-skill").mkdir(parents=True, exist_ok=True)
+(repo / "profiles" / "work_profile.md").write_text(render_markdown_profile(profile), encoding="utf-8")
+(repo / "profiles" / "work_profile.json").write_text(json.dumps(profile.model_dump(), ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+(repo / "profiles" / "work-skill" / "SKILL.md").write_text(render_skill(profile), encoding="utf-8")
 PY
 ```
 
 Expected:
 
 ```text
-profiles/derek_work_profile.md
-profiles/derek_work_profile.json
-profiles/derek-skill/SKILL.md
+profiles/work_profile.md
+profiles/work_profile.json
+profiles/work-skill/SKILL.md
 ```
 
 - [ ] **Step 6: Run focused tests**
@@ -1037,8 +1037,8 @@ Expected: all work profile tests pass.
 - [ ] **Step 7: Commit**
 
 ```bash
-git add apps/local-service/ceo_agent_service/work_profile.py apps/local-service/tests/test_work_profile.py profiles/derek_work_profile.md profiles/derek_work_profile.json profiles/derek-skill/SKILL.md
-git commit -m "Add Derek work profile assets"
+git add apps/local-service/ceo_agent_service/work_profile.py apps/local-service/tests/test_work_profile.py profiles/work_profile.md profiles/work_profile.json profiles/work-skill/SKILL.md
+git commit -m "Add Alex work profile assets"
 ```
 
 ---
@@ -1076,9 +1076,9 @@ def test_build_work_profile_command_writes_repo_assets(tmp_path, monkeypatch):
     workspace = tmp_path / "memory"
     corpus_dir = tmp_path / "corpus"
     evidence_dir = tmp_path / "data" / "profile-evidence"
-    profile_path = tmp_path / "profiles" / "derek_work_profile.md"
-    profile_json = tmp_path / "profiles" / "derek_work_profile.json"
-    skill_path = tmp_path / "profiles" / "derek-skill" / "SKILL.md"
+    profile_path = tmp_path / "profiles" / "work_profile.md"
+    profile_json = tmp_path / "profiles" / "work_profile.json"
+    skill_path = tmp_path / "profiles" / "work-skill" / "SKILL.md"
 
     monkeypatch.setenv("CEO_WORK_PROFILE_PATH", str(profile_path))
     monkeypatch.setenv("CEO_PROFILE_EVIDENCE_DIR", str(evidence_dir))
@@ -1176,7 +1176,7 @@ def build_work_profile_command(
     evidence_dir = profile_evidence_dir()
     evidence_dir.mkdir(parents=True, exist_ok=True)
     evidence = []
-    evidence.extend(collect_existing_corpus_evidence(settings.corpus_dir / "derek_style_corpus.csv"))
+    evidence.extend(collect_existing_corpus_evidence(settings.corpus_dir / "style_corpus.csv"))
     evidence.extend(collect_local_doc_evidence(settings.workspace))
     if include_dingtalk_kb:
         evidence.extend(
@@ -1196,7 +1196,7 @@ def build_work_profile_command(
         json.dumps(profile.model_dump(), ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
-    skill_path = profile_path.parent / "derek-skill" / "SKILL.md"
+    skill_path = profile_path.parent / "work-skill" / "SKILL.md"
     skill_path.parent.mkdir(parents=True, exist_ok=True)
     skill_path.write_text(render_skill(profile), encoding="utf-8")
     print(
@@ -1243,7 +1243,7 @@ Expected: all selected tests pass.
 
 ```bash
 git add apps/local-service/ceo_agent_service/cli.py apps/local-service/tests/test_cli.py
-git commit -m "Add Derek work profile build command"
+git commit -m "Add Alex work profile build command"
 ```
 
 ---
@@ -1252,9 +1252,9 @@ git commit -m "Add Derek work profile build command"
 
 **Files:**
 - Modify generated files only if the command changes them:
-  - `profiles/derek_work_profile.md`
-  - `profiles/derek_work_profile.json`
-  - `profiles/derek-skill/SKILL.md`
+  - `profiles/work_profile.md`
+  - `profiles/work_profile.json`
+  - `profiles/work-skill/SKILL.md`
 - Runtime data remains ignored:
   - `data/profile-evidence/evidence_index.jsonl`
   - `data/profile-evidence/dingtalk_kb_cache/`
@@ -1265,14 +1265,14 @@ Run:
 
 ```bash
 cd apps/local-service
-.venv/bin/python -m ceo_agent_service.cli build-work-profile --workspace /Users/derek/Documents/memory
+.venv/bin/python -m ceo_agent_service.cli build-work-profile --workspace /Users/principal/Documents/memory
 ```
 
 Expected output contains:
 
 ```text
 build-work-profile evidence=
-profile=/Users/derek/Documents/Projects/ceo-agent-service/profiles/derek_work_profile.md
+profile=/Users/principal/Documents/Projects/ceo-agent-service/profiles/work_profile.md
 ```
 
 - [ ] **Step 2: Verify generated files exist**
@@ -1280,9 +1280,9 @@ profile=/Users/derek/Documents/Projects/ceo-agent-service/profiles/derek_work_pr
 Run:
 
 ```bash
-test -f profiles/derek_work_profile.md
-test -f profiles/derek_work_profile.json
-test -f profiles/derek-skill/SKILL.md
+test -f profiles/work_profile.md
+test -f profiles/work_profile.json
+test -f profiles/work-skill/SKILL.md
 test -f data/profile-evidence/evidence_index.jsonl
 ```
 
@@ -1314,8 +1314,8 @@ Expected: test passes.
 If `git status --short profiles` shows modified profile assets, commit them:
 
 ```bash
-git add profiles/derek_work_profile.md profiles/derek_work_profile.json profiles/derek-skill/SKILL.md
-git commit -m "Refresh Derek work profile assets"
+git add profiles/work_profile.md profiles/work_profile.json profiles/work-skill/SKILL.md
+git commit -m "Refresh Alex work profile assets"
 ```
 
 If no profile assets changed, do not create an empty commit.

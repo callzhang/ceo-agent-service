@@ -74,11 +74,6 @@ def _principal_label() -> str:
     return principal_display_name() or principal_name() or "the principal"
 
 
-def _principal_slug() -> str:
-    slug = re.sub(r"[^a-z0-9]+", "-", principal_name().strip().lower()).strip("-")
-    return slug or "principal"
-
-
 def _handoff_label() -> str:
     return principal_handoff_name() or _principal_label()
 
@@ -199,7 +194,7 @@ def collect_existing_corpus_evidence(csv_path: Path) -> list[EvidenceRecord]:
         location = f"{item.conversation_id}/{item.message_id}"
         records.append(
             EvidenceRecord(
-                id=evidence_id(item.source_type, location, item.derek_reply),
+                id=evidence_id(item.source_type, location, item.principal_reply),
                 source_type=item.source_type,
                 title=item.source_title,
                 timestamp=item.timestamp,
@@ -207,7 +202,7 @@ def collect_existing_corpus_evidence(csv_path: Path) -> list[EvidenceRecord]:
                 scenario="general",
                 evidence_strength="behavior_high",
                 sensitivity="general",
-                excerpt=safe_excerpt(item.derek_reply),
+                excerpt=safe_excerpt(item.principal_reply),
                 usable_for_profile=True,
             )
         )
@@ -624,7 +619,7 @@ def render_markdown_profile(profile: WorkProfile) -> str:
 def render_skill(profile: WorkProfile) -> str:
     profile_markdown = render_markdown_profile(profile).strip()
     principal = _principal_label()
-    skill_name = f"{_principal_slug()}-perspective"
+    skill_name = "work-perspective"
     return f"""---
 name: {skill_name}
 description: |

@@ -82,19 +82,19 @@ def test_cached_directory_checks_hr_and_manager_chain(tmp_path):
 
 def test_cached_directory_current_user_uses_cache_metadata(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    store.set_current_user_id("derek-user")
+    store.set_current_user_id("principal-user")
     directory = CachedOrgDirectory(store)
 
-    assert directory.is_current_user_message(message(sender_user_id="derek-user")) is True
+    assert directory.is_current_user_message(message(sender_user_id="principal-user")) is True
 
 
 def test_cached_directory_current_user_does_not_use_display_name(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    store.set_current_user_id("derek-user")
+    store.set_current_user_id("principal-user")
     store.upsert_org_user_profile(
-        user_id="derek-user",
-        name="磊哥",
-        open_dingtalk_id="derek-open-id",
+        user_id="principal-user",
+        name="明哥",
+        open_dingtalk_id="principal-open-id",
         manager_user_id=None,
         department_ids=set(),
     )
@@ -105,7 +105,7 @@ def test_cached_directory_current_user_does_not_use_display_name(tmp_path):
             message(
                 sender_user_id=None,
                 sender_open_dingtalk_id=None,
-                sender_name="磊哥",
+                sender_name="明哥",
             )
         )
         is False
@@ -144,7 +144,7 @@ def test_cached_dws_client_delegates_message_io_and_uses_cached_org(tmp_path):
             self.dings.append((user_id, text))
 
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    store.set_current_user_id("derek-user")
+    store.set_current_user_id("principal-user")
     cached = CachedDwsClient(FakeDws(), CachedOrgDirectory(store))
 
     cached.send_message("cid-1", "ok", at_users=["user-1"])
@@ -153,8 +153,8 @@ def test_cached_dws_client_delegates_message_io_and_uses_cached_org(tmp_path):
 
     assert cached.dws.sent == [("cid-1", "ok", ["user-1"])]
     assert cached.dws.replies == [("cid-1", "msg-1", "open-1", "reply")]
-    assert cached.dws.dings == [("derek-user", "handoff")]
-    assert cached.is_current_user_message(message(sender_user_id="derek-user")) is True
+    assert cached.dws.dings == [("principal-user", "handoff")]
+    assert cached.is_current_user_message(message(sender_user_id="principal-user")) is True
 
 
 def test_cached_dws_client_delegates_linked_material_reads(tmp_path):
@@ -327,19 +327,19 @@ def test_cached_dws_client_current_user_check_uses_live_sender_resolution_on_cac
 
         def resolve_message_sender(self, msg):
             self.resolved.append(msg.sender_open_dingtalk_id)
-            return "derek-user"
+            return "principal-user"
 
         def get_user_profile(self, user_id):
-            assert user_id == "derek-user"
+            assert user_id == "principal-user"
             return DwsUserProfile(
-                user_id="derek-user",
-                name="Derek Zen",
+                user_id="principal-user",
+                name="Alex Chen",
                 manager_user_id=None,
                 department_ids={"dept-1"},
             )
 
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    store.set_current_user_id("derek-user")
+    store.set_current_user_id("principal-user")
     cached = CachedDwsClient(FakeDws(), CachedOrgDirectory(store))
 
     assert cached.is_current_user_message(message()) is True
@@ -399,7 +399,7 @@ def test_refresh_org_cache_updates_current_user_hr_departments_and_known_users(t
             self.requested_user_ids = []
 
         def get_current_user_id(self):
-            return "derek-user"
+            return "principal-user"
 
         def search_department_ids(self, query):
             assert query == "人力资源"
@@ -419,9 +419,9 @@ def test_refresh_org_cache_updates_current_user_hr_departments_and_known_users(t
         def get_user_profiles(self, user_ids):
             self.requested_user_ids.append(set(user_ids))
             profiles = {
-                "derek-user": DwsUserProfile(
-                    user_id="derek-user",
-                    name="Derek",
+                "principal-user": DwsUserProfile(
+                    user_id="principal-user",
+                    name="Alex",
                     manager_user_id=None,
                     department_ids={"exec-dept"},
                 ),
@@ -444,7 +444,7 @@ def test_refresh_org_cache_updates_current_user_hr_departments_and_known_users(t
     refreshed = refresh_org_cache(store, FakeDws(), user_ids={"subject"})
 
     assert refreshed >= 4
-    assert store.get_current_user_id() == "derek-user"
+    assert store.get_current_user_id() == "principal-user"
     assert store.get_hr_department_ids() == {"hr-dept"}
     assert store.get_org_user_profile("subject").manager_user_id == "manager-1"
     assert store.get_org_user_profile("manager-1") is not None
@@ -458,7 +458,7 @@ def test_refresh_org_cache_fetches_known_users_in_bounded_batches(tmp_path):
             self.requested_user_ids = []
 
         def get_current_user_id(self):
-            return "derek-user"
+            return "principal-user"
 
         def search_department_ids(self, query):
             assert query == "人力资源"

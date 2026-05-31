@@ -61,7 +61,7 @@ def test_main_launch_agent_runs_single_keepalive_service():
     assert "CEO_ASSISTANT_SIGNATURE" not in env
     assert "CEO_HANDOFF_ACK" not in env
     assert "CEO_DING_ROBOT_NAME" not in env
-    assert "/Users/derek" not in command[2]
+    assert "/Users/principal" not in command[2]
     assert "run-reply-producer.sh" not in command[2]
     assert "run-reply-consumer.sh" not in command[2]
     assert "run-audit-web.sh" not in command[2]

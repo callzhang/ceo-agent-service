@@ -70,7 +70,7 @@ Add this test to `apps/local-service/tests/test_codex_runner.py`:
 def test_codex_command_exposes_memory_connector_mcp(tmp_path, monkeypatch):
     monkeypatch.setenv("MEMORY_CONNECTOR_URL", "https://memory.example/mcp/")
     monkeypatch.setenv("CONNECTOR_API_KEY", "secret-token")
-    monkeypatch.setenv("MEMORY_CONNECTOR_USER_ID", "derek")
+    monkeypatch.setenv("MEMORY_CONNECTOR_USER_ID", "principal")
 
     runner = CodexRunner(workspace=tmp_path, codex_bin="codex")
     command = runner.build_command("prompt", session_id=None)
@@ -96,7 +96,7 @@ def test_codex_runner_env_loads_memory_connector_env_file(tmp_path, monkeypatch)
             [
                 "export CONNECTOR_API_KEY='secret-token'",
                 "export MEMORY_CONNECTOR_URL='https://memory.example/mcp/'",
-                "export MEMORY_CONNECTOR_USER_ID='derek'",
+                "export MEMORY_CONNECTOR_USER_ID='principal'",
             ]
         )
         + "\n",
@@ -111,7 +111,7 @@ def test_codex_runner_env_loads_memory_connector_env_file(tmp_path, monkeypatch)
 
     assert env["CONNECTOR_API_KEY"] == "secret-token"
     assert env["MEMORY_CONNECTOR_URL"] == "https://memory.example/mcp/"
-    assert env["MEMORY_CONNECTOR_USER_ID"] == "derek"
+    assert env["MEMORY_CONNECTOR_USER_ID"] == "principal"
 ```
 
 - [ ] **Step 3: Run tests and verify failure**
@@ -119,7 +119,7 @@ def test_codex_runner_env_loads_memory_connector_env_file(tmp_path, monkeypatch)
 Run:
 
 ```bash
-cd /Users/derek/Documents/Projects/ceo-agent-service/apps/local-service
+cd /Users/principal/Documents/Projects/ceo-agent-service/apps/local-service
 .venv/bin/pytest tests/test_codex_runner.py -q
 ```
 
@@ -177,7 +177,7 @@ def memory_connector_env() -> dict[str, str]:
     ):
         if os.getenv(key):
             values[key] = os.environ[key]
-    values.setdefault("MEMORY_CONNECTOR_USER_ID", "derek")
+    values.setdefault("MEMORY_CONNECTOR_USER_ID", "principal")
     return values
 
 
@@ -215,7 +215,7 @@ Add `*memory_connector_config_options(),` inside `common_options` after `--ignor
 Run:
 
 ```bash
-cd /Users/derek/Documents/Projects/ceo-agent-service/apps/local-service
+cd /Users/principal/Documents/Projects/ceo-agent-service/apps/local-service
 .venv/bin/pytest tests/test_codex_runner.py -q
 ```
 
@@ -224,7 +224,7 @@ Expected: PASS.
 - [ ] **Step 6: Commit**
 
 ```bash
-cd /Users/derek/Documents/Projects/ceo-agent-service
+cd /Users/principal/Documents/Projects/ceo-agent-service
 git add apps/local-service/ceo_agent_service/codex_runner.py apps/local-service/tests/test_codex_runner.py
 git commit -m "Expose memory MCP to Codex runner"
 ```
@@ -312,7 +312,7 @@ def test_memory_write_event_success_and_failure_updates_status(tmp_path: Path):
 Run:
 
 ```bash
-cd /Users/derek/Documents/Projects/ceo-agent-service/apps/local-service
+cd /Users/principal/Documents/Projects/ceo-agent-service/apps/local-service
 .venv/bin/pytest tests/test_store.py -q
 ```
 
@@ -495,7 +495,7 @@ Add methods near other reply attempt helpers:
 Run:
 
 ```bash
-cd /Users/derek/Documents/Projects/ceo-agent-service/apps/local-service
+cd /Users/principal/Documents/Projects/ceo-agent-service/apps/local-service
 .venv/bin/pytest tests/test_store.py -q
 ```
 
@@ -504,7 +504,7 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /Users/derek/Documents/Projects/ceo-agent-service
+cd /Users/principal/Documents/Projects/ceo-agent-service
 git add apps/local-service/ceo_agent_service/store.py apps/local-service/tests/test_store.py
 git commit -m "Add memory write outbox store"
 ```
@@ -536,7 +536,7 @@ def make_attempt(**overrides):
         "conversation_title": "Friday",
         "trigger_message_id": "msg-1",
         "trigger_sender": "Han Lu",
-        "trigger_text": "@Derek Zen 看下这个方案",
+        "trigger_text": "@Alex Chen 看下这个方案",
         "action": "send_reply",
         "sensitivity_kind": "general",
         "codex_reason": "需要给出判断",
@@ -617,7 +617,7 @@ def test_build_review_correction_memory_payload_records_feedback():
 Run:
 
 ```bash
-cd /Users/derek/Documents/Projects/ceo-agent-service/apps/local-service
+cd /Users/principal/Documents/Projects/ceo-agent-service/apps/local-service
 .venv/bin/pytest tests/test_memory_events.py -q
 ```
 
@@ -726,7 +726,7 @@ def _provenance_payload(
 Run:
 
 ```bash
-cd /Users/derek/Documents/Projects/ceo-agent-service/apps/local-service
+cd /Users/principal/Documents/Projects/ceo-agent-service/apps/local-service
 .venv/bin/pytest tests/test_memory_events.py -q
 ```
 
@@ -735,7 +735,7 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /Users/derek/Documents/Projects/ceo-agent-service
+cd /Users/principal/Documents/Projects/ceo-agent-service
 git add apps/local-service/ceo_agent_service/memory_events.py apps/local-service/tests/test_memory_events.py
 git commit -m "Build memory episode payloads"
 ```
@@ -767,7 +767,7 @@ def test_sent_reply_enqueues_memory_event(tmp_path: Path, monkeypatch):
     conversation = group_conversation()
     message = message_from(
         "msg-1",
-        "@Derek Zen 看一下这个方案",
+        "@Alex Chen 看一下这个方案",
         sender="Han Lu",
     )
 
@@ -796,7 +796,7 @@ def test_dry_run_reply_does_not_enqueue_memory_event(tmp_path: Path, monkeypatch
     )
     worker = make_worker(tmp_path, dws, codex, monkeypatch, dry_run=True)
     conversation = group_conversation()
-    message = message_from("msg-1", "@Derek Zen 看一下这个方案", sender="Han Lu")
+    message = message_from("msg-1", "@Alex Chen 看一下这个方案", sender="Han Lu")
 
     worker._process_batch(conversation, [message], [message])
 
@@ -815,7 +815,7 @@ Adjust helper names if the file uses different existing fixture helpers. Keep th
 Run:
 
 ```bash
-cd /Users/derek/Documents/Projects/ceo-agent-service/apps/local-service
+cd /Users/principal/Documents/Projects/ceo-agent-service/apps/local-service
 .venv/bin/pytest tests/test_worker.py -q -k "memory_event or dry_run_reply"
 ```
 
@@ -868,7 +868,7 @@ Call it in the handoff branch after the attempt is updated to `send_status="sent
 Run:
 
 ```bash
-cd /Users/derek/Documents/Projects/ceo-agent-service/apps/local-service
+cd /Users/principal/Documents/Projects/ceo-agent-service/apps/local-service
 .venv/bin/pytest tests/test_worker.py -q -k "memory_event or dry_run_reply"
 ```
 
@@ -877,7 +877,7 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /Users/derek/Documents/Projects/ceo-agent-service
+cd /Users/principal/Documents/Projects/ceo-agent-service
 git add apps/local-service/ceo_agent_service/worker.py apps/local-service/tests/test_worker.py
 git commit -m "Enqueue memory events for sent replies"
 ```
@@ -921,7 +921,7 @@ Extend `test_handle_feedback_post_updates_attempt_and_redirects` in `apps/local-
 Run:
 
 ```bash
-cd /Users/derek/Documents/Projects/ceo-agent-service/apps/local-service
+cd /Users/principal/Documents/Projects/ceo-agent-service/apps/local-service
 .venv/bin/pytest tests/test_cli.py::test_record_feedback_command_updates_reply_attempt tests/test_audit_web.py::test_handle_feedback_post_updates_attempt_and_redirects -q
 ```
 
@@ -978,7 +978,7 @@ In `handle_reviewed_message_reply()`, after `store.record_reply_feedback(...)`, 
 Run:
 
 ```bash
-cd /Users/derek/Documents/Projects/ceo-agent-service/apps/local-service
+cd /Users/principal/Documents/Projects/ceo-agent-service/apps/local-service
 .venv/bin/pytest tests/test_cli.py::test_record_feedback_command_updates_reply_attempt tests/test_audit_web.py::test_handle_feedback_post_updates_attempt_and_redirects -q
 ```
 
@@ -987,7 +987,7 @@ Expected: PASS.
 - [ ] **Step 6: Commit**
 
 ```bash
-cd /Users/derek/Documents/Projects/ceo-agent-service
+cd /Users/principal/Documents/Projects/ceo-agent-service
 git add apps/local-service/ceo_agent_service/memory_events.py apps/local-service/ceo_agent_service/cli.py apps/local-service/ceo_agent_service/audit_web.py apps/local-service/tests/test_cli.py apps/local-service/tests/test_audit_web.py
 git commit -m "Enqueue memory events for review feedback"
 ```
@@ -1064,7 +1064,7 @@ def test_flush_memory_events_marks_success(tmp_path):
     assert count == 1
     assert client.calls[0]["data"] == '{"event":"reply_sent"}'
     assert client.calls[0]["type"] == "json"
-    assert client.calls[0]["user_id"] == "derek"
+    assert client.calls[0]["user_id"] == "principal"
     assert events[0].id == event_id
     assert events[0].status == "sent"
     assert events[0].memory_episode_id == "ep-1"
@@ -1107,7 +1107,7 @@ def test_parser_supports_flush_memory_events_command():
 Run:
 
 ```bash
-cd /Users/derek/Documents/Projects/ceo-agent-service/apps/local-service
+cd /Users/principal/Documents/Projects/ceo-agent-service/apps/local-service
 .venv/bin/pytest tests/test_memory_connector.py tests/test_memory_flush.py tests/test_cli.py::test_parser_supports_flush_memory_events_command -q
 ```
 
@@ -1131,7 +1131,7 @@ class MemoryConnectorError(RuntimeError):
 
 
 def memory_connector_user_id() -> str:
-    return os.getenv("MEMORY_CONNECTOR_USER_ID", "derek")
+    return os.getenv("MEMORY_CONNECTOR_USER_ID", "principal")
 
 
 def memory_connector_url() -> str:
@@ -1335,7 +1335,7 @@ Add dispatch in `main()`:
 Run:
 
 ```bash
-cd /Users/derek/Documents/Projects/ceo-agent-service/apps/local-service
+cd /Users/principal/Documents/Projects/ceo-agent-service/apps/local-service
 .venv/bin/pytest tests/test_memory_connector.py tests/test_memory_flush.py tests/test_cli.py::test_parser_supports_flush_memory_events_command -q
 ```
 
@@ -1344,7 +1344,7 @@ Expected: PASS.
 - [ ] **Step 8: Commit**
 
 ```bash
-cd /Users/derek/Documents/Projects/ceo-agent-service
+cd /Users/principal/Documents/Projects/ceo-agent-service
 git add apps/local-service/ceo_agent_service/memory_connector.py apps/local-service/ceo_agent_service/memory_flush.py apps/local-service/ceo_agent_service/cli.py apps/local-service/tests/test_memory_connector.py apps/local-service/tests/test_memory_flush.py apps/local-service/tests/test_cli.py
 git commit -m "Flush memory outbox events"
 ```
@@ -1369,7 +1369,7 @@ def test_render_attempt_detail_shows_memory_write_state(tmp_path: Path):
         conversation_title="Friday",
         trigger_message_id="msg-1",
         trigger_sender="Han Lu",
-        trigger_text="@Derek Zen 看一下",
+        trigger_text="@Alex Chen 看一下",
         action="send_reply",
         sensitivity_kind="general",
         send_status="sent",
@@ -1394,7 +1394,7 @@ If `render_attempt_detail` has a different existing signature, keep the store se
 Run:
 
 ```bash
-cd /Users/derek/Documents/Projects/ceo-agent-service/apps/local-service
+cd /Users/principal/Documents/Projects/ceo-agent-service/apps/local-service
 .venv/bin/pytest tests/test_audit_web.py::test_render_attempt_detail_shows_memory_write_state -q
 ```
 
@@ -1441,7 +1441,7 @@ Add `_memory_write_card(store, attempt.id)` to the attempt detail body near feed
 Run:
 
 ```bash
-cd /Users/derek/Documents/Projects/ceo-agent-service/apps/local-service
+cd /Users/principal/Documents/Projects/ceo-agent-service/apps/local-service
 .venv/bin/pytest tests/test_audit_web.py::test_render_attempt_detail_shows_memory_write_state -q
 ```
 
@@ -1450,7 +1450,7 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /Users/derek/Documents/Projects/ceo-agent-service
+cd /Users/principal/Documents/Projects/ceo-agent-service
 git add apps/local-service/ceo_agent_service/audit_web.py apps/local-service/tests/test_audit_web.py
 git commit -m "Show memory outbox state in audit UI"
 ```
@@ -1469,7 +1469,7 @@ git commit -m "Show memory outbox state in audit UI"
 Run:
 
 ```bash
-cd /Users/derek/Documents/Projects/ceo-agent-service
+cd /Users/principal/Documents/Projects/ceo-agent-service
 rg -n "reply-producer|reply-consumer|launchd|plist|StartInterval|audit-web" scripts apps/local-service tests
 ```
 
@@ -1491,14 +1491,14 @@ Run that test and verify it fails.
 In the existing launchd install surface, add a job equivalent to:
 
 ```sh
-if [ -f "/Users/derek/.codex/memory_connector.env" ]; then
-  . "/Users/derek/.codex/memory_connector.env"
+if [ -f "/Users/principal/.codex/memory_connector.env" ]; then
+  . "/Users/principal/.codex/memory_connector.env"
 fi
-cd /Users/derek/Documents/Projects/ceo-agent-service/apps/local-service
+cd /Users/principal/Documents/Projects/ceo-agent-service/apps/local-service
 .venv/bin/python -m ceo_agent_service.cli flush-memory-events \
-  --db /Users/derek/Documents/Projects/ceo-agent-service/data/auto-reply.sqlite3 \
-  --workspace /Users/derek/Documents/memory \
-  --corpus-dir /Users/derek/Documents/Projects/ceo-agent-service/corpus \
+  --db /Users/principal/Documents/Projects/ceo-agent-service/data/auto-reply.sqlite3 \
+  --workspace /Users/principal/Documents/memory \
+  --corpus-dir /Users/principal/Documents/Projects/ceo-agent-service/corpus \
   --limit 20
 ```
 
@@ -1509,7 +1509,7 @@ Use a low frequency such as every 60 seconds. Do not put this inside reply consu
 Run:
 
 ```bash
-cd /Users/derek/Documents/Projects/ceo-agent-service/apps/local-service
+cd /Users/principal/Documents/Projects/ceo-agent-service/apps/local-service
 .venv/bin/pytest tests/test_codex_runner.py tests/test_store.py tests/test_memory_events.py tests/test_memory_connector.py tests/test_memory_flush.py tests/test_cli.py tests/test_audit_web.py -q
 ```
 
@@ -1520,7 +1520,7 @@ Expected: PASS.
 Run:
 
 ```bash
-cd /Users/derek/Documents/Projects/ceo-agent-service/apps/local-service
+cd /Users/principal/Documents/Projects/ceo-agent-service/apps/local-service
 .venv/bin/pytest -q
 ```
 
@@ -1531,7 +1531,7 @@ Expected: PASS or only known unrelated skipped tests.
 Run:
 
 ```bash
-cd /Users/derek/Documents/Projects/ceo-agent-service/apps/local-service
+cd /Users/principal/Documents/Projects/ceo-agent-service/apps/local-service
 .venv/bin/ruff check .
 ```
 
@@ -1542,11 +1542,11 @@ Expected: PASS.
 Run:
 
 ```bash
-cd /Users/derek/Documents/Projects/ceo-agent-service/apps/local-service
+cd /Users/principal/Documents/Projects/ceo-agent-service/apps/local-service
 .venv/bin/python -m ceo_agent_service.cli flush-memory-events \
-  --db /Users/derek/Documents/Projects/ceo-agent-service/data/auto-reply.sqlite3 \
-  --workspace /Users/derek/Documents/memory \
-  --corpus-dir /Users/derek/Documents/Projects/ceo-agent-service/corpus \
+  --db /Users/principal/Documents/Projects/ceo-agent-service/data/auto-reply.sqlite3 \
+  --workspace /Users/principal/Documents/memory \
+  --corpus-dir /Users/principal/Documents/Projects/ceo-agent-service/corpus \
   --limit 1
 ```
 
@@ -1555,7 +1555,7 @@ Expected: Command exits without sending DingTalk messages. If memory backend ret
 - [ ] **Step 8: Commit**
 
 ```bash
-cd /Users/derek/Documents/Projects/ceo-agent-service
+cd /Users/principal/Documents/Projects/ceo-agent-service
 git add scripts apps/local-service/tests
 git commit -m "Schedule memory outbox flush"
 ```
@@ -1563,7 +1563,7 @@ git commit -m "Schedule memory outbox flush"
 - [ ] **Step 9: Push**
 
 ```bash
-cd /Users/derek/Documents/Projects/ceo-agent-service
+cd /Users/principal/Documents/Projects/ceo-agent-service
 git push
 ```
 
@@ -1590,4 +1590,4 @@ Expected: push succeeds.
 - Type consistency:
   - `MemoryWriteEvent` fields match the SQL table and store methods.
   - `event_type` values match the design: `reply_sent`, `review_correction`.
-  - Flush calls `memory_write(type="json", user_id="derek")` through `memory_connector_user_id()`.
+  - Flush calls `memory_write(type="json", user_id="principal")` through `memory_connector_user_id()`.

@@ -28,7 +28,7 @@ def test_reply_task_queue_dedupes_by_conversation_and_message(tmp_path: Path):
         trigger_message_id="msg-1",
         trigger_create_time="2026-05-13 18:00:00",
         trigger_sender="Mina",
-        trigger_text="@Derek Zen 看一下",
+        trigger_text="@Alex Chen 看一下",
     )
     second_inserted = store.enqueue_reply_task(
         conversation_id="cid-1",
@@ -37,7 +37,7 @@ def test_reply_task_queue_dedupes_by_conversation_and_message(tmp_path: Path):
         trigger_message_id="msg-1",
         trigger_create_time="2026-05-13 18:00:00",
         trigger_sender="Mina",
-        trigger_text="@Derek Zen 看一下",
+        trigger_text="@Alex Chen 看一下",
     )
 
     assert first_inserted is True
@@ -54,7 +54,7 @@ def test_claim_reply_tasks_marks_tasks_processing_atomically(tmp_path: Path):
         trigger_message_id="msg-1",
         trigger_create_time="2026-05-13 18:00:00",
         trigger_sender="Mina",
-        trigger_text="@Derek Zen 看一下",
+        trigger_text="@Alex Chen 看一下",
     )
 
     claimed = store.claim_reply_tasks(limit=1)
@@ -79,7 +79,7 @@ def test_complete_reply_task_for_message_marks_matching_task_done(tmp_path: Path
         trigger_message_id="msg-1",
         trigger_create_time="2026-05-13 18:00:00",
         trigger_sender="Mina",
-        trigger_text="@Derek Zen 看一下",
+        trigger_text="@Alex Chen 看一下",
     )
     claimed = store.claim_reply_tasks(limit=1)[0]
     store.fail_reply_task(claimed.id, "old failure")
@@ -101,7 +101,7 @@ def test_list_reply_tasks_filters_statuses_newest_first(tmp_path: Path):
         trigger_message_id="msg-1",
         trigger_create_time="2026-05-13 18:00:00",
         trigger_sender="Mina",
-        trigger_text="@Derek Zen 看一下",
+        trigger_text="@Alex Chen 看一下",
     )
     store.enqueue_reply_task(
         conversation_id="cid-2",
@@ -110,7 +110,7 @@ def test_list_reply_tasks_filters_statuses_newest_first(tmp_path: Path):
         trigger_message_id="msg-2",
         trigger_create_time="2026-05-13 18:01:00",
         trigger_sender="Phina",
-        trigger_text="@Derek Zen 再看一下",
+        trigger_text="@Alex Chen 再看一下",
     )
     claimed = store.claim_reply_tasks(limit=1)
     store.complete_reply_task(claimed[0].id)
@@ -130,7 +130,7 @@ def test_reset_stale_processing_reply_tasks_requeues_orphans(tmp_path: Path):
         trigger_message_id="msg-1",
         trigger_create_time="2026-05-13 18:00:00",
         trigger_sender="Mina",
-        trigger_text="@Derek Zen 看一下",
+        trigger_text="@Alex Chen 看一下",
     )
     claimed = store.claim_reply_tasks(limit=1)
     with sqlite3.connect(db_path) as db:
@@ -156,7 +156,7 @@ def test_requeue_reply_task_keeps_attempt_count_for_retry(tmp_path: Path):
         trigger_message_id="msg-1",
         trigger_create_time="2026-05-13 18:00:00",
         trigger_sender="Mina",
-        trigger_text="@Derek Zen 看一下",
+        trigger_text="@Alex Chen 看一下",
     )
     claimed = store.claim_reply_tasks(limit=1)
 
@@ -177,7 +177,7 @@ def test_defer_reply_task_for_authorization_refunds_claim_attempt(tmp_path: Path
         trigger_message_id="msg-1",
         trigger_create_time="2026-05-13 18:00:00",
         trigger_sender="Mina",
-        trigger_text="@Derek Zen 看一下",
+        trigger_text="@Alex Chen 看一下",
     )
     claimed = store.claim_reply_tasks(limit=1)
 
@@ -197,7 +197,7 @@ def test_reset_codex_sessions_clears_conversation_mapping_only(tmp_path: Path):
         conversation_title="Friday",
         trigger_message_id="msg-1",
         trigger_sender="Xiaomin",
-        trigger_text="@Derek Zen 这个怎么处理？",
+        trigger_text="@Alex Chen 这个怎么处理？",
         action="send_reply",
         sensitivity_kind="general",
         codex_session_id="session-1",
@@ -261,7 +261,7 @@ def test_reply_attempt_migration_backfills_codex_session_from_conversation(tmp_p
                 trigger_sender, trigger_text, action, sensitivity_kind, send_status
             ) values (
                 'cid-1', 'Friday', 'msg-1', 'Xiaomin',
-                '@Derek Zen 这个怎么处理？', 'send_reply', 'general', 'sent'
+                '@Alex Chen 这个怎么处理？', 'send_reply', 'general', 'sent'
             );
             """
         )
@@ -313,7 +313,7 @@ def test_reply_attempt_migration_normalizes_authorization_status_to_failed(
                 trigger_sender, trigger_text, action, sensitivity_kind, send_status
             ) values (
                 'cid-1', 'Friday', 'msg-1', 'Xiaomin',
-                '@Derek Zen 这个怎么处理？', 'send_reply', 'general',
+                '@Alex Chen 这个怎么处理？', 'send_reply', 'general',
                 'needs_authorization'
             );
             """
@@ -341,7 +341,7 @@ def test_records_sent_reply_and_error(tmp_path: Path):
     store.record_sent_reply(
         "cid-1",
         "msg-1",
-        "收到（by磊哥分身）",
+        "收到（by明哥分身）",
         send_result_json='{"result":{"processQueryKey":"key-1"}}',
         recall_key="key-1",
     )
@@ -357,7 +357,7 @@ def test_records_sent_reply_and_error(tmp_path: Path):
 
 def test_records_sent_reply_recall_result(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    store.record_sent_reply("cid-1", "msg-1", "收到（by磊哥分身）", recall_key="key-1")
+    store.record_sent_reply("cid-1", "msg-1", "收到（by明哥分身）", recall_key="key-1")
     sent_reply = store.get_sent_reply("cid-1", "msg-1")
 
     assert sent_reply is not None
@@ -382,7 +382,7 @@ def test_reply_attempt_tracing_and_feedback_round_trip(tmp_path: Path):
         conversation_title="技术部",
         trigger_message_id="msg-1",
         trigger_sender="Xiaomin",
-        trigger_text="@Derek Zen 这个怎么处理？",
+        trigger_text="@Alex Chen 这个怎么处理？",
         action="send_reply",
         sensitivity_kind="general",
         codex_reason="direct ask",
@@ -396,7 +396,7 @@ def test_reply_attempt_tracing_and_feedback_round_trip(tmp_path: Path):
     )
     store.update_reply_attempt(
         attempt_id,
-        final_reply_text="先收敛问题（by磊哥分身）",
+        final_reply_text="先收敛问题（by明哥分身）",
         permission_action="allow",
         permission_reason="",
         send_status="sent",
@@ -421,7 +421,7 @@ def test_reply_attempt_tracing_and_feedback_round_trip(tmp_path: Path):
     assert attempt.codex_session_id == "session-1"
     assert attempt.codex_transcript_start_line == 2
     assert attempt.codex_transcript_end_line == 7
-    assert attempt.final_reply_text == "先收敛问题（by磊哥分身）"
+    assert attempt.final_reply_text == "先收敛问题（by明哥分身）"
     assert attempt.send_status == "sent"
     assert attempt.retry_count == 1
     assert attempt.reviewed_at is not None
@@ -473,7 +473,7 @@ def test_record_reply_attempt_for_trigger_reuses_existing_attempt_id(
         conversation_title="技术部",
         trigger_message_id="msg-1",
         trigger_sender="Xiaomin",
-        trigger_text="@Derek Zen 这个怎么处理？",
+        trigger_text="@Alex Chen 这个怎么处理？",
         action="no_reply",
         sensitivity_kind="general",
         codex_reason="system_or_notification_message",
@@ -491,7 +491,7 @@ def test_record_reply_attempt_for_trigger_reuses_existing_attempt_id(
         conversation_title="技术部",
         trigger_message_id="msg-1",
         trigger_sender="Xiaomin",
-        trigger_text="@Derek Zen 这个怎么处理？",
+        trigger_text="@Alex Chen 这个怎么处理？",
         action="send_reply",
         sensitivity_kind="general",
         codex_reason="direct ask",
@@ -528,7 +528,7 @@ def test_get_latest_reply_attempt_for_trigger(tmp_path: Path):
         conversation_title="技术部",
         trigger_message_id="msg-1",
         trigger_sender="Xiaomin",
-        trigger_text="@Derek Zen 这个怎么处理？",
+        trigger_text="@Alex Chen 这个怎么处理？",
         action="send_reply",
         sensitivity_kind="general",
         send_status="failed",
@@ -538,7 +538,7 @@ def test_get_latest_reply_attempt_for_trigger(tmp_path: Path):
         conversation_title="技术部",
         trigger_message_id="msg-1",
         trigger_sender="Xiaomin",
-        trigger_text="@Derek Zen 这个怎么处理？",
+        trigger_text="@Alex Chen 这个怎么处理？",
         action="send_reply",
         sensitivity_kind="general",
         send_status="dry_run",
@@ -559,7 +559,7 @@ def test_lists_reply_attempts_newest_first_with_limit(tmp_path: Path):
         conversation_title="技术部",
         trigger_message_id="msg-1",
         trigger_sender="Xiaomin",
-        trigger_text="@Derek Zen 这个怎么处理？",
+        trigger_text="@Alex Chen 这个怎么处理？",
         action="send_reply",
         sensitivity_kind="general",
         codex_reason="direct ask",
@@ -592,7 +592,7 @@ def test_lists_reviewed_reply_attempts_for_optimization(tmp_path: Path):
         conversation_title="技术部",
         trigger_message_id="msg-1",
         trigger_sender="Xiaomin",
-        trigger_text="@Derek Zen 这个怎么处理？",
+        trigger_text="@Alex Chen 这个怎么处理？",
         action="send_reply",
         sensitivity_kind="general",
     )
@@ -601,27 +601,27 @@ def test_lists_reviewed_reply_attempts_for_optimization(tmp_path: Path):
         conversation_title="Claire",
         trigger_message_id="msg-2",
         trigger_sender="Claire",
-        trigger_text="磊哥上会啦",
+        trigger_text="明哥上会啦",
         action="send_reply",
         sensitivity_kind="general",
         draft_reply_text="收到，我现在进会。",
     )
     store.update_reply_attempt(
         reviewed_id,
-        final_reply_text="收到，我现在进会。（by磊哥分身）",
+        final_reply_text="收到，我现在进会。（by明哥分身）",
         send_status="sent",
     )
     store.record_reply_feedback(
         reviewed_id,
-        feedback="不能代 Derek 声称正在进会",
-        corrected_reply_text="我让磊哥本人看一下。（by磊哥分身）",
+        feedback="不能代 Alex 声称正在进会",
+        corrected_reply_text="我让明哥本人看一下。（by明哥分身）",
     )
 
     attempts = store.list_reviewed_reply_attempts()
 
     assert [attempt.id for attempt in attempts] == [reviewed_id]
-    assert attempts[0].reviewer_feedback == "不能代 Derek 声称正在进会"
-    assert attempts[0].corrected_reply_text == "我让磊哥本人看一下。（by磊哥分身）"
+    assert attempts[0].reviewer_feedback == "不能代 Alex 声称正在进会"
+    assert attempts[0].corrected_reply_text == "我让明哥本人看一下。（by明哥分身）"
     assert unreviewed_id != reviewed_id
 
 
@@ -649,12 +649,12 @@ def test_lists_run_delta_records_after_ids(tmp_path: Path):
         conversation_title="Friday",
         trigger_message_id="msg-1",
         trigger_sender="Mina",
-        trigger_text="@Derek Zen 这个怎么处理？",
+        trigger_text="@Alex Chen 这个怎么处理？",
         action="no_reply",
         sensitivity_kind="general",
         send_status="skipped",
     )
-    store.record_sent_reply("cid-1", "msg-1", "收到（by磊哥分身）")
+    store.record_sent_reply("cid-1", "msg-1", "收到（by明哥分身）")
     store.record_error("cid-1", "msg-1", "codex", "invalid json")
 
     baseline_attempt_id = store.max_reply_attempt_id()
@@ -666,12 +666,12 @@ def test_lists_run_delta_records_after_ids(tmp_path: Path):
         conversation_title="BA",
         trigger_message_id="msg-2",
         trigger_sender="Phina",
-        trigger_text="@Derek Zen 需要看一下吗？",
+        trigger_text="@Alex Chen 需要看一下吗？",
         action="send_reply",
         sensitivity_kind="general",
         send_status="pending",
     )
-    store.record_sent_reply("cid-2", "msg-2", "可以（by磊哥分身）")
+    store.record_sent_reply("cid-2", "msg-2", "可以（by明哥分身）")
     store.record_error("cid-2", "msg-2", "read_messages", "dws timeout")
 
     assert baseline_attempt_id == first_attempt_id
@@ -725,10 +725,10 @@ def test_org_user_profile_cache_round_trip(tmp_path: Path):
 def test_org_cache_metadata_round_trip(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
 
-    store.set_current_user_id("derek-user-1")
+    store.set_current_user_id("principal-user-1")
     store.set_hr_department_ids({"hr-dept-1"})
 
-    assert store.get_current_user_id() == "derek-user-1"
+    assert store.get_current_user_id() == "principal-user-1"
     assert store.get_hr_department_ids() == {"hr-dept-1"}
 
 

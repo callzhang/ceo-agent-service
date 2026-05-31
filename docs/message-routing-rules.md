@@ -115,7 +115,7 @@ message_type=file, content=这是文件
 会跳过的例子：
 
 ```text
-@磊哥 [dingtalk://dingtalkclient/page/flash_minutes_detail?x=1](dingtalk://dingtalkclient/page/flash_minutes_detail?x=1)
+@明哥 [dingtalk://dingtalkclient/page/flash_minutes_detail?x=1](dingtalk://dingtalkclient/page/flash_minutes_detail?x=1)
 [https://alidocs.dingtalk.com/i/u/dingdocSelectorV4/save?...](https://alidocs.dingtalk.com/i/u/dingdocSelectorV4/save?...)
 ![图片](@lQLPJwKtm28)
 ```
@@ -124,8 +124,8 @@ message_type=file, content=这是文件
 
 ```text
 这个链接里的方案怎么看？ https://example.com/a
-@磊哥 https://example.com/a
-https://github.com/alchaincyf/darwin-skill @Derek Zen 这个达尔文 skill 挺有意思
+@明哥 https://example.com/a
+https://github.com/alchaincyf/darwin-skill @Alex Chen 这个达尔文 skill 挺有意思
 ```
 
 说明：
@@ -265,7 +265,7 @@ AI 自动同步成功：xxx
 不会跳过的例子：
 
 ```text
-文件已更新，麻烦磊哥看一下
+文件已更新，麻烦明哥看一下
 已更新文档，帮忙给 comments
 ```
 
@@ -303,17 +303,17 @@ AI 自动同步成功：xxx
 
 下面这些类型故意不由代码硬跳过。
 
-### 群聊 @Derek 候选顺序
+### 群聊 @Alex 候选顺序
 
 当前行为：`agent_review`。
 
-群聊里有多条 @Derek 候选消息时，worker 按消息创建时间排序后处理最新一条，而不是依赖钉钉接口返回顺序。
+群聊里有多条 @Alex 候选消息时，worker 按消息创建时间排序后处理最新一条，而不是依赖钉钉接口返回顺序。
 
 说明：
 
 - 钉钉近期消息接口可能按倒序返回。
 - 未读尾部可能只包含后续文件、图片或状态消息。
-- 如果同一轮里既有较早的 @Derek 问题，又有后续的 @Derek 审阅请求，应该优先处理时间上最新、仍未被 Derek 正式回复的请求。
+- 如果同一轮里既有较早的 @Alex 问题，又有后续的 @Alex 审阅请求，应该优先处理时间上最新、仍未被 Alex 正式回复的请求。
 
 ### 自动处理回执
 
@@ -327,10 +327,10 @@ AI 自动同步成功：xxx
 
 说明：
 
-- 这只是处理回执，不代表 Derek 已经回复了业务问题。
+- 这只是处理回执，不代表 Alex 已经回复了业务问题。
 - producer 只负责发现消息并入队，不发送这条回执。
 - consumer 先读取上下文并构造 agent 输入，再发送这条回执，然后调用 agent。
-- 候选过滤时不能把它当成 Derek 的最新人工回复。
+- 候选过滤时不能把它当成 Alex 的最新人工回复。
 - 构造 agent 上下文时也应过滤掉它，避免 agent 误判“已处理完”。
 
 ### 消费者中断后的任务恢复
@@ -340,7 +340,7 @@ AI 自动同步成功：xxx
 说明：
 
 - 消费者被重启或子进程异常退出时，任务可能已经领取但没有写入最终结果。
-- 这类任务不应该永久停在处理中，否则会造成 @Derek 消息漏处理。
+- 这类任务不应该永久停在处理中，否则会造成 @Alex 消息漏处理。
 - 30 分钟阈值用于避免把仍在正常长时间处理的任务重复领取。
 
 ### 普通外部链接
@@ -350,8 +350,8 @@ AI 自动同步成功：xxx
 例子：
 
 ```text
-@磊哥 https://example.com/a
-https://github.com/alchaincyf/darwin-skill @Derek Zen 这个达尔文 skill 挺有意思
+@明哥 https://example.com/a
+https://github.com/alchaincyf/darwin-skill @Alex Chen 这个达尔文 skill 挺有意思
 这个链接里的方案怎么看？ https://example.com/a
 ```
 
@@ -379,7 +379,7 @@ https?://(?![^\s)]*dingtalk\.com)\S+
 ```text
 [Ding]张静提醒您审批他的录用申请
 [Ding]于海龙提醒您审批他的云资源费用&服务器使用审批
-[Ding]磊哥 房租已经过期，求审批
+[Ding]明哥 房租已经过期，求审批
 ```
 
 候选结构正则：
@@ -402,7 +402,7 @@ https?://(?![^\s)]*dingtalk\.com)\S+
 例子：
 
 ```text
-请磊哥审批
+请明哥审批
 这个录用申请麻烦看一下
 费用报销对外付款综合审批单需要处理
 ```
@@ -425,9 +425,9 @@ https?://(?![^\s)]*dingtalk\.com)\S+
 例子：
 
 ```text
-辛苦明姐去磊哥家里取一下身份证，拿到后我尽快去银行办理 @Derek Zen
+辛苦明姐去明哥家里取一下身份证，拿到后我尽快去银行办理 @Alex Chen
 候选人在外出差，需要临时找个面试的位置，预计晚5分钟，我稍后呼叫两位
-磊哥你进下会议
+明哥你进下会议
 ```
 
 只建议用于高风险检测的候选正则：
@@ -450,7 +450,7 @@ https?://(?![^\s)]*dingtalk\.com)\S+
 已见过的例子：
 
 ```text
-@磊哥 链接已放
+@明哥 链接已放
 [dingtalk://dingtalkclient/action/open_mini_app?...]
 ```
 
@@ -462,7 +462,7 @@ https?://(?![^\s)]*dingtalk\.com)\S+
 
 建议路由：
 
-- 如果这是回复 Derek 之前索要材料，可以跳过或交给 agent 根据上下文判断。
+- 如果这是回复 Alex 之前索要材料，可以跳过或交给 agent 根据上下文判断。
 - 如果这是新的审阅请求，agent 必须读取链接或材料。
 - 不适合无条件代码跳过。
 

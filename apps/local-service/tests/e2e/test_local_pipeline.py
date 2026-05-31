@@ -49,7 +49,7 @@ class FakeDws:
 
     def get_current_user_id(self):
         self.org_calls.append("get_current_user_id")
-        return "derek-user"
+        return "principal-user"
 
     def search_department_ids(self, query):
         self.org_calls.append(("search_department_ids", query))
@@ -72,10 +72,10 @@ class FakeDws:
     def get_user_profiles(self, user_ids):
         self.org_calls.append(("get_user_profiles", tuple(user_ids)))
         profiles = {
-            "derek-user": DwsUserProfile(
-                user_id="derek-user",
-                name="Derek",
-                open_dingtalk_id="open-derek",
+            "principal-user": DwsUserProfile(
+                user_id="principal-user",
+                name="Alex",
+                open_dingtalk_id="open-principal",
                 manager_user_id=None,
                 department_ids={"exec-dept"},
             ),
@@ -215,7 +215,7 @@ def test_local_pipeline_refreshes_org_cache_then_replies_without_runtime_org_cal
     assert final_sent(raw_dws) == [
         (
             None,
-            "> HR: 张三转正怎么看？\n\n建议先观察一个月（by磊哥分身）",
+            "> HR: 张三转正怎么看？\n\n建议先观察一个月（by明哥分身）",
         )
     ]
     assert final_sent_at_users(raw_dws) == [[]]
@@ -249,12 +249,12 @@ def test_local_pipeline_handoff_ding_uses_cached_current_user_without_runtime_or
     assert final_sent(raw_dws) == [
         (
             None,
-            "> HR: 不要分身，真人看一下\n\n我让磊哥本人看一下。（by磊哥分身）",
+            "> HR: 不要分身，真人看一下\n\n我让明哥本人看一下。（by明哥分身）",
         )
     ]
     assert raw_dws.dings == [
         (
-            "derek-user",
+            "principal-user",
             "HR direct\nHR: 不要分身，真人看一下\nprevious split-person reply: none",
         )
     ]

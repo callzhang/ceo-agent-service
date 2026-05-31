@@ -33,7 +33,7 @@ def test_live_dws_read_only_smoke():
     reason="set CEO_LIVE_CODEX_E2E=1 to run live Codex exec smoke test",
 )
 def test_live_codex_exec_json_smoke():
-    workspace = Path(os.getenv("CEO_CODEX_E2E_WORKSPACE", "/Users/derek/Documents/memory"))
+    workspace = Path(os.getenv("CEO_CODEX_E2E_WORKSPACE", "/Users/principal/Documents/memory"))
     assert workspace.exists()
     runner = CodexDecisionRunner(workspace=workspace, timeout_seconds=120)
 
@@ -79,4 +79,4 @@ def test_live_dingtalk_chat_send_smoke():
         pytest.skip("CEO_E2E_CONVERSATION_ID is required")
     dws = DwsClient()
 
-    dws.send_message(conversation_id, "CEO agent live chat smoke test（by磊哥分身）")
+    dws.send_message(conversation_id, "CEO agent live chat smoke test（by明哥分身）")

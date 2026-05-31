@@ -134,7 +134,7 @@ def test_runner_injects_skill_uses_schema_parses_result_and_records_session(
     skill_path = tmp_path / "skills" / "dingtalk-oa-approval" / "SKILL.md"
     skill_path.parent.mkdir(parents=True)
     skill_path.write_text("# OA Skill\n\n审批前先审阅。", encoding="utf-8")
-    monkeypatch.setenv("HOME", "/Users/derek")
+    monkeypatch.setenv("HOME", "/Users/principal")
 
     calls: list[tuple[list[str], str]] = []
 
@@ -191,7 +191,7 @@ def test_runner_injects_skill_uses_schema_parses_result_and_records_session(
     assert CODEX_BYPASS_APPROVALS_AND_SANDBOX in command
     assert "--output-schema" in command
     assert command[command.index("--output-schema") + 1] == str(OA_APPROVAL_SCHEMA_PATH)
-    assert runner.runner.build_env()["HOME"] == "/Users/derek"
+    assert runner.runner.build_env()["HOME"] == "/Users/principal"
     assert prompt == "请审批"
     assert result.process_instance_id == "proc-1"
     assert runner.last_session_id == "session-1"

@@ -72,7 +72,7 @@ def test_work_profile_serializes_rules():
         usable_for_profile=True,
     )
     profile = WorkProfile(
-        title="Derek Work Profile",
+        title="Alex Work Profile",
         summary="工作判断 profile",
         rules=[
             WorkProfileRule(
@@ -93,7 +93,7 @@ def test_work_profile_serializes_rules():
 
 
 def test_collect_existing_corpus_evidence_reads_style_corpus(tmp_path: Path):
-    csv_path = tmp_path / "corpus" / "derek_style_corpus.csv"
+    csv_path = tmp_path / "corpus" / "style_corpus.csv"
     write_records(
         csv_path,
         [
@@ -102,10 +102,10 @@ def test_collect_existing_corpus_evidence_reads_style_corpus(tmp_path: Path):
                 source_title="客户合作群",
                 timestamp="2026-05-26T10:00:00",
                 context="客户问是否能今天给最终方案",
-                derek_reply="先别承诺最终版，先把客户目标和交付边界收敛清楚。",
+                principal_reply="先别承诺最终版，先把客户目标和交付边界收敛清楚。",
                 message_id="msg-1",
                 conversation_id="cid-1",
-                speaker_name="Derek",
+                speaker_name="Alex",
                 metadata_json="{}",
             )
         ],
@@ -220,7 +220,7 @@ class FakeDwsForKnowledgeBase:
         }
 
     def doc_info(self, node):
-        return {"result": {"nodeId": node, "name": "战略判断.md", "creatorName": "Derek"}}
+        return {"result": {"nodeId": node, "name": "战略判断.md", "creatorName": "Alex"}}
 
     def read_doc(self, node):
         self.read_nodes.append(node)
@@ -440,7 +440,7 @@ def test_collect_dingtalk_kb_evidence_chunks_long_docs(tmp_path: Path):
 
 def test_render_markdown_profile_contains_required_sections():
     profile = WorkProfile(
-        title="Derek Work Profile",
+        title="Alex Work Profile",
         summary="用于钉钉自动回复的工作判断 profile。",
         rules=[
             WorkProfileRule(
@@ -459,7 +459,7 @@ def test_render_markdown_profile_contains_required_sections():
 
     markdown = render_markdown_profile(profile)
 
-    assert "# Derek Work Profile" in markdown
+    assert "# Alex Work Profile" in markdown
     assert "## Core Judgment Order" in markdown
     assert "## 自动回复硬规则" in markdown
     assert "### Decision Framework" in markdown
@@ -473,7 +473,7 @@ def test_render_markdown_profile_contains_required_sections():
 
 def test_render_markdown_profile_contains_complete_portrait_sections():
     profile = WorkProfile(
-        title="Derek Work Profile",
+        title="Alex Work Profile",
         summary="用于钉钉自动回复的工作判断 profile。",
         identity=["我是谁：企业执行系统建设者。"],
         mental_models=[
@@ -528,7 +528,7 @@ def test_render_markdown_profile_contains_complete_portrait_sections():
 
 def test_render_markdown_profile_shows_evidence_coverage():
     profile = WorkProfile(
-        title="Derek Work Profile",
+        title="Alex Work Profile",
         summary="用于钉钉自动回复的工作判断 profile。",
         evidence_coverage=WorkProfileEvidenceCoverage(
             usable_records=500,
@@ -624,11 +624,11 @@ def test_build_initial_profile_uses_distinct_evidence_sources():
 
 
 def test_render_skill_marks_manual_use_not_runtime_dependency():
-    profile = WorkProfile(title="Derek Work Profile", summary="工作判断 profile。", rules=[])
+    profile = WorkProfile(title="Alex Work Profile", summary="工作判断 profile。", rules=[])
 
     skill = render_skill(profile)
 
-    assert "name: derek-perspective" in skill
-    assert "not 磊哥 and does not authorize" in skill
+    assert "name: work-perspective" in skill
+    assert "not 明哥 and does not authorize" in skill
     assert "Do not use this skill as the automated DingTalk runtime" in skill
-    assert "# Derek Work Profile" in skill
+    assert "# Alex Work Profile" in skill

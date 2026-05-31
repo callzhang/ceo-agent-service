@@ -49,7 +49,7 @@ class CorpusRecord(BaseModel):
     source_title: str
     timestamp: str
     context: str
-    derek_reply: str
+    principal_reply: str
     message_id: str
     conversation_id: str
     speaker_name: str
@@ -93,7 +93,7 @@ def extract_minutes_records(path: Path, source_title: str) -> list[CorpusRecord]
                         source_title=source_title,
                         timestamp=timestamp,
                         context=previous_text[-500:],
-                        derek_reply=text,
+                        principal_reply=text,
                         message_id=f"{path.name}:{index}",
                         conversation_id=str(path),
                         speaker_name=speaker,
@@ -120,7 +120,7 @@ def append_records(csv_path: Path, records: list[CorpusRecord]) -> None:
         if write_header:
             writer.writeheader()
         for record in records:
-            if not is_informative_reply(record.derek_reply):
+            if not is_informative_reply(record.principal_reply):
                 continue
             if record.message_id in existing_ids:
                 continue
@@ -136,7 +136,7 @@ def write_records(csv_path: Path, records: list[CorpusRecord]) -> int:
         writer = csv.DictWriter(file, fieldnames=FIELDNAMES)
         writer.writeheader()
         for record in records:
-            if not is_informative_reply(record.derek_reply):
+            if not is_informative_reply(record.principal_reply):
                 continue
             if record.message_id in seen_message_ids:
                 continue
@@ -165,7 +165,7 @@ def load_corpus_records(csv_path: Path) -> list[CorpusRecord]:
                 record = CorpusRecord.model_validate(row)
             except ValueError:
                 continue
-            if is_informative_reply(record.derek_reply):
+            if is_informative_reply(record.principal_reply):
                 records.append(record)
     return records
 
@@ -192,7 +192,7 @@ def retrieve_similar_examples(
     query_chars = set(query)
     scored = []
     for record in records:
-        haystack_chars = set(record.context + record.derek_reply)
+        haystack_chars = set(record.context + record.principal_reply)
         score = len(query_chars & haystack_chars)
         if score > 0:
             scored.append((score, record))
@@ -234,7 +234,7 @@ def build_dingtalk_records_from_sender_payload(
                     source_title=title,
                     timestamp=str(message.get("createTime") or ""),
                     context=str(quoted_message.get("content") or "")[-500:],
-                    derek_reply=content,
+                    principal_reply=content,
                     message_id=str(message.get("openMessageId") or ""),
                     conversation_id=conversation_id,
                     speaker_name=str(message.get("sender") or ""),

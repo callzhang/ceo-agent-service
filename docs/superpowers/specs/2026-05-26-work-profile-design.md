@@ -1,19 +1,19 @@
-# Derek Work Profile Design
+# Alex Work Profile Design
 
 ## Purpose
 
-Build a repo-owned Derek work profile for `ceo-agent-service`.
+Build a repo-owned Alex work profile for `ceo-agent-service`.
 
-The profile should help the DingTalk CEO agent decide and reply more like Derek
+The profile should help the DingTalk CEO agent decide and reply more like Alex
 in work contexts. It is not a biography, a generic personality summary, or a
-replacement for Derek's final judgment. It is a structured, evidence-backed
+replacement for Alex's final judgment. It is a structured, evidence-backed
 operating profile for:
 
 - when to reply
 - how to judge incomplete information
 - how to ask follow-up questions
 - how to phrase concise work replies
-- when to hand off to Derek
+- when to hand off to Alex
 - what the agent must not claim or decide
 
 The first implementation should use the profile as a stable local project asset.
@@ -22,14 +22,14 @@ decision path for automated DingTalk replies.
 
 ## Confirmed Scope
 
-Use approach 1: generate the service-ready profile first, then derive a Derek
+Use approach 1: generate the service-ready profile first, then derive a Alex
 skill from the profile.
 
 The first version should produce both:
 
 - a `ceo-agent-service` profile used by the local auto-reply runtime
-- a Nuwa-style Derek skill that can later be installed under
-  `~/.agents/skills/derek-perspective/`
+- a Nuwa-style Alex skill that can later be installed under
+  `~/.agents/skills/work-perspective/`
 
 Runtime auto-reply should not directly invoke Nuwa or the global skill. It should
 read the repo-local profile.
@@ -42,18 +42,18 @@ Reuse the existing evidence pipeline instead of rebuilding it.
 
 The current service already has paths for:
 
-- DingTalk messages sent by Derek, collected through `dws list_messages_by_sender`
-- Derek's AI meeting transcript utterances from `workspace/AI听记/**/*.md`
-- `derek_style_corpus.csv`, which stores extracted behavior examples
+- DingTalk messages sent by Alex, collected through `dws list_messages_by_sender`
+- Alex's AI meeting transcript utterances from `workspace/AI听记/**/*.md`
+- `style_corpus.csv`, which stores extracted behavior examples
 
 This corpus remains the highest-value evidence for real behavior and response
 style.
 
 ### Local Knowledge Base
 
-Use `/Users/derek/Documents/memory/` as the local knowledge base input.
+Use `/Users/principal/Documents/memory/` as the local knowledge base input.
 
-Most material in this folder can be treated as Derek-authored or Derek-curated
+Most material in this folder can be treated as Alex-authored or Alex-curated
 for first-version extraction. Higher-confidence authored sources include:
 
 - `Thinking/`
@@ -64,7 +64,7 @@ for first-version extraction. Higher-confidence authored sources include:
 - other clearly authored local docs
 
 The local knowledge base is an input source only. Do not write generated profiles
-back into `/Users/derek/Documents/memory/`.
+back into `/Users/principal/Documents/memory/`.
 
 ### Live DingTalk Knowledge Base
 
@@ -101,13 +101,13 @@ Normalize all inputs into evidence records with at least:
 
 Use these evidence strength classes:
 
-- `behavior_high`: Derek's sent DingTalk messages and direct transcript speech
-- `authored_high`: clear Derek-authored local or knowledge base writing
-- `authored_assumed`: likely Derek-authored local material
+- `behavior_high`: Alex's sent DingTalk messages and direct transcript speech
+- `authored_high`: clear Alex-authored local or knowledge base writing
+- `authored_assumed`: likely Alex-authored local material
 - `kb_live_doc`: online DingTalk knowledge base document content
 - `kb_live_doc_assumed`: online knowledge base content whose author cannot be
   confirmed but is still useful
-- `background_only`: context material that must not directly become a Derek rule
+- `background_only`: context material that must not directly become a Alex rule
 
 Sensitive evidence should stay in ignored data files. Stable profile files should
 not include raw sensitive excerpts.
@@ -117,7 +117,7 @@ not include raw sensitive excerpts.
 Do not ask a model to summarize all materials in one pass. Use a staged flow.
 
 1. Collect evidence
-   - load `derek_style_corpus.csv`
+   - load `style_corpus.csv`
    - scan selected local knowledge base directories
    - read live DingTalk knowledge base documents
    - cache online document reads
@@ -142,7 +142,7 @@ Do not ask a model to summarize all materials in one pass. Use a staged flow.
    - scenario playbooks
    - honest boundaries
 
-5. Derive a Derek skill
+5. Derive a Alex skill
    - generate the skill from the stable profile
    - keep role-play language bounded by work context and honesty constraints
    - do not make the automated DingTalk runtime depend on the skill
@@ -154,9 +154,9 @@ Use repo-local paths.
 Committed project assets:
 
 ```text
-profiles/derek_work_profile.md
-profiles/derek_work_profile.json
-profiles/derek-skill/SKILL.md
+profiles/work_profile.md
+profiles/work_profile.json
+profiles/work-skill/SKILL.md
 ```
 
 Ignored runtime evidence data:
@@ -173,7 +173,7 @@ and do not overwrite it.
 
 ## Profile Shape
 
-`profiles/derek_work_profile.md` should be concise and readable. It should
+`profiles/work_profile.md` should be concise and readable. It should
 include:
 
 - purpose and scope
@@ -185,7 +185,7 @@ include:
 - boundary framework
 - honest boundaries
 
-`profiles/derek_work_profile.json` should be structured for tests and future
+`profiles/work_profile.json` should be structured for tests and future
 evals. Each rule should include:
 
 - `id`
@@ -198,8 +198,8 @@ evals. Each rule should include:
 - `confidence`
 - `evidence_ids`
 
-`profiles/derek-skill/SKILL.md` should be a Nuwa-style derived skill for manual
-use. It should state that it is Derek's work perspective, not Derek himself. It
+`profiles/work-skill/SKILL.md` should be a Nuwa-style derived skill for manual
+use. It should state that it is Alex's work perspective, not Alex himself. It
 must not authorize the agent to make real-world commitments, execute approvals,
 or make final personnel judgments.
 
@@ -210,14 +210,14 @@ or make final personnel judgments.
 Add a prompt rule equivalent to:
 
 ```text
-If profiles/derek_work_profile.md exists in this repository, read it before
+If profiles/work_profile.md exists in this repository, read it before
 making work-context judgments about reply style, follow-up questions, refusal,
 handoff, or decision framing.
 ```
 
 The profile must not override existing hard guardrails:
 
-- real-world actions only Derek can perform must hand off to Derek
+- real-world actions only Alex can perform must hand off to Alex
 - OA and approval decisions require full material review
 - internal personnel matters remain sensitive
 - candidate judgments require role and resume evidence
@@ -246,14 +246,14 @@ Use historical DingTalk messages or tests to check whether profile-guided replie
 - are shorter and more direct
 - ask for missing material before judging
 - avoid generic advice
-- avoid claiming Derek's real-world status or actions
+- avoid claiming Alex's real-world status or actions
 - avoid final approval, personnel, finance, or customer-critical decisions
   without evidence
 - still comply with the existing decision JSON schema
 
 ### Human Review
 
-Derek should review:
+Alex should review:
 
 - whether the profile contains rules that do not sound like him
 - whether key work scenarios are missing
@@ -263,14 +263,14 @@ Derek should review:
 
 The first implementation is complete when:
 
-- `profiles/derek_work_profile.md` exists
-- `profiles/derek_work_profile.json` exists
-- `profiles/derek-skill/SKILL.md` exists
+- `profiles/work_profile.md` exists
+- `profiles/work_profile.json` exists
+- `profiles/work-skill/SKILL.md` exists
 - `data/profile-evidence/evidence_index.jsonl` and
   `data/profile-evidence/dingtalk_kb_cache/` are produced or expected as ignored
   runtime data
 - prompt integration reads the profile when present
 - profile absence keeps existing behavior unchanged
 - tests cover prompt integration and ignored evidence data boundaries
-- Derek has reviewed the generated profile and no obvious false-personality
+- Alex has reviewed the generated profile and no obvious false-personality
   rules remain

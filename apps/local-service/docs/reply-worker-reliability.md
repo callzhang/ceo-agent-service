@@ -68,7 +68,7 @@ messages that still need a real reply.
 ## Reply quote fallback
 
 Final replies include a short text quote built from the trigger message. Compact
-assistant mentions such as `@磊哥分身，请...` are stripped only up to the first
+assistant mentions such as `@明哥分身，请...` are stripped only up to the first
 message punctuation, so the remaining request text is preserved in the quote
 instead of falling back to `原消息`.
 

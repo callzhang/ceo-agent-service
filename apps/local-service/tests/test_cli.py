@@ -179,9 +179,9 @@ def test_build_work_profile_command_writes_repo_assets(tmp_path, monkeypatch):
     workspace = tmp_path / "memory"
     corpus_dir = tmp_path / "corpus"
     evidence_dir = tmp_path / "data" / "profile-evidence"
-    profile_path = tmp_path / "profiles" / "derek_work_profile.md"
-    profile_json = tmp_path / "profiles" / "derek_work_profile.json"
-    skill_path = tmp_path / "profiles" / "derek-skill" / "SKILL.md"
+    profile_path = tmp_path / "profiles" / "work_profile.md"
+    profile_json = tmp_path / "profiles" / "work_profile.json"
+    skill_path = tmp_path / "profiles" / "work-skill" / "SKILL.md"
 
     monkeypatch.setenv("CEO_WORK_PROFILE_PATH", str(profile_path))
     monkeypatch.setenv("CEO_PROFILE_EVIDENCE_DIR", str(evidence_dir))
@@ -256,7 +256,7 @@ def test_build_work_profile_command_can_skip_live_sources(tmp_path, monkeypatch)
     calls = []
     monkeypatch.setenv(
         "CEO_WORK_PROFILE_PATH",
-        str(tmp_path / "profiles" / "derek_work_profile.md"),
+        str(tmp_path / "profiles" / "work_profile.md"),
     )
     monkeypatch.setenv(
         "CEO_PROFILE_EVIDENCE_DIR",
@@ -312,7 +312,7 @@ def test_reset_codex_sessions_command_only_clears_conversation_sessions(tmp_path
         conversation_title="Friday",
         trigger_message_id="msg-1",
         trigger_sender="Xiaomin",
-        trigger_text="@Derek Zen 这个怎么处理？",
+        trigger_text="@Alex Chen 这个怎么处理？",
         action="send_reply",
         sensitivity_kind="general",
         codex_session_id="session-1",
@@ -372,11 +372,11 @@ def test_send_attempt_command_sends_existing_dry_run_without_rerunning_codex(
         conversation_title="Friday",
         trigger_message_id="msg-1",
         trigger_sender="Phina",
-        trigger_text="@Derek Zen 看一下",
+        trigger_text="@Alex Chen 看一下",
         action="send_reply",
         sensitivity_kind="general",
     )
-    final_reply = "> Phina: 看一下\n\n<@user-1> 可以先这样处理。（by磊哥分身）"
+    final_reply = "> Phina: 看一下\n\n<@user-1> 可以先这样处理。（by明哥分身）"
     store.update_reply_attempt(
         attempt_id,
         final_reply_text=final_reply,
@@ -440,7 +440,7 @@ def test_send_attempt_command_sends_single_chat_to_stored_direct_user(
         sensitivity_kind="general",
         direct_user_id="user-1",
     )
-    final_reply = "> Claire: 可以不参加\n\n收到。（by磊哥分身）"
+    final_reply = "> Claire: 可以不参加\n\n收到。（by明哥分身）"
     store.update_reply_attempt(
         attempt_id,
         final_reply_text=final_reply,
@@ -503,7 +503,7 @@ def test_send_attempt_command_resolves_single_chat_direct_user_from_trigger(
         action="send_reply",
         sensitivity_kind="general",
     )
-    final_reply = "> Claire: 可以不参加\n\n收到。（by磊哥分身）"
+    final_reply = "> Claire: 可以不参加\n\n收到。（by明哥分身）"
     store.update_reply_attempt(
         attempt_id,
         final_reply_text=final_reply,
@@ -571,7 +571,7 @@ def test_send_attempt_command_resolves_single_chat_direct_user_near_attempt_time
         action="send_reply",
         sensitivity_kind="general",
     )
-    final_reply = "> Claire: 可以不参加\n\n收到。（by磊哥分身）"
+    final_reply = "> Claire: 可以不参加\n\n收到。（by明哥分身）"
     store.update_reply_attempt(
         attempt_id,
         final_reply_text=final_reply,
@@ -641,7 +641,7 @@ def test_send_attempt_command_uses_single_chat_open_dingtalk_id_when_user_id_abs
         action="send_reply",
         sensitivity_kind="general",
     )
-    final_reply = "> Claire: 可以不参加\n\n收到。（by磊哥分身）"
+    final_reply = "> Claire: 可以不参加\n\n收到。（by明哥分身）"
     store.update_reply_attempt(
         attempt_id,
         final_reply_text=final_reply,
@@ -713,7 +713,7 @@ def test_send_attempt_command_resolves_single_chat_sender_profile_when_ids_absen
         action="send_reply",
         sensitivity_kind="general",
     )
-    final_reply = "> Claire: 可以不参加\n\n收到。（by磊哥分身）"
+    final_reply = "> Claire: 可以不参加\n\n收到。（by明哥分身）"
     store.update_reply_attempt(
         attempt_id,
         final_reply_text=final_reply,
@@ -794,7 +794,7 @@ def test_send_attempt_command_resolves_single_chat_target_forward_from_attempt_t
         action="send_reply",
         sensitivity_kind="general",
     )
-    final_reply = "> Claire: 可以不参加\n\n收到。（by磊哥分身）"
+    final_reply = "> Claire: 可以不参加\n\n收到。（by明哥分身）"
     store.update_reply_attempt(
         attempt_id,
         final_reply_text=final_reply,
@@ -837,13 +837,13 @@ def test_send_attempt_command_blocks_runtime_leaks(monkeypatch, tmp_path):
         conversation_title="Friday",
         trigger_message_id="msg-1",
         trigger_sender="Phina",
-        trigger_text="@Derek Zen 看一下",
+        trigger_text="@Alex Chen 看一下",
         action="send_reply",
         sensitivity_kind="general",
     )
     store.update_reply_attempt(
         attempt_id,
-        final_reply_text="Codex 检索了本地 workspace 后认为可以。（by磊哥分身）",
+        final_reply_text="Codex 检索了本地 workspace 后认为可以。（by明哥分身）",
         send_status="dry_run",
     )
 
@@ -1163,21 +1163,21 @@ def test_create_worker_wires_store_dws_codex_and_dry_run(monkeypatch, tmp_path):
     )
     settings.corpus_dir.mkdir()
     (settings.corpus_dir / "style_profile.md").write_text(
-        "# Derek Style Profile\n- 先结论，再解释原因。\n",
+        "# Alex Style Profile\n- 先结论，再解释原因。\n",
         encoding="utf-8",
     )
     append_records(
-        settings.corpus_dir / "derek_style_corpus.csv",
+        settings.corpus_dir / "style_corpus.csv",
         [
             CorpusRecord(
                 source_type="dingtalk",
                 source_title="Friday",
                 timestamp="2026-05-13 18:00:00",
                 context="项目排期怎么处理",
-                derek_reply="先判断客户价值，再确认负责人、时间点和验收标准，不要只说继续推进。",
+                principal_reply="先判断客户价值，再确认负责人、时间点和验收标准，不要只说继续推进。",
                 message_id="style-msg-1",
                 conversation_id="cid-1",
-                speaker_name="磊哥",
+                speaker_name="明哥",
                 metadata_json="{}",
             )
         ],
@@ -1323,7 +1323,7 @@ def test_run_once_command_prints_attempt_sent_and_error_deltas(
                 conversation_title="BA",
                 trigger_message_id="msg-1",
                 trigger_sender="Phina",
-                trigger_text="@Derek Zen 需要看一下吗？",
+                trigger_text="@Alex Chen 需要看一下吗？",
                 action="send_reply",
                 sensitivity_kind="general",
                 send_status="pending",
@@ -1331,7 +1331,7 @@ def test_run_once_command_prints_attempt_sent_and_error_deltas(
             store.record_sent_reply(
                 "cid-1",
                 "msg-1",
-                "可以推进，后面同步一下。（by磊哥分身）",
+                "可以推进，后面同步一下。（by明哥分身）",
                 send_result_json='{"ok": true}',
             )
             store.record_error("cid-2", None, "read_messages", "dws exit code 6")
@@ -1471,7 +1471,7 @@ def test_rerun_message_command_marks_matching_failed_task_done(
         trigger_message_id="msg-1",
         trigger_create_time="2026-05-20 09:56:09",
         trigger_sender="Claire",
-        trigger_text="@Derek 这个怎么处理？",
+        trigger_text="@Alex 这个怎么处理？",
     )
     task = store.claim_reply_tasks(1)[0]
     store.fail_reply_task(task.id, "old failure")
@@ -1632,7 +1632,7 @@ def test_record_feedback_command_updates_reply_attempt(tmp_path, capsys):
         conversation_title="技术部",
         trigger_message_id="msg-1",
         trigger_sender="Xiaomin",
-        trigger_text="@Derek Zen 这个怎么处理？",
+        trigger_text="@Alex Chen 这个怎么处理？",
         action="send_reply",
         sensitivity_kind="general",
     )
@@ -1776,7 +1776,7 @@ def test_export_feedback_command_writes_reviewed_attempts_jsonl(tmp_path, capsys
         conversation_title="Claire",
         trigger_message_id="msg-1",
         trigger_sender="Claire",
-        trigger_text="磊哥上会啦",
+        trigger_text="明哥上会啦",
         action="send_reply",
         sensitivity_kind="general",
         codex_reason="direct ask",
@@ -1784,13 +1784,13 @@ def test_export_feedback_command_writes_reviewed_attempts_jsonl(tmp_path, capsys
     )
     store.update_reply_attempt(
         attempt_id,
-        final_reply_text="收到，我现在进会。（by磊哥分身）",
+        final_reply_text="收到，我现在进会。（by明哥分身）",
         send_status="sent",
     )
     store.record_reply_feedback(
         attempt_id,
-        feedback="不能代 Derek 声称正在进会",
-        corrected_reply_text="我让磊哥本人看一下。（by磊哥分身）",
+        feedback="不能代 Alex 声称正在进会",
+        corrected_reply_text="我让明哥本人看一下。（by明哥分身）",
     )
     output = tmp_path / "feedback.jsonl"
 
@@ -1799,9 +1799,9 @@ def test_export_feedback_command_writes_reviewed_attempts_jsonl(tmp_path, capsys
     text = output.read_text(encoding="utf-8")
     assert written_count == 1
     assert '"attempt_id": 1' in text
-    assert '"trigger_text": "磊哥上会啦"' in text
-    assert '"reviewer_feedback": "不能代 Derek 声称正在进会"' in text
-    assert '"corrected_reply_text": "我让磊哥本人看一下。（by磊哥分身）"' in text
+    assert '"trigger_text": "明哥上会啦"' in text
+    assert '"reviewer_feedback": "不能代 Alex 声称正在进会"' in text
+    assert '"corrected_reply_text": "我让明哥本人看一下。（by明哥分身）"' in text
     assert "feedback exported count=1" in capsys.readouterr().out
 
 
@@ -1946,7 +1946,7 @@ def test_build_style_corpus_scans_minutes_and_writes_outputs(tmp_path, capsys):
 同事
 00:01
 这个怎么排？
-磊哥
+明哥
 00:02
 先看客户价值，再决定投入优先级和负责人，不要只按谁声音大来排。
 """,
@@ -1957,7 +1957,7 @@ def test_build_style_corpus_scans_minutes_and_writes_outputs(tmp_path, capsys):
 
     count = build_style_corpus(workspace=workspace, corpus_dir=corpus_dir)
 
-    csv_content = (corpus_dir / "derek_style_corpus.csv").read_text(encoding="utf-8")
+    csv_content = (corpus_dir / "style_corpus.csv").read_text(encoding="utf-8")
     profile = (corpus_dir / "style_profile.md").read_text(encoding="utf-8")
     output = capsys.readouterr().out
     assert count == 1
@@ -1982,7 +1982,7 @@ def test_collect_corpus_fetches_current_user_sender_messages(monkeypatch, tmp_pa
             self.calls = []
 
         def get_current_user_id(self):
-            return "derek-user-1"
+            return "principal-user-1"
 
         def list_messages_by_sender(self, sender_user_id, start, end, limit, cursor):
             self.calls.append((sender_user_id, start, end, limit, cursor))
@@ -2000,14 +2000,14 @@ def test_collect_corpus_fetches_current_user_sender_messages(monkeypatch, tmp_pa
                                     "openConversationId": "cid-1",
                                     "openMessageId": "msg-1",
                                     "quotedMessage": {"content": "是否可以让算法同学分享？"},
-                                    "sender": "磊哥",
+                                    "sender": "明哥",
                                 },
                                 {
                                     "content": "好的",
                                     "createTime": "2026-05-14 12:02:00",
                                     "openConversationId": "cid-1",
                                     "openMessageId": "msg-short",
-                                    "sender": "磊哥",
+                                    "sender": "明哥",
                                 },
                             ],
                         }
@@ -2027,13 +2027,13 @@ def test_collect_corpus_fetches_current_user_sender_messages(monkeypatch, tmp_pa
 
     count = collect_corpus(settings, target_count=1000)
 
-    csv_content = (settings.corpus_dir / "derek_style_corpus.csv").read_text(encoding="utf-8")
+    csv_content = (settings.corpus_dir / "style_corpus.csv").read_text(encoding="utf-8")
     assert count == 1
-    assert fake_dws.calls[0][0] == "derek-user-1"
+    assert fake_dws.calls[0][0] == "principal-user-1"
     assert fake_dws.calls[0][3] == 100
     assert "msg-1" in csv_content
     assert "msg-short" not in csv_content
-    assert "collect-corpus sender_user_id=derek-user-1 records=1" in capsys.readouterr().out
+    assert "collect-corpus sender_user_id=principal-user-1 records=1" in capsys.readouterr().out
 
 
 def test_probe_dws_reports_unread_ok_and_ding_blocked(monkeypatch, capsys):

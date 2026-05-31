@@ -410,7 +410,7 @@ def create_worker(settings: WorkerSettings) -> DingTalkAutoReplyWorker:
         idle_timeout_seconds=settings.codex_idle_timeout_seconds,
     )
     style_profile = _load_style_profile(settings.corpus_dir)
-    style_records = load_corpus_records(settings.corpus_dir / "derek_style_corpus.csv")
+    style_records = load_corpus_records(settings.corpus_dir / "style_corpus.csv")
     worker = DingTalkAutoReplyWorker(
         store=store,
         dws=cached_dws,
@@ -1029,7 +1029,7 @@ def _service_component_target(
 def build_style_corpus(workspace: Path, corpus_dir: Path) -> int:
     minutes_dir = workspace / "AI听记"
     corpus_dir.mkdir(parents=True, exist_ok=True)
-    corpus_csv = corpus_dir / "derek_style_corpus.csv"
+    corpus_csv = corpus_dir / "style_corpus.csv"
     style_profile = corpus_dir / "style_profile.md"
 
     records = []
@@ -1097,7 +1097,7 @@ def collect_corpus(settings: WorkerSettings, target_count: int = 1000) -> int:
             break
         cursor = str(next_cursor)
 
-    corpus_csv = settings.corpus_dir / "derek_style_corpus.csv"
+    corpus_csv = settings.corpus_dir / "style_corpus.csv"
     append_records(corpus_csv, collected_records)
     print(
         f"collect-corpus sender_user_id={sender_user_id} records={len(collected_records)} "
@@ -1125,7 +1125,7 @@ def build_work_profile_command(
 
     evidence = []
     evidence.extend(
-        collect_existing_corpus_evidence(settings.corpus_dir / "derek_style_corpus.csv")
+        collect_existing_corpus_evidence(settings.corpus_dir / "style_corpus.csv")
     )
     evidence.extend(collect_local_doc_evidence(settings.workspace))
     if include_dingtalk_kb:
@@ -1146,7 +1146,7 @@ def build_work_profile_command(
         json.dumps(profile.model_dump(), ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
-    skill_path = profile_path.parent / "derek-skill" / "SKILL.md"
+    skill_path = profile_path.parent / "work-skill" / "SKILL.md"
     skill_path.parent.mkdir(parents=True, exist_ok=True)
     skill_path.write_text(render_skill(profile), encoding="utf-8")
     print(

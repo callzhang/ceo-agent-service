@@ -20,7 +20,7 @@ from ceo_agent_service.prompt import (
 )
 
 
-CARD_CONTENT = """@Derek Zen(磊哥) 磊哥，董事会报告根据昨天的会议进行了修改，您是否已完成审核？是否可以定稿了？
+CARD_CONTENT = """@Alex Chen(明哥) 明哥，董事会报告根据昨天的会议进行了修改，您是否已完成审核？是否可以定稿了？
   引用: 26年董事会报告
 ![image](https://gw.alicdn.com/imgextra/i4/O1CN019r2O9o1mRbjrcNMe5_!!6000000004951-2-tps-96-54.png)
 ![image](https://gw.alicdn.com/imgextra/i4/O1CN01DXenu91IyBR0wQXk9_!!6000000000961-2-tps-148-72.png)
@@ -36,14 +36,14 @@ def test_developer_prompt_template_path_can_be_overridden(tmp_path, monkeypatch)
 
 
 def test_developer_prompt_template_renders_vars_files_and_code(tmp_path, monkeypatch):
-    profile = repo_root() / "profiles" / "derek_work_profile.md"
+    profile = repo_root() / "profiles" / "work_profile.md"
     script = repo_root() / ".developer_prompt_test_script.py"
     script.write_text(
         "def dynamic_rule():\n"
         "    return 'runtime rule from code'\n",
         encoding="utf-8",
     )
-    monkeypatch.setenv("USER_ALIAS", "Derek")
+    monkeypatch.setenv("USER_ALIAS", "Alex")
     try:
         rendered = render_developer_prompt_template(
             "\n".join(
@@ -54,7 +54,7 @@ def test_developer_prompt_template_renders_vars_files_and_code(tmp_path, monkeyp
                     "</vars>",
                     "",
                     "principal=<var: principal>",
-                    "profile=<file: profiles/derek_work_profile.md>",
+                    "profile=<file: profiles/work_profile.md>",
                     "code=<code: .developer_prompt_test_script.py:dynamic_rule()>",
                     "handoff=<var: handoff>",
                 ]
@@ -63,23 +63,23 @@ def test_developer_prompt_template_renders_vars_files_and_code(tmp_path, monkeyp
     finally:
         script.unlink(missing_ok=True)
 
-    assert "principal=Derek" in rendered
+    assert "principal=Alex" in rendered
     assert profile.read_text(encoding="utf-8").splitlines()[0] in rendered
     assert "code=runtime rule from code" in rendered
-    assert "handoff=Derek" in rendered
+    assert "handoff=Alex" in rendered
 
 
 def test_default_developer_prompt_template_is_a_separate_file():
     template = read_developer_prompt_template()
 
     assert not template.startswith("<vars>")
-    assert "principal = 磊哥" not in template
-    assert "handoff_name = Derek" not in template
+    assert "principal = 明哥" not in template
+    assert "handoff_name = Alex" not in template
     assert "<vars>" not in template
     assert "<var: principal>" in template
     assert "<code: ceo_agent_service.prompt:work_profile_instruction()>" in template
     assert "work_profile_path" not in template
-    assert "Derek 工作人格 Profile:" not in template
+    assert "Alex 工作人格 Profile:" not in template
 
 
 def test_developer_prompt_delegates_memory_to_agent_mcp_tools():
@@ -109,9 +109,9 @@ def test_work_profile_instruction_uses_configured_principal_name(
     instruction = work_profile_instruction()
 
     assert "Alex 工作人格 Profile" in instruction
-    assert "Derek 工作人格 Profile" not in instruction
+    assert "the principal 工作人格 Profile" not in instruction
     assert "更接近 Alex 的判断顺序" in instruction
-    assert "更接近 Derek 的判断顺序" not in instruction
+    assert "更接近 the principal 的判断顺序" not in instruction
 
 
 def test_user_prompt_template_path_can_be_overridden(tmp_path, monkeypatch):
@@ -170,7 +170,7 @@ def test_build_turn_prompt_uses_user_prompt_template_override(tmp_path, monkeypa
                 single_chat=False,
                 sender_name="Mina",
                 create_time="2026-05-15 13:00:00",
-                content="@Derek Zen(磊哥) 看下图片",
+                content="@Alex Chen(明哥) 看下图片",
             )
         ],
         [],
@@ -198,7 +198,7 @@ def test_context_messages_block_renders_json_array():
         message_type="text",
         create_time="2026-05-15 12:59:00",
         content="上文背景",
-        mentioned_user_ids=["derek-user-1"],
+        mentioned_user_ids=["principal-user-1"],
         quoted_message_id="quoted-1",
         quoted_content="引用背景",
     )
@@ -218,7 +218,7 @@ def test_context_messages_block_renders_json_array():
                 single_chat=False,
                 sender_name="Mina",
                 create_time="2026-05-15 13:00:00",
-                content="@Derek Zen(磊哥) 看下",
+                content="@Alex Chen(明哥) 看下",
             )
         ],
         [context_message],
@@ -240,7 +240,7 @@ def test_context_messages_block_renders_json_array():
             },
             "message_type": "text",
             "content": "上文背景",
-            "mentioned_user_ids": ["derek-user-1"],
+            "mentioned_user_ids": ["principal-user-1"],
             "quoted": {
                 "open_message_id": "quoted-1",
                 "content": "引用背景",
@@ -278,19 +278,19 @@ def test_message_lines_remove_repeated_card_images_and_shorten_links():
 
 def test_sanitize_dingtalk_prompt_text_keeps_malformed_url_text():
     rendered = sanitize_dingtalk_prompt_text(
-        "@Derek Zen(磊哥) 看下这个链接 https://[not-a-valid-ipv6/link?x=1"
+        "@Alex Chen(明哥) 看下这个链接 https://[not-a-valid-ipv6/link?x=1"
     )
 
-    assert "@Derek Zen(磊哥) 看下这个链接" in rendered
+    assert "@Alex Chen(明哥) 看下这个链接" in rendered
     assert "https://[not-a-valid-ipv6/link?x=1" in rendered
 
 
 def test_sanitize_dingtalk_prompt_text_keeps_url_with_nfkc_unsafe_host_text():
     rendered = sanitize_dingtalk_prompt_text(
-        "@Derek Zen(磊哥) 看下这个服务 http://stardust-gpu4:8787？"
+        "@Alex Chen(明哥) 看下这个服务 http://stardust-gpu4:8787？"
     )
 
-    assert "@Derek Zen(磊哥) 看下这个服务" in rendered
+    assert "@Alex Chen(明哥) 看下这个服务" in rendered
     assert "http://stardust-gpu4:8787？" in rendered
 
 
@@ -338,7 +338,7 @@ def test_thread_prompt_explains_first_person_single_chat_subject():
 def test_thread_prompt_treats_mentioned_arrangements_requiring_principal_as_replies():
     prompt = ceo_agent_thread_prompt()
 
-    assert "需要 磊哥 参与或确认的安排" in prompt
+    assert "需要 明哥 参与或确认的安排" in prompt
     assert "即使没有问号，也应视为需要回复" in prompt
 
 
@@ -367,7 +367,7 @@ def test_build_turn_prompt_keeps_user_message_separate_from_thread_prompt():
                 sender_name="周俊杰",
                 sender_user_id="junjie-user-1",
                 create_time="2026-05-15 13:00:00",
-                content="磊哥，我今天想请一天调休。",
+                content="明哥，我今天想请一天调休。",
             )
         ],
         [],
@@ -395,7 +395,7 @@ def test_build_turn_prompt_includes_known_people_lines():
         single_chat=True,
         sender_name="Mina 邹",
         create_time="2026-05-15 13:00:00",
-        content="磊哥，晓民的转正时间快到了。",
+        content="明哥，晓民的转正时间快到了。",
     )
 
     prompt = build_turn_prompt(
@@ -425,7 +425,7 @@ def test_build_turn_prompt_includes_sender_org_lines():
         single_chat=True,
         sender_name="Mina 邹",
         create_time="2026-05-15 13:00:00",
-        content="磊哥，晓民的转正时间快到了。",
+        content="明哥，晓民的转正时间快到了。",
     )
 
     prompt = build_turn_prompt(
@@ -435,7 +435,7 @@ def test_build_turn_prompt_includes_sender_org_lines():
         style_lines=[],
         include_thread_prompt=True,
         sender_org_lines=[
-            '{\n  "name": "Mina 邹",\n  "user_id": "sender-user-1",\n  "title": "首席人力资源专家兼HRVP",\n  "manager": {"name": "Derek Zen", "user_id": "derek-user-1"}\n}'
+            '{\n  "name": "Mina 邹",\n  "user_id": "sender-user-1",\n  "title": "首席人力资源专家兼HRVP",\n  "manager": {"name": "Alex Chen", "user_id": "principal-user-1"}\n}'
         ],
     )
 
@@ -481,19 +481,19 @@ def test_thread_prompt_requires_sender_org_context_when_available():
 def test_thread_prompt_injects_work_profile_without_exposing_path(monkeypatch):
     monkeypatch.setenv(
         "CEO_WORK_PROFILE_PATH",
-        str(repo_root() / "profiles" / "derek_work_profile.md"),
+        str(repo_root() / "profiles" / "work_profile.md"),
     )
 
     prompt = ceo_agent_thread_prompt()
 
-    assert "磊哥 工作人格 Profile" in prompt
+    assert "明哥 工作人格 Profile" in prompt
     assert (
-        "/Users/derek/Documents/Projects/ceo-agent-service/profiles/derek_work_profile.md"
+        "/Users/principal/Documents/Projects/ceo-agent-service/profiles/work_profile.md"
         not in prompt
     )
     assert "不要再尝试读取 profile 文件路径" in prompt
     assert "Profile 内容:" in prompt
-    assert "# Derek Work Profile" in prompt
+    assert "# Alex Work Profile" in prompt
     assert "Core Judgment Order" in prompt
 
 
@@ -528,7 +528,7 @@ def test_thread_prompt_references_calendar_rules():
 def test_thread_prompt_requires_witty_reply_for_direct_jokes():
     prompt = ceo_agent_thread_prompt()
 
-    assert "真人直接 @磊哥 或分身开玩笑" in prompt
+    assert "真人直接 @明哥 或分身开玩笑" in prompt
     assert "简短、机智、克制的玩笑" in prompt
     assert "体现判断力和幽默感" in prompt
     assert "不要写成流程说明或机制解释" in prompt
@@ -559,7 +559,7 @@ def test_build_turn_prompt_includes_prefetched_dingtalk_document():
                 single_chat=False,
                 sender_name="张毅倜(ET)",
                 create_time="2026-05-18 00:33:40",
-                content="https://alidocs.dingtalk.com/i/nodes/doc123 @Derek Zen(磊哥) 看下",
+                content="https://alidocs.dingtalk.com/i/nodes/doc123 @Alex Chen(明哥) 看下",
             )
         ],
         [],

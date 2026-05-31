@@ -58,19 +58,19 @@ def make_message(content: str) -> DingTalkMessage:
 
 
 def test_dingtalk_message_mentions_principal_for_english_name():
-    message = make_message("@Derek Zen(磊哥) 这个看一下")
+    message = make_message("@Alex Chen(明哥) 这个看一下")
 
     assert message.mentions_principal() is True
 
 
 def test_dingtalk_message_mentions_principal_for_chinese_name():
-    message = make_message("@磊哥 这个看一下")
+    message = make_message("@明哥 这个看一下")
 
     assert message.mentions_principal() is True
 
 
 def test_dingtalk_message_mentions_principal_false_for_name_without_at():
-    message = make_message("这个要和磊哥对一下")
+    message = make_message("这个要和明哥对一下")
 
     assert message.mentions_principal() is False
 
@@ -352,7 +352,7 @@ def test_send_message_command_shape():
 
     command = client.build_send_message_command(
         conversation_id="cid-1",
-        text="收到（by磊哥分身）",
+        text="收到（by明哥分身）",
         at_users=["user-1"],
     )
 
@@ -364,11 +364,11 @@ def test_send_message_command_shape():
         "--group",
         "cid-1",
         "--title",
-        "收到（by磊哥分身）",
+        "收到（by明哥分身）",
         "--at-users",
         "user-1",
         "--text",
-        "<@user-1> 收到（by磊哥分身）",
+        "<@user-1> 收到（by明哥分身）",
         "--format",
         "json",
         "--yes",
@@ -380,7 +380,7 @@ def test_send_message_command_does_not_duplicate_existing_at_placeholder():
 
     command = client.build_send_message_command(
         conversation_id="cid-1",
-        text="<@user-1> 收到（by磊哥分身）",
+        text="<@user-1> 收到（by明哥分身）",
         at_users=["user-1"],
     )
 
@@ -392,11 +392,11 @@ def test_send_message_command_does_not_duplicate_existing_at_placeholder():
         "--group",
         "cid-1",
         "--title",
-        "收到（by磊哥分身）",
+        "收到（by明哥分身）",
         "--at-users",
         "user-1",
         "--text",
-        "<@user-1> 收到（by磊哥分身）",
+        "<@user-1> 收到（by明哥分身）",
         "--format",
         "json",
         "--yes",
@@ -408,7 +408,7 @@ def test_send_message_command_supports_direct_user_target():
 
     command = client.build_send_message_command(
         conversation_id=None,
-        text="收到（by磊哥分身）",
+        text="收到（by明哥分身）",
         user_id="user-1",
     )
 
@@ -420,9 +420,9 @@ def test_send_message_command_supports_direct_user_target():
         "--user",
         "user-1",
         "--title",
-        "收到（by磊哥分身）",
+        "收到（by明哥分身）",
         "--text",
-        "收到（by磊哥分身）",
+        "收到（by明哥分身）",
         "--format",
         "json",
         "--yes",
@@ -523,7 +523,7 @@ def test_reply_message_command_shape():
         conversation_id="cid-1",
         ref_message_id="msg-1",
         ref_sender_open_dingtalk_id="open-1",
-        text="收到（by磊哥分身）",
+        text="收到（by明哥分身）",
     )
 
     assert command == [
@@ -538,7 +538,7 @@ def test_reply_message_command_shape():
         "--ref-sender",
         "open-1",
         "--text",
-        "收到（by磊哥分身）",
+        "收到（by明哥分身）",
         "--format",
         "json",
         "--yes",
@@ -709,8 +709,8 @@ def test_parse_messages_response_keeps_quoted_message():
                     "senderUserId": "sender-user-1",
                     "msgType": "text",
                     "createTime": "2026-05-13 15:16:49",
-                    "content": "@Derek Zen(磊哥) 我和俊杰聊下",
-                    "atUserIds": ["derek-user-1", "jun-jie-user-1"],
+                    "content": "@Alex Chen(明哥) 我和俊杰聊下",
+                    "atUserIds": ["principal-user-1", "jun-jie-user-1"],
                     "quotedMessage": {
                         "openMessageId": "msg-0",
                         "content": "这个ACL表看一下",
@@ -736,8 +736,8 @@ def test_parse_messages_response_keeps_quoted_message():
         sender_user_id="sender-user-1",
         message_type="text",
         create_time="2026-05-13 15:16:49",
-        content="@Derek Zen(磊哥) 我和俊杰聊下",
-        mentioned_user_ids=["derek-user-1", "jun-jie-user-1"],
+        content="@Alex Chen(明哥) 我和俊杰聊下",
+        mentioned_user_ids=["principal-user-1", "jun-jie-user-1"],
         quoted_message_id="msg-0",
         quoted_content="这个ACL表看一下",
         raw_payload=payload["result"]["messages"][0],
@@ -761,7 +761,7 @@ def test_calendar_invite_from_message_parses_structured_calendar_payload():
                 "summary": "客户升级问题决策",
                 "start": {"dateTime": "2026-05-14T10:00:00+08:00"},
                 "end": {"dateTime": "2026-05-14T11:00:00+08:00"},
-                "description": "客户 CEO 会参加，需要 Derek 决策。",
+                "description": "客户 CEO 会参加，需要 Alex 决策。",
                 "organizer": {"displayName": "Mina"},
             }
         },
@@ -774,7 +774,7 @@ def test_calendar_invite_from_message_parses_structured_calendar_payload():
     assert event.title == "客户升级问题决策"
     assert event.start_time == "2026-05-14T10:00:00+08:00"
     assert event.end_time == "2026-05-14T11:00:00+08:00"
-    assert event.description == "客户 CEO 会参加，需要 Derek 决策。"
+    assert event.description == "客户 CEO 会参加，需要 Alex 决策。"
     assert event.organizer == "Mina"
 
 
@@ -794,7 +794,7 @@ def test_calendar_invite_from_message_accepts_nested_event_without_event_id():
                 "title": "客户升级问题决策",
                 "startTime": "2026-05-14T10:00:00+08:00",
                 "endTime": "2026-05-14T11:00:00+08:00",
-                "description": "客户 CEO 会参加，需要 Derek 决策。",
+                "description": "客户 CEO 会参加，需要 Alex 决策。",
             }
         },
     )
@@ -817,13 +817,13 @@ def test_calendar_invite_from_message_fetches_detail_from_calendar_link():
                 "summary": "国寿Demo思路",
                 "start": {"dateTime": "2026-05-30T14:00:00+08:00"},
                 "end": {"dateTime": "2026-05-30T15:00:00+08:00"},
-                "description": "需要 Derek 参与 Demo 判断。",
+                "description": "需要 Alex 参与 Demo 判断。",
                 "organizer": {"displayName": "韩露"},
                 "created": 1780045392000,
                 "updated": 1780046750260,
                 "attendees": [
                     {
-                        "displayName": "磊哥",
+                        "displayName": "明哥",
                         "responseStatus": "needsAction",
                         "self": True,
                     }
@@ -840,7 +840,7 @@ def test_calendar_invite_from_message_fetches_detail_from_calendar_link():
         sender_name="韩露",
         create_time="2026-05-29 17:26:25",
         content=(
-            "好的磊哥\n"
+            "好的明哥\n"
             "dingtalk://dingtalkclient/action/open_mini_app?"
             "page=pages%2Fdetail%2Findex%3FuniqueId%3Devent-1%26recurrenceId%3D"
         ),
@@ -851,8 +851,8 @@ def test_calendar_invite_from_message_fetches_detail_from_calendar_link():
     assert event is not None
     assert event.event_id == "event-1"
     assert event.title == "国寿Demo思路"
-    assert event.description == "需要 Derek 参与 Demo 判断。"
-    assert event.attendees == ["磊哥"]
+    assert event.description == "需要 Alex 参与 Demo 判断。"
+    assert event.attendees == ["明哥"]
     assert event.self_response_status == "needsAction"
     assert event.status == "confirmed"
     assert event.created_ms == 1780045392000
@@ -1362,7 +1362,7 @@ def test_read_recent_messages_high_level_method_uses_group_command(monkeypatch):
                     "openMessageId": "msg-1",
                     "sender": "Xiaomin张晓民",
                     "createTime": "2026-05-13 15:16:49",
-                    "content": "@Derek Zen(磊哥) 看一下",
+                    "content": "@Alex Chen(明哥) 看一下",
                 }
             ]
         }
@@ -1471,7 +1471,7 @@ def test_read_mentioned_messages_parses_conversation_messages_list(monkeypatch):
                             "sender": "Mina 邹",
                             "senderOpenDingTalkId": "open-1",
                             "createTime": "2026-05-25 13:30:26",
-                            "content": "@Derek Zen(磊哥) 磊哥分身，大模型项目经理需要具备什么能力",
+                            "content": "@Alex Chen(明哥) 明哥分身，大模型项目经理需要具备什么能力",
                         }
                     ],
                 }
@@ -1558,7 +1558,7 @@ def test_build_list_messages_by_sender_command_uses_sender_and_cursor():
     client = DwsClient(dws_bin="dws")
 
     command = client.build_list_messages_by_sender_command(
-        sender_user_id="derek-user-1",
+        sender_user_id="principal-user-1",
         start="2025-11-14T00:00:00-08:00",
         end="2026-05-14T23:59:59-07:00",
         limit=100,
@@ -1571,7 +1571,7 @@ def test_build_list_messages_by_sender_command_uses_sender_and_cursor():
         "message",
         "list-by-sender",
         "--sender-user-id",
-        "derek-user-1",
+        "principal-user-1",
         "--start",
         "2025-11-14T00:00:00-08:00",
         "--end",
@@ -1681,7 +1681,7 @@ def test_read_unread_messages_skips_dws_when_unread_point_is_zero():
 def test_send_message_high_level_method_uses_command():
     client = RecordingDwsClient({"success": True})
 
-    client.send_message("cid-1", "<@user-1> 收到（by磊哥分身）", at_users=["user-1"])
+    client.send_message("cid-1", "<@user-1> 收到（by明哥分身）", at_users=["user-1"])
 
     assert client.commands == [
         [
@@ -1692,11 +1692,11 @@ def test_send_message_high_level_method_uses_command():
             "--group",
             "cid-1",
             "--title",
-            "收到（by磊哥分身）",
+            "收到（by明哥分身）",
             "--at-users",
             "user-1",
             "--text",
-            "<@user-1> 收到（by磊哥分身）",
+            "<@user-1> 收到（by明哥分身）",
             "--format",
             "json",
             "--yes",
@@ -1863,7 +1863,7 @@ def test_get_current_user_id_parses_get_self_response():
             {
                 "orgEmployeeModel": {
                     "userId": "self-user-1",
-                    "orgUserName": "Derek",
+                    "orgUserName": "Alex",
                 }
             }
         ]
@@ -1923,10 +1923,10 @@ def test_is_current_user_message_compares_resolved_sender():
 
 def test_is_current_user_message_does_not_use_display_name_without_sender_id():
     client = RecordingDwsClient(
-        {"result": [{"orgEmployeeModel": {"userId": "self-user-1", "name": "磊哥"}}]}
+        {"result": [{"orgEmployeeModel": {"userId": "self-user-1", "name": "明哥"}}]}
     )
     msg = make_message("我来处理")
-    msg.sender_name = "磊哥"
+    msg.sender_name = "明哥"
     msg.sender_user_id = None
     msg.sender_open_dingtalk_id = None
 

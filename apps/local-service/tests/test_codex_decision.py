@@ -119,7 +119,7 @@ def test_extract_codex_audit_events_from_jsonl_tool_events():
                         "type": "tool_call",
                         "tool_name": "exec_command",
                         "arguments": {
-                            "cmd": "sed -n '1,120p' /Users/derek/Documents/memory/面试/岗位画像.md"
+                            "cmd": "sed -n '1,120p' /Users/principal/Documents/memory/面试/岗位画像.md"
                         },
                     },
                 },
@@ -134,8 +134,8 @@ def test_extract_codex_audit_events_from_jsonl_tool_events():
         {
             "event_type": "item.completed",
             "tool": "exec_command",
-            "command": "sed -n '1,120p' /Users/derek/Documents/memory/面试/岗位画像.md",
-            "path": "/Users/derek/Documents/memory/面试/岗位画像.md",
+            "command": "sed -n '1,120p' /Users/principal/Documents/memory/面试/岗位画像.md",
+            "path": "/Users/principal/Documents/memory/面试/岗位画像.md",
         }
     ]
 
@@ -384,7 +384,7 @@ def test_runner_tracks_audit_tool_events(tmp_path: Path):
                                 "type": "tool_call",
                                 "tool_name": "exec_command",
                                 "arguments": {
-                                    "cmd": "rg -n 岗位 /Users/derek/Documents/memory/面试"
+                                    "cmd": "rg -n 岗位 /Users/principal/Documents/memory/面试"
                                 },
                             },
                         },
@@ -704,7 +704,7 @@ def test_reply_with_empty_audit_documents_accepts_nonempty_audit_summary(
                     "action": "send_reply",
                     "reply_text": "先按A方案走",
                     "audit_documents": [],
-                    "audit_summary": "未使用可作为业务依据的文档材料；本次判断主要基于当前群聊上下文和直接@磊哥的管理同步规则。",
+                    "audit_summary": "未使用可作为业务依据的文档材料；本次判断主要基于当前群聊上下文和直接@明哥的管理同步规则。",
                 },
                 ensure_ascii=False,
             ),
@@ -720,12 +720,12 @@ def test_reply_with_empty_audit_documents_accepts_nonempty_audit_summary(
 
 
 def test_append_signature_once():
-    assert append_signature("收到") == "收到（by磊哥分身）"
-    assert append_signature("收到（by磊哥分身）") == "收到（by磊哥分身）"
+    assert append_signature("收到") == "收到（by明哥分身）"
+    assert append_signature("收到（by明哥分身）") == "收到（by明哥分身）"
 
 
 def test_detects_forbidden_leaks():
-    assert contains_forbidden_leak("/Users/derek/Documents/memory/secret.md") is True
+    assert contains_forbidden_leak("/Users/principal/Documents/memory/secret.md") is True
     assert contains_forbidden_leak("graphify evidence: node 1") is True
     assert contains_forbidden_leak("Sources: internal notes") is True
     assert contains_forbidden_leak("sources: internal notes") is True
@@ -742,8 +742,8 @@ def test_detects_forbidden_leaks():
     assert contains_forbidden_leak("参考 [1]") is True
     assert contains_forbidden_leak("参考【1】") is True
     assert contains_forbidden_leak("/tmp/secret.md") is True
-    assert contains_forbidden_leak("/home/derek/secret.md") is True
-    assert contains_forbidden_leak("正常回复（by磊哥分身）") is False
+    assert contains_forbidden_leak("/home/principal/secret.md") is True
+    assert contains_forbidden_leak("正常回复（by明哥分身）") is False
 
 
 def test_subprocess_executor_passes_timeout(tmp_path: Path, monkeypatch):

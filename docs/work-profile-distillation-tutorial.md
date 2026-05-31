@@ -1,6 +1,6 @@
 # Work Profile Distillation Tutorial
 
-This guide explains how to regenerate Derek's repo-local work profile from
+This guide explains how to regenerate Alex's repo-local work profile from
 local evidence and read-only DingTalk evidence.
 
 Distillation means turning many concrete examples into a smaller operating
@@ -12,9 +12,9 @@ copy raw private evidence into committed files.
 
 The profile builder uses these evidence sources:
 
-- `derek_style_corpus.csv`: extracted Derek-style examples from local AI meeting
+- `style_corpus.csv`: extracted Alex-style examples from local AI meeting
   notes and recent DingTalk sent messages.
-- `/Users/derek/Documents/memory`: local authored or curated work documents.
+- `/Users/principal/Documents/memory`: local authored or curated work documents.
 - DingTalk knowledge base documents read through `dws` in read-only mode.
 
 Runtime evidence and online document cache are written under
@@ -27,16 +27,16 @@ Build the local AI meeting-note corpus:
 ```bash
 cd apps/local-service
 .venv/bin/ceo-agent build-corpus \
-  --workspace /Users/derek/Documents/memory \
-  --corpus-dir /Users/derek/Documents/Projects/ceo-agent-service/corpus
+  --workspace /Users/principal/Documents/memory \
+  --corpus-dir /Users/principal/Documents/Projects/ceo-agent-service/corpus
 ```
 
 Append recent DingTalk sent-message examples:
 
 ```bash
 .venv/bin/ceo-agent collect-corpus \
-  --workspace /Users/derek/Documents/memory \
-  --corpus-dir /Users/derek/Documents/Projects/ceo-agent-service/corpus
+  --workspace /Users/principal/Documents/memory \
+  --corpus-dir /Users/principal/Documents/Projects/ceo-agent-service/corpus
 ```
 
 ## Step 2: Build The Work Profile
@@ -45,8 +45,8 @@ Run the profile builder:
 
 ```bash
 .venv/bin/ceo-agent build-work-profile \
-  --workspace /Users/derek/Documents/memory \
-  --corpus-dir /Users/derek/Documents/Projects/ceo-agent-service/corpus
+  --workspace /Users/principal/Documents/memory \
+  --corpus-dir /Users/principal/Documents/Projects/ceo-agent-service/corpus
 ```
 
 By default this command:
@@ -71,12 +71,12 @@ Use these flags when you need a narrower run:
 The committed outputs are:
 
 ```text
-profiles/derek_work_profile.md
-profiles/derek_work_profile.json
-profiles/derek-skill/SKILL.md
+profiles/work_profile.md
+profiles/work_profile.json
+profiles/work-skill/SKILL.md
 ```
 
-The runtime consumes `profiles/derek_work_profile.md` directly. The derived
+The runtime consumes `profiles/work_profile.md` directly. The derived
 skill is for manual agent use only; the auto-reply worker should not depend on a
 global installed skill.
 
@@ -92,7 +92,7 @@ Before using a regenerated profile, check:
   `data/profile-evidence/evidence_index.jsonl`.
 - The profile does not authorize the agent to make final approvals, personnel
   decisions, financial commitments, or customer-critical decisions without
-  Derek's explicit action.
+  Alex's explicit action.
 
 Run the focused tests:
 

@@ -39,7 +39,7 @@ def seed_attempt(store: AutoReplyStore) -> int:
         conversation_title="技术部",
         trigger_message_id="msg-1",
         trigger_sender="Xiaomin",
-        trigger_text="@Derek Zen 这个怎么处理？",
+        trigger_text="@Alex Chen 这个怎么处理？",
         action="send_reply",
         sensitivity_kind="general",
         codex_reason="direct ask",
@@ -53,7 +53,7 @@ def seed_attempt(store: AutoReplyStore) -> int:
     )
     store.update_reply_attempt(
         attempt_id,
-        final_reply_text="> Xiaomin: 这个怎么处理？\n\n先按A方案走（by磊哥分身）",
+        final_reply_text="> Xiaomin: 这个怎么处理？\n\n先按A方案走（by明哥分身）",
         permission_action="allow",
         send_status="sent",
     )
@@ -190,7 +190,7 @@ def test_render_config_page_shows_message_routing_logic():
     assert "Producer 路由配置" in html
     assert "每次 producer 运行都会调用" in html
     assert 'value="CEO_MENTION_ALIASES"' not in html
-    assert 'value="@Derek Zen, @磊哥"' not in html
+    assert 'value="@Alex Chen, @明哥"' not in html
     assert 'value="principal"' not in html
     assert 'value="handoff_name"' not in html
     assert 'value="responsibility_summary"' not in html
@@ -205,7 +205,7 @@ def test_render_config_page_shows_message_routing_logic():
     assert 'value="CEO_PRINCIPAL_HANDOFF_NAME"' not in html
     assert 'value="CEO_RESPONSIBILITY_SUMMARY"' not in html
     assert '<code class="config-token">read_mentioned_messages</code>' in html
-    assert '<code class="config-token">@Derek Zen/@磊哥</code>' in html
+    assert '<code class="config-token">@Alex Chen/@明哥</code>' in html
     assert "Fast path" not in html
     assert "Slow path" not in html
     assert "Group chat" not in html
@@ -216,7 +216,7 @@ def test_render_config_page_shows_message_routing_logic():
     assert "私聊" in html
     assert "list_unread_conversations" in html
     assert "read_mentioned_messages" in html
-    assert "@Derek Zen/@磊哥" in html
+    assert "@Alex Chen/@明哥" in html
     assert "私聊文档会进入 agent 判断" in html
     assert "/config" in html
 
@@ -393,7 +393,7 @@ def test_render_config_dynamic_functions_do_not_hardcode_principal_name(monkeypa
 
     assert "work_profile_instruction()" in html
     assert "读取并注入工作人格 Profile；通常用于 Developer Prompt。" in html
-    assert "Derek 工作人格 Profile" not in html
+    assert "Alex 工作人格 Profile" not in html
 
 
 def test_config_route_is_available(tmp_path: Path):
@@ -422,7 +422,7 @@ def test_render_developer_prompt_editor_shows_template_and_preview(
         "\n".join(
                 [
                     "<vars>",
-                    "principal = Derek",
+                    "principal = Alex",
                     "</vars>",
                 "",
                 "# Editable",
@@ -433,7 +433,7 @@ def test_render_developer_prompt_editor_shows_template_and_preview(
         encoding="utf-8",
     )
     monkeypatch.setenv("CEO_DEVELOPER_PROMPT_TEMPLATE_PATH", str(template_path))
-    monkeypatch.setenv("USER_ALIAS", "Derek")
+    monkeypatch.setenv("USER_ALIAS", "Alex")
 
     html = render_config_page(active_tab="developer", saved=True)
 
@@ -461,7 +461,7 @@ def test_render_developer_prompt_editor_shows_template_and_preview(
     assert 'value="CEO_PRINCIPAL_NAME"' not in html
     assert 'value="CEO_PRINCIPAL_DISPLAY_NAME"' not in html
     assert 'value="CEO_PRINCIPAL_HANDOFF_NAME"' not in html
-    assert "Hi Derek" in html
+    assert "Hi Alex" in html
     assert "Saved." in html
 
 
@@ -508,7 +508,7 @@ def test_render_prompt_editor_shows_user_prompt_tab(tmp_path: Path, monkeypatch)
 def test_handle_developer_prompt_post_saves_template(tmp_path: Path, monkeypatch):
     template_path = tmp_path / "developer.md"
     template_path.write_text(
-        "<vars>\nprincipal = Derek\n</vars>\n\n# Old\nHi <var: principal>",
+        "<vars>\nprincipal = Alex\n</vars>\n\n# Old\nHi <var: principal>",
         encoding="utf-8",
     )
     monkeypatch.setenv("CEO_DEVELOPER_PROMPT_TEMPLATE_PATH", str(template_path))
@@ -530,7 +530,7 @@ def test_handle_prompt_variables_post_saves_variables_without_changing_template(
 ):
     template_path = tmp_path / "developer.md"
     template_path.write_text(
-        "<vars>\nprincipal = Derek\n</vars>\n\n# Body\nHi <var: principal>",
+        "<vars>\nprincipal = Alex\n</vars>\n\n# Body\nHi <var: principal>",
         encoding="utf-8",
     )
     monkeypatch.setenv("CEO_DEVELOPER_PROMPT_TEMPLATE_PATH", str(template_path))
@@ -551,7 +551,7 @@ def test_handle_prompt_variables_post_saves_variables_without_changing_template(
     assert headers["Location"] == "/config?tab=user&saved=1"
     assert html == ""
     assert template_path.read_text(encoding="utf-8") == (
-        "<vars>\nprincipal = Derek\n</vars>\n\n# Body\nHi <var: principal>"
+        "<vars>\nprincipal = Alex\n</vars>\n\n# Body\nHi <var: principal>"
     )
     env_text = (tmp_path / ".env").read_text(encoding="utf-8")
     assert "CEO_PROMPT_VAR_RESPONSIBILITY_SUMMARY" in env_text
@@ -595,7 +595,7 @@ def test_render_attempt_list_shows_pending_reply_tasks(tmp_path: Path):
         trigger_message_id="msg-queued",
         trigger_create_time="2026-05-28 18:00:00",
         trigger_sender="Mina",
-        trigger_text="@Derek Zen(磊哥) 这个候选人怎么看？",
+        trigger_text="@Alex Chen(明哥) 这个候选人怎么看？",
     )
 
     html = render_attempt_list(store)
@@ -605,7 +605,7 @@ def test_render_attempt_list_shows_pending_reply_tasks(tmp_path: Path):
     assert "HR管理" in html
     assert "Mina" in html
     assert "pending" in html
-    assert "@Derek Zen(磊哥) 这个候选人怎么看？" in html
+    assert "@Alex Chen(明哥) 这个候选人怎么看？" in html
 
 
 def test_render_attempt_list_shows_processing_reply_tasks(tmp_path: Path):
@@ -617,7 +617,7 @@ def test_render_attempt_list_shows_processing_reply_tasks(tmp_path: Path):
         trigger_message_id="msg-queued",
         trigger_create_time="2026-05-28 18:00:00",
         trigger_sender="Mina",
-        trigger_text="@Derek Zen(磊哥) 这个候选人怎么看？",
+        trigger_text="@Alex Chen(明哥) 这个候选人怎么看？",
     )
     store.claim_reply_tasks(limit=1)
 
@@ -636,7 +636,7 @@ def test_render_attempt_list_does_not_pin_failed_reply_tasks(tmp_path: Path):
         trigger_message_id="msg-failed",
         trigger_create_time="2026-05-28 18:00:00",
         trigger_sender="Mina",
-        trigger_text="@Derek Zen(磊哥) 这个候选人怎么看？",
+        trigger_text="@Alex Chen(明哥) 这个候选人怎么看？",
     )
     store.fail_reply_task(1, "delivery failed")
 
@@ -673,7 +673,7 @@ def test_render_attempt_detail_shows_quality_warnings(tmp_path: Path):
         conversation_title="技术部",
         trigger_message_id="msg-1",
         trigger_sender="Xiaomin",
-        trigger_text="@Derek Zen 这个怎么处理？",
+        trigger_text="@Alex Chen 这个怎么处理？",
         action="send_reply",
         sensitivity_kind="general",
         draft_reply_text="先按A方案走",
@@ -785,7 +785,7 @@ def test_render_attempt_detail_allows_explained_empty_documents(tmp_path: Path):
         conversation_title="技术部",
         trigger_message_id="msg-1",
         trigger_sender="Xiaomin",
-        trigger_text="@Derek Zen 这个怎么处理？",
+        trigger_text="@Alex Chen 这个怎么处理？",
         action="send_reply",
         sensitivity_kind="general",
         draft_reply_text="先按A方案走",
@@ -808,7 +808,7 @@ def test_render_attempt_detail_allows_explained_empty_tool_events(tmp_path: Path
         conversation_title="技术部",
         trigger_message_id="msg-1",
         trigger_sender="Xiaomin",
-        trigger_text="@Derek Zen 这个怎么处理？",
+        trigger_text="@Alex Chen 这个怎么处理？",
         action="send_reply",
         sensitivity_kind="general",
         draft_reply_text="先按A方案走",
@@ -833,7 +833,7 @@ def test_render_attempt_list_shows_context_only_info_icon_instead_of_warning(
         conversation_title="技术部",
         trigger_message_id="msg-1",
         trigger_sender="Xiaomin",
-        trigger_text="@Derek Zen 这个怎么处理？",
+        trigger_text="@Alex Chen 这个怎么处理？",
         action="send_reply",
         sensitivity_kind="general",
         draft_reply_text="先按A方案走",
@@ -870,7 +870,7 @@ def test_render_attempt_list_shows_missing_documents_info_icon_instead_of_warnin
         conversation_title="技术部",
         trigger_message_id="msg-1",
         trigger_sender="Xiaomin",
-        trigger_text="@Derek Zen 这个怎么处理？",
+        trigger_text="@Alex Chen 这个怎么处理？",
         action="send_reply",
         sensitivity_kind="general",
         draft_reply_text="先按A方案走",
@@ -903,7 +903,7 @@ def test_render_attempt_list_shows_missing_codex_session_info_icon_instead_of_wa
         conversation_title="技术部",
         trigger_message_id="msg-1",
         trigger_sender="Xiaomin",
-        trigger_text="@Derek Zen 这个怎么处理？",
+        trigger_text="@Alex Chen 这个怎么处理？",
         action="send_reply",
         sensitivity_kind="general",
         draft_reply_text="先按A方案走",
@@ -962,16 +962,16 @@ def test_fastapi_app_records_feedback_and_redirects(tmp_path: Path):
 def test_render_attempt_detail_shows_full_decision_and_feedback_form(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     attempt_id = seed_attempt(store)
-    store.record_sent_reply("cid-1", "msg-1", "先按A方案走（by磊哥分身）")
+    store.record_sent_reply("cid-1", "msg-1", "先按A方案走（by明哥分身）")
 
     status, html = render_attempt_detail(store, attempt_id)
 
     assert status == 200
     assert html.index("Trigger") < html.index("生成回复")
-    assert html.index("Trigger") < html.index("先按A方案走（by磊哥分身）")
+    assert html.index("Trigger") < html.index("先按A方案走（by明哥分身）")
     assert "review-grid" in html
     assert "reply-pre" in html
-    assert "@Derek Zen 这个怎么处理？" in html
+    assert "@Alex Chen 这个怎么处理？" in html
     assert "direct ask" in html
     assert "Audit summary" in html
     assert "查看岗位画像后建议先按A方案走" in html
@@ -1048,7 +1048,7 @@ def test_render_codex_session_detail_uses_local_rendered_history(
     session_path.write_text(
         "\n".join(
             [
-                '{"timestamp":"2026-05-14T12:00:00Z","type":"session_meta","payload":{"id":"session-1","cwd":"/Users/derek/Documents/memory"}}',
+                '{"timestamp":"2026-05-14T12:00:00Z","type":"session_meta","payload":{"id":"session-1","cwd":"/Users/principal/Documents/memory"}}',
                 '{"timestamp":"2026-05-14T12:00:01Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"已查看岗位画像"}]}}',
             ]
         ),
@@ -1067,7 +1067,7 @@ def test_render_codex_session_detail_uses_local_rendered_history(
     assert "已查看岗位画像" in html
     assert "Related history" in html
     assert f"/attempts/{attempt_id}" in html
-    assert "@Derek Zen 这个怎么处理？" in html
+    assert "@Alex Chen 这个怎么处理？" in html
     assert '<details class="event event-assistant" open>' in html
     assert '<details class="event event-session">' in html
     assert '<time>2026-05-14T12:00:01Z</time>' in html
@@ -1089,7 +1089,7 @@ def test_render_codex_session_detail_shows_related_history_when_file_missing(
         conversation_title="Phina",
         trigger_message_id="msg-1",
         trigger_sender="Phina",
-        trigger_text="磊哥，这个怎么处理？",
+        trigger_text="明哥，这个怎么处理？",
         action="send_reply",
         sensitivity_kind="general",
         draft_reply_text="先按A方案走",
@@ -1109,7 +1109,7 @@ def test_render_codex_session_detail_shows_related_history_when_file_missing(
     assert "The local Codex transcript file for this session is no longer available" in html
     assert "Related history" in html
     assert f"/attempts/{attempt_id}" in html
-    assert "磊哥，这个怎么处理？" in html
+    assert "明哥，这个怎么处理？" in html
 
 
 def test_render_attempt_detail_shows_recall_button_when_recall_key_exists(
@@ -1120,7 +1120,7 @@ def test_render_attempt_detail_shows_recall_button_when_recall_key_exists(
     store.record_sent_reply(
         "cid-1",
         "msg-1",
-        "先按A方案走（by磊哥分身）",
+        "先按A方案走（by明哥分身）",
         recall_key="key-1",
     )
 
@@ -1175,7 +1175,7 @@ def test_handle_recall_post_calls_dws_and_records_success(tmp_path: Path):
     store.record_sent_reply(
         "cid-1",
         "msg-1",
-        "先按A方案走（by磊哥分身）",
+        "先按A方案走（by明哥分身）",
         recall_key="key-1",
     )
     dws = FakeDws()
@@ -1199,7 +1199,7 @@ def test_handle_recall_post_blocks_without_recall_key(tmp_path: Path):
 
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     attempt_id = seed_attempt(store)
-    store.record_sent_reply("cid-1", "msg-1", "先按A方案走（by磊哥分身）")
+    store.record_sent_reply("cid-1", "msg-1", "先按A方案走（by明哥分身）")
 
     status, headers, html = handle_recall_post(store, FakeDws(), attempt_id)
 
@@ -1241,7 +1241,7 @@ def test_handle_reviewed_message_reply_matches_sender_group_and_text(
                     sender_open_dingtalk_id="open-mina",
                     sender_user_id="user-mina",
                     create_time="2026-05-25 13:30:26",
-                    content="@Derek Zen(磊哥) 磊哥分身，大模型项目经理需要具备什么能力",
+                    content="@Alex Chen(明哥) 明哥分身，大模型项目经理需要具备什么能力",
                 )
             ]
 
@@ -1286,7 +1286,7 @@ def test_handle_reviewed_message_reply_matches_sender_group_and_text(
         dws,
         user_name="Mina 邹",
         group_name="【招聘】大模型项目经理/大模型数据解决方案专家",
-        message_str="@Derek Zen(磊哥) 磊哥分身，大模型项目经理需要具备什么能力",
+        message_str="@Alex Chen(明哥) 明哥分身，大模型项目经理需要具备什么能力",
         reply_text="这个岗位核心看业务拆解、模型理解、项目推进和学习速度。",
     )
 
@@ -1295,10 +1295,10 @@ def test_handle_reviewed_message_reply_matches_sender_group_and_text(
     assert result["send_status"] == "sent"
     assert attempt is not None
     assert attempt.trigger_sender == "Mina 邹"
-    assert attempt.trigger_text == "@Derek Zen(磊哥) 磊哥分身，大模型项目经理需要具备什么能力"
+    assert attempt.trigger_text == "@Alex Chen(明哥) 明哥分身，大模型项目经理需要具备什么能力"
     assert (
         attempt.final_reply_text
-        == "这个岗位核心看业务拆解、模型理解、项目推进和学习速度。（by磊哥分身）"
+        == "这个岗位核心看业务拆解、模型理解、项目推进和学习速度。（by明哥分身）"
     )
     assert dws.sent_messages == []
     assert dws.reply_messages == [
@@ -1390,7 +1390,7 @@ def test_handle_reviewed_message_reply_uses_stored_group_and_recent_message(
     assert attempt is not None
     assert (
         attempt.final_reply_text
-        == "我已经完成审核，会把核心 comment 补到 tracker。（by磊哥分身）"
+        == "我已经完成审核，会把核心 comment 补到 tracker。（by明哥分身）"
     )
     assert (
         attempt.reviewer_feedback
@@ -1442,7 +1442,7 @@ def test_handle_reviewed_message_reply_matches_private_message_without_mention(
                     sender_name="Mina 邹",
                     sender_user_id="user-mina",
                     create_time="2026-05-25 13:40:26",
-                    content="磊哥分身，大模型项目经理需要具备什么能力",
+                    content="明哥分身，大模型项目经理需要具备什么能力",
                 )
             ]
 
@@ -1472,7 +1472,7 @@ def test_handle_reviewed_message_reply_matches_private_message_without_mention(
         dws,
         user_name="Mina 邹",
         group_name="Mina 邹",
-        message_str="磊哥分身，大模型项目经理需要具备什么能力",
+        message_str="明哥分身，大模型项目经理需要具备什么能力",
         reply_text="这个岗位核心看业务拆解、模型理解、项目推进和学习速度。",
     )
 
@@ -1481,8 +1481,8 @@ def test_handle_reviewed_message_reply_matches_private_message_without_mention(
     assert result["send_status"] == "sent"
     assert attempt is not None
     assert attempt.trigger_sender == "Mina 邹"
-    assert attempt.trigger_text == "磊哥分身，大模型项目经理需要具备什么能力"
-    assert "> Mina 邹: 磊哥分身，大模型项目经理需要具备什么能力" in attempt.final_reply_text
+    assert attempt.trigger_text == "明哥分身，大模型项目经理需要具备什么能力"
+    assert "> Mina 邹: 明哥分身，大模型项目经理需要具备什么能力" in attempt.final_reply_text
     assert dws.sent_messages == [
         (
             None,
@@ -1599,7 +1599,7 @@ def test_render_error_list_marks_sent_trigger_errors_resolved(tmp_path: Path):
         conversation_title="国内外融资群",
         trigger_message_id="msg-1",
         trigger_sender="Lily",
-        trigger_text="@Derek Zen 这个怎么看？",
+        trigger_text="@Alex Chen 这个怎么看？",
         action="send_reply",
         sensitivity_kind="general",
         draft_reply_text="先按这个口径回复。",

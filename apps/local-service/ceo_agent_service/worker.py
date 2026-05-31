@@ -3931,7 +3931,7 @@ class DingTalkAutoReplyWorker:
             )
             for index, example in enumerate(examples, start=1):
                 lines.append(
-                    f"- 例{index}: {self._style_example_text(example.derek_reply)}"
+                    f"- 例{index}: {self._style_example_text(example.principal_reply)}"
                 )
 
         feedback_examples = self._review_feedback_prompt_lines(

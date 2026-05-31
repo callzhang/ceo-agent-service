@@ -48,7 +48,7 @@ def _without_developer_instructions(command: list[str]) -> list[str]:
 def test_codex_command_exposes_memory_connector_mcp(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("MEMORY_CONNECTOR_URL", "https://memory.example/mcp/")
     monkeypatch.setenv("CONNECTOR_API_KEY", "secret-token")
-    monkeypatch.setenv("MEMORY_CONNECTOR_USER_ID", "derek")
+    monkeypatch.setenv("MEMORY_CONNECTOR_USER_ID", "principal")
     runner = CodexRunner(workspace=tmp_path, codex_bin="codex")
 
     command = runner.build_command(prompt="hello", session_id=None)
@@ -79,7 +79,7 @@ def test_codex_runner_env_loads_memory_connector_env_file(
             [
                 "export CONNECTOR_API_KEY='secret-token'",
                 "export MEMORY_CONNECTOR_URL='https://memory.example/mcp/'",
-                "export MEMORY_CONNECTOR_USER_ID='derek'",
+                "export MEMORY_CONNECTOR_USER_ID='principal'",
                 "export UNRELATED_SECRET='do-not-forward'",
             ]
         ),
@@ -95,7 +95,7 @@ def test_codex_runner_env_loads_memory_connector_env_file(
 
     assert env["CONNECTOR_API_KEY"] == "secret-token"
     assert env["MEMORY_CONNECTOR_URL"] == "https://memory.example/mcp/"
-    assert env["MEMORY_CONNECTOR_USER_ID"] == "derek"
+    assert env["MEMORY_CONNECTOR_USER_ID"] == "principal"
     assert "UNRELATED_SECRET" not in env
 
 
@@ -120,7 +120,7 @@ def test_codex_command_reads_memory_connector_mcp_url_from_env_file(
             [
                 "export CONNECTOR_API_KEY='secret-token'",
                 "export MEMORY_CONNECTOR_URL='https://memory.example/mcp/'",
-                "export MEMORY_CONNECTOR_USER_ID='derek'",
+                "export MEMORY_CONNECTOR_USER_ID='principal'",
             ]
         ),
         encoding="utf-8",
@@ -153,7 +153,7 @@ def test_builds_new_thread_command(tmp_path: Path):
     command = runner.build_command(prompt="hello", session_id=None)
 
     developer_arg = _developer_instructions_arg(command)
-    assert "你是 磊哥 的钉钉自动回复分身" in developer_arg
+    assert "你是 明哥 的钉钉自动回复分身" in developer_arg
     assert "默认不了解当前业务背景" in developer_arg
     assert "当前待处理消息" not in developer_arg
     assert "\\n" in developer_arg
@@ -195,7 +195,7 @@ def test_builds_resume_command(tmp_path: Path):
     command = runner.build_command(prompt="next", session_id="abc")
 
     developer_arg = _developer_instructions_arg(command)
-    assert "你是 磊哥 的钉钉自动回复分身" in developer_arg
+    assert "你是 明哥 的钉钉自动回复分身" in developer_arg
     assert "默认不了解当前业务背景" in developer_arg
     assert "当前待处理消息" not in developer_arg
 
@@ -274,7 +274,7 @@ def test_codex_developer_instructions_hold_thread_prompt_not_turn_message(monkey
     instructions = codex_developer_instructions()
 
     assert instructions.startswith("You are the local CEO DingTalk reply worker.")
-    assert "你是 磊哥 的钉钉自动回复分身" in instructions
+    assert "你是 明哥 的钉钉自动回复分身" in instructions
     assert "默认不了解当前业务背景" in instructions
     assert "本地文件" in instructions
     assert "dws aisearch" in instructions
@@ -294,17 +294,17 @@ def test_codex_developer_instructions_inject_work_profile_content_without_path(
 ):
     monkeypatch.setenv(
         "CEO_WORK_PROFILE_PATH",
-        str(repo_root() / "profiles" / "derek_work_profile.md"),
+        str(repo_root() / "profiles" / "work_profile.md"),
     )
 
     instructions = codex_developer_instructions()
 
-    assert "磊哥 工作人格 Profile" in instructions
+    assert "明哥 工作人格 Profile" in instructions
     assert (
-        "/Users/derek/Documents/Projects/ceo-agent-service/profiles/derek_work_profile.md"
+        "/Users/principal/Documents/Projects/ceo-agent-service/profiles/work_profile.md"
         not in instructions
     )
-    assert "# Derek Work Profile" in instructions
+    assert "# Alex Work Profile" in instructions
     assert "Core Judgment Order" in instructions
     assert "不要再尝试读取 profile 文件路径" in instructions
     assert "心智模型、决策启发式、表达DNA" in instructions
@@ -314,8 +314,8 @@ def test_codex_developer_instructions_inject_work_profile_content_without_path(
 def test_codex_developer_instructions_uses_template_variable_values():
     instructions = codex_developer_instructions()
 
-    assert "你是 磊哥 的钉钉自动回复分身" in instructions
-    assert "让 磊哥 本人接管" in instructions
+    assert "你是 明哥 的钉钉自动回复分身" in instructions
+    assert "让 明哥 本人接管" in instructions
 
 
 def test_codex_decision_schema_file_exists():
@@ -328,9 +328,9 @@ def test_codex_decision_schema_file_exists():
 
 
 def test_preserves_process_home_environment(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("HOME", "/Users/derek")
+    monkeypatch.setenv("HOME", "/Users/principal")
     runner = CodexRunner(workspace=tmp_path, codex_bin="codex")
 
     env = runner.build_env()
 
-    assert env["HOME"] == "/Users/derek"
+    assert env["HOME"] == "/Users/principal"
