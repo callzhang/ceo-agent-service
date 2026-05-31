@@ -4,6 +4,7 @@ import shlex
 from pathlib import Path
 
 from ceo_agent_service.prompt import ceo_agent_thread_prompt
+from ceo_agent_service.config import memory_connector_user_id
 
 
 CODEX_DECISION_SCHEMA_PATH = (
@@ -21,7 +22,6 @@ MEMORY_CONNECTOR_ENV_FILE = "memory_connector.env"
 MEMORY_CONNECTOR_URL_ENV = "MEMORY_CONNECTOR_URL"
 MEMORY_CONNECTOR_API_KEY_ENV = "CONNECTOR_API_KEY"
 MEMORY_CONNECTOR_USER_ID_ENV = "MEMORY_CONNECTOR_USER_ID"
-DEFAULT_MEMORY_CONNECTOR_USER_ID = "derek"
 MEMORY_CONNECTOR_ENV_KEYS = {
     MEMORY_CONNECTOR_API_KEY_ENV,
     MEMORY_CONNECTOR_URL_ENV,
@@ -66,7 +66,7 @@ def _memory_connector_env() -> dict[str, str]:
         key: value for key, value in file_env.items() if key in MEMORY_CONNECTOR_ENV_KEYS
     }
     env = {**whitelisted_file_env, **os.environ}
-    env.setdefault(MEMORY_CONNECTOR_USER_ID_ENV, DEFAULT_MEMORY_CONNECTOR_USER_ID)
+    env.setdefault(MEMORY_CONNECTOR_USER_ID_ENV, memory_connector_user_id())
     return env
 
 

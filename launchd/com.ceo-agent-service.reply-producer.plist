@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.ceo-agent-service.reply-producer</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/zsh</string>
+    <string>-lc</string>
+    <string><![CDATA[lock_dir="${CEO_REPLY_PRODUCER_LOCK_DIR:-${TMPDIR:-/tmp}/ceo-agent-service-reply-producer.lock}"; if ! mkdir "$lock_dir" 2>/dev/null; then if [ -f "$lock_dir/pid" ] && kill -0 "$(cat "$lock_dir/pid")" 2>/dev/null; then date -u "+%Y-%m-%dT%H:%M:%SZ producer skipped: previous run still active"; exit 0; fi; rm -rf "$lock_dir"; mkdir "$lock_dir"; fi; printf "%s\n" "$$" > "$lock_dir/pid"; trap 'rm -rf "$lock_dir"' EXIT; service_root="${CEO_SERVICE_ROOT:-${HOME:?HOME must be set}/Documents/Projects/ceo-agent-service}"; cd "${service_root}/apps/local-service" && export PATH="${HOME}/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:${PATH:-}" && export HOME="${CEO_SERVICE_HOME:-${HOME}}" && export PYTHONPATH="${PYTHONPATH:-.}" && export CODEX_HOME="${CODEX_HOME:-${HOME}/.codex}" && export CEO_WORKSPACE="${CEO_WORKSPACE:-${HOME}/Documents/memory}" && export CEO_WORKER_DB="${CEO_WORKER_DB:-${service_root}/data/auto-reply.sqlite3}" && export CEO_CORPUS_DIR="${CEO_CORPUS_DIR:-${service_root}/corpus}" && export DWS_DISABLE_KEYCHAIN="${DWS_DISABLE_KEYCHAIN:-1}" && export DWS_KEYCHAIN_DIR="${DWS_KEYCHAIN_DIR:-${CEO_WORKSPACE}/Library/Application Support/dws-cli}" && export CEO_NOT_SEND_MESSAGE=0 && export CEO_LIVE_SEND_BLOCKERS_ACCEPTED=1 && date -u "+%Y-%m-%dT%H:%M:%SZ producer starting" && .venv/bin/python -m ceo_agent_service.cli produce-once --db "${CEO_WORKER_DB}" --workspace "${CEO_WORKSPACE}" --corpus-dir "${CEO_CORPUS_DIR}"; exit_code=$?; date -u "+%Y-%m-%dT%H:%M:%SZ producer finished status=${exit_code}"; exit $exit_code]]></string>
+  </array>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>StartInterval</key>
+  <integer>60</integer>
+
+  <key>StandardOutPath</key>
+  <string>/tmp/ceo-agent-service-reply-producer.out.log</string>
+
+  <key>StandardErrorPath</key>
+  <string>/tmp/ceo-agent-service-reply-producer.err.log</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>DWS_DISABLE_KEYCHAIN</key>
+    <string>1</string>
+    <key>PYTHONPATH</key>
+    <string>.</string>
+  </dict>
+</dict>
+</plist>

@@ -99,6 +99,17 @@ def test_codex_runner_env_loads_memory_connector_env_file(
     assert "UNRELATED_SECRET" not in env
 
 
+def test_codex_runner_memory_user_defaults_to_configured_principal(
+    tmp_path: Path, monkeypatch
+):
+    monkeypatch.setenv("CEO_PRINCIPAL_NAME", "Executive")
+    runner = CodexRunner(workspace=tmp_path, codex_bin="codex")
+
+    env = runner.build_env()
+
+    assert env["MEMORY_CONNECTOR_USER_ID"] == "Executive"
+
+
 def test_codex_command_reads_memory_connector_mcp_url_from_env_file(
     tmp_path: Path, monkeypatch
 ):

@@ -19,24 +19,17 @@ trap 'rm -rf "${lock_dir}"' EXIT
 
 cd "${repo_root}/apps/local-service"
 
-export PATH="/Users/derek/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:${PATH:-}"
-export HOME="${CEO_SERVICE_HOME:-/Users/derek}"
+export PATH="${HOME}/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:${PATH:-}"
+export HOME="${CEO_SERVICE_HOME:-${HOME}}"
 export PYTHONPATH="${PYTHONPATH:-.}"
-export CODEX_HOME="${CODEX_HOME:-/Users/derek/.codex}"
-export CEO_WORKSPACE="${CEO_WORKSPACE:-/Users/derek/Documents/memory}"
+export CODEX_HOME="${CODEX_HOME:-${HOME}/.codex}"
+export CEO_WORKSPACE="${CEO_WORKSPACE:-${HOME}/Documents/memory}"
 export CEO_WORKER_DB="${CEO_WORKER_DB:-${repo_root}/data/auto-reply.sqlite3}"
 export CEO_CORPUS_DIR="${CEO_CORPUS_DIR:-${repo_root}/corpus}"
 export DWS_DISABLE_KEYCHAIN="${DWS_DISABLE_KEYCHAIN:-1}"
 export DWS_KEYCHAIN_DIR="${DWS_KEYCHAIN_DIR:-${CEO_WORKSPACE}/Library/Application Support/dws-cli}"
 export CEO_NOT_SEND_MESSAGE="0"
 export CEO_LIVE_SEND_BLOCKERS_ACCEPTED="1"
-export CEO_PRINCIPAL_NAME="${CEO_PRINCIPAL_NAME:-Derek}"
-export CEO_PRINCIPAL_DISPLAY_NAME="${CEO_PRINCIPAL_DISPLAY_NAME:-Derek}"
-export CEO_PRINCIPAL_HANDOFF_NAME="${CEO_PRINCIPAL_HANDOFF_NAME:-磊哥}"
-export CEO_MENTION_ALIASES="${CEO_MENTION_ALIASES:-@Derek Zen,@磊哥}"
-export CEO_STYLE_SPEAKER_NAMES="${CEO_STYLE_SPEAKER_NAMES:-磊哥,Derek}"
-export CEO_ASSISTANT_SIGNATURE="${CEO_ASSISTANT_SIGNATURE:-（by磊哥分身）}"
-export CEO_HANDOFF_ACK="${CEO_HANDOFF_ACK:-我让磊哥本人看一下。（by磊哥分身）}"
 
 printf '%s producer live starting\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 .venv/bin/python -m ceo_agent_service.cli produce-once \

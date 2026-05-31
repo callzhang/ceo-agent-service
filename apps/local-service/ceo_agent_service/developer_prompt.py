@@ -9,6 +9,7 @@ from types import ModuleType
 from ceo_agent_service.config import (
     principal_display_name,
     principal_handoff_name,
+    memory_connector_user_id,
     repo_root,
     write_env_values,
 )
@@ -192,6 +193,7 @@ def prompt_template_variables() -> dict[str, str]:
     variables = {
         "principal": principal_handoff_name(),
         "handoff_name": principal_display_name(),
+        "memory_user_id": memory_connector_user_id(),
     }
     for key, default in CONFIGURABLE_PROMPT_VARIABLE_DEFAULTS.items():
         variables[key] = os.getenv(prompt_variable_env_key(key), default)

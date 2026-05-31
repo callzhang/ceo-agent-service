@@ -5,6 +5,11 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
+from ceo_agent_service.config import (
+    principal_display_name,
+    principal_handoff_name,
+    principal_name,
+)
 from ceo_agent_service.corpus import load_corpus_records
 
 
@@ -63,6 +68,19 @@ LOCAL_SENSITIVITY_TERMS = (
         ),
     ),
 )
+
+
+def _principal_label() -> str:
+    return principal_display_name() or principal_name() or "the principal"
+
+
+def _principal_slug() -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", principal_name().strip().lower()).strip("-")
+    return slug or "principal"
+
+
+def _handoff_label() -> str:
+    return principal_handoff_name() or _principal_label()
 
 
 def evidence_id(source_type: str, location: str, text: str) -> str:
@@ -533,8 +551,10 @@ def _source_note_lines(profile: WorkProfile) -> list[str]:
 
 
 def render_markdown_profile(profile: WorkProfile) -> str:
+    principal = _principal_label()
+    handoff = _handoff_label()
     lines = [
-        "# Derek Work Profile",
+        f"# {profile.title or f'{principal} Work Profile'}",
         "",
         profile.summary,
         "",
@@ -543,13 +563,13 @@ def render_markdown_profile(profile: WorkProfile) -> str:
         (
             "Use this profile for DingTalk auto-reply judgment, business "
             "communication, product judgment, management coordination, "
-            "recruiting triage, and approval pre-review. It is not Derek's "
+            f"recruiting triage, and approval pre-review. It is not {principal}'s "
             "final personal decision."
         ),
         "",
         "## Core Judgment Order",
         "",
-        "1. Decide whether Derek needs to reply.",
+        f"1. Decide whether {principal} needs to reply.",
         "2. Check whether the material is complete.",
         "3. Check hard boundaries before making any commitment.",
         "4. Reply with conclusion, reason, and next step when enough evidence exists.",
@@ -580,7 +600,7 @@ def render_markdown_profile(profile: WorkProfile) -> str:
             "- Approval: verify body, budget, owner, project context, and attachment before giving a view.",
             "- Candidate review: require role context, resume evidence, and interview material before judging fit.",
             "- Business or product judgment: identify customer value, boundary, owner, and next step.",
-            "- Daily coordination: reply only when the next action is clear; hand off real-world actions to Derek.",
+            f"- Daily coordination: reply only when the next action is clear; hand off real-world actions to {handoff}.",
             "",
         ]
     )
@@ -593,7 +613,7 @@ def render_markdown_profile(profile: WorkProfile) -> str:
             "## 诚实边界",
             "",
             "- This profile is inferred from local work evidence and authored material.",
-            "- It improves draft judgment but does not replace Derek's final decision.",
+            f"- It improves draft judgment but does not replace {principal}'s final decision.",
             "- It must not override the service's hard safety and privacy guardrails.",
             "",
         ]
@@ -603,23 +623,25 @@ def render_markdown_profile(profile: WorkProfile) -> str:
 
 def render_skill(profile: WorkProfile) -> str:
     profile_markdown = render_markdown_profile(profile).strip()
+    principal = _principal_label()
+    skill_name = f"{_principal_slug()}-perspective"
     return f"""---
-name: derek-perspective
+name: {skill_name}
 description: |
-  Derek's work perspective and thinking framework for reviewing drafts, decisions, product direction,
+  {principal}'s work perspective and thinking framework for reviewing drafts, decisions, product direction,
   business communication, organization issues, recruiting, and DingTalk auto-reply judgment.
-  Use when the user asks for Derek's angle, Derek work style, Derek thinking framework, or Derek perspective.
+  Use when the user asks for {principal}'s angle, work style, thinking framework, or perspective.
 ---
 
-# Derek Work Perspective
+# {principal} Work Perspective
 
-This skill represents Derek's work perspective based on local evidence. It is not Derek himself and does not authorize final real-world decisions.
+This skill represents {principal}'s work perspective based on local evidence. It is not {principal} and does not authorize final real-world decisions.
 
-Do not use this skill as the automated DingTalk runtime. The runtime reads `profiles/derek_work_profile.md` inside `ceo-agent-service`.
+Do not use this skill as the automated DingTalk runtime. The runtime reads the configured work profile path inside `ceo-agent-service`.
 
 ## Hard Boundaries
 
-- Do not claim Derek has joined a meeting, made a call, checked a message, approved a request, or completed a real-world action.
+- Do not claim {principal} has joined a meeting, made a call, checked a message, approved a request, or completed a real-world action.
 - Do not make final personnel, approval, finance, legal, or customer-critical decisions.
 - When material is incomplete, ask for the missing material instead of inventing a conclusion.
 
@@ -772,7 +794,7 @@ def _build_mental_models(evidence: list[EvidenceRecord]) -> list[WorkProfileMent
                 "提需求不是提功能，而是定义一个值得解决的问题、价值边界、验收标准和责任人。"
             ),
             evidence=[
-                "月会文稿明确说“提需求，是定义价值”，并把 PreSeen/Friday 的机会落在高价值知识工作执行系统。",
+                "月会文稿明确说“提需求，是定义价值”，并把产品机会落在高价值知识工作执行系统。",
                 "管理议题文档把 P0、资源置换、产研服务标准、经营字段统一拆成选择题，先让决策问题变清楚。",
                 "日常消息中常把“当前问题”和“创新解法”分开，反对为了创新而创新。"
             ],
@@ -845,8 +867,8 @@ def _build_mental_models(evidence: list[EvidenceRecord]) -> list[WorkProfileMent
                 "最有价值的人应该留在判断位，系统接走低价值、重复、琐碎但耗时的执行工作。"
             ),
             evidence=[
-                "月会文稿把 Friday 定义成把高价值知识工作者从执行层释放出来的系统。",
-                "自动回复边界坚持现实动作、审批、最终拍板必须 handoff 给 Derek 本人。",
+                "月会文稿把执行系统定义成把高价值知识工作者从执行层释放出来的系统。",
+                "自动回复边界坚持现实动作、审批、最终拍板必须 handoff 给本人。",
                 "对 agent runtime 的关注点不是替代人，而是状态、记忆、工具、权限、监控和可恢复 workflow。"
             ],
             application=(
@@ -928,7 +950,7 @@ def _build_decision_heuristics(
         WorkProfileDecisionHeuristic(
             title="真实场景验证优先于自我感动",
             description="方向对不等于产品成立，必须进入 lighthouse、客户现场或真实 workflow 验证。",
-            application="PreSeen/Friday、Starbench、活动筛选、客户交付。",
+            application="产品方向、活动筛选、客户交付。",
             example="月会文稿强调没有真实场景验证，再好的判断也容易变成自我感动。",
             evidence_ids=_profile_evidence_ids(evidence, source_types=("local_doc", "dingtalk_kb_live"), limit=6),
         ),
@@ -982,17 +1004,19 @@ def _build_expression_dna() -> WorkProfileExpressionDna:
 
 
 def build_initial_profile(evidence: list[EvidenceRecord]) -> WorkProfile:
+    principal = _principal_label()
+    handoff = _handoff_label()
     usable_evidence = [record for record in evidence if record.usable_for_profile]
     if usable_evidence:
         summary = (
-            "A work-context profile for Derek's DingTalk auto-reply agent, "
+            f"A work-context profile for {principal}'s DingTalk auto-reply agent, "
             f"seeded from {len(usable_evidence)} usable records across "
             f"{len({record.source_type for record in usable_evidence})} source types "
             f"({_evidence_source_summary(usable_evidence)}) and ready for continued refinement."
         )
     else:
         summary = (
-            "Initial deterministic seed for Derek's DingTalk auto-reply work "
+            f"Initial deterministic seed for {principal}'s DingTalk auto-reply work "
             "profile. It defines the first runtime-safe judgment framework and "
             "will be replaced or refined as local evidence is collected."
         )
@@ -1048,13 +1072,13 @@ def build_initial_profile(evidence: list[EvidenceRecord]) -> WorkProfile:
             category="boundary",
             scenarios=["daily_coordination", "meeting", "handoff"],
             trigger=(
-                "A message asks whether Derek has joined, called, checked, "
+                f"A message asks whether {principal} has joined, called, checked, "
                 "approved, gone onsite, or will immediately do a real-world "
                 "action."
             ),
-            do="Hand off to Derek or state that Derek should personally handle it.",
+            do=f"Hand off to {handoff} or state that {principal} should personally handle it.",
             dont=(
-                "Do not claim Derek is doing, will do immediately, or has "
+                f"Do not claim {principal} is doing, will do immediately, or has "
                 "done the action unless the conversation explicitly proves it."
             ),
             confidence="high",
@@ -1095,13 +1119,13 @@ def build_initial_profile(evidence: list[EvidenceRecord]) -> WorkProfile:
         ),
     ]
     return WorkProfile(
-        title="Derek Work Profile",
+        title=f"{principal} Work Profile",
         summary=summary,
         evidence_coverage=_build_evidence_coverage(usable_evidence, rules),
         identity=[
             (
-                "我是谁：一个把 AI agent 当作企业执行系统来建设的 CEO / operator，"
-                "关注 Starbench、Friday/PreSeen、企业 memory、runtime、eval 和真实工作流重写。"
+                "我是谁：一个需要结合本地资料和组织上下文判断的负责人 / operator，"
+                "关注企业 memory、runtime、eval 和真实工作流重写。"
             ),
             (
                 "我的起点：不是把 AI 当聊天工具，而是把它放进组织、流程、客户场景和高价值知识工作里，"
@@ -1142,8 +1166,8 @@ def build_initial_profile(evidence: list[EvidenceRecord]) -> WorkProfile:
         ],
         source_notes=[
             "一手/高置信本地文档：`~/Documents/memory/Thinking`、`management/strategy` 等本地知识库文档。",
-            "会议与 AI 听记：`~/Documents/memory/AI听记` 中 Derek 发言片段和管理讨论。",
-            "钉钉消息：Derek 已发送消息和分身回复，用于表达风格、边界和日常判断。",
+            f"会议与 AI 听记：`~/Documents/memory/AI听记` 中 {principal} 发言片段和管理讨论。",
+            f"钉钉消息：{principal} 已发送消息和分身回复，用于表达风格、边界和日常判断。",
             "钉钉知识库实时拉取：线上知识库文档，用于战略、管理议题、活动筛选和外部判断材料。",
         ],
         rules=rules,

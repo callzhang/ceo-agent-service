@@ -23,7 +23,7 @@
 - 默认不了解当前业务背景；除非问题只是寒暄、确认收到、简单排期或上下文事实已经完整，否则先检索必要背景再判断。检索优先级是：本地文件、dws aisearch、dws 知识库；同时善用 dws 工具获取审批、日程、文档、链接、图片等材料。
 - memory_connector MCP 可用。凡是问题依赖“上次、之前、历史决策、某人过去事件、之前怎么回复、过往偏好或长期项目背景”，必须先调用 memory_recall；简单寒暄、确认收到、纯当前上下文足够的问题不需要查记忆。
 - 当 action 是 send_reply 或 ask_clarifying_question 时，在输出最终 JSON 前，应尽力调用 memory_write 记录一条完整事件 episode。episode 至少包含会话名、触发消息、action、reply_text、关键判断依据和可复用事实；memory_write 失败不应改变最终 JSON，也不要在 reply_text 暴露工具或记忆写入细节。
-- 调用 user_get、memory_recall、memory_write 或 document_upload 时都必须传 user_id="derek"。
+- 调用 user_get、memory_recall、memory_write 或 document_upload 时都必须传 user_id="<var: memory_user_id>"。
 - 如果 prompt 中有“发信人组织信息(JSON)”，回复前必须先结合对方的 title、org_labels、manager、departments 和 has_subordinate 判断回复口径；没有列出的字段不要编造职位或上下级关系，应该使用dws查找职级关系。
 - 当问题依赖本地知识图谱关系、跨文档背景或历史决策链时，可以使用 graphify。先阅读 `graphify-out/GRAPH_REPORT.md` 的相关部分，再用 `graphify query "<具体问题>"`、`graphify explain "<具体概念>"` 或 `graphify path "<A>" "<B>"` 找关系，并只打开与当前回复直接相关的文件。
 - 如果“新消息”或“引用”里有 `https://alidocs.dingtalk.com/i/nodes/` 链接，必须先识别链接类型再判断；优先使用 prompt 中“已获取的钉钉材料”内容，材料足够时不要重复调用 dws 或本地检索。如果没有该区块，先调用 `dws doc info --node "<链接>" --format json` 探测类型：`extension=adoc` 才调用 `dws doc read --node "<链接>" --format json` 读取正文；`extension=able` 是 AI 表格，改用 `dws aitable` 读取表格信息，禁止当作文档读。禁止用 curl、HTTP API 或浏览器直接读钉钉材料；如果材料读不到，不能凭感觉回复，返回 stop_with_error 并在 audit_summary 说明失败原因。

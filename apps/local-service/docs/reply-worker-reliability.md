@@ -30,10 +30,11 @@ not block message discovery for that producer pass.
 
 ## DWS auth environment
 
-The LaunchAgents keep work data under `CEO_WORKSPACE=/Users/derek/Documents/memory`,
-but run with `HOME=/Users/derek` so DWS can decrypt the authenticated file-backed
-credential store selected by `DWS_DISABLE_KEYCHAIN=1` plus
-`DWS_KEYCHAIN_DIR=/Users/derek/Documents/memory/Library/Application Support/dws-cli`.
+The LaunchAgents keep work data under the configured `CEO_WORKSPACE` and use the
+current user `HOME` unless `CEO_SERVICE_HOME` is explicitly set, so DWS can
+decrypt the authenticated file-backed credential store selected by
+`DWS_DISABLE_KEYCHAIN=1` plus `DWS_KEYCHAIN_DIR`. The keychain directory defaults
+to `$CEO_WORKSPACE/Library/Application Support/dws-cli`.
 Using the memory directory as `HOME` can report `not_authenticated` even when
 the same token directory is valid from the normal user home. The diagnostic
 script `scripts/check-dws-auth-env.sh` reproduces the boundary: the correct
@@ -66,16 +67,17 @@ to guess visual content when the question depends on the missing image.
 
 ## Mentioned arrangements
 
-When a human mentions Derek in a group and shares an arrangement, process, or
-decision that needs Derek to participate or confirm, the agent should treat it as
+When a human mentions the configured principal in a group and shares an
+arrangement, process, or decision that needs the principal to participate or
+confirm, the agent should treat it as
 reply-worthy even if the message is phrased as a statement rather than a
-question. It should only skip when the later context shows Derek already
+question. It should only skip when the later context shows the principal already
 confirmed the arrangement.
 
-Mention discovery starts from the recent global `@Derek` feed, not only from the
+Mention discovery starts from the recent global configured mention feed, not only from the
 current unread conversation list. A mentioned group can therefore be processed
 after the user opens the conversation and clears the unread badge. Later context
-from the same conversation is used to decide whether Derek already gave a real
+from the same conversation is used to decide whether the principal already gave a real
 reply; rendered files, images, cards, calendar invites, and processing
 acknowledgements do not count as a real reply.
 

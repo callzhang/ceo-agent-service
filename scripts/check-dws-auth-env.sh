@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-workspace="${CEO_WORKSPACE:-/Users/derek/Documents/memory}"
-service_home="${CEO_SERVICE_HOME:-/Users/derek}"
+workspace="${CEO_WORKSPACE:-${HOME}/Documents/memory}"
+service_home="${CEO_SERVICE_HOME:-${HOME}}"
 keychain_dir="${DWS_KEYCHAIN_DIR:-${workspace}/Library/Application Support/dws-cli}"
 dws_bin="${DWS_BIN:-dws}"
-path_value="/Users/derek/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+path_value="${HOME}/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+service_user="${CEO_SERVICE_USER:-${USER:-$(id -un)}}"
 
 run_unread_probe() {
   local name="$1"
@@ -17,8 +18,8 @@ run_unread_probe() {
   set +e
   env -i \
     PATH="${path_value}" \
-    USER=derek \
-    LOGNAME=derek \
+    USER="${service_user}" \
+    LOGNAME="${service_user}" \
     HOME="${home}" \
     DWS_DISABLE_KEYCHAIN="${disable_keychain}" \
     DWS_KEYCHAIN_DIR="${keychain}" \

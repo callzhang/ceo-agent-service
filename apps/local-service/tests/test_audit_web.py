@@ -222,12 +222,17 @@ def test_render_config_page_shows_system_config_tab_with_descriptions():
 
     assert "System Config" in html
     assert "系统运行参数" in html
+    assert "运行时身份缓存" in html
+    assert "current_user_id" in html
+    assert "sender_open_dingtalk_id" in html
+    assert "不从 .env 手填" in html
     assert 'method="post" action="/config/system"' in html
     assert 'name="system_key"' in html
     assert 'name="system_value"' in html
     assert 'class="prompt-tab active"' in html
     assert "不写入 Prompt" in html
     assert "MESSAGE_RECOVERY_INTERVAL" in html
+    assert "MEMORY_CONNECTOR_USER_ID" in html
     assert "CEO_MENTION_ALIASES" in html
     assert "群聊/消息触发时识别点名" in html
     assert "每次慢路径兜底扫描之间至少间隔多久" in html

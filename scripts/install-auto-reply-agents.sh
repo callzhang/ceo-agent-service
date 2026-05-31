@@ -5,19 +5,27 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 target_dir="${HOME}/Library/LaunchAgents"
 log_dir="${HOME}/Library/Logs/ceo-agent-service"
 domain="gui/$(id -u)"
+legacy_label_prefix="com.$(id -un).ceo-agent-service"
 plist_names=(
-  "com.derek.ceo-agent-service.reply-producer.plist"
-  "com.derek.ceo-agent-service.reply-consumer.plist"
+  "com.ceo-agent-service.reply-producer.plist"
+  "com.ceo-agent-service.reply-consumer.plist"
+  "com.ceo-agent-service.audit-web.plist"
 )
 legacy_labels=(
-  "com.derek.ceo-agent-service.hourly-dry-run"
-  "com.derek.ceo-agent-service.dry-run-consumer"
-  "com.derek.ceo-agent-service.memory-flush"
+  "${legacy_label_prefix}.reply-producer"
+  "${legacy_label_prefix}.reply-consumer"
+  "${legacy_label_prefix}.audit-web"
+  "${legacy_label_prefix}.hourly-dry-run"
+  "${legacy_label_prefix}.dry-run-consumer"
+  "${legacy_label_prefix}.memory-flush"
 )
 legacy_plist_names=(
-  "com.derek.ceo-agent-service.hourly-dry-run.plist"
-  "com.derek.ceo-agent-service.dry-run-consumer.plist"
-  "com.derek.ceo-agent-service.memory-flush.plist"
+  "${legacy_label_prefix}.reply-producer.plist"
+  "${legacy_label_prefix}.reply-consumer.plist"
+  "${legacy_label_prefix}.audit-web.plist"
+  "${legacy_label_prefix}.hourly-dry-run.plist"
+  "${legacy_label_prefix}.dry-run-consumer.plist"
+  "${legacy_label_prefix}.memory-flush.plist"
 )
 
 mkdir -p "${target_dir}" "${log_dir}"

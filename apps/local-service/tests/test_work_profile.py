@@ -629,6 +629,6 @@ def test_render_skill_marks_manual_use_not_runtime_dependency():
     skill = render_skill(profile)
 
     assert "name: derek-perspective" in skill
-    assert "not Derek himself" in skill
+    assert "not Derek and does not authorize" in skill
     assert "Do not use this skill as the automated DingTalk runtime" in skill
     assert "# Derek Work Profile" in skill

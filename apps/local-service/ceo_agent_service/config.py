@@ -114,6 +114,10 @@ def principal_handoff_name() -> str:
     return os.getenv("CEO_PRINCIPAL_HANDOFF_NAME", principal_display_name())
 
 
+def memory_connector_user_id() -> str:
+    return os.getenv("MEMORY_CONNECTOR_USER_ID", principal_name())
+
+
 def mention_aliases() -> tuple[str, ...]:
     return env_csv("CEO_MENTION_ALIASES", ("@CEO",))
 

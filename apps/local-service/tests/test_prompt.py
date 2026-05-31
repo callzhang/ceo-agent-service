@@ -89,7 +89,7 @@ def test_developer_prompt_delegates_memory_to_agent_mcp_tools():
     assert "memory_connector MCP 可用" in template
     assert "必须先调用 memory_recall" in template
     assert "调用 memory_write 记录一条完整事件 episode" in template
-    assert 'user_id="derek"' in template
+    assert 'user_id="<var: memory_user_id>"' in template
     assert "memory_write 失败不应改变最终 JSON" in template
 
 

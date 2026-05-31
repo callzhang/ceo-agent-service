@@ -22,6 +22,7 @@ from ceo_agent_service.config import (
     group_read_recovery_limit,
     group_read_recovery_window,
     handoff_ack,
+    memory_connector_user_id,
     mention_aliases,
     message_recovery_interval,
     principal_display_name,
@@ -269,13 +270,14 @@ def render_config_page(
     *,
     active_tab: str = "info",
     saved: bool = False,
+    db_path: Path | None = None,
 ) -> str:
     if active_tab == "developer":
         content = _render_developer_prompt_editor_content(saved=saved)
     elif active_tab == "user":
         content = _render_user_prompt_editor_content(saved=saved)
     elif active_tab == "system":
-        content = _render_system_config()
+        content = _render_system_config(db_path=db_path)
     else:
         active_tab = "info"
         content = _render_config_info()
@@ -367,6 +369,11 @@ def _system_config_rows() -> list[tuple[str, str, str]]:
             "需要真人接管时使用的称呼。",
         ),
         (
+            "MEMORY_CONNECTOR_USER_ID",
+            memory_connector_user_id(),
+            "Memory Connector 的用户空间；用于 MCP header 和 prompt 中的 memory user_id。",
+        ),
+        (
             "CEO_MENTION_ALIASES",
             mention_text,
             "群聊/消息触发时识别点名 principal 的别名；影响 producer 候选生成。",
@@ -451,7 +458,7 @@ def _developer_prompt_variable_map() -> dict[str, str]:
     return dict(configurable_prompt_variable_pairs())
 
 
-def _render_system_config() -> str:
+def _render_system_config(*, db_path: Path | None = None) -> str:
     editable_keys = _editable_system_config_keys()
     rows = [
         "<tr><th>Key</th><th>Current value</th><th>说明</th></tr>",
@@ -476,7 +483,53 @@ def _render_system_config() -> str:
         + "</table>"
         "<p><button type=\"submit\">Save system config</button></p>"
         "</form>"
+        f"{_runtime_identity_cache_html(db_path)}"
         "</section>"
+    )
+
+
+def _runtime_identity_cache_html(db_path: Path | None) -> str:
+    configured_db_path = os.environ.get("CEO_WORKER_DB")
+    store_path = db_path or (Path(configured_db_path) if configured_db_path else None)
+    current_user_id = ""
+    if store_path is not None and store_path.exists():
+        current_user_id = AutoReplyStore(store_path).get_current_user_id() or ""
+    rows = [
+        (
+            "current_user_id",
+            current_user_id or "not cached",
+            "DWS 当前登录账号写入 DB 的只读缓存；用于识别本人消息，不从 .env 手填。",
+        ),
+        (
+            "sender_user_id",
+            "message field",
+            "钉钉消息自带字段；每条消息不同，不是系统参数。",
+        ),
+        (
+            "sender_open_dingtalk_id",
+            "message field",
+            "钉钉消息自带字段；只用于映射到组织 user_id，不是系统参数。",
+        ),
+        (
+            "user_id",
+            "org profile field",
+            "组织通讯录中的人员 id；来自 DWS/组织缓存，不在代码里写死。",
+        ),
+    ]
+    table = "".join(
+        "<tr>"
+        f"<td><code class=\"config-value\">{escape(key)}</code></td>"
+        f"<td><code class=\"config-value\">{escape(value)}</code></td>"
+        f"<td>{escape(description)}</td>"
+        "</tr>"
+        for key, value, description in rows
+    )
+    return (
+        "<h3>运行时身份缓存</h3>"
+        "<p class=\"muted\">这些值参与本人消息判断，但不是用户可编辑配置。</p>"
+        "<table class=\"system-config-table\">"
+        "<tr><th>Key</th><th>Current value</th><th>说明</th></tr>"
+        f"{table}</table>"
     )
 
 
@@ -485,6 +538,7 @@ def _editable_system_config_keys() -> set[str]:
         "CEO_PRINCIPAL_NAME",
         "CEO_PRINCIPAL_DISPLAY_NAME",
         "CEO_PRINCIPAL_HANDOFF_NAME",
+        "MEMORY_CONNECTOR_USER_ID",
         "CEO_MENTION_ALIASES",
         "CEO_BROADCAST_MENTION_ALIASES",
         "CEO_STYLE_SPEAKER_NAMES",
@@ -1287,6 +1341,7 @@ def create_audit_app(
         return render_config_page(
             active_tab=request.query_params.get("tab", "info"),
             saved=request.query_params.get("saved") == "1",
+            db_path=db_path,
         )
 
     @app.get("/attempts/{attempt_id}", response_class=HTMLResponse)

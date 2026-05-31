@@ -5,7 +5,7 @@ The DingTalk reply producer only enqueues messages created within the latest
 
 DWS message payloads expose `createTime` as a Beijing-time string. The worker
 compares that instant against `now - 24 hours` in the machine's local timezone,
-so Derek's local clock and DWS Beijing timestamps are compared by real time
+so the service host's local clock and DWS Beijing timestamps are compared by real time
 rather than by wall-clock text.
 
 Messages outside the window are recorded as skipped and marked seen, so they do
