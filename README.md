@@ -122,14 +122,79 @@ cp .env.example .env
 
 不要把 `HOME` 指向项目目录。`dws` 和 Codex 需要使用真实用户环境里的认证状态。
 
-### 4. 运行一次 dry-run
+### 4. 准备知识库
+
+CEO Agent Service 会把“知识库”分成两类：本地知识库和外部可访问知识库。本地知识库由 `CEO_WORKSPACE` 指向；外部知识库通过 `dws`、Codex MCP 工具或当前消息材料按权限读取。
+
+#### 本地知识库
+
+建议把本地知识库放在项目目录之外，例如：
+
+```text
+/path/to/workspace/
+├── AI听记/                    # 会议纪要、逐字稿、AI 总结
+├── management/
+│   ├── OA/                    # 审批原则、日历规则、SOP
+│   └── strategy/              # 战略、组织、产品判断材料
+├── recruiting/                # JD、岗位画像、简历和面试记录
+├── Thinking/                  # 个人或团队沉淀文档
+└── graphify-out/
+    └── GRAPH_REPORT.md        # 可选：graphify 生成的结构化索引
+```
+
+准备步骤：
+
+1. 把可检索的业务材料整理到 `CEO_WORKSPACE`，优先使用 Markdown、文本、可读的导出文档或已抽取正文的文件。
+2. 在 `.env` 里设置 `CEO_WORKSPACE=/path/to/workspace`。
+3. 对需要稳定执行的规则，放到明确路径，例如 `management/OA/审批原则.md`、`management/OA/日历规则.md`。
+4. 可选运行 graphify，让 agent 先读 `graphify-out/GRAPH_REPORT.md`，再用本地文件验证具体事实。
+5. 不要把真实知识库、会议记录、简历、审批材料放进 Git；这些内容应该留在本地 workspace 或被 Git 忽略的运行目录。
+
+运行时，agent 会按 Prompt 规则先判断是否需要背景信息；需要时优先检索本地文件，再使用外部知识入口。回复正文不会暴露本地路径、检索命令、工具输出或内部审计细节。
+
+#### 外部可访问知识库
+
+外部知识入口取决于当前机器的认证和工具安装情况：
+
+| 知识入口 | 能读什么 | 主要用途 | 边界 |
+| --- | --- | --- | --- |
+| 钉钉在线文档 / 知识库 | `dws doc info/read/list/search` 可访问的 Alidocs 文档、文件夹和知识库节点 | 读取消息里贴出的文档、构建工作画像、审阅材料 | 只读优先；访问范围由当前 `dws` 登录用户权限决定 |
+| 钉钉 AI 表格 | `dws aitable` 可访问的 AI 表格、表、记录和附件信息 | 当链接类型是 AI 表格时读取结构化数据 | 不能当普通在线文档读；需要按表结构读取 |
+| 钉钉普通文件 / 钉盘 | `dws doc` / `dws drive` 能定位或下载的普通文件 | 读取附件、简历、方案、审批材料 | 只有文件名不等于有正文；拿不到正文时不能凭文件名判断 |
+| DWS 企业搜索 | `dws aisearch` 可访问的人员、知识、行为、群组和帮助中心搜索 | 本地资料不足时补查企业内知识、历史上下文或组织信息 | 搜索结果仍需可读材料验证，不能只凭标题下结论 |
+| 钉钉会话上下文 | `dws chat` 可读的群聊、私聊、引用消息和历史消息 | 理解当前 trigger、前后文、是否已经有人处理 | 群聊仍必须满足路由规则才进入 agent |
+| OA / 日程 / 联系人 | `dws oa`、`dws calendar`、`dws contact` 可读的审批、日程、组织信息 | 审批审阅、日程判断、识别本人和相关人员 | 审批动作必须满足 SOP 和材料完整性要求 |
+| Memory Connector MCP | `memory_recall`、`memory_write`、`document_upload` 可访问的长期记忆 | 回忆历史决策、过往偏好、上次处理结果，并在回复后写入 episode | 不是替代业务文档的事实来源；关键判断仍要回到材料和上下文 |
+
+钉钉知识库准备建议：
+
+```bash
+dws auth status
+dws doctor --json --timeout 5
+dws doc info --node '<alidocs-url>' --format json
+dws doc read --node '<alidocs-url>' --format json
+```
+
+如果要把某个钉钉知识库纳入工作画像构建，可以使用知识库 ID 或知识库 URL：
+
+```bash
+cd apps/local-service
+.venv/bin/ceo-agent build-work-profile \
+  --workspace /path/to/workspace \
+  --corpus-dir /path/to/corpus \
+  --dingtalk-kb-workspace '<workspace-id-or-url>'
+```
+
+普通运行时不需要预先同步整个外部知识库。消息中出现钉钉在线文档、OA、日程、图片或文件材料时，worker 会先尽量读取可访问正文和附件，再把材料区块交给 agent。读不到关键材料时，应追问、评论要求补材料或返回可审计错误，而不是猜测。
+
+### 5. 运行一次 dry-run
 
 ```bash
 cd apps/local-service
 CEO_NOT_SEND_MESSAGE=1 .venv/bin/ceo-agent run-once --not-send-message
 ```
 
-### 5. 启动审计页面
+### 6. 启动审计页面
 
 ```bash
 cd apps/local-service
@@ -243,6 +308,7 @@ Live smoke tests 默认跳过，只有显式设置环境变量时才会访问真
 - [docs/product-logic.md](docs/product-logic.md)：产品逻辑、审计、安全默认值。
 - [docs/message-routing-rules.md](docs/message-routing-rules.md)：消息类型、路由条件和已实现规则。
 - [docs/dws-capabilities.md](docs/dws-capabilities.md)：项目使用的 DWS 能力。
+- [docs/dws-command-inventory.md](docs/dws-command-inventory.md)：DWS 命令面、外部知识入口和读写风险分类。
 - [docs/work-profile-distillation-tutorial.md](docs/work-profile-distillation-tutorial.md)：工作画像生成教程。
 - [SECURITY.md](SECURITY.md)：安全策略。
 - [CONTRIBUTING.md](CONTRIBUTING.md)：贡献指南。
