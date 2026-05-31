@@ -27,7 +27,7 @@ def test_notification_uses_valid_escaped_applescript_literals(monkeypatch):
     ]
 
 
-def test_notification_binds_click_url_with_terminal_notifier(monkeypatch):
+def test_notification_binds_click_url_with_terminal_notifier(tmp_path, monkeypatch):
     commands = []
     monkeypatch.setattr(
         "ceo_agent_service.notification.subprocess.run",
@@ -38,6 +38,14 @@ def test_notification_binds_click_url_with_terminal_notifier(monkeypatch):
         lambda command: "/opt/homebrew/bin/terminal-notifier"
         if command == "terminal-notifier"
         else None,
+    )
+    monkeypatch.setattr(
+        "ceo_agent_service.notification.DEFAULT_NOTIFICATION_ICON_PATH",
+        tmp_path / "missing-logo.png",
+    )
+    monkeypatch.setattr(
+        "ceo_agent_service.notification._notification_group_id",
+        lambda: "ceo-agent-service-test",
     )
 
     send_macos_notification(
@@ -54,6 +62,57 @@ def test_notification_binds_click_url_with_terminal_notifier(monkeypatch):
                 "CEO auto reply",
                 "-message",
                 "已回复",
+                "-group",
+                "ceo-agent-service-test",
+                "-open",
+                "dingtalk://dingtalkclient/page/conversation?cid=75217569357",
+            ],
+            False,
+        )
+    ]
+
+
+def test_notification_uses_logo_as_terminal_notifier_icon(tmp_path, monkeypatch):
+    commands = []
+    icon_path = tmp_path / "logo.png"
+    icon_path.write_bytes(b"png")
+    monkeypatch.setattr(
+        "ceo_agent_service.notification.subprocess.run",
+        lambda command, check: commands.append((command, check)),
+    )
+    monkeypatch.setattr(
+        "ceo_agent_service.notification.shutil.which",
+        lambda command: "/opt/homebrew/bin/terminal-notifier"
+        if command == "terminal-notifier"
+        else None,
+    )
+    monkeypatch.setattr(
+        "ceo_agent_service.notification.DEFAULT_NOTIFICATION_ICON_PATH",
+        icon_path,
+    )
+    monkeypatch.setattr(
+        "ceo_agent_service.notification._notification_group_id",
+        lambda: "ceo-agent-service-test",
+    )
+
+    send_macos_notification(
+        title="CEO auto reply",
+        message="已回复",
+        url="dingtalk://dingtalkclient/page/conversation?cid=75217569357",
+    )
+
+    assert commands == [
+        (
+            [
+                "/opt/homebrew/bin/terminal-notifier",
+                "-title",
+                "CEO auto reply",
+                "-message",
+                "已回复",
+                "-group",
+                "ceo-agent-service-test",
+                "-appIcon",
+                str(icon_path),
                 "-open",
                 "dingtalk://dingtalkclient/page/conversation?cid=75217569357",
             ],
