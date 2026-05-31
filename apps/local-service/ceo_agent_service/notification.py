@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+import shlex
 import shutil
 import subprocess
 import uuid
@@ -13,9 +14,10 @@ def send_macos_notification(title: str, message: str, url: str | None = None) ->
     if url and terminal_notifier:
         command = [terminal_notifier, "-title", title, "-message", message]
         command.extend(["-group", _notification_group_id()])
+        command.extend(["-sound", "default"])
         if DEFAULT_NOTIFICATION_ICON_PATH.exists():
             command.extend(["-appIcon", str(DEFAULT_NOTIFICATION_ICON_PATH)])
-        command.extend(["-open", url])
+        command.extend(["-execute", _open_url_command(url)])
         subprocess.run(
             command,
             check=False,
@@ -32,3 +34,7 @@ def _applescript_string(value: str) -> str:
 
 def _notification_group_id() -> str:
     return f"ceo-agent-service-{uuid.uuid4().hex}"
+
+
+def _open_url_command(url: str) -> str:
+    return f"/usr/bin/open {shlex.quote(url)}"
