@@ -2,7 +2,7 @@ from pathlib import Path
 import plistlib
 
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
+REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_local_service_script_runs_single_main_service():

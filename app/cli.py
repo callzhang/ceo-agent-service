@@ -66,7 +66,7 @@ run_audit_web = None
 
 
 def _repo_root() -> Path:
-    return Path(__file__).resolve().parents[3]
+    return Path(__file__).resolve().parents[1]
 
 
 def _default_data_dir() -> Path:
