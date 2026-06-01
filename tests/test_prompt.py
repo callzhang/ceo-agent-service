@@ -351,7 +351,7 @@ def test_thread_prompt_explains_first_person_single_chat_subject():
 def test_thread_prompt_treats_mentioned_arrangements_requiring_principal_as_replies():
     prompt = ceo_agent_thread_prompt()
 
-    assert "需要 明哥 参与或确认的安排" in prompt
+    assert "明确要求 明哥 处理、确认、决策或对某个结论表态" in prompt
     assert "即使没有问号，也应视为需要回复" in prompt
 
 
@@ -547,6 +547,15 @@ def test_thread_prompt_requires_witty_reply_for_direct_jokes():
     assert "体现判断力和幽默感" in prompt
     assert "不要写成流程说明或机制解释" in prompt
     assert "如果玩笑要求分身做无法真实执行的动作" not in prompt
+
+
+def test_thread_prompt_prevents_interjecting_on_group_broadcasts():
+    prompt = ceo_agent_thread_prompt()
+
+    assert "全员通知、流程提醒、OKR/复盘/会议安排等广播消息" in prompt
+    assert "没有点名要求 明哥 处理、确认或决策" in prompt
+    assert "默认 no_reply" in prompt
+    assert "不要因为 明哥 可以补充管理建议就插嘴" in prompt
 
 
 def test_thread_prompt_requires_polite_reply_for_direct_thanks():
