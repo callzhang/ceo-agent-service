@@ -6119,9 +6119,15 @@ def test_handoff_ding_failure_does_not_block_ack(
 
     assert final_sent(dws) == [("cid-1", HANDOFF_ACK)]
     assert store.has_seen("msg-1") is True
-    assert store.count_errors() == 2
+    assert store.count_errors() == 1
     assert store.count_reply_tasks(status="done") == 1
-    assert notifications[0]["title"] == "CEO handoff notify failed: Friday"
+    assert len(notifications) == 1
+    assert notifications[0]["title"] == "CEO handoff: Friday"
+    assert notifications[0]["url"] is None
+    assert notifications[0]["message"].startswith(
+        "DING unavailable; delivered by local notification. Friday\n"
+    )
+    assert "不要分身" in notifications[0]["message"]
 
 
 def test_persists_codex_last_session_id_after_decision(tmp_path: Path, monkeypatch):

@@ -26,6 +26,12 @@ AppleScript `display notification` call. That fallback is only a visibility path
 it does not bind a click action to DingTalk, so conversation jump remains
 available through the browser bridge when an audit page is open.
 
+Handoff notifications use DING first so they can reach the operator inside
+DingTalk. If DING is unavailable, for example because the DING server quota is
+exhausted, the worker falls back to the same local notification path instead of
+failing the reply attempt. The original chat acknowledgement remains the delivery
+source of truth; the local notification only replaces the operator alert.
+
 ## DWS upgrade check
 
 The producer checks for `dws` updates inside the normal CEO system pass, once per

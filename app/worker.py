@@ -2362,26 +2362,11 @@ class DingTalkAutoReplyWorker:
                 if raise_on_delivery_failure:
                     raise ReplyDeliveryError(str(exc)) from exc
                 return
-            try:
-                self._ding_self(
-                    self._handoff_ding_text(
-                        conversation=conversation,
-                        trigger=trigger,
-                        context_messages=context_messages,
-                    )
-                )
-            except Exception as exc:
-                self.store.record_error(
-                    conversation.open_conversation_id,
-                    trigger.open_message_id,
-                    "handoff_notify",
-                    str(exc),
-                )
-                self._notify(
-                    title=f"CEO handoff notify failed: {conversation.title}",
-                    message=str(exc)[:120],
-                    conversation=conversation,
-                )
+            handoff_notified_locally = self._notify_handoff(
+                conversation=conversation,
+                trigger=trigger,
+                context_messages=context_messages,
+            )
             self.store.record_error(
                 conversation.open_conversation_id,
                 trigger.open_message_id,
@@ -2394,11 +2379,12 @@ class DingTalkAutoReplyWorker:
                 send_status="sent",
             )
             self._mark_seen(new_messages)
-            self._notify(
-                title=f"CEO handoff: {conversation.title}",
-                message=trigger.content[:120],
-                conversation=conversation,
-            )
+            if not handoff_notified_locally:
+                self._notify(
+                    title=f"CEO handoff: {conversation.title}",
+                    message=trigger.content[:120],
+                    conversation=conversation,
+                )
             return
 
         permission = self.permission_gate.evaluate(decision, trigger)
@@ -3235,6 +3221,31 @@ class DingTalkAutoReplyWorker:
             f"{trigger.sender_name}: {trigger.content[:300]}\n"
             f"previous split-person reply: {previous_split_reply}"
         )
+
+    def _notify_handoff(
+        self,
+        conversation: DingTalkConversation,
+        trigger: DingTalkMessage,
+        context_messages: list[DingTalkMessage],
+    ) -> bool:
+        handoff_text = self._handoff_ding_text(
+            conversation=conversation,
+            trigger=trigger,
+            context_messages=context_messages,
+        )
+        try:
+            self._ding_self(handoff_text)
+        except Exception:
+            self._notify(
+                title=f"CEO handoff: {conversation.title}",
+                message=(
+                    "DING unavailable; delivered by local notification. "
+                    f"{handoff_text}"
+                )[:120],
+                conversation=conversation,
+            )
+            return True
+        return False
 
     def _previous_split_person_reply(
         self,

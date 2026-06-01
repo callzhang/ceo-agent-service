@@ -59,11 +59,13 @@ the agent to claim a real-world action that only the human can perform, the
 decision should be `handoff_to_human`.
 
 Handoff sends a short acknowledgement in DingTalk and uses DING to notify the
-operator. The handoff remains active until the worker observes a real manual
-reply from the operator in the same conversation. Live runs send a local pause
-notification when new unread messages arrive during active handoff; dry-run
-checks suppress that pause notification because they intentionally do not mark
-messages as seen.
+operator. If DING is unavailable, it falls back to the local Chrome notification
+bridge so the acknowledgement is not marked failed just because the operator
+alert channel is exhausted. The handoff remains active until the worker observes
+a real manual reply from the operator in the same conversation. Live runs send a
+local pause notification when new unread messages arrive during active handoff;
+dry-run checks suppress that pause notification because they intentionally do not
+mark messages as seen.
 
 ## Audit
 
