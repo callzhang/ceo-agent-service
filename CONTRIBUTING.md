@@ -5,9 +5,9 @@ Thanks for considering a contribution.
 ## Development
 
 ```bash
-python3 -m venv apps/local-service/.venv
-apps/local-service/.venv/bin/pip install -e 'apps/local-service[dev]'
-cd apps/local-service
+python3 -m venv .venv
+.venv/bin/pip install -e '.[dev]'
+cd /path/to/ceo-agent-service
 .venv/bin/pytest -q
 ```
 

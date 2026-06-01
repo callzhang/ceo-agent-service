@@ -25,7 +25,7 @@ Runtime evidence and online document cache are written under
 Build the local AI meeting-note corpus:
 
 ```bash
-cd apps/local-service
+cd /path/to/ceo-agent-service
 .venv/bin/ceo-agent build-corpus \
   --workspace /Users/principal/Documents/memory \
   --corpus-dir /Users/principal/Documents/Projects/ceo-agent-service/corpus
@@ -97,7 +97,7 @@ Before using a regenerated profile, check:
 Run the focused tests:
 
 ```bash
-cd apps/local-service
+cd /path/to/ceo-agent-service
 .venv/bin/pytest tests/test_work_profile.py tests/test_prompt.py tests/test_worker.py::test_consumer_codex_command_embeds_work_profile_content -q
 ```
 

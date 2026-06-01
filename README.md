@@ -95,8 +95,8 @@ CEO Agent Service 会从钉钉读取私聊、群聊、在线文档、OA 审批�
 ### 2. 安装本地服务
 
 ```bash
-python3 -m venv apps/local-service/.venv
-apps/local-service/.venv/bin/pip install -e 'apps/local-service[dev]'
+python3 -m venv .venv
+.venv/bin/pip install -e '.[dev]'
 ```
 
 ### 3. 配置环境变量
@@ -178,7 +178,7 @@ dws doc read --node '<alidocs-url>' --format json
 如果要把某个钉钉知识库纳入工作画像构建，可以使用知识库 ID 或知识库 URL：
 
 ```bash
-cd apps/local-service
+cd /path/to/ceo-agent-service
 .venv/bin/ceo-agent build-work-profile \
   --workspace /path/to/workspace \
   --corpus-dir /path/to/corpus \
@@ -190,14 +190,14 @@ cd apps/local-service
 ### 5. 运行一次 dry-run
 
 ```bash
-cd apps/local-service
+cd /path/to/ceo-agent-service
 CEO_NOT_SEND_MESSAGE=1 .venv/bin/ceo-agent run-once --not-send-message
 ```
 
 ### 6. 启动审计页面
 
 ```bash
-cd apps/local-service
+cd /path/to/ceo-agent-service
 .venv/bin/python -m app.cli audit-web --reload --host 127.0.0.1 --port 8765
 ```
 
@@ -235,7 +235,7 @@ scripts/install-auto-reply-agents.sh
 手动发送已审阅 attempt：
 
 ```bash
-cd apps/local-service
+cd /path/to/ceo-agent-service
 CEO_NOT_SEND_MESSAGE=0 CEO_LIVE_SEND_BLOCKERS_ACCEPTED=1 \
   .venv/bin/ceo-agent send-attempt --attempt-id 123
 ```
@@ -243,7 +243,7 @@ CEO_NOT_SEND_MESSAGE=0 CEO_LIVE_SEND_BLOCKERS_ACCEPTED=1 \
 重跑指定消息：
 
 ```bash
-cd apps/local-service
+cd /path/to/ceo-agent-service
 .venv/bin/ceo-agent rerun-message \
   --conversation-id '<openConversationId>' \
   --message-id '<openMessageId>' \
@@ -255,7 +255,7 @@ cd apps/local-service
 可从本地会议纪要和已发送钉钉消息构建风格语料：
 
 ```bash
-cd apps/local-service
+cd /path/to/ceo-agent-service
 .venv/bin/ceo-agent build-corpus \
   --workspace /path/to/workspace \
   --corpus-dir /path/to/corpus
@@ -264,7 +264,7 @@ cd apps/local-service
 追加当前 `dws` 用户的近期钉钉发送样例：
 
 ```bash
-cd apps/local-service
+cd /path/to/ceo-agent-service
 .venv/bin/ceo-agent collect-corpus \
   --workspace /path/to/workspace \
   --corpus-dir /path/to/corpus
@@ -276,7 +276,8 @@ cd apps/local-service
 
 ```text
 .
-├── apps/local-service/          # Python 服务、CLI、worker、测试
+├── app/                         # Python 应用包、CLI、worker 和资源
+├── tests/                       # Python 测试
 ├── docs/                        # 架构图、DWS 能力、消息路由和产品逻辑文档
 ├── launchd/                     # macOS launchd 模板
 ├── prompts/                     # Developer/User Prompt 模板
@@ -290,14 +291,14 @@ cd apps/local-service
 运行测试：
 
 ```bash
-cd apps/local-service
+cd /path/to/ceo-agent-service
 .venv/bin/pytest -q
 ```
 
 只跑相关测试：
 
 ```bash
-cd apps/local-service
+cd /path/to/ceo-agent-service
 .venv/bin/python -m pytest tests/test_worker.py -q
 ```
 
