@@ -8,7 +8,7 @@
     "url": "https://github.com/callzhang/ceo-agent-service.git"
   },
   "scripts": {
-    "dev:local": "cd apps/local-service && ceo-agent run",
-    "test:local": "cd apps/local-service && pytest"
+    "dev:local": "ceo-agent run",
+    "test:local": "pytest"
   }
 }

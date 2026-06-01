@@ -2,10 +2,11 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-cd "${repo_root}/apps/local-service"
+cd "${repo_root}"
 
 export PATH="${HOME}/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:${PATH:-}"
 export HOME="${CEO_SERVICE_HOME:-${HOME}}"
+export PYTHONPATH="${PYTHONPATH:-.}"
 export CODEX_HOME="${CODEX_HOME:-${HOME}/.codex}"
 export CEO_WORKSPACE="${CEO_WORKSPACE:-${HOME}/Documents/memory}"
 export CEO_WORKER_DB="${CEO_WORKER_DB:-${repo_root}/data/auto-reply.sqlite3}"

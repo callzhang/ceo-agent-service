@@ -8,7 +8,7 @@ from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from pydantic import BaseModel, PositiveInt
+from pydantic import BaseModel, NonNegativeInt, PositiveInt
 
 from app.codex_decision import CodexDecisionRunner
 from app.config import (
@@ -91,7 +91,7 @@ class WorkerSettings(BaseModel):
     dws_transient_retry_delay_seconds: float = 1.0
     codex_timeout_seconds: PositiveInt = 420
     codex_idle_timeout_seconds: PositiveInt = 180
-    max_batches: PositiveInt | None = None
+    max_batches: NonNegativeInt | None = None
 
 
 def _env_bool(name: str, default: bool) -> bool:
@@ -122,11 +122,18 @@ def _positive_int(value: str) -> int:
     return parsed
 
 
-def _optional_positive_int_env(name: str) -> int | None:
+def _non_negative_int(value: str) -> int:
+    parsed = int(value)
+    if parsed < 0:
+        raise argparse.ArgumentTypeError("must be a non-negative integer")
+    return parsed
+
+
+def _optional_non_negative_int_env(name: str) -> int | None:
     value = os.getenv(name)
     if value is None or value == "":
         return None
-    return _positive_int(value)
+    return _non_negative_int(value)
 
 
 def _non_negative_float(value: str) -> float:
@@ -189,8 +196,8 @@ def build_parser() -> argparse.ArgumentParser:
         )
         subparser.add_argument(
             "--max-batches",
-            type=_positive_int,
-            default=_optional_positive_int_env("CEO_MAX_BATCHES"),
+            type=_non_negative_int,
+            default=_optional_non_negative_int_env("CEO_MAX_BATCHES"),
             help="maximum candidate batches to process before exiting this pass",
         )
         subparser.add_argument(

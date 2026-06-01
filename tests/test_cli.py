@@ -866,6 +866,16 @@ def test_max_batches_can_be_configured_from_env(monkeypatch):
     assert settings.max_batches == 3
 
 
+def test_max_batches_can_be_zero_for_empty_smoke_run(monkeypatch):
+    monkeypatch.setenv("CEO_MAX_BATCHES", "0")
+    parser = build_parser()
+
+    args = parser.parse_args(["run-once"])
+    settings = settings_from_args(args)
+
+    assert settings.max_batches == 0
+
+
 def test_corpus_dir_can_be_configured_from_env(monkeypatch):
     monkeypatch.setenv("CEO_CORPUS_DIR", "/tmp/ceo-corpus")
     parser = build_parser()

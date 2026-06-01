@@ -200,10 +200,12 @@ class DingTalkAutoReplyWorker:
         self._client_conversation_id_cache: dict[str, str] = {}
 
     def run_once(self, max_batches: int | None = None) -> None:
-        self.produce_once()
+        self.produce_once(max_tasks=max_batches)
         self.consume_once(max_tasks=max_batches)
 
     def produce_once(self, max_tasks: int | None = None) -> int:
+        if max_tasks == 0:
+            return 0
         self._maybe_upgrade_dws_once_per_day()
         self._maybe_refresh_org_cache_once_per_week()
         fast_path_checked_at = self._now().astimezone(timezone.utc)
@@ -677,6 +679,8 @@ class DingTalkAutoReplyWorker:
         )
 
     def consume_once(self, max_tasks: int | None = None) -> int:
+        if max_tasks == 0:
+            return 0
         limit = max_tasks if max_tasks is not None else 50
         processed_tasks = 0
         stale_tasks = self.store.list_stale_processing_reply_tasks(

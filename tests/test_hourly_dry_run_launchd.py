@@ -13,6 +13,7 @@ def test_local_service_script_runs_single_main_service():
     assert '${HOME}/.local/bin' in content
     assert 'export CODEX_HOME="${CODEX_HOME:-${HOME}/.codex}"' in content
     assert 'export HOME="${CEO_SERVICE_HOME:-${HOME}}"' in content
+    assert 'export PYTHONPATH="${PYTHONPATH:-.}"' in content
     assert 'export CEO_WORKSPACE="${CEO_WORKSPACE:-${HOME}/Documents/memory}"' in content
     assert 'export CEO_PRODUCER_INTERVAL_SECONDS="${CEO_PRODUCER_INTERVAL_SECONDS:-60}"' in content
     assert 'export CEO_CONSUMER_POLL_INTERVAL_SECONDS="${CEO_CONSUMER_POLL_INTERVAL_SECONDS:-10}"' in content

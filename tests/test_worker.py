@@ -689,6 +689,21 @@ def make_worker(
     )
 
 
+def test_run_once_with_zero_batches_is_noop(tmp_path, monkeypatch):
+    dws = FakeDws(
+        conversations=[conversation(single_chat=True)],
+        messages={},
+    )
+    worker = make_worker(tmp_path, dws, FakeCodex([]), monkeypatch)
+
+    worker.run_once(max_batches=0)
+
+    assert dws.upgrade_check_calls == 0
+    assert dws.recent_message_reads == []
+    assert dws.unread_message_reads == []
+    assert worker.store.list_errors() == []
+
+
 def developer_instructions_from_command(command: list[str]) -> str:
     for index, item in enumerate(command):
         if item != "-c":
