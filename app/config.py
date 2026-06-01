@@ -7,8 +7,12 @@ def repo_root() -> Path:
     return Path(__file__).resolve().parents[1]
 
 
+def env_path(name: str, default: Path | str) -> Path:
+    return Path(os.getenv(name, str(default))).expanduser()
+
+
 def env_file_path() -> Path:
-    return Path(os.getenv("CEO_ENV_FILE", str(repo_root() / ".env")))
+    return env_path("CEO_ENV_FILE", repo_root() / ".env")
 
 
 def load_env_file(path: Path | None = None) -> None:
@@ -78,20 +82,16 @@ load_env_file()
 
 
 def work_profile_path() -> Path:
-    return Path(
-        os.getenv(
-            "CEO_WORK_PROFILE_PATH",
-            str(repo_root() / "profiles" / "work_profile.md"),
-        )
+    return env_path(
+        "CEO_WORK_PROFILE_PATH",
+        repo_root() / "profiles" / "work_profile.md",
     )
 
 
 def profile_evidence_dir() -> Path:
-    return Path(
-        os.getenv(
-            "CEO_PROFILE_EVIDENCE_DIR",
-            str(repo_root() / "data" / "profile-evidence"),
-        )
+    return env_path(
+        "CEO_PROFILE_EVIDENCE_DIR",
+        repo_root() / "data" / "profile-evidence",
     )
 
 
