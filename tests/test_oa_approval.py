@@ -423,7 +423,7 @@ def test_read_only_handle_uses_hard_sandbox_and_requires_empty_action_result(
     assert 'sandbox_mode="read-only"' in command
 
 
-def test_execute_handle_warns_return_is_not_executable(tmp_path: Path):
+def test_execute_handle_warns_return_becomes_service_comment(tmp_path: Path):
     skill_path = tmp_path / "skill.md"
     skill_path.write_text("# OA Skill", encoding="utf-8")
     prompts: list[str] = []
@@ -452,7 +452,7 @@ def test_execute_handle_warns_return_is_not_executable(tmp_path: Path):
 
     runner.handle("触发消息", "", "", execute=True)
 
-    assert "退回只能作为审阅建议" in prompts[0]
+    assert "退回会由服务作为审批单评论提交" in prompts[0]
     assert "不会用拒绝冒充退回" in prompts[0]
 
 

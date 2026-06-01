@@ -457,6 +457,29 @@ class DwsClient:
             "--yes",
         ]
 
+    def build_oa_approval_comment_command(
+        self,
+        process_instance_id: str,
+        text: str,
+    ) -> list[str]:
+        if not process_instance_id.strip():
+            raise ValueError("missing OA process instance id")
+        if not text.strip():
+            raise ValueError("missing OA approval comment text")
+        return [
+            self.dws_bin,
+            "mcp",
+            "oa",
+            "dingflow_comments",
+            "--processInstanceId",
+            process_instance_id,
+            "--text",
+            self._literal_cli_value(text),
+            "--format",
+            "json",
+            "--yes",
+        ]
+
     def build_list_pending_oa_approvals_command(
         self, page: int = 1, size: int = 30
     ) -> list[str]:
@@ -978,6 +1001,15 @@ class DwsClient:
                 action,
                 remark,
             )
+        )
+
+    def comment_oa_approval(
+        self,
+        process_instance_id: str,
+        text: str,
+    ) -> dict[str, Any]:
+        return self.run_json(
+            self.build_oa_approval_comment_command(process_instance_id, text)
         )
 
     def list_pending_oa_approvals(

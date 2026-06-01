@@ -150,6 +150,9 @@ class FakeDws:
         self.oa_approval_actions: list[tuple[str, str, str, str]] = []
         self.oa_approval_action_result: dict = {"errcode": 0, "errmsg": "ok"}
         self.oa_approval_action_error: Exception | None = None
+        self.oa_approval_comments: list[tuple[str, str]] = []
+        self.oa_approval_comment_result: dict = {"errcode": 0, "errmsg": "ok"}
+        self.oa_approval_comment_error: Exception | None = None
         self.pending_oa_approvals: list[DwsOaApprovalCandidate] = []
         self.oa_approval_details: dict[str, dict] = {}
         self.oa_approval_records: dict[str, dict] = {}
@@ -448,6 +451,16 @@ class FakeDws:
         if self.oa_approval_action_error:
             raise self.oa_approval_action_error
         return self.oa_approval_action_result
+
+    def comment_oa_approval(
+        self,
+        process_instance_id: str,
+        text: str,
+    ) -> dict:
+        self.oa_approval_comments.append((process_instance_id, text))
+        if self.oa_approval_comment_error:
+            raise self.oa_approval_comment_error
+        return self.oa_approval_comment_result
 
     def list_pending_oa_approvals(
         self, page: int = 1, size: int = 30
@@ -2465,7 +2478,7 @@ def test_structured_approval_card_is_processed_by_oa_runner(
     }
 
 
-def test_oa_return_action_is_blocked_instead_of_mapped_to_reject(
+def test_oa_return_action_is_left_as_approval_comment_instead_of_reject(
     tmp_path: Path, monkeypatch
 ):
     trigger = message(
@@ -2490,13 +2503,19 @@ def test_oa_return_action_is_blocked_instead_of_mapped_to_reject(
     worker.run_once()
 
     assert dws.oa_approval_actions == []
+    assert dws.oa_approval_comments == [
+        ("proc-1", "请补充预算来源和项目归属后重新提交。")
+    ]
     attempt = worker.store.get_reply_attempt(1)
     assert attempt is not None
     assert attempt.action == "oa_approval"
     assert attempt.oa_action == "退回"
-    assert attempt.send_status == "blocked"
-    assert attempt.send_error == "oa_return_action_not_supported"
-    assert json.loads(attempt.oa_action_result_json) == {}
+    assert attempt.send_status == "skipped"
+    assert attempt.send_error == ""
+    assert json.loads(attempt.oa_action_result_json) == {
+        "errcode": 0,
+        "errmsg": "ok",
+    }
 
 
 def test_automatic_sync_notification_is_skipped_before_codex(

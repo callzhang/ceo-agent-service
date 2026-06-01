@@ -1137,8 +1137,15 @@ class DingTalkAutoReplyWorker:
             )
             if has_approval_target:
                 if result.oa_action == "退回":
-                    send_status = "blocked"
-                    send_error = "oa_return_action_not_supported"
+                    try:
+                        action_result = self.dws.comment_oa_approval(
+                            result.process_instance_id,
+                            result.oa_remark,
+                        )
+                        send_status = "skipped"
+                    except Exception as exc:
+                        send_status = "failed"
+                        send_error = str(exc)
                 else:
                     try:
                         action_result = self.dws.execute_oa_approval_action(

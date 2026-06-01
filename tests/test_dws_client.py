@@ -489,6 +489,27 @@ def test_oa_approval_action_command_does_not_map_return_to_reject():
         )
 
 
+def test_oa_approval_comment_command_uses_dws_mcp_comment_tool():
+    client = DwsClient(dws_bin="dws")
+
+    assert client.build_oa_approval_comment_command(
+        process_instance_id="proc-1",
+        text="请补充预算来源和项目归属后重新提交。",
+    ) == [
+        "dws",
+        "mcp",
+        "oa",
+        "dingflow_comments",
+        "--processInstanceId",
+        "proc-1",
+        "--text",
+        "请补充预算来源和项目归属后重新提交。",
+        "--format",
+        "json",
+        "--yes",
+    ]
+
+
 def test_list_pending_oa_approvals_command_and_parser():
     client = DwsClient(dws_bin="dws")
 
