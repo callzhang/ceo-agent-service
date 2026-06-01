@@ -441,8 +441,8 @@ def test_oa_approval_action_command_maps_review_action_to_dws_command():
     reject = client.build_oa_approval_action_command(
         process_instance_id="proc-1",
         task_id="task-1",
-        action="退回",
-        remark="请补材料。",
+        action="拒绝",
+        remark="材料不符合规则，拒绝。",
     )
 
     assert approve == [
@@ -470,11 +470,23 @@ def test_oa_approval_action_command_maps_review_action_to_dws_command():
         "--task-id",
         "task-1",
         "--remark",
-        "请补材料。",
+        "材料不符合规则，拒绝。",
         "--format",
         "json",
         "--yes",
     ]
+
+
+def test_oa_approval_action_command_does_not_map_return_to_reject():
+    client = DwsClient(dws_bin="dws")
+
+    with pytest.raises(ValueError, match="distinct OA return action"):
+        client.build_oa_approval_action_command(
+            process_instance_id="proc-1",
+            task_id="task-1",
+            action="退回",
+            remark="请补材料。",
+        )
 
 
 def test_list_pending_oa_approvals_command_and_parser():

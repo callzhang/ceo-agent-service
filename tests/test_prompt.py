@@ -520,6 +520,7 @@ def test_thread_prompt_requires_oa_review_principles_for_approval_messages():
     assert "以评论的形式回复审批人" in prompt
     assert "明确不匹配规则或 SOP" in prompt
     assert "退回" in prompt
+    assert "不能用拒绝冒充退回" in prompt
     assert "缺任何实质材料时不能给批准、退回或拒绝结论" not in prompt
 
 

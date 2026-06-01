@@ -423,6 +423,39 @@ def test_read_only_handle_uses_hard_sandbox_and_requires_empty_action_result(
     assert 'sandbox_mode="read-only"' in command
 
 
+def test_execute_handle_warns_return_is_not_executable(tmp_path: Path):
+    skill_path = tmp_path / "skill.md"
+    skill_path.write_text("# OA Skill", encoding="utf-8")
+    prompts: list[str] = []
+
+    def fake_executor(command: list[str], prompt: str) -> str:
+        prompts.append(prompt)
+        return json.dumps(
+            {
+                "process_instance_id": "proc-1",
+                "task_id": "task-1",
+                "oa_url": "https://aflow.dingtalk.com/detail?procInstId=proc-1",
+                "oa_action": "拒绝",
+                "oa_remark": "材料不符合规则，拒绝。",
+                "action_result": {},
+                "audit_summary": "已审阅。",
+                "audit_documents": [],
+            },
+            ensure_ascii=False,
+        )
+
+    runner = OaApprovalCodexRunner(
+        workspace=tmp_path,
+        executor=fake_executor,
+        skill_path=skill_path,
+    )
+
+    runner.handle("触发消息", "", "", execute=True)
+
+    assert "退回只能作为审阅建议" in prompts[0]
+    assert "不会用拒绝冒充退回" in prompts[0]
+
+
 def test_read_only_handle_rejects_mutating_result_or_tool_event(tmp_path: Path):
     skill_path = tmp_path / "skill.md"
     skill_path.write_text("# OA Skill", encoding="utf-8")

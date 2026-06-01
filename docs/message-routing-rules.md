@@ -212,7 +212,7 @@ aflow\.dingtalk\.com|dinghash(?:=|%3D)approval|swfrom(?:=|%3D)oa
 
 - 不在 agent 前跳过。
 - 配置了 OA runner 时，交给专用 OA agent；该 agent 注入 `dingtalk-oa-approval` skill。
-- OA agent 最终记录的审批动作只能是 `通过`、`拒绝`、`退回`。
+- OA agent 最终记录的审阅动作只能是 `通过`、`拒绝`、`退回`。其中当前 DWS 可执行动作只有 `通过` 和 `拒绝`；`退回` 不能静默映射成 `拒绝`，必须阻断并说明当前没有真实退回接口。
 - 服务在既有 `reply_attempts` 审计记录中保存审批 URL、审批动作、审批留言、执行结果、Codex session 和工具事件。
 - 不新增 OA 页面；从既有 attempt detail 查看处理过程。
 - DWS 详情不完整时，OA agent 可使用已授权的钉钉 OA API 补读详情，但不得记录 token、AppKey、AppSecret、cookie、OAuth code 或签名 URL。

@@ -435,8 +435,10 @@ class DwsClient:
     ) -> list[str]:
         if action == "通过":
             command_action = "approve"
-        elif action in {"拒绝", "退回"}:
+        elif action == "拒绝":
             command_action = "reject"
+        elif action == "退回":
+            raise ValueError("DWS does not support a distinct OA return action")
         else:
             raise ValueError(f"unsupported OA approval action: {action}")
         return [

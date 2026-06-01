@@ -549,6 +549,30 @@ class FakeOaApprovalRunner:
             task_id="task-1",
             oa_url=oa_url
             or "https://aflow.dingtalk.com/dingtalk/pc/query/pchomepage.htm?procInstId=proc-1&taskId=task-1",
+            oa_action="拒绝",
+            oa_remark="请补充预算来源和项目归属后重新提交。",
+            action_result={},
+            audit_summary="缺少预算来源和项目归属，按审批规则拒绝。",
+            audit_documents=[{"title": "OA 审批单", "url": oa_url}],
+        )
+
+
+class ReturnOaApprovalRunner(FakeOaApprovalRunner):
+    def handle(
+        self,
+        trigger_text: str,
+        context_text: str,
+        oa_url: str,
+        approval_detail_text: str = "",
+        execute: bool = True,
+    ) -> OaApprovalResult:
+        self.calls.append((trigger_text, context_text, oa_url, execute))
+        self.approval_detail_texts.append(approval_detail_text)
+        return OaApprovalResult(
+            process_instance_id="proc-1",
+            task_id="task-1",
+            oa_url=oa_url
+            or "https://aflow.dingtalk.com/dingtalk/pc/query/pchomepage.htm?procInstId=proc-1&taskId=task-1",
             oa_action="退回",
             oa_remark="请补充预算来源和项目归属后重新提交。",
             action_result={},
@@ -2411,7 +2435,7 @@ def test_structured_approval_card_is_processed_by_oa_runner(
     assert attempt.send_status == "skipped"
     assert attempt.draft_reply_text == "请补充预算来源和项目归属后重新提交。"
     assert attempt.final_reply_text == "请补充预算来源和项目归属后重新提交。"
-    assert attempt.audit_summary == "缺少预算来源和项目归属，按审批规则退回补充。"
+    assert attempt.audit_summary == "缺少预算来源和项目归属，按审批规则拒绝。"
     assert json.loads(attempt.audit_documents_json) == [
         {"title": "OA 审批单", "url": attempt.oa_url}
     ]
@@ -2424,14 +2448,14 @@ def test_structured_approval_card_is_processed_by_oa_runner(
     assert attempt.oa_process_instance_id == "proc-1"
     assert attempt.oa_task_id == "task-1"
     assert attempt.oa_url.startswith("https://aflow.dingtalk.com/")
-    assert attempt.oa_action == "退回"
+    assert attempt.oa_action == "拒绝"
     assert attempt.oa_remark == "请补充预算来源和项目归属后重新提交。"
     assert oa_runner.calls[0][3] is False
     assert dws.oa_approval_actions == [
         (
             "proc-1",
             "task-1",
-            "退回",
+            "拒绝",
             "请补充预算来源和项目归属后重新提交。",
         )
     ]
@@ -2439,6 +2463,40 @@ def test_structured_approval_card_is_processed_by_oa_runner(
         "errcode": 0,
         "errmsg": "ok",
     }
+
+
+def test_oa_return_action_is_blocked_instead_of_mapped_to_reject(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message(
+        "[Ding]张静提醒您审批他的费用报销 "
+        "https://aflow.dingtalk.com/detail?procInstId=proc-1&taskId=task-1",
+        single_chat=True,
+    )
+    dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该走聊天回复")
+    )
+    oa_runner = ReturnOaApprovalRunner()
+    worker = make_worker(
+        tmp_path,
+        dws,
+        codex,
+        monkeypatch,
+        dry_run=False,
+        oa_approval_runner=oa_runner,
+    )
+
+    worker.run_once()
+
+    assert dws.oa_approval_actions == []
+    attempt = worker.store.get_reply_attempt(1)
+    assert attempt is not None
+    assert attempt.action == "oa_approval"
+    assert attempt.oa_action == "退回"
+    assert attempt.send_status == "blocked"
+    assert attempt.send_error == "oa_return_action_not_supported"
+    assert json.loads(attempt.oa_action_result_json) == {}
 
 
 def test_automatic_sync_notification_is_skipped_before_codex(
@@ -2634,7 +2692,7 @@ def test_ding_approval_reminder_is_processed_by_oa_runner(
         (
             "proc-1",
             "task-1",
-            "退回",
+            "拒绝",
             "请补充预算来源和项目归属后重新提交。",
         )
     ]
@@ -2813,7 +2871,7 @@ def test_oa_approval_dry_run_uses_review_only_mode_and_keeps_live_retry_open(
         (
             "proc-1",
             "task-1",
-            "退回",
+            "拒绝",
             "请补充预算来源和项目归属后重新提交。",
         )
     ]
