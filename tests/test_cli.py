@@ -180,8 +180,6 @@ def test_build_work_profile_command_writes_repo_assets(tmp_path, monkeypatch):
     corpus_dir = tmp_path / "corpus"
     evidence_dir = tmp_path / "data" / "profile-evidence"
     profile_path = tmp_path / "profiles" / "work_profile.md"
-    profile_json = tmp_path / "profiles" / "work_profile.json"
-    skill_path = tmp_path / "profiles" / "work-skill" / "SKILL.md"
 
     monkeypatch.setenv("CEO_WORK_PROFILE_PATH", str(profile_path))
     monkeypatch.setenv("CEO_PROFILE_EVIDENCE_DIR", str(evidence_dir))
@@ -247,9 +245,10 @@ def test_build_work_profile_command_writes_repo_assets(tmp_path, monkeypatch):
         ("dingtalk", 1000),
     ]
     assert profile_path.exists()
-    assert profile_json.exists()
-    assert skill_path.exists()
     assert (evidence_dir / "evidence_index.jsonl").exists()
+    assert not profile_path.with_suffix(".json").exists()
+    assert not (profile_path.parent / "work-skill").exists()
+    assert not (evidence_dir / "dingtalk_kb_cache").exists()
 
 
 def test_build_work_profile_command_can_skip_live_sources(tmp_path, monkeypatch):

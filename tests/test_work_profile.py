@@ -15,7 +15,6 @@ from app.work_profile import (
     evidence_chunks,
     evidence_id,
     render_markdown_profile,
-    render_skill,
     safe_excerpt,
 )
 
@@ -227,7 +226,7 @@ class FakeDwsForKnowledgeBase:
         return {"result": {"markdown": "判断客户合作先看目标、边界和交付闭环。"}}
 
 
-def test_collect_dingtalk_kb_evidence_reads_online_docs_to_cache(tmp_path: Path):
+def test_collect_dingtalk_kb_evidence_reads_online_docs_without_cache(tmp_path: Path):
     dws = FakeDwsForKnowledgeBase()
 
     records = collect_dingtalk_kb_evidence(
@@ -241,7 +240,7 @@ def test_collect_dingtalk_kb_evidence_reads_online_docs_to_cache(tmp_path: Path)
     assert records[0].source_type == "dingtalk_kb_live"
     assert records[0].evidence_strength == "kb_live_doc"
     assert "客户合作" in records[0].excerpt
-    assert len(list((tmp_path / "cache").glob("node_*.md"))) == 1
+    assert not (tmp_path / "cache").exists()
 
 
 class FakePaginatedDwsForKnowledgeBase:
@@ -318,7 +317,7 @@ class FakePathTraversalDwsForKnowledgeBase:
         return {"result": {"markdown": "客户合作先看目标、边界和交付闭环。"}}
 
 
-def test_collect_dingtalk_kb_evidence_hashes_cache_filename(tmp_path: Path):
+def test_collect_dingtalk_kb_evidence_does_not_write_cache(tmp_path: Path):
     cache_dir = tmp_path / "cache"
 
     records = collect_dingtalk_kb_evidence(
@@ -329,7 +328,7 @@ def test_collect_dingtalk_kb_evidence_hashes_cache_filename(tmp_path: Path):
     assert len(records) == 1
     assert records[0].location == "dingtalk-kb:../escape"
     assert not (tmp_path / "escape.md").exists()
-    assert len(list(cache_dir.glob("node_*.md"))) == 1
+    assert not cache_dir.exists()
 
 
 class FakeSensitiveDwsForKnowledgeBase:
@@ -621,14 +620,3 @@ def test_build_initial_profile_uses_distinct_evidence_sources():
         }
         assert len(rule.evidence_ids) == 24
         assert rule_source_types == set(source_types)
-
-
-def test_render_skill_marks_manual_use_not_runtime_dependency():
-    profile = WorkProfile(title="Alex Work Profile", summary="工作判断 profile。", rules=[])
-
-    skill = render_skill(profile)
-
-    assert "name: work-perspective" in skill
-    assert "not 明哥 and does not authorize" in skill
-    assert "Do not use this skill as the automated DingTalk runtime" in skill
-    assert "# Alex Work Profile" in skill

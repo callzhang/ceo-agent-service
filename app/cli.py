@@ -48,7 +48,6 @@ from app.work_profile import (
     collect_existing_corpus_evidence,
     collect_local_doc_evidence,
     render_markdown_profile,
-    render_skill,
     write_jsonl,
 )
 from app.worker import DingTalkAutoReplyWorker
@@ -1139,7 +1138,6 @@ def build_work_profile_command(
         evidence.extend(
             collect_dingtalk_kb_evidence(
                 dws=DwsClient(),
-                cache_dir=evidence_dir / "dingtalk_kb_cache",
                 workspace_id=dingtalk_kb_workspace or None,
             )
         )
@@ -1149,16 +1147,9 @@ def build_work_profile_command(
     profile_path = work_profile_path()
     profile_path.parent.mkdir(parents=True, exist_ok=True)
     profile_path.write_text(render_markdown_profile(profile), encoding="utf-8")
-    profile_path.with_suffix(".json").write_text(
-        json.dumps(profile.model_dump(), ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
-    skill_path = profile_path.parent / "work-skill" / "SKILL.md"
-    skill_path.parent.mkdir(parents=True, exist_ok=True)
-    skill_path.write_text(render_skill(profile), encoding="utf-8")
     print(
         f"build-work-profile evidence={len(evidence)} "
-        f"profile={profile_path} skill={skill_path}",
+        f"profile={profile_path} evidence_index={evidence_dir / 'evidence_index.jsonl'}",
         flush=True,
     )
     return len(evidence)

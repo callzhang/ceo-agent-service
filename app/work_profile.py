@@ -296,20 +296,14 @@ def _doc_markdown_from_payload(payload: dict) -> str:
     return ""
 
 
-def _dingtalk_kb_cache_path(cache_dir: Path, node_id: str) -> Path:
-    digest = hashlib.sha256(node_id.encode("utf-8")).hexdigest()[:16]
-    return cache_dir / f"node_{digest}.md"
-
-
 def collect_dingtalk_kb_evidence(
     *,
     dws,
-    cache_dir: Path,
+    cache_dir: Path | None = None,
     workspace_id: str | None = None,
     folder_id: str | None = None,
     limit: int = 200,
 ) -> list[EvidenceRecord]:
-    cache_dir.mkdir(parents=True, exist_ok=True)
     records: list[EvidenceRecord] = []
     page_token = ""
     seen_page_tokens: set[str] = set()
@@ -335,8 +329,6 @@ def collect_dingtalk_kb_evidence(
             markdown = _doc_markdown_from_payload(dws.read_doc(node_id)).strip()
             if not markdown:
                 continue
-            cache_path = _dingtalk_kb_cache_path(cache_dir, node_id)
-            cache_path.write_text(markdown, encoding="utf-8")
             info_result = info.get("result", info) if isinstance(info, dict) else {}
             title = str(info_result.get("name") or node.get("name") or node_id)
             location = f"dingtalk-kb:{node_id}"
@@ -614,36 +606,6 @@ def render_markdown_profile(profile: WorkProfile) -> str:
         ]
     )
     return "\n".join(lines).rstrip() + "\n"
-
-
-def render_skill(profile: WorkProfile) -> str:
-    profile_markdown = render_markdown_profile(profile).strip()
-    principal = _principal_label()
-    skill_name = "work-perspective"
-    return f"""---
-name: {skill_name}
-description: |
-  {principal}'s work perspective and thinking framework for reviewing drafts, decisions, product direction,
-  business communication, organization issues, recruiting, and DingTalk auto-reply judgment.
-  Use when the user asks for {principal}'s angle, work style, thinking framework, or perspective.
----
-
-# {principal} Work Perspective
-
-This skill represents {principal}'s work perspective based on local evidence. It is not {principal} and does not authorize final real-world decisions.
-
-Do not use this skill as the automated DingTalk runtime. The runtime reads the configured work profile path inside `ceo-agent-service`.
-
-## Hard Boundaries
-
-- Do not claim {principal} has joined a meeting, made a call, checked a message, approved a request, or completed a real-world action.
-- Do not make final personnel, approval, finance, legal, or customer-critical decisions.
-- When material is incomplete, ask for the missing material instead of inventing a conclusion.
-
----
-
-{profile_markdown}
-"""
 
 
 def _evidence_source_summary(evidence: list[EvidenceRecord]) -> str:
