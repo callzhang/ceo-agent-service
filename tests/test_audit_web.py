@@ -98,7 +98,9 @@ def test_render_history_page_includes_favicon_and_refresh(tmp_path: Path):
     assert 'content="15"' in html
     assert "ceo-agent-service-notification-leader" in html
     assert 'new EventSource("/notifications/events")' in html
+    assert "event.preventDefault()" in html
     assert 'await fetch(payload.url, { method: "GET", keepalive: true })' in html
+    assert "window.open(payload.url" not in html
 
 
 def test_top_nav_highlights_current_page_and_disables_current_link(tmp_path: Path):
@@ -352,7 +354,9 @@ def test_browser_notifications_page_is_available(tmp_path: Path):
     assert "Chrome 通知" in response.text
     assert "Notification.requestPermission" in response.text
     assert 'new EventSource("/notifications/events")' in response.text
+    assert "event.preventDefault()" in response.text
     assert 'await fetch(payload.url, { method: "GET", keepalive: true })' in response.text
+    assert "window.open(payload.url" not in response.text
     assert "granted connected" in response.text
     assert "granted standby" in response.text
     assert '<span class="nav-item active" aria-current="page">Notifications</span>' not in response.text

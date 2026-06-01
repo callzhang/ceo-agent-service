@@ -341,12 +341,13 @@ def _browser_notification_client_script() -> str:
       tag: payload.id,
       renotify: true,
     });
-    notification.onclick = async () => {
+    notification.onclick = async (event) => {
+      event.preventDefault();
       if (payload.url) {
         try {
           await fetch(payload.url, { method: "GET", keepalive: true });
         } catch (error) {
-          window.open(payload.url, "_blank", "noopener");
+          logLine(`notification click failed: ${error}`);
         }
       }
       notification.close();
