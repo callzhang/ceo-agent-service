@@ -4135,6 +4135,28 @@ def test_prompt_includes_dynamic_similar_corpus_examples_without_static_style_pr
             speaker_name="明哥",
             metadata_json="{}",
         ),
+        CorpusRecord(
+            source_type="dingtalk",
+            source_title="项目群",
+            timestamp="2026-05-13",
+            context="项目排期延期怎么拆",
+            principal_reply="先判断延期是不是影响客户承诺，再决定砍范围、加资源还是换里程碑。",
+            message_id="style-4",
+            conversation_id="cid-style-4",
+            speaker_name="明哥",
+            metadata_json="{}",
+        ),
+        CorpusRecord(
+            source_type="dingtalk",
+            source_title="研发群",
+            timestamp="2026-05-13",
+            context="项目排期和负责人不清楚",
+            principal_reply="先把负责人写到任务上，再把验收口径写清楚，否则排期没有意义。",
+            message_id="style-5",
+            conversation_id="cid-style-5",
+            speaker_name="明哥",
+            metadata_json="{}",
+        ),
     ]
     worker = make_worker(
         tmp_path,
@@ -4154,7 +4176,9 @@ def test_prompt_includes_dynamic_similar_corpus_examples_without_static_style_pr
     assert "只学习语气、判断顺序和句式结构" in prompt
     assert "不要复用例子里的事实、人名、项目名、客户名、数字或结论" in prompt
     assert "先定优先级，再确认谁负责、什么时候交付、怎么验收。" in prompt
-    assert prompt.count("- 例") == 2
+    assert prompt.count("- 例") == 4
+    assert "先判断延期是不是影响客户承诺" in prompt
+    assert "先把负责人写到任务上" in prompt
     assert "先看岗位匹配" not in prompt
     assert "cid-style-1" not in prompt
     assert "Friday" in prompt
@@ -4274,6 +4298,65 @@ def test_review_feedback_examples_require_relevant_keywords(tmp_path: Path, monk
     )
 
     assert [example.id for example in examples] == [okr_attempt_id]
+
+
+def test_review_feedback_examples_skip_generic_old_corrections(
+    tmp_path: Path, monkeypatch
+):
+    dws = FakeDws([], {})
+    codex = FakeCodex(CodexDecision(action=CodexAction.NO_REPLY, reason="dry run"))
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+
+    old_corrections = [
+        (
+            "官网迭代群",
+            "@All 新的官网更新一共16页，请大家打开每一个html文档给文字comment",
+            "官网是 marketing 重要内容，CEO 直接相关；这类 @All 官网审核消息需要处理。",
+            "Claire，我这边已按文字内容做了一轮完整审核。",
+        ),
+        (
+            "Helix discussion",
+            "@Derek Zen 这里哈",
+            "重要客户合同/终止谈判消息虽然超过24小时仍需回复，不能只因过期窗口跳过。",
+            "Claire，我看了。这个方向可以发，但建议再收紧三点。",
+        ),
+        (
+            "HR&管理层合作及季度会",
+            "@Derek Zen @曹宇航 这版稿子不要再按场景列表往下堆",
+            "用户要求补回 ET 连续多条 @Derek 未完整回复的问题。",
+            "@张毅倜 @曹宇航 对，这个补充是关键。",
+        ),
+    ]
+    for index, (title, trigger_text, feedback, corrected) in enumerate(
+        old_corrections,
+        start=1,
+    ):
+        attempt_id = worker.store.record_reply_attempt(
+            conversation_id=f"cid-old-{index}",
+            conversation_title=title,
+            trigger_message_id=f"msg-old-{index}",
+            trigger_sender="同事",
+            trigger_text=trigger_text,
+            action="send_reply",
+            sensitivity_kind="general",
+            codex_reason=feedback,
+        )
+        worker.store.record_reply_feedback(
+            attempt_id,
+            feedback=feedback,
+            corrected_reply_text=corrected,
+        )
+
+    examples = worker._retrieve_review_feedback_examples(
+        (
+            "@Derek Zen 磊哥，我跟晓民哥讨论了二次查询方案，"
+            "memory_recall 返回可用上下文，二次 memory_get 会污染上下文。"
+        ),
+        worker.store.list_reviewed_reply_attempts(limit=50),
+        limit=3,
+    )
+
+    assert examples == []
 
 
 def test_group_name_reference_without_direct_at_does_not_queue(

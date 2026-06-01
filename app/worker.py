@@ -184,7 +184,7 @@ class DingTalkAutoReplyWorker:
         dry_run: bool = False,
         style_profile: str = "",
         style_records: list[CorpusRecord] | None = None,
-        style_example_limit: int = 2,
+        style_example_limit: int = 4,
         send_attempts: int = 2,
         max_task_attempts: int = MAX_REPLY_TASK_ATTEMPTS,
         now_provider: Callable[[], datetime] | None = None,
@@ -3954,7 +3954,7 @@ class DingTalkAutoReplyWorker:
         return lines
 
     def _review_feedback_prompt_lines(
-        self, query: str, *, limit: int = 3, candidate_limit: int = 50
+        self, query: str, *, limit: int = 1, candidate_limit: int = 50
     ) -> list[str]:
         examples = self._retrieve_review_feedback_examples(
             query,
@@ -3984,25 +3984,50 @@ class DingTalkAutoReplyWorker:
         if not query_keywords:
             return []
 
+        attempt_keyword_maps = {
+            attempt.id: DingTalkAutoReplyWorker._review_feedback_keyword_maps(attempt)
+            for attempt in attempts
+        }
+        keyword_document_counts: dict[str, int] = {}
+        for field_maps in attempt_keyword_maps.values():
+            attempt_keywords: set[str] = set()
+            for field_keywords, _field_weight in field_maps:
+                attempt_keywords.update(field_keywords)
+            for keyword in attempt_keywords:
+                keyword_document_counts[keyword] = (
+                    keyword_document_counts.get(keyword, 0) + 1
+                )
+        specific_keyword_limit = max(1, len(attempts) // 12)
         scored: list[tuple[float, ReplyAttempt]] = []
         for attempt in attempts:
             score = DingTalkAutoReplyWorker._review_feedback_keyword_score(
-                query_keywords, attempt
+                query_keywords,
+                attempt_keyword_maps.get(attempt.id, []),
+                keyword_document_counts,
+                candidate_count=len(attempts),
             )
-            if score >= 1.2:
+            specific_overlap = (
+                DingTalkAutoReplyWorker._review_feedback_specific_keyword_overlap(
+                    query_keywords,
+                    attempt_keyword_maps.get(attempt.id, []),
+                    keyword_document_counts,
+                    specific_keyword_limit=specific_keyword_limit,
+                )
+            )
+            if score >= 1.6 and specific_overlap >= 2:
                 scored.append((score, attempt))
 
         scored.sort(key=lambda item: item[0], reverse=True)
         if not scored:
             return []
 
-        minimum_score = max(1.2, scored[0][0] * 0.55)
+        minimum_score = max(1.6, scored[0][0] * 0.75)
         return [attempt for score, attempt in scored if score >= minimum_score][:limit]
 
     @staticmethod
-    def _review_feedback_keyword_score(
-        query_keywords: dict[str, float], attempt: ReplyAttempt
-    ) -> float:
+    def _review_feedback_keyword_maps(
+        attempt: ReplyAttempt,
+    ) -> list[tuple[dict[str, float], float]]:
         field_weights = [
             (attempt.trigger_text, 3.0),
             (attempt.codex_reason, 2.0),
@@ -4010,15 +4035,67 @@ class DingTalkAutoReplyWorker:
             (attempt.reviewer_feedback, 0.7),
             (attempt.corrected_reply_text, 0.4),
         ]
+        return [
+            (field_keywords, field_weight)
+            for text, field_weight in field_weights
+            if (field_keywords := extract_retrieval_keywords(text))
+        ]
+
+    @staticmethod
+    def _review_feedback_keyword_score(
+        query_keywords: dict[str, float],
+        field_keyword_maps: list[tuple[dict[str, float], float]],
+        keyword_document_counts: dict[str, int],
+        *,
+        candidate_count: int,
+    ) -> float:
         score = 0.0
-        for text, field_weight in field_weights:
-            field_keywords = extract_retrieval_keywords(text)
+        for field_keywords, field_weight in field_keyword_maps:
             score += sum(
-                query_weight * field_keywords[keyword] * field_weight
+                query_weight
+                * field_keywords[keyword]
+                * field_weight
+                * DingTalkAutoReplyWorker._feedback_keyword_rarity_weight(
+                    keyword,
+                    keyword_document_counts,
+                    candidate_count=candidate_count,
+                )
                 for keyword, query_weight in query_keywords.items()
                 if keyword in field_keywords
             )
         return score
+
+    @staticmethod
+    def _feedback_keyword_rarity_weight(
+        keyword: str,
+        keyword_document_counts: dict[str, int],
+        *,
+        candidate_count: int,
+    ) -> float:
+        if candidate_count <= 0:
+            return 0.0
+        if candidate_count <= 2:
+            return 1.0
+        frequency = keyword_document_counts.get(keyword, 0) / candidate_count
+        return max(0.05, 1.0 - frequency)
+
+    @staticmethod
+    def _review_feedback_specific_keyword_overlap(
+        query_keywords: dict[str, float],
+        field_keyword_maps: list[tuple[dict[str, float], float]],
+        keyword_document_counts: dict[str, int],
+        *,
+        specific_keyword_limit: int,
+    ) -> int:
+        candidate_keywords = set()
+        for field_keywords, _field_weight in field_keyword_maps:
+            candidate_keywords.update(field_keywords)
+        return sum(
+            1
+            for keyword in query_keywords
+            if keyword in candidate_keywords
+            and keyword_document_counts.get(keyword, 0) <= specific_keyword_limit
+        )
 
     def _style_query(
         self,
