@@ -2363,13 +2363,6 @@ class DingTalkAutoReplyWorker:
                 )
                 return
             try:
-                self._ding_self(
-                    self._handoff_ding_text(
-                        conversation=conversation,
-                        trigger=trigger,
-                        context_messages=context_messages,
-                    )
-                )
                 self._send_reply_to_trigger(
                     conversation,
                     trigger,
@@ -2397,6 +2390,26 @@ class DingTalkAutoReplyWorker:
                 if raise_on_delivery_failure:
                     raise ReplyDeliveryError(str(exc)) from exc
                 return
+            try:
+                self._ding_self(
+                    self._handoff_ding_text(
+                        conversation=conversation,
+                        trigger=trigger,
+                        context_messages=context_messages,
+                    )
+                )
+            except Exception as exc:
+                self.store.record_error(
+                    conversation.open_conversation_id,
+                    trigger.open_message_id,
+                    "handoff_notify",
+                    str(exc),
+                )
+                self._notify(
+                    title=f"CEO handoff notify failed: {conversation.title}",
+                    message=str(exc)[:120],
+                    conversation=conversation,
+                )
             self.store.record_error(
                 conversation.open_conversation_id,
                 trigger.open_message_id,
@@ -3595,9 +3608,10 @@ class DingTalkAutoReplyWorker:
     ) -> str:
         quote = DingTalkAutoReplyWorker._fake_quote(trigger)
         placeholders = " ".join(f"<@{user_id}>" for user_id in at_users)
-        if placeholders:
-            return f"{quote}\n\n{placeholders} {reply_text}"
-        return f"{quote}\n\n{reply_text}"
+        body = f"{placeholders} {reply_text}" if placeholders else reply_text
+        if not quote:
+            return body
+        return f"{quote}\n\n{body}"
 
     @staticmethod
     def _format_reply_delivery_text(
@@ -3630,6 +3644,10 @@ class DingTalkAutoReplyWorker:
     @staticmethod
     def _fake_quote(trigger: DingTalkMessage) -> str:
         normalized = DingTalkAutoReplyWorker._quote_source_text(trigger.content)
+        if not normalized:
+            normalized = DingTalkAutoReplyWorker._quote_source_placeholder(trigger)
+        if not normalized:
+            return ""
         normalized = redact_forbidden_leak_markers(normalized)
         excerpt = DingTalkAutoReplyWorker._truncate_quote_text(
             normalized,
@@ -3642,7 +3660,26 @@ class DingTalkAutoReplyWorker:
         without_links = MEDIA_OR_LINK_PATTERN.sub(" ", text)
         without_mentions = QUOTE_MENTION_PATTERN.sub(" ", without_links)
         normalized = " ".join(without_mentions.split()).lstrip("，,。；;：:、?？!！")
-        return normalized or "原消息"
+        return normalized
+
+    @staticmethod
+    def _quote_source_placeholder(trigger: DingTalkMessage) -> str:
+        content = trigger.content.strip()
+        rendered_prefix = RENDERED_NON_TEXT_PREFIX_PATTERN.match(content)
+        if rendered_prefix:
+            return rendered_prefix.group(0).strip()
+        message_type = (trigger.message_type or "").lower()
+        if message_type in {"image", "picture"}:
+            return "[图片]"
+        if message_type == "file":
+            return "[文件]"
+        if message_type == "video":
+            return "[视频]"
+        if message_type == "calendar":
+            return "[日程]"
+        if message_type and message_type not in TEXT_MESSAGE_TYPES:
+            return f"[{message_type}]"
+        return ""
 
     @staticmethod
     def _truncate_quote_text(text: str, unit_limit: int) -> str:

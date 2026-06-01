@@ -4764,6 +4764,27 @@ def test_fake_quote_redacts_runtime_terms_from_user_text():
     assert "原消息" not in quote
 
 
+def test_fake_quote_uses_message_type_placeholder_for_empty_image_text():
+    trigger = message(
+        "[图片消息](mediaId=@img-token-1)",
+        message_type="image",
+    )
+
+    quote = DingTalkAutoReplyWorker._fake_quote(trigger)
+
+    assert quote == "> 周俊杰: [图片]"
+    assert "原消息" not in quote
+
+
+def test_format_reply_omits_fake_quote_when_trigger_has_no_readable_context():
+    trigger = message("@明哥分身", single_chat=True)
+
+    text = DingTalkAutoReplyWorker._format_reply_text(trigger, "收到", [])
+
+    assert text == "收到"
+    assert "原消息" not in text
+
+
 def test_user_runtime_term_in_trigger_quote_does_not_block_safe_reply(
     tmp_path: Path, monkeypatch
 ):
@@ -5837,12 +5858,14 @@ def test_pat_authorization_error_is_recorded_as_failed_without_retry_or_url(
     assert "open-dev.dingtalk.com" not in attempt.send_error
 
 
-def test_handoff_ding_failure_does_not_mark_seen(
+def test_handoff_ding_failure_does_not_block_ack(
     tmp_path: Path, monkeypatch
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    notifications: list[dict[str, str | None]] = []
     monkeypatch.setattr(
-        "app.worker.send_macos_notification", lambda **_: None
+        "app.worker.send_macos_notification",
+        lambda **kwargs: notifications.append(kwargs),
     )
     dws = FakeDws(
         [conversation()],
@@ -5856,10 +5879,11 @@ def test_handoff_ding_failure_does_not_mark_seen(
 
     worker.run_once()
 
-    assert final_sent(dws) == []
-    assert store.has_seen("msg-1") is False
+    assert final_sent(dws) == [("cid-1", HANDOFF_ACK)]
+    assert store.has_seen("msg-1") is True
     assert store.count_errors() == 2
-    assert store.count_reply_tasks(status="pending") == 1
+    assert store.count_reply_tasks(status="done") == 1
+    assert notifications[0]["title"] == "CEO handoff notify failed: Friday"
 
 
 def test_persists_codex_last_session_id_after_decision(tmp_path: Path, monkeypatch):

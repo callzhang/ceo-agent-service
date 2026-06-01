@@ -70,7 +70,9 @@ messages that still need a real reply.
 Final replies include a short text quote built from the trigger message. Compact
 assistant mentions such as `@明哥分身，请...` are stripped only up to the first
 message punctuation, so the remaining request text is preserved in the quote
-instead of falling back to `原消息`.
+instead of producing an empty quote. If a non-text message has no readable text,
+the quote uses a type-specific placeholder such as `[图片]`; if no useful context
+can be inferred, the quote is omitted instead of falling back to `原消息`.
 
 ## Image attachments
 
