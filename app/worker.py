@@ -37,6 +37,7 @@ from app.corpus import (
     MEDIA_OR_LINK_PATTERN,
     CorpusRecord,
     count_information_units,
+    extract_retrieval_keywords,
     retrieve_similar_examples,
 )
 from app.dingtalk_models import (
@@ -4008,29 +4009,45 @@ class DingTalkAutoReplyWorker:
     def _retrieve_review_feedback_examples(
         query: str, attempts: list[ReplyAttempt], *, limit: int
     ) -> list[ReplyAttempt]:
-        query_chars = set(query)
-        scored: list[tuple[int, ReplyAttempt]] = []
+        query_keywords = extract_retrieval_keywords(query)
+        if not query_keywords:
+            return []
+
+        scored: list[tuple[float, ReplyAttempt]] = []
         for attempt in attempts:
-            haystack = "\n".join(
-                [
-                    attempt.conversation_title,
-                    attempt.trigger_sender,
-                    attempt.trigger_text,
-                    attempt.codex_reason,
-                    attempt.reviewer_feedback,
-                    attempt.corrected_reply_text,
-                ]
+            score = DingTalkAutoReplyWorker._review_feedback_keyword_score(
+                query_keywords, attempt
             )
-            score = len(query_chars & set(haystack))
-            if score > 0:
+            if score >= 1.2:
                 scored.append((score, attempt))
 
         scored.sort(key=lambda item: item[0], reverse=True)
         if not scored:
             return []
 
-        minimum_score = max(3, int(scored[0][0] * 0.35))
-        return [attempt for score, attempt in scored[:limit] if score >= minimum_score]
+        minimum_score = max(1.2, scored[0][0] * 0.55)
+        return [attempt for score, attempt in scored if score >= minimum_score][:limit]
+
+    @staticmethod
+    def _review_feedback_keyword_score(
+        query_keywords: dict[str, float], attempt: ReplyAttempt
+    ) -> float:
+        field_weights = [
+            (attempt.trigger_text, 3.0),
+            (attempt.codex_reason, 2.0),
+            (attempt.conversation_title, 0.8),
+            (attempt.reviewer_feedback, 0.7),
+            (attempt.corrected_reply_text, 0.4),
+        ]
+        score = 0.0
+        for text, field_weight in field_weights:
+            field_keywords = extract_retrieval_keywords(text)
+            score += sum(
+                query_weight * field_keywords[keyword] * field_weight
+                for keyword, query_weight in query_keywords.items()
+                if keyword in field_keywords
+            )
+        return score
 
     def _style_query(
         self,

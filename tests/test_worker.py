@@ -4121,6 +4121,79 @@ def test_prompt_includes_similar_human_feedback_examples(tmp_path: Path, monkeyp
     assert "cid-old" not in prompt
 
 
+def test_review_feedback_examples_require_relevant_keywords(tmp_path: Path, monkeypatch):
+    dws = FakeDws([], {})
+    codex = FakeCodex(CodexDecision(action=CodexAction.NO_REPLY, reason="dry run"))
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+
+    okr_attempt_id = worker.store.record_reply_attempt(
+        conversation_id="cid-okr",
+        conversation_title="公司大群",
+        trigger_message_id="msg-okr",
+        trigger_sender="Mina",
+        trigger_text=(
+            "@所有人 请填写 Q2 OKR 进展和 OKR 月度复盘，"
+            "HRBP 会安排部门负责人与管理层 1:1。"
+        ),
+        action="send_reply",
+        sensitivity_kind="internal_personnel",
+        codex_reason="错误地对 OKR 复盘广播补充管理口径。",
+    )
+    worker.store.record_reply_feedback(
+        okr_attempt_id,
+        feedback=(
+            "群聊@所有人的 OKR 复盘或会议安排广播，如果没有点名要求本人"
+            "处理、确认或决策，应该 no_reply，不要主动插嘴。"
+        ),
+        corrected_reply_text="这个不应该回复",
+    )
+
+    unrelated_attempts = [
+        (
+            "cid-tool",
+            "工具安装",
+            "你先安装试试这个本地工具",
+            "本地工具安装请求不要直接交给本人。",
+        ),
+        (
+            "cid-hiring",
+            "候选人评估",
+            "这个候选人简历是否推进",
+            "候选人问题先看岗位匹配和简历材料。",
+        ),
+        (
+            "cid-doc",
+            "文档审核",
+            "帮忙看一下客户合同条款",
+            "文档审核必须先读正文材料。",
+        ),
+    ]
+    for conversation_id, title, trigger_text, feedback in unrelated_attempts:
+        attempt_id = worker.store.record_reply_attempt(
+            conversation_id=conversation_id,
+            conversation_title=title,
+            trigger_message_id=f"msg-{conversation_id}",
+            trigger_sender="同事",
+            trigger_text=trigger_text,
+            action="send_reply",
+            sensitivity_kind="general",
+            codex_reason=feedback,
+        )
+        worker.store.record_reply_feedback(
+            attempt_id,
+            feedback=feedback,
+            corrected_reply_text="按对应场景重新判断",
+        )
+
+    examples = worker._retrieve_review_feedback_examples(
+        "@所有人 请更新第二季度 OKR 进展和月度复盘，本周安排管理层 1:1。",
+        worker.store.list_reviewed_reply_attempts(limit=50),
+        limit=3,
+    )
+
+    assert [example.id for example in examples] == [okr_attempt_id]
+
+
 def test_group_name_reference_without_direct_at_does_not_queue(
     tmp_path: Path, monkeypatch
 ):
