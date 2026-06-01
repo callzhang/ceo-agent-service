@@ -17,21 +17,20 @@ operating profile for:
 - what the agent must not claim or decide
 
 The first implementation should use the profile as a stable local project asset.
-The Nuwa-style skill is a derived artifact for manual agent use, not the runtime
-decision path for automated DingTalk replies.
+Nvwa is a generation-time distillation dependency, not the runtime decision path
+for automated DingTalk replies.
 
 ## Confirmed Scope
 
-Use approach 1: generate the service-ready profile first, then derive a Alex
-skill from the profile.
+Use approach 1: generate the service-ready profile from evidence with Nvwa
+review.
 
-The first version should produce both:
+The current version should produce:
 
 - a `ceo-agent-service` profile used by the local auto-reply runtime
-- a Nuwa-style Alex skill that can later be installed under
-  `~/.agents/skills/work-perspective/`
+- an evidence index that lets Nvwa and reviewers trace profile claims
 
-Runtime auto-reply should not directly invoke Nuwa or the global skill. It should
+Runtime auto-reply should not directly invoke Nvwa or a global skill. It should
 read the repo-local profile.
 
 ## Inputs
@@ -155,15 +154,12 @@ Committed project assets:
 
 ```text
 profiles/work_profile.md
-profiles/work_profile.json
-profiles/work-skill/SKILL.md
 ```
 
 Ignored runtime evidence data:
 
 ```text
 data/profile-evidence/evidence_index.jsonl
-data/profile-evidence/dingtalk_kb_cache/
 ```
 
 Do not use `style_profile.md` for this new work profile. That name belongs to
@@ -185,27 +181,9 @@ include:
 - boundary framework
 - honest boundaries
 
-`profiles/work_profile.json` should be structured for tests and future
-evals. Each rule should include:
-
-- `id`
-- `title`
-- `category`
-- `scenarios`
-- `trigger`
-- `do`
-- `dont`
-- `confidence`
-- `evidence_ids`
-
-`profiles/work-skill/SKILL.md` should be a Nuwa-style derived skill for manual
-use. It should state that it is Alex's work perspective, not Alex himself. It
-must not authorize the agent to make real-world commitments, execute approvals,
-or make final personnel judgments.
-
 ## Runtime Integration
 
-`ceo-agent-service` should use the repo-local profile, not Nuwa directly.
+`ceo-agent-service` should use the repo-local profile, not Nvwa directly.
 
 Add a prompt rule equivalent to:
 
@@ -264,11 +242,10 @@ Alex should review:
 The first implementation is complete when:
 
 - `profiles/work_profile.md` exists
-- `profiles/work_profile.json` exists
-- `profiles/work-skill/SKILL.md` exists
-- `data/profile-evidence/evidence_index.jsonl` and
-  `data/profile-evidence/dingtalk_kb_cache/` are produced or expected as ignored
-  runtime data
+- `data/profile-evidence/evidence_index.jsonl` is produced as ignored evidence
+  data
+- no `profiles/work_profile.json`, `profiles/work-skill/SKILL.md`, or
+  `data/profile-evidence/dingtalk_kb_cache/` is produced by the builder
 - prompt integration reads the profile when present
 - profile absence keeps existing behavior unchanged
 - tests cover prompt integration and ignored evidence data boundaries

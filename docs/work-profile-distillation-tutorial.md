@@ -8,6 +8,8 @@ profile that the auto-reply worker can use. The profile should capture judgment
 order, follow-up behavior, boundaries, and expression style. It should not
 copy raw private evidence into committed files.
 
+For full profile distillation, this workflow depends on the local Nvwa persona skill. The repository command prepares evidence and writes the runtime profile file; the Nvwa step reviews the evidence and rewrites the profile so it reflects the user's real work judgment rather than a static template.
+
 ## Inputs
 
 The profile builder uses these evidence sources:
@@ -17,8 +19,22 @@ The profile builder uses these evidence sources:
 - `/Users/principal/Documents/memory`: local authored or curated work documents.
 - DingTalk knowledge base documents read through `dws` in read-only mode.
 
-Runtime evidence and online document cache are written under
-`data/profile-evidence/`, which is ignored by Git.
+Runtime evidence is written under `data/profile-evidence/`, which is ignored by Git.
+
+## Prerequisite: Nvwa Skill
+
+Install the Nvwa persona skill before rebuilding a reviewed work profile:
+
+```bash
+test -f ~/.agents/skills/nvwa/SKILL.md
+```
+
+Expected path:
+
+```text
+~/.agents/skills/nvwa/SKILL.md
+```
+
 
 ## Step 1: Refresh The Style Corpus
 
@@ -55,8 +71,8 @@ By default this command:
 - appends DingTalk sent-message samples
 - scans local work documents
 - reads DingTalk knowledge base documents through `dws`
-- writes profile evidence under `data/profile-evidence/`
-- writes committed profile assets under `profiles/`
+- writes `data/profile-evidence/evidence_index.jsonl`
+- writes `profiles/work_profile.md`
 
 Use these flags when you need a narrower run:
 
@@ -72,13 +88,24 @@ The committed outputs are:
 
 ```text
 profiles/work_profile.md
-profiles/work_profile.json
-profiles/work-skill/SKILL.md
 ```
 
-The runtime consumes `profiles/work_profile.md` directly. The derived
-skill is for manual agent use only; the auto-reply worker should not depend on a
-global installed skill.
+The local evidence output is ignored by Git:
+
+```text
+data/profile-evidence/evidence_index.jsonl
+```
+
+The runtime consumes `profiles/work_profile.md` directly. The builder should not
+generate `profiles/work_profile.json`, `profiles/work-skill/SKILL.md`, or a
+`data/profile-evidence/dingtalk_kb_cache/` directory.
+
+## Step 3: Review With Nvwa
+
+After `build-work-profile` prepares the evidence and runtime profile file, run a
+Codex session with the Nvwa skill loaded and ask it to rewrite only
+`profiles/work_profile.md` from `data/profile-evidence/evidence_index.jsonl`,
+`corpus/style_corpus.csv`, and `profiles/work_profile.md`.
 
 ## Review Checklist
 
@@ -88,7 +115,7 @@ Before using a regenerated profile, check:
   style, scenario rules, and boundaries.
 - The profile does not expose raw sensitive excerpts, local private paths, tokens,
   or DingTalk cache contents.
-- Each JSON rule has evidence ids and the evidence ids exist in
+- Important claims can be traced to evidence ids in
   `data/profile-evidence/evidence_index.jsonl`.
 - The profile does not authorize the agent to make final approvals, personnel
   decisions, financial commitments, or customer-critical decisions without

@@ -1,6 +1,9 @@
 import json
+from pathlib import Path
 
 from app.dingtalk_models import DingTalkConversation, DingTalkMessage
+from app.config import env_file_path
+from app.config import profile_evidence_dir
 from app.config import repo_root
 from app.config import work_profile_path
 from app.developer_prompt import (
@@ -96,6 +99,16 @@ def test_work_profile_path_default_is_not_user_specific(monkeypatch):
     monkeypatch.delenv("CEO_WORK_PROFILE_PATH", raising=False)
 
     assert work_profile_path() == repo_root() / "profiles" / "work_profile.md"
+
+
+def test_config_paths_expand_home(monkeypatch):
+    monkeypatch.setenv("CEO_ENV_FILE", "~/.ceo-agent-test.env")
+    monkeypatch.setenv("CEO_WORK_PROFILE_PATH", "~/profile.md")
+    monkeypatch.setenv("CEO_PROFILE_EVIDENCE_DIR", "~/profile-evidence")
+
+    assert env_file_path() == Path.home() / ".ceo-agent-test.env"
+    assert work_profile_path() == Path.home() / "profile.md"
+    assert profile_evidence_dir() == Path.home() / "profile-evidence"
 
 
 def test_work_profile_instruction_uses_configured_principal_name(
@@ -493,8 +506,9 @@ def test_thread_prompt_injects_work_profile_without_exposing_path(monkeypatch):
     )
     assert "不要再尝试读取 profile 文件路径" in prompt
     assert "Profile 内容:" in prompt
-    assert "# Alex Work Profile" in prompt
-    assert "Core Judgment Order" in prompt
+    assert "# Work Profile" in prompt
+    assert "This profile is a runtime work-judgment profile" in prompt
+    assert "Core Operating Loop" in prompt
 
 
 def test_thread_prompt_requires_oa_review_principles_for_approval_messages():

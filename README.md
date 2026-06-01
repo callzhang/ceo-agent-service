@@ -270,7 +270,9 @@ cd /path/to/ceo-agent-service
   --corpus-dir /path/to/corpus
 ```
 
-工作画像生成流程见 [docs/work-profile-distillation-tutorial.md](docs/work-profile-distillation-tutorial.md)。
+工作画像生成依赖本地 Nvwa persona skill 做证据归纳和人工复核。安装与数据准备见
+[docs/nvwa-work-profile-installation.md](docs/nvwa-work-profile-installation.md)，生成流程见
+[docs/work-profile-distillation-tutorial.md](docs/work-profile-distillation-tutorial.md)。
 
 ## 项目结构
 
