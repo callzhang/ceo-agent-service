@@ -4,6 +4,7 @@ import re
 from pathlib import Path
 from typing import Any
 
+import jieba.analyse
 from pydantic import BaseModel
 
 from app.config import (
@@ -189,11 +190,23 @@ def retrieve_similar_examples(
     records: list[CorpusRecord],
     limit: int = 5,
 ) -> list[CorpusRecord]:
-    query_chars = set(query)
-    scored = []
+    query_keywords = extract_retrieval_keywords(query)
+    if not query_keywords:
+        return []
+
+    scored: list[tuple[float, CorpusRecord]] = []
     for record in records:
-        haystack_chars = set(record.context + record.principal_reply)
-        score = len(query_chars & haystack_chars)
+        context_keywords = extract_retrieval_keywords(record.context)
+        reply_keywords = extract_retrieval_keywords(record.principal_reply)
+        score = _weighted_keyword_overlap(
+            query_keywords,
+            context_keywords,
+            field_weight=2.0,
+        ) + _weighted_keyword_overlap(
+            query_keywords,
+            reply_keywords,
+            field_weight=1.0,
+        )
         if score > 0:
             scored.append((score, record))
 
@@ -201,8 +214,36 @@ def retrieve_similar_examples(
     if not scored:
         return []
 
-    minimum_score = max(3, int(scored[0][0] * 0.35))
+    minimum_score = scored[0][0] * 0.35
     return [record for score, record in scored[:limit] if score >= minimum_score]
+
+
+def extract_retrieval_keywords(text: str, limit: int = 30) -> dict[str, float]:
+    normalized = MEDIA_OR_LINK_PATTERN.sub(" ", text)
+    normalized = " ".join(normalized.split())
+    if not normalized:
+        return {}
+    return {
+        keyword: min(weight, 1.0)
+        for keyword, weight in jieba.analyse.extract_tags(
+            normalized,
+            topK=limit,
+            withWeight=True,
+        )
+    }
+
+
+def _weighted_keyword_overlap(
+    query_keywords: dict[str, float],
+    candidate_keywords: dict[str, float],
+    *,
+    field_weight: float,
+) -> float:
+    return sum(
+        query_weight * candidate_keywords[keyword] * field_weight
+        for keyword, query_weight in query_keywords.items()
+        if keyword in candidate_keywords
+    )
 
 
 def build_dingtalk_records_from_sender_payload(

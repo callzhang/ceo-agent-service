@@ -7,6 +7,7 @@ from app.corpus import (
     build_style_profile,
     count_information_units,
     extract_minutes_records,
+    extract_retrieval_keywords,
     is_conversational_dingtalk_text,
     is_informative_reply,
     is_plain_text_dingtalk_message,
@@ -198,7 +199,7 @@ def test_build_style_profile_mentions_direct_business_tone():
     assert "业务" in profile
 
 
-def test_retrieve_similar_examples_by_highest_character_overlap():
+def test_retrieve_similar_examples_by_keyword_overlap():
     records = [
         CorpusRecord(
             source_type="dingtalk",
@@ -227,6 +228,52 @@ def test_retrieve_similar_examples_by_highest_character_overlap():
     examples = retrieve_similar_examples("这个项目排期要不要改", records, limit=1)
 
     assert examples[0].message_id == "msg-1"
+
+
+def test_retrieve_similar_examples_does_not_let_repeated_name_dominate_keywords():
+    records = [
+        CorpusRecord(
+            source_type="dingtalk",
+            source_title="闲聊",
+            timestamp="2026-05-13",
+            context="Claire 今天在吗",
+            principal_reply="今天先不展开，等材料齐了再看。",
+            message_id="msg-name",
+            conversation_id="cid-1",
+            speaker_name="明哥",
+            metadata_json="{}",
+        ),
+        CorpusRecord(
+            source_type="dingtalk",
+            source_title="项目",
+            timestamp="2026-05-13",
+            context="项目排期负责人和交付时间怎么处理",
+            principal_reply="先定优先级，再确认负责人、交付时间和验收标准。",
+            message_id="msg-project",
+            conversation_id="cid-2",
+            speaker_name="明哥",
+            metadata_json="{}",
+        ),
+    ]
+
+    examples = retrieve_similar_examples(
+        "Claire Claire Claire 这个项目排期怎么处理，负责人和交付时间怎么定",
+        records,
+        limit=1,
+    )
+
+    assert examples[0].message_id == "msg-project"
+
+
+def test_extract_retrieval_keywords_ignores_media_links():
+    keywords = extract_retrieval_keywords(
+        "请看这个排期 https://example.com/a/b/c [图片] 负责人怎么安排？"
+    )
+
+    assert "排期" in keywords
+    assert "负责人" in keywords
+    assert "https" not in keywords
+    assert "图片" not in keywords
 
 
 def test_information_units_ignore_media_links_and_count_chinese_or_words():
