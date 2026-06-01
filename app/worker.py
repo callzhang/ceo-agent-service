@@ -59,7 +59,12 @@ from app.org_cache import (
 )
 from app.permission import PermissionAction, PermissionGate
 from app.prompt import LinkedDocumentContext, build_turn_prompt
-from app.store import AutoReplyStore, ReplyAttempt, ReplyTask
+from app.store import (
+    FAST_PATH_UNREAD_BACKOFF_TASK_ERROR,
+    AutoReplyStore,
+    ReplyAttempt,
+    ReplyTask,
+)
 
 HANDOFF_ACK = handoff_ack()
 # Historical auto-ack marker. Keep filtering it from context, but do not send
@@ -145,7 +150,6 @@ PDF_TEXT_PAGE_LIMIT = 30
 DWS_UPGRADE_CHECKED_DATE_STATE_KEY = "dws_upgrade_checked_date"
 MESSAGE_RECOVERY_CHECKED_AT_STATE_KEY = "message_recovery_checked_at"
 MESSAGE_FAST_PATH_CHECKED_AT_STATE_KEY = "message_fast_path_checked_at"
-MESSAGE_FAST_PATH_UNREAD_BACKOFF_STATE_PREFIX = "message_fast_path_unread_backoff:"
 ORG_CACHE_REFRESH_INTERVAL = timedelta(days=7)
 AITABLE_TABLE_PREVIEW_LIMIT = 5
 AITABLE_RECORD_PREVIEW_LIMIT = 10
@@ -224,17 +228,12 @@ class DingTalkAutoReplyWorker:
         original_unread_conversation_ids = {
             conversation.open_conversation_id for conversation in conversations
         }
-        delayed_unread_conversation_ids: set[str] = set()
+        self._skip_due_fast_path_backoff_tasks_for_cleared_unread(
+            original_unread_conversation_ids,
+            fast_path_checked_at,
+        )
         if not recovery_due:
             conversations = self._conversations_due_for_fast_path(conversations)
-        else:
-            conversations = self._conversations_after_fast_path_unread_backoff(
-                conversations
-            )
-        if FAST_PATH_UNREAD_BACKOFF > timedelta(0):
-            delayed_unread_conversation_ids = original_unread_conversation_ids - {
-                conversation.open_conversation_id for conversation in conversations
-            }
         unread_conversation_ids = {
             conversation.open_conversation_id for conversation in conversations
         }
@@ -244,12 +243,6 @@ class DingTalkAutoReplyWorker:
             mentioned_messages,
             broadcast_messages,
         )
-        if delayed_unread_conversation_ids:
-            addressed_messages = {
-                conversation_id: messages
-                for conversation_id, messages in addressed_messages.items()
-                if conversation_id not in delayed_unread_conversation_ids
-            }
         conversations = self._conversations_with_mentions(
             conversations,
             addressed_messages,
@@ -344,7 +337,23 @@ class DingTalkAutoReplyWorker:
                 new_messages,
             )
             for message in trigger_messages:
-                if self._enqueue_reply_task(conversation, message):
+                available_at = ""
+                error = ""
+                if (
+                    FAST_PATH_UNREAD_BACKOFF > timedelta(0)
+                    and not recovery_due
+                    and conversation.open_conversation_id in unread_conversation_ids
+                ):
+                    available_at = self._sqlite_timestamp(
+                        fast_path_checked_at + FAST_PATH_UNREAD_BACKOFF
+                    )
+                    error = FAST_PATH_UNREAD_BACKOFF_TASK_ERROR
+                if self._enqueue_reply_task(
+                    conversation,
+                    message,
+                    available_at=available_at,
+                    error=error,
+                ):
                     queued_tasks += 1
                 if max_tasks is not None and queued_tasks >= max_tasks:
                     self.store.set_service_state(
@@ -444,103 +453,46 @@ class DingTalkAutoReplyWorker:
         self,
         conversations: list[DingTalkConversation],
     ) -> list[DingTalkConversation]:
-        if FAST_PATH_UNREAD_BACKOFF <= timedelta(0):
-            return self._conversations_updated_since_fast_path_check(conversations)
-        return self._conversations_after_fast_path_unread_backoff(conversations)
+        return self._conversations_updated_since_fast_path_check(conversations)
 
-    def _conversations_after_fast_path_unread_backoff(
+    def _skip_due_fast_path_backoff_tasks_for_cleared_unread(
         self,
-        conversations: list[DingTalkConversation],
-    ) -> list[DingTalkConversation]:
+        unread_conversation_ids: set[str],
+        checked_at: datetime,
+    ) -> None:
         if FAST_PATH_UNREAD_BACKOFF <= timedelta(0):
-            return conversations
-        return [
-            conversation
-            for conversation in conversations
-            if self._fast_path_unread_backoff_ready(conversation)
-        ]
-
-    def _fast_path_unread_backoff_ready(
-        self,
-        conversation: DingTalkConversation,
-    ) -> bool:
-        now = self._now().astimezone(timezone.utc)
-        key = self._fast_path_unread_backoff_state_key(conversation)
-        signature = self._fast_path_unread_signature(conversation)
-        raw_state = self.store.get_service_state(key)
-        first_seen_at = self._fast_path_unread_backoff_first_seen_at(
-            raw_state,
-            signature,
-        )
-        if first_seen_at is None:
-            self.store.set_service_state(
-                key,
-                json.dumps(
-                    {
-                        "signature": signature,
-                        "first_seen_at": now.isoformat(),
-                    },
-                    ensure_ascii=False,
-                    sort_keys=True,
+            return
+        for task in self.store.list_due_fast_path_backoff_tasks(
+            self._sqlite_timestamp(checked_at)
+        ):
+            if task.conversation_id in unread_conversation_ids:
+                continue
+            attempt_id = self.store.record_reply_attempt_for_trigger(
+                conversation_id=task.conversation_id,
+                conversation_title=task.conversation_title,
+                trigger_message_id=task.trigger_message_id,
+                trigger_sender=task.trigger_sender,
+                trigger_text=task.trigger_text,
+                action=CodexAction.NO_REPLY.value,
+                sensitivity_kind="general",
+                codex_reason="fast_path_unread_cleared_during_backoff",
+                audit_summary=(
+                    "快路径首次发现未读后已等待；等待窗口结束时会话不再未读，"
+                    "视为本人已打开或处理，不自动回复。"
                 ),
             )
-            return False
-        if now - first_seen_at.astimezone(timezone.utc) < FAST_PATH_UNREAD_BACKOFF:
-            return False
-        self.store.set_service_state(
-            key,
-            json.dumps(
-                {
-                    "signature": signature,
-                    "first_seen_at": now.isoformat(),
-                },
-                ensure_ascii=False,
-                sort_keys=True,
-            ),
-        )
-        return True
+            self.store.update_reply_attempt(
+                attempt_id,
+                send_status="skipped",
+                send_error="no_reply",
+            )
+            if not self.dry_run:
+                self.store.mark_seen(task.trigger_message_id, task.conversation_id)
+            self.store.complete_reply_task(task.id)
 
     @staticmethod
-    def _fast_path_unread_backoff_first_seen_at(
-        raw_state: str | None,
-        signature: str,
-    ) -> datetime | None:
-        if not raw_state:
-            return None
-        try:
-            state = json.loads(raw_state)
-        except json.JSONDecodeError:
-            return None
-        if state.get("signature") != signature:
-            return None
-        first_seen_at = state.get("first_seen_at")
-        if not isinstance(first_seen_at, str):
-            return None
-        try:
-            parsed = datetime.fromisoformat(first_seen_at.replace("Z", "+00:00"))
-        except ValueError:
-            return None
-        if parsed.tzinfo is None:
-            return parsed.replace(tzinfo=timezone.utc)
-        return parsed
-
-    @staticmethod
-    def _fast_path_unread_backoff_state_key(
-        conversation: DingTalkConversation,
-    ) -> str:
-        return (
-            MESSAGE_FAST_PATH_UNREAD_BACKOFF_STATE_PREFIX
-            + conversation.open_conversation_id
-        )
-
-    @staticmethod
-    def _fast_path_unread_signature(conversation: DingTalkConversation) -> str:
-        return ":".join(
-            [
-                str(conversation.unread_point),
-                str(conversation.last_message_create_at or ""),
-            ]
-        )
+    def _sqlite_timestamp(value: datetime) -> str:
+        return value.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
     def _service_state_datetime(self, key: str) -> datetime | None:
         value = self.store.get_service_state(key)
@@ -708,7 +660,10 @@ class DingTalkAutoReplyWorker:
                 title="CEO task retrying stale tasks",
                 message=f"requeued {reset_count} stale task(s)",
             )
-        for task in self.store.claim_reply_tasks(limit):
+        for task in self.store.claim_reply_tasks(
+            limit,
+            now=self._sqlite_timestamp(self._now()),
+        ):
             conversation = DingTalkConversation(
                 open_conversation_id=task.conversation_id,
                 title=task.conversation_title,
@@ -817,6 +772,9 @@ class DingTalkAutoReplyWorker:
         self,
         conversation: DingTalkConversation,
         trigger: DingTalkMessage,
+        *,
+        available_at: str = "",
+        error: str = "",
     ) -> bool:
         return self.store.enqueue_reply_task(
             conversation_id=conversation.open_conversation_id,
@@ -827,6 +785,8 @@ class DingTalkAutoReplyWorker:
             trigger_sender=trigger.sender_name,
             trigger_text=trigger.content,
             trigger_message_json=trigger.model_dump_json(),
+            available_at=available_at,
+            error=error,
         )
 
     @staticmethod

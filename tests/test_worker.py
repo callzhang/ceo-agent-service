@@ -965,12 +965,11 @@ def test_produce_once_fast_path_reads_only_unread_messages_without_recent_contex
     assert worker.store.count_reply_tasks(status="pending") == 1
 
 
-def test_produce_once_fast_path_waits_before_reading_unread_messages(
+def test_produce_once_fast_path_enqueues_pending_before_backoff(
     tmp_path: Path, monkeypatch
 ):
     trigger = message("@Alex Chen(明哥) 这个怎么处理？", message_id="msg-unread")
     dws = FakeDws([conversation()], {"cid-1": [trigger]})
-    dws.mentioned_messages = {"cid-1": [trigger]}
     codex = FakeCodex(
         CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该调用")
     )
@@ -988,22 +987,22 @@ def test_produce_once_fast_path_waits_before_reading_unread_messages(
 
     queued = worker.produce_once()
 
-    assert queued == 0
-    assert dws.unread_message_reads == []
-    assert worker.store.count_reply_tasks(status="pending") == 0
-    state = worker.store.get_service_state(
-        worker._fast_path_unread_backoff_state_key(conversation())
-    )
-    assert state is not None
-    assert json.loads(state)["signature"] == "1:"
+    tasks = worker.store.list_reply_tasks(statuses=("pending",), limit=10)
+    assert queued == 1
+    assert dws.unread_message_reads == ["cid-1"]
+    assert len(tasks) == 1
+    assert tasks[0].trigger_message_id == "msg-unread"
+    assert tasks[0].available_at == "2026-05-13 17:05:00"
+    assert tasks[0].error == "waiting_fast_path_unread_backoff"
+    assert worker.consume_once() == 0
+    assert worker.store.count_reply_tasks(status="pending") == 1
 
 
-def test_produce_once_fast_path_reads_unread_messages_after_backoff(
+def test_produce_once_fast_path_task_is_claimable_after_backoff(
     tmp_path: Path, monkeypatch
 ):
     trigger = message("@Alex Chen(明哥) 这个怎么处理？", message_id="msg-unread")
-    conv = conversation()
-    dws = FakeDws([conv], {"cid-1": [trigger]})
+    dws = FakeDws([conversation()], {"cid-1": [trigger]})
     codex = FakeCodex(
         CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该调用")
     )
@@ -1018,23 +1017,22 @@ def test_produce_once_fast_path_reads_unread_messages_after_backoff(
         "message_recovery_checked_at",
         "2026-05-13T16:30:00+00:00",
     )
-    worker.store.set_service_state(
-        worker._fast_path_unread_backoff_state_key(conv),
-        json.dumps(
-            {
-                "signature": worker._fast_path_unread_signature(conv),
-                "first_seen_at": (
-                    fixed_worker_now() - timedelta(minutes=6)
-                ).isoformat(),
-            }
-        ),
+    assert worker.produce_once() == 1
+
+    claimed_before_backoff = worker.store.claim_reply_tasks(
+        limit=1,
+        now="2026-05-13 17:04:59",
+    )
+    claimed_after_backoff = worker.store.claim_reply_tasks(
+        limit=1,
+        now="2026-05-13 17:05:00",
     )
 
-    queued = worker.produce_once()
-
-    assert queued == 1
-    assert dws.unread_message_reads == ["cid-1"]
-    assert worker.store.count_reply_tasks(status="pending") == 1
+    assert claimed_before_backoff == []
+    assert len(claimed_after_backoff) == 1
+    assert claimed_after_backoff[0].status == "processing"
+    assert claimed_after_backoff[0].error == ""
+    assert claimed_after_backoff[0].available_at == ""
 
 
 def test_produce_once_fast_path_does_not_queue_when_unread_clears_during_backoff(
@@ -1057,12 +1055,19 @@ def test_produce_once_fast_path_does_not_queue_when_unread_clears_during_backoff
         "2026-05-13T16:30:00+00:00",
     )
 
-    assert worker.produce_once() == 0
+    assert worker.produce_once() == 1
     dws.conversations = []
+    worker.now_provider = lambda: fixed_worker_now() + timedelta(minutes=6)
     assert worker.produce_once() == 0
 
-    assert dws.unread_message_reads == []
+    attempts = worker.store.list_reply_attempts(limit=10)
+    assert dws.unread_message_reads == ["cid-1"]
     assert worker.store.count_reply_tasks(status="pending") == 0
+    assert worker.store.count_reply_tasks(status="done") == 1
+    assert len(attempts) == 1
+    assert attempts[0].action == "no_reply"
+    assert attempts[0].send_status == "skipped"
+    assert attempts[0].codex_reason == "fast_path_unread_cleared_during_backoff"
 
 
 def test_produce_once_fast_path_skips_unread_conversations_unchanged_since_last_check(

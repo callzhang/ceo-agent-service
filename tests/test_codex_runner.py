@@ -304,8 +304,8 @@ def test_codex_developer_instructions_inject_work_profile_content_without_path(
         "/Users/principal/Documents/Projects/ceo-agent-service/profiles/work_profile.md"
         not in instructions
     )
-    assert "# Alex Work Profile" in instructions
-    assert "Core Judgment Order" in instructions
+    assert "# Work Profile" in instructions
+    assert "Core Operating Loop" in instructions
     assert "不要再尝试读取 profile 文件路径" in instructions
     assert "心智模型、决策启发式、表达DNA" in instructions
     assert "不能覆盖既有硬规则" in instructions

@@ -4,6 +4,8 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
+FAST_PATH_UNREAD_BACKOFF_TASK_ERROR = "waiting_fast_path_unread_backoff"
+
 
 class OrgUserProfile(BaseModel):
     user_id: str
@@ -95,6 +97,7 @@ class ReplyTask(BaseModel):
     trigger_sender: str
     trigger_text: str
     trigger_message_json: str = "{}"
+    available_at: str = ""
     status: str
     attempts: int
     locked_at: str | None = None
@@ -200,6 +203,7 @@ class AutoReplyStore:
                     trigger_sender text not null,
                     trigger_text text not null,
                     trigger_message_json text not null default '{}',
+                    available_at text not null default '',
                     status text not null default 'pending',
                     attempts integer not null default 0,
                     locked_at text,
@@ -312,10 +316,14 @@ class AutoReplyStore:
                 row["name"]
                 for row in db.execute("pragma table_info(reply_tasks)").fetchall()
             }
-            if "trigger_message_json" not in reply_task_columns:
-                db.execute(
-                    "alter table reply_tasks add column trigger_message_json text not null default '{}'"
-                )
+            for column, definition in (
+                ("trigger_message_json", "text not null default '{}'"),
+                ("available_at", "text not null default ''"),
+            ):
+                if column not in reply_task_columns:
+                    db.execute(
+                        f"alter table reply_tasks add column {column} {definition}"
+                    )
             org_user_profile_columns = {
                 row["name"]
                 for row in db.execute("pragma table_info(org_user_profiles)").fetchall()
@@ -344,6 +352,7 @@ class AutoReplyStore:
             trigger_sender=row["trigger_sender"],
             trigger_text=row["trigger_text"],
             trigger_message_json=row["trigger_message_json"],
+            available_at=row["available_at"],
             status=row["status"],
             attempts=row["attempts"],
             locked_at=row["locked_at"],
@@ -363,6 +372,8 @@ class AutoReplyStore:
         trigger_sender: str,
         trigger_text: str,
         trigger_message_json: str = "{}",
+        available_at: str = "",
+        error: str = "",
     ) -> bool:
         with self._connect() as db:
             cursor = db.execute(
@@ -375,9 +386,11 @@ class AutoReplyStore:
                     trigger_create_time,
                     trigger_sender,
                     trigger_text,
-                    trigger_message_json
+                    trigger_message_json,
+                    available_at,
+                    error
                 )
-                values (?, ?, ?, ?, ?, ?, ?, ?)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     conversation_id,
@@ -388,24 +401,32 @@ class AutoReplyStore:
                     trigger_sender,
                     trigger_text,
                     trigger_message_json,
+                    available_at,
+                    error,
                 ),
             )
             return cursor.rowcount == 1
 
-    def claim_reply_tasks(self, limit: int) -> list[ReplyTask]:
+    def claim_reply_tasks(self, limit: int, now: str | None = None) -> list[ReplyTask]:
         if limit <= 0:
             return []
         with self._connect() as db:
             db.execute("begin immediate")
+            now_expression = "current_timestamp" if now is None else "?"
+            args: list[str | int] = []
+            if now is not None:
+                args.append(now)
+            args.append(limit)
             rows = db.execute(
-                """
+                f"""
                 select *
                 from reply_tasks
                 where status='pending'
+                  and (available_at='' or available_at <= {now_expression})
                 order by id
                 limit ?
                 """,
-                (limit,),
+                args,
             ).fetchall()
             task_ids = [row["id"] for row in rows]
             if not task_ids:
@@ -417,10 +438,15 @@ class AutoReplyStore:
                 set status='processing',
                     attempts=attempts + 1,
                     locked_at=current_timestamp,
+                    available_at='',
+                    error=case
+                        when error=? then ''
+                        else error
+                    end,
                     updated_at=current_timestamp
                 where id in ({placeholders})
                 """,
-                task_ids,
+                [FAST_PATH_UNREAD_BACKOFF_TASK_ERROR, *task_ids],
             )
             claimed_rows = db.execute(
                 f"""
@@ -478,6 +504,7 @@ class AutoReplyStore:
                 update reply_tasks
                 set status='done',
                     error='',
+                    available_at='',
                     updated_at=current_timestamp
                 where id=?
                 """,
@@ -494,6 +521,7 @@ class AutoReplyStore:
                 set status='done',
                     locked_at=null,
                     error='',
+                    available_at='',
                     updated_at=current_timestamp
                 where conversation_id=?
                   and trigger_message_id=?
@@ -509,6 +537,7 @@ class AutoReplyStore:
                 update reply_tasks
                 set status='failed',
                     error=?,
+                    available_at='',
                     updated_at=current_timestamp
                 where id=?
                 """,
@@ -522,6 +551,7 @@ class AutoReplyStore:
                 update reply_tasks
                 set status='pending',
                     locked_at=null,
+                    available_at='',
                     error=?,
                     updated_at=current_timestamp
                 where id=?
@@ -537,6 +567,7 @@ class AutoReplyStore:
                 set status='pending',
                     attempts=max(attempts - 1, 0),
                     locked_at=null,
+                    available_at='',
                     error=?,
                     updated_at=current_timestamp
                 where id=?
@@ -546,6 +577,22 @@ class AutoReplyStore:
 
     def defer_reply_task_for_authorization(self, task_id: int, error: str) -> None:
         self.defer_reply_task(task_id, error)
+
+    def list_due_fast_path_backoff_tasks(self, now: str) -> list[ReplyTask]:
+        with self._connect() as db:
+            rows = db.execute(
+                """
+                select *
+                from reply_tasks
+                where status='pending'
+                  and error=?
+                  and available_at!=''
+                  and available_at <= ?
+                order by id
+                """,
+                (FAST_PATH_UNREAD_BACKOFF_TASK_ERROR, now),
+            ).fetchall()
+            return [self._reply_task_from_row(row) for row in rows]
 
     def count_reply_tasks(self, status: str | None = None) -> int:
         with self._connect() as db:

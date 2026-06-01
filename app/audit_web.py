@@ -64,6 +64,7 @@ from app.dingtalk_models import (
 )
 from app.dws_client import DwsClient
 from app.store import (
+    FAST_PATH_UNREAD_BACKOFF_TASK_ERROR,
     AutoReplyStore,
     ReplyAttempt,
     ReplyError,
@@ -839,20 +840,21 @@ def _config_logic_sections() -> list[tuple[str, list[tuple[str, str]]]]:
         (
             "入口",
             "每次 producer 运行都会调用 list_unread_conversations(count=50)。"
-            "快路径首次扫描到未读会话后，会先等待 "
-            f"{_duration_label(fast_path_unread_backoff_duration())}，再重新查看；"
+            "快路径首次扫描到未读会话后，会读取未读消息并写入 reply_tasks/pending，"
+            f"但延迟 {_duration_label(fast_path_unread_backoff_duration())} 后才允许 consumer 领取；"
             "慢路径未到点时，会过滤早于 message_fast_path_checked_at 的会话。",
         ),
         (
             "读取",
-            "未读会话等待窗口结束后才使用 read_unread_messages。producer 也会调用 "
+            "快路径首次触发时使用 read_unread_messages 取得可审计的 trigger。producer 也会调用 "
             f"read_mentioned_messages 和广播 mention 查询，所以即使未读状态不完整，"
             f"也能找到 {mention_example}、{broadcast_example} 这类点名或广播消息。",
         ),
         (
             "输出",
             "候选消息会经过过滤、按 seen_messages 去重、检查过期窗口；"
-            "之后要么作为通知/系统消息跳过，要么进入 reply_tasks。",
+            "之后要么作为通知/系统消息跳过，要么进入 reply_tasks。"
+            "等待窗口结束时如果会话已不再未读，会记录 skipped；仍未读则进入 processing。",
         ),
     ]
     slow_path_rows = [
@@ -1002,7 +1004,7 @@ def render_attempt_list(store: AutoReplyStore, limit: int | None = None) -> str:
 def _reply_task_item(task: ReplyTask) -> str:
     error_html = (
         f"<div class=\"attempt-foot\"><span class=\"attempt-warning\">{escape(task.error)}</span></div>"
-        if task.error
+        if task.error and task.error != FAST_PATH_UNREAD_BACKOFF_TASK_ERROR
         else ""
     )
     return (
@@ -1030,6 +1032,8 @@ def _reply_task_item(task: ReplyTask) -> str:
 
 def _reply_task_progress_text(task: ReplyTask) -> str:
     if task.status == "pending":
+        if task.error == FAST_PATH_UNREAD_BACKOFF_TASK_ERROR:
+            return f"快路径已触发，等待到 {task.available_at} 后确认是否仍需处理"
         return "已进入处理队列，等待分身生成回复"
     if task.status == "processing":
         return "分身正在处理"

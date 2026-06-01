@@ -99,12 +99,15 @@ from the same conversation is used to decide whether the principal already gave 
 reply; rendered files, images, cards, calendar invites, and processing
 acknowledgements do not count as a real reply.
 
-Fast-path unread discovery has a short human-reply backoff before it reads
-message contents or creates a reply task. When the producer first sees an unread
-conversation, it records that unread signature and waits for
-`FAST_PATH_UNREAD_BACKOFF` before checking it again. If the principal has opened
-or replied to the conversation during that window and it is no longer unread, no
-task enters the consumer queue.
+Fast-path unread discovery has a short human-reply backoff before the consumer
+can process a reply task. When the producer first sees an unread conversation,
+it reads the unread messages, records the trigger in `reply_tasks` as `pending`,
+and sets the task's availability to `FAST_PATH_UNREAD_BACKOFF` later. This makes
+the pending item visible in history immediately without letting the consumer
+reply while the principal may still be handling it. After the window, if the
+conversation is no longer unread, the task is completed and a `skipped` no-reply
+attempt is recorded. If it is still unread, the consumer can claim the task and
+move it to `processing`.
 
 ## Consumer retry behavior
 
