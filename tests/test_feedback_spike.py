@@ -70,8 +70,8 @@ def test_build_feedback_link_text_contains_two_feedback_urls():
 
     assert text == (
         "可以，先按这个方向试一下。\n\n"
-        "反馈：[👍 赞](https://feedback.example.com/up)"
-        "｜[👎 踩](https://feedback.example.com/down)"
+        "反馈：[👍](https://feedback.example.com/up)"
+        "｜[👎](https://feedback.example.com/down)"
     )
 
 
@@ -91,8 +91,8 @@ def test_extract_feedback_link_context_handles_emoji_feedback_labels():
 
 def test_extract_feedback_link_context_handles_markdown_links():
     context = extract_feedback_link_context(
-        "反馈：[👍 赞](https://feedback.example.com/api/dingtalk-feedback-spike"
-        "?feedback_token=spike_1_abcd&rating=up)｜[👎 踩](https://feedback.example.com"
+        "反馈：[👍](https://feedback.example.com/api/dingtalk-feedback-spike"
+        "?feedback_token=spike_1_abcd&rating=up)｜[👎](https://feedback.example.com"
         "/api/dingtalk-feedback-spike?feedback_token=spike_1_abcd&rating=down)"
     )
 

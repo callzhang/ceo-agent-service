@@ -84,7 +84,7 @@ def build_feedback_link_text(
     stripped_reply = reply_text.strip()
     if not stripped_reply:
         raise ValueError("reply text is required")
-    return f"{stripped_reply}\n\n反馈：[👍 赞]({up_url})｜[👎 踩]({down_url})"
+    return f"{stripped_reply}\n\n反馈：[👍]({up_url})｜[👎]({down_url})"
 
 
 def _feedback_context_excerpt(text: str) -> str:
