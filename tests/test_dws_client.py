@@ -410,7 +410,8 @@ def test_send_message_command_supports_title_override():
         conversation_id="cid-1",
         text=(
             "收到\n\n"
-            "反馈：赞 https://feedback.example.com/up  踩 https://feedback.example.com/down"
+            "反馈：👍 赞 https://feedback.example.com/up"
+            " ｜ 👎 踩 https://feedback.example.com/down"
         ),
         title="收到",
     )

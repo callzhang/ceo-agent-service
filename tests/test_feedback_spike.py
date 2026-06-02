@@ -9,6 +9,7 @@ from app.feedback_spike import (
     build_events_url,
     build_feedback_link_text,
     build_feedback_spike_link_message,
+    extract_feedback_link_context,
     normalize_vercel_base_url,
     send_feedback_spike_links,
 )
@@ -68,8 +69,23 @@ def test_build_feedback_link_text_contains_two_feedback_urls():
 
     assert text == (
         "可以，先按这个方向试一下。\n\n"
-        "反馈：赞 https://feedback.example.com/up  踩 https://feedback.example.com/down"
+        "反馈：👍 赞 https://feedback.example.com/up"
+        " ｜ 👎 踩 https://feedback.example.com/down"
     )
+
+
+def test_extract_feedback_link_context_handles_emoji_feedback_labels():
+    message = build_feedback_spike_link_message(
+        vercel_base_url="https://feedback.example.com",
+        reply_text="收到",
+        feedback_token="spike_1_abcd",
+    )
+
+    context = extract_feedback_link_context(message.text)
+
+    assert context is not None
+    assert context.feedback_token == "spike_1_abcd"
+    assert context.vercel_base_url == "https://feedback.example.com"
 
 
 def test_build_feedback_spike_link_message_accepts_fixed_token_for_verification():
