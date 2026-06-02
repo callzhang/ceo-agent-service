@@ -5,7 +5,7 @@ from urllib.parse import parse_qs, urlencode, urlparse
 
 from app.dws_client import DwsClient
 
-DEFAULT_SOURCE = "ceo-agent-spike"
+MAX_FEEDBACK_CONTEXT_CHARS = 100
 
 
 @dataclass(frozen=True)
@@ -13,6 +13,12 @@ class FeedbackSpikeLinkMessage:
     feedback_token: str
     callback_url_up: str
     callback_url_down: str
+    text: str
+
+
+@dataclass(frozen=True)
+class FeedbackReplyText:
+    feedback_token: str
     text: str
 
 
@@ -47,14 +53,13 @@ def build_callback_url(
     if rating not in {"up", "down"}:
         raise ValueError("rating must be up or down")
     fields = {
-        "source": DEFAULT_SOURCE,
         "feedback_token": feedback_token,
         "rating": rating,
     }
     if original_text.strip():
-        fields["original_text"] = original_text.strip()
+        fields["original_text"] = _feedback_context_excerpt(original_text)
     if reply_text.strip():
-        fields["reply_text"] = reply_text.strip()
+        fields["reply_text"] = _feedback_context_excerpt(reply_text)
     query = urlencode(fields)
     return f"{normalize_vercel_base_url(vercel_base_url)}/api/dingtalk-feedback-spike?{query}"
 
@@ -79,6 +84,13 @@ def build_feedback_link_text(
     if not stripped_reply:
         raise ValueError("reply text is required")
     return f"{stripped_reply}\n\n反馈：👍 赞 {up_url} ｜ 👎 踩 {down_url}"
+
+
+def _feedback_context_excerpt(text: str) -> str:
+    stripped = " ".join(text.strip().split())
+    if len(stripped) <= MAX_FEEDBACK_CONTEXT_CHARS:
+        return stripped
+    return stripped[:MAX_FEEDBACK_CONTEXT_CHARS].rstrip() + "..."
 
 
 def extract_feedback_link_context(text: str) -> FeedbackLinkContext | None:
@@ -129,6 +141,28 @@ def build_feedback_spike_link_message(
         callback_url_down=down_url,
         text=build_feedback_link_text(reply_text, up_url=up_url, down_url=down_url),
     )
+
+
+def append_feedback_links(
+    *,
+    vercel_base_url: str,
+    reply_text: str,
+    original_text: str = "",
+    feedback_token: str | None = None,
+) -> FeedbackReplyText:
+    existing_context = extract_feedback_link_context(reply_text)
+    if existing_context is not None:
+        return FeedbackReplyText(
+            feedback_token=existing_context.feedback_token,
+            text=reply_text,
+        )
+    message = build_feedback_spike_link_message(
+        vercel_base_url=vercel_base_url,
+        reply_text=reply_text,
+        original_text=original_text,
+        feedback_token=feedback_token,
+    )
+    return FeedbackReplyText(feedback_token=message.feedback_token, text=message.text)
 
 
 def send_feedback_spike_links(

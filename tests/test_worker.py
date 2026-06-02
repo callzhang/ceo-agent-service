@@ -1553,6 +1553,7 @@ def test_produce_once_does_not_notify_when_only_recent_context_read_fails(
 
 
 def test_consume_once_processes_queued_task(tmp_path: Path, monkeypatch):
+    monkeypatch.delenv("CEO_FEEDBACK_SPIKE_VERCEL_BASE_URL", raising=False)
     trigger = message("@Alex Chen(明哥) 这个怎么处理？")
     dws = FakeDws([conversation()], {"cid-1": [trigger]})
     codex = FakeCodex(
@@ -1566,6 +1567,37 @@ def test_consume_once_processes_queued_task(tmp_path: Path, monkeypatch):
     assert processed == 1
     assert worker.store.count_reply_tasks(status="done") == 1
     assert final_sent(dws) == [("cid-1", "先按A方案走（by明哥分身）")]
+
+
+def test_consume_once_appends_feedback_links_when_configured(
+    tmp_path: Path, monkeypatch
+):
+    monkeypatch.setenv(
+        "CEO_FEEDBACK_SPIKE_VERCEL_BASE_URL",
+        "https://feedback.example.com",
+    )
+    trigger = message("@Alex Chen(明哥) 这个怎么处理？")
+    dws = FakeDws([conversation()], {"cid-1": [trigger]})
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="先按A方案走")
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+    worker.produce_once()
+
+    processed = worker.consume_once(max_tasks=1)
+
+    assert processed == 1
+    sent_text = final_sent(dws)[0][1]
+    assert sent_text.startswith("先按A方案走（by明哥分身）")
+    assert "反馈：👍 赞 https://feedback.example.com/api/dingtalk-feedback-spike" in sent_text
+    assert "rating=up" in sent_text
+    assert "rating=down" in sent_text
+    sent_reply = worker.store.get_sent_reply("cid-1", "msg-1")
+    assert sent_reply is not None
+    assert sent_reply.feedback_token.startswith("spike_")
+    assert sent_reply.feedback_token in sent_text
+    attempt = worker.store.list_reply_attempts(limit=1)[0]
+    assert attempt.final_reply_text == sent_text
 
 
 def test_consume_once_retries_task_failure_before_final_failure(
@@ -3006,7 +3038,7 @@ def test_success_notification_keeps_full_reply_text(tmp_path: Path, monkeypatch)
         {
             "title": "CEO auto reply: Friday",
             "message": final_sent(dws)[0][1],
-            "url": None,
+            "url": "http://127.0.0.1:8765/open-dingtalk?conversation_id=cid-1",
         }
     ]
 
@@ -3451,7 +3483,7 @@ def test_codex_stop_with_error_sends_macos_notification(tmp_path: Path, monkeypa
     assert notifications[0] == {
         "title": "CEO agent error: Friday",
         "message": "codex exec failed",
-        "url": None,
+        "url": "http://127.0.0.1:8765/open-dingtalk?conversation_id=cid-1",
     }
 
 
@@ -4858,7 +4890,7 @@ def test_new_principal_mention_is_processed(
         {
             "title": "CEO auto reply: 26年董事会筹备组",
             "message": "战略主线建议这样调整（by明哥分身）",
-            "url": None,
+            "url": "http://127.0.0.1:8765/open-dingtalk?conversation_id=cid-1",
         }
     ]
 
@@ -6122,7 +6154,10 @@ def test_handoff_ding_failure_does_not_block_ack(
     assert store.count_reply_tasks(status="done") == 1
     assert len(notifications) == 1
     assert notifications[0]["title"] == "CEO handoff: Friday"
-    assert notifications[0]["url"] is None
+    assert (
+        notifications[0]["url"]
+        == "http://127.0.0.1:8765/open-dingtalk?conversation_id=cid-1"
+    )
     assert notifications[0]["message"].startswith(
         "DING unavailable; delivered by local notification. Friday\n"
     )

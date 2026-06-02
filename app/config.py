@@ -201,6 +201,10 @@ def notification_bridge_base_url() -> str:
     )
 
 
+def feedback_spike_vercel_base_url() -> str:
+    return os.getenv("CEO_FEEDBACK_SPIKE_VERCEL_BASE_URL", "").strip().rstrip("/")
+
+
 def message_recovery_interval() -> timedelta:
     return env_duration("MESSAGE_RECOVERY_INTERVAL", timedelta(hours=1))
 

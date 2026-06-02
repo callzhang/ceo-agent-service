@@ -13,6 +13,7 @@ from pydantic import BaseModel, NonNegativeInt, PositiveInt
 from app.codex_decision import CodexDecisionRunner
 from app.config import (
     consumer_poll_interval_seconds,
+    feedback_spike_vercel_base_url,
     principal_display_name,
     producer_interval_seconds,
     profile_evidence_dir,
@@ -33,6 +34,7 @@ from app.dws_client import (
     local_time_zone_name,
 )
 from app.feedback_spike import (
+    append_feedback_links,
     build_events_url,
     send_feedback_spike_links,
 )
@@ -711,10 +713,35 @@ def send_attempt_command(settings: WorkerSettings, attempt_id: int) -> dict[str,
         attempt=attempt,
         store=store,
     )
+    reply_text = attempt.final_reply_text
+    feedback_token = ""
+    feedback_base_url = feedback_spike_vercel_base_url()
+    if feedback_base_url:
+        feedback_reply = append_feedback_links(
+            vercel_base_url=feedback_base_url,
+            reply_text=reply_text,
+            original_text=attempt.trigger_text,
+        )
+        reply_text = feedback_reply.text
+        feedback_token = feedback_reply.feedback_token
+        store.update_reply_attempt(attempt.id, final_reply_text=reply_text)
+        if contains_forbidden_leak(reply_text):
+            store.update_reply_attempt(
+                attempt.id,
+                send_status="blocked",
+                send_error="leak_check",
+            )
+            store.record_error(
+                attempt.conversation_id,
+                attempt.trigger_message_id,
+                "leak_check",
+                reply_text,
+            )
+            raise SystemExit(f"reply attempt {attempt_id} blocked by leak_check")
     try:
         send_result = dws.send_message(
             None if conversation.single_chat else attempt.conversation_id,
-            attempt.final_reply_text,
+            reply_text,
             at_users=[] if conversation.single_chat else at_users,
             user_id=direct_user_id,
             open_dingtalk_id=direct_open_dingtalk_id,
@@ -737,9 +764,10 @@ def send_attempt_command(settings: WorkerSettings, attempt_id: int) -> dict[str,
     store.record_sent_reply(
         attempt.conversation_id,
         attempt.trigger_message_id,
-        attempt.final_reply_text,
+        reply_text,
         send_result_json=json.dumps(send_result or {}, ensure_ascii=False),
         recall_key=DwsClient.extract_recall_key(send_result),
+        feedback_token=feedback_token,
     )
     result = {
         "attempt_id": attempt.id,
@@ -747,7 +775,7 @@ def send_attempt_command(settings: WorkerSettings, attempt_id: int) -> dict[str,
         "trigger_sender": attempt.trigger_sender,
         "trigger_text_excerpt": _excerpt(attempt.trigger_text),
         "send_status": "sent",
-        "reply_text_excerpt": _excerpt(attempt.final_reply_text),
+        "reply_text_excerpt": _excerpt(reply_text),
         "send_result_excerpt": _excerpt(json.dumps(send_result or {}, ensure_ascii=False)),
     }
     print(json.dumps(result, ensure_ascii=False), flush=True)

@@ -395,6 +395,70 @@ def test_send_attempt_command_sends_existing_dry_run_without_rerunning_codex(
     assert '"send_status": "sent"' in capsys.readouterr().out
 
 
+def test_send_attempt_command_appends_feedback_links_when_configured(
+    monkeypatch, tmp_path
+):
+    sent = {}
+
+    class FakeDws:
+        def __init__(self, **kwargs):
+            pass
+
+        @staticmethod
+        def extract_recall_key(send_result):
+            return send_result["result"]["processQueryKey"]
+
+        def send_message(
+            self,
+            conversation_id,
+            text,
+            at_users=None,
+            user_id=None,
+            open_dingtalk_id=None,
+        ):
+            sent["message"] = (
+                conversation_id,
+                text,
+                at_users,
+                user_id,
+                open_dingtalk_id,
+            )
+            return {"result": {"processQueryKey": "recall-1"}}
+
+    monkeypatch.setenv(
+        "CEO_FEEDBACK_SPIKE_VERCEL_BASE_URL",
+        "https://feedback.example.com",
+    )
+    monkeypatch.setattr(cli, "DwsClient", FakeDws)
+    settings = WorkerSettings(db_path=tmp_path / "worker.sqlite3", dry_run=False)
+    store = cli.AutoReplyStore(settings.db_path)
+    store.upsert_conversation("cid-1", "Friday", False, None)
+    attempt_id = store.record_reply_attempt(
+        conversation_id="cid-1",
+        conversation_title="Friday",
+        trigger_message_id="msg-1",
+        trigger_sender="Phina",
+        trigger_text="@Alex Chen 看一下",
+        action="send_reply",
+        sensitivity_kind="general",
+    )
+    store.update_reply_attempt(
+        attempt_id,
+        final_reply_text="可以先这样处理。（by明哥分身）",
+        send_status="dry_run",
+    )
+
+    send_attempt_command(settings, attempt_id)
+
+    sent_text = sent["message"][1]
+    assert "反馈：👍 赞 https://feedback.example.com/api/dingtalk-feedback-spike" in sent_text
+    assert "source=" not in sent_text
+    sent_reply = cli.AutoReplyStore(settings.db_path).get_sent_reply("cid-1", "msg-1")
+    assert sent_reply is not None
+    assert sent_reply.feedback_token.startswith("spike_")
+    assert sent_reply.feedback_token in sent_text
+
+
 def test_send_attempt_command_sends_single_chat_to_stored_direct_user(
     monkeypatch, tmp_path
 ):

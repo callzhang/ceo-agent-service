@@ -34,6 +34,7 @@ from app.config import (
     document_extraction_ids,
     env_file_path,
     fast_path_unread_backoff_duration,
+    feedback_spike_vercel_base_url,
     forbidden_path_prefixes,
     group_read_recovery_limit,
     group_read_recovery_window,
@@ -880,6 +881,11 @@ def _system_config_rows() -> list[tuple[str, str, str]]:
             "系统需要交给真人处理时的默认提示文案。",
         ),
         (
+            "CEO_FEEDBACK_SPIKE_VERCEL_BASE_URL",
+            feedback_spike_vercel_base_url(),
+            "对话方反馈页根地址；配置后发出的回复会自动追加赞踩链接并记录 feedback token。",
+        ),
+        (
             "CEO_WORK_PROFILE_PATH",
             str(work_profile_path()),
             "work_profile_instruction() 读取这个文件并注入 Developer Prompt。",
@@ -1033,6 +1039,7 @@ def _editable_system_config_keys() -> set[str]:
         "DOCUMENT_EXTRACTION_IDS",
         "CEO_ASSISTANT_SIGNATURE",
         "CEO_HANDOFF_ACK",
+        "CEO_FEEDBACK_SPIKE_VERCEL_BASE_URL",
         "CEO_WORK_PROFILE_PATH",
         "CEO_FORBIDDEN_PATH_PREFIXES",
         "CEO_PRODUCER_INTERVAL_SECONDS",

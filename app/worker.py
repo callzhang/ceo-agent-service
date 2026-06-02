@@ -17,6 +17,7 @@ from app.config import (
     assistant_signature,
     broadcast_mention_aliases,
     fast_path_unread_backoff_duration,
+    feedback_spike_vercel_base_url,
     group_read_recovery_limit,
     group_read_recovery_window,
     handoff_ack,
@@ -33,6 +34,7 @@ from app.dws_client import (
     DwsDocumentSearchResult,
     DwsError,
 )
+from app.feedback_spike import append_feedback_links
 from app.corpus import (
     MEDIA_OR_LINK_PATTERN,
     CorpusRecord,
@@ -3389,6 +3391,16 @@ class DingTalkAutoReplyWorker:
         raise_on_delivery_failure: bool = False,
     ) -> None:
         reply_text = final_reply_text
+        feedback_token = ""
+        feedback_base_url = feedback_spike_vercel_base_url()
+        if feedback_base_url:
+            feedback_reply = append_feedback_links(
+                vercel_base_url=feedback_base_url,
+                reply_text=reply_text,
+                original_text=trigger.content,
+            )
+            reply_text = feedback_reply.text
+            feedback_token = feedback_reply.feedback_token
         self.store.update_reply_attempt(
             attempt_id,
             final_reply_text=reply_text,
@@ -3467,6 +3479,7 @@ class DingTalkAutoReplyWorker:
             reply_text,
             send_result_json=json.dumps(send_result or {}, ensure_ascii=False),
             recall_key=DwsClient.extract_recall_key(send_result),
+            feedback_token=feedback_token,
         )
         self._mark_seen(new_messages)
 

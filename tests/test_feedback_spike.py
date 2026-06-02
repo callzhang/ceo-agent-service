@@ -5,6 +5,7 @@ import pytest
 from app.cli import build_parser, feedback_spike_command
 from app.dws_client import DwsClient
 from app.feedback_spike import (
+    append_feedback_links,
     build_callback_url,
     build_events_url,
     build_feedback_link_text,
@@ -15,7 +16,7 @@ from app.feedback_spike import (
 )
 
 
-def test_build_callback_url_contains_token_rating_and_source():
+def test_build_callback_url_contains_token_and_rating():
     url = build_callback_url(
         "https://feedback.example.com/",
         feedback_token="spike_1_abcd",
@@ -24,7 +25,7 @@ def test_build_callback_url_contains_token_rating_and_source():
 
     assert url == (
         "https://feedback.example.com/api/dingtalk-feedback-spike"
-        "?source=ceo-agent-spike&feedback_token=spike_1_abcd&rating=up"
+        "?feedback_token=spike_1_abcd&rating=up"
     )
 
 
@@ -86,6 +87,38 @@ def test_extract_feedback_link_context_handles_emoji_feedback_labels():
     assert context is not None
     assert context.feedback_token == "spike_1_abcd"
     assert context.vercel_base_url == "https://feedback.example.com"
+
+
+def test_append_feedback_links_does_not_duplicate_existing_links():
+    first = append_feedback_links(
+        vercel_base_url="https://feedback.example.com",
+        reply_text="收到",
+        original_text="帮我看一下",
+        feedback_token="spike_1_abcd",
+    )
+
+    second = append_feedback_links(
+        vercel_base_url="https://feedback.example.com",
+        reply_text=first.text,
+        original_text="帮我看一下",
+    )
+
+    assert second.feedback_token == "spike_1_abcd"
+    assert second.text == first.text
+    assert second.text.count("/api/dingtalk-feedback-spike") == 2
+
+
+def test_callback_url_truncates_long_feedback_context():
+    url = build_callback_url(
+        "https://feedback.example.com/",
+        feedback_token="spike_1_abcd",
+        rating="up",
+        original_text="原话" * 500,
+        reply_text="回复" * 500,
+    )
+
+    assert len(url) < 2500
+    assert "..." in url
 
 
 def test_build_feedback_spike_link_message_accepts_fixed_token_for_verification():
