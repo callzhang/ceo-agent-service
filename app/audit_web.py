@@ -1,12 +1,15 @@
 import json
 import asyncio
+from collections.abc import Iterable
 from collections import deque
 from html import escape
 from itertools import count, zip_longest
 import os
 from pathlib import Path
 import subprocess
-from urllib.parse import parse_qs, quote
+import urllib.error
+import urllib.request
+from urllib.parse import parse_qs, quote, urlparse
 
 import uvicorn
 from fastapi import FastAPI, Request
@@ -63,9 +66,14 @@ from app.dingtalk_models import (
     SensitivityKind,
 )
 from app.dws_client import DwsClient
+from app.feedback_spike import (
+    FeedbackLinkContext,
+    extract_feedback_link_context,
+)
 from app.store import (
     FAST_PATH_UNREAD_BACKOFF_TASK_ERROR,
     AutoReplyStore,
+    FeedbackEvent,
     ReplyAttempt,
     ReplyError,
     ReplyTask,
@@ -138,6 +146,13 @@ th{background:var(--surface-soft);color:var(--steel);font-size:12px;font-weight:
 .attempt-foot{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:6px;flex-wrap:wrap}
 .attempt-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .attempt-warning{color:#8a2626;font-size:12px;line-height:1.4}
+.feedback-chip{display:inline-flex;align-items:center;max-width:100%;min-height:24px;padding:3px 9px;border-radius:999px;background:#ddfff6;border:1px solid rgba(0,180,138,.42);color:#005b49;font-size:12px;font-weight:700;line-height:1.35;white-space:nowrap}
+.feedback-card{border-color:rgba(0,180,138,.28);background:linear-gradient(180deg,#ffffff 0%,#f6fffc 100%)}
+.feedback-event{border:1px solid var(--hairline);border-radius:8px;background:var(--canvas);padding:12px;margin-top:10px}
+.feedback-event-head{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:8px}
+.feedback-rating{display:inline-flex;align-items:center;min-height:26px;padding:4px 10px;border-radius:999px;background:rgba(0,212,164,.12);border:1px solid rgba(0,180,138,.28);color:#005b49;font-size:13px;font-weight:700}
+.feedback-comment{font-size:14px;color:var(--charcoal);white-space:pre-wrap}
+.feedback-token{font-family:"Geist Mono","SF Mono",Menlo,Consolas,monospace;color:var(--steel);font-size:12px;word-break:break-all}
 .attempt-info{position:relative;display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border:1px solid #d29a12;border-radius:50%;color:#8a5a08;background:#fff3c4;font-size:11px;font-weight:700;line-height:1;cursor:help;flex:0 0 auto}
 .attempt-info:hover,.attempt-info:focus{background:#ffe7a3;border-color:#b77908;outline:0}
 .attempt-info::after{content:attr(data-tooltip);display:none;position:absolute;left:0;bottom:calc(100% + 8px);z-index:30;width:max-content;max-width:min(320px,calc(100vw - 48px));padding:7px 9px;border-radius:6px;background:#1f2937;color:#fff;box-shadow:0 8px 24px rgba(15,23,42,.18);font-size:12px;font-weight:500;line-height:1.4;text-align:left;white-space:normal}
@@ -341,16 +356,21 @@ def _browser_notification_client_script() -> str:
       tag: payload.id,
       renotify: true,
     });
-    notification.onclick = async (event) => {
+    notification.onclick = (event) => {
       event.preventDefault();
-      if (payload.url) {
-        try {
-          await fetch(payload.url, { method: "GET", keepalive: true });
-        } catch (error) {
-          logLine(`notification click failed: ${error}`);
-        }
-      }
       notification.close();
+      window.focus();
+      if (payload.url) {
+        fetch(payload.url, {
+          method: "GET",
+          keepalive: true,
+          headers: { "Accept": "application/json" },
+        }).catch((error) => logLine(`notification click failed: ${error}`));
+      }
+      if (payload.dingtalk_url) {
+        window.location.href = payload.dingtalk_url;
+      }
+      return false;
     };
   }
 
@@ -441,7 +461,25 @@ def _browser_notification_event(
         "title": title,
         "message": message,
         "url": url,
+        "dingtalk_url": _dingtalk_url_from_bridge_url(url),
     }
+
+
+def _dingtalk_conversation_url(cid: str) -> str:
+    return (
+        "dingtalk://dingtalkclient/page/conversation"
+        f"?cid={quote(cid.strip(), safe='')}"
+    )
+
+
+def _dingtalk_url_from_bridge_url(url: str) -> str:
+    parsed = urlparse(url)
+    if parsed.path != "/open-dingtalk":
+        return ""
+    cid = (parse_qs(parsed.query).get("cid") or [""])[0].strip()
+    if not cid:
+        return ""
+    return _dingtalk_conversation_url(cid)
 
 
 def _publish_browser_notification(event: dict[str, str]) -> bool:
@@ -947,7 +985,20 @@ def render_attempt_list(store: AutoReplyStore, limit: int | None = None) -> str:
         limit=limit,
     ):
         items.append(_reply_task_item(task))
-    for attempt in store.list_reply_attempts(limit=limit):
+    attempts = store.list_reply_attempts(limit=limit)
+    sent_replies_by_attempt = store.list_sent_replies_for_attempts(attempts)
+    _sync_feedback_events_for_sent_replies(store, sent_replies_by_attempt.values())
+    feedback_events_by_token = _feedback_events_by_sent_reply(
+        store,
+        sent_replies_by_attempt.values(),
+    )
+    for attempt in attempts:
+        sent_reply = sent_replies_by_attempt.get(
+            (attempt.conversation_id, attempt.trigger_message_id)
+        )
+        feedback_events = _feedback_events_for_sent_reply(
+            sent_reply, feedback_events_by_token
+        )
         codex_session_id = attempt.codex_session_id or store.get_codex_session_id(
             attempt.conversation_id
         )
@@ -984,6 +1035,7 @@ def render_attempt_list(store: AutoReplyStore, limit: int | None = None) -> str:
             f"{_attempt_text_line('问', attempt.trigger_text, 260)}"
             f"{_attempt_text_line('答', _reply_preview_text(attempt), 320)}"
             "</div>"
+            f"{_attempt_feedback_summary(feedback_events, sent_reply)}"
             f"{foot_section}"
             "</article>"
         )
@@ -1054,12 +1106,18 @@ def render_attempt_detail(store: AutoReplyStore, attempt_id: int) -> tuple[int, 
         attempt.conversation_id,
         attempt.trigger_message_id,
     )
+    if sent_reply is not None:
+        _sync_feedback_events_for_sent_replies(store, [sent_reply])
+    feedback_events = _feedback_events_for_sent_reply(
+        sent_reply,
+        _feedback_events_by_sent_reply(store, [sent_reply] if sent_reply else []),
+    )
     codex_session_id = attempt.codex_session_id or store.get_codex_session_id(
         attempt.conversation_id
     )
     return 200, render_page(
         f"Attempt #{attempt.id}",
-        _attempt_detail_body(attempt, sent_reply, codex_session_id),
+        _attempt_detail_body(attempt, sent_reply, codex_session_id, feedback_events),
         active_nav="history",
     )
 
@@ -1607,24 +1665,21 @@ def create_audit_app(
                 "ok": True,
                 "delivered": delivered,
                 "subscribers": len(_BROWSER_NOTIFICATION_SUBSCRIBERS),
+                "dingtalk_url": event["dingtalk_url"],
             }
         )
 
-    @app.get("/open-dingtalk", response_class=HTMLResponse)
-    def open_dingtalk(cid: str) -> HTMLResponse:
+    @app.get("/open-dingtalk")
+    def open_dingtalk(cid: str) -> JSONResponse:
         cleaned_cid = cid.strip()
         if not cleaned_cid:
-            return HTMLResponse("missing cid", status_code=400)
-        dingtalk_url = (
-            "dingtalk://dingtalkclient/page/conversation"
-            f"?cid={quote(cleaned_cid, safe='')}"
-        )
+            return JSONResponse(
+                {"ok": False, "error": "missing_cid"},
+                status_code=400,
+            )
+        dingtalk_url = _dingtalk_conversation_url(cleaned_cid)
         subprocess.run(["/usr/bin/open", dingtalk_url], check=False)
-        return HTMLResponse(
-            "<!doctype html><title>Opening DingTalk</title>"
-            "<p>Opening DingTalk conversation...</p>",
-            status_code=200,
-        )
+        return JSONResponse({"ok": True, "dingtalk_url": dingtalk_url})
 
     @app.get("/attempts/{attempt_id}", response_class=HTMLResponse)
     def attempt_detail(attempt_id: int) -> HTMLResponse:
@@ -1756,6 +1811,7 @@ def _attempt_detail_body(
     attempt: ReplyAttempt,
     sent_reply: SentReply | None,
     codex_session_id: str | None,
+    feedback_events: list[FeedbackEvent],
 ) -> str:
     fields = [
         ("conversation", attempt.conversation_title),
@@ -1783,6 +1839,7 @@ def _attempt_detail_body(
         f"{_context_only_info_card(attempt)}"
         f"{_oa_metadata_card(attempt)}"
         f"{_recall_card(attempt, sent_reply)}"
+        f"{_counterparty_feedback_card(sent_reply, feedback_events)}"
         f"{_codex_session_card(codex_session_id, attempt)}"
         f"{_text_card('Trigger', attempt.trigger_text)}"
         f"{_text_card('Codex reason', attempt.codex_reason)}"
@@ -1791,6 +1848,168 @@ def _attempt_detail_body(
         f"{_collapsible_json_card('Audit tool events', attempt.audit_tool_events_json)}"
         f"{_text_card('Draft reply (raw Codex reply)', attempt.draft_reply_text)}"
         f"{_text_card('Final reply (send-ready text)', attempt.final_reply_text)}"
+    )
+
+
+def _sync_feedback_events_for_sent_replies(
+    store: AutoReplyStore,
+    sent_replies: Iterable[SentReply],
+) -> None:
+    contexts = {
+        context.feedback_token: context
+        for sent_reply in sent_replies
+        if (context := _feedback_context_for_sent_reply(sent_reply)) is not None
+    }
+    existing_events = store.list_feedback_events_for_tokens(list(contexts))
+    for context in contexts.values():
+        if existing_events.get(context.feedback_token):
+            continue
+        _sync_feedback_events_for_context(store, context)
+
+
+def _sync_feedback_events_for_context(
+    store: AutoReplyStore,
+    context: FeedbackLinkContext,
+) -> None:
+    url = (
+        f"{context.vercel_base_url}/api/dingtalk-feedback-spike-events"
+        f"?feedback_token={quote(context.feedback_token)}&limit=20"
+    )
+    request = urllib.request.Request(url, headers={"Accept": "application/json"})
+    try:
+        with urllib.request.urlopen(request, timeout=2) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except (
+        OSError,
+        TimeoutError,
+        urllib.error.URLError,
+        urllib.error.HTTPError,
+        json.JSONDecodeError,
+    ):
+        return
+    events = payload.get("events") if isinstance(payload, dict) else None
+    if not isinstance(events, list):
+        return
+    for event in events:
+        if not isinstance(event, dict):
+            continue
+        token = str(event.get("feedback_token") or "").strip()
+        if token != context.feedback_token:
+            continue
+        key = str(event.get("key") or "").strip()
+        if not key:
+            key = f"{token}:{event.get('received_at') or ''}:{event.get('rating') or ''}"
+        store.upsert_feedback_event(
+            key=key,
+            feedback_token=token,
+            rating=str(event.get("rating") or ""),
+            rating_label=str(event.get("rating_label") or ""),
+            comment=str(event.get("comment") or ""),
+            original_text=str(event.get("original_text") or ""),
+            reply_text=str(event.get("reply_text") or ""),
+            source=str(event.get("source") or ""),
+            received_at=str(event.get("received_at") or ""),
+            raw_json=json.dumps(event, ensure_ascii=False),
+        )
+
+
+def _feedback_context_for_sent_reply(
+    sent_reply: SentReply,
+) -> FeedbackLinkContext | None:
+    context = extract_feedback_link_context(sent_reply.reply_text)
+    if context is not None:
+        return context
+    token = sent_reply.feedback_token.strip()
+    base_url = os.getenv("CEO_FEEDBACK_SPIKE_VERCEL_BASE_URL", "").strip().rstrip("/")
+    if token and (
+        base_url.startswith("https://") or base_url.startswith("http://")
+    ):
+        return FeedbackLinkContext(feedback_token=token, vercel_base_url=base_url)
+    return None
+
+
+def _feedback_token_for_sent_reply(sent_reply: SentReply | None) -> str:
+    if sent_reply is None:
+        return ""
+    if sent_reply.feedback_token.strip():
+        return sent_reply.feedback_token.strip()
+    context = extract_feedback_link_context(sent_reply.reply_text)
+    return context.feedback_token if context else ""
+
+
+def _feedback_events_by_sent_reply(
+    store: AutoReplyStore,
+    sent_replies: Iterable[SentReply],
+) -> dict[str, list[FeedbackEvent]]:
+    tokens = [_feedback_token_for_sent_reply(sent_reply) for sent_reply in sent_replies]
+    return store.list_feedback_events_for_tokens(tokens)
+
+
+def _feedback_events_for_sent_reply(
+    sent_reply: SentReply | None,
+    feedback_events_by_token: dict[str, list[FeedbackEvent]],
+) -> list[FeedbackEvent]:
+    token = _feedback_token_for_sent_reply(sent_reply)
+    if not token:
+        return []
+    return feedback_events_by_token.get(token, [])
+
+
+def _attempt_feedback_summary(
+    feedback_events: list[FeedbackEvent],
+    sent_reply: SentReply | None,
+) -> str:
+    if feedback_events:
+        latest = feedback_events[0]
+        label = latest.rating_label or latest.rating or "feedback"
+        comment = f": {latest.comment}" if latest.comment.strip() else ""
+        return (
+            "<div class=\"attempt-foot\">"
+            f"<span class=\"feedback-chip\">对方反馈 {escape(label)}{escape(_excerpt(comment, 90))}</span>"
+            "</div>"
+        )
+    if _feedback_token_for_sent_reply(sent_reply):
+        return (
+            "<div class=\"attempt-foot\">"
+            "<span class=\"feedback-chip\">等待对方反馈</span>"
+            "</div>"
+        )
+    return ""
+
+
+def _counterparty_feedback_card(
+    sent_reply: SentReply | None,
+    feedback_events: list[FeedbackEvent],
+) -> str:
+    token = _feedback_token_for_sent_reply(sent_reply)
+    if not token and not feedback_events:
+        return ""
+    if not feedback_events:
+        return (
+            "<section class=\"card feedback-card\"><h2>对方反馈</h2>"
+            "<p class=\"muted\">还没有收到对方反馈。</p>"
+            f"<p class=\"feedback-token\">token: {escape(token)}</p></section>"
+        )
+    events_html = "".join(_feedback_event_html(event) for event in feedback_events)
+    return (
+        "<section class=\"card feedback-card\"><h2>对方反馈</h2>"
+        f"<p class=\"feedback-token\">token: {escape(token)}</p>"
+        f"{events_html}</section>"
+    )
+
+
+def _feedback_event_html(event: FeedbackEvent) -> str:
+    rating = event.rating_label or event.rating or "feedback"
+    comment = event.comment.strip() or "未填写评语"
+    return (
+        "<article class=\"feedback-event\">"
+        "<div class=\"feedback-event-head\">"
+        f"<span class=\"feedback-rating\">{escape(rating)}</span>"
+        f"<time class=\"attempt-time\">{escape(event.received_at or event.updated_at)}</time>"
+        "</div>"
+        f"<div class=\"feedback-comment\">{escape(comment)}</div>"
+        f"<p class=\"muted\">source: {escape(event.source)}</p>"
+        "</article>"
     )
 
 

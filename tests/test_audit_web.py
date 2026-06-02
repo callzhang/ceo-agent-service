@@ -85,6 +85,32 @@ def test_render_attempt_list_shows_history_rows(tmp_path: Path):
     assert "/codex/session-1" in html
 
 
+def test_render_attempt_list_shows_counterparty_feedback(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    seed_attempt(store)
+    store.record_sent_reply(
+        "cid-1",
+        "msg-1",
+        "先按A方案走",
+        feedback_token="token-1",
+    )
+    store.upsert_feedback_event(
+        key="event-1",
+        feedback_token="token-1",
+        rating="very_useful",
+        rating_label="很有用",
+        comment="这个建议能直接用",
+        source="ceo-agent-spike",
+        received_at="2026-06-02T08:00:00.000Z",
+    )
+
+    html = render_attempt_list(store)
+
+    assert "对方反馈" in html
+    assert "很有用" in html
+    assert "这个建议能直接用" in html
+
+
 def test_render_history_page_includes_favicon_and_refresh(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     seed_attempt(store)
@@ -99,7 +125,9 @@ def test_render_history_page_includes_favicon_and_refresh(tmp_path: Path):
     assert "ceo-agent-service-notification-leader" in html
     assert 'new EventSource("/notifications/events")' in html
     assert "event.preventDefault()" in html
-    assert 'await fetch(payload.url, { method: "GET", keepalive: true })' in html
+    assert "window.focus()" in html
+    assert "window.location.href = payload.dingtalk_url" in html
+    assert 'headers: { "Accept": "application/json" }' in html
     assert "window.open(payload.url" not in html
 
 
@@ -320,6 +348,10 @@ def test_open_dingtalk_bridge_opens_conversation_url(tmp_path: Path, monkeypatch
     response = client.get("/open-dingtalk?cid=75217569357")
 
     assert response.status_code == 200
+    assert response.json() == {
+        "ok": True,
+        "dingtalk_url": "dingtalk://dingtalkclient/page/conversation?cid=75217569357",
+    }
     assert commands == [
         (
             [
@@ -342,6 +374,7 @@ def test_open_dingtalk_bridge_rejects_missing_cid(tmp_path: Path, monkeypatch):
     response = client.get("/open-dingtalk?cid=")
 
     assert response.status_code == 400
+    assert response.json() == {"ok": False, "error": "missing_cid"}
     assert commands == []
 
 
@@ -355,7 +388,9 @@ def test_browser_notifications_page_is_available(tmp_path: Path):
     assert "Notification.requestPermission" in response.text
     assert 'new EventSource("/notifications/events")' in response.text
     assert "event.preventDefault()" in response.text
-    assert 'await fetch(payload.url, { method: "GET", keepalive: true })' in response.text
+    assert "window.focus()" in response.text
+    assert "window.location.href = payload.dingtalk_url" in response.text
+    assert 'headers: { "Accept": "application/json" }' in response.text
     assert "window.open(payload.url" not in response.text
     assert "granted connected" in response.text
     assert "granted standby" in response.text
@@ -376,7 +411,12 @@ def test_browser_notification_post_reports_no_subscribers(tmp_path: Path):
     )
 
     assert response.status_code == 200
-    assert response.json() == {"ok": True, "delivered": False, "subscribers": 0}
+    assert response.json() == {
+        "ok": True,
+        "delivered": False,
+        "subscribers": 0,
+        "dingtalk_url": "dingtalk://dingtalkclient/page/conversation?cid=75217569357",
+    }
 
 
 def test_env_file_overrides_existing_environment(tmp_path: Path, monkeypatch):
@@ -1003,6 +1043,34 @@ def test_render_attempt_detail_shows_full_decision_and_feedback_form(tmp_path: P
     assert "/codex/session-1" in html
     assert "撤销发送" in html
     assert "撤销不可用" in html
+
+
+def test_render_attempt_detail_shows_counterparty_feedback(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    attempt_id = seed_attempt(store)
+    store.record_sent_reply(
+        "cid-1",
+        "msg-1",
+        "先按A方案走",
+        feedback_token="token-2",
+    )
+    store.upsert_feedback_event(
+        key="event-2",
+        feedback_token="token-2",
+        rating="not_useful",
+        rating_label="不太有用",
+        comment="没有回答到我的问题",
+        source="ceo-agent-spike",
+        received_at="2026-06-02T08:05:00.000Z",
+    )
+
+    status, html = render_attempt_detail(store, attempt_id)
+
+    assert status == 200
+    assert "对方反馈" in html
+    assert "token-2" in html
+    assert "不太有用" in html
+    assert "没有回答到我的问题" in html
     assert "当前发送方式不支持" in html
 
 

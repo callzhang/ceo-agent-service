@@ -77,7 +77,23 @@ class SentReply(BaseModel):
     recall_status: str = ""
     recall_error: str = ""
     recalled_at: str | None = None
+    feedback_token: str = ""
     sent_at: str
+
+
+class FeedbackEvent(BaseModel):
+    key: str
+    feedback_token: str
+    rating: str = ""
+    rating_label: str = ""
+    comment: str = ""
+    original_text: str = ""
+    reply_text: str = ""
+    source: str = ""
+    received_at: str = ""
+    raw_json: str = "{}"
+    created_at: str
+    updated_at: str
 
 
 class ConversationRecord(BaseModel):
@@ -142,8 +158,25 @@ class AutoReplyStore:
                     recall_status text not null default '',
                     recall_error text not null default '',
                     recalled_at text,
+                    feedback_token text not null default '',
                     sent_at text not null default current_timestamp
                 );
+                create table if not exists feedback_events (
+                    key text primary key,
+                    feedback_token text not null,
+                    rating text not null default '',
+                    rating_label text not null default '',
+                    comment text not null default '',
+                    original_text text not null default '',
+                    reply_text text not null default '',
+                    source text not null default '',
+                    received_at text not null default '',
+                    raw_json text not null default '{}',
+                    created_at text not null default current_timestamp,
+                    updated_at text not null default current_timestamp
+                );
+                create index if not exists idx_feedback_events_token
+                    on feedback_events(feedback_token, received_at);
                 create table if not exists errors (
                     id integer primary key autoincrement,
                     conversation_id text,
@@ -257,6 +290,7 @@ class AutoReplyStore:
                 ("recall_status", "text not null default ''"),
                 ("recall_error", "text not null default ''"),
                 ("recalled_at", "text"),
+                ("feedback_token", "text not null default ''"),
             ):
                 if column not in sent_reply_columns:
                     try:
@@ -861,6 +895,7 @@ class AutoReplyStore:
         *,
         send_result_json: str = "",
         recall_key: str = "",
+        feedback_token: str = "",
     ) -> None:
         with self._connect() as db:
             db.execute(
@@ -870,9 +905,10 @@ class AutoReplyStore:
                     trigger_message_id,
                     reply_text,
                     send_result_json,
-                    recall_key
+                    recall_key,
+                    feedback_token
                 )
-                values (?, ?, ?, ?, ?)
+                values (?, ?, ?, ?, ?, ?)
                 """,
                 (
                     conversation_id,
@@ -880,6 +916,7 @@ class AutoReplyStore:
                     reply_text,
                     send_result_json,
                     recall_key,
+                    feedback_token,
                 ),
             )
 
@@ -913,6 +950,129 @@ class AutoReplyStore:
                 (sent_reply_id,),
             ).fetchall()
             return [SentReply.model_validate(dict(row)) for row in rows]
+
+    def list_sent_replies_for_attempts(
+        self, attempts: list[ReplyAttempt]
+    ) -> dict[tuple[str, str], SentReply]:
+        keys = [
+            (attempt.conversation_id, attempt.trigger_message_id)
+            for attempt in attempts
+        ]
+        if not keys:
+            return {}
+        placeholders = ",".join(["(?, ?)"] * len(keys))
+        args = [value for key in keys for value in key]
+        with self._connect() as db:
+            rows = db.execute(
+                f"""
+                select *
+                from sent_replies
+                where (conversation_id, trigger_message_id) in ({placeholders})
+                order by id desc
+                """,
+                args,
+            ).fetchall()
+            result: dict[tuple[str, str], SentReply] = {}
+            for row in rows:
+                reply = SentReply.model_validate(dict(row))
+                key = (reply.conversation_id, reply.trigger_message_id)
+                if key not in result:
+                    result[key] = reply
+            return result
+
+    def upsert_feedback_event(
+        self,
+        *,
+        key: str,
+        feedback_token: str,
+        rating: str = "",
+        rating_label: str = "",
+        comment: str = "",
+        original_text: str = "",
+        reply_text: str = "",
+        source: str = "",
+        received_at: str = "",
+        raw_json: str = "{}",
+    ) -> None:
+        with self._connect() as db:
+            db.execute(
+                """
+                insert into feedback_events (
+                    key,
+                    feedback_token,
+                    rating,
+                    rating_label,
+                    comment,
+                    original_text,
+                    reply_text,
+                    source,
+                    received_at,
+                    raw_json
+                )
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                on conflict(key) do update set
+                    feedback_token=excluded.feedback_token,
+                    rating=excluded.rating,
+                    rating_label=excluded.rating_label,
+                    comment=excluded.comment,
+                    original_text=excluded.original_text,
+                    reply_text=excluded.reply_text,
+                    source=excluded.source,
+                    received_at=excluded.received_at,
+                    raw_json=excluded.raw_json,
+                    updated_at=current_timestamp
+                """,
+                (
+                    key,
+                    feedback_token,
+                    rating,
+                    rating_label,
+                    comment,
+                    original_text,
+                    reply_text,
+                    source,
+                    received_at,
+                    raw_json,
+                ),
+            )
+
+    def list_feedback_events_for_token(self, feedback_token: str) -> list[FeedbackEvent]:
+        if not feedback_token.strip():
+            return []
+        with self._connect() as db:
+            rows = db.execute(
+                """
+                select *
+                from feedback_events
+                where feedback_token=?
+                order by received_at desc, updated_at desc
+                """,
+                (feedback_token,),
+            ).fetchall()
+            return [FeedbackEvent.model_validate(dict(row)) for row in rows]
+
+    def list_feedback_events_for_tokens(
+        self, feedback_tokens: list[str]
+    ) -> dict[str, list[FeedbackEvent]]:
+        tokens = sorted({token for token in feedback_tokens if token.strip()})
+        if not tokens:
+            return {}
+        placeholders = ",".join(["?"] * len(tokens))
+        with self._connect() as db:
+            rows = db.execute(
+                f"""
+                select *
+                from feedback_events
+                where feedback_token in ({placeholders})
+                order by received_at desc, updated_at desc
+                """,
+                tokens,
+            ).fetchall()
+            result: dict[str, list[FeedbackEvent]] = {}
+            for row in rows:
+                event = FeedbackEvent.model_validate(dict(row))
+                result.setdefault(event.feedback_token, []).append(event)
+            return result
 
     def update_sent_reply_recall(
         self,

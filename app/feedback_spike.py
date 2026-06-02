@@ -1,7 +1,7 @@
 import secrets
 import time
 from dataclasses import dataclass
-from urllib.parse import urlencode
+from urllib.parse import parse_qs, urlencode, urlparse
 
 from app.dws_client import DwsClient
 
@@ -14,6 +14,12 @@ class FeedbackSpikeLinkMessage:
     callback_url_up: str
     callback_url_down: str
     text: str
+
+
+@dataclass(frozen=True)
+class FeedbackLinkContext:
+    feedback_token: str
+    vercel_base_url: str
 
 
 def generate_feedback_token(now_seconds: int | None = None) -> str:
@@ -73,6 +79,26 @@ def build_feedback_link_text(
     if not stripped_reply:
         raise ValueError("reply text is required")
     return f"{stripped_reply}\n\n反馈：赞 {up_url}  踩 {down_url}"
+
+
+def extract_feedback_link_context(text: str) -> FeedbackLinkContext | None:
+    for raw_part in text.split():
+        part = raw_part.strip("，,。；;：:、()（）[]【】<>《》\"'")
+        if "/api/dingtalk-feedback-spike" not in part:
+            continue
+        parsed = urlparse(part)
+        if not parsed.scheme or not parsed.netloc:
+            continue
+        query = parse_qs(parsed.query)
+        token = (query.get("feedback_token") or query.get("feedbackToken") or [""])[0]
+        token = token.strip()
+        if not token:
+            continue
+        return FeedbackLinkContext(
+            feedback_token=token,
+            vercel_base_url=f"{parsed.scheme}://{parsed.netloc}",
+        )
+    return None
 
 
 def build_feedback_spike_link_message(
