@@ -1166,6 +1166,34 @@ class AutoReplyStore:
             ).fetchall()
             return [UserFeedbackItem.model_validate(dict(row)) for row in rows]
 
+    def count_pending_user_feedback_items(self) -> int:
+        with self._connect() as db:
+            row = db.execute(
+                """
+                with latest_attempt_by_token as (
+                    select
+                        sr.feedback_token as feedback_token,
+                        max(ra.id) as attempt_id
+                    from sent_replies sr
+                    join reply_attempts ra
+                        on ra.conversation_id = sr.conversation_id
+                       and ra.trigger_message_id = sr.trigger_message_id
+                    where trim(sr.feedback_token) <> ''
+                    group by sr.feedback_token
+                )
+                select count(*) as pending_count
+                from feedback_events fe
+                left join latest_attempt_by_token latest
+                    on latest.feedback_token = fe.feedback_token
+                left join reply_attempts ra
+                    on ra.id = latest.attempt_id
+                where trim(fe.resolved_at) = ''
+                  and trim(coalesce(ra.reviewer_feedback, '')) = ''
+                  and trim(coalesce(ra.corrected_reply_text, '')) = ''
+                """
+            ).fetchone()
+            return int(row["pending_count"] if row else 0)
+
     def resolve_feedback_event(self, key: str) -> bool:
         cleaned_key = key.strip()
         if not cleaned_key:

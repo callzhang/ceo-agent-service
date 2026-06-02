@@ -239,6 +239,33 @@ def test_handle_user_feedback_resolve_post_marks_feedback_resolved(tmp_path: Pat
     assert "已处理" in feedback_html
 
 
+def test_user_feedback_nav_badge_shows_pending_count(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    seed_attempt(store)
+    store.record_sent_reply(
+        "cid-1",
+        "msg-1",
+        "先按A方案走",
+        feedback_token="token-1",
+    )
+    store.upsert_feedback_event(
+        key="event-1",
+        feedback_token="token-1",
+        rating="useful",
+        rating_label="很有用",
+        comment="需要处理",
+        source="ceo-agent-spike",
+        received_at="2026-06-02T08:00:00.000Z",
+    )
+
+    pending_html = render_attempt_list(store)
+    store.resolve_feedback_event("event-1")
+    resolved_html = render_attempt_list(store)
+
+    assert '<span class="nav-badge">1</span>' in pending_html
+    assert '<span class="nav-badge">1</span>' not in resolved_html
+
+
 def test_user_feedback_resolve_route_redirects_to_feedback_page(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     seed_attempt(store)

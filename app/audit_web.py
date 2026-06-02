@@ -176,6 +176,7 @@ th{background:var(--surface-soft);color:var(--steel);font-size:12px;font-weight:
 .nav-item{display:inline-flex;align-items:center;height:36px;padding:0 14px;border:1px solid var(--hairline);border-radius:999px;background:var(--canvas);color:var(--steel);font-size:14px;font-weight:500}
 a.nav-item:hover{color:var(--ink);text-decoration:none;border-color:var(--ink)}
 .nav-item.active{background:var(--ink);border-color:var(--ink);color:#fff;cursor:default}
+.nav-badge{display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:18px;margin-left:7px;padding:0 5px;border-radius:999px;background:#d45656;color:#fff;font-family:"Geist Mono","SF Mono",Menlo,Consolas,monospace;font-size:11px;font-weight:800;line-height:1}
 .prompt-tabs{display:inline-flex;align-items:center;gap:6px;padding:4px;border:1px solid var(--hairline);border-radius:999px;background:var(--surface-soft);margin:0 0 12px}
 .prompt-tab{display:inline-flex;align-items:center;height:32px;padding:0 13px;border-radius:999px;color:var(--steel);font-size:13px;font-weight:600}
 .prompt-tab:hover{text-decoration:none;color:var(--ink)}
@@ -271,11 +272,12 @@ def render_page(
     *,
     auto_refresh: bool = False,
     active_nav: str | None = None,
+    user_feedback_pending_count: int | None = None,
 ) -> str:
     refresh_meta = (
         "<meta http-equiv=\"refresh\" content=\"15\">" if auto_refresh else ""
     )
-    nav_html = _top_nav(active_nav)
+    nav_html = _top_nav(active_nav, user_feedback_pending_count)
     return (
         "<!doctype html><html><head><meta charset=\"utf-8\">"
         "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
@@ -743,7 +745,10 @@ def _browser_notification_event_stream() -> StreamingResponse:
     )
 
 
-def _top_nav(active_nav: str | None) -> str:
+def _top_nav(
+    active_nav: str | None,
+    user_feedback_pending_count: int | None = None,
+) -> str:
     items = [
         ("history", "History", "/"),
         ("user-feedback", "用户反馈", "/user-feedback"),
@@ -752,14 +757,33 @@ def _top_nav(active_nav: str | None) -> str:
         ("errors", "Errors", "/errors"),
     ]
     item_html = "".join(
-        (
-            f"<span class=\"nav-item active\" aria-current=\"page\">{escape(label)}</span>"
-            if key == active_nav
-            else f"<a class=\"nav-item\" href=\"{escape(href)}\">{escape(label)}</a>"
+        _top_nav_item(
+            key=key,
+            label=label,
+            href=href,
+            active=key == active_nav,
+            user_feedback_pending_count=user_feedback_pending_count,
         )
         for key, label, href in items
     )
     return f"<nav class=\"nav\">{item_html}</nav>"
+
+
+def _top_nav_item(
+    *,
+    key: str,
+    label: str,
+    href: str,
+    active: bool,
+    user_feedback_pending_count: int | None,
+) -> str:
+    label_html = escape(label)
+    if key == "user-feedback" and user_feedback_pending_count:
+        badge_text = "99+" if user_feedback_pending_count > 99 else str(user_feedback_pending_count)
+        label_html += f"<span class=\"nav-badge\">{escape(badge_text)}</span>"
+    if active:
+        return f"<span class=\"nav-item active\" aria-current=\"page\">{label_html}</span>"
+    return f"<a class=\"nav-item\" href=\"{escape(href)}\">{label_html}</a>"
 
 
 def render_config_page(
@@ -778,7 +802,17 @@ def render_config_page(
         active_tab = "info"
         content = _render_config_info()
     body = f"{_prompt_config_card(active_tab)}{_config_tabs(active_tab)}{content}"
-    return render_page("Config", body, active_nav="config")
+    pending_count = (
+        AutoReplyStore(db_path).count_pending_user_feedback_items()
+        if db_path is not None
+        else None
+    )
+    return render_page(
+        "Config",
+        body,
+        active_nav="config",
+        user_feedback_pending_count=pending_count,
+    )
 
 
 def _prompt_config_card(active_tab: str) -> str:
@@ -1288,6 +1322,7 @@ def render_attempt_list(store: AutoReplyStore, limit: int | None = None) -> str:
         body,
         auto_refresh=True,
         active_nav="history",
+        user_feedback_pending_count=store.count_pending_user_feedback_items(),
     )
 
 
@@ -1347,7 +1382,12 @@ def render_user_feedback_list(store: AutoReplyStore, limit: int = 200) -> str:
             "<section class=\"card\"><h2>用户反馈</h2>"
             "<p class=\"muted\">暂无用户反馈。</p></section>"
         )
-    return render_page("用户反馈", body, active_nav="user-feedback")
+    return render_page(
+        "用户反馈",
+        body,
+        active_nav="user-feedback",
+        user_feedback_pending_count=store.count_pending_user_feedback_items(),
+    )
 
 
 def _user_feedback_status(item: UserFeedbackItem) -> str:
@@ -1436,6 +1476,7 @@ def render_attempt_detail(store: AutoReplyStore, attempt_id: int) -> tuple[int, 
         f"Attempt #{attempt.id}",
         _attempt_detail_body(attempt, sent_reply, codex_session_id, feedback_events),
         active_nav="history",
+        user_feedback_pending_count=store.count_pending_user_feedback_items(),
     )
 
 
@@ -1463,7 +1504,12 @@ def render_codex_session_list(store: AutoReplyStore) -> str:
         + "".join(rows)
         + "</tbody></table>"
     )
-    return render_page("Codex Sessions", table, active_nav="codex")
+    return render_page(
+        "Codex Sessions",
+        table,
+        active_nav="codex",
+        user_feedback_pending_count=store.count_pending_user_feedback_items(),
+    )
 
 
 def render_codex_session_detail(
@@ -1488,11 +1534,17 @@ def render_codex_session_detail(
                 "Codex session unavailable",
                 body,
                 active_nav="codex",
+                user_feedback_pending_count=(
+                    store.count_pending_user_feedback_items() if store else None
+                ),
             )
         return 404, render_page(
             "Codex session not found",
             f"<p>Codex session not found: {escape(session_id)}</p>",
             active_nav="codex",
+            user_feedback_pending_count=(
+                store.count_pending_user_feedback_items() if store else None
+            ),
         )
     events = "".join(_codex_event_card(event) for event in rendered.events)
     related_history = _related_history_card(
@@ -1507,7 +1559,14 @@ def render_codex_session_detail(
         f"{related_history}"
         f"{events}"
     )
-    return 200, render_page(f"Codex Session {session_id}", body, active_nav="codex")
+    return 200, render_page(
+        f"Codex Session {session_id}",
+        body,
+        active_nav="codex",
+        user_feedback_pending_count=(
+            store.count_pending_user_feedback_items() if store else None
+        ),
+    )
 
 
 def render_error_list(store: AutoReplyStore, limit: int | None = None) -> str:
@@ -1536,7 +1595,12 @@ def render_error_list(store: AutoReplyStore, limit: int | None = None) -> str:
         + "".join(rows)
         + "</tbody></table>"
     )
-    return render_page("Errors", table, active_nav="errors")
+    return render_page(
+        "Errors",
+        table,
+        active_nav="errors",
+        user_feedback_pending_count=store.count_pending_user_feedback_items(),
+    )
 
 
 def _config_tabs(active_tab: str) -> str:
