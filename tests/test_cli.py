@@ -451,7 +451,7 @@ def test_send_attempt_command_appends_feedback_links_when_configured(
     send_attempt_command(settings, attempt_id)
 
     sent_text = sent["message"][1]
-    assert "反馈：👍 赞 https://feedback.example.com/api/dingtalk-feedback-spike" in sent_text
+    assert "反馈：[👍 赞](https://feedback.example.com/api/dingtalk-feedback-spike" in sent_text
     assert "source=" not in sent_text
     sent_reply = cli.AutoReplyStore(settings.db_path).get_sent_reply("cid-1", "msg-1")
     assert sent_reply is not None

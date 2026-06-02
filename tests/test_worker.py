@@ -1589,7 +1589,7 @@ def test_consume_once_appends_feedback_links_when_configured(
     assert processed == 1
     sent_text = final_sent(dws)[0][1]
     assert sent_text.startswith("先按A方案走（by明哥分身）")
-    assert "反馈：👍 赞 https://feedback.example.com/api/dingtalk-feedback-spike" in sent_text
+    assert "反馈：[👍 赞](https://feedback.example.com/api/dingtalk-feedback-spike" in sent_text
     assert "rating=up" in sent_text
     assert "rating=down" in sent_text
     sent_reply = worker.store.get_sent_reply("cid-1", "msg-1")

@@ -1,3 +1,4 @@
+import re
 import secrets
 import time
 from dataclasses import dataclass
@@ -83,7 +84,7 @@ def build_feedback_link_text(
     stripped_reply = reply_text.strip()
     if not stripped_reply:
         raise ValueError("reply text is required")
-    return f"{stripped_reply}\n\n反馈：👍 赞 {up_url} ｜ 👎 踩 {down_url}"
+    return f"{stripped_reply}\n\n反馈：[👍 赞]({up_url})｜[👎 踩]({down_url})"
 
 
 def _feedback_context_excerpt(text: str) -> str:
@@ -94,7 +95,9 @@ def _feedback_context_excerpt(text: str) -> str:
 
 
 def extract_feedback_link_context(text: str) -> FeedbackLinkContext | None:
-    for raw_part in text.split():
+    url_candidates = re.findall(r"https?://[^\s)）]+", text)
+    token_candidates = text.split()
+    for raw_part in [*url_candidates, *token_candidates]:
         part = raw_part.strip("，,。；;：:、()（）[]【】<>《》\"'")
         if "/api/dingtalk-feedback-spike" not in part:
             continue
