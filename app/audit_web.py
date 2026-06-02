@@ -191,6 +191,7 @@ a.nav-item:hover{color:var(--ink);text-decoration:none;border-color:var(--ink)}
 .card p{margin:8px 0}
 .review-grid{display:grid;grid-template-columns:minmax(0,1.25fr) minmax(340px,.75fr);gap:16px;align-items:start;margin:16px 0}
 .review-grid .card{margin:0}
+.review-side{display:grid;gap:16px}
 .reply-pre{min-height:188px;background:var(--surface-soft);border-color:var(--hairline);font-size:14px;line-height:1.55}
 .reply-meta{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
 .trigger-pre{min-height:0;margin:0 0 14px;background:var(--surface-soft);border-color:var(--hairline);font-size:14px;line-height:1.55}
@@ -2118,13 +2119,12 @@ def _attempt_detail_body(
         for label, value in fields
     )
     return (
-        f"{_review_panel(attempt)}"
+        f"{_review_panel(attempt, sent_reply, feedback_events)}"
         f"<section class=\"card compact-card\"><div class=\"grid\">{rows}</div></section>"
         f"{_quality_warning_card(attempt)}"
         f"{_context_only_info_card(attempt)}"
         f"{_oa_metadata_card(attempt)}"
         f"{_recall_card(attempt, sent_reply)}"
-        f"{_counterparty_feedback_card(sent_reply, feedback_events)}"
         f"{_codex_session_card(codex_session_id, attempt)}"
         f"{_text_card('Trigger', attempt.trigger_text)}"
         f"{_text_card('Codex reason', attempt.codex_reason)}"
@@ -2298,7 +2298,11 @@ def _feedback_event_html(event: FeedbackEvent) -> str:
     )
 
 
-def _review_panel(attempt: ReplyAttempt) -> str:
+def _review_panel(
+    attempt: ReplyAttempt,
+    sent_reply: SentReply | None,
+    feedback_events: list[FeedbackEvent],
+) -> str:
     reply_text = attempt.final_reply_text or attempt.draft_reply_text
     if not reply_text.strip():
         reply_text = "No generated reply recorded."
@@ -2314,7 +2318,10 @@ def _review_panel(attempt: ReplyAttempt) -> str:
         "<h2>生成回复</h2>"
         f"<pre class=\"reply-pre\">{escape(reply_text)}</pre>"
         "</div>"
+        "<div class=\"review-side\">"
         f"{_feedback_form(attempt)}"
+        f"{_counterparty_feedback_card(sent_reply, feedback_events)}"
+        "</div>"
         "</section>"
     )
 

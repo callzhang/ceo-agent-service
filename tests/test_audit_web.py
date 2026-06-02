@@ -1178,6 +1178,7 @@ def test_render_attempt_detail_shows_counterparty_feedback(tmp_path: Path):
 
     assert status == 200
     assert "对方反馈" in html
+    assert html.index("记录反馈 / 修改意见") < html.index("对方反馈")
     assert "token-2" in html
     assert "不太有用" in html
     assert "没有回答到我的问题" in html
