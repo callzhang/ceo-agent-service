@@ -1,3 +1,5 @@
+import { put } from "@vercel/blob";
+
 const EVENT_LIST_KEY = "feedback-spike-events";
 const EVENT_KEY_PREFIX = "feedback-spike:";
 
@@ -54,32 +56,18 @@ function extractFeedbackToken(body, query) {
   return extractField(body, query, "feedback_token") || extractField(body, query, "feedbackToken");
 }
 
-async function kvCommand(command) {
-  const url = process.env.KV_REST_API_URL;
-  const token = process.env.KV_REST_API_TOKEN;
-  if (!url || !token) {
-    return { persisted: false, result: null };
-  }
-  const response = await fetch(url, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(command),
-  });
-  if (!response.ok) {
-    throw new Error(`KV command failed status=${response.status}`);
-  }
-  return { persisted: true, result: await response.json() };
-}
-
 async function persistEvent(event) {
-  const eventJson = JSON.stringify(event);
-  await kvCommand(["SET", event.key, eventJson, "EX", "604800"]);
-  await kvCommand(["LPUSH", EVENT_LIST_KEY, eventJson]);
-  await kvCommand(["LTRIM", EVENT_LIST_KEY, "0", "99"]);
-  return Boolean(process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN);
+  const token = process.env.BLOB_READ_WRITE_TOKEN;
+  if (!token) {
+    return false;
+  }
+  await put(`${EVENT_LIST_KEY}/${event.key}.json`, JSON.stringify(event), {
+    access: "public",
+    allowOverwrite: true,
+    contentType: "application/json",
+    token,
+  });
+  return true;
 }
 
 export default async function handler(req, res) {

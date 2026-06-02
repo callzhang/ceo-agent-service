@@ -7,6 +7,9 @@
     "type": "git",
     "url": "https://github.com/callzhang/ceo-agent-service.git"
   },
+  "dependencies": {
+    "@vercel/blob": "^2.0.0"
+  },
   "scripts": {
     "dev:local": "ceo-agent run",
     "test:local": "pytest"

@@ -23,7 +23,7 @@ In scope:
 - Add a Vercel query endpoint for recent captured spike events.
 - Add a local spike command or script that sends one test card through
   `dws chat message send-card`.
-- Store only minimal callback payloads in Vercel KV for inspection.
+- Store only minimal callback payloads in Vercel Blob for inspection.
 
 Out of scope:
 
@@ -49,8 +49,8 @@ Components:
   - Accepts both GET and POST because the exact DingTalk card action behavior is
     not yet known.
   - Records method, query, body, a safe subset of headers, and received time.
-  - Stores events under Vercel KV keys such as
-    `feedback-spike:<timestamp>:<random>`.
+  - Stores events as Vercel Blob JSON objects under
+    `feedback-spike-events/feedback-spike:<timestamp>:<random>.json`.
   - Returns a simple success payload unless DingTalk requires a different
     response format discovered during testing.
 
@@ -128,7 +128,7 @@ changing all replies:
   unchanged.
 - Card delivery failure falls back to the current plain-text reply path.
 - The feedback card carries an opaque `feedback_token`, not a local SQLite ID.
-- Vercel KV stores minimal feedback events.
+- Vercel Blob stores minimal feedback events.
 - The local service pulls unsynced feedback from Vercel and writes it into local
   SQLite.
 
@@ -153,11 +153,15 @@ changing all replies:
 Required Vercel environment variables:
 
 - `FEEDBACK_SPIKE_SECRET`: shared secret for reading captured events.
-- `KV_REST_API_URL`: optional Vercel KV / Upstash REST URL. If missing, the
-  callback endpoint still responds but does not persist events.
-- `KV_REST_API_TOKEN`: optional write token for storing callback events.
-- `KV_REST_API_READ_ONLY_TOKEN`: optional read token for the events endpoint;
-  if missing, `KV_REST_API_TOKEN` is used.
+- `BLOB_READ_WRITE_TOKEN`: Vercel Blob token created by linking a Blob store to
+  the Vercel project. If missing, the callback endpoint still responds but does
+  not persist events.
+
+The deployed spike project is:
+
+- Project: `ceo-agent-service-feedback-spike`
+- Production URL:
+  `https://ceo-agent-service-feedback-spike.vercel.app`
 
 Local preview without sending a DingTalk card:
 

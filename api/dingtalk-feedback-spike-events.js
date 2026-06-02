@@ -1,3 +1,5 @@
+import { list } from "@vercel/blob";
+
 const EVENT_LIST_KEY = "feedback-spike-events";
 
 function requestSecret(req) {
@@ -10,26 +12,6 @@ function requestSecret(req) {
   return "";
 }
 
-async function kvCommand(command) {
-  const url = process.env.KV_REST_API_URL;
-  const token = process.env.KV_REST_API_READ_ONLY_TOKEN || process.env.KV_REST_API_TOKEN;
-  if (!url || !token) {
-    return { persisted: false, result: null };
-  }
-  const response = await fetch(url, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(command),
-  });
-  if (!response.ok) {
-    throw new Error(`KV command failed status=${response.status}`);
-  }
-  return { persisted: true, result: await response.json() };
-}
-
 function parseLimit(value) {
   const raw = Array.isArray(value) ? value[0] : value;
   const parsed = Number.parseInt(raw || "20", 10);
@@ -37,6 +19,14 @@ function parseLimit(value) {
     return 20;
   }
   return Math.min(parsed, 100);
+}
+
+async function fetchEventBlob(blob) {
+  const response = await fetch(blob.url);
+  if (!response.ok) {
+    return { key: blob.pathname, fetch_error: `status=${response.status}` };
+  }
+  return response.json();
 }
 
 export default async function handler(req, res) {
@@ -53,14 +43,20 @@ export default async function handler(req, res) {
   }
 
   const limit = parseLimit(req.query && req.query.limit);
-  const kv = await kvCommand(["LRANGE", EVENT_LIST_KEY, "0", String(limit - 1)]);
-  const rawEvents = kv.result && Array.isArray(kv.result.result) ? kv.result.result : [];
-  const events = rawEvents.map((value) => {
-    try {
-      return JSON.parse(value);
-    } catch {
-      return { raw: value };
-    }
+  const token = process.env.BLOB_READ_WRITE_TOKEN;
+  if (!token) {
+    return res.status(503).json({ ok: false, error: "blob_not_configured" });
+  }
+  const blobList = await list({
+    limit,
+    mode: "expanded",
+    prefix: `${EVENT_LIST_KEY}/`,
+    token,
   });
-  return res.status(200).json({ ok: true, persisted: kv.persisted, events });
+  const sortedBlobs = [...blobList.blobs].sort(
+    (left, right) =>
+      new Date(right.uploadedAt).getTime() - new Date(left.uploadedAt).getTime()
+  );
+  const events = await Promise.all(sortedBlobs.slice(0, limit).map(fetchEventBlob));
+  return res.status(200).json({ ok: true, persisted: true, events });
 }
