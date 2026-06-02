@@ -11,8 +11,7 @@ service_user="${CEO_SERVICE_USER:-${USER:-$(id -un)}}"
 run_unread_probe() {
   local name="$1"
   local home="$2"
-  local disable_keychain="$3"
-  local keychain="$4"
+  shift 2
   local output_file
   output_file="$(mktemp)"
   set +e
@@ -21,9 +20,8 @@ run_unread_probe() {
     USER="${service_user}" \
     LOGNAME="${service_user}" \
     HOME="${home}" \
-    DWS_DISABLE_KEYCHAIN="${disable_keychain}" \
-    DWS_KEYCHAIN_DIR="${keychain}" \
-    "${dws_bin}" chat message list-unread-conversations --count 1 --format json \
+    "$@" \
+    "${dws_bin}" chat message list-unread-conversations --count 1 --timeout 5 --format json \
     >"${output_file}" 2>&1
   local exit_code=$?
   set -e
@@ -50,13 +48,12 @@ PY
   rm -f "${output_file}"
 }
 
-bad_keychain_dir="$(mktemp -d)"
-trap 'rm -rf "${bad_keychain_dir}"' EXIT
-
-run_unread_probe "correct-file-keychain" "${service_home}" "1" "${keychain_dir}"
-run_unread_probe "wrong-file-keychain" "${workspace}" "1" "${bad_keychain_dir}"
+run_unread_probe "default-user-auth" "${service_home}"
+run_unread_probe "forced-file-keychain" "${service_home}" \
+  DWS_DISABLE_KEYCHAIN=1 \
+  DWS_KEYCHAIN_DIR="${keychain_dir}"
 
 if [[ "${1:-}" == "--include-native-keychain" ]]; then
   printf '%s\n' "native-keychain probe may trigger a macOS Keychain dialog."
-  run_unread_probe "native-keychain" "${service_home}" "0" "${keychain_dir}"
+  run_unread_probe "native-keychain" "${service_home}" DWS_DISABLE_KEYCHAIN=0
 fi

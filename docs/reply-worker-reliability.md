@@ -54,15 +54,12 @@ not block message discovery for that producer pass.
 ## DWS auth environment
 
 The LaunchAgents keep work data under the configured `CEO_WORKSPACE` and use the
-current user `HOME` unless `CEO_SERVICE_HOME` is explicitly set, so DWS can
-decrypt the authenticated file-backed credential store selected by
-`DWS_DISABLE_KEYCHAIN=1` plus `DWS_KEYCHAIN_DIR`. The keychain directory defaults
-to `$CEO_WORKSPACE/Library/Application Support/dws-cli`.
-Using the memory directory as `HOME` can report `not_authenticated` even when
-the same token directory is valid from the normal user home. The diagnostic
-script `scripts/check-dws-auth-env.sh` reproduces the boundary: the correct
-service home plus file keychain dir succeeds, while an empty file keychain dir
-fails with `not_authenticated`.
+current user `HOME` unless `CEO_SERVICE_HOME` is explicitly set. The service
+does not force `DWS_DISABLE_KEYCHAIN` or `DWS_KEYCHAIN_DIR`; it uses the same
+default DWS login state that works from an interactive shell. Forcing a separate
+file-backed keychain can report `not_authenticated` even when normal `dws` reads
+work. The diagnostic script `scripts/check-dws-auth-env.sh` verifies the default
+user auth path first and then compares optional file-keychain probes.
 
 ## Processing acknowledgement
 

@@ -16,8 +16,6 @@ export CEO_PRODUCER_INTERVAL_SECONDS="${CEO_PRODUCER_INTERVAL_SECONDS:-60}"
 export CEO_CONSUMER_POLL_INTERVAL_SECONDS="${CEO_CONSUMER_POLL_INTERVAL_SECONDS:-10}"
 export CEO_BATCH_SECONDS="${CEO_BATCH_SECONDS:-120}"
 export CEO_CORPUS_DIR="${CEO_CORPUS_DIR:-${repo_root}/corpus}"
-export DWS_DISABLE_KEYCHAIN="${DWS_DISABLE_KEYCHAIN:-1}"
-export DWS_KEYCHAIN_DIR="${DWS_KEYCHAIN_DIR:-${CEO_WORKSPACE}/Library/Application Support/dws-cli}"
 
 ceo_agent_cmd=(.venv/bin/python -c 'from app.cli import main; main()')
 if [[ -x .venv/bin/ceo-agent ]]; then
