@@ -98,7 +98,7 @@ def test_render_attempt_list_shows_counterparty_feedback(tmp_path: Path):
     store.upsert_feedback_event(
         key="event-1",
         feedback_token="token-1",
-        rating="very_useful",
+        rating="useful",
         rating_label="很有用",
         comment="这个建议能直接用",
         source="ceo-agent-spike",
@@ -107,9 +107,8 @@ def test_render_attempt_list_shows_counterparty_feedback(tmp_path: Path):
 
     html = render_attempt_list(store)
 
-    assert "对方反馈" in html
-    assert "很有用" in html
-    assert "这个建议能直接用" in html
+    assert "反馈：☆☆☆☆ | 这个建议能直接用" in html
+    assert "对方反馈 很有用" not in html
 
 
 def test_render_attempt_list_hides_pending_counterparty_feedback(tmp_path: Path):

@@ -2246,14 +2246,26 @@ def _attempt_feedback_summary(
 ) -> str:
     if feedback_events:
         latest = feedback_events[0]
-        label = latest.rating_label or latest.rating or "feedback"
-        comment = f": {latest.comment}" if latest.comment.strip() else ""
+        label = _feedback_rating_stars(latest) or latest.rating_label or latest.rating
+        comment = f" | {_excerpt(latest.comment, 90)}" if latest.comment.strip() else ""
         return (
             "<div class=\"attempt-foot\">"
-            f"<span class=\"feedback-chip\">对方反馈 {escape(label)}{escape(_excerpt(comment, 90))}</span>"
+            f"<span class=\"feedback-chip\">反馈：{escape(label)}{escape(comment)}</span>"
             "</div>"
         )
     return ""
+
+
+def _feedback_rating_stars(event: FeedbackEvent) -> str:
+    star_counts = {
+        "very_unhelpful": 1,
+        "not_useful": 2,
+        "neutral": 3,
+        "useful": 4,
+        "very_useful": 5,
+    }
+    count = star_counts.get(event.rating)
+    return "☆" * count if count else ""
 
 
 def _counterparty_feedback_card(
