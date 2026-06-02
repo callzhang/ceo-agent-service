@@ -85,6 +85,7 @@ from app.store import (
     ReplyError,
     ReplyTask,
     SentReply,
+    UserFeedbackItem,
 )
 from app.user_prompt_blocks import USER_PROMPT_BLOCKS, UserPromptBlock
 from app.worker import DingTalkAutoReplyWorker
@@ -160,6 +161,12 @@ th{background:var(--surface-soft);color:var(--steel);font-size:12px;font-weight:
 .feedback-rating{display:inline-flex;align-items:center;min-height:26px;padding:4px 10px;border-radius:999px;background:rgba(0,212,164,.12);border:1px solid rgba(0,180,138,.28);color:#005b49;font-size:13px;font-weight:700}
 .feedback-comment{font-size:14px;color:var(--charcoal);white-space:pre-wrap}
 .feedback-token{font-family:"Geist Mono","SF Mono",Menlo,Consolas,monospace;color:var(--steel);font-size:12px;word-break:break-all}
+.user-feedback-table th:nth-child(1),.user-feedback-table td:nth-child(1){width:112px}
+.user-feedback-table th:nth-child(2),.user-feedback-table td:nth-child(2){width:100px}
+.user-feedback-table th:nth-child(5),.user-feedback-table td:nth-child(5){width:150px}
+.user-feedback-table th:nth-child(6),.user-feedback-table td:nth-child(6){width:112px}
+.user-feedback-comment{font-weight:600;color:var(--ink)}
+.user-feedback-context{margin-top:4px;color:var(--steel);font-size:12px;line-height:1.4}
 .attempt-info{position:relative;display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border:1px solid #d29a12;border-radius:50%;color:#8a5a08;background:#fff3c4;font-size:11px;font-weight:700;line-height:1;cursor:help;flex:0 0 auto}
 .attempt-info:hover,.attempt-info:focus{background:#ffe7a3;border-color:#b77908;outline:0}
 .attempt-info::after{content:attr(data-tooltip);display:none;position:absolute;left:0;bottom:calc(100% + 8px);z-index:30;width:max-content;max-width:min(320px,calc(100vw - 48px));padding:7px 9px;border-radius:6px;background:#1f2937;color:#fff;box-shadow:0 8px 24px rgba(15,23,42,.18);font-size:12px;font-weight:500;line-height:1.4;text-align:left;white-space:normal}
@@ -739,6 +746,7 @@ def _browser_notification_event_stream() -> StreamingResponse:
 def _top_nav(active_nav: str | None) -> str:
     items = [
         ("history", "History", "/"),
+        ("user-feedback", "用户反馈", "/user-feedback"),
         ("codex", "Codex Sessions", "/codex"),
         ("config", "Config", "/config"),
         ("errors", "Errors", "/errors"),
@@ -1281,6 +1289,70 @@ def render_attempt_list(store: AutoReplyStore, limit: int | None = None) -> str:
         auto_refresh=True,
         active_nav="history",
     )
+
+
+def render_user_feedback_list(store: AutoReplyStore, limit: int = 200) -> str:
+    _sync_feedback_events_for_sent_replies(
+        store,
+        store.list_sent_replies_with_feedback_tokens(),
+    )
+    rows = []
+    for item in store.list_user_feedback_items(limit=limit):
+        status = _user_feedback_status(item)
+        attempt_link = (
+            f"<a class=\"review-link\" href=\"/attempts/{item.attempt_id}\">处理</a>"
+            if item.attempt_id
+            else "<span class=\"muted\">未关联</span>"
+        )
+        context_lines = [
+            value
+            for value in (
+                item.conversation_title,
+                item.trigger_sender,
+                _excerpt(item.trigger_text, 140),
+            )
+            if value
+        ]
+        context_html = (
+            f"<div class=\"user-feedback-context\">{escape(' · '.join(context_lines))}</div>"
+            if context_lines
+            else ""
+        )
+        comment = item.comment.strip() or "未填写评语"
+        rows.append(
+            "<tr>"
+            f"<td><span class=\"pill status-{escape(status)}\">{escape(status)}</span></td>"
+            f"<td>{escape(_feedback_rating_stars_for_rating(item.rating) or item.rating_label or item.rating)}</td>"
+            "<td>"
+            f"<div class=\"user-feedback-comment\">{escape(comment)}</div>"
+            f"{context_html}"
+            "</td>"
+            f"<td><span class=\"feedback-token\">{escape(item.feedback_token)}</span></td>"
+            f"<td>{escape(item.received_at or item.updated_at)}</td>"
+            f"<td>{attempt_link}</td>"
+            "</tr>"
+        )
+    if rows:
+        body = (
+            "<section class=\"card\"><h2>用户反馈</h2>"
+            "<table class=\"user-feedback-table\"><thead><tr>"
+            "<th>状态</th><th>评分</th><th>用户反馈</th><th>Token</th><th>时间</th><th>操作</th>"
+            "</tr></thead><tbody>"
+            + "".join(rows)
+            + "</tbody></table></section>"
+        )
+    else:
+        body = (
+            "<section class=\"card\"><h2>用户反馈</h2>"
+            "<p class=\"muted\">暂无用户反馈。</p></section>"
+        )
+    return render_page("用户反馈", body, active_nav="user-feedback")
+
+
+def _user_feedback_status(item: UserFeedbackItem) -> str:
+    if item.reviewer_feedback.strip() or item.corrected_reply_text.strip():
+        return "resolved"
+    return "pending"
 
 
 def _reply_task_item(task: ReplyTask) -> str:
@@ -1842,6 +1914,10 @@ def create_audit_app(
     def attempt_list() -> str:
         return render_attempt_list(AutoReplyStore(db_path))
 
+    @app.get("/user-feedback", response_class=HTMLResponse)
+    def user_feedback_list() -> str:
+        return render_user_feedback_list(AutoReplyStore(db_path))
+
     @app.get("/errors", response_class=HTMLResponse)
     def error_list() -> str:
         return render_error_list(AutoReplyStore(db_path))
@@ -2257,6 +2333,10 @@ def _attempt_feedback_summary(
 
 
 def _feedback_rating_stars(event: FeedbackEvent) -> str:
+    return _feedback_rating_stars_for_rating(event.rating)
+
+
+def _feedback_rating_stars_for_rating(rating: str) -> str:
     star_counts = {
         "very_unhelpful": 1,
         "not_useful": 2,
@@ -2264,7 +2344,7 @@ def _feedback_rating_stars(event: FeedbackEvent) -> str:
         "useful": 4,
         "very_useful": 5,
     }
-    count = star_counts.get(event.rating)
+    count = star_counts.get(rating)
     return "☆" * count if count else ""
 
 
@@ -2543,7 +2623,7 @@ def _recall_card(attempt: ReplyAttempt, sent_reply: SentReply | None) -> str:
 
 def _feedback_form(attempt: ReplyAttempt) -> str:
     return (
-        f"<section class=\"card\" id=\"feedback\"><h2>记录反馈 / 修改意见</h2>"
+        f"<section class=\"card\" id=\"feedback\"><h2>内部反馈/建议修改</h2>"
         f"<form method=\"post\" action=\"/attempts/{attempt.id}/feedback\">"
         "<label>反馈意见</label><textarea name=\"feedback\" "
         "placeholder=\"这条判断哪里不对、为什么不满意、以后应该遵守什么规则\">"

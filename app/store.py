@@ -96,6 +96,24 @@ class FeedbackEvent(BaseModel):
     updated_at: str
 
 
+class UserFeedbackItem(BaseModel):
+    key: str
+    feedback_token: str
+    rating: str = ""
+    rating_label: str = ""
+    comment: str = ""
+    source: str = ""
+    received_at: str = ""
+    attempt_id: int = 0
+    conversation_title: str = ""
+    trigger_sender: str = ""
+    trigger_text: str = ""
+    final_reply_text: str = ""
+    reviewer_feedback: str = ""
+    corrected_reply_text: str = ""
+    updated_at: str = ""
+
+
 class ConversationRecord(BaseModel):
     conversation_id: str
     title: str
@@ -980,6 +998,22 @@ class AutoReplyStore:
                     result[key] = reply
             return result
 
+    def list_sent_replies_with_feedback_tokens(
+        self, limit: int = 500
+    ) -> list[SentReply]:
+        with self._connect() as db:
+            rows = db.execute(
+                """
+                select *
+                from sent_replies
+                where trim(feedback_token) <> ''
+                order by sent_at desc, id desc
+                limit ?
+                """,
+                (limit,),
+            ).fetchall()
+            return [SentReply.model_validate(dict(row)) for row in rows]
+
     def upsert_feedback_event(
         self,
         *,
@@ -1073,6 +1107,49 @@ class AutoReplyStore:
                 event = FeedbackEvent.model_validate(dict(row))
                 result.setdefault(event.feedback_token, []).append(event)
             return result
+
+    def list_user_feedback_items(self, limit: int = 200) -> list[UserFeedbackItem]:
+        with self._connect() as db:
+            rows = db.execute(
+                """
+                with latest_attempt_by_token as (
+                    select
+                        sr.feedback_token as feedback_token,
+                        max(ra.id) as attempt_id
+                    from sent_replies sr
+                    join reply_attempts ra
+                        on ra.conversation_id = sr.conversation_id
+                       and ra.trigger_message_id = sr.trigger_message_id
+                    where trim(sr.feedback_token) <> ''
+                    group by sr.feedback_token
+                )
+                select
+                    fe.key,
+                    fe.feedback_token,
+                    fe.rating,
+                    fe.rating_label,
+                    fe.comment,
+                    fe.source,
+                    fe.received_at,
+                    coalesce(ra.id, 0) as attempt_id,
+                    coalesce(ra.conversation_title, '') as conversation_title,
+                    coalesce(ra.trigger_sender, '') as trigger_sender,
+                    coalesce(ra.trigger_text, '') as trigger_text,
+                    coalesce(ra.final_reply_text, '') as final_reply_text,
+                    coalesce(ra.reviewer_feedback, '') as reviewer_feedback,
+                    coalesce(ra.corrected_reply_text, '') as corrected_reply_text,
+                    fe.updated_at
+                from feedback_events fe
+                left join latest_attempt_by_token latest
+                    on latest.feedback_token = fe.feedback_token
+                left join reply_attempts ra
+                    on ra.id = latest.attempt_id
+                order by fe.received_at desc, fe.updated_at desc
+                limit ?
+                """,
+                (limit,),
+            ).fetchall()
+            return [UserFeedbackItem.model_validate(dict(row)) for row in rows]
 
     def update_sent_reply_recall(
         self,

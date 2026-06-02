@@ -20,6 +20,7 @@ from app.audit_web import (
     render_config_page,
     render_developer_prompt_editor,
     render_error_list,
+    render_user_feedback_list,
     run_audit_web,
 )
 from app.developer_prompt import read_developer_prompt_template
@@ -126,6 +127,94 @@ def test_render_attempt_list_hides_pending_counterparty_feedback(tmp_path: Path)
     assert "等待对方反馈" not in html
 
 
+def test_render_user_feedback_list_marks_pending_and_resolved(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    pending_attempt_id = seed_attempt(store)
+    store.upsert_conversation(
+        "cid-2",
+        title="产品群",
+        single_chat=False,
+        codex_session_id="session-2",
+    )
+    resolved_attempt_id = store.record_reply_attempt(
+        conversation_id="cid-2",
+        conversation_title="产品群",
+        trigger_message_id="msg-2",
+        trigger_sender="Mina",
+        trigger_text="这个回复有帮助吗？",
+        action="send_reply",
+        sensitivity_kind="general",
+        codex_reason="direct ask",
+        draft_reply_text="收到，我来看",
+    )
+    store.update_reply_attempt(
+        resolved_attempt_id,
+        final_reply_text="收到，我来看",
+        permission_action="allow",
+        send_status="sent",
+    )
+    store.record_sent_reply(
+        "cid-1",
+        "msg-1",
+        "先按A方案走",
+        feedback_token="token-pending",
+    )
+    store.record_sent_reply(
+        "cid-2",
+        "msg-2",
+        "收到，我来看",
+        feedback_token="token-resolved",
+    )
+    store.upsert_feedback_event(
+        key="event-pending",
+        feedback_token="token-pending",
+        rating="not_useful",
+        rating_label="不太有用",
+        comment="没有回答到我的问题",
+        source="ceo-agent-spike",
+        received_at="2026-06-02T08:05:00.000Z",
+    )
+    store.upsert_feedback_event(
+        key="event-resolved",
+        feedback_token="token-resolved",
+        rating="useful",
+        rating_label="很有用",
+        comment="测试一下反馈功能",
+        source="ceo-agent-spike",
+        received_at="2026-06-02T08:06:00.000Z",
+    )
+    store.record_reply_feedback(
+        resolved_attempt_id,
+        feedback="已看，后续收敛一点",
+        corrected_reply_text="收到，我来看。",
+    )
+
+    html = render_user_feedback_list(store)
+
+    assert "用户反馈" in html
+    assert "pending" in html
+    assert "resolved" in html
+    assert "☆☆" in html
+    assert "☆☆☆☆" in html
+    assert "没有回答到我的问题" in html
+    assert "测试一下反馈功能" in html
+    assert f'href="/attempts/{pending_attempt_id}"' in html
+    assert f'href="/attempts/{resolved_attempt_id}"' in html
+
+
+def test_user_feedback_route_renders_feedback_page(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    seed_attempt(store)
+    app = create_audit_app(store.path)
+    client = TestClient(app)
+
+    response = client.get("/user-feedback")
+
+    assert response.status_code == 200
+    assert "用户反馈" in response.text
+    assert "暂无用户反馈" in response.text
+
+
 def test_render_history_page_includes_favicon_and_refresh(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     seed_attempt(store)
@@ -154,13 +243,18 @@ def test_top_nav_highlights_current_page_and_disables_current_link(tmp_path: Pat
     seed_attempt(store)
 
     history_html = render_attempt_list(store)
+    user_feedback_html = render_user_feedback_list(store)
     config_html = render_config_page()
     codex_html = render_codex_session_list(store)
     errors_html = render_error_list(store)
 
     assert '<span class="nav-item active" aria-current="page">History</span>' in history_html
     assert '<a class="nav-item" href="/">History</a>' not in history_html
+    assert '<a class="nav-item" href="/user-feedback">用户反馈</a>' in history_html
     assert '<a class="nav-item" href="/config">Config</a>' in history_html
+
+    assert '<span class="nav-item active" aria-current="page">用户反馈</span>' in user_feedback_html
+    assert '<a class="nav-item" href="/user-feedback">用户反馈</a>' not in user_feedback_html
 
     assert '<span class="nav-item active" aria-current="page">Config</span>' in config_html
     assert '<a class="nav-item" href="/config">Config</a>' not in config_html
@@ -1158,7 +1252,7 @@ def test_render_attempt_detail_shows_full_decision_and_feedback_form(tmp_path: P
     assert "Draft reply (raw Codex reply)" in html
     assert "Final reply (send-ready text)" in html
     assert "permission" in html
-    assert "记录反馈 / 修改意见" in html
+    assert "内部反馈/建议修改" in html
     assert "反馈意见" in html
     assert "建议回复" in html
     assert f'action="/attempts/{attempt_id}/feedback"' in html
@@ -1192,7 +1286,7 @@ def test_render_attempt_detail_shows_counterparty_feedback(tmp_path: Path):
 
     assert status == 200
     assert "对方反馈" in html
-    assert html.index("记录反馈 / 修改意见") < html.index("对方反馈")
+    assert html.index("内部反馈/建议修改") < html.index("对方反馈")
     assert "token-2" in html
     assert "不太有用" in html
     assert "没有回答到我的问题" in html
