@@ -3011,7 +3011,7 @@ def test_success_notification_keeps_full_reply_text(tmp_path: Path, monkeypatch)
     ]
 
 
-def test_success_notification_prepares_dingtalk_conversation_url(
+def test_success_notification_prepares_dingtalk_open_conversation_url(
     tmp_path: Path, monkeypatch
 ):
     trigger = message("@Alex Chen(明哥) 请给一下你的看法")
@@ -3019,7 +3019,6 @@ def test_success_notification_prepares_dingtalk_conversation_url(
     dws = FakeDws(
         [conversation()],
         {"cid-1": [trigger]},
-        client_cids={"cid-1": "75217569357"},
     )
     codex = FakeCodex(CodexDecision(action=CodexAction.SEND_REPLY, reply_text="收到"))
     worker = make_worker(tmp_path, dws, codex, monkeypatch)
@@ -3031,11 +3030,11 @@ def test_success_notification_prepares_dingtalk_conversation_url(
 
     worker.run_once()
 
-    assert dws.client_cid_calls == ["cid-1"]
+    assert dws.client_cid_calls == []
     assert notifications[0] == {
         "title": "CEO auto reply: Friday",
         "message": final_sent(dws)[0][1],
-        "url": "http://127.0.0.1:8765/open-dingtalk?cid=75217569357",
+        "url": "http://127.0.0.1:8765/open-dingtalk?conversation_id=cid-1",
     }
 
 

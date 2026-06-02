@@ -202,7 +202,6 @@ class DingTalkAutoReplyWorker:
         self.now_provider = now_provider or (lambda: datetime.now().astimezone())
         self.permission_gate = PermissionGate(dws)
         self.oa_approval_runner = oa_approval_runner
-        self._client_conversation_id_cache: dict[str, str] = {}
 
     def run_once(self, max_batches: int | None = None) -> None:
         self.produce_once(max_tasks=max_batches)
@@ -3687,37 +3686,13 @@ class DingTalkAutoReplyWorker:
     def _notification_url(self, conversation: DingTalkConversation | None) -> str | None:
         if conversation is None:
             return None
-        client_conversation_id = self._client_conversation_id(
-            conversation.open_conversation_id
-        )
-        if not client_conversation_id:
+        open_conversation_id = conversation.open_conversation_id.strip()
+        if not open_conversation_id:
             return None
         return (
             f"{notification_bridge_base_url()}/open-dingtalk"
-            f"?cid={quote(client_conversation_id, safe='')}"
+            f"?conversation_id={quote(open_conversation_id, safe='')}"
         )
-
-    def _client_conversation_id(self, open_conversation_id: str) -> str:
-        if open_conversation_id in self._client_conversation_id_cache:
-            return self._client_conversation_id_cache[open_conversation_id]
-        resolver = getattr(self.dws, "client_conversation_id", None)
-        if not callable(resolver):
-            self._client_conversation_id_cache[open_conversation_id] = ""
-            return ""
-        try:
-            client_conversation_id = str(resolver(open_conversation_id) or "")
-        except Exception as exc:
-            self.store.record_error(
-                open_conversation_id,
-                None,
-                "dingtalk_client_cid",
-                str(exc),
-            )
-            client_conversation_id = ""
-        self._client_conversation_id_cache[open_conversation_id] = (
-            client_conversation_id
-        )
-        return client_conversation_id
 
     def _mark_seen(self, messages: list[DingTalkMessage]) -> None:
         if self.dry_run:

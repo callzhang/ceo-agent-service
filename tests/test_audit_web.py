@@ -125,11 +125,11 @@ def test_render_history_page_includes_favicon_and_refresh(tmp_path: Path):
     assert 'content="15"' in html
     assert "ceo-agent-service-notification-leader" in html
     assert 'new EventSource("/notifications/events")' in html
-    assert "event.preventDefault()" in html
     assert "navigator.serviceWorker" in html
     assert '"/notification-service-worker.js"' in html
     assert "registration.showNotification(payload.title, options)" in html
-    assert 'headers: { "Accept": "application/json" }' in html
+    assert "new Notification(" not in html
+    assert "notification.onclick" not in html
     assert "payload.dingtalk_url" not in html
     assert "window.location.href" not in html
     assert "window.open(payload.url" not in html
@@ -373,6 +373,46 @@ def test_open_dingtalk_bridge_opens_conversation_url(tmp_path: Path, monkeypatch
     ]
 
 
+def test_open_dingtalk_bridge_opens_pc_jsapi_bridge_for_open_conversation_id(
+    tmp_path: Path, monkeypatch
+):
+    commands = []
+
+    def fake_run(command, check):
+        commands.append((command, check))
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(
+        "app.audit_web.subprocess.run",
+        fake_run,
+    )
+    client = TestClient(create_audit_app(tmp_path / "worker.sqlite3"))
+
+    response = client.get("/open-dingtalk?conversation_id=cid-1")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["bridge_url"] == (
+        "http://testserver/dingtalk/open-chat-bridge?conversation_id=cid-1"
+    )
+    assert payload["dingtalk_url"].startswith(
+        "dingtalk://dingtalkclient/page/link?url="
+    )
+    assert "&pc_slide=true" in payload["dingtalk_url"]
+    assert "open_platform_link" not in payload["dingtalk_url"]
+    assert "jumpToChat" not in payload["dingtalk_url"]
+    assert commands == [
+        (
+            [
+                "/usr/bin/open",
+                payload["dingtalk_url"],
+            ],
+            False,
+        )
+    ]
+
+
 def test_open_dingtalk_bridge_rejects_missing_cid(tmp_path: Path, monkeypatch):
     commands = []
     monkeypatch.setattr(
@@ -388,6 +428,43 @@ def test_open_dingtalk_bridge_rejects_missing_cid(tmp_path: Path, monkeypatch):
     assert commands == []
 
 
+def test_dingtalk_open_chat_bridge_calls_open_conversation_jsapi(tmp_path: Path):
+    client = TestClient(create_audit_app(tmp_path / "worker.sqlite3"))
+
+    response = client.get("/dingtalk/open-chat-bridge?conversation_id=cid-1")
+
+    assert response.status_code == 200
+    assert "https://g.alicdn.com/dingding/dingtalk-jsapi/" in response.text
+    assert "dd.openChatByConversationId" in response.text
+    assert "toConversationByOpenConversationId" in response.text
+    assert "/dingtalk/bridge-status" in response.text
+    assert "window.dd.ready" in response.text
+    assert "dd-ready-timeout" in response.text
+    assert "dd.closePage" in response.text
+    assert "jumpToChat" not in response.text
+
+
+def test_dingtalk_bridge_status_records_events(tmp_path: Path):
+    client = TestClient(create_audit_app(tmp_path / "worker.sqlite3"))
+
+    response = client.post(
+        "/dingtalk/bridge-status",
+        json={
+            "conversation_id": "cid-1",
+            "stage": "loaded",
+            "detail": "DingTalk",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": True}
+    assert client.get("/dingtalk/bridge-status").json()["events"][-1] == {
+        "conversation_id": "cid-1",
+        "stage": "loaded",
+        "detail": "DingTalk",
+    }
+
+
 def test_notification_service_worker_fetches_bridge_without_opening_window(
     tmp_path: Path,
 ):
@@ -399,6 +476,8 @@ def test_notification_service_worker_fetches_bridge_without_opening_window(
     assert response.headers["content-type"].startswith("application/javascript")
     assert response.headers["cache-control"] == "no-cache"
     assert "notificationclick" in response.text
+    assert "skipWaiting" in response.text
+    assert "clients.claim" in response.text
     assert 'await fetch(data.url, {' in response.text
     assert "clients.matchAll" in response.text
     assert "client.focus" in response.text
@@ -415,11 +494,11 @@ def test_browser_notifications_page_is_available(tmp_path: Path):
     assert "Chrome 通知" in response.text
     assert "Notification.requestPermission" in response.text
     assert 'new EventSource("/notifications/events")' in response.text
-    assert "event.preventDefault()" in response.text
     assert "navigator.serviceWorker" in response.text
     assert '"/notification-service-worker.js"' in response.text
     assert "registration.showNotification(payload.title, options)" in response.text
-    assert 'headers: { "Accept": "application/json" }' in response.text
+    assert "new Notification(" not in response.text
+    assert "notification.onclick" not in response.text
     assert "payload.dingtalk_url" not in response.text
     assert "window.location.href" not in response.text
     assert "window.open(payload.url" not in response.text

@@ -253,6 +253,7 @@ NO_CODEX_SESSION_TOOLTIP = (
 _BROWSER_NOTIFICATION_SUBSCRIBERS: set[asyncio.Queue[dict[str, str]]] = set()
 _BROWSER_NOTIFICATION_HISTORY: deque[dict[str, str]] = deque(maxlen=20)
 _BROWSER_NOTIFICATION_SEQUENCE = count(1)
+_DINGTALK_BRIDGE_STATUS: deque[dict[str, str]] = deque(maxlen=20)
 
 
 def render_page(
@@ -381,23 +382,11 @@ def _browser_notification_client_script() -> str:
       data: { url: payload.url || "" },
     };
     const registration = await ensureServiceWorker();
-    if (registration) {
-      await registration.showNotification(payload.title, options);
+    if (!registration) {
+      logLine("notification skipped: service worker unavailable");
       return;
     }
-    const notification = new Notification(payload.title, options);
-    notification.onclick = (event) => {
-      event.preventDefault();
-      notification.close();
-      if (payload.url) {
-        fetch(payload.url, {
-          method: "GET",
-          keepalive: true,
-          headers: { "Accept": "application/json" },
-        }).catch((error) => logLine(`notification click failed: ${error}`));
-      }
-      return false;
-    };
+    await registration.showNotification(payload.title, options);
   }
 
   function stopEvents() {
@@ -484,6 +473,14 @@ def _browser_notification_client_script() -> str:
 
 def _notification_service_worker_script() -> str:
     return """
+self.addEventListener("install", (event) => {
+  event.waitUntil(self.skipWaiting());
+});
+
+self.addEventListener("activate", (event) => {
+  event.waitUntil(self.clients.claim());
+});
+
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
   event.waitUntil(handleNotificationClick(event.notification.data || {}));
@@ -539,14 +536,171 @@ def _dingtalk_conversation_url(cid: str) -> str:
     )
 
 
+def _dingtalk_pc_slide_link_url(link: str) -> str:
+    return (
+        "dingtalk://dingtalkclient/page/link"
+        f"?url={quote(link, safe='')}&pc_slide=true"
+    )
+
+
 def _dingtalk_url_from_bridge_url(url: str) -> str:
     parsed = urlparse(url)
     if parsed.path != "/open-dingtalk":
         return ""
-    cid = (parse_qs(parsed.query).get("cid") or [""])[0].strip()
+    query = parse_qs(parsed.query)
+    conversation_id = (query.get("conversation_id") or [""])[0].strip()
+    if conversation_id:
+        return _dingtalk_pc_slide_link_url(
+            f"{parsed.scheme}://{parsed.netloc}/dingtalk/open-chat-bridge"
+            f"?conversation_id={quote(conversation_id, safe='')}"
+        )
+    cid = (query.get("cid") or [""])[0].strip()
     if not cid:
         return ""
     return _dingtalk_conversation_url(cid)
+
+
+def render_dingtalk_open_chat_bridge(open_conversation_id: str) -> str:
+    escaped_conversation_id = json.dumps(open_conversation_id)
+    return f"""<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>打开钉钉会话</title>
+  <style>
+    body{{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;margin:0;padding:28px;background:#fff;color:#111;line-height:1.5}}
+    .card{{max-width:520px;margin:12vh auto 0;border:1px solid #e5e5e5;border-radius:12px;padding:22px;background:#fafafa}}
+    h1{{margin:0 0 10px;font-size:18px}}
+    p{{margin:8px 0;color:#555}}
+    code{{word-break:break-all;background:#eee;border-radius:6px;padding:2px 5px}}
+  </style>
+  <script src="https://g.alicdn.com/dingding/dingtalk-jsapi/3.0.25/dingtalk.open.js"></script>
+</head>
+<body>
+  <section class="card">
+    <h1>正在打开钉钉会话</h1>
+    <p id="status">等待钉钉 JSAPI...</p>
+    <p><code>{escape(open_conversation_id)}</code></p>
+  </section>
+  <script>
+    const openConversationId = {escaped_conversation_id};
+    const statusEl = document.getElementById("status");
+    function report(stage, detail) {{
+      const body = JSON.stringify({{
+        conversation_id: openConversationId,
+        stage,
+        detail: detail || "",
+      }});
+      if (navigator.sendBeacon) {{
+        navigator.sendBeacon("/dingtalk/bridge-status", body);
+        return;
+      }}
+      fetch("/dingtalk/bridge-status", {{
+        method: "POST",
+        headers: {{ "Content-Type": "application/json" }},
+        body,
+      }}).catch(() => {{}});
+    }}
+    function setStatus(text) {{
+      statusEl.textContent = text;
+      report("status", text);
+    }}
+    function apiNames(dd) {{
+      const root = Object.keys(dd || {{}}).sort().slice(0, 80);
+      const chat = Object.keys((dd && dd.biz && dd.biz.chat) || {{}}).sort();
+      return JSON.stringify({{ root, chat }});
+    }}
+    function invokeWithCallbackTimeout(label, invoke) {{
+      report("invoke", label);
+      let callbackSeen = false;
+      const done = (text) => {{
+        callbackSeen = true;
+        setStatus(text);
+        closeBridgePageSoon();
+      }};
+      invoke(done);
+      setTimeout(() => {{
+        if (!callbackSeen) {{
+          report("callback-timeout", label);
+        }}
+      }}, 1200);
+    }}
+    function closeBridgePageSoon() {{
+      setTimeout(() => {{
+        const dd = window.dd;
+        const closeNavigation = dd && dd.biz && dd.biz.navigation && dd.biz.navigation.close;
+        if (typeof closeNavigation === "function") {{
+          report("close-navigation", "");
+          closeNavigation({{}});
+          return;
+        }}
+        if (dd && typeof dd.closePage === "function") {{
+          report("close-page", "");
+          dd.closePage({{}});
+        }}
+        window.close();
+      }}, 600);
+    }}
+    function openChat() {{
+      const dd = window.dd;
+      if (!dd) {{
+        setStatus("钉钉 JSAPI 未加载。请确认本页是在钉钉客户端内打开。");
+        return;
+      }}
+      report("dd-api-names", apiNames(dd));
+      const legacyApi = dd.biz && dd.biz.chat && dd.biz.chat.toConversationByOpenConversationId;
+      if (typeof legacyApi === "function") {{
+        invokeWithCallbackTimeout("biz.chat.toConversationByOpenConversationId", (done) => {{
+          legacyApi({{
+            openConversationId,
+            onSuccess: () => done("已通过旧版桌面会话 API 发起跳转。"),
+            onFail: (error) => done(`旧版桌面会话 API 跳转失败: ${{JSON.stringify(error)}}`),
+          }});
+        }});
+        return;
+      }}
+      if (typeof dd.openChatByConversationId === "function") {{
+        invokeWithCallbackTimeout("openChatByConversationId", (done) => {{
+          dd.openChatByConversationId({{
+            openConversationId,
+            success: () => done("已通过新版会话 API 发起跳转。"),
+            fail: (error) => done(`新版会话 API 跳转失败: ${{JSON.stringify(error)}}`),
+            complete: () => {{}},
+          }});
+        }});
+        return;
+      }}
+      setStatus("当前钉钉客户端没有 openChatByConversationId 能力。");
+    }}
+    function openWhenReady() {{
+      report("loaded", navigator.userAgent);
+      if (window.dd && typeof window.dd.ready === "function") {{
+        let opened = false;
+        const openOnce = () => {{
+          if (opened) {{
+            return;
+          }}
+          opened = true;
+          openChat();
+        }};
+        window.dd.ready(() => {{
+          report("dd-ready", "");
+          openOnce();
+        }});
+        window.dd.error((error) => setStatus(`JSAPI 初始化失败: ${{JSON.stringify(error)}}`));
+        setTimeout(() => {{
+          report("dd-ready-timeout", "");
+          openOnce();
+        }}, 1000);
+        return;
+      }}
+      setTimeout(openChat, 350);
+    }}
+    window.addEventListener("load", openWhenReady);
+  </script>
+</body>
+</html>"""
 
 
 def _publish_browser_notification(event: dict[str, str]) -> bool:
@@ -1744,8 +1898,51 @@ def create_audit_app(
             }
         )
 
+    @app.get("/dingtalk/open-chat-bridge", response_class=HTMLResponse)
+    def dingtalk_open_chat_bridge(conversation_id: str) -> HTMLResponse:
+        cleaned_conversation_id = conversation_id.strip()
+        if not cleaned_conversation_id:
+            return HTMLResponse("missing conversation_id", status_code=400)
+        return HTMLResponse(render_dingtalk_open_chat_bridge(cleaned_conversation_id))
+
+    @app.post("/dingtalk/bridge-status")
+    async def dingtalk_bridge_status(request: Request) -> JSONResponse:
+        try:
+            payload = await request.json()
+        except Exception:
+            payload = {}
+        _DINGTALK_BRIDGE_STATUS.append(
+            {
+                "conversation_id": str(payload.get("conversation_id") or ""),
+                "stage": str(payload.get("stage") or ""),
+                "detail": str(payload.get("detail") or ""),
+            }
+        )
+        return JSONResponse({"ok": True})
+
+    @app.get("/dingtalk/bridge-status")
+    def dingtalk_bridge_status_list() -> JSONResponse:
+        return JSONResponse({"events": list(_DINGTALK_BRIDGE_STATUS)})
+
     @app.get("/open-dingtalk")
-    def open_dingtalk(cid: str) -> JSONResponse:
+    def open_dingtalk(request: Request, cid: str = "", conversation_id: str = "") -> JSONResponse:
+        cleaned_conversation_id = conversation_id.strip()
+        if cleaned_conversation_id:
+            bridge_url = (
+                f"{request.url.scheme}://{request.url.netloc}"
+                "/dingtalk/open-chat-bridge"
+                f"?conversation_id={quote(cleaned_conversation_id, safe='')}"
+            )
+            dingtalk_url = _dingtalk_pc_slide_link_url(bridge_url)
+            completed = subprocess.run(["/usr/bin/open", dingtalk_url], check=False)
+            return JSONResponse(
+                {
+                    "ok": completed.returncode == 0,
+                    "dingtalk_url": dingtalk_url,
+                    "bridge_url": bridge_url,
+                    "open_returncode": completed.returncode,
+                }
+            )
         cleaned_cid = cid.strip()
         if not cleaned_cid:
             return JSONResponse(
