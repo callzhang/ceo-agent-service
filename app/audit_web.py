@@ -2253,12 +2253,6 @@ def _attempt_feedback_summary(
             f"<span class=\"feedback-chip\">对方反馈 {escape(label)}{escape(_excerpt(comment, 90))}</span>"
             "</div>"
         )
-    if _feedback_token_for_sent_reply(sent_reply):
-        return (
-            "<div class=\"attempt-foot\">"
-            "<span class=\"feedback-chip\">等待对方反馈</span>"
-            "</div>"
-        )
     return ""
 
 

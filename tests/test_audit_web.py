@@ -112,6 +112,21 @@ def test_render_attempt_list_shows_counterparty_feedback(tmp_path: Path):
     assert "这个建议能直接用" in html
 
 
+def test_render_attempt_list_hides_pending_counterparty_feedback(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    seed_attempt(store)
+    store.record_sent_reply(
+        "cid-1",
+        "msg-1",
+        "先按A方案走",
+        feedback_token="token-1",
+    )
+
+    html = render_attempt_list(store)
+
+    assert "等待对方反馈" not in html
+
+
 def test_render_history_page_includes_favicon_and_refresh(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     seed_attempt(store)
