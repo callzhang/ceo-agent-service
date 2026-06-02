@@ -32,7 +32,11 @@ from app.dws_client import (
     DwsError,
     local_time_zone_name,
 )
-from app.feedback_spike import build_events_url, send_feedback_spike_card
+from app.feedback_spike import (
+    build_events_url,
+    send_feedback_spike_card,
+    send_feedback_spike_markdown_message,
+)
 from app.leak_check import contains_forbidden_leak
 from app.dingtalk_models import CodexAction, DingTalkConversation
 from app.notification import send_macos_notification
@@ -249,7 +253,10 @@ def build_parser() -> argparse.ArgumentParser:
             subparser.add_argument("--feedback", required=True)
             subparser.add_argument("--corrected-reply", default="")
         if command == "feedback-spike":
-            subparser.add_argument("spike_action", choices=("send-card", "events-url"))
+            subparser.add_argument(
+                "spike_action",
+                choices=("send-card", "send-markdown", "events-url"),
+            )
             subparser.add_argument(
                 "--vercel-base-url",
                 default=os.getenv("CEO_FEEDBACK_SPIKE_VERCEL_BASE_URL", ""),
@@ -257,6 +264,17 @@ def build_parser() -> argparse.ArgumentParser:
             )
             subparser.add_argument("--conversation-id", default="")
             subparser.add_argument("--receiver-open-dingtalk-id", default="")
+            subparser.add_argument(
+                "--robot-code",
+                default=os.getenv(
+                    "CEO_DING_ROBOT_CODE",
+                    os.getenv("DINGTALK_DING_ROBOT_CODE", ""),
+                ),
+            )
+            subparser.add_argument(
+                "--title",
+                default="CEO agent feedback",
+            )
             subparser.add_argument(
                 "--reply-text",
                 default="这是一条 CEO agent 反馈卡片 spike 测试消息。",
@@ -894,6 +912,31 @@ def feedback_spike_command(args: argparse.Namespace) -> dict[str, object]:
             limit=args.limit,
         )
         result = {"events_url": url}
+        print(json.dumps(result, ensure_ascii=False), flush=True)
+        return result
+
+    if args.spike_action == "send-markdown":
+        missing = [
+            flag
+            for flag, value in (
+                ("--conversation-id", args.conversation_id),
+                ("--robot-code", args.robot_code),
+            )
+            if not value.strip()
+        ]
+        if missing:
+            raise SystemExit(
+                f"{', '.join(missing)} required for feedback-spike send-markdown"
+            )
+        result = send_feedback_spike_markdown_message(
+            vercel_base_url=args.vercel_base_url,
+            conversation_id=args.conversation_id,
+            robot_code=args.robot_code,
+            reply_text=args.reply_text,
+            title=args.title,
+            dws_bin=args.dws_bin,
+            preview=args.preview,
+        )
         print(json.dumps(result, ensure_ascii=False), flush=True)
         return result
 

@@ -21,6 +21,19 @@ function parseLimit(value) {
   return Math.min(parsed, 100);
 }
 
+function queryValue(query, key) {
+  if (!query || query[key] === undefined) {
+    return "";
+  }
+  return Array.isArray(query[key]) ? query[key][0] : query[key];
+}
+
+function requestFeedbackToken(req) {
+  return String(
+    queryValue(req.query, "feedback_token") || queryValue(req.query, "feedbackToken")
+  ).trim();
+}
+
 async function fetchEventBlob(blob) {
   const response = await fetch(blob.url);
   if (!response.ok) {
@@ -35,10 +48,12 @@ export default async function handler(req, res) {
     return res.status(405).json({ ok: false, error: "method_not_allowed" });
   }
   const configuredSecret = process.env.FEEDBACK_SPIKE_SECRET || "";
-  if (!configuredSecret) {
-    return res.status(503).json({ ok: false, error: "secret_not_configured" });
-  }
-  if (requestSecret(req) !== configuredSecret) {
+  const feedbackToken = requestFeedbackToken(req);
+  const hasValidSecret = configuredSecret && requestSecret(req) === configuredSecret;
+  if (!hasValidSecret && !feedbackToken) {
+    if (!configuredSecret) {
+      return res.status(503).json({ ok: false, error: "secret_not_configured" });
+    }
     return res.status(401).json({ ok: false, error: "unauthorized" });
   }
 
@@ -58,5 +73,13 @@ export default async function handler(req, res) {
       new Date(right.uploadedAt).getTime() - new Date(left.uploadedAt).getTime()
   );
   const events = await Promise.all(sortedBlobs.slice(0, limit).map(fetchEventBlob));
-  return res.status(200).json({ ok: true, persisted: true, events });
+  const filteredEvents = feedbackToken
+    ? events.filter((event) => event && event.feedback_token === feedbackToken)
+    : events;
+  return res.status(200).json({
+    ok: true,
+    persisted: true,
+    feedback_token: feedbackToken || undefined,
+    events: filteredEvents,
+  });
 }

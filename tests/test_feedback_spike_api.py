@@ -36,6 +36,9 @@ def test_events_endpoint_requires_secret_and_reads_recent_events():
     assert 'import { list } from "@vercel/blob";' in source
     assert "FEEDBACK_SPIKE_SECRET" in source
     assert "x-feedback-spike-secret" in source
+    assert "requestFeedbackToken" in source
+    assert '"feedback_token"' in source
+    assert "filteredEvents" in source
     assert 'res.status(401).json({ ok: false, error: "unauthorized" })' in source
     assert "BLOB_READ_WRITE_TOKEN" in source
     assert 'prefix: `${EVENT_LIST_KEY}/`' in source
