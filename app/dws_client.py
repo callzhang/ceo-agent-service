@@ -241,6 +241,7 @@ class DwsClient:
         at_users: list[str] | None = None,
         user_id: str | None = None,
         open_dingtalk_id: str | None = None,
+        title: str | None = None,
     ) -> list[str]:
         command = [
             self.dws_bin,
@@ -261,7 +262,15 @@ class DwsClient:
             command.extend(["--user", user_id])
         else:
             command.extend(["--open-dingtalk-id", open_dingtalk_id or ""])
-        command.extend(["--title", self._literal_cli_value(self._message_title(text), is_title=True)])
+        command.extend(
+            [
+                "--title",
+                self._literal_cli_value(
+                    self._message_title(title if title is not None else text),
+                    is_title=True,
+                ),
+            ]
+        )
         if at_users:
             command.extend(["--at-users", ",".join(at_users)])
             text = self._with_at_placeholders(text, at_users)
@@ -1168,6 +1177,7 @@ class DwsClient:
         at_users: list[str] | None = None,
         user_id: str | None = None,
         open_dingtalk_id: str | None = None,
+        title: str | None = None,
     ) -> dict[str, Any]:
         return self.run_json(
             self.build_send_message_command(
@@ -1176,6 +1186,7 @@ class DwsClient:
                 at_users,
                 user_id=user_id,
                 open_dingtalk_id=open_dingtalk_id,
+                title=title,
             )
         )
 

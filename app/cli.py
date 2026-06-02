@@ -34,7 +34,7 @@ from app.dws_client import (
 )
 from app.feedback_spike import (
     build_events_url,
-    send_feedback_spike_card,
+    send_feedback_spike_links,
 )
 from app.leak_check import contains_forbidden_leak
 from app.dingtalk_models import CodexAction, DingTalkConversation
@@ -254,7 +254,7 @@ def build_parser() -> argparse.ArgumentParser:
         if command == "feedback-spike":
             subparser.add_argument(
                 "spike_action",
-                choices=("send-card", "events-url"),
+                choices=("send-links", "events-url"),
             )
             subparser.add_argument(
                 "--vercel-base-url",
@@ -262,26 +262,17 @@ def build_parser() -> argparse.ArgumentParser:
                 help="Vercel deployment root URL, for example https://example.vercel.app",
             )
             subparser.add_argument("--conversation-id", default="")
-            subparser.add_argument(
-                "--robot-code",
-                default=os.getenv(
-                    "CEO_DING_ROBOT_CODE",
-                    os.getenv("DINGTALK_DING_ROBOT_CODE", ""),
-                ),
-            )
+            subparser.add_argument("--user-id", default="")
+            subparser.add_argument("--open-dingtalk-id", default="")
             subparser.add_argument(
                 "--reply-text",
-                default="这是一条 CEO agent 反馈卡片 spike 测试消息。",
+                default="这是一条 CEO agent 反馈链接 spike 测试消息。",
             )
-            subparser.add_argument("--card-template-id", default="")
-            subparser.add_argument(
-                "--dingtalk-config-path",
-                default=os.getenv("DINGTALK_SKILL_CONFIG", "~/.dingtalk-skills/config"),
-            )
+            subparser.add_argument("--dws-bin", default=os.getenv("DWS_BIN", "dws"))
             subparser.add_argument(
                 "--preview",
                 action="store_true",
-                help="print the generated DingTalk card payload without sending",
+                help="print the generated DingTalk text message without sending",
             )
             subparser.add_argument(
                 "--secret",
@@ -912,23 +903,24 @@ def feedback_spike_command(args: argparse.Namespace) -> dict[str, object]:
         print(json.dumps(result, ensure_ascii=False), flush=True)
         return result
 
-    missing = [
-        flag
-        for flag, value in (
-            ("--conversation-id", args.conversation_id),
-            ("--robot-code", args.robot_code),
+    targets = {
+        "--conversation-id": args.conversation_id.strip(),
+        "--user-id": args.user_id.strip(),
+        "--open-dingtalk-id": args.open_dingtalk_id.strip(),
+    }
+    selected_targets = [flag for flag, value in targets.items() if value]
+    if len(selected_targets) != 1:
+        raise SystemExit(
+            "exactly one of --conversation-id, --user-id, --open-dingtalk-id "
+            "is required for feedback-spike send-links"
         )
-        if not value.strip()
-    ]
-    if missing:
-        raise SystemExit(f"{', '.join(missing)} required for feedback-spike send-card")
-    result = send_feedback_spike_card(
+    result = send_feedback_spike_links(
         vercel_base_url=args.vercel_base_url,
-        conversation_id=args.conversation_id,
-        robot_code=args.robot_code,
         reply_text=args.reply_text,
-        card_template_id=args.card_template_id,
-        dingtalk_config_path=args.dingtalk_config_path,
+        conversation_id=args.conversation_id.strip() or None,
+        user_id=args.user_id.strip() or None,
+        open_dingtalk_id=args.open_dingtalk_id.strip() or None,
+        dws_bin=args.dws_bin,
         preview=args.preview,
     )
     print(json.dumps(result, ensure_ascii=False), flush=True)

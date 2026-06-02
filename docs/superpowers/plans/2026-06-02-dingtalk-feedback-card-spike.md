@@ -1,10 +1,10 @@
-# DingTalk Feedback Card Spike Implementation Plan
+# DingTalk Feedback Link Spike Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build a non-production spike that can send one DingTalk feedback card and capture button callbacks through Vercel.
+**Goal:** Build a non-production spike that can send one DingTalk feedback message and capture up/down link clicks through Vercel.
 
-**Architecture:** Keep the production reply path unchanged. Add a local Python spike helper that builds a tokenized card payload and invokes `dws chat message send-card`, plus small Vercel API endpoints that store and list callback events.
+**Architecture:** Keep the production reply path unchanged. Add a local Python spike helper that builds a tokenized text message with two feedback links and sends it through the existing current-user `dws chat message send` path, plus small Vercel API endpoints that store and list callback events. Do not use robot cards for this spike, because each group would need the robot installed first and private chats require a different card path.
 
 **Tech Stack:** Python CLI, pytest, DWS CLI, Vercel serverless functions, Vercel KV REST API.
 
@@ -17,8 +17,8 @@
 - Modify: `app/cli.py`
 - Test: `tests/test_feedback_spike.py`
 
-- [ ] Add pure helpers for token generation, callback URLs, card data, and DWS command construction.
-- [ ] Add `ceo-agent feedback-spike send-card` with required target args.
+- [ ] Add pure helpers for token generation, callback URLs, feedback-link text, and DWS command construction.
+- [ ] Add `ceo-agent feedback-spike send-links` with exactly one DingTalk target arg.
 - [ ] Add `ceo-agent feedback-spike events-url` for local verification of the Vercel diagnostic URL.
 - [ ] Test helper output without sending live DingTalk messages.
 

@@ -3,14 +3,14 @@ import json
 import pytest
 
 from app.cli import build_parser, feedback_spike_command
+from app.dws_client import DwsClient
 from app.feedback_spike import (
     build_callback_url,
-    build_card_data,
-    build_dingtalk_interactive_card_request_body,
     build_events_url,
-    build_feedback_spike_card,
+    build_feedback_link_text,
+    build_feedback_spike_link_message,
     normalize_vercel_base_url,
-    send_feedback_spike_card,
+    send_feedback_spike_links,
 )
 
 
@@ -45,129 +45,103 @@ def test_normalize_vercel_base_url_rejects_missing_scheme():
         normalize_vercel_base_url("feedback.example.com")
 
 
-def test_build_card_data_contains_two_feedback_actions():
-    card_data = build_card_data(
+def test_build_feedback_link_text_contains_two_feedback_urls():
+    text = build_feedback_link_text(
         "可以，先按这个方向试一下。",
+        up_url="https://feedback.example.com/up",
+        down_url="https://feedback.example.com/down",
+    )
+
+    assert text == (
+        "可以，先按这个方向试一下。\n\n"
+        "反馈：赞 https://feedback.example.com/up  踩 https://feedback.example.com/down"
+    )
+
+
+def test_build_feedback_spike_link_message_accepts_fixed_token_for_verification():
+    message = build_feedback_spike_link_message(
         vercel_base_url="https://feedback.example.com",
-        feedback_token="spike_1_abcd",
-    )
-
-    assert card_data["config"] == {"autoLayout": True, "enableForward": False}
-    assert card_data["metadata"] == {
-        "source": "ceo-agent-spike",
-        "feedbackToken": "spike_1_abcd",
-    }
-    assert card_data["contents"][0] == {
-        "type": "markdown",
-        "text": "可以，先按这个方向试一下。",
-        "id": "reply_text",
-    }
-    actions = card_data["contents"][1]["actions"]
-    assert actions[0]["label"]["text"] == "赞"
-    assert actions[0]["actionType"] == "openLink"
-    assert actions[0]["url"]["all"] == (
-        "https://feedback.example.com/api/dingtalk-feedback-spike"
-        "?source=ceo-agent-spike&feedback_token=spike_1_abcd&rating=up"
-    )
-    assert actions[1]["label"]["text"] == "踩"
-    assert actions[1]["actionType"] == "openLink"
-    assert actions[1]["url"]["all"] == (
-        "https://feedback.example.com/api/dingtalk-feedback-spike"
-        "?source=ceo-agent-spike&feedback_token=spike_1_abcd&rating=down"
-    )
-
-
-def test_build_dingtalk_interactive_card_request_body_uses_native_card_api_shape():
-    card_data = {"contents": []}
-
-    body = build_dingtalk_interactive_card_request_body(
-        conversation_id="cid-1",
-        robot_code="robot-code",
-        feedback_token="spike_1_abcd",
-        card_data=card_data,
-        card_template_id="template-1",
-    )
-
-    assert body["cardTemplateId"] == "template-1"
-    assert body["openConversationId"] == "cid-1"
-    assert body["cardBizId"] == "spike_1_abcd"
-    assert body["robotCode"] == "robot-code"
-    assert json.loads(body["cardData"]) == card_data
-
-
-def test_build_feedback_spike_card_accepts_fixed_token_for_verification():
-    card = build_feedback_spike_card(
-        vercel_base_url="https://feedback.example.com",
-        conversation_id="cid-1",
-        robot_code="robot-code",
         reply_text="收到",
         feedback_token="spike_1_abcd",
     )
 
-    assert card.feedback_token == "spike_1_abcd"
-    assert "rating=up" in card.callback_url_up
-    assert "rating=down" in card.callback_url_down
-    assert card.request_body["cardTemplateId"] == "StandardCard"
-    assert card.request_body["openConversationId"] == "cid-1"
-    assert card.request_body["robotCode"] == "robot-code"
+    assert message.feedback_token == "spike_1_abcd"
+    assert "rating=up" in message.callback_url_up
+    assert "rating=down" in message.callback_url_down
+    assert message.callback_url_up in message.text
+    assert message.callback_url_down in message.text
 
 
-def test_send_feedback_spike_card_uses_native_dingtalk_interactive_card_api(monkeypatch):
-    calls = []
+def test_send_feedback_spike_links_uses_current_user_message_path():
+    class RecordingDwsClient(DwsClient):
+        def __init__(self):
+            super().__init__(dws_bin="dws")
+            self.sent = []
 
-    monkeypatch.setattr(
-        "app.feedback_spike.read_dingtalk_app_credentials",
-        lambda path: {"DINGTALK_APP_KEY": "app-key", "DINGTALK_APP_SECRET": "app-secret"},
-    )
-    monkeypatch.setattr("app.feedback_spike.get_dingtalk_access_token", lambda credentials: "token-1")
+        def send_message(
+            self,
+            conversation_id,
+            text,
+            at_users=None,
+            user_id=None,
+            open_dingtalk_id=None,
+            title=None,
+        ):
+            self.sent.append(
+                {
+                    "conversation_id": conversation_id,
+                    "text": text,
+                    "at_users": at_users,
+                    "user_id": user_id,
+                    "open_dingtalk_id": open_dingtalk_id,
+                    "title": title,
+                }
+            )
+            return {"result": {"processQueryKey": "key-1"}}
 
-    def fake_post(url, payload, *, access_token=""):
-        calls.append((url, payload, access_token))
-        return {"processQueryKey": "key-1"}
+    client = RecordingDwsClient()
 
-    monkeypatch.setattr("app.feedback_spike.post_dingtalk_json", fake_post)
-    result = send_feedback_spike_card(
+    result = send_feedback_spike_links(
         vercel_base_url="https://feedback.example.com",
-        conversation_id="cid-1",
-        robot_code="robot-code",
         reply_text="收到",
+        conversation_id="cid-1",
+        dws_client=client,
     )
 
-    assert result["response"] == {"processQueryKey": "key-1"}
-    assert calls[0][0].endswith("/v1.0/im/v1.0/robot/interactiveCards/send")
-    assert calls[0][1]["robotCode"] == "robot-code"
-    assert calls[0][1]["openConversationId"] == "cid-1"
-    assert calls[0][2] == "token-1"
+    assert result["response"] == {"result": {"processQueryKey": "key-1"}}
+    assert client.sent[0]["conversation_id"] == "cid-1"
+    assert client.sent[0]["user_id"] is None
+    assert client.sent[0]["title"] == "收到"
+    assert "rating=up" in client.sent[0]["text"]
+    assert "rating=down" in client.sent[0]["text"]
+    assert result["command"][3] == "send"
+    assert "--group" in result["command"]
+    assert result["command"][result["command"].index("--title") + 1] == "收到"
+    assert "send-by-bot" not in result["command"]
 
 
-def test_parser_supports_feedback_spike_send_card():
+def test_parser_supports_feedback_spike_send_links():
     parser = build_parser()
 
     args = parser.parse_args(
         [
             "feedback-spike",
-            "send-card",
+            "send-links",
             "--vercel-base-url",
             "https://feedback.example.com",
             "--conversation-id",
             "cid-1",
-            "--robot-code",
-            "robot-code",
             "--reply-text",
             "收到",
-            "--card-template-id",
-            "template-1",
             "--preview",
         ]
     )
 
     assert args.command == "feedback-spike"
-    assert args.spike_action == "send-card"
+    assert args.spike_action == "send-links"
     assert args.vercel_base_url == "https://feedback.example.com"
     assert args.conversation_id == "cid-1"
-    assert args.robot_code == "robot-code"
     assert args.reply_text == "收到"
-    assert args.card_template_id == "template-1"
     assert args.preview is True
 
 
@@ -198,16 +172,39 @@ def test_feedback_spike_events_url_command_prints_json(capsys):
     assert output == result
 
 
-def test_feedback_spike_send_card_requires_target_args():
+def test_feedback_spike_send_links_requires_exactly_one_target():
     parser = build_parser()
     args = parser.parse_args(
         [
             "feedback-spike",
-            "send-card",
+            "send-links",
             "--vercel-base-url",
             "https://feedback.example.com",
         ]
     )
 
-    with pytest.raises(SystemExit, match="--conversation-id"):
+    with pytest.raises(SystemExit, match="exactly one"):
         feedback_spike_command(args)
+
+
+def test_feedback_spike_send_links_supports_direct_user_preview():
+    parser = build_parser()
+    args = parser.parse_args(
+        [
+            "feedback-spike",
+            "send-links",
+            "--vercel-base-url",
+            "https://feedback.example.com",
+            "--user-id",
+            "user-1",
+            "--reply-text",
+            "收到",
+            "--preview",
+        ]
+    )
+
+    result = feedback_spike_command(args)
+
+    assert result["preview"] is True
+    assert "--user" in result["command"]
+    assert "user-1" in result["command"]

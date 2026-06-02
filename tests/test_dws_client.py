@@ -403,6 +403,22 @@ def test_send_message_command_does_not_duplicate_existing_at_placeholder():
     ]
 
 
+def test_send_message_command_supports_title_override():
+    client = DwsClient(dws_bin="dws")
+
+    command = client.build_send_message_command(
+        conversation_id="cid-1",
+        text=(
+            "收到\n\n"
+            "反馈：赞 https://feedback.example.com/up  踩 https://feedback.example.com/down"
+        ),
+        title="收到",
+    )
+
+    assert command[command.index("--title") + 1] == "收到"
+    assert "https://feedback.example.com/up" in command[command.index("--text") + 1]
+
+
 def test_send_message_command_supports_direct_user_target():
     client = DwsClient(dws_bin="dws")
 
