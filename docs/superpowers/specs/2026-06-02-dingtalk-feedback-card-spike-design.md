@@ -147,3 +147,50 @@ changing all replies:
 - Does DingTalk support URL-style button actions for this card type?
 - Does the callback include click actor identity?
 - Does the callback response need a DingTalk-specific JSON format?
+
+## Implemented Spike Commands
+
+Required Vercel environment variables:
+
+- `FEEDBACK_SPIKE_SECRET`: shared secret for reading captured events.
+- `KV_REST_API_URL`: optional Vercel KV / Upstash REST URL. If missing, the
+  callback endpoint still responds but does not persist events.
+- `KV_REST_API_TOKEN`: optional write token for storing callback events.
+- `KV_REST_API_READ_ONLY_TOKEN`: optional read token for the events endpoint;
+  if missing, `KV_REST_API_TOKEN` is used.
+
+Local preview without sending a DingTalk card:
+
+```bash
+ceo-agent feedback-spike send-card \
+  --preview \
+  --vercel-base-url https://your-vercel-app.vercel.app \
+  --conversation-id '<openConversationId>' \
+  --receiver-open-dingtalk-id '<receiverOpenDingTalkId>' \
+  --reply-text '这是一条 CEO agent 反馈卡片 spike 测试消息。'
+```
+
+Live DingTalk card send:
+
+```bash
+ceo-agent feedback-spike send-card \
+  --vercel-base-url https://your-vercel-app.vercel.app \
+  --conversation-id '<openConversationId>' \
+  --receiver-open-dingtalk-id '<receiverOpenDingTalkId>' \
+  --reply-text '这是一条 CEO agent 反馈卡片 spike 测试消息。' \
+  --card-template-id '<optionalCardTemplateId>'
+```
+
+Generate the diagnostic event query URL:
+
+```bash
+ceo-agent feedback-spike events-url \
+  --vercel-base-url https://your-vercel-app.vercel.app \
+  --secret "$FEEDBACK_SPIKE_SECRET" \
+  --limit 20
+```
+
+The local sender prints the generated `feedback_token`, the two callback URLs,
+the full `card_data`, and the exact `dws chat message send-card` command. The
+spike is considered passed only after a real DingTalk click appears in the
+diagnostic event list with both `feedback_token` and `rating`.

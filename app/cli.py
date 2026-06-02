@@ -32,6 +32,7 @@ from app.dws_client import (
     DwsError,
     local_time_zone_name,
 )
+from app.feedback_spike import build_events_url, send_feedback_spike_card
 from app.leak_check import contains_forbidden_leak
 from app.dingtalk_models import CodexAction, DingTalkConversation
 from app.notification import send_macos_notification
@@ -160,6 +161,7 @@ def build_parser() -> argparse.ArgumentParser:
         "collect-corpus",
         "refresh-org-cache",
         "feedback",
+        "feedback-spike",
         "audit-web",
         "export-feedback",
         "test-ding",
@@ -246,6 +248,32 @@ def build_parser() -> argparse.ArgumentParser:
             subparser.add_argument("--attempt-id", type=int, required=True)
             subparser.add_argument("--feedback", required=True)
             subparser.add_argument("--corrected-reply", default="")
+        if command == "feedback-spike":
+            subparser.add_argument("spike_action", choices=("send-card", "events-url"))
+            subparser.add_argument(
+                "--vercel-base-url",
+                default=os.getenv("CEO_FEEDBACK_SPIKE_VERCEL_BASE_URL", ""),
+                help="Vercel deployment root URL, for example https://example.vercel.app",
+            )
+            subparser.add_argument("--conversation-id", default="")
+            subparser.add_argument("--receiver-open-dingtalk-id", default="")
+            subparser.add_argument(
+                "--reply-text",
+                default="这是一条 CEO agent 反馈卡片 spike 测试消息。",
+            )
+            subparser.add_argument("--card-template-id", default="")
+            subparser.add_argument("--dws-bin", default=os.getenv("DWS_BIN", "dws"))
+            subparser.add_argument(
+                "--preview",
+                action="store_true",
+                help="print the generated dws command and card payload without sending",
+            )
+            subparser.add_argument(
+                "--secret",
+                default=os.getenv("FEEDBACK_SPIKE_SECRET", ""),
+                help="shared secret for the Vercel diagnostic events endpoint",
+            )
+            subparser.add_argument("--limit", type=_positive_int, default=20)
         if command == "audit-web":
             subparser.add_argument("--host", default="127.0.0.1")
             subparser.add_argument("--port", type=_positive_int, default=8765)
@@ -856,6 +884,42 @@ def record_feedback_command(
     print(f"feedback recorded attempt_id={attempt_id}", flush=True)
 
 
+def feedback_spike_command(args: argparse.Namespace) -> dict[str, object]:
+    if args.spike_action == "events-url":
+        if not args.secret.strip():
+            raise SystemExit("--secret or FEEDBACK_SPIKE_SECRET is required")
+        url = build_events_url(
+            args.vercel_base_url,
+            secret=args.secret,
+            limit=args.limit,
+        )
+        result = {"events_url": url}
+        print(json.dumps(result, ensure_ascii=False), flush=True)
+        return result
+
+    missing = [
+        flag
+        for flag, value in (
+            ("--conversation-id", args.conversation_id),
+            ("--receiver-open-dingtalk-id", args.receiver_open_dingtalk_id),
+        )
+        if not value.strip()
+    ]
+    if missing:
+        raise SystemExit(f"{', '.join(missing)} required for feedback-spike send-card")
+    result = send_feedback_spike_card(
+        vercel_base_url=args.vercel_base_url,
+        conversation_id=args.conversation_id,
+        receiver_open_dingtalk_id=args.receiver_open_dingtalk_id,
+        reply_text=args.reply_text,
+        card_template_id=args.card_template_id,
+        dws_bin=args.dws_bin,
+        preview=args.preview,
+    )
+    print(json.dumps(result, ensure_ascii=False), flush=True)
+    return result
+
+
 def run_audit_web_command(
     settings: WorkerSettings,
     host: str,
@@ -1242,6 +1306,8 @@ def main() -> None:
             feedback=args.feedback,
             corrected_reply=args.corrected_reply,
         )
+    elif args.command == "feedback-spike":
+        feedback_spike_command(args)
     elif args.command == "audit-web":
         run_audit_web_command(
             settings,
