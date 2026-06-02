@@ -163,10 +163,14 @@ th{background:var(--surface-soft);color:var(--steel);font-size:12px;font-weight:
 .feedback-token{font-family:"Geist Mono","SF Mono",Menlo,Consolas,monospace;color:var(--steel);font-size:12px;word-break:break-all}
 .user-feedback-table th:nth-child(1),.user-feedback-table td:nth-child(1){width:112px}
 .user-feedback-table th:nth-child(2),.user-feedback-table td:nth-child(2){width:100px}
-.user-feedback-table th:nth-child(5),.user-feedback-table td:nth-child(5){width:150px}
-.user-feedback-table th:nth-child(6),.user-feedback-table td:nth-child(6){width:112px}
+.user-feedback-table th:nth-child(4),.user-feedback-table td:nth-child(4){width:150px}
+.user-feedback-table th:nth-child(5),.user-feedback-table td:nth-child(5){width:190px}
 .user-feedback-comment{font-weight:600;color:var(--ink)}
 .user-feedback-context{margin-top:4px;color:var(--steel);font-size:12px;line-height:1.4}
+.user-feedback-actions{display:flex;align-items:center;gap:8px;flex-wrap:nowrap;white-space:nowrap}
+.user-feedback-actions form{display:inline-flex;margin:0}
+.user-feedback-actions button{display:inline-flex;align-items:center;height:30px;padding:0 12px;border:1px solid var(--hairline);border-radius:999px;background:var(--canvas);color:var(--ink);font-size:13px;font-weight:500;line-height:1;white-space:nowrap}
+.user-feedback-actions button:hover{border-color:var(--ink);background:var(--surface-soft)}
 .attempt-info{position:relative;display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border:1px solid #d29a12;border-radius:50%;color:#8a5a08;background:#fff3c4;font-size:11px;font-weight:700;line-height:1;cursor:help;flex:0 0 auto}
 .attempt-info:hover,.attempt-info:focus{background:#ffe7a3;border-color:#b77908;outline:0}
 .attempt-info::after{content:attr(data-tooltip);display:none;position:absolute;left:0;bottom:calc(100% + 8px);z-index:30;width:max-content;max-width:min(320px,calc(100vw - 48px));padding:7px 9px;border-radius:6px;background:#1f2937;color:#fff;box-shadow:0 8px 24px rgba(15,23,42,.18);font-size:12px;font-weight:500;line-height:1.4;text-align:left;white-space:normal}
@@ -1363,16 +1367,15 @@ def render_user_feedback_list(store: AutoReplyStore, limit: int = 200) -> str:
             f"<div class=\"user-feedback-comment\">{escape(comment)}</div>"
             f"{context_html}"
             "</td>"
-            f"<td><span class=\"feedback-token\">{escape(item.feedback_token)}</span></td>"
             f"<td>{escape(item.received_at or item.updated_at)}</td>"
-            f"<td><div class=\"attempt-actions\">{attempt_link}{resolve_action}</div></td>"
+            f"<td><div class=\"user-feedback-actions\">{attempt_link}{resolve_action}</div></td>"
             "</tr>"
         )
     if rows:
         body = (
             "<section class=\"card\"><h2>用户反馈</h2>"
             "<table class=\"user-feedback-table\"><thead><tr>"
-            "<th>状态</th><th>评分</th><th>用户反馈</th><th>Token</th><th>时间</th><th>操作</th>"
+            "<th>状态</th><th>评分</th><th>用户反馈</th><th>时间</th><th>操作</th>"
             "</tr></thead><tbody>"
             + "".join(rows)
             + "</tbody></table></section>"

@@ -199,6 +199,9 @@ def test_render_user_feedback_list_marks_pending_and_resolved(tmp_path: Path):
     assert "☆☆☆☆" in html
     assert "没有回答到我的问题" in html
     assert "测试一下反馈功能" in html
+    assert "<th>Token</th>" not in html
+    assert "token-pending" not in html
+    assert "user-feedback-actions" in html
     assert 'action="/user-feedback/resolve"' in html
     assert 'name="key" value="event-pending"' in html
     assert "标记 resolved" in html
