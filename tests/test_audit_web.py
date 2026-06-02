@@ -1,4 +1,5 @@
 import os
+import subprocess
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -125,9 +126,12 @@ def test_render_history_page_includes_favicon_and_refresh(tmp_path: Path):
     assert "ceo-agent-service-notification-leader" in html
     assert 'new EventSource("/notifications/events")' in html
     assert "event.preventDefault()" in html
-    assert "window.focus()" in html
-    assert "window.location.href = payload.dingtalk_url" in html
+    assert "navigator.serviceWorker" in html
+    assert '"/notification-service-worker.js"' in html
+    assert "registration.showNotification(payload.title, options)" in html
     assert 'headers: { "Accept": "application/json" }' in html
+    assert "payload.dingtalk_url" not in html
+    assert "window.location.href" not in html
     assert "window.open(payload.url" not in html
 
 
@@ -339,9 +343,14 @@ def test_handle_system_config_post_saves_runtime_params_to_env_file(
 
 def test_open_dingtalk_bridge_opens_conversation_url(tmp_path: Path, monkeypatch):
     commands = []
+
+    def fake_run(command, check):
+        commands.append((command, check))
+        return subprocess.CompletedProcess(command, 0)
+
     monkeypatch.setattr(
         "app.audit_web.subprocess.run",
-        lambda command, check: commands.append((command, check)),
+        fake_run,
     )
     client = TestClient(create_audit_app(tmp_path / "worker.sqlite3"))
 
@@ -351,6 +360,7 @@ def test_open_dingtalk_bridge_opens_conversation_url(tmp_path: Path, monkeypatch
     assert response.json() == {
         "ok": True,
         "dingtalk_url": "dingtalk://dingtalkclient/page/conversation?cid=75217569357",
+        "open_returncode": 0,
     }
     assert commands == [
         (
@@ -378,6 +388,24 @@ def test_open_dingtalk_bridge_rejects_missing_cid(tmp_path: Path, monkeypatch):
     assert commands == []
 
 
+def test_notification_service_worker_fetches_bridge_without_opening_window(
+    tmp_path: Path,
+):
+    client = TestClient(create_audit_app(tmp_path / "worker.sqlite3"))
+
+    response = client.get("/notification-service-worker.js")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("application/javascript")
+    assert response.headers["cache-control"] == "no-cache"
+    assert "notificationclick" in response.text
+    assert 'await fetch(data.url, {' in response.text
+    assert "clients.matchAll" in response.text
+    assert "client.focus" in response.text
+    assert "clients.openWindow" not in response.text
+    assert "window.open" not in response.text
+
+
 def test_browser_notifications_page_is_available(tmp_path: Path):
     client = TestClient(create_audit_app(tmp_path / "worker.sqlite3"))
 
@@ -388,9 +416,12 @@ def test_browser_notifications_page_is_available(tmp_path: Path):
     assert "Notification.requestPermission" in response.text
     assert 'new EventSource("/notifications/events")' in response.text
     assert "event.preventDefault()" in response.text
-    assert "window.focus()" in response.text
-    assert "window.location.href = payload.dingtalk_url" in response.text
+    assert "navigator.serviceWorker" in response.text
+    assert '"/notification-service-worker.js"' in response.text
+    assert "registration.showNotification(payload.title, options)" in response.text
     assert 'headers: { "Accept": "application/json" }' in response.text
+    assert "payload.dingtalk_url" not in response.text
+    assert "window.location.href" not in response.text
     assert "window.open(payload.url" not in response.text
     assert "granted connected" in response.text
     assert "granted standby" in response.text

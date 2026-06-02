@@ -13,7 +13,13 @@ from urllib.parse import parse_qs, quote, urlparse
 
 import uvicorn
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import (
+    HTMLResponse,
+    JSONResponse,
+    RedirectResponse,
+    Response,
+    StreamingResponse,
+)
 
 from app.codex_history import (
     RenderedCodexEvent,
@@ -304,6 +310,7 @@ def _browser_notification_client_script() -> str:
   const logEl = document.getElementById("notification-log");
   const enableButton = document.getElementById("enable-notifications");
   let events = null;
+  let serviceWorkerReady = null;
 
   function logLine(text) {
     if (!logEl) {
@@ -321,6 +328,22 @@ def _browser_notification_client_script() -> str:
 
   function canNotify() {
     return "Notification" in window && Notification.permission === "granted";
+  }
+
+  function ensureServiceWorker() {
+    if (!("serviceWorker" in navigator)) {
+      return Promise.resolve(null);
+    }
+    if (!serviceWorkerReady) {
+      serviceWorkerReady = navigator.serviceWorker
+        .register("/notification-service-worker.js")
+        .then(() => navigator.serviceWorker.ready)
+        .catch((error) => {
+          logLine(`service worker failed: ${error}`);
+          return null;
+        });
+    }
+    return serviceWorkerReady;
   }
 
   function readLock() {
@@ -346,29 +369,32 @@ def _browser_notification_client_script() -> str:
     }
   }
 
-  function showBrowserNotification(payload) {
+  async function showBrowserNotification(payload) {
     logLine(`${payload.title}: ${payload.message}`);
     if (!canNotify()) {
       return;
     }
-    const notification = new Notification(payload.title, {
+    const options = {
       body: payload.message,
       tag: payload.id,
       renotify: true,
-    });
+      data: { url: payload.url || "" },
+    };
+    const registration = await ensureServiceWorker();
+    if (registration) {
+      await registration.showNotification(payload.title, options);
+      return;
+    }
+    const notification = new Notification(payload.title, options);
     notification.onclick = (event) => {
       event.preventDefault();
       notification.close();
-      window.focus();
       if (payload.url) {
         fetch(payload.url, {
           method: "GET",
           keepalive: true,
           headers: { "Accept": "application/json" },
         }).catch((error) => logLine(`notification click failed: ${error}`));
-      }
-      if (payload.dingtalk_url) {
-        window.location.href = payload.dingtalk_url;
       }
       return false;
     };
@@ -388,7 +414,9 @@ def _browser_notification_client_script() -> str:
     events = new EventSource("/notifications/events");
     events.onopen = () => logLine("connected to 8765 notification stream");
     events.onerror = () => logLine("notification stream reconnecting");
-    events.onmessage = (event) => showBrowserNotification(JSON.parse(event.data));
+    events.onmessage = (event) => {
+      showBrowserNotification(JSON.parse(event.data));
+    };
   }
 
   function refreshPermission() {
@@ -413,6 +441,7 @@ def _browser_notification_client_script() -> str:
     const lockIsStale = !lock || Date.now() - Number(lock.ts || 0) > lockTtlMs;
     if (lockIsStale || lock.id === tabId) {
       writeLock();
+      ensureServiceWorker();
       startEvents();
       setState("granted connected");
       return;
@@ -428,6 +457,9 @@ def _browser_notification_client_script() -> str:
     }
     const permission = await Notification.requestPermission();
     logLine(`permission: ${permission}`);
+    if (permission === "granted") {
+      await ensureServiceWorker();
+    }
     electLeader();
   }
 
@@ -450,6 +482,42 @@ def _browser_notification_client_script() -> str:
 """
 
 
+def _notification_service_worker_script() -> str:
+    return """
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  event.waitUntil(handleNotificationClick(event.notification.data || {}));
+});
+
+async function handleNotificationClick(data) {
+  if (data.url) {
+    try {
+      await fetch(data.url, {
+        method: "GET",
+        headers: { "Accept": "application/json" },
+      });
+    } catch (error) {
+      // The backend bridge is best-effort; do not open a fallback browser tab.
+    }
+  }
+  const windows = await self.clients.matchAll({
+    type: "window",
+    includeUncontrolled: true,
+  });
+  for (const client of windows) {
+    try {
+      if (new URL(client.url).origin === self.location.origin && client.focus) {
+        await client.focus();
+        return;
+      }
+    } catch (error) {
+      // Ignore malformed client URLs.
+    }
+  }
+}
+"""
+
+
 def _browser_notification_event(
     *,
     title: str,
@@ -461,7 +529,6 @@ def _browser_notification_event(
         "title": title,
         "message": message,
         "url": url,
-        "dingtalk_url": _dingtalk_url_from_bridge_url(url),
     }
 
 
@@ -1647,6 +1714,14 @@ def create_audit_app(
     def browser_notifications() -> str:
         return render_browser_notifications_page()
 
+    @app.get("/notification-service-worker.js")
+    def notification_service_worker() -> Response:
+        return Response(
+            _notification_service_worker_script(),
+            media_type="application/javascript",
+            headers={"Cache-Control": "no-cache"},
+        )
+
     @app.get("/notifications/events")
     def browser_notification_events() -> StreamingResponse:
         return _browser_notification_event_stream()
@@ -1665,7 +1740,7 @@ def create_audit_app(
                 "ok": True,
                 "delivered": delivered,
                 "subscribers": len(_BROWSER_NOTIFICATION_SUBSCRIBERS),
-                "dingtalk_url": event["dingtalk_url"],
+                "dingtalk_url": _dingtalk_url_from_bridge_url(event["url"]),
             }
         )
 
@@ -1678,8 +1753,14 @@ def create_audit_app(
                 status_code=400,
             )
         dingtalk_url = _dingtalk_conversation_url(cleaned_cid)
-        subprocess.run(["/usr/bin/open", dingtalk_url], check=False)
-        return JSONResponse({"ok": True, "dingtalk_url": dingtalk_url})
+        completed = subprocess.run(["/usr/bin/open", dingtalk_url], check=False)
+        return JSONResponse(
+            {
+                "ok": completed.returncode == 0,
+                "dingtalk_url": dingtalk_url,
+                "open_returncode": completed.returncode,
+            }
+        )
 
     @app.get("/attempts/{attempt_id}", response_class=HTMLResponse)
     def attempt_detail(attempt_id: int) -> HTMLResponse:
