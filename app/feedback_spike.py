@@ -17,6 +17,7 @@ class FeedbackSpikeCard:
     callback_url_down: str
     card_data: dict[str, object]
     command: list[str]
+    update_content: str
 
 
 def generate_feedback_token(now_seconds: int | None = None) -> str:
@@ -83,10 +84,12 @@ def build_card_data(
     return {
         "source": DEFAULT_SOURCE,
         "feedbackToken": feedback_token,
+        "msgContent": stripped_reply,
         "replyText": stripped_reply,
         "cardParamMap": {
             "source": DEFAULT_SOURCE,
             "feedbackToken": feedback_token,
+            "msgContent": stripped_reply,
             "replyText": stripped_reply,
             "upUrl": up_url,
             "downUrl": down_url,
@@ -122,8 +125,6 @@ def build_dws_send_card_command(
         conversation_id.strip(),
         "--user",
         receiver_open_dingtalk_id.strip(),
-        "--msg-content",
-        reply_text.strip(),
         "--card-data",
         json.dumps(card_data, ensure_ascii=False, separators=(",", ":")),
         "--format",
@@ -132,6 +133,45 @@ def build_dws_send_card_command(
     if card_template_id.strip():
         command.extend(["--card-template-id", card_template_id.strip()])
     return command
+
+
+def build_update_content(reply_text: str, *, up_url: str, down_url: str) -> str:
+    stripped_reply = reply_text.strip()
+    if not stripped_reply:
+        raise ValueError("reply text is required")
+    return (
+        f"{stripped_reply}\n\n"
+        "反馈：\n"
+        f"赞：{up_url}\n"
+        f"踩：{down_url}"
+    )
+
+
+def build_dws_update_card_command(
+    *,
+    biz_id: str,
+    content: str,
+    flow_status: int = 2,
+    dws_bin: str = "dws",
+) -> list[str]:
+    if not biz_id.strip():
+        raise ValueError("biz id is required")
+    if not content.strip():
+        raise ValueError("content is required")
+    return [
+        dws_bin,
+        "chat",
+        "message",
+        "update-card",
+        "--biz-id",
+        biz_id.strip(),
+        "--content",
+        content,
+        "--flow-status",
+        str(flow_status),
+        "--format",
+        "json",
+    ]
 
 
 def build_feedback_spike_card(
@@ -164,6 +204,11 @@ def build_feedback_spike_card(
         callback_url_down=card_data["actions"][1]["url"],  # type: ignore[index]
         card_data=card_data,
         command=command,
+        update_content=build_update_content(
+            reply_text,
+            up_url=card_data["actions"][0]["url"],  # type: ignore[index]
+            down_url=card_data["actions"][1]["url"],  # type: ignore[index]
+        ),
     )
 
 
@@ -191,6 +236,7 @@ def send_feedback_spike_card(
         "callback_url_down": card.callback_url_down,
         "card_data": card.card_data,
         "command": card.command,
+        "update_content": card.update_content,
         "preview": preview,
     }
     if preview:
@@ -215,4 +261,43 @@ def send_feedback_spike_card(
             "dws send-card failed "
             f"returncode={completed.returncode} stderr={completed.stderr.strip()}"
         )
+    biz_id = _extract_biz_id(completed.stdout)
+    update_command = build_dws_update_card_command(
+        biz_id=biz_id,
+        content=card.update_content,
+        dws_bin=dws_bin,
+    )
+    update_completed = subprocess.run(
+        update_command,
+        check=False,
+        capture_output=True,
+        text=True,
+        env=os.environ.copy(),
+    )
+    result.update(
+        {
+            "biz_id": biz_id,
+            "update_command": update_command,
+            "update_returncode": update_completed.returncode,
+            "update_stdout": update_completed.stdout.strip(),
+            "update_stderr": update_completed.stderr.strip(),
+        }
+    )
+    if update_completed.returncode != 0:
+        raise RuntimeError(
+            "dws update-card failed "
+            f"returncode={update_completed.returncode} stderr={update_completed.stderr.strip()}"
+        )
     return result
+
+
+def _extract_biz_id(stdout: str) -> str:
+    try:
+        payload = json.loads(stdout)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("dws send-card returned non-json stdout") from exc
+    result = payload.get("result") if isinstance(payload, dict) else None
+    biz_id = result.get("bizId") if isinstance(result, dict) else None
+    if not isinstance(biz_id, str) or not biz_id.strip():
+        raise RuntimeError("dws send-card result did not include result.bizId")
+    return biz_id

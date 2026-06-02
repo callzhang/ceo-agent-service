@@ -7,9 +7,12 @@ from app.feedback_spike import (
     build_callback_url,
     build_card_data,
     build_dws_send_card_command,
+    build_dws_update_card_command,
     build_events_url,
     build_feedback_spike_card,
+    build_update_content,
     normalize_vercel_base_url,
+    send_feedback_spike_card,
 )
 
 
@@ -53,6 +56,7 @@ def test_build_card_data_contains_two_feedback_actions():
 
     assert card_data["source"] == "ceo-agent-spike"
     assert card_data["feedbackToken"] == "spike_1_abcd"
+    assert card_data["msgContent"] == "可以，先按这个方向试一下。"
     assert card_data["replyText"] == "可以，先按这个方向试一下。"
     assert card_data["actions"] == [
         {
@@ -88,7 +92,7 @@ def test_build_dws_send_card_command_uses_documented_flags():
         dws_bin="/bin/dws",
     )
 
-    assert command[:10] == [
+    assert command[:8] == [
         "/bin/dws",
         "chat",
         "message",
@@ -97,9 +101,8 @@ def test_build_dws_send_card_command_uses_documented_flags():
         "cid-1",
         "--user",
         "open-1",
-        "--msg-content",
-        "收到",
     ]
+    assert "--msg-content" not in command
     assert "--card-data" in command
     card_data_index = command.index("--card-data") + 1
     assert json.loads(command[card_data_index]) == card_data
@@ -119,6 +122,89 @@ def test_build_feedback_spike_card_accepts_fixed_token_for_verification():
     assert "rating=up" in card.callback_url_up
     assert "rating=down" in card.callback_url_down
     assert "send-card" in card.command
+    assert "反馈：" in card.update_content
+    assert card.callback_url_up in card.update_content
+    assert card.callback_url_down in card.update_content
+
+
+def test_build_update_content_contains_reply_and_feedback_urls():
+    content = build_update_content(
+        "收到",
+        up_url="https://feedback.example.com/up",
+        down_url="https://feedback.example.com/down",
+    )
+
+    assert content == (
+        "收到\n\n"
+        "反馈：\n"
+        "赞：https://feedback.example.com/up\n"
+        "踩：https://feedback.example.com/down"
+    )
+
+
+def test_build_dws_update_card_command_uses_documented_flags():
+    command = build_dws_update_card_command(
+        biz_id="transformer_card_1",
+        content="收到",
+        dws_bin="/bin/dws",
+    )
+
+    assert command == [
+        "/bin/dws",
+        "chat",
+        "message",
+        "update-card",
+        "--biz-id",
+        "transformer_card_1",
+        "--content",
+        "收到",
+        "--flow-status",
+        "2",
+        "--format",
+        "json",
+    ]
+
+
+def test_send_feedback_spike_card_updates_streaming_card(monkeypatch):
+    calls = []
+
+    class Completed:
+        def __init__(self, returncode: int, stdout: str = "", stderr: str = ""):
+            self.returncode = returncode
+            self.stdout = stdout
+            self.stderr = stderr
+
+    def fake_run(command, **kwargs):
+        calls.append(command)
+        if "send-card" in command:
+            return Completed(
+                0,
+                json.dumps(
+                    {
+                        "success": True,
+                        "result": {
+                            "bizId": "transformer_card_1",
+                            "cardInstanceId": 123,
+                        },
+                    }
+                ),
+            )
+        return Completed(0, json.dumps({"success": True, "result": {}}))
+
+    monkeypatch.setattr("app.feedback_spike.subprocess.run", fake_run)
+
+    result = send_feedback_spike_card(
+        vercel_base_url="https://feedback.example.com",
+        conversation_id="cid-1",
+        receiver_open_dingtalk_id="open-1",
+        reply_text="收到",
+    )
+
+    assert result["biz_id"] == "transformer_card_1"
+    assert calls[0][3] == "send-card"
+    assert calls[1][3] == "update-card"
+    assert calls[1][calls[1].index("--biz-id") + 1] == "transformer_card_1"
+    assert "反馈：" in calls[1][calls[1].index("--content") + 1]
 
 
 def test_parser_supports_feedback_spike_send_card():
