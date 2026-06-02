@@ -1,13 +1,19 @@
 import json
 import os
 import secrets
-import subprocess
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from urllib.parse import urlencode
+from urllib.request import Request, urlopen
 
 
 DEFAULT_SOURCE = "ceo-agent-spike"
+DEFAULT_DINGTALK_CONFIG_PATH = "~/.dingtalk-skills/config"
+DINGTALK_ACCESS_TOKEN_URL = "https://api.dingtalk.com/v1.0/oauth2/accessToken"
+DINGTALK_INTERACTIVE_CARD_SEND_URL = (
+    "https://api.dingtalk.com/v1.0/im/v1.0/robot/interactiveCards/send"
+)
 
 
 @dataclass(frozen=True)
@@ -16,17 +22,7 @@ class FeedbackSpikeCard:
     callback_url_up: str
     callback_url_down: str
     card_data: dict[str, object]
-    command: list[str]
-    update_content: str
-
-
-@dataclass(frozen=True)
-class FeedbackSpikeMarkdownMessage:
-    feedback_token: str
-    callback_url_up: str
-    callback_url_down: str
-    markdown_text: str
-    command: list[str]
+    request_body: dict[str, object]
 
 
 def generate_feedback_token(now_seconds: int | None = None) -> str:
@@ -91,151 +87,88 @@ def build_card_data(
         rating="down",
     )
     return {
-        "source": DEFAULT_SOURCE,
-        "feedbackToken": feedback_token,
-        "msgContent": stripped_reply,
-        "replyText": stripped_reply,
-        "cardParamMap": {
+        "config": {
+            "autoLayout": True,
+            "enableForward": False,
+        },
+        "header": {
+            "title": {
+                "type": "text",
+                "text": "CEO agent feedback",
+            },
+        },
+        "contents": [
+            {
+                "type": "markdown",
+                "text": stripped_reply,
+                "id": "reply_text",
+            },
+            {
+                "type": "action",
+                "actions": [
+                    {
+                        "type": "button",
+                        "label": {
+                            "type": "text",
+                            "text": "赞",
+                            "id": "label_up",
+                        },
+                        "actionType": "openLink",
+                        "url": {"all": up_url},
+                        "status": "primary",
+                        "id": "button_up",
+                    },
+                    {
+                        "type": "button",
+                        "label": {
+                            "type": "text",
+                            "text": "踩",
+                            "id": "label_down",
+                        },
+                        "actionType": "openLink",
+                        "url": {"all": down_url},
+                        "status": "normal",
+                        "id": "button_down",
+                    },
+                ],
+                "id": "feedback_actions",
+            },
+        ],
+        "metadata": {
             "source": DEFAULT_SOURCE,
             "feedbackToken": feedback_token,
-            "msgContent": stripped_reply,
-            "replyText": stripped_reply,
-            "upUrl": up_url,
-            "downUrl": down_url,
-            "upText": "赞",
-            "downText": "踩",
         },
-        "actions": [
-            {"label": "赞", "rating": "up", "url": up_url},
-            {"label": "踩", "rating": "down", "url": down_url},
-        ],
     }
 
 
-def build_dws_send_card_command(
-    *,
-    conversation_id: str,
-    receiver_open_dingtalk_id: str,
-    reply_text: str,
-    card_data: dict[str, object],
-    card_template_id: str = "",
-    dws_bin: str = "dws",
-) -> list[str]:
-    if not conversation_id.strip():
-        raise ValueError("conversation id is required")
-    if not receiver_open_dingtalk_id.strip():
-        raise ValueError("receiver open DingTalk id is required")
-    command = [
-        dws_bin,
-        "chat",
-        "message",
-        "send-card",
-        "--group",
-        conversation_id.strip(),
-        "--user",
-        receiver_open_dingtalk_id.strip(),
-        "--card-data",
-        json.dumps(card_data, ensure_ascii=False, separators=(",", ":")),
-        "--format",
-        "json",
-    ]
-    if card_template_id.strip():
-        command.extend(["--card-template-id", card_template_id.strip()])
-    return command
-
-
-def build_update_content(reply_text: str, *, up_url: str, down_url: str) -> str:
-    stripped_reply = reply_text.strip()
-    if not stripped_reply:
-        raise ValueError("reply text is required")
-    return (
-        f"{stripped_reply}\n\n"
-        "反馈：\n"
-        f"赞：{up_url}\n"
-        f"踩：{down_url}"
-    )
-
-
-def build_markdown_text(reply_text: str, *, up_url: str, down_url: str) -> str:
-    stripped_reply = reply_text.strip()
-    if not stripped_reply:
-        raise ValueError("reply text is required")
-    return (
-        f"{stripped_reply}\n\n"
-        f"[赞]({up_url})\n\n"
-        f"[踩]({down_url})"
-    )
-
-
-def build_dws_send_bot_markdown_command(
+def build_dingtalk_interactive_card_request_body(
     *,
     conversation_id: str,
     robot_code: str,
-    title: str,
-    markdown_text: str,
-    dws_bin: str = "dws",
-) -> list[str]:
+    feedback_token: str,
+    card_data: dict[str, object],
+    card_template_id: str = "",
+) -> dict[str, object]:
     if not conversation_id.strip():
         raise ValueError("conversation id is required")
     if not robot_code.strip():
         raise ValueError("robot code is required")
-    if not title.strip():
-        raise ValueError("title is required")
-    if not markdown_text.strip():
-        raise ValueError("markdown text is required")
-    return [
-        dws_bin,
-        "chat",
-        "message",
-        "send-by-bot",
-        "--group",
-        conversation_id.strip(),
-        "--robot-code",
-        robot_code.strip(),
-        "--title",
-        title.strip(),
-        "--text",
-        markdown_text,
-        "--format",
-        "json",
-    ]
-
-
-def build_dws_update_card_command(
-    *,
-    biz_id: str,
-    content: str,
-    flow_status: int = 2,
-    dws_bin: str = "dws",
-) -> list[str]:
-    if not biz_id.strip():
-        raise ValueError("biz id is required")
-    if not content.strip():
-        raise ValueError("content is required")
-    return [
-        dws_bin,
-        "chat",
-        "message",
-        "update-card",
-        "--biz-id",
-        biz_id.strip(),
-        "--content",
-        content,
-        "--flow-status",
-        str(flow_status),
-        "--format",
-        "json",
-    ]
+    return {
+        "cardTemplateId": card_template_id.strip() or "StandardCard",
+        "openConversationId": conversation_id.strip(),
+        "cardBizId": feedback_token,
+        "robotCode": robot_code.strip(),
+        "cardData": json.dumps(card_data, ensure_ascii=False, separators=(",", ":")),
+    }
 
 
 def build_feedback_spike_card(
     *,
     vercel_base_url: str,
     conversation_id: str,
-    receiver_open_dingtalk_id: str,
+    robot_code: str,
     reply_text: str,
     card_template_id: str = "",
-    dws_bin: str = "dws",
     feedback_token: str | None = None,
 ) -> FeedbackSpikeCard:
     token = feedback_token or generate_feedback_token()
@@ -244,63 +177,21 @@ def build_feedback_spike_card(
         vercel_base_url=vercel_base_url,
         feedback_token=token,
     )
-    command = build_dws_send_card_command(
-        conversation_id=conversation_id,
-        receiver_open_dingtalk_id=receiver_open_dingtalk_id,
-        reply_text=reply_text,
-        card_data=card_data,
-        card_template_id=card_template_id,
-        dws_bin=dws_bin,
-    )
-    return FeedbackSpikeCard(
-        feedback_token=token,
-        callback_url_up=card_data["actions"][0]["url"],  # type: ignore[index]
-        callback_url_down=card_data["actions"][1]["url"],  # type: ignore[index]
-        card_data=card_data,
-        command=command,
-        update_content=build_update_content(
-            reply_text,
-            up_url=card_data["actions"][0]["url"],  # type: ignore[index]
-            down_url=card_data["actions"][1]["url"],  # type: ignore[index]
-        ),
-    )
-
-
-def build_feedback_spike_markdown_message(
-    *,
-    vercel_base_url: str,
-    conversation_id: str,
-    robot_code: str,
-    reply_text: str,
-    title: str = "CEO agent feedback",
-    dws_bin: str = "dws",
-    feedback_token: str | None = None,
-) -> FeedbackSpikeMarkdownMessage:
-    token = feedback_token or generate_feedback_token()
-    up_url = build_callback_url(
-        vercel_base_url,
-        feedback_token=token,
-        rating="up",
-    )
-    down_url = build_callback_url(
-        vercel_base_url,
-        feedback_token=token,
-        rating="down",
-    )
-    markdown_text = build_markdown_text(reply_text, up_url=up_url, down_url=down_url)
-    command = build_dws_send_bot_markdown_command(
+    request_body = build_dingtalk_interactive_card_request_body(
         conversation_id=conversation_id,
         robot_code=robot_code,
-        title=title,
-        markdown_text=markdown_text,
-        dws_bin=dws_bin,
+        feedback_token=token,
+        card_data=card_data,
+        card_template_id=card_template_id,
     )
-    return FeedbackSpikeMarkdownMessage(
+    up_url = _card_action_url(card_data, "button_up")
+    down_url = _card_action_url(card_data, "button_down")
+    return FeedbackSpikeCard(
         feedback_token=token,
         callback_url_up=up_url,
         callback_url_down=down_url,
-        markdown_text=markdown_text,
-        command=command,
+        card_data=card_data,
+        request_body=request_body,
     )
 
 
@@ -308,139 +199,119 @@ def send_feedback_spike_card(
     *,
     vercel_base_url: str,
     conversation_id: str,
-    receiver_open_dingtalk_id: str,
+    robot_code: str,
     reply_text: str,
     card_template_id: str = "",
-    dws_bin: str = "dws",
+    dingtalk_config_path: str = DEFAULT_DINGTALK_CONFIG_PATH,
     preview: bool = False,
 ) -> dict[str, object]:
     card = build_feedback_spike_card(
         vercel_base_url=vercel_base_url,
         conversation_id=conversation_id,
-        receiver_open_dingtalk_id=receiver_open_dingtalk_id,
+        robot_code=robot_code,
         reply_text=reply_text,
         card_template_id=card_template_id,
-        dws_bin=dws_bin,
     )
     result: dict[str, object] = {
         "feedback_token": card.feedback_token,
         "callback_url_up": card.callback_url_up,
         "callback_url_down": card.callback_url_down,
         "card_data": card.card_data,
-        "command": card.command,
-        "update_content": card.update_content,
+        "request_body": card.request_body,
         "preview": preview,
     }
     if preview:
         return result
 
-    completed = subprocess.run(
-        card.command,
-        check=False,
-        capture_output=True,
-        text=True,
-        env=os.environ.copy(),
+    access_token = get_dingtalk_access_token(
+        read_dingtalk_app_credentials(dingtalk_config_path)
     )
-    result.update(
-        {
-            "returncode": completed.returncode,
-            "stdout": completed.stdout.strip(),
-            "stderr": completed.stderr.strip(),
-        }
+    response = post_dingtalk_json(
+        DINGTALK_INTERACTIVE_CARD_SEND_URL,
+        card.request_body,
+        access_token=access_token,
     )
-    if completed.returncode != 0:
-        raise RuntimeError(
-            "dws send-card failed "
-            f"returncode={completed.returncode} stderr={completed.stderr.strip()}"
-        )
-    biz_id = _extract_biz_id(completed.stdout)
-    update_command = build_dws_update_card_command(
-        biz_id=biz_id,
-        content=card.update_content,
-        dws_bin=dws_bin,
-    )
-    update_completed = subprocess.run(
-        update_command,
-        check=False,
-        capture_output=True,
-        text=True,
-        env=os.environ.copy(),
-    )
-    result.update(
-        {
-            "biz_id": biz_id,
-            "update_command": update_command,
-            "update_returncode": update_completed.returncode,
-            "update_stdout": update_completed.stdout.strip(),
-            "update_stderr": update_completed.stderr.strip(),
-        }
-    )
-    if update_completed.returncode != 0:
-        raise RuntimeError(
-            "dws update-card failed "
-            f"returncode={update_completed.returncode} stderr={update_completed.stderr.strip()}"
-        )
+    result["response"] = response
     return result
 
 
-def send_feedback_spike_markdown_message(
+def read_dingtalk_app_credentials(
+    config_path: str = DEFAULT_DINGTALK_CONFIG_PATH,
+) -> dict[str, str]:
+    values: dict[str, str] = {}
+    expanded = Path(os.path.expanduser(config_path))
+    if expanded.exists():
+        with expanded.open(encoding="utf-8") as file:
+            for line in file:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, value = line.split("=", 1)
+                values[key.strip()] = value.strip().strip("\"'")
+    for key in ("DINGTALK_APP_KEY", "DINGTALK_APP_SECRET"):
+        if os.getenv(key):
+            values[key] = os.getenv(key, "")
+    missing = [
+        key
+        for key in ("DINGTALK_APP_KEY", "DINGTALK_APP_SECRET")
+        if not values.get(key)
+    ]
+    if missing:
+        raise RuntimeError("DingTalk app credentials are missing")
+    return values
+
+
+def get_dingtalk_access_token(credentials: dict[str, str]) -> str:
+    response = post_dingtalk_json(
+        DINGTALK_ACCESS_TOKEN_URL,
+        {
+            "appKey": credentials["DINGTALK_APP_KEY"],
+            "appSecret": credentials["DINGTALK_APP_SECRET"],
+        },
+    )
+    token = response.get("accessToken") or response.get("access_token")
+    if not isinstance(token, str) or not token:
+        raise RuntimeError("DingTalk access token response did not include a token")
+    return token
+
+
+def post_dingtalk_json(
+    url: str,
+    payload: dict[str, object],
     *,
-    vercel_base_url: str,
-    conversation_id: str,
-    robot_code: str,
-    reply_text: str,
-    title: str = "CEO agent feedback",
-    dws_bin: str = "dws",
-    preview: bool = False,
+    access_token: str = "",
 ) -> dict[str, object]:
-    message = build_feedback_spike_markdown_message(
-        vercel_base_url=vercel_base_url,
-        conversation_id=conversation_id,
-        robot_code=robot_code,
-        reply_text=reply_text,
-        title=title,
-        dws_bin=dws_bin,
+    headers = {"Content-Type": "application/json"}
+    if access_token:
+        headers["x-acs-dingtalk-access-token"] = access_token
+    request = Request(
+        url,
+        data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+        method="POST",
+        headers=headers,
     )
-    result: dict[str, object] = {
-        "feedback_token": message.feedback_token,
-        "callback_url_up": message.callback_url_up,
-        "callback_url_down": message.callback_url_down,
-        "markdown_text": message.markdown_text,
-        "command": message.command,
-        "preview": preview,
-    }
-    if preview:
-        return result
-
-    completed = subprocess.run(
-        message.command,
-        check=False,
-        capture_output=True,
-        text=True,
-        env=os.environ.copy(),
-    )
-    result.update(
-        {
-            "returncode": completed.returncode,
-            "stdout": completed.stdout.strip(),
-            "stderr": completed.stderr.strip(),
-        }
-    )
-    if completed.returncode != 0:
-        raise RuntimeError(
-            "dws send-by-bot failed "
-            f"returncode={completed.returncode} stderr={completed.stderr.strip()}"
-        )
-    return result
-
-
-def _extract_biz_id(stdout: str) -> str:
     try:
-        payload = json.loads(stdout)
+        with urlopen(request, timeout=30) as response:
+            raw = response.read().decode("utf-8")
+    except Exception as exc:
+        raise RuntimeError("DingTalk OpenAPI request failed") from exc
+    try:
+        parsed = json.loads(raw)
     except json.JSONDecodeError as exc:
-        raise RuntimeError("dws send-card returned non-json stdout") from exc
-    result = payload.get("result") if isinstance(payload, dict) else None
-    biz_id = result.get("bizId") if isinstance(result, dict) else None
-    if not isinstance(biz_id, str) or not biz_id.strip():
-        raise RuntimeError("dws send-card result did not include result.bizId")
-    return biz_id
+        raise RuntimeError("DingTalk OpenAPI returned non-json response") from exc
+    if not isinstance(parsed, dict):
+        raise RuntimeError("DingTalk OpenAPI returned invalid response")
+    return parsed
+
+
+def _card_action_url(card_data: dict[str, object], action_id: str) -> str:
+    for item in card_data.get("contents", []):
+        if not isinstance(item, dict) or item.get("type") != "action":
+            continue
+        for action in item.get("actions", []):
+            if not isinstance(action, dict) or action.get("id") != action_id:
+                continue
+            url = action.get("url")
+            if isinstance(url, dict) and isinstance(url.get("all"), str):
+                return url["all"]
+    raise RuntimeError(f"card action url not found: {action_id}")

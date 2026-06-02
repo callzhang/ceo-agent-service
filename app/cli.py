@@ -35,7 +35,6 @@ from app.dws_client import (
 from app.feedback_spike import (
     build_events_url,
     send_feedback_spike_card,
-    send_feedback_spike_markdown_message,
 )
 from app.leak_check import contains_forbidden_leak
 from app.dingtalk_models import CodexAction, DingTalkConversation
@@ -255,7 +254,7 @@ def build_parser() -> argparse.ArgumentParser:
         if command == "feedback-spike":
             subparser.add_argument(
                 "spike_action",
-                choices=("send-card", "send-markdown", "events-url"),
+                choices=("send-card", "events-url"),
             )
             subparser.add_argument(
                 "--vercel-base-url",
@@ -263,7 +262,6 @@ def build_parser() -> argparse.ArgumentParser:
                 help="Vercel deployment root URL, for example https://example.vercel.app",
             )
             subparser.add_argument("--conversation-id", default="")
-            subparser.add_argument("--receiver-open-dingtalk-id", default="")
             subparser.add_argument(
                 "--robot-code",
                 default=os.getenv(
@@ -272,19 +270,18 @@ def build_parser() -> argparse.ArgumentParser:
                 ),
             )
             subparser.add_argument(
-                "--title",
-                default="CEO agent feedback",
-            )
-            subparser.add_argument(
                 "--reply-text",
                 default="这是一条 CEO agent 反馈卡片 spike 测试消息。",
             )
             subparser.add_argument("--card-template-id", default="")
-            subparser.add_argument("--dws-bin", default=os.getenv("DWS_BIN", "dws"))
+            subparser.add_argument(
+                "--dingtalk-config-path",
+                default=os.getenv("DINGTALK_SKILL_CONFIG", "~/.dingtalk-skills/config"),
+            )
             subparser.add_argument(
                 "--preview",
                 action="store_true",
-                help="print the generated dws command and card payload without sending",
+                help="print the generated DingTalk card payload without sending",
             )
             subparser.add_argument(
                 "--secret",
@@ -915,36 +912,11 @@ def feedback_spike_command(args: argparse.Namespace) -> dict[str, object]:
         print(json.dumps(result, ensure_ascii=False), flush=True)
         return result
 
-    if args.spike_action == "send-markdown":
-        missing = [
-            flag
-            for flag, value in (
-                ("--conversation-id", args.conversation_id),
-                ("--robot-code", args.robot_code),
-            )
-            if not value.strip()
-        ]
-        if missing:
-            raise SystemExit(
-                f"{', '.join(missing)} required for feedback-spike send-markdown"
-            )
-        result = send_feedback_spike_markdown_message(
-            vercel_base_url=args.vercel_base_url,
-            conversation_id=args.conversation_id,
-            robot_code=args.robot_code,
-            reply_text=args.reply_text,
-            title=args.title,
-            dws_bin=args.dws_bin,
-            preview=args.preview,
-        )
-        print(json.dumps(result, ensure_ascii=False), flush=True)
-        return result
-
     missing = [
         flag
         for flag, value in (
             ("--conversation-id", args.conversation_id),
-            ("--receiver-open-dingtalk-id", args.receiver_open_dingtalk_id),
+            ("--robot-code", args.robot_code),
         )
         if not value.strip()
     ]
@@ -953,10 +925,10 @@ def feedback_spike_command(args: argparse.Namespace) -> dict[str, object]:
     result = send_feedback_spike_card(
         vercel_base_url=args.vercel_base_url,
         conversation_id=args.conversation_id,
-        receiver_open_dingtalk_id=args.receiver_open_dingtalk_id,
+        robot_code=args.robot_code,
         reply_text=args.reply_text,
         card_template_id=args.card_template_id,
-        dws_bin=args.dws_bin,
+        dingtalk_config_path=args.dingtalk_config_path,
         preview=args.preview,
     )
     print(json.dumps(result, ensure_ascii=False), flush=True)
