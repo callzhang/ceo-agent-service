@@ -11,6 +11,7 @@ from app.audit_web import (
     handle_system_config_post,
     handle_user_prompt_post,
     handle_feedback_post,
+    handle_user_feedback_resolve_post,
     handle_recall_post,
     handle_reviewed_message_reply,
     render_attempt_detail,
@@ -198,8 +199,69 @@ def test_render_user_feedback_list_marks_pending_and_resolved(tmp_path: Path):
     assert "☆☆☆☆" in html
     assert "没有回答到我的问题" in html
     assert "测试一下反馈功能" in html
+    assert 'action="/user-feedback/resolve"' in html
+    assert 'name="key" value="event-pending"' in html
+    assert "标记 resolved" in html
     assert f'href="/attempts/{pending_attempt_id}"' in html
     assert f'href="/attempts/{resolved_attempt_id}"' in html
+
+
+def test_handle_user_feedback_resolve_post_marks_feedback_resolved(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    seed_attempt(store)
+    store.record_sent_reply(
+        "cid-1",
+        "msg-1",
+        "先按A方案走",
+        feedback_token="token-1",
+    )
+    store.upsert_feedback_event(
+        key="event-1",
+        feedback_token="token-1",
+        rating="useful",
+        rating_label="很有用",
+        comment="不需要内部反馈",
+        source="ceo-agent-spike",
+        received_at="2026-06-02T08:00:00.000Z",
+    )
+
+    status, headers, html = handle_user_feedback_resolve_post(
+        store,
+        b"key=event-1",
+    )
+    feedback_html = render_user_feedback_list(store)
+
+    assert status == 303
+    assert headers["Location"] == "/user-feedback"
+    assert html == ""
+    assert "resolved" in feedback_html
+    assert "标记 resolved" not in feedback_html
+    assert "已处理" in feedback_html
+
+
+def test_user_feedback_resolve_route_redirects_to_feedback_page(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    seed_attempt(store)
+    store.upsert_feedback_event(
+        key="event-1",
+        feedback_token="token-1",
+        rating="useful",
+        rating_label="很有用",
+        comment="不需要内部反馈",
+        source="ceo-agent-spike",
+        received_at="2026-06-02T08:00:00.000Z",
+    )
+    app = create_audit_app(store.path)
+    client = TestClient(app)
+
+    response = client.post(
+        "/user-feedback/resolve",
+        data={"key": "event-1"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/user-feedback"
 
 
 def test_user_feedback_route_renders_feedback_page(tmp_path: Path):

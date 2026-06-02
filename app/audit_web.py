@@ -1304,6 +1304,7 @@ def render_user_feedback_list(store: AutoReplyStore, limit: int = 200) -> str:
             if item.attempt_id
             else "<span class=\"muted\">未关联</span>"
         )
+        resolve_action = _user_feedback_resolve_action(item, status)
         context_lines = [
             value
             for value in (
@@ -1329,7 +1330,7 @@ def render_user_feedback_list(store: AutoReplyStore, limit: int = 200) -> str:
             "</td>"
             f"<td><span class=\"feedback-token\">{escape(item.feedback_token)}</span></td>"
             f"<td>{escape(item.received_at or item.updated_at)}</td>"
-            f"<td>{attempt_link}</td>"
+            f"<td><div class=\"attempt-actions\">{attempt_link}{resolve_action}</div></td>"
             "</tr>"
         )
     if rows:
@@ -1350,9 +1351,24 @@ def render_user_feedback_list(store: AutoReplyStore, limit: int = 200) -> str:
 
 
 def _user_feedback_status(item: UserFeedbackItem) -> str:
-    if item.reviewer_feedback.strip() or item.corrected_reply_text.strip():
+    if (
+        item.resolved_at.strip()
+        or item.reviewer_feedback.strip()
+        or item.corrected_reply_text.strip()
+    ):
         return "resolved"
     return "pending"
+
+
+def _user_feedback_resolve_action(item: UserFeedbackItem, status: str) -> str:
+    if status == "resolved":
+        return "<span class=\"muted\">已处理</span>"
+    return (
+        "<form method=\"post\" action=\"/user-feedback/resolve\">"
+        f"<input type=\"hidden\" name=\"key\" value=\"{escape(item.key)}\">"
+        "<button type=\"submit\">标记 resolved</button>"
+        "</form>"
+    )
 
 
 def _reply_task_item(task: ReplyTask) -> str:
@@ -1694,6 +1710,16 @@ def handle_feedback_post(
     ):
         return 404, {}, render_page("Attempt not found", "Attempt not found")
     return 303, {"Location": f"/attempts/{attempt_id}"}, ""
+
+
+def handle_user_feedback_resolve_post(
+    store: AutoReplyStore, body: bytes
+) -> tuple[int, dict[str, str], str]:
+    parsed = parse_qs(body.decode("utf-8"), keep_blank_values=True)
+    key = parsed.get("key", [""])[0]
+    if not store.resolve_feedback_event(key):
+        return 404, {}, render_page("Feedback not found", "Feedback not found")
+    return 303, {"Location": "/user-feedback"}, ""
 
 
 def handle_developer_prompt_post(body: bytes) -> tuple[int, dict[str, str], str]:
@@ -2053,6 +2079,14 @@ def create_audit_app(
         status, headers, html = handle_feedback_post(
             AutoReplyStore(db_path),
             attempt_id,
+            await request.body(),
+        )
+        return _fastapi_post_response(status, headers, html)
+
+    @app.post("/user-feedback/resolve")
+    async def user_feedback_resolve(request: Request):
+        status, headers, html = handle_user_feedback_resolve_post(
+            AutoReplyStore(db_path),
             await request.body(),
         )
         return _fastapi_post_response(status, headers, html)

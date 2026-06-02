@@ -91,6 +91,7 @@ class FeedbackEvent(BaseModel):
     reply_text: str = ""
     source: str = ""
     received_at: str = ""
+    resolved_at: str = ""
     raw_json: str = "{}"
     created_at: str
     updated_at: str
@@ -111,6 +112,7 @@ class UserFeedbackItem(BaseModel):
     final_reply_text: str = ""
     reviewer_feedback: str = ""
     corrected_reply_text: str = ""
+    resolved_at: str = ""
     updated_at: str = ""
 
 
@@ -189,6 +191,7 @@ class AutoReplyStore:
                     reply_text text not null default '',
                     source text not null default '',
                     received_at text not null default '',
+                    resolved_at text not null default '',
                     raw_json text not null default '{}',
                     created_at text not null default current_timestamp,
                     updated_at text not null default current_timestamp
@@ -318,6 +321,17 @@ class AutoReplyStore:
                     except sqlite3.OperationalError as exc:
                         if "duplicate column name" not in str(exc):
                             raise
+            feedback_event_columns = {
+                row["name"]
+                for row in db.execute("pragma table_info(feedback_events)").fetchall()
+            }
+            for column, definition in (
+                ("resolved_at", "text not null default ''"),
+            ):
+                if column not in feedback_event_columns:
+                    db.execute(
+                        f"alter table feedback_events add column {column} {definition}"
+                    )
             reply_attempt_columns = {
                 row["name"]
                 for row in db.execute("pragma table_info(reply_attempts)").fetchall()
@@ -1138,6 +1152,7 @@ class AutoReplyStore:
                     coalesce(ra.final_reply_text, '') as final_reply_text,
                     coalesce(ra.reviewer_feedback, '') as reviewer_feedback,
                     coalesce(ra.corrected_reply_text, '') as corrected_reply_text,
+                    fe.resolved_at,
                     fe.updated_at
                 from feedback_events fe
                 left join latest_attempt_by_token latest
@@ -1150,6 +1165,22 @@ class AutoReplyStore:
                 (limit,),
             ).fetchall()
             return [UserFeedbackItem.model_validate(dict(row)) for row in rows]
+
+    def resolve_feedback_event(self, key: str) -> bool:
+        cleaned_key = key.strip()
+        if not cleaned_key:
+            return False
+        with self._connect() as db:
+            cursor = db.execute(
+                """
+                update feedback_events
+                set resolved_at=current_timestamp,
+                    updated_at=current_timestamp
+                where key=?
+                """,
+                (cleaned_key,),
+            )
+            return cursor.rowcount == 1
 
     def update_sent_reply_recall(
         self,
