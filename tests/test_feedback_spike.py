@@ -27,6 +27,20 @@ def test_build_callback_url_contains_token_rating_and_source():
     )
 
 
+def test_build_callback_url_can_include_feedback_context():
+    url = build_callback_url(
+        "https://feedback.example.com/",
+        feedback_token="spike_1_abcd",
+        rating="down",
+        original_text="原话",
+        reply_text="回复样例",
+    )
+
+    assert "rating=down" in url
+    assert "original_text=%E5%8E%9F%E8%AF%9D" in url
+    assert "reply_text=%E5%9B%9E%E5%A4%8D%E6%A0%B7%E4%BE%8B" in url
+
+
 def test_build_events_url_contains_secret_and_limit():
     url = build_events_url(
         "https://feedback.example.com",
@@ -62,6 +76,7 @@ def test_build_feedback_spike_link_message_accepts_fixed_token_for_verification(
     message = build_feedback_spike_link_message(
         vercel_base_url="https://feedback.example.com",
         reply_text="收到",
+        original_text="能看一下这个方案吗？",
         feedback_token="spike_1_abcd",
     )
 
@@ -70,6 +85,8 @@ def test_build_feedback_spike_link_message_accepts_fixed_token_for_verification(
     assert "rating=down" in message.callback_url_down
     assert message.callback_url_up in message.text
     assert message.callback_url_down in message.text
+    assert "original_text=" in message.callback_url_up
+    assert "reply_text=" in message.callback_url_up
 
 
 def test_send_feedback_spike_links_uses_current_user_message_path():
@@ -104,6 +121,7 @@ def test_send_feedback_spike_links_uses_current_user_message_path():
     result = send_feedback_spike_links(
         vercel_base_url="https://feedback.example.com",
         reply_text="收到",
+        original_text="帮我看看这个方案",
         conversation_id="cid-1",
         dws_client=client,
     )
@@ -133,6 +151,8 @@ def test_parser_supports_feedback_spike_send_links():
             "cid-1",
             "--reply-text",
             "收到",
+            "--original-text",
+            "原话",
             "--preview",
         ]
     )
@@ -142,6 +162,7 @@ def test_parser_supports_feedback_spike_send_links():
     assert args.vercel_base_url == "https://feedback.example.com"
     assert args.conversation_id == "cid-1"
     assert args.reply_text == "收到"
+    assert args.original_text == "原话"
     assert args.preview is True
 
 

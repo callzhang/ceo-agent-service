@@ -35,16 +35,21 @@ def build_callback_url(
     *,
     feedback_token: str,
     rating: str,
+    original_text: str = "",
+    reply_text: str = "",
 ) -> str:
     if rating not in {"up", "down"}:
         raise ValueError("rating must be up or down")
-    query = urlencode(
-        {
-            "source": DEFAULT_SOURCE,
-            "feedback_token": feedback_token,
-            "rating": rating,
-        }
-    )
+    fields = {
+        "source": DEFAULT_SOURCE,
+        "feedback_token": feedback_token,
+        "rating": rating,
+    }
+    if original_text.strip():
+        fields["original_text"] = original_text.strip()
+    if reply_text.strip():
+        fields["reply_text"] = reply_text.strip()
+    query = urlencode(fields)
     return f"{normalize_vercel_base_url(vercel_base_url)}/api/dingtalk-feedback-spike?{query}"
 
 
@@ -74,6 +79,7 @@ def build_feedback_spike_link_message(
     *,
     vercel_base_url: str,
     reply_text: str,
+    original_text: str = "",
     feedback_token: str | None = None,
 ) -> FeedbackSpikeLinkMessage:
     token = feedback_token or generate_feedback_token()
@@ -81,11 +87,15 @@ def build_feedback_spike_link_message(
         vercel_base_url,
         feedback_token=token,
         rating="up",
+        original_text=original_text,
+        reply_text=reply_text,
     )
     down_url = build_callback_url(
         vercel_base_url,
         feedback_token=token,
         rating="down",
+        original_text=original_text,
+        reply_text=reply_text,
     )
     return FeedbackSpikeLinkMessage(
         feedback_token=token,
@@ -99,6 +109,7 @@ def send_feedback_spike_links(
     *,
     vercel_base_url: str,
     reply_text: str,
+    original_text: str = "",
     conversation_id: str | None = None,
     user_id: str | None = None,
     open_dingtalk_id: str | None = None,
@@ -109,6 +120,7 @@ def send_feedback_spike_links(
     message = build_feedback_spike_link_message(
         vercel_base_url=vercel_base_url,
         reply_text=reply_text,
+        original_text=original_text,
     )
     client = dws_client or DwsClient(dws_bin=dws_bin)
     command = client.build_send_message_command(

@@ -268,6 +268,7 @@ def build_parser() -> argparse.ArgumentParser:
                 "--reply-text",
                 default="这是一条 CEO agent 反馈链接 spike 测试消息。",
             )
+            subparser.add_argument("--original-text", default="")
             subparser.add_argument("--dws-bin", default=os.getenv("DWS_BIN", "dws"))
             subparser.add_argument(
                 "--preview",
@@ -917,6 +918,7 @@ def feedback_spike_command(args: argparse.Namespace) -> dict[str, object]:
     result = send_feedback_spike_links(
         vercel_base_url=args.vercel_base_url,
         reply_text=args.reply_text,
+        original_text=args.original_text,
         conversation_id=args.conversation_id.strip() or None,
         user_id=args.user_id.strip() or None,
         open_dingtalk_id=args.open_dingtalk_id.strip() or None,
