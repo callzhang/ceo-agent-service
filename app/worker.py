@@ -1458,6 +1458,42 @@ class DingTalkAutoReplyWorker:
             ignore_system_notification_skip=True,
         ):
             return True
+        if not calendar_context.invite.description.strip():
+            reply_text = self._calendar_missing_description_reply(calendar_context)
+            attempt_id = self.store.record_reply_attempt_for_trigger(
+                conversation_id=conversation.open_conversation_id,
+                conversation_title=conversation.title,
+                trigger_message_id=trigger.open_message_id,
+                trigger_sender=trigger.sender_name,
+                trigger_text=trigger.content,
+                action=CodexAction.ASK_CLARIFYING_QUESTION.value,
+                sensitivity_kind="general",
+                codex_reason="calendar_missing_description",
+                draft_reply_text=reply_text,
+                audit_documents_json=json.dumps(
+                    [
+                        {
+                            "path": "management/OA/日历规则.md",
+                            "title": "日历规则",
+                            "relevance": "用于判断无描述日程需要先追问参加理由。",
+                        }
+                    ],
+                    ensure_ascii=False,
+                ),
+                audit_summary=self._calendar_missing_description_audit_summary(
+                    calendar_context
+                ),
+            )
+            self._send_reply(
+                conversation=conversation,
+                trigger=trigger,
+                new_messages=[trigger],
+                reply_text=reply_text,
+                reason="calendar_missing_description",
+                attempt_id=attempt_id,
+                raise_on_delivery_failure=raise_on_delivery_failure,
+            )
+            return True
         if not calendar_context.conflicts:
             self._process_batch(
                 conversation,
@@ -1668,14 +1704,39 @@ class DingTalkAutoReplyWorker:
             event.title or "未命名日程" for event in context.conflicts[:3]
         )
         invite_title = context.invite.title or "这场会议"
+        invite_time = (
+            f"{context.invite.start_time} - {context.invite.end_time}"
+            if context.invite.start_time and context.invite.end_time
+            else ""
+        )
+        invite_label = f"「{invite_title}」"
+        if invite_time:
+            invite_label = f"{invite_label}（{invite_time}）"
         if not conflict_titles:
             return (
-                f"我这边看到「{invite_title}」没有会议描述。请补充一下参加理由、"
+                f"我这边看到{invite_label}没有会议描述。请补充一下参加理由、"
                 "希望我决策或输入的内容，以及为什么需要我参加。"
             )
         return (
-            f"我这边看到「{invite_title}」和已有日程「{conflict_titles}」时间冲突，"
+            f"我这边看到{invite_label}和已有日程「{conflict_titles}」时间冲突，"
             "但这场会议没有会议描述。请补充一下参加理由、希望我决策或输入的内容，以及为什么需要优先于现有日程。"
+        )
+
+    @staticmethod
+    def _calendar_missing_description_audit_summary(
+        context: CalendarConflictContext,
+    ) -> str:
+        conflict_titles = "、".join(
+            event.title or "未命名日程" for event in context.conflicts[:3]
+        )
+        conflict_part = (
+            f"；同时间段冲突日程：{conflict_titles}" if conflict_titles else "；未发现同时间段冲突日程"
+        )
+        return (
+            f"已读取日程：{context.invite.title or '未命名日程'}，"
+            f"时间：{context.invite.start_time} - {context.invite.end_time}，"
+            f"组织者：{context.invite.organizer or '未知'}；会议描述为空"
+            f"{conflict_part}。按日历规则先追问参加理由和希望判断或输入的内容。"
         )
 
     @staticmethod

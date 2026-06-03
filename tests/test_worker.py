@@ -1818,10 +1818,10 @@ def test_calendar_link_message_is_handled_as_calendar_invite(tmp_path: Path, mon
 
     worker.run_once()
 
-    assert len(codex.calls) == 1
-    assert "日历规则判断" in codex.calls[0][0]
-    assert "国寿Demo思路" in codex.calls[0][0]
+    assert codex.calls == []
     assert len(final_sent(dws)) == 1
+    assert "国寿Demo思路" in final_sent(dws)[0][1]
+    assert "2026-05-30T14:00:00+08:00" in final_sent(dws)[0][1]
     assert "请补充" in final_sent(dws)[0][1]
     attempt = worker.store.get_reply_attempt(1)
     assert attempt.action == "ask_clarifying_question"
@@ -1858,10 +1858,10 @@ def test_bare_calendar_card_uses_unique_pending_invite_from_sender(
 
     worker.run_once()
 
-    assert len(codex.calls) == 1
-    assert "日历规则判断" in codex.calls[0][0]
-    assert "Preseen x Walmart" in codex.calls[0][0]
+    assert codex.calls == []
     assert len(final_sent(dws)) == 1
+    assert "Preseen x Walmart" in final_sent(dws)[0][1]
+    assert "2026-05-16T09:00:00+08:00" in final_sent(dws)[0][1]
     assert "请补充" in final_sent(dws)[0][1]
     attempt = worker.store.get_reply_attempt(1)
     assert attempt.action == "ask_clarifying_question"
@@ -1958,11 +1958,9 @@ def test_bare_calendar_card_uses_pending_invite_created_near_message(
 
     worker.run_once()
 
-    assert len(codex.calls) == 1
-    assert "日历规则判断" in codex.calls[0][0]
-    assert "Mike项目结项会" in codex.calls[0][0]
-    assert "客户会 A" not in codex.calls[0][0]
+    assert codex.calls == []
     assert len(final_sent(dws)) == 1
+    assert "Mike项目结项会" in final_sent(dws)[0][1]
     assert "客户会 A" not in final_sent(dws)[0][1]
     attempt = worker.store.get_reply_attempt(1)
     assert attempt.action == "ask_clarifying_question"
@@ -2016,10 +2014,9 @@ def test_calendar_retry_ignores_old_system_notification_skip(
     )
     worker.consume_once()
 
-    assert len(codex.calls) == 1
-    assert "日历规则判断" in codex.calls[0][0]
-    assert "客户复盘" in codex.calls[0][0]
+    assert codex.calls == []
     assert len(final_sent(dws)) == 1
+    assert "客户复盘" in final_sent(dws)[0][1]
     assert "请补充" in final_sent(dws)[0][1]
     latest = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
     assert latest is not None
@@ -2063,12 +2060,9 @@ def test_calendar_invite_without_description_asks_for_attendance_reason(
 
     worker.run_once()
 
-    assert len(codex.calls) == 1
-    prompt = codex.calls[0][0]
-    assert "日历冲突检查" in prompt
-    assert "客户复盘" in prompt
-    assert "产品周会" in prompt
+    assert codex.calls == []
     assert len(final_sent(dws)) == 1
+    assert "客户复盘" in final_sent(dws)[0][1]
     assert "产品周会" in final_sent(dws)[0][1]
     assert "请补充" in final_sent(dws)[0][1]
     assert worker.store.has_seen("msg-1") is True
@@ -2115,12 +2109,9 @@ def test_calendar_invite_ignores_declined_overlapping_event(
 
     worker.run_once()
 
-    assert len(codex.calls) == 1
-    prompt = codex.calls[0][0]
-    assert "日历规则判断" in prompt
-    assert "当前未发现同时间段已有日程冲突" in prompt
-    assert "销售周会" not in prompt
+    assert codex.calls == []
     assert len(final_sent(dws)) == 1
+    assert "Mike项目结项会" in final_sent(dws)[0][1]
     assert "销售周会" not in final_sent(dws)[0][1]
     assert "时间冲突" not in final_sent(dws)[0][1]
     assert "请补充" in final_sent(dws)[0][1]
@@ -2164,12 +2155,9 @@ def test_calendar_invite_ignores_pending_overlapping_event(
 
     worker.run_once()
 
-    assert len(codex.calls) == 1
-    prompt = codex.calls[0][0]
-    assert "日历规则判断" in prompt
-    assert "当前未发现同时间段已有日程冲突" in prompt
-    assert "待确认会议" not in prompt
+    assert codex.calls == []
     assert len(final_sent(dws)) == 1
+    assert "客户复盘" in final_sent(dws)[0][1]
     assert "待确认会议" not in final_sent(dws)[0][1]
     assert "时间冲突" not in final_sent(dws)[0][1]
     assert "请补充" in final_sent(dws)[0][1]
@@ -2200,11 +2188,10 @@ def test_calendar_invite_without_description_asks_even_without_conflict(
 
     worker.run_once()
 
-    assert len(codex.calls) == 1
-    prompt = codex.calls[0][0]
-    assert "日历规则判断" in prompt
-    assert "当前未发现同时间段已有日程冲突" in prompt
+    assert codex.calls == []
     assert len(final_sent(dws)) == 1
+    assert "客户复盘" in final_sent(dws)[0][1]
+    assert "2026-05-14T10:00:00+08:00" in final_sent(dws)[0][1]
     assert "请补充" in final_sent(dws)[0][1]
     assert dws.calendar_responses == []
     attempt = worker.store.get_reply_attempt(1)
