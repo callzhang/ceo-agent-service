@@ -1869,6 +1869,59 @@ def test_bare_calendar_card_uses_unique_pending_invite_from_sender(
     assert attempt.codex_reason == "标题和组织者足以判断需要参加客户会议。"
 
 
+def test_bare_calendar_card_uses_closest_recent_pending_invite_from_sender(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message("[日程]", single_chat=True, message_type="calendar")
+    message_time_ms = int(
+        datetime(2026, 5, 13, 18, 0, 0, tzinfo=ZoneInfo("Asia/Shanghai")).timestamp()
+        * 1000
+    )
+    matched_invite = DwsCalendarEvent(
+        event_id="invite-1",
+        title="售前候选人二面",
+        start_time="2026-05-16T09:00:00+08:00",
+        end_time="2026-05-16T10:00:00+08:00",
+        organizer=trigger.sender_name,
+        self_response_status="needsAction",
+        status="confirmed",
+        created_ms=message_time_ms,
+    )
+    nearby_invite = DwsCalendarEvent(
+        event_id="invite-2",
+        title="管理工作讨论",
+        start_time="2026-05-17T09:00:00+08:00",
+        end_time="2026-05-17T10:00:00+08:00",
+        organizer=trigger.sender_name,
+        self_response_status="needsAction",
+        status="confirmed",
+        created_ms=message_time_ms + 2 * 60 * 1000,
+    )
+    dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
+    dws.calendar_events[
+        "2026-05-13T17:00:00+08:00|2026-05-27T17:00:00+08:00"
+    ] = [matched_invite, nearby_invite]
+    dws.calendar_events[f"{matched_invite.start_time}|{matched_invite.end_time}"] = [
+        matched_invite
+    ]
+    codex = FakeCodex(
+        CodexDecision(
+            action=CodexAction.NO_REPLY,
+            reason="候选人二面需要参加。",
+            calendar_response_status="accepted",
+            audit_summary="已按消息时间匹配最近创建的待响应日程。",
+        )
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+
+    worker.run_once()
+
+    assert len(codex.calls) == 1
+    assert "售前候选人二面" in codex.calls[0][0]
+    assert "管理工作讨论" not in codex.calls[0][0]
+    assert dws.calendar_responses == [("invite-1", "accepted")]
+
+
 def test_bare_calendar_card_does_not_guess_multiple_pending_invites(
     tmp_path: Path, monkeypatch
 ):

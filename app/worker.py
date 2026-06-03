@@ -1547,26 +1547,65 @@ class DingTalkAutoReplyWorker:
         ]
         if len(time_matched_candidates) == 1:
             return time_matched_candidates[0]
+        if len(time_matched_candidates) > 1:
+            return self._closest_calendar_event_changed_near_message(
+                time_matched_candidates,
+                message,
+            )
         if len(candidates) != 1:
             return None
         return candidates[0]
+
+    @classmethod
+    def _closest_calendar_event_changed_near_message(
+        cls,
+        events: list[DwsCalendarEvent],
+        message: DingTalkMessage,
+    ) -> DwsCalendarEvent | None:
+        scored_events = [
+            (delta_ms, event)
+            for event in events
+            if (delta_ms := cls._calendar_event_change_delta_ms(event, message))
+            is not None
+        ]
+        if not scored_events:
+            return None
+        scored_events.sort(key=lambda item: item[0])
+        if len(scored_events) > 1 and scored_events[0][0] == scored_events[1][0]:
+            return None
+        return scored_events[0][1]
 
     @staticmethod
     def _calendar_event_changed_near_message(
         event: DwsCalendarEvent,
         message: DingTalkMessage,
     ) -> bool:
+        delta_ms = DingTalkAutoReplyWorker._calendar_event_change_delta_ms(
+            event,
+            message,
+        )
+        if delta_ms is None:
+            return False
+        return delta_ms <= CALENDAR_PENDING_INVITE_EVENT_MATCH_SECONDS * 1000
+
+    @staticmethod
+    def _calendar_event_change_delta_ms(
+        event: DwsCalendarEvent,
+        message: DingTalkMessage,
+    ) -> int | None:
         message_time_ms = int(
             DingTalkAutoReplyWorker._message_create_time_as_instant(
                 message
             ).timestamp()
             * 1000
         )
-        tolerance_ms = CALENDAR_PENDING_INVITE_EVENT_MATCH_SECONDS * 1000
-        return any(
-            event_time_ms > 0 and abs(event_time_ms - message_time_ms) <= tolerance_ms
+        deltas = [
+            abs(event_time_ms - message_time_ms)
             for event_time_ms in (event.created_ms, event.updated_ms)
-        )
+            if event_time_ms > 0
+        ]
+        return min(deltas) if deltas else None
+
 
     def _calendar_pending_invite_search_window(
         self,
