@@ -1,7 +1,6 @@
 import argparse
 import json
 import os
-import re
 import threading
 import time
 from collections.abc import Callable
@@ -39,7 +38,7 @@ from app.feedback_spike import (
     send_feedback_spike_links,
 )
 from app.leak_check import contains_forbidden_leak
-from app.dingtalk_models import CodexAction, DingTalkConversation
+from app.dingtalk_models import CodexAction, DingTalkConversation, DingTalkMessage
 from app.notification import send_macos_notification
 from app.oa_approval import OaApprovalCodexRunner
 from app.org_cache import (
@@ -699,7 +698,6 @@ def send_attempt_command(settings: WorkerSettings, attempt_id: int) -> dict[str,
     if conversation is None:
         raise SystemExit(f"conversation not found: {attempt.conversation_id}")
 
-    at_users = _at_user_ids_from_reply(attempt.final_reply_text)
     dws = DwsClient(
         ding_robot_code=settings.ding_robot_code,
         ding_robot_name=settings.ding_robot_name,
@@ -707,9 +705,15 @@ def send_attempt_command(settings: WorkerSettings, attempt_id: int) -> dict[str,
         transient_retry_attempts=settings.dws_transient_retry_attempts,
         transient_retry_delay_seconds=settings.dws_transient_retry_delay_seconds,
     )
-    direct_user_id, direct_open_dingtalk_id = _direct_send_target_for_attempt(
+    dingtalk_conversation = DingTalkConversation(
+        open_conversation_id=conversation.conversation_id,
+        title=conversation.title,
+        single_chat=conversation.single_chat,
+        unread_point=0,
+    )
+    trigger = _trigger_message_for_attempt(
         dws=dws,
-        conversation=conversation,
+        conversation=dingtalk_conversation,
         attempt=attempt,
         store=store,
     )
@@ -739,12 +743,10 @@ def send_attempt_command(settings: WorkerSettings, attempt_id: int) -> dict[str,
             )
             raise SystemExit(f"reply attempt {attempt_id} blocked by leak_check")
     try:
-        send_result = dws.send_message(
-            None if conversation.single_chat else attempt.conversation_id,
+        send_result = dws.send_reply_to_trigger(
+            dingtalk_conversation,
+            trigger,
             reply_text,
-            at_users=[] if conversation.single_chat else at_users,
-            user_id=direct_user_id,
-            open_dingtalk_id=direct_open_dingtalk_id,
         )
     except Exception as exc:
         store.update_reply_attempt(
@@ -782,70 +784,89 @@ def send_attempt_command(settings: WorkerSettings, attempt_id: int) -> dict[str,
     return result
 
 
-def _direct_send_target_for_attempt(
+def _trigger_message_for_attempt(
     *,
     dws: DwsClient,
-    conversation,
+    conversation: DingTalkConversation,
     attempt,
     store: AutoReplyStore,
-) -> tuple[str | None, str | None]:
-    if not conversation.single_chat:
-        return None, None
-    if attempt.direct_user_id.strip():
-        return attempt.direct_user_id.strip(), None
-    if attempt.direct_open_dingtalk_id.strip():
-        return None, attempt.direct_open_dingtalk_id.strip()
-
-    dingtalk_conversation = DingTalkConversation(
-        open_conversation_id=conversation.conversation_id,
-        title=conversation.title,
-        single_chat=True,
-        unread_point=0,
+) -> DingTalkMessage:
+    task = store.get_reply_task_for_message(
+        attempt.conversation_id,
+        attempt.trigger_message_id,
     )
-    candidate_conversations = [dingtalk_conversation]
+    if task is not None:
+        try:
+            raw_payload = json.loads(task.trigger_message_json)
+        except json.JSONDecodeError:
+            raw_payload = {}
+        if isinstance(raw_payload, dict):
+            message = _trigger_message_from_payload(
+                raw_payload,
+                conversation=conversation,
+            )
+            if (
+                message.open_message_id == attempt.trigger_message_id
+                and message.sender_open_dingtalk_id
+            ):
+                return message
+
+    candidate_conversations = [conversation]
     attempt_created_at_ms = _attempt_created_at_ms(attempt.created_at)
     if attempt_created_at_ms is not None:
         candidate_conversations.append(
-            dingtalk_conversation.model_copy(
-                update={"last_message_create_at": attempt_created_at_ms}
-            )
+            conversation.model_copy(update={"last_message_create_at": attempt_created_at_ms})
         )
     for candidate_conversation in candidate_conversations:
         for message in _send_attempt_target_lookup_messages(dws, candidate_conversation):
             if message.open_message_id != attempt.trigger_message_id:
                 continue
-            if message.sender_user_id:
-                store.update_reply_attempt(
-                    attempt.id,
-                    direct_user_id=message.sender_user_id,
-                    direct_open_dingtalk_id=getattr(
-                        message, "sender_open_dingtalk_id", None
-                    )
-                    or "",
-                )
-                return message.sender_user_id, None
-            sender_open_dingtalk_id = (
-                getattr(message, "sender_open_dingtalk_id", None) or ""
-            )
-            if sender_open_dingtalk_id:
-                store.update_reply_attempt(
-                    attempt.id,
-                    direct_open_dingtalk_id=sender_open_dingtalk_id,
-                )
-                return None, sender_open_dingtalk_id
-            try:
-                resolved_sender_user_id = dws.resolve_message_sender(message)
-            except Exception:
-                continue
-            if resolved_sender_user_id:
-                store.update_reply_attempt(
-                    attempt.id,
-                    direct_user_id=resolved_sender_user_id,
-                )
-                return resolved_sender_user_id, None
+            if getattr(message, "sender_open_dingtalk_id", ""):
+                return message
             break
     raise SystemExit(
-        f"reply attempt {attempt.id} cannot resolve direct user id for single-chat send"
+        f"reply attempt {attempt.id} cannot resolve trigger senderOpenDingTalkId for quoted reply"
+    )
+
+
+def _trigger_message_from_payload(
+    payload: dict[str, object],
+    *,
+    conversation: DingTalkConversation,
+) -> DingTalkMessage:
+    quoted_message = payload.get("quotedMessage")
+    quoted_payload = quoted_message if isinstance(quoted_message, dict) else {}
+    return DingTalkMessage(
+        open_conversation_id=str(
+            payload.get("openConversationId") or conversation.open_conversation_id
+        ),
+        open_message_id=str(payload.get("openMessageId") or ""),
+        conversation_title=conversation.title,
+        single_chat=conversation.single_chat,
+        sender_name=str(payload.get("sender") or ""),
+        sender_open_dingtalk_id=(
+            str(payload.get("senderOpenDingTalkId"))
+            if payload.get("senderOpenDingTalkId")
+            else None
+        ),
+        sender_user_id=(
+            str(payload.get("senderUserId")) if payload.get("senderUserId") else None
+        ),
+        message_type=str(payload.get("messageType") or ""),
+        create_time=str(payload.get("createTime") or ""),
+        content=str(payload.get("content") or ""),
+        mentioned_user_ids=[],
+        quoted_message_id=(
+            str(quoted_payload.get("openMessageId"))
+            if quoted_payload.get("openMessageId")
+            else None
+        ),
+        quoted_content=(
+            str(quoted_payload.get("content"))
+            if quoted_payload.get("content")
+            else None
+        ),
+        raw_payload=payload,
     )
 
 
@@ -876,15 +897,6 @@ def _attempt_created_at_ms(created_at: str) -> int | None:
     except ValueError:
         return None
     return int(parsed.replace(tzinfo=timezone.utc).timestamp() * 1000)
-
-
-def _at_user_ids_from_reply(reply_text: str) -> list[str]:
-    user_ids: list[str] = []
-    for match in re.finditer(r"<@([^>]+)>", reply_text):
-        user_id = match.group(1).strip()
-        if user_id and user_id not in user_ids:
-            user_ids.append(user_id)
-    return user_ids
 
 
 def _load_style_profile(corpus_dir: Path) -> str:

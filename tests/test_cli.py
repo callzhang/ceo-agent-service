@@ -33,6 +33,39 @@ from app.corpus import CorpusRecord, append_records
 from app.dws_client import DwsError
 
 
+def enqueue_trigger_task(
+    store,
+    *,
+    conversation_id: str = "cid-1",
+    conversation_title: str = "Friday",
+    single_chat: bool = False,
+    trigger_message_id: str = "msg-1",
+    trigger_sender: str = "Phina",
+    trigger_text: str = "@Alex Chen 看一下",
+    sender_open_dingtalk_id: str = "open-sender-1",
+):
+    store.enqueue_reply_task(
+        conversation_id=conversation_id,
+        conversation_title=conversation_title,
+        single_chat=single_chat,
+        trigger_message_id=trigger_message_id,
+        trigger_create_time="2026-05-28 18:00:00",
+        trigger_sender=trigger_sender,
+        trigger_text=trigger_text,
+        trigger_message_json=json.dumps(
+            {
+                "openConversationId": conversation_id,
+                "openMessageId": trigger_message_id,
+                "sender": trigger_sender,
+                "senderOpenDingTalkId": sender_open_dingtalk_id,
+                "createTime": "2026-05-28 18:00:00",
+                "content": trigger_text,
+            },
+            ensure_ascii=False,
+        ),
+    )
+
+
 def test_parser_supports_worker_commands():
     parser = build_parser()
 
@@ -340,20 +373,12 @@ def test_send_attempt_command_sends_existing_dry_run_without_rerunning_codex(
         def extract_recall_key(send_result):
             return send_result["result"]["processQueryKey"]
 
-        def send_message(
-            self,
-            conversation_id,
-            text,
-            at_users=None,
-            user_id=None,
-            open_dingtalk_id=None,
-        ):
-            sent["message"] = (
-                conversation_id,
+        def send_reply_to_trigger(self, conversation, trigger, text):
+            sent["reply"] = (
+                conversation.open_conversation_id,
+                trigger.open_message_id,
+                trigger.sender_open_dingtalk_id,
                 text,
-                at_users,
-                user_id,
-                open_dingtalk_id,
             )
             return {"result": {"processQueryKey": "recall-1"}}
 
@@ -366,6 +391,7 @@ def test_send_attempt_command_sends_existing_dry_run_without_rerunning_codex(
     )
     store = cli.AutoReplyStore(settings.db_path)
     store.upsert_conversation("cid-1", "Friday", False, None)
+    enqueue_trigger_task(store)
     attempt_id = store.record_reply_attempt(
         conversation_id="cid-1",
         conversation_title="Friday",
@@ -384,7 +410,7 @@ def test_send_attempt_command_sends_existing_dry_run_without_rerunning_codex(
 
     result = send_attempt_command(settings, attempt_id)
 
-    assert sent["message"] == ("cid-1", final_reply, ["user-1"], None, None)
+    assert sent["reply"] == ("cid-1", "msg-1", "open-sender-1", final_reply)
     assert result["send_status"] == "sent"
     updated = cli.AutoReplyStore(settings.db_path).get_reply_attempt(attempt_id)
     assert updated is not None
@@ -408,20 +434,12 @@ def test_send_attempt_command_appends_feedback_links_when_configured(
         def extract_recall_key(send_result):
             return send_result["result"]["processQueryKey"]
 
-        def send_message(
-            self,
-            conversation_id,
-            text,
-            at_users=None,
-            user_id=None,
-            open_dingtalk_id=None,
-        ):
-            sent["message"] = (
-                conversation_id,
+        def send_reply_to_trigger(self, conversation, trigger, text):
+            sent["reply"] = (
+                conversation.open_conversation_id,
+                trigger.open_message_id,
+                trigger.sender_open_dingtalk_id,
                 text,
-                at_users,
-                user_id,
-                open_dingtalk_id,
             )
             return {"result": {"processQueryKey": "recall-1"}}
 
@@ -433,6 +451,7 @@ def test_send_attempt_command_appends_feedback_links_when_configured(
     settings = WorkerSettings(db_path=tmp_path / "worker.sqlite3", dry_run=False)
     store = cli.AutoReplyStore(settings.db_path)
     store.upsert_conversation("cid-1", "Friday", False, None)
+    enqueue_trigger_task(store)
     attempt_id = store.record_reply_attempt(
         conversation_id="cid-1",
         conversation_title="Friday",
@@ -450,7 +469,7 @@ def test_send_attempt_command_appends_feedback_links_when_configured(
 
     send_attempt_command(settings, attempt_id)
 
-    sent_text = sent["message"][1]
+    sent_text = sent["reply"][3]
     assert "反馈：[👍](https://feedback.example.com/api/dingtalk-feedback-spike" in sent_text
     assert "source=" not in sent_text
     sent_reply = cli.AutoReplyStore(settings.db_path).get_sent_reply("cid-1", "msg-1")
@@ -459,7 +478,7 @@ def test_send_attempt_command_appends_feedback_links_when_configured(
     assert sent_reply.feedback_token in sent_text
 
 
-def test_send_attempt_command_sends_single_chat_to_stored_direct_user(
+def test_send_attempt_command_sends_single_chat_as_quoted_reply(
     monkeypatch, tmp_path
 ):
     sent = {}
@@ -472,20 +491,12 @@ def test_send_attempt_command_sends_single_chat_to_stored_direct_user(
         def extract_recall_key(send_result):
             return send_result["result"]["processQueryKey"]
 
-        def send_message(
-            self,
-            conversation_id,
-            text,
-            at_users=None,
-            user_id=None,
-            open_dingtalk_id=None,
-        ):
-            sent["message"] = (
-                conversation_id,
+        def send_reply_to_trigger(self, conversation, trigger, text):
+            sent["reply"] = (
+                conversation.open_conversation_id,
+                trigger.open_message_id,
+                trigger.sender_open_dingtalk_id,
                 text,
-                at_users,
-                user_id,
-                open_dingtalk_id,
             )
             return {"result": {"processQueryKey": "recall-1"}}
 
@@ -493,6 +504,13 @@ def test_send_attempt_command_sends_single_chat_to_stored_direct_user(
     settings = WorkerSettings(db_path=tmp_path / "worker.sqlite3", dry_run=False)
     store = cli.AutoReplyStore(settings.db_path)
     store.upsert_conversation("cid-1", "Claire", True, None)
+    enqueue_trigger_task(
+        store,
+        conversation_title="Claire",
+        single_chat=True,
+        trigger_sender="Claire",
+        trigger_text="可以不参加",
+    )
     attempt_id = store.record_reply_attempt(
         conversation_id="cid-1",
         conversation_title="Claire",
@@ -512,12 +530,12 @@ def test_send_attempt_command_sends_single_chat_to_stored_direct_user(
 
     send_attempt_command(settings, attempt_id)
 
-    assert sent["message"] == (None, final_reply, [], "user-1", None)
+    assert sent["reply"] == ("cid-1", "msg-1", "open-sender-1", final_reply)
     sent_reply = cli.AutoReplyStore(settings.db_path).get_sent_reply("cid-1", "msg-1")
     assert sent_reply is not None
 
 
-def test_send_attempt_command_resolves_single_chat_direct_user_from_trigger(
+def test_send_attempt_command_resolves_single_chat_trigger_sender_from_recent_message(
     monkeypatch, tmp_path
 ):
     sent = {}
@@ -533,23 +551,18 @@ def test_send_attempt_command_resolves_single_chat_direct_user_from_trigger(
         def read_recent_messages(self, conversation, limit=50):
             sent["read_recent"] = (conversation.open_conversation_id, limit)
             return [
-                SimpleNamespace(open_message_id="msg-1", sender_user_id="user-1"),
+                SimpleNamespace(
+                    open_message_id="msg-1",
+                    sender_open_dingtalk_id="open-1",
+                ),
             ]
 
-        def send_message(
-            self,
-            conversation_id,
-            text,
-            at_users=None,
-            user_id=None,
-            open_dingtalk_id=None,
-        ):
-            sent["message"] = (
-                conversation_id,
+        def send_reply_to_trigger(self, conversation, trigger, text):
+            sent["reply"] = (
+                conversation.open_conversation_id,
+                trigger.open_message_id,
+                trigger.sender_open_dingtalk_id,
                 text,
-                at_users,
-                user_id,
-                open_dingtalk_id,
             )
             return {"result": {"processQueryKey": "recall-1"}}
 
@@ -576,13 +589,10 @@ def test_send_attempt_command_resolves_single_chat_direct_user_from_trigger(
     send_attempt_command(settings, attempt_id)
 
     assert sent["read_recent"] == ("cid-1", cli.SEND_ATTEMPT_TARGET_LOOKBACK_LIMIT)
-    assert sent["message"] == (None, final_reply, [], "user-1", None)
-    updated = cli.AutoReplyStore(settings.db_path).get_reply_attempt(attempt_id)
-    assert updated is not None
-    assert updated.direct_user_id == "user-1"
+    assert sent["reply"] == ("cid-1", "msg-1", "open-1", final_reply)
 
 
-def test_send_attempt_command_resolves_single_chat_direct_user_near_attempt_time(
+def test_send_attempt_command_resolves_single_chat_trigger_sender_near_attempt_time(
     monkeypatch, tmp_path
 ):
     sent = {}
@@ -601,23 +611,18 @@ def test_send_attempt_command_resolves_single_chat_direct_user_near_attempt_time
             if conversation.last_message_create_at is None:
                 return []
             return [
-                SimpleNamespace(open_message_id="msg-1", sender_user_id="user-1"),
+                SimpleNamespace(
+                    open_message_id="msg-1",
+                    sender_open_dingtalk_id="open-1",
+                ),
             ]
 
-        def send_message(
-            self,
-            conversation_id,
-            text,
-            at_users=None,
-            user_id=None,
-            open_dingtalk_id=None,
-        ):
-            sent["message"] = (
-                conversation_id,
+        def send_reply_to_trigger(self, conversation, trigger, text):
+            sent["reply"] = (
+                conversation.open_conversation_id,
+                trigger.open_message_id,
+                trigger.sender_open_dingtalk_id,
                 text,
-                at_users,
-                user_id,
-                open_dingtalk_id,
             )
             return {"result": {"processQueryKey": "recall-1"}}
 
@@ -649,7 +654,7 @@ def test_send_attempt_command_resolves_single_chat_direct_user_near_attempt_time
     )
     assert sent["read_recent"][1][0] is not None
     assert sent["read_recent"][1][1] == cli.SEND_ATTEMPT_TARGET_LOOKBACK_LIMIT
-    assert sent["message"] == (None, final_reply, [], "user-1", None)
+    assert sent["reply"] == ("cid-1", "msg-1", "open-1", final_reply)
 
 
 def test_send_attempt_command_uses_single_chat_open_dingtalk_id_when_user_id_absent(
@@ -674,20 +679,12 @@ def test_send_attempt_command_uses_single_chat_open_dingtalk_id_when_user_id_abs
                 ),
             ]
 
-        def send_message(
-            self,
-            conversation_id,
-            text,
-            at_users=None,
-            user_id=None,
-            open_dingtalk_id=None,
-        ):
-            sent["message"] = (
-                conversation_id,
+        def send_reply_to_trigger(self, conversation, trigger, text):
+            sent["reply"] = (
+                conversation.open_conversation_id,
+                trigger.open_message_id,
+                trigger.sender_open_dingtalk_id,
                 text,
-                at_users,
-                user_id,
-                open_dingtalk_id,
             )
             return {"result": {"processQueryKey": "recall-1"}}
 
@@ -713,13 +710,10 @@ def test_send_attempt_command_uses_single_chat_open_dingtalk_id_when_user_id_abs
 
     send_attempt_command(settings, attempt_id)
 
-    assert sent["message"] == (None, final_reply, [], None, "open-1")
-    updated = cli.AutoReplyStore(settings.db_path).get_reply_attempt(attempt_id)
-    assert updated is not None
-    assert updated.direct_open_dingtalk_id == "open-1"
+    assert sent["reply"] == ("cid-1", "msg-1", "open-1", final_reply)
 
 
-def test_send_attempt_command_resolves_single_chat_sender_profile_when_ids_absent(
+def test_send_attempt_command_requires_trigger_sender_for_quoted_reply(
     monkeypatch, tmp_path
 ):
     sent = {}
@@ -742,27 +736,6 @@ def test_send_attempt_command_resolves_single_chat_sender_profile_when_ids_absen
                 ),
             ]
 
-        def resolve_message_sender(self, message):
-            sent["resolved_sender"] = message.sender_name
-            return "user-1"
-
-        def send_message(
-            self,
-            conversation_id,
-            text,
-            at_users=None,
-            user_id=None,
-            open_dingtalk_id=None,
-        ):
-            sent["message"] = (
-                conversation_id,
-                text,
-                at_users,
-                user_id,
-                open_dingtalk_id,
-            )
-            return {"result": {"processQueryKey": "recall-1"}}
-
     monkeypatch.setattr(cli, "DwsClient", FakeDws)
     settings = WorkerSettings(db_path=tmp_path / "worker.sqlite3", dry_run=False)
     store = cli.AutoReplyStore(settings.db_path)
@@ -783,13 +756,8 @@ def test_send_attempt_command_resolves_single_chat_sender_profile_when_ids_absen
         send_status="dry_run",
     )
 
-    send_attempt_command(settings, attempt_id)
-
-    assert sent["resolved_sender"] == "Claire"
-    assert sent["message"] == (None, final_reply, [], "user-1", None)
-    updated = cli.AutoReplyStore(settings.db_path).get_reply_attempt(attempt_id)
-    assert updated is not None
-    assert updated.direct_user_id == "user-1"
+    with pytest.raises(SystemExit, match="senderOpenDingTalkId"):
+        send_attempt_command(settings, attempt_id)
 
 
 def test_send_attempt_command_resolves_single_chat_target_forward_from_attempt_time(
@@ -827,20 +795,12 @@ def test_send_attempt_command_resolves_single_chat_target_forward_from_attempt_t
                 ),
             ]
 
-        def send_message(
-            self,
-            conversation_id,
-            text,
-            at_users=None,
-            user_id=None,
-            open_dingtalk_id=None,
-        ):
-            sent["message"] = (
-                conversation_id,
+        def send_reply_to_trigger(self, conversation, trigger, text):
+            sent["reply"] = (
+                conversation.open_conversation_id,
+                trigger.open_message_id,
+                trigger.sender_open_dingtalk_id,
                 text,
-                at_users,
-                user_id,
-                open_dingtalk_id,
             )
             return {"result": {"processQueryKey": "recall-1"}}
 
@@ -869,7 +829,7 @@ def test_send_attempt_command_resolves_single_chat_target_forward_from_attempt_t
     assert sent["forward"][0][0] is not None
     assert sent["forward"][0][1] == cli.SEND_ATTEMPT_TARGET_LOOKBACK_LIMIT
     assert sent["forward"][0][2] is True
-    assert sent["message"] == (None, final_reply, [], None, "open-1")
+    assert sent["reply"] == ("cid-1", "msg-1", "open-1", final_reply)
 
 
 def test_send_attempt_command_blocks_runtime_leaks(monkeypatch, tmp_path):

@@ -153,6 +153,25 @@ class FakeDws:
         self.sent.append((conversation_id, text))
         self.sent_at_users.append(at_users or [])
 
+    def reply_message(
+        self,
+        conversation_id,
+        ref_message_id,
+        ref_sender_open_dingtalk_id,
+        text,
+    ):
+        self.chat_calls.append(("reply_message", conversation_id, ref_message_id))
+        self.sent.append((conversation_id, text))
+        self.sent_at_users.append([])
+
+    def send_reply_to_trigger(self, conversation, trigger, text):
+        return self.reply_message(
+            conversation.open_conversation_id,
+            trigger.open_message_id,
+            trigger.sender_open_dingtalk_id,
+            text,
+        )
+
     def ding_user(self, user_id, text):
         self.chat_calls.append(("ding_user", user_id))
         self.dings.append((user_id, text))
@@ -214,7 +233,7 @@ def test_local_pipeline_refreshes_org_cache_then_replies_without_runtime_org_cal
     assert raw_dws.org_calls == []
     assert final_sent(raw_dws) == [
         (
-            None,
+            "cid-1",
             "> HR: 张三转正怎么看？\n\n建议先观察一个月（by明哥分身）",
         )
     ]
@@ -248,7 +267,7 @@ def test_local_pipeline_handoff_ding_uses_cached_current_user_without_runtime_or
     assert raw_dws.org_calls == []
     assert final_sent(raw_dws) == [
         (
-            None,
+            "cid-1",
             "> HR: 不要分身，真人看一下\n\n我让明哥本人看一下。（by明哥分身）",
         )
     ]

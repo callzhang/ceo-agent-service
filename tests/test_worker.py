@@ -378,6 +378,14 @@ class FakeDws:
         self.direct_open_dingtalk_ids.append(None)
         return self.send_result
 
+    def send_reply_to_trigger(self, conversation, trigger, text: str) -> None:
+        return self.reply_message(
+            conversation.open_conversation_id,
+            trigger.open_message_id,
+            trigger.sender_open_dingtalk_id,
+            text,
+        )
+
     def ding_self(self, text: str) -> None:
         if self.ding_error:
             raise self.ding_error
@@ -5235,14 +5243,21 @@ def test_single_chat_unread_is_processed_without_mention(tmp_path: Path, monkeyp
 
     assert final_sent(dws) == [
         (
-            "",
+            "cid-1",
             "> 周俊杰: 这个今天能拍吗？\n\n可以，先推进（by明哥分身）",
         )
     ]
     assert final_sent_at_users(dws) == [[]]
-    assert final_direct_user_ids(dws) == ["sender-user-1"]
+    assert final_direct_user_ids(dws) == [None]
     assert final_direct_open_dingtalk_ids(dws) == [None]
-    assert dws.reply_messages == []
+    assert dws.reply_messages == [
+        (
+            "cid-1",
+            "msg-1",
+            "sender-1",
+            "> 周俊杰: 这个今天能拍吗？\n\n可以，先推进（by明哥分身）",
+        )
+    ]
     attempt = worker.store.get_reply_attempt(1)
     assert attempt is not None
     assert attempt.send_status == "sent"
@@ -6046,7 +6061,7 @@ def test_internal_personnel_question_missing_subject_asks_clarifying_question(
 
     assert final_sent(dws) == [
         (
-            "",
+            "cid-1",
             "> 周俊杰: 这个人后续怎么处理？\n\n这个是关于谁的问题？（by明哥分身）",
         )
     ]
@@ -6072,7 +6087,7 @@ def test_internal_personnel_question_allows_hr_requester(tmp_path: Path, monkeyp
 
     assert final_sent(dws) == [
         (
-            "",
+            "cid-1",
             "> 周俊杰: 张三转正怎么看？\n\n建议先观察一个月（by明哥分身）",
         )
     ]
@@ -6100,7 +6115,7 @@ def test_internal_personnel_question_allows_subject_manager(
 
     assert final_sent(dws) == [
         (
-            "",
+            "cid-1",
             "> 周俊杰: 张三绩效怎么定？\n\n先按事实反馈（by明哥分身）",
         )
     ]
@@ -6127,7 +6142,7 @@ def test_internal_personnel_question_refuses_unrelated_requester(
 
     assert final_sent(dws) == [
         (
-            "",
+            "cid-1",
             "> 周俊杰: 张三绩效怎么定？\n\n"
             "这个涉及内部人事隐私，我不能回答。（by明哥分身）",
         )
@@ -6155,7 +6170,7 @@ def test_candidate_question_missing_department_asks_clarifying_question(
 
     assert final_sent(dws) == [
         (
-            "",
+            "cid-1",
             "> 周俊杰: 这个候选人怎么样？\n\n"
             "这个候选人是哪个岗位/部门的？（by明哥分身）",
         )
@@ -6185,7 +6200,7 @@ def test_candidate_question_allows_related_department_requester(
 
     assert final_sent(dws) == [
         (
-            "",
+            "cid-1",
             "> 周俊杰: 这个候选人怎么样？\n\n可以推进（by明哥分身）",
         )
     ]
@@ -6214,7 +6229,7 @@ def test_candidate_question_refuses_unrelated_department_requester(
 
     assert final_sent(dws) == [
         (
-            "",
+            "cid-1",
             "> 周俊杰: 这个候选人怎么样？\n\n"
             "这个候选人信息只回答相关部门的人。（by明哥分身）",
         )

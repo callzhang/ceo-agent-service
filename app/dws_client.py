@@ -1208,6 +1208,21 @@ class DwsClient:
             )
         )
 
+    def send_reply_to_trigger(
+        self,
+        conversation: DingTalkConversation,
+        trigger: DingTalkMessage,
+        text: str,
+    ) -> dict[str, Any]:
+        if not trigger.sender_open_dingtalk_id:
+            raise DwsError("missing trigger senderOpenDingTalkId for quoted reply")
+        return self.reply_message(
+            conversation.open_conversation_id,
+            trigger.open_message_id,
+            trigger.sender_open_dingtalk_id,
+            text,
+        )
+
     def recall_bot_message(
         self, conversation_id: str | None, process_query_key: str
     ) -> dict[str, Any]:

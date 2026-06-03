@@ -702,6 +702,24 @@ class AutoReplyStore:
             rows = db.execute(query, args).fetchall()
             return [self._reply_task_from_row(row) for row in rows]
 
+    def get_reply_task_for_message(
+        self, conversation_id: str, trigger_message_id: str
+    ) -> ReplyTask | None:
+        with self._connect() as db:
+            row = db.execute(
+                """
+                select *
+                from reply_tasks
+                where conversation_id=? and trigger_message_id=?
+                order by id desc
+                limit 1
+                """,
+                (conversation_id, trigger_message_id),
+            ).fetchone()
+            if row is None:
+                return None
+            return self._reply_task_from_row(row)
+
     def upsert_conversation(
         self,
         conversation_id: str,

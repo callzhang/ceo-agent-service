@@ -1919,6 +1919,14 @@ def test_handle_reviewed_message_reply_matches_sender_group_and_text(
             )
             return {"result": {"processQueryKey": "recall-1"}}
 
+        def send_reply_to_trigger(self, conversation, trigger, text):
+            return self.reply_message(
+                conversation.open_conversation_id,
+                trigger.open_message_id,
+                trigger.sender_open_dingtalk_id,
+                text,
+            )
+
     monkeypatch.setattr(
         "app.worker.send_macos_notification",
         lambda **kwargs: None,
@@ -2005,6 +2013,14 @@ def test_handle_reviewed_message_reply_uses_stored_group_and_recent_message(
             )
             return {"result": {"processQueryKey": "recall-site-1"}}
 
+        def send_reply_to_trigger(self, conversation, trigger, text):
+            return self.reply_message(
+                conversation.open_conversation_id,
+                trigger.open_message_id,
+                trigger.sender_open_dingtalk_id,
+                text,
+            )
+
     monkeypatch.setattr(
         "app.worker.send_macos_notification",
         lambda **kwargs: None,
@@ -2059,6 +2075,7 @@ def test_handle_reviewed_message_reply_matches_private_message_without_mention(
     class FakeDws:
         def __init__(self):
             self.sent_messages = []
+            self.reply_messages = []
             self.read_mentioned_calls = 0
 
         def search_conversations(self, query):
@@ -2085,6 +2102,7 @@ def test_handle_reviewed_message_reply_matches_private_message_without_mention(
                     conversation_title=conversation.title,
                     single_chat=True,
                     sender_name="Mina 邹",
+                    sender_open_dingtalk_id="open-mina",
                     sender_user_id="user-mina",
                     create_time="2026-05-25 13:40:26",
                     content="明哥分身，大模型项目经理需要具备什么能力",
@@ -2104,6 +2122,26 @@ def test_handle_reviewed_message_reply_matches_private_message_without_mention(
         ):
             self.sent_messages.append((conversation_id, text, at_users, user_id))
             return {"result": {"processQueryKey": "recall-private-1"}}
+
+        def reply_message(
+            self,
+            conversation_id,
+            ref_message_id,
+            ref_sender_open_dingtalk_id,
+            text,
+        ):
+            self.reply_messages.append(
+                (conversation_id, ref_message_id, ref_sender_open_dingtalk_id, text)
+            )
+            return {"result": {"processQueryKey": "recall-private-1"}}
+
+        def send_reply_to_trigger(self, conversation, trigger, text):
+            return self.reply_message(
+                conversation.open_conversation_id,
+                trigger.open_message_id,
+                trigger.sender_open_dingtalk_id,
+                text,
+            )
 
     monkeypatch.setattr(
         "app.worker.send_macos_notification",
@@ -2128,12 +2166,13 @@ def test_handle_reviewed_message_reply_matches_private_message_without_mention(
     assert attempt.trigger_sender == "Mina 邹"
     assert attempt.trigger_text == "明哥分身，大模型项目经理需要具备什么能力"
     assert "> Mina 邹: 明哥分身，大模型项目经理需要具备什么能力" in attempt.final_reply_text
-    assert dws.sent_messages == [
+    assert dws.sent_messages == []
+    assert dws.reply_messages == [
         (
-            None,
+            "cid-private",
+            "msg-private-1",
+            "open-mina",
             attempt.final_reply_text,
-            None,
-            "user-mina",
         )
     ]
     assert sent_reply is not None
@@ -2147,6 +2186,7 @@ def test_handle_reviewed_message_reply_uses_stored_private_conversation_when_sea
     class FakeDws:
         def __init__(self):
             self.sent_messages = []
+            self.reply_messages = []
 
         def search_conversations(self, query):
             assert query == "Mina 邹"
@@ -2162,6 +2202,7 @@ def test_handle_reviewed_message_reply_uses_stored_private_conversation_when_sea
                     conversation_title=conversation.title,
                     single_chat=True,
                     sender_name="Mina 邹",
+                    sender_open_dingtalk_id="open-mina",
                     sender_user_id="user-mina",
                     create_time="2026-05-25 13:40:26",
                     content="好",
@@ -2181,6 +2222,26 @@ def test_handle_reviewed_message_reply_uses_stored_private_conversation_when_sea
         ):
             self.sent_messages.append((conversation_id, text, at_users, user_id))
             return {"result": {"processQueryKey": "recall-private-1"}}
+
+        def reply_message(
+            self,
+            conversation_id,
+            ref_message_id,
+            ref_sender_open_dingtalk_id,
+            text,
+        ):
+            self.reply_messages.append(
+                (conversation_id, ref_message_id, ref_sender_open_dingtalk_id, text)
+            )
+            return {"result": {"processQueryKey": "recall-private-1"}}
+
+        def send_reply_to_trigger(self, conversation, trigger, text):
+            return self.reply_message(
+                conversation.open_conversation_id,
+                trigger.open_message_id,
+                trigger.sender_open_dingtalk_id,
+                text,
+            )
 
     monkeypatch.setattr(
         "app.worker.send_macos_notification",
@@ -2208,12 +2269,13 @@ def test_handle_reviewed_message_reply_uses_stored_private_conversation_when_sea
     assert result["send_status"] == "sent"
     assert attempt is not None
     assert "> Mina 邹: 好" in attempt.final_reply_text
-    assert dws.sent_messages == [
+    assert dws.sent_messages == []
+    assert dws.reply_messages == [
         (
-            None,
+            "cid-private",
+            "msg-private-1",
+            "open-mina",
             attempt.final_reply_text,
-            None,
-            "user-mina",
         )
     ]
 

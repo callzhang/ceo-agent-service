@@ -256,6 +256,9 @@ class CachedDwsClient:
             text,
         )
 
+    def send_reply_to_trigger(self, conversation, trigger, text: str):
+        return self.dws.send_reply_to_trigger(conversation, trigger, text)
+
     def recall_bot_message(self, conversation_id: str | None, process_query_key: str):
         return self.dws.recall_bot_message(conversation_id, process_query_key)
 
