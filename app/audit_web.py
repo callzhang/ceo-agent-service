@@ -212,7 +212,12 @@ a.nav-item:hover{color:var(--ink);text-decoration:none;border-color:var(--ink)}
 .status-pending,.status-processing{background:rgba(55,114,207,.10);color:#245aa5;border-color:rgba(55,114,207,.24)}
 .status-skipped{background:var(--surface);color:var(--stone)}
 .status-failed,.status-blocked,.status-active{background:rgba(212,86,86,.12);color:#9a2f2f;border-color:rgba(212,86,86,.24)}
-.status-action{background:rgba(0,180,138,.12);color:#006b55;border-color:rgba(0,180,138,.28)}
+.status-action{background:var(--surface);color:var(--steel);border-color:var(--hairline)}
+.action-state-sent,.action-state-accepted,.action-state-approved,.action-state-resolved{background:rgba(0,212,164,.12);color:#006b55;border-color:rgba(0,180,138,.28)}
+.action-state-skipped{background:var(--surface);color:var(--stone);border-color:var(--hairline)}
+.action-state-pending,.action-state-processing,.action-state-dry-run,.action-state-commented{background:rgba(55,114,207,.10);color:#245aa5;border-color:rgba(55,114,207,.24)}
+.action-state-tentative,.action-state-returned{background:rgba(195,125,13,.12);color:#8a5a08;border-color:rgba(195,125,13,.24)}
+.action-state-failed,.action-state-blocked,.action-state-declined,.action-state-rejected{background:rgba(212,86,86,.12);color:#9a2f2f;border-color:rgba(212,86,86,.24)}
 .quality-warning{border-color:rgba(212,86,86,.28);background:rgba(212,86,86,.08)}
 .quality-warning ul{margin:8px 0 0;padding-left:20px;color:#8a2626}
 .context-only-info{display:inline-flex;align-items:center;gap:8px}
@@ -1590,7 +1595,8 @@ def _reply_task_item(task: ReplyTask) -> str:
         "<div class=\"attempt-head\">"
         "<div class=\"attempt-title\">"
         f"<span class=\"attempt-id\">#task-{task.id}</span>"
-        f"<span class=\"pill status-action\">💬 {_display_action_state(task.status)}</span>"
+        f"<span class=\"pill status-action {_action_state_class(task.status)}\">"
+        f"💬 {_display_action_state(task.status)}</span>"
         f"<div class=\"attempt-main\">{escape(task.conversation_title)}</div>"
         f"<div class=\"attempt-meta\">{escape(task.trigger_sender)}</div>"
         "</div>"
@@ -2850,14 +2856,20 @@ def _calendar_metadata_card(attempt: ReplyAttempt) -> str:
 
 
 def _attempt_action_pills(attempt: ReplyAttempt) -> str:
-    labels = [f"💬 {_display_action_state(attempt.send_status)}"]
+    actions = [(f"💬 {_display_action_state(attempt.send_status)}", attempt.send_status)]
     if attempt.oa_action.strip():
-        labels.append(f"🧾 {attempt.oa_action.strip()}")
+        actions.append((f"🧾 {attempt.oa_action.strip()}", attempt.oa_action))
     if attempt.calendar_response_status.strip():
-        labels.append(f"📆 {_display_action_state(attempt.calendar_response_status)}")
+        actions.append(
+            (
+                f"📆 {_display_action_state(attempt.calendar_response_status)}",
+                attempt.calendar_response_status,
+            )
+        )
     return "".join(
-        f"<span class=\"pill status-action\">{escape(label)}</span>"
-        for label in labels
+        f"<span class=\"pill status-action {_action_state_class(state)}\">"
+        f"{escape(label)}</span>"
+        for label, state in actions
     )
 
 
@@ -2887,6 +2899,36 @@ def _display_action_state(value: str) -> str:
         for part in value.replace("-", "_").split("_")
         if part
     )
+
+
+def _action_state_class(value: str) -> str:
+    normalized = value.strip().lower().replace("_", "-")
+    mapped = {
+        "通过": "approved",
+        "同意": "approved",
+        "拒绝": "rejected",
+        "退回": "returned",
+        "评论": "commented",
+        "留言": "commented",
+    }.get(value.strip(), normalized)
+    if mapped in {"approve", "approved", "pass"}:
+        mapped = "approved"
+    elif mapped in {"accept", "accepted"}:
+        mapped = "accepted"
+    elif mapped in {"decline", "declined"}:
+        mapped = "declined"
+    elif mapped in {"reject", "rejected"}:
+        mapped = "rejected"
+    elif mapped in {"return", "returned"}:
+        mapped = "returned"
+    elif mapped in {"dry-run", "dryrun"}:
+        mapped = "dry-run"
+    safe = "".join(
+        char if (char.isascii() and char.isalnum()) or char == "-" else "-"
+        for char in mapped
+    )
+    safe = "-".join(part for part in safe.split("-") if part)
+    return f"action-state-{safe or 'unknown'}"
 
 
 def _quality_warnings(attempt: ReplyAttempt) -> list[str]:

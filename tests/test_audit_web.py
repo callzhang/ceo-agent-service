@@ -76,6 +76,7 @@ def test_render_attempt_list_shows_history_rows(tmp_path: Path):
     assert "技术部" in html
     assert "Xiaomin" in html
     assert "💬 Sent" in html
+    assert 'class="pill status-action action-state-sent">💬 Sent</span>' in html
     assert "attempt-feed" in html
     assert "attempt-item" in html
     assert "attempt-line" in html
@@ -1148,6 +1149,9 @@ def test_render_attempt_list_shows_pending_reply_tasks(tmp_path: Path):
     html = render_attempt_list(store)
 
     assert "💬 Pending" in html
+    assert (
+        'class="pill status-action action-state-pending">💬 Pending</span>' in html
+    )
     assert "#task-1" in html
     assert "HR管理" in html
     assert "Mina" in html
@@ -1301,6 +1305,8 @@ def test_attempt_detail_renders_oa_metadata(tmp_path: Path):
     assert "https://aflow.dingtalk.com/detail?procInstId=proc-1" in html
     assert "💬 Skipped" in html
     assert "🧾 通过" in html
+    assert 'class="pill status-action action-state-skipped">💬 Skipped</span>' in html
+    assert 'class="pill status-action action-state-approved">🧾 通过</span>' in html
 
 
 def test_attempt_history_and_detail_render_calendar_response_metadata(
@@ -1328,6 +1334,14 @@ def test_attempt_history_and_detail_render_calendar_response_metadata(
     assert status == 200
     assert "💬 Skipped" in list_html
     assert "📆 Accepted" in list_html
+    assert (
+        'class="pill status-action action-state-skipped">💬 Skipped</span>'
+        in list_html
+    )
+    assert (
+        'class="pill status-action action-state-accepted">📆 Accepted</span>'
+        in list_html
+    )
     assert "Calendar response" in detail_html
     assert "event-1" in detail_html
     assert "accepted" in detail_html
@@ -1352,9 +1366,28 @@ def test_render_attempt_list_uses_unified_emoji_action_pills(
 
     html = render_attempt_list(store)
 
-    assert 'class="pill status-action">💬 Skipped</span>' in html
+    assert 'class="pill status-action action-state-skipped">💬 Skipped</span>' in html
     assert '<span class="pill action-no_reply"' not in html
     assert '<span class="pill status-skipped"' not in html
+
+
+def test_render_attempt_list_uses_failed_action_pill_color(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.record_reply_attempt(
+        conversation_id="cid-1",
+        conversation_title="Mina",
+        trigger_message_id="msg-1",
+        trigger_sender="Mina",
+        trigger_text="@Alex Chen 这个怎么处理？",
+        action="send_reply",
+        sensitivity_kind="general",
+        codex_reason="delivery failed",
+        send_status="failed",
+    )
+
+    html = render_attempt_list(store)
+
+    assert 'class="pill status-action action-state-failed">💬 Failed</span>' in html
 
 
 def test_render_attempt_detail_allows_explained_empty_documents(tmp_path: Path):
@@ -1435,7 +1468,7 @@ def test_render_attempt_list_shows_context_only_info_icon_instead_of_warning(
     assert (
         html.index('href="/attempts/1">#1</a>')
         < html.index('class="attempt-info"')
-        < html.index('class="pill status-action"')
+        < html.index('class="pill status-action action-state-pending"')
     )
     assert "No tools were used; this answer was generated from conversation context only." in html
 
