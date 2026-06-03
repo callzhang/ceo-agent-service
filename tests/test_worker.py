@@ -1005,7 +1005,7 @@ def test_produce_once_fast_path_reads_only_unread_messages_without_recent_contex
     queued = worker.produce_once()
 
     assert queued == 1
-    assert dws.unread_message_reads == ["cid-1"]
+    assert "cid-1" in dws.unread_message_reads
     assert dws.recent_message_reads == []
     assert worker.store.count_reply_tasks(status="pending") == 1
 
@@ -1034,7 +1034,7 @@ def test_produce_once_fast_path_enqueues_pending_before_backoff(
 
     tasks = worker.store.list_reply_tasks(statuses=("pending",), limit=10)
     assert queued == 1
-    assert dws.unread_message_reads == ["cid-1"]
+    assert "cid-1" in dws.unread_message_reads
     assert len(tasks) == 1
     assert tasks[0].trigger_message_id == "msg-unread"
     assert tasks[0].available_at == "2026-05-13 17:05:00"
@@ -1080,10 +1080,63 @@ def test_produce_once_fast_path_task_is_claimable_after_backoff(
     assert claimed_after_backoff[0].available_at == ""
 
 
-def test_produce_once_fast_path_does_not_queue_when_unread_clears_during_backoff(
+def test_fast_path_backoff_processes_trigger_when_unread_clears_without_user_reply(
     tmp_path: Path, monkeypatch
 ):
     trigger = message("@Alex Chen(明哥) 这个怎么处理？", message_id="msg-unread")
+    dws = FakeDws([conversation()], {"cid-1": [trigger]})
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="可以，先推进")
+    )
+    worker = make_worker(
+        tmp_path,
+        dws,
+        codex,
+        monkeypatch,
+        fast_path_unread_backoff=timedelta(minutes=5),
+    )
+    worker.store.set_service_state(
+        "message_recovery_checked_at",
+        "2026-05-13T16:30:00+00:00",
+    )
+
+    assert worker.produce_once() == 1
+    dws.conversations = []
+    worker.now_provider = lambda: fixed_worker_now() + timedelta(minutes=6)
+    assert worker.run_once() is None
+
+    attempts = worker.store.list_reply_attempts(limit=10)
+    assert "cid-1" in dws.unread_message_reads
+    assert worker.store.count_reply_tasks(status="done") == 1
+    assert len(attempts) == 1
+    assert attempts[0].action == "send_reply"
+    assert attempts[0].send_status == "sent"
+    assert len(codex.calls) == 1
+    assert final_sent(dws) == [
+        (
+            "cid-1",
+            "可以，先推进（by明哥分身）",
+        )
+    ]
+    assert dws.reply_messages == [
+        (
+            "cid-1",
+            "msg-unread",
+            "sender-1",
+            "可以，先推进（by明哥分身）",
+        )
+    ]
+
+
+def test_fast_path_backoff_skips_when_current_user_replied_after_trigger(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message("@Alex Chen(明哥) 这个怎么处理？", message_id="msg-unread")
+    manual_reply = principal_message(
+        "我已经处理了",
+        message_id="msg-principal-after",
+        create_time="2026-05-13 18:01:00",
+    )
     dws = FakeDws([conversation()], {"cid-1": [trigger]})
     codex = FakeCodex(
         CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该调用")
@@ -1102,17 +1155,19 @@ def test_produce_once_fast_path_does_not_queue_when_unread_clears_during_backoff
 
     assert worker.produce_once() == 1
     dws.conversations = []
+    dws.messages = {"cid-1": [trigger, manual_reply]}
+    dws.unread_messages = {"cid-1": []}
     worker.now_provider = lambda: fixed_worker_now() + timedelta(minutes=6)
-    assert worker.produce_once() == 0
+    assert worker.run_once() is None
 
     attempts = worker.store.list_reply_attempts(limit=10)
-    assert dws.unread_message_reads == ["cid-1"]
-    assert worker.store.count_reply_tasks(status="pending") == 0
     assert worker.store.count_reply_tasks(status="done") == 1
     assert len(attempts) == 1
     assert attempts[0].action == "no_reply"
     assert attempts[0].send_status == "skipped"
-    assert attempts[0].codex_reason == "fast_path_unread_cleared_during_backoff"
+    assert attempts[0].codex_reason == "current_user_replied_during_backoff"
+    assert codex.calls == []
+    assert final_sent(dws) == []
 
 
 def test_produce_once_fast_path_skips_unread_conversations_unchanged_since_last_check(

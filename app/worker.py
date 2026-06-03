@@ -232,13 +232,6 @@ class DingTalkAutoReplyWorker:
                 message=str(exc)[:120],
             )
             return 0
-        original_unread_conversation_ids = {
-            conversation.open_conversation_id for conversation in conversations
-        }
-        self._skip_due_fast_path_backoff_tasks_for_cleared_unread(
-            original_unread_conversation_ids,
-            fast_path_checked_at,
-        )
         if not recovery_due:
             conversations = self._conversations_due_for_fast_path(conversations)
         unread_conversation_ids = {
@@ -461,41 +454,6 @@ class DingTalkAutoReplyWorker:
         conversations: list[DingTalkConversation],
     ) -> list[DingTalkConversation]:
         return self._conversations_updated_since_fast_path_check(conversations)
-
-    def _skip_due_fast_path_backoff_tasks_for_cleared_unread(
-        self,
-        unread_conversation_ids: set[str],
-        checked_at: datetime,
-    ) -> None:
-        if FAST_PATH_UNREAD_BACKOFF <= timedelta(0):
-            return
-        for task in self.store.list_due_fast_path_backoff_tasks(
-            self._sqlite_timestamp(checked_at)
-        ):
-            if task.conversation_id in unread_conversation_ids:
-                continue
-            attempt_id = self.store.record_reply_attempt_for_trigger(
-                conversation_id=task.conversation_id,
-                conversation_title=task.conversation_title,
-                trigger_message_id=task.trigger_message_id,
-                trigger_sender=task.trigger_sender,
-                trigger_text=task.trigger_text,
-                action=CodexAction.NO_REPLY.value,
-                sensitivity_kind="general",
-                codex_reason="fast_path_unread_cleared_during_backoff",
-                audit_summary=(
-                    "快路径首次发现未读后已等待；等待窗口结束时会话不再未读，"
-                    "视为本人已打开或处理，不自动回复。"
-                ),
-            )
-            self.store.update_reply_attempt(
-                attempt_id,
-                send_status="skipped",
-                send_error="no_reply",
-            )
-            if not self.dry_run:
-                self.store.mark_seen(task.trigger_message_id, task.conversation_id)
-            self.store.complete_reply_task(task.id)
 
     @staticmethod
     def _sqlite_timestamp(value: datetime) -> str:
@@ -744,6 +702,13 @@ class DingTalkAutoReplyWorker:
             context_messages, unread_messages
         )
         trigger = DingTalkMessage.model_validate_json(task.trigger_message_json)
+        if self._has_current_user_reply_after_trigger(context_messages, trigger):
+            self._record_current_user_replied_during_backoff_skip(
+                conversation,
+                trigger,
+            )
+            self._mark_seen([trigger])
+            return True
         if self._handle_minutes_permission_request_if_actionable(
             conversation,
             trigger,
@@ -1900,6 +1865,41 @@ class DingTalkAutoReplyWorker:
             send_error="no_reply",
         )
 
+    def _record_current_user_replied_during_backoff_skip(
+        self,
+        conversation: DingTalkConversation,
+        message: DingTalkMessage,
+    ) -> None:
+        existing_attempt = self.store.get_latest_reply_attempt_for_trigger(
+            conversation.open_conversation_id,
+            message.open_message_id,
+        )
+        if (
+            existing_attempt
+            and existing_attempt.action == CodexAction.NO_REPLY.value
+            and existing_attempt.send_status == "skipped"
+        ):
+            return
+        attempt_id = self.store.record_reply_attempt_for_trigger(
+            conversation_id=conversation.open_conversation_id,
+            conversation_title=conversation.title,
+            trigger_message_id=message.open_message_id,
+            trigger_sender=message.sender_name,
+            trigger_text=message.content,
+            action=CodexAction.NO_REPLY.value,
+            sensitivity_kind="general",
+            codex_reason="current_user_replied_during_backoff",
+            audit_summary=(
+                "快路径首次发现未读后已等待；等待窗口内检测到本人已在该 trigger "
+                "之后回复，因此不再由 agent 自动回复。"
+            ),
+        )
+        self.store.update_reply_attempt(
+            attempt_id,
+            send_status="skipped",
+            send_error="no_reply",
+        )
+
     def _record_stale_message_skip(
         self,
         conversation: DingTalkConversation,
@@ -2042,6 +2042,27 @@ class DingTalkAutoReplyWorker:
             )
         ]
         return sorted(candidates, key=lambda message: message.create_time)
+
+    def _has_current_user_reply_after_trigger(
+        self,
+        messages: list[DingTalkMessage],
+        trigger: DingTalkMessage,
+    ) -> bool:
+        for message in messages:
+            if message.open_message_id == trigger.open_message_id:
+                continue
+            if message.create_time <= trigger.create_time:
+                continue
+            if not self._is_current_user_message_for_candidate_filter(message):
+                continue
+            if self._is_split_person_auto_reply_message(message):
+                continue
+            if self._is_processing_ack_message(message):
+                continue
+            if self._is_system_or_notification_message(message):
+                continue
+            return True
+        return False
 
     def _candidate_source_messages(
         self,

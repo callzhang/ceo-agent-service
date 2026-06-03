@@ -653,22 +653,6 @@ class AutoReplyStore:
     def defer_reply_task_for_authorization(self, task_id: int, error: str) -> None:
         self.defer_reply_task(task_id, error)
 
-    def list_due_fast_path_backoff_tasks(self, now: str) -> list[ReplyTask]:
-        with self._connect() as db:
-            rows = db.execute(
-                """
-                select *
-                from reply_tasks
-                where status='pending'
-                  and error=?
-                  and available_at!=''
-                  and available_at <= ?
-                order by id
-                """,
-                (FAST_PATH_UNREAD_BACKOFF_TASK_ERROR, now),
-            ).fetchall()
-            return [self._reply_task_from_row(row) for row in rows]
-
     def count_reply_tasks(self, status: str | None = None) -> int:
         with self._connect() as db:
             if status is None:
