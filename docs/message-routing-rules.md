@@ -126,6 +126,7 @@ https://shanji.dingtalk.com/app/transcribes/...
 - 读取听记基础信息、AI 摘要、处理事项和文字稿预览。
 - 将材料注入 prompt 的“已获取的钉钉材料”。
 - agent 必须像处理待办事项一样处理听记中的明确事项，给出结论、负责人、下一步或需要补充的材料；不能只总结会议。
+- 如果 agent 生成 `send_reply` / `ask_clarifying_question`，服务优先把处理结果写入原 AI 听记 / 静默会的全文评论；当前 DWS 对 AI 听记评论不可用时，会 fallback 到原消息 reply。这类消息不因为“只是材料投递、聊天里没有额外问题”而自动 `no_reply`。
 
 ### 只有钉钉内部链接或媒体占位符的消息
 

@@ -155,6 +155,9 @@ class FakeDws:
         self.minutes_summary_calls: list[str] = []
         self.minutes_todo_calls: list[str] = []
         self.minutes_transcription_calls: list[tuple[str, str]] = []
+        self.doc_comments: list[tuple[str, str]] = []
+        self.doc_comment_result: dict = {"result": {"commentKey": "comment-1"}}
+        self.doc_comment_error: Exception | None = None
         self.oa_approval_actions: list[tuple[str, str, str, str]] = []
         self.oa_approval_action_result: dict = {"errcode": 0, "errmsg": "ok"}
         self.oa_approval_action_error: Exception | None = None
@@ -477,6 +480,12 @@ class FakeDws:
     ) -> dict:
         self.minutes_transcription_calls.append((task_uuid, next_token))
         return self.minutes_transcriptions.get(task_uuid, {"result": {}})
+
+    def create_doc_comment(self, node_id: str, content: str) -> dict:
+        self.doc_comments.append((node_id, content))
+        if self.doc_comment_error:
+            raise self.doc_comment_error
+        return self.doc_comment_result
 
     def execute_oa_approval_action(
         self,
@@ -3761,6 +3770,10 @@ def test_minutes_link_reads_material_and_processes_action_items(
 ):
     minutes_id = "76327569643331323035353732315f3233333438363436305f30"
     trigger = message(
+        "[https://alidocs.dingtalk.com/i/u/dingdocSelectorV4/save?"
+        f"resourceId={minutes_id}&resourceType=SHANJI&createLink=true]"
+        "(https://alidocs.dingtalk.com/i/u/dingdocSelectorV4/save?"
+        f"resourceId={minutes_id}&resourceType=SHANJI&createLink=true)\n"
         "[dingtalk://dingtalkclient/page/flash_minutes_detail?"
         f"minutesId={minutes_id}&from=8]"
         "(dingtalk://dingtalkclient/page/flash_minutes_detail?"
@@ -3822,6 +3835,67 @@ def test_minutes_link_reads_material_and_processes_action_items(
     assert attempt is not None
     assert attempt.action == "send_reply"
     assert attempt.send_status == "sent"
+    assert dws.reply_messages == []
+    assert dws.doc_comments == [
+        (
+            "https://alidocs.dingtalk.com/i/u/dingdocSelectorV4/save?"
+            f"resourceId={minutes_id}&resourceType=SHANJI&createLink=true",
+            "这几个事项我看到了，先按材料方向推进。（by明哥分身）",
+        )
+    ]
+
+
+def test_minutes_comment_failure_falls_back_to_original_message_reply(
+    tmp_path: Path, monkeypatch
+):
+    minutes_id = "76327569643331323035353732315f3233333438363436305f30"
+    target_url = (
+        "https://alidocs.dingtalk.com/i/u/dingdocSelectorV4/save?"
+        f"resourceId={minutes_id}&resourceType=SHANJI&createLink=true"
+    )
+    trigger = message(
+        f"[{target_url}]({target_url})\n"
+        "[dingtalk://dingtalkclient/page/flash_minutes_detail?"
+        f"minutesId={minutes_id}&from=8]"
+        "(dingtalk://dingtalkclient/page/flash_minutes_detail?"
+        f"minutesId={minutes_id}&from=8)",
+        single_chat=True,
+    )
+    dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
+    dws.doc_comment_error = RuntimeError("AI Minutes comments unsupported")
+    dws.minutes_infos[minutes_id] = {
+        "result": {
+            "taskUuid": minutes_id,
+            "title": "测试开发三面",
+            "url": f"https://shanji.dingtalk.com/app/transcribes/{minutes_id}",
+        }
+    }
+    dws.minutes_summaries[minutes_id] = {"result": {"fullSummary": "候选人风险偏高。"}}
+    codex = FakeCodex(
+        CodexDecision(
+            action=CodexAction.SEND_REPLY,
+            reply_text="不建议直接推进，建议补充作业后再判断。",
+        )
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+
+    worker.run_once()
+
+    signed_reply = "不建议直接推进，建议补充作业后再判断。（by明哥分身）"
+    assert dws.doc_comments == [(target_url, signed_reply)]
+    assert dws.reply_messages == [("cid-1", "msg-1", "sender-1", signed_reply)]
+    attempt = worker.store.get_reply_attempt(1)
+    assert attempt is not None
+    assert attempt.send_status == "sent"
+    assert attempt.send_error == ""
+    sent_reply = worker.store.get_sent_reply("cid-1", "msg-1")
+    assert sent_reply is not None
+    assert '"fallback": "chat_reply"' in sent_reply.send_result_json
+    assert "AI Minutes comments unsupported" in sent_reply.send_result_json
+    errors = worker.store.list_errors()
+    assert len(errors) == 1
+    assert errors[0].kind == "minutes_comment"
+    assert "AI Minutes comments unsupported" in errors[0].detail
 
 
 def test_media_id_image_is_downloaded_and_passed_to_codex(

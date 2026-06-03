@@ -784,6 +784,78 @@ def test_send_attempt_command_uses_single_chat_open_dingtalk_id_when_user_id_abs
     assert sent["reply"] == ("cid-1", "msg-1", "open-1", "收到。（by明哥分身）")
 
 
+def test_send_attempt_command_uses_saved_snake_case_trigger_payload(
+    monkeypatch, tmp_path
+):
+    sent = {}
+
+    class FakeDws:
+        def __init__(self, **kwargs):
+            sent["kwargs"] = kwargs
+
+        @staticmethod
+        def extract_recall_key(send_result):
+            return send_result["result"]["processQueryKey"]
+
+        def send_reply_to_trigger(self, conversation, trigger, text):
+            sent["reply"] = (
+                conversation.open_conversation_id,
+                trigger.open_message_id,
+                trigger.sender_open_dingtalk_id,
+                text,
+            )
+            return {"result": {"processQueryKey": "recall-1"}}
+
+    monkeypatch.setattr(cli, "DwsClient", FakeDws)
+    settings = WorkerSettings(db_path=tmp_path / "worker.sqlite3", dry_run=False)
+    store = cli.AutoReplyStore(settings.db_path)
+    store.upsert_conversation("cid-1", "Claire", True, None)
+    store.enqueue_reply_task(
+        conversation_id="cid-1",
+        conversation_title="Claire",
+        single_chat=True,
+        trigger_message_id="msg-1",
+        trigger_create_time="2026-05-28 18:00:00",
+        trigger_sender="Claire",
+        trigger_text="可以不参加",
+        trigger_message_json=json.dumps(
+            {
+                "open_conversation_id": "cid-1",
+                "open_message_id": "msg-1",
+                "sender_name": "Claire",
+                "sender_open_dingtalk_id": "open-snake-1",
+                "create_time": "2026-05-28 18:00:00",
+                "content": "可以不参加",
+            },
+            ensure_ascii=False,
+        ),
+    )
+    attempt_id = store.record_reply_attempt(
+        conversation_id="cid-1",
+        conversation_title="Claire",
+        trigger_message_id="msg-1",
+        trigger_sender="Claire",
+        trigger_text="可以不参加",
+        action="send_reply",
+        sensitivity_kind="general",
+    )
+    final_reply = "> Claire: 可以不参加\n\n收到。（by明哥分身）"
+    store.update_reply_attempt(
+        attempt_id,
+        final_reply_text=final_reply,
+        send_status="dry_run",
+    )
+
+    send_attempt_command(settings, attempt_id)
+
+    assert sent["reply"] == (
+        "cid-1",
+        "msg-1",
+        "open-snake-1",
+        "收到。（by明哥分身）",
+    )
+
+
 def test_send_attempt_command_requires_trigger_sender_for_native_reply(
     monkeypatch, tmp_path
 ):

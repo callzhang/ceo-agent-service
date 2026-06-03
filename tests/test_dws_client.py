@@ -701,6 +701,26 @@ def test_send_message_title_uses_reply_body_after_fake_quote():
     )
 
 
+def test_create_doc_comment_command_uses_doc_comment_create():
+    client = DwsClient(dws_bin="dws")
+
+    command = client.build_create_doc_comment_command("https://example.com/doc", "处理结果")
+
+    assert command == [
+        "dws",
+        "doc",
+        "comment",
+        "create",
+        "--nodeId",
+        "https://example.com/doc",
+        "--content",
+        "处理结果",
+        "--format",
+        "json",
+        "--yes",
+    ]
+
+
 def test_send_message_escapes_at_prefixed_title_for_dws_cli():
     client = DwsClient(dws_bin="dws")
 

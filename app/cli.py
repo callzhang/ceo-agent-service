@@ -901,31 +901,47 @@ def _trigger_message_from_payload(
     *,
     conversation: DingTalkConversation,
 ) -> DingTalkMessage:
-    quoted_message = payload.get("quotedMessage")
+    raw_payload_value = payload.get("raw_payload")
+    raw_payload = raw_payload_value if isinstance(raw_payload_value, dict) else {}
+
+    def field(*names: str) -> object:
+        for name in names:
+            value = payload.get(name)
+            if value not in (None, ""):
+                return value
+            value = raw_payload.get(name)
+            if value not in (None, ""):
+                return value
+        return None
+
+    quoted_message = field("quotedMessage", "quoted_message")
     quoted_payload = quoted_message if isinstance(quoted_message, dict) else {}
     return DingTalkMessage(
         open_conversation_id=str(
-            payload.get("openConversationId") or conversation.open_conversation_id
+            field("openConversationId", "open_conversation_id")
+            or conversation.open_conversation_id
         ),
-        open_message_id=str(payload.get("openMessageId") or ""),
+        open_message_id=str(field("openMessageId", "open_message_id") or ""),
         conversation_title=conversation.title,
         single_chat=conversation.single_chat,
-        sender_name=str(payload.get("sender") or ""),
+        sender_name=str(field("sender", "sender_name") or ""),
         sender_open_dingtalk_id=(
-            str(payload.get("senderOpenDingTalkId"))
-            if payload.get("senderOpenDingTalkId")
+            str(field("senderOpenDingTalkId", "sender_open_dingtalk_id"))
+            if field("senderOpenDingTalkId", "sender_open_dingtalk_id")
             else None
         ),
         sender_user_id=(
-            str(payload.get("senderUserId")) if payload.get("senderUserId") else None
+            str(field("senderUserId", "sender_user_id"))
+            if field("senderUserId", "sender_user_id")
+            else None
         ),
-        message_type=str(payload.get("messageType") or ""),
-        create_time=str(payload.get("createTime") or ""),
-        content=str(payload.get("content") or ""),
+        message_type=str(field("messageType", "message_type") or ""),
+        create_time=str(field("createTime", "create_time") or ""),
+        content=str(field("content") or ""),
         mentioned_user_ids=[],
         quoted_message_id=(
-            str(quoted_payload.get("openMessageId"))
-            if quoted_payload.get("openMessageId")
+            str(quoted_payload.get("openMessageId") or quoted_payload.get("open_message_id"))
+            if quoted_payload.get("openMessageId") or quoted_payload.get("open_message_id")
             else None
         ),
         quoted_content=(

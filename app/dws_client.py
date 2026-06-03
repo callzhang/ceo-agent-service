@@ -738,6 +738,25 @@ class DwsClient:
             "json",
         ]
 
+    def build_create_doc_comment_command(self, node_id: str, content: str) -> list[str]:
+        if not node_id.strip():
+            raise ValueError("missing doc comment nodeId")
+        if not content.strip():
+            raise ValueError("missing doc comment content")
+        return [
+            self.dws_bin,
+            "doc",
+            "comment",
+            "create",
+            "--nodeId",
+            node_id,
+            "--content",
+            content,
+            "--format",
+            "json",
+            "--yes",
+        ]
+
     def build_minutes_info_command(self, task_uuid: str) -> list[str]:
         return [
             self.dws_bin,
@@ -1242,6 +1261,12 @@ class DwsClient:
         )
         if not isinstance(payload, dict):
             raise DwsError("invalid minutes transcription response")
+        return payload
+
+    def create_doc_comment(self, node_id: str, content: str) -> dict[str, Any]:
+        payload = self.run_json(self.build_create_doc_comment_command(node_id, content))
+        if not isinstance(payload, dict):
+            raise DwsError("invalid doc comment response")
         return payload
 
     def get_resource_download_url(

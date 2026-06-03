@@ -138,6 +138,11 @@ DINGTALK_MINUTES_LINK_PATTERN = re.compile(
     r"https://shanji\.dingtalk\.com/app/transcribes/[^\s)\]]+)",
     re.IGNORECASE,
 )
+DINGTALK_SHANJI_DOC_SELECTOR_PATTERN = re.compile(
+    r"https://alidocs\.dingtalk\.com/i/u/dingdocSelectorV4/save\?[^\s)\]]*"
+    r"resourceType=SHANJI[^\s)\]]*",
+    re.IGNORECASE,
+)
 MINUTES_SUMMARY_MAX_CHARS = 5000
 MINUTES_TRANSCRIPTION_PARAGRAPH_LIMIT = 20
 FILE_MESSAGE_PATTERN = re.compile(r"^\s*\[文件]\s*(?P<name>.+?)\s*$")
@@ -3258,9 +3263,32 @@ class DingTalkAutoReplyWorker:
                     task_uuids.append(task_uuid)
         return task_uuids
 
+    @classmethod
+    def _minutes_comment_target(cls, messages: list[DingTalkMessage]) -> str:
+        shanji_urls: list[str] = []
+        transcription_urls: list[str] = []
+        for message in messages:
+            for text in (message.content, message.quoted_content or ""):
+                for match in DINGTALK_SHANJI_DOC_SELECTOR_PATTERN.finditer(text):
+                    url = cls._clean_link_url(match.group(0))
+                    if url and url not in shanji_urls:
+                        shanji_urls.append(url)
+                for match in DINGTALK_MINUTES_LINK_PATTERN.finditer(text):
+                    url = cls._clean_link_url(match.group(0))
+                    if (
+                        url.startswith("https://shanji.dingtalk.com/")
+                        and url not in transcription_urls
+                    ):
+                        transcription_urls.append(url)
+        return (shanji_urls or transcription_urls or [""])[0]
+
+    @staticmethod
+    def _clean_link_url(url: str) -> str:
+        return url.rstrip(".,;，。；")
+
     @staticmethod
     def _minutes_task_uuid_from_url(url: str) -> str:
-        cleaned = url.rstrip(".,;，。；")
+        cleaned = DingTalkAutoReplyWorker._clean_link_url(url)
         parsed = urlsplit(cleaned)
         query = parse_qs(parsed.query)
         minutes_id = query.get("minutesId", [""])[0]
@@ -3737,6 +3765,20 @@ class DingTalkAutoReplyWorker:
             )
             return
 
+        minutes_comment_target = self._minutes_comment_target(new_messages)
+        if minutes_comment_target:
+            self._deliver_minutes_comment(
+                conversation=conversation,
+                trigger=trigger,
+                new_messages=new_messages,
+                attempt_id=attempt_id,
+                reply_text=reply_text,
+                target_url=minutes_comment_target,
+                feedback_token=feedback_token,
+                raise_on_delivery_failure=raise_on_delivery_failure,
+            )
+            return
+
         self._notify(
             title=f"CEO auto reply: {conversation.title}",
             message=reply_text,
@@ -3787,6 +3829,123 @@ class DingTalkAutoReplyWorker:
             trigger.open_message_id,
             reply_text,
             send_result_json=json.dumps(send_result or {}, ensure_ascii=False),
+            recall_key=DwsClient.extract_recall_key(send_result),
+            feedback_token=feedback_token,
+        )
+        self._mark_seen(new_messages)
+
+    def _deliver_minutes_comment(
+        self,
+        *,
+        conversation: DingTalkConversation,
+        trigger: DingTalkMessage,
+        new_messages: list[DingTalkMessage],
+        attempt_id: int,
+        reply_text: str,
+        target_url: str,
+        feedback_token: str,
+        raise_on_delivery_failure: bool = False,
+    ) -> None:
+        self._notify(
+            title=f"CEO minutes comment: {conversation.title}",
+            message=reply_text,
+            conversation=conversation,
+        )
+        if self.dry_run:
+            self.store.update_reply_attempt(attempt_id, send_status="dry_run")
+            return
+        try:
+            send_result = self.dws.create_doc_comment(target_url, reply_text)
+        except Exception as exc:
+            self.store.record_error(
+                conversation.open_conversation_id,
+                trigger.open_message_id,
+                "minutes_comment",
+                str(exc),
+            )
+            self._notify(
+                title=f"CEO minutes comment unavailable: {conversation.title}",
+                message=str(exc)[:120],
+                conversation=conversation,
+            )
+            self._deliver_minutes_comment_fallback_reply(
+                conversation=conversation,
+                trigger=trigger,
+                new_messages=new_messages,
+                attempt_id=attempt_id,
+                reply_text=reply_text,
+                feedback_token=feedback_token,
+                comment_error=str(exc),
+                raise_on_delivery_failure=raise_on_delivery_failure,
+            )
+            return
+        self.store.update_reply_attempt(
+            attempt_id,
+            send_status="sent",
+            retry_count=0,
+        )
+        self.store.record_sent_reply(
+            conversation.open_conversation_id,
+            trigger.open_message_id,
+            reply_text,
+            send_result_json=json.dumps(send_result or {}, ensure_ascii=False),
+            recall_key=DwsClient.extract_recall_key(send_result),
+            feedback_token=feedback_token,
+        )
+        self._mark_seen(new_messages)
+
+    def _deliver_minutes_comment_fallback_reply(
+        self,
+        *,
+        conversation: DingTalkConversation,
+        trigger: DingTalkMessage,
+        new_messages: list[DingTalkMessage],
+        attempt_id: int,
+        reply_text: str,
+        feedback_token: str,
+        comment_error: str,
+        raise_on_delivery_failure: bool = False,
+    ) -> None:
+        try:
+            retry_count, send_result = self._send_reply_to_trigger_with_retry(
+                conversation,
+                trigger,
+                reply_text,
+            )
+        except Exception as exc:
+            self.store.update_reply_attempt(
+                attempt_id,
+                send_status="failed",
+                send_error=f"minutes_comment_failed: {comment_error}; reply_failed: {exc}",
+                retry_count=max(self.send_attempts - 1, 0),
+            )
+            self.store.record_error(
+                conversation.open_conversation_id,
+                trigger.open_message_id,
+                "send",
+                str(exc),
+            )
+            if raise_on_delivery_failure:
+                raise ReplyDeliveryError(str(exc)) from exc
+            return
+        self.store.update_reply_attempt(
+            attempt_id,
+            send_status="sent",
+            send_error="",
+            retry_count=retry_count,
+        )
+        self.store.record_sent_reply(
+            conversation.open_conversation_id,
+            trigger.open_message_id,
+            reply_text,
+            send_result_json=json.dumps(
+                {
+                    "fallback": "chat_reply",
+                    "minutes_comment_error": comment_error,
+                    "send_result": send_result or {},
+                },
+                ensure_ascii=False,
+            ),
             recall_key=DwsClient.extract_recall_key(send_result),
             feedback_token=feedback_token,
         )
