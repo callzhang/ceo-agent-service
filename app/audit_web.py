@@ -138,6 +138,10 @@ th{background:var(--surface-soft);color:var(--steel);font-size:12px;font-weight:
 .logic-section dd{margin:2px 0 0;color:var(--charcoal);font-size:14px;line-height:1.5}
 .notification-panel{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:12px 0}
 .notification-log{max-height:260px}
+.card-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px;flex-wrap:wrap}
+.card-head h2{margin:0}
+.compact-button{display:inline-flex;align-items:center;height:30px;padding:0 12px;border:1px solid var(--hairline);border-radius:999px;background:var(--canvas);color:var(--ink);font-size:13px;font-weight:500;line-height:1;white-space:nowrap}
+.compact-button:hover{border-color:var(--ink);background:var(--surface-soft)}
 .attempt-feed{display:grid;gap:8px}
 .attempt-item{background:var(--canvas);border:1px solid var(--hairline);border-radius:8px;padding:10px 12px}
 .attempt-head{display:flex;align-items:center;justify-content:space-between;gap:12px;min-width:0}
@@ -273,6 +277,8 @@ _BROWSER_NOTIFICATION_SUBSCRIBERS: set[asyncio.Queue[dict[str, str]]] = set()
 _BROWSER_NOTIFICATION_HISTORY: deque[dict[str, str]] = deque(maxlen=20)
 _BROWSER_NOTIFICATION_SEQUENCE = count(1)
 _DINGTALK_BRIDGE_STATUS: deque[dict[str, str]] = deque(maxlen=20)
+DEFAULT_ATTEMPT_LIST_LIMIT = 120
+DEFAULT_ERROR_LIST_LIMIT = 200
 
 
 def render_page(
@@ -1258,7 +1264,9 @@ def _duration_label(value) -> str:
     return f"{total_seconds}s"
 
 
-def render_attempt_list(store: AutoReplyStore, limit: int | None = None) -> str:
+def render_attempt_list(
+    store: AutoReplyStore, limit: int | None = DEFAULT_ATTEMPT_LIST_LIMIT
+) -> str:
     items = []
     for task in store.list_reply_tasks(
         statuses=("pending", "processing"),
@@ -1267,7 +1275,6 @@ def render_attempt_list(store: AutoReplyStore, limit: int | None = None) -> str:
         items.append(_reply_task_item(task))
     attempts = store.list_reply_attempts(limit=limit)
     sent_replies_by_attempt = store.list_sent_replies_for_attempts(attempts)
-    _sync_feedback_events_for_sent_replies(store, sent_replies_by_attempt.values())
     feedback_events_by_token = _feedback_events_by_sent_reply(
         store,
         sent_replies_by_attempt.values(),
@@ -1336,10 +1343,6 @@ def render_attempt_list(store: AutoReplyStore, limit: int | None = None) -> str:
 
 
 def render_user_feedback_list(store: AutoReplyStore, limit: int = 200) -> str:
-    _sync_feedback_events_for_sent_replies(
-        store,
-        store.list_sent_replies_with_feedback_tokens(),
-    )
     rows = []
     for item in store.list_user_feedback_items(limit=limit):
         status = _user_feedback_status(item)
@@ -1378,7 +1381,8 @@ def render_user_feedback_list(store: AutoReplyStore, limit: int = 200) -> str:
         )
     if rows:
         body = (
-            "<section class=\"card\"><h2>用户反馈</h2>"
+            "<section class=\"card\">"
+            f"{_user_feedback_page_head()}"
             "<table class=\"user-feedback-table\"><thead><tr>"
             "<th>状态</th><th>评分</th><th>用户反馈</th><th>时间</th><th>操作</th>"
             "</tr></thead><tbody>"
@@ -1387,7 +1391,8 @@ def render_user_feedback_list(store: AutoReplyStore, limit: int = 200) -> str:
         )
     else:
         body = (
-            "<section class=\"card\"><h2>用户反馈</h2>"
+            "<section class=\"card\">"
+            f"{_user_feedback_page_head()}"
             "<p class=\"muted\">暂无用户反馈。</p></section>"
         )
     return render_page(
@@ -1395,6 +1400,15 @@ def render_user_feedback_list(store: AutoReplyStore, limit: int = 200) -> str:
         body,
         active_nav="user-feedback",
         user_feedback_pending_count=store.count_pending_user_feedback_items(),
+    )
+
+
+def _user_feedback_page_head() -> str:
+    return (
+        "<div class=\"card-head\"><h2>用户反馈</h2>"
+        "<form method=\"post\" action=\"/user-feedback/sync\">"
+        "<button class=\"compact-button\" type=\"submit\">同步最新反馈</button>"
+        "</form></div>"
     )
 
 
@@ -1471,8 +1485,6 @@ def render_attempt_detail(store: AutoReplyStore, attempt_id: int) -> tuple[int, 
         attempt.conversation_id,
         attempt.trigger_message_id,
     )
-    if sent_reply is not None:
-        _sync_feedback_events_for_sent_replies(store, [sent_reply])
     feedback_events = _feedback_events_for_sent_reply(
         sent_reply,
         _feedback_events_by_sent_reply(store, [sent_reply] if sent_reply else []),
@@ -1577,7 +1589,9 @@ def render_codex_session_detail(
     )
 
 
-def render_error_list(store: AutoReplyStore, limit: int | None = None) -> str:
+def render_error_list(
+    store: AutoReplyStore, limit: int | None = DEFAULT_ERROR_LIST_LIMIT
+) -> str:
     rows = []
     for error in store.list_errors(limit=limit):
         resolution = _error_resolution_label(store, error)
@@ -1791,6 +1805,16 @@ def handle_user_feedback_resolve_post(
     key = parsed.get("key", [""])[0]
     if not store.resolve_feedback_event(key):
         return 404, {}, render_page("Feedback not found", "Feedback not found")
+    return 303, {"Location": "/user-feedback"}, ""
+
+
+def handle_user_feedback_sync_post(
+    store: AutoReplyStore,
+) -> tuple[int, dict[str, str], str]:
+    _sync_feedback_events_for_sent_replies(
+        store,
+        store.list_sent_replies_with_feedback_tokens(),
+    )
     return 303, {"Location": "/user-feedback"}, ""
 
 
@@ -2161,6 +2185,11 @@ def create_audit_app(
             AutoReplyStore(db_path),
             await request.body(),
         )
+        return _fastapi_post_response(status, headers, html)
+
+    @app.post("/user-feedback/sync")
+    def user_feedback_sync():
+        status, headers, html = handle_user_feedback_sync_post(AutoReplyStore(db_path))
         return _fastapi_post_response(status, headers, html)
 
     @app.post("/developer-prompt")

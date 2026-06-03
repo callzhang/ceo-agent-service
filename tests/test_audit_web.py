@@ -4,6 +4,7 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
+import app.audit_web as audit_web_module
 from app.audit_web import (
     create_audit_app,
     handle_developer_prompt_post,
@@ -12,6 +13,7 @@ from app.audit_web import (
     handle_user_prompt_post,
     handle_feedback_post,
     handle_user_feedback_resolve_post,
+    handle_user_feedback_sync_post,
     handle_recall_post,
     handle_reviewed_message_reply,
     render_attempt_detail,
@@ -209,6 +211,65 @@ def test_render_user_feedback_list_marks_pending_and_resolved(tmp_path: Path):
     assert f'href="/attempts/{resolved_attempt_id}"' in html
 
 
+def test_feedback_pages_do_not_sync_external_events_during_render(
+    tmp_path: Path, monkeypatch
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    seed_attempt(store)
+    store.record_sent_reply(
+        "cid-1",
+        "msg-1",
+        "先按A方案走",
+        feedback_token="token-1",
+    )
+
+    def fail_sync(*_args, **_kwargs):
+        raise AssertionError("render should not sync external feedback")
+
+    monkeypatch.setattr(
+        audit_web_module,
+        "_sync_feedback_events_for_sent_replies",
+        fail_sync,
+    )
+
+    assert "用户反馈" in render_user_feedback_list(store)
+    assert "CEO Agent Audit" in render_attempt_list(store)
+    status, html = render_attempt_detail(store, 1)
+    assert status == 200
+    assert "Attempt #1" in html
+
+
+def test_handle_user_feedback_sync_post_triggers_explicit_sync(
+    tmp_path: Path, monkeypatch
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    seed_attempt(store)
+    store.record_sent_reply(
+        "cid-1",
+        "msg-1",
+        "先按A方案走",
+        feedback_token="token-1",
+    )
+    calls = []
+
+    def fake_sync(_store, sent_replies):
+        calls.append(list(sent_replies))
+
+    monkeypatch.setattr(
+        audit_web_module,
+        "_sync_feedback_events_for_sent_replies",
+        fake_sync,
+    )
+
+    status, headers, html = handle_user_feedback_sync_post(store)
+
+    assert status == 303
+    assert headers["Location"] == "/user-feedback"
+    assert html == ""
+    assert len(calls) == 1
+    assert calls[0][0].feedback_token == "token-1"
+
+
 def test_handle_user_feedback_resolve_post_marks_feedback_resolved(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     seed_attempt(store)
@@ -304,7 +365,33 @@ def test_user_feedback_route_renders_feedback_page(tmp_path: Path):
 
     assert response.status_code == 200
     assert "用户反馈" in response.text
+    assert 'action="/user-feedback/sync"' in response.text
     assert "暂无用户反馈" in response.text
+
+
+def test_user_feedback_sync_route_redirects_to_feedback_page(
+    tmp_path: Path, monkeypatch
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    seed_attempt(store)
+    app = create_audit_app(store.path)
+    client = TestClient(app)
+    calls = []
+
+    def fake_sync(_store, sent_replies):
+        calls.append(list(sent_replies))
+
+    monkeypatch.setattr(
+        audit_web_module,
+        "_sync_feedback_events_for_sent_replies",
+        fake_sync,
+    )
+
+    response = client.post("/user-feedback/sync", follow_redirects=False)
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/user-feedback"
+    assert len(calls) == 1
 
 
 def test_render_history_page_includes_favicon_and_refresh(tmp_path: Path):
