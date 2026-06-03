@@ -211,7 +211,7 @@ def test_get_resource_download_url_command_uses_mcp_chat_surface():
         open_conversation_id="cid-1",
         open_message_id="msg-1",
         resource_id="@img-token-1",
-        resource_type="image",
+        resource_type="mediaId",
     )
 
     assert command == [
@@ -219,14 +219,15 @@ def test_get_resource_download_url_command_uses_mcp_chat_surface():
         "mcp",
         "chat",
         "get_resource_download_url",
-        "--openConversationId",
-        "cid-1",
-        "--openMessageId",
-        "msg-1",
-        "--resourceId",
-        " @img-token-1",
-        "--resourceType",
-        "image",
+        "--json",
+        json.dumps(
+            {
+                "openConversationId": "cid-1",
+                "openMessageId": "msg-1",
+                "resourceId": "@img-token-1",
+                "resourceType": "mediaId",
+            }
+        ),
         "--format",
         "json",
     ]

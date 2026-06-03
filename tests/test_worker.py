@@ -1833,6 +1833,10 @@ def test_bare_calendar_card_uses_unique_pending_invite_from_sender(
     tmp_path: Path, monkeypatch
 ):
     trigger = message("[日程]", single_chat=True, message_type="calendar")
+    message_time_ms = int(
+        datetime(2026, 5, 13, 18, 0, 0, tzinfo=ZoneInfo("Asia/Shanghai")).timestamp()
+        * 1000
+    )
     invite = DwsCalendarEvent(
         event_id="invite-1",
         title="Preseen x Walmart",
@@ -1842,6 +1846,7 @@ def test_bare_calendar_card_uses_unique_pending_invite_from_sender(
         organizer=trigger.sender_name,
         self_response_status="needsAction",
         status="confirmed",
+        created_ms=message_time_ms,
     )
     dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
     dws.calendar_events[
@@ -1867,6 +1872,51 @@ def test_bare_calendar_card_uses_unique_pending_invite_from_sender(
     attempt = worker.store.get_reply_attempt(1)
     assert attempt.action == "no_reply"
     assert attempt.codex_reason == "标题和组织者足以判断需要参加客户会议。"
+
+
+def test_bare_calendar_card_does_not_use_already_accepted_invite(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message("[日程]", single_chat=True, message_type="calendar")
+    message_time_ms = int(
+        datetime(2026, 5, 13, 18, 0, 0, tzinfo=ZoneInfo("Asia/Shanghai")).timestamp()
+        * 1000
+    )
+    invite = DwsCalendarEvent(
+        event_id="invite-1",
+        title="主持会议",
+        start_time="2026-05-16T09:00:00+08:00",
+        end_time="2026-05-16T10:00:00+08:00",
+        description="主持人需要参加。",
+        organizer=trigger.sender_name,
+        self_response_status="accepted",
+        status="confirmed",
+        created_ms=message_time_ms,
+    )
+    dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
+    dws.calendar_events[
+        "2026-05-13T17:00:00+08:00|2026-05-27T17:00:00+08:00"
+    ] = [invite]
+    dws.calendar_events[f"{invite.start_time}|{invite.end_time}"] = [invite]
+    codex = FakeCodex(
+        CodexDecision(
+            action=CodexAction.NO_REPLY,
+            reason="日程已经接受，且标题和描述足够判断，无需再追问。",
+            audit_summary="已按消息时间匹配同一发送人刚创建的日程。",
+        )
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+
+    worker.run_once()
+
+    assert codex.calls == []
+    assert len(final_sent(dws)) == 1
+    assert "只看到日程卡片" in final_sent(dws)[0][1]
+    assert "主持会议" not in final_sent(dws)[0][1]
+    assert dws.calendar_responses == []
+    attempt = worker.store.get_reply_attempt(1)
+    assert attempt.action == "ask_clarifying_question"
+    assert attempt.codex_reason == "calendar_detail_unreadable"
 
 
 def test_bare_calendar_card_uses_closest_recent_pending_invite_from_sender(
@@ -1920,6 +1970,86 @@ def test_bare_calendar_card_uses_closest_recent_pending_invite_from_sender(
     assert "售前候选人二面" in codex.calls[0][0]
     assert "管理工作讨论" not in codex.calls[0][0]
     assert dws.calendar_responses == [("invite-1", "accepted")]
+
+
+def test_bare_calendar_card_requires_recent_sender_created_pending_invite(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message("[日程]", single_chat=True, message_type="calendar")
+    message_time_ms = int(
+        datetime(2026, 5, 13, 18, 0, 0, tzinfo=ZoneInfo("Asia/Shanghai")).timestamp()
+        * 1000
+    )
+    invite = DwsCalendarEvent(
+        event_id="invite-1",
+        title="管理工作讨论",
+        start_time="2026-05-16T09:00:00+08:00",
+        end_time="2026-05-16T10:00:00+08:00",
+        description="会议主要结论",
+        organizer="系统日历",
+        self_response_status="needsAction",
+        status="confirmed",
+        created_ms=message_time_ms,
+        attendees=[trigger.sender_name],
+    )
+    dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
+    dws.calendar_events[
+        "2026-05-13T17:00:00+08:00|2026-05-27T17:00:00+08:00"
+    ] = [invite]
+    dws.calendar_events[f"{invite.start_time}|{invite.end_time}"] = [invite]
+    codex = FakeCodex(
+        CodexDecision(
+            action=CodexAction.NO_REPLY,
+            reason="标题和描述足以判断需要参加。",
+            calendar_response_status="accepted",
+            audit_summary="已按消息时间匹配刚创建的本人待响应日程。",
+        )
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+
+    worker.run_once()
+
+    assert codex.calls == []
+    assert len(final_sent(dws)) == 1
+    assert "只看到日程卡片" in final_sent(dws)[0][1]
+    assert "管理工作讨论" not in final_sent(dws)[0][1]
+    assert dws.calendar_responses == []
+
+
+def test_bare_calendar_card_ignores_sender_pending_invite_changed_too_early(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message("[日程]", single_chat=True, message_type="calendar")
+    message_time_ms = int(
+        datetime(2026, 5, 13, 18, 0, 0, tzinfo=ZoneInfo("Asia/Shanghai")).timestamp()
+        * 1000
+    )
+    invite = DwsCalendarEvent(
+        event_id="invite-1",
+        title="过早创建的会议",
+        start_time="2026-05-16T09:00:00+08:00",
+        end_time="2026-05-16T10:00:00+08:00",
+        organizer=trigger.sender_name,
+        self_response_status="needsAction",
+        status="confirmed",
+        created_ms=message_time_ms - 6 * 60 * 1000,
+    )
+    dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
+    dws.calendar_events[
+        "2026-05-13T17:00:00+08:00|2026-05-27T17:00:00+08:00"
+    ] = [invite]
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该调用")
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+
+    worker.run_once()
+
+    assert codex.calls == []
+    assert len(final_sent(dws)) == 1
+    assert "只看到日程卡片" in final_sent(dws)[0][1]
+    assert "过早创建的会议" not in final_sent(dws)[0][1]
+    assert dws.calendar_responses == []
 
 
 def test_bare_calendar_card_does_not_guess_multiple_pending_invites(
@@ -3408,7 +3538,7 @@ def test_media_id_image_is_downloaded_and_passed_to_codex(
     )
     dws = FakeDws([conversation()], {"cid-1": [trigger]})
     dws.resource_download_urls[
-        ("cid-1", "msg-image-1", "@img-token-1", "image")
+        ("cid-1", "msg-image-1", "@img-token-1", "mediaId")
     ] = {"downloadUrl": "https://signed.example/message-image.png"}
     codex = FakeCodex(
         CodexDecision(
@@ -3427,12 +3557,50 @@ def test_media_id_image_is_downloaded_and_passed_to_codex(
     worker.run_once()
 
     assert dws.resource_download_url_calls == [
-        ("cid-1", "msg-image-1", "@img-token-1", "image")
+        ("cid-1", "msg-image-1", "@img-token-1", "mediaId")
     ]
     image_paths = codex.calls[0][2]
     assert len(image_paths) == 1
     assert image_paths[0].suffix == ".png"
     assert image_paths[0].read_bytes() == b"\x89PNG\r\n\x1a\nimage-bytes"
+
+
+def test_media_id_image_reads_nested_dws_download_url_response(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message(
+        "@Alex Chen(明哥) 看下这个图[图片消息](mediaId=@img-token-1)",
+        message_id="msg-image-1",
+    )
+    dws = FakeDws([conversation()], {"cid-1": [trigger]})
+    dws.resource_download_urls[
+        ("cid-1", "msg-image-1", "@img-token-1", "mediaId")
+    ] = {
+        "response": {
+            "content": {
+                "result": {"downloadUrl": "https://signed.example/message-image.png"}
+            }
+        }
+    }
+    codex = FakeCodex(
+        CodexDecision(
+            action=CodexAction.NO_REPLY,
+            reason="image reviewed",
+            audit_summary="只需上下文判断，不需要回复。",
+        )
+    )
+    monkeypatch.setattr(
+        DingTalkAutoReplyWorker,
+        "_download_resource_bytes",
+        staticmethod(lambda url, headers: b"\x89PNG\r\n\x1a\nnested-image"),
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+
+    worker.run_once()
+
+    image_paths = codex.calls[0][2]
+    assert len(image_paths) == 1
+    assert image_paths[0].read_bytes() == b"\x89PNG\r\n\x1a\nnested-image"
 
 
 def test_robot_download_code_image_is_downloaded_and_passed_to_codex(
@@ -3480,8 +3648,8 @@ def test_image_download_failure_is_passed_to_codex_prompt(tmp_path: Path, monkey
     )
     dws = FakeDws([conversation()], {"cid-1": [trigger]})
     dws.resource_download_urls[
-        ("cid-1", "msg-image-1", "@img-token-1", "image")
-    ] = DwsError("unsupported resourceType: image")
+        ("cid-1", "msg-image-1", "@img-token-1", "mediaId")
+    ] = DwsError("resource download unavailable")
     codex = FakeCodex(
         CodexDecision(
             action=CodexAction.ASK_CLARIFYING_QUESTION,
@@ -3493,14 +3661,14 @@ def test_image_download_failure_is_passed_to_codex_prompt(tmp_path: Path, monkey
     worker.run_once()
 
     assert dws.resource_download_url_calls == [
-        ("cid-1", "msg-image-1", "@img-token-1", "image")
+        ("cid-1", "msg-image-1", "@img-token-1", "mediaId")
     ]
     assert len(codex.calls) == 1
     prompt, _session_id, image_paths = codex.calls[0]
     assert image_paths == []
     assert "图片读取状态:" in prompt
     assert "msg-image-1" in prompt
-    assert "unsupported resourceType: image" in prompt
+    assert "resource download unavailable" in prompt
     assert "如果当前问题依赖图片内容，不能臆测图片细节" in prompt
     attempts = worker.store.list_reply_attempts()
     assert len(attempts) == 1
@@ -3508,7 +3676,7 @@ def test_image_download_failure_is_passed_to_codex_prompt(tmp_path: Path, monkey
     assert attempts[0].send_status == "sent"
     errors = worker.store.list_errors()
     image_error = next(error for error in errors if error.kind == "image_download")
-    assert "unsupported resourceType: image" in image_error.detail
+    assert "resource download unavailable" in image_error.detail
 
 
 def test_dingtalk_doc_read_failure_blocks_codex(tmp_path: Path, monkeypatch):

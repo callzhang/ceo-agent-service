@@ -85,7 +85,7 @@ STALE_PROCESSING_TASK_SECONDS = 30 * 60
 MAX_REPLY_TASK_ATTEMPTS = 3
 STALE_CODEX_RESUME_ATTEMPTS = 2
 CALENDAR_PENDING_INVITE_LOOKAHEAD_DAYS = 14
-CALENDAR_PENDING_INVITE_EVENT_MATCH_SECONDS = 30 * 60
+CALENDAR_PENDING_INVITE_EVENT_MATCH_SECONDS = 5 * 60
 TEXT_MESSAGE_TYPES = {"text"}
 RENDERED_NON_TEXT_PREFIXES = (
     "[文件]",
@@ -1538,23 +1538,26 @@ class DingTalkAutoReplyWorker:
             for event in events
             if event.organizer.strip() == sender_name
             and event.status == "confirmed"
-            and event.self_response_status == "needsAction"
+            and self._calendar_event_is_self_pending(event)
+            and self._calendar_event_changed_near_message(event, message)
         ]
-        time_matched_candidates = [
-            event
-            for event in candidates
-            if self._calendar_event_changed_near_message(event, message)
-        ]
-        if len(time_matched_candidates) == 1:
-            return time_matched_candidates[0]
-        if len(time_matched_candidates) > 1:
+        if len(candidates) == 1:
+            return candidates[0]
+        if len(candidates) > 1:
             return self._closest_calendar_event_changed_near_message(
-                time_matched_candidates,
+                candidates,
                 message,
             )
-        if len(candidates) != 1:
-            return None
-        return candidates[0]
+        return None
+
+    @staticmethod
+    def _calendar_event_is_self_pending(event: DwsCalendarEvent) -> bool:
+        self_response_status = event.self_response_status.strip().lower()
+        return self_response_status in {
+            "needsaction",
+            "needs_action",
+            "needs-action",
+        }
 
     @classmethod
     def _closest_calendar_event_changed_near_message(
@@ -2637,7 +2640,7 @@ class DingTalkAutoReplyWorker:
                 message.open_conversation_id,
                 message.open_message_id,
                 payload["media_id"],
-                "image",
+                "mediaId",
             )
             url = self._download_url_from_payload(download_payload)
         elif kind == "download_code":
@@ -2671,14 +2674,21 @@ class DingTalkAutoReplyWorker:
         return codes
 
     @staticmethod
-    def _download_url_from_payload(payload: dict) -> str:
-        for key in ("downloadUrl", "resourceUrl", "url"):
-            value = payload.get(key)
-            if isinstance(value, str) and value.strip():
-                return value.strip()
-        result = payload.get("result")
-        if isinstance(result, dict):
-            return DingTalkAutoReplyWorker._download_url_from_payload(result)
+    def _download_url_from_payload(payload: object) -> str:
+        if isinstance(payload, dict):
+            for key in ("downloadUrl", "resourceUrl", "url"):
+                value = payload.get(key)
+                if isinstance(value, str) and value.strip():
+                    return value.strip()
+            for value in payload.values():
+                url = DingTalkAutoReplyWorker._download_url_from_payload(value)
+                if url:
+                    return url
+        if isinstance(payload, list):
+            for value in payload:
+                url = DingTalkAutoReplyWorker._download_url_from_payload(value)
+                if url:
+                    return url
         return ""
 
     def _download_image_bytes(self, url: str) -> bytes:
