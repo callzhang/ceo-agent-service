@@ -372,6 +372,7 @@ class CodexDecisionRunner:
                 '"reply_text":"","reason":"","ding_self":false,"macos_notify":true,'
                 '"sensitivity_kind":"general|internal_personnel|external_candidate",'
                 '"personnel_subject_user_id":null,"candidate_context_known":false,"candidate_department_ids":[],'
+                '"calendar_response_status":"",'
                 '"audit_documents":[],"audit_summary":""}'
             )
             second_raw = self.executor(

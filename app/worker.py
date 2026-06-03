@@ -77,6 +77,7 @@ LEAK_CHECK_REGENERATION_SCHEMA = (
     '"reply_text":"","reason":"","ding_self":false,"macos_notify":true,'
     '"sensitivity_kind":"general|internal_personnel|external_candidate",'
     '"personnel_subject_user_id":null,"candidate_context_known":false,"candidate_department_ids":[],'
+    '"calendar_response_status":"",'
     '"audit_documents":[],"audit_summary":""}'
 )
 SPLIT_PERSON_SIGNATURE = assistant_signature()
@@ -1458,42 +1459,6 @@ class DingTalkAutoReplyWorker:
             ignore_system_notification_skip=True,
         ):
             return True
-        if not calendar_context.invite.description.strip():
-            reply_text = self._calendar_missing_description_reply(calendar_context)
-            attempt_id = self.store.record_reply_attempt_for_trigger(
-                conversation_id=conversation.open_conversation_id,
-                conversation_title=conversation.title,
-                trigger_message_id=trigger.open_message_id,
-                trigger_sender=trigger.sender_name,
-                trigger_text=trigger.content,
-                action=CodexAction.ASK_CLARIFYING_QUESTION.value,
-                sensitivity_kind="general",
-                codex_reason="calendar_missing_description",
-                draft_reply_text=reply_text,
-                audit_documents_json=json.dumps(
-                    [
-                        {
-                            "path": "management/OA/日历规则.md",
-                            "title": "日历规则",
-                            "relevance": "用于判断无描述日程需要先追问参加理由。",
-                        }
-                    ],
-                    ensure_ascii=False,
-                ),
-                audit_summary=self._calendar_missing_description_audit_summary(
-                    calendar_context
-                ),
-            )
-            self._send_reply(
-                conversation=conversation,
-                trigger=trigger,
-                new_messages=[trigger],
-                reply_text=reply_text,
-                reason="calendar_missing_description",
-                attempt_id=attempt_id,
-                raise_on_delivery_failure=raise_on_delivery_failure,
-            )
-            return True
         if not calendar_context.conflicts:
             self._process_batch(
                 conversation,
@@ -1506,7 +1471,7 @@ class DingTalkAutoReplyWorker:
                 ],
                 ignore_existing_attempt=True,
                 raise_on_delivery_failure=raise_on_delivery_failure,
-                calendar_accept_event=calendar_context.invite,
+                calendar_response_event=calendar_context.invite,
             )
             return True
         self._process_batch(
@@ -1520,6 +1485,7 @@ class DingTalkAutoReplyWorker:
             ],
             ignore_existing_attempt=True,
             raise_on_delivery_failure=raise_on_delivery_failure,
+            calendar_response_event=calendar_context.invite,
         )
         return True
 
@@ -1697,49 +1663,6 @@ class DingTalkAutoReplyWorker:
                 return None
 
     @staticmethod
-    def _calendar_missing_description_reply(
-        context: CalendarConflictContext,
-    ) -> str:
-        conflict_titles = "、".join(
-            event.title or "未命名日程" for event in context.conflicts[:3]
-        )
-        invite_title = context.invite.title or "这场会议"
-        invite_time = (
-            f"{context.invite.start_time} - {context.invite.end_time}"
-            if context.invite.start_time and context.invite.end_time
-            else ""
-        )
-        invite_label = f"「{invite_title}」"
-        if invite_time:
-            invite_label = f"{invite_label}（{invite_time}）"
-        if not conflict_titles:
-            return (
-                f"我这边看到{invite_label}没有会议描述。请补充一下参加理由、"
-                "希望我决策或输入的内容，以及为什么需要我参加。"
-            )
-        return (
-            f"我这边看到{invite_label}和已有日程「{conflict_titles}」时间冲突，"
-            "但这场会议没有会议描述。请补充一下参加理由、希望我决策或输入的内容，以及为什么需要优先于现有日程。"
-        )
-
-    @staticmethod
-    def _calendar_missing_description_audit_summary(
-        context: CalendarConflictContext,
-    ) -> str:
-        conflict_titles = "、".join(
-            event.title or "未命名日程" for event in context.conflicts[:3]
-        )
-        conflict_part = (
-            f"；同时间段冲突日程：{conflict_titles}" if conflict_titles else "；未发现同时间段冲突日程"
-        )
-        return (
-            f"已读取日程：{context.invite.title or '未命名日程'}，"
-            f"时间：{context.invite.start_time} - {context.invite.end_time}，"
-            f"组织者：{context.invite.organizer or '未知'}；会议描述为空"
-            f"{conflict_part}。按日历规则先追问参加理由和希望判断或输入的内容。"
-        )
-
-    @staticmethod
     def _calendar_unreadable_reply() -> str:
         return (
             "我这边只看到日程卡片，但没有读到会议标题、时间和描述。请补充一下参加理由、"
@@ -1755,13 +1678,14 @@ class DingTalkAutoReplyWorker:
         lines = [
             "日历冲突检查：",
             "有人发来新的日程邀请，且时间已经被已有日程占用。",
-            "请评估这场新会议的描述是否足以优先于重叠会议。",
-            "如果理由充分，回复中说明建议接受这场会议并调整或拒绝哪个重叠会议；如果说明不足以取消另一个重叠会议，回复对方原因并请补充。",
+            "请基于标题、时间、组织者、会议描述和重叠会议判断是否接受、暂定、拒绝或追问；会议描述为空不是自动追问条件。",
+            "如果标题和上下文已经足够判断，可以 action 输出 no_reply，并设置 calendar_response_status 为 accepted、tentative 或 declined。",
+            "如果理由充分但需要聊天同步，回复中说明建议接受这场会议并调整或拒绝哪个重叠会议；如果信息不足，再回复对方原因并请补充。",
             "",
             f"新会议：{context.invite.title or '未命名日程'}",
             f"时间：{context.invite.start_time} - {context.invite.end_time}",
             f"组织者：{context.invite.organizer or trigger.sender_name}",
-            f"会议描述：{context.invite.description.strip()}",
+            f"会议描述：{context.invite.description.strip() or '无'}",
             "重叠会议：",
         ]
         for event in context.conflicts:
@@ -1790,15 +1714,17 @@ class DingTalkAutoReplyWorker:
         lines = [
             "日历规则判断：",
             "有人发来新的日程邀请，当前未发现同时间段已有日程冲突。",
-            "请按日历规则判断是否需要聊天回复，或是否可以接受日程。",
+            "请基于标题、时间、组织者和会议描述判断是否接受、暂定、拒绝或追问；会议描述为空不是自动追问条件。",
             "如果日程是在要求审批、批阅、review、反馈或评论某个文档内容，reply_text 必须是：请直接@我文档让我批阅即可，只有存疑再约会。",
-            f"如果日程描述明确，且 {principal_display_name()} 本人参与对业务判断、关键客户、关键产品、核心人事或跨部门决策有明确价值，action 输出 no_reply，reason 说明 calendar_auto_accept。",
-            "如果描述或价值不明确，不要输出 no_reply；应追问补充信息或 handoff。",
+            f"如果标题或描述足以判断 {principal_display_name()} 本人参与有业务价值，action 输出 no_reply，并设置 calendar_response_status 为 accepted。",
+            "如果标题或描述足以判断先保留但不确认，action 输出 no_reply，并设置 calendar_response_status 为 tentative。",
+            "如果标题或描述足以判断本人参加无价值，action 输出 no_reply，并设置 calendar_response_status 为 declined。",
+            "如果标题、时间、组织者和描述仍不足以判断，再追问补充信息或 handoff。",
             "",
             f"新会议：{context.invite.title or '未命名日程'}",
             f"时间：{context.invite.start_time} - {context.invite.end_time}",
             f"组织者：{context.invite.organizer or trigger.sender_name}",
-            f"会议描述：{context.invite.description.strip()}",
+            f"会议描述：{context.invite.description.strip() or '无'}",
         ]
         return DingTalkMessage(
             open_conversation_id=conversation.open_conversation_id,
@@ -1810,13 +1736,14 @@ class DingTalkAutoReplyWorker:
             content="\n".join(lines),
         )
 
-    def _accept_calendar_invite(
+    def _respond_calendar_invite(
         self,
         *,
         conversation: DingTalkConversation,
         trigger: DingTalkMessage,
         new_messages: list[DingTalkMessage],
         event: DwsCalendarEvent,
+        response_status: str,
         attempt_id: int,
         reason: str,
         raise_on_delivery_failure: bool = False,
@@ -1831,11 +1758,11 @@ class DingTalkAutoReplyWorker:
             self.store.record_error(
                 conversation.open_conversation_id,
                 trigger.open_message_id,
-                "calendar_accept",
+                "calendar_response",
                 error,
             )
             self._notify(
-                title=f"CEO calendar accept failed: {conversation.title}",
+                title=f"CEO calendar response failed: {conversation.title}",
                 message=error,
                 conversation=conversation,
             )
@@ -1849,7 +1776,7 @@ class DingTalkAutoReplyWorker:
             )
             return
         try:
-            self.dws.respond_calendar_event(event.event_id, "accepted")
+            self.dws.respond_calendar_event(event.event_id, response_status)
         except Exception as exc:
             self.store.update_reply_attempt(
                 attempt_id,
@@ -1859,11 +1786,11 @@ class DingTalkAutoReplyWorker:
             self.store.record_error(
                 conversation.open_conversation_id,
                 trigger.open_message_id,
-                "calendar_accept",
+                "calendar_response",
                 str(exc),
             )
             self._notify(
-                title=f"CEO calendar accept failed: {conversation.title}",
+                title=f"CEO calendar response failed: {conversation.title}",
                 message=str(exc)[:120],
                 conversation=conversation,
             )
@@ -1880,8 +1807,8 @@ class DingTalkAutoReplyWorker:
             self.store.record_error(
                 conversation.open_conversation_id,
                 trigger.open_message_id,
-                "calendar_auto_accept",
-                reason,
+                "calendar_response",
+                f"{response_status}: {reason}",
             )
 
     def _record_system_or_notification_skip(
@@ -2229,7 +2156,7 @@ class DingTalkAutoReplyWorker:
         *,
         ignore_existing_attempt: bool = False,
         raise_on_delivery_failure: bool = False,
-        calendar_accept_event: DwsCalendarEvent | None = None,
+        calendar_response_event: DwsCalendarEvent | None = None,
     ) -> None:
         trigger = new_messages[-1]
         if not ignore_existing_attempt and self._handle_existing_attempt(
@@ -2341,15 +2268,14 @@ class DingTalkAutoReplyWorker:
         )
 
         if decision.action == CodexAction.NO_REPLY:
-            if (
-                calendar_accept_event is not None
-                and decision.reason.strip().startswith("calendar_auto_accept")
-            ):
-                self._accept_calendar_invite(
+            calendar_response_status = decision.calendar_response_status.value
+            if calendar_response_event is not None and calendar_response_status:
+                self._respond_calendar_invite(
                     conversation=conversation,
                     trigger=trigger,
                     new_messages=new_messages,
-                    event=calendar_accept_event,
+                    event=calendar_response_event,
+                    response_status=calendar_response_status,
                     attempt_id=attempt_id,
                     reason=decision.reason,
                     raise_on_delivery_failure=raise_on_delivery_failure,

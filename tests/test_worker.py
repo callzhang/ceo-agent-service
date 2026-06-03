@@ -1811,21 +1811,22 @@ def test_calendar_link_message_is_handled_as_calendar_invite(tmp_path: Path, mon
         CodexDecision(
             action=CodexAction.ASK_CLARIFYING_QUESTION,
             reply_text="请补充这场会议希望我决策或输入的内容。",
-            reason="calendar_missing_description",
+            reason="calendar_agent_needs_more_context",
         )
     )
     worker = make_worker(tmp_path, dws, codex, monkeypatch)
 
     worker.run_once()
 
-    assert codex.calls == []
+    assert len(codex.calls) == 1
+    prompt = codex.calls[0][0]
+    assert "国寿Demo思路" in prompt
+    assert "会议描述：无" in prompt
     assert len(final_sent(dws)) == 1
-    assert "国寿Demo思路" in final_sent(dws)[0][1]
-    assert "2026-05-30T14:00:00+08:00" in final_sent(dws)[0][1]
     assert "请补充" in final_sent(dws)[0][1]
     attempt = worker.store.get_reply_attempt(1)
     assert attempt.action == "ask_clarifying_question"
-    assert attempt.codex_reason == "calendar_missing_description"
+    assert attempt.codex_reason == "calendar_agent_needs_more_context"
 
 
 def test_bare_calendar_card_uses_unique_pending_invite_from_sender(
@@ -1849,23 +1850,23 @@ def test_bare_calendar_card_uses_unique_pending_invite_from_sender(
     dws.calendar_events[f"{invite.start_time}|{invite.end_time}"] = [invite]
     codex = FakeCodex(
         CodexDecision(
-            action=CodexAction.ASK_CLARIFYING_QUESTION,
-            reply_text="请补充这场会议希望我决策或输入的内容。",
-            reason="calendar_missing_description",
+            action=CodexAction.NO_REPLY,
+            reason="标题和组织者足以判断需要参加客户会议。",
+            calendar_response_status="accepted",
+            audit_summary="已读取待响应日程；标题和组织者足以判断需要接受。",
         )
     )
     worker = make_worker(tmp_path, dws, codex, monkeypatch)
 
     worker.run_once()
 
-    assert codex.calls == []
-    assert len(final_sent(dws)) == 1
-    assert "Preseen x Walmart" in final_sent(dws)[0][1]
-    assert "2026-05-16T09:00:00+08:00" in final_sent(dws)[0][1]
-    assert "请补充" in final_sent(dws)[0][1]
+    assert len(codex.calls) == 1
+    assert "Preseen x Walmart" in codex.calls[0][0]
+    assert final_sent(dws) == []
+    assert dws.calendar_responses == [("invite-1", "accepted")]
     attempt = worker.store.get_reply_attempt(1)
-    assert attempt.action == "ask_clarifying_question"
-    assert attempt.codex_reason == "calendar_missing_description"
+    assert attempt.action == "no_reply"
+    assert attempt.codex_reason == "标题和组织者足以判断需要参加客户会议。"
 
 
 def test_bare_calendar_card_does_not_guess_multiple_pending_invites(
@@ -1951,20 +1952,21 @@ def test_bare_calendar_card_uses_pending_invite_created_near_message(
         CodexDecision(
             action=CodexAction.ASK_CLARIFYING_QUESTION,
             reply_text="请补充这场会议希望我决策或输入的内容。",
-            reason="calendar_missing_description",
+            reason="calendar_agent_needs_more_context",
         )
     )
     worker = make_worker(tmp_path, dws, codex, monkeypatch)
 
     worker.run_once()
 
-    assert codex.calls == []
+    assert len(codex.calls) == 1
+    assert "Mike项目结项会" in codex.calls[0][0]
+    assert "客户会 A" not in codex.calls[0][0]
     assert len(final_sent(dws)) == 1
-    assert "Mike项目结项会" in final_sent(dws)[0][1]
-    assert "客户会 A" not in final_sent(dws)[0][1]
+    assert "请补充" in final_sent(dws)[0][1]
     attempt = worker.store.get_reply_attempt(1)
     assert attempt.action == "ask_clarifying_question"
-    assert attempt.codex_reason == "calendar_missing_description"
+    assert attempt.codex_reason == "calendar_agent_needs_more_context"
 
 
 def test_calendar_retry_ignores_old_system_notification_skip(
@@ -1985,7 +1987,7 @@ def test_calendar_retry_ignores_old_system_notification_skip(
         CodexDecision(
             action=CodexAction.ASK_CLARIFYING_QUESTION,
             reply_text="请补充这场会议希望我决策或输入的内容。",
-            reason="calendar_missing_description",
+            reason="calendar_agent_needs_more_context",
         )
     )
     worker = make_worker(tmp_path, dws, codex, monkeypatch)
@@ -2014,15 +2016,14 @@ def test_calendar_retry_ignores_old_system_notification_skip(
     )
     worker.consume_once()
 
-    assert codex.calls == []
+    assert len(codex.calls) == 1
     assert len(final_sent(dws)) == 1
-    assert "客户复盘" in final_sent(dws)[0][1]
     assert "请补充" in final_sent(dws)[0][1]
     latest = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
     assert latest is not None
     assert latest.id == old_attempt_id
     assert latest.action == "ask_clarifying_question"
-    assert latest.codex_reason == "calendar_missing_description"
+    assert latest.codex_reason == "calendar_agent_needs_more_context"
     assert worker.store.count_reply_attempts() == 1
 
 
@@ -2053,21 +2054,25 @@ def test_calendar_invite_without_description_asks_for_attendance_reason(
         CodexDecision(
             action=CodexAction.ASK_CLARIFYING_QUESTION,
             reply_text="这场和产品周会冲突，请补充为什么需要优先于现有日程。",
-            reason="calendar_missing_description",
+            reason="calendar_agent_needs_more_context",
         )
     )
     worker = make_worker(tmp_path, dws, codex, monkeypatch)
 
     worker.run_once()
 
-    assert codex.calls == []
+    assert len(codex.calls) == 1
+    prompt = codex.calls[0][0]
+    assert "日历冲突检查" in prompt
+    assert "客户复盘" in prompt
+    assert "产品周会" in prompt
+    assert "会议描述：无" in prompt
     assert len(final_sent(dws)) == 1
-    assert "客户复盘" in final_sent(dws)[0][1]
-    assert "产品周会" in final_sent(dws)[0][1]
     assert "请补充" in final_sent(dws)[0][1]
     assert worker.store.has_seen("msg-1") is True
     attempt = worker.store.get_reply_attempt(1)
     assert attempt.action == "ask_clarifying_question"
+    assert attempt.codex_reason == "calendar_agent_needs_more_context"
     assert attempt.send_status == "sent"
 
 
@@ -2100,21 +2105,21 @@ def test_calendar_invite_ignores_declined_overlapping_event(
     ]
     codex = FakeCodex(
         CodexDecision(
-            action=CodexAction.ASK_CLARIFYING_QUESTION,
-            reply_text="请补充这场会议希望我决策或输入的内容。",
-            reason="calendar_missing_description",
+            action=CodexAction.NO_REPLY,
+            reason="已拒绝过重叠会议，标题足以判断新会议可接受。",
+            calendar_response_status="accepted",
+            audit_summary="已读取日程；重叠会议是 declined，不构成冲突。",
         )
     )
     worker = make_worker(tmp_path, dws, codex, monkeypatch)
 
     worker.run_once()
 
-    assert codex.calls == []
-    assert len(final_sent(dws)) == 1
-    assert "Mike项目结项会" in final_sent(dws)[0][1]
-    assert "销售周会" not in final_sent(dws)[0][1]
-    assert "时间冲突" not in final_sent(dws)[0][1]
-    assert "请补充" in final_sent(dws)[0][1]
+    assert len(codex.calls) == 1
+    assert "Mike项目结项会" in codex.calls[0][0]
+    assert "销售周会" not in codex.calls[0][0]
+    assert final_sent(dws) == []
+    assert dws.calendar_responses == [("invite-1", "accepted")]
 
 
 def test_calendar_invite_ignores_pending_overlapping_event(
@@ -2148,22 +2153,21 @@ def test_calendar_invite_ignores_pending_overlapping_event(
         CodexDecision(
             action=CodexAction.ASK_CLARIFYING_QUESTION,
             reply_text="请补充这场会议希望我决策或输入的内容。",
-            reason="calendar_missing_description",
+            reason="calendar_agent_needs_more_context",
         )
     )
     worker = make_worker(tmp_path, dws, codex, monkeypatch)
 
     worker.run_once()
 
-    assert codex.calls == []
+    assert len(codex.calls) == 1
+    assert "客户复盘" in codex.calls[0][0]
+    assert "待确认会议" not in codex.calls[0][0]
     assert len(final_sent(dws)) == 1
-    assert "客户复盘" in final_sent(dws)[0][1]
-    assert "待确认会议" not in final_sent(dws)[0][1]
-    assert "时间冲突" not in final_sent(dws)[0][1]
     assert "请补充" in final_sent(dws)[0][1]
 
 
-def test_calendar_invite_without_description_asks_even_without_conflict(
+def test_calendar_invite_without_description_can_be_tentative_without_conflict(
     tmp_path: Path, monkeypatch
 ):
     trigger = message("[日程]", single_chat=True, message_type="calendar")
@@ -2179,24 +2183,26 @@ def test_calendar_invite_without_description_asks_even_without_conflict(
     dws.calendar_invites["msg-1"] = invite
     codex = FakeCodex(
         CodexDecision(
-            action=CodexAction.ASK_CLARIFYING_QUESTION,
-            reply_text="请补充这场会议希望我决策或输入的内容。",
-            reason="calendar_missing_description",
+            action=CodexAction.NO_REPLY,
+            reason="标题看起来相关但价值不够明确，先暂定。",
+            calendar_response_status="tentative",
+            audit_summary="已读取日程；标题足以判断先暂定，不需要聊天追问。",
         )
     )
     worker = make_worker(tmp_path, dws, codex, monkeypatch)
 
     worker.run_once()
 
-    assert codex.calls == []
-    assert len(final_sent(dws)) == 1
-    assert "客户复盘" in final_sent(dws)[0][1]
-    assert "2026-05-14T10:00:00+08:00" in final_sent(dws)[0][1]
-    assert "请补充" in final_sent(dws)[0][1]
-    assert dws.calendar_responses == []
+    assert len(codex.calls) == 1
+    prompt = codex.calls[0][0]
+    assert "客户复盘" in prompt
+    assert "2026-05-14T10:00:00+08:00" in prompt
+    assert "会议描述：无" in prompt
+    assert final_sent(dws) == []
+    assert dws.calendar_responses == [("invite-1", "tentative")]
     attempt = worker.store.get_reply_attempt(1)
-    assert attempt.action == "ask_clarifying_question"
-    assert attempt.codex_reason == "calendar_missing_description"
+    assert attempt.action == "no_reply"
+    assert attempt.codex_reason == "标题看起来相关但价值不够明确，先暂定。"
 
 
 def test_calendar_invite_with_description_asks_codex_to_evaluate_conflict(
@@ -2238,7 +2244,7 @@ def test_calendar_invite_with_description_asks_codex_to_evaluate_conflict(
     assert "日历冲突检查" in prompt
     assert "客户升级问题决策" in prompt
     assert "产品周会" in prompt
-    assert "如果说明不足以取消另一个重叠会议" in prompt
+    assert "如果信息不足，再回复对方原因并请补充" in prompt
     assert len(final_sent(dws)) == 1
     assert "客户升级问题优先级更高" in final_sent(dws)[0][1]
     assert worker.store.has_seen("msg-1") is True
@@ -2297,7 +2303,8 @@ def test_calendar_invite_with_clear_value_auto_accepts_without_chat_reply(
     codex = FakeCodex(
         CodexDecision(
             action=CodexAction.NO_REPLY,
-            reason="calendar_auto_accept: Alex 参与有明确业务价值",
+            reason="Alex 参与有明确业务价值",
+            calendar_response_status="accepted",
             audit_summary="日程描述明确，且需要 Alex 做关键客户交付判断。",
         )
     )
@@ -2311,7 +2318,7 @@ def test_calendar_invite_with_clear_value_auto_accepts_without_chat_reply(
     assert worker.store.has_seen("msg-1") is True
     attempt = worker.store.get_reply_attempt(1)
     assert attempt.action == "no_reply"
-    assert attempt.codex_reason.startswith("calendar_auto_accept")
+    assert attempt.codex_reason == "Alex 参与有明确业务价值"
     assert attempt.send_status == "skipped"
     assert attempt.send_error == ""
 
@@ -2346,6 +2353,42 @@ def test_calendar_invite_no_reply_without_auto_accept_reason_does_not_accept(
     assert attempt.action == "no_reply"
     assert attempt.send_status == "skipped"
     assert attempt.send_error == "no_reply"
+
+
+def test_calendar_invite_agent_can_decline_without_chat_reply(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message("[日程]", single_chat=True, message_type="calendar")
+    invite = DwsCalendarEvent(
+        event_id="invite-1",
+        title="状态同步会",
+        start_time="2026-05-14T10:00:00+08:00",
+        end_time="2026-05-14T11:00:00+08:00",
+        description="同步信息，不需要 Alex 输入。",
+        organizer="Mina",
+    )
+    dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
+    dws.calendar_invites["msg-1"] = invite
+    codex = FakeCodex(
+        CodexDecision(
+            action=CodexAction.NO_REPLY,
+            reason="会议只是状态同步，不需要本人参加。",
+            calendar_response_status="declined",
+            audit_summary="已读取日程；描述显示只是同步信息，不需要本人输入。",
+        )
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+
+    worker.run_once()
+
+    assert len(codex.calls) == 1
+    assert dws.calendar_responses == [("invite-1", "declined")]
+    assert final_sent(dws) == []
+    attempt = worker.store.get_reply_attempt(1)
+    assert attempt.action == "no_reply"
+    assert attempt.codex_reason == "会议只是状态同步，不需要本人参加。"
+    assert attempt.send_status == "skipped"
+    assert attempt.send_error == ""
 
 
 def test_structured_link_card_is_skipped_before_codex(tmp_path: Path, monkeypatch):

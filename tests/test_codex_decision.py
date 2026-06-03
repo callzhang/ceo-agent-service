@@ -79,6 +79,21 @@ def test_parse_codex_json_accepts_permission_fields():
     assert decision.personnel_subject_user_id == "user-1"
 
 
+def test_parse_codex_json_accepts_calendar_response_status():
+    raw = json.dumps(
+        {
+            "action": "no_reply",
+            "calendar_response_status": "tentative",
+            "audit_summary": "已读取日程，标题足以判断先暂定。",
+        },
+        ensure_ascii=False,
+    )
+
+    decision = parse_codex_json(raw)
+
+    assert decision.calendar_response_status == "tentative"
+
+
 def test_parse_codex_json_accepts_audit_fields():
     raw = json.dumps(
         {

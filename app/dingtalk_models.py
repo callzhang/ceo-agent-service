@@ -58,6 +58,13 @@ class SensitivityKind(StrEnum):
     EXTERNAL_CANDIDATE = "external_candidate"
 
 
+class CalendarResponseStatus(StrEnum):
+    NONE = ""
+    ACCEPTED = "accepted"
+    TENTATIVE = "tentative"
+    DECLINED = "declined"
+
+
 class CodexDecision(BaseModel):
     action: CodexAction
     reply_text: str = ""
@@ -68,5 +75,6 @@ class CodexDecision(BaseModel):
     personnel_subject_user_id: str | None = None
     candidate_context_known: bool = False
     candidate_department_ids: list[str] = []
+    calendar_response_status: CalendarResponseStatus = CalendarResponseStatus.NONE
     audit_documents: list[dict[str, str]] = Field(default_factory=list)
     audit_summary: str = ""
