@@ -136,6 +136,11 @@ DINGTALK_DOC_URL_PATTERN = re.compile(
 )
 FILE_MESSAGE_PATTERN = re.compile(r"^\s*\[文件]\s*(?P<name>.+?)\s*$")
 IMAGE_MESSAGE_MEDIA_ID_PATTERN = re.compile(r"\[图片消息]\(mediaId=(?P<media_id>[^)]+)\)")
+DWS_MEDIA_DOWNLOAD_INSTRUCTION_PATTERN = re.compile(
+    r"\s*注意[:：]\s*如需下载使用\s*dws\s+chat\s+message\s+download-media"
+    r"\s*命令下载[，,]?\s*请使用@开头的mediaId\s*",
+    re.IGNORECASE,
+)
 MARKDOWN_IMAGE_URL_PATTERN = re.compile(r"!\[[^\]]*]\((?P<url>https?://[^)]+)\)")
 QUOTE_WORD_OR_CJK_PATTERN = re.compile(
     r"[A-Za-z0-9]+(?:[-_'][A-Za-z0-9]+)*|[\u4e00-\u9fff]"
@@ -3652,7 +3657,8 @@ class DingTalkAutoReplyWorker:
 
     @staticmethod
     def _quote_source_text(text: str) -> str:
-        without_links = MEDIA_OR_LINK_PATTERN.sub(" ", text)
+        without_internal_hints = DWS_MEDIA_DOWNLOAD_INSTRUCTION_PATTERN.sub(" ", text)
+        without_links = MEDIA_OR_LINK_PATTERN.sub(" ", without_internal_hints)
         without_mentions = QUOTE_MENTION_PATTERN.sub(" ", without_links)
         normalized = " ".join(without_mentions.split()).lstrip("，,。；;：:、?？!！")
         return normalized
@@ -3660,6 +3666,8 @@ class DingTalkAutoReplyWorker:
     @staticmethod
     def _quote_source_placeholder(trigger: DingTalkMessage) -> str:
         content = trigger.content.strip()
+        if IMAGE_MESSAGE_MEDIA_ID_PATTERN.match(content):
+            return "[图片]"
         rendered_prefix = RENDERED_NON_TEXT_PREFIX_PATTERN.match(content)
         if rendered_prefix:
             return rendered_prefix.group(0).strip()

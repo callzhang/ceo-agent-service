@@ -5045,6 +5045,31 @@ def test_fake_quote_uses_message_type_placeholder_for_empty_image_text():
     assert "原消息" not in quote
 
 
+def test_fake_quote_uses_image_placeholder_for_dws_download_instruction():
+    trigger = message(
+        "[图片消息](mediaId=@img-token-1) "
+        "注意：如需下载使用dws chat message download-media命令下载，请使用@开头的mediaId",
+        message_type="image",
+    )
+
+    quote = DingTalkAutoReplyWorker._fake_quote(trigger)
+
+    assert quote == "> 周俊杰: [图片]"
+    assert "download-media" not in quote
+    assert "mediaId" not in quote
+
+
+def test_fake_quote_keeps_user_caption_after_image_media_id():
+    trigger = message(
+        "[图片消息](mediaId=@img-token-1) 这个图已经反馈了",
+        message_type="image",
+    )
+
+    quote = DingTalkAutoReplyWorker._fake_quote(trigger)
+
+    assert quote == "> 周俊杰: 这个图已经反馈了"
+
+
 def test_format_reply_omits_fake_quote_when_trigger_has_no_readable_context():
     trigger = message("@明哥分身", single_chat=True)
 
