@@ -601,9 +601,11 @@ def test_lists_reply_attempts_newest_first_with_limit(tmp_path: Path):
 
     all_attempts = store.list_reply_attempts()
     attempts = store.list_reply_attempts(limit=1)
+    offset_attempts = store.list_reply_attempts(limit=1, offset=1)
 
     assert [attempt.id for attempt in all_attempts] == [second_id, first_id]
     assert [attempt.id for attempt in attempts] == [second_id]
+    assert [attempt.id for attempt in offset_attempts] == [first_id]
     assert attempts[0].conversation_title == "HR"
     assert attempts[0].send_status == "pending"
     assert first_id != second_id
@@ -656,6 +658,7 @@ def test_lists_errors_newest_first_with_limit(tmp_path: Path):
 
     all_errors = store.list_errors()
     errors = store.list_errors(limit=1)
+    offset_errors = store.list_errors(limit=1, offset=1)
 
     assert [error.kind for error in all_errors] == ["send", "codex"]
     assert len(errors) == 1
@@ -664,6 +667,8 @@ def test_lists_errors_newest_first_with_limit(tmp_path: Path):
     assert errors[0].kind == "send"
     assert errors[0].detail == "authorization required"
     assert errors[0].created_at
+    assert len(offset_errors) == 1
+    assert offset_errors[0].kind == "codex"
 
 
 def test_lists_run_delta_records_after_ids(tmp_path: Path):

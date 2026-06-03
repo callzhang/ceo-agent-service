@@ -90,6 +90,65 @@ def test_render_attempt_list_shows_history_rows(tmp_path: Path):
     assert "/codex/session-1" in html
 
 
+def test_render_attempt_list_paginates_attempts(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    older_id = store.record_reply_attempt(
+        conversation_id="cid-old",
+        conversation_title="Older Group",
+        trigger_message_id="msg-old",
+        trigger_sender="Older",
+        trigger_text="older question",
+        action="send_reply",
+        sensitivity_kind="general",
+    )
+    newer_id = store.record_reply_attempt(
+        conversation_id="cid-new",
+        conversation_title="Newer Group",
+        trigger_message_id="msg-new",
+        trigger_sender="Newer",
+        trigger_text="newer question",
+        action="send_reply",
+        sensitivity_kind="general",
+    )
+
+    first_page = render_attempt_list(store, limit=1, page=1)
+    second_page = render_attempt_list(store, limit=1, page=2)
+
+    assert f"/attempts/{newer_id}" in first_page
+    assert f"/attempts/{older_id}" not in first_page
+    assert 'href="/?page=2"' in first_page
+    assert "第 1 / 2 页" in first_page
+    assert f"/attempts/{older_id}" in second_page
+    assert f"/attempts/{newer_id}" not in second_page
+    assert 'href="/"' in second_page
+    assert "第 2 / 2 页" in second_page
+
+
+def test_history_route_reads_page_query(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    first_id = 0
+    for index in range(121):
+        attempt_id = store.record_reply_attempt(
+            conversation_id=f"cid-{index}",
+            conversation_title=f"Group {index}",
+            trigger_message_id=f"msg-{index}",
+            trigger_sender="Mina",
+            trigger_text=f"question {index}",
+            action="send_reply",
+            sensitivity_kind="general",
+        )
+        if index == 0:
+            first_id = attempt_id
+    app = create_audit_app(store.path)
+    client = TestClient(app)
+
+    response = client.get("/?page=2")
+
+    assert response.status_code == 200
+    assert f"/attempts/{first_id}" in response.text
+    assert "第 2 / 2 页" in response.text
+
+
 def test_render_attempt_list_shows_counterparty_feedback(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     seed_attempt(store)
@@ -209,6 +268,39 @@ def test_render_user_feedback_list_marks_pending_and_resolved(tmp_path: Path):
     assert "标记 resolved" in html
     assert f'href="/attempts/{pending_attempt_id}"' in html
     assert f'href="/attempts/{resolved_attempt_id}"' in html
+
+
+def test_render_user_feedback_list_paginates(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    seed_attempt(store)
+    store.upsert_feedback_event(
+        key="older",
+        feedback_token="older-token",
+        rating="useful",
+        rating_label="很有用",
+        comment="older feedback",
+        source="ceo-agent-spike",
+        received_at="2026-06-02T08:00:00.000Z",
+    )
+    store.upsert_feedback_event(
+        key="newer",
+        feedback_token="newer-token",
+        rating="not_useful",
+        rating_label="不太有用",
+        comment="newer feedback",
+        source="ceo-agent-spike",
+        received_at="2026-06-02T09:00:00.000Z",
+    )
+
+    first_page = render_user_feedback_list(store, limit=1, page=1)
+    second_page = render_user_feedback_list(store, limit=1, page=2)
+
+    assert "newer feedback" in first_page
+    assert "older feedback" not in first_page
+    assert 'href="/user-feedback?page=2"' in first_page
+    assert "older feedback" in second_page
+    assert "newer feedback" not in second_page
+    assert 'href="/user-feedback"' in second_page
 
 
 def test_feedback_pages_do_not_sync_external_events_during_render(
@@ -2059,6 +2151,22 @@ def test_render_error_list_shows_recent_errors(tmp_path: Path):
     assert "authorization required" in html
     assert "cid-1" in html
     assert "active" in html
+
+
+def test_render_error_list_paginates(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.record_error("cid-1", "msg-1", "codex", "older error")
+    store.record_error("cid-2", "msg-2", "send", "newer error")
+
+    first_page = render_error_list(store, limit=1, page=1)
+    second_page = render_error_list(store, limit=1, page=2)
+
+    assert "newer error" in first_page
+    assert "older error" not in first_page
+    assert 'href="/errors?page=2"' in first_page
+    assert "older error" in second_page
+    assert "newer error" not in second_page
+    assert 'href="/errors"' in second_page
 
 
 def test_render_error_list_marks_sent_trigger_errors_resolved(tmp_path: Path):

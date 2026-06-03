@@ -1122,7 +1122,9 @@ class AutoReplyStore:
                 result.setdefault(event.feedback_token, []).append(event)
             return result
 
-    def list_user_feedback_items(self, limit: int = 200) -> list[UserFeedbackItem]:
+    def list_user_feedback_items(
+        self, limit: int = 200, offset: int = 0
+    ) -> list[UserFeedbackItem]:
         with self._connect() as db:
             rows = db.execute(
                 """
@@ -1161,10 +1163,18 @@ class AutoReplyStore:
                     on ra.id = latest.attempt_id
                 order by fe.received_at desc, fe.updated_at desc
                 limit ?
+                offset ?
                 """,
-                (limit,),
+                (limit, max(0, offset)),
             ).fetchall()
             return [UserFeedbackItem.model_validate(dict(row)) for row in rows]
+
+    def count_user_feedback_items(self) -> int:
+        with self._connect() as db:
+            row = db.execute(
+                "select count(*) as count from feedback_events"
+            ).fetchone()
+            return int(row["count"])
 
     def count_pending_user_feedback_items(self) -> int:
         with self._connect() as db:
@@ -1544,7 +1554,9 @@ class AutoReplyStore:
                 return None
             return ReplyAttempt.model_validate(dict(row))
 
-    def list_reply_attempts(self, limit: int | None = None) -> list[ReplyAttempt]:
+    def list_reply_attempts(
+        self, limit: int | None = None, offset: int = 0
+    ) -> list[ReplyAttempt]:
         with self._connect() as db:
             query = """
                 select *
@@ -1553,8 +1565,8 @@ class AutoReplyStore:
             """
             args: tuple[int, ...] = ()
             if limit is not None:
-                query = f"{query} limit ?"
-                args = (limit,)
+                query = f"{query} limit ? offset ?"
+                args = (limit, max(0, offset))
             rows = db.execute(query, args).fetchall()
             return [ReplyAttempt.model_validate(dict(row)) for row in rows]
 
@@ -1645,7 +1657,9 @@ class AutoReplyStore:
                 (conversation_id, message_id, kind, detail),
             )
 
-    def list_errors(self, limit: int | None = None) -> list[ReplyError]:
+    def list_errors(
+        self, limit: int | None = None, offset: int = 0
+    ) -> list[ReplyError]:
         with self._connect() as db:
             query = """
                 select *
@@ -1654,8 +1668,8 @@ class AutoReplyStore:
             """
             args: tuple[int, ...] = ()
             if limit is not None:
-                query = f"{query} limit ?"
-                args = (limit,)
+                query = f"{query} limit ? offset ?"
+                args = (limit, max(0, offset))
             rows = db.execute(query, args).fetchall()
             return [ReplyError.model_validate(dict(row)) for row in rows]
 

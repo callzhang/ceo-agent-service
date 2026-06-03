@@ -142,6 +142,11 @@ th{background:var(--surface-soft);color:var(--steel);font-size:12px;font-weight:
 .card-head h2{margin:0}
 .compact-button{display:inline-flex;align-items:center;height:30px;padding:0 12px;border:1px solid var(--hairline);border-radius:999px;background:var(--canvas);color:var(--ink);font-size:13px;font-weight:500;line-height:1;white-space:nowrap}
 .compact-button:hover{border-color:var(--ink);background:var(--surface-soft)}
+.pagination{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0 0 12px;flex-wrap:wrap}
+.pagination.bottom{margin:12px 0 0}
+.pagination-meta{color:var(--steel);font-size:13px;font-weight:600}
+.pagination-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.pagination-disabled{display:inline-flex;align-items:center;height:30px;padding:0 12px;border:1px solid var(--hairline-soft);border-radius:999px;background:var(--surface-soft);color:var(--muted);font-size:13px;font-weight:500;white-space:nowrap}
 .attempt-feed{display:grid;gap:8px}
 .attempt-item{background:var(--canvas);border:1px solid var(--hairline);border-radius:8px;padding:10px 12px}
 .attempt-head{display:flex;align-items:center;justify-content:space-between;gap:12px;min-width:0}
@@ -1264,16 +1269,75 @@ def _duration_label(value) -> str:
     return f"{total_seconds}s"
 
 
-def render_attempt_list(
-    store: AutoReplyStore, limit: int | None = DEFAULT_ATTEMPT_LIST_LIMIT
+def _page_offset(page: int, limit: int | None) -> int:
+    if limit is None:
+        return 0
+    return max(0, page - 1) * limit
+
+
+def _page_count(total_count: int, limit: int | None) -> int:
+    if limit is None or limit <= 0:
+        return 1
+    return max(1, (max(0, total_count) + limit - 1) // limit)
+
+
+def _bounded_page(page: int, limit: int | None, total_count: int) -> int:
+    return min(max(1, page), _page_count(total_count, limit))
+
+
+def _page_href(base_path: str, page: int) -> str:
+    if page <= 1:
+        return base_path
+    return f"{base_path}?page={page}"
+
+
+def _pagination_controls(
+    *,
+    base_path: str,
+    page: int,
+    limit: int | None,
+    total_count: int,
+    bottom: bool = False,
 ) -> str:
+    page_count = _page_count(total_count, limit)
+    if page_count <= 1:
+        return ""
+    page = min(max(1, page), page_count)
+    prev_html = (
+        f"<a class=\"review-link\" href=\"{escape(_page_href(base_path, page - 1))}\">上一页</a>"
+        if page > 1
+        else "<span class=\"pagination-disabled\">上一页</span>"
+    )
+    next_html = (
+        f"<a class=\"review-link\" href=\"{escape(_page_href(base_path, page + 1))}\">下一页</a>"
+        if page < page_count
+        else "<span class=\"pagination-disabled\">下一页</span>"
+    )
+    bottom_class = " bottom" if bottom else ""
+    return (
+        f"<div class=\"pagination{bottom_class}\">"
+        f"<div class=\"pagination-meta\">第 {page} / {page_count} 页 · 共 {total_count} 条</div>"
+        f"<div class=\"pagination-actions\">{prev_html}{next_html}</div>"
+        "</div>"
+    )
+
+
+def render_attempt_list(
+    store: AutoReplyStore,
+    limit: int | None = DEFAULT_ATTEMPT_LIST_LIMIT,
+    page: int = 1,
+) -> str:
+    total_count = store.count_reply_attempts()
+    page = _bounded_page(page, limit, total_count)
+    offset = _page_offset(page, limit)
     items = []
-    for task in store.list_reply_tasks(
-        statuses=("pending", "processing"),
-        limit=limit,
-    ):
-        items.append(_reply_task_item(task))
-    attempts = store.list_reply_attempts(limit=limit)
+    if page == 1:
+        for task in store.list_reply_tasks(
+            statuses=("pending", "processing"),
+            limit=limit,
+        ):
+            items.append(_reply_task_item(task))
+    attempts = store.list_reply_attempts(limit=limit, offset=offset)
     sent_replies_by_attempt = store.list_sent_replies_for_attempts(attempts)
     feedback_events_by_token = _feedback_events_by_sent_reply(
         store,
@@ -1332,7 +1396,19 @@ def render_attempt_list(
             f"<p class=\"muted\">DB: {escape(str(store.path))}</p></section>"
         )
     else:
-        body = "<section class=\"attempt-feed\">" + "".join(items) + "</section>"
+        pagination = _pagination_controls(
+            base_path="/",
+            page=page,
+            limit=limit,
+            total_count=total_count,
+        )
+        body = (
+            f"{pagination}"
+            "<section class=\"attempt-feed\">"
+            + "".join(items)
+            + "</section>"
+            f"{_pagination_controls(base_path='/', page=page, limit=limit, total_count=total_count, bottom=True)}"
+        )
     return render_page(
         "CEO Agent Audit",
         body,
@@ -1342,9 +1418,14 @@ def render_attempt_list(
     )
 
 
-def render_user_feedback_list(store: AutoReplyStore, limit: int = 200) -> str:
+def render_user_feedback_list(
+    store: AutoReplyStore, limit: int = 200, page: int = 1
+) -> str:
+    total_count = store.count_user_feedback_items()
+    page = _bounded_page(page, limit, total_count)
+    offset = _page_offset(page, limit)
     rows = []
-    for item in store.list_user_feedback_items(limit=limit):
+    for item in store.list_user_feedback_items(limit=limit, offset=offset):
         status = _user_feedback_status(item)
         attempt_link = (
             f"<a class=\"review-link\" href=\"/attempts/{item.attempt_id}\">处理</a>"
@@ -1380,14 +1461,23 @@ def render_user_feedback_list(store: AutoReplyStore, limit: int = 200) -> str:
             "</tr>"
         )
     if rows:
+        pagination = _pagination_controls(
+            base_path="/user-feedback",
+            page=page,
+            limit=limit,
+            total_count=total_count,
+        )
         body = (
             "<section class=\"card\">"
             f"{_user_feedback_page_head()}"
+            f"{pagination}"
             "<table class=\"user-feedback-table\"><thead><tr>"
             "<th>状态</th><th>评分</th><th>用户反馈</th><th>时间</th><th>操作</th>"
             "</tr></thead><tbody>"
             + "".join(rows)
-            + "</tbody></table></section>"
+            + "</tbody></table>"
+            f"{_pagination_controls(base_path='/user-feedback', page=page, limit=limit, total_count=total_count, bottom=True)}"
+            "</section>"
         )
     else:
         body = (
@@ -1590,10 +1680,15 @@ def render_codex_session_detail(
 
 
 def render_error_list(
-    store: AutoReplyStore, limit: int | None = DEFAULT_ERROR_LIST_LIMIT
+    store: AutoReplyStore,
+    limit: int | None = DEFAULT_ERROR_LIST_LIMIT,
+    page: int = 1,
 ) -> str:
+    total_count = store.count_errors()
+    page = _bounded_page(page, limit, total_count)
+    offset = _page_offset(page, limit)
     rows = []
-    for error in store.list_errors(limit=limit):
+    for error in store.list_errors(limit=limit, offset=offset):
         resolution = _error_resolution_label(store, error)
         status_class = (
             "status-resolved"
@@ -1611,11 +1706,19 @@ def render_error_list(
             f"<td>{escape(error.detail)}</td>"
             "</tr>"
         )
+    pagination = _pagination_controls(
+        base_path="/errors",
+        page=page,
+        limit=limit,
+        total_count=total_count,
+    )
     table = (
+        f"{pagination}"
         "<table><thead><tr><th>ID</th><th>Time</th><th>Conversation</th>"
         "<th>Message</th><th>Kind</th><th>Status</th><th>Detail</th></tr></thead><tbody>"
         + "".join(rows)
         + "</tbody></table>"
+        f"{_pagination_controls(base_path='/errors', page=page, limit=limit, total_count=total_count, bottom=True)}"
     )
     return render_page(
         "Errors",
@@ -2033,16 +2136,25 @@ def create_audit_app(
     app = FastAPI(title="CEO Agent Audit")
 
     @app.get("/", response_class=HTMLResponse)
-    def attempt_list() -> str:
-        return render_attempt_list(AutoReplyStore(db_path))
+    def attempt_list(request: Request) -> str:
+        return render_attempt_list(
+            AutoReplyStore(db_path),
+            page=_positive_int_query(request, "page", default=1),
+        )
 
     @app.get("/user-feedback", response_class=HTMLResponse)
-    def user_feedback_list() -> str:
-        return render_user_feedback_list(AutoReplyStore(db_path))
+    def user_feedback_list(request: Request) -> str:
+        return render_user_feedback_list(
+            AutoReplyStore(db_path),
+            page=_positive_int_query(request, "page", default=1),
+        )
 
     @app.get("/errors", response_class=HTMLResponse)
-    def error_list() -> str:
-        return render_error_list(AutoReplyStore(db_path))
+    def error_list(request: Request) -> str:
+        return render_error_list(
+            AutoReplyStore(db_path),
+            page=_positive_int_query(request, "page", default=1),
+        )
 
     @app.get("/codex", response_class=HTMLResponse)
     def codex_session_list() -> str:
@@ -2302,6 +2414,15 @@ def _fastapi_post_response(status: int, headers: dict[str, str], html: str):
     if status == 303:
         return RedirectResponse(headers["Location"], status_code=303)
     return HTMLResponse(html, status_code=status)
+
+
+def _positive_int_query(request: Request, name: str, *, default: int) -> int:
+    raw_value = request.query_params.get(name, "")
+    try:
+        value = int(raw_value)
+    except ValueError:
+        return default
+    return value if value > 0 else default
 
 
 def _attempt_detail_body(
