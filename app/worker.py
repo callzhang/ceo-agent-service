@@ -1794,6 +1794,8 @@ class DingTalkAutoReplyWorker:
             error = "missing_calendar_event_id"
             self.store.update_reply_attempt(
                 attempt_id,
+                calendar_event_id=event.event_id,
+                calendar_response_status=response_status,
                 send_status="failed",
                 send_error=error,
             )
@@ -1814,14 +1816,20 @@ class DingTalkAutoReplyWorker:
         if self.dry_run:
             self.store.update_reply_attempt(
                 attempt_id,
+                calendar_event_id=event.event_id,
+                calendar_response_status=response_status,
                 send_status="dry_run",
             )
             return
         try:
-            self.dws.respond_calendar_event(event.event_id, response_status)
+            action_result = self.dws.respond_calendar_event(
+                event.event_id, response_status
+            )
         except Exception as exc:
             self.store.update_reply_attempt(
                 attempt_id,
+                calendar_event_id=event.event_id,
+                calendar_response_status=response_status,
                 send_status="failed",
                 send_error=str(exc),
             )
@@ -1841,6 +1849,13 @@ class DingTalkAutoReplyWorker:
             return
         self.store.update_reply_attempt(
             attempt_id,
+            calendar_event_id=event.event_id,
+            calendar_response_status=response_status,
+            calendar_response_result_json=json.dumps(
+                action_result,
+                ensure_ascii=False,
+                sort_keys=True,
+            ),
             send_status="skipped",
             send_error="",
         )

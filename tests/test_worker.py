@@ -1872,6 +1872,9 @@ def test_bare_calendar_card_uses_unique_pending_invite_from_sender(
     attempt = worker.store.get_reply_attempt(1)
     assert attempt.action == "no_reply"
     assert attempt.codex_reason == "标题和组织者足以判断需要参加客户会议。"
+    assert attempt.calendar_event_id == "invite-1"
+    assert attempt.calendar_response_status == "accepted"
+    assert attempt.calendar_response_result_json == '{"success": true}'
 
 
 def test_bare_calendar_card_does_not_use_already_accepted_invite(
@@ -2504,6 +2507,9 @@ def test_calendar_invite_with_clear_value_auto_accepts_without_chat_reply(
     assert attempt.codex_reason == "Alex 参与有明确业务价值"
     assert attempt.send_status == "skipped"
     assert attempt.send_error == ""
+    assert attempt.calendar_event_id == "invite-1"
+    assert attempt.calendar_response_status == "accepted"
+    assert attempt.calendar_response_result_json == '{"success": true}'
 
 
 def test_calendar_invite_no_reply_without_auto_accept_reason_does_not_accept(

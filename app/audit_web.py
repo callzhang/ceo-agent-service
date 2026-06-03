@@ -216,6 +216,7 @@ a.nav-item:hover{color:var(--ink);text-decoration:none;border-color:var(--ink)}
 .status-pending,.status-processing{background:rgba(55,114,207,.10);color:#245aa5;border-color:rgba(55,114,207,.24)}
 .status-skipped{background:var(--surface);color:var(--stone)}
 .status-failed,.status-blocked,.status-active{background:rgba(212,86,86,.12);color:#9a2f2f;border-color:rgba(212,86,86,.24)}
+.status-action{background:rgba(0,180,138,.12);color:#006b55;border-color:rgba(0,180,138,.28)}
 .quality-warning{border-color:rgba(212,86,86,.28);background:rgba(212,86,86,.08)}
 .quality-warning ul{margin:8px 0 0;padding-left:20px;color:#8a2626}
 .context-only-info{display:inline-flex;align-items:center;gap:8px}
@@ -1431,6 +1432,7 @@ def render_attempt_list(
             f"{info_html}"
             f"<span class=\"pill action-{escape(attempt.action)}\">{escape(attempt.action)}</span>"
             f"<span class=\"pill status-{escape(attempt.send_status)}\">{escape(attempt.send_status)}</span>"
+            f"{_external_action_pills(attempt)}"
             f"<div class=\"attempt-main\">{escape(attempt.conversation_title)}</div>"
             f"<div class=\"attempt-meta\">{escape(attempt.trigger_sender)}</div>"
             "</div>"
@@ -2517,6 +2519,7 @@ def _attempt_detail_body(
         f"{_quality_warning_card(attempt)}"
         f"{_context_only_info_card(attempt)}"
         f"{_oa_metadata_card(attempt)}"
+        f"{_calendar_metadata_card(attempt)}"
         f"{_recall_card(attempt, sent_reply)}"
         f"{_codex_session_card(codex_session_id, attempt)}"
         f"{_text_card('Trigger', attempt.trigger_text)}"
@@ -2732,6 +2735,7 @@ def _review_panel(
         "<div class=\"reply-meta\">"
         f"<span class=\"pill action-{escape(attempt.action)}\">{escape(attempt.action)}</span>"
         f"<span class=\"pill status-{escape(attempt.send_status)}\">{escape(attempt.send_status)}</span>"
+        f"{_external_action_pills(attempt)}"
         "</div>"
         "<h2>Trigger</h2>"
         f"<pre class=\"trigger-pre\">{escape(_trigger_text(attempt))}</pre>"
@@ -2820,6 +2824,49 @@ def _oa_metadata_card(attempt: ReplyAttempt) -> str:
         "<section class=\"card compact-card\"><h2>OA approval</h2>"
         f"<div class=\"grid\">{rows}</div></section>"
         f"{_json_card('OA action result', attempt.oa_action_result_json)}"
+    )
+
+
+def _calendar_metadata_card(attempt: ReplyAttempt) -> str:
+    if not any(
+        value.strip()
+        for value in (
+            attempt.calendar_event_id,
+            attempt.calendar_response_status,
+            attempt.calendar_response_result_json,
+        )
+    ):
+        return ""
+    rows = "".join(
+        f"<div class=\"muted\">{escape(label)}</div><div>{escape(value)}</div>"
+        for label, value in (
+            ("event id", attempt.calendar_event_id),
+            ("response", attempt.calendar_response_status),
+        )
+    )
+    return (
+        "<section class=\"card compact-card\"><h2>Calendar response</h2>"
+        f"<div class=\"grid\">{rows}</div></section>"
+        + (
+            _json_card(
+                "Calendar response result",
+                attempt.calendar_response_result_json,
+            )
+            if attempt.calendar_response_result_json.strip()
+            else ""
+        )
+    )
+
+
+def _external_action_pills(attempt: ReplyAttempt) -> str:
+    labels = []
+    if attempt.oa_action.strip():
+        labels.append(f"OA: {attempt.oa_action.strip()}")
+    if attempt.calendar_response_status.strip():
+        labels.append(f"Calendar: {attempt.calendar_response_status.strip()}")
+    return "".join(
+        f"<span class=\"pill status-action\">{escape(label)}</span>"
+        for label in labels
     )
 
 

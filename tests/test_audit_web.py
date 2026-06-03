@@ -1303,6 +1303,36 @@ def test_attempt_detail_renders_oa_metadata(tmp_path: Path):
     assert "https://aflow.dingtalk.com/detail?procInstId=proc-1" in html
 
 
+def test_attempt_history_and_detail_render_calendar_response_metadata(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    attempt_id = store.record_reply_attempt(
+        conversation_id="cid-1",
+        conversation_title="Mina",
+        trigger_message_id="msg-1",
+        trigger_sender="Mina",
+        trigger_text="[日程]",
+        action="no_reply",
+        sensitivity_kind="general",
+        codex_reason="calendar invite accepted",
+        calendar_event_id="event-1",
+        calendar_response_status="accepted",
+        calendar_response_result_json='{"success":true}',
+        send_status="skipped",
+    )
+
+    list_html = render_attempt_list(store)
+    status, detail_html = render_attempt_detail(store, attempt_id)
+
+    assert status == 200
+    assert "Calendar: accepted" in list_html
+    assert "Calendar response" in detail_html
+    assert "event-1" in detail_html
+    assert "accepted" in detail_html
+    assert "Calendar response result" in detail_html
+
+
 def test_render_attempt_list_uses_distinct_action_and_status_pill_classes(
     tmp_path: Path,
 ):

@@ -45,6 +45,9 @@ class ReplyAttempt(BaseModel):
     oa_action: str = ""
     oa_remark: str = ""
     oa_action_result_json: str = ""
+    calendar_event_id: str = ""
+    calendar_response_status: str = ""
+    calendar_response_result_json: str = ""
     final_reply_text: str
     permission_action: str
     permission_reason: str
@@ -231,6 +234,9 @@ class AutoReplyStore:
                     oa_action text not null default '',
                     oa_remark text not null default '',
                     oa_action_result_json text not null default '',
+                    calendar_event_id text not null default '',
+                    calendar_response_status text not null default '',
+                    calendar_response_result_json text not null default '',
                     final_reply_text text not null default '',
                     permission_action text not null default '',
                     permission_reason text not null default '',
@@ -351,6 +357,9 @@ class AutoReplyStore:
                 ("oa_action", "text not null default ''"),
                 ("oa_remark", "text not null default ''"),
                 ("oa_action_result_json", "text not null default ''"),
+                ("calendar_event_id", "text not null default ''"),
+                ("calendar_response_status", "text not null default ''"),
+                ("calendar_response_result_json", "text not null default ''"),
             ):
                 if column not in reply_attempt_columns:
                     try:
@@ -1268,6 +1277,9 @@ class AutoReplyStore:
         oa_action: str = "",
         oa_remark: str = "",
         oa_action_result_json: str = "",
+        calendar_event_id: str = "",
+        calendar_response_status: str = "",
+        calendar_response_result_json: str = "",
         send_status: str = "pending",
     ) -> int:
         with self._connect() as db:
@@ -1297,9 +1309,12 @@ class AutoReplyStore:
                     oa_action,
                     oa_remark,
                     oa_action_result_json,
+                    calendar_event_id,
+                    calendar_response_status,
+                    calendar_response_result_json,
                     send_status
                 )
-                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     conversation_id,
@@ -1325,6 +1340,9 @@ class AutoReplyStore:
                     oa_action,
                     oa_remark,
                     oa_action_result_json,
+                    calendar_event_id,
+                    calendar_response_status,
+                    calendar_response_result_json,
                     send_status,
                 ),
             )
@@ -1356,6 +1374,9 @@ class AutoReplyStore:
         oa_action: str = "",
         oa_remark: str = "",
         oa_action_result_json: str = "",
+        calendar_event_id: str = "",
+        calendar_response_status: str = "",
+        calendar_response_result_json: str = "",
         send_status: str = "pending",
     ) -> int:
         existing_attempt = self.get_latest_reply_attempt_for_trigger(
@@ -1386,6 +1407,9 @@ class AutoReplyStore:
                 oa_action=oa_action,
                 oa_remark=oa_remark,
                 oa_action_result_json=oa_action_result_json,
+                calendar_event_id=calendar_event_id,
+                calendar_response_status=calendar_response_status,
+                calendar_response_result_json=calendar_response_result_json,
                 send_status=send_status,
             )
         with self._connect() as db:
@@ -1415,6 +1439,9 @@ class AutoReplyStore:
                     oa_action=?,
                     oa_remark=?,
                     oa_action_result_json=?,
+                    calendar_event_id=?,
+                    calendar_response_status=?,
+                    calendar_response_result_json=?,
                     final_reply_text='',
                     permission_action='',
                     permission_reason='',
@@ -1448,6 +1475,9 @@ class AutoReplyStore:
                     oa_action,
                     oa_remark,
                     oa_action_result_json,
+                    calendar_event_id,
+                    calendar_response_status,
+                    calendar_response_result_json,
                     send_status,
                     existing_attempt.id,
                 ),
@@ -1469,6 +1499,9 @@ class AutoReplyStore:
         oa_action: str | None = None,
         oa_remark: str | None = None,
         oa_action_result_json: str | None = None,
+        calendar_event_id: str | None = None,
+        calendar_response_status: str | None = None,
+        calendar_response_result_json: str | None = None,
         send_status: str | None = None,
         send_error: str | None = None,
         retry_count: int | None = None,
@@ -1487,6 +1520,9 @@ class AutoReplyStore:
             ("oa_action", oa_action),
             ("oa_remark", oa_remark),
             ("oa_action_result_json", oa_action_result_json),
+            ("calendar_event_id", calendar_event_id),
+            ("calendar_response_status", calendar_response_status),
+            ("calendar_response_result_json", calendar_response_result_json),
             ("send_status", send_status),
             ("send_error", send_error),
             ("retry_count", retry_count),

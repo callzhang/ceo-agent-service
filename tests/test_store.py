@@ -487,6 +487,32 @@ def test_reply_attempt_records_oa_metadata(tmp_path: Path):
     assert loaded.oa_action_result_json == '{"errcode":0,"errmsg":"ok"}'
 
 
+def test_reply_attempt_records_calendar_response_metadata(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+
+    attempt_id = store.record_reply_attempt(
+        conversation_id="cid-1",
+        conversation_title="Mina",
+        trigger_message_id="msg-1",
+        trigger_sender="Mina",
+        trigger_text="[日程]",
+        action="no_reply",
+        sensitivity_kind="general",
+        codex_reason="calendar invite handled",
+        calendar_event_id="event-1",
+        calendar_response_status="accepted",
+        calendar_response_result_json='{"success":true}',
+        send_status="skipped",
+    )
+
+    loaded = store.get_reply_attempt(attempt_id)
+
+    assert loaded is not None
+    assert loaded.calendar_event_id == "event-1"
+    assert loaded.calendar_response_status == "accepted"
+    assert loaded.calendar_response_result_json == '{"success":true}'
+
+
 def test_record_reply_attempt_for_trigger_reuses_existing_attempt_id(
     tmp_path: Path,
 ):
