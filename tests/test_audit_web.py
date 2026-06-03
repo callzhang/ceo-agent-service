@@ -1321,6 +1321,11 @@ def test_render_attempt_detail_shows_full_decision_and_feedback_form(tmp_path: P
     status, html = render_attempt_detail(store, attempt_id)
 
     assert status == 200
+    assert "attempt-conversation-banner" in html
+    assert "群名" in html
+    assert "技术部" in html
+    assert "触发人：Xiaomin" in html
+    assert html.index("群名") < html.index("内部反馈/建议修改")
     assert html.index("Trigger") < html.index("生成回复")
     assert html.index("Trigger") < html.index("先按A方案走（by明哥分身）")
     assert "review-grid" in html

@@ -154,6 +154,11 @@ th{background:var(--surface-soft);color:var(--steel);font-size:12px;font-weight:
 .attempt-foot{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:6px;flex-wrap:wrap}
 .attempt-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .attempt-warning{color:#8a2626;font-size:12px;line-height:1.4}
+.attempt-conversation-banner{display:flex;align-items:center;gap:14px;border:1px solid rgba(0,180,138,.34);background:#f3fffb}
+.attempt-conversation-label{display:inline-flex;align-items:center;height:28px;padding:0 10px;border-radius:999px;background:#ddfff6;border:1px solid rgba(0,180,138,.42);color:#005b49;font-size:12px;font-weight:800;white-space:nowrap}
+.attempt-conversation-main{min-width:0}
+.attempt-conversation-title{color:var(--ink);font-size:20px;font-weight:750;line-height:1.3;word-break:break-word}
+.attempt-conversation-sub{margin-top:2px;color:var(--steel);font-size:12px;font-weight:600;line-height:1.4}
 .feedback-chip{display:inline-flex;align-items:center;max-width:100%;min-height:24px;padding:3px 9px;border-radius:999px;background:#ddfff6;border:1px solid rgba(0,180,138,.42);color:#005b49;font-size:12px;font-weight:700;line-height:1.35;white-space:nowrap}
 .feedback-card{border-color:rgba(0,180,138,.28);background:linear-gradient(180deg,#ffffff 0%,#f6fffc 100%)}
 .feedback-event{border:1px solid var(--hairline);border-radius:8px;background:var(--canvas);padding:12px;margin-top:10px}
@@ -2296,6 +2301,7 @@ def _attempt_detail_body(
         for label, value in fields
     )
     return (
+        f"{_attempt_conversation_banner(attempt)}"
         f"{_review_panel(attempt, sent_reply, feedback_events)}"
         f"<section class=\"card compact-card\"><div class=\"grid\">{rows}</div></section>"
         f"{_quality_warning_card(attempt)}"
@@ -2310,6 +2316,23 @@ def _attempt_detail_body(
         f"{_collapsible_json_card('Audit tool events', attempt.audit_tool_events_json)}"
         f"{_text_card('Draft reply (raw Codex reply)', attempt.draft_reply_text)}"
         f"{_text_card('Final reply (send-ready text)', attempt.final_reply_text)}"
+    )
+
+
+def _attempt_conversation_banner(attempt: ReplyAttempt) -> str:
+    subtitle = (
+        f"<div class=\"attempt-conversation-sub\">触发人：{escape(attempt.trigger_sender)}</div>"
+        if attempt.trigger_sender.strip()
+        else ""
+    )
+    return (
+        "<section class=\"card compact-card attempt-conversation-banner\">"
+        "<div class=\"attempt-conversation-label\">群名</div>"
+        "<div class=\"attempt-conversation-main\">"
+        f"<div class=\"attempt-conversation-title\">{escape(attempt.conversation_title)}</div>"
+        f"{subtitle}"
+        "</div>"
+        "</section>"
     )
 
 
