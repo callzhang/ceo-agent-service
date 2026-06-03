@@ -1312,7 +1312,7 @@ class DwsClient:
         text: str,
     ) -> dict[str, Any]:
         if not trigger.sender_open_dingtalk_id:
-            raise DwsError("missing trigger senderOpenDingTalkId for quoted reply")
+            raise DwsError("missing trigger senderOpenDingTalkId for native reply")
         return self.reply_message(
             conversation.open_conversation_id,
             trigger.open_message_id,

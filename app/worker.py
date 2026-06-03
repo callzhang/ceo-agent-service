@@ -51,7 +51,6 @@ from app.dingtalk_models import (
 from app.leak_check import (
     FORBIDDEN_MARKERS,
     contains_forbidden_leak,
-    redact_forbidden_leak_markers,
 )
 from app.notification import send_macos_notification
 from app.oa_approval import extract_oa_url
@@ -131,7 +130,6 @@ MENTION_PATTERN = re.compile(
     r"(?:\s+[A-Za-z][^\s@()（），,。；;：:、?？!！]*)?"
     r"(?:[（(](?:[^()（）]|[（(][^()（）]*[）)])*[）)])?"
 )
-QUOTE_MENTION_PATTERN = MENTION_PATTERN
 DINGTALK_DOC_URL_PATTERN = re.compile(
     r"https://alidocs\.dingtalk\.com/i/nodes/[^\s)\]]+"
 )
@@ -144,19 +142,10 @@ MINUTES_SUMMARY_MAX_CHARS = 5000
 MINUTES_TRANSCRIPTION_PARAGRAPH_LIMIT = 20
 FILE_MESSAGE_PATTERN = re.compile(r"^\s*\[文件]\s*(?P<name>.+?)\s*$")
 IMAGE_MESSAGE_MEDIA_ID_PATTERN = re.compile(r"\[图片消息]\(mediaId=(?P<media_id>[^)]+)\)")
-DWS_MEDIA_DOWNLOAD_INSTRUCTION_PATTERN = re.compile(
-    r"\s*注意[:：]\s*如需下载使用\s*dws\s+chat\s+message\s+download-media"
-    r"\s*命令下载[，,]?\s*请使用@开头的mediaId\s*",
-    re.IGNORECASE,
-)
 MARKDOWN_IMAGE_URL_PATTERN = re.compile(r"!\[[^\]]*]\((?P<url>https?://[^)]+)\)")
-QUOTE_WORD_OR_CJK_PATTERN = re.compile(
-    r"[A-Za-z0-9]+(?:[-_'][A-Za-z0-9]+)*|[\u4e00-\u9fff]"
-)
 DINGTALK_TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
 GROUP_CONTEXT_RECOVERY_WINDOW = timedelta(hours=24)
 RECENT_REPLY_WINDOW = timedelta(hours=24)
-QUOTE_INFORMATION_UNIT_LIMIT = 20
 REFERENCED_FILE_CONTEXT_WINDOW = timedelta(minutes=10)
 DOWNLOADED_FILE_MAX_BYTES = 50 * 1024 * 1024
 DOWNLOADED_IMAGE_MAX_BYTES = 20 * 1024 * 1024
@@ -2420,12 +2409,7 @@ class DingTalkAutoReplyWorker:
                 raise ReplyTaskProcessingError(decision.reason)
             return
         if decision.action == CodexAction.HANDOFF_TO_HUMAN:
-            handoff_reply_text = self._format_reply_delivery_text(
-                conversation,
-                trigger,
-                HANDOFF_ACK,
-                [],
-            )
+            handoff_reply_text = self._format_reply_delivery_text(HANDOFF_ACK)
             if self.dry_run:
                 self.store.update_reply_attempt(
                     attempt_id,
@@ -3469,10 +3453,7 @@ class DingTalkAutoReplyWorker:
         direct_user_id = at_users[0] if conversation.single_chat and at_users else None
         send_at_users = [] if conversation.single_chat else at_users
         final_reply_text = self._format_reply_delivery_text(
-            conversation,
-            trigger,
             attempt.final_reply_text,
-            send_at_users,
         )
         self._deliver_final_reply(
             conversation=conversation,
@@ -3652,10 +3633,7 @@ class DingTalkAutoReplyWorker:
         send_at_users = [] if conversation.single_chat else at_users
         reply_text = append_signature(reply_text)
         reply_text = self._format_reply_delivery_text(
-            conversation,
-            trigger,
             reply_text,
-            send_at_users,
         )
         if contains_forbidden_leak(reply_text):
             regenerated_reply_text = self._regenerate_reply_after_leak_check(
@@ -3664,10 +3642,7 @@ class DingTalkAutoReplyWorker:
             if regenerated_reply_text:
                 reply_text = append_signature(regenerated_reply_text)
                 reply_text = self._format_reply_delivery_text(
-                    conversation,
-                    trigger,
                     reply_text,
-                    send_at_users,
                 )
         self._deliver_final_reply(
             conversation=conversation,
@@ -3726,7 +3701,7 @@ class DingTalkAutoReplyWorker:
         direct_open_dingtalk_id: str | None,
         raise_on_delivery_failure: bool = False,
     ) -> None:
-        reply_text = final_reply_text
+        reply_text = self._native_reply_body(final_reply_text)
         feedback_token = ""
         feedback_base_url = feedback_spike_vercel_base_url()
         if feedback_base_url:
@@ -3869,29 +3844,9 @@ class DingTalkAutoReplyWorker:
         return users
 
     @staticmethod
-    def _format_reply_text(
-        trigger: DingTalkMessage, reply_text: str, at_users: list[str]
-    ) -> str:
-        quote = DingTalkAutoReplyWorker._fake_quote(trigger)
-        placeholders = " ".join(f"<@{user_id}>" for user_id in at_users)
-        body = f"{placeholders} {reply_text}" if placeholders else reply_text
-        if not quote:
-            return body
-        return f"{quote}\n\n{body}"
-
-    @staticmethod
     def _format_reply_delivery_text(
-        conversation: DingTalkConversation,
-        trigger: DingTalkMessage,
         reply_text: str,
-        at_users: list[str],
     ) -> str:
-        if conversation.single_chat:
-            return DingTalkAutoReplyWorker._format_reply_text(
-                trigger,
-                reply_text,
-                at_users,
-            )
         return DingTalkAutoReplyWorker._native_reply_body(reply_text)
 
     @staticmethod
@@ -3906,57 +3861,6 @@ class DingTalkAutoReplyWorker:
                 break
             stripped = stripped[end + 1 :].lstrip()
         return stripped
-
-    @staticmethod
-    def _fake_quote(trigger: DingTalkMessage) -> str:
-        normalized = DingTalkAutoReplyWorker._quote_source_text(trigger.content)
-        if not normalized:
-            normalized = DingTalkAutoReplyWorker._quote_source_placeholder(trigger)
-        if not normalized:
-            return ""
-        normalized = redact_forbidden_leak_markers(normalized)
-        excerpt = DingTalkAutoReplyWorker._truncate_quote_text(
-            normalized,
-            unit_limit=QUOTE_INFORMATION_UNIT_LIMIT,
-        )
-        return f"> {trigger.sender_name}: {excerpt}"
-
-    @staticmethod
-    def _quote_source_text(text: str) -> str:
-        without_internal_hints = DWS_MEDIA_DOWNLOAD_INSTRUCTION_PATTERN.sub(" ", text)
-        without_links = MEDIA_OR_LINK_PATTERN.sub(" ", without_internal_hints)
-        without_mentions = QUOTE_MENTION_PATTERN.sub(" ", without_links)
-        normalized = " ".join(without_mentions.split()).lstrip("，,。；;：:、?？!！")
-        return normalized
-
-    @staticmethod
-    def _quote_source_placeholder(trigger: DingTalkMessage) -> str:
-        content = trigger.content.strip()
-        if IMAGE_MESSAGE_MEDIA_ID_PATTERN.match(content):
-            return "[图片]"
-        rendered_prefix = RENDERED_NON_TEXT_PREFIX_PATTERN.match(content)
-        if rendered_prefix:
-            return rendered_prefix.group(0).strip()
-        message_type = (trigger.message_type or "").lower()
-        if message_type in {"image", "picture"}:
-            return "[图片]"
-        if message_type == "file":
-            return "[文件]"
-        if message_type == "video":
-            return "[视频]"
-        if message_type == "calendar":
-            return "[日程]"
-        if message_type and message_type not in TEXT_MESSAGE_TYPES:
-            return f"[{message_type}]"
-        return ""
-
-    @staticmethod
-    def _truncate_quote_text(text: str, unit_limit: int) -> str:
-        matches = list(QUOTE_WORD_OR_CJK_PATTERN.finditer(text))
-        if len(matches) <= unit_limit:
-            return text
-        end_index = matches[unit_limit - 1].end()
-        return f"{text[:end_index].rstrip()}..."
 
     def _notify(
         self,

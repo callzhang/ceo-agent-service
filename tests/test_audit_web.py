@@ -2185,7 +2185,10 @@ def test_handle_reviewed_message_reply_matches_private_message_without_mention(
     assert attempt is not None
     assert attempt.trigger_sender == "Mina 邹"
     assert attempt.trigger_text == "明哥分身，大模型项目经理需要具备什么能力"
-    assert "> Mina 邹: 明哥分身，大模型项目经理需要具备什么能力" in attempt.final_reply_text
+    assert (
+        attempt.final_reply_text
+        == "这个岗位核心看业务拆解、模型理解、项目推进和学习速度。（by明哥分身）"
+    )
     assert dws.sent_messages == []
     assert dws.reply_messages == [
         (
@@ -2288,7 +2291,7 @@ def test_handle_reviewed_message_reply_uses_stored_private_conversation_when_sea
     attempt = store.get_reply_attempt(result["attempt_id"])
     assert result["send_status"] == "sent"
     assert attempt is not None
-    assert "> Mina 邹: 好" in attempt.final_reply_text
+    assert attempt.final_reply_text == "收到，那你先按这个口径推进。（by明哥分身）"
     assert dws.sent_messages == []
     assert dws.reply_messages == [
         (

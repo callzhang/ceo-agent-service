@@ -4140,22 +4140,13 @@ def test_queued_failed_non_send_attempt_does_not_create_duplicate_attempt(
     assert codex.calls == []
 
 
-def test_long_trigger_quote_is_capped_by_twenty_information_units(
-    tmp_path: Path, monkeypatch
-):
-    trigger = message(
-        "@Alex Chen(明哥) 如果是私有化的POC都是走产研评估流程的，如果是VOC需求也都是PRD评审后走我们正常Sprint迭代流程的",
+def test_native_reply_body_strips_legacy_quote_and_at_placeholders():
+    sent_text = DingTalkAutoReplyWorker._native_reply_body(
+        "> 周俊杰: 如果是私有化的POC都是走产研评估流程的，如果...\n\n"
+        "<@sender-user-1> 流程方向没问题（by明哥分身）"
     )
 
-    sent_text = DingTalkAutoReplyWorker._format_reply_text(
-        trigger,
-        "流程方向没问题（by明哥分身）",
-        ["sender-user-1"],
-    )
-
-    quote, reply = sent_text.split("\n\n", 1)
-    assert quote == "> 周俊杰: 如果是私有化的POC都是走产研评估流程的，如果..."
-    assert reply == "<@sender-user-1> 流程方向没问题（by明哥分身）"
+    assert sent_text == "流程方向没问题（by明哥分身）"
 
 
 def test_resume_prompt_only_includes_turn_message_without_repeating_thread_prompt(
@@ -5525,7 +5516,7 @@ def test_single_chat_unread_is_processed_without_mention(tmp_path: Path, monkeyp
     assert final_sent(dws) == [
         (
             "cid-1",
-            "> 周俊杰: 这个今天能拍吗？\n\n可以，先推进（by明哥分身）",
+            "可以，先推进（by明哥分身）",
         )
     ]
     assert final_sent_at_users(dws) == [[]]
@@ -5536,7 +5527,7 @@ def test_single_chat_unread_is_processed_without_mention(tmp_path: Path, monkeyp
             "cid-1",
             "msg-1",
             "sender-1",
-            "> 周俊杰: 这个今天能拍吗？\n\n可以，先推进（by明哥分身）",
+            "可以，先推进（by明哥分身）",
         )
     ]
     attempt = worker.store.get_reply_attempt(1)
@@ -5544,95 +5535,10 @@ def test_single_chat_unread_is_processed_without_mention(tmp_path: Path, monkeyp
     assert attempt.send_status == "sent"
     assert attempt.direct_user_id == "sender-user-1"
     assert attempt.direct_open_dingtalk_id == "sender-1"
-    assert attempt.final_reply_text == (
-        "> 周俊杰: 这个今天能拍吗？\n\n可以，先推进（by明哥分身）"
-    )
+    assert attempt.final_reply_text == "可以，先推进（by明哥分身）"
 
 
-def test_fake_quote_removes_links_and_mentions_before_truncating():
-    trigger = message(
-        "https://alidocs.dingtalk.com/i/nodes/doc123 "
-        "@Alex Chen(明哥) @Shawn Hou(侯光焕) @Xingzu Liu(刘兴祖) "
-        "@张晓民(Xiaomin张晓民) 数据导入导出业务的根因和解法"
-    )
-
-    quote = DingTalkAutoReplyWorker._fake_quote(trigger)
-
-    assert quote == "> 周俊杰: 数据导入导出业务的根因和解法"
-    assert "http" not in quote
-    assert "@Alex" not in quote
-    assert "@Shawn" not in quote
-
-
-def test_fake_quote_keeps_text_after_compact_assistant_mention():
-    trigger = message(
-        "@明哥分身，请你按照一曲线、二曲线、三曲线的流程和节点，分析缺乏owner的地方。"
-    )
-
-    quote = DingTalkAutoReplyWorker._fake_quote(trigger)
-
-    assert quote == "> 周俊杰: 请你按照一曲线、二曲线、三曲线的流程和节点，分..."
-    assert "原消息" not in quote
-    assert "@明哥分身" not in quote
-
-
-def test_fake_quote_redacts_runtime_terms_from_user_text():
-    trigger = message("明哥，你是怎么解决codex上下文压缩失败的问题的？")
-
-    quote = DingTalkAutoReplyWorker._fake_quote(trigger)
-
-    assert quote == "> 周俊杰: 明哥，你是怎么解决相关内容上下文压缩失败的..."
-    assert "codex" not in quote.lower()
-    assert "原消息" not in quote
-
-
-def test_fake_quote_uses_message_type_placeholder_for_empty_image_text():
-    trigger = message(
-        "[图片消息](mediaId=@img-token-1)",
-        message_type="image",
-    )
-
-    quote = DingTalkAutoReplyWorker._fake_quote(trigger)
-
-    assert quote == "> 周俊杰: [图片]"
-    assert "原消息" not in quote
-
-
-def test_fake_quote_uses_image_placeholder_for_dws_download_instruction():
-    trigger = message(
-        "[图片消息](mediaId=@img-token-1) "
-        "注意：如需下载使用dws chat message download-media命令下载，请使用@开头的mediaId",
-        message_type="image",
-    )
-
-    quote = DingTalkAutoReplyWorker._fake_quote(trigger)
-
-    assert quote == "> 周俊杰: [图片]"
-    assert "download-media" not in quote
-    assert "mediaId" not in quote
-
-
-def test_fake_quote_keeps_user_caption_after_image_media_id():
-    trigger = message(
-        "[图片消息](mediaId=@img-token-1) 这个图已经反馈了",
-        message_type="image",
-    )
-
-    quote = DingTalkAutoReplyWorker._fake_quote(trigger)
-
-    assert quote == "> 周俊杰: 这个图已经反馈了"
-
-
-def test_format_reply_omits_fake_quote_when_trigger_has_no_readable_context():
-    trigger = message("@明哥分身", single_chat=True)
-
-    text = DingTalkAutoReplyWorker._format_reply_text(trigger, "收到", [])
-
-    assert text == "收到"
-    assert "原消息" not in text
-
-
-def test_user_runtime_term_in_trigger_quote_does_not_block_safe_reply(
+def test_user_runtime_term_in_trigger_does_not_block_safe_reply(
     tmp_path: Path, monkeypatch
 ):
     dws = FakeDws(
@@ -5652,7 +5558,7 @@ def test_user_runtime_term_in_trigger_quote_does_not_block_safe_reply(
 
     sent_text = final_sent(dws)[0][1]
     assert "codex" not in sent_text.lower()
-    assert "相关内容上下文压缩失败" in sent_text
+    assert sent_text == "我会把长任务拆小，每一步都留清楚验收口径。（by明哥分身）"
     assert worker.store.get_reply_attempt(1).send_status == "sent"
 
 
@@ -6340,12 +6246,7 @@ def test_internal_personnel_question_missing_subject_asks_clarifying_question(
 
     worker.run_once()
 
-    assert final_sent(dws) == [
-        (
-            "cid-1",
-            "> 周俊杰: 这个人后续怎么处理？\n\n这个是关于谁的问题？（by明哥分身）",
-        )
-    ]
+    assert final_sent(dws) == [("cid-1", "这个是关于谁的问题？（by明哥分身）")]
 
 
 def test_internal_personnel_question_allows_hr_requester(tmp_path: Path, monkeypatch):
@@ -6366,12 +6267,7 @@ def test_internal_personnel_question_allows_hr_requester(tmp_path: Path, monkeyp
 
     worker.run_once()
 
-    assert final_sent(dws) == [
-        (
-            "cid-1",
-            "> 周俊杰: 张三转正怎么看？\n\n建议先观察一个月（by明哥分身）",
-        )
-    ]
+    assert final_sent(dws) == [("cid-1", "建议先观察一个月（by明哥分身）")]
 
 
 def test_internal_personnel_question_allows_subject_manager(
@@ -6394,12 +6290,7 @@ def test_internal_personnel_question_allows_subject_manager(
 
     worker.run_once()
 
-    assert final_sent(dws) == [
-        (
-            "cid-1",
-            "> 周俊杰: 张三绩效怎么定？\n\n先按事实反馈（by明哥分身）",
-        )
-    ]
+    assert final_sent(dws) == [("cid-1", "先按事实反馈（by明哥分身）")]
 
 
 def test_internal_personnel_question_refuses_unrelated_requester(
@@ -6422,11 +6313,7 @@ def test_internal_personnel_question_refuses_unrelated_requester(
     worker.run_once()
 
     assert final_sent(dws) == [
-        (
-            "cid-1",
-            "> 周俊杰: 张三绩效怎么定？\n\n"
-            "这个涉及内部人事隐私，我不能回答。（by明哥分身）",
-        )
+        ("cid-1", "这个涉及内部人事隐私，我不能回答。（by明哥分身）")
     ]
 
 
@@ -6450,11 +6337,7 @@ def test_candidate_question_missing_department_asks_clarifying_question(
     worker.run_once()
 
     assert final_sent(dws) == [
-        (
-            "cid-1",
-            "> 周俊杰: 这个候选人怎么样？\n\n"
-            "这个候选人是哪个岗位/部门的？（by明哥分身）",
-        )
+        ("cid-1", "这个候选人是哪个岗位/部门的？（by明哥分身）")
     ]
 
 
@@ -6479,12 +6362,7 @@ def test_candidate_question_allows_related_department_requester(
 
     worker.run_once()
 
-    assert final_sent(dws) == [
-        (
-            "cid-1",
-            "> 周俊杰: 这个候选人怎么样？\n\n可以推进（by明哥分身）",
-        )
-    ]
+    assert final_sent(dws) == [("cid-1", "可以推进（by明哥分身）")]
 
 
 def test_candidate_question_refuses_unrelated_department_requester(
@@ -6509,11 +6387,7 @@ def test_candidate_question_refuses_unrelated_department_requester(
     worker.run_once()
 
     assert final_sent(dws) == [
-        (
-            "cid-1",
-            "> 周俊杰: 这个候选人怎么样？\n\n"
-            "这个候选人信息只回答相关部门的人。（by明哥分身）",
-        )
+        ("cid-1", "这个候选人信息只回答相关部门的人。（by明哥分身）")
     ]
 
 

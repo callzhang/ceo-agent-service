@@ -231,12 +231,7 @@ def test_local_pipeline_refreshes_org_cache_then_replies_without_runtime_org_cal
     worker.run_once()
 
     assert raw_dws.org_calls == []
-    assert final_sent(raw_dws) == [
-        (
-            "cid-1",
-            "> HR: 张三转正怎么看？\n\n建议先观察一个月（by明哥分身）",
-        )
-    ]
+    assert final_sent(raw_dws) == [("cid-1", "建议先观察一个月（by明哥分身）")]
     assert final_sent_at_users(raw_dws) == [[]]
     assert store.has_seen("msg-1") is True
     assert store.get_codex_session_id("cid-1") == "session-1"
@@ -266,10 +261,7 @@ def test_local_pipeline_handoff_ding_uses_cached_current_user_without_runtime_or
 
     assert raw_dws.org_calls == []
     assert final_sent(raw_dws) == [
-        (
-            "cid-1",
-            "> HR: 不要分身，真人看一下\n\n我让明哥本人看一下。（by明哥分身）",
-        )
+        ("cid-1", "我让明哥本人看一下。（by明哥分身）")
     ]
     assert raw_dws.dings == [
         (

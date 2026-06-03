@@ -680,9 +680,10 @@ def send_attempt_command(settings: WorkerSettings, attempt_id: int) -> dict[str,
         raise SystemExit(
             f"reply attempt {attempt_id} is not sendable: action={attempt.action}"
         )
-    if not attempt.final_reply_text.strip():
+    reply_text = DingTalkAutoReplyWorker._native_reply_body(attempt.final_reply_text)
+    if not reply_text.strip():
         raise SystemExit(f"reply attempt {attempt_id} has empty final_reply_text")
-    if contains_forbidden_leak(attempt.final_reply_text):
+    if contains_forbidden_leak(reply_text):
         store.update_reply_attempt(
             attempt.id,
             send_status="blocked",
@@ -692,7 +693,7 @@ def send_attempt_command(settings: WorkerSettings, attempt_id: int) -> dict[str,
             attempt.conversation_id,
             attempt.trigger_message_id,
             "leak_check",
-            attempt.final_reply_text,
+            reply_text,
         )
         raise SystemExit(f"reply attempt {attempt_id} blocked by leak_check")
 
@@ -719,7 +720,6 @@ def send_attempt_command(settings: WorkerSettings, attempt_id: int) -> dict[str,
         attempt=attempt,
         store=store,
     )
-    reply_text = attempt.final_reply_text
     feedback_token = ""
     feedback_base_url = feedback_spike_vercel_base_url()
     if feedback_base_url:
@@ -744,6 +744,7 @@ def send_attempt_command(settings: WorkerSettings, attempt_id: int) -> dict[str,
                 reply_text,
             )
             raise SystemExit(f"reply attempt {attempt_id} blocked by leak_check")
+    store.update_reply_attempt(attempt.id, final_reply_text=reply_text)
     try:
         send_result = dws.send_reply_to_trigger(
             dingtalk_conversation,
@@ -891,7 +892,7 @@ def _trigger_message_for_attempt(
                 return message
             break
     raise SystemExit(
-        f"reply attempt {attempt.id} cannot resolve trigger senderOpenDingTalkId for quoted reply"
+        f"reply attempt {attempt.id} cannot resolve trigger senderOpenDingTalkId for native reply"
     )
 
 

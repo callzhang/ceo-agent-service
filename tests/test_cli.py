@@ -421,11 +421,17 @@ def test_send_attempt_command_sends_existing_dry_run_without_rerunning_codex(
 
     result = send_attempt_command(settings, attempt_id)
 
-    assert sent["reply"] == ("cid-1", "msg-1", "open-sender-1", final_reply)
+    assert sent["reply"] == (
+        "cid-1",
+        "msg-1",
+        "open-sender-1",
+        "可以先这样处理。（by明哥分身）",
+    )
     assert result["send_status"] == "sent"
     updated = cli.AutoReplyStore(settings.db_path).get_reply_attempt(attempt_id)
     assert updated is not None
     assert updated.send_status == "sent"
+    assert updated.final_reply_text == "可以先这样处理。（by明哥分身）"
     sent_reply = cli.AutoReplyStore(settings.db_path).get_sent_reply("cid-1", "msg-1")
     assert sent_reply is not None
     assert sent_reply.recall_key == "recall-1"
@@ -538,7 +544,7 @@ def test_send_attempt_command_appends_feedback_links_when_configured(
     assert sent_reply.feedback_token in sent_text
 
 
-def test_send_attempt_command_sends_single_chat_as_quoted_reply(
+def test_send_attempt_command_sends_single_chat_as_native_reply(
     monkeypatch, tmp_path
 ):
     sent = {}
@@ -590,7 +596,12 @@ def test_send_attempt_command_sends_single_chat_as_quoted_reply(
 
     send_attempt_command(settings, attempt_id)
 
-    assert sent["reply"] == ("cid-1", "msg-1", "open-sender-1", final_reply)
+    assert sent["reply"] == (
+        "cid-1",
+        "msg-1",
+        "open-sender-1",
+        "收到。（by明哥分身）",
+    )
     sent_reply = cli.AutoReplyStore(settings.db_path).get_sent_reply("cid-1", "msg-1")
     assert sent_reply is not None
 
@@ -649,7 +660,7 @@ def test_send_attempt_command_resolves_single_chat_trigger_sender_from_recent_me
     send_attempt_command(settings, attempt_id)
 
     assert sent["read_recent"] == ("cid-1", cli.SEND_ATTEMPT_TARGET_LOOKBACK_LIMIT)
-    assert sent["reply"] == ("cid-1", "msg-1", "open-1", final_reply)
+    assert sent["reply"] == ("cid-1", "msg-1", "open-1", "收到。（by明哥分身）")
 
 
 def test_send_attempt_command_resolves_single_chat_trigger_sender_near_attempt_time(
@@ -714,7 +725,7 @@ def test_send_attempt_command_resolves_single_chat_trigger_sender_near_attempt_t
     )
     assert sent["read_recent"][1][0] is not None
     assert sent["read_recent"][1][1] == cli.SEND_ATTEMPT_TARGET_LOOKBACK_LIMIT
-    assert sent["reply"] == ("cid-1", "msg-1", "open-1", final_reply)
+    assert sent["reply"] == ("cid-1", "msg-1", "open-1", "收到。（by明哥分身）")
 
 
 def test_send_attempt_command_uses_single_chat_open_dingtalk_id_when_user_id_absent(
@@ -770,10 +781,10 @@ def test_send_attempt_command_uses_single_chat_open_dingtalk_id_when_user_id_abs
 
     send_attempt_command(settings, attempt_id)
 
-    assert sent["reply"] == ("cid-1", "msg-1", "open-1", final_reply)
+    assert sent["reply"] == ("cid-1", "msg-1", "open-1", "收到。（by明哥分身）")
 
 
-def test_send_attempt_command_requires_trigger_sender_for_quoted_reply(
+def test_send_attempt_command_requires_trigger_sender_for_native_reply(
     monkeypatch, tmp_path
 ):
     sent = {}
@@ -889,7 +900,7 @@ def test_send_attempt_command_resolves_single_chat_target_forward_from_attempt_t
     assert sent["forward"][0][0] is not None
     assert sent["forward"][0][1] == cli.SEND_ATTEMPT_TARGET_LOOKBACK_LIMIT
     assert sent["forward"][0][2] is True
-    assert sent["reply"] == ("cid-1", "msg-1", "open-1", final_reply)
+    assert sent["reply"] == ("cid-1", "msg-1", "open-1", "收到。（by明哥分身）")
 
 
 def test_send_attempt_command_blocks_runtime_leaks(monkeypatch, tmp_path):
