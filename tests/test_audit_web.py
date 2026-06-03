@@ -117,17 +117,27 @@ def test_render_attempt_list_paginates_attempts(tmp_path: Path):
     assert f"/attempts/{newer_id}" in first_page
     assert f"/attempts/{older_id}" not in first_page
     assert 'href="/?page=2"' in first_page
-    assert "第 1 / 2 页" in first_page
+    assert "1-1" in first_page
+    assert "1 / 2" in first_page
+    assert 'aria-label="第一页"' in first_page
+    assert 'aria-label="上一页"' in first_page
+    assert 'aria-label="下一页"' in first_page
+    assert 'aria-label="最后一页"' in first_page
+    assert 'pagination-button is-disabled" aria-label="第一页"' in first_page
+    assert 'pagination-button is-disabled pagination-arrow" aria-label="上一页"' in first_page
     assert f"/attempts/{older_id}" in second_page
     assert f"/attempts/{newer_id}" not in second_page
     assert 'href="/"' in second_page
-    assert "第 2 / 2 页" in second_page
+    assert "2-2" in second_page
+    assert "2 / 2" in second_page
+    assert 'pagination-button is-disabled pagination-arrow" aria-label="下一页"' in second_page
+    assert 'pagination-button is-disabled" aria-label="最后一页"' in second_page
 
 
 def test_history_route_reads_page_query(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     first_id = 0
-    for index in range(121):
+    for index in range(100):
         attempt_id = store.record_reply_attempt(
             conversation_id=f"cid-{index}",
             conversation_title=f"Group {index}",
@@ -146,7 +156,8 @@ def test_history_route_reads_page_query(tmp_path: Path):
 
     assert response.status_code == 200
     assert f"/attempts/{first_id}" in response.text
-    assert "第 2 / 2 页" in response.text
+    assert "51-100" in response.text
+    assert "2 / 2" in response.text
 
 
 def test_render_attempt_list_shows_counterparty_feedback(tmp_path: Path):
@@ -298,9 +309,13 @@ def test_render_user_feedback_list_paginates(tmp_path: Path):
     assert "newer feedback" in first_page
     assert "older feedback" not in first_page
     assert 'href="/user-feedback?page=2"' in first_page
+    assert "1-1" in first_page
+    assert "1 / 2" in first_page
     assert "older feedback" in second_page
     assert "newer feedback" not in second_page
     assert 'href="/user-feedback"' in second_page
+    assert "2-2" in second_page
+    assert "2 / 2" in second_page
 
 
 def test_feedback_pages_do_not_sync_external_events_during_render(
@@ -2164,9 +2179,13 @@ def test_render_error_list_paginates(tmp_path: Path):
     assert "newer error" in first_page
     assert "older error" not in first_page
     assert 'href="/errors?page=2"' in first_page
+    assert "1-1" in first_page
+    assert "1 / 2" in first_page
     assert "older error" in second_page
     assert "newer error" not in second_page
     assert 'href="/errors"' in second_page
+    assert "2-2" in second_page
+    assert "2 / 2" in second_page
 
 
 def test_render_error_list_marks_sent_trigger_errors_resolved(tmp_path: Path):

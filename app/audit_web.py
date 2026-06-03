@@ -142,11 +142,18 @@ th{background:var(--surface-soft);color:var(--steel);font-size:12px;font-weight:
 .card-head h2{margin:0}
 .compact-button{display:inline-flex;align-items:center;height:30px;padding:0 12px;border:1px solid var(--hairline);border-radius:999px;background:var(--canvas);color:var(--ink);font-size:13px;font-weight:500;line-height:1;white-space:nowrap}
 .compact-button:hover{border-color:var(--ink);background:var(--surface-soft)}
-.pagination{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0 0 12px;flex-wrap:wrap}
+.pagination{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0 0 12px;padding:8px 10px;border:1px solid var(--hairline);border-radius:8px;background:var(--surface-soft);flex-wrap:wrap}
 .pagination.bottom{margin:12px 0 0}
-.pagination-meta{color:var(--steel);font-size:13px;font-weight:600}
-.pagination-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
-.pagination-disabled{display:inline-flex;align-items:center;height:30px;padding:0 12px;border:1px solid var(--hairline-soft);border-radius:999px;background:var(--surface-soft);color:var(--muted);font-size:13px;font-weight:500;white-space:nowrap}
+.pagination-status{display:flex;align-items:center;gap:8px;min-width:0;flex-wrap:wrap}
+.pagination-range{color:var(--ink);font-family:"Geist Mono","SF Mono",Menlo,Consolas,monospace;font-size:13px;font-weight:800;line-height:1.3}
+.pagination-page{display:inline-flex;align-items:center;height:24px;padding:0 8px;border:1px solid rgba(0,180,138,.28);border-radius:999px;background:#ddfff6;color:#005b49;font-family:"Geist Mono","SF Mono",Menlo,Consolas,monospace;font-size:12px;font-weight:800;line-height:1}
+.pagination-total{color:var(--steel);font-size:12px;font-weight:600;line-height:1.35}
+.pagination-actions{display:flex;align-items:center;gap:4px;padding:3px;border:1px solid var(--hairline);border-radius:999px;background:var(--canvas);flex-wrap:nowrap}
+.pagination-button{display:inline-flex;align-items:center;justify-content:center;height:28px;min-width:34px;padding:0 10px;border:1px solid transparent;border-radius:999px;background:transparent;color:var(--steel);font-size:12px;font-weight:700;line-height:1;white-space:nowrap}
+.pagination-button:hover{border-color:var(--hairline);background:var(--surface-soft);color:var(--ink);text-decoration:none}
+.pagination-arrow{min-width:28px;padding:0 8px;font-size:16px}
+.pagination-button.is-disabled{color:var(--muted);background:var(--surface-soft);cursor:default}
+.pagination-button.is-disabled:hover{border-color:transparent;color:var(--muted);background:var(--surface-soft)}
 .attempt-feed{display:grid;gap:8px}
 .attempt-item{background:var(--canvas);border:1px solid var(--hairline);border-radius:8px;padding:10px 12px}
 .attempt-head{display:flex;align-items:center;justify-content:space-between;gap:12px;min-width:0}
@@ -282,8 +289,8 @@ _BROWSER_NOTIFICATION_SUBSCRIBERS: set[asyncio.Queue[dict[str, str]]] = set()
 _BROWSER_NOTIFICATION_HISTORY: deque[dict[str, str]] = deque(maxlen=20)
 _BROWSER_NOTIFICATION_SEQUENCE = count(1)
 _DINGTALK_BRIDGE_STATUS: deque[dict[str, str]] = deque(maxlen=20)
-DEFAULT_ATTEMPT_LIST_LIMIT = 120
-DEFAULT_ERROR_LIST_LIMIT = 200
+DEFAULT_ATTEMPT_LIST_LIMIT = 50
+DEFAULT_ERROR_LIST_LIMIT = 50
 
 
 def render_page(
@@ -1291,6 +1298,40 @@ def _page_href(base_path: str, page: int) -> str:
     return f"{base_path}?page={page}"
 
 
+def _pagination_range(page: int, limit: int | None, total_count: int) -> str:
+    if total_count <= 0:
+        return "0-0"
+    if limit is None or limit <= 0:
+        return f"1-{total_count}"
+    start = _page_offset(page, limit) + 1
+    end = min(start + limit - 1, total_count)
+    return f"{start}-{end}"
+
+
+def _pagination_button(
+    *,
+    label_html: str,
+    aria_label: str,
+    href: str | None,
+    arrow: bool = False,
+) -> str:
+    classes = "pagination-button"
+    if href is None:
+        classes += " is-disabled"
+    if arrow:
+        classes += " pagination-arrow"
+    label = escape(aria_label)
+    if href is None:
+        return (
+            f"<span class=\"{classes}\" aria-label=\"{label}\" title=\"{label}\">"
+            f"{label_html}</span>"
+        )
+    return (
+        f"<a class=\"{classes}\" href=\"{escape(href)}\" "
+        f"aria-label=\"{label}\" title=\"{label}\">{label_html}</a>"
+    )
+
+
 def _pagination_controls(
     *,
     base_path: str,
@@ -1303,21 +1344,40 @@ def _pagination_controls(
     if page_count <= 1:
         return ""
     page = min(max(1, page), page_count)
-    prev_html = (
-        f"<a class=\"review-link\" href=\"{escape(_page_href(base_path, page - 1))}\">上一页</a>"
-        if page > 1
-        else "<span class=\"pagination-disabled\">上一页</span>"
+    is_first = page <= 1
+    is_last = page >= page_count
+    first_html = _pagination_button(
+        label_html="首页",
+        aria_label="第一页",
+        href=None if is_first else _page_href(base_path, 1),
     )
-    next_html = (
-        f"<a class=\"review-link\" href=\"{escape(_page_href(base_path, page + 1))}\">下一页</a>"
-        if page < page_count
-        else "<span class=\"pagination-disabled\">下一页</span>"
+    prev_html = _pagination_button(
+        label_html="&lsaquo;",
+        aria_label="上一页",
+        href=None if is_first else _page_href(base_path, page - 1),
+        arrow=True,
+    )
+    next_html = _pagination_button(
+        label_html="&rsaquo;",
+        aria_label="下一页",
+        href=None if is_last else _page_href(base_path, page + 1),
+        arrow=True,
+    )
+    last_html = _pagination_button(
+        label_html="末页",
+        aria_label="最后一页",
+        href=None if is_last else _page_href(base_path, page_count),
     )
     bottom_class = " bottom" if bottom else ""
     return (
         f"<div class=\"pagination{bottom_class}\">"
-        f"<div class=\"pagination-meta\">第 {page} / {page_count} 页 · 共 {total_count} 条</div>"
-        f"<div class=\"pagination-actions\">{prev_html}{next_html}</div>"
+        "<div class=\"pagination-status\">"
+        f"<span class=\"pagination-range\">{_pagination_range(page, limit, total_count)}</span>"
+        f"<span class=\"pagination-page\">{page} / {page_count}</span>"
+        f"<span class=\"pagination-total\">共 {total_count} 条</span>"
+        "</div>"
+        f"<nav class=\"pagination-actions\" aria-label=\"分页导航\">"
+        f"{first_html}{prev_html}{next_html}{last_html}</nav>"
         "</div>"
     )
 
@@ -1419,7 +1479,7 @@ def render_attempt_list(
 
 
 def render_user_feedback_list(
-    store: AutoReplyStore, limit: int = 200, page: int = 1
+    store: AutoReplyStore, limit: int = 50, page: int = 1
 ) -> str:
     total_count = store.count_user_feedback_items()
     page = _bounded_page(page, limit, total_count)
