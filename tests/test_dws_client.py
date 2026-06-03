@@ -221,6 +221,77 @@ def test_download_doc_supplies_required_output_path():
     assert command[output_index] != "--format"
 
 
+def test_minutes_read_commands_shape():
+    client = DwsClient(dws_bin="dws")
+
+    assert client.build_minutes_info_command("minutes-1") == [
+        "dws",
+        "minutes",
+        "get",
+        "info",
+        "--id",
+        "minutes-1",
+        "--format",
+        "json",
+    ]
+    assert client.build_minutes_summary_command("minutes-1") == [
+        "dws",
+        "minutes",
+        "get",
+        "summary",
+        "--id",
+        "minutes-1",
+        "--format",
+        "json",
+    ]
+    assert client.build_minutes_todos_command("minutes-1") == [
+        "dws",
+        "minutes",
+        "get",
+        "todos",
+        "--id",
+        "minutes-1",
+        "--format",
+        "json",
+    ]
+    assert client.build_minutes_transcription_command("minutes-1") == [
+        "dws",
+        "minutes",
+        "get",
+        "transcription",
+        "--id",
+        "minutes-1",
+        "--direction",
+        "forward",
+        "--format",
+        "json",
+    ]
+
+
+def test_minutes_transcription_command_shape_with_next_token():
+    client = DwsClient(dws_bin="dws")
+
+    command = client.build_minutes_transcription_command(
+        "minutes-1",
+        next_token="token-2",
+    )
+
+    assert command == [
+        "dws",
+        "minutes",
+        "get",
+        "transcription",
+        "--id",
+        "minutes-1",
+        "--direction",
+        "forward",
+        "--next-token",
+        "token-2",
+        "--format",
+        "json",
+    ]
+
+
 def test_get_resource_download_url_command_uses_mcp_chat_surface():
     client = DwsClient(dws_bin="dws")
 

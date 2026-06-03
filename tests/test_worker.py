@@ -147,6 +147,14 @@ class FakeDws:
             str, DwsMinutesPermissionRequest | None
         ] = {}
         self.added_minutes_permissions: list[DwsMinutesPermissionRequest] = []
+        self.minutes_infos: dict[str, dict] = {}
+        self.minutes_summaries: dict[str, dict] = {}
+        self.minutes_todos: dict[str, dict] = {}
+        self.minutes_transcriptions: dict[str, dict] = {}
+        self.minutes_info_calls: list[str] = []
+        self.minutes_summary_calls: list[str] = []
+        self.minutes_todo_calls: list[str] = []
+        self.minutes_transcription_calls: list[tuple[str, str]] = []
         self.oa_approval_actions: list[tuple[str, str, str, str]] = []
         self.oa_approval_action_result: dict = {"errcode": 0, "errmsg": "ok"}
         self.oa_approval_action_error: Exception | None = None
@@ -445,6 +453,30 @@ class FakeDws:
     ) -> dict:
         self.added_minutes_permissions.append(request)
         return {"success": True}
+
+    def get_minutes_info(self, task_uuid: str) -> dict:
+        self.minutes_info_calls.append(task_uuid)
+        return self.minutes_infos.get(
+            task_uuid,
+            {"result": {"taskUuid": task_uuid, "title": "静默会"}},
+        )
+
+    def get_minutes_summary(self, task_uuid: str) -> dict:
+        self.minutes_summary_calls.append(task_uuid)
+        return self.minutes_summaries.get(task_uuid, {"result": {}})
+
+    def get_minutes_todos(self, task_uuid: str) -> dict:
+        self.minutes_todo_calls.append(task_uuid)
+        return self.minutes_todos.get(task_uuid, {"result": {}})
+
+    def get_minutes_transcription(
+        self,
+        task_uuid: str,
+        *,
+        next_token: str = "",
+    ) -> dict:
+        self.minutes_transcription_calls.append((task_uuid, next_token))
+        return self.minutes_transcriptions.get(task_uuid, {"result": {}})
 
     def execute_oa_approval_action(
         self,
@@ -1940,6 +1972,48 @@ def test_bare_calendar_card_uses_unique_pending_invite_from_sender(
     assert attempt.calendar_response_result_json == '{"success": true}'
 
 
+def test_rendered_calendar_card_without_message_type_uses_unique_pending_invite_without_change_time(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message("[日程]", single_chat=True)
+    invite = DwsCalendarEvent(
+        event_id="invite-1",
+        title="MB 营销proposal 终版确认",
+        start_time="2026-06-04T10:00:00+08:00",
+        end_time="2026-06-04T11:00:00+08:00",
+        description="",
+        organizer=trigger.sender_name,
+        self_response_status="needsAction",
+        status="confirmed",
+    )
+    dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
+    dws.calendar_events[
+        "2026-05-13T17:00:00+08:00|2026-05-27T17:00:00+08:00"
+    ] = [invite]
+    dws.calendar_events[f"{invite.start_time}|{invite.end_time}"] = [invite]
+    codex = FakeCodex(
+        CodexDecision(
+            action=CodexAction.NO_REPLY,
+            reason="标题足以判断先暂定。",
+            calendar_response_status="tentative",
+            audit_summary="已按唯一待响应日程匹配裸日程卡片。",
+        )
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+
+    worker.run_once()
+
+    assert len(codex.calls) == 1
+    assert "MB 营销proposal 终版确认" in codex.calls[0][0]
+    assert final_sent(dws) == []
+    assert dws.calendar_responses == [("invite-1", "tentative")]
+    attempt = worker.store.get_reply_attempt(1)
+    assert attempt.action == "no_reply"
+    assert attempt.codex_reason == "标题足以判断先暂定。"
+    assert attempt.calendar_event_id == "invite-1"
+    assert attempt.calendar_response_status == "tentative"
+
+
 def test_bare_calendar_card_does_not_use_already_accepted_invite(
     tmp_path: Path, monkeypatch
 ):
@@ -2447,6 +2521,9 @@ def test_calendar_invite_without_description_can_be_tentative_without_conflict(
     assert "客户复盘" in prompt
     assert "2026-05-14T10:00:00+08:00" in prompt
     assert "会议描述：无" in prompt
+    assert "最近上下文事项" in prompt
+    assert "标题足以判断" in prompt
+    assert "本人有必要参加" in prompt
     assert final_sent(dws) == []
     assert dws.calendar_responses == [("invite-1", "tentative")]
     attempt = worker.store.get_reply_attempt(1)
@@ -3598,6 +3675,74 @@ def test_referenced_file_metadata_does_not_expose_download_credentials(
     assert "authorizationUrl" not in prompt
 
 
+def test_minutes_link_reads_material_and_processes_action_items(
+    tmp_path: Path, monkeypatch
+):
+    minutes_id = "76327569643331323035353732315f3233333438363436305f30"
+    trigger = message(
+        "[dingtalk://dingtalkclient/page/flash_minutes_detail?"
+        f"minutesId={minutes_id}&from=8]"
+        "(dingtalk://dingtalkclient/page/flash_minutes_detail?"
+        f"minutesId={minutes_id}&from=8)",
+        single_chat=True,
+    )
+    dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
+    dws.minutes_infos[minutes_id] = {
+        "result": {
+            "taskUuid": minutes_id,
+            "title": "岚图端到端算法开发需求讨论",
+            "url": f"https://shanji.dingtalk.com/app/transcribes/{minutes_id}",
+        }
+    }
+    dws.minutes_summaries[minutes_id] = {
+        "result": {"fullSummary": "会议决定以数据闭环和算法底座为核心准备材料。"}
+    }
+    dws.minutes_todos[minutes_id] = {
+        "result": {
+            "actions": [
+                '{"value":"韩露周三前完成自动驾驶能力图谱初版大纲"}',
+                '{"value":"Alex 今日内确认材料方向"}',
+            ],
+            "dingtalkTodoList": [
+                {"title": "侯光焕协调蓝图汽车技术交流时间"},
+            ],
+        }
+    }
+    dws.minutes_transcriptions[minutes_id] = {
+        "result": {
+            "paragraphList": [
+                {"nickName": "Yuhang Cao", "paragraph": "客户希望看完整能力菜单。"},
+                {"nickName": "Alex", "paragraph": "先聚焦数据闭环和算法底座。"},
+            ]
+        }
+    }
+    codex = FakeCodex(
+        CodexDecision(
+            action=CodexAction.SEND_REPLY,
+            reply_text="这几个事项我看到了，先按材料方向推进。",
+        )
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+
+    worker.run_once()
+
+    assert dws.minutes_info_calls == [minutes_id]
+    assert dws.minutes_summary_calls == [minutes_id]
+    assert dws.minutes_todo_calls == [minutes_id]
+    assert dws.minutes_transcription_calls == [(minutes_id, "")]
+    prompt = codex.calls[0][0]
+    assert "AI 听记材料:" in prompt
+    assert "岚图端到端算法开发需求讨论" in prompt
+    assert "处理事项:" in prompt
+    assert "韩露周三前完成自动驾驶能力图谱初版大纲" in prompt
+    assert "文字稿预览:" in prompt
+    assert "先聚焦数据闭环和算法底座" in prompt
+    attempt = worker.store.get_reply_attempt(1)
+    assert attempt is not None
+    assert attempt.action == "send_reply"
+    assert attempt.send_status == "sent"
+
+
 def test_media_id_image_is_downloaded_and_passed_to_codex(
     tmp_path: Path, monkeypatch
 ):
@@ -4700,7 +4845,7 @@ def test_review_feedback_examples_skip_generic_old_corrections(
 
     examples = worker._retrieve_review_feedback_examples(
         (
-            "@Derek Zen 磊哥，我跟晓民哥讨论了二次查询方案，"
+            "@Derek Zen Alex，我跟晓民哥讨论了二次查询方案，"
             "memory_recall 返回可用上下文，二次 memory_get 会污染上下文。"
         ),
         worker.store.list_reviewed_reply_attempts(limit=50),

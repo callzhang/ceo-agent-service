@@ -738,6 +738,63 @@ class DwsClient:
             "json",
         ]
 
+    def build_minutes_info_command(self, task_uuid: str) -> list[str]:
+        return [
+            self.dws_bin,
+            "minutes",
+            "get",
+            "info",
+            "--id",
+            task_uuid,
+            "--format",
+            "json",
+        ]
+
+    def build_minutes_summary_command(self, task_uuid: str) -> list[str]:
+        return [
+            self.dws_bin,
+            "minutes",
+            "get",
+            "summary",
+            "--id",
+            task_uuid,
+            "--format",
+            "json",
+        ]
+
+    def build_minutes_todos_command(self, task_uuid: str) -> list[str]:
+        return [
+            self.dws_bin,
+            "minutes",
+            "get",
+            "todos",
+            "--id",
+            task_uuid,
+            "--format",
+            "json",
+        ]
+
+    def build_minutes_transcription_command(
+        self,
+        task_uuid: str,
+        *,
+        next_token: str = "",
+    ) -> list[str]:
+        command = [
+            self.dws_bin,
+            "minutes",
+            "get",
+            "transcription",
+            "--id",
+            task_uuid,
+            "--direction",
+            "forward",
+        ]
+        if next_token:
+            command.extend(["--next-token", next_token])
+        command.extend(["--format", "json"])
+        return command
+
     def build_get_resource_download_url_command(
         self,
         open_conversation_id: str,
@@ -1151,6 +1208,40 @@ class DwsClient:
             payload = self.run_json(self.build_download_doc_command(node, output_path))
         if not isinstance(payload, dict):
             raise DwsError("invalid doc download response")
+        return payload
+
+    def get_minutes_info(self, task_uuid: str) -> dict[str, Any]:
+        payload = self.run_json(self.build_minutes_info_command(task_uuid))
+        if not isinstance(payload, dict):
+            raise DwsError("invalid minutes info response")
+        return payload
+
+    def get_minutes_summary(self, task_uuid: str) -> dict[str, Any]:
+        payload = self.run_json(self.build_minutes_summary_command(task_uuid))
+        if not isinstance(payload, dict):
+            raise DwsError("invalid minutes summary response")
+        return payload
+
+    def get_minutes_todos(self, task_uuid: str) -> dict[str, Any]:
+        payload = self.run_json(self.build_minutes_todos_command(task_uuid))
+        if not isinstance(payload, dict):
+            raise DwsError("invalid minutes todos response")
+        return payload
+
+    def get_minutes_transcription(
+        self,
+        task_uuid: str,
+        *,
+        next_token: str = "",
+    ) -> dict[str, Any]:
+        payload = self.run_json(
+            self.build_minutes_transcription_command(
+                task_uuid,
+                next_token=next_token,
+            )
+        )
+        if not isinstance(payload, dict):
+            raise DwsError("invalid minutes transcription response")
         return payload
 
     def get_resource_download_url(

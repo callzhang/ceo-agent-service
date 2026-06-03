@@ -537,7 +537,18 @@ def test_thread_prompt_references_calendar_rules():
     assert "management/OA/日历规则.md" in prompt
     assert "请直接@我文档让我批阅即可，只有存疑再约会。" in prompt
     assert "是否需要详细描述由你判断" in prompt
-    assert "可以直接接受、暂定或拒绝日程" in prompt
+    assert "最近上下文事项和会议标题" in prompt
+    assert "如果最近事项和标题已经能判断有必要参加，直接接受日程" in prompt
+    assert "仍判断不了，再提问" in prompt
+
+
+def test_thread_prompt_requires_minutes_material_action_item_handling():
+    prompt = ceo_agent_thread_prompt()
+
+    assert "静默会" in prompt
+    assert "AI 听记" in prompt
+    assert "处理事项" in prompt
+    assert "不能只总结会议" in prompt
 
 
 def test_thread_prompt_requires_witty_reply_for_direct_jokes():

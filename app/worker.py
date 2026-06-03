@@ -135,6 +135,13 @@ QUOTE_MENTION_PATTERN = MENTION_PATTERN
 DINGTALK_DOC_URL_PATTERN = re.compile(
     r"https://alidocs\.dingtalk\.com/i/nodes/[^\s)\]]+"
 )
+DINGTALK_MINUTES_LINK_PATTERN = re.compile(
+    r"(?:dingtalk://[^\s)\]]*flash_minutes_detail[^\s)\]]*|"
+    r"https://shanji\.dingtalk\.com/app/transcribes/[^\s)\]]+)",
+    re.IGNORECASE,
+)
+MINUTES_SUMMARY_MAX_CHARS = 5000
+MINUTES_TRANSCRIPTION_PARAGRAPH_LIMIT = 20
 FILE_MESSAGE_PATTERN = re.compile(r"^\s*\[文件]\s*(?P<name>.+?)\s*$")
 IMAGE_MESSAGE_MEDIA_ID_PATTERN = re.compile(r"\[图片消息]\(mediaId=(?P<media_id>[^)]+)\)")
 DWS_MEDIA_DOWNLOAD_INSTRUCTION_PATTERN = re.compile(
@@ -1504,15 +1511,23 @@ class DingTalkAutoReplyWorker:
             if event.organizer.strip() == sender_name
             and event.status == "confirmed"
             and self._calendar_event_is_self_pending(event)
-            and self._calendar_event_changed_near_message(event, message)
         ]
-        if len(candidates) == 1:
-            return candidates[0]
-        if len(candidates) > 1:
+        near_message_candidates = [
+            event
+            for event in candidates
+            if self._calendar_event_changed_near_message(event, message)
+        ]
+        if len(near_message_candidates) == 1:
+            return near_message_candidates[0]
+        if len(near_message_candidates) > 1:
             return self._closest_calendar_event_changed_near_message(
-                candidates,
+                near_message_candidates,
                 message,
             )
+        if len(candidates) == 1 and not self._calendar_event_has_change_time(
+            candidates[0]
+        ):
+            return candidates[0]
         return None
 
     @staticmethod
@@ -1555,6 +1570,10 @@ class DingTalkAutoReplyWorker:
         if delta_ms is None:
             return False
         return delta_ms <= CALENDAR_PENDING_INVITE_EVENT_MATCH_SECONDS * 1000
+
+    @staticmethod
+    def _calendar_event_has_change_time(event: DwsCalendarEvent) -> bool:
+        return event.created_ms > 0 or event.updated_ms > 0
 
     @staticmethod
     def _calendar_event_change_delta_ms(
@@ -1685,8 +1704,9 @@ class DingTalkAutoReplyWorker:
         lines = [
             "日历冲突检查：",
             "有人发来新的日程邀请，且时间已经被已有日程占用。",
-            "请基于标题、时间、组织者、会议描述和重叠会议判断是否接受、暂定、拒绝或追问；会议描述为空不是自动追问条件。",
-            "如果标题和上下文已经足够判断，可以 action 输出 no_reply，并设置 calendar_response_status 为 accepted、tentative 或 declined。",
+            "请先结合最近上下文事项、会议标题、时间、组织者、会议描述和重叠会议判断是否有必要参加；会议描述为空不是自动追问条件。",
+            "如果最近事项和标题已经能判断本人有必要参加，action 输出 no_reply，并设置 calendar_response_status 为 accepted。",
+            "如果最近事项和标题能判断没有必要参加或仅需保留观察，可以 action 输出 no_reply，并设置 calendar_response_status 为 declined 或 tentative。",
             "如果理由充分但需要聊天同步，回复中说明建议接受这场会议并调整或拒绝哪个重叠会议；如果信息不足，再回复对方原因并请补充。",
             "",
             f"新会议：{context.invite.title or '未命名日程'}",
@@ -1721,12 +1741,12 @@ class DingTalkAutoReplyWorker:
         lines = [
             "日历规则判断：",
             "有人发来新的日程邀请，当前未发现同时间段已有日程冲突。",
-            "请基于标题、时间、组织者和会议描述判断是否接受、暂定、拒绝或追问；会议描述为空不是自动追问条件。",
+            "请先结合最近上下文事项、会议标题、时间、组织者和会议描述判断是否有必要参加；会议描述为空不是自动追问条件。",
             "如果日程是在要求审批、批阅、review、反馈或评论某个文档内容，reply_text 必须是：请直接@我文档让我批阅即可，只有存疑再约会。",
-            f"如果标题或描述足以判断 {principal_display_name()} 本人参与有业务价值，action 输出 no_reply，并设置 calendar_response_status 为 accepted。",
-            "如果标题或描述足以判断先保留但不确认，action 输出 no_reply，并设置 calendar_response_status 为 tentative。",
-            "如果标题或描述足以判断本人参加无价值，action 输出 no_reply，并设置 calendar_response_status 为 declined。",
-            "如果标题、时间、组织者和描述仍不足以判断，再追问补充信息或 handoff。",
+            f"如果最近事项和标题足以判断 {principal_display_name()} 本人有必要参加，action 输出 no_reply，并设置 calendar_response_status 为 accepted。",
+            "如果最近事项和标题足以判断先保留但不确认，action 输出 no_reply，并设置 calendar_response_status 为 tentative。",
+            "如果最近事项和标题足以判断本人参加无价值，action 输出 no_reply，并设置 calendar_response_status 为 declined。",
+            "如果结合最近事项、标题、时间、组织者和描述后仍不足以判断，再追问补充信息或 handoff。",
             "",
             f"新会议：{context.invite.title or '未命名日程'}",
             f"时间：{context.invite.start_time} - {context.invite.end_time}",
@@ -1942,6 +1962,8 @@ class DingTalkAutoReplyWorker:
         content = message.content.strip()
         if DINGTALK_APPROVAL_LINK_PATTERN.search(content):
             return False
+        if DingTalkAutoReplyWorker._has_dingtalk_minutes_link(content):
+            return False
         if DingTalkAutoReplyWorker._has_rendered_non_text_prefix(content):
             return True
         if content.startswith("[dingtalk://"):
@@ -1971,12 +1993,21 @@ class DingTalkAutoReplyWorker:
         ) or RENDERED_NON_TEXT_PREFIX_PATTERN.match(content) is not None
 
     @staticmethod
+    def _has_dingtalk_minutes_link(content: str) -> bool:
+        return any(
+            DingTalkAutoReplyWorker._minutes_task_uuid_from_url(match.group(0))
+            for match in DINGTALK_MINUTES_LINK_PATTERN.finditer(content)
+        )
+
+    @staticmethod
     def _is_link_caption_only(content: str) -> bool:
         if not MEDIA_OR_LINK_PATTERN.search(content):
             return False
         if not DINGTALK_INTERNAL_OR_RENDERED_MEDIA_PATTERN.search(content):
             return False
         if DINGTALK_DOC_URL_PATTERN.search(content):
+            return False
+        if DingTalkAutoReplyWorker._has_dingtalk_minutes_link(content):
             return False
         if DINGTALK_APPROVAL_LINK_PATTERN.search(content):
             return False
@@ -1993,6 +2024,8 @@ class DingTalkAutoReplyWorker:
         if not DINGTALK_INTERNAL_OR_RENDERED_MEDIA_PATTERN.search(content):
             return False
         if DINGTALK_DOC_URL_PATTERN.search(content):
+            return False
+        if DingTalkAutoReplyWorker._has_dingtalk_minutes_link(content):
             return False
         if DINGTALK_APPROVAL_LINK_PATTERN.search(content):
             return False
@@ -2569,6 +2602,8 @@ class DingTalkAutoReplyWorker:
         referenced_messages = self._referenced_document_messages(
             new_messages, context_messages
         )
+        for task_uuid in self._dingtalk_minutes_ids(referenced_messages):
+            documents.append(self._read_linked_minutes(task_uuid))
         for url in self._dingtalk_doc_urls(referenced_messages):
             documents.append(self._read_linked_alidocs_node(url))
         for file_name in self._referenced_file_names(new_messages, context_messages):
@@ -2833,6 +2868,138 @@ class DingTalkAutoReplyWorker:
             markdown="\n".join(lines),
         )
 
+    def _read_linked_minutes(self, task_uuid: str) -> LinkedDocumentContext:
+        info = self.dws.get_minutes_info(task_uuid)
+        summary = self.dws.get_minutes_summary(task_uuid)
+        todos = self.dws.get_minutes_todos(task_uuid)
+        transcription = self.dws.get_minutes_transcription(task_uuid)
+        markdown = self._format_minutes_material(
+            task_uuid,
+            info,
+            summary,
+            todos,
+            transcription,
+        )
+        title = self._minutes_title(info) or f"AI 听记 {task_uuid}"
+        return LinkedDocumentContext(
+            url=self._minutes_url(info),
+            title=title,
+            markdown=markdown,
+        )
+
+    @classmethod
+    def _format_minutes_material(
+        cls,
+        task_uuid: str,
+        info: dict[str, object],
+        summary: dict[str, object],
+        todos: dict[str, object],
+        transcription: dict[str, object],
+    ) -> str:
+        lines = [
+            "AI 听记材料:",
+            f"taskUuid: {task_uuid}",
+        ]
+        title = cls._minutes_title(info)
+        if title:
+            lines.append(f"标题: {title}")
+        url = cls._minutes_url(info)
+        if url:
+            lines.append(f"链接: {url}")
+        summary_text = cls._minutes_summary_text(summary)
+        if summary_text:
+            lines.extend(["", "摘要:", summary_text[:MINUTES_SUMMARY_MAX_CHARS]])
+        todo_lines = cls._minutes_todo_lines(todos)
+        if todo_lines:
+            lines.extend(["", "处理事项:"])
+            lines.extend(todo_lines)
+        transcription_lines = cls._minutes_transcription_lines(transcription)
+        if transcription_lines:
+            lines.extend(["", "文字稿预览:"])
+            lines.extend(transcription_lines)
+        return "\n".join(lines)
+
+    @classmethod
+    def _minutes_title(cls, payload: dict[str, object]) -> str:
+        data = cls._payload_data(payload)
+        title = data.get("title")
+        return str(title).strip() if title else ""
+
+    @classmethod
+    def _minutes_url(cls, payload: dict[str, object]) -> str:
+        data = cls._payload_data(payload)
+        url = data.get("url")
+        return str(url).strip() if url else ""
+
+    @classmethod
+    def _minutes_summary_text(cls, payload: dict[str, object]) -> str:
+        data = cls._payload_data(payload)
+        for key in ("fullSummary", "summary", "markdown", "content", "text"):
+            value = data.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        return ""
+
+    @classmethod
+    def _minutes_todo_lines(cls, payload: dict[str, object]) -> list[str]:
+        data = cls._payload_data(payload)
+        values: list[str] = []
+        actions = data.get("actions")
+        if isinstance(actions, list):
+            for action in actions:
+                text = cls._minutes_todo_text(action)
+                if text:
+                    values.append(text)
+        todo_list = data.get("dingtalkTodoList")
+        if isinstance(todo_list, list):
+            for item in todo_list:
+                text = cls._minutes_todo_text(item)
+                if text:
+                    values.append(text)
+        result: list[str] = []
+        seen: set[str] = set()
+        for value in values:
+            if value in seen:
+                continue
+            seen.add(value)
+            result.append(f"- {value}")
+        return result
+
+    @classmethod
+    def _minutes_todo_text(cls, value: object) -> str:
+        if isinstance(value, str):
+            stripped = value.strip()
+            if stripped.startswith("{") and stripped.endswith("}"):
+                try:
+                    decoded = json.loads(stripped)
+                except json.JSONDecodeError:
+                    return stripped
+                return cls._minutes_todo_text(decoded)
+            return stripped
+        if isinstance(value, dict):
+            for key in ("title", "value", "content", "text"):
+                text = value.get(key)
+                if isinstance(text, str) and text.strip():
+                    return text.strip()
+        return ""
+
+    @classmethod
+    def _minutes_transcription_lines(cls, payload: dict[str, object]) -> list[str]:
+        data = cls._payload_data(payload)
+        paragraphs = data.get("paragraphList")
+        if not isinstance(paragraphs, list):
+            return []
+        lines: list[str] = []
+        for paragraph in paragraphs[:MINUTES_TRANSCRIPTION_PARAGRAPH_LIMIT]:
+            if not isinstance(paragraph, dict):
+                continue
+            text = str(paragraph.get("paragraph") or "").strip()
+            if not text:
+                continue
+            speaker = str(paragraph.get("nickName") or "发言人").strip()
+            lines.append(f"- {speaker}: {text}")
+        return lines
+
     @staticmethod
     def _referenced_document_messages(
         new_messages: list[DingTalkMessage],
@@ -3093,10 +3260,40 @@ class DingTalkAutoReplyWorker:
                     urls.append(url)
         return urls
 
+    @classmethod
+    def _dingtalk_minutes_ids(cls, messages: list[DingTalkMessage]) -> list[str]:
+        task_uuids: list[str] = []
+        seen: set[str] = set()
+        for message in messages:
+            for text in (message.content, message.quoted_content or ""):
+                for match in DINGTALK_MINUTES_LINK_PATTERN.finditer(text):
+                    task_uuid = cls._minutes_task_uuid_from_url(match.group(0))
+                    if not task_uuid or task_uuid in seen:
+                        continue
+                    seen.add(task_uuid)
+                    task_uuids.append(task_uuid)
+        return task_uuids
+
+    @staticmethod
+    def _minutes_task_uuid_from_url(url: str) -> str:
+        cleaned = url.rstrip(".,;，。；")
+        parsed = urlsplit(cleaned)
+        query = parse_qs(parsed.query)
+        minutes_id = query.get("minutesId", [""])[0]
+        if minutes_id.strip():
+            return minutes_id.strip()
+        path = parsed.path.rstrip("/")
+        if "/app/transcribes/" in path:
+            return path.rsplit("/", 1)[-1].strip()
+        return ""
+
     @staticmethod
     def _payload_data(payload: dict[str, object]) -> dict[str, object]:
         data = payload.get("data")
-        return data if isinstance(data, dict) else payload
+        if isinstance(data, dict):
+            return data
+        result = payload.get("result")
+        return result if isinstance(result, dict) else payload
 
     @classmethod
     def _aitable_tables_from_payload(

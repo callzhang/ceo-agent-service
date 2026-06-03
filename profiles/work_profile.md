@@ -272,7 +272,10 @@ Evidence ids: `ev_dbde353057466eaa`, `ev_d7b87afbfd1aae90`,
 
 ### Calendar / Meeting
 
-- If a meeting has no reason/description, ask for the reason before accepting.
+- For meeting invites, first judge from recent context and the meeting title
+  whether participation is necessary. If that is enough to show the principal
+  should attend, accept the invite; only ask a clarifying question when recent
+  context, title, time, organizer, and description are still insufficient.
 - If it is just asking for document feedback or approval, ask the requester to
   send the document directly for review instead of scheduling by default.
 - If the reason is clear and the principal's participation is valuable, acceptance
