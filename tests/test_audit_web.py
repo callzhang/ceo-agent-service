@@ -75,8 +75,7 @@ def test_render_attempt_list_shows_history_rows(tmp_path: Path):
     assert f"/attempts/{attempt_id}" in html
     assert "技术部" in html
     assert "Xiaomin" in html
-    assert "send_reply" in html
-    assert "sent" in html
+    assert "💬 Sent" in html
     assert "attempt-feed" in html
     assert "attempt-item" in html
     assert "attempt-line" in html
@@ -1148,11 +1147,10 @@ def test_render_attempt_list_shows_pending_reply_tasks(tmp_path: Path):
 
     html = render_attempt_list(store)
 
-    assert "Queued / processing" in html
+    assert "💬 Pending" in html
     assert "#task-1" in html
     assert "HR管理" in html
     assert "Mina" in html
-    assert "pending" in html
     assert "@Alex Chen(明哥) 这个候选人怎么看？" in html
 
 
@@ -1301,6 +1299,8 @@ def test_attempt_detail_renders_oa_metadata(tmp_path: Path):
     assert "通过" in html
     assert "材料完整，同意。" in html
     assert "https://aflow.dingtalk.com/detail?procInstId=proc-1" in html
+    assert "💬 Skipped" in html
+    assert "🧾 通过" in html
 
 
 def test_attempt_history_and_detail_render_calendar_response_metadata(
@@ -1326,14 +1326,15 @@ def test_attempt_history_and_detail_render_calendar_response_metadata(
     status, detail_html = render_attempt_detail(store, attempt_id)
 
     assert status == 200
-    assert "Calendar: accepted" in list_html
+    assert "💬 Skipped" in list_html
+    assert "📆 Accepted" in list_html
     assert "Calendar response" in detail_html
     assert "event-1" in detail_html
     assert "accepted" in detail_html
     assert "Calendar response result" in detail_html
 
 
-def test_render_attempt_list_uses_distinct_action_and_status_pill_classes(
+def test_render_attempt_list_uses_unified_emoji_action_pills(
     tmp_path: Path,
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
@@ -1351,9 +1352,9 @@ def test_render_attempt_list_uses_distinct_action_and_status_pill_classes(
 
     html = render_attempt_list(store)
 
-    assert 'class="pill action-no_reply"' in html
-    assert 'class="pill status-skipped"' in html
-    assert ".action-no_reply" in html
+    assert 'class="pill status-action">💬 Skipped</span>' in html
+    assert '<span class="pill action-no_reply"' not in html
+    assert '<span class="pill status-skipped"' not in html
 
 
 def test_render_attempt_detail_allows_explained_empty_documents(tmp_path: Path):
@@ -1434,7 +1435,7 @@ def test_render_attempt_list_shows_context_only_info_icon_instead_of_warning(
     assert (
         html.index('href="/attempts/1">#1</a>')
         < html.index('class="attempt-info"')
-        < html.index('class="pill action-send_reply"')
+        < html.index('class="pill status-action"')
     )
     assert "No tools were used; this answer was generated from conversation context only." in html
 
@@ -1638,8 +1639,7 @@ def test_render_codex_session_list_shows_conversation_sessions(tmp_path: Path):
     assert "/codex/session-1" in html
     assert "History" in html
     assert f"/attempts/{attempt_id}" in html
-    assert "send_reply" in html
-    assert "sent" in html
+    assert "💬 Sent" in html
 
 
 def test_render_codex_session_detail_uses_local_rendered_history(

@@ -207,10 +207,6 @@ a.nav-item:hover{color:var(--ink);text-decoration:none;border-color:var(--ink)}
 .prompt-tab:hover{text-decoration:none;color:var(--ink)}
 .prompt-tab.active{background:var(--ink);color:#fff}
 .pill{display:inline-flex;align-items:center;min-height:24px;padding:3px 9px;border-radius:999px;background:var(--surface);color:var(--steel);border:1px solid var(--hairline);font-family:"Geist Mono","SF Mono",Menlo,Consolas,monospace;font-size:12px;line-height:1.3;white-space:nowrap}
-.action-no_reply{background:rgba(55,114,207,.10);color:#245aa5;border-color:rgba(55,114,207,.24)}
-.action-send_reply,.action-ask_clarifying_question{background:rgba(0,212,164,.10);color:#006b55;border-color:rgba(0,180,138,.24)}
-.action-handoff_to_human{background:rgba(195,125,13,.12);color:#8a5a08;border-color:rgba(195,125,13,.24)}
-.action-stop_with_error{background:rgba(212,86,86,.12);color:#9a2f2f;border-color:rgba(212,86,86,.24)}
 .status-sent{background:rgba(0,212,164,.12);color:#006b55;border-color:rgba(0,180,138,.28)}
 .status-resolved{background:rgba(0,212,164,.12);color:#006b55;border-color:rgba(0,180,138,.28)}
 .status-pending,.status-processing{background:rgba(55,114,207,.10);color:#245aa5;border-color:rgba(55,114,207,.24)}
@@ -1430,9 +1426,7 @@ def render_attempt_list(
             "<div class=\"attempt-title\">"
             f"<a class=\"attempt-id\" href=\"/attempts/{attempt.id}\">#{attempt.id}</a>"
             f"{info_html}"
-            f"<span class=\"pill action-{escape(attempt.action)}\">{escape(attempt.action)}</span>"
-            f"<span class=\"pill status-{escape(attempt.send_status)}\">{escape(attempt.send_status)}</span>"
-            f"{_external_action_pills(attempt)}"
+            f"{_attempt_action_pills(attempt)}"
             f"<div class=\"attempt-main\">{escape(attempt.conversation_title)}</div>"
             f"<div class=\"attempt-meta\">{escape(attempt.trigger_sender)}</div>"
             "</div>"
@@ -1596,8 +1590,7 @@ def _reply_task_item(task: ReplyTask) -> str:
         "<div class=\"attempt-head\">"
         "<div class=\"attempt-title\">"
         f"<span class=\"attempt-id\">#task-{task.id}</span>"
-        "<span class=\"pill action-send_reply\">Queued / processing</span>"
-        f"<span class=\"pill status-{escape(task.status)}\">{escape(task.status)}</span>"
+        f"<span class=\"pill status-action\">💬 {_display_action_state(task.status)}</span>"
         f"<div class=\"attempt-main\">{escape(task.conversation_title)}</div>"
         f"<div class=\"attempt-meta\">{escape(task.trigger_sender)}</div>"
         "</div>"
@@ -2733,9 +2726,7 @@ def _review_panel(
         "<section class=\"review-grid\">"
         "<div class=\"card\">"
         "<div class=\"reply-meta\">"
-        f"<span class=\"pill action-{escape(attempt.action)}\">{escape(attempt.action)}</span>"
-        f"<span class=\"pill status-{escape(attempt.send_status)}\">{escape(attempt.send_status)}</span>"
-        f"{_external_action_pills(attempt)}"
+        f"{_attempt_action_pills(attempt)}"
         "</div>"
         "<h2>Trigger</h2>"
         f"<pre class=\"trigger-pre\">{escape(_trigger_text(attempt))}</pre>"
@@ -2858,15 +2849,43 @@ def _calendar_metadata_card(attempt: ReplyAttempt) -> str:
     )
 
 
-def _external_action_pills(attempt: ReplyAttempt) -> str:
-    labels = []
+def _attempt_action_pills(attempt: ReplyAttempt) -> str:
+    labels = [f"💬 {_display_action_state(attempt.send_status)}"]
     if attempt.oa_action.strip():
-        labels.append(f"OA: {attempt.oa_action.strip()}")
+        labels.append(f"🧾 {attempt.oa_action.strip()}")
     if attempt.calendar_response_status.strip():
-        labels.append(f"Calendar: {attempt.calendar_response_status.strip()}")
+        labels.append(f"📆 {_display_action_state(attempt.calendar_response_status)}")
     return "".join(
         f"<span class=\"pill status-action\">{escape(label)}</span>"
         for label in labels
+    )
+
+
+def _attempt_action_label_text(attempt: ReplyAttempt) -> str:
+    return " · ".join(
+        label
+        for label in (
+            f"💬 {_display_action_state(attempt.send_status)}",
+            (
+                f"🧾 {attempt.oa_action.strip()}"
+                if attempt.oa_action.strip()
+                else ""
+            ),
+            (
+                f"📆 {_display_action_state(attempt.calendar_response_status)}"
+                if attempt.calendar_response_status.strip()
+                else ""
+            ),
+        )
+        if label
+    )
+
+
+def _display_action_state(value: str) -> str:
+    return " ".join(
+        part.capitalize()
+        for part in value.replace("-", "_").split("_")
+        if part
     )
 
 
@@ -2943,15 +2962,14 @@ def _related_history_card(attempts: list[ReplyAttempt]) -> str:
             f"<td>{_attempt_link(attempt)}</td>"
             f"<td>{escape(attempt.created_at)}</td>"
             f"<td>{escape(attempt.trigger_sender)}</td>"
-            f"<td><span class=\"pill action-{escape(attempt.action)}\">{escape(attempt.action)}</span></td>"
-            f"<td><span class=\"pill status-{escape(attempt.send_status)}\">{escape(attempt.send_status)}</span></td>"
+            f"<td>{_attempt_action_pills(attempt)}</td>"
             f"<td>{escape(_excerpt(attempt.trigger_text, 120))}</td>"
             "</tr>"
         )
     return (
         "<section class=\"card\"><h2>Related history</h2>"
         "<table><thead><tr><th>Attempt</th><th>Time</th><th>Sender</th>"
-        "<th>Action</th><th>Status</th><th>Trigger</th></tr></thead><tbody>"
+        "<th>Actions</th><th>Trigger</th></tr></thead><tbody>"
         + "".join(rows)
         + "</tbody></table></section>"
     )
@@ -3024,7 +3042,7 @@ def _review_link(attempt: ReplyAttempt) -> str:
 def _attempt_link(attempt: ReplyAttempt) -> str:
     return (
         f"<a href=\"/attempts/{attempt.id}\">"
-        f"#{attempt.id} · {escape(attempt.action)} · {escape(attempt.send_status)}</a>"
+        f"#{attempt.id} · {escape(_attempt_action_label_text(attempt))}</a>"
     )
 
 
