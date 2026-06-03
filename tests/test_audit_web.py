@@ -1,6 +1,7 @@
 import os
 import subprocess
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from fastapi.testclient import TestClient
 
@@ -63,6 +64,25 @@ def seed_attempt(store: AutoReplyStore) -> int:
         send_status="sent",
     )
     return attempt_id
+
+
+def test_format_local_time_converts_utc_sqlite_timestamp():
+    assert audit_web_module._format_local_time(
+        "2026-06-03 09:55:59",
+        local_tz=ZoneInfo("America/Los_Angeles"),
+    ) == "2026-06-03 02:55:59"
+
+
+def test_format_local_time_converts_iso_timestamp_with_timezone():
+    assert audit_web_module._format_local_time(
+        "2026-06-03T09:55:59Z",
+        local_tz=ZoneInfo("Asia/Shanghai"),
+    ) == "2026-06-03 17:55:59"
+
+
+def test_format_local_time_preserves_empty_or_unknown_value():
+    assert audit_web_module._format_local_time("") == ""
+    assert audit_web_module._format_local_time("not-a-time") == "not-a-time"
 
 
 def test_render_attempt_list_shows_history_rows(tmp_path: Path):

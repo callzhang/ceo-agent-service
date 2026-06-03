@@ -2,6 +2,7 @@ import json
 import asyncio
 from collections.abc import Iterable
 from collections import deque
+from datetime import datetime, timezone, tzinfo
 from html import escape
 from itertools import count, zip_longest
 import os
@@ -88,6 +89,8 @@ from app.store import (
     UserFeedbackItem,
 )
 from app.user_prompt_blocks import USER_PROMPT_BLOCKS, UserPromptBlock
+
+DISPLAY_TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
 from app.worker import DingTalkAutoReplyWorker
 
 
@@ -1300,6 +1303,24 @@ def _page_href(base_path: str, page: int) -> str:
     return f"{base_path}?page={page}"
 
 
+def _format_local_time(value: str, *, local_tz: tzinfo | None = None) -> str:
+    raw = value.strip()
+    if not raw:
+        return ""
+    local_timezone = local_tz or datetime.now().astimezone().tzinfo
+    normalized = raw.replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        try:
+            parsed = datetime.strptime(raw, DISPLAY_TIME_FORMAT)
+        except ValueError:
+            return value
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(local_timezone).strftime(DISPLAY_TIME_FORMAT)
+
+
 def _pagination_range(page: int, limit: int | None, total_count: int) -> str:
     if total_count <= 0:
         return "0-0"
@@ -1436,7 +1457,7 @@ def render_attempt_list(
             f"<div class=\"attempt-meta\">{escape(attempt.trigger_sender)}</div>"
             "</div>"
             "<div class=\"attempt-side\">"
-            f"<time class=\"attempt-time\">{escape(attempt.created_at)}</time>"
+            f"<time class=\"attempt-time\">{escape(_format_local_time(attempt.created_at))}</time>"
             "<div class=\"attempt-actions\">"
             f"{_review_link(attempt)}"
             f"{_codex_link(codex_session_id)}"
@@ -1517,7 +1538,7 @@ def render_user_feedback_list(
             f"<div class=\"user-feedback-comment\">{escape(comment)}</div>"
             f"{context_html}"
             "</td>"
-            f"<td>{escape(item.received_at or item.updated_at)}</td>"
+            f"<td>{escape(_format_local_time(item.received_at or item.updated_at))}</td>"
             f"<td><div class=\"user-feedback-actions\">{attempt_link}{resolve_action}</div></td>"
             "</tr>"
         )
@@ -1601,7 +1622,7 @@ def _reply_task_item(task: ReplyTask) -> str:
         f"<div class=\"attempt-meta\">{escape(task.trigger_sender)}</div>"
         "</div>"
         "<div class=\"attempt-side\">"
-        f"<time class=\"attempt-time\">{escape(task.updated_at)}</time>"
+        f"<time class=\"attempt-time\">{escape(_format_local_time(task.updated_at))}</time>"
         "</div>"
         "</div>"
         "<div class=\"attempt-lines\">"
@@ -1759,7 +1780,7 @@ def render_error_list(
         rows.append(
             "<tr>"
             f"<td>#{error.id}</td>"
-            f"<td>{escape(error.created_at)}</td>"
+            f"<td>{escape(_format_local_time(error.created_at))}</td>"
             f"<td>{escape(error.conversation_id or '')}</td>"
             f"<td>{escape(error.message_id or '')}</td>"
             f"<td><span class=\"pill status-failed\">{escape(error.kind)}</span></td>"
@@ -2503,9 +2524,9 @@ def _attempt_detail_body(
         ("send status", attempt.send_status),
         ("send error", attempt.send_error),
         ("retry count", str(attempt.retry_count)),
-        ("created", attempt.created_at),
-        ("updated", attempt.updated_at),
-        ("reviewed", attempt.reviewed_at or ""),
+        ("created", _format_local_time(attempt.created_at)),
+        ("updated", _format_local_time(attempt.updated_at)),
+        ("reviewed", _format_local_time(attempt.reviewed_at or "")),
     ]
     rows = "".join(
         f"<div class=\"muted\">{escape(label)}</div><div>{escape(value)}</div>"
@@ -2712,7 +2733,7 @@ def _feedback_event_html(event: FeedbackEvent) -> str:
         "<article class=\"feedback-event\">"
         "<div class=\"feedback-event-head\">"
         f"<span class=\"feedback-rating\">{escape(rating)}</span>"
-        f"<time class=\"attempt-time\">{escape(event.received_at or event.updated_at)}</time>"
+        f"<time class=\"attempt-time\">{escape(_format_local_time(event.received_at or event.updated_at))}</time>"
         "</div>"
         f"<div class=\"feedback-comment\">{escape(comment)}</div>"
         f"<p class=\"muted\">source: {escape(event.source)}</p>"
@@ -3002,7 +3023,7 @@ def _related_history_card(attempts: list[ReplyAttempt]) -> str:
         rows.append(
             "<tr>"
             f"<td>{_attempt_link(attempt)}</td>"
-            f"<td>{escape(attempt.created_at)}</td>"
+            f"<td>{escape(_format_local_time(attempt.created_at))}</td>"
             f"<td>{escape(attempt.trigger_sender)}</td>"
             f"<td>{_attempt_action_pills(attempt)}</td>"
             f"<td>{escape(_excerpt(attempt.trigger_text, 120))}</td>"

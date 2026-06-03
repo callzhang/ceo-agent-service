@@ -191,7 +191,7 @@ def test_search_documents_command_shape():
 def test_download_doc_command_shape():
     client = DwsClient(dws_bin="dws")
 
-    command = client.build_download_doc_command("node-1")
+    command = client.build_download_doc_command("node-1", "/tmp/doc-download")
 
     assert command == [
         "dws",
@@ -199,9 +199,26 @@ def test_download_doc_command_shape():
         "download",
         "--node",
         "node-1",
+        "--output",
+        "/tmp/doc-download",
         "--format",
         "json",
     ]
+
+
+def test_download_doc_supplies_required_output_path():
+    client = RecordingDwsClient(
+        {"success": True, "resourceUrl": "https://example.test/a"}
+    )
+
+    payload = client.download_doc("node-1")
+
+    assert payload["success"] is True
+    command = client.commands[0]
+    output_index = command.index("--output") + 1
+    assert command[:5] == ["dws", "doc", "download", "--node", "node-1"]
+    assert command[output_index]
+    assert command[output_index] != "--format"
 
 
 def test_get_resource_download_url_command_uses_mcp_chat_surface():

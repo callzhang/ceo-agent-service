@@ -2,8 +2,10 @@ import json
 import os
 import re
 import subprocess
+import tempfile
 import time
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, unquote, urlencode
 from urllib.request import Request, urlopen
@@ -723,13 +725,15 @@ class DwsClient:
             "json",
         ]
 
-    def build_download_doc_command(self, node: str) -> list[str]:
+    def build_download_doc_command(self, node: str, output_path: str) -> list[str]:
         return [
             self.dws_bin,
             "doc",
             "download",
             "--node",
             node,
+            "--output",
+            output_path,
             "--format",
             "json",
         ]
@@ -1142,7 +1146,9 @@ class DwsClient:
         return self.parse_document_search_results(payload)
 
     def download_doc(self, node: str) -> dict[str, Any]:
-        payload = self.run_json(self.build_download_doc_command(node))
+        with tempfile.TemporaryDirectory(prefix="ceo-agent-dws-doc-") as temp_dir:
+            output_path = str(Path(temp_dir) / "download")
+            payload = self.run_json(self.build_download_doc_command(node, output_path))
         if not isinstance(payload, dict):
             raise DwsError("invalid doc download response")
         return payload
