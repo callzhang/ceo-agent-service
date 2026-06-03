@@ -539,7 +539,8 @@ def test_thread_prompt_references_calendar_rules():
     assert "是否需要详细描述由你判断" in prompt
     assert "最近上下文事项和会议标题" in prompt
     assert "如果最近事项和标题已经能判断有必要参加，直接接受日程" in prompt
-    assert "仍判断不了，再提问" in prompt
+    assert "优先在日历中评论" in prompt
+    assert "fallback 到聊天文字追问" in prompt
 
 
 def test_thread_prompt_requires_minutes_material_action_item_handling():

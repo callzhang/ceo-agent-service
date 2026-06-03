@@ -85,7 +85,7 @@ class WorkerSettings(BaseModel):
     workspace: Path = DEFAULT_WORKSPACE
     db_path: Path = _default_data_dir() / "auto-reply.sqlite3"
     corpus_dir: Path = _default_corpus_dir()
-    dry_run: bool = True
+    dry_run: bool = False
     poll_interval_seconds: PositiveInt = 300
     batch_seconds: PositiveInt = 120
     ding_robot_code: str | None = None
@@ -671,6 +671,8 @@ def send_attempt_command(settings: WorkerSettings, attempt_id: int) -> dict[str,
         raise SystemExit(
             f"reply attempt {attempt_id} is not a dry_run attempt: {attempt.send_status}"
         )
+    if attempt.calendar_event_id.strip() and attempt.calendar_response_status.strip():
+        return _send_calendar_attempt(settings, store, attempt)
     if attempt.action not in {
         CodexAction.SEND_REPLY.value,
         CodexAction.ASK_CLARIFYING_QUESTION.value,
@@ -779,6 +781,70 @@ def send_attempt_command(settings: WorkerSettings, attempt_id: int) -> dict[str,
         "send_status": "sent",
         "reply_text_excerpt": _excerpt(reply_text),
         "send_result_excerpt": _excerpt(json.dumps(send_result or {}, ensure_ascii=False)),
+    }
+    print(json.dumps(result, ensure_ascii=False), flush=True)
+    return result
+
+
+def _send_calendar_attempt(
+    settings: WorkerSettings,
+    store: AutoReplyStore,
+    attempt,
+) -> dict[str, object]:
+    dws = DwsClient(
+        ding_robot_code=settings.ding_robot_code,
+        ding_robot_name=settings.ding_robot_name,
+        ding_receiver_user_id=settings.ding_receiver_user_id,
+        transient_retry_attempts=settings.dws_transient_retry_attempts,
+        transient_retry_delay_seconds=settings.dws_transient_retry_delay_seconds,
+    )
+    event_id = attempt.calendar_event_id.strip()
+    response_status = attempt.calendar_response_status.strip()
+    try:
+        action_result = dws.respond_calendar_event(event_id, response_status)
+    except Exception as exc:
+        store.update_reply_attempt(
+            attempt.id,
+            send_status="failed",
+            send_error=str(exc),
+        )
+        store.record_error(
+            attempt.conversation_id,
+            attempt.trigger_message_id,
+            "calendar_response",
+            str(exc),
+        )
+        raise
+
+    store.update_reply_attempt(
+        attempt.id,
+        calendar_response_result_json=json.dumps(
+            action_result,
+            ensure_ascii=False,
+            sort_keys=True,
+        ),
+        send_status="skipped",
+        send_error="",
+        retry_count=0,
+    )
+    if attempt.codex_reason:
+        store.record_error(
+            attempt.conversation_id,
+            attempt.trigger_message_id,
+            "calendar_response",
+            f"{response_status}: {attempt.codex_reason}",
+        )
+    result = {
+        "attempt_id": attempt.id,
+        "conversation_title": attempt.conversation_title,
+        "trigger_sender": attempt.trigger_sender,
+        "trigger_text_excerpt": _excerpt(attempt.trigger_text),
+        "send_status": "skipped",
+        "calendar_event_id": event_id,
+        "calendar_response_status": response_status,
+        "calendar_response_result_excerpt": _excerpt(
+            json.dumps(action_result or {}, ensure_ascii=False)
+        ),
     }
     print(json.dumps(result, ensure_ascii=False), flush=True)
     return result

@@ -3429,6 +3429,14 @@ class DingTalkAutoReplyWorker:
         *,
         raise_on_delivery_failure: bool = False,
     ) -> bool:
+        if attempt.calendar_event_id.strip() and attempt.calendar_response_status.strip():
+            return self._retry_existing_calendar_attempt(
+                conversation,
+                trigger,
+                new_messages,
+                attempt,
+                raise_on_delivery_failure=raise_on_delivery_failure,
+            )
         if attempt.action not in {
             CodexAction.SEND_REPLY.value,
             CodexAction.ASK_CLARIFYING_QUESTION.value,
@@ -3479,6 +3487,61 @@ class DingTalkAutoReplyWorker:
             else None,
             raise_on_delivery_failure=raise_on_delivery_failure,
         )
+        return True
+
+    def _retry_existing_calendar_attempt(
+        self,
+        conversation: DingTalkConversation,
+        trigger: DingTalkMessage,
+        new_messages: list[DingTalkMessage],
+        attempt: ReplyAttempt,
+        *,
+        raise_on_delivery_failure: bool = False,
+    ) -> bool:
+        event_id = attempt.calendar_event_id.strip()
+        response_status = attempt.calendar_response_status.strip()
+        if not event_id or not response_status:
+            return False
+        try:
+            action_result = self.dws.respond_calendar_event(event_id, response_status)
+        except Exception as exc:
+            self.store.update_reply_attempt(
+                attempt.id,
+                send_status="failed",
+                send_error=str(exc),
+            )
+            self.store.record_error(
+                conversation.open_conversation_id,
+                trigger.open_message_id,
+                "calendar_response",
+                str(exc),
+            )
+            self._notify(
+                title=f"CEO calendar response failed: {conversation.title}",
+                message=str(exc)[:120],
+                conversation=conversation,
+            )
+            if raise_on_delivery_failure:
+                raise ReplyDeliveryError(str(exc)) from exc
+            return True
+        self.store.update_reply_attempt(
+            attempt.id,
+            calendar_response_result_json=json.dumps(
+                action_result,
+                ensure_ascii=False,
+                sort_keys=True,
+            ),
+            send_status="skipped",
+            send_error="",
+        )
+        self._mark_seen(new_messages)
+        if attempt.codex_reason:
+            self.store.record_error(
+                conversation.open_conversation_id,
+                trigger.open_message_id,
+                "calendar_response",
+                f"{response_status}: {attempt.codex_reason}",
+            )
         return True
 
     def _handoff_ding_text(

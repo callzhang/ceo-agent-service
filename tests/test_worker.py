@@ -2014,6 +2014,87 @@ def test_rendered_calendar_card_without_message_type_uses_unique_pending_invite_
     assert attempt.calendar_response_status == "tentative"
 
 
+def test_existing_dry_run_calendar_response_is_executed_without_rerunning_codex(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message("[日程]", single_chat=True)
+    dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
+    codex = FakeCodex(
+        CodexDecision(
+            action=CodexAction.SEND_REPLY,
+            reply_text="不应该重新生成",
+        )
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+    attempt_id = worker.store.record_reply_attempt(
+        conversation_id="cid-1",
+        conversation_title="Friday",
+        trigger_message_id=trigger.open_message_id,
+        trigger_sender=trigger.sender_name,
+        trigger_text=trigger.content,
+        action="no_reply",
+        sensitivity_kind="general",
+        codex_reason="标题足以判断需要接受。",
+        calendar_event_id="invite-1",
+        calendar_response_status="accepted",
+        send_status="dry_run",
+    )
+
+    worker.run_once()
+
+    assert codex.calls == []
+    assert dws.calendar_responses == [("invite-1", "accepted")]
+    attempt = worker.store.get_reply_attempt(attempt_id)
+    assert attempt is not None
+    assert attempt.send_status == "skipped"
+    assert attempt.send_error == ""
+    assert attempt.calendar_response_result_json == '{"success": true}'
+    assert worker.store.has_seen(trigger.open_message_id) is True
+
+
+def test_calendar_response_respects_worker_dry_run(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message("[日程]", single_chat=True, message_type="calendar")
+    message_time_ms = int(
+        datetime(2026, 5, 13, 18, 0, 0, tzinfo=ZoneInfo("Asia/Shanghai")).timestamp()
+        * 1000
+    )
+    invite = DwsCalendarEvent(
+        event_id="invite-1",
+        title="客户方案确认",
+        start_time="2026-05-16T09:00:00+08:00",
+        end_time="2026-05-16T10:00:00+08:00",
+        organizer=trigger.sender_name,
+        self_response_status="needsAction",
+        status="confirmed",
+        created_ms=message_time_ms,
+    )
+    dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
+    dws.calendar_events[
+        "2026-05-13T17:00:00+08:00|2026-05-27T17:00:00+08:00"
+    ] = [invite]
+    dws.calendar_events[f"{invite.start_time}|{invite.end_time}"] = [invite]
+    codex = FakeCodex(
+        CodexDecision(
+            action=CodexAction.NO_REPLY,
+            reason="标题足以判断需要接受。",
+            calendar_response_status="accepted",
+        )
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch, dry_run=True)
+
+    worker.run_once()
+
+    assert dws.calendar_responses == []
+    attempt = worker.store.get_reply_attempt(1)
+    assert attempt is not None
+    assert attempt.send_status == "dry_run"
+    assert attempt.calendar_event_id == "invite-1"
+    assert attempt.calendar_response_status == "accepted"
+    assert attempt.calendar_response_result_json == ""
+
+
 def test_bare_calendar_card_does_not_use_already_accepted_invite(
     tmp_path: Path, monkeypatch
 ):

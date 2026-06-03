@@ -113,6 +113,17 @@ def test_parser_keeps_dry_run_as_not_send_message_alias():
     assert args.dry_run is True
 
 
+def test_parser_defaults_to_live_send_when_not_send_env_is_unset(monkeypatch):
+    monkeypatch.delenv("CEO_DRY_RUN", raising=False)
+    monkeypatch.delenv("CEO_NOT_SEND_MESSAGE", raising=False)
+    parser = build_parser()
+
+    args = parser.parse_args(["run-once"])
+    settings = settings_from_args(args)
+
+    assert settings.dry_run is False
+
+
 def test_parser_supports_reset_codex_sessions_command():
     parser = build_parser()
 
@@ -419,6 +430,55 @@ def test_send_attempt_command_sends_existing_dry_run_without_rerunning_codex(
     assert sent_reply is not None
     assert sent_reply.recall_key == "recall-1"
     assert '"send_status": "sent"' in capsys.readouterr().out
+
+
+def test_send_attempt_command_executes_existing_dry_run_calendar_response(
+    monkeypatch, tmp_path, capsys
+):
+    calls = {}
+
+    class FakeDws:
+        def __init__(self, **kwargs):
+            calls["kwargs"] = kwargs
+
+        def respond_calendar_event(self, event_id, response_status):
+            calls["calendar"] = (event_id, response_status)
+            return {"success": True}
+
+    monkeypatch.setattr(cli, "DwsClient", FakeDws)
+    settings = WorkerSettings(
+        db_path=tmp_path / "worker.sqlite3",
+        dry_run=False,
+        dws_transient_retry_attempts=4,
+        dws_transient_retry_delay_seconds=0,
+    )
+    store = cli.AutoReplyStore(settings.db_path)
+    store.upsert_conversation("cid-1", "Calendar", True, None)
+    attempt_id = store.record_reply_attempt(
+        conversation_id="cid-1",
+        conversation_title="Calendar",
+        trigger_message_id="msg-1",
+        trigger_sender="Mina",
+        trigger_text="[日程]",
+        action="no_reply",
+        sensitivity_kind="general",
+        codex_reason="标题足以判断需要接受。",
+        calendar_event_id="event-1",
+        calendar_response_status="accepted",
+        send_status="dry_run",
+    )
+
+    result = send_attempt_command(settings, attempt_id)
+
+    assert calls["calendar"] == ("event-1", "accepted")
+    assert result["send_status"] == "skipped"
+    assert result["calendar_response_status"] == "accepted"
+    updated = cli.AutoReplyStore(settings.db_path).get_reply_attempt(attempt_id)
+    assert updated is not None
+    assert updated.send_status == "skipped"
+    assert updated.send_error == ""
+    assert updated.calendar_response_result_json == '{"success": true}'
+    assert '"calendar_response_status": "accepted"' in capsys.readouterr().out
 
 
 def test_send_attempt_command_appends_feedback_links_when_configured(
