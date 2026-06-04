@@ -33,6 +33,7 @@ from app.dws_client import (
     DwsClient,
     DwsDocumentSearchResult,
     DwsError,
+    native_reply_delivery_payload,
 )
 from app.feedback_spike import append_feedback_links
 from app.corpus import (
@@ -2476,32 +2477,22 @@ class DingTalkAutoReplyWorker:
                     conversation=conversation,
                 )
                 return
-            try:
-                self._send_reply_to_trigger(
-                    conversation,
-                    trigger,
-                    handoff_reply_text,
-                )
-            except Exception as exc:
-                self.store.update_reply_attempt(
-                    attempt_id,
-                    final_reply_text=handoff_reply_text,
-                    send_status="failed",
-                    send_error=str(exc),
-                )
-                self.store.record_error(
-                    conversation.open_conversation_id,
-                    trigger.open_message_id,
-                    "handoff_delivery",
-                    str(exc),
-                )
-                self._notify(
-                    title=f"CEO handoff failed: {conversation.title}",
-                    message=str(exc)[:120],
-                    conversation=conversation,
-                )
-                if raise_on_delivery_failure:
-                    raise ReplyDeliveryError(str(exc)) from exc
+            self.store.update_reply_attempt(
+                attempt_id,
+                final_reply_text=handoff_reply_text,
+            )
+            delivered = self._deliver_trigger_reply(
+                conversation=conversation,
+                trigger=trigger,
+                new_messages=new_messages,
+                attempt_id=attempt_id,
+                reply_text=handoff_reply_text,
+                feedback_token="",
+                failure_error_kind="handoff_delivery",
+                failure_notify_title=f"CEO handoff failed: {conversation.title}",
+                raise_on_delivery_failure=raise_on_delivery_failure,
+            )
+            if not delivered:
                 return
             handoff_notified_locally = self._notify_handoff(
                 conversation=conversation,
@@ -2517,9 +2508,7 @@ class DingTalkAutoReplyWorker:
             self.store.update_reply_attempt(
                 attempt_id,
                 final_reply_text=handoff_reply_text,
-                send_status="sent",
             )
-            self._mark_seen(new_messages)
             if not handoff_notified_locally:
                 self._notify(
                     title=f"CEO handoff: {conversation.title}",
@@ -3546,21 +3535,26 @@ class DingTalkAutoReplyWorker:
                 raise ReplyDeliveryError(str(exc)) from exc
             return True
         direct_user_id = at_users[0] if conversation.single_chat and at_users else None
-        send_at_users = [] if conversation.single_chat else at_users
         final_reply_text = self._format_reply_delivery_text(
             attempt.final_reply_text,
         )
-        self._deliver_final_reply(
+        self.store.update_reply_attempt(
+            attempt.id,
+            final_reply_text=final_reply_text,
+            direct_user_id=direct_user_id or "",
+            direct_open_dingtalk_id=trigger.sender_open_dingtalk_id
+            if conversation.single_chat
+            else "",
+        )
+        self._deliver_trigger_reply(
             conversation=conversation,
             trigger=trigger,
             new_messages=new_messages,
             attempt_id=attempt.id,
-            final_reply_text=final_reply_text,
-            at_users=send_at_users,
-            direct_user_id=direct_user_id,
-            direct_open_dingtalk_id=trigger.sender_open_dingtalk_id
-            if conversation.single_chat
-            else None,
+            reply_text=final_reply_text,
+            feedback_token="",
+            failure_error_kind="send",
+            failure_notify_title=f"CEO auto reply failed: {conversation.title}",
             raise_on_delivery_failure=raise_on_delivery_failure,
         )
         return True
@@ -3856,55 +3850,17 @@ class DingTalkAutoReplyWorker:
             message=reply_text,
             conversation=conversation,
         )
-        if self.dry_run:
-            self.store.update_reply_attempt(
-                attempt_id,
-                send_status="dry_run",
-            )
-            return
-        try:
-            retry_count, send_result = self._send_reply_to_trigger_with_retry(
-                conversation,
-                trigger,
-                reply_text,
-            )
-        except Exception as exc:
-            self.store.update_reply_attempt(
-                attempt_id,
-                send_status="failed",
-                send_error=str(exc),
-                retry_count=0
-                if getattr(exc, "needs_authorization", False)
-                else max(self.send_attempts - 1, 0),
-            )
-            self.store.record_error(
-                conversation.open_conversation_id,
-                trigger.open_message_id,
-                "send",
-                str(exc),
-            )
-            if raise_on_delivery_failure:
-                raise ReplyDeliveryError(str(exc)) from exc
-            self._notify(
-                title=f"CEO auto reply failed: {conversation.title}",
-                message=str(exc)[:120],
-                conversation=conversation,
-            )
-            return
-        self.store.update_reply_attempt(
-            attempt_id,
-            send_status="sent",
-            retry_count=retry_count,
-        )
-        self.store.record_sent_reply(
-            conversation.open_conversation_id,
-            trigger.open_message_id,
-            reply_text,
-            send_result_json=json.dumps(send_result or {}, ensure_ascii=False),
-            recall_key=DwsClient.extract_recall_key(send_result),
+        self._deliver_trigger_reply(
+            conversation=conversation,
+            trigger=trigger,
+            new_messages=new_messages,
+            attempt_id=attempt_id,
+            reply_text=reply_text,
             feedback_token=feedback_token,
+            failure_error_kind="send",
+            failure_notify_title=f"CEO auto reply failed: {conversation.title}",
+            raise_on_delivery_failure=raise_on_delivery_failure,
         )
-        self._mark_seen(new_messages)
 
     def _deliver_minutes_comment(
         self,
@@ -3978,6 +3934,44 @@ class DingTalkAutoReplyWorker:
         comment_error: str,
         raise_on_delivery_failure: bool = False,
     ) -> None:
+        self._deliver_trigger_reply(
+            conversation=conversation,
+            trigger=trigger,
+            new_messages=new_messages,
+            attempt_id=attempt_id,
+            reply_text=reply_text,
+            feedback_token=feedback_token,
+            send_result_json_builder=lambda send_result: {
+                "fallback": "chat_reply",
+                "minutes_comment_error": comment_error,
+                "send_result": send_result or {},
+            },
+            failure_error_kind="send",
+            failure_send_error=lambda exc: (
+                f"minutes_comment_failed: {comment_error}; reply_failed: {exc}"
+            ),
+            failure_notify_title=f"CEO minutes fallback reply failed: {conversation.title}",
+            raise_on_delivery_failure=raise_on_delivery_failure,
+        )
+
+    def _deliver_trigger_reply(
+        self,
+        *,
+        conversation: DingTalkConversation,
+        trigger: DingTalkMessage,
+        new_messages: list[DingTalkMessage],
+        attempt_id: int,
+        reply_text: str,
+        feedback_token: str,
+        send_result_json_builder=None,
+        failure_error_kind: str = "send",
+        failure_send_error=None,
+        failure_notify_title: str = "",
+        raise_on_delivery_failure: bool = False,
+    ) -> bool:
+        if self.dry_run:
+            self.store.update_reply_attempt(attempt_id, send_status="dry_run")
+            return True
         try:
             retry_count, send_result = self._send_reply_to_trigger_with_retry(
                 conversation,
@@ -3985,21 +3979,39 @@ class DingTalkAutoReplyWorker:
                 reply_text,
             )
         except Exception as exc:
+            send_error = (
+                failure_send_error(exc)
+                if failure_send_error is not None
+                else str(exc)
+            )
             self.store.update_reply_attempt(
                 attempt_id,
                 send_status="failed",
-                send_error=f"minutes_comment_failed: {comment_error}; reply_failed: {exc}",
-                retry_count=max(self.send_attempts - 1, 0),
+                send_error=send_error,
+                retry_count=0
+                if getattr(exc, "needs_authorization", False)
+                else max(self.send_attempts - 1, 0),
             )
             self.store.record_error(
                 conversation.open_conversation_id,
                 trigger.open_message_id,
-                "send",
+                failure_error_kind,
                 str(exc),
             )
             if raise_on_delivery_failure:
                 raise ReplyDeliveryError(str(exc)) from exc
-            return
+            if failure_notify_title:
+                self._notify(
+                    title=failure_notify_title,
+                    message=str(exc)[:120],
+                    conversation=conversation,
+                )
+            return False
+        send_result_json_payload = (
+            send_result_json_builder(send_result)
+            if send_result_json_builder is not None
+            else (send_result or {})
+        )
         self.store.update_reply_attempt(
             attempt_id,
             send_status="sent",
@@ -4011,27 +4023,21 @@ class DingTalkAutoReplyWorker:
             trigger.open_message_id,
             reply_text,
             send_result_json=json.dumps(
-                {
-                    "fallback": "chat_reply",
-                    "minutes_comment_error": comment_error,
-                    "send_result": send_result or {},
-                },
+                native_reply_delivery_payload(
+                    conversation,
+                    trigger,
+                    send_result,
+                    extra=send_result_json_payload
+                    if send_result_json_builder is not None
+                    else None,
+                ),
                 ensure_ascii=False,
             ),
             recall_key=DwsClient.extract_recall_key(send_result),
             feedback_token=feedback_token,
         )
         self._mark_seen(new_messages)
-
-    def _send_reply_to_trigger(
-        self,
-        conversation: DingTalkConversation,
-        trigger: DingTalkMessage,
-        text: str,
-    ):
-        if self.dry_run:
-            return None
-        return self.dws.send_reply_to_trigger(conversation, trigger, text)
+        return True
 
     def _send_reply_to_trigger_with_retry(
         self,
@@ -4042,7 +4048,7 @@ class DingTalkAutoReplyWorker:
         errors: list[str] = []
         for attempt_number in range(1, self.send_attempts + 1):
             try:
-                send_result = self._send_reply_to_trigger(
+                send_result = self.dws.send_reply_to_trigger(
                     conversation,
                     trigger,
                     text,

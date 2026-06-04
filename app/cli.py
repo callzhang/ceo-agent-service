@@ -31,6 +31,7 @@ from app.dws_client import (
     DwsClient,
     DwsError,
     local_time_zone_name,
+    native_reply_delivery_payload,
 )
 from app.feedback_spike import (
     append_feedback_links,
@@ -770,7 +771,14 @@ def send_attempt_command(settings: WorkerSettings, attempt_id: int) -> dict[str,
         attempt.conversation_id,
         attempt.trigger_message_id,
         reply_text,
-        send_result_json=json.dumps(send_result or {}, ensure_ascii=False),
+        send_result_json=json.dumps(
+            native_reply_delivery_payload(
+                dingtalk_conversation,
+                trigger,
+                send_result,
+            ),
+            ensure_ascii=False,
+        ),
         recall_key=DwsClient.extract_recall_key(send_result),
         feedback_token=feedback_token,
     )

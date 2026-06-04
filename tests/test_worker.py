@@ -5524,6 +5524,7 @@ def test_handoff_sends_ack_dings_self_and_records_message_result(
 
     expected_ack = HANDOFF_ACK
     assert final_sent(dws) == [("cid-1", expected_ack)]
+    assert dws.reply_messages == [("cid-1", "msg-1", "sender-1", expected_ack)]
     assert len(dws.dings) == 1
     assert "Friday" in dws.dings[0]
     assert "不要分身" in dws.dings[0]
@@ -5531,6 +5532,11 @@ def test_handoff_sends_ack_dings_self_and_records_message_result(
     attempt = store.get_reply_attempt(1)
     assert attempt is not None
     assert attempt.final_reply_text == expected_ack
+    assert attempt.send_status == "sent"
+    sent_reply = store.get_sent_reply("cid-1", "msg-1")
+    assert sent_reply is not None
+    assert '"kind": "native_reply"' in sent_reply.send_result_json
+    assert '"ref_message_id": "msg-1"' in sent_reply.send_result_json
 
 
 def test_new_principal_mention_is_processed(

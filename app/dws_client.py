@@ -49,6 +49,24 @@ class DwsError(RuntimeError):
         }
 
 
+def native_reply_delivery_payload(
+    conversation: DingTalkConversation,
+    trigger: DingTalkMessage,
+    send_result: dict[str, Any] | None,
+    *,
+    extra: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = dict(extra or {})
+    payload["delivery"] = {
+        "kind": "native_reply",
+        "conversation_id": conversation.open_conversation_id,
+        "ref_message_id": trigger.open_message_id,
+        "ref_sender_open_dingtalk_id": trigger.sender_open_dingtalk_id or "",
+    }
+    payload["send_result"] = send_result or {}
+    return payload
+
+
 class DwsUserProfile(BaseModel):
     user_id: str
     name: str = ""
@@ -1343,6 +1361,21 @@ class DwsClient:
             trigger.open_message_id,
             trigger.sender_open_dingtalk_id,
             text,
+        )
+
+    @staticmethod
+    def native_reply_delivery_payload(
+        conversation: DingTalkConversation,
+        trigger: DingTalkMessage,
+        send_result: dict[str, Any] | None,
+        *,
+        extra: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        return native_reply_delivery_payload(
+            conversation,
+            trigger,
+            send_result,
+            extra=extra,
         )
 
     def recall_bot_message(

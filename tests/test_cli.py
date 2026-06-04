@@ -435,6 +435,8 @@ def test_send_attempt_command_sends_existing_dry_run_without_rerunning_codex(
     sent_reply = cli.AutoReplyStore(settings.db_path).get_sent_reply("cid-1", "msg-1")
     assert sent_reply is not None
     assert sent_reply.recall_key == "recall-1"
+    assert '"kind": "native_reply"' in sent_reply.send_result_json
+    assert '"ref_message_id": "msg-1"' in sent_reply.send_result_json
     assert '"send_status": "sent"' in capsys.readouterr().out
 
 
@@ -542,6 +544,7 @@ def test_send_attempt_command_appends_feedback_links_when_configured(
     assert sent_reply is not None
     assert sent_reply.feedback_token.startswith("spike_")
     assert sent_reply.feedback_token in sent_text
+    assert '"kind": "native_reply"' in sent_reply.send_result_json
 
 
 def test_send_attempt_command_sends_single_chat_as_native_reply(
