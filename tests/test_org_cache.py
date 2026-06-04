@@ -257,6 +257,22 @@ def test_cached_dws_client_delegates_calendar_and_minutes_helpers(tmp_path):
             self.calls.append(("add_minutes_member_permission", permission_request))
             return {"success": True}
 
+        def get_minutes_info(self, task_uuid):
+            self.calls.append(("get_minutes_info", task_uuid))
+            return {"result": {"taskUuid": task_uuid}}
+
+        def get_minutes_summary(self, task_uuid):
+            self.calls.append(("get_minutes_summary", task_uuid))
+            return {"result": {"summary": "ok"}}
+
+        def get_minutes_todos(self, task_uuid):
+            self.calls.append(("get_minutes_todos", task_uuid))
+            return {"result": {"actions": []}}
+
+        def get_minutes_transcription(self, task_uuid, *, next_token=""):
+            self.calls.append(("get_minutes_transcription", task_uuid, next_token))
+            return {"result": {"paragraphList": []}}
+
         def calendar_invite_from_message(self, msg):
             self.calls.append(("calendar_invite_from_message", msg))
             return event
@@ -277,12 +293,24 @@ def test_cached_dws_client_delegates_calendar_and_minutes_helpers(tmp_path):
 
     assert cached.minutes_permission_request_from_message(msg) is request
     assert cached.add_minutes_member_permission(request) == {"success": True}
+    assert cached.get_minutes_info("minutes-1") == {
+        "result": {"taskUuid": "minutes-1"}
+    }
+    assert cached.get_minutes_summary("minutes-1") == {"result": {"summary": "ok"}}
+    assert cached.get_minutes_todos("minutes-1") == {"result": {"actions": []}}
+    assert cached.get_minutes_transcription("minutes-1", next_token="n1") == {
+        "result": {"paragraphList": []}
+    }
     assert cached.calendar_invite_from_message(msg) is event
     assert cached.list_calendar_events("start", "end") == [event]
     assert cached.respond_calendar_event("event-1", "accepted") == {"success": True}
     assert cached.dws.calls == [
         ("minutes_permission_request_from_message", msg),
         ("add_minutes_member_permission", request),
+        ("get_minutes_info", "minutes-1"),
+        ("get_minutes_summary", "minutes-1"),
+        ("get_minutes_todos", "minutes-1"),
+        ("get_minutes_transcription", "minutes-1", "n1"),
         ("calendar_invite_from_message", msg),
         ("list_calendar_events", "start", "end"),
         ("respond_calendar_event", "event-1", "accepted"),

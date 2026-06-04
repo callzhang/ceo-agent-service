@@ -1084,6 +1084,52 @@ def test_produce_once_fast_path_enqueues_pending_before_backoff(
     assert worker.store.count_reply_tasks(status="pending") == 1
 
 
+def test_produce_once_fast_path_skips_bare_minutes_link_before_backoff(
+    tmp_path: Path, monkeypatch
+):
+    minutes_id = "76327569643331373139373932355f313131333531383337385f30"
+    trigger = message(
+        "[dingtalk://dingtalkclient/page/flash_minutes_detail?"
+        f"minutesId={minutes_id}&from=8&creator=1113518378]"
+        "(dingtalk://dingtalkclient/page/flash_minutes_detail?"
+        f"minutesId={minutes_id}&from=8&creator=1113518378)\n"
+        "[dingtalk://dingtalkclient/page/flash_minutes_detail?"
+        f"minutesId={minutes_id}&from=8]"
+        "(dingtalk://dingtalkclient/page/flash_minutes_detail?"
+        f"minutesId={minutes_id}&from=8)",
+        message_id="msg-minutes-only",
+        single_chat=True,
+    )
+    dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
+    dws.unread_messages = {"cid-1": [trigger]}
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该调用")
+    )
+    worker = make_worker(
+        tmp_path,
+        dws,
+        codex,
+        monkeypatch,
+        fast_path_unread_backoff=timedelta(minutes=5),
+    )
+    worker.store.set_service_state(
+        "message_recovery_checked_at",
+        "2026-05-13T16:30:00+00:00",
+    )
+
+    queued = worker.produce_once()
+
+    attempts = worker.store.list_reply_attempts(limit=10)
+    assert queued == 0
+    assert worker.store.count_reply_tasks() == 0
+    assert len(attempts) == 1
+    assert attempts[0].trigger_message_id == "msg-minutes-only"
+    assert attempts[0].action == "no_reply"
+    assert attempts[0].send_status == "skipped"
+    assert attempts[0].codex_reason == "system_or_notification_message"
+    assert codex.calls == []
+
+
 def test_produce_once_fast_path_task_is_claimable_after_backoff(
     tmp_path: Path, monkeypatch
 ):
@@ -1119,6 +1165,126 @@ def test_produce_once_fast_path_task_is_claimable_after_backoff(
     assert claimed_after_backoff[0].status == "processing"
     assert claimed_after_backoff[0].error == ""
     assert claimed_after_backoff[0].available_at == ""
+
+
+def test_produce_once_enqueues_pending_calendar_invite_without_chat_card(
+    tmp_path: Path, monkeypatch
+):
+    dws = FakeDws([], {})
+    codex = FakeCodex(
+        CodexDecision(
+            action=CodexAction.NO_REPLY,
+            reason="标题和描述足以判断需要参加。",
+            calendar_response_status="accepted",
+            audit_summary="已读取待响应日程。",
+        )
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+    worker.store.upsert_conversation("cid-1", "产品部", False, None)
+    worker.store.enqueue_reply_task(
+        conversation_id="cid-1",
+        conversation_title="产品部",
+        single_chat=False,
+        trigger_message_id="msg-from-organizer",
+        trigger_create_time="2026-05-13 18:00:00",
+        trigger_sender="连航",
+        trigger_text="@Alex Chen(明哥) 我来约个会吧",
+    )
+    invite = DwsCalendarEvent(
+        event_id="invite-1",
+        title="产品部效能讨论",
+        start_time="2026-05-14T10:00:00+08:00",
+        end_time="2026-05-14T11:00:00+08:00",
+        description="分析产品部效能情况并寻找解决方案",
+        organizer="连航",
+        self_response_status="needsAction",
+        attendees=["Alex Chen(明哥)", "连航"],
+        status="confirmed",
+    )
+    old_recurring_invite = DwsCalendarEvent(
+        event_id="invite-next-week",
+        title="产品例会",
+        start_time="2026-05-21T10:00:00+08:00",
+        end_time="2026-05-21T11:00:00+08:00",
+        description="下周例会",
+        organizer="连航",
+        self_response_status="needsAction",
+        attendees=["Alex Chen(明哥)", "连航"],
+        status="confirmed",
+    )
+    scan_start, scan_end = worker._pending_calendar_invite_scan_window()
+    dws.calendar_events[f"{scan_start}|{scan_end}"] = [invite, old_recurring_invite]
+
+    queued = worker.produce_once()
+
+    tasks = worker.store.list_reply_tasks(statuses=("pending",), limit=10)
+    assert queued == 1
+    assert len(tasks) == 2
+    calendar_task = [
+        task for task in tasks if task.trigger_message_id.startswith("calendar:")
+    ][0]
+    assert [task.trigger_message_id for task in tasks].count(
+        "calendar:invite-next-week"
+    ) == 0
+    assert calendar_task.conversation_id == "cid-1"
+    assert calendar_task.conversation_title == "产品部"
+    assert calendar_task.trigger_sender == "连航"
+    assert calendar_task.trigger_text == "[日程] 产品部效能讨论"
+
+
+def test_pending_calendar_invite_from_recent_sender_uses_existing_calendar_flow(
+    tmp_path: Path, monkeypatch
+):
+    dws = FakeDws([], {"cid-1": []})
+    codex = FakeCodex(
+        CodexDecision(
+            action=CodexAction.NO_REPLY,
+            reason="标题和描述足以判断需要参加。",
+            calendar_response_status="accepted",
+            audit_summary="已读取待响应日程并判断需要接受。",
+        )
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+    worker.store.upsert_conversation("cid-1", "产品部", False, None)
+    worker.store.enqueue_reply_task(
+        conversation_id="cid-1",
+        conversation_title="产品部",
+        single_chat=False,
+        trigger_message_id="msg-from-organizer",
+        trigger_create_time="2026-05-13 18:00:00",
+        trigger_sender="连航",
+        trigger_text="@Alex Chen(明哥) 我来约个会吧",
+    )
+    invite = DwsCalendarEvent(
+        event_id="invite-1",
+        title="产品部效能讨论",
+        start_time="2026-05-14T10:00:00+08:00",
+        end_time="2026-05-14T11:00:00+08:00",
+        description="分析产品部效能情况并寻找解决方案",
+        organizer="连航",
+        self_response_status="needsAction",
+        attendees=["Alex Chen(明哥)", "连航"],
+        status="confirmed",
+    )
+    scan_start, scan_end = worker._pending_calendar_invite_scan_window()
+    dws.calendar_events[f"{scan_start}|{scan_end}"] = [invite]
+    dws.calendar_events[f"{invite.start_time}|{invite.end_time}"] = [invite]
+    dws.calendar_invites["calendar:invite-1"] = invite
+
+    assert worker.produce_once() == 1
+    assert worker.consume_once() == 1
+
+    assert len(codex.calls) == 1
+    assert "产品部效能讨论" in codex.calls[0][0]
+    assert "分析产品部效能情况并寻找解决方案" in codex.calls[0][0]
+    assert dws.calendar_responses == [("invite-1", "accepted")]
+    assert final_sent(dws) == []
+    attempt = worker.store.get_reply_attempt(1)
+    assert attempt.action == "no_reply"
+    assert attempt.calendar_event_id == "invite-1"
+    assert attempt.calendar_response_status == "accepted"
+    assert attempt.send_status == "skipped"
+    assert worker.store.has_seen("calendar:invite-1") is True
 
 
 def test_fast_path_backoff_processes_trigger_when_unread_clears_without_user_reply(
@@ -1623,7 +1789,7 @@ def test_produce_once_uses_recent_context_when_unread_read_fails_for_group_menti
     assert queued == 1
     assert worker.store.count_reply_tasks(status="pending") == 1
     assert worker.store.count_errors() == 1
-    assert notifications[0]["title"] == "CEO read unread messages failed: Friday"
+    assert notifications == []
     assert codex.calls == []
 
 

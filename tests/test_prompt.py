@@ -90,8 +90,14 @@ def test_developer_prompt_delegates_memory_to_agent_mcp_tools():
 
     assert "memory_connector MCP 可用" in template
     assert "必须先调用 memory_recall" in template
-    assert "调用 memory_write 记录一条完整事件 episode" in template
-    assert 'user_id="<var: memory_user_id>"' in template
+    assert "只有产生后续会复用的业务信息时，才调用 memory_write" in template
+    assert "send_reply" in template
+    assert "记录一条业务 episode" in template
+    assert "ask_clarifying_question 默认不写入长期 Memory" in template
+    assert "orphaned_after_service_restart" in template
+    assert "waiting_fast_path_unread_backoff" in template
+    assert "不要传 user_id" in template
+    assert 'user_id="<var: memory_user_id>"' not in template
     assert "memory_write 失败不应改变最终 JSON" in template
 
 

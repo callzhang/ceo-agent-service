@@ -86,6 +86,8 @@ MAX_REPLY_TASK_ATTEMPTS = 3
 STALE_CODEX_RESUME_ATTEMPTS = 2
 CALENDAR_PENDING_INVITE_LOOKAHEAD_DAYS = 14
 CALENDAR_PENDING_INVITE_EVENT_MATCH_SECONDS = 5 * 60
+CALENDAR_PENDING_INVITE_RECENT_SENDER_LOOKBACK = timedelta(hours=24)
+CALENDAR_PENDING_INVITE_NO_CHANGE_TIME_START_LOOKAHEAD = timedelta(hours=24)
 TEXT_MESSAGE_TYPES = {"text"}
 RENDERED_NON_TEXT_PREFIXES = (
     "[文件]",
@@ -293,11 +295,6 @@ class DingTalkAutoReplyWorker:
                         "read_unread_messages",
                         str(exc),
                     )
-                    self._notify(
-                        title=f"CEO read unread messages failed: {conversation.title}",
-                        message=str(exc)[:120],
-                        conversation=conversation,
-                    )
                     candidate_unread_messages = context_messages
             if (
                 not context_messages
@@ -363,11 +360,174 @@ class DingTalkAutoReplyWorker:
                         fast_path_checked_at.isoformat(),
                     )
                     return queued_tasks
+        if max_tasks is None or queued_tasks < max_tasks:
+            remaining_tasks = None if max_tasks is None else max_tasks - queued_tasks
+            queued_tasks += self._enqueue_pending_calendar_invite_tasks(
+                max_tasks=remaining_tasks
+            )
         self.store.set_service_state(
             MESSAGE_FAST_PATH_CHECKED_AT_STATE_KEY,
             fast_path_checked_at.isoformat(),
         )
         return queued_tasks
+
+    def _enqueue_pending_calendar_invite_tasks(
+        self,
+        *,
+        max_tasks: int | None = None,
+    ) -> int:
+        list_calendar_events = getattr(self.dws, "list_calendar_events", None)
+        if list_calendar_events is None:
+            return 0
+        start, end = self._pending_calendar_invite_scan_window()
+        try:
+            events = list_calendar_events(start, end)
+        except Exception as exc:
+            self.store.record_error(None, None, "list_pending_calendar_invites", str(exc))
+            self._notify(
+                title="CEO read pending calendar invites failed",
+                message=str(exc)[:120],
+            )
+            return 0
+        queued = 0
+        for event in events:
+            if not self._calendar_event_is_actionable_pending_invite(event):
+                continue
+            conversation = self._pending_calendar_invite_conversation(event)
+            if conversation is None:
+                continue
+            trigger = self._pending_calendar_invite_trigger(event, conversation)
+            if self.store.has_seen(trigger.open_message_id):
+                continue
+            self.store.upsert_conversation(
+                conversation_id=conversation.open_conversation_id,
+                title=conversation.title,
+                single_chat=conversation.single_chat,
+                codex_session_id=None,
+            )
+            if self._enqueue_reply_task(conversation, trigger):
+                queued += 1
+                if max_tasks is not None and queued >= max_tasks:
+                    break
+        return queued
+
+    def _pending_calendar_invite_scan_window(self) -> tuple[str, str]:
+        now = self._now().astimezone(DINGTALK_MESSAGE_TIME_ZONE)
+        start = now - timedelta(days=1)
+        end = now + timedelta(days=CALENDAR_PENDING_INVITE_LOOKAHEAD_DAYS)
+        return (
+            start.isoformat(timespec="seconds"),
+            end.isoformat(timespec="seconds"),
+        )
+
+    def _calendar_event_is_actionable_pending_invite(
+        self,
+        event: DwsCalendarEvent,
+    ) -> bool:
+        return bool(
+            event.event_id.strip()
+            and self._calendar_event_is_active(event)
+            and self._calendar_event_is_self_pending(event)
+            and self._calendar_pending_invite_is_current_candidate(event)
+        )
+
+    @staticmethod
+    def _calendar_event_is_active(event: DwsCalendarEvent) -> bool:
+        return event.status.strip().lower() != "cancelled"
+
+    def _calendar_pending_invite_is_current_candidate(
+        self,
+        event: DwsCalendarEvent,
+    ) -> bool:
+        if self._calendar_event_has_change_time(event):
+            now_ms = int(self._now().timestamp() * 1000)
+            event_times = [
+                event_time_ms
+                for event_time_ms in (event.created_ms, event.updated_ms)
+                if event_time_ms > 0
+            ]
+            return any(
+                abs(now_ms - event_time_ms)
+                <= CALENDAR_PENDING_INVITE_EVENT_MATCH_SECONDS * 1000
+                for event_time_ms in event_times
+            )
+        start_time = self._parse_calendar_time(event.start_time)
+        if start_time is None:
+            return False
+        now = self._now()
+        if start_time.tzinfo is None:
+            start_time = start_time.replace(tzinfo=DINGTALK_MESSAGE_TIME_ZONE)
+        start_time = start_time.astimezone(now.tzinfo or timezone.utc)
+        return (
+            now <= start_time
+            and start_time - now <= CALENDAR_PENDING_INVITE_NO_CHANGE_TIME_START_LOOKAHEAD
+        )
+
+    def _pending_calendar_invite_conversation(
+        self,
+        event: DwsCalendarEvent,
+    ) -> DingTalkConversation | None:
+        since_utc = self._sqlite_timestamp(
+            self._now().astimezone(timezone.utc)
+            - CALENDAR_PENDING_INVITE_RECENT_SENDER_LOOKBACK
+        )
+        record = self.store.get_recent_conversation_for_sender(
+            event.organizer,
+            since_utc,
+        )
+        if record is not None:
+            return DingTalkConversation(
+                open_conversation_id=record.conversation_id,
+                title=record.title,
+                single_chat=record.single_chat,
+                unread_point=0,
+            )
+        return None
+
+    def _pending_calendar_invite_trigger(
+        self,
+        event: DwsCalendarEvent,
+        conversation: DingTalkConversation,
+    ) -> DingTalkMessage:
+        now = self._now().astimezone(DINGTALK_MESSAGE_TIME_ZONE)
+        title = event.title.strip() or "未命名日程"
+        return DingTalkMessage(
+            open_conversation_id=conversation.open_conversation_id,
+            open_message_id=f"calendar:{event.event_id}",
+            conversation_title=conversation.title,
+            single_chat=conversation.single_chat,
+            sender_name=event.organizer.strip() or "日历",
+            message_type="calendar",
+            create_time=now.strftime(DINGTALK_TIME_FORMAT),
+            content=f"[日程] {title}",
+            raw_payload=self._calendar_event_raw_payload(event),
+        )
+
+    @staticmethod
+    def _calendar_event_raw_payload(event: DwsCalendarEvent) -> dict[str, Any]:
+        return {
+            "id": event.event_id,
+            "summary": event.title,
+            "description": event.description,
+            "organizer": {"displayName": event.organizer},
+            "start": {"dateTime": event.start_time},
+            "end": {"dateTime": event.end_time},
+            "attendees": [
+                {
+                    "displayName": attendee,
+                    "responseStatus": (
+                        event.self_response_status
+                        if attendee == principal_display_name()
+                        else ""
+                    ),
+                    "self": attendee == principal_display_name(),
+                }
+                for attendee in event.attendees
+            ],
+            "status": event.status,
+            "created": event.created_ms,
+            "updated": event.updated_ms,
+        }
 
     def _conversations_with_recent_single_chat_recovery(
         self,
@@ -698,12 +858,12 @@ class DingTalkAutoReplyWorker:
     def _process_queued_task(
         self, conversation: DingTalkConversation, task: ReplyTask
     ) -> bool:
+        trigger = DingTalkMessage.model_validate_json(task.trigger_message_json)
         context_messages = self.dws.read_recent_messages(conversation)
         unread_messages = self.dws.read_unread_messages(conversation)
         prompt_context_messages = self._prompt_context_messages(
             context_messages, unread_messages
         )
-        trigger = DingTalkMessage.model_validate_json(task.trigger_message_json)
         if self._has_current_user_reply_after_trigger(context_messages, trigger):
             self._record_current_user_replied_during_backoff_skip(
                 conversation,
@@ -1489,7 +1649,7 @@ class DingTalkAutoReplyWorker:
             for event in events
             if self._calendar_events_conflict(invite, event)
             and not self._same_calendar_event(invite, event)
-            and event.status != "cancelled"
+            and self._calendar_event_is_active(event)
             and self._calendar_event_blocks_time(event)
         ]
         return CalendarConflictContext(invite=invite, conflicts=conflicts)
@@ -1508,7 +1668,7 @@ class DingTalkAutoReplyWorker:
             event
             for event in events
             if event.organizer.strip() == sender_name
-            and event.status == "confirmed"
+            and self._calendar_event_is_active(event)
             and self._calendar_event_is_self_pending(event)
         ]
         near_message_candidates = [
@@ -1994,7 +2154,9 @@ class DingTalkAutoReplyWorker:
         if DINGTALK_APPROVAL_LINK_PATTERN.search(content):
             return False
         if DingTalkAutoReplyWorker._has_dingtalk_minutes_link(content):
-            return False
+            return DingTalkAutoReplyWorker._is_bare_dingtalk_minutes_link_message(
+                content
+            )
         if DingTalkAutoReplyWorker._has_rendered_non_text_prefix(content):
             return True
         if content.startswith("[dingtalk://"):
@@ -2029,6 +2191,16 @@ class DingTalkAutoReplyWorker:
             DingTalkAutoReplyWorker._minutes_task_uuid_from_url(match.group(0))
             for match in DINGTALK_MINUTES_LINK_PATTERN.finditer(content)
         )
+
+    @staticmethod
+    def _is_bare_dingtalk_minutes_link_message(content: str) -> bool:
+        if DINGTALK_SHANJI_DOC_SELECTOR_PATTERN.search(content):
+            return False
+        text_without_links = MEDIA_OR_LINK_PATTERN.sub(" ", content)
+        text_without_mentions = MENTION_PATTERN.sub(" ", text_without_links)
+        if QUESTION_MARK_PATTERN.search(text_without_mentions):
+            return False
+        return count_information_units(text_without_mentions) == 0
 
     @staticmethod
     def _is_link_caption_only(content: str) -> bool:

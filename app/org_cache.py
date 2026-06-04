@@ -188,6 +188,21 @@ class CachedDwsClient:
     def add_minutes_member_permission(self, request):
         return self.dws.add_minutes_member_permission(request)
 
+    def get_minutes_info(self, task_uuid: str):
+        return self.dws.get_minutes_info(task_uuid)
+
+    def get_minutes_summary(self, task_uuid: str):
+        return self.dws.get_minutes_summary(task_uuid)
+
+    def get_minutes_todos(self, task_uuid: str):
+        return self.dws.get_minutes_todos(task_uuid)
+
+    def get_minutes_transcription(self, task_uuid: str, *, next_token: str = ""):
+        return self.dws.get_minutes_transcription(
+            task_uuid,
+            next_token=next_token,
+        )
+
     def calendar_invite_from_message(self, message: DingTalkMessage):
         return self.dws.calendar_invite_from_message(message)
 
