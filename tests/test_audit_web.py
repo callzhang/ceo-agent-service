@@ -1329,6 +1329,38 @@ def test_attempt_detail_renders_oa_metadata(tmp_path: Path):
     assert 'class="pill status-action action-state-approved">🧾 通过</span>' in html
 
 
+def test_attempt_detail_renders_oa_comment_status(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    attempt_id = store.record_reply_attempt(
+        conversation_id="cid-1",
+        conversation_title="审批通知",
+        trigger_message_id="msg-1",
+        trigger_sender="工作通知",
+        trigger_text="[Ding]审批提醒",
+        action="oa_approval",
+        sensitivity_kind="internal_finance",
+        codex_reason="退回",
+        oa_process_instance_id="proc-1",
+        oa_task_id="task-1",
+        oa_url="https://aflow.dingtalk.com/detail?procInstId=proc-1",
+        oa_action="退回",
+        oa_remark="请补充预算来源。",
+        oa_action_result_json='{"errcode":0,"errmsg":"ok"}',
+        send_status="commented",
+    )
+
+    status, html = render_attempt_detail(store, attempt_id)
+
+    assert status == 200
+    assert "💬 Commented" in html
+    assert "🧾 退回" in html
+    assert (
+        'class="pill status-action action-state-commented">💬 Commented</span>'
+        in html
+    )
+    assert 'class="pill status-action action-state-returned">🧾 退回</span>' in html
+
+
 def test_attempt_history_and_detail_render_calendar_response_metadata(
     tmp_path: Path,
 ):

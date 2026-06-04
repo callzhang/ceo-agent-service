@@ -1276,7 +1276,7 @@ class DingTalkAutoReplyWorker:
                             result.process_instance_id,
                             result.oa_remark,
                         )
-                        send_status = "skipped"
+                        send_status = "commented"
                     except Exception as exc:
                         send_status = "failed"
                         send_error = str(exc)
@@ -2765,7 +2765,7 @@ class DingTalkAutoReplyWorker:
             and attempt.codex_reason == "system_or_notification_message"
         ):
             return False
-        if attempt.send_status in {"sent", "skipped", "blocked"}:
+        if attempt.send_status in {"sent", "skipped", "blocked", "commented"}:
             self._mark_seen(new_messages)
             return True
         if attempt.send_status == "dry_run":

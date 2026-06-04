@@ -3223,12 +3223,57 @@ def test_oa_return_action_is_left_as_approval_comment_instead_of_reject(
     assert attempt is not None
     assert attempt.action == "oa_approval"
     assert attempt.oa_action == "退回"
-    assert attempt.send_status == "skipped"
+    assert attempt.send_status == "commented"
     assert attempt.send_error == ""
     assert json.loads(attempt.oa_action_result_json) == {
         "errcode": 0,
         "errmsg": "ok",
     }
+
+
+def test_existing_commented_oa_attempt_is_terminal(tmp_path: Path, monkeypatch):
+    trigger = message(
+        "[Ding]张静提醒您审批他的录用申请 https://aflow.dingtalk.com/dingtalk/pc/query"
+        "/pchomepage.htm?procInstId=proc-1&taskId=task-1&swfrom=oa",
+        single_chat=True,
+    )
+    dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该重新生成")
+    )
+    oa_runner = FakeOaApprovalRunner()
+    worker = make_worker(
+        tmp_path,
+        dws,
+        codex,
+        monkeypatch,
+        dry_run=False,
+        oa_approval_runner=oa_runner,
+    )
+    worker.store.record_reply_attempt(
+        conversation_id="cid-1",
+        conversation_title="Friday",
+        trigger_message_id="msg-1",
+        trigger_sender="周俊杰",
+        trigger_text=trigger.content,
+        action="oa_approval",
+        sensitivity_kind="internal_finance",
+        codex_reason="退回",
+        oa_process_instance_id="proc-1",
+        oa_task_id="task-1",
+        oa_action="退回",
+        oa_remark="请补充预算来源。",
+        oa_action_result_json='{"errcode":0,"errmsg":"ok"}',
+        send_status="commented",
+    )
+
+    worker.run_once()
+
+    assert codex.calls == []
+    assert oa_runner.calls == []
+    assert dws.oa_approval_actions == []
+    assert dws.oa_approval_comments == []
+    assert worker.store.has_seen("msg-1") is True
 
 
 def test_automatic_sync_notification_is_skipped_before_codex(
