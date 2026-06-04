@@ -4299,6 +4299,9 @@ class DingTalkAutoReplyWorker:
             return
         for message in messages:
             self.store.mark_seen(message.open_message_id, message.open_conversation_id)
+            for message_id in message.raw_payload.get("coalesced_message_ids", []):
+                if isinstance(message_id, str) and message_id.strip():
+                    self.store.mark_seen(message_id, message.open_conversation_id)
 
     def _persist_codex_session_id(
         self,

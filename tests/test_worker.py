@@ -6160,6 +6160,24 @@ def test_produce_once_coalesces_consecutive_group_mentions_from_same_sender(
     assert codex.calls == []
 
 
+def test_mark_seen_tracks_all_coalesced_message_ids(tmp_path: Path, monkeypatch):
+    first = message("@Alex Chen(明哥) 先看第一点", message_id="msg-mentioned-1")
+    second = message("@Alex Chen(明哥) 再看第二点", message_id="msg-mentioned-2")
+    third = message("@Alex Chen(明哥) 最后总结一下", message_id="msg-mentioned-3")
+    dws = FakeDws([conversation()], {"cid-1": [first, second, third]})
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.NO_REPLY, reason="no action needed")
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+    coalesced = DingTalkAutoReplyWorker._coalesced_message([first, second, third])
+
+    worker._mark_seen([coalesced])
+
+    assert worker.store.has_seen("msg-mentioned-1") is True
+    assert worker.store.has_seen("msg-mentioned-2") is True
+    assert worker.store.has_seen("msg-mentioned-3") is True
+
+
 def test_group_all_mention_from_unread_conversation_is_processed(
     tmp_path: Path, monkeypatch
 ):
