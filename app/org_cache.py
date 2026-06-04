@@ -226,6 +226,9 @@ class CachedDwsClient:
             remark,
         )
 
+    def comment_oa_approval(self, process_instance_id: str, text: str):
+        return self.dws.comment_oa_approval(process_instance_id, text)
+
     def list_pending_oa_approvals(self, page: int = 1, size: int = 30):
         return self.dws.list_pending_oa_approvals(page=page, size=size)
 

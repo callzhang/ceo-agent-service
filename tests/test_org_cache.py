@@ -241,7 +241,7 @@ def test_cached_dws_client_delegates_linked_material_reads(tmp_path):
     ]
 
 
-def test_cached_dws_client_delegates_calendar_and_minutes_helpers(tmp_path):
+def test_cached_dws_client_delegates_external_action_helpers(tmp_path):
     request = object()
     event = object()
 
@@ -285,6 +285,10 @@ def test_cached_dws_client_delegates_calendar_and_minutes_helpers(tmp_path):
             self.calls.append(("respond_calendar_event", event_id, response_status))
             return {"success": True}
 
+        def comment_oa_approval(self, process_instance_id, text):
+            self.calls.append(("comment_oa_approval", process_instance_id, text))
+            return {"success": True}
+
     cached = CachedDwsClient(
         FakeDws(),
         CachedOrgDirectory(AutoReplyStore(tmp_path / "worker.sqlite3")),
@@ -304,6 +308,7 @@ def test_cached_dws_client_delegates_calendar_and_minutes_helpers(tmp_path):
     assert cached.calendar_invite_from_message(msg) is event
     assert cached.list_calendar_events("start", "end") == [event]
     assert cached.respond_calendar_event("event-1", "accepted") == {"success": True}
+    assert cached.comment_oa_approval("proc-1", "请补材料") == {"success": True}
     assert cached.dws.calls == [
         ("minutes_permission_request_from_message", msg),
         ("add_minutes_member_permission", request),
@@ -314,6 +319,7 @@ def test_cached_dws_client_delegates_calendar_and_minutes_helpers(tmp_path):
         ("calendar_invite_from_message", msg),
         ("list_calendar_events", "start", "end"),
         ("respond_calendar_event", "event-1", "accepted"),
+        ("comment_oa_approval", "proc-1", "请补材料"),
     ]
 
 
