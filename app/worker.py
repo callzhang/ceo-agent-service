@@ -1426,32 +1426,36 @@ class DingTalkAutoReplyWorker:
         ):
             return True
         if not calendar_context.conflicts:
+            calendar_prompt_message = self._calendar_invite_prompt_message(
+                conversation, trigger, calendar_context
+            )
             self._process_batch(
                 conversation,
                 [trigger],
                 [
                     *context_messages,
-                    self._calendar_invite_prompt_message(
-                        conversation, trigger, calendar_context
-                    ),
+                    calendar_prompt_message,
                 ],
                 ignore_existing_attempt=True,
                 raise_on_delivery_failure=raise_on_delivery_failure,
                 calendar_response_event=calendar_context.invite,
+                comment_target_messages=[trigger, calendar_prompt_message],
             )
             return True
+        calendar_prompt_message = self._calendar_conflict_prompt_message(
+            conversation, trigger, calendar_context
+        )
         self._process_batch(
             conversation,
             [trigger],
             [
                 *context_messages,
-                self._calendar_conflict_prompt_message(
-                    conversation, trigger, calendar_context
-                ),
+                calendar_prompt_message,
             ],
             ignore_existing_attempt=True,
             raise_on_delivery_failure=raise_on_delivery_failure,
             calendar_response_event=calendar_context.invite,
+            comment_target_messages=[trigger, calendar_prompt_message],
         )
         return True
 
@@ -1701,6 +1705,8 @@ class DingTalkAutoReplyWorker:
             "请先结合最近上下文事项、会议标题、时间、组织者、会议描述和重叠会议判断是否有必要参加；会议描述为空不是自动追问条件。",
             "如果最近事项和标题已经能判断本人有必要参加，action 输出 no_reply，并设置 calendar_response_status 为 accepted。",
             "如果最近事项和标题能判断没有必要参加或仅需保留观察，可以 action 输出 no_reply，并设置 calendar_response_status 为 declined 或 tentative。",
+            "如果新会议本身是静默会、异步评审、材料审阅或明确要求处理事项，不能只接受日历；请把日程标题、描述、链接材料、冲突会议和上下文当作待处理事项直接处理，输出处理结论或需要补充的材料。",
+            "这类材料处理可以同时设置 calendar_response_status；如果材料链接支持评论，服务会优先写入原材料评论，不能评论时再回退到原消息回复。",
             "如果理由充分但需要聊天同步，回复中说明建议接受这场会议并调整或拒绝哪个重叠会议；如果信息不足，再回复对方原因并请补充。",
             "",
             f"新会议：{context.invite.title or '未命名日程'}",
@@ -1737,6 +1743,8 @@ class DingTalkAutoReplyWorker:
             "有人发来新的日程邀请，当前未发现同时间段已有日程冲突。",
             "请先结合最近上下文事项、会议标题、时间、组织者和会议描述判断是否有必要参加；会议描述为空不是自动追问条件。",
             "如果日程是在要求审批、批阅、review、反馈或评论某个文档内容，reply_text 必须是：请直接@我文档让我批阅即可，只有存疑再约会。",
+            "如果新会议本身是静默会、异步评审、材料审阅或明确要求处理事项，不能只接受日历；请把日程标题、描述、链接材料和上下文当作待处理事项直接处理，输出处理结论或需要补充的材料。",
+            "这类材料处理可以同时设置 calendar_response_status；如果材料链接支持评论，服务会优先写入原材料评论，不能评论时再回退到原消息回复。",
             f"如果最近事项和标题足以判断 {principal_display_name()} 本人有必要参加，action 输出 no_reply，并设置 calendar_response_status 为 accepted。",
             "如果最近事项和标题足以判断先保留但不确认，action 输出 no_reply，并设置 calendar_response_status 为 tentative。",
             "如果最近事项和标题足以判断本人参加无价值，action 输出 no_reply，并设置 calendar_response_status 为 declined。",
@@ -1769,15 +1777,47 @@ class DingTalkAutoReplyWorker:
         reason: str,
         raise_on_delivery_failure: bool = False,
     ) -> None:
+        succeeded = self._execute_calendar_response(
+            conversation=conversation,
+            trigger=trigger,
+            event=event,
+            response_status=response_status,
+            attempt_id=attempt_id,
+            mark_attempt_terminal=True,
+            raise_on_delivery_failure=raise_on_delivery_failure,
+        )
+        if not succeeded:
+            return
+        self._mark_seen(new_messages)
+        if reason:
+            self.store.record_error(
+                conversation.open_conversation_id,
+                trigger.open_message_id,
+                "calendar_response",
+                f"{response_status}: {reason}",
+            )
+
+    def _execute_calendar_response(
+        self,
+        *,
+        conversation: DingTalkConversation,
+        trigger: DingTalkMessage,
+        event: DwsCalendarEvent,
+        response_status: str,
+        attempt_id: int,
+        mark_attempt_terminal: bool,
+        raise_on_delivery_failure: bool = False,
+    ) -> bool:
         if not event.event_id.strip():
             error = "missing_calendar_event_id"
-            self.store.update_reply_attempt(
-                attempt_id,
-                calendar_event_id=event.event_id,
-                calendar_response_status=response_status,
-                send_status="failed",
-                send_error=error,
-            )
+            updates: dict[str, Any] = {
+                "calendar_event_id": event.event_id,
+                "calendar_response_status": response_status,
+                "send_error": error,
+            }
+            if mark_attempt_terminal:
+                updates["send_status"] = "failed"
+            self.store.update_reply_attempt(attempt_id, **updates)
             self.store.record_error(
                 conversation.open_conversation_id,
                 trigger.open_message_id,
@@ -1791,27 +1831,29 @@ class DingTalkAutoReplyWorker:
             )
             if raise_on_delivery_failure:
                 raise ReplyDeliveryError(error)
-            return
+            return False
         if self.dry_run:
-            self.store.update_reply_attempt(
-                attempt_id,
-                calendar_event_id=event.event_id,
-                calendar_response_status=response_status,
-                send_status="dry_run",
-            )
-            return
+            updates = {
+                "calendar_event_id": event.event_id,
+                "calendar_response_status": response_status,
+            }
+            if mark_attempt_terminal:
+                updates["send_status"] = "dry_run"
+            self.store.update_reply_attempt(attempt_id, **updates)
+            return True
         try:
             action_result = self.dws.respond_calendar_event(
                 event.event_id, response_status
             )
         except Exception as exc:
-            self.store.update_reply_attempt(
-                attempt_id,
-                calendar_event_id=event.event_id,
-                calendar_response_status=response_status,
-                send_status="failed",
-                send_error=str(exc),
-            )
+            updates = {
+                "calendar_event_id": event.event_id,
+                "calendar_response_status": response_status,
+                "send_error": str(exc),
+            }
+            if mark_attempt_terminal:
+                updates["send_status"] = "failed"
+            self.store.update_reply_attempt(attempt_id, **updates)
             self.store.record_error(
                 conversation.open_conversation_id,
                 trigger.open_message_id,
@@ -1825,27 +1867,21 @@ class DingTalkAutoReplyWorker:
             )
             if raise_on_delivery_failure:
                 raise ReplyDeliveryError(str(exc)) from exc
-            return
-        self.store.update_reply_attempt(
-            attempt_id,
-            calendar_event_id=event.event_id,
-            calendar_response_status=response_status,
-            calendar_response_result_json=json.dumps(
+            return False
+        updates = {
+            "calendar_event_id": event.event_id,
+            "calendar_response_status": response_status,
+            "calendar_response_result_json": json.dumps(
                 action_result,
                 ensure_ascii=False,
                 sort_keys=True,
             ),
-            send_status="skipped",
-            send_error="",
-        )
-        self._mark_seen(new_messages)
-        if reason:
-            self.store.record_error(
-                conversation.open_conversation_id,
-                trigger.open_message_id,
-                "calendar_response",
-                f"{response_status}: {reason}",
-            )
+            "send_error": "",
+        }
+        if mark_attempt_terminal:
+            updates["send_status"] = "skipped"
+        self.store.update_reply_attempt(attempt_id, **updates)
+        return True
 
     def _record_system_or_notification_skip(
         self,
@@ -2262,6 +2298,7 @@ class DingTalkAutoReplyWorker:
         ignore_existing_attempt: bool = False,
         raise_on_delivery_failure: bool = False,
         calendar_response_event: DwsCalendarEvent | None = None,
+        comment_target_messages: list[DingTalkMessage] | None = None,
     ) -> None:
         trigger = new_messages[-1]
         if not ignore_existing_attempt and self._handle_existing_attempt(
@@ -2271,12 +2308,13 @@ class DingTalkAutoReplyWorker:
             raise_on_delivery_failure=raise_on_delivery_failure,
         ):
             return
+        material_messages = comment_target_messages or new_messages
         try:
             linked_documents = self._read_linked_documents(
-                new_messages, context_messages
+                material_messages, context_messages
             )
             image_paths, image_download_errors = self._collect_image_paths(
-                new_messages,
+                material_messages,
                 context_messages,
             )
         except Exception as exc:
@@ -2372,9 +2410,9 @@ class DingTalkAutoReplyWorker:
             audit_summary=decision.audit_summary,
         )
 
-        if decision.action == CodexAction.NO_REPLY:
-            calendar_response_status = decision.calendar_response_status.value
-            if calendar_response_event is not None and calendar_response_status:
+        calendar_response_status = decision.calendar_response_status.value
+        if calendar_response_event is not None and calendar_response_status:
+            if decision.action == CodexAction.NO_REPLY:
                 self._respond_calendar_invite(
                     conversation=conversation,
                     trigger=trigger,
@@ -2386,6 +2424,17 @@ class DingTalkAutoReplyWorker:
                     raise_on_delivery_failure=raise_on_delivery_failure,
                 )
                 return
+            self._execute_calendar_response(
+                conversation=conversation,
+                trigger=trigger,
+                event=calendar_response_event,
+                response_status=calendar_response_status,
+                attempt_id=attempt_id,
+                mark_attempt_terminal=False,
+                raise_on_delivery_failure=raise_on_delivery_failure,
+            )
+
+        if decision.action == CodexAction.NO_REPLY:
             self.store.update_reply_attempt(
                 attempt_id,
                 send_status="skipped",
@@ -2511,6 +2560,7 @@ class DingTalkAutoReplyWorker:
                 reply_text=permission.reply_text,
                 reason=permission.reason,
                 attempt_id=attempt_id,
+                comment_target_messages=comment_target_messages,
                 raise_on_delivery_failure=raise_on_delivery_failure,
             )
             return
@@ -2522,6 +2572,7 @@ class DingTalkAutoReplyWorker:
             reply_text=decision.reply_text,
             reason=decision.reason,
             attempt_id=attempt_id,
+            comment_target_messages=comment_target_messages,
             raise_on_delivery_failure=raise_on_delivery_failure,
         )
 
@@ -3255,6 +3306,14 @@ class DingTalkAutoReplyWorker:
         seen: set[str] = set()
         for message in messages:
             for text in (message.content, message.quoted_content or ""):
+                for match in DINGTALK_SHANJI_DOC_SELECTOR_PATTERN.finditer(text):
+                    task_uuid = cls._minutes_task_uuid_from_selector_url(
+                        match.group(0)
+                    )
+                    if not task_uuid or task_uuid in seen:
+                        continue
+                    seen.add(task_uuid)
+                    task_uuids.append(task_uuid)
                 for match in DINGTALK_MINUTES_LINK_PATTERN.finditer(text):
                     task_uuid = cls._minutes_task_uuid_from_url(match.group(0))
                     if not task_uuid or task_uuid in seen:
@@ -3262,6 +3321,14 @@ class DingTalkAutoReplyWorker:
                     seen.add(task_uuid)
                     task_uuids.append(task_uuid)
         return task_uuids
+
+    @staticmethod
+    def _minutes_task_uuid_from_selector_url(url: str) -> str:
+        cleaned = DingTalkAutoReplyWorker._clean_link_url(url)
+        parsed = urlsplit(cleaned)
+        query = parse_qs(parsed.query)
+        resource_id = query.get("resourceId", [""])[0]
+        return resource_id.strip()
 
     @classmethod
     def _minutes_comment_target(cls, messages: list[DingTalkMessage]) -> str:
@@ -3615,6 +3682,7 @@ class DingTalkAutoReplyWorker:
         reply_text: str,
         reason: str,
         attempt_id: int,
+        comment_target_messages: list[DingTalkMessage] | None = None,
         raise_on_delivery_failure: bool = False,
     ) -> None:
         if not reply_text.strip():
@@ -3683,6 +3751,7 @@ class DingTalkAutoReplyWorker:
             direct_open_dingtalk_id=trigger.sender_open_dingtalk_id
             if conversation.single_chat
             else None,
+            comment_target_messages=comment_target_messages,
             raise_on_delivery_failure=raise_on_delivery_failure,
         )
 
@@ -3727,6 +3796,7 @@ class DingTalkAutoReplyWorker:
         at_users: list[str],
         direct_user_id: str | None,
         direct_open_dingtalk_id: str | None,
+        comment_target_messages: list[DingTalkMessage] | None = None,
         raise_on_delivery_failure: bool = False,
     ) -> None:
         reply_text = self._native_reply_body(final_reply_text)
@@ -3765,7 +3835,9 @@ class DingTalkAutoReplyWorker:
             )
             return
 
-        minutes_comment_target = self._minutes_comment_target(new_messages)
+        minutes_comment_target = self._minutes_comment_target(
+            comment_target_messages or new_messages
+        )
         if minutes_comment_target:
             self._deliver_minutes_comment(
                 conversation=conversation,

@@ -2702,6 +2702,72 @@ def test_calendar_invite_for_document_review_replies_to_use_document_comment(
     assert dws.calendar_responses == []
 
 
+def test_calendar_static_review_reads_minutes_accepts_and_comments_material(
+    tmp_path: Path, monkeypatch
+):
+    minutes_id = "76327569643331323035353732315f3233333438363436305f30"
+    target_url = (
+        "https://alidocs.dingtalk.com/i/u/dingdocSelectorV4/save?"
+        f"resourceId={minutes_id}&resourceType=SHANJI&createLink=true"
+    )
+    trigger = message("[日程]", single_chat=True, message_type="calendar")
+    invite = DwsCalendarEvent(
+        event_id="invite-1",
+        title="【静默会】测试开发工程师 - 候选人A 作业题审阅",
+        start_time="2026-05-14T10:00:00+08:00",
+        end_time="2026-05-14T11:00:00+08:00",
+        description=f"请阅读听记和作业材料后给处理结论：{target_url}",
+        organizer=trigger.sender_name,
+    )
+    dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
+    dws.calendar_invites["msg-1"] = invite
+    dws.minutes_infos[minutes_id] = {
+        "result": {
+            "taskUuid": minutes_id,
+            "title": "候选人A测试开发技术面记录",
+            "url": f"https://shanji.dingtalk.com/app/transcribes/{minutes_id}",
+        }
+    }
+    dws.minutes_summaries[minutes_id] = {
+        "result": {"fullSummary": "候选人测试开发基础较完整，但 Agent 工程化偏浅。"}
+    }
+    dws.minutes_todos[minutes_id] = {
+        "result": {"actions": ['{"value":"Alex 给出是否推进录用的处理结论"}']}
+    }
+    codex = FakeCodex(
+        CodexDecision(
+            action=CodexAction.SEND_REPLY,
+            reply_text="不建议直接推进，建议补充作业后再判断。",
+            reason="静默会材料已处理，并接受日程。",
+            calendar_response_status="accepted",
+            audit_summary="读取静默会听记后给出处理结论。",
+        )
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+
+    worker.run_once()
+
+    assert dws.minutes_info_calls == [minutes_id]
+    assert dws.minutes_summary_calls == [minutes_id]
+    assert dws.minutes_todo_calls == [minutes_id]
+    prompt = codex.calls[0][0]
+    assert "不能只接受日历" in prompt
+    assert "AI 听记材料:" in prompt
+    assert "候选人测试开发基础较完整" in prompt
+    assert "Alex 给出是否推进录用的处理结论" in prompt
+    signed_reply = "不建议直接推进，建议补充作业后再判断。（by明哥分身）"
+    assert dws.calendar_responses == [("invite-1", "accepted")]
+    assert dws.doc_comments == [(target_url, signed_reply)]
+    assert final_sent(dws) == []
+    attempt = worker.store.get_reply_attempt(1)
+    assert attempt is not None
+    assert attempt.action == "send_reply"
+    assert attempt.send_status == "sent"
+    assert attempt.calendar_event_id == "invite-1"
+    assert attempt.calendar_response_status == "accepted"
+    assert attempt.calendar_response_result_json == '{"success": true}'
+
+
 def test_calendar_invite_with_clear_value_auto_accepts_without_chat_reply(
     tmp_path: Path, monkeypatch
 ):

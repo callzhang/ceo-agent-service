@@ -117,16 +117,30 @@ message_type=file, content=这是文件
 ```text
 dingtalk://dingtalkclient/page/flash_minutes_detail?...minutesId=...
 https://shanji.dingtalk.com/app/transcribes/...
+https://alidocs.dingtalk.com/i/u/dingdocSelectorV4/save?...resourceType=SHANJI...
 ```
 
 处理规则：
 
 - 不按普通钉钉内部链接跳过。
 - 从链接中提取 `minutesId` / taskUuid。
+- 对 `resourceType=SHANJI` 的钉钉文档选择器链接，从 `resourceId` 提取听记 taskUuid。
 - 读取听记基础信息、AI 摘要、处理事项和文字稿预览。
 - 将材料注入 prompt 的“已获取的钉钉材料”。
 - agent 必须像处理待办事项一样处理听记中的明确事项，给出结论、负责人、下一步或需要补充的材料；不能只总结会议。
 - 如果 agent 生成 `send_reply` / `ask_clarifying_question`，服务优先把处理结果写入原 AI 听记 / 静默会的全文评论；当前 DWS 对 AI 听记评论不可用时，会 fallback 到原消息 reply。这类消息不因为“只是材料投递、聊天里没有额外问题”而自动 `no_reply`。
+
+### 日历里的静默会 / 异步评审
+
+当前行为：`agent_review`，并且可同时执行日历响应。
+
+处理规则：
+
+- 日程卡片会先尽量定位到对应日程详情；裸 `[日程]` 会按发送人和最近创建/更新时间匹配待响应日程。
+- 如果日程标题、描述或上下文显示这是静默会、异步评审、材料审阅或明确要求处理事项，agent 不能只输出接受日历；必须把日程标题、描述、链接材料和上下文当作待处理事项处理。
+- 日程描述里的 AI 听记 / 静默会链接会参与材料读取，并可作为评论写回目标。
+- agent 可以在同一个结果里同时设置 `calendar_response_status` 和 `send_reply` / `ask_clarifying_question`；服务会先执行日历响应，再把处理结论写入原材料评论，不能评论时回退到原消息 reply。
+- 如果日历本身不能评论，则通过材料评论或聊天回复完成处理闭环。
 
 ### 只有钉钉内部链接或媒体占位符的消息
 
