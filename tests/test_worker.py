@@ -2755,6 +2755,53 @@ def test_bare_calendar_card_does_not_guess_multiple_pending_invites(
     assert attempt.codex_reason == "calendar_detail_unreadable"
 
 
+def test_bare_calendar_card_uses_near_upcoming_invite_without_change_time(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message("[日程]", single_chat=True, message_type="calendar")
+    near_invite = DwsCalendarEvent(
+        event_id="invite-1",
+        title="【静默会】审工资",
+        start_time="2026-05-14T14:30:00+08:00",
+        end_time="2026-05-14T15:00:00+08:00",
+        organizer=trigger.sender_name,
+        self_response_status="needsAction",
+        status="confirmed",
+    )
+    later_invite = DwsCalendarEvent(
+        event_id="invite-2",
+        title="管理周会",
+        start_time="2026-05-16T09:00:00+08:00",
+        end_time="2026-05-16T10:00:00+08:00",
+        organizer=trigger.sender_name,
+        self_response_status="needsAction",
+        status="confirmed",
+    )
+    dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
+    dws.calendar_events[
+        "2026-05-13T17:00:00+08:00|2026-05-27T17:00:00+08:00"
+    ] = [near_invite, later_invite]
+    dws.calendar_events[f"{near_invite.start_time}|{near_invite.end_time}"] = [
+        near_invite
+    ]
+    codex = FakeCodex(
+        CodexDecision(
+            action=CodexAction.NO_REPLY,
+            reason="标题和时间足以判断需要接受这次静默会。",
+            calendar_response_status="accepted",
+        )
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+
+    worker.run_once()
+
+    assert len(codex.calls) == 1
+    assert "【静默会】审工资" in codex.calls[0][0]
+    assert "管理周会" not in codex.calls[0][0]
+    assert final_sent(dws) == []
+    assert dws.calendar_responses == [("invite-1", "accepted")]
+
+
 def test_bare_calendar_card_uses_pending_invite_created_near_message(
     tmp_path: Path, monkeypatch
 ):

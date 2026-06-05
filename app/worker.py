@@ -1784,6 +1784,14 @@ class DingTalkAutoReplyWorker:
                 near_message_candidates,
                 message,
             )
+        upcoming_candidate = (
+            self._closest_upcoming_calendar_event_without_change_time(
+                candidates,
+                message,
+            )
+        )
+        if upcoming_candidate is not None:
+            return upcoming_candidate
         if len(candidates) == 1 and not self._calendar_event_has_change_time(
             candidates[0]
         ):
@@ -1850,6 +1858,37 @@ class DingTalkAutoReplyWorker:
     @staticmethod
     def _calendar_event_has_change_time(event: DwsCalendarEvent) -> bool:
         return event.created_ms > 0 or event.updated_ms > 0
+
+    @classmethod
+    def _closest_upcoming_calendar_event_without_change_time(
+        cls,
+        events: list[DwsCalendarEvent],
+        message: DingTalkMessage,
+    ) -> DwsCalendarEvent | None:
+        message_time = cls._message_create_time_as_instant(message)
+        scored_events: list[tuple[timedelta, DwsCalendarEvent]] = []
+        for event in events:
+            if cls._calendar_event_has_change_time(event):
+                continue
+            start_time = cls._parse_calendar_time(event.start_time)
+            if start_time is None:
+                continue
+            if start_time.tzinfo is None:
+                start_time = start_time.replace(tzinfo=DINGTALK_MESSAGE_TIME_ZONE)
+            start_time = start_time.astimezone(message_time.tzinfo or timezone.utc)
+            delta = start_time - message_time
+            if (
+                timedelta()
+                <= delta
+                <= CALENDAR_PENDING_INVITE_NO_CHANGE_TIME_START_LOOKAHEAD
+            ):
+                scored_events.append((delta, event))
+        if not scored_events:
+            return None
+        scored_events.sort(key=lambda item: item[0])
+        if len(scored_events) > 1 and scored_events[0][0] == scored_events[1][0]:
+            return None
+        return scored_events[0][1]
 
     @staticmethod
     def _calendar_event_change_delta_ms(
