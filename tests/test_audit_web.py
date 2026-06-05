@@ -1178,6 +1178,28 @@ def test_render_attempt_list_shows_pending_reply_tasks(tmp_path: Path):
     assert "@Alex Chen(明哥) 这个候选人怎么看？" in html
 
 
+def test_render_attempt_list_formats_pending_backoff_time_in_local_timezone(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="cid-1",
+        conversation_title="HR管理",
+        single_chat=False,
+        trigger_message_id="msg-queued",
+        trigger_create_time="2026-05-28 18:00:00",
+        trigger_sender="Mina",
+        trigger_text="@Alex Chen(明哥) 这个候选人怎么看？",
+        available_at="2026-06-04 08:06:52",
+        error="waiting_fast_path_unread_backoff",
+    )
+
+    html = render_attempt_list(store)
+
+    assert "快路径已触发，等待到 2026-06-04 01:06:52 后确认是否仍需处理" in html
+    assert "等待到 2026-06-04 08:06:52" not in html
+
+
 def test_render_attempt_list_shows_processing_reply_tasks(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.enqueue_reply_task(

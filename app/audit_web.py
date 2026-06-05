@@ -1637,7 +1637,8 @@ def _reply_task_item(task: ReplyTask) -> str:
 def _reply_task_progress_text(task: ReplyTask) -> str:
     if task.status == "pending":
         if task.error == FAST_PATH_UNREAD_BACKOFF_TASK_ERROR:
-            return f"快路径已触发，等待到 {task.available_at} 后确认是否仍需处理"
+            available_at = _format_local_time(task.available_at)
+            return f"快路径已触发，等待到 {available_at} 后确认是否仍需处理"
         return "已进入处理队列，等待分身生成回复"
     if task.status == "processing":
         return "分身正在处理"
