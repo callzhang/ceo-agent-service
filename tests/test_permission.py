@@ -45,7 +45,7 @@ def test_internal_personnel_private_requester_cannot_receive_other_person_reply(
     assert result.reason == "private requester is not personnel subject"
 
 
-def test_internal_personnel_private_request_requires_subject_id():
+def test_internal_personnel_private_request_without_subject_refuses_instead_of_asking():
     class Dws:
         def resolve_message_sender(self, message):
             raise RuntimeError("sender resolution should not be needed")
@@ -62,7 +62,8 @@ def test_internal_personnel_private_request_requires_subject_id():
     )
 
     assert result.action == PermissionAction.REPLY
-    assert "关于谁" in result.reply_text
+    assert "其他人的人事信息" in result.reply_text
+    assert result.reason == "missing personnel subject"
 
 
 def test_internal_personnel_subject_can_receive_reply_about_self():

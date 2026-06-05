@@ -6951,7 +6951,7 @@ def test_processing_ack_does_not_hide_unanswered_group_mention(
     assert "请审一下这个文档" in prompt
 
 
-def test_internal_personnel_question_missing_subject_asks_clarifying_question(
+def test_internal_personnel_question_missing_subject_refuses_instead_of_asking(
     tmp_path: Path, monkeypatch
 ):
     dws = FakeDws(
@@ -6969,7 +6969,9 @@ def test_internal_personnel_question_missing_subject_asks_clarifying_question(
 
     worker.run_once()
 
-    assert final_sent(dws) == [("cid-1", "这个是关于谁的问题？（by明哥分身）")]
+    assert final_sent(dws) == [
+        ("cid-1", "这个涉及其他人的人事信息，我不能直接回答。（by明哥分身）")
+    ]
 
 
 def test_internal_personnel_question_allows_private_self_subject(

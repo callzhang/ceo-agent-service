@@ -9,7 +9,6 @@ from app.dingtalk_models import (
 )
 
 
-INTERNAL_PERSONNEL_CLARIFICATION = "这个是关于谁的问题？"
 INTERNAL_PERSONNEL_PRIVATE_REFUSAL = "这个涉及其他人的人事信息，我不能直接回答。"
 INTERNAL_PERSONNEL_GROUP_REFUSAL = "这个涉及个人敏感信息，不适合在群里展开，单独同步我。"
 CANDIDATE_DEPARTMENT_CLARIFICATION = "这个候选人是哪个岗位/部门的？"
@@ -49,17 +48,17 @@ class PermissionGate:
     def _evaluate_internal_personnel(
         self, decision: CodexDecision, trigger: DingTalkMessage
     ) -> PermissionResult:
-        if not decision.personnel_subject_user_id:
-            return PermissionResult(
-                action=PermissionAction.REPLY,
-                reply_text=INTERNAL_PERSONNEL_CLARIFICATION,
-                reason="missing personnel subject",
-            )
         if not trigger.single_chat:
             return PermissionResult(
                 action=PermissionAction.REPLY,
                 reply_text=INTERNAL_PERSONNEL_GROUP_REFUSAL,
                 reason="internal personnel detail in group chat",
+            )
+        if not decision.personnel_subject_user_id:
+            return PermissionResult(
+                action=PermissionAction.REPLY,
+                reply_text=INTERNAL_PERSONNEL_PRIVATE_REFUSAL,
+                reason="missing personnel subject",
             )
         try:
             requester_user_id = self.dws.resolve_message_sender(trigger)
