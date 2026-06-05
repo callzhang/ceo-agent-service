@@ -399,6 +399,12 @@ class DingTalkAutoReplyWorker:
             trigger = self._pending_calendar_invite_trigger(event, conversation)
             if self.store.has_seen(trigger.open_message_id):
                 continue
+            if self._merge_pending_calendar_invite_into_recent_card(
+                event,
+                conversation,
+                synthetic_trigger=trigger,
+            ):
+                continue
             self.store.upsert_conversation(
                 conversation_id=conversation.open_conversation_id,
                 title=conversation.title,
@@ -410,6 +416,67 @@ class DingTalkAutoReplyWorker:
                 if max_tasks is not None and queued >= max_tasks:
                     break
         return queued
+
+    def _merge_pending_calendar_invite_into_recent_card(
+        self,
+        event: DwsCalendarEvent,
+        conversation: DingTalkConversation,
+        *,
+        synthetic_trigger: DingTalkMessage,
+    ) -> bool:
+        since_utc = self._sqlite_timestamp(
+            self._now().astimezone(timezone.utc)
+            - timedelta(seconds=CALENDAR_PENDING_INVITE_EVENT_MATCH_SECONDS)
+        )
+        for task in self.store.list_recent_reply_tasks_for_sender(
+            conversation_id=conversation.open_conversation_id,
+            sender_name=event.organizer,
+            since_utc=since_utc,
+        ):
+            if task.trigger_message_id.startswith("calendar:"):
+                continue
+            message = self._reply_task_message(task)
+            if message is None or not self._is_calendar_message(message):
+                continue
+            if task.status == "failed":
+                continue
+            if task.status == "pending" and task.attempts == 0:
+                merged = self._calendar_card_message_with_pending_invite(
+                    message,
+                    event,
+                )
+                self.store.update_reply_task_trigger(
+                    task.id,
+                    trigger_text=merged.content,
+                    trigger_message_json=merged.model_dump_json(),
+                )
+            self.store.mark_seen(
+                synthetic_trigger.open_message_id,
+                conversation.open_conversation_id,
+            )
+            return True
+        return False
+
+    @staticmethod
+    def _reply_task_message(task: ReplyTask) -> DingTalkMessage | None:
+        try:
+            return DingTalkMessage.model_validate_json(task.trigger_message_json)
+        except ValueError:
+            return None
+
+    def _calendar_card_message_with_pending_invite(
+        self,
+        message: DingTalkMessage,
+        event: DwsCalendarEvent,
+    ) -> DingTalkMessage:
+        title = event.title.strip() or "未命名日程"
+        return message.model_copy(
+            update={
+                "message_type": message.message_type or "calendar",
+                "content": f"[日程] {title}",
+                "raw_payload": self._calendar_event_raw_payload(event),
+            }
+        )
 
     def _pending_calendar_invite_scan_window(self) -> tuple[str, str]:
         now = self._now().astimezone(DINGTALK_MESSAGE_TIME_ZONE)

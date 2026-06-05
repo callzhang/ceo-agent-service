@@ -1232,6 +1232,97 @@ def test_produce_once_enqueues_pending_calendar_invite_without_chat_card(
     assert calendar_task.trigger_text == "[日程] 产品部效能讨论"
 
 
+def test_pending_calendar_invite_merges_into_recent_calendar_card_task(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message(
+        "[日程]",
+        message_id="msg-calendar-card",
+        single_chat=True,
+        message_type="calendar",
+    )
+    dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
+    codex = FakeCodex(
+        CodexDecision(
+            action=CodexAction.NO_REPLY,
+            reason="标题和组织者足以判断需要参加。",
+            calendar_response_status="accepted",
+            audit_summary="已读取待响应日程。",
+        )
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+    invite = DwsCalendarEvent(
+        event_id="invite-1",
+        title="Vivian Memorial Park",
+        start_time="2026-05-13T15:00:00-07:00",
+        end_time="2026-05-13T16:00:00-07:00",
+        description="",
+        organizer=trigger.sender_name,
+        self_response_status="needsAction",
+        attendees=["Alex Chen(明哥)", trigger.sender_name],
+        status="confirmed",
+    )
+    scan_start, scan_end = worker._pending_calendar_invite_scan_window()
+    dws.calendar_events[f"{scan_start}|{scan_end}"] = [invite]
+
+    queued = worker.produce_once()
+
+    tasks = worker.store.list_reply_tasks(statuses=("pending",), limit=10)
+    assert queued == 1
+    assert [task.trigger_message_id for task in tasks] == ["msg-calendar-card"]
+    assert tasks[0].trigger_text == "[日程] Vivian Memorial Park"
+    merged = DingTalkMessage.model_validate_json(tasks[0].trigger_message_json)
+    assert merged.sender_open_dingtalk_id == "sender-1"
+    assert merged.raw_payload["id"] == "invite-1"
+    assert worker.store.has_seen("calendar:invite-1") is True
+
+
+def test_pending_calendar_invite_can_recover_failed_calendar_card_task(
+    tmp_path: Path, monkeypatch
+):
+    failed_card = message(
+        "[日程]",
+        message_id="msg-calendar-card",
+        single_chat=True,
+        message_type="calendar",
+    )
+    dws = FakeDws([], {})
+    worker = make_worker(tmp_path, dws, FakeCodex([]), monkeypatch)
+    worker.store.upsert_conversation("cid-1", "Friday", True, None)
+    worker.store.enqueue_reply_task(
+        conversation_id="cid-1",
+        conversation_title="Friday",
+        single_chat=True,
+        trigger_message_id=failed_card.open_message_id,
+        trigger_create_time=failed_card.create_time,
+        trigger_sender=failed_card.sender_name,
+        trigger_text=failed_card.content,
+        trigger_message_json=failed_card.model_dump_json(),
+    )
+    failed_task = worker.store.claim_reply_tasks(limit=1)[0]
+    worker.store.fail_reply_task(failed_task.id, "calendar card failed")
+    invite = DwsCalendarEvent(
+        event_id="invite-1",
+        title="Vivian Memorial Park",
+        start_time="2026-05-13T15:00:00-07:00",
+        end_time="2026-05-13T16:00:00-07:00",
+        organizer=failed_card.sender_name,
+        self_response_status="needsAction",
+        status="confirmed",
+    )
+    scan_start, scan_end = worker._pending_calendar_invite_scan_window()
+    dws.calendar_events[f"{scan_start}|{scan_end}"] = [invite]
+
+    queued = worker.produce_once()
+
+    pending_tasks = worker.store.list_reply_tasks(statuses=("pending",), limit=10)
+    assert queued == 1
+    assert [task.trigger_message_id for task in pending_tasks] == [
+        "calendar:invite-1"
+    ]
+    assert worker.store.has_seen("calendar:invite-1") is False
+
+
 def test_pending_calendar_invite_from_recent_sender_uses_existing_calendar_flow(
     tmp_path: Path, monkeypatch
 ):

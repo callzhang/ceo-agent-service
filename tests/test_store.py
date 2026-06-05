@@ -144,6 +144,63 @@ def test_list_reply_tasks_filters_statuses_newest_first(tmp_path: Path):
     assert [task.trigger_message_id for task in tasks] == ["msg-2"]
 
 
+def test_list_recent_reply_tasks_for_sender_filters_conversation_and_sender(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="cid-1",
+        conversation_title="Friday",
+        single_chat=False,
+        trigger_message_id="msg-1",
+        trigger_create_time="2026-05-13 18:00:00",
+        trigger_sender="Mina",
+        trigger_text="[日程]",
+    )
+    store.enqueue_reply_task(
+        conversation_id="cid-2",
+        conversation_title="HR管理",
+        single_chat=False,
+        trigger_message_id="msg-2",
+        trigger_create_time="2026-05-13 18:01:00",
+        trigger_sender="Mina",
+        trigger_text="[日程]",
+    )
+
+    tasks = store.list_recent_reply_tasks_for_sender(
+        conversation_id="cid-1",
+        sender_name="Mina",
+        since_utc="2000-01-01 00:00:00",
+    )
+
+    assert [task.trigger_message_id for task in tasks] == ["msg-1"]
+
+
+def test_update_reply_task_trigger_only_changes_unclaimed_pending_task(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="cid-1",
+        conversation_title="Friday",
+        single_chat=False,
+        trigger_message_id="msg-1",
+        trigger_create_time="2026-05-13 18:00:00",
+        trigger_sender="Mina",
+        trigger_text="[日程]",
+        trigger_message_json='{"content":"[日程]"}',
+    )
+    claimed = store.claim_reply_tasks(limit=1)[0]
+
+    updated = store.update_reply_task_trigger(
+        claimed.id,
+        trigger_text="[日程] 新标题",
+        trigger_message_json='{"content":"[日程] 新标题"}',
+    )
+
+    task = store.list_reply_tasks(limit=1)[0]
+    assert updated == 0
+    assert task.trigger_text == "[日程]"
+
+
 def test_reset_stale_processing_reply_tasks_requeues_orphans(tmp_path: Path):
     db_path = tmp_path / "worker.sqlite3"
     store = AutoReplyStore(db_path)
