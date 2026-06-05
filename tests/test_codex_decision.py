@@ -149,6 +149,7 @@ def test_extract_codex_audit_events_from_jsonl_tool_events():
         {
             "event_type": "item.completed",
             "tool": "exec_command",
+            "input": '{ "cmd": "sed -n \'1,120p\' /Users/principal/Documents/memory/面试/岗位画像.md" }',
             "command": "sed -n '1,120p' /Users/principal/Documents/memory/面试/岗位画像.md",
             "path": "/Users/principal/Documents/memory/面试/岗位画像.md",
         }

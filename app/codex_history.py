@@ -365,7 +365,11 @@ def _audit_event_from_jsonl(payload: dict[str, Any]) -> dict[str, str] | None:
         event: dict[str, str] = {
             "event_type": "response_item",
             "tool": name,
+            "input": arguments,
         }
+        call_id = _string(item.get("call_id"))
+        if call_id:
+            event["call_id"] = call_id
         command = _command_from_json_text(arguments)
         if command:
             event["command"] = command
@@ -378,9 +382,11 @@ def _audit_event_from_jsonl(payload: dict[str, Any]) -> dict[str, str] | None:
         event = {
             "event_type": "response_item",
             "tool": "tool_output",
+            "output": output,
         }
         call_id = _string(item.get("call_id"))
         if call_id:
+            event["call_id"] = call_id
             event["command"] = call_id
         path = _first_pathish_token(output)
         if path:

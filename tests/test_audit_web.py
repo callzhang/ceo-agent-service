@@ -1,3 +1,4 @@
+import json
 import os
 import subprocess
 from pathlib import Path
@@ -1695,6 +1696,48 @@ def test_render_attempt_detail_shows_full_decision_and_feedback_form(tmp_path: P
     assert "Codex local history" not in html
     assert "Final reply (send-ready text)" not in html
     assert "撤销发送" not in html
+
+
+def test_render_attempt_detail_renders_audit_tool_inputs_and_outputs(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    attempt_id = store.record_reply_attempt(
+        conversation_id="cid-1",
+        conversation_title="技术部",
+        trigger_message_id="msg-1",
+        trigger_sender="Xiaomin",
+        trigger_text="@Alex Chen 这个怎么处理？",
+        action="send_reply",
+        sensitivity_kind="general",
+        codex_session_id="session-1",
+        audit_tool_events_json=json.dumps(
+            [
+                {
+                    "event_type": "response_item",
+                    "tool": "exec_command",
+                    "call_id": "call-1",
+                    "input": '{\n  "cmd": "rg -n 岗位 /Users/principal/Documents/memory/面试"\n}',
+                    "command": "rg -n 岗位 /Users/principal/Documents/memory/面试",
+                },
+                {
+                    "event_type": "response_item",
+                    "tool": "tool_output",
+                    "call_id": "call-1",
+                    "output": "Output:\n岗位画像.md:1:项目经理",
+                },
+            ],
+            ensure_ascii=False,
+        ),
+        audit_summary="已查看工具输入输出。",
+    )
+
+    status, html = render_attempt_detail(store, attempt_id)
+
+    assert status == 200
+    assert "to exec_command" in html
+    assert "input / command args" in html
+    assert "rg -n 岗位 /Users/principal/Documents/memory/面试" in html
+    assert "output" in html
+    assert "岗位画像.md:1:项目经理" in html
 
 
 def test_render_attempt_detail_shows_counterparty_feedback(tmp_path: Path):

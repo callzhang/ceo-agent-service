@@ -24,6 +24,7 @@ from fastapi.responses import (
 
 from app.codex_history import (
     RenderedCodexEvent,
+    extract_codex_audit_events_from_session,
     render_local_codex_session,
 )
 from app.codex_decision import audit_summary_explains_no_documents
@@ -202,6 +203,16 @@ th{background:var(--surface-soft);color:var(--steel);font-size:12px;font-weight:
 .user-feedback-actions form{display:inline-flex;margin:0}
 .user-feedback-actions button{display:inline-flex;align-items:center;height:30px;padding:0 12px;border:1px solid var(--hairline);border-radius:999px;background:var(--canvas);color:var(--ink);font-size:13px;font-weight:500;line-height:1;white-space:nowrap}
 .user-feedback-actions button:hover{border-color:var(--ink);background:var(--surface-soft)}
+.audit-tool-list{display:grid;gap:12px;margin-top:8px}
+.audit-tool-event{border:1px solid var(--hairline);border-radius:8px;background:var(--canvas);padding:12px}
+.audit-tool-head{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:10px}
+.audit-tool-title{display:flex;align-items:center;gap:8px;min-width:0;color:var(--ink);font-size:14px;font-weight:750}
+.audit-tool-index{font-family:"Geist Mono","SF Mono",Menlo,Consolas,monospace;color:var(--steel);font-size:12px;font-weight:700}
+.audit-tool-command{max-width:100%;font-family:"Geist Mono","SF Mono",Menlo,Consolas,monospace;color:var(--steel);font-size:12px;line-height:1.4;word-break:break-word}
+.audit-tool-io{display:grid;gap:8px}
+.audit-tool-section{display:grid;gap:4px}
+.audit-tool-label{color:var(--steel);font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.03em}
+.audit-tool-pre{margin:0;max-height:420px;overflow:auto;border:1px solid var(--hairline);border-radius:7px;background:var(--surface-soft);padding:9px 10px;color:var(--charcoal);font-size:12px;line-height:1.45;white-space:pre-wrap;word-break:break-word}
 .attempt-info{position:relative;display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border:1px solid #d29a12;border-radius:50%;color:#8a5a08;background:#fff3c4;font-size:11px;font-weight:700;line-height:1;cursor:help;flex:0 0 auto}
 .attempt-info:hover,.attempt-info:focus{background:#ffe7a3;border-color:#b77908;outline:0}
 .attempt-info::after{content:attr(data-tooltip);display:none;position:absolute;left:0;bottom:calc(100% + 8px);z-index:30;width:max-content;max-width:min(320px,calc(100vw - 48px));padding:7px 9px;border-radius:6px;background:#1f2937;color:#fff;box-shadow:0 8px 24px rgba(15,23,42,.18);font-size:12px;font-weight:500;line-height:1.4;text-align:left;white-space:normal}
@@ -2543,7 +2554,7 @@ def _attempt_detail_body(
         f"{_calendar_metadata_card(attempt)}"
         f"{_text_card('Audit summary', attempt.audit_summary)}"
         f"{_collapsible_json_card('Audit documents', attempt.audit_documents_json)}"
-        f"{_collapsible_json_card('Audit tool events', attempt.audit_tool_events_json)}"
+        f"{_audit_tool_events_card(attempt)}"
         f"{_text_card('Draft reply (raw Codex reply)', attempt.draft_reply_text)}"
     )
 
@@ -3114,6 +3125,132 @@ def _collapsible_json_card(title: str, text: str) -> str:
         "<details class=\"card collapsible-card\">"
         f"<summary><h2>{escape(title)}</h2></summary>"
         f"<pre class=\"json-pre\">{_json_html(text)}</pre></details>"
+    )
+
+
+def _audit_tool_events_card(attempt: ReplyAttempt) -> str:
+    events = _audit_tool_events_for_attempt(attempt)
+    if not events:
+        return _collapsible_json_card("Audit tool events", attempt.audit_tool_events_json)
+    return (
+        "<details class=\"card collapsible-card\">"
+        "<summary><h2>Audit tool events</h2></summary>"
+        f"<div class=\"audit-tool-list\">{_audit_tool_events_html(events)}</div>"
+        "</details>"
+    )
+
+
+def _audit_tool_events_for_attempt(attempt: ReplyAttempt) -> list[dict[str, str]]:
+    if attempt.codex_session_id.strip():
+        session_events = extract_codex_audit_events_from_session(
+            attempt.codex_session_id.strip(),
+            start_line=attempt.codex_transcript_start_line,
+            end_line=(
+                attempt.codex_transcript_end_line
+                if attempt.codex_transcript_end_line > 0
+                else None
+            ),
+        )
+        if session_events:
+            return session_events
+    try:
+        payload = json.loads(attempt.audit_tool_events_json or "[]")
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(payload, list):
+        return []
+    return [event for event in payload if isinstance(event, dict)]
+
+
+def _audit_tool_events_html(events: list[dict[str, str]]) -> str:
+    calls: list[dict[str, object]] = []
+    by_call_id: dict[str, dict[str, object]] = {}
+    for event in events:
+        tool = str(event.get("tool") or "tool").strip() or "tool"
+        call_id = str(event.get("call_id") or "").strip()
+        if tool == "tool_output":
+            target = by_call_id.get(call_id) if call_id else None
+            if target is not None:
+                target["output"] = str(event.get("output") or "")
+                target["output_event"] = event
+                continue
+            calls.append(
+                {
+                    "tool": "tool_output",
+                    "call_id": call_id,
+                    "input": "",
+                    "output": str(event.get("output") or ""),
+                    "command": str(event.get("command") or ""),
+                    "event": event,
+                }
+            )
+            continue
+        call = {
+            "tool": tool,
+            "call_id": call_id,
+            "input": _audit_tool_input_text(event),
+            "output": "",
+            "command": str(event.get("command") or ""),
+            "event": event,
+        }
+        calls.append(call)
+        if call_id:
+            by_call_id[call_id] = call
+    return "".join(_audit_tool_call_html(index, call) for index, call in enumerate(calls, 1))
+
+
+def _audit_tool_input_text(event: dict[str, str]) -> str:
+    value = str(event.get("input") or "").strip()
+    if value:
+        return value
+    command = str(event.get("command") or "").strip()
+    path = str(event.get("path") or "").strip()
+    fallback = {key: val for key, val in {"command": command, "path": path}.items() if val}
+    if fallback:
+        return json.dumps(fallback, ensure_ascii=False, indent=2)
+    return json.dumps(event, ensure_ascii=False, indent=2)
+
+
+def _audit_tool_call_html(index: int, call: dict[str, object]) -> str:
+    tool = str(call.get("tool") or "tool")
+    command = str(call.get("command") or "").strip()
+    call_id = str(call.get("call_id") or "").strip()
+    input_text = str(call.get("input") or "").strip()
+    output_text = str(call.get("output") or "").strip()
+    command_line = (
+        f"<div class=\"audit-tool-command\">{escape(command)}</div>"
+        if command and command != call_id
+        else ""
+    )
+    call_id_line = (
+        f"<span class=\"pill\">{escape(call_id)}</span>" if call_id else ""
+    )
+    return (
+        "<div class=\"audit-tool-event\">"
+        "<div class=\"audit-tool-head\">"
+        "<div class=\"audit-tool-title\">"
+        f"<span class=\"audit-tool-index\">#{index}</span>"
+        f"<span>to {escape(tool)}</span>"
+        f"{call_id_line}"
+        "</div>"
+        f"{command_line}"
+        "</div>"
+        "<div class=\"audit-tool-io\">"
+        f"{_audit_tool_section_html('input / command args', input_text)}"
+        f"{_audit_tool_section_html('output', output_text)}"
+        "</div>"
+        "</div>"
+    )
+
+
+def _audit_tool_section_html(label: str, text: str) -> str:
+    if not text.strip():
+        return ""
+    return (
+        "<div class=\"audit-tool-section\">"
+        f"<div class=\"audit-tool-label\">{escape(label)}</div>"
+        f"<pre class=\"audit-tool-pre\">{escape(text)}</pre>"
+        "</div>"
     )
 
 
