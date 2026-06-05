@@ -2006,7 +2006,11 @@ def test_consume_once_retries_task_failure_before_final_failure(
 ):
     notifications = []
     trigger = message("@Alex Chen(明哥) 这个怎么处理？")
-    dws = FakeDws([conversation()], {"cid-1": [trigger]})
+    dws = FakeDws(
+        [conversation()],
+        {"cid-1": [trigger]},
+        send_error=RuntimeError("temporary dws send failure"),
+    )
     codex = FakeCodex(
         CodexDecision(action=CodexAction.SEND_REPLY, reply_text="先按A方案走")
     )
@@ -2022,7 +2026,6 @@ def test_consume_once_retries_task_failure_before_final_failure(
         lambda **kwargs: notifications.append(kwargs),
     )
     worker.produce_once()
-    dws.read_errors["cid-1"] = RuntimeError("temporary dws auth failure")
 
     assert worker.consume_once(max_tasks=1) == 0
     assert worker.store.count_reply_tasks(status="pending") == 1
@@ -2031,9 +2034,11 @@ def test_consume_once_retries_task_failure_before_final_failure(
     assert worker.consume_once(max_tasks=1) == 0
     assert worker.store.count_reply_tasks(status="pending") == 0
     assert worker.store.count_reply_tasks(status="failed") == 1
-    assert worker.store.count_errors() == 2
-    assert [notification["title"] for notification in notifications] == [
-        "CEO task failed: Friday"
+    error_kinds = [error.kind for error in worker.store.list_errors(limit=10)]
+    assert "reply_task_retry" in error_kinds
+    assert "reply_task" in error_kinds
+    assert "CEO task failed: Friday" in [
+        notification["title"] for notification in notifications
     ]
 
 

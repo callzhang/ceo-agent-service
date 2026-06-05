@@ -20,13 +20,13 @@ def trigger() -> DingTalkMessage:
     )
 
 
-def test_internal_personnel_hr_requester_does_not_require_manager_chain():
+def test_internal_personnel_private_requester_cannot_receive_other_person_reply():
     class Dws:
         def resolve_message_sender(self, message):
             return message.sender_user_id
 
         def is_hr_user(self, user_id):
-            return True
+            raise RuntimeError("HR membership should not be needed")
 
         def user_in_manager_chain(self, manager_user_id, subject_user_id):
             raise RuntimeError("manager chain should not be called")
@@ -40,16 +40,18 @@ def test_internal_personnel_hr_requester_does_not_require_manager_chain():
         trigger(),
     )
 
-    assert result.action == PermissionAction.ALLOW
+    assert result.action == PermissionAction.REPLY
+    assert "其他人的人事信息" in result.reply_text
+    assert result.reason == "private requester is not personnel subject"
 
 
-def test_internal_personnel_hr_requester_does_not_require_subject_id():
+def test_internal_personnel_private_request_requires_subject_id():
     class Dws:
         def resolve_message_sender(self, message):
-            return message.sender_user_id
+            raise RuntimeError("sender resolution should not be needed")
 
         def is_hr_user(self, user_id):
-            return True
+            raise RuntimeError("HR membership should not be needed")
 
     result = PermissionGate(Dws()).evaluate(
         CodexDecision(
@@ -59,7 +61,8 @@ def test_internal_personnel_hr_requester_does_not_require_subject_id():
         trigger(),
     )
 
-    assert result.action == PermissionAction.ALLOW
+    assert result.action == PermissionAction.REPLY
+    assert "关于谁" in result.reply_text
 
 
 def test_internal_personnel_subject_can_receive_reply_about_self():
@@ -85,13 +88,13 @@ def test_internal_personnel_subject_can_receive_reply_about_self():
     assert result.action == PermissionAction.ALLOW
 
 
-def test_internal_personnel_unresolved_hr_identity_is_error():
+def test_internal_personnel_sender_resolution_failure_is_error():
     class Dws:
         def resolve_message_sender(self, message):
-            return message.sender_user_id
+            raise RuntimeError("sender identity source is not configured")
 
         def is_hr_user(self, user_id):
-            raise RuntimeError("HR membership source is not configured")
+            raise RuntimeError("HR membership should not be needed")
 
     result = PermissionGate(Dws()).evaluate(
         CodexDecision(
@@ -103,7 +106,7 @@ def test_internal_personnel_unresolved_hr_identity_is_error():
     )
 
     assert result.action == PermissionAction.ERROR
-    assert "HR membership" in result.reason
+    assert "sender identity" in result.reason
 
 
 def test_candidate_empty_requester_departments_is_error():
