@@ -937,6 +937,42 @@ def test_calendar_invite_from_message_parses_structured_calendar_payload():
     assert event.organizer == "Mina"
 
 
+def test_parse_calendar_event_converts_string_create_update_time_to_epoch_ms():
+    payload = {
+        "result": {
+            "events": [
+                {
+                    "id": "event-1",
+                    "summary": "客户升级问题决策",
+                    "start": {"dateTime": "2026-05-14T10:00:00+08:00"},
+                    "end": {"dateTime": "2026-05-14T11:00:00+08:00"},
+                    "organizer": {"displayName": "Mina"},
+                    "createTime": "2026-06-05 17:08:14",
+                    "updateTime": "2026-06-05T17:09:15+08:00",
+                }
+            ]
+        }
+    }
+
+    event = DwsClient.parse_calendar_events(payload)[0]
+
+    assert event.created_ms == int(
+        datetime(
+            2026,
+            6,
+            5,
+            17,
+            8,
+            14,
+            tzinfo=ZoneInfo("Asia/Shanghai"),
+        ).timestamp()
+        * 1000
+    )
+    assert event.updated_ms == int(
+        datetime.fromisoformat("2026-06-05T17:09:15+08:00").timestamp() * 1000
+    )
+
+
 def test_calendar_invite_from_message_accepts_nested_event_without_event_id():
     client = DwsClient(dws_bin="dws")
     message = DingTalkMessage(
@@ -1073,7 +1109,7 @@ def test_list_calendar_events_uses_dws_calendar_event_list():
     assert events[0].description == "固定例会"
 
 
-def test_respond_calendar_event_uses_mcp_calendar_respond():
+def test_respond_calendar_event_uses_calendar_event_respond():
     client = RecordingDwsClient({"success": True})
 
     result = client.respond_calendar_event("event-1", "accepted")
@@ -1081,12 +1117,12 @@ def test_respond_calendar_event_uses_mcp_calendar_respond():
     assert client.commands == [
         [
             "dws",
-            "mcp",
             "calendar",
+            "event",
             "respond",
-            "--eventId",
+            "--id",
             "event-1",
-            "--responseStatus",
+            "--status",
             "accepted",
             "--format",
             "json",

@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.ceo-agent-service.main</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/zsh</string>
+    <string>-lc</string>
+    <string><![CDATA[service_root="${CEO_SERVICE_ROOT:-${HOME:?HOME must be set}/Documents/Projects/ceo-agent-service}"; cd "${service_root}" && export PATH="${HOME}/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:${PATH:-}" && export HOME="${CEO_SERVICE_HOME:-${HOME}}" && export PYTHONPATH="${PYTHONPATH:-.}" && export CODEX_HOME="${CODEX_HOME:-${HOME}/.codex}" && export CEO_WORKSPACE="${CEO_WORKSPACE:-${HOME}/Documents/memory}" && export CEO_WORKER_DB="${CEO_WORKER_DB:-${service_root}/data/auto-reply.sqlite3}" && export CEO_CORPUS_DIR="${CEO_CORPUS_DIR:-${service_root}/corpus}" && export CEO_NOT_SEND_MESSAGE=0 && export CEO_LIVE_SEND_BLOCKERS_ACCEPTED=1 && exec /usr/bin/caffeinate -i .venv/bin/python -m app.cli service --host "${CEO_AUDIT_WEB_HOST:-127.0.0.1}" --port "${CEO_AUDIT_WEB_PORT:-8765}" --producer-interval-seconds "${CEO_PRODUCER_INTERVAL_SECONDS:-60}" --consumer-poll-interval-seconds "${CEO_CONSUMER_POLL_INTERVAL_SECONDS:-10}" --db "${CEO_WORKER_DB}" --workspace "${CEO_WORKSPACE}" --corpus-dir "${CEO_CORPUS_DIR}"]]></string>
+  </array>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>KeepAlive</key>
+  <true/>
+
+  <key>StandardOutPath</key>
+  <string>/tmp/ceo-agent-service-main.out.log</string>
+
+  <key>StandardErrorPath</key>
+  <string>/tmp/ceo-agent-service-main.err.log</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>PYTHONPATH</key>
+    <string>.</string>
+  </dict>
+</dict>
+</plist>

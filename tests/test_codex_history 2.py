@@ -61,6 +61,7 @@ def write_session(codex_home: Path, session_id: str) -> Path:
             "payload": {
                 "type": "function_call",
                 "name": "exec_command",
+                "call_id": "call-1",
                 "arguments": json.dumps(
                     {"cmd": "rg -n 岗位 /Users/principal/Documents/memory/面试"},
                     ensure_ascii=False,
@@ -225,12 +226,16 @@ def test_extract_codex_audit_events_from_session_respects_line_range(tmp_path: P
         {
             "event_type": "response_item",
             "tool": "exec_command",
+            "input": '{\n  "cmd": "rg -n 岗位 /Users/principal/Documents/memory/面试"\n}',
+            "call_id": "call-1",
             "command": "rg -n 岗位 /Users/principal/Documents/memory/面试",
             "path": "/Users/principal/Documents/memory/面试",
         },
         {
             "event_type": "response_item",
             "tool": "tool_output",
+            "output": "Output:\n岗位画像.md:1:项目经理",
+            "call_id": "call-1",
             "command": "call-1",
             "path": "岗位画像.md",
         },

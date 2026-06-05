@@ -90,8 +90,14 @@ def test_developer_prompt_delegates_memory_to_agent_mcp_tools():
 
     assert "memory_connector MCP 可用" in template
     assert "必须先调用 memory_recall" in template
-    assert "调用 memory_write 记录一条完整事件 episode" in template
-    assert 'user_id="<var: memory_user_id>"' in template
+    assert "只有产生后续会复用的业务信息时，才调用 memory_write" in template
+    assert "send_reply" in template
+    assert "记录一条业务 episode" in template
+    assert "ask_clarifying_question 默认不写入长期 Memory" in template
+    assert "orphaned_after_service_restart" in template
+    assert "waiting_fast_path_unread_backoff" in template
+    assert "不要传 user_id" in template
+    assert 'user_id="<var: memory_user_id>"' not in template
     assert "memory_write 失败不应改变最终 JSON" in template
 
 
@@ -343,9 +349,19 @@ def test_build_turn_prompt_sanitizes_quoted_card_without_repeating_assets():
 def test_thread_prompt_explains_first_person_single_chat_subject():
     prompt = ceo_agent_thread_prompt()
 
-    assert "发信人讨论自己的请假、调休" in prompt
+    assert "单聊里可以回答发信人关于他自己的请假、调休" in prompt
     assert "personnel_subject_user_id 必须填写该消息的 sender_user_id" in prompt
-    assert "单聊和群聊都适用" in prompt
+    assert "群聊里不要回复具体个人的人事敏感信息" in prompt
+    assert "单聊里如果对方询问第三方的人事敏感信息" in prompt
+
+
+def test_thread_prompt_limits_internal_personnel_to_specific_people():
+    prompt = ceo_agent_thread_prompt()
+
+    assert "internal_personnel 只用于具体个人的人事判断" in prompt
+    assert "部门整体机制、团队流程、会议总结" in prompt
+    assert "不属于 internal_personnel" in prompt
+    assert "除非新消息明确要求判断某个具体个人" in prompt
 
 
 def test_thread_prompt_treats_mentioned_arrangements_requiring_principal_as_replies():

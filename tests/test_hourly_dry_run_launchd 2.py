@@ -46,6 +46,7 @@ def test_main_launch_agent_runs_single_keepalive_service():
     assert "--consumer-poll-interval-seconds" in command[2]
     assert "--host" in command[2]
     assert "--port" in command[2]
+    assert "exec /usr/bin/caffeinate -i .venv/bin/python -m app.cli service" in command[2]
     assert "CEO_SERVICE_ROOT" in command[2]
     assert "CEO_NOT_SEND_MESSAGE=0" in command[2]
     assert "CEO_LIVE_SEND_BLOCKERS_ACCEPTED=1" in command[2]

@@ -180,6 +180,14 @@ def _audit_event_from_payload(payload: Any) -> dict[str, str] | None:
         event["event_type"] = _short_text(event_type)
     if tool:
         event["tool"] = _short_text(tool)
+    arguments = source.get("arguments")
+    if isinstance(arguments, dict):
+        event["input"] = _short_text(
+            json.dumps(arguments, ensure_ascii=False, indent=2),
+            4000,
+        )
+    elif isinstance(arguments, str):
+        event["input"] = _short_text(arguments, 4000)
     if command:
         event["command"] = _short_text(command, 500)
     if path:

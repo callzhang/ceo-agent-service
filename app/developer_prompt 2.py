@@ -7,7 +7,6 @@ from pathlib import Path
 from types import ModuleType
 
 from app.config import (
-    memory_connector_user_id,
     repo_root,
     user_alias,
     write_env_values,
@@ -196,7 +195,6 @@ def prompt_template_variables() -> dict[str, str]:
     variables = {
         "principal": user_alias(),
         "handoff_name": user_alias(),
-        "memory_user_id": memory_connector_user_id(),
     }
     for key, default in CONFIGURABLE_PROMPT_VARIABLE_DEFAULTS.items():
         variables[key] = os.getenv(prompt_variable_env_key(key), default)
