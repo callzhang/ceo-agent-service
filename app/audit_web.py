@@ -2531,6 +2531,7 @@ def _attempt_detail_body(
     )
     return (
         f"{_attempt_conversation_banner(attempt)}"
+        f"{_attempt_detail_toolbar(codex_session_id)}"
         f"{_review_panel(attempt, sent_reply, feedback_events)}"
         f"<section class=\"card compact-card\"><div class=\"grid\">{rows}</div></section>"
         f"{_quality_warning_card(attempt)}"
@@ -2561,6 +2562,23 @@ def _attempt_conversation_banner(attempt: ReplyAttempt) -> str:
         "<div class=\"attempt-conversation-main\">"
         f"<div class=\"attempt-conversation-title\">{escape(attempt.conversation_title)}</div>"
         f"{subtitle}"
+        "</div>"
+        "</section>"
+    )
+
+
+def _attempt_detail_toolbar(codex_session_id: str | None) -> str:
+    if codex_session_id:
+        codex = (
+            f"<a class=\"compact-button\" href=\"/codex/{escape(codex_session_id)}\">"
+            "Codex</a>"
+        )
+    else:
+        codex = "<span class=\"muted\">No Codex session</span>"
+    return (
+        "<section class=\"card compact-card\">"
+        "<div class=\"attempt-actions\">"
+        f"{codex}"
         "</div>"
         "</section>"
     )
