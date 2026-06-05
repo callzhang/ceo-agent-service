@@ -2530,13 +2530,10 @@ def _attempt_detail_body(
     feedback_events: list[FeedbackEvent],
 ) -> str:
     fields = [
-        ("conversation", attempt.conversation_title),
-        ("trigger sender", attempt.trigger_sender),
         ("trigger message id", attempt.trigger_message_id),
         ("action", attempt.action),
         ("sensitivity", attempt.sensitivity_kind),
-        ("permission", attempt.permission_action),
-        ("permission reason", attempt.permission_reason),
+        ("permission", _permission_display(attempt)),
         ("send status", attempt.send_status),
         ("send error", attempt.send_error),
         ("retry count", str(attempt.retry_count)),
@@ -2557,6 +2554,14 @@ def _attempt_detail_body(
         f"{_audit_tool_events_card(attempt)}"
         f"{_text_card('Draft reply (raw Codex reply)', attempt.draft_reply_text)}"
     )
+
+
+def _permission_display(attempt: ReplyAttempt) -> str:
+    action = attempt.permission_action.strip()
+    reason = attempt.permission_reason.strip()
+    if action and reason:
+        return f"{action} · {reason}"
+    return action or reason
 
 
 def _attempt_conversation_banner(

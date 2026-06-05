@@ -1657,8 +1657,15 @@ def test_render_attempt_detail_shows_full_decision_and_feedback_form(tmp_path: P
     assert "技术部" in html
     assert "触发人：Xiaomin" in html
     assert "attempt-detail-grid" in html
-    assert "conversation" in html
-    assert "trigger sender" in html
+    detail_grid = html[
+        html.index('<div class="attempt-detail-grid">') :
+        html.index("内部反馈/建议修改")
+    ]
+    assert "conversation" not in detail_grid
+    assert "trigger sender" not in detail_grid
+    assert "permission" in detail_grid
+    assert "allow" in detail_grid
+    assert "permission reason" not in html
     assert "agent 执行记录" in html
     assert html.index("群名") < html.index("内部反馈/建议修改")
     assert html.index('class="agent-log-button" href="/codex/session-1"') < html.index(
