@@ -1486,13 +1486,14 @@ def _render_history_chart(store: AutoReplyStore) -> str:
         "aria-label=\"最近 24 小时事件数量堆叠柱状图\"></div>"
         "<script src=\"https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js\"></script>"
         "<script>"
-        f"const historyEventChartData = {payload_json};"
+        f"window.historyEventChartData = {payload_json};"
         """
 (() => {
   const el = document.getElementById("history-event-chart");
   if (!el || !window.echarts) {
     return;
   }
+  const historyEventChartData = window.historyEventChartData;
   const chart = echarts.init(el, null, {renderer: "canvas"});
   chart.setOption({
     animation: false,
