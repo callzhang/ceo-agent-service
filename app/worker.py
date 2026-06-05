@@ -927,10 +927,8 @@ class DingTalkAutoReplyWorker:
         self, conversation: DingTalkConversation, task: ReplyTask
     ) -> bool:
         trigger = DingTalkMessage.model_validate_json(task.trigger_message_json)
-        context_messages = self.dws.read_recent_messages(conversation)
-        unread_messages = self.dws.read_unread_messages(conversation)
-        prompt_context_messages = self._prompt_context_messages(
-            context_messages, unread_messages
+        context_messages, prompt_context_messages = (
+            self._queued_task_prompt_context_messages(conversation, trigger)
         )
         if self._has_current_user_reply_after_trigger(context_messages, trigger):
             self._record_current_user_replied_during_backoff_skip(
@@ -969,6 +967,40 @@ class DingTalkAutoReplyWorker:
             raise_on_delivery_failure=True,
         )
         return True
+
+    def _queued_task_prompt_context_messages(
+        self,
+        conversation: DingTalkConversation,
+        trigger: DingTalkMessage,
+    ) -> tuple[list[DingTalkMessage], list[DingTalkMessage]]:
+        context_messages: list[DingTalkMessage] = []
+        unread_messages: list[DingTalkMessage] = []
+        try:
+            context_messages = self.dws.read_recent_messages(conversation)
+        except Exception as exc:
+            if self._is_authorization_error(exc):
+                raise
+            self.store.record_error(
+                conversation.open_conversation_id,
+                trigger.open_message_id,
+                "read_recent_messages_fallback",
+                str(exc),
+            )
+        try:
+            unread_messages = self.dws.read_unread_messages(conversation)
+        except Exception as exc:
+            if self._is_authorization_error(exc):
+                raise
+            self.store.record_error(
+                conversation.open_conversation_id,
+                trigger.open_message_id,
+                "read_unread_messages_fallback",
+                str(exc),
+            )
+        return context_messages, self._prompt_context_messages(
+            context_messages,
+            unread_messages,
+        )
 
     def _enqueue_reply_task(
         self,

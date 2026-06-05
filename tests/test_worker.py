@@ -1426,6 +1426,46 @@ def test_fast_path_backoff_processes_trigger_when_unread_clears_without_user_rep
     ]
 
 
+def test_queued_task_falls_back_to_trigger_when_context_read_fails(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message(
+        "@Alex Chen(明哥) 这是新的工作流，效率可以提升很多",
+        message_id="msg-context-error",
+    )
+    dws = FakeDws([conversation()], {"cid-1": [trigger]})
+    dws.read_errors["cid-1"] = DwsError("forbidden request", code="1001")
+    dws.unread_errors["cid-1"] = DwsError("forbidden request", code="1001")
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="这个方向可以")
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+    worker.store.enqueue_reply_task(
+        conversation_id="cid-1",
+        conversation_title="MKT core",
+        single_chat=False,
+        trigger_message_id=trigger.open_message_id,
+        trigger_create_time=trigger.create_time,
+        trigger_sender=trigger.sender_name,
+        trigger_text=trigger.content,
+        trigger_message_json=trigger.model_dump_json(),
+    )
+
+    assert worker.consume_once() == 1
+
+    assert len(codex.calls) == 1
+    assert "这是新的工作流" in codex.calls[0][0]
+    assert final_sent(dws) == [("cid-1", "这个方向可以（by明哥分身）")]
+    attempt = worker.store.get_reply_attempt(1)
+    assert attempt.action == "send_reply"
+    assert attempt.send_status == "sent"
+    errors = worker.store.list_errors(limit=10)
+    assert {error.kind for error in errors} == {
+        "read_recent_messages_fallback",
+        "read_unread_messages_fallback",
+    }
+
+
 def test_fast_path_backoff_skips_when_current_user_replied_after_trigger(
     tmp_path: Path, monkeypatch
 ):
