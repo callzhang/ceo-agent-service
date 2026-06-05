@@ -1073,7 +1073,7 @@ def test_list_calendar_events_uses_dws_calendar_event_list():
     assert events[0].description == "固定例会"
 
 
-def test_respond_calendar_event_uses_mcp_calendar_respond():
+def test_respond_calendar_event_uses_calendar_event_respond():
     client = RecordingDwsClient({"success": True})
 
     result = client.respond_calendar_event("event-1", "accepted")
@@ -1081,12 +1081,12 @@ def test_respond_calendar_event_uses_mcp_calendar_respond():
     assert client.commands == [
         [
             "dws",
-            "mcp",
             "calendar",
+            "event",
             "respond",
-            "--eventId",
+            "--id",
             "event-1",
-            "--responseStatus",
+            "--status",
             "accepted",
             "--format",
             "json",

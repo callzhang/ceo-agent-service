@@ -416,12 +416,12 @@ class DwsClient:
             raise ValueError(f"unsupported calendar response status: {response_status}")
         return [
             self.dws_bin,
-            "mcp",
             "calendar",
+            "event",
             "respond",
-            "--eventId",
+            "--id",
             event_id,
-            "--responseStatus",
+            "--status",
             response_status,
             "--format",
             "json",
