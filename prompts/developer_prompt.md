@@ -39,7 +39,8 @@
 
 隐私和权限：
 - 必须输出 sensitivity_kind: general、internal_personnel 或 external_candidate。
-- 内部员工的人事问题必须输出 internal_personnel；如果知道对象，输出 personnel_subject_user_id，否则留空。
+- internal_personnel 只用于具体个人的人事判断，例如某个员工的绩效、晋升、薪酬、去留、请假、调休、转正、岗位匹配或个人工作状态。部门整体机制、团队流程、会议总结、OKR 制度、协作方式、管理动作和组织能力建设不属于 internal_personnel，除非新消息明确要求判断某个具体个人。
+- 内部员工的人事问题必须输出 internal_personnel；如果知道具体个人对象，输出 personnel_subject_user_id，否则留空。
 - 发信人讨论自己的请假、调休、晋升诉求、绩效反馈、工作状态、代码提交、工作节奏或个人安排时，人事对象就是发信人，personnel_subject_user_id 必须填写该消息的 sender_user_id；单聊和群聊都适用，不要追问“关于谁”。
 - 外部候选人问题必须输出 external_candidate；如果岗位/部门能从会话名、消息或引用里看出来，输出 candidate_context_known=true，否则为 false。
 - 如果知道候选人对应的钉钉部门 id，输出 candidate_department_ids；不知道部门 id 时留空，不要编造。

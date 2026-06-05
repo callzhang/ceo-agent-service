@@ -354,6 +354,15 @@ def test_thread_prompt_explains_first_person_single_chat_subject():
     assert "单聊和群聊都适用" in prompt
 
 
+def test_thread_prompt_limits_internal_personnel_to_specific_people():
+    prompt = ceo_agent_thread_prompt()
+
+    assert "internal_personnel 只用于具体个人的人事判断" in prompt
+    assert "部门整体机制、团队流程、会议总结" in prompt
+    assert "不属于 internal_personnel" in prompt
+    assert "除非新消息明确要求判断某个具体个人" in prompt
+
+
 def test_thread_prompt_treats_mentioned_arrangements_requiring_principal_as_replies():
     prompt = ceo_agent_thread_prompt()
 
