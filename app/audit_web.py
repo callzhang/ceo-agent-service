@@ -1433,9 +1433,6 @@ def render_attempt_list(
         feedback_events = _feedback_events_for_sent_reply(
             sent_reply, feedback_events_by_token
         )
-        codex_session_id = attempt.codex_session_id or store.get_codex_session_id(
-            attempt.conversation_id
-        )
         warning_text = _attempt_warning_summary(attempt)
         warning_html = (
             f"<span class=\"attempt-warning\">{escape(warning_text)}</span>"
@@ -1460,7 +1457,6 @@ def render_attempt_list(
             f"<time class=\"attempt-time\">{escape(_format_local_time(attempt.created_at))}</time>"
             "<div class=\"attempt-actions\">"
             f"{_review_link(attempt)}"
-            f"{_codex_link(codex_session_id)}"
             "</div>"
             "</div>"
             "</div>"
@@ -2786,8 +2782,8 @@ def _codex_session_card(
         )
     return (
         "<section class=\"card\"><h2>Codex local history</h2>"
-        f"<p><a href=\"/codex/{escape(codex_session_id)}\">"
-        "View rendered Codex session</a></p>"
+        f"<p><a class=\"compact-button\" href=\"/codex/{escape(codex_session_id)}\">"
+        "Codex</a></p>"
         f"<p class=\"muted\">{escape(codex_session_id)}</p>"
         f"{line_range}"
         "</section>"
@@ -3107,15 +3103,6 @@ def _attempt_link(attempt: ReplyAttempt) -> str:
     return (
         f"<a href=\"/attempts/{attempt.id}\">"
         f"#{attempt.id} · {escape(_attempt_action_label_text(attempt))}</a>"
-    )
-
-
-def _codex_link(codex_session_id: str | None) -> str:
-    if not codex_session_id:
-        return "<span class=\"muted\">-</span>"
-    return (
-        f"<a class=\"review-link\" href=\"/codex/{escape(codex_session_id)}\">"
-        "Codex</a>"
     )
 
 

@@ -106,8 +106,8 @@ def test_render_attempt_list_shows_history_rows(tmp_path: Path):
     assert "&gt; Xiaomin:" not in html
     assert f"/attempts/{attempt_id}" in html
     assert "查看/反馈" in html
-    assert "Codex" in html
-    assert "/codex/session-1" in html
+    assert ">Codex</a>" not in html
+    assert "/codex/session-1" not in html
 
 
 def test_render_attempt_list_paginates_attempts(tmp_path: Path):
@@ -1248,13 +1248,11 @@ def test_render_attempt_list_uses_attempt_codex_session_over_conversation(tmp_pa
         codex_session_id="new-session",
     )
 
-    html = render_attempt_list(store)
     status, detail = render_attempt_detail(store, attempt_id)
 
-    assert "/codex/session-1" in html
-    assert "/codex/new-session" not in html
     assert status == 200
     assert "/codex/session-1" in detail
+    assert "/codex/new-session" not in detail
     assert "lines 2-8" in detail
 
 
@@ -1687,6 +1685,7 @@ def test_render_attempt_detail_shows_full_decision_and_feedback_form(tmp_path: P
     assert f'action="/attempts/{attempt_id}/feedback"' in html
     assert "textarea" in html
     assert "Codex local history" in html
+    assert '<a class="compact-button" href="/codex/session-1">Codex</a>' in html
     assert "/codex/session-1" in html
     assert "撤销发送" in html
     assert "撤销不可用" in html
@@ -1731,7 +1730,7 @@ def test_attempt_list_uses_single_review_feedback_entrypoint(tmp_path: Path):
     assert f'href="/attempts/{attempt_id}"' in html
     assert f'href="/attempts/{attempt_id}#feedback"' not in html
     assert "查看/反馈" in html
-    assert ">Codex</a>" in html
+    assert ">Codex</a>" not in html
 
 
 def test_render_codex_session_list_shows_conversation_sessions(tmp_path: Path):
