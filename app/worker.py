@@ -88,6 +88,7 @@ CALENDAR_PENDING_INVITE_LOOKAHEAD_DAYS = 14
 CALENDAR_PENDING_INVITE_EVENT_MATCH_SECONDS = 5 * 60
 CALENDAR_PENDING_INVITE_RECENT_SENDER_LOOKBACK = timedelta(hours=24)
 CALENDAR_PENDING_INVITE_NO_CHANGE_TIME_START_LOOKAHEAD = timedelta(hours=24)
+CALENDAR_ORGANIZER_RESPONSE_ERROR = "Cannot change response status of event organizer"
 TEXT_MESSAGE_TYPES = {"text"}
 RENDERED_NON_TEXT_PREFIXES = (
     "[文件]",
@@ -2025,6 +2026,38 @@ class DingTalkAutoReplyWorker:
                 f"{response_status}: {reason}",
             )
 
+    @staticmethod
+    def _calendar_response_is_organizer_noop(exc: Exception) -> bool:
+        return CALENDAR_ORGANIZER_RESPONSE_ERROR in str(exc)
+
+    def _mark_calendar_response_noop(
+        self,
+        *,
+        attempt_id: int,
+        event_id: str,
+        response_status: str,
+        send_status: str | None,
+        send_error: str,
+    ) -> None:
+        result = {
+            "success": True,
+            "noop_reason": "calendar_event_organizer",
+            "message": CALENDAR_ORGANIZER_RESPONSE_ERROR,
+        }
+        updates: dict[str, Any] = {
+            "calendar_event_id": event_id,
+            "calendar_response_status": response_status,
+            "calendar_response_result_json": json.dumps(
+                result,
+                ensure_ascii=False,
+                sort_keys=True,
+            ),
+            "send_error": send_error,
+        }
+        if send_status is not None:
+            updates["send_status"] = send_status
+        self.store.update_reply_attempt(attempt_id, **updates)
+
     def _execute_calendar_response(
         self,
         *,
@@ -2074,6 +2107,15 @@ class DingTalkAutoReplyWorker:
                 event.event_id, response_status
             )
         except Exception as exc:
+            if self._calendar_response_is_organizer_noop(exc):
+                self._mark_calendar_response_noop(
+                    attempt_id=attempt_id,
+                    event_id=event.event_id,
+                    response_status=response_status,
+                    send_status="skipped" if mark_attempt_terminal else None,
+                    send_error="calendar_event_organizer_noop",
+                )
+                return True
             updates = {
                 "calendar_event_id": event.event_id,
                 "calendar_response_status": response_status,
@@ -3814,6 +3856,16 @@ class DingTalkAutoReplyWorker:
         try:
             action_result = self.dws.respond_calendar_event(event_id, response_status)
         except Exception as exc:
+            if self._calendar_response_is_organizer_noop(exc):
+                self._mark_calendar_response_noop(
+                    attempt_id=attempt.id,
+                    event_id=event_id,
+                    response_status=response_status,
+                    send_status="skipped",
+                    send_error="calendar_event_organizer_noop",
+                )
+                self._mark_seen(new_messages)
+                return True
             self.store.update_reply_attempt(
                 attempt.id,
                 send_status="failed",

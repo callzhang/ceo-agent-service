@@ -2238,6 +2238,55 @@ def test_bare_calendar_card_uses_unique_pending_invite_from_sender(
     assert attempt.calendar_response_result_json == '{"success": true}'
 
 
+def test_calendar_response_organizer_error_is_terminal_noop(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message("[日程]", single_chat=True, message_type="calendar")
+    invite = DwsCalendarEvent(
+        event_id="invite-1",
+        title="项目组反馈讨论",
+        start_time="2026-05-16T09:00:00+08:00",
+        end_time="2026-05-16T10:00:00+08:00",
+        description="",
+        organizer=trigger.sender_name,
+        self_response_status="needsAction",
+        status="confirmed",
+    )
+    dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
+    dws.calendar_events[
+        "2026-05-13T17:00:00+08:00|2026-05-27T17:00:00+08:00"
+    ] = [invite]
+    dws.calendar_events[f"{invite.start_time}|{invite.end_time}"] = [invite]
+    dws.calendar_response_error = DwsError(
+        "code: 300000, developerMessage: Cannot change response status of event organizer.",
+        code="300000",
+    )
+    codex = FakeCodex(
+        CodexDecision(
+            action=CodexAction.NO_REPLY,
+            reason="组织者本人不需要文字回复。",
+            calendar_response_status="accepted",
+            audit_summary="已读取待响应日程。",
+        )
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+
+    worker.run_once()
+
+    assert final_sent(dws) == []
+    assert dws.calendar_responses == [("invite-1", "accepted")]
+    attempt = worker.store.get_reply_attempt(1)
+    assert attempt.action == "no_reply"
+    assert attempt.send_status == "skipped"
+    assert attempt.send_error == "calendar_event_organizer_noop"
+    assert attempt.calendar_response_status == "accepted"
+    assert json.loads(attempt.calendar_response_result_json) == {
+        "message": "Cannot change response status of event organizer",
+        "noop_reason": "calendar_event_organizer",
+        "success": True,
+    }
+
+
 def test_rendered_calendar_card_without_message_type_uses_unique_pending_invite_without_change_time(
     tmp_path: Path, monkeypatch
 ):
