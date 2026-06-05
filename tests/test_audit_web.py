@@ -1253,7 +1253,7 @@ def test_render_attempt_list_uses_attempt_codex_session_over_conversation(tmp_pa
     assert status == 200
     assert "/codex/session-1" in detail
     assert "/codex/new-session" not in detail
-    assert "lines 2-8" in detail
+    assert "agent 执行记录" in detail
 
 
 def test_render_attempt_detail_shows_quality_warnings(tmp_path: Path):
@@ -1620,7 +1620,7 @@ def test_fastapi_app_serves_history_routes(tmp_path: Path):
     assert "CEO Agent Audit" in response.text
     assert "技术部" in response.text
     assert detail_response.status_code == 200
-    assert "Codex local history" in detail_response.text
+    assert "agent 执行记录" in detail_response.text
 
 
 def test_fastapi_app_records_feedback_and_redirects(tmp_path: Path):
@@ -1655,14 +1655,21 @@ def test_render_attempt_detail_shows_full_decision_and_feedback_form(tmp_path: P
     assert "群名" in html
     assert "技术部" in html
     assert "触发人：Xiaomin" in html
+    assert "attempt-detail-grid" in html
+    assert "conversation" in html
+    assert "trigger sender" in html
+    assert "agent 执行记录" in html
     assert html.index("群名") < html.index("内部反馈/建议修改")
-    assert html.index('href="/codex/session-1"') < html.index("内部反馈/建议修改")
+    assert html.index('class="agent-log-button" href="/codex/session-1"') < html.index(
+        "内部反馈/建议修改"
+    )
     assert html.index("Trigger") < html.index("生成回复")
     assert html.index("Trigger") < html.index("先按A方案走（by明哥分身）")
+    assert html.index("Codex reason") < html.index("生成回复")
+    assert html.index("direct ask") < html.index("生成回复")
     assert "review-grid" in html
     assert "reply-pre" in html
     assert "@Alex Chen 这个怎么处理？" in html
-    assert "direct ask" in html
     assert "Audit summary" in html
     assert "查看岗位画像后建议先按A方案走" in html
     assert "Audit documents" in html
@@ -1678,18 +1685,16 @@ def test_render_attempt_detail_shows_full_decision_and_feedback_form(tmp_path: P
     assert "\n  " in html
     assert "先按A方案走" in html
     assert "Draft reply (raw Codex reply)" in html
-    assert "Final reply (send-ready text)" in html
     assert "permission" in html
     assert "内部反馈/建议修改" in html
     assert "反馈意见" in html
     assert "建议回复" in html
     assert f'action="/attempts/{attempt_id}/feedback"' in html
     assert "textarea" in html
-    assert "Codex local history" in html
-    assert '<a class="compact-button" href="/codex/session-1">Codex</a>' in html
     assert "/codex/session-1" in html
-    assert "撤销发送" in html
-    assert "撤销不可用" in html
+    assert "Codex local history" not in html
+    assert "Final reply (send-ready text)" not in html
+    assert "撤销发送" not in html
 
 
 def test_render_attempt_detail_shows_counterparty_feedback(tmp_path: Path):
@@ -1719,7 +1724,7 @@ def test_render_attempt_detail_shows_counterparty_feedback(tmp_path: Path):
     assert "token-2" in html
     assert "不太有用" in html
     assert "没有回答到我的问题" in html
-    assert "当前发送方式不支持" in html
+    assert "当前发送方式不支持" not in html
 
 
 def test_attempt_list_uses_single_review_feedback_entrypoint(tmp_path: Path):
@@ -1831,7 +1836,7 @@ def test_render_codex_session_detail_shows_related_history_when_file_missing(
     assert "明哥，这个怎么处理？" in html
 
 
-def test_render_attempt_detail_shows_recall_button_when_recall_key_exists(
+def test_render_attempt_detail_hides_recall_button_when_recall_key_exists(
     tmp_path: Path,
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
@@ -1846,10 +1851,10 @@ def test_render_attempt_detail_shows_recall_button_when_recall_key_exists(
     status, html = render_attempt_detail(store, attempt_id)
 
     assert status == 200
-    assert "撤销发送" in html
-    assert f'action="/attempts/{attempt_id}/recall"' in html
-    assert "确认撤销这条已发送消息？" in html
-    assert "撤销这条消息" in html
+    assert "撤销发送" not in html
+    assert f'action="/attempts/{attempt_id}/recall"' not in html
+    assert "确认撤销这条已发送消息？" not in html
+    assert "撤销这条消息" not in html
 
 
 def test_render_attempt_detail_returns_404_when_missing(tmp_path: Path):

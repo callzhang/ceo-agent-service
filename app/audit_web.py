@@ -145,6 +145,8 @@ th{background:var(--surface-soft);color:var(--steel);font-size:12px;font-weight:
 .card-head h2{margin:0}
 .compact-button{display:inline-flex;align-items:center;height:30px;padding:0 12px;border:1px solid var(--hairline);border-radius:999px;background:var(--canvas);color:var(--ink);font-size:13px;font-weight:500;line-height:1;white-space:nowrap}
 .compact-button:hover{border-color:var(--ink);background:var(--surface-soft)}
+.agent-log-button{display:inline-flex;align-items:center;height:34px;padding:0 14px;border:1px solid rgba(55,114,207,.38);border-radius:999px;background:#3772cf;color:#fff;font-size:13px;font-weight:700;line-height:1;white-space:nowrap;box-shadow:0 6px 18px rgba(55,114,207,.18)}
+.agent-log-button:hover{background:#245aa5;color:#fff;text-decoration:none}
 .pagination{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0 0 12px;padding:8px 10px;border:1px solid var(--hairline);border-radius:8px;background:var(--surface-soft);flex-wrap:wrap}
 .pagination.bottom{margin:12px 0 0}
 .pagination-status{display:flex;align-items:center;gap:8px;min-width:0;flex-wrap:wrap}
@@ -173,11 +175,16 @@ th{background:var(--surface-soft);color:var(--steel);font-size:12px;font-weight:
 .attempt-foot{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:6px;flex-wrap:wrap}
 .attempt-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .attempt-warning{color:#8a2626;font-size:12px;line-height:1.4}
-.attempt-conversation-banner{display:flex;align-items:center;gap:14px;border:1px solid rgba(0,180,138,.34);background:#f3fffb}
+.attempt-conversation-banner{display:flex;align-items:center;justify-content:space-between;gap:14px;border:1px solid rgba(0,180,138,.34);background:#f3fffb}
+.attempt-conversation-left{display:flex;align-items:center;gap:14px;min-width:0}
 .attempt-conversation-label{display:inline-flex;align-items:center;height:28px;padding:0 10px;border-radius:999px;background:#ddfff6;border:1px solid rgba(0,180,138,.42);color:#005b49;font-size:12px;font-weight:800;white-space:nowrap}
 .attempt-conversation-main{min-width:0}
 .attempt-conversation-title{color:var(--ink);font-size:20px;font-weight:750;line-height:1.3;word-break:break-word}
 .attempt-conversation-sub{margin-top:2px;color:var(--steel);font-size:12px;font-weight:600;line-height:1.4}
+.attempt-detail-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+.attempt-detail-cell{min-width:0;padding:10px 12px;border:1px solid var(--hairline);border-radius:8px;background:var(--surface-soft)}
+.attempt-detail-label{margin-bottom:4px;color:var(--steel);font-size:12px;font-weight:700;line-height:1.35}
+.attempt-detail-value{color:var(--ink);font-size:13px;font-weight:600;line-height:1.45;word-break:break-word}
 .feedback-chip{display:inline-flex;align-items:center;max-width:100%;min-height:24px;padding:3px 9px;border-radius:999px;background:#ddfff6;border:1px solid rgba(0,180,138,.42);color:#005b49;font-size:12px;font-weight:700;line-height:1.35;white-space:nowrap}
 .feedback-card{border-color:rgba(0,180,138,.28);background:linear-gradient(180deg,#ffffff 0%,#f6fffc 100%)}
 .feedback-event{border:1px solid var(--hairline);border-radius:8px;background:var(--canvas);padding:12px;margin-top:10px}
@@ -233,6 +240,7 @@ a.nav-item:hover{color:var(--ink);text-decoration:none;border-color:var(--ink)}
 .reply-pre{min-height:188px;background:var(--surface-soft);border-color:var(--hairline);font-size:14px;line-height:1.55}
 .reply-meta{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
 .trigger-pre{min-height:0;margin:0 0 14px;background:var(--surface-soft);border-color:var(--hairline);font-size:14px;line-height:1.55}
+.codex-reason{margin:0 0 14px;padding:12px 14px;border:1px solid rgba(55,114,207,.22);border-radius:8px;background:rgba(55,114,207,.08);color:var(--charcoal);font-size:14px;line-height:1.5;white-space:pre-wrap}
 .compact-card{padding:16px}
 .compact-card h2{font-size:16px;margin-bottom:10px}
 .collapsible-card{padding:0;overflow:hidden}
@@ -267,8 +275,8 @@ label{display:block;margin:14px 0 7px;color:var(--slate);font-size:13px;font-wei
 .review-link:hover{text-decoration:none;border-color:var(--ink);background:var(--surface-soft)}
 .danger{background:#9f1d1d}
 .muted{color:var(--steel)}
-@media (max-width:900px){.attempt-head{align-items:flex-start;flex-direction:column}.attempt-title{flex-wrap:wrap}.attempt-side{align-items:flex-start;flex-direction:column;gap:6px}.attempt-main,.attempt-meta{white-space:normal}.attempt-time{text-align:left}.attempt-copy{-webkit-line-clamp:3}.review-grid{grid-template-columns:1fr}}
-@media (max-width:760px){.shell,main{padding-left:12px;padding-right:12px}.topbar{align-items:flex-start;flex-direction:column;padding:14px 0}.grid{grid-template-columns:1fr}th,td{padding:10px 12px}.attempt-foot{align-items:flex-start;flex-direction:column}}
+@media (max-width:900px){.attempt-head{align-items:flex-start;flex-direction:column}.attempt-title{flex-wrap:wrap}.attempt-side{align-items:flex-start;flex-direction:column;gap:6px}.attempt-main,.attempt-meta{white-space:normal}.attempt-time{text-align:left}.attempt-copy{-webkit-line-clamp:3}.review-grid{grid-template-columns:1fr}.attempt-detail-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media (max-width:760px){.shell,main{padding-left:12px;padding-right:12px}.topbar{align-items:flex-start;flex-direction:column;padding:14px 0}.grid{grid-template-columns:1fr}th,td{padding:10px 12px}.attempt-foot{align-items:flex-start;flex-direction:column}.attempt-conversation-banner{align-items:flex-start;flex-direction:column}.attempt-detail-grid{grid-template-columns:1fr}}
 """
 
 FAVICON_HREF = (
@@ -2525,61 +2533,60 @@ def _attempt_detail_body(
         ("updated", _format_local_time(attempt.updated_at)),
         ("reviewed", _format_local_time(attempt.reviewed_at or "")),
     ]
-    rows = "".join(
-        f"<div class=\"muted\">{escape(label)}</div><div>{escape(value)}</div>"
-        for label, value in fields
-    )
     return (
-        f"{_attempt_conversation_banner(attempt)}"
-        f"{_attempt_detail_toolbar(codex_session_id)}"
+        f"{_attempt_conversation_banner(attempt, codex_session_id)}"
+        f"{_attempt_detail_grid(fields)}"
         f"{_review_panel(attempt, sent_reply, feedback_events)}"
-        f"<section class=\"card compact-card\"><div class=\"grid\">{rows}</div></section>"
         f"{_quality_warning_card(attempt)}"
         f"{_context_only_info_card(attempt)}"
         f"{_oa_metadata_card(attempt)}"
         f"{_calendar_metadata_card(attempt)}"
-        f"{_recall_card(attempt, sent_reply)}"
-        f"{_codex_session_card(codex_session_id, attempt)}"
-        f"{_text_card('Trigger', attempt.trigger_text)}"
-        f"{_text_card('Codex reason', attempt.codex_reason)}"
         f"{_text_card('Audit summary', attempt.audit_summary)}"
         f"{_collapsible_json_card('Audit documents', attempt.audit_documents_json)}"
         f"{_collapsible_json_card('Audit tool events', attempt.audit_tool_events_json)}"
         f"{_text_card('Draft reply (raw Codex reply)', attempt.draft_reply_text)}"
-        f"{_text_card('Final reply (send-ready text)', attempt.final_reply_text)}"
     )
 
 
-def _attempt_conversation_banner(attempt: ReplyAttempt) -> str:
+def _attempt_conversation_banner(
+    attempt: ReplyAttempt, codex_session_id: str | None
+) -> str:
     subtitle = (
         f"<div class=\"attempt-conversation-sub\">触发人：{escape(attempt.trigger_sender)}</div>"
         if attempt.trigger_sender.strip()
         else ""
     )
+    agent_log = (
+        f"<a class=\"agent-log-button\" href=\"/codex/{escape(codex_session_id)}\">"
+        "agent 执行记录</a>"
+        if codex_session_id
+        else "<span class=\"muted\">No agent execution record</span>"
+    )
     return (
         "<section class=\"card compact-card attempt-conversation-banner\">"
+        "<div class=\"attempt-conversation-left\">"
         "<div class=\"attempt-conversation-label\">群名</div>"
         "<div class=\"attempt-conversation-main\">"
         f"<div class=\"attempt-conversation-title\">{escape(attempt.conversation_title)}</div>"
         f"{subtitle}"
         "</div>"
+        "</div>"
+        f"{agent_log}"
         "</section>"
     )
 
 
-def _attempt_detail_toolbar(codex_session_id: str | None) -> str:
-    if codex_session_id:
-        codex = (
-            f"<a class=\"compact-button\" href=\"/codex/{escape(codex_session_id)}\">"
-            "Codex</a>"
-        )
-    else:
-        codex = "<span class=\"muted\">No Codex session</span>"
+def _attempt_detail_grid(fields: list[tuple[str, str]]) -> str:
+    cells = "".join(
+        "<div class=\"attempt-detail-cell\">"
+        f"<div class=\"attempt-detail-label\">{escape(label)}</div>"
+        f"<div class=\"attempt-detail-value\">{escape(value)}</div>"
+        "</div>"
+        for label, value in fields
+    )
     return (
         "<section class=\"card compact-card\">"
-        "<div class=\"attempt-actions\">"
-        f"{codex}"
-        "</div>"
+        f"<div class=\"attempt-detail-grid\">{cells}</div>"
         "</section>"
     )
 
@@ -2772,6 +2779,8 @@ def _review_panel(
         "</div>"
         "<h2>Trigger</h2>"
         f"<pre class=\"trigger-pre\">{escape(_trigger_text(attempt))}</pre>"
+        "<h2>Codex reason</h2>"
+        f"<div class=\"codex-reason\">{escape(attempt.codex_reason)}</div>"
         "<h2>生成回复</h2>"
         f"<pre class=\"reply-pre\">{escape(reply_text)}</pre>"
         "</div>"
@@ -2779,31 +2788,6 @@ def _review_panel(
         f"{_feedback_form(attempt)}"
         f"{_counterparty_feedback_card(sent_reply, feedback_events)}"
         "</div>"
-        "</section>"
-    )
-
-
-def _codex_session_card(
-    codex_session_id: str | None, attempt: ReplyAttempt | None = None
-) -> str:
-    if not codex_session_id:
-        return (
-            "<section class=\"card\"><h2>Codex local history</h2>"
-            "<p class=\"muted\">No Codex session recorded for this conversation.</p>"
-            "</section>"
-        )
-    line_range = ""
-    if attempt and attempt.codex_transcript_end_line > attempt.codex_transcript_start_line:
-        line_range = (
-            f"<p class=\"muted\">lines {attempt.codex_transcript_start_line}-"
-            f"{attempt.codex_transcript_end_line}</p>"
-        )
-    return (
-        "<section class=\"card\"><h2>Codex local history</h2>"
-        f"<p><a class=\"compact-button\" href=\"/codex/{escape(codex_session_id)}\">"
-        "Codex</a></p>"
-        f"<p class=\"muted\">{escape(codex_session_id)}</p>"
-        f"{line_range}"
         "</section>"
     )
 
@@ -3067,34 +3051,6 @@ def _codex_event_card(event: RenderedCodexEvent) -> str:
         "</summary>"
         f"<pre>{escape(event.body)}</pre>"
         "</details>"
-    )
-
-
-def _recall_card(attempt: ReplyAttempt, sent_reply: SentReply | None) -> str:
-    if attempt.send_status != "sent":
-        return ""
-    if sent_reply is None:
-        return (
-            "<section class=\"card\"><h2>撤销发送</h2>"
-            "<p class=\"muted\">撤销不可用：没有找到对应的发送记录。</p></section>"
-        )
-    if sent_reply.recall_status == "recalled":
-        return (
-            "<section class=\"card\"><h2>撤销发送</h2>"
-            f"<p>已撤销：{escape(sent_reply.recalled_at or '')}</p></section>"
-        )
-    if not sent_reply.recall_key:
-        return (
-            "<section class=\"card\"><h2>撤销发送</h2>"
-            "<p class=\"muted\">撤销不可用：当前发送方式不支持。dws 目前只支持机器人消息通过 processQueryKey 撤回；这条消息是当前用户身份发送，未记录可撤销 key。</p>"
-            "</section>"
-        )
-    return (
-        "<section class=\"card\"><h2>撤销发送</h2>"
-        f"<form method=\"post\" action=\"/attempts/{attempt.id}/recall\" "
-        "onsubmit=\"return confirm('确认撤销这条已发送消息？');\">"
-        "<button class=\"danger\" type=\"submit\">撤销这条消息</button>"
-        "</form></section>"
     )
 
 
