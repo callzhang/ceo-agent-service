@@ -2,7 +2,7 @@ import json
 import asyncio
 from collections.abc import Iterable
 from collections import deque
-from datetime import datetime, timezone, tzinfo
+from datetime import datetime, timedelta, timezone, tzinfo
 from html import escape
 from itertools import count, zip_longest
 import os
@@ -160,6 +160,12 @@ th{background:var(--surface-soft);color:var(--steel);font-size:12px;font-weight:
 .pagination-arrow{min-width:28px;padding:0 8px;font-size:16px}
 .pagination-button.is-disabled{color:var(--muted);background:var(--surface-soft);cursor:default}
 .pagination-button.is-disabled:hover{border-color:transparent;color:var(--muted);background:var(--surface-soft)}
+.history-chart-card{padding:16px 18px;margin:0 0 12px}
+.history-chart-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:10px;flex-wrap:wrap}
+.history-chart-title{margin:0;color:var(--ink);font-size:16px;font-weight:700;line-height:1.35}
+.history-chart-subtitle{color:var(--steel);font-size:12px;font-weight:600;line-height:1.4}
+.history-chart{width:100%;height:260px}
+.history-chart-empty{display:flex;align-items:center;justify-content:center;height:180px;border:1px dashed var(--hairline);border-radius:8px;color:var(--steel);background:var(--surface-soft);font-size:13px}
 .attempt-feed{display:grid;gap:8px}
 .attempt-item{background:var(--canvas);border:1px solid var(--hairline);border-radius:8px;padding:10px 12px}
 .attempt-head{display:flex;align-items:center;justify-content:space-between;gap:12px;min-width:0}
@@ -287,7 +293,7 @@ label{display:block;margin:14px 0 7px;color:var(--slate);font-size:13px;font-wei
 .danger{background:#9f1d1d}
 .muted{color:var(--steel)}
 @media (max-width:900px){.attempt-head{align-items:flex-start;flex-direction:column}.attempt-title{flex-wrap:wrap}.attempt-side{align-items:flex-start;flex-direction:column;gap:6px}.attempt-main,.attempt-meta{white-space:normal}.attempt-time{text-align:left}.attempt-copy{-webkit-line-clamp:3}.review-grid{grid-template-columns:1fr}.attempt-detail-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
-@media (max-width:760px){.shell,main{padding-left:12px;padding-right:12px}.topbar{align-items:flex-start;flex-direction:column;padding:14px 0}.grid{grid-template-columns:1fr}th,td{padding:10px 12px}.attempt-foot{align-items:flex-start;flex-direction:column}.attempt-conversation-banner{align-items:flex-start;flex-direction:column}.attempt-detail-grid{grid-template-columns:1fr}}
+@media (max-width:760px){.shell,main{padding-left:12px;padding-right:12px}.topbar{align-items:flex-start;flex-direction:column;padding:14px 0}.grid{grid-template-columns:1fr}th,td{padding:10px 12px}.attempt-foot{align-items:flex-start;flex-direction:column}.attempt-conversation-banner{align-items:flex-start;flex-direction:column}.attempt-detail-grid{grid-template-columns:1fr}.history-chart{height:220px}}
 """
 
 FAVICON_HREF = (
@@ -315,6 +321,21 @@ _BROWSER_NOTIFICATION_SEQUENCE = count(1)
 _DINGTALK_BRIDGE_STATUS: deque[dict[str, str]] = deque(maxlen=20)
 DEFAULT_ATTEMPT_LIST_LIMIT = 50
 DEFAULT_ERROR_LIST_LIMIT = 50
+HISTORY_CHART_HOURS = 24
+HISTORY_CHART_COLORS = {
+    "💬 Sent": "#00b48a",
+    "💬 Skipped": "#a8a8aa",
+    "💬 Processing": "#3772cf",
+    "💬 Failed": "#d45656",
+    "💬 Dry run": "#c37d0d",
+    "📆 Accepted": "#00b48a",
+    "📆 Tentative": "#c37d0d",
+    "📆 Declined": "#d45656",
+    "🧾 Approved": "#00b48a",
+    "🧾 Commented": "#3772cf",
+    "🧾 Returned": "#c37d0d",
+    "🧾 Rejected": "#d45656",
+}
 
 
 def render_page(
@@ -1340,6 +1361,165 @@ def _format_local_time(value: str, *, local_tz: tzinfo | None = None) -> str:
     return parsed.astimezone(local_timezone).strftime(DISPLAY_TIME_FORMAT)
 
 
+def _parse_utc_timestamp(value: str) -> datetime | None:
+    raw = value.strip()
+    if not raw:
+        return None
+    normalized = raw.replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        try:
+            parsed = datetime.strptime(raw, DISPLAY_TIME_FORMAT)
+        except ValueError:
+            return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _history_event_label(attempt: ReplyAttempt) -> str:
+    calendar_status = attempt.calendar_response_status.strip().lower()
+    if calendar_status == "accepted":
+        return "📆 Accepted"
+    if calendar_status == "tentative":
+        return "📆 Tentative"
+    if calendar_status == "declined":
+        return "📆 Declined"
+
+    oa_action = attempt.oa_action.strip().lower()
+    if oa_action in {"agree", "approve", "approved"}:
+        return "🧾 Approved"
+    if oa_action in {"comment", "commented"}:
+        return "🧾 Commented"
+    if oa_action in {"return", "returned"}:
+        return "🧾 Returned"
+    if oa_action in {"refuse", "reject", "rejected"}:
+        return "🧾 Rejected"
+
+    status = attempt.send_status.strip().lower()
+    if status == "sent":
+        return "💬 Sent"
+    if status == "skipped":
+        return "💬 Skipped"
+    if status in {"failed", "blocked"}:
+        return "💬 Failed"
+    if status == "dry_run":
+        return "💬 Dry run"
+    return "💬 Processing"
+
+
+def _history_chart_payload(
+    store: AutoReplyStore,
+    *,
+    hours: int = HISTORY_CHART_HOURS,
+    now: datetime | None = None,
+) -> dict[str, object]:
+    local_tz = datetime.now().astimezone().tzinfo
+    local_now = now.astimezone(local_tz) if now else datetime.now(local_tz)
+    bucket_count = max(1, hours)
+    first_bucket = local_now.replace(minute=0, second=0, microsecond=0) - timedelta(
+        hours=bucket_count - 1
+    )
+    labels = [
+        (first_bucket + timedelta(hours=index)).strftime("%m-%d %H:%M")
+        for index in range(bucket_count)
+    ]
+    since_utc = first_bucket.astimezone(timezone.utc).strftime(DISPLAY_TIME_FORMAT)
+    attempts = store.list_reply_attempts_since(since_utc)
+    bucket_values: dict[str, list[int]] = {}
+    label_indexes = {label: index for index, label in enumerate(labels)}
+    for attempt in attempts:
+        created_at = _parse_utc_timestamp(attempt.created_at)
+        if created_at is None:
+            continue
+        local_bucket = created_at.astimezone(local_tz).replace(
+            minute=0,
+            second=0,
+            microsecond=0,
+        )
+        label = local_bucket.strftime("%m-%d %H:%M")
+        bucket_index = label_indexes.get(label)
+        if bucket_index is None:
+            continue
+        event_label = _history_event_label(attempt)
+        bucket_values.setdefault(event_label, [0] * bucket_count)[bucket_index] += 1
+    series = [
+        {
+            "name": name,
+            "type": "bar",
+            "stack": "events",
+            "data": bucket_values[name],
+            "itemStyle": {"color": HISTORY_CHART_COLORS.get(name, "#5a5a5c")},
+        }
+        for name in HISTORY_CHART_COLORS
+        if name in bucket_values
+    ]
+    return {
+        "labels": labels,
+        "series": series,
+        "total": sum(sum(item["data"]) for item in series),
+        "range": f"{labels[0]} - {labels[-1]}",
+    }
+
+
+def _render_history_chart(store: AutoReplyStore) -> str:
+    payload = _history_chart_payload(store)
+    if int(payload["total"]) <= 0:
+        return (
+            "<section class=\"card history-chart-card\">"
+            "<div class=\"history-chart-head\">"
+            "<div><h2 class=\"history-chart-title\">最近 24 小时事件</h2>"
+            f"<div class=\"history-chart-subtitle\">{escape(str(payload['range']))}</div></div>"
+            "<span class=\"pill\">0 events</span>"
+            "</div><div class=\"history-chart-empty\">暂无事件</div></section>"
+        )
+    payload_json = json.dumps(payload, ensure_ascii=False)
+    return (
+        "<section class=\"card history-chart-card\">"
+        "<div class=\"history-chart-head\">"
+        "<div><h2 class=\"history-chart-title\">最近 24 小时事件</h2>"
+        f"<div class=\"history-chart-subtitle\">{escape(str(payload['range']))}</div></div>"
+        f"<span class=\"pill\">{int(payload['total'])} events</span>"
+        "</div>"
+        "<div id=\"history-event-chart\" class=\"history-chart\" role=\"img\" "
+        "aria-label=\"最近 24 小时事件数量堆叠柱状图\"></div>"
+        "<script src=\"https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js\"></script>"
+        "<script>"
+        f"const historyEventChartData = {payload_json};"
+        """
+(() => {
+  const el = document.getElementById("history-event-chart");
+  if (!el || !window.echarts) {
+    return;
+  }
+  const chart = echarts.init(el, null, {renderer: "canvas"});
+  chart.setOption({
+    animation: false,
+    tooltip: {trigger: "axis", axisPointer: {type: "shadow"}},
+    legend: {top: 0, left: 0, itemWidth: 10, itemHeight: 10, textStyle: {color: "#5a5a5c"}},
+    grid: {left: 34, right: 12, top: 54, bottom: 32},
+    xAxis: {
+      type: "category",
+      data: historyEventChartData.labels,
+      axisTick: {show: false},
+      axisLabel: {color: "#888888", fontSize: 11, hideOverlap: true}
+    },
+    yAxis: {
+      type: "value",
+      minInterval: 1,
+      splitLine: {lineStyle: {color: "#ededed"}},
+      axisLabel: {color: "#888888", fontSize: 11}
+    },
+    series: historyEventChartData.series
+  });
+  window.addEventListener("resize", () => chart.resize());
+})();
+"""
+        "</script></section>"
+    )
+
+
 def _pagination_range(page: int, limit: int | None, total_count: int) -> str:
     if total_count <= 0:
         return "0-0"
@@ -1489,6 +1669,7 @@ def render_attempt_list(
         )
     if not items:
         body = (
+            f"{_render_history_chart(store)}"
             "<section class=\"card\"><p class=\"muted\">No reply attempts recorded.</p>"
             f"<p class=\"muted\">DB: {escape(str(store.path))}</p></section>"
         )
@@ -1500,6 +1681,7 @@ def render_attempt_list(
             total_count=total_count,
         )
         body = (
+            f"{_render_history_chart(store)}"
             f"{pagination}"
             "<section class=\"attempt-feed\">"
             + "".join(items)

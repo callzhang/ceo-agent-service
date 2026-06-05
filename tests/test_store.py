@@ -694,6 +694,41 @@ def test_lists_reply_attempts_newest_first_with_limit(tmp_path: Path):
     assert first_id != second_id
 
 
+def test_lists_reply_attempts_since_timestamp(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    old_id = store.record_reply_attempt(
+        conversation_id="cid-old",
+        conversation_title="Old",
+        trigger_message_id="msg-old",
+        trigger_sender="Old",
+        trigger_text="old",
+        action="send_reply",
+        sensitivity_kind="general",
+    )
+    new_id = store.record_reply_attempt(
+        conversation_id="cid-new",
+        conversation_title="New",
+        trigger_message_id="msg-new",
+        trigger_sender="New",
+        trigger_text="new",
+        action="send_reply",
+        sensitivity_kind="general",
+    )
+    with store._connect() as db:
+        db.execute(
+            "update reply_attempts set created_at=? where id=?",
+            ("2026-06-04 00:00:00", old_id),
+        )
+        db.execute(
+            "update reply_attempts set created_at=? where id=?",
+            ("2026-06-05 00:00:00", new_id),
+        )
+
+    attempts = store.list_reply_attempts_since("2026-06-04 12:00:00")
+
+    assert [attempt.id for attempt in attempts] == [new_id]
+
+
 def test_lists_reviewed_reply_attempts_for_optimization(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     unreviewed_id = store.record_reply_attempt(

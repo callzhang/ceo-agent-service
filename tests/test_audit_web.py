@@ -93,6 +93,11 @@ def test_render_attempt_list_shows_history_rows(tmp_path: Path):
     html = render_attempt_list(store)
 
     assert "CEO Agent Audit" in html
+    assert "最近 24 小时事件" in html
+    assert 'id="history-event-chart"' in html
+    assert "echarts@5" in html
+    assert "historyEventChartData" in html
+    assert '"name": "💬 Sent"' in html
     assert f"/attempts/{attempt_id}" in html
     assert "技术部" in html
     assert "Xiaomin" in html

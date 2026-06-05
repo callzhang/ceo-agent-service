@@ -1703,6 +1703,19 @@ class AutoReplyStore:
             ).fetchall()
             return [ReplyAttempt.model_validate(dict(row)) for row in rows]
 
+    def list_reply_attempts_since(self, since_utc: str) -> list[ReplyAttempt]:
+        with self._connect() as db:
+            rows = db.execute(
+                """
+                select *
+                from reply_attempts
+                where datetime(created_at) >= datetime(?)
+                order by created_at asc, id asc
+                """,
+                (since_utc,),
+            ).fetchall()
+            return [ReplyAttempt.model_validate(dict(row)) for row in rows]
+
     def list_reply_attempts_for_conversation(
         self, conversation_id: str, limit: int | None = None
     ) -> list[ReplyAttempt]:
