@@ -349,9 +349,10 @@ def test_build_turn_prompt_sanitizes_quoted_card_without_repeating_assets():
 def test_thread_prompt_explains_first_person_single_chat_subject():
     prompt = ceo_agent_thread_prompt()
 
-    assert "发信人讨论自己的请假、调休" in prompt
+    assert "单聊里可以回答发信人关于他自己的请假、调休" in prompt
     assert "personnel_subject_user_id 必须填写该消息的 sender_user_id" in prompt
-    assert "单聊和群聊都适用" in prompt
+    assert "群聊里不要回复具体个人的人事敏感信息" in prompt
+    assert "单聊里如果对方询问第三方的人事敏感信息" in prompt
 
 
 def test_thread_prompt_limits_internal_personnel_to_specific_people():

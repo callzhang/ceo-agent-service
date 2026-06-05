@@ -6715,34 +6715,38 @@ def test_internal_personnel_question_missing_subject_asks_clarifying_question(
     assert final_sent(dws) == [("cid-1", "这个是关于谁的问题？（by明哥分身）")]
 
 
-def test_internal_personnel_question_allows_hr_requester(tmp_path: Path, monkeypatch):
+def test_internal_personnel_question_allows_private_self_subject(
+    tmp_path: Path, monkeypatch
+):
     dws = FakeDws(
         [conversation(single_chat=True)],
-        {"cid-1": [message("张三转正怎么看？", single_chat=True)]},
+        {"cid-1": [message("我转正怎么看？", single_chat=True)]},
     )
-    dws.hr_users.add("sender-user-1")
     codex = FakeCodex(
         CodexDecision(
             action=CodexAction.SEND_REPLY,
-            reply_text="建议先观察一个月",
+            reply_text="你这次转正材料看起来可以，但后续要补齐闭环。",
             sensitivity_kind=SensitivityKind.INTERNAL_PERSONNEL,
-            personnel_subject_user_id="subject-user-1",
+            personnel_subject_user_id="sender-user-1",
         )
     )
     worker = make_worker(tmp_path, dws, codex, monkeypatch)
 
     worker.run_once()
 
-    assert final_sent(dws) == [("cid-1", "建议先观察一个月（by明哥分身）")]
+    assert final_sent(dws) == [
+        ("cid-1", "你这次转正材料看起来可以，但后续要补齐闭环。（by明哥分身）")
+    ]
 
 
-def test_internal_personnel_question_allows_subject_manager(
+def test_internal_personnel_question_does_not_auto_allow_hr_or_manager(
     tmp_path: Path, monkeypatch
 ):
     dws = FakeDws(
         [conversation(single_chat=True)],
         {"cid-1": [message("张三绩效怎么定？", single_chat=True)]},
     )
+    dws.hr_users.add("sender-user-1")
     dws.manager_chains["subject-user-1"] = ["sender-user-1"]
     codex = FakeCodex(
         CodexDecision(
@@ -6756,7 +6760,9 @@ def test_internal_personnel_question_allows_subject_manager(
 
     worker.run_once()
 
-    assert final_sent(dws) == [("cid-1", "先按事实反馈（by明哥分身）")]
+    assert final_sent(dws) == [
+        ("cid-1", "这个涉及其他人的人事信息，我不能直接回答。（by明哥分身）")
+    ]
 
 
 def test_internal_personnel_question_refuses_unrelated_requester(
@@ -6779,7 +6785,31 @@ def test_internal_personnel_question_refuses_unrelated_requester(
     worker.run_once()
 
     assert final_sent(dws) == [
-        ("cid-1", "这个涉及内部人事隐私，我不能回答。（by明哥分身）")
+        ("cid-1", "这个涉及其他人的人事信息，我不能直接回答。（by明哥分身）")
+    ]
+
+
+def test_internal_personnel_question_never_replies_sensitive_detail_in_group(
+    tmp_path: Path, monkeypatch
+):
+    dws = FakeDws(
+        [conversation(single_chat=False)],
+        {"cid-1": [message("@Alex Chen(明哥) 我绩效怎么定？", single_chat=False)]},
+    )
+    codex = FakeCodex(
+        CodexDecision(
+            action=CodexAction.SEND_REPLY,
+            reply_text="你这次可以按高绩效处理",
+            sensitivity_kind=SensitivityKind.INTERNAL_PERSONNEL,
+            personnel_subject_user_id="sender-user-1",
+        )
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+
+    worker.run_once()
+
+    assert final_sent(dws) == [
+        ("cid-1", "这个涉及个人敏感信息，不适合在群里展开，单独同步我。（by明哥分身）")
     ]
 
 
