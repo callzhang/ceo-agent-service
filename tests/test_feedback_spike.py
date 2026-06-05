@@ -29,7 +29,7 @@ def test_build_callback_url_contains_token_and_rating():
     )
 
 
-def test_build_callback_url_can_include_feedback_context():
+def test_build_callback_url_omits_feedback_context():
     url = build_callback_url(
         "https://feedback.example.com/",
         feedback_token="spike_1_abcd",
@@ -38,9 +38,10 @@ def test_build_callback_url_can_include_feedback_context():
         reply_text="回复样例",
     )
 
-    assert "rating=down" in url
-    assert "original_text=%E5%8E%9F%E8%AF%9D" in url
-    assert "reply_text=%E5%9B%9E%E5%A4%8D%E6%A0%B7%E4%BE%8B" in url
+    assert url == (
+        "https://feedback.example.com/api/dingtalk-feedback-spike"
+        "?feedback_token=spike_1_abcd&rating=down"
+    )
 
 
 def test_build_events_url_contains_secret_and_limit():
@@ -120,7 +121,7 @@ def test_append_feedback_links_does_not_duplicate_existing_links():
     assert second.text.count("/api/dingtalk-feedback-spike") == 2
 
 
-def test_callback_url_truncates_long_feedback_context():
+def test_callback_url_never_embeds_long_feedback_context():
     url = build_callback_url(
         "https://feedback.example.com/",
         feedback_token="spike_1_abcd",
@@ -129,8 +130,10 @@ def test_callback_url_truncates_long_feedback_context():
         reply_text="回复" * 500,
     )
 
-    assert len(url) < 2500
-    assert "..." in url
+    assert url == (
+        "https://feedback.example.com/api/dingtalk-feedback-spike"
+        "?feedback_token=spike_1_abcd&rating=up"
+    )
 
 
 def test_build_feedback_spike_link_message_accepts_fixed_token_for_verification():
@@ -146,8 +149,8 @@ def test_build_feedback_spike_link_message_accepts_fixed_token_for_verification(
     assert "rating=down" in message.callback_url_down
     assert message.callback_url_up in message.text
     assert message.callback_url_down in message.text
-    assert "original_text=" in message.callback_url_up
-    assert "reply_text=" in message.callback_url_up
+    assert "original_text=" not in message.callback_url_up
+    assert "reply_text=" not in message.callback_url_up
 
 
 def test_send_feedback_spike_links_uses_current_user_message_path():
