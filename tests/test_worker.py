@@ -141,6 +141,8 @@ class FakeDws:
         self.current_user_checks: list[str] = []
         self.calendar_invites: dict[str, DwsCalendarEvent | None] = {}
         self.calendar_events: dict[str, list[DwsCalendarEvent]] = {}
+        self.calendar_event_details: dict[str, DwsCalendarEvent | None] = {}
+        self.calendar_event_detail_calls: list[str] = []
         self.calendar_responses: list[tuple[str, str]] = []
         self.calendar_response_error: Exception | None = None
         self.minutes_permission_requests: dict[
@@ -439,6 +441,10 @@ class FakeDws:
 
     def list_calendar_events(self, start: str, end: str) -> list[DwsCalendarEvent]:
         return self.calendar_events.get(f"{start}|{end}", [])
+
+    def get_calendar_event(self, event_id: str) -> DwsCalendarEvent | None:
+        self.calendar_event_detail_calls.append(event_id)
+        return self.calendar_event_details.get(event_id)
 
     def respond_calendar_event(self, event_id: str, response_status: str) -> dict:
         self.calendar_responses.append((event_id, response_status))
@@ -2372,6 +2378,78 @@ def test_rendered_calendar_card_without_message_type_uses_unique_pending_invite_
     assert attempt.codex_reason == "标题足以判断先暂定。"
     assert attempt.calendar_event_id == "invite-1"
     assert attempt.calendar_response_status == "tentative"
+
+
+def test_bare_calendar_card_enriches_sender_pending_invites_to_match_recent_create_time(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message("[日程]", single_chat=True)
+    invite = DwsCalendarEvent(
+        event_id="invite-1",
+        title="吴柯欣 - 招聘专员 - 三面",
+        start_time="2026-06-07T13:30:00+08:00",
+        end_time="2026-06-07T14:30:00+08:00",
+        description="",
+        organizer=trigger.sender_name,
+        self_response_status="needsAction",
+        status="confirmed",
+    )
+    enriched_invite = invite.model_copy(
+        update={
+            "description": "候选人：吴柯欣\n岗位：招聘专员\n轮次：三面",
+            "created_ms": int(
+                datetime(
+                    2026,
+                    5,
+                    13,
+                    18,
+                    0,
+                    0,
+                    tzinfo=ZoneInfo("Asia/Shanghai"),
+                ).timestamp()
+                * 1000
+            ),
+        }
+    )
+    older_invite = DwsCalendarEvent(
+        event_id="invite-2",
+        title="HR 周例会",
+        start_time="2026-06-08T13:30:00+08:00",
+        end_time="2026-06-08T14:45:00+08:00",
+        organizer=trigger.sender_name,
+        self_response_status="needsAction",
+        status="confirmed",
+    )
+    dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
+    dws.calendar_events[
+        "2026-05-13T17:00:00+08:00|2026-05-27T17:00:00+08:00"
+    ] = [invite, older_invite]
+    dws.calendar_event_details["invite-1"] = enriched_invite
+    dws.calendar_event_details["invite-2"] = older_invite
+    dws.calendar_events[f"{enriched_invite.start_time}|{enriched_invite.end_time}"] = [
+        enriched_invite
+    ]
+    codex = FakeCodex(
+        CodexDecision(
+            action=CodexAction.NO_REPLY,
+            reason="已读取候选人面试日程并接受。",
+            calendar_response_status="accepted",
+            audit_summary="已通过详情接口读取刚创建的待响应日程。",
+        )
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+
+    worker.run_once()
+
+    assert dws.calendar_event_detail_calls == ["invite-1", "invite-2"]
+    assert len(codex.calls) == 1
+    assert "吴柯欣 - 招聘专员 - 三面" in codex.calls[0][0]
+    assert "候选人：吴柯欣" in codex.calls[0][0]
+    assert final_sent(dws) == []
+    assert dws.calendar_responses == [("invite-1", "accepted")]
+    attempt = worker.store.get_reply_attempt(1)
+    assert attempt.calendar_event_id == "invite-1"
+    assert attempt.calendar_response_status == "accepted"
 
 
 def test_existing_dry_run_calendar_response_is_executed_without_rerunning_codex(

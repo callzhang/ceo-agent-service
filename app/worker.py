@@ -1771,6 +1771,7 @@ class DingTalkAutoReplyWorker:
             and self._calendar_event_is_active(event)
             and self._calendar_event_is_self_pending(event)
         ]
+        candidates = self._calendar_pending_invite_candidates_with_details(candidates)
         near_message_candidates = [
             event
             for event in candidates
@@ -1788,6 +1789,22 @@ class DingTalkAutoReplyWorker:
         ):
             return candidates[0]
         return None
+
+    def _calendar_pending_invite_candidates_with_details(
+        self,
+        candidates: list[DwsCalendarEvent],
+    ) -> list[DwsCalendarEvent]:
+        get_calendar_event = getattr(self.dws, "get_calendar_event", None)
+        if get_calendar_event is None:
+            return candidates
+        result: list[DwsCalendarEvent] = []
+        for event in candidates:
+            if self._calendar_event_has_change_time(event):
+                result.append(event)
+                continue
+            detailed_event = get_calendar_event(event.event_id)
+            result.append(detailed_event or event)
+        return result
 
     @staticmethod
     def _calendar_event_is_self_pending(event: DwsCalendarEvent) -> bool:

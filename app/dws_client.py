@@ -2236,7 +2236,32 @@ class DwsClient:
                 return int(value)
             if isinstance(value, str) and value.strip().isdigit():
                 return int(value.strip())
+            if isinstance(value, str):
+                timestamp_ms = DwsClient._datetime_string_to_epoch_ms(value)
+                if timestamp_ms > 0:
+                    return timestamp_ms
         return 0
+
+    @staticmethod
+    def _datetime_string_to_epoch_ms(value: str) -> int:
+        text = value.strip()
+        if not text:
+            return 0
+        normalized = text.replace("Z", "+00:00")
+        try:
+            parsed = datetime.fromisoformat(normalized)
+        except ValueError:
+            for pattern in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
+                try:
+                    parsed = datetime.strptime(text, pattern)
+                    break
+                except ValueError:
+                    parsed = None
+            if parsed is None:
+                return 0
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=DINGTALK_MESSAGE_TIME_ZONE)
+        return int(parsed.timestamp() * 1000)
 
     @staticmethod
     def _find_minutes_permission_request(
