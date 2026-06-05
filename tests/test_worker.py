@@ -149,7 +149,7 @@ class FakeDws:
             str, DwsMinutesPermissionRequest | None
         ] = {}
         self.added_minutes_permissions: list[DwsMinutesPermissionRequest] = []
-        self.minutes_infos: dict[str, dict] = {}
+        self.minutes_infos: dict[str, dict | Exception] = {}
         self.minutes_summaries: dict[str, dict] = {}
         self.minutes_todos: dict[str, dict] = {}
         self.minutes_transcriptions: dict[str, dict] = {}
@@ -465,6 +465,11 @@ class FakeDws:
 
     def get_minutes_info(self, task_uuid: str) -> dict:
         self.minutes_info_calls.append(task_uuid)
+        result = self.minutes_infos.get(task_uuid)
+        if isinstance(result, Exception):
+            raise result
+        if result is not None:
+            return result
         return self.minutes_infos.get(
             task_uuid,
             {"result": {"taskUuid": task_uuid, "title": "静默会"}},
@@ -4661,6 +4666,39 @@ def test_dingtalk_doc_read_failure_blocks_codex(tmp_path: Path, monkeypatch):
     assert attempt.action == "stop_with_error"
     assert attempt.send_status == "failed"
     assert "linked_dingtalk_doc_read_failed" in attempt.send_error
+
+
+def test_minutes_permission_error_requests_access_instead_of_failing(
+    tmp_path: Path, monkeypatch
+):
+    minutes_id = "7632756964333134343836383736303334325f3435313431363430365f35"
+    trigger = message(
+        "这些初筛的数据，尤其是没有通过的，我就不给你开放读取了。\n"
+        f"[听记](dingtalk://dingtalkclient/page/flash_minutes_detail?minutesId={minutes_id}&from=8)",
+        single_chat=True,
+    )
+    dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
+    dws.minutes_infos[minutes_id] = DwsError(
+        "B_PERMISSION_NoPermission",
+        code="B_PERMISSION_NoPermission",
+    )
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该调用")
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+
+    worker.run_once()
+
+    assert dws.minutes_info_calls == [minutes_id]
+    assert codex.calls == []
+    assert len(final_sent(dws)) == 1
+    assert "没有权限读取你引用的材料" in final_sent(dws)[0][1]
+    assert dws.reply_messages[0][1] == trigger.open_message_id
+    attempt = worker.store.get_reply_attempt(1)
+    assert attempt.action == "ask_clarifying_question"
+    assert attempt.send_status == "sent"
+    assert "linked_dingtalk_doc_permission_required" in attempt.codex_reason
+    assert worker.store.list_errors() == []
 
 
 def test_codex_stop_with_error_sends_macos_notification(tmp_path: Path, monkeypatch):

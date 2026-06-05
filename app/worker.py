@@ -2688,8 +2688,13 @@ class DingTalkAutoReplyWorker:
                 context_messages,
             )
         except Exception as exc:
-            self._record_linked_document_error(conversation, trigger, str(exc))
-            if raise_on_delivery_failure:
+            handled = self._record_linked_document_error(
+                conversation,
+                trigger,
+                exc,
+                raise_on_delivery_failure=raise_on_delivery_failure,
+            )
+            if raise_on_delivery_failure and not handled:
                 raise ReplyTaskProcessingError(str(exc)) from exc
             return
         session_id = None
@@ -3826,9 +3831,35 @@ class DingTalkAutoReplyWorker:
         self,
         conversation: DingTalkConversation,
         trigger: DingTalkMessage,
-        error: str,
-    ) -> None:
-        reason = f"linked_dingtalk_doc_read_failed: {error}"
+        error: Exception,
+        *,
+        raise_on_delivery_failure: bool = False,
+    ) -> bool:
+        error_text = str(error)
+        if self._is_linked_document_permission_error(error):
+            reason = f"linked_dingtalk_doc_permission_required: {error_text}"
+            attempt_id = self.store.record_reply_attempt_for_trigger(
+                conversation_id=conversation.open_conversation_id,
+                conversation_title=conversation.title,
+                trigger_message_id=trigger.open_message_id,
+                trigger_sender=trigger.sender_name,
+                trigger_text=trigger.content,
+                action=CodexAction.ASK_CLARIFYING_QUESTION.value,
+                sensitivity_kind="general",
+                codex_reason=reason,
+                audit_summary="新消息引用的钉钉材料读取权限不足；已请求对方开放权限或重发正文。",
+            )
+            self._send_reply(
+                conversation=conversation,
+                trigger=trigger,
+                new_messages=[trigger],
+                reply_text=self._linked_document_permission_request_reply(),
+                reason=reason,
+                attempt_id=attempt_id,
+                raise_on_delivery_failure=raise_on_delivery_failure,
+            )
+            return True
+        reason = f"linked_dingtalk_doc_read_failed: {error_text}"
         attempt_id = self.store.record_reply_attempt_for_trigger(
             conversation_id=conversation.open_conversation_id,
             conversation_title=conversation.title,
@@ -3849,12 +3880,26 @@ class DingTalkAutoReplyWorker:
             conversation.open_conversation_id,
             trigger.open_message_id,
             "linked_dingtalk_doc_read",
-            error,
+            error_text,
         )
         self._notify(
             title=f"CEO doc read failed: {conversation.title}",
-            message=error[:120],
+            message=error_text[:120],
             conversation=conversation,
+        )
+        return False
+
+    @staticmethod
+    def _is_linked_document_permission_error(error: Exception) -> bool:
+        if isinstance(error, DwsError) and error.code == "B_PERMISSION_NoPermission":
+            return True
+        return "B_PERMISSION_NoPermission" in str(error)
+
+    @staticmethod
+    def _linked_document_permission_request_reply() -> str:
+        return (
+            "我这边没有权限读取你引用的材料。麻烦把听记/文档权限开给我，"
+            "或者把正文和关键结论直接发过来，我再继续处理。"
         )
 
     def _retry_existing_reply_attempt(
