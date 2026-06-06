@@ -4876,14 +4876,21 @@ class DingTalkAutoReplyWorker:
     ) -> bool:
         return (
             conversation.single_chat
-            and bool(linked_documents)
+            and any(
+                not DingTalkAutoReplyWorker._is_minutes_linked_document(document)
+                for document in linked_documents
+            )
             and decision.action == CodexAction.NO_REPLY
         )
 
     @staticmethod
+    def _is_minutes_linked_document(document: LinkedDocumentContext) -> bool:
+        return document.markdown.lstrip().startswith("AI 听记材料:")
+
+    @staticmethod
     def _single_chat_document_retry_prompt() -> str:
         return (
-            "上一次输出了 no_reply，但当前是私聊，且服务已经读取并注入了钉钉材料正文、摘要或可处理内容。"
+            "上一次输出了 no_reply，但当前是私聊，且服务已经读取并注入了钉钉在线文档或普通文件正文、摘要或可处理内容。"
             "请重新阅读已获取的钉钉材料并给出处理结果。"
             "如果材料足够，action 用 send_reply，reply_text 给出结论、修改意见、风险、下一步或需要补充的具体问题；"
             "如果材料不足，action 用 ask_clarifying_question 或 stop_with_error。"

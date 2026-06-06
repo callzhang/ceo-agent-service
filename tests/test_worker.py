@@ -4911,6 +4911,45 @@ def test_minutes_link_reads_material_and_processes_action_items(
     ]
 
 
+def test_single_chat_minutes_no_reply_does_not_trigger_document_retry(
+    tmp_path: Path, monkeypatch
+):
+    minutes_id = "76327569643331323035353732315f3233333438363436305f30"
+    trigger = message(
+        "这是一条听记链接\n"
+        "[dingtalk://dingtalkclient/page/flash_minutes_detail?"
+        f"minutesId={minutes_id}&from=8]"
+        "(dingtalk://dingtalkclient/page/flash_minutes_detail?"
+        f"minutesId={minutes_id}&from=8)",
+        single_chat=True,
+    )
+    dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
+    dws.minutes_infos[minutes_id] = {
+        "result": {
+            "taskUuid": minutes_id,
+            "title": "例会听记",
+            "url": f"https://shanji.dingtalk.com/app/transcribes/{minutes_id}",
+        }
+    }
+    dws.minutes_summaries[minutes_id] = {"result": {"fullSummary": "普通例会同步。"}}
+    dws.minutes_todos[minutes_id] = {"result": {}}
+    dws.minutes_transcriptions[minutes_id] = {"result": {}}
+    codex = FakeCodex(
+        CodexDecision(
+            action=CodexAction.NO_REPLY,
+            audit_summary="单独听记链接按上下文判断无需回复。",
+        )
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+
+    worker.run_once()
+
+    assert len(codex.calls) == 1
+    attempt = worker.store.get_reply_attempt(1)
+    assert attempt.action == "no_reply"
+    assert attempt.send_status == "skipped"
+
+
 def test_minutes_comment_failure_falls_back_to_original_message_reply(
     tmp_path: Path, monkeypatch
 ):
