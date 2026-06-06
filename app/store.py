@@ -819,6 +819,41 @@ class AutoReplyStore:
             )
             return cursor.rowcount
 
+    def update_pending_reply_task_trigger_for_message(
+        self,
+        conversation_id: str,
+        trigger_message_id: str,
+        *,
+        trigger_text: str,
+        trigger_message_json: str,
+    ) -> int:
+        with self._connect() as db:
+            cursor = db.execute(
+                """
+                update reply_tasks
+                set trigger_text=?,
+                    trigger_message_json=?,
+                    updated_at=current_timestamp
+                where conversation_id=?
+                  and trigger_message_id=?
+                  and status='pending'
+                  and attempts=0
+                  and (
+                    trigger_text != ?
+                    or trigger_message_json != ?
+                  )
+                """,
+                (
+                    trigger_text,
+                    trigger_message_json,
+                    conversation_id,
+                    trigger_message_id,
+                    trigger_text,
+                    trigger_message_json,
+                ),
+            )
+            return cursor.rowcount
+
     def reset_codex_sessions(self) -> int:
         with self._connect() as db:
             cursor = db.execute(

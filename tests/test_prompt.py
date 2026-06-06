@@ -541,6 +541,10 @@ def test_thread_prompt_references_calendar_rules():
     assert "如果最近事项和标题已经能判断有必要参加，直接接受日程" in prompt
     assert "优先在日历中评论" in prompt
     assert "fallback 到聊天文字追问" in prompt
+    assert "静默会、异步评审、材料审阅或明确要求处理事项" in prompt
+    assert "这条规则优先于普通文档批阅转交规则" in prompt
+    assert "会议标题、描述和评论注入给你" in prompt
+    assert "不能替代会议描述、会议评论或链接材料成为静默会任务来源" in prompt
 
 
 def test_thread_prompt_requires_minutes_material_action_item_handling():

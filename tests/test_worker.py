@@ -1376,6 +1376,156 @@ def test_group_calendar_card_can_trigger_without_explicit_mention(
     assert worker.store.has_seen("msg-calendar-intro") is False
 
 
+def test_group_calendar_card_uses_context_when_sender_is_not_organizer(
+    tmp_path: Path, monkeypatch
+):
+    older_noise = message(
+        "官网 review 需要关注客户表达、产品定位、agent 体验和上线风险。",
+        message_id="msg-older-noise",
+        single_chat=False,
+    )
+    older_noise.create_time = "2026-05-13 17:30:00"
+    intro = message(
+        "欢迎有兴趣的同学参与周二 09:00-10:00 的领先性讨论周会，"
+        "下周二议题是产品部和售前团队分享。",
+        message_id="msg-calendar-intro",
+        single_chat=False,
+    )
+    intro.create_time = "2026-05-13 17:59:33"
+    trigger = message(
+        "[日程]",
+        message_id="msg-calendar-card",
+        single_chat=False,
+        message_type="calendar",
+    )
+    intro.sender_name = "Robin"
+    trigger.sender_name = "Robin"
+    dws = FakeDws(
+        [conversation(single_chat=False)],
+        {"cid-1": [older_noise, intro, trigger]},
+        unread_messages={"cid-1": [trigger]},
+    )
+    worker = make_worker(tmp_path, dws, FakeCodex([]), monkeypatch)
+    worker.store.mark_seen("msg-older-noise", "cid-1")
+    worker.store.mark_seen("msg-calendar-intro", "cid-1")
+    unrelated = DwsCalendarEvent(
+        event_id="invite-unrelated",
+        title="官网 review",
+        start_time="2026-05-14T12:00:00+08:00",
+        end_time="2026-05-14T12:30:00+08:00",
+        description="客户表达、产品定位、agent 体验和上线风险。",
+        organizer="Claire",
+        self_response_status="accepted",
+        status="confirmed",
+    )
+    similar_accepted = DwsCalendarEvent(
+        event_id="invite-similar-accepted",
+        title="产品前瞻性和领先性讨论",
+        start_time="2026-05-19T09:00:00+08:00",
+        end_time="2026-05-19T10:00:00+08:00",
+        description="产品领先性讨论。",
+        organizer="Principal",
+        self_response_status="accepted",
+        status="confirmed",
+    )
+    sender_owned_unrelated = DwsCalendarEvent(
+        event_id="invite-sender-unrelated",
+        title="Friday memory MCP 安装",
+        start_time="2026-05-15T18:00:00+08:00",
+        end_time="2026-05-15T19:00:00+08:00",
+        description="讨论 MCP 安装路径。",
+        organizer="Robin",
+        self_response_status="accepted",
+        status="confirmed",
+    )
+    invite = DwsCalendarEvent(
+        event_id="invite-context",
+        title="领先性讨论周会（每周一收集、每周二讨论）",
+        start_time="2026-05-19T09:00:00+08:00",
+        end_time="2026-05-19T10:00:00+08:00",
+        description="产品部和售前团队分享新的市场、客户需求和技术落地路径。",
+        organizer="Alex Chen",
+        self_response_status="tentative",
+        status="confirmed",
+    )
+    later_recurrence = invite.model_copy(
+        update={
+            "event_id": "invite-context-next",
+            "start_time": "2026-05-23T09:00:00+08:00",
+            "end_time": "2026-05-23T10:00:00+08:00",
+        }
+    )
+    dws.calendar_events[
+        "2026-05-13T17:00:00+08:00|2026-05-27T17:00:00+08:00"
+    ] = [unrelated, similar_accepted, sender_owned_unrelated, invite, later_recurrence]
+    dws.calendar_events[f"{invite.start_time}|{invite.end_time}"] = [invite]
+
+    assert worker.produce_once() == 1
+
+    tasks = worker.store.list_reply_tasks(statuses=("pending",), limit=10)
+    assert [task.trigger_message_id for task in tasks] == ["msg-calendar-card"]
+    assert tasks[0].trigger_text == "[日程] 领先性讨论周会（每周一收集、每周二讨论）"
+    merged = DingTalkMessage.model_validate_json(tasks[0].trigger_message_json)
+    assert merged.raw_payload["id"] == "invite-context"
+    assert merged.raw_payload["organizer"]["displayName"] == "Alex Chen"
+    assert "cid-1" in dws.recent_message_reads
+
+
+def test_group_calendar_card_refreshes_existing_pending_task_with_context(
+    tmp_path: Path, monkeypatch
+):
+    intro = message(
+        "欢迎参与周二 09:00-10:00 的领先性讨论周会，下周二议题是产品部分享。",
+        message_id="msg-calendar-intro",
+        single_chat=False,
+    )
+    intro.create_time = "2026-05-13 17:59:33"
+    trigger = message(
+        "[日程]",
+        message_id="msg-calendar-card",
+        single_chat=False,
+        message_type="calendar",
+    )
+    dws = FakeDws(
+        [conversation(single_chat=False)],
+        {"cid-1": [intro, trigger]},
+        unread_messages={"cid-1": [trigger]},
+    )
+    worker = make_worker(tmp_path, dws, FakeCodex([]), monkeypatch)
+    worker.store.enqueue_reply_task(
+        conversation_id="cid-1",
+        conversation_title="Friday",
+        single_chat=False,
+        trigger_message_id="msg-calendar-card",
+        trigger_create_time=trigger.create_time,
+        trigger_sender=trigger.sender_name,
+        trigger_text="[日程]",
+        trigger_message_json=trigger.model_dump_json(),
+    )
+    invite = DwsCalendarEvent(
+        event_id="invite-context",
+        title="领先性讨论周会（每周一收集、每周二讨论）",
+        start_time="2026-05-19T09:00:00+08:00",
+        end_time="2026-05-19T10:00:00+08:00",
+        description="产品部分享新的市场和技术落地路径。",
+        organizer="Alex Chen",
+        self_response_status="tentative",
+        status="confirmed",
+    )
+    dws.calendar_events[
+        "2026-05-13T17:00:00+08:00|2026-05-27T17:00:00+08:00"
+    ] = [invite]
+    dws.calendar_events[f"{invite.start_time}|{invite.end_time}"] = [invite]
+
+    assert worker.produce_once() == 1
+
+    tasks = worker.store.list_reply_tasks(statuses=("pending",), limit=10)
+    assert len(tasks) == 1
+    assert tasks[0].trigger_text == "[日程] 领先性讨论周会（每周一收集、每周二讨论）"
+    merged = DingTalkMessage.model_validate_json(tasks[0].trigger_message_json)
+    assert merged.raw_payload["id"] == "invite-context"
+
+
 def test_pending_calendar_invite_can_recover_failed_calendar_card_task(
     tmp_path: Path, monkeypatch
 ):
@@ -3324,6 +3474,53 @@ def test_calendar_invite_for_document_review_replies_to_use_document_comment(
     assert "请直接@我文档让我批阅即可，只有存疑再约会。" in prompt
     assert "请直接@我文档让我批阅即可，只有存疑再约会。" in final_sent(dws)[0][1]
     assert dws.calendar_responses == []
+
+
+def test_calendar_static_review_description_must_process_task_before_document_redirect(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message("[日程]", single_chat=True, message_type="calendar")
+    invite = DwsCalendarEvent(
+        event_id="invite-1",
+        title="【静默会】官网反馈",
+        start_time="2026-05-14T10:00:00+08:00",
+        end_time="2026-05-14T11:00:00+08:00",
+        description=(
+            "请根据官网反馈截图和评论直接给处理结论："
+            "上线前必须改、后续可优化，并具体到把 A 改成 B。"
+        ),
+        organizer="Mina",
+        comments=["Mina: 重点看首屏定位和客户案例模块，处理完请评论会议。"],
+    )
+    dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
+    dws.calendar_invites["msg-1"] = invite
+    codex = FakeCodex(
+        CodexDecision(
+            action=CodexAction.SEND_REPLY,
+            reply_text=(
+                "可以，这个静默会我直接处理：上线前先收敛首屏 CTA 和表单跳转；"
+                "后续再优化客户案例的排序。"
+            ),
+            reason="calendar_static_review_task_processed",
+            calendar_response_status="accepted",
+            audit_summary="根据静默会描述直接处理官网反馈任务。",
+        )
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+
+    worker.run_once()
+
+    assert len(codex.calls) == 1
+    prompt = codex.calls[0][0]
+    assert "这条规则优先于普通文档批阅转交规则" in prompt
+    assert "不能只接受日历" in prompt
+    assert "不能只要求对方改去文档里 @" in prompt
+    assert "上线前必须改、后续可优化" in prompt
+    assert "会议评论：Mina: 重点看首屏定位和客户案例模块，处理完请评论会议。" in prompt
+    assert "只有当日程不是静默会" in prompt
+    assert dws.calendar_responses == [("invite-1", "accepted")]
+    assert "请直接@我文档让我批阅即可" not in final_sent(dws)[0][1]
+    assert "上线前先收敛首屏 CTA" in final_sent(dws)[0][1]
 
 
 def test_calendar_static_review_reads_minutes_accepts_and_comments_material(

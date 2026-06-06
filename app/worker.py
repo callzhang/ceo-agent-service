@@ -88,6 +88,8 @@ CALENDAR_PENDING_INVITE_LOOKAHEAD_DAYS = 14
 CALENDAR_PENDING_INVITE_EVENT_MATCH_SECONDS = 5 * 60
 CALENDAR_PENDING_INVITE_RECENT_SENDER_LOOKBACK = timedelta(hours=24)
 CALENDAR_PENDING_INVITE_NO_CHANGE_TIME_START_LOOKAHEAD = timedelta(hours=24)
+CALENDAR_CONTEXT_MATCH_MIN_SCORE = 0.05
+CALENDAR_CONTEXT_MATCH_LOOKBACK = timedelta(minutes=10)
 CALENDAR_ORGANIZER_RESPONSE_ERROR = "Cannot change response status of event organizer"
 CALENDAR_ACTION_SEND_STATUS = "calendar"
 TEXT_MESSAGE_TYPES = {"text"}
@@ -352,6 +354,10 @@ class DingTalkAutoReplyWorker:
                 if self._enqueue_reply_task(
                     conversation,
                     message,
+                    context_messages=self._prompt_context_messages(
+                        context_messages,
+                        unread_messages,
+                    ),
                     available_at=available_at,
                     error=error,
                 ):
@@ -484,12 +490,14 @@ class DingTalkAutoReplyWorker:
         self,
         conversation: DingTalkConversation,
         message: DingTalkMessage,
+        context_messages: list[DingTalkMessage] | None = None,
     ) -> DingTalkMessage:
         if not self._is_calendar_message(message):
             return message
         invite = self._calendar_invite_from_message_or_sender(
             conversation,
             message,
+            context_messages=context_messages,
             include_resolved=True,
         )
         if invite is None:
@@ -501,6 +509,7 @@ class DingTalkAutoReplyWorker:
         conversation: DingTalkConversation,
         message: DingTalkMessage,
         *,
+        context_messages: list[DingTalkMessage] | None = None,
         include_resolved: bool = False,
     ) -> DwsCalendarEvent | None:
         calendar_invite_from_message = getattr(
@@ -522,6 +531,7 @@ class DingTalkAutoReplyWorker:
         return self._calendar_pending_invite_from_sender(
             message,
             list_calendar_events,
+            context_messages=context_messages,
             include_resolved=include_resolved,
         )
 
@@ -1054,14 +1064,28 @@ class DingTalkAutoReplyWorker:
         conversation: DingTalkConversation,
         trigger: DingTalkMessage,
         *,
+        context_messages: list[DingTalkMessage] | None = None,
         available_at: str = "",
         error: str = "",
     ) -> bool:
+        if self._is_calendar_message(trigger):
+            try:
+                full_context_messages = self.dws.read_recent_messages(conversation)
+                if full_context_messages:
+                    context_messages = full_context_messages
+            except Exception as exc:
+                self.store.record_error(
+                    conversation.open_conversation_id,
+                    trigger.open_message_id,
+                    "read_recent_messages_calendar_context",
+                    str(exc),
+                )
         trigger = self._calendar_card_message_with_available_details(
             conversation,
             trigger,
+            context_messages,
         )
-        return self.store.enqueue_reply_task(
+        inserted = self.store.enqueue_reply_task(
             conversation_id=conversation.open_conversation_id,
             conversation_title=conversation.title,
             single_chat=conversation.single_chat,
@@ -1073,6 +1097,15 @@ class DingTalkAutoReplyWorker:
             available_at=available_at,
             error=error,
         )
+        if inserted:
+            return True
+        updated = self.store.update_pending_reply_task_trigger_for_message(
+            conversation.open_conversation_id,
+            trigger.open_message_id,
+            trigger_text=trigger.content,
+            trigger_message_json=trigger.model_dump_json(),
+        )
+        return updated > 0
 
     @staticmethod
     def _reply_task_trigger_messages(
@@ -1704,7 +1737,8 @@ class DingTalkAutoReplyWorker:
         calendar_context = self._calendar_invite_context(
             conversation,
             trigger,
-            include_resolved_invites=True,
+            context_messages,
+            include_resolved_invites=include_resolved_calendar_invites,
         )
         if calendar_context is None:
             if self._is_calendar_message(trigger):
@@ -1787,6 +1821,7 @@ class DingTalkAutoReplyWorker:
         self,
         conversation: DingTalkConversation,
         message: DingTalkMessage,
+        context_messages: list[DingTalkMessage] | None = None,
         *,
         include_resolved_invites: bool = False,
     ) -> CalendarConflictContext | None:
@@ -1798,6 +1833,7 @@ class DingTalkAutoReplyWorker:
         invite = self._calendar_invite_from_message_or_sender(
             conversation,
             message,
+            context_messages=context_messages,
             include_resolved=include_resolved_invites,
         )
         if invite is None:
@@ -1837,6 +1873,7 @@ class DingTalkAutoReplyWorker:
         message: DingTalkMessage,
         list_calendar_events: Callable[[str, str], list[DwsCalendarEvent]],
         *,
+        context_messages: list[DingTalkMessage] | None = None,
         include_resolved: bool = False,
     ) -> DwsCalendarEvent | None:
         sender_name = message.sender_name.strip()
@@ -1844,11 +1881,45 @@ class DingTalkAutoReplyWorker:
             return None
         start, end = self._calendar_pending_invite_search_window(message)
         events = list_calendar_events(start, end)
-        candidates = [
+        candidates = self._calendar_pending_invite_candidates(
+            events,
+            include_resolved=include_resolved,
+        )
+        if not message.single_chat:
+            matched = self._calendar_pending_invite_from_context(
+                candidates,
+                message,
+                context_messages or [],
+            )
+            if matched is not None:
+                return matched
+        sender_candidates = [
+            event for event in candidates if event.organizer.strip() == sender_name
+        ]
+        matched = self._calendar_pending_invite_from_candidates(
+            sender_candidates,
+            message,
+        )
+        if matched is not None:
+            return matched
+        if message.single_chat:
+            return self._calendar_pending_invite_from_context(
+                candidates,
+                message,
+                context_messages or [],
+            )
+        return None
+
+    def _calendar_pending_invite_candidates(
+        self,
+        events: list[DwsCalendarEvent],
+        *,
+        include_resolved: bool = False,
+    ) -> list[DwsCalendarEvent]:
+        return [
             event
             for event in events
-            if event.organizer.strip() == sender_name
-            and self._calendar_event_is_active(event)
+            if self._calendar_event_is_active(event)
             and (
                 self._calendar_event_is_self_pending(event)
                 or (
@@ -1857,6 +1928,12 @@ class DingTalkAutoReplyWorker:
                 )
             )
         ]
+
+    def _calendar_pending_invite_from_candidates(
+        self,
+        candidates: list[DwsCalendarEvent],
+        message: DingTalkMessage,
+    ) -> DwsCalendarEvent | None:
         candidates = self._calendar_pending_invite_candidates_with_details(candidates)
         near_message_candidates = [
             event
@@ -1884,6 +1961,153 @@ class DingTalkAutoReplyWorker:
             return candidates[0]
         return None
 
+    def _calendar_pending_invite_from_context(
+        self,
+        candidates: list[DwsCalendarEvent],
+        message: DingTalkMessage,
+        context_messages: list[DingTalkMessage],
+    ) -> DwsCalendarEvent | None:
+        context_keywords = self._calendar_context_matching_keywords(
+            message,
+            context_messages,
+        )
+        context_time_markers = self._calendar_context_time_markers(
+            message,
+            context_messages,
+        )
+        if not context_keywords and not context_time_markers:
+            return None
+        detailed_candidates = self._calendar_pending_invite_candidates_with_details(
+            candidates
+        )
+        scored: list[tuple[float, DwsCalendarEvent]] = []
+        for event in detailed_candidates:
+            event_keywords = self._calendar_event_matching_keywords(event)
+            score = self._calendar_keyword_overlap(context_keywords, event_keywords)
+            event_time_markers = self._calendar_event_time_markers(event)
+            score += 0.75 * len(context_time_markers & event_time_markers)
+            if score >= CALENDAR_CONTEXT_MATCH_MIN_SCORE:
+                scored.append((score, event))
+        if not scored:
+            return None
+        pending_scored = [
+            (score, event)
+            for score, event in scored
+            if self._calendar_event_is_self_pending(event)
+        ]
+        if pending_scored:
+            scored = pending_scored
+        scored.sort(key=lambda item: item[0], reverse=True)
+        best_score = scored[0][0]
+        best_candidates = [event for score, event in scored if score == best_score]
+        if len(best_candidates) == 1:
+            return best_candidates[0]
+        return self._closest_upcoming_calendar_event(best_candidates, message)
+
+    @classmethod
+    def _calendar_context_matching_keywords(
+        cls,
+        message: DingTalkMessage,
+        context_messages: list[DingTalkMessage],
+    ) -> dict[str, float]:
+        message_time = cls._message_create_time_as_instant(message)
+        text_parts: list[str] = []
+        for context_message in context_messages:
+            if context_message.open_message_id == message.open_message_id:
+                continue
+            try:
+                context_time = cls._message_create_time_as_instant(context_message)
+            except ValueError:
+                continue
+            delta = message_time - context_time
+            if not timedelta() <= delta <= CALENDAR_CONTEXT_MATCH_LOOKBACK:
+                continue
+            text_parts.append(context_message.content)
+        return cls._calendar_non_numeric_keywords(" ".join(text_parts))
+
+    @staticmethod
+    def _calendar_event_matching_keywords(
+        event: DwsCalendarEvent,
+    ) -> dict[str, float]:
+        return DingTalkAutoReplyWorker._calendar_non_numeric_keywords(
+            " ".join(
+                (
+                    event.title,
+                    event.description,
+                    event.organizer,
+                )
+            ),
+        )
+
+    @staticmethod
+    def _calendar_non_numeric_keywords(text: str) -> dict[str, float]:
+        return {
+            keyword: score
+            for keyword, score in extract_retrieval_keywords(text, limit=50).items()
+            if not keyword.isdigit()
+        }
+
+    @classmethod
+    def _calendar_context_time_markers(
+        cls,
+        message: DingTalkMessage,
+        context_messages: list[DingTalkMessage],
+    ) -> set[str]:
+        message_time = cls._message_create_time_as_instant(message)
+        markers: set[str] = set()
+        for context_message in context_messages:
+            if context_message.open_message_id == message.open_message_id:
+                continue
+            try:
+                context_time = cls._message_create_time_as_instant(context_message)
+            except ValueError:
+                continue
+            delta = message_time - context_time
+            if not timedelta() <= delta <= CALENDAR_CONTEXT_MATCH_LOOKBACK:
+                continue
+            markers.update(cls._calendar_text_time_markers(context_message.content))
+        return markers
+
+    @staticmethod
+    def _calendar_text_time_markers(text: str) -> set[str]:
+        markers = set(re.findall(r"周[一二三四五六日天]", text))
+        markers.update(re.findall(r"(?<!\d)(?:[01]?\d|2[0-3]):[0-5]\d(?!\d)", text))
+        return markers
+
+    @staticmethod
+    def _calendar_event_time_markers(event: DwsCalendarEvent) -> set[str]:
+        start_time = DingTalkAutoReplyWorker._parse_calendar_time(event.start_time)
+        end_time = DingTalkAutoReplyWorker._parse_calendar_time(event.end_time)
+        if start_time is None:
+            return set()
+        if start_time.tzinfo is None:
+            start_time = start_time.replace(tzinfo=DINGTALK_MESSAGE_TIME_ZONE)
+        start_time = start_time.astimezone(DINGTALK_MESSAGE_TIME_ZONE)
+        markers = {
+            f"周{DingTalkAutoReplyWorker._weekday_name(start_time.weekday())}",
+            start_time.strftime("%H:%M"),
+        }
+        if end_time is not None:
+            if end_time.tzinfo is None:
+                end_time = end_time.replace(tzinfo=DINGTALK_MESSAGE_TIME_ZONE)
+            end_time = end_time.astimezone(DINGTALK_MESSAGE_TIME_ZONE)
+            markers.add(end_time.strftime("%H:%M"))
+        return markers
+
+    @staticmethod
+    def _weekday_name(weekday: int) -> str:
+        names = ("一", "二", "三", "四", "五", "六", "日")
+        if 0 <= weekday < len(names):
+            return names[weekday]
+        return ""
+
+    @staticmethod
+    def _calendar_keyword_overlap(
+        left: dict[str, float],
+        right: dict[str, float],
+    ) -> float:
+        return sum(left[keyword] * right[keyword] for keyword in left if keyword in right)
+
     def _calendar_pending_invite_candidates_with_details(
         self,
         candidates: list[DwsCalendarEvent],
@@ -1907,6 +2131,7 @@ class DingTalkAutoReplyWorker:
             "needsaction",
             "needs_action",
             "needs-action",
+            "tentative",
         }
 
     @staticmethod
@@ -1978,6 +2203,31 @@ class DingTalkAutoReplyWorker:
                 <= delta
                 <= CALENDAR_PENDING_INVITE_NO_CHANGE_TIME_START_LOOKAHEAD
             ):
+                scored_events.append((delta, event))
+        if not scored_events:
+            return None
+        scored_events.sort(key=lambda item: item[0])
+        if len(scored_events) > 1 and scored_events[0][0] == scored_events[1][0]:
+            return None
+        return scored_events[0][1]
+
+    @classmethod
+    def _closest_upcoming_calendar_event(
+        cls,
+        events: list[DwsCalendarEvent],
+        message: DingTalkMessage,
+    ) -> DwsCalendarEvent | None:
+        message_time = cls._message_create_time_as_instant(message)
+        scored_events: list[tuple[timedelta, DwsCalendarEvent]] = []
+        for event in events:
+            start_time = cls._parse_calendar_time(event.start_time)
+            if start_time is None:
+                continue
+            if start_time.tzinfo is None:
+                start_time = start_time.replace(tzinfo=DINGTALK_MESSAGE_TIME_ZONE)
+            start_time = start_time.astimezone(message_time.tzinfo or timezone.utc)
+            delta = start_time - message_time
+            if delta >= timedelta():
                 scored_events.append((delta, event))
         if not scored_events:
             return None
@@ -2116,9 +2366,11 @@ class DingTalkAutoReplyWorker:
             "日历冲突检查：",
             "有人发来新的日程邀请，且时间已经被已有日程占用。",
             "请先结合最近上下文事项、会议标题、时间、组织者、会议描述、会议评论和重叠会议判断是否有必要参加；会议描述为空不是自动追问条件。",
+            "如果新会议标题、描述或会议评论显示这是静默会、异步评审、材料审阅或明确要求处理事项，这条规则优先于普通文档批阅转交规则；不能只接受日历，也不能只要求对方改去文档里 @，必须把日程标题、描述、会议评论、链接材料和冲突会议当作待处理事项直接处理，输出处理结论或需要补充的材料。",
+            "最近聊天上下文只能用于理解背景和判断参加价值，不能替代会议描述、会议评论或链接材料成为静默会任务来源；如果会议内容和评论没有给出可处理材料，应要求补充具体缺失材料。",
+            "只有当日程不是静默会/异步评审/材料审阅/明确处理事项，且只是邀请批阅、review、反馈或评论某个文档但没有提供足够可处理材料时，reply_text 才使用：请直接@我文档让我批阅即可，只有存疑再约会。",
             "如果最近事项和标题已经能判断本人有必要参加，action 输出 send_reply，reply_text 用一两句话说明接受理由，并设置 calendar_response_status 为 accepted。",
             "如果最近事项和标题能判断没有必要参加或仅需保留观察，可以 action 输出 no_reply，并设置 calendar_response_status 为 declined 或 tentative。",
-            "如果新会议本身是静默会、异步评审、材料审阅或明确要求处理事项，不能只接受日历；请把日程标题、描述、链接材料、冲突会议和上下文当作待处理事项直接处理，输出处理结论或需要补充的材料。",
             "这类材料处理可以同时设置 calendar_response_status；如果材料链接支持评论，服务会优先写入原材料评论，不能评论时再回退到原消息回复。",
             "如果理由充分但需要聊天同步，回复中说明建议接受这场会议并调整或拒绝哪个重叠会议；如果信息不足，再回复对方原因并请补充。",
             "",
@@ -2156,8 +2408,9 @@ class DingTalkAutoReplyWorker:
             "日历规则判断：",
             "有人发来新的日程邀请，当前未发现同时间段已有日程冲突。",
             "请先结合最近上下文事项、会议标题、时间、组织者、会议描述和会议评论判断是否有必要参加；会议描述为空不是自动追问条件。",
-            "如果日程是在要求审批、批阅、review、反馈或评论某个文档内容，reply_text 必须是：请直接@我文档让我批阅即可，只有存疑再约会。",
-            "如果新会议本身是静默会、异步评审、材料审阅或明确要求处理事项，不能只接受日历；请把日程标题、描述、链接材料和上下文当作待处理事项直接处理，输出处理结论或需要补充的材料。",
+            "如果新会议标题、描述或会议评论显示这是静默会、异步评审、材料审阅或明确要求处理事项，这条规则优先于普通文档批阅转交规则；不能只接受日历，也不能只要求对方改去文档里 @，必须把日程标题、描述、会议评论和链接材料当作待处理事项直接处理，输出处理结论或需要补充的材料。",
+            "最近聊天上下文只能用于理解背景和判断参加价值，不能替代会议描述、会议评论或链接材料成为静默会任务来源；如果会议内容和评论没有给出可处理材料，应要求补充具体缺失材料。",
+            "只有当日程不是静默会/异步评审/材料审阅/明确处理事项，且只是邀请批阅、review、反馈或评论某个文档但没有提供足够可处理材料时，reply_text 才使用：请直接@我文档让我批阅即可，只有存疑再约会。",
             "这类材料处理可以同时设置 calendar_response_status；如果材料链接支持评论，服务会优先写入原材料评论，不能评论时再回退到原消息回复。",
             f"如果最近事项和标题足以判断 {principal_display_name()} 本人有必要参加，action 输出 send_reply，reply_text 用一两句话说明接受理由，并设置 calendar_response_status 为 accepted。",
             "如果最近事项和标题足以判断先保留但不确认，action 输出 no_reply，并设置 calendar_response_status 为 tentative。",
