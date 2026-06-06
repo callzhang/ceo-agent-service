@@ -1334,6 +1334,47 @@ def test_producer_enriches_bare_calendar_card_task_with_invite_details(
     ]
 
 
+def test_group_calendar_card_can_trigger_without_explicit_mention(
+    tmp_path: Path, monkeypatch
+):
+    intro = message(
+        "静默会，请大家先认真阅读会议描述，谢谢",
+        message_id="msg-calendar-intro",
+        single_chat=False,
+    )
+    trigger = message(
+        "[日程]",
+        message_id="msg-calendar-card",
+        single_chat=False,
+        message_type="calendar",
+    )
+    intro.sender_name = "Claire"
+    trigger.sender_name = "Claire"
+    dws = FakeDws([conversation(single_chat=False)], {"cid-1": [intro, trigger]})
+    worker = make_worker(tmp_path, dws, FakeCodex([]), monkeypatch)
+    invite = DwsCalendarEvent(
+        event_id="invite-1",
+        title="官网反馈静默会",
+        start_time="2026-05-16T09:00:00+08:00",
+        end_time="2026-05-16T10:00:00+08:00",
+        description="请阅读官网反馈材料并给出修改建议。",
+        organizer="Claire",
+        self_response_status="needsAction",
+        status="confirmed",
+    )
+    dws.calendar_events[
+        "2026-05-13T17:00:00+08:00|2026-05-27T17:00:00+08:00"
+    ] = [invite]
+    dws.calendar_events[f"{invite.start_time}|{invite.end_time}"] = [invite]
+
+    assert worker.produce_once() == 1
+
+    tasks = worker.store.list_reply_tasks(statuses=("pending",), limit=10)
+    assert [task.trigger_message_id for task in tasks] == ["msg-calendar-card"]
+    assert tasks[0].trigger_text == "[日程] 官网反馈静默会"
+    assert worker.store.has_seen("msg-calendar-intro") is False
+
+
 def test_pending_calendar_invite_can_recover_failed_calendar_card_task(
     tmp_path: Path, monkeypatch
 ):

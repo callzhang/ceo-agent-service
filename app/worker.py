@@ -2569,7 +2569,9 @@ class DingTalkAutoReplyWorker:
             eligible_messages = messages
         else:
             eligible_messages = [
-                message for message in messages if message.addresses_principal()
+                message
+                for message in messages
+                if message.addresses_principal() or self._is_calendar_message(message)
             ]
         candidates = [
             message
