@@ -56,7 +56,7 @@ from app.work_profile import (
     render_markdown_profile,
     write_jsonl,
 )
-from app.worker import DingTalkAutoReplyWorker
+from app.worker import CALENDAR_ACTION_SEND_STATUS, DingTalkAutoReplyWorker
 
 LIVE_SEND_BLOCKERS = (
     "deterministic personnel/candidate permission gates",
@@ -832,7 +832,7 @@ def _send_calendar_attempt(
             ensure_ascii=False,
             sort_keys=True,
         ),
-        send_status="skipped",
+        send_status=CALENDAR_ACTION_SEND_STATUS,
         send_error="",
         retry_count=0,
     )
@@ -848,7 +848,7 @@ def _send_calendar_attempt(
         "conversation_title": attempt.conversation_title,
         "trigger_sender": attempt.trigger_sender,
         "trigger_text_excerpt": _excerpt(attempt.trigger_text),
-        "send_status": "skipped",
+        "send_status": CALENDAR_ACTION_SEND_STATUS,
         "calendar_event_id": event_id,
         "calendar_response_status": response_status,
         "calendar_response_result_excerpt": _excerpt(

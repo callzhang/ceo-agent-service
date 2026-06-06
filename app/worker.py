@@ -89,6 +89,7 @@ CALENDAR_PENDING_INVITE_EVENT_MATCH_SECONDS = 5 * 60
 CALENDAR_PENDING_INVITE_RECENT_SENDER_LOOKBACK = timedelta(hours=24)
 CALENDAR_PENDING_INVITE_NO_CHANGE_TIME_START_LOOKAHEAD = timedelta(hours=24)
 CALENDAR_ORGANIZER_RESPONSE_ERROR = "Cannot change response status of event organizer"
+CALENDAR_ACTION_SEND_STATUS = "calendar"
 TEXT_MESSAGE_TYPES = {"text"}
 RENDERED_NON_TEXT_PREFIXES = (
     "[文件]",
@@ -1192,6 +1193,7 @@ class DingTalkAutoReplyWorker:
             trigger,
             prompt_context_messages,
             ignore_existing_attempt=force_new_decision,
+            include_resolved_calendar_invites=force_new_decision,
         ):
             return trigger.open_message_id
         if self._handle_oa_approval_if_actionable(
@@ -1643,9 +1645,14 @@ class DingTalkAutoReplyWorker:
         context_messages: list[DingTalkMessage],
         *,
         ignore_existing_attempt: bool = False,
+        include_resolved_calendar_invites: bool = False,
         raise_on_delivery_failure: bool = False,
     ) -> bool:
-        calendar_context = self._calendar_invite_context(conversation, trigger)
+        calendar_context = self._calendar_invite_context(
+            conversation,
+            trigger,
+            include_resolved_invites=include_resolved_calendar_invites,
+        )
         if calendar_context is None:
             if self._is_calendar_message(trigger):
                 if not ignore_existing_attempt and self._handle_existing_attempt(
@@ -1724,6 +1731,8 @@ class DingTalkAutoReplyWorker:
         self,
         conversation: DingTalkConversation,
         message: DingTalkMessage,
+        *,
+        include_resolved_invites: bool = False,
     ) -> CalendarConflictContext | None:
         if not self._is_calendar_message(message):
             return None
@@ -1737,9 +1746,15 @@ class DingTalkAutoReplyWorker:
             return None
         invite = calendar_invite_from_message(message)
         if invite is None:
+            invite = self._calendar_invite_from_existing_attempt(
+                conversation,
+                message,
+            )
+        if invite is None:
             invite = self._calendar_pending_invite_from_sender(
                 message,
                 list_calendar_events,
+                include_resolved=include_resolved_invites,
             )
             if invite is None:
                 return None
@@ -1754,10 +1769,31 @@ class DingTalkAutoReplyWorker:
         ]
         return CalendarConflictContext(invite=invite, conflicts=conflicts)
 
+    def _calendar_invite_from_existing_attempt(
+        self,
+        conversation: DingTalkConversation,
+        message: DingTalkMessage,
+    ) -> DwsCalendarEvent | None:
+        attempt = self.store.get_latest_reply_attempt_for_trigger(
+            conversation.open_conversation_id,
+            message.open_message_id,
+        )
+        if attempt is None:
+            return None
+        event_id = attempt.calendar_event_id.strip()
+        if not event_id:
+            return None
+        get_calendar_event = getattr(self.dws, "get_calendar_event", None)
+        if get_calendar_event is None:
+            return None
+        return get_calendar_event(event_id)
+
     def _calendar_pending_invite_from_sender(
         self,
         message: DingTalkMessage,
         list_calendar_events: Callable[[str, str], list[DwsCalendarEvent]],
+        *,
+        include_resolved: bool = False,
     ) -> DwsCalendarEvent | None:
         sender_name = message.sender_name.strip()
         if not sender_name:
@@ -1769,7 +1805,13 @@ class DingTalkAutoReplyWorker:
             for event in events
             if event.organizer.strip() == sender_name
             and self._calendar_event_is_active(event)
-            and self._calendar_event_is_self_pending(event)
+            and (
+                self._calendar_event_is_self_pending(event)
+                or (
+                    include_resolved
+                    and self._calendar_event_has_self_response(event)
+                )
+            )
         ]
         candidates = self._calendar_pending_invite_candidates_with_details(candidates)
         near_message_candidates = [
@@ -1821,6 +1863,16 @@ class DingTalkAutoReplyWorker:
             "needsaction",
             "needs_action",
             "needs-action",
+        }
+
+    @staticmethod
+    def _calendar_event_has_self_response(event: DwsCalendarEvent) -> bool:
+        self_response_status = event.self_response_status.strip().lower()
+        return self_response_status in {
+            "accepted",
+            "tentative",
+            "declined",
+            "rejected",
         }
 
     @classmethod
@@ -2020,7 +2072,7 @@ class DingTalkAutoReplyWorker:
             "日历冲突检查：",
             "有人发来新的日程邀请，且时间已经被已有日程占用。",
             "请先结合最近上下文事项、会议标题、时间、组织者、会议描述和重叠会议判断是否有必要参加；会议描述为空不是自动追问条件。",
-            "如果最近事项和标题已经能判断本人有必要参加，action 输出 no_reply，并设置 calendar_response_status 为 accepted。",
+            "如果最近事项和标题已经能判断本人有必要参加，action 输出 send_reply，reply_text 用一两句话说明接受理由，并设置 calendar_response_status 为 accepted。",
             "如果最近事项和标题能判断没有必要参加或仅需保留观察，可以 action 输出 no_reply，并设置 calendar_response_status 为 declined 或 tentative。",
             "如果新会议本身是静默会、异步评审、材料审阅或明确要求处理事项，不能只接受日历；请把日程标题、描述、链接材料、冲突会议和上下文当作待处理事项直接处理，输出处理结论或需要补充的材料。",
             "这类材料处理可以同时设置 calendar_response_status；如果材料链接支持评论，服务会优先写入原材料评论，不能评论时再回退到原消息回复。",
@@ -2062,7 +2114,7 @@ class DingTalkAutoReplyWorker:
             "如果日程是在要求审批、批阅、review、反馈或评论某个文档内容，reply_text 必须是：请直接@我文档让我批阅即可，只有存疑再约会。",
             "如果新会议本身是静默会、异步评审、材料审阅或明确要求处理事项，不能只接受日历；请把日程标题、描述、链接材料和上下文当作待处理事项直接处理，输出处理结论或需要补充的材料。",
             "这类材料处理可以同时设置 calendar_response_status；如果材料链接支持评论，服务会优先写入原材料评论，不能评论时再回退到原消息回复。",
-            f"如果最近事项和标题足以判断 {principal_display_name()} 本人有必要参加，action 输出 no_reply，并设置 calendar_response_status 为 accepted。",
+            f"如果最近事项和标题足以判断 {principal_display_name()} 本人有必要参加，action 输出 send_reply，reply_text 用一两句话说明接受理由，并设置 calendar_response_status 为 accepted。",
             "如果最近事项和标题足以判断先保留但不确认，action 输出 no_reply，并设置 calendar_response_status 为 tentative。",
             "如果最近事项和标题足以判断本人参加无价值，action 输出 no_reply，并设置 calendar_response_status 为 declined。",
             "如果结合最近事项、标题、时间、组织者和描述后仍不足以判断，再追问补充信息或 handoff。",
@@ -2200,7 +2252,9 @@ class DingTalkAutoReplyWorker:
                     attempt_id=attempt_id,
                     event_id=event.event_id,
                     response_status=response_status,
-                    send_status="skipped" if mark_attempt_terminal else None,
+                    send_status=CALENDAR_ACTION_SEND_STATUS
+                    if mark_attempt_terminal
+                    else None,
                     send_error="calendar_event_organizer_noop",
                 )
                 return True
@@ -2237,7 +2291,7 @@ class DingTalkAutoReplyWorker:
             "send_error": "",
         }
         if mark_attempt_terminal:
-            updates["send_status"] = "skipped"
+            updates["send_status"] = CALENDAR_ACTION_SEND_STATUS
         self.store.update_reply_attempt(attempt_id, **updates)
         return True
 
@@ -2788,6 +2842,33 @@ class DingTalkAutoReplyWorker:
         calendar_response_status = decision.calendar_response_status.value
         if calendar_response_event is not None and calendar_response_status:
             if decision.action == CodexAction.NO_REPLY:
+                if calendar_response_status == "accepted":
+                    accepted = self._execute_calendar_response(
+                        conversation=conversation,
+                        trigger=trigger,
+                        event=calendar_response_event,
+                        response_status=calendar_response_status,
+                        attempt_id=attempt_id,
+                        mark_attempt_terminal=False,
+                        raise_on_delivery_failure=raise_on_delivery_failure,
+                    )
+                    if not accepted:
+                        return
+                    self.store.update_reply_attempt(
+                        attempt_id,
+                        action=CodexAction.SEND_REPLY.value,
+                    )
+                    self._send_reply(
+                        conversation=conversation,
+                        trigger=trigger,
+                        new_messages=new_messages,
+                        reply_text=decision.reason or "已接受这个日程。",
+                        reason=decision.reason,
+                        attempt_id=attempt_id,
+                        comment_target_messages=comment_target_messages,
+                        raise_on_delivery_failure=raise_on_delivery_failure,
+                    )
+                    return
                 self._respond_calendar_invite(
                     conversation=conversation,
                     trigger=trigger,
@@ -2967,7 +3048,13 @@ class DingTalkAutoReplyWorker:
             and attempt.codex_reason == "system_or_notification_message"
         ):
             return False
-        if attempt.send_status in {"sent", "skipped", "blocked", "commented"}:
+        if attempt.send_status in {
+            "sent",
+            "skipped",
+            "blocked",
+            "commented",
+            CALENDAR_ACTION_SEND_STATUS,
+        }:
             self._mark_seen(new_messages)
             return True
         if attempt.send_status == "dry_run":
@@ -3994,7 +4081,7 @@ class DingTalkAutoReplyWorker:
                     attempt_id=attempt.id,
                     event_id=event_id,
                     response_status=response_status,
-                    send_status="skipped",
+                    send_status=CALENDAR_ACTION_SEND_STATUS,
                     send_error="calendar_event_organizer_noop",
                 )
                 self._mark_seen(new_messages)
@@ -4025,7 +4112,7 @@ class DingTalkAutoReplyWorker:
                 ensure_ascii=False,
                 sort_keys=True,
             ),
-            send_status="skipped",
+            send_status=CALENDAR_ACTION_SEND_STATUS,
             send_error="",
         )
         self._mark_seen(new_messages)
@@ -4124,25 +4211,28 @@ class DingTalkAutoReplyWorker:
         try:
             at_users = self._reply_at_users(trigger)
         except Exception as exc:
-            self.store.update_reply_attempt(
-                attempt_id,
-                send_status="failed",
-                send_error=str(exc),
-            )
-            self.store.record_error(
-                conversation.open_conversation_id,
-                trigger.open_message_id,
-                "reply_at_users",
-                str(exc),
-            )
-            self._notify(
-                title=f"CEO reply recipient failed: {conversation.title}",
-                message=str(exc)[:120],
-                conversation=conversation,
-            )
-            if raise_on_delivery_failure:
-                raise ReplyDeliveryError(str(exc)) from exc
-            return
+            if trigger.open_message_id.startswith("calendar:"):
+                at_users = []
+            else:
+                self.store.update_reply_attempt(
+                    attempt_id,
+                    send_status="failed",
+                    send_error=str(exc),
+                )
+                self.store.record_error(
+                    conversation.open_conversation_id,
+                    trigger.open_message_id,
+                    "reply_at_users",
+                    str(exc),
+                )
+                self._notify(
+                    title=f"CEO reply recipient failed: {conversation.title}",
+                    message=str(exc)[:120],
+                    conversation=conversation,
+                )
+                if raise_on_delivery_failure:
+                    raise ReplyDeliveryError(str(exc)) from exc
+                return
         direct_user_id = at_users[0] if conversation.single_chat and at_users else None
         send_at_users = [] if conversation.single_chat else at_users
         reply_text = append_signature(reply_text)

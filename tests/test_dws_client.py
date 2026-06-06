@@ -1081,12 +1081,12 @@ def test_respond_calendar_event_uses_mcp_calendar_respond():
     assert client.commands == [
         [
             "dws",
-            "mcp",
             "calendar",
+            "event",
             "respond",
-            "--eventId",
+            "--id",
             "event-1",
-            "--responseStatus",
+            "--status",
             "accepted",
             "--format",
             "json",

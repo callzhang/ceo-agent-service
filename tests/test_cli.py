@@ -479,11 +479,11 @@ def test_send_attempt_command_executes_existing_dry_run_calendar_response(
     result = send_attempt_command(settings, attempt_id)
 
     assert calls["calendar"] == ("event-1", "accepted")
-    assert result["send_status"] == "skipped"
+    assert result["send_status"] == "calendar"
     assert result["calendar_response_status"] == "accepted"
     updated = cli.AutoReplyStore(settings.db_path).get_reply_attempt(attempt_id)
     assert updated is not None
-    assert updated.send_status == "skipped"
+    assert updated.send_status == "calendar"
     assert updated.send_error == ""
     assert updated.calendar_response_result_json == '{"success": true}'
     assert '"calendar_response_status": "accepted"' in capsys.readouterr().out

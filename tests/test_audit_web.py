@@ -1403,19 +1403,15 @@ def test_attempt_history_and_detail_render_calendar_response_metadata(
         calendar_event_id="event-1",
         calendar_response_status="accepted",
         calendar_response_result_json='{"success":true}',
-        send_status="skipped",
+        send_status="calendar",
     )
 
     list_html = render_attempt_list(store)
     status, detail_html = render_attempt_detail(store, attempt_id)
 
     assert status == 200
-    assert "💬 Skipped" in list_html
+    assert "💬 Skipped" not in list_html
     assert "📆 Accepted" in list_html
-    assert (
-        'class="pill status-action action-state-skipped">💬 Skipped</span>'
-        in list_html
-    )
     assert (
         'class="pill status-action action-state-accepted">📆 Accepted</span>'
         in list_html

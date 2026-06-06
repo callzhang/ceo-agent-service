@@ -1572,6 +1572,7 @@ class AutoReplyStore:
         self,
         attempt_id: int,
         *,
+        action: str | None = None,
         final_reply_text: str | None = None,
         permission_action: str | None = None,
         permission_reason: str | None = None,
@@ -1593,6 +1594,7 @@ class AutoReplyStore:
         assignments = []
         values = []
         for column, value in (
+            ("action", action),
             ("final_reply_text", final_reply_text),
             ("permission_action", permission_action),
             ("permission_reason", permission_reason),

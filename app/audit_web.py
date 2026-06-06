@@ -3075,7 +3075,15 @@ def _calendar_metadata_card(attempt: ReplyAttempt) -> str:
 
 
 def _attempt_action_pills(attempt: ReplyAttempt) -> str:
-    actions = [(f"💬 {_display_action_state(attempt.send_status)}", attempt.send_status)]
+    calendar_only = (
+        attempt.send_status.strip().lower() == "calendar"
+        and attempt.calendar_response_status.strip()
+    )
+    actions = (
+        []
+        if calendar_only
+        else [(f"💬 {_display_action_state(attempt.send_status)}", attempt.send_status)]
+    )
     if attempt.oa_action.strip():
         actions.append((f"🧾 {attempt.oa_action.strip()}", attempt.oa_action))
     if attempt.calendar_response_status.strip():
@@ -3093,10 +3101,18 @@ def _attempt_action_pills(attempt: ReplyAttempt) -> str:
 
 
 def _attempt_action_label_text(attempt: ReplyAttempt) -> str:
+    calendar_only = (
+        attempt.send_status.strip().lower() == "calendar"
+        and attempt.calendar_response_status.strip()
+    )
     return " · ".join(
         label
         for label in (
-            f"💬 {_display_action_state(attempt.send_status)}",
+            (
+                ""
+                if calendar_only
+                else f"💬 {_display_action_state(attempt.send_status)}"
+            ),
             (
                 f"🧾 {attempt.oa_action.strip()}"
                 if attempt.oa_action.strip()

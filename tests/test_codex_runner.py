@@ -158,7 +158,7 @@ def test_builds_new_thread_command(tmp_path: Path):
     assert "当前待处理消息" not in developer_arg
     assert "\\n" in developer_arg
     assert "memory_connector MCP 可用" in developer_arg
-    assert "memory_write 记录一条完整事件 episode" in developer_arg
+    assert "memory_write 记录一条业务 episode" in developer_arg
 
     assert _without_developer_instructions(command) == [
         "codex",

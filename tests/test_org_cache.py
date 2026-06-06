@@ -281,6 +281,10 @@ def test_cached_dws_client_delegates_external_action_helpers(tmp_path):
             self.calls.append(("list_calendar_events", start, end))
             return [event]
 
+        def get_calendar_event(self, event_id):
+            self.calls.append(("get_calendar_event", event_id))
+            return event
+
         def respond_calendar_event(self, event_id, response_status):
             self.calls.append(("respond_calendar_event", event_id, response_status))
             return {"success": True}
@@ -307,6 +311,7 @@ def test_cached_dws_client_delegates_external_action_helpers(tmp_path):
     }
     assert cached.calendar_invite_from_message(msg) is event
     assert cached.list_calendar_events("start", "end") == [event]
+    assert cached.get_calendar_event("event-1") is event
     assert cached.respond_calendar_event("event-1", "accepted") == {"success": True}
     assert cached.comment_oa_approval("proc-1", "请补材料") == {"success": True}
     assert cached.dws.calls == [
@@ -318,6 +323,7 @@ def test_cached_dws_client_delegates_external_action_helpers(tmp_path):
         ("get_minutes_transcription", "minutes-1", "n1"),
         ("calendar_invite_from_message", msg),
         ("list_calendar_events", "start", "end"),
+        ("get_calendar_event", "event-1"),
         ("respond_calendar_event", "event-1", "accepted"),
         ("comment_oa_approval", "proc-1", "请补材料"),
     ]

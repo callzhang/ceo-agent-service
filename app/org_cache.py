@@ -209,6 +209,9 @@ class CachedDwsClient:
     def list_calendar_events(self, start: str, end: str):
         return self.dws.list_calendar_events(start, end)
 
+    def get_calendar_event(self, event_id: str):
+        return self.dws.get_calendar_event(event_id)
+
     def respond_calendar_event(self, event_id: str, response_status: str):
         return self.dws.respond_calendar_event(event_id, response_status)
 
