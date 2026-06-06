@@ -1194,6 +1194,7 @@ class DingTalkAutoReplyWorker:
             prompt_context_messages,
             ignore_existing_attempt=force_new_decision,
             include_resolved_calendar_invites=force_new_decision,
+            allow_duplicate_send=force_new_decision,
         ):
             return trigger.open_message_id
         if self._handle_oa_approval_if_actionable(
@@ -1213,6 +1214,7 @@ class DingTalkAutoReplyWorker:
             [trigger],
             prompt_context_messages,
             ignore_existing_attempt=force_new_decision,
+            allow_duplicate_send=force_new_decision,
         )
         return trigger.open_message_id
 
@@ -1647,6 +1649,7 @@ class DingTalkAutoReplyWorker:
         ignore_existing_attempt: bool = False,
         include_resolved_calendar_invites: bool = False,
         raise_on_delivery_failure: bool = False,
+        allow_duplicate_send: bool = False,
     ) -> bool:
         calendar_context = self._calendar_invite_context(
             conversation,
@@ -1683,6 +1686,7 @@ class DingTalkAutoReplyWorker:
                     reason="calendar_detail_unreadable",
                     attempt_id=attempt_id,
                     raise_on_delivery_failure=raise_on_delivery_failure,
+                    allow_duplicate_send=allow_duplicate_send,
                 )
                 return True
             return False
@@ -1708,6 +1712,7 @@ class DingTalkAutoReplyWorker:
                 raise_on_delivery_failure=raise_on_delivery_failure,
                 calendar_response_event=calendar_context.invite,
                 comment_target_messages=[trigger, calendar_prompt_message],
+                allow_duplicate_send=allow_duplicate_send,
             )
             return True
         calendar_prompt_message = self._calendar_conflict_prompt_message(
@@ -1724,6 +1729,7 @@ class DingTalkAutoReplyWorker:
             raise_on_delivery_failure=raise_on_delivery_failure,
             calendar_response_event=calendar_context.invite,
             comment_target_messages=[trigger, calendar_prompt_message],
+            allow_duplicate_send=allow_duplicate_send,
         )
         return True
 
@@ -2145,6 +2151,7 @@ class DingTalkAutoReplyWorker:
         attempt_id: int,
         reason: str,
         raise_on_delivery_failure: bool = False,
+        allow_duplicate_send: bool = False,
     ) -> None:
         succeeded = self._execute_calendar_response(
             conversation=conversation,
@@ -2723,6 +2730,7 @@ class DingTalkAutoReplyWorker:
         raise_on_delivery_failure: bool = False,
         calendar_response_event: DwsCalendarEvent | None = None,
         comment_target_messages: list[DingTalkMessage] | None = None,
+        allow_duplicate_send: bool = False,
     ) -> None:
         trigger = new_messages[-1]
         if not ignore_existing_attempt and self._handle_existing_attempt(
@@ -2867,6 +2875,7 @@ class DingTalkAutoReplyWorker:
                         attempt_id=attempt_id,
                         comment_target_messages=comment_target_messages,
                         raise_on_delivery_failure=raise_on_delivery_failure,
+                        allow_duplicate_send=allow_duplicate_send,
                     )
                     return
                 self._respond_calendar_invite(
@@ -2878,6 +2887,7 @@ class DingTalkAutoReplyWorker:
                     attempt_id=attempt_id,
                     reason=decision.reason,
                     raise_on_delivery_failure=raise_on_delivery_failure,
+                    allow_duplicate_send=allow_duplicate_send,
                 )
                 return
             self._execute_calendar_response(
@@ -2946,6 +2956,7 @@ class DingTalkAutoReplyWorker:
                 failure_error_kind="handoff_delivery",
                 failure_notify_title=f"CEO handoff failed: {conversation.title}",
                 raise_on_delivery_failure=raise_on_delivery_failure,
+                allow_duplicate_send=allow_duplicate_send,
             )
             if not delivered:
                 return
@@ -3006,6 +3017,7 @@ class DingTalkAutoReplyWorker:
                 attempt_id=attempt_id,
                 comment_target_messages=comment_target_messages,
                 raise_on_delivery_failure=raise_on_delivery_failure,
+                allow_duplicate_send=allow_duplicate_send,
             )
             return
 
@@ -3018,6 +3030,7 @@ class DingTalkAutoReplyWorker:
             attempt_id=attempt_id,
             comment_target_messages=comment_target_messages,
             raise_on_delivery_failure=raise_on_delivery_failure,
+            allow_duplicate_send=allow_duplicate_send,
         )
 
     def _handle_existing_attempt(
@@ -4189,6 +4202,7 @@ class DingTalkAutoReplyWorker:
         attempt_id: int,
         comment_target_messages: list[DingTalkMessage] | None = None,
         raise_on_delivery_failure: bool = False,
+        allow_duplicate_send: bool = False,
     ) -> None:
         if not reply_text.strip():
             self.store.update_reply_attempt(
@@ -4261,6 +4275,7 @@ class DingTalkAutoReplyWorker:
             else None,
             comment_target_messages=comment_target_messages,
             raise_on_delivery_failure=raise_on_delivery_failure,
+            allow_duplicate_send=allow_duplicate_send,
         )
 
     def _regenerate_reply_after_leak_check(
@@ -4306,6 +4321,7 @@ class DingTalkAutoReplyWorker:
         direct_open_dingtalk_id: str | None,
         comment_target_messages: list[DingTalkMessage] | None = None,
         raise_on_delivery_failure: bool = False,
+        allow_duplicate_send: bool = False,
     ) -> None:
         reply_text = self._native_reply_body(final_reply_text)
         feedback_token = ""
@@ -4374,6 +4390,7 @@ class DingTalkAutoReplyWorker:
             failure_error_kind="send",
             failure_notify_title=f"CEO auto reply failed: {conversation.title}",
             raise_on_delivery_failure=raise_on_delivery_failure,
+            allow_duplicate_send=allow_duplicate_send,
         )
 
     def _deliver_minutes_comment(
@@ -4482,11 +4499,12 @@ class DingTalkAutoReplyWorker:
         failure_send_error=None,
         failure_notify_title: str = "",
         raise_on_delivery_failure: bool = False,
+        allow_duplicate_send: bool = False,
     ) -> bool:
         if self.dry_run:
             self.store.update_reply_attempt(attempt_id, send_status="dry_run")
             return True
-        if self.store.has_sent_reply_for_trigger(
+        if not allow_duplicate_send and self.store.has_sent_reply_for_trigger(
             conversation.open_conversation_id,
             trigger.open_message_id,
         ):
