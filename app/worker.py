@@ -480,6 +480,51 @@ class DingTalkAutoReplyWorker:
             }
         )
 
+    def _calendar_card_message_with_available_details(
+        self,
+        conversation: DingTalkConversation,
+        message: DingTalkMessage,
+    ) -> DingTalkMessage:
+        if not self._is_calendar_message(message):
+            return message
+        invite = self._calendar_invite_from_message_or_sender(
+            conversation,
+            message,
+            include_resolved=True,
+        )
+        if invite is None:
+            return message
+        return self._calendar_card_message_with_pending_invite(message, invite)
+
+    def _calendar_invite_from_message_or_sender(
+        self,
+        conversation: DingTalkConversation,
+        message: DingTalkMessage,
+        *,
+        include_resolved: bool = False,
+    ) -> DwsCalendarEvent | None:
+        calendar_invite_from_message = getattr(
+            self.dws,
+            "calendar_invite_from_message",
+            None,
+        )
+        if calendar_invite_from_message is None:
+            return None
+        invite = calendar_invite_from_message(message)
+        if invite is not None:
+            return invite
+        invite = self._calendar_invite_from_existing_attempt(conversation, message)
+        if invite is not None:
+            return invite
+        list_calendar_events = getattr(self.dws, "list_calendar_events", None)
+        if list_calendar_events is None:
+            return None
+        return self._calendar_pending_invite_from_sender(
+            message,
+            list_calendar_events,
+            include_resolved=include_resolved,
+        )
+
     def _pending_calendar_invite_scan_window(self) -> tuple[str, str]:
         now = self._now().astimezone(DINGTALK_MESSAGE_TIME_ZONE)
         start = now - timedelta(days=1)
@@ -578,6 +623,7 @@ class DingTalkAutoReplyWorker:
             "id": event.event_id,
             "summary": event.title,
             "description": event.description,
+            "comments": event.comments,
             "organizer": {"displayName": event.organizer},
             "start": {"dateTime": event.start_time},
             "end": {"dateTime": event.end_time},
@@ -1011,6 +1057,10 @@ class DingTalkAutoReplyWorker:
         available_at: str = "",
         error: str = "",
     ) -> bool:
+        trigger = self._calendar_card_message_with_available_details(
+            conversation,
+            trigger,
+        )
         return self.store.enqueue_reply_task(
             conversation_id=conversation.open_conversation_id,
             conversation_title=conversation.title,
@@ -1742,28 +1792,16 @@ class DingTalkAutoReplyWorker:
     ) -> CalendarConflictContext | None:
         if not self._is_calendar_message(message):
             return None
-        calendar_invite_from_message = getattr(
-            self.dws,
-            "calendar_invite_from_message",
-            None,
-        )
         list_calendar_events = getattr(self.dws, "list_calendar_events", None)
-        if calendar_invite_from_message is None or list_calendar_events is None:
+        if list_calendar_events is None:
             return None
-        invite = calendar_invite_from_message(message)
+        invite = self._calendar_invite_from_message_or_sender(
+            conversation,
+            message,
+            include_resolved=include_resolved_invites,
+        )
         if invite is None:
-            invite = self._calendar_invite_from_existing_attempt(
-                conversation,
-                message,
-            )
-        if invite is None:
-            invite = self._calendar_pending_invite_from_sender(
-                message,
-                list_calendar_events,
-                include_resolved=include_resolved_invites,
-            )
-            if invite is None:
-                return None
+            return None
         events = list_calendar_events(invite.start_time, invite.end_time)
         conflicts = [
             event
@@ -2077,7 +2115,7 @@ class DingTalkAutoReplyWorker:
         lines = [
             "日历冲突检查：",
             "有人发来新的日程邀请，且时间已经被已有日程占用。",
-            "请先结合最近上下文事项、会议标题、时间、组织者、会议描述和重叠会议判断是否有必要参加；会议描述为空不是自动追问条件。",
+            "请先结合最近上下文事项、会议标题、时间、组织者、会议描述、会议评论和重叠会议判断是否有必要参加；会议描述为空不是自动追问条件。",
             "如果最近事项和标题已经能判断本人有必要参加，action 输出 send_reply，reply_text 用一两句话说明接受理由，并设置 calendar_response_status 为 accepted。",
             "如果最近事项和标题能判断没有必要参加或仅需保留观察，可以 action 输出 no_reply，并设置 calendar_response_status 为 declined 或 tentative。",
             "如果新会议本身是静默会、异步评审、材料审阅或明确要求处理事项，不能只接受日历；请把日程标题、描述、链接材料、冲突会议和上下文当作待处理事项直接处理，输出处理结论或需要补充的材料。",
@@ -2088,6 +2126,7 @@ class DingTalkAutoReplyWorker:
             f"时间：{context.invite.start_time} - {context.invite.end_time}",
             f"组织者：{context.invite.organizer or trigger.sender_name}",
             f"会议描述：{context.invite.description.strip() or '无'}",
+            f"会议评论：{DingTalkAutoReplyWorker._calendar_comments_text(context.invite)}",
             "重叠会议：",
         ]
         for event in context.conflicts:
@@ -2116,19 +2155,20 @@ class DingTalkAutoReplyWorker:
         lines = [
             "日历规则判断：",
             "有人发来新的日程邀请，当前未发现同时间段已有日程冲突。",
-            "请先结合最近上下文事项、会议标题、时间、组织者和会议描述判断是否有必要参加；会议描述为空不是自动追问条件。",
+            "请先结合最近上下文事项、会议标题、时间、组织者、会议描述和会议评论判断是否有必要参加；会议描述为空不是自动追问条件。",
             "如果日程是在要求审批、批阅、review、反馈或评论某个文档内容，reply_text 必须是：请直接@我文档让我批阅即可，只有存疑再约会。",
             "如果新会议本身是静默会、异步评审、材料审阅或明确要求处理事项，不能只接受日历；请把日程标题、描述、链接材料和上下文当作待处理事项直接处理，输出处理结论或需要补充的材料。",
             "这类材料处理可以同时设置 calendar_response_status；如果材料链接支持评论，服务会优先写入原材料评论，不能评论时再回退到原消息回复。",
             f"如果最近事项和标题足以判断 {principal_display_name()} 本人有必要参加，action 输出 send_reply，reply_text 用一两句话说明接受理由，并设置 calendar_response_status 为 accepted。",
             "如果最近事项和标题足以判断先保留但不确认，action 输出 no_reply，并设置 calendar_response_status 为 tentative。",
             "如果最近事项和标题足以判断本人参加无价值，action 输出 no_reply，并设置 calendar_response_status 为 declined。",
-            "如果结合最近事项、标题、时间、组织者和描述后仍不足以判断，再追问补充信息或 handoff。",
+            "如果结合最近事项、标题、时间、组织者、描述和评论后仍不足以判断，再追问补充信息或 handoff。",
             "",
             f"新会议：{context.invite.title or '未命名日程'}",
             f"时间：{context.invite.start_time} - {context.invite.end_time}",
             f"组织者：{context.invite.organizer or trigger.sender_name}",
             f"会议描述：{context.invite.description.strip() or '无'}",
+            f"会议评论：{DingTalkAutoReplyWorker._calendar_comments_text(context.invite)}",
         ]
         return DingTalkMessage(
             open_conversation_id=conversation.open_conversation_id,
@@ -2139,6 +2179,11 @@ class DingTalkAutoReplyWorker:
             create_time=trigger.create_time,
             content="\n".join(lines),
         )
+
+    @staticmethod
+    def _calendar_comments_text(event: DwsCalendarEvent) -> str:
+        comments = [comment.strip() for comment in event.comments if comment.strip()]
+        return "\n".join(comments) if comments else "无"
 
     def _respond_calendar_invite(
         self,

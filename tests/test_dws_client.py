@@ -937,6 +937,45 @@ def test_calendar_invite_from_message_parses_structured_calendar_payload():
     assert event.organizer == "Mina"
 
 
+def test_calendar_invite_from_message_parses_calendar_comments():
+    client = DwsClient(dws_bin="dws")
+    message = DingTalkMessage(
+        open_conversation_id="cid-1",
+        open_message_id="msg-1",
+        conversation_title="Friday",
+        single_chat=True,
+        sender_name="Mina",
+        create_time="2026-05-13 15:16:49",
+        content="[日程]",
+        message_type="calendar",
+        raw_payload={
+            "calendarEvent": {
+                "eventId": "event-1",
+                "summary": "客户升级问题决策",
+                "start": {"dateTime": "2026-05-14T10:00:00+08:00"},
+                "end": {"dateTime": "2026-05-14T11:00:00+08:00"},
+                "description": "客户 CEO 会参加，需要 Alex 决策。",
+                "organizer": {"displayName": "Mina"},
+                "commentList": [
+                    {
+                        "creator": {"displayName": "Mina"},
+                        "content": "请会前看完客户升级材料。",
+                    },
+                    "补充：客户希望当天定方案。",
+                ],
+            }
+        },
+    )
+
+    event = client.calendar_invite_from_message(message)
+
+    assert event is not None
+    assert event.comments == [
+        "Mina: 请会前看完客户升级材料。",
+        "补充：客户希望当天定方案。",
+    ]
+
+
 def test_calendar_invite_from_message_accepts_nested_event_without_event_id():
     client = DwsClient(dws_bin="dws")
     message = DingTalkMessage(

@@ -99,6 +99,7 @@ class DwsCalendarEvent(BaseModel):
     response_status: str = ""
     self_response_status: str = ""
     attendees: list[str] = Field(default_factory=list)
+    comments: list[str] = Field(default_factory=list)
     status: str = ""
     created_ms: int = 0
     updated_ms: int = 0
@@ -2152,6 +2153,7 @@ class DwsClient:
                 record.get("attendees")
             ),
             attendees=DwsClient._calendar_attendees(record.get("attendees")),
+            comments=DwsClient._calendar_comments(record),
             status=DwsClient._first_string(record, "status"),
             created_ms=DwsClient._first_int(record, "created", "createTime"),
             updated_ms=DwsClient._first_int(record, "updated", "updateTime"),
@@ -2204,6 +2206,40 @@ class DwsClient:
             person = DwsClient._calendar_person(item)
             if person:
                 result.append(person)
+        return result
+
+    @staticmethod
+    def _calendar_comments(record: dict[str, Any]) -> list[str]:
+        result: list[str] = []
+        for key in (
+            "comments",
+            "commentList",
+            "calendarComments",
+            "dingComments",
+        ):
+            value = record.get(key)
+            if isinstance(value, str) and value.strip():
+                result.append(value.strip())
+            elif isinstance(value, list):
+                for item in value:
+                    if isinstance(item, str) and item.strip():
+                        result.append(item.strip())
+                    elif isinstance(item, dict):
+                        text = DwsClient._first_string(
+                            item,
+                            "content",
+                            "text",
+                            "comment",
+                            "message",
+                            "remark",
+                        )
+                        if text:
+                            author = DwsClient._calendar_person(
+                                item.get("creator")
+                                or item.get("author")
+                                or item.get("sender")
+                            )
+                            result.append(f"{author}: {text}" if author else text)
         return result
 
     @staticmethod

@@ -21,6 +21,7 @@ from app.dingtalk_models import (
 )
 from app.dws_client import (
     DwsCalendarEvent,
+    DwsClient,
     DwsDocumentSearchResult,
     DwsError,
     DwsMinutesPermissionRequest,
@@ -437,6 +438,10 @@ class FakeDws:
     def calendar_invite_from_message(
         self, message: DingTalkMessage
     ) -> DwsCalendarEvent | None:
+        if message.raw_payload:
+            event = DwsClient._find_calendar_event_in_payload(message.raw_payload)
+            if event is not None:
+                return event
         return self.calendar_invites.get(message.open_message_id)
 
     def list_calendar_events(self, start: str, end: str) -> list[DwsCalendarEvent]:
@@ -1286,6 +1291,47 @@ def test_pending_calendar_invite_merges_into_recent_calendar_card_task(
     assert merged.sender_open_dingtalk_id == "sender-1"
     assert merged.raw_payload["id"] == "invite-1"
     assert worker.store.has_seen("calendar:invite-1") is True
+
+
+def test_producer_enriches_bare_calendar_card_task_with_invite_details(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message(
+        "[日程]",
+        message_id="msg-calendar-card",
+        single_chat=True,
+        message_type="calendar",
+    )
+    dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
+    worker = make_worker(tmp_path, dws, FakeCodex([]), monkeypatch)
+    invite = DwsCalendarEvent(
+        event_id="invite-1",
+        title="测试开发岗位人选画像圆桌",
+        start_time="2026-05-16T09:00:00+08:00",
+        end_time="2026-05-16T10:00:00+08:00",
+        description="讨论测试开发岗位画像和候选人结论。",
+        organizer=trigger.sender_name,
+        self_response_status="accepted",
+        attendees=["Alex Chen(明哥)", trigger.sender_name],
+        comments=["Alan: 请先看第一位弱不推荐候选人的材料。"],
+        status="confirmed",
+    )
+    dws.calendar_events[
+        "2026-05-13T17:00:00+08:00|2026-05-27T17:00:00+08:00"
+    ] = [invite]
+    dws.calendar_events[f"{invite.start_time}|{invite.end_time}"] = [invite]
+
+    assert worker.produce_once() == 1
+
+    tasks = worker.store.list_reply_tasks(statuses=("pending",), limit=10)
+    assert [task.trigger_message_id for task in tasks] == ["msg-calendar-card"]
+    assert tasks[0].trigger_text == "[日程] 测试开发岗位人选画像圆桌"
+    merged = DingTalkMessage.model_validate_json(tasks[0].trigger_message_json)
+    assert merged.raw_payload["id"] == "invite-1"
+    assert merged.raw_payload["description"] == "讨论测试开发岗位画像和候选人结论。"
+    assert merged.raw_payload["comments"] == [
+        "Alan: 请先看第一位弱不推荐候选人的材料。"
+    ]
 
 
 def test_pending_calendar_invite_can_recover_failed_calendar_card_task(
@@ -2602,6 +2648,7 @@ def test_bare_calendar_card_uses_unique_future_accepted_invite_without_change_ti
         description="讨论测试开发岗位画像和候选人结论。",
         organizer=trigger.sender_name,
         self_response_status="accepted",
+        comments=["Alan: 第一位候选人弱不推荐，需要会上定取舍。"],
         status="confirmed",
     )
     dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
@@ -2623,6 +2670,7 @@ def test_bare_calendar_card_uses_unique_future_accepted_invite_without_change_ti
     assert len(codex.calls) == 1
     assert "【圆桌讨论】测试开发岗位人选画像" in codex.calls[0][0]
     assert "讨论测试开发岗位画像和候选人结论" in codex.calls[0][0]
+    assert "第一位候选人弱不推荐，需要会上定取舍" in codex.calls[0][0]
     assert final_sent(dws) == [
         ("cid-1", "已看到圆桌会，按测试岗位画像和候选人结论来准备。（by明哥分身）")
     ]
