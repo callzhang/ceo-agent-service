@@ -1654,7 +1654,7 @@ class DingTalkAutoReplyWorker:
         calendar_context = self._calendar_invite_context(
             conversation,
             trigger,
-            include_resolved_invites=include_resolved_calendar_invites,
+            include_resolved_invites=True,
         )
         if calendar_context is None:
             if self._is_calendar_message(trigger):
@@ -2845,6 +2845,9 @@ class DingTalkAutoReplyWorker:
                 ensure_ascii=False,
             ),
             audit_summary=decision.audit_summary,
+            calendar_event_id=(
+                calendar_response_event.event_id if calendar_response_event else ""
+            ),
         )
 
         calendar_response_status = decision.calendar_response_status.value

@@ -2542,7 +2542,7 @@ def test_calendar_response_respects_worker_dry_run(
     assert attempt.calendar_response_result_json == ""
 
 
-def test_bare_calendar_card_does_not_use_already_accepted_invite(
+def test_bare_calendar_card_uses_already_accepted_invite_as_context(
     tmp_path: Path, monkeypatch
 ):
     trigger = message("[日程]", single_chat=True, message_type="calendar")
@@ -2568,8 +2568,9 @@ def test_bare_calendar_card_does_not_use_already_accepted_invite(
     dws.calendar_events[f"{invite.start_time}|{invite.end_time}"] = [invite]
     codex = FakeCodex(
         CodexDecision(
-            action=CodexAction.NO_REPLY,
-            reason="日程已经接受，且标题和描述足够判断，无需再追问。",
+            action=CodexAction.SEND_REPLY,
+            reply_text="这个日程已经接受，后面按会议主题准备。",
+            reason="日程已经接受，标题和描述足够判断。",
             audit_summary="已按消息时间匹配同一发送人刚创建的日程。",
         )
     )
@@ -2577,14 +2578,58 @@ def test_bare_calendar_card_does_not_use_already_accepted_invite(
 
     worker.run_once()
 
-    assert codex.calls == []
-    assert len(final_sent(dws)) == 1
-    assert "只看到日程卡片" in final_sent(dws)[0][1]
-    assert "主持会议" not in final_sent(dws)[0][1]
+    assert len(codex.calls) == 1
+    assert "主持会议" in codex.calls[0][0]
+    assert final_sent(dws) == [
+        ("cid-1", "这个日程已经接受，后面按会议主题准备。（by明哥分身）")
+    ]
     assert dws.calendar_responses == []
     attempt = worker.store.get_reply_attempt(1)
-    assert attempt.action == "ask_clarifying_question"
-    assert attempt.codex_reason == "calendar_detail_unreadable"
+    assert attempt.action == "send_reply"
+    assert attempt.codex_reason == "日程已经接受，标题和描述足够判断。"
+    assert attempt.calendar_event_id == "invite-1"
+
+
+def test_bare_calendar_card_uses_unique_future_accepted_invite_without_change_time(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message("[日程]", single_chat=True, message_type="calendar")
+    invite = DwsCalendarEvent(
+        event_id="invite-1",
+        title="【圆桌讨论】测试开发岗位人选画像",
+        start_time="2026-05-16T09:00:00+08:00",
+        end_time="2026-05-16T10:00:00+08:00",
+        description="讨论测试开发岗位画像和候选人结论。",
+        organizer=trigger.sender_name,
+        self_response_status="accepted",
+        status="confirmed",
+    )
+    dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
+    dws.calendar_events[
+        "2026-05-13T17:00:00+08:00|2026-05-27T17:00:00+08:00"
+    ] = [invite]
+    dws.calendar_events[f"{invite.start_time}|{invite.end_time}"] = [invite]
+    codex = FakeCodex(
+        CodexDecision(
+            action=CodexAction.SEND_REPLY,
+            reply_text="已看到圆桌会，按测试岗位画像和候选人结论来准备。",
+            reason="同发送人的唯一未来日程已经匹配。",
+        )
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+
+    worker.run_once()
+
+    assert len(codex.calls) == 1
+    assert "【圆桌讨论】测试开发岗位人选画像" in codex.calls[0][0]
+    assert "讨论测试开发岗位画像和候选人结论" in codex.calls[0][0]
+    assert final_sent(dws) == [
+        ("cid-1", "已看到圆桌会，按测试岗位画像和候选人结论来准备。（by明哥分身）")
+    ]
+    assert dws.calendar_responses == []
+    attempt = worker.store.get_reply_attempt(1)
+    assert attempt.action == "send_reply"
+    assert attempt.calendar_event_id == "invite-1"
 
 
 def test_bare_calendar_card_uses_closest_recent_pending_invite_from_sender(
