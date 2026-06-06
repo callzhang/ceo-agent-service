@@ -89,7 +89,9 @@ def test_developer_prompt_delegates_memory_to_agent_mcp_tools():
     template = read_developer_prompt_template()
 
     assert "memory_connector MCP 可用" in template
-    assert "必须先调用 memory_recall" in template
+    assert "检索优先级是：memory_recall、本地文件、dws aisearch、dws 知识库" in template
+    assert "优先调用 memory_recall 获取可复用上下文" in template
+    assert "业务判断、人员判断、项目背景、客户口径、审批/日历处理" in template
     assert "调用 memory_write 记录一条业务 episode" in template
     assert "不要传 user_id" in template
     assert "memory_write 失败不应改变最终 JSON" in template
