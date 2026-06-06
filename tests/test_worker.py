@@ -1051,6 +1051,7 @@ def test_produce_once_fast_path_reads_only_unread_messages_without_recent_contex
         {"cid-1": [message("历史上下文", message_id="msg-context")]},
     )
     dws.unread_messages = {"cid-1": [trigger]}
+    dws.mentioned_messages = {"cid-1": [trigger]}
     codex = FakeCodex(
         CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该调用")
     )
@@ -1073,6 +1074,7 @@ def test_produce_once_fast_path_enqueues_pending_before_backoff(
 ):
     trigger = message("@Alex Chen(明哥) 这个怎么处理？", message_id="msg-unread")
     dws = FakeDws([conversation()], {"cid-1": [trigger]})
+    dws.mentioned_messages = {"cid-1": [trigger]}
     codex = FakeCodex(
         CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该调用")
     )
@@ -1152,6 +1154,7 @@ def test_produce_once_fast_path_task_is_claimable_after_backoff(
 ):
     trigger = message("@Alex Chen(明哥) 这个怎么处理？", message_id="msg-unread")
     dws = FakeDws([conversation()], {"cid-1": [trigger]})
+    dws.mentioned_messages = {"cid-1": [trigger]}
     codex = FakeCodex(
         CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该调用")
     )
@@ -1465,6 +1468,7 @@ def test_fast_path_backoff_processes_trigger_when_unread_clears_without_user_rep
 ):
     trigger = message("@Alex Chen(明哥) 这个怎么处理？", message_id="msg-unread")
     dws = FakeDws([conversation()], {"cid-1": [trigger]})
+    dws.mentioned_messages = {"cid-1": [trigger]}
     codex = FakeCodex(
         CodexDecision(action=CodexAction.SEND_REPLY, reply_text="可以，先推进")
     )
@@ -1516,6 +1520,7 @@ def test_queued_task_falls_back_to_trigger_when_context_read_fails(
         message_id="msg-context-error",
     )
     dws = FakeDws([conversation()], {"cid-1": [trigger]})
+    dws.mentioned_messages = {"cid-1": [trigger]}
     dws.read_errors["cid-1"] = DwsError("forbidden request", code="1001")
     dws.unread_errors["cid-1"] = DwsError("forbidden request", code="1001")
     codex = FakeCodex(
@@ -1558,6 +1563,7 @@ def test_fast_path_backoff_skips_when_current_user_replied_after_trigger(
         create_time="2026-05-13 18:01:00",
     )
     dws = FakeDws([conversation()], {"cid-1": [trigger]})
+    dws.mentioned_messages = {"cid-1": [trigger]}
     codex = FakeCodex(
         CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该调用")
     )
@@ -1620,6 +1626,7 @@ def test_produce_once_fast_path_skips_unread_conversations_unchanged_since_last_
         },
         unread_messages={"cid-new": [new_trigger]},
     )
+    dws.mentioned_messages = {"cid-new": [new_trigger]}
     codex = FakeCodex(
         CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该调用")
     )
@@ -6469,10 +6476,16 @@ def test_no_reply_action_does_not_send(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(
         "app.worker.send_macos_notification", lambda **_: None
     )
-    dws = FakeDws([conversation()], {"cid-1": [message("@Alex Chen(明哥) cc一下")]})
+    trigger = message("@Alex Chen(明哥) cc一下")
+    dws = FakeDws([conversation()], {"cid-1": [trigger]})
+    dws.mentioned_messages = {"cid-1": [trigger]}
     codex = FakeCodex(CodexDecision(action=CodexAction.NO_REPLY, reason="cc only"))
     worker = DingTalkAutoReplyWorker(
         store=store, dws=dws, codex=codex, now_provider=fixed_worker_now
+    )
+    worker.store.set_service_state(
+        "message_recovery_checked_at",
+        "2026-05-13T16:30:00+00:00",
     )
 
     worker.run_once()
@@ -6494,13 +6507,16 @@ def test_handoff_sends_ack_dings_self_and_records_message_result(
     monkeypatch.setattr(
         "app.worker.send_macos_notification", lambda **_: None
     )
-    dws = FakeDws(
-        [conversation()],
-        {"cid-1": [message("@Alex Chen(明哥) 不要分身，真人看一下")]},
-    )
+    trigger = message("@Alex Chen(明哥) 不要分身，真人看一下")
+    dws = FakeDws([conversation()], {"cid-1": [trigger]})
+    dws.mentioned_messages = {"cid-1": [trigger]}
     codex = FakeCodex(CodexDecision(action=CodexAction.HANDOFF_TO_HUMAN))
     worker = DingTalkAutoReplyWorker(
         store=store, dws=dws, codex=codex, now_provider=fixed_worker_now
+    )
+    worker.store.set_service_state(
+        "message_recovery_checked_at",
+        "2026-05-13T16:30:00+00:00",
     )
 
     worker.run_once()
@@ -6592,6 +6608,43 @@ def test_group_unread_without_principal_mention_is_ignored(
     assert final_sent(dws) == []
     assert store.has_seen("file-after-handoff") is False
     assert notifications == []
+
+
+def test_group_unread_without_principal_mention_does_not_read_unread_tail(
+    tmp_path: Path, monkeypatch
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    latest = message(
+        "无关同步",
+        message_id="msg-unmentioned",
+    )
+    latest.create_time = "2026-05-13 18:10:00"
+    group = conversation()
+    group.title = "无关群"
+    group.single_chat = False
+    group.unread_point = 1
+    dws = FakeDws(
+        [group],
+        {"cid-1": [latest]},
+        unread_errors={"cid-1": RuntimeError("forbidden request")},
+    )
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该调用")
+    )
+    worker = DingTalkAutoReplyWorker(
+        store=store, dws=dws, codex=codex, now_provider=fixed_worker_now
+    )
+    worker.store.set_service_state(
+        "message_recovery_checked_at",
+        "2026-05-13T16:30:00+00:00",
+    )
+
+    worker.run_once()
+
+    assert dws.unread_message_reads == []
+    assert store.list_errors() == []
+    assert codex.calls == []
+    assert final_sent(dws) == []
 
 
 def test_dry_run_group_unread_without_principal_mention_is_ignored(

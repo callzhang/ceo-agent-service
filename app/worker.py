@@ -283,9 +283,11 @@ class DingTalkAutoReplyWorker:
                     )
             unread_messages = []
             candidate_unread_messages = []
-            should_read_unread = (
-                recovery_due
-                or conversation.open_conversation_id in unread_conversation_ids
+            should_read_unread = self._should_read_unread_messages(
+                conversation,
+                conversation_mentions,
+                recovery_due=recovery_due,
+                unread_conversation_ids=unread_conversation_ids,
             )
             if should_read_unread:
                 try:
@@ -372,6 +374,22 @@ class DingTalkAutoReplyWorker:
             fast_path_checked_at.isoformat(),
         )
         return queued_tasks
+
+    @staticmethod
+    def _should_read_unread_messages(
+        conversation: DingTalkConversation,
+        conversation_mentions: list[DingTalkMessage],
+        *,
+        recovery_due: bool,
+        unread_conversation_ids: set[str],
+    ) -> bool:
+        if recovery_due:
+            return True
+        if conversation.open_conversation_id not in unread_conversation_ids:
+            return False
+        if conversation.single_chat:
+            return True
+        return bool(conversation_mentions)
 
     @staticmethod
     def _reply_task_message(task: ReplyTask) -> DingTalkMessage | None:
