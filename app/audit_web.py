@@ -696,18 +696,21 @@ def render_dingtalk_open_chat_bridge(open_conversation_id: str) -> str:
     }}
     function invokeWithCallbackTimeout(label, invoke) {{
       report("invoke", label);
-      let callbackSeen = false;
-      const done = (text) => {{
+      return new Promise((resolve) => {{
+        let callbackSeen = false;
+        const done = (ok, text) => {{
         callbackSeen = true;
         setStatus(text);
-        closeBridgePageSoon();
-      }};
-      invoke(done);
-      setTimeout(() => {{
-        if (!callbackSeen) {{
-          report("callback-timeout", label);
-        }}
-      }}, 1200);
+          resolve(ok);
+        }};
+        invoke(done);
+        setTimeout(() => {{
+          if (!callbackSeen) {{
+            report("callback-timeout", label);
+            resolve(false);
+          }}
+        }}, 1200);
+      }});
     }}
     function closeBridgePageSoon() {{
       setTimeout(() => {{
@@ -725,36 +728,53 @@ def render_dingtalk_open_chat_bridge(open_conversation_id: str) -> str:
         window.close();
       }}, 600);
     }}
-    function openChat() {{
+    async function openChat() {{
       const dd = window.dd;
       if (!dd) {{
         setStatus("钉钉 JSAPI 未加载。请确认本页是在钉钉客户端内打开。");
         return;
       }}
       report("dd-api-names", apiNames(dd));
+      const attempts = [];
       const legacyApi = dd.biz && dd.biz.chat && dd.biz.chat.toConversationByOpenConversationId;
       if (typeof legacyApi === "function") {{
-        invokeWithCallbackTimeout("biz.chat.toConversationByOpenConversationId", (done) => {{
+        attempts.push(["biz.chat.toConversationByOpenConversationId", (done) => {{
           legacyApi({{
             openConversationId,
-            onSuccess: () => done("已通过旧版桌面会话 API 发起跳转。"),
-            onFail: (error) => done(`旧版桌面会话 API 跳转失败: ${{JSON.stringify(error)}}`),
+            onSuccess: () => done(true, "已通过旧版桌面会话 API 发起跳转。"),
+            onFail: (error) => done(false, `旧版桌面会话 API 跳转失败: ${{JSON.stringify(error)}}`),
           }});
-        }});
-        return;
+        }}]);
       }}
       if (typeof dd.openChatByConversationId === "function") {{
-        invokeWithCallbackTimeout("openChatByConversationId", (done) => {{
+        attempts.push(["openChatByConversationId", (done) => {{
           dd.openChatByConversationId({{
             openConversationId,
-            success: () => done("已通过新版会话 API 发起跳转。"),
-            fail: (error) => done(`新版会话 API 跳转失败: ${{JSON.stringify(error)}}`),
+            success: () => done(true, "已通过新版会话 API 发起跳转。"),
+            fail: (error) => done(false, `新版会话 API 跳转失败: ${{JSON.stringify(error)}}`),
             complete: () => {{}},
           }});
-        }});
-        return;
+        }}]);
       }}
-      setStatus("当前钉钉客户端没有 openChatByConversationId 能力。");
+      const toConversationApi = dd.biz && dd.biz.chat && dd.biz.chat.toConversation;
+      if (typeof toConversationApi === "function") {{
+        attempts.push(["biz.chat.toConversation", (done) => {{
+          toConversationApi({{
+            cid: openConversationId,
+            openConversationId,
+            onSuccess: () => done(true, "已通过桌面会话 cid API 发起跳转。"),
+            onFail: (error) => done(false, `桌面会话 cid API 跳转失败: ${{JSON.stringify(error)}}`),
+          }});
+        }}]);
+      }}
+      for (const [label, invoke] of attempts) {{
+        const ok = await invokeWithCallbackTimeout(label, invoke);
+        if (ok) {{
+          closeBridgePageSoon();
+          return;
+        }}
+      }}
+      setStatus("当前钉钉客户端没有可用的桌面会话跳转能力，或全部跳转失败。");
     }}
     function openWhenReady() {{
       report("loaded", navigator.userAgent);
