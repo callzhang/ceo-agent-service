@@ -3808,22 +3808,43 @@ def test_single_chat_alidocs_card_reaches_codex(tmp_path: Path, monkeypatch):
         "title": "总裁办每周讨论",
         "markdown": "本周重点：处理项目 owner 和延期问题。",
     }
-    codex = FakeCodex(
-        CodexDecision(
-            action=CodexAction.NO_REPLY,
-            audit_summary="私聊文档卡片已进入 agent 判断。",
-        )
+    codex = SequencedFakeCodex(
+        [
+            CodexDecision(
+                action=CodexAction.NO_REPLY,
+                audit_summary="私聊文档卡片已进入 agent 判断。",
+            ),
+            CodexDecision(
+                action=CodexAction.SEND_REPLY,
+                reply_text="这份周会材料需要先明确项目 owner 和延期处理方案。",
+                audit_summary="已读取私聊文档正文并给出处理意见。",
+                audit_documents=[
+                    {
+                        "title": "总裁办每周讨论",
+                        "relevance": "私聊发送的钉钉文档正文",
+                    }
+                ],
+            ),
+        ]
     )
     worker = make_worker(tmp_path, dws, codex, monkeypatch)
 
     worker.run_once()
 
-    assert len(codex.calls) == 1
+    assert len(codex.calls) == 2
     assert dws.read_doc_calls == [canonical_doc_url]
+    assert "上一次输出了 no_reply" in codex.calls[1][0]
     attempt = worker.store.get_reply_attempt(1)
-    assert attempt.action == "no_reply"
-    assert attempt.codex_reason == ""
-    assert attempt.audit_summary == "私聊文档卡片已进入 agent 判断。"
+    assert attempt.action == "send_reply"
+    assert attempt.send_status == "sent"
+    assert "明确项目 owner" in attempt.final_reply_text
+    assert final_sent(dws) == [
+        (
+            "cid-1",
+            "这份周会材料需要先明确项目 owner 和延期处理方案。（by明哥分身）",
+        )
+    ]
+    assert attempt.audit_summary == "已读取私聊文档正文并给出处理意见。"
 
 
 def test_structured_approval_card_is_processed_by_oa_runner(

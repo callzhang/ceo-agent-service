@@ -2951,6 +2951,16 @@ class DingTalkAutoReplyWorker:
                 session_id=None,
                 image_paths=image_paths,
             )
+        if self._single_chat_document_no_reply_needs_retry(
+            conversation,
+            linked_documents,
+            decision,
+        ):
+            decision = self.codex.decide(
+                prompt=self._single_chat_document_retry_prompt(),
+                session_id=getattr(self.codex, "last_session_id", None) or session_id,
+                image_paths=image_paths,
+            )
         after_session_id = getattr(self.codex, "last_session_id", None)
         self._persist_codex_session_id(
             conversation,
@@ -4856,6 +4866,29 @@ class DingTalkAutoReplyWorker:
             title=conversation.title,
             single_chat=conversation.single_chat,
             codex_session_id=after_session_id,
+        )
+
+    @staticmethod
+    def _single_chat_document_no_reply_needs_retry(
+        conversation: DingTalkConversation,
+        linked_documents: list[LinkedDocumentContext],
+        decision: CodexDecision,
+    ) -> bool:
+        return (
+            conversation.single_chat
+            and bool(linked_documents)
+            and decision.action == CodexAction.NO_REPLY
+        )
+
+    @staticmethod
+    def _single_chat_document_retry_prompt() -> str:
+        return (
+            "上一次输出了 no_reply，但当前是私聊，且服务已经读取并注入了钉钉材料正文、摘要或可处理内容。"
+            "请重新阅读已获取的钉钉材料并给出处理结果。"
+            "如果材料足够，action 用 send_reply，reply_text 给出结论、修改意见、风险、下一步或需要补充的具体问题；"
+            "如果材料不足，action 用 ask_clarifying_question 或 stop_with_error。"
+            "不要因为对方只发送文档、没有额外写“请处理/请 review”就 no_reply。"
+            "只输出合法 JSON。"
         )
 
     @staticmethod
