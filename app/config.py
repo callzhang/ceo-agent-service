@@ -219,11 +219,3 @@ def single_chat_read_recovery_window() -> timedelta:
 
 def single_chat_read_recovery_limit() -> int:
     return env_int("SINGLE_CHAT_READ_RECOVERY_LIMIT", 50)
-
-
-def group_read_recovery_window() -> timedelta:
-    return env_duration("GROUP_READ_RECOVERY_WINDOW", timedelta(hours=24))
-
-
-def group_read_recovery_limit() -> int:
-    return env_int("GROUP_READ_RECOVERY_LIMIT", 3)

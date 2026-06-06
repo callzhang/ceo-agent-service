@@ -737,10 +737,6 @@ def test_handle_system_config_post_saves_runtime_params_to_env_file(
         "&system_value=12h"
         "&system_key=SINGLE_CHAT_READ_RECOVERY_LIMIT"
         "&system_value=25"
-        "&system_key=GROUP_READ_RECOVERY_WINDOW"
-        "&system_value=6h"
-        "&system_key=GROUP_READ_RECOVERY_LIMIT"
-        "&system_value=2"
     ).encode()
 
     status, headers, html = handle_system_config_post(body)
@@ -756,8 +752,6 @@ def test_handle_system_config_post_saves_runtime_params_to_env_file(
     assert "MESSAGE_RECOVERY_INTERVAL=30m" in env_text
     assert "SINGLE_CHAT_READ_RECOVERY_WINDOW=12h" in env_text
     assert "SINGLE_CHAT_READ_RECOVERY_LIMIT=25" in env_text
-    assert "GROUP_READ_RECOVERY_WINDOW=6h" in env_text
-    assert "GROUP_READ_RECOVERY_LIMIT=2" in env_text
     assert "MESSAGE_RECOVERY_INTERVAL" not in read_developer_prompt_template()
 
 

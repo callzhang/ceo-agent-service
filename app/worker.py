@@ -18,8 +18,6 @@ from app.config import (
     broadcast_mention_aliases,
     fast_path_unread_backoff_duration,
     feedback_spike_vercel_base_url,
-    group_read_recovery_limit,
-    group_read_recovery_window,
     handoff_ack,
     message_recovery_interval,
     notification_bridge_base_url,
@@ -172,8 +170,6 @@ MESSAGE_RECOVERY_INTERVAL = message_recovery_interval()
 FAST_PATH_UNREAD_BACKOFF = fast_path_unread_backoff_duration()
 SINGLE_CHAT_READ_RECOVERY_WINDOW = single_chat_read_recovery_window()
 SINGLE_CHAT_READ_RECOVERY_LIMIT = single_chat_read_recovery_limit()
-GROUP_READ_RECOVERY_WINDOW = group_read_recovery_window()
-GROUP_READ_RECOVERY_LIMIT = group_read_recovery_limit()
 
 
 @dataclass(frozen=True)
@@ -271,7 +267,13 @@ class DingTalkAutoReplyWorker:
                 conversation.open_conversation_id, []
             )
             context_messages = []
-            if conversation.open_conversation_id in recovery_conversation_ids:
+            should_read_recent = self._should_read_recent_messages(
+                conversation,
+                conversation_mentions,
+                recovery_due=recovery_due,
+                recovery_conversation_ids=recovery_conversation_ids,
+            )
+            if should_read_recent:
                 try:
                     context_messages = self.dws.read_recent_messages(conversation)
                 except Exception as exc:
@@ -386,6 +388,22 @@ class DingTalkAutoReplyWorker:
         if recovery_due:
             return True
         if conversation.open_conversation_id not in unread_conversation_ids:
+            return False
+        if conversation.single_chat:
+            return True
+        return bool(conversation_mentions)
+
+    @staticmethod
+    def _should_read_recent_messages(
+        conversation: DingTalkConversation,
+        conversation_mentions: list[DingTalkMessage],
+        *,
+        recovery_due: bool,
+        recovery_conversation_ids: set[str],
+    ) -> bool:
+        if conversation.open_conversation_id in recovery_conversation_ids:
+            return True
+        if not recovery_due:
             return False
         if conversation.single_chat:
             return True
@@ -534,11 +552,15 @@ class DingTalkAutoReplyWorker:
         )
         if not should_recover:
             return conversations, set()
+        existing_ids = {
+            conversation.open_conversation_id
+            for conversation in conversations
+        }
         recovered = self._conversations_with_recent_single_chat_recovery(conversations)
-        recovered = self._conversations_with_recent_group_recovery(recovered)
         recovery_conversation_ids = {
             conversation.open_conversation_id
             for conversation in recovered
+            if conversation.open_conversation_id not in existing_ids
         }
         self.store.set_service_state(
             MESSAGE_RECOVERY_CHECKED_AT_STATE_KEY,
@@ -611,34 +633,6 @@ class DingTalkAutoReplyWorker:
         return (
             self._now().astimezone(timezone.utc) - last_checked.astimezone(timezone.utc)
         ) >= MESSAGE_RECOVERY_INTERVAL
-
-    def _conversations_with_recent_group_recovery(
-        self,
-        conversations: list[DingTalkConversation],
-    ) -> list[DingTalkConversation]:
-        existing_ids = {
-            conversation.open_conversation_id for conversation in conversations
-        }
-        since_utc = (
-            self.now_provider().astimezone(timezone.utc) - GROUP_READ_RECOVERY_WINDOW
-        ).strftime("%Y-%m-%d %H:%M:%S")
-        recovered = []
-        for record in self.store.list_recent_group_conversations(
-            since_utc,
-            limit=GROUP_READ_RECOVERY_LIMIT,
-        ):
-            if record.conversation_id in existing_ids:
-                continue
-            existing_ids.add(record.conversation_id)
-            recovered.append(
-                DingTalkConversation(
-                    open_conversation_id=record.conversation_id,
-                    title=record.title,
-                    single_chat=False,
-                    unread_point=0,
-                )
-            )
-        return [*conversations, *recovered]
 
     def _maybe_upgrade_dws_once_per_day(self) -> None:
         today = self._now().date().isoformat()

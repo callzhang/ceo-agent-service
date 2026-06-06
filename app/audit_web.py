@@ -38,8 +38,6 @@ from app.config import (
     fast_path_unread_backoff_duration,
     feedback_spike_vercel_base_url,
     forbidden_path_prefixes,
-    group_read_recovery_limit,
-    group_read_recovery_window,
     handoff_ack,
     memory_connector_user_id,
     mention_aliases,
@@ -1070,16 +1068,6 @@ def _system_config_rows() -> list[tuple[str, str, str]]:
             str(single_chat_read_recovery_limit()),
             "慢路径私聊恢复扫描最多读取多少个会话。",
         ),
-        (
-            "GROUP_READ_RECOVERY_WINDOW",
-            _duration_label(group_read_recovery_window()),
-            "慢路径群聊恢复扫描回看多长时间内的会话。",
-        ),
-        (
-            "GROUP_READ_RECOVERY_LIMIT",
-            str(group_read_recovery_limit()),
-            "慢路径群聊恢复扫描最多读取多少个会话。",
-        ),
     ]
 
 
@@ -1185,8 +1173,6 @@ def _editable_system_config_keys() -> set[str]:
         "MESSAGE_RECOVERY_INTERVAL",
         "SINGLE_CHAT_READ_RECOVERY_WINDOW",
         "SINGLE_CHAT_READ_RECOVERY_LIMIT",
-        "GROUP_READ_RECOVERY_WINDOW",
-        "GROUP_READ_RECOVERY_LIMIT",
     }
 
 
@@ -1224,7 +1210,6 @@ def _highlight_logic_text(text: str) -> str:
         "reply_tasks",
         _duration_label(message_recovery_interval()),
         _duration_label(single_chat_read_recovery_window()),
-        _duration_label(group_read_recovery_window()),
     ]
     for term in sorted({item for item in terms if item}, key=len, reverse=True):
         escaped_term = escape(term)
@@ -1273,10 +1258,8 @@ def _config_logic_sections() -> list[tuple[str, list[tuple[str, str]]]]:
         ),
         (
             "群聊恢复",
-            "从本地 DB 加入最近 "
-            f"{_duration_label(group_read_recovery_window())} 内的群聊会话，最多 "
-            f"{group_read_recovery_limit()} 个。群聊候选仍然必须点名 "
-            f"{user_alias()} 或配置的广播别名，才会进入队列。",
+            "慢路径不从本地 seen_messages 主动恢复群聊。群聊只通过 "
+            "read_mentioned_messages、广播 mention 查询，或当前未读会话中的明确点名进入候选。",
         ),
     ]
     group_rows = [

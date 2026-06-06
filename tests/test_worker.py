@@ -50,8 +50,6 @@ def test_worker_recovery_runtime_config_reads_environment(monkeypatch):
     monkeypatch.setenv("FAST_PATH_UNREAD_BACKOFF", "2m")
     monkeypatch.setenv("SINGLE_CHAT_READ_RECOVERY_WINDOW", "6h")
     monkeypatch.setenv("SINGLE_CHAT_READ_RECOVERY_LIMIT", "11")
-    monkeypatch.setenv("GROUP_READ_RECOVERY_WINDOW", "45m")
-    monkeypatch.setenv("GROUP_READ_RECOVERY_LIMIT", "4")
 
     importlib.reload(worker_module)
 
@@ -59,15 +57,11 @@ def test_worker_recovery_runtime_config_reads_environment(monkeypatch):
     assert worker_module.FAST_PATH_UNREAD_BACKOFF == timedelta(minutes=2)
     assert worker_module.SINGLE_CHAT_READ_RECOVERY_WINDOW == timedelta(hours=6)
     assert worker_module.SINGLE_CHAT_READ_RECOVERY_LIMIT == 11
-    assert worker_module.GROUP_READ_RECOVERY_WINDOW == timedelta(minutes=45)
-    assert worker_module.GROUP_READ_RECOVERY_LIMIT == 4
     for name in (
         "MESSAGE_RECOVERY_INTERVAL",
         "FAST_PATH_UNREAD_BACKOFF",
         "SINGLE_CHAT_READ_RECOVERY_WINDOW",
         "SINGLE_CHAT_READ_RECOVERY_LIMIT",
-        "GROUP_READ_RECOVERY_WINDOW",
-        "GROUP_READ_RECOVERY_LIMIT",
     ):
         monkeypatch.delenv(name)
     monkeypatch.setenv("FAST_PATH_UNREAD_BACKOFF", "0s")
@@ -1722,6 +1716,36 @@ def test_produce_once_runs_recent_conversation_recovery_once_per_hour(
     )
 
 
+def test_produce_once_does_not_recover_recent_group_conversations(
+    tmp_path: Path, monkeypatch
+):
+    dws = FakeDws([], {"cid-group": [message("@Alex Chen(明哥) 群里补充一下")]})
+    dws.read_errors["cid-group"] = DwsError("forbidden request", code="1001")
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该调用")
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+    worker.store.upsert_conversation(
+        conversation_id="cid-group",
+        title="最近处理过的群聊",
+        single_chat=False,
+        codex_session_id=None,
+    )
+    worker.store.mark_seen("msg-seen-group", "cid-group")
+    worker.store.set_service_state(
+        "message_recovery_checked_at",
+        "2026-05-13T15:30:00+00:00",
+    )
+
+    queued = worker.produce_once()
+
+    assert queued == 0
+    assert dws.recent_message_reads == []
+    assert dws.unread_message_reads == []
+    assert worker.store.list_errors() == []
+    assert worker.store.count_reply_tasks(status="pending") == 0
+
+
 def test_current_user_candidate_filter_uses_only_local_identity_cache(
     tmp_path: Path, monkeypatch
 ):
@@ -1995,6 +2019,7 @@ def test_produce_once_uses_recent_context_when_unread_read_fails_for_group_menti
             )
         },
     )
+    dws.mentioned_messages = {"cid-1": [trigger]}
     codex = FakeCodex(
         CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该调用")
     )
@@ -2024,6 +2049,7 @@ def test_produce_once_does_not_notify_when_only_recent_context_read_fails(
         unread_messages={"cid-1": [trigger]},
         read_errors={"cid-1": DwsError("temporary SYSTEM_ERROR", code="SYSTEM_ERROR")},
     )
+    dws.mentioned_messages = {"cid-1": [trigger]}
     codex = FakeCodex(
         CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该调用")
     )
@@ -6125,6 +6151,7 @@ def test_group_direct_mention_found_in_recent_context_is_queued(
         },
         unread_messages={"cid-1": [latest_unread]},
     )
+    dws.mentioned_messages = {"cid-1": [old_direct_mention]}
     codex = FakeCodex(
         CodexDecision(action=CodexAction.SEND_REPLY, reply_text="我看一下")
     )
@@ -7200,7 +7227,7 @@ def test_read_group_mention_is_skipped_when_later_current_user_text_replied(
     assert worker.store.list_reply_attempts(limit=10) == []
 
 
-def test_read_group_mention_after_seen_message_is_recovered_from_recent_context(
+def test_read_group_mention_after_seen_message_is_processed_from_mentions(
     tmp_path: Path, monkeypatch
 ):
     handled = message(
@@ -7229,17 +7256,12 @@ def test_read_group_mention_after_seen_message_is_recovered_from_recent_context(
     conversation_record.title = "奔驰北美-Hyperion需求"
     conversation_record.unread_point = 0
 
-    class RecentGroupFakeDws(FakeDws):
-        def read_recent_messages(self, conversation: DingTalkConversation):
-            if conversation.open_conversation_id == "cid-hyperion":
-                return [handled, bot_reply, follow_up]
-            return super().read_recent_messages(conversation)
-
-    dws = RecentGroupFakeDws(
+    dws = FakeDws(
         [],
         {"cid-hyperion": [handled, bot_reply, follow_up]},
         unread_messages={"cid-hyperion": []},
     )
+    dws.mentioned_messages = {"cid-hyperion": [follow_up]}
     codex = FakeCodex(
         CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该调用")
     )
@@ -7259,6 +7281,7 @@ def test_read_group_mention_after_seen_message_is_recovered_from_recent_context(
     assert len(tasks) == 1
     assert tasks[0].trigger_message_id == "msg-follow-up"
     assert "我喜欢明哥分身的答案" in tasks[0].trigger_text
+    assert dws.recent_message_reads == ["cid-hyperion"]
 
 
 def test_split_person_auto_reply_does_not_hide_unanswered_group_mention(
@@ -7290,17 +7313,12 @@ def test_split_person_auto_reply_does_not_hide_unanswered_group_mention(
     conversation_record.title = "迭代群"
     conversation_record.unread_point = 0
 
-    class RecentGroupFakeDws(FakeDws):
-        def read_recent_messages(self, conversation: DingTalkConversation):
-            if conversation.open_conversation_id == "cid-iter":
-                return [handled, missed, auto_reply]
-            return super().read_recent_messages(conversation)
-
-    dws = RecentGroupFakeDws(
+    dws = FakeDws(
         [],
         {"cid-iter": [handled, missed, auto_reply]},
         unread_messages={"cid-iter": []},
     )
+    dws.mentioned_messages = {"cid-iter": [missed]}
     codex = FakeCodex(
         CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该调用")
     )
@@ -7315,6 +7333,7 @@ def test_split_person_auto_reply_does_not_hide_unanswered_group_mention(
     assert len(tasks) == 1
     assert tasks[0].trigger_message_id == "msg-missed"
     assert "能读群历史和群文件吗" in tasks[0].trigger_text
+    assert dws.recent_message_reads == ["cid-iter"]
 
 
 def test_group_mentions_are_processed_by_message_time_not_fetch_order(
