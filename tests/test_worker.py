@@ -5389,6 +5389,46 @@ def test_rerun_message_can_force_new_codex_decision(tmp_path: Path, monkeypatch)
     ]
 
 
+def test_force_new_rerun_does_not_resend_when_trigger_already_has_sent_reply(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message("@Alex Chen(明哥) 这个怎么处理？")
+    dws = FakeDws([conversation()], {"cid-1": [trigger]})
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="改走B方案")
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+    attempt_id = worker.store.record_reply_attempt(
+        conversation_id="cid-1",
+        conversation_title="Friday",
+        trigger_message_id="msg-1",
+        trigger_sender="周俊杰",
+        trigger_text=trigger.content,
+        action="send_reply",
+        sensitivity_kind="general",
+        send_status="sent",
+    )
+    worker.store.record_sent_reply(
+        conversation_id="cid-1",
+        trigger_message_id="msg-1",
+        reply_text="已经发过的回复",
+        send_result_json='{"ok": true}',
+    )
+
+    worker.rerun_message(conversation(), "msg-1", force_new_decision=True)
+
+    assert len(codex.calls) == 1
+    assert final_sent(dws) == []
+    attempt = worker.store.get_reply_attempt(attempt_id)
+    assert attempt is not None
+    assert attempt.draft_reply_text == "改走B方案"
+    assert attempt.final_reply_text == "改走B方案（by明哥分身）"
+    assert attempt.send_status == "blocked"
+    assert attempt.send_error == "duplicate_sent_reply_for_trigger"
+    assert worker.store.count_sent_replies() == 1
+    assert worker.store.has_seen("msg-1") is True
+
+
 def test_force_new_rerun_starts_fresh_codex_session(tmp_path: Path, monkeypatch):
     trigger = message("@Alex Chen(明哥) 这个怎么处理？")
     dws = FakeDws([conversation()], {"cid-1": [trigger]})

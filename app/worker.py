@@ -4486,6 +4486,23 @@ class DingTalkAutoReplyWorker:
         if self.dry_run:
             self.store.update_reply_attempt(attempt_id, send_status="dry_run")
             return True
+        if self.store.has_sent_reply_for_trigger(
+            conversation.open_conversation_id,
+            trigger.open_message_id,
+        ):
+            self.store.update_reply_attempt(
+                attempt_id,
+                send_status="blocked",
+                send_error="duplicate_sent_reply_for_trigger",
+            )
+            self.store.record_error(
+                conversation.open_conversation_id,
+                trigger.open_message_id,
+                "duplicate_sent_reply_for_trigger",
+                "A sent reply already exists for this trigger; skipped duplicate delivery.",
+            )
+            self._mark_seen(new_messages)
+            return False
         try:
             retry_count, send_result = self._send_reply_to_trigger_with_retry(
                 conversation,

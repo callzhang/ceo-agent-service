@@ -1045,6 +1045,23 @@ class AutoReplyStore:
                 ),
             )
 
+    def has_sent_reply_for_trigger(
+        self,
+        conversation_id: str,
+        trigger_message_id: str,
+    ) -> bool:
+        with self._connect() as db:
+            row = db.execute(
+                """
+                select 1
+                from sent_replies
+                where conversation_id=? and trigger_message_id=?
+                limit 1
+                """,
+                (conversation_id, trigger_message_id),
+            ).fetchone()
+            return row is not None
+
     def get_sent_reply(
         self, conversation_id: str, trigger_message_id: str
     ) -> SentReply | None:
