@@ -1019,9 +1019,10 @@ def test_produce_once_continues_when_mention_recovery_fails(
 
     queued = worker.produce_once()
 
-    assert queued == 0
+    assert queued == 1
     assert worker.store.count_errors() == 1
-    assert worker.store.count_reply_tasks(status="pending") == 0
+    assert worker.store.count_reply_tasks(status="pending") == 1
+    assert dws.unread_message_reads[0] == "cid-1"
     assert notifications == [
         {
             "title": "CEO read mentioned messages failed",
@@ -2474,6 +2475,50 @@ def test_calendar_response_organizer_error_is_terminal_noop(
         "noop_reason": "calendar_event_organizer",
         "success": True,
     }
+
+
+def test_send_reply_calendar_response_failure_does_not_send_reply(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message("[日程]", single_chat=True, message_type="calendar")
+    invite = DwsCalendarEvent(
+        event_id="invite-1",
+        title="客户续约方案讨论",
+        start_time="2026-05-16T09:00:00+08:00",
+        end_time="2026-05-16T10:00:00+08:00",
+        description="",
+        organizer=trigger.sender_name,
+        self_response_status="needsAction",
+        status="confirmed",
+    )
+    dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
+    dws.calendar_response_error = DwsError("calendar accept failed", code="500")
+    codex = FakeCodex(
+        CodexDecision(
+            action=CodexAction.SEND_REPLY,
+            reply_text="我先参加，重点看续约方案。",
+            reason="客户续约会议有明确业务价值，应该参加。",
+            calendar_response_status="accepted",
+            audit_summary="已读取待响应日程。",
+        )
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+
+    worker._process_batch(
+        dws.conversations[0],
+        [trigger],
+        [trigger],
+        calendar_response_event=invite,
+    )
+
+    assert dws.calendar_responses == [("invite-1", "accepted")]
+    assert final_sent(dws) == []
+    attempt = worker.store.get_reply_attempt(1)
+    assert attempt.send_status == "failed"
+    assert attempt.send_error == "calendar accept failed"
+    assert attempt.calendar_event_id == "invite-1"
+    assert attempt.calendar_response_status == "accepted"
+    assert worker.store.has_seen("msg-1") is False
 
 
 def test_rendered_calendar_card_without_message_type_uses_unique_pending_invite_without_change_time(
@@ -6664,7 +6709,7 @@ def test_group_unread_without_principal_mention_is_ignored(
     assert notifications == []
 
 
-def test_group_unread_without_principal_mention_does_not_read_unread_tail(
+def test_group_unread_without_principal_mention_reads_unread_tail_but_does_not_queue(
     tmp_path: Path, monkeypatch
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
@@ -6680,7 +6725,6 @@ def test_group_unread_without_principal_mention_does_not_read_unread_tail(
     dws = FakeDws(
         [group],
         {"cid-1": [latest]},
-        unread_errors={"cid-1": RuntimeError("forbidden request")},
     )
     codex = FakeCodex(
         CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该调用")
@@ -6695,13 +6739,13 @@ def test_group_unread_without_principal_mention_does_not_read_unread_tail(
 
     worker.run_once()
 
-    assert dws.unread_message_reads == []
+    assert dws.unread_message_reads[0] == "cid-1"
     assert store.list_errors() == []
     assert codex.calls == []
     assert final_sent(dws) == []
 
 
-def test_recovery_due_group_unread_without_principal_mention_does_not_read_unread_tail(
+def test_recovery_due_group_unread_without_principal_mention_reads_unread_tail_but_does_not_queue(
     tmp_path: Path, monkeypatch
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
@@ -6717,7 +6761,6 @@ def test_recovery_due_group_unread_without_principal_mention_does_not_read_unrea
     dws = FakeDws(
         [group],
         {"cid-1": [latest]},
-        unread_errors={"cid-1": RuntimeError("forbidden request")},
     )
     codex = FakeCodex(
         CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该调用")
@@ -6732,7 +6775,7 @@ def test_recovery_due_group_unread_without_principal_mention_does_not_read_unrea
 
     worker.run_once()
 
-    assert dws.unread_message_reads == []
+    assert dws.unread_message_reads == ["cid-1"]
     assert store.list_errors() == []
     assert codex.calls == []
     assert final_sent(dws) == []
@@ -7033,6 +7076,36 @@ def test_group_mention_from_unread_conversation_is_processed_when_unread_tail_mi
     attempts = worker.store.list_reply_attempts(limit=10)
     assert len(codex.calls) == 1
     assert attempts[0].trigger_message_id == "msg-mentioned"
+    assert attempts[0].send_status == "dry_run"
+
+
+def test_group_mention_from_unread_payload_is_processed_when_mention_lookup_misses_it(
+    tmp_path: Path, monkeypatch
+):
+    unread_mention = message(
+        "@Alex Chen(明哥) 官网反馈这条帮忙看一下",
+        message_id="msg-unread-mention",
+    )
+    unread_mention.create_time = "2026-05-25 17:53:12"
+    conv = conversation()
+    conv.unread_point = 4
+    dws = FakeDws(
+        [conv],
+        {"cid-1": [unread_mention]},
+        unread_messages={"cid-1": [unread_mention]},
+    )
+    dws.mentioned_messages = {}
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="这条我看一下")
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch, dry_run=True)
+
+    worker.run_once()
+
+    attempts = worker.store.list_reply_attempts(limit=10)
+    assert dws.unread_message_reads[0] == "cid-1"
+    assert len(codex.calls) == 1
+    assert attempts[0].trigger_message_id == "msg-unread-mention"
     assert attempts[0].send_status == "dry_run"
 
 

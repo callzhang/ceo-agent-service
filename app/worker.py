@@ -403,11 +403,7 @@ class DingTalkAutoReplyWorker:
         recovery_due: bool,
         unread_conversation_ids: set[str],
     ) -> bool:
-        if conversation.open_conversation_id not in unread_conversation_ids:
-            return False
-        if conversation.single_chat:
-            return True
-        return bool(conversation_mentions)
+        return conversation.open_conversation_id in unread_conversation_ids
 
     @staticmethod
     def _should_read_recent_messages(
@@ -2667,7 +2663,7 @@ class DingTalkAutoReplyWorker:
             eligible_messages = [
                 message
                 for message in messages
-                if message.addresses_principal() or self._is_calendar_message(message)
+                if message.addresses_principal()
             ]
         candidates = [
             message
@@ -3003,7 +2999,7 @@ class DingTalkAutoReplyWorker:
                         event=calendar_response_event,
                         response_status=calendar_response_status,
                         attempt_id=attempt_id,
-                        mark_attempt_terminal=False,
+                        mark_attempt_terminal=True,
                         raise_on_delivery_failure=raise_on_delivery_failure,
                     )
                     if not accepted:
@@ -3036,15 +3032,17 @@ class DingTalkAutoReplyWorker:
                     allow_duplicate_send=allow_duplicate_send,
                 )
                 return
-            self._execute_calendar_response(
+            calendar_response_succeeded = self._execute_calendar_response(
                 conversation=conversation,
                 trigger=trigger,
                 event=calendar_response_event,
                 response_status=calendar_response_status,
                 attempt_id=attempt_id,
-                mark_attempt_terminal=False,
+                mark_attempt_terminal=True,
                 raise_on_delivery_failure=raise_on_delivery_failure,
             )
+            if not calendar_response_succeeded:
+                return
 
         if decision.action == CodexAction.NO_REPLY:
             self.store.update_reply_attempt(
