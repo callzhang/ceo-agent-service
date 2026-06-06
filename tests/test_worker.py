@@ -85,8 +85,10 @@ class FakeDws:
         client_cids: dict[str, str] | None = None,
     ):
         self.conversations = conversations
-        self.messages = messages
-        self.unread_messages = unread_messages or messages
+        self.messages = self._messages_by_conversation(messages)
+        self.unread_messages = self._messages_by_conversation(
+            unread_messages or messages
+        )
         self.read_errors = read_errors or {}
         self.unread_errors = unread_errors or {}
         self.list_error = list_error
@@ -123,8 +125,24 @@ class FakeDws:
         self.direct_open_dingtalk_ids: list[str | None] = []
         self.send_attempt_count = 0
         self.dings: list[str] = []
-        self.mentioned_messages: dict[str, list[DingTalkMessage]] = {}
-        self.broadcast_messages: dict[str, list[DingTalkMessage]] = {}
+        self.mentioned_messages: dict[str, list[DingTalkMessage]] = {
+            conversation_id: [
+                message
+                for message in messages
+                if "@Alex Chen" in message.content
+                or "@所有人" in message.content
+                or "@All" in message.content
+            ]
+            for conversation_id, messages in self.unread_messages.items()
+        }
+        self.broadcast_messages: dict[str, list[DingTalkMessage]] = {
+            conversation_id: [
+                message
+                for message in messages
+                if "@所有人" in message.content or "@All" in message.content
+            ]
+            for conversation_id, messages in self.unread_messages.items()
+        }
         self.user_departments: dict[str, set[str]] = {}
         self.user_profiles: dict[str, DwsUserProfile] = {}
         self.user_profile_calls: list[str] = []
@@ -173,6 +191,20 @@ class FakeDws:
         self.upgrade_calls = 0
         self.client_cids = client_cids or {}
         self.client_cid_calls: list[str] = []
+
+    @staticmethod
+    def _messages_by_conversation(
+        messages: dict[str, list[DingTalkMessage]],
+    ) -> dict[str, list[DingTalkMessage]]:
+        return {
+            conversation_id: [
+                message.model_copy(
+                    update={"open_conversation_id": conversation_id}
+                )
+                for message in conversation_messages
+            ]
+            for conversation_id, conversation_messages in messages.items()
+        }
 
     def list_unread_conversations(self, count: int) -> list[DingTalkConversation]:
         assert count == 50
@@ -987,9 +1019,9 @@ def test_produce_once_continues_when_mention_recovery_fails(
 
     queued = worker.produce_once()
 
-    assert queued == 1
+    assert queued == 0
     assert worker.store.count_errors() == 1
-    assert worker.store.count_reply_tasks(status="pending") == 1
+    assert worker.store.count_reply_tasks(status="pending") == 0
     assert notifications == [
         {
             "title": "CEO read mentioned messages failed",
@@ -1266,7 +1298,7 @@ def test_producer_enriches_bare_calendar_card_task_with_invite_details(
     ]
 
 
-def test_group_calendar_card_can_trigger_without_explicit_mention(
+def test_group_calendar_card_without_explicit_mention_is_ignored(
     tmp_path: Path, monkeypatch
 ):
     intro = message(
@@ -1299,15 +1331,14 @@ def test_group_calendar_card_can_trigger_without_explicit_mention(
     ] = [invite]
     dws.calendar_events[f"{invite.start_time}|{invite.end_time}"] = [invite]
 
-    assert worker.produce_once() == 1
+    assert worker.produce_once() == 0
 
     tasks = worker.store.list_reply_tasks(statuses=("pending",), limit=10)
-    assert [task.trigger_message_id for task in tasks] == ["msg-calendar-card"]
-    assert tasks[0].trigger_text == "[日程] 官网反馈静默会"
+    assert tasks == []
     assert worker.store.has_seen("msg-calendar-intro") is False
 
 
-def test_group_calendar_card_uses_context_when_sender_is_not_organizer(
+def test_group_calendar_card_without_explicit_mention_does_not_use_context(
     tmp_path: Path, monkeypatch
 ):
     older_noise = message(
@@ -1391,18 +1422,14 @@ def test_group_calendar_card_uses_context_when_sender_is_not_organizer(
     ] = [unrelated, similar_accepted, sender_owned_unrelated, invite, later_recurrence]
     dws.calendar_events[f"{invite.start_time}|{invite.end_time}"] = [invite]
 
-    assert worker.produce_once() == 1
+    assert worker.produce_once() == 0
 
     tasks = worker.store.list_reply_tasks(statuses=("pending",), limit=10)
-    assert [task.trigger_message_id for task in tasks] == ["msg-calendar-card"]
-    assert tasks[0].trigger_text == "[日程] 领先性讨论周会（每周一收集、每周二讨论）"
-    merged = DingTalkMessage.model_validate_json(tasks[0].trigger_message_json)
-    assert merged.raw_payload["id"] == "invite-context"
-    assert merged.raw_payload["organizer"]["displayName"] == "Alex Chen"
-    assert "cid-1" in dws.recent_message_reads
+    assert tasks == []
+    assert dws.recent_message_reads == []
 
 
-def test_group_calendar_card_refreshes_existing_pending_task_with_context(
+def test_group_calendar_card_without_explicit_mention_does_not_refresh_pending_task(
     tmp_path: Path, monkeypatch
 ):
     intro = message(
@@ -1448,13 +1475,13 @@ def test_group_calendar_card_refreshes_existing_pending_task_with_context(
     ] = [invite]
     dws.calendar_events[f"{invite.start_time}|{invite.end_time}"] = [invite]
 
-    assert worker.produce_once() == 1
+    assert worker.produce_once() == 0
 
     tasks = worker.store.list_reply_tasks(statuses=("pending",), limit=10)
     assert len(tasks) == 1
-    assert tasks[0].trigger_text == "[日程] 领先性讨论周会（每周一收集、每周二讨论）"
+    assert tasks[0].trigger_text == "[日程]"
     merged = DingTalkMessage.model_validate_json(tasks[0].trigger_message_json)
-    assert merged.raw_payload["id"] == "invite-context"
+    assert merged.raw_payload == {}
 
 
 def test_fast_path_backoff_processes_trigger_when_unread_clears_without_user_reply(
@@ -1708,7 +1735,7 @@ def test_produce_once_runs_recent_conversation_recovery_once_per_hour(
 
     assert queued == 1
     assert dws.recent_message_reads == ["cid-recovered"]
-    assert dws.unread_message_reads == ["cid-recovered"]
+    assert dws.unread_message_reads == []
     assert worker.store.count_reply_tasks(status="pending") == 1
     assert (
         worker.store.get_service_state("message_recovery_checked_at")
@@ -1719,7 +1746,7 @@ def test_produce_once_runs_recent_conversation_recovery_once_per_hour(
 def test_produce_once_does_not_recover_recent_group_conversations(
     tmp_path: Path, monkeypatch
 ):
-    dws = FakeDws([], {"cid-group": [message("@Alex Chen(明哥) 群里补充一下")]})
+    dws = FakeDws([], {"cid-group": [message("群里补充一下")]})
     dws.read_errors["cid-group"] = DwsError("forbidden request", code="1001")
     codex = FakeCodex(
         CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该调用")
@@ -6664,6 +6691,43 @@ def test_group_unread_without_principal_mention_does_not_read_unread_tail(
     worker.store.set_service_state(
         "message_recovery_checked_at",
         "2026-05-13T16:30:00+00:00",
+    )
+
+    worker.run_once()
+
+    assert dws.unread_message_reads == []
+    assert store.list_errors() == []
+    assert codex.calls == []
+    assert final_sent(dws) == []
+
+
+def test_recovery_due_group_unread_without_principal_mention_does_not_read_unread_tail(
+    tmp_path: Path, monkeypatch
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    latest = message(
+        "无关同步",
+        message_id="msg-unmentioned",
+    )
+    latest.create_time = "2026-05-13 18:10:00"
+    group = conversation()
+    group.title = "无关群"
+    group.single_chat = False
+    group.unread_point = 1
+    dws = FakeDws(
+        [group],
+        {"cid-1": [latest]},
+        unread_errors={"cid-1": RuntimeError("forbidden request")},
+    )
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该调用")
+    )
+    worker = DingTalkAutoReplyWorker(
+        store=store, dws=dws, codex=codex, now_provider=fixed_worker_now
+    )
+    worker.store.set_service_state(
+        "message_recovery_checked_at",
+        "2026-05-13T15:30:00+00:00",
     )
 
     worker.run_once()

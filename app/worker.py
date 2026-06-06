@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from io import BytesIO
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 from urllib.parse import parse_qs, quote, unquote, urlparse, urlsplit, urlunsplit
 
 from pypdf import PdfReader
@@ -88,6 +88,7 @@ CALENDAR_PENDING_INVITE_NO_CHANGE_TIME_START_LOOKAHEAD = timedelta(hours=24)
 CALENDAR_CONTEXT_MATCH_MIN_SCORE = 0.05
 CALENDAR_CONTEXT_MATCH_LOOKBACK = timedelta(minutes=10)
 CALENDAR_ORGANIZER_RESPONSE_ERROR = "Cannot change response status of event organizer"
+T = TypeVar("T")
 CALENDAR_ACTION_SEND_STATUS = "calendar"
 TEXT_MESSAGE_TYPES = {"text"}
 RENDERED_NON_TEXT_PREFIXES = (
@@ -218,6 +219,27 @@ class DingTalkAutoReplyWorker:
         self.produce_once(max_tasks=max_batches)
         self.consume_once(max_tasks=max_batches)
 
+    def _call_dws(
+        self,
+        kind: str,
+        call: Callable[[], T],
+        *,
+        conversation_id: str | None = None,
+        message_id: str | None = None,
+        notify_title: str | None = None,
+        default: T,
+    ) -> T:
+        try:
+            return call()
+        except Exception as exc:
+            self.store.record_error(conversation_id, message_id, kind, str(exc))
+            if notify_title:
+                self._notify(
+                    title=notify_title,
+                    message=str(exc)[:120],
+                )
+            return default
+
     def produce_once(self, max_tasks: int | None = None) -> int:
         if max_tasks == 0:
             return 0
@@ -226,14 +248,13 @@ class DingTalkAutoReplyWorker:
         fast_path_checked_at = self._now().astimezone(timezone.utc)
         recovery_due = self._should_run_recent_message_recovery()
         queued_tasks = 0
-        try:
-            conversations = self.dws.list_unread_conversations(count=50)
-        except Exception as exc:
-            self.store.record_error(None, None, "list_unread_conversations", str(exc))
-            self._notify(
-                title="CEO read unread conversations failed",
-                message=str(exc)[:120],
-            )
+        conversations = self._call_dws(
+            "list_unread_conversations",
+            lambda: self.dws.list_unread_conversations(count=50),
+            notify_title="CEO read unread conversations failed",
+            default=None,
+        )
+        if conversations is None:
             return 0
         if not recovery_due:
             conversations = self._conversations_due_for_fast_path(conversations)
@@ -274,15 +295,12 @@ class DingTalkAutoReplyWorker:
                 recovery_conversation_ids=recovery_conversation_ids,
             )
             if should_read_recent:
-                try:
-                    context_messages = self.dws.read_recent_messages(conversation)
-                except Exception as exc:
-                    self.store.record_error(
-                        conversation.open_conversation_id,
-                        None,
-                        "read_recent_messages",
-                        str(exc),
-                    )
+                context_messages = self._call_dws(
+                    "read_recent_messages",
+                    lambda: self.dws.read_recent_messages(conversation),
+                    conversation_id=conversation.open_conversation_id,
+                    default=[],
+                )
             unread_messages = []
             candidate_unread_messages = []
             should_read_unread = self._should_read_unread_messages(
@@ -292,17 +310,17 @@ class DingTalkAutoReplyWorker:
                 unread_conversation_ids=unread_conversation_ids,
             )
             if should_read_unread:
-                try:
-                    unread_messages = self.dws.read_unread_messages(conversation)
-                    candidate_unread_messages = unread_messages
-                except Exception as exc:
-                    self.store.record_error(
-                        conversation.open_conversation_id,
-                        None,
-                        "read_unread_messages",
-                        str(exc),
-                    )
+                unread_messages = self._call_dws(
+                    "read_unread_messages",
+                    lambda: self.dws.read_unread_messages(conversation),
+                    conversation_id=conversation.open_conversation_id,
+                    default=None,
+                )
+                if unread_messages is None:
+                    unread_messages = []
                     candidate_unread_messages = context_messages
+                else:
+                    candidate_unread_messages = unread_messages
             if (
                 not context_messages
                 and not unread_messages
@@ -385,8 +403,6 @@ class DingTalkAutoReplyWorker:
         recovery_due: bool,
         unread_conversation_ids: set[str],
     ) -> bool:
-        if recovery_due:
-            return True
         if conversation.open_conversation_id not in unread_conversation_ids:
             return False
         if conversation.single_chat:
@@ -1000,34 +1016,29 @@ class DingTalkAutoReplyWorker:
     def _mentioned_messages_by_conversation(
         self, conversations: list[DingTalkConversation]
     ) -> dict[str, list[DingTalkMessage]]:
-        try:
-            messages = self.dws.read_mentioned_messages(limit=100)
-        except Exception as exc:
-            self.store.record_error(None, None, "read_mentioned_messages", str(exc))
-            self._notify(
-                title="CEO read mentioned messages failed",
-                message=str(exc)[:120],
-            )
-            return {}
+        del conversations
+        messages = self._call_dws(
+            "read_mentioned_messages",
+            lambda: self.dws.read_mentioned_messages(limit=100),
+            notify_title="CEO read mentioned messages failed",
+            default=[],
+        )
         grouped: dict[str, list[DingTalkMessage]] = {}
         for message in messages:
             grouped.setdefault(message.open_conversation_id, []).append(message)
         return grouped
 
     def _broadcast_messages_by_conversation(self) -> dict[str, list[DingTalkMessage]]:
-        try:
-            messages = self.dws.read_broadcast_messages(
+        messages = self._call_dws(
+            "read_broadcast_messages",
+            lambda: self.dws.read_broadcast_messages(
                 broadcast_mention_aliases(),
                 limit=100,
                 lookback_hours=24,
-            )
-        except Exception as exc:
-            self.store.record_error(None, None, "read_broadcast_messages", str(exc))
-            self._notify(
-                title="CEO read broadcast messages failed",
-                message=str(exc)[:120],
-            )
-            return {}
+            ),
+            notify_title="CEO read broadcast messages failed",
+            default=[],
+        )
         grouped: dict[str, list[DingTalkMessage]] = {}
         for message in messages:
             if self._is_current_user_message_for_candidate_filter(message):
