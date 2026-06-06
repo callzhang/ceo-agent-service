@@ -164,6 +164,8 @@ PDF_TEXT_PAGE_LIMIT = 30
 DWS_UPGRADE_CHECKED_DATE_STATE_KEY = "dws_upgrade_checked_date"
 MESSAGE_RECOVERY_CHECKED_AT_STATE_KEY = "message_recovery_checked_at"
 MESSAGE_FAST_PATH_CHECKED_AT_STATE_KEY = "message_fast_path_checked_at"
+DWS_FORBIDDEN_CONVERSATIONS_STATE_KEY = "dws_forbidden_conversations"
+DWS_FORBIDDEN_CONVERSATION_COOLDOWN = timedelta(days=1)
 ORG_CACHE_REFRESH_INTERVAL = timedelta(days=7)
 AITABLE_TABLE_PREVIEW_LIMIT = 5
 AITABLE_RECORD_PREVIEW_LIMIT = 10
@@ -233,6 +235,8 @@ class DingTalkAutoReplyWorker:
             return call()
         except Exception as exc:
             self.store.record_error(conversation_id, message_id, kind, str(exc))
+            if conversation_id and self._is_dws_forbidden_read_error(exc):
+                self._mark_dws_read_forbidden(conversation_id)
             if notify_title:
                 self._notify(
                     title=notify_title,
@@ -294,7 +298,12 @@ class DingTalkAutoReplyWorker:
                 recovery_due=recovery_due,
                 recovery_conversation_ids=recovery_conversation_ids,
             )
-            if should_read_recent:
+            if (
+                should_read_recent
+                and not self._is_dws_read_forbidden(
+                    conversation.open_conversation_id
+                )
+            ):
                 context_messages = self._call_dws(
                     "read_recent_messages",
                     lambda: self.dws.read_recent_messages(conversation),
@@ -309,7 +318,12 @@ class DingTalkAutoReplyWorker:
                 recovery_due=recovery_due,
                 unread_conversation_ids=unread_conversation_ids,
             )
-            if should_read_unread:
+            if (
+                should_read_unread
+                and not self._is_dws_read_forbidden(
+                    conversation.open_conversation_id
+                )
+            ):
                 unread_messages = self._call_dws(
                     "read_unread_messages",
                     lambda: self.dws.read_unread_messages(conversation),
@@ -615,13 +629,55 @@ class DingTalkAutoReplyWorker:
         return self._conversations_updated_since_fast_path_check(conversations)
 
     @staticmethod
-    def _sqlite_timestamp(value: datetime) -> str:
-        return value.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    def _is_dws_forbidden_read_error(exc: Exception) -> bool:
+        return (
+            isinstance(exc, DwsError)
+            and exc.code == "1001"
+            and "forbidden request" in str(exc).lower()
+        )
 
-    def _service_state_datetime(self, key: str) -> datetime | None:
-        value = self.store.get_service_state(key)
-        if not value:
-            return None
+    def _mark_dws_read_forbidden(self, conversation_id: str) -> None:
+        forbidden_until = (
+            self._now().astimezone(timezone.utc)
+            + DWS_FORBIDDEN_CONVERSATION_COOLDOWN
+        ).isoformat()
+        state = self._dws_forbidden_conversations()
+        state[conversation_id] = forbidden_until
+        self.store.set_service_state(
+            DWS_FORBIDDEN_CONVERSATIONS_STATE_KEY,
+            json.dumps(state, ensure_ascii=False, sort_keys=True),
+        )
+
+    def _is_dws_read_forbidden(self, conversation_id: str) -> bool:
+        state = self._dws_forbidden_conversations()
+        forbidden_until_text = state.get(conversation_id)
+        if not forbidden_until_text:
+            return False
+        forbidden_until = self._parse_service_state_datetime(forbidden_until_text)
+        if forbidden_until is None:
+            return False
+        return self._now().astimezone(timezone.utc) < forbidden_until.astimezone(
+            timezone.utc
+        )
+
+    def _dws_forbidden_conversations(self) -> dict[str, str]:
+        raw = self.store.get_service_state(DWS_FORBIDDEN_CONVERSATIONS_STATE_KEY)
+        if not raw:
+            return {}
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError:
+            return {}
+        if not isinstance(payload, dict):
+            return {}
+        return {
+            str(key): value
+            for key, value in payload.items()
+            if isinstance(value, str)
+        }
+
+    @staticmethod
+    def _parse_service_state_datetime(value: str) -> datetime | None:
         try:
             parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
         except ValueError:
@@ -629,6 +685,16 @@ class DingTalkAutoReplyWorker:
         if parsed.tzinfo is None:
             return parsed.replace(tzinfo=timezone.utc)
         return parsed
+
+    @staticmethod
+    def _sqlite_timestamp(value: datetime) -> str:
+        return value.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+
+    def _service_state_datetime(self, key: str) -> datetime | None:
+        value = self.store.get_service_state(key)
+        if not value:
+            return None
+        return self._parse_service_state_datetime(value)
 
     def _should_run_recent_message_recovery(self) -> bool:
         checked_at = self.store.get_service_state(MESSAGE_RECOVERY_CHECKED_AT_STATE_KEY)

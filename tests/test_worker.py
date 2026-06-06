@@ -2066,6 +2066,29 @@ def test_produce_once_uses_recent_context_when_unread_read_fails_for_group_menti
     assert codex.calls == []
 
 
+def test_produce_once_suppresses_repeated_forbidden_unread_reads(
+    tmp_path: Path, monkeypatch
+):
+    dws = FakeDws(
+        [conversation()],
+        {"cid-1": []},
+        unread_errors={"cid-1": DwsError("forbidden request", code="1001")},
+    )
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该调用")
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+
+    assert worker.produce_once() == 0
+    assert dws.unread_message_reads == ["cid-1"]
+    assert worker.store.count_errors() == 1
+
+    assert worker.produce_once() == 0
+    assert dws.unread_message_reads == ["cid-1"]
+    assert worker.store.count_errors() == 1
+    assert worker.store.count_reply_tasks(status="pending") == 0
+
+
 def test_produce_once_does_not_notify_when_only_recent_context_read_fails(
     tmp_path: Path, monkeypatch
 ):
