@@ -1184,72 +1184,7 @@ def test_produce_once_fast_path_task_is_claimable_after_backoff(
     assert claimed_after_backoff[0].available_at == ""
 
 
-def test_produce_once_enqueues_pending_calendar_invite_without_chat_card(
-    tmp_path: Path, monkeypatch
-):
-    dws = FakeDws([], {})
-    codex = FakeCodex(
-        CodexDecision(
-            action=CodexAction.NO_REPLY,
-            reason="标题和描述足以判断需要参加。",
-            calendar_response_status="accepted",
-            audit_summary="已读取待响应日程。",
-        )
-    )
-    worker = make_worker(tmp_path, dws, codex, monkeypatch)
-    worker.store.upsert_conversation("cid-1", "产品部", False, None)
-    worker.store.enqueue_reply_task(
-        conversation_id="cid-1",
-        conversation_title="产品部",
-        single_chat=False,
-        trigger_message_id="msg-from-organizer",
-        trigger_create_time="2026-05-13 18:00:00",
-        trigger_sender="连航",
-        trigger_text="@Alex Chen(明哥) 我来约个会吧",
-    )
-    invite = DwsCalendarEvent(
-        event_id="invite-1",
-        title="产品部效能讨论",
-        start_time="2026-05-14T10:00:00+08:00",
-        end_time="2026-05-14T11:00:00+08:00",
-        description="分析产品部效能情况并寻找解决方案",
-        organizer="连航",
-        self_response_status="needsAction",
-        attendees=["Alex Chen(明哥)", "连航"],
-        status="confirmed",
-    )
-    old_recurring_invite = DwsCalendarEvent(
-        event_id="invite-next-week",
-        title="产品例会",
-        start_time="2026-05-21T10:00:00+08:00",
-        end_time="2026-05-21T11:00:00+08:00",
-        description="下周例会",
-        organizer="连航",
-        self_response_status="needsAction",
-        attendees=["Alex Chen(明哥)", "连航"],
-        status="confirmed",
-    )
-    scan_start, scan_end = worker._pending_calendar_invite_scan_window()
-    dws.calendar_events[f"{scan_start}|{scan_end}"] = [invite, old_recurring_invite]
-
-    queued = worker.produce_once()
-
-    tasks = worker.store.list_reply_tasks(statuses=("pending",), limit=10)
-    assert queued == 1
-    assert len(tasks) == 2
-    calendar_task = [
-        task for task in tasks if task.trigger_message_id.startswith("calendar:")
-    ][0]
-    assert [task.trigger_message_id for task in tasks].count(
-        "calendar:invite-next-week"
-    ) == 0
-    assert calendar_task.conversation_id == "cid-1"
-    assert calendar_task.conversation_title == "产品部"
-    assert calendar_task.trigger_sender == "连航"
-    assert calendar_task.trigger_text == "[日程] 产品部效能讨论"
-
-
-def test_pending_calendar_invite_merges_into_recent_calendar_card_task(
+def test_calendar_card_task_is_enriched_with_matching_pending_invite(
     tmp_path: Path, monkeypatch
 ):
     trigger = message(
@@ -1279,8 +1214,8 @@ def test_pending_calendar_invite_merges_into_recent_calendar_card_task(
         attendees=["Alex Chen(明哥)", trigger.sender_name],
         status="confirmed",
     )
-    scan_start, scan_end = worker._pending_calendar_invite_scan_window()
-    dws.calendar_events[f"{scan_start}|{scan_end}"] = [invite]
+    search_start, search_end = worker._calendar_pending_invite_search_window(trigger)
+    dws.calendar_events[f"{search_start}|{search_end}"] = [invite]
 
     queued = worker.produce_once()
 
@@ -1291,7 +1226,6 @@ def test_pending_calendar_invite_merges_into_recent_calendar_card_task(
     merged = DingTalkMessage.model_validate_json(tasks[0].trigger_message_json)
     assert merged.sender_open_dingtalk_id == "sender-1"
     assert merged.raw_payload["id"] == "invite-1"
-    assert worker.store.has_seen("calendar:invite-1") is True
 
 
 def test_producer_enriches_bare_calendar_card_task_with_invite_details(
@@ -1524,107 +1458,6 @@ def test_group_calendar_card_refreshes_existing_pending_task_with_context(
     assert tasks[0].trigger_text == "[日程] 领先性讨论周会（每周一收集、每周二讨论）"
     merged = DingTalkMessage.model_validate_json(tasks[0].trigger_message_json)
     assert merged.raw_payload["id"] == "invite-context"
-
-
-def test_pending_calendar_invite_can_recover_failed_calendar_card_task(
-    tmp_path: Path, monkeypatch
-):
-    failed_card = message(
-        "[日程]",
-        message_id="msg-calendar-card",
-        single_chat=True,
-        message_type="calendar",
-    )
-    dws = FakeDws([], {})
-    worker = make_worker(tmp_path, dws, FakeCodex([]), monkeypatch)
-    worker.store.upsert_conversation("cid-1", "Friday", True, None)
-    worker.store.enqueue_reply_task(
-        conversation_id="cid-1",
-        conversation_title="Friday",
-        single_chat=True,
-        trigger_message_id=failed_card.open_message_id,
-        trigger_create_time=failed_card.create_time,
-        trigger_sender=failed_card.sender_name,
-        trigger_text=failed_card.content,
-        trigger_message_json=failed_card.model_dump_json(),
-    )
-    failed_task = worker.store.claim_reply_tasks(limit=1)[0]
-    worker.store.fail_reply_task(failed_task.id, "calendar card failed")
-    invite = DwsCalendarEvent(
-        event_id="invite-1",
-        title="Vivian Memorial Park",
-        start_time="2026-05-13T15:00:00-07:00",
-        end_time="2026-05-13T16:00:00-07:00",
-        organizer=failed_card.sender_name,
-        self_response_status="needsAction",
-        status="confirmed",
-    )
-    scan_start, scan_end = worker._pending_calendar_invite_scan_window()
-    dws.calendar_events[f"{scan_start}|{scan_end}"] = [invite]
-
-    queued = worker.produce_once()
-
-    pending_tasks = worker.store.list_reply_tasks(statuses=("pending",), limit=10)
-    assert queued == 1
-    assert [task.trigger_message_id for task in pending_tasks] == [
-        "calendar:invite-1"
-    ]
-    assert worker.store.has_seen("calendar:invite-1") is False
-
-
-def test_pending_calendar_invite_from_recent_sender_uses_existing_calendar_flow(
-    tmp_path: Path, monkeypatch
-):
-    dws = FakeDws([], {"cid-1": []})
-    codex = FakeCodex(
-        CodexDecision(
-            action=CodexAction.NO_REPLY,
-            reason="标题和描述足以判断需要参加。",
-            calendar_response_status="accepted",
-            audit_summary="已读取待响应日程并判断需要接受。",
-        )
-    )
-    worker = make_worker(tmp_path, dws, codex, monkeypatch)
-    worker.store.upsert_conversation("cid-1", "产品部", False, None)
-    worker.store.enqueue_reply_task(
-        conversation_id="cid-1",
-        conversation_title="产品部",
-        single_chat=False,
-        trigger_message_id="msg-from-organizer",
-        trigger_create_time="2026-05-13 18:00:00",
-        trigger_sender="连航",
-        trigger_text="@Alex Chen(明哥) 我来约个会吧",
-    )
-    invite = DwsCalendarEvent(
-        event_id="invite-1",
-        title="产品部效能讨论",
-        start_time="2026-05-14T10:00:00+08:00",
-        end_time="2026-05-14T11:00:00+08:00",
-        description="分析产品部效能情况并寻找解决方案",
-        organizer="连航",
-        self_response_status="needsAction",
-        attendees=["Alex Chen(明哥)", "连航"],
-        status="confirmed",
-    )
-    scan_start, scan_end = worker._pending_calendar_invite_scan_window()
-    dws.calendar_events[f"{scan_start}|{scan_end}"] = [invite]
-    dws.calendar_events[f"{invite.start_time}|{invite.end_time}"] = [invite]
-    dws.calendar_invites["calendar:invite-1"] = invite
-
-    assert worker.produce_once() == 1
-    assert worker.consume_once() == 1
-
-    assert len(codex.calls) == 1
-    assert "产品部效能讨论" in codex.calls[0][0]
-    assert "分析产品部效能情况并寻找解决方案" in codex.calls[0][0]
-    assert dws.calendar_responses == [("invite-1", "accepted")]
-    assert final_sent(dws) == [("cid-1", "标题和描述足以判断需要参加。（by明哥分身）")]
-    attempt = worker.store.get_reply_attempt(1)
-    assert attempt.action == "send_reply"
-    assert attempt.calendar_event_id == "invite-1"
-    assert attempt.calendar_response_status == "accepted"
-    assert attempt.send_status == "sent"
-    assert worker.store.has_seen("calendar:invite-1") is True
 
 
 def test_fast_path_backoff_processes_trigger_when_unread_clears_without_user_reply(

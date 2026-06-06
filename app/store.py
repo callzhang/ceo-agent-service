@@ -737,66 +737,6 @@ class AutoReplyStore:
             ).fetchone()
             return None if row is None else row["codex_session_id"]
 
-    def get_recent_conversation_for_sender(
-        self,
-        sender_name: str,
-        since_utc: str,
-    ) -> ConversationRecord | None:
-        sender_name = sender_name.strip()
-        if not sender_name:
-            return None
-        with self._connect() as db:
-            row = db.execute(
-                """
-                select
-                    c.conversation_id,
-                    c.title,
-                    c.single_chat,
-                    c.codex_session_id
-                from reply_tasks t
-                join conversations c on c.conversation_id=t.conversation_id
-                where t.trigger_sender=?
-                  and t.created_at >= ?
-                order by t.created_at desc, t.id desc
-                limit 1
-                """,
-                (sender_name, since_utc),
-            ).fetchone()
-            if row is None:
-                return None
-            return ConversationRecord(
-                conversation_id=row["conversation_id"],
-                title=row["title"],
-                single_chat=bool(row["single_chat"]),
-                codex_session_id=row["codex_session_id"],
-            )
-
-    def list_recent_reply_tasks_for_sender(
-        self,
-        *,
-        conversation_id: str,
-        sender_name: str,
-        since_utc: str,
-        limit: int = 10,
-    ) -> list[ReplyTask]:
-        sender_name = sender_name.strip()
-        if not sender_name:
-            return []
-        with self._connect() as db:
-            rows = db.execute(
-                """
-                select *
-                from reply_tasks
-                where conversation_id=?
-                  and trigger_sender=?
-                  and created_at >= ?
-                order by created_at desc, id desc
-                limit ?
-                """,
-                (conversation_id, sender_name, since_utc, limit),
-            ).fetchall()
-            return [self._reply_task_from_row(row) for row in rows]
-
     def update_reply_task_trigger(
         self,
         task_id: int,

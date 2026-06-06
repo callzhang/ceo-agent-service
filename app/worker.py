@@ -86,7 +86,6 @@ MAX_REPLY_TASK_ATTEMPTS = 3
 STALE_CODEX_RESUME_ATTEMPTS = 2
 CALENDAR_PENDING_INVITE_LOOKAHEAD_DAYS = 14
 CALENDAR_PENDING_INVITE_EVENT_MATCH_SECONDS = 5 * 60
-CALENDAR_PENDING_INVITE_RECENT_SENDER_LOOKBACK = timedelta(hours=24)
 CALENDAR_PENDING_INVITE_NO_CHANGE_TIME_START_LOOKAHEAD = timedelta(hours=24)
 CALENDAR_CONTEXT_MATCH_MIN_SCORE = 0.05
 CALENDAR_CONTEXT_MATCH_LOOKBACK = timedelta(minutes=10)
@@ -368,102 +367,11 @@ class DingTalkAutoReplyWorker:
                         fast_path_checked_at.isoformat(),
                     )
                     return queued_tasks
-        if max_tasks is None or queued_tasks < max_tasks:
-            remaining_tasks = None if max_tasks is None else max_tasks - queued_tasks
-            queued_tasks += self._enqueue_pending_calendar_invite_tasks(
-                max_tasks=remaining_tasks
-            )
         self.store.set_service_state(
             MESSAGE_FAST_PATH_CHECKED_AT_STATE_KEY,
             fast_path_checked_at.isoformat(),
         )
         return queued_tasks
-
-    def _enqueue_pending_calendar_invite_tasks(
-        self,
-        *,
-        max_tasks: int | None = None,
-    ) -> int:
-        list_calendar_events = getattr(self.dws, "list_calendar_events", None)
-        if list_calendar_events is None:
-            return 0
-        start, end = self._pending_calendar_invite_scan_window()
-        try:
-            events = list_calendar_events(start, end)
-        except Exception as exc:
-            self.store.record_error(None, None, "list_pending_calendar_invites", str(exc))
-            self._notify(
-                title="CEO read pending calendar invites failed",
-                message=str(exc)[:120],
-            )
-            return 0
-        queued = 0
-        for event in events:
-            if not self._calendar_event_is_actionable_pending_invite(event):
-                continue
-            conversation = self._pending_calendar_invite_conversation(event)
-            if conversation is None:
-                continue
-            trigger = self._pending_calendar_invite_trigger(event, conversation)
-            if self.store.has_seen(trigger.open_message_id):
-                continue
-            if self._merge_pending_calendar_invite_into_recent_card(
-                event,
-                conversation,
-                synthetic_trigger=trigger,
-            ):
-                continue
-            self.store.upsert_conversation(
-                conversation_id=conversation.open_conversation_id,
-                title=conversation.title,
-                single_chat=conversation.single_chat,
-                codex_session_id=None,
-            )
-            if self._enqueue_reply_task(conversation, trigger):
-                queued += 1
-                if max_tasks is not None and queued >= max_tasks:
-                    break
-        return queued
-
-    def _merge_pending_calendar_invite_into_recent_card(
-        self,
-        event: DwsCalendarEvent,
-        conversation: DingTalkConversation,
-        *,
-        synthetic_trigger: DingTalkMessage,
-    ) -> bool:
-        since_utc = self._sqlite_timestamp(
-            self._now().astimezone(timezone.utc)
-            - timedelta(seconds=CALENDAR_PENDING_INVITE_EVENT_MATCH_SECONDS)
-        )
-        for task in self.store.list_recent_reply_tasks_for_sender(
-            conversation_id=conversation.open_conversation_id,
-            sender_name=event.organizer,
-            since_utc=since_utc,
-        ):
-            if task.trigger_message_id.startswith("calendar:"):
-                continue
-            message = self._reply_task_message(task)
-            if message is None or not self._is_calendar_message(message):
-                continue
-            if task.status == "failed":
-                continue
-            if task.status == "pending" and task.attempts == 0:
-                merged = self._calendar_card_message_with_pending_invite(
-                    message,
-                    event,
-                )
-                self.store.update_reply_task_trigger(
-                    task.id,
-                    trigger_text=merged.content,
-                    trigger_message_json=merged.model_dump_json(),
-                )
-            self.store.mark_seen(
-                synthetic_trigger.open_message_id,
-                conversation.open_conversation_id,
-            )
-            return True
-        return False
 
     @staticmethod
     def _reply_task_message(task: ReplyTask) -> DingTalkMessage | None:
@@ -535,97 +443,9 @@ class DingTalkAutoReplyWorker:
             include_resolved=include_resolved,
         )
 
-    def _pending_calendar_invite_scan_window(self) -> tuple[str, str]:
-        now = self._now().astimezone(DINGTALK_MESSAGE_TIME_ZONE)
-        start = now - timedelta(days=1)
-        end = now + timedelta(days=CALENDAR_PENDING_INVITE_LOOKAHEAD_DAYS)
-        return (
-            start.isoformat(timespec="seconds"),
-            end.isoformat(timespec="seconds"),
-        )
-
-    def _calendar_event_is_actionable_pending_invite(
-        self,
-        event: DwsCalendarEvent,
-    ) -> bool:
-        return bool(
-            event.event_id.strip()
-            and self._calendar_event_is_active(event)
-            and self._calendar_event_is_self_pending(event)
-            and self._calendar_pending_invite_is_current_candidate(event)
-        )
-
     @staticmethod
     def _calendar_event_is_active(event: DwsCalendarEvent) -> bool:
         return event.status.strip().lower() != "cancelled"
-
-    def _calendar_pending_invite_is_current_candidate(
-        self,
-        event: DwsCalendarEvent,
-    ) -> bool:
-        if self._calendar_event_has_change_time(event):
-            now_ms = int(self._now().timestamp() * 1000)
-            event_times = [
-                event_time_ms
-                for event_time_ms in (event.created_ms, event.updated_ms)
-                if event_time_ms > 0
-            ]
-            return any(
-                abs(now_ms - event_time_ms)
-                <= CALENDAR_PENDING_INVITE_EVENT_MATCH_SECONDS * 1000
-                for event_time_ms in event_times
-            )
-        start_time = self._parse_calendar_time(event.start_time)
-        if start_time is None:
-            return False
-        now = self._now()
-        if start_time.tzinfo is None:
-            start_time = start_time.replace(tzinfo=DINGTALK_MESSAGE_TIME_ZONE)
-        start_time = start_time.astimezone(now.tzinfo or timezone.utc)
-        return (
-            now <= start_time
-            and start_time - now <= CALENDAR_PENDING_INVITE_NO_CHANGE_TIME_START_LOOKAHEAD
-        )
-
-    def _pending_calendar_invite_conversation(
-        self,
-        event: DwsCalendarEvent,
-    ) -> DingTalkConversation | None:
-        since_utc = self._sqlite_timestamp(
-            self._now().astimezone(timezone.utc)
-            - CALENDAR_PENDING_INVITE_RECENT_SENDER_LOOKBACK
-        )
-        record = self.store.get_recent_conversation_for_sender(
-            event.organizer,
-            since_utc,
-        )
-        if record is not None:
-            return DingTalkConversation(
-                open_conversation_id=record.conversation_id,
-                title=record.title,
-                single_chat=record.single_chat,
-                unread_point=0,
-            )
-        return None
-
-    def _pending_calendar_invite_trigger(
-        self,
-        event: DwsCalendarEvent,
-        conversation: DingTalkConversation,
-    ) -> DingTalkMessage:
-        now = self._now().astimezone(DINGTALK_MESSAGE_TIME_ZONE)
-        title = event.title.strip() or "未命名日程"
-        return DingTalkMessage(
-            open_conversation_id=conversation.open_conversation_id,
-            open_message_id=f"calendar:{event.event_id}",
-            conversation_title=conversation.title,
-            single_chat=conversation.single_chat,
-            sender_name=event.organizer.strip() or "日历",
-            message_type="calendar",
-            create_time=now.strftime(DINGTALK_TIME_FORMAT),
-            content=f"[日程] {title}",
-            raw_payload=self._calendar_event_raw_payload(event),
-        )
 
     @staticmethod
     def _calendar_event_raw_payload(event: DwsCalendarEvent) -> dict[str, Any]:
@@ -4528,28 +4348,25 @@ class DingTalkAutoReplyWorker:
         try:
             at_users = self._reply_at_users(trigger)
         except Exception as exc:
-            if trigger.open_message_id.startswith("calendar:"):
-                at_users = []
-            else:
-                self.store.update_reply_attempt(
-                    attempt_id,
-                    send_status="failed",
-                    send_error=str(exc),
-                )
-                self.store.record_error(
-                    conversation.open_conversation_id,
-                    trigger.open_message_id,
-                    "reply_at_users",
-                    str(exc),
-                )
-                self._notify(
-                    title=f"CEO reply recipient failed: {conversation.title}",
-                    message=str(exc)[:120],
-                    conversation=conversation,
-                )
-                if raise_on_delivery_failure:
-                    raise ReplyDeliveryError(str(exc)) from exc
-                return
+            self.store.update_reply_attempt(
+                attempt_id,
+                send_status="failed",
+                send_error=str(exc),
+            )
+            self.store.record_error(
+                conversation.open_conversation_id,
+                trigger.open_message_id,
+                "reply_at_users",
+                str(exc),
+            )
+            self._notify(
+                title=f"CEO reply recipient failed: {conversation.title}",
+                message=str(exc)[:120],
+                conversation=conversation,
+            )
+            if raise_on_delivery_failure:
+                raise ReplyDeliveryError(str(exc)) from exc
+            return
         direct_user_id = at_users[0] if conversation.single_chat and at_users else None
         send_at_users = [] if conversation.single_chat else at_users
         reply_text = append_signature(reply_text)
