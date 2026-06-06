@@ -9,7 +9,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, NonNegativeInt, PositiveInt
 
-from app.codex_decision import CodexDecisionRunner
+from app.codex_decision import CodexDecisionRunner, append_signature
 from app.config import (
     consumer_poll_interval_seconds,
     feedback_spike_vercel_base_url,
@@ -685,18 +685,26 @@ def send_attempt_command(settings: WorkerSettings, attempt_id: int) -> dict[str,
     if not reply_text.strip():
         raise SystemExit(f"reply attempt {attempt_id} has empty final_reply_text")
     if contains_forbidden_leak(reply_text):
-        store.update_reply_attempt(
-            attempt.id,
-            send_status="blocked",
-            send_error="leak_check",
+        regenerated_reply_text = _regenerate_send_attempt_after_leak_check(
+            settings,
+            blocked_reply_text=reply_text,
+            session_id=attempt.codex_session_id or None,
         )
-        store.record_error(
-            attempt.conversation_id,
-            attempt.trigger_message_id,
-            "leak_check",
-            reply_text,
-        )
-        raise SystemExit(f"reply attempt {attempt_id} blocked by leak_check")
+        if regenerated_reply_text:
+            reply_text = append_signature(regenerated_reply_text)
+        if contains_forbidden_leak(reply_text):
+            store.update_reply_attempt(
+                attempt.id,
+                send_status="blocked",
+                send_error="leak_check",
+            )
+            store.record_error(
+                attempt.conversation_id,
+                attempt.trigger_message_id,
+                "leak_check",
+                reply_text,
+            )
+            raise SystemExit(f"reply attempt {attempt_id} blocked by leak_check")
 
     conversation = store.get_conversation(attempt.conversation_id)
     if conversation is None:
@@ -732,6 +740,22 @@ def send_attempt_command(settings: WorkerSettings, attempt_id: int) -> dict[str,
         reply_text = feedback_reply.text
         feedback_token = feedback_reply.feedback_token
         store.update_reply_attempt(attempt.id, final_reply_text=reply_text)
+        if contains_forbidden_leak(reply_text):
+            regenerated_reply_text = _regenerate_send_attempt_after_leak_check(
+                settings,
+                blocked_reply_text=reply_text,
+                session_id=attempt.codex_session_id or None,
+            )
+            if regenerated_reply_text:
+                clean_reply_text = append_signature(regenerated_reply_text)
+                feedback_reply = append_feedback_links(
+                    vercel_base_url=feedback_base_url,
+                    reply_text=clean_reply_text,
+                    original_text=attempt.trigger_text,
+                )
+                reply_text = feedback_reply.text
+                feedback_token = feedback_reply.feedback_token
+                store.update_reply_attempt(attempt.id, final_reply_text=reply_text)
         if contains_forbidden_leak(reply_text):
             store.update_reply_attempt(
                 attempt.id,
@@ -793,6 +817,31 @@ def send_attempt_command(settings: WorkerSettings, attempt_id: int) -> dict[str,
     }
     print(json.dumps(result, ensure_ascii=False), flush=True)
     return result
+
+
+def _regenerate_send_attempt_after_leak_check(
+    settings: WorkerSettings,
+    *,
+    blocked_reply_text: str,
+    session_id: str | None,
+) -> str:
+    codex = CodexDecisionRunner(
+        workspace=settings.workspace,
+        timeout_seconds=settings.codex_timeout_seconds,
+        idle_timeout_seconds=settings.codex_idle_timeout_seconds,
+    )
+    decision = codex.decide(
+        prompt=DingTalkAutoReplyWorker._leak_check_feedback_prompt(
+            blocked_reply_text
+        ),
+        session_id=session_id,
+    )
+    if decision.action not in {
+        CodexAction.SEND_REPLY,
+        CodexAction.ASK_CLARIFYING_QUESTION,
+    }:
+        return ""
+    return decision.reply_text.strip()
 
 
 def _send_calendar_attempt(

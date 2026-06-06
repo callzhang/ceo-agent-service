@@ -978,7 +978,12 @@ def test_send_attempt_command_resolves_single_chat_target_forward_from_attempt_t
     assert sent["reply"] == ("cid-1", "msg-1", "open-1", "收到。（by明哥分身）")
 
 
-def test_send_attempt_command_blocks_runtime_leaks(monkeypatch, tmp_path):
+def test_send_attempt_command_regenerates_runtime_leaks_before_sending(
+    monkeypatch, tmp_path
+):
+    sent = {}
+    codex_calls = []
+
     class FakeDws:
         def __init__(self, **kwargs):
             pass
@@ -986,6 +991,21 @@ def test_send_attempt_command_blocks_runtime_leaks(monkeypatch, tmp_path):
         @staticmethod
         def extract_recall_key(send_result):
             return ""
+
+        def read_recent_messages(self, conversation, limit=20):
+            return [
+                cli.DingTalkMessage(
+                    open_conversation_id=conversation.open_conversation_id,
+                    open_message_id="msg-1",
+                    conversation_title=conversation.title,
+                    single_chat=conversation.single_chat,
+                    sender_name="Phina",
+                    sender_open_dingtalk_id="sender-open-1",
+                    sender_user_id="sender-user-1",
+                    create_time="2026-05-13 18:00:00",
+                    content="@Alex Chen 看一下",
+                )
+            ]
 
         def send_message(
             self,
@@ -995,9 +1015,39 @@ def test_send_attempt_command_blocks_runtime_leaks(monkeypatch, tmp_path):
             user_id=None,
             open_dingtalk_id=None,
         ):
-            raise AssertionError("send_message should not be called")
+            sent["message"] = (
+                conversation_id,
+                text,
+                at_users,
+                user_id,
+                open_dingtalk_id,
+            )
+            return {"result": {"processQueryKey": "key-1"}}
+
+        def send_reply_to_trigger(self, conversation, trigger, text, at_users=None):
+            sent["reply"] = (
+                conversation.open_conversation_id,
+                trigger.open_message_id,
+                text,
+                at_users,
+            )
+            return {"result": {"processQueryKey": "key-1"}}
+
+    class FakeCodex:
+        def __init__(self, workspace, timeout_seconds, idle_timeout_seconds):
+            self.workspace = workspace
+            self.timeout_seconds = timeout_seconds
+            self.idle_timeout_seconds = idle_timeout_seconds
+
+        def decide(self, prompt, session_id, image_paths=None):
+            codex_calls.append((prompt, session_id, image_paths))
+            return SimpleNamespace(
+                action=cli.CodexAction.SEND_REPLY,
+                reply_text="改写后可以发送",
+            )
 
     monkeypatch.setattr(cli, "DwsClient", FakeDws)
+    monkeypatch.setattr(cli, "CodexDecisionRunner", FakeCodex)
     settings = WorkerSettings(db_path=tmp_path / "worker.sqlite3", dry_run=False)
     store = cli.AutoReplyStore(settings.db_path)
     store.upsert_conversation("cid-1", "Friday", False, None)
@@ -1015,14 +1065,29 @@ def test_send_attempt_command_blocks_runtime_leaks(monkeypatch, tmp_path):
         final_reply_text="Codex 检索了本地 workspace 后认为可以。（by明哥分身）",
         send_status="dry_run",
     )
+    with store._connect() as conn:
+        conn.execute(
+            "update reply_attempts set codex_session_id=? where id=?",
+            ("session-1", attempt_id),
+        )
 
-    with pytest.raises(SystemExit):
-        send_attempt_command(settings, attempt_id)
+    result = send_attempt_command(settings, attempt_id)
 
     updated = cli.AutoReplyStore(settings.db_path).get_reply_attempt(attempt_id)
     assert updated is not None
-    assert updated.send_status == "blocked"
-    assert updated.send_error == "leak_check"
+    assert updated.send_status == "sent"
+    assert updated.send_error == ""
+    assert updated.final_reply_text == "改写后可以发送（by明哥分身）"
+    assert result["send_status"] == "sent"
+    assert sent["reply"] == (
+        "cid-1",
+        "msg-1",
+        "改写后可以发送（by明哥分身）",
+        None,
+    )
+    assert len(codex_calls) == 1
+    assert codex_calls[0][1] == "session-1"
+    assert "发送安全检查拦截" in codex_calls[0][0]
 
 
 def test_max_batches_can_be_configured_from_env(monkeypatch):

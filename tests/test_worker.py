@@ -28,6 +28,7 @@ from app.dws_client import (
     DwsOaApprovalCandidate,
     DwsUserProfile,
 )
+from app.feedback_spike import FeedbackReplyText
 from app.oa_approval import OaApprovalResult
 from app.store import AutoReplyStore
 from app.worker import (
@@ -4409,6 +4410,60 @@ def test_leak_check_feedback_regenerates_reply_before_blocking(
     assert attempt.send_error == ""
     assert "参考 [1]" not in attempt.final_reply_text
     assert "先按A方案推进" in attempt.final_reply_text
+
+
+def test_live_send_regenerates_once_when_delivery_text_leaks(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message("@Alex Chen(明哥) 这个怎么处理？")
+    trigger.mentioned_user_ids = ["principal-user-1"]
+    dws = FakeDws([conversation()], {"cid-1": [trigger]})
+    codex = SequencedFakeCodex(
+        [
+            CodexDecision(
+                action=CodexAction.SEND_REPLY,
+                reply_text="先按A方案推进",
+                audit_summary="当前消息已足够确认。",
+            ),
+            CodexDecision(
+                action=CodexAction.SEND_REPLY,
+                reply_text="改写后继续推进",
+                audit_summary="发送安全检查反馈后改写。",
+            ),
+        ]
+    )
+    feedback_calls = []
+
+    def fake_append_feedback_links(**kwargs):
+        feedback_calls.append(kwargs)
+        if len(feedback_calls) == 1:
+            return FeedbackReplyText(
+                feedback_token="token-1",
+                text=f"{kwargs['reply_text']}\n\n反馈：参考 [1]",
+            )
+        return FeedbackReplyText(
+            feedback_token="token-2",
+            text=f"{kwargs['reply_text']}\n\n反馈：OK",
+        )
+
+    monkeypatch.setattr("app.worker.append_feedback_links", fake_append_feedback_links)
+    monkeypatch.setattr(
+        "app.worker.feedback_spike_vercel_base_url",
+        lambda: "https://feedback.example.com",
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+
+    worker.run_once()
+
+    assert len(codex.calls) == 2
+    assert "发送安全检查拦截" in codex.calls[1][0]
+    assert len(feedback_calls) == 2
+    assert final_sent(dws) == [("cid-1", "改写后继续推进（by明哥分身）\n\n反馈：OK")]
+    attempt = worker.store.get_reply_attempt(1)
+    assert attempt is not None
+    assert attempt.send_status == "sent"
+    assert attempt.send_error == ""
+    assert "参考 [1]" not in attempt.final_reply_text
 
 
 def test_dingtalk_doc_link_is_read_before_codex(tmp_path: Path, monkeypatch):

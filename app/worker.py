@@ -4391,6 +4391,28 @@ class DingTalkAutoReplyWorker:
             direct_open_dingtalk_id=direct_open_dingtalk_id or "",
         )
         if contains_forbidden_leak(reply_text):
+            regenerated_reply_text = self._regenerate_reply_after_leak_check(
+                blocked_reply_text=reply_text,
+            )
+            if regenerated_reply_text:
+                reply_text = append_signature(regenerated_reply_text)
+                reply_text = self._format_reply_delivery_text(reply_text)
+                feedback_token = ""
+                if feedback_base_url:
+                    feedback_reply = append_feedback_links(
+                        vercel_base_url=feedback_base_url,
+                        reply_text=reply_text,
+                        original_text=trigger.content,
+                    )
+                    reply_text = feedback_reply.text
+                    feedback_token = feedback_reply.feedback_token
+                self.store.update_reply_attempt(
+                    attempt_id,
+                    final_reply_text=reply_text,
+                    direct_user_id=direct_user_id or "",
+                    direct_open_dingtalk_id=direct_open_dingtalk_id or "",
+                )
+        if contains_forbidden_leak(reply_text):
             self.store.update_reply_attempt(
                 attempt_id,
                 send_status="blocked",
