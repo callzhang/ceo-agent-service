@@ -230,6 +230,7 @@ class DingTalkAutoReplyWorker:
         message_id: str | None = None,
         notify_title: str | None = None,
         raise_authorization: bool = False,
+        record_forbidden_error: bool = True,
         default: T,
     ) -> T:
         try:
@@ -237,15 +238,41 @@ class DingTalkAutoReplyWorker:
         except Exception as exc:
             if raise_authorization and self._is_authorization_error(exc):
                 raise
-            self.store.record_error(conversation_id, message_id, kind, str(exc))
-            if conversation_id and self._is_dws_forbidden_read_error(exc):
+            is_forbidden_read = bool(
+                conversation_id and self._is_dws_forbidden_read_error(exc)
+            )
+            if is_forbidden_read:
                 self._mark_dws_read_forbidden(conversation_id)
+            if record_forbidden_error or not is_forbidden_read:
+                self.store.record_error(conversation_id, message_id, kind, str(exc))
             if notify_title:
                 self._notify(
                     title=notify_title,
                     message=str(exc)[:120],
                 )
             return default
+
+    def _read_conversation_messages(
+        self,
+        kind: str,
+        conversation: DingTalkConversation,
+        reader: Callable[[], T],
+        *,
+        message_id: str | None = None,
+        raise_authorization: bool = False,
+        default: T,
+    ) -> T:
+        if self._is_dws_read_forbidden(conversation.open_conversation_id):
+            return default
+        return self._call_dws(
+            kind,
+            reader,
+            conversation_id=conversation.open_conversation_id,
+            message_id=message_id,
+            raise_authorization=raise_authorization,
+            record_forbidden_error=False,
+            default=default,
+        )
 
     def produce_once(self, max_tasks: int | None = None) -> int:
         if max_tasks == 0:
@@ -301,16 +328,11 @@ class DingTalkAutoReplyWorker:
                 recovery_due=recovery_due,
                 recovery_conversation_ids=recovery_conversation_ids,
             )
-            if (
-                should_read_recent
-                and not self._is_dws_read_forbidden(
-                    conversation.open_conversation_id
-                )
-            ):
-                context_messages = self._call_dws(
+            if should_read_recent:
+                context_messages = self._read_conversation_messages(
                     "read_recent_messages",
+                    conversation,
                     lambda: self.dws.read_recent_messages(conversation),
-                    conversation_id=conversation.open_conversation_id,
                     default=[],
                 )
             unread_messages = []
@@ -321,16 +343,11 @@ class DingTalkAutoReplyWorker:
                 recovery_due=recovery_due,
                 unread_conversation_ids=unread_conversation_ids,
             )
-            if (
-                should_read_unread
-                and not self._is_dws_read_forbidden(
-                    conversation.open_conversation_id
-                )
-            ):
-                unread_messages = self._call_dws(
+            if should_read_unread:
+                unread_messages = self._read_conversation_messages(
                     "read_unread_messages",
+                    conversation,
                     lambda: self.dws.read_unread_messages(conversation),
-                    conversation_id=conversation.open_conversation_id,
                     default=None,
                 )
                 if unread_messages is None:
@@ -633,11 +650,12 @@ class DingTalkAutoReplyWorker:
 
     @staticmethod
     def _is_dws_forbidden_read_error(exc: Exception) -> bool:
-        return (
-            isinstance(exc, DwsError)
-            and exc.code == "1001"
-            and "forbidden request" in str(exc).lower()
-        )
+        detail = str(exc).lower()
+        if "forbidden request" not in detail:
+            return False
+        if isinstance(exc, DwsError):
+            return exc.code in {None, "1001"}
+        return True
 
     def _mark_dws_read_forbidden(self, conversation_id: str) -> None:
         forbidden_until = (
@@ -945,24 +963,22 @@ class DingTalkAutoReplyWorker:
     ) -> tuple[list[DingTalkMessage], list[DingTalkMessage]]:
         context_messages: list[DingTalkMessage] = []
         unread_messages: list[DingTalkMessage] = []
-        if not self._is_dws_read_forbidden(conversation.open_conversation_id):
-            context_messages = self._call_dws(
-                "read_recent_messages_fallback",
-                lambda: self.dws.read_recent_messages(conversation),
-                conversation_id=conversation.open_conversation_id,
-                message_id=trigger.open_message_id,
-                raise_authorization=True,
-                default=[],
-            )
-        if not self._is_dws_read_forbidden(conversation.open_conversation_id):
-            unread_messages = self._call_dws(
-                "read_unread_messages_fallback",
-                lambda: self.dws.read_unread_messages(conversation),
-                conversation_id=conversation.open_conversation_id,
-                message_id=trigger.open_message_id,
-                raise_authorization=True,
-                default=[],
-            )
+        context_messages = self._read_conversation_messages(
+            "read_recent_messages_fallback",
+            conversation,
+            lambda: self.dws.read_recent_messages(conversation),
+            message_id=trigger.open_message_id,
+            raise_authorization=True,
+            default=[],
+        )
+        unread_messages = self._read_conversation_messages(
+            "read_unread_messages_fallback",
+            conversation,
+            lambda: self.dws.read_unread_messages(conversation),
+            message_id=trigger.open_message_id,
+            raise_authorization=True,
+            default=[],
+        )
         return context_messages, self._prompt_context_messages(
             context_messages,
             unread_messages,
@@ -978,16 +994,15 @@ class DingTalkAutoReplyWorker:
         error: str = "",
     ) -> bool:
         if self._is_calendar_message(trigger):
-            if not self._is_dws_read_forbidden(conversation.open_conversation_id):
-                full_context_messages = self._call_dws(
-                    "read_recent_messages_calendar_context",
-                    lambda: self.dws.read_recent_messages(conversation),
-                    conversation_id=conversation.open_conversation_id,
-                    message_id=trigger.open_message_id,
-                    default=[],
-                )
-                if full_context_messages:
-                    context_messages = full_context_messages
+            full_context_messages = self._read_conversation_messages(
+                "read_recent_messages_calendar_context",
+                conversation,
+                lambda: self.dws.read_recent_messages(conversation),
+                message_id=trigger.open_message_id,
+                default=[],
+            )
+            if full_context_messages:
+                context_messages = full_context_messages
         trigger = self._calendar_card_message_with_available_details(
             conversation,
             trigger,
@@ -1153,8 +1168,18 @@ class DingTalkAutoReplyWorker:
         force_new_decision: bool = False,
         oa_url: str = "",
     ) -> str:
-        context_messages = self.dws.read_recent_messages(conversation)
-        unread_messages = self.dws.read_unread_messages(conversation)
+        context_messages = self._read_conversation_messages(
+            "read_recent_messages_rerun",
+            conversation,
+            lambda: self.dws.read_recent_messages(conversation),
+            default=[],
+        )
+        unread_messages = self._read_conversation_messages(
+            "read_unread_messages_rerun",
+            conversation,
+            lambda: self.dws.read_unread_messages(conversation),
+            default=[],
+        )
         prompt_context_messages = self._prompt_context_messages(
             context_messages, unread_messages
         )
