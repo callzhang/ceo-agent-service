@@ -97,6 +97,7 @@ class CodexRunner:
         prompt: str,
         session_id: str | None,
         image_paths: list[Path] | None = None,
+        output_schema_path: Path | None = CODEX_DECISION_SCHEMA_PATH,
     ) -> list[str]:
         image_options: list[str] = []
         for image_path in image_paths or []:
@@ -138,8 +139,11 @@ class CodexRunner:
             "exec",
             *common_options,
             CODEX_BYPASS_APPROVALS_AND_SANDBOX,
-            "--output-schema",
-            str(CODEX_DECISION_SCHEMA_PATH),
+            *(
+                ["--output-schema", str(output_schema_path)]
+                if output_schema_path
+                else []
+            ),
             *image_options,
             "--cd",
             str(self.workspace),

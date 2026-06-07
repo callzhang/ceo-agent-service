@@ -480,8 +480,57 @@ def test_task_agent_codex_runner_parses_jsonl_payload(tmp_path):
     assert runner.last_session_id == "session-task-1"
 
 
+def test_task_agent_codex_runner_parses_response_item_output_text(tmp_path):
+    from app.task_agent import TaskAgentCodexRunner
+
+    def executor(command, prompt):
+        return "\n".join(
+            [
+                json.dumps({"type": "thread.started", "thread_id": "session-task-2"}),
+                json.dumps(
+                    {
+                        "type": "response_item",
+                        "payload": {
+                            "type": "message",
+                            "role": "assistant",
+                            "content": [
+                                {
+                                    "type": "output_text",
+                                    "text": json.dumps(
+                                        {
+                                            "action": "discard",
+                                            "discard_reason": "只是确认收到",
+                                            "project": None,
+                                            "todo_changes": [],
+                                            "follow_up_drafts": [],
+                                            "update_summary": "无新增事项",
+                                            "merge_reason": "",
+                                            "memory_recall_used": False,
+                                            "confidence": 0.8,
+                                        },
+                                        ensure_ascii=False,
+                                    ),
+                                }
+                            ],
+                        },
+                    },
+                    ensure_ascii=False,
+                ),
+            ]
+        )
+
+    runner = TaskAgentCodexRunner(workspace=tmp_path, executor=executor)
+    decision = runner.decide(prompt="x")
+
+    assert decision.action == "discard"
+    assert decision.discard_reason == "只是确认收到"
+    assert runner.last_session_id == "session-task-2"
+
+
 def test_task_agent_codex_runner_uses_process_runner_signature(tmp_path):
     from app.task_agent import TaskAgentCodexRunner
+    from app.task_agent import TASK_AGENT_DECISION_SCHEMA_PATH
+    from app.codex_runner import CODEX_DECISION_SCHEMA_PATH
 
     calls = []
 
@@ -516,10 +565,14 @@ def test_task_agent_codex_runner_uses_process_runner_signature(tmp_path):
 
     assert decision.action == "discard"
     assert calls
+    command = calls[0][0]
     assert calls[0][1]["prompt"] == "decide"
     assert calls[0][1]["env"] == runner.runner.build_env()
     assert calls[0][1]["total_timeout_seconds"] == 7
     assert calls[0][1]["idle_timeout_seconds"] == 3
+    assert "--output-schema" in command
+    assert str(TASK_AGENT_DECISION_SCHEMA_PATH) in command
+    assert str(CODEX_DECISION_SCHEMA_PATH) not in command
 
 
 def test_task_agent_codex_runner_timeout_raises_reason(tmp_path):

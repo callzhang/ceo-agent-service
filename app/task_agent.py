@@ -15,6 +15,11 @@ from app.task_models import (
 from app.task_retrieval import render_candidate_prompt, retrieve_project_candidates
 
 
+TASK_AGENT_DECISION_SCHEMA_PATH = (
+    Path(__file__).resolve().parent / "schemas" / "task_agent_decision.schema.json"
+)
+
+
 class TaskCodex(Protocol):
     last_session_id: str
     last_transcript_start_line: int
@@ -82,7 +87,12 @@ class TaskAgentCodexRunner:
         return _parse_task_agent_decision(raw)
 
     def _execute(self, *, prompt: str, session_id: str | None) -> str:
-        command = self.runner.build_command(prompt, session_id, image_paths=None)
+        command = self.runner.build_command(
+            prompt,
+            session_id,
+            image_paths=None,
+            output_schema_path=TASK_AGENT_DECISION_SCHEMA_PATH,
+        )
         if self.executor is not None:
             return self.executor(command, prompt)
         completed = self._run_process_with_idle_timeout(
