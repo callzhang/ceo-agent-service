@@ -527,6 +527,24 @@ def test_task_agent_codex_runner_parses_response_item_output_text(tmp_path):
     assert runner.last_session_id == "session-task-2"
 
 
+def test_task_agent_schema_uses_strict_object_shapes():
+    from app.task_agent import TASK_AGENT_DECISION_SCHEMA_PATH
+
+    schema = json.loads(TASK_AGENT_DECISION_SCHEMA_PATH.read_text(encoding="utf-8"))
+
+    def visit(node):
+        if isinstance(node, dict):
+            if node.get("type") == "object":
+                assert node.get("additionalProperties") is False
+            for value in node.values():
+                visit(value)
+        elif isinstance(node, list):
+            for item in node:
+                visit(item)
+
+    visit(schema)
+
+
 def test_task_agent_codex_runner_uses_process_runner_signature(tmp_path):
     from app.task_agent import TaskAgentCodexRunner
     from app.task_agent import TASK_AGENT_DECISION_SCHEMA_PATH

@@ -160,8 +160,18 @@
           "type": "array",
           "items": {
             "type": "object",
-            "additionalProperties": {
-              "type": "string"
+            "additionalProperties": false,
+            "required": ["name", "user_id", "role"],
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "user_id": {
+                "type": "string"
+              },
+              "role": {
+                "type": "string"
+              }
             }
           }
         },
@@ -197,7 +207,22 @@
           "type": "array",
           "items": {
             "type": "object",
-            "additionalProperties": true
+            "additionalProperties": false,
+            "required": ["conversation_id", "title", "kind", "source_ref"],
+            "properties": {
+              "conversation_id": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string"
+              },
+              "source_ref": {
+                "type": "string"
+              }
+            }
           }
         }
       }
@@ -255,7 +280,19 @@
         },
         "completion_evidence": {
           "type": ["object", "null"],
-          "additionalProperties": true
+          "additionalProperties": false,
+          "required": ["description", "source", "completed_at"],
+          "properties": {
+            "description": {
+              "type": "string"
+            },
+            "source": {
+              "type": "string"
+            },
+            "completed_at": {
+              "type": "string"
+            }
+          }
         },
         "blocker": {
           "type": "string"
@@ -301,7 +338,19 @@
         },
         "risk_check": {
           "type": "object",
-          "additionalProperties": true
+          "additionalProperties": false,
+          "required": ["sensitive", "owner_in_group", "reason"],
+          "properties": {
+            "sensitive": {
+              "type": "boolean"
+            },
+            "owner_in_group": {
+              "type": "boolean"
+            },
+            "reason": {
+              "type": "string"
+            }
+          }
         },
         "status": {
           "type": "string",
