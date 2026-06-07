@@ -41,6 +41,10 @@ def _is_under_workspace(path: Path, workspace: Path) -> bool:
     return True
 
 
+def _has_hidden_path_part(path: Path) -> bool:
+    return any(part.startswith(".") for part in path.parts)
+
+
 def _local_file_source_ref(path: Path, *, digest: str, size: int) -> str:
     return f"{path}#sha256={digest}:size={size}"
 
@@ -51,6 +55,7 @@ def scan_local_workspace_files(
     workspace: Path,
     include_globs: tuple[str, ...] = ("*.md", "*.txt"),
     exclude_globs: tuple[str, ...] = (),
+    enqueue_existing_on_first_scan: bool = False,
 ) -> int:
     workspace = workspace.expanduser().resolve()
     if not workspace.exists() or not workspace.is_dir():
@@ -68,6 +73,7 @@ def scan_local_workspace_files(
     except json.JSONDecodeError:
         cursor = {}
     previous_path_refs = dict(cursor.get("path_refs") or {})
+    first_scan = not previous_path_refs
     path_refs: dict[str, str] = {}
     count = 0
 
@@ -76,6 +82,9 @@ def scan_local_workspace_files(
             continue
         resolved = path.resolve()
         if not _is_under_workspace(resolved, workspace):
+            continue
+        relative = resolved.relative_to(workspace)
+        if _has_hidden_path_part(relative):
             continue
         if exclude_globs and _matches_any(resolved, exclude_globs):
             continue
@@ -94,6 +103,8 @@ def scan_local_workspace_files(
         )
         path_refs[resolved_text] = source_ref
         if previous_path_refs.get(resolved_text) == source_ref:
+            continue
+        if first_scan and not enqueue_existing_on_first_scan:
             continue
         item = WorkItem.model_validate(
             {

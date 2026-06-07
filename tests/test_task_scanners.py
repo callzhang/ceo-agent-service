@@ -19,6 +19,7 @@ def test_scan_local_files_only_under_workspace(tmp_path):
         workspace=workspace,
         include_globs=("*.md",),
         exclude_globs=(),
+        enqueue_existing_on_first_scan=True,
     )
 
     assert count == 1
@@ -40,6 +41,56 @@ def test_scan_local_files_rejects_workspace_outside_root(tmp_path):
     )
 
 
+def test_scan_local_files_baselines_existing_files_on_first_scan(tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    existing = workspace / "existing.md"
+    existing.write_text("历史文件不应该首次入队", encoding="utf-8")
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+
+    assert scan_local_workspace_files(store, workspace=workspace) == 0
+    assert store.claim_work_summary_inputs(limit=10) == []
+
+    new_file = workspace / "new.md"
+    new_file.write_text("新增文件应该入队", encoding="utf-8")
+
+    assert (
+        scan_local_workspace_files(
+            store,
+            workspace=workspace,
+            enqueue_existing_on_first_scan=True,
+        )
+        == 1
+    )
+    claimed = store.claim_work_summary_inputs(limit=10)
+    assert len(claimed) == 1
+    assert str(new_file) in claimed[0].source_ref
+
+
+def test_scan_local_files_skips_hidden_paths(tmp_path):
+    workspace = tmp_path / "workspace"
+    hidden_dir = workspace / ".codex"
+    hidden_dir.mkdir(parents=True)
+    hidden_file = hidden_dir / "SKILL.md"
+    hidden_file.write_text("隐藏目录不应该进入 task", encoding="utf-8")
+    visible = workspace / "visible.md"
+    visible.write_text("可见文件建立 baseline", encoding="utf-8")
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+
+    assert (
+        scan_local_workspace_files(
+            store,
+            workspace=workspace,
+            enqueue_existing_on_first_scan=True,
+        )
+        == 1
+    )
+    claimed = store.claim_work_summary_inputs(limit=10)
+    assert len(claimed) == 1
+    assert str(visible) in claimed[0].source_ref
+    assert str(hidden_file) not in claimed[0].payload_json
+
+
 def test_scan_local_files_uses_incremental_mtime_cursor(tmp_path):
     workspace = tmp_path / "workspace"
     workspace.mkdir()
@@ -47,12 +98,26 @@ def test_scan_local_files_uses_incremental_mtime_cursor(tmp_path):
     first.write_text("第一次扫描", encoding="utf-8")
     store = AutoReplyStore(tmp_path / "task.sqlite3")
 
-    assert scan_local_workspace_files(store, workspace=workspace) == 1
+    assert (
+        scan_local_workspace_files(
+            store,
+            workspace=workspace,
+            enqueue_existing_on_first_scan=True,
+        )
+        == 1
+    )
     assert scan_local_workspace_files(store, workspace=workspace) == 0
 
     second = workspace / "second.md"
     second.write_text("第二次扫描", encoding="utf-8")
-    assert scan_local_workspace_files(store, workspace=workspace) == 1
+    assert (
+        scan_local_workspace_files(
+            store,
+            workspace=workspace,
+            enqueue_existing_on_first_scan=True,
+        )
+        == 1
+    )
 
 
 def test_scan_local_files_does_not_skip_new_file_with_same_mtime(tmp_path):
@@ -65,12 +130,26 @@ def test_scan_local_files_does_not_skip_new_file_with_same_mtime(tmp_path):
     os.utime(first, (timestamp, timestamp))
     store = AutoReplyStore(tmp_path / "task.sqlite3")
 
-    assert scan_local_workspace_files(store, workspace=workspace) == 1
+    assert (
+        scan_local_workspace_files(
+            store,
+            workspace=workspace,
+            enqueue_existing_on_first_scan=True,
+        )
+        == 1
+    )
 
     second.write_text("第二次扫描", encoding="utf-8")
     os.utime(second, (timestamp, timestamp))
 
-    assert scan_local_workspace_files(store, workspace=workspace) == 1
+    assert (
+        scan_local_workspace_files(
+            store,
+            workspace=workspace,
+            enqueue_existing_on_first_scan=True,
+        )
+        == 1
+    )
     claimed = store.claim_work_summary_inputs(limit=10)
     assert {
         Path(row.source_ref.split("#", 1)[0]).name for row in claimed
@@ -86,7 +165,14 @@ def test_scan_local_files_requeues_edited_done_file(tmp_path):
     os.utime(file_path, (timestamp, timestamp))
     store = AutoReplyStore(tmp_path / "task.sqlite3")
 
-    assert scan_local_workspace_files(store, workspace=workspace) == 1
+    assert (
+        scan_local_workspace_files(
+            store,
+            workspace=workspace,
+            enqueue_existing_on_first_scan=True,
+        )
+        == 1
+    )
     first_claimed = store.claim_work_summary_inputs(limit=10)
     assert len(first_claimed) == 1
     store.mark_work_summary_input_done(first_claimed[0].id)
@@ -94,7 +180,14 @@ def test_scan_local_files_requeues_edited_done_file(tmp_path):
     file_path.write_text("第二次扫描，需要重新处理", encoding="utf-8")
     os.utime(file_path, (timestamp + 1, timestamp + 1))
 
-    assert scan_local_workspace_files(store, workspace=workspace) == 1
+    assert (
+        scan_local_workspace_files(
+            store,
+            workspace=workspace,
+            enqueue_existing_on_first_scan=True,
+        )
+        == 1
+    )
     second_claimed = store.claim_work_summary_inputs(limit=10)
     assert len(second_claimed) == 1
     assert second_claimed[0].source_ref != first_claimed[0].source_ref
@@ -110,7 +203,14 @@ def test_scan_local_files_requeues_edited_done_file_with_same_mtime(tmp_path):
     os.utime(file_path, (timestamp, timestamp))
     store = AutoReplyStore(tmp_path / "task.sqlite3")
 
-    assert scan_local_workspace_files(store, workspace=workspace) == 1
+    assert (
+        scan_local_workspace_files(
+            store,
+            workspace=workspace,
+            enqueue_existing_on_first_scan=True,
+        )
+        == 1
+    )
     first_claimed = store.claim_work_summary_inputs(limit=10)
     assert len(first_claimed) == 1
     store.mark_work_summary_input_done(first_claimed[0].id)
