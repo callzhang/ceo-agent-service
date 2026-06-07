@@ -4,7 +4,6 @@ import shlex
 from pathlib import Path
 
 from app.prompt import ceo_agent_thread_prompt
-from app.config import memory_connector_user_id
 
 
 CODEX_DECISION_SCHEMA_PATH = (
@@ -21,11 +20,9 @@ CODEX_BYPASS_APPROVALS_AND_SANDBOX = "--dangerously-bypass-approvals-and-sandbox
 MEMORY_CONNECTOR_ENV_FILE = "memory_connector.env"
 MEMORY_CONNECTOR_URL_ENV = "MEMORY_CONNECTOR_URL"
 MEMORY_CONNECTOR_API_KEY_ENV = "CONNECTOR_API_KEY"
-MEMORY_CONNECTOR_USER_ID_ENV = "MEMORY_CONNECTOR_USER_ID"
 MEMORY_CONNECTOR_ENV_KEYS = {
     MEMORY_CONNECTOR_API_KEY_ENV,
     MEMORY_CONNECTOR_URL_ENV,
-    MEMORY_CONNECTOR_USER_ID_ENV,
 }
 
 
@@ -66,7 +63,7 @@ def _memory_connector_env() -> dict[str, str]:
         key: value for key, value in file_env.items() if key in MEMORY_CONNECTOR_ENV_KEYS
     }
     env = {**whitelisted_file_env, **os.environ}
-    env.setdefault(MEMORY_CONNECTOR_USER_ID_ENV, memory_connector_user_id())
+    env.pop("MEMORY_CONNECTOR_USER_ID", None)
     return env
 
 
@@ -82,11 +79,6 @@ def memory_connector_config_options() -> list[str]:
         _config_string(
             "mcp_servers.memory_connector.bearer_token_env_var",
             MEMORY_CONNECTOR_API_KEY_ENV,
-        ),
-        "-c",
-        (
-            'mcp_servers.memory_connector.env_http_headers='
-            f'{{"x-memory-user-id" = "{MEMORY_CONNECTOR_USER_ID_ENV}"}}'
         ),
     ]
 

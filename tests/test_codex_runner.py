@@ -48,7 +48,6 @@ def _without_developer_instructions(command: list[str]) -> list[str]:
 def test_codex_command_exposes_memory_connector_mcp(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("MEMORY_CONNECTOR_URL", "https://memory.example/mcp/")
     monkeypatch.setenv("CONNECTOR_API_KEY", "secret-token")
-    monkeypatch.setenv("MEMORY_CONNECTOR_USER_ID", "principal")
     runner = CodexRunner(workspace=tmp_path, codex_bin="codex")
 
     command = runner.build_command(prompt="hello", session_id=None)
@@ -63,10 +62,7 @@ def test_codex_command_exposes_memory_connector_mcp(tmp_path: Path, monkeypatch)
         'mcp_servers.memory_connector.bearer_token_env_var="CONNECTOR_API_KEY"'
         in command
     )
-    assert (
-        'mcp_servers.memory_connector.env_http_headers={"x-memory-user-id" = "MEMORY_CONNECTOR_USER_ID"}'
-        in command
-    )
+    assert "x-memory-user-id" not in " ".join(command)
 
 
 def test_codex_runner_env_loads_memory_connector_env_file(
@@ -95,19 +91,23 @@ def test_codex_runner_env_loads_memory_connector_env_file(
 
     assert env["CONNECTOR_API_KEY"] == "secret-token"
     assert env["MEMORY_CONNECTOR_URL"] == "https://memory.example/mcp/"
-    assert env["MEMORY_CONNECTOR_USER_ID"] == "principal"
+    assert "MEMORY_CONNECTOR_USER_ID" not in env
     assert "UNRELATED_SECRET" not in env
 
 
-def test_codex_runner_memory_user_defaults_to_configured_principal(
-    tmp_path: Path, monkeypatch
+def test_codex_runner_does_not_forward_memory_user_id(
+    tmp_path: Path,
+    monkeypatch,
 ):
     monkeypatch.setenv("CEO_PRINCIPAL_NAME", "Executive")
+    monkeypatch.setenv("MEMORY_CONNECTOR_USER_ID", "principal")
     runner = CodexRunner(workspace=tmp_path, codex_bin="codex")
 
     env = runner.build_env()
 
-    assert env["MEMORY_CONNECTOR_USER_ID"] == "Executive"
+    assert "MEMORY_CONNECTOR_USER_ID" not in env
+    command = runner.build_command(prompt="hello", session_id=None)
+    assert "x-memory-user-id" not in " ".join(command)
 
 
 def test_codex_command_reads_memory_connector_mcp_url_from_env_file(
@@ -141,10 +141,7 @@ def test_codex_command_reads_memory_connector_mcp_url_from_env_file(
         'mcp_servers.memory_connector.bearer_token_env_var="CONNECTOR_API_KEY"'
         in command
     )
-    assert (
-        'mcp_servers.memory_connector.env_http_headers={"x-memory-user-id" = "MEMORY_CONNECTOR_USER_ID"}'
-        in command
-    )
+    assert "x-memory-user-id" not in " ".join(command)
 
 
 def test_builds_new_thread_command(tmp_path: Path):
