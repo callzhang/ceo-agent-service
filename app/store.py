@@ -1859,7 +1859,6 @@ class AutoReplyStore:
 
     def enqueue_work_summary_input(
         self,
-        *,
         source_type: str,
         source_ref: str,
         payload_json: str,
@@ -1871,6 +1870,16 @@ class AutoReplyStore:
                 values (?, ?, ?)
                 on conflict(source_type, source_ref) do update set
                     payload_json=excluded.payload_json,
+                    status=case
+                        when work_summary_inputs.status in ('failed', 'discarded')
+                            then 'pending'
+                        else work_summary_inputs.status
+                    end,
+                    error=case
+                        when work_summary_inputs.status in ('failed', 'discarded')
+                            then ''
+                        else work_summary_inputs.error
+                    end,
                     updated_at=current_timestamp
                 """,
                 (source_type, source_ref, payload_json),
@@ -1958,21 +1967,86 @@ class AutoReplyStore:
                 (error, input_id),
             )
 
+    @staticmethod
+    def _filter_allowed_values(
+        values: dict[str, object],
+        allowed_columns: set[str],
+    ) -> dict[str, object]:
+        unknown_columns = set(values) - allowed_columns
+        if unknown_columns:
+            unknown = ", ".join(sorted(unknown_columns))
+            raise ValueError(f"Unsupported column(s): {unknown}")
+        return dict(values)
+
     def create_work_project(self, **values) -> int:
-        keys = list(values.keys())
+        allowed_columns = {
+            "title",
+            "category",
+            "tags_json",
+            "status",
+            "priority",
+            "risk_level",
+            "needs_derek_attention",
+            "owner_user_id",
+            "owner_name",
+            "related_people_json",
+            "goal",
+            "background",
+            "facts_json",
+            "current_state",
+            "blocker",
+            "next_step",
+            "next_follow_up_at",
+            "follow_up_mode",
+            "source_conversations_json",
+            "memory_context_json",
+        }
+        filtered = self._filter_allowed_values(values, allowed_columns)
+        if "needs_derek_attention" in filtered:
+            filtered["needs_derek_attention"] = int(
+                bool(filtered["needs_derek_attention"])
+            )
+        keys = list(filtered.keys())
         columns = ", ".join(keys)
         placeholders = ", ".join("?" for _ in keys)
         with self._connect() as db:
             cursor = db.execute(
                 f"insert into work_projects ({columns}) values ({placeholders})",
-                [values[key] for key in keys],
+                [filtered[key] for key in keys],
             )
             return int(cursor.lastrowid)
 
     def update_work_project(self, project_id: int, **values) -> None:
         if not values:
             return
-        assignments = ", ".join(f"{key}=?" for key in values)
+        allowed_columns = {
+            "title",
+            "category",
+            "tags_json",
+            "status",
+            "priority",
+            "risk_level",
+            "needs_derek_attention",
+            "owner_user_id",
+            "owner_name",
+            "related_people_json",
+            "goal",
+            "background",
+            "facts_json",
+            "current_state",
+            "blocker",
+            "next_step",
+            "next_follow_up_at",
+            "follow_up_mode",
+            "source_conversations_json",
+            "memory_context_json",
+        }
+        filtered = self._filter_allowed_values(values, allowed_columns)
+        if "needs_derek_attention" in filtered:
+            filtered["needs_derek_attention"] = int(
+                bool(filtered["needs_derek_attention"])
+            )
+        assignments = ", ".join(f"{key}=?" for key in filtered)
         with self._connect() as db:
             db.execute(
                 f"""
@@ -1982,7 +2056,7 @@ class AutoReplyStore:
                     last_activity_at=current_timestamp
                 where id=?
                 """,
-                [*values.values(), project_id],
+                [*filtered.values(), project_id],
             )
 
     def get_work_project(self, project_id: int) -> WorkProject | None:
@@ -1995,7 +2069,6 @@ class AutoReplyStore:
 
     def list_work_projects(
         self,
-        *,
         statuses: tuple[str, ...] | None = None,
         limit: int | None = None,
     ) -> list[WorkProject]:
@@ -2015,28 +2088,68 @@ class AutoReplyStore:
             ]
 
     def create_work_todo(self, **values) -> int:
-        keys = list(values.keys())
+        allowed_columns = {
+            "project_id",
+            "title",
+            "owner_user_id",
+            "owner_name",
+            "status",
+            "priority",
+            "deadline_at",
+            "next_follow_up_at",
+            "follow_up_question",
+            "blocker",
+            "completion_evidence_json",
+            "created_from_update_id",
+        }
+        filtered = self._filter_allowed_values(values, allowed_columns)
+        keys = list(filtered.keys())
         columns = ", ".join(keys)
         placeholders = ", ".join("?" for _ in keys)
         with self._connect() as db:
             cursor = db.execute(
                 f"insert into work_todos ({columns}) values ({placeholders})",
-                [values[key] for key in keys],
+                [filtered[key] for key in keys],
             )
             return int(cursor.lastrowid)
 
     def update_work_todo(self, todo_id: int, **values) -> None:
         if not values:
             return
-        assignments = ", ".join(f"{key}=?" for key in values)
+        allowed_columns = {
+            "project_id",
+            "title",
+            "owner_user_id",
+            "owner_name",
+            "status",
+            "priority",
+            "deadline_at",
+            "next_follow_up_at",
+            "follow_up_question",
+            "blocker",
+            "completion_evidence_json",
+            "created_from_update_id",
+            "completed_at",
+        }
+        filtered = self._filter_allowed_values(values, allowed_columns)
+        if filtered.get("status") == "done" and "completed_at" not in filtered:
+            filtered["completed_at"] = "__CURRENT_TIMESTAMP__"
+        assignments: list[str] = []
+        parameters: list[object] = []
+        for key, value in filtered.items():
+            if key == "completed_at" and value == "__CURRENT_TIMESTAMP__":
+                assignments.append("completed_at=current_timestamp")
+                continue
+            assignments.append(f"{key}=?")
+            parameters.append(value)
         with self._connect() as db:
             db.execute(
                 f"""
                 update work_todos
-                set {assignments}, updated_at=current_timestamp
+                set {', '.join(assignments)}, updated_at=current_timestamp
                 where id=?
                 """,
-                [*values.values(), todo_id],
+                [*parameters, todo_id],
             )
 
     def list_work_todos(
@@ -2065,17 +2178,36 @@ class AutoReplyStore:
             return [WorkTodo.model_validate(dict(row)) for row in db.execute(query, args)]
 
     def create_work_update(self, **values) -> int:
-        keys = list(values.keys())
+        allowed_columns = {
+            "project_id",
+            "source_type",
+            "source_ref",
+            "summary",
+            "changes_json",
+            "merge_reason",
+            "confidence",
+        }
+        filtered = self._filter_allowed_values(values, allowed_columns)
+        keys = list(filtered.keys())
         columns = ", ".join(keys)
         placeholders = ", ".join("?" for _ in keys)
         with self._connect() as db:
             cursor = db.execute(
                 f"insert into work_updates ({columns}) values ({placeholders})",
-                [values[key] for key in keys],
+                [filtered[key] for key in keys],
+            )
+            db.execute(
+                """
+                update work_projects
+                set updated_at=current_timestamp,
+                    last_activity_at=current_timestamp
+                where id=?
+                """,
+                (filtered["project_id"],),
             )
             return int(cursor.lastrowid)
 
-    def list_work_updates(self, *, project_id: int, limit: int = 50) -> list[WorkUpdate]:
+    def list_work_updates(self, project_id: int, limit: int = 50) -> list[WorkUpdate]:
         with self._connect() as db:
             rows = db.execute(
                 """
@@ -2091,7 +2223,6 @@ class AutoReplyStore:
 
     def record_task_agent_run(
         self,
-        *,
         summary_input_id: int,
         codex_session_id: str = "",
         decision_json: str = "{}",
@@ -2121,24 +2252,63 @@ class AutoReplyStore:
             return int(cursor.lastrowid)
 
     def create_follow_up_draft(self, **values) -> int:
-        keys = list(values.keys())
+        allowed_columns = {
+            "project_id",
+            "todo_id",
+            "owner_user_id",
+            "owner_name",
+            "target_conversation_id",
+            "target_kind",
+            "question_text",
+            "risk_check_json",
+            "status",
+            "send_result_json",
+            "scheduled_at",
+            "sent_at",
+        }
+        filtered = self._filter_allowed_values(values, allowed_columns)
+        keys = list(filtered.keys())
         columns = ", ".join(keys)
         placeholders = ", ".join("?" for _ in keys)
         with self._connect() as db:
             cursor = db.execute(
                 f"insert into follow_up_drafts ({columns}) values ({placeholders})",
-                [values[key] for key in keys],
+                [filtered[key] for key in keys],
             )
             return int(cursor.lastrowid)
 
     def update_follow_up_draft(self, draft_id: int, **values) -> None:
         if not values:
             return
-        assignments = ", ".join(f"{key}=?" for key in values)
+        allowed_columns = {
+            "project_id",
+            "todo_id",
+            "owner_user_id",
+            "owner_name",
+            "target_conversation_id",
+            "target_kind",
+            "question_text",
+            "risk_check_json",
+            "status",
+            "send_result_json",
+            "scheduled_at",
+            "sent_at",
+        }
+        filtered = self._filter_allowed_values(values, allowed_columns)
+        if filtered.get("status") == "sent" and "sent_at" not in filtered:
+            filtered["sent_at"] = "__CURRENT_TIMESTAMP__"
+        assignments = []
+        parameters = []
+        for key, value in filtered.items():
+            if key == "sent_at" and value == "__CURRENT_TIMESTAMP__":
+                assignments.append("sent_at=current_timestamp")
+                continue
+            assignments.append(f"{key}=?")
+            parameters.append(value)
         with self._connect() as db:
             db.execute(
-                f"update follow_up_drafts set {assignments} where id=?",
-                [*values.values(), draft_id],
+                f"update follow_up_drafts set {', '.join(assignments)} where id=?",
+                [*parameters, draft_id],
             )
 
     def list_follow_up_drafts(
@@ -2170,7 +2340,6 @@ class AutoReplyStore:
     def set_daily_scan_state(
         self,
         scanner_name: str,
-        *,
         last_success_at: str,
         cursor_json: str = "{}",
         last_error: str = "",
