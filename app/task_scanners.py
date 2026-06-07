@@ -173,6 +173,7 @@ def scan_ai_minutes(store: AutoReplyStore, dws) -> int:
             or minutes.get("minutesId")
             or minutes.get("id")
             or minutes.get("task_uuid")
+            or minutes.get("uuid")
             or ""
         )
         if not minutes_id:
@@ -184,7 +185,12 @@ def scan_ai_minutes(store: AutoReplyStore, dws) -> int:
                     "type": "ai_minutes",
                     "ref": minutes_id,
                     "title": title,
-                    "created_at": str(minutes.get("createdAt") or ""),
+                    "created_at": str(
+                        minutes.get("createdAt")
+                        or minutes.get("startTimeISO")
+                        or minutes.get("startTime")
+                        or ""
+                    ),
                 },
                 "summary": json.dumps(minutes, ensure_ascii=False),
                 "project_name": title,

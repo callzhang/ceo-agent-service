@@ -125,6 +125,28 @@ def test_scan_ai_minutes_enqueues_adapter_items(tmp_path):
     assert "售前知识库周会" in claimed[0].payload_json
 
 
+def test_scan_ai_minutes_accepts_live_dws_row_shape(tmp_path):
+    class FakeDws:
+        def list_minutes(self):
+            return [
+                {
+                    "uuid": "minutes-1",
+                    "title": "吴柯欣 - 招聘专员-2026050701 - 三面",
+                    "startTimeISO": "2026-06-07T13:24:06+08:00",
+                }
+            ]
+
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+
+    count = scan_ai_minutes(store, FakeDws())
+
+    assert count == 1
+    claimed = store.claim_work_summary_inputs(limit=10)
+    assert len(claimed) == 1
+    assert claimed[0].source_ref == "minutes-1"
+    assert "2026-06-07T13:24:06+08:00" in claimed[0].payload_json
+
+
 def test_scan_ai_minutes_records_unavailable_adapter(tmp_path):
     store = AutoReplyStore(tmp_path / "task.sqlite3")
 

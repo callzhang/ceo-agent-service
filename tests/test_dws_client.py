@@ -326,6 +326,29 @@ def test_parse_minutes_list_accepts_common_wrappers():
     ) == [{"taskUuid": "minutes-2", "title": "复盘"}]
 
 
+def test_parse_minutes_list_accepts_live_item_list_shape():
+    payload = {
+        "result": {
+            "itemList": [
+                {
+                    "uuid": "minutes-1",
+                    "title": "吴柯欣 - 招聘专员-2026050701 - 三面",
+                    "startTimeISO": "2026-06-07T13:24:06+08:00",
+                }
+            ]
+        }
+    }
+
+    assert DwsClient.parse_minutes_list(payload) == [
+        {
+            "uuid": "minutes-1",
+            "title": "吴柯欣 - 招聘专员-2026050701 - 三面",
+            "startTimeISO": "2026-06-07T13:24:06+08:00",
+            "taskUuid": "minutes-1",
+        }
+    ]
+
+
 def test_minutes_transcription_command_shape_with_next_token():
     client = DwsClient(dws_bin="dws")
 

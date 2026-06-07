@@ -1960,6 +1960,7 @@ class DwsClient:
                 or item.get("minutesId")
                 or item.get("id")
                 or item.get("task_uuid")
+                or item.get("uuid")
             )
             if not task_uuid:
                 continue
@@ -1988,7 +1989,7 @@ class DwsClient:
         for candidate in candidates:
             if not isinstance(candidate, dict):
                 continue
-            for key in ("items", "list", "records", "minutes", "value"):
+            for key in ("items", "itemList", "list", "records", "minutes", "value"):
                 value = candidate.get(key)
                 if isinstance(value, list):
                     return value
