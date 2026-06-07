@@ -97,6 +97,8 @@ class WorkerSettings(BaseModel):
     dws_transient_retry_delay_seconds: float = 1.0
     codex_timeout_seconds: PositiveInt = 420
     codex_idle_timeout_seconds: PositiveInt = 180
+    task_work_item_interval_seconds: PositiveInt = 60
+    task_daily_interval_seconds: PositiveInt = 86_400
     max_batches: NonNegativeInt | None = None
 
 
@@ -345,6 +347,26 @@ def build_parser() -> argparse.ArgumentParser:
                 type=_positive_int,
                 default=consumer_poll_interval_seconds(),
             )
+            subparser.add_argument(
+                "--task-work-item-interval-seconds",
+                type=_positive_int,
+                default=_positive_int(
+                    os.getenv(
+                        "CEO_TASK_WORK_ITEM_INTERVAL_SECONDS",
+                        str(defaults.task_work_item_interval_seconds),
+                    )
+                ),
+            )
+            subparser.add_argument(
+                "--task-daily-interval-seconds",
+                type=_positive_int,
+                default=_positive_int(
+                    os.getenv(
+                        "CEO_TASK_DAILY_INTERVAL_SECONDS",
+                        str(defaults.task_daily_interval_seconds),
+                    )
+                ),
+            )
         if command == "export-feedback":
             subparser.add_argument(
                 "--output",
@@ -459,6 +481,16 @@ def settings_from_args(args: argparse.Namespace) -> WorkerSettings:
         dws_transient_retry_delay_seconds=args.dws_transient_retry_delay_seconds,
         codex_timeout_seconds=args.codex_timeout_seconds,
         codex_idle_timeout_seconds=args.codex_idle_timeout_seconds,
+        task_work_item_interval_seconds=getattr(
+            args,
+            "task_work_item_interval_seconds",
+            WorkerSettings().task_work_item_interval_seconds,
+        ),
+        task_daily_interval_seconds=getattr(
+            args,
+            "task_daily_interval_seconds",
+            WorkerSettings().task_daily_interval_seconds,
+        ),
         max_batches=args.max_batches,
     )
 
@@ -1360,6 +1392,25 @@ def run_consumer_loop(
         sleep(poll_interval_seconds)
 
 
+def run_task_maintenance_loop(
+    settings: WorkerSettings,
+    *,
+    work_item_interval_seconds: int,
+    daily_interval_seconds: int,
+    sleep: Callable[[int], None] = time.sleep,
+    monotonic: Callable[[], float] = time.monotonic,
+) -> None:
+    next_daily_run = monotonic()
+    while True:
+        process_work_items_command(settings)
+        now = monotonic()
+        if now >= next_daily_run:
+            scan_task_sources_command(settings)
+            process_follow_ups_command(settings)
+            next_daily_run = now + daily_interval_seconds
+        sleep(work_item_interval_seconds)
+
+
 def run_service(
     settings: WorkerSettings,
     *,
@@ -1391,6 +1442,14 @@ def run_service(
         (
             "audit-web",
             lambda: run_audit_web_command(settings, host=host, port=port, reload=False),
+        ),
+        (
+            "task-maintenance",
+            lambda: run_task_maintenance_loop(
+                settings,
+                work_item_interval_seconds=settings.task_work_item_interval_seconds,
+                daily_interval_seconds=settings.task_daily_interval_seconds,
+            ),
         ),
     )
     for component, target in components:

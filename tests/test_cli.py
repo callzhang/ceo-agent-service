@@ -20,6 +20,7 @@ from app.cli import (
     rerun_message_command,
     reset_codex_sessions_command,
     run_consumer_loop,
+    run_task_maintenance_loop,
     record_feedback_command,
     refresh_org_cache_command,
     run_loop,
@@ -391,6 +392,10 @@ def test_parser_supports_single_service_command(monkeypatch):
             "61",
             "--consumer-poll-interval-seconds",
             "11",
+            "--task-work-item-interval-seconds",
+            "31",
+            "--task-daily-interval-seconds",
+            "3600",
         ]
     )
 
@@ -399,6 +404,8 @@ def test_parser_supports_single_service_command(monkeypatch):
     assert args.port == 8765
     assert args.producer_interval_seconds == 61
     assert args.consumer_poll_interval_seconds == 11
+    assert args.task_work_item_interval_seconds == 31
+    assert args.task_daily_interval_seconds == 3600
 
 
 def test_parser_keeps_dry_run_as_not_send_message_alias():
@@ -640,6 +647,8 @@ def test_settings_defaults_point_to_memory_home():
     assert settings.poll_interval_seconds == 300
     assert settings.codex_timeout_seconds == 420
     assert settings.codex_idle_timeout_seconds == 180
+    assert settings.task_work_item_interval_seconds == 60
+    assert settings.task_daily_interval_seconds == 86_400
     assert settings.max_batches is None
 
 
@@ -2416,6 +2425,51 @@ def test_producer_and_consumer_loops_call_separate_methods_once():
     ]
 
 
+def test_task_maintenance_loop_processes_work_and_daily_steps(monkeypatch, tmp_path):
+    calls = []
+    times = iter([10.0, 10.0])
+
+    class StopLoop(Exception):
+        pass
+
+    settings = WorkerSettings(db_path=tmp_path / "worker.sqlite3")
+    monkeypatch.setattr(
+        cli,
+        "process_work_items_command",
+        lambda received: calls.append(("work", received.db_path)) or 2,
+    )
+    monkeypatch.setattr(
+        cli,
+        "scan_task_sources_command",
+        lambda received: calls.append(("scan", received.db_path)) or 3,
+    )
+    monkeypatch.setattr(
+        cli,
+        "process_follow_ups_command",
+        lambda received: calls.append(("follow", received.db_path)) or 1,
+    )
+
+    def sleep(seconds):
+        calls.append(("sleep", seconds))
+        raise StopLoop
+
+    with pytest.raises(StopLoop):
+        run_task_maintenance_loop(
+            settings,
+            work_item_interval_seconds=31,
+            daily_interval_seconds=3600,
+            sleep=sleep,
+            monotonic=lambda: next(times),
+        )
+
+    assert calls == [
+        ("work", tmp_path / "worker.sqlite3"),
+        ("scan", tmp_path / "worker.sqlite3"),
+        ("follow", tmp_path / "worker.sqlite3"),
+        ("sleep", 31),
+    ]
+
+
 def test_run_service_starts_web_producer_and_consumer(monkeypatch, tmp_path):
     calls = []
     failures = []
@@ -2461,12 +2515,25 @@ def test_run_service_starts_web_producer_and_consumer(monkeypatch, tmp_path):
     )
     monkeypatch.setattr(
         cli,
+        "run_task_maintenance_loop",
+        lambda settings, work_item_interval_seconds, daily_interval_seconds: calls.append(
+            ("task-maintenance", work_item_interval_seconds, daily_interval_seconds)
+        )
+        or stop("task-maintenance"),
+    )
+    monkeypatch.setattr(
+        cli,
         "_record_service_failure",
         lambda settings, component, exc: failures.append((component, str(exc))),
     )
 
     run_service(
-        WorkerSettings(db_path=tmp_path / "worker.sqlite3", max_batches=4),
+        WorkerSettings(
+            db_path=tmp_path / "worker.sqlite3",
+            max_batches=4,
+            task_work_item_interval_seconds=31,
+            task_daily_interval_seconds=3600,
+        ),
         host="127.0.0.1",
         port=8765,
         producer_interval_seconds=60,
@@ -2483,14 +2550,17 @@ def test_run_service_starts_web_producer_and_consumer(monkeypatch, tmp_path):
         ("consumer", 10, 4),
         ("start", "ceo-agent-service-audit-web", True),
         ("audit-web", "127.0.0.1", 8765, False),
+        ("start", "ceo-agent-service-task-maintenance", True),
+        ("task-maintenance", 31, 3600),
         ("wait",),
     ]
     assert failures == [
         ("producer", "stop producer"),
         ("consumer", "stop consumer"),
         ("audit-web", "stop audit-web"),
+        ("task-maintenance", "stop task-maintenance"),
     ]
-    assert exits == [1, 1, 1]
+    assert exits == [1, 1, 1, 1]
 
 
 def test_default_poll_interval_is_five_minutes():

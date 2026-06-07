@@ -238,7 +238,12 @@ management, strategy, projects, marketing, research, dev, product,
 recruiting, sales, finance, admin, HR, other
 ```
 
-常用命令：
+主服务会自动运行 task maintenance：
+
+- 每 `CEO_TASK_WORK_ITEM_INTERVAL_SECONDS` 秒消费一次 reply worker 写入的 Work Item，默认 60 秒。
+- 每 `CEO_TASK_DAILY_INTERVAL_SECONDS` 秒扫描 AI 听记、本地新增文件并处理到期 follow-up，默认 86400 秒。
+
+手动补跑命令：
 
 ```bash
 cd /path/to/ceo-agent-service
@@ -281,6 +286,7 @@ scripts/install-auto-reply-agents.sh
 - `com.ceo-agent-service.main`：单个 launchd 主服务，常驻运行 8765 审计页面、producer loop 和 consumer loop。
 - producer loop：按 `CEO_PRODUCER_INTERVAL_SECONDS` 间隔发现消息并入队，默认 60 秒。
 - consumer loop：按 `CEO_CONSUMER_POLL_INTERVAL_SECONDS` 间隔领取任务、调用 agent、执行发送或跳过，默认 10 秒。
+- task maintenance loop：按 `CEO_TASK_WORK_ITEM_INTERVAL_SECONDS` 处理 Work Item，并按 `CEO_TASK_DAILY_INTERVAL_SECONDS` 扫描 AI 听记、`CEO_WORKSPACE` 文件和到期 follow-up。
 
 手动发送已审阅 attempt：
 
