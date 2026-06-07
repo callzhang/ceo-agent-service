@@ -92,6 +92,8 @@ class TaskAgentCodexRunner:
             total_timeout_seconds=self.timeout_seconds,
             idle_timeout_seconds=self.idle_timeout_seconds,
         )
+        if completed.timed_out:
+            raise RuntimeError(completed.timeout_reason or "task agent codex timed out")
         if completed.returncode != 0:
             raise RuntimeError(
                 self._subprocess_failure_reason(completed.stderr, completed.stdout)

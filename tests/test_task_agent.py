@@ -520,3 +520,23 @@ def test_task_agent_codex_runner_uses_process_runner_signature(tmp_path):
     assert calls[0][1]["env"] == runner.runner.build_env()
     assert calls[0][1]["total_timeout_seconds"] == 7
     assert calls[0][1]["idle_timeout_seconds"] == 3
+
+
+def test_task_agent_codex_runner_timeout_raises_reason(tmp_path):
+    from app.task_agent import TaskAgentCodexRunner
+
+    def fake_run(command, **kwargs):
+        return ProcessRunResult(
+            returncode=-15,
+            stdout="",
+            stderr="",
+            timed_out=True,
+            timeout_kind="idle",
+            timeout_reason="process produced no output for 3 seconds",
+        )
+
+    runner = TaskAgentCodexRunner(workspace=tmp_path)
+    runner._run_process_with_idle_timeout = fake_run
+
+    with pytest.raises(RuntimeError, match="no output for 3 seconds"):
+        runner.decide(prompt="decide")
