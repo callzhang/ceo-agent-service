@@ -1569,10 +1569,9 @@ def test_queued_task_falls_back_to_trigger_when_context_read_fails(
     assert attempt.action == "send_reply"
     assert attempt.send_status == "sent"
     errors = worker.store.list_errors(limit=10)
-    assert {error.kind for error in errors} == {
-        "read_recent_messages_fallback",
-        "read_unread_messages_fallback",
-    }
+    assert [error.kind for error in errors] == ["read_recent_messages_fallback"]
+    assert dws.recent_message_reads == ["cid-1"]
+    assert dws.unread_message_reads == []
 
 
 def test_fast_path_backoff_skips_when_current_user_replied_after_trigger(

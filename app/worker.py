@@ -229,11 +229,14 @@ class DingTalkAutoReplyWorker:
         conversation_id: str | None = None,
         message_id: str | None = None,
         notify_title: str | None = None,
+        raise_authorization: bool = False,
         default: T,
     ) -> T:
         try:
             return call()
         except Exception as exc:
+            if raise_authorization and self._is_authorization_error(exc):
+                raise
             self.store.record_error(conversation_id, message_id, kind, str(exc))
             if conversation_id and self._is_dws_forbidden_read_error(exc):
                 self._mark_dws_read_forbidden(conversation_id)
@@ -942,27 +945,23 @@ class DingTalkAutoReplyWorker:
     ) -> tuple[list[DingTalkMessage], list[DingTalkMessage]]:
         context_messages: list[DingTalkMessage] = []
         unread_messages: list[DingTalkMessage] = []
-        try:
-            context_messages = self.dws.read_recent_messages(conversation)
-        except Exception as exc:
-            if self._is_authorization_error(exc):
-                raise
-            self.store.record_error(
-                conversation.open_conversation_id,
-                trigger.open_message_id,
+        if not self._is_dws_read_forbidden(conversation.open_conversation_id):
+            context_messages = self._call_dws(
                 "read_recent_messages_fallback",
-                str(exc),
+                lambda: self.dws.read_recent_messages(conversation),
+                conversation_id=conversation.open_conversation_id,
+                message_id=trigger.open_message_id,
+                raise_authorization=True,
+                default=[],
             )
-        try:
-            unread_messages = self.dws.read_unread_messages(conversation)
-        except Exception as exc:
-            if self._is_authorization_error(exc):
-                raise
-            self.store.record_error(
-                conversation.open_conversation_id,
-                trigger.open_message_id,
+        if not self._is_dws_read_forbidden(conversation.open_conversation_id):
+            unread_messages = self._call_dws(
                 "read_unread_messages_fallback",
-                str(exc),
+                lambda: self.dws.read_unread_messages(conversation),
+                conversation_id=conversation.open_conversation_id,
+                message_id=trigger.open_message_id,
+                raise_authorization=True,
+                default=[],
             )
         return context_messages, self._prompt_context_messages(
             context_messages,
@@ -979,17 +978,16 @@ class DingTalkAutoReplyWorker:
         error: str = "",
     ) -> bool:
         if self._is_calendar_message(trigger):
-            try:
-                full_context_messages = self.dws.read_recent_messages(conversation)
+            if not self._is_dws_read_forbidden(conversation.open_conversation_id):
+                full_context_messages = self._call_dws(
+                    "read_recent_messages_calendar_context",
+                    lambda: self.dws.read_recent_messages(conversation),
+                    conversation_id=conversation.open_conversation_id,
+                    message_id=trigger.open_message_id,
+                    default=[],
+                )
                 if full_context_messages:
                     context_messages = full_context_messages
-            except Exception as exc:
-                self.store.record_error(
-                    conversation.open_conversation_id,
-                    trigger.open_message_id,
-                    "read_recent_messages_calendar_context",
-                    str(exc),
-                )
         trigger = self._calendar_card_message_with_available_details(
             conversation,
             trigger,
