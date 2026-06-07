@@ -818,6 +818,21 @@ def make_worker(
     )
 
 
+def test_notification_url_includes_attempt_id(tmp_path, monkeypatch):
+    dws = FakeDws(
+        conversations=[conversation(single_chat=True)],
+        messages={},
+    )
+    worker = make_worker(tmp_path, dws, FakeCodex([]), monkeypatch)
+
+    url = worker._notification_url(conversation(single_chat=True), attempt_id=123)
+
+    assert url == (
+        "http://127.0.0.1:8765/open-dingtalk"
+        "?conversation_id=cid-1&attempt_id=123"
+    )
+
+
 def test_run_once_with_zero_batches_is_noop(tmp_path, monkeypatch):
     dws = FakeDws(
         conversations=[conversation(single_chat=True)],
@@ -4548,12 +4563,15 @@ def test_success_notification_keeps_full_reply_text(tmp_path: Path, monkeypatch)
 
     assert len(notifications[0]["message"]) > 120
     assert notifications == [
-        {
-            "title": "CEO auto reply: Friday",
-            "message": final_sent(dws)[0][1],
-            "url": "http://127.0.0.1:8765/open-dingtalk?conversation_id=cid-1",
-        }
-    ]
+            {
+                "title": "CEO auto reply: Friday",
+                "message": final_sent(dws)[0][1],
+                "url": (
+                    "http://127.0.0.1:8765/open-dingtalk"
+                    "?conversation_id=cid-1&attempt_id=1"
+                ),
+            }
+        ]
 
 
 def test_success_notification_prepares_dingtalk_open_conversation_url(
@@ -4579,7 +4597,10 @@ def test_success_notification_prepares_dingtalk_open_conversation_url(
     assert notifications[0] == {
         "title": "CEO auto reply: Friday",
         "message": final_sent(dws)[0][1],
-        "url": "http://127.0.0.1:8765/open-dingtalk?conversation_id=cid-1",
+        "url": (
+            "http://127.0.0.1:8765/open-dingtalk"
+            "?conversation_id=cid-1&attempt_id=1"
+        ),
     }
 
 
@@ -6780,12 +6801,15 @@ def test_new_principal_mention_is_processed(
     assert final_sent(dws) == [("cid-1", "战略主线建议这样调整（by明哥分身）")]
     assert store.has_seen("msg-after-handoff") is True
     assert notifications == [
-        {
-            "title": "CEO auto reply: 26年董事会筹备组",
-            "message": "战略主线建议这样调整（by明哥分身）",
-            "url": "http://127.0.0.1:8765/open-dingtalk?conversation_id=cid-1",
-        }
-    ]
+            {
+                "title": "CEO auto reply: 26年董事会筹备组",
+                "message": "战略主线建议这样调整（by明哥分身）",
+                "url": (
+                    "http://127.0.0.1:8765/open-dingtalk"
+                    "?conversation_id=cid-1&attempt_id=1"
+                ),
+            }
+        ]
 
 
 def test_group_unread_without_principal_mention_is_ignored(

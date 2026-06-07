@@ -464,7 +464,7 @@ def _browser_notification_client_script() -> str:
       body: payload.message,
       tag: payload.id,
       renotify: true,
-      data: { url: payload.url || "" },
+      data: { url: payload.url || "", detailUrl: payload.detail_url || "" },
     };
     const registration = await ensureServiceWorker();
     if (!registration) {
@@ -540,6 +540,23 @@ def _browser_notification_client_script() -> str:
   if (enableButton) {
     enableButton.addEventListener("click", requestNotificationPermission);
   }
+  if ("serviceWorker" in navigator) {
+    navigator.serviceWorker.addEventListener("message", (event) => {
+      const payload = event.data || {};
+      if (payload.type !== "ceo-agent-service:navigate" || !payload.url) {
+        return;
+      }
+      const target = new URL(payload.url, window.location.origin);
+      if (target.origin !== window.location.origin) {
+        return;
+      }
+      const targetPath = `${target.pathname}${target.search}${target.hash}`;
+      const currentPath = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+      if (targetPath !== currentPath) {
+        window.location.assign(targetPath);
+      }
+    });
+  }
   window.addEventListener("storage", (event) => {
     if (event.key === lockKey) {
       electLeader();
@@ -590,6 +607,12 @@ async function handleNotificationClick(data) {
     try {
       if (new URL(client.url).origin === self.location.origin && client.focus) {
         await client.focus();
+        if (data.detailUrl && client.postMessage) {
+          client.postMessage({
+            type: "ceo-agent-service:navigate",
+            url: data.detailUrl,
+          });
+        }
         return;
       }
     } catch (error) {
@@ -611,7 +634,23 @@ def _browser_notification_event(
         "title": title,
         "message": message,
         "url": url,
+        "detail_url": _notification_detail_url(url),
     }
+
+
+def _notification_detail_url(url: str) -> str:
+    parsed = urlparse(url)
+    query = parse_qs(parsed.query)
+    attempt_ids = query.get("attempt_id", [])
+    if not attempt_ids:
+        return ""
+    try:
+        attempt_id = int(attempt_ids[0])
+    except ValueError:
+        return ""
+    if attempt_id <= 0:
+        return ""
+    return f"/attempts/{attempt_id}"
 
 
 def _dingtalk_conversation_url(cid: str) -> str:

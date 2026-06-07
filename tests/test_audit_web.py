@@ -966,6 +966,8 @@ def test_notification_service_worker_fetches_bridge_without_opening_window(
     assert 'await fetch(data.url, {' in response.text
     assert "clients.matchAll" in response.text
     assert "client.focus" in response.text
+    assert "client.postMessage" in response.text
+    assert "ceo-agent-service:navigate" in response.text
     assert "clients.openWindow" not in response.text
     assert "window.open" not in response.text
 
@@ -982,6 +984,8 @@ def test_browser_notifications_page_is_available(tmp_path: Path):
     assert "navigator.serviceWorker" in response.text
     assert '"/notification-service-worker.js"' in response.text
     assert "registration.showNotification(payload.title, options)" in response.text
+    assert "navigator.serviceWorker.addEventListener(\"message\"" in response.text
+    assert "window.location.assign(targetPath)" in response.text
     assert "new Notification(" not in response.text
     assert "notification.onclick" not in response.text
     assert "payload.dingtalk_url" not in response.text
@@ -1012,6 +1016,26 @@ def test_browser_notification_post_reports_no_subscribers(tmp_path: Path):
         "subscribers": 0,
         "dingtalk_url": "dingtalk://dingtalkclient/page/conversation?cid=75217569357",
     }
+
+
+def test_browser_notification_event_includes_attempt_detail_url():
+    event = audit_web_module._browser_notification_event(
+        title="CEO auto reply",
+        message="已回复",
+        url="http://127.0.0.1:8765/open-dingtalk?cid=75217569357&attempt_id=123",
+    )
+
+    assert event["detail_url"] == "/attempts/123"
+
+
+def test_browser_notification_event_ignores_invalid_attempt_id():
+    event = audit_web_module._browser_notification_event(
+        title="CEO auto reply",
+        message="已回复",
+        url="http://127.0.0.1:8765/open-dingtalk?cid=75217569357&attempt_id=not-a-number",
+    )
+
+    assert event["detail_url"] == ""
 
 
 def test_env_file_overrides_existing_environment(tmp_path: Path, monkeypatch):

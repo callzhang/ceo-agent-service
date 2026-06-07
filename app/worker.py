@@ -4464,6 +4464,7 @@ class DingTalkAutoReplyWorker:
                 title=f"CEO agent empty reply: {conversation.title}",
                 message=reason[:120],
                 conversation=conversation,
+                attempt_id=attempt_id,
             )
             return
         try:
@@ -4484,6 +4485,7 @@ class DingTalkAutoReplyWorker:
                 title=f"CEO reply recipient failed: {conversation.title}",
                 message=str(exc)[:120],
                 conversation=conversation,
+                attempt_id=attempt_id,
             )
             if raise_on_delivery_failure:
                 raise ReplyDeliveryError(str(exc)) from exc
@@ -4619,6 +4621,7 @@ class DingTalkAutoReplyWorker:
                 title=f"CEO agent blocked leak: {conversation.title}",
                 message=reply_text[:120],
                 conversation=conversation,
+                attempt_id=attempt_id,
             )
             return
 
@@ -4642,6 +4645,7 @@ class DingTalkAutoReplyWorker:
             title=f"CEO auto reply: {conversation.title}",
             message=reply_text,
             conversation=conversation,
+            attempt_id=attempt_id,
         )
         self._deliver_trigger_reply(
             conversation=conversation,
@@ -4672,6 +4676,7 @@ class DingTalkAutoReplyWorker:
             title=f"CEO minutes comment: {conversation.title}",
             message=reply_text,
             conversation=conversation,
+            attempt_id=attempt_id,
         )
         if self.dry_run:
             self.store.update_reply_attempt(attempt_id, send_status="dry_run")
@@ -4689,6 +4694,7 @@ class DingTalkAutoReplyWorker:
                 title=f"CEO minutes comment unavailable: {conversation.title}",
                 message=str(exc)[:120],
                 conversation=conversation,
+                attempt_id=attempt_id,
             )
             self._deliver_minutes_comment_fallback_reply(
                 conversation=conversation,
@@ -4817,6 +4823,7 @@ class DingTalkAutoReplyWorker:
                     title=failure_notify_title,
                     message=str(exc)[:120],
                     conversation=conversation,
+                    attempt_id=attempt_id,
                 )
             return False
         send_result_json_payload = (
@@ -4978,22 +4985,31 @@ class DingTalkAutoReplyWorker:
         title: str,
         message: str,
         conversation: DingTalkConversation | None = None,
+        attempt_id: int | None = None,
     ) -> None:
         send_macos_notification(
             title=title,
             message=message,
-            url=self._notification_url(conversation),
+            url=self._notification_url(conversation, attempt_id=attempt_id),
         )
 
-    def _notification_url(self, conversation: DingTalkConversation | None) -> str | None:
+    def _notification_url(
+        self,
+        conversation: DingTalkConversation | None,
+        *,
+        attempt_id: int | None = None,
+    ) -> str | None:
         if conversation is None:
             return None
         open_conversation_id = conversation.open_conversation_id.strip()
         if not open_conversation_id:
             return None
+        query = f"conversation_id={quote(open_conversation_id, safe='')}"
+        if attempt_id is not None:
+            query = f"{query}&attempt_id={int(attempt_id)}"
         return (
             f"{notification_bridge_base_url()}/open-dingtalk"
-            f"?conversation_id={quote(open_conversation_id, safe='')}"
+            f"?{query}"
         )
 
     def _mark_seen(self, messages: list[DingTalkMessage]) -> None:
