@@ -452,3 +452,28 @@ def test_process_work_item_accepts_none_session_id(tmp_path):
             "select summary_input_id, codex_session_id from task_agent_runs",
         ).fetchone()
     assert run_row == (input_id, "")
+
+
+def test_task_agent_codex_runner_parses_jsonl_payload(tmp_path):
+    from app.task_agent import TaskAgentCodexRunner
+
+    def executor(command, prompt):
+        return (
+            '{"type":"session_meta","payload":{"id":"session-task-1"}}\n'
+            '{"item":{"type":"agent_message","text":"'
+            '{\\"action\\":\\"discard\\",'
+            '\\"discard_reason\\":\\"没有状态变化\\",'
+            '\\"todo_changes\\":[],'
+            '\\"follow_up_drafts\\":[],'
+            '\\"update_summary\\":\\"无变化\\",'
+            '\\"merge_reason\\":\\"\\",'
+            '\\"memory_recall_used\\":false,'
+            '\\"confidence\\":0.7}'
+            '"}}\n'
+        )
+
+    runner = TaskAgentCodexRunner(workspace=tmp_path, executor=executor)
+    decision = runner.decide(prompt="x")
+
+    assert decision.action == "discard"
+    assert runner.last_session_id == "session-task-1"

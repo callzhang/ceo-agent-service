@@ -48,6 +48,7 @@ from app.org_cache import (
     refresh_org_cache,
 )
 from app.store import AutoReplyStore
+from app.task_agent import TaskAgentCodexRunner, TaskAgentRunner, process_work_item
 from app.work_profile import (
     build_initial_profile,
     collect_dingtalk_kb_evidence,
@@ -162,6 +163,7 @@ def build_parser() -> argparse.ArgumentParser:
         "produce",
         "consume-once",
         "consume",
+        "process-work-items",
         "build-corpus",
         "collect-corpus",
         "refresh-org-cache",
@@ -577,6 +579,28 @@ def consume_once(settings: WorkerSettings) -> int:
         _record_service_failure(settings, "consumer", exc)
         raise
     print(f"consume-once processed={processed}", flush=True)
+    return processed
+
+
+def process_work_items_command(settings: WorkerSettings) -> int:
+    store = AutoReplyStore(settings.db_path)
+    limit = settings.max_batches or 20
+    runner = TaskAgentRunner(
+        TaskAgentCodexRunner(
+            workspace=settings.workspace,
+            timeout_seconds=settings.codex_timeout_seconds,
+            idle_timeout_seconds=settings.codex_idle_timeout_seconds,
+        )
+    )
+    processed = 0
+    for work_input in store.claim_work_summary_inputs(limit=limit):
+        try:
+            process_work_item(store, runner, work_input)
+            processed += 1
+        except Exception as exc:
+            store.mark_work_summary_input_failed(work_input.id, str(exc))
+            store.record_error(None, None, "task_agent", str(exc))
+    print(f"process-work-items processed={processed}", flush=True)
     return processed
 
 
@@ -1471,6 +1495,8 @@ def main() -> None:
             settings.poll_interval_seconds,
             max_tasks=settings.max_batches,
         )
+    elif args.command == "process-work-items":
+        process_work_items_command(settings)
     elif args.command == "build-corpus":
         build_style_corpus(settings.workspace, settings.corpus_dir)
     elif args.command == "collect-corpus":

@@ -1,5 +1,8 @@
 import json
+from pathlib import Path
 from typing import Protocol
+
+from pydantic import ValidationError
 
 from app.store import AutoReplyStore
 from app.task_models import (
@@ -34,6 +37,65 @@ class TaskAgentRunner:
             prompt=build_task_agent_prompt(work_item, candidate_prompt),
             session_id=None,
         )
+
+
+class TaskAgentCodexRunner:
+    def __init__(
+        self,
+        workspace: Path,
+        codex_bin: str = "codex",
+        executor=None,
+        timeout_seconds: int = 420,
+        idle_timeout_seconds: int = 180,
+    ):
+        from app.codex_decision import (
+            _subprocess_failure_reason,
+            extract_codex_audit_events,
+            extract_codex_session_id,
+        )
+        from app.codex_runner import CodexRunner
+        from app.process_runner import run_process_with_idle_timeout
+
+        self.workspace = workspace
+        self.runner = CodexRunner(workspace=workspace, codex_bin=codex_bin)
+        self.executor = executor
+        self.timeout_seconds = timeout_seconds
+        self.idle_timeout_seconds = idle_timeout_seconds
+        self._run_process_with_idle_timeout = run_process_with_idle_timeout
+        self._extract_codex_session_id = extract_codex_session_id
+        self._extract_codex_audit_events = extract_codex_audit_events
+        self._subprocess_failure_reason = _subprocess_failure_reason
+        self.last_session_id: str | None = None
+        self.last_audit_tool_events: list[dict[str, str]] = []
+        self.last_transcript_start_line = 0
+        self.last_transcript_end_line = 0
+
+    def decide(
+        self,
+        *,
+        prompt: str,
+        session_id: str | None = None,
+    ) -> TaskAgentDecision:
+        raw = self._execute(prompt=prompt, session_id=session_id)
+        self.last_session_id = self._extract_codex_session_id(raw) or session_id
+        self.last_audit_tool_events = self._extract_codex_audit_events(raw)
+        return _parse_task_agent_decision(raw)
+
+    def _execute(self, *, prompt: str, session_id: str | None) -> str:
+        command = self.runner.build_command(prompt, session_id, image_paths=None)
+        if self.executor is not None:
+            return self.executor(command, prompt)
+        completed = self._run_process_with_idle_timeout(
+            command,
+            input_text=prompt,
+            timeout_seconds=self.timeout_seconds,
+            idle_timeout_seconds=self.idle_timeout_seconds,
+        )
+        if completed.returncode != 0:
+            raise RuntimeError(
+                self._subprocess_failure_reason(completed.stderr, completed.stdout)
+            )
+        return completed.stdout
 
 
 def build_task_agent_prompt(work_item: WorkItem, candidate_prompt: str) -> str:
@@ -337,3 +399,54 @@ def _jsonable(value: object) -> object:
 
 def _enum_value(value: object) -> object:
     return getattr(value, "value", value)
+
+
+def _task_decision_text_candidates(payload: object) -> list[str]:
+    candidates: list[str] = []
+    if not isinstance(payload, dict):
+        return candidates
+    for key in ("message", "last_agent_message", "content", "text"):
+        value = payload.get(key)
+        if isinstance(value, str):
+            candidates.append(value)
+        elif isinstance(value, list):
+            for item in value:
+                if isinstance(item, dict) and isinstance(item.get("text"), str):
+                    candidates.append(item["text"])
+    item = payload.get("item")
+    if isinstance(item, dict):
+        candidates.extend(_task_decision_text_candidates(item))
+    nested = payload.get("payload")
+    if isinstance(nested, dict):
+        candidates.extend(_task_decision_text_candidates(nested))
+    return candidates
+
+
+def _parse_task_agent_decision(raw: str) -> TaskAgentDecision:
+    stripped = raw.strip()
+    try:
+        return TaskAgentDecision.model_validate_json(stripped)
+    except (ValueError, ValidationError):
+        pass
+
+    payloads: list[object] = []
+    for line in stripped.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            payloads.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+
+    for payload in reversed(payloads):
+        try:
+            return TaskAgentDecision.model_validate(payload)
+        except (ValueError, ValidationError):
+            pass
+        for text in _task_decision_text_candidates(payload):
+            try:
+                return TaskAgentDecision.model_validate_json(text)
+            except (ValueError, ValidationError):
+                continue
+    raise ValueError("No TaskAgentDecision JSON found")

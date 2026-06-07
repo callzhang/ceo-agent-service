@@ -24,6 +24,7 @@ from app.cli import (
     run_loop,
     run_producer_loop,
     run_service,
+    process_work_items_command,
     send_attempt_command,
     settings_from_args,
     test_ding_command as run_test_ding_command,
@@ -31,6 +32,8 @@ from app.cli import (
 )
 from app.corpus import CorpusRecord, append_records
 from app.dws_client import DwsError
+from app.store import AutoReplyStore
+from app.task_models import TaskAgentDecision, WorkItem
 
 
 def enqueue_trigger_task(
@@ -76,6 +79,86 @@ def test_parser_supports_worker_commands():
     assert args.command == "run-once"
     assert args.dry_run is True
     assert args.db == "/tmp/worker.sqlite3"
+
+
+def test_parser_supports_process_work_items():
+    args = build_parser().parse_args(["process-work-items", "--max-batches", "3"])
+
+    assert args.command == "process-work-items"
+    assert args.max_batches == 3
+
+
+def test_process_work_items_command_processes_claimed_input(tmp_path, monkeypatch, capsys):
+    class FakeTaskAgentCodexRunner:
+        last_session_id = "task-session-1"
+        last_transcript_start_line = 0
+        last_transcript_end_line = 0
+
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        def decide(self, *, prompt, session_id=None):
+            return TaskAgentDecision.model_validate(
+                {
+                    "action": "create_project",
+                    "project": {
+                        "title": "售前知识库建设",
+                        "category": "sales",
+                        "status": "active",
+                    },
+                    "todo_changes": [],
+                    "follow_up_drafts": [],
+                    "update_summary": "创建项目。",
+                    "merge_reason": "事项名称稳定。",
+                    "memory_recall_used": False,
+                    "confidence": 0.8,
+                }
+            )
+
+    monkeypatch.setattr(cli, "TaskAgentCodexRunner", FakeTaskAgentCodexRunner)
+    db_path = tmp_path / "task.sqlite3"
+    store = AutoReplyStore(db_path)
+    item = WorkItem.model_validate(
+        {
+            "source": {
+                "type": "reply_attempt",
+                "ref": "1",
+                "title": "售前推进",
+                "conversation_id": "cid-1",
+                "conversation_title": "售前群",
+                "created_at": "2026-06-07 09:00:00",
+            },
+            "summary": "售前知识库需要补齐来源链接。",
+            "project_name": "售前知识库",
+            "context": {
+                "sender": "Mina",
+                "participants": ["Alex"],
+                "source_conversation_kind": "group",
+                "source_conversation_title": "售前群",
+            },
+        }
+    )
+    input_id = store.enqueue_work_summary_input(
+        item.source.type.value,
+        item.source.ref,
+        item.model_dump_json(),
+    )
+
+    processed = process_work_items_command(
+        WorkerSettings(db_path=db_path, workspace=tmp_path, max_batches=5)
+    )
+
+    loaded = AutoReplyStore(db_path)
+    assert processed == 1
+    assert capsys.readouterr().out == "process-work-items processed=1\n"
+    assert loaded.list_work_projects()[0].title == "售前知识库建设"
+    assert loaded.claim_work_summary_inputs(limit=1) == []
+    with loaded._connect() as db:
+        status = db.execute(
+            "select status from work_summary_inputs where id=?",
+            (input_id,),
+        ).fetchone()["status"]
+    assert status == "done"
 
 
 def test_parser_supports_single_service_command(monkeypatch):
