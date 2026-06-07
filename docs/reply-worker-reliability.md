@@ -51,6 +51,26 @@ so a manual refresh prevents an immediate duplicate refresh from the next
 producer pass. Refresh failures are recorded locally and notified, but they do
 not block message discovery for that producer pass.
 
+## Task source maintenance
+
+Task summary maintenance has three independent steps:
+
+- `scan-task-sources` finds new AI minutes and new Markdown/text files under the
+  configured `CEO_WORKSPACE`.
+- `process-work-items` lets the task agent merge Work Items into existing
+  projects or create new projects.
+- `process-follow-ups` processes due owner follow-up drafts.
+
+`daily-task-maintenance` runs those steps in order and prints counts for source
+items, processed Work Items, and follow-ups. AI minutes and local file cursors
+are kept in `daily_scan_state`, so scanner failures are visible without
+forgetting the last successful cursor. Local file identity includes path, size,
+mtime, and content hash so same-mtime edits can still be reprocessed.
+
+Follow-up dispatch is guarded separately from draft generation. Dry-run records
+the draft state without sending. Live CLI sends require the same
+`CEO_LIVE_SEND_BLOCKERS_ACCEPTED=1` override as normal DingTalk replies.
+
 ## DWS auth environment
 
 The LaunchAgents keep work data under the configured `CEO_WORKSPACE` and use the

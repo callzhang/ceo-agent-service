@@ -83,12 +83,64 @@ Every attempt is stored locally, including:
 The audit summary is a concise explanation of evidence and applied rules. It is
 not hidden chain of thought.
 
+## Task Summary
+
+The task summary system is project-centered, not inbox-centered. It records
+company management items, business projects, important operating matters, and
+action items that need owner attention. Obvious one-off conversations should not
+be promoted into durable projects.
+
+Each processed conversation can enqueue a compact Work Item with:
+
+- `summary`
+- `project_name`
+- source conversation or document metadata
+- owner hints
+- timestamps
+
+The task agent owns fact extraction. It receives BM25 project candidates built
+from the Work Item summary and project name, then decides whether to update an
+existing `work_project` or create a new one. If retrieval finds no stable
+candidate, or candidates are present but the agent judges them mismatched, the
+prompt allows the agent to recover context through DWS conversation reads or
+Memory Connector. New projects should use `memory_recall` for historical
+background before creation. If a stable project name still cannot be recovered,
+the agent should generate a clarification follow-up instead of creating a vague
+project.
+
+`work_projects` store:
+
+- title and category
+- `background`
+- owner, status, priority, risk level, source conversation
+- `next_step`
+- `facts`: a list of `description`, `source`, `created`, and `updated`
+
+Supported categories are `management`, `strategy`, `projects`, `marketing`,
+`research`, `dev`, `product`, `recruiting`, `sales`, `finance`, `admin`, `HR`,
+and `other`.
+
+TODOs live under projects. Due dates and priority are inferred from the concrete
+context and OKR pressure rather than copied mechanically. P0/P1/P2 work should
+normally become same-day, three-day, or same-week follow-up pressure when the
+source material does not give a clearer deadline.
+
+Completion can be inferred automatically from later messages, meetings, or
+documents when the evidence is explicit. If an item is due and still open, the
+task follow-up path drafts a message for the owner. It prefers the originating
+group when the owner is in that group; otherwise it falls back to a direct
+message. Owner replies then enter the existing CEO reply path, so follow-up does
+not need a separate reply engine.
+
 ## Safety Defaults
 
 - `CEO_NOT_SEND_MESSAGE=1` by default. `CEO_DRY_RUN` remains a compatibility
   alias for older scripts.
 - Runtime state lives under `data/` and is ignored by Git.
 - Live sends require explicit opt-in.
+- Task follow-up commands are send-capable commands and therefore use the same
+  live-send guard as normal reply delivery.
+- Local task source scanning is limited to the configured `CEO_WORKSPACE` path.
 - DingTalk media/calendar placeholders and DingTalk internal link-only cards are
   skipped before Codex, except approval/OA links.
 - OA approval cards and reminders are routed to a dedicated OA approval agent.
