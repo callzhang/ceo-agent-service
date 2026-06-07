@@ -118,6 +118,19 @@ def test_process_work_item_creates_project_todo_update_and_run(tmp_path):
     assert store.claim_work_summary_inputs(limit=1) == []
     assert "memory_recall" in codex.prompts[0]
     assert "候选项目" in codex.prompts[0]
+    with sqlite3.connect(tmp_path / "task.sqlite3") as db:
+        input_row = db.execute(
+            "select status, error from work_summary_inputs where id=?",
+            (input_id,),
+        ).fetchone()
+        run_row = db.execute(
+            """
+            select summary_input_id, codex_session_id, audit_summary, memory_recall_used
+            from task_agent_runs
+            """,
+        ).fetchone()
+    assert input_row == ("done", "")
+    assert run_row == (input_id, "task-session-1", "创建售前知识库项目。", 1)
 
 
 def test_apply_decision_closes_todo_with_completion_evidence(tmp_path):
