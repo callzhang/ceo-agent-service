@@ -224,6 +224,16 @@ def test_download_doc_supplies_required_output_path():
 def test_minutes_read_commands_shape():
     client = DwsClient(dws_bin="dws")
 
+    assert client.build_list_minutes_command(max_results=20) == [
+        "dws",
+        "minutes",
+        "list",
+        "all",
+        "--max",
+        "20",
+        "--format",
+        "json",
+    ]
     assert client.build_minutes_info_command("minutes-1") == [
         "dws",
         "minutes",
@@ -266,6 +276,54 @@ def test_minutes_read_commands_shape():
         "--format",
         "json",
     ]
+
+
+def test_list_minutes_returns_parsed_items():
+    client = RecordingDwsClient(
+        {
+            "result": {
+                "items": [
+                    {"id": "minutes-1", "name": "售前知识库周会"},
+                    '{"task_uuid": "minutes-2", "title": "产品例会"}',
+                    "minutes-3",
+                ]
+            }
+        }
+    )
+
+    rows = client.list_minutes(scope="mine", max_results=3)
+
+    assert rows == [
+        {
+            "id": "minutes-1",
+            "name": "售前知识库周会",
+            "taskUuid": "minutes-1",
+            "title": "售前知识库周会",
+        },
+        {"task_uuid": "minutes-2", "title": "产品例会", "taskUuid": "minutes-2"},
+        {"taskUuid": "minutes-3", "title": "minutes-3"},
+    ]
+    assert client.commands == [
+        [
+            "dws",
+            "minutes",
+            "list",
+            "mine",
+            "--max",
+            "3",
+            "--format",
+            "json",
+        ]
+    ]
+
+
+def test_parse_minutes_list_accepts_common_wrappers():
+    assert DwsClient.parse_minutes_list(
+        {"data": {"records": [{"minutesId": "minutes-1", "title": "周会"}]}}
+    ) == [{"minutesId": "minutes-1", "title": "周会", "taskUuid": "minutes-1"}]
+    assert DwsClient.parse_minutes_list(
+        {"list": [{"taskUuid": "minutes-2", "title": "复盘"}]}
+    ) == [{"taskUuid": "minutes-2", "title": "复盘"}]
 
 
 def test_minutes_transcription_command_shape_with_next_token():

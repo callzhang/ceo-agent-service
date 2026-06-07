@@ -39,6 +39,10 @@ def _is_under_workspace(path: Path, workspace: Path) -> bool:
     return True
 
 
+def _local_file_source_ref(path: Path, *, mtime_ns: int, size: int) -> str:
+    return f"{path}#mtime_ns={mtime_ns}:size={size}"
+
+
 def scan_local_workspace_files(
     store: AutoReplyStore,
     *,
@@ -77,7 +81,8 @@ def scan_local_workspace_files(
             continue
         if include_globs and not _matches_any(resolved, include_globs):
             continue
-        mtime = resolved.stat().st_mtime
+        stat = resolved.stat()
+        mtime = stat.st_mtime
         resolved_text = str(resolved)
         if mtime > max_mtime:
             max_mtime = mtime
@@ -91,11 +96,16 @@ def scan_local_workspace_files(
         excerpt = _read_text_excerpt(resolved)
         if not excerpt.strip():
             continue
+        source_ref = _local_file_source_ref(
+            resolved,
+            mtime_ns=stat.st_mtime_ns,
+            size=stat.st_size,
+        )
         item = WorkItem.model_validate(
             {
                 "source": {
                     "type": "local_file",
-                    "ref": str(resolved),
+                    "ref": source_ref,
                     "title": resolved.name,
                     "created_at": datetime.fromtimestamp(
                         mtime,
@@ -158,7 +168,13 @@ def scan_ai_minutes(store: AutoReplyStore, dws) -> int:
 
     count = 0
     for minutes in minutes_items:
-        minutes_id = str(minutes.get("taskUuid") or minutes.get("minutesId") or "")
+        minutes_id = str(
+            minutes.get("taskUuid")
+            or minutes.get("minutesId")
+            or minutes.get("id")
+            or minutes.get("task_uuid")
+            or ""
+        )
         if not minutes_id:
             continue
         title = str(minutes.get("title") or f"AI minutes {minutes_id}")

@@ -776,6 +776,27 @@ class DwsClient:
             "--yes",
         ]
 
+    def build_list_minutes_command(
+        self,
+        *,
+        scope: str = "all",
+        max_results: int = 20,
+    ) -> list[str]:
+        if scope not in {"all", "mine", "shared"}:
+            raise ValueError("minutes scope must be one of: all, mine, shared")
+        if max_results < 1:
+            raise ValueError("max_results must be positive")
+        return [
+            self.dws_bin,
+            "minutes",
+            "list",
+            scope,
+            "--max",
+            str(max_results),
+            "--format",
+            "json",
+        ]
+
     def build_minutes_info_command(self, task_uuid: str) -> list[str]:
         return [
             self.dws_bin,
@@ -1247,6 +1268,17 @@ class DwsClient:
         if not isinstance(payload, dict):
             raise DwsError("invalid doc download response")
         return payload
+
+    def list_minutes(
+        self,
+        *,
+        scope: str = "all",
+        max_results: int = 20,
+    ) -> list[dict[str, Any]]:
+        payload = self.run_json(
+            self.build_list_minutes_command(scope=scope, max_results=max_results)
+        )
+        return self.parse_minutes_list(payload)
 
     def get_minutes_info(self, task_uuid: str) -> dict[str, Any]:
         payload = self.run_json(self.build_minutes_info_command(task_uuid))
@@ -1900,6 +1932,67 @@ class DwsClient:
                 )
             )
         return results
+
+    @staticmethod
+    def parse_minutes_list(payload: Any) -> list[dict[str, Any]]:
+        rows = DwsClient._unwrap_minutes_list_rows(payload)
+        results: list[dict[str, Any]] = []
+        for item in rows:
+            if isinstance(item, str):
+                text = item.strip()
+                if not text:
+                    continue
+                if text.startswith("{"):
+                    try:
+                        parsed = json.loads(text)
+                    except json.JSONDecodeError:
+                        continue
+                    if not isinstance(parsed, dict):
+                        continue
+                    item = parsed
+                else:
+                    results.append({"taskUuid": text, "title": text})
+                    continue
+            if not isinstance(item, dict):
+                continue
+            task_uuid = (
+                item.get("taskUuid")
+                or item.get("minutesId")
+                or item.get("id")
+                or item.get("task_uuid")
+            )
+            if not task_uuid:
+                continue
+            row = dict(item)
+            row["taskUuid"] = str(task_uuid)
+            if "title" not in row and row.get("name"):
+                row["title"] = str(row["name"])
+            results.append(row)
+        return results
+
+    @staticmethod
+    def _unwrap_minutes_list_rows(payload: Any) -> list[Any]:
+        if isinstance(payload, list):
+            return payload
+        if not isinstance(payload, dict):
+            return []
+
+        candidates: list[Any] = [payload]
+        for key in ("result", "data", "list"):
+            value = payload.get(key)
+            if isinstance(value, list):
+                return value
+            if isinstance(value, dict):
+                candidates.append(value)
+
+        for candidate in candidates:
+            if not isinstance(candidate, dict):
+                continue
+            for key in ("items", "list", "records", "minutes", "value"):
+                value = candidate.get(key)
+                if isinstance(value, list):
+                    return value
+        return []
 
     @staticmethod
     def parse_messages(

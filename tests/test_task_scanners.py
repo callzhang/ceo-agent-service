@@ -72,7 +72,33 @@ def test_scan_local_files_does_not_skip_new_file_with_same_mtime(tmp_path):
 
     assert scan_local_workspace_files(store, workspace=workspace) == 1
     claimed = store.claim_work_summary_inputs(limit=10)
-    assert {Path(row.source_ref).name for row in claimed} == {"first.md", "second.md"}
+    assert {
+        Path(row.source_ref.split("#", 1)[0]).name for row in claimed
+    } == {"first.md", "second.md"}
+
+
+def test_scan_local_files_requeues_edited_done_file(tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    file_path = workspace / "project.md"
+    timestamp = 1_800_000_000
+    file_path.write_text("第一次扫描", encoding="utf-8")
+    os.utime(file_path, (timestamp, timestamp))
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+
+    assert scan_local_workspace_files(store, workspace=workspace) == 1
+    first_claimed = store.claim_work_summary_inputs(limit=10)
+    assert len(first_claimed) == 1
+    store.mark_work_summary_input_done(first_claimed[0].id)
+
+    file_path.write_text("第二次扫描，需要重新处理", encoding="utf-8")
+    os.utime(file_path, (timestamp + 1, timestamp + 1))
+
+    assert scan_local_workspace_files(store, workspace=workspace) == 1
+    second_claimed = store.claim_work_summary_inputs(limit=10)
+    assert len(second_claimed) == 1
+    assert second_claimed[0].source_ref != first_claimed[0].source_ref
+    assert "第二次扫描" in second_claimed[0].payload_json
 
 
 def test_scan_ai_minutes_enqueues_adapter_items(tmp_path):
