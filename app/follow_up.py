@@ -10,7 +10,9 @@ def _is_low_risk(risk_check_json: str) -> bool:
         return False
     if risk.get("sensitive") is True:
         return False
-    if risk.get("owner_in_group") is False:
+    if risk.get("sensitive") is not False:
+        return False
+    if risk.get("owner_in_group") is not True:
         return False
     return True
 
@@ -30,13 +32,14 @@ def process_due_follow_ups(
         limit=limit,
     )
     for draft in drafts:
-        should_send = draft.status == "approved" or (
-            auto_send and _is_low_risk(draft.risk_check_json)
+        should_send = auto_send and (
+            draft.status == "approved"
+            or _is_low_risk(draft.risk_check_json)
         )
         if not should_send:
             continue
         try:
-            if draft.target_kind == "direct":
+            if draft.target_kind == "direct" or not draft.target_conversation_id:
                 result = dws.send_message(
                     None,
                     draft.question_text,
