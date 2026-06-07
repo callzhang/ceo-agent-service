@@ -658,7 +658,7 @@ def setup_memory_connector_command(
     claude_config: str,
 ) -> dict[str, str]:
     from app.memory_setup import (
-        ensure_claude_memory_connector_config,
+        claude_memory_connector_status,
         ensure_codex_memory_connector_config,
     )
 
@@ -674,22 +674,21 @@ def setup_memory_connector_command(
         codex_config_path,
         url=url,
     )
-    claude_backup = ensure_claude_memory_connector_config(
-        claude_config_path,
-        url=url,
-    )
+    claude_status = claude_memory_connector_status(claude_config_path)
     result = {
         "codex_config": str(codex_config_path),
         "codex_backup": str(codex_backup),
         "claude_config": str(claude_config_path),
-        "claude_backup": str(claude_backup),
+        "claude_status": claude_status["status"],
+        "claude_manual_action": claude_status["manual_action"],
     }
     print(
         "setup-memory-connector "
         f"codex_config={result['codex_config']} "
         f"codex_backup={result['codex_backup']} "
         f"claude_config={result['claude_config']} "
-        f"claude_backup={result['claude_backup']}",
+        f"claude_status={result['claude_status']} "
+        f"claude_manual_action={json.dumps(result['claude_manual_action'], ensure_ascii=False)}",
         flush=True,
     )
     return result

@@ -114,7 +114,10 @@ def test_parser_supports_setup_memory_connector():
     assert args.claude_config == "/tmp/claude.json"
 
 
-def test_setup_memory_connector_command_updates_codex_and_claude(tmp_path, capsys):
+def test_setup_memory_connector_command_updates_codex_and_reports_claude(
+    tmp_path,
+    capsys,
+):
     codex_config = tmp_path / "config.toml"
     claude_config = tmp_path / "claude.json"
 
@@ -126,13 +129,14 @@ def test_setup_memory_connector_command_updates_codex_and_claude(tmp_path, capsy
 
     assert result["codex_config"] == str(codex_config)
     assert result["claude_config"] == str(claude_config)
+    assert result["claude_status"] == "manual_required"
     assert "[mcp_servers.memory_connector]" in codex_config.read_text(
         encoding="utf-8"
     )
-    assert "memory_connector" in claude_config.read_text(encoding="utf-8")
+    assert not claude_config.exists()
     out = capsys.readouterr().out
     assert "setup-memory-connector codex_config=" in out
-    assert "claude_config=" in out
+    assert "claude_status=manual_required" in out
 
 
 def test_setup_memory_connector_command_requires_memory_url(tmp_path):

@@ -1,9 +1,9 @@
 import json
 
 from app.memory_setup import (
+    claude_memory_connector_status,
     claude_config_has_memory_connector,
     codex_config_has_memory_connector,
-    ensure_claude_memory_connector_config,
     ensure_codex_memory_connector_config,
 )
 
@@ -44,29 +44,35 @@ def test_codex_config_update_is_idempotent(tmp_path):
     ) == 1
 
 
-def test_claude_config_detection_and_update(tmp_path):
+def test_codex_config_detects_dotted_key_memory_connector(tmp_path):
+    config = tmp_path / "config.toml"
+    config.write_text(
+        'mcp_servers.memory_connector.url = "https://memory.example/mcp/"\n',
+        encoding="utf-8",
+    )
+
+    assert codex_config_has_memory_connector(config) is True
+
+    ensure_codex_memory_connector_config(config, url="https://memory.example/mcp/")
+
+    assert "[mcp_servers.memory_connector]" not in config.read_text(encoding="utf-8")
+
+
+def test_claude_config_reports_manual_required_without_writing_remote(tmp_path):
     config = tmp_path / "claude_desktop_config.json"
-    config.write_text(json.dumps({"mcpServers": {"other": {"url": "https://other"}}}))
+    original = json.dumps({"mcpServers": {"other": {"url": "https://other"}}})
+    config.write_text(original, encoding="utf-8")
 
     assert claude_config_has_memory_connector(config) is False
 
-    backup_path = ensure_claude_memory_connector_config(
-        config,
-        url="https://memory.example/mcp/",
-        bearer_token_env_var="CONNECTOR_API_KEY",
-    )
+    status = claude_memory_connector_status(config)
 
-    payload = json.loads(config.read_text(encoding="utf-8"))
-    assert payload["mcpServers"]["memory_connector"] == {
-        "url": "https://memory.example/mcp/",
-        "headers": {
-            "Authorization": "Bearer ${CONNECTOR_API_KEY}",
-        },
-    }
-    assert backup_path.exists()
+    assert status["status"] == "manual_required"
+    assert "Settings > Connectors" in status["manual_action"]
+    assert config.read_text(encoding="utf-8") == original
 
 
-def test_claude_config_update_preserves_existing_memory_connector(tmp_path):
+def test_claude_config_reports_existing_memory_connector(tmp_path):
     config = tmp_path / "claude_desktop_config.json"
     config.write_text(
         json.dumps(
@@ -81,9 +87,7 @@ def test_claude_config_update_preserves_existing_memory_connector(tmp_path):
         encoding="utf-8",
     )
 
-    ensure_claude_memory_connector_config(config, url="https://memory.example/mcp/")
+    status = claude_memory_connector_status(config)
 
-    payload = json.loads(config.read_text(encoding="utf-8"))
-    assert payload["mcpServers"]["memory_connector"]["url"] == (
-        "https://existing.example/mcp/"
-    )
+    assert status["status"] == "already_configured"
+    assert status["manual_action"] == ""
