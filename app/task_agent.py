@@ -92,6 +92,7 @@ class TaskAgentCodexRunner:
             session_id,
             image_paths=None,
             output_schema_path=TASK_AGENT_DECISION_SCHEMA_PATH,
+            ignore_user_config=True,
         )
         if self.executor is not None:
             return self.executor(command, prompt)

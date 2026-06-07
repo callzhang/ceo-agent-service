@@ -98,6 +98,7 @@ class CodexRunner:
         session_id: str | None,
         image_paths: list[Path] | None = None,
         output_schema_path: Path | None = CODEX_DECISION_SCHEMA_PATH,
+        ignore_user_config: bool = False,
     ) -> list[str]:
         image_options: list[str] = []
         for image_path in image_paths or []:
@@ -106,6 +107,7 @@ class CodexRunner:
             "--json",
             "-m",
             "gpt-5.5",
+            *(["--ignore-user-config"] if ignore_user_config else []),
             "--ignore-rules",
             *memory_connector_config_options(),
             "-c",
