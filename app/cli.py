@@ -1627,8 +1627,10 @@ def main() -> None:
     elif args.command == "scan-task-sources":
         scan_task_sources_command(settings)
     elif args.command == "process-follow-ups":
+        ensure_live_send_allowed(settings)
         process_follow_ups_command(settings)
     elif args.command == "daily-task-maintenance":
+        ensure_live_send_allowed(settings)
         daily_task_maintenance_command(settings)
     elif args.command == "setup-memory-connector":
         setup_memory_connector_command(

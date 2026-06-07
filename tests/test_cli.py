@@ -1,4 +1,5 @@
 import json
+import sys
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -1593,6 +1594,26 @@ def test_live_send_allows_guarded_override(monkeypatch, tmp_path):
     )
 
     ensure_live_send_allowed(settings)
+
+
+@pytest.mark.parametrize("command", ["process-follow-ups", "daily-task-maintenance"])
+def test_main_guards_follow_up_send_commands(monkeypatch, tmp_path, command):
+    monkeypatch.delenv("CEO_LIVE_SEND_BLOCKERS_ACCEPTED", raising=False)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["ceo-agent", command, "--db", str(tmp_path / "worker.sqlite3")],
+    )
+    monkeypatch.setattr(
+        cli,
+        "process_follow_ups_command",
+        lambda settings: pytest.fail("follow-up send command should be guarded"),
+    )
+    monkeypatch.setattr(cli, "scan_task_sources_command", lambda settings: 0)
+    monkeypatch.setattr(cli, "process_work_items_command", lambda settings: 0)
+
+    with pytest.raises(SystemExit, match="CEO_NOT_SEND_MESSAGE=0 is blocked"):
+        cli.main()
 
 
 def test_poll_interval_seconds_must_be_positive():
