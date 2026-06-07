@@ -87,8 +87,9 @@ class TaskAgentCodexRunner:
             return self.executor(command, prompt)
         completed = self._run_process_with_idle_timeout(
             command,
-            input_text=prompt,
-            timeout_seconds=self.timeout_seconds,
+            prompt=prompt,
+            env=self.runner.build_env(),
+            total_timeout_seconds=self.timeout_seconds,
             idle_timeout_seconds=self.idle_timeout_seconds,
         )
         if completed.returncode != 0:

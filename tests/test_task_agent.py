@@ -3,6 +3,7 @@ import sqlite3
 
 import pytest
 
+from app.process_runner import ProcessRunResult
 from app.store import AutoReplyStore
 from app.task_agent import TaskAgentRunner, apply_task_agent_decision, process_work_item
 from app.task_models import TaskAgentDecision, WorkItem
@@ -477,3 +478,45 @@ def test_task_agent_codex_runner_parses_jsonl_payload(tmp_path):
 
     assert decision.action == "discard"
     assert runner.last_session_id == "session-task-1"
+
+
+def test_task_agent_codex_runner_uses_process_runner_signature(tmp_path):
+    from app.task_agent import TaskAgentCodexRunner
+
+    calls = []
+
+    def fake_run(command, **kwargs):
+        calls.append((command, kwargs))
+        return ProcessRunResult(
+            returncode=0,
+            stdout=json.dumps(
+                {
+                    "action": "discard",
+                    "discard_reason": "没有状态变化",
+                    "todo_changes": [],
+                    "follow_up_drafts": [],
+                    "update_summary": "无变化",
+                    "merge_reason": "",
+                    "memory_recall_used": False,
+                    "confidence": 0.7,
+                },
+                ensure_ascii=False,
+            ),
+            stderr="",
+        )
+
+    runner = TaskAgentCodexRunner(
+        workspace=tmp_path,
+        timeout_seconds=7,
+        idle_timeout_seconds=3,
+    )
+    runner._run_process_with_idle_timeout = fake_run
+
+    decision = runner.decide(prompt="decide")
+
+    assert decision.action == "discard"
+    assert calls
+    assert calls[0][1]["prompt"] == "decide"
+    assert calls[0][1]["env"] == runner.runner.build_env()
+    assert calls[0][1]["total_timeout_seconds"] == 7
+    assert calls[0][1]["idle_timeout_seconds"] == 3

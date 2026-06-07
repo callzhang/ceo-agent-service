@@ -584,7 +584,7 @@ def consume_once(settings: WorkerSettings) -> int:
 
 def process_work_items_command(settings: WorkerSettings) -> int:
     store = AutoReplyStore(settings.db_path)
-    limit = settings.max_batches or 20
+    limit = 20 if settings.max_batches is None else settings.max_batches
     runner = TaskAgentRunner(
         TaskAgentCodexRunner(
             workspace=settings.workspace,

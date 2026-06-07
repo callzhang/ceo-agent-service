@@ -161,6 +161,53 @@ def test_process_work_items_command_processes_claimed_input(tmp_path, monkeypatc
     assert status == "done"
 
 
+def test_process_work_items_command_respects_zero_max_batches(
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    class FakeTaskAgentCodexRunner:
+        last_session_id = "task-session-1"
+        last_transcript_start_line = 0
+        last_transcript_end_line = 0
+
+        def __init__(self, **kwargs):
+            pass
+
+        def decide(self, *, prompt, session_id=None):
+            raise AssertionError("no inputs should be claimed")
+
+    monkeypatch.setattr(cli, "TaskAgentCodexRunner", FakeTaskAgentCodexRunner)
+    db_path = tmp_path / "task.sqlite3"
+    store = AutoReplyStore(db_path)
+    item = WorkItem.model_validate(
+        {
+            "source": {"type": "reply_attempt", "ref": "1"},
+            "summary": "售前知识库需要补齐来源链接。",
+            "project_name": "售前知识库",
+            "context": {
+                "sender": "Mina",
+                "participants": ["Alex"],
+                "source_conversation_kind": "group",
+                "source_conversation_title": "售前群",
+            },
+        }
+    )
+    store.enqueue_work_summary_input(
+        item.source.type.value,
+        item.source.ref,
+        item.model_dump_json(),
+    )
+
+    processed = process_work_items_command(
+        WorkerSettings(db_path=db_path, workspace=tmp_path, max_batches=0)
+    )
+
+    assert processed == 0
+    assert capsys.readouterr().out == "process-work-items processed=0\n"
+    assert len(AutoReplyStore(db_path).claim_work_summary_inputs(limit=1)) == 1
+
+
 def test_parser_supports_single_service_command(monkeypatch):
     monkeypatch.setenv("CEO_PRODUCER_INTERVAL_SECONDS", "60")
     monkeypatch.setenv("CEO_CONSUMER_POLL_INTERVAL_SECONDS", "10")
