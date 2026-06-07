@@ -134,7 +134,8 @@ def apply_task_agent_decision(
             {
                 "action": decision.action,
                 "todo_changes": [
-                    change.model_dump(mode="json") for change in decision.todo_changes
+                    _todo_change_audit_payload(change)
+                    for change in decision.todo_changes
                 ],
                 "follow_up_drafts": [
                     draft.model_dump(mode="json")
@@ -158,15 +159,15 @@ def apply_task_agent_decision(
 
 
 def _validate_task_agent_decision(decision: TaskAgentDecision) -> None:
+    for todo_change in decision.todo_changes:
+        if todo_change.action != "create" and todo_change.todo_id is None:
+            raise ValueError(f"{todo_change.action} requires todo_id")
     if decision.action == "discard":
         return
     if decision.project is None:
         raise ValueError(f"{decision.action} requires project")
     if decision.action == "update_project" and decision.project.id is None:
         raise ValueError("update_project requires project.id")
-    for todo_change in decision.todo_changes:
-        if todo_change.action != "create" and todo_change.todo_id is None:
-            raise ValueError(f"{todo_change.action} requires todo_id")
 
 
 def _apply_project(store: AutoReplyStore, decision: TaskAgentDecision) -> int:
@@ -278,6 +279,26 @@ def _todo_values(
     ) and change.completion_evidence is not None:
         values["completion_evidence_json"] = _json_dumps(change.completion_evidence)
     return values
+
+
+def _todo_change_audit_payload(change: TodoChange) -> dict[str, object]:
+    payload: dict[str, object] = {"action": change.action}
+    if change.todo_id is not None:
+        payload["todo_id"] = change.todo_id
+    if change.action == "create":
+        payload.update(_todo_values(change))
+        return payload
+
+    for field, value in _todo_values(
+        change,
+        only_fields=change.model_fields_set - {"action", "todo_id"},
+    ).items():
+        payload[field] = value
+    if change.action == "close":
+        payload["status"] = "done"
+    elif change.action == "cancel":
+        payload["status"] = "cancelled"
+    return payload
 
 
 def _create_follow_up_draft(

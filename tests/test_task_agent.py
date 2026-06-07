@@ -381,6 +381,46 @@ def test_sparse_todo_update_preserves_existing_status_and_priority(tmp_path):
     assert todo.status == "waiting_owner"
     assert todo.priority == "P0"
     assert todo.blocker == "等待 owner 回复"
+    update = store.list_work_updates(project_id=project_id)[0]
+    todo_change = json.loads(update.changes_json)["todo_changes"][0]
+    assert todo_change == {
+        "action": "update",
+        "todo_id": todo_id,
+        "blocker": "等待 owner 回复",
+    }
+
+
+def test_discard_with_malformed_todo_change_marks_failed(tmp_path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    item = _work_item()
+    input_id = store.enqueue_work_summary_input(
+        item.source.type.value,
+        item.source.ref,
+        item.model_dump_json(),
+    )
+    work_input = store.claim_work_summary_inputs(limit=1)[0]
+    codex = FakeCodex(
+        {
+            "action": "discard",
+            "discard_reason": "不是稳定任务。",
+            "todo_changes": [{"action": "close", "title": "补齐来源链接"}],
+            "follow_up_drafts": [],
+            "update_summary": "丢弃输入。",
+            "merge_reason": "",
+            "memory_recall_used": False,
+            "confidence": 0.8,
+        }
+    )
+
+    with pytest.raises(ValueError, match="requires todo_id"):
+        process_work_item(store, TaskAgentRunner(codex), work_input)
+
+    with sqlite3.connect(tmp_path / "task.sqlite3") as db:
+        input_row = db.execute(
+            "select status from work_summary_inputs where id=?",
+            (input_id,),
+        ).fetchone()
+    assert input_row == ("failed",)
 
 
 def test_process_work_item_accepts_none_session_id(tmp_path):
