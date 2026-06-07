@@ -88,17 +88,37 @@ def test_create_project_todo_update_and_follow_up(tmp_path: Path):
     assert project.title == "售前知识库建设"
     assert project.category == "sales"
     assert project.priority == "P1"
+    assert project.risk_level == "medium"
     assert project.needs_derek_attention is True
+    assert project.owner_user_id == "owner-1"
+    assert project.owner_name == "Alex"
+    assert project.goal == "沉淀可复用售前材料"
+    assert project.background == "销售支持项目"
+    assert project.facts_json == (
+        '[{"description":"已确认材料路径","source":"reply_attempt",'
+        '"created":"2026-06-07","updated":"2026-06-07"}]'
+    )
+    assert project.current_state == "整理来源材料"
+    assert project.next_step == "确认边界"
+    assert project.next_follow_up_at == "2026-06-10 09:00:00"
+    assert project.follow_up_mode == "draft"
+    assert project.source_conversations_json == (
+        '[{"id":"cid-1","title":"售前项目群"}]'
+    )
 
     store.update_work_project(
         project_id,
         current_state="等待 owner 回复",
         blocker="缺少来源链接",
+        next_step="owner 补齐来源链接",
+        next_follow_up_at="2026-06-11 09:00:00",
     )
     updated_project = store.get_work_project(project_id)
     assert updated_project is not None
     assert updated_project.current_state == "等待 owner 回复"
     assert updated_project.blocker == "缺少来源链接"
+    assert updated_project.next_step == "owner 补齐来源链接"
+    assert updated_project.next_follow_up_at == "2026-06-11 09:00:00"
 
     todo_id = store.create_work_todo(
         project_id=project_id,
