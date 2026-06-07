@@ -22,6 +22,10 @@ class FakeCodex:
         return TaskAgentDecision.model_validate(self.payload)
 
 
+class FakeCodexWithoutSession(FakeCodex):
+    last_session_id = None
+
+
 def _work_item(project_name="售前知识库"):
     return WorkItem.model_validate(
         {
@@ -291,3 +295,120 @@ def test_update_project_without_id_raises_value_error(tmp_path):
             work_item=_work_item("客户交付"),
             decision=decision,
         )
+
+
+def test_process_work_item_failure_does_not_create_partial_project(tmp_path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    item = _work_item()
+    input_id = store.enqueue_work_summary_input(
+        item.source.type.value,
+        item.source.ref,
+        item.model_dump_json(),
+    )
+    work_input = store.claim_work_summary_inputs(limit=1)[0]
+    codex = FakeCodex(
+        {
+            "action": "create_project",
+            "project": {"title": "售前知识库建设", "category": "sales"},
+            "todo_changes": [{"action": "close", "title": "补齐来源链接"}],
+            "follow_up_drafts": [],
+            "update_summary": "坏的待办更新。",
+            "merge_reason": "",
+            "memory_recall_used": False,
+            "confidence": 0.4,
+        }
+    )
+
+    with pytest.raises(ValueError, match="requires todo_id"):
+        process_work_item(store, TaskAgentRunner(codex), work_input)
+
+    with sqlite3.connect(tmp_path / "task.sqlite3") as db:
+        input_row = db.execute(
+            "select status from work_summary_inputs where id=?",
+            (input_id,),
+        ).fetchone()
+        project_count = db.execute("select count(*) from work_projects").fetchone()
+        update_count = db.execute("select count(*) from work_updates").fetchone()
+        run_count = db.execute("select count(*) from task_agent_runs").fetchone()
+    assert input_row == ("failed",)
+    assert project_count == (0,)
+    assert update_count == (0,)
+    assert run_count == (1,)
+
+
+def test_sparse_todo_update_preserves_existing_status_and_priority(tmp_path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    project_id = store.create_work_project(
+        title="客户交付",
+        category="projects",
+        status="active",
+        priority="P0",
+        risk_level="high",
+    )
+    todo_id = store.create_work_todo(
+        project_id=project_id,
+        title="给出交付 ETA",
+        status="waiting_owner",
+        priority="P0",
+    )
+    decision = TaskAgentDecision.model_validate(
+        {
+            "action": "update_project",
+            "project": {"id": project_id, "title": "客户交付", "category": "projects"},
+            "todo_changes": [
+                {
+                    "action": "update",
+                    "todo_id": todo_id,
+                    "blocker": "等待 owner 回复",
+                }
+            ],
+            "follow_up_drafts": [],
+            "update_summary": "补充阻塞原因。",
+            "merge_reason": "同一客户交付项目。",
+            "memory_recall_used": False,
+            "confidence": 0.8,
+        }
+    )
+
+    apply_task_agent_decision(
+        store,
+        summary_input_id=0,
+        work_item=_work_item("客户交付"),
+        decision=decision,
+    )
+
+    todo = store.list_work_todos(project_id=project_id)[0]
+    assert todo.status == "waiting_owner"
+    assert todo.priority == "P0"
+    assert todo.blocker == "等待 owner 回复"
+
+
+def test_process_work_item_accepts_none_session_id(tmp_path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    item = _work_item()
+    input_id = store.enqueue_work_summary_input(
+        item.source.type.value,
+        item.source.ref,
+        item.model_dump_json(),
+    )
+    work_input = store.claim_work_summary_inputs(limit=1)[0]
+    codex = FakeCodexWithoutSession(
+        {
+            "action": "discard",
+            "discard_reason": "一次性对话。",
+            "todo_changes": [],
+            "follow_up_drafts": [],
+            "update_summary": "丢弃。",
+            "merge_reason": "",
+            "memory_recall_used": False,
+            "confidence": 0.9,
+        }
+    )
+
+    process_work_item(store, TaskAgentRunner(codex), work_input)
+
+    with sqlite3.connect(tmp_path / "task.sqlite3") as db:
+        run_row = db.execute(
+            "select summary_input_id, codex_session_id from task_agent_runs",
+        ).fetchone()
+    assert run_row == (input_id, "")

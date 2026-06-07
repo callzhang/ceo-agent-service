@@ -81,7 +81,7 @@ def process_work_item(
             project_name=work_item.project_name,
         )
         decision = runner.decide(work_item, render_candidate_prompt(candidates))
-        codex_session_id = getattr(runner.codex, "last_session_id", "")
+        codex_session_id = getattr(runner.codex, "last_session_id", None) or ""
         apply_task_agent_decision(
             store,
             summary_input_id=work_input.id,
@@ -116,6 +116,7 @@ def apply_task_agent_decision(
         audit_summary=decision.update_summary,
         memory_recall_used=decision.memory_recall_used,
     )
+    _validate_task_agent_decision(decision)
 
     if decision.action == "discard":
         return None
@@ -154,6 +155,18 @@ def apply_task_agent_decision(
     for draft in decision.follow_up_drafts:
         _create_follow_up_draft(store, project_id=project_id, draft=draft)
     return project_id
+
+
+def _validate_task_agent_decision(decision: TaskAgentDecision) -> None:
+    if decision.action == "discard":
+        return
+    if decision.project is None:
+        raise ValueError(f"{decision.action} requires project")
+    if decision.action == "update_project" and decision.project.id is None:
+        raise ValueError("update_project requires project.id")
+    for todo_change in decision.todo_changes:
+        if todo_change.action != "create" and todo_change.todo_id is None:
+            raise ValueError(f"{todo_change.action} requires todo_id")
 
 
 def _apply_project(store: AutoReplyStore, decision: TaskAgentDecision) -> int:
@@ -217,8 +230,8 @@ def _apply_todo_change(
     update_id: int,
     change: TodoChange,
 ) -> int:
-    values = _todo_values(change)
     if change.action == "create":
+        values = _todo_values(change)
         return store.create_work_todo(
             project_id=project_id,
             created_from_update_id=update_id,
@@ -226,6 +239,10 @@ def _apply_todo_change(
         )
     if change.todo_id is None:
         raise ValueError(f"{change.action} requires todo_id")
+    values = _todo_values(
+        change,
+        only_fields=change.model_fields_set - {"action", "todo_id"},
+    )
     if change.action == "close":
         values["status"] = "done"
     elif change.action == "cancel":
@@ -234,7 +251,10 @@ def _apply_todo_change(
     return change.todo_id
 
 
-def _todo_values(change: TodoChange) -> dict[str, object]:
+def _todo_values(
+    change: TodoChange,
+    only_fields: set[str] | None = None,
+) -> dict[str, object]:
     values: dict[str, object] = {}
     fields = [
         "title",
@@ -248,10 +268,14 @@ def _todo_values(change: TodoChange) -> dict[str, object]:
         "blocker",
     ]
     for field in fields:
+        if only_fields is not None and field not in only_fields:
+            continue
         value = getattr(change, field)
         if value not in ("", None):
             values[field] = _enum_value(value)
-    if change.completion_evidence is not None:
+    if (
+        only_fields is None or "completion_evidence" in only_fields
+    ) and change.completion_evidence is not None:
         values["completion_evidence_json"] = _json_dumps(change.completion_evidence)
     return values
 
