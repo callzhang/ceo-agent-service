@@ -148,7 +148,12 @@ def scan_local_workspace_files(
     return count
 
 
-def scan_ai_minutes(store: AutoReplyStore, dws) -> int:
+def scan_ai_minutes(
+    store: AutoReplyStore,
+    dws,
+    *,
+    enqueue_existing_on_first_scan: bool = False,
+) -> int:
     list_minutes = getattr(dws, "list_minutes", None)
     if list_minutes is None:
         store.set_daily_scan_state(
@@ -174,6 +179,14 @@ def scan_ai_minutes(store: AutoReplyStore, dws) -> int:
         )
         return 0
 
+    state = store.get_daily_scan_state(AI_MINUTES_SCANNER) or {}
+    try:
+        cursor = json.loads(state.get("cursor_json") or "{}")
+    except json.JSONDecodeError:
+        cursor = {}
+    previous_seen_ids = set(str(value) for value in (cursor.get("seen_ids") or []))
+    first_scan = not previous_seen_ids
+    seen_ids = set(previous_seen_ids)
     count = 0
     for minutes in minutes_items:
         minutes_id = str(
@@ -185,6 +198,11 @@ def scan_ai_minutes(store: AutoReplyStore, dws) -> int:
             or ""
         )
         if not minutes_id:
+            continue
+        seen_ids.add(minutes_id)
+        if minutes_id in previous_seen_ids:
+            continue
+        if first_scan and not enqueue_existing_on_first_scan:
             continue
         title = str(minutes.get("title") or f"AI minutes {minutes_id}")
         item = WorkItem.model_validate(
@@ -220,7 +238,10 @@ def scan_ai_minutes(store: AutoReplyStore, dws) -> int:
     store.set_daily_scan_state(
         AI_MINUTES_SCANNER,
         last_success_at=_utc_now(),
-        cursor_json="{}",
+        cursor_json=json.dumps(
+            {"seen_ids": sorted(seen_ids)},
+            sort_keys=True,
+        ),
         last_error="",
     )
     return count

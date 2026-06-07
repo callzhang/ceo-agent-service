@@ -239,7 +239,7 @@ def test_scan_ai_minutes_enqueues_adapter_items(tmp_path):
 
     store = AutoReplyStore(tmp_path / "task.sqlite3")
 
-    count = scan_ai_minutes(store, FakeDws())
+    count = scan_ai_minutes(store, FakeDws(), enqueue_existing_on_first_scan=True)
 
     assert count == 1
     claimed = store.claim_work_summary_inputs(limit=10)
@@ -262,7 +262,7 @@ def test_scan_ai_minutes_accepts_live_dws_row_shape(tmp_path):
 
     store = AutoReplyStore(tmp_path / "task.sqlite3")
 
-    count = scan_ai_minutes(store, FakeDws())
+    count = scan_ai_minutes(store, FakeDws(), enqueue_existing_on_first_scan=True)
 
     assert count == 1
     claimed = store.claim_work_summary_inputs(limit=10)
@@ -296,12 +296,39 @@ def test_scan_ai_minutes_walks_paginated_adapter(tmp_path):
     dws = FakeDws()
     store = AutoReplyStore(tmp_path / "task.sqlite3")
 
-    count = scan_ai_minutes(store, dws)
+    count = scan_ai_minutes(store, dws, enqueue_existing_on_first_scan=True)
 
     assert count == 2
     assert dws.tokens == [(50, ""), (50, "token-2")]
     claimed = store.claim_work_summary_inputs(limit=10)
     assert {row.source_ref for row in claimed} == {"minutes-1", "minutes-2"}
+
+
+def test_scan_ai_minutes_baselines_existing_items_on_first_scan(tmp_path):
+    class FakeDws:
+        def __init__(self):
+            self.items = [
+                {"taskUuid": "minutes-1", "title": "历史会议"},
+            ]
+
+        def list_minutes(self):
+            return self.items
+
+    dws = FakeDws()
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+
+    assert scan_ai_minutes(store, dws) == 0
+    assert store.claim_work_summary_inputs(limit=10) == []
+
+    dws.items = [
+        {"taskUuid": "minutes-1", "title": "历史会议"},
+        {"taskUuid": "minutes-2", "title": "新增会议"},
+    ]
+
+    assert scan_ai_minutes(store, dws) == 1
+    claimed = store.claim_work_summary_inputs(limit=10)
+    assert len(claimed) == 1
+    assert claimed[0].source_ref == "minutes-2"
 
 
 def test_scan_ai_minutes_records_unavailable_adapter(tmp_path):
