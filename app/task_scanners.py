@@ -62,7 +62,9 @@ def scan_local_workspace_files(
     except json.JSONDecodeError:
         cursor = {}
     previous_mtime = float(cursor.get("max_mtime", 0))
+    previous_mtime_paths = set(cursor.get("max_mtime_paths") or [])
     max_mtime = previous_mtime
+    max_mtime_paths: set[str] = set(previous_mtime_paths)
     count = 0
 
     for path in sorted(workspace.rglob("*")):
@@ -76,8 +78,15 @@ def scan_local_workspace_files(
         if include_globs and not _matches_any(resolved, include_globs):
             continue
         mtime = resolved.stat().st_mtime
-        max_mtime = max(max_mtime, mtime)
-        if mtime <= previous_mtime:
+        resolved_text = str(resolved)
+        if mtime > max_mtime:
+            max_mtime = mtime
+            max_mtime_paths = {resolved_text}
+        elif mtime == max_mtime:
+            max_mtime_paths.add(resolved_text)
+        if mtime < previous_mtime:
+            continue
+        if mtime == previous_mtime and resolved_text in previous_mtime_paths:
             continue
         excerpt = _read_text_excerpt(resolved)
         if not excerpt.strip():
@@ -113,7 +122,13 @@ def scan_local_workspace_files(
     store.set_daily_scan_state(
         LOCAL_FILE_SCANNER,
         last_success_at=_utc_now(),
-        cursor_json=json.dumps({"max_mtime": max_mtime}, sort_keys=True),
+        cursor_json=json.dumps(
+            {
+                "max_mtime": max_mtime,
+                "max_mtime_paths": sorted(max_mtime_paths),
+            },
+            sort_keys=True,
+        ),
         last_error="",
     )
     return count
@@ -130,8 +145,19 @@ def scan_ai_minutes(store: AutoReplyStore, dws) -> int:
         )
         return 0
 
+    try:
+        minutes_items = list_minutes()
+    except Exception as exc:
+        store.set_daily_scan_state(
+            AI_MINUTES_SCANNER,
+            last_success_at="",
+            cursor_json="{}",
+            last_error=str(exc),
+        )
+        return 0
+
     count = 0
-    for minutes in list_minutes():
+    for minutes in minutes_items:
         minutes_id = str(minutes.get("taskUuid") or minutes.get("minutesId") or "")
         if not minutes_id:
             continue

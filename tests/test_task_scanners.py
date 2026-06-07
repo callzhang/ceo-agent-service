@@ -1,4 +1,5 @@
 from pathlib import Path
+import os
 
 from app.store import AutoReplyStore
 from app.task_scanners import scan_ai_minutes, scan_local_workspace_files
@@ -54,6 +55,26 @@ def test_scan_local_files_uses_incremental_mtime_cursor(tmp_path):
     assert scan_local_workspace_files(store, workspace=workspace) == 1
 
 
+def test_scan_local_files_does_not_skip_new_file_with_same_mtime(tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    first = workspace / "first.md"
+    second = workspace / "second.md"
+    timestamp = 1_800_000_000
+    first.write_text("第一次扫描", encoding="utf-8")
+    os.utime(first, (timestamp, timestamp))
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+
+    assert scan_local_workspace_files(store, workspace=workspace) == 1
+
+    second.write_text("第二次扫描", encoding="utf-8")
+    os.utime(second, (timestamp, timestamp))
+
+    assert scan_local_workspace_files(store, workspace=workspace) == 1
+    claimed = store.claim_work_summary_inputs(limit=10)
+    assert {Path(row.source_ref).name for row in claimed} == {"first.md", "second.md"}
+
+
 def test_scan_ai_minutes_enqueues_adapter_items(tmp_path):
     class FakeDws:
         def list_minutes(self):
@@ -87,3 +108,18 @@ def test_scan_ai_minutes_records_unavailable_adapter(tmp_path):
     state = store.get_daily_scan_state("ai_minutes")
     assert state is not None
     assert state["last_error"] == "dws list_minutes unavailable"
+
+
+def test_scan_ai_minutes_records_adapter_errors(tmp_path):
+    class BrokenDws:
+        def list_minutes(self):
+            raise RuntimeError("auth expired")
+
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+
+    count = scan_ai_minutes(store, BrokenDws())
+
+    assert count == 0
+    state = store.get_daily_scan_state("ai_minutes")
+    assert state is not None
+    assert state["last_error"] == "auth expired"
