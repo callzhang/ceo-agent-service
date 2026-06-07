@@ -9,7 +9,7 @@ from zoneinfo import ZoneInfo
 import pytest
 
 import app.worker as worker_module
-from app.codex_decision import CodexDecisionRunner
+from app.codex_decision import CodexDecisionRunner, append_signature
 from app.corpus import CorpusRecord
 from app.developer_prompt import read_developer_prompt_template
 from app.dingtalk_models import (
@@ -2134,6 +2134,35 @@ def test_consume_once_processes_queued_task(tmp_path: Path, monkeypatch):
     assert processed == 1
     assert worker.store.count_reply_tasks(status="done") == 1
     assert final_sent(dws) == [("cid-1", "先按A方案走（by明哥分身）")]
+
+
+def test_sent_reply_enqueues_conversation_work_item(tmp_path: Path, monkeypatch):
+    trigger = message("@Alex Chen 这个项目需要 Alex 三天内给进展")
+    dws = FakeDws([conversation()], {"cid-1": [trigger]})
+    codex = FakeCodex(
+        CodexDecision(
+            action=CodexAction.SEND_REPLY,
+            reply_text="请 Alex 三天内给进展。",
+            reason="形成项目推进要求。",
+            sensitivity_kind=SensitivityKind.GENERAL,
+            audit_summary="上下文形成 P1 项目进展要求。",
+        )
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+
+    worker._process_batch(
+        conversation(),
+        [trigger],
+        [],
+        ignore_existing_attempt=True,
+    )
+
+    claimed = worker.store.claim_work_summary_inputs(limit=1)
+    attempts = worker.store.list_reply_attempts()
+    assert len(claimed) == 1
+    assert claimed[0].source_type == "reply_attempt"
+    assert "Alex 三天内给进展" in claimed[0].payload_json
+    assert append_signature("请 Alex 三天内给进展。") in attempts[0].final_reply_text
 
 
 def test_consume_once_appends_feedback_links_when_configured(

@@ -65,6 +65,7 @@ from app.store import (
     ReplyAttempt,
     ReplyTask,
 )
+from app.task_models import WorkItem
 
 HANDOFF_ACK = handoff_ack()
 # Historical auto-ack marker. Keep filtering it from context, but do not send
@@ -4847,8 +4848,70 @@ class DingTalkAutoReplyWorker:
             recall_key=DwsClient.extract_recall_key(send_result),
             feedback_token=feedback_token,
         )
+        attempt = self.store.get_reply_attempt(attempt_id)
+        if attempt is not None:
+            self._enqueue_conversation_work_item(
+                attempt_id=attempt_id,
+                conversation=conversation,
+                trigger=trigger,
+                action=attempt.action,
+                audit_summary=attempt.audit_summary,
+                final_reply_text=attempt.final_reply_text,
+            )
         self._mark_seen(new_messages)
         return True
+
+    def _enqueue_conversation_work_item(
+        self,
+        *,
+        attempt_id: int,
+        conversation: DingTalkConversation,
+        trigger: DingTalkMessage,
+        action: str,
+        audit_summary: str,
+        final_reply_text: str,
+    ) -> None:
+        if action not in {
+            CodexAction.SEND_REPLY.value,
+            CodexAction.ASK_CLARIFYING_QUESTION.value,
+        }:
+            return
+        summary_parts = [
+            trigger.content.strip(),
+            audit_summary.strip(),
+            final_reply_text.strip(),
+        ]
+        summary = "\n".join(part for part in summary_parts if part)
+        if not summary.strip():
+            return
+        project_name = conversation.title.strip() if not conversation.single_chat else ""
+        item = WorkItem.model_validate(
+            {
+                "source": {
+                    "type": "reply_attempt",
+                    "ref": str(attempt_id),
+                    "title": conversation.title,
+                    "conversation_id": conversation.open_conversation_id,
+                    "conversation_title": conversation.title,
+                    "created_at": trigger.create_time,
+                },
+                "summary": summary,
+                "project_name": project_name,
+                "context": {
+                    "sender": trigger.sender_name,
+                    "participants": [trigger.sender_name],
+                    "source_conversation_kind": "direct"
+                    if conversation.single_chat
+                    else "group",
+                    "source_conversation_title": conversation.title,
+                },
+            }
+        )
+        self.store.enqueue_work_summary_input(
+            source_type=item.source.type.value,
+            source_ref=item.source.ref,
+            payload_json=item.model_dump_json(),
+        )
 
     def _send_reply_to_trigger_with_retry(
         self,
