@@ -166,6 +166,7 @@ def build_parser() -> argparse.ArgumentParser:
         "process-work-items",
         "scan-task-sources",
         "process-follow-ups",
+        "daily-task-maintenance",
         "setup-memory-connector",
         "build-corpus",
         "collect-corpus",
@@ -668,6 +669,23 @@ def process_follow_ups_command(settings: WorkerSettings) -> int:
     )
     print(f"process-follow-ups sent={sent}", flush=True)
     return sent
+
+
+def daily_task_maintenance_command(settings: WorkerSettings) -> dict[str, int]:
+    sources = scan_task_sources_command(settings)
+    work_items = process_work_items_command(settings)
+    follow_ups = process_follow_ups_command(settings)
+    result = {
+        "sources": sources,
+        "work_items": work_items,
+        "follow_ups": follow_ups,
+    }
+    print(
+        "daily-task-maintenance "
+        f"sources={sources} work_items={work_items} follow_ups={follow_ups}",
+        flush=True,
+    )
+    return result
 
 
 def setup_memory_connector_command(
@@ -1610,6 +1628,8 @@ def main() -> None:
         scan_task_sources_command(settings)
     elif args.command == "process-follow-ups":
         process_follow_ups_command(settings)
+    elif args.command == "daily-task-maintenance":
+        daily_task_maintenance_command(settings)
     elif args.command == "setup-memory-connector":
         setup_memory_connector_command(
             memory_url=args.memory_url,

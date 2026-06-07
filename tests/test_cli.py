@@ -101,6 +101,13 @@ def test_parser_supports_process_follow_ups():
     assert args.command == "process-follow-ups"
 
 
+def test_parser_supports_daily_task_maintenance():
+    args = build_parser().parse_args(["daily-task-maintenance", "--max-batches", "4"])
+
+    assert args.command == "daily-task-maintenance"
+    assert args.max_batches == 4
+
+
 def test_parser_supports_setup_memory_connector():
     args = build_parser().parse_args(
         [
@@ -170,6 +177,40 @@ def test_process_follow_ups_command_processes_due_drafts(tmp_path, monkeypatch, 
     assert sent == 2
     assert calls == [(tmp_path / "worker.sqlite3", "DwsClient", True, True)]
     assert capsys.readouterr().out == "process-follow-ups sent=2\n"
+
+
+def test_daily_task_maintenance_runs_task_pipeline(tmp_path, monkeypatch, capsys):
+    calls = []
+
+    monkeypatch.setattr(
+        cli,
+        "scan_task_sources_command",
+        lambda settings: calls.append(("scan", settings.db_path)) or 3,
+    )
+    monkeypatch.setattr(
+        cli,
+        "process_work_items_command",
+        lambda settings: calls.append(("work", settings.db_path)) or 2,
+    )
+    monkeypatch.setattr(
+        cli,
+        "process_follow_ups_command",
+        lambda settings: calls.append(("follow", settings.db_path)) or 1,
+    )
+
+    result = cli.daily_task_maintenance_command(
+        WorkerSettings(db_path=tmp_path / "worker.sqlite3", max_batches=4)
+    )
+
+    assert result == {"sources": 3, "work_items": 2, "follow_ups": 1}
+    assert calls == [
+        ("scan", tmp_path / "worker.sqlite3"),
+        ("work", tmp_path / "worker.sqlite3"),
+        ("follow", tmp_path / "worker.sqlite3"),
+    ]
+    assert capsys.readouterr().out == (
+        "daily-task-maintenance sources=3 work_items=2 follow_ups=1\n"
+    )
 
 
 def test_process_work_items_command_processes_claimed_input(tmp_path, monkeypatch, capsys):
