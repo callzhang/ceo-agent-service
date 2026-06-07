@@ -25,6 +25,7 @@ from app.audit_web import (
     render_config_page,
     render_developer_prompt_editor,
     render_error_list,
+    render_tasks_page,
     render_user_feedback_list,
     run_audit_web,
 )
@@ -559,6 +560,7 @@ def test_top_nav_highlights_current_page_and_disables_current_link(tmp_path: Pat
     config_html = render_config_page()
     codex_html = render_codex_session_list(store)
     errors_html = render_error_list(store)
+    tasks_html = render_tasks_page(store)
 
     assert '<span class="nav-item active" aria-current="page">History</span>' in history_html
     assert '<a class="nav-item" href="/">History</a>' not in history_html
@@ -576,6 +578,64 @@ def test_top_nav_highlights_current_page_and_disables_current_link(tmp_path: Pat
 
     assert '<span class="nav-item active" aria-current="page">Errors</span>' in errors_html
     assert '<a class="nav-item" href="/errors">Errors</a>' not in errors_html
+
+    assert '<span class="nav-item active" aria-current="page">Tasks</span>' in tasks_html
+    assert '<a class="nav-item" href="/tasks">Tasks</a>' not in tasks_html
+
+
+def test_tasks_page_renders_projects_todos_and_drafts(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    project_id = store.create_work_project(
+        title="售前知识库建设",
+        category="sales",
+        status="active",
+        priority="P1",
+        risk_level="medium",
+        background="销售支持项目。",
+        current_state="整理中",
+        next_step="补齐来源链接",
+    )
+    todo_id = store.create_work_todo(
+        project_id=project_id,
+        title="补齐来源链接",
+        status="open",
+        priority="P1",
+    )
+    store.create_follow_up_draft(
+        project_id=project_id,
+        todo_id=todo_id,
+        owner_name="Alex",
+        target_conversation_id="cid-1",
+        target_kind="group",
+        question_text="来源链接补齐到哪一步了？",
+        status="draft",
+    )
+
+    html = render_tasks_page(store)
+
+    assert "售前知识库建设" in html
+    assert "补齐来源链接" in html
+    assert "来源链接补齐到哪一步了" in html
+    assert "/tasks" in html
+
+
+def test_tasks_route_renders_page(tmp_path: Path):
+    db_path = tmp_path / "worker.sqlite3"
+    store = AutoReplyStore(db_path)
+    store.create_work_project(
+        title="售前知识库建设",
+        category="sales",
+        status="active",
+        priority="P1",
+        risk_level="medium",
+    )
+    client = TestClient(create_audit_app(db_path))
+
+    response = client.get("/tasks")
+
+    assert response.status_code == 200
+    assert "售前知识库建设" in response.text
+    assert '<span class="nav-item active" aria-current="page">Tasks</span>' in response.text
 
 
 def test_non_history_pages_do_not_auto_refresh(tmp_path: Path):

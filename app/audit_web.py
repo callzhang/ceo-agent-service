@@ -845,6 +845,7 @@ def _top_nav(
 ) -> str:
     items = [
         ("history", "History", "/"),
+        ("tasks", "Tasks", "/tasks"),
         ("user-feedback", "用户反馈", "/user-feedback"),
         ("codex", "Codex Sessions", "/codex"),
         ("config", "Config", "/config"),
@@ -1739,6 +1740,72 @@ def render_attempt_list(
     )
 
 
+def render_tasks_page(store: AutoReplyStore) -> str:
+    projects = store.list_work_projects(limit=100)
+    draft_count = len(store.list_follow_up_drafts(statuses=("draft",), limit=200))
+    rows = []
+    for project in projects:
+        todos = store.list_work_todos(
+            project_id=project.id,
+            statuses=("open", "waiting_owner"),
+        )
+        todo_text = ", ".join(todo.title for todo in todos)
+        rows.append(
+            "<tr>"
+            f"<td><a href=\"/tasks#{project.id}\">{escape(project.title)}</a></td>"
+            f"<td><span class=\"pill\">{escape(project.category)}</span></td>"
+            f"<td><span class=\"pill\">{escape(project.priority)}</span></td>"
+            f"<td><span class=\"pill\">{escape(project.risk_level)}</span></td>"
+            f"<td>{escape(project.owner_name)}</td>"
+            f"<td>{escape(_excerpt(project.current_state, 90))}</td>"
+            f"<td>{escape(_excerpt(project.next_step, 110))}</td>"
+            f"<td>{len(todos)}</td>"
+            f"<td>{escape(_excerpt(todo_text, 140))}</td>"
+            "</tr>"
+        )
+    table = (
+        "<table><thead><tr>"
+        "<th>Project</th><th>Category</th><th>Priority</th><th>Risk</th>"
+        "<th>Owner</th><th>State</th><th>Next</th><th>Open</th><th>TODOs</th>"
+        "</tr></thead><tbody>"
+        + "".join(rows)
+        + "</tbody></table>"
+    )
+    drafts = store.list_follow_up_drafts(statuses=("draft",), limit=50)
+    draft_items = "".join(
+        "<div class=\"attempt-item\">"
+        "<div class=\"attempt-head\">"
+        "<div class=\"attempt-title\">"
+        f"<div class=\"attempt-main\">{escape(draft.owner_name or 'Owner')}</div>"
+        f"<div class=\"attempt-meta\">{escape(draft.target_kind)}</div>"
+        "</div>"
+        f"<time class=\"attempt-time\">{escape(_format_local_time(draft.scheduled_at))}</time>"
+        "</div>"
+        "<div class=\"attempt-lines\">"
+        f"{_attempt_text_line('问', draft.question_text, 240)}"
+        "</div>"
+        "</div>"
+        for draft in drafts
+    )
+    body = (
+        "<section class=\"card\"><div class=\"card-head\">"
+        "<h2>Tasks</h2>"
+        f"<span class=\"pill\">Draft follow-ups {draft_count}</span>"
+        "</div>"
+        f"{table if rows else '<p class=\"muted\">No work projects recorded.</p>'}"
+        "</section>"
+        "<section class=\"card\"><h2>Pending follow-ups</h2>"
+        f"{draft_items or '<p class=\"muted\">No pending follow-ups.</p>'}"
+        "</section>"
+    )
+    return render_page(
+        "Tasks",
+        body,
+        active_nav="tasks",
+        user_feedback_pending_count=store.count_pending_user_feedback_items(),
+    )
+
+
 def render_user_feedback_list(
     store: AutoReplyStore, limit: int = 50, page: int = 1
 ) -> str:
@@ -2470,6 +2537,10 @@ def create_audit_app(
             AutoReplyStore(db_path),
             page=_positive_int_query(request, "page", default=1),
         )
+
+    @app.get("/tasks", response_class=HTMLResponse)
+    def tasks_page() -> str:
+        return render_tasks_page(AutoReplyStore(db_path))
 
     @app.get("/errors", response_class=HTMLResponse)
     def error_list(request: Request) -> str:
