@@ -95,6 +95,55 @@ def test_parser_supports_scan_task_sources():
     assert args.workspace == "/tmp/w"
 
 
+def test_parser_supports_setup_memory_connector():
+    args = build_parser().parse_args(
+        [
+            "setup-memory-connector",
+            "--memory-url",
+            "https://memory.example/mcp/",
+            "--codex-config",
+            "/tmp/codex.toml",
+            "--claude-config",
+            "/tmp/claude.json",
+        ]
+    )
+
+    assert args.command == "setup-memory-connector"
+    assert args.memory_url == "https://memory.example/mcp/"
+    assert args.codex_config == "/tmp/codex.toml"
+    assert args.claude_config == "/tmp/claude.json"
+
+
+def test_setup_memory_connector_command_updates_codex_and_claude(tmp_path, capsys):
+    codex_config = tmp_path / "config.toml"
+    claude_config = tmp_path / "claude.json"
+
+    result = cli.setup_memory_connector_command(
+        memory_url="https://memory.example/mcp/",
+        codex_config=str(codex_config),
+        claude_config=str(claude_config),
+    )
+
+    assert result["codex_config"] == str(codex_config)
+    assert result["claude_config"] == str(claude_config)
+    assert "[mcp_servers.memory_connector]" in codex_config.read_text(
+        encoding="utf-8"
+    )
+    assert "memory_connector" in claude_config.read_text(encoding="utf-8")
+    out = capsys.readouterr().out
+    assert "setup-memory-connector codex_config=" in out
+    assert "claude_config=" in out
+
+
+def test_setup_memory_connector_command_requires_memory_url(tmp_path):
+    with pytest.raises(SystemExit):
+        cli.setup_memory_connector_command(
+            memory_url="",
+            codex_config=str(tmp_path / "config.toml"),
+            claude_config=str(tmp_path / "claude.json"),
+        )
+
+
 def test_process_work_items_command_processes_claimed_input(tmp_path, monkeypatch, capsys):
     class FakeTaskAgentCodexRunner:
         last_session_id = "task-session-1"

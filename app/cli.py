@@ -165,6 +165,7 @@ def build_parser() -> argparse.ArgumentParser:
         "consume",
         "process-work-items",
         "scan-task-sources",
+        "setup-memory-connector",
         "build-corpus",
         "collect-corpus",
         "refresh-org-cache",
@@ -252,6 +253,31 @@ def build_parser() -> argparse.ArgumentParser:
         )
         if command == "refresh-org-cache":
             subparser.add_argument("--user-id", action="append", default=[])
+        if command == "setup-memory-connector":
+            subparser.add_argument(
+                "--memory-url",
+                default=os.getenv("MEMORY_CONNECTOR_URL", ""),
+                help="memory connector MCP URL",
+            )
+            subparser.add_argument(
+                "--codex-config",
+                default=str(
+                    Path(os.getenv("CODEX_HOME", "~/.codex")).expanduser()
+                    / "config.toml"
+                ),
+                help="Codex config.toml path",
+            )
+            subparser.add_argument(
+                "--claude-config",
+                default=str(
+                    Path.home()
+                    / "Library"
+                    / "Application Support"
+                    / "Claude"
+                    / "claude_desktop_config.json"
+                ),
+                help="Claude Desktop config JSON path",
+            )
         if command == "feedback":
             subparser.add_argument("--attempt-id", type=int, required=True)
             subparser.add_argument("--feedback", required=True)
@@ -623,6 +649,50 @@ def scan_task_sources_command(settings: WorkerSettings) -> int:
         flush=True,
     )
     return total
+
+
+def setup_memory_connector_command(
+    *,
+    memory_url: str,
+    codex_config: str,
+    claude_config: str,
+) -> dict[str, str]:
+    from app.memory_setup import (
+        ensure_claude_memory_connector_config,
+        ensure_codex_memory_connector_config,
+    )
+
+    if not memory_url.strip():
+        raise SystemExit(
+            "setup-memory-connector requires --memory-url or MEMORY_CONNECTOR_URL"
+        )
+
+    url = memory_url.strip()
+    codex_config_path = Path(codex_config).expanduser()
+    claude_config_path = Path(claude_config).expanduser()
+    codex_backup = ensure_codex_memory_connector_config(
+        codex_config_path,
+        url=url,
+    )
+    claude_backup = ensure_claude_memory_connector_config(
+        claude_config_path,
+        url=url,
+    )
+    result = {
+        "codex_config": str(codex_config_path),
+        "codex_backup": str(codex_backup),
+        "claude_config": str(claude_config_path),
+        "claude_backup": str(claude_backup),
+    }
+    print(
+        "setup-memory-connector "
+        f"codex_config={result['codex_config']} "
+        f"codex_backup={result['codex_backup']} "
+        f"claude_config={result['claude_config']} "
+        f"claude_backup={result['claude_backup']}",
+        flush=True,
+    )
+    return result
 
 
 def _record_service_failure(
@@ -1520,6 +1590,12 @@ def main() -> None:
         process_work_items_command(settings)
     elif args.command == "scan-task-sources":
         scan_task_sources_command(settings)
+    elif args.command == "setup-memory-connector":
+        setup_memory_connector_command(
+            memory_url=args.memory_url,
+            codex_config=args.codex_config,
+            claude_config=args.claude_config,
+        )
     elif args.command == "build-corpus":
         build_style_corpus(settings.workspace, settings.corpus_dir)
     elif args.command == "collect-corpus":
