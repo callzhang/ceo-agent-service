@@ -781,21 +781,24 @@ class DwsClient:
         *,
         scope: str = "all",
         max_results: int = 20,
+        next_token: str = "",
     ) -> list[str]:
         if scope not in {"all", "mine", "shared"}:
             raise ValueError("minutes scope must be one of: all, mine, shared")
         if max_results < 1:
             raise ValueError("max_results must be positive")
-        return [
+        command = [
             self.dws_bin,
             "minutes",
             "list",
             scope,
             "--max",
             str(max_results),
-            "--format",
-            "json",
         ]
+        if next_token:
+            command.extend(["--next-token", next_token])
+        command.extend(["--format", "json"])
+        return command
 
     def build_minutes_info_command(self, task_uuid: str) -> list[str]:
         return [
@@ -1274,11 +1277,33 @@ class DwsClient:
         *,
         scope: str = "all",
         max_results: int = 20,
+        next_token: str = "",
     ) -> list[dict[str, Any]]:
+        return self.list_minutes_page(
+            scope=scope,
+            max_results=max_results,
+            next_token=next_token,
+        )["items"]
+
+    def list_minutes_page(
+        self,
+        *,
+        scope: str = "all",
+        max_results: int = 20,
+        next_token: str = "",
+    ) -> dict[str, Any]:
         payload = self.run_json(
-            self.build_list_minutes_command(scope=scope, max_results=max_results)
+            self.build_list_minutes_command(
+                scope=scope,
+                max_results=max_results,
+                next_token=next_token,
+            )
         )
-        return self.parse_minutes_list(payload)
+        return {
+            "items": self.parse_minutes_list(payload),
+            "has_more": self.parse_minutes_has_more(payload),
+            "next_token": self.parse_minutes_next_token(payload),
+        }
 
     def get_minutes_info(self, task_uuid: str) -> dict[str, Any]:
         payload = self.run_json(self.build_minutes_info_command(task_uuid))
@@ -1970,6 +1995,32 @@ class DwsClient:
                 row["title"] = str(row["name"])
             results.append(row)
         return results
+
+    @staticmethod
+    def parse_minutes_has_more(payload: Any) -> bool:
+        result = payload.get("result") if isinstance(payload, dict) else None
+        candidates = [payload, result]
+        for candidate in candidates:
+            if not isinstance(candidate, dict):
+                continue
+            value = candidate.get("hasMore")
+            if isinstance(value, bool):
+                return value
+            if isinstance(value, str):
+                return value.lower() == "true"
+        return False
+
+    @staticmethod
+    def parse_minutes_next_token(payload: Any) -> str:
+        result = payload.get("result") if isinstance(payload, dict) else None
+        candidates = [payload, result]
+        for candidate in candidates:
+            if not isinstance(candidate, dict):
+                continue
+            value = candidate.get("nextToken") or candidate.get("next_token")
+            if value:
+                return str(value)
+        return ""
 
     @staticmethod
     def _unwrap_minutes_list_rows(payload: Any) -> list[Any]:

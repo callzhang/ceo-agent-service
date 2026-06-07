@@ -101,6 +101,30 @@ def test_scan_local_files_requeues_edited_done_file(tmp_path):
     assert "第二次扫描" in second_claimed[0].payload_json
 
 
+def test_scan_local_files_requeues_edited_done_file_with_same_mtime(tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    file_path = workspace / "project.md"
+    timestamp = 1_800_000_000
+    file_path.write_text("第一次扫描", encoding="utf-8")
+    os.utime(file_path, (timestamp, timestamp))
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+
+    assert scan_local_workspace_files(store, workspace=workspace) == 1
+    first_claimed = store.claim_work_summary_inputs(limit=10)
+    assert len(first_claimed) == 1
+    store.mark_work_summary_input_done(first_claimed[0].id)
+
+    file_path.write_text("第二次扫描", encoding="utf-8")
+    os.utime(file_path, (timestamp, timestamp))
+
+    assert scan_local_workspace_files(store, workspace=workspace) == 1
+    second_claimed = store.claim_work_summary_inputs(limit=10)
+    assert len(second_claimed) == 1
+    assert second_claimed[0].source_ref != first_claimed[0].source_ref
+    assert "第二次扫描" in second_claimed[0].payload_json
+
+
 def test_scan_ai_minutes_enqueues_adapter_items(tmp_path):
     class FakeDws:
         def list_minutes(self):
@@ -145,6 +169,39 @@ def test_scan_ai_minutes_accepts_live_dws_row_shape(tmp_path):
     assert len(claimed) == 1
     assert claimed[0].source_ref == "minutes-1"
     assert "2026-06-07T13:24:06+08:00" in claimed[0].payload_json
+
+
+def test_scan_ai_minutes_walks_paginated_adapter(tmp_path):
+    class FakeDws:
+        def __init__(self):
+            self.tokens = []
+
+        def list_minutes_page(self, *, max_results, next_token):
+            self.tokens.append((max_results, next_token))
+            if not next_token:
+                return {
+                    "items": [{"taskUuid": "minutes-1", "title": "第一页"}],
+                    "has_more": True,
+                    "next_token": "token-2",
+                }
+            return {
+                "items": [{"taskUuid": "minutes-2", "title": "第二页"}],
+                "has_more": False,
+                "next_token": "",
+            }
+
+        def list_minutes(self):
+            raise AssertionError("paginated adapter should be used")
+
+    dws = FakeDws()
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+
+    count = scan_ai_minutes(store, dws)
+
+    assert count == 2
+    assert dws.tokens == [(50, ""), (50, "token-2")]
+    claimed = store.claim_work_summary_inputs(limit=10)
+    assert {row.source_ref for row in claimed} == {"minutes-1", "minutes-2"}
 
 
 def test_scan_ai_minutes_records_unavailable_adapter(tmp_path):

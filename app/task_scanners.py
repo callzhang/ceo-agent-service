@@ -1,4 +1,5 @@
 import fnmatch
+import hashlib
 import json
 from datetime import datetime, timezone
 from pathlib import Path
@@ -23,12 +24,13 @@ def _matches_any(path: Path, patterns: tuple[str, ...]) -> bool:
     )
 
 
-def _read_text_excerpt(path: Path, limit: int = 6000) -> str:
+def _read_text_excerpt_and_digest(path: Path, limit: int = 6000) -> tuple[str, str]:
     try:
-        text = path.read_text(encoding="utf-8")
+        raw = path.read_bytes()
+        text = raw.decode("utf-8")
     except UnicodeDecodeError:
-        return ""
-    return text[:limit]
+        return "", ""
+    return text[:limit], hashlib.sha256(raw).hexdigest()
 
 
 def _is_under_workspace(path: Path, workspace: Path) -> bool:
@@ -39,8 +41,8 @@ def _is_under_workspace(path: Path, workspace: Path) -> bool:
     return True
 
 
-def _local_file_source_ref(path: Path, *, mtime_ns: int, size: int) -> str:
-    return f"{path}#mtime_ns={mtime_ns}:size={size}"
+def _local_file_source_ref(path: Path, *, digest: str, size: int) -> str:
+    return f"{path}#sha256={digest}:size={size}"
 
 
 def scan_local_workspace_files(
@@ -65,10 +67,8 @@ def scan_local_workspace_files(
         cursor = json.loads(state.get("cursor_json") or "{}")
     except json.JSONDecodeError:
         cursor = {}
-    previous_mtime = float(cursor.get("max_mtime", 0))
-    previous_mtime_paths = set(cursor.get("max_mtime_paths") or [])
-    max_mtime = previous_mtime
-    max_mtime_paths: set[str] = set(previous_mtime_paths)
+    previous_path_refs = dict(cursor.get("path_refs") or {})
+    path_refs: dict[str, str] = {}
     count = 0
 
     for path in sorted(workspace.rglob("*")):
@@ -84,23 +84,17 @@ def scan_local_workspace_files(
         stat = resolved.stat()
         mtime = stat.st_mtime
         resolved_text = str(resolved)
-        if mtime > max_mtime:
-            max_mtime = mtime
-            max_mtime_paths = {resolved_text}
-        elif mtime == max_mtime:
-            max_mtime_paths.add(resolved_text)
-        if mtime < previous_mtime:
-            continue
-        if mtime == previous_mtime and resolved_text in previous_mtime_paths:
-            continue
-        excerpt = _read_text_excerpt(resolved)
+        excerpt, digest = _read_text_excerpt_and_digest(resolved)
         if not excerpt.strip():
             continue
         source_ref = _local_file_source_ref(
             resolved,
-            mtime_ns=stat.st_mtime_ns,
+            digest=digest,
             size=stat.st_size,
         )
+        path_refs[resolved_text] = source_ref
+        if previous_path_refs.get(resolved_text) == source_ref:
+            continue
         item = WorkItem.model_validate(
             {
                 "source": {
@@ -134,8 +128,7 @@ def scan_local_workspace_files(
         last_success_at=_utc_now(),
         cursor_json=json.dumps(
             {
-                "max_mtime": max_mtime,
-                "max_mtime_paths": sorted(max_mtime_paths),
+                "path_refs": path_refs,
             },
             sort_keys=True,
         ),
@@ -155,8 +148,12 @@ def scan_ai_minutes(store: AutoReplyStore, dws) -> int:
         )
         return 0
 
+    list_minutes_page = getattr(dws, "list_minutes_page", None)
     try:
-        minutes_items = list_minutes()
+        if list_minutes_page is not None:
+            minutes_items = _list_all_ai_minutes(list_minutes_page)
+        else:
+            minutes_items = list_minutes()
     except Exception as exc:
         store.set_daily_scan_state(
             AI_MINUTES_SCANNER,
@@ -216,3 +213,19 @@ def scan_ai_minutes(store: AutoReplyStore, dws) -> int:
         last_error="",
     )
     return count
+
+
+def _list_all_ai_minutes(list_minutes_page) -> list[dict]:
+    items: list[dict] = []
+    next_token = ""
+    seen_tokens: set[str] = set()
+    for _ in range(100):
+        page = list_minutes_page(max_results=50, next_token=next_token)
+        page_items = page.get("items") or []
+        items.extend(item for item in page_items if isinstance(item, dict))
+        next_token = str(page.get("next_token") or "")
+        has_more = bool(page.get("has_more"))
+        if not has_more or not next_token or next_token in seen_tokens:
+            break
+        seen_tokens.add(next_token)
+    return items

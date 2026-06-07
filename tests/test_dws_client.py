@@ -317,6 +317,44 @@ def test_list_minutes_returns_parsed_items():
     ]
 
 
+def test_list_minutes_page_returns_pagination_metadata():
+    client = RecordingDwsClient(
+        {
+            "result": {
+                "itemList": [{"uuid": "minutes-1", "title": "周会"}],
+                "hasMore": True,
+                "nextToken": "token-2",
+            }
+        }
+    )
+
+    page = client.list_minutes_page(
+        scope="all",
+        max_results=1,
+        next_token="token-1",
+    )
+
+    assert page == {
+        "items": [{"uuid": "minutes-1", "title": "周会", "taskUuid": "minutes-1"}],
+        "has_more": True,
+        "next_token": "token-2",
+    }
+    assert client.commands == [
+        [
+            "dws",
+            "minutes",
+            "list",
+            "all",
+            "--max",
+            "1",
+            "--next-token",
+            "token-1",
+            "--format",
+            "json",
+        ]
+    ]
+
+
 def test_parse_minutes_list_accepts_common_wrappers():
     assert DwsClient.parse_minutes_list(
         {"data": {"records": [{"minutesId": "minutes-1", "title": "周会"}]}}
