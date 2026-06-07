@@ -705,6 +705,10 @@ def test_render_config_page_shows_system_config_tab_with_descriptions():
     assert "每次慢路径兜底扫描之间至少间隔多久" in html
     assert "USER_ALIAS" in html
     assert "用户别名" in html
+    assert "CEO_WORKSPACE" in html
+    assert "本地知识库路径" in html
+    assert "CEO_WORKER_DB" in html
+    assert "CEO_CORPUS_DIR" in html
     assert "DOCUMENT_EXTRACTION_IDS" in html
     assert "抽取该身份的发言或材料" in html
     assert "CEO_FORBIDDEN_PATH_PREFIXES" in html
@@ -712,8 +716,7 @@ def test_render_config_page_shows_system_config_tab_with_descriptions():
     assert "CEO_CURRENT_USER_DISPLAY_NAMES" not in html
     assert "CEO_FORBIDDEN_PATH_PREFIXES" in html
     system_section = html.split("<h2>系统运行参数</h2>", 1)[1]
-    assert "forbidden_reply_text_terms" not in system_section
-    assert "CEO_PROMPT_VAR_FORBIDDEN_REPLY_TEXT_TERMS" not in system_section
+    assert "保存位置" in system_section
 
 
 def test_handle_system_config_post_saves_runtime_params_to_env_file(
@@ -723,9 +726,12 @@ def test_handle_system_config_post_saves_runtime_params_to_env_file(
     env_path = tmp_path / ".env"
     env_path.write_text("CEO_WORKSPACE=/tmp/memory\n", encoding="utf-8")
     monkeypatch.setenv("CEO_ENV_FILE", str(env_path))
+    monkeypatch.setenv("CEO_WORKSPACE", "/tmp/memory")
 
     body = (
-        "system_key=CEO_PRODUCER_INTERVAL_SECONDS"
+        "system_key=CEO_WORKSPACE"
+        "&system_value=/tmp/new-memory"
+        "&system_key=CEO_PRODUCER_INTERVAL_SECONDS"
         "&system_value=60"
         "&system_key=CEO_CONSUMER_POLL_INTERVAL_SECONDS"
         "&system_value=10"
@@ -745,7 +751,7 @@ def test_handle_system_config_post_saves_runtime_params_to_env_file(
     assert headers["Location"] == "/config?tab=system&saved=1"
     assert html == ""
     env_text = env_path.read_text(encoding="utf-8")
-    assert "CEO_WORKSPACE=/tmp/memory" in env_text
+    assert "CEO_WORKSPACE=/tmp/new-memory" in env_text
     assert "CEO_PRODUCER_INTERVAL_SECONDS=60" in env_text
     assert "CEO_CONSUMER_POLL_INTERVAL_SECONDS=10" in env_text
     assert "FAST_PATH_UNREAD_BACKOFF=5m" in env_text

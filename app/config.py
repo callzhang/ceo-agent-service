@@ -95,6 +95,18 @@ def profile_evidence_dir() -> Path:
     )
 
 
+def workspace_path() -> Path:
+    return env_path("CEO_WORKSPACE", Path.home() / "Documents" / "memory")
+
+
+def worker_db_path() -> Path:
+    return env_path("CEO_WORKER_DB", repo_root() / "data" / "auto-reply.sqlite3")
+
+
+def corpus_dir() -> Path:
+    return env_path("CEO_CORPUS_DIR", repo_root() / "corpus")
+
+
 def env_csv(name: str, default: tuple[str, ...]) -> tuple[str, ...]:
     value = os.getenv(name)
     if value is None:

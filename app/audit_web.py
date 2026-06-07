@@ -33,6 +33,7 @@ from app.config import (
     batch_seconds,
     broadcast_mention_aliases,
     consumer_poll_interval_seconds,
+    corpus_dir,
     document_extraction_ids,
     env_file_path,
     fast_path_unread_backoff_duration,
@@ -45,11 +46,14 @@ from app.config import (
     poll_interval_seconds,
     principal_name,
     producer_interval_seconds,
+    read_env_file,
     single_chat_read_recovery_limit,
     single_chat_read_recovery_window,
     user_alias,
+    worker_db_path,
     write_env_values,
     work_profile_path,
+    workspace_path,
 )
 from app.developer_prompt import (
     configurable_prompt_variable_pairs,
@@ -968,11 +972,12 @@ def _render_config_info() -> str:
 
 
 def _system_config_rows() -> list[tuple[str, str, str]]:
+    env_values = read_env_file()
     mention_text = _csv_label(mention_aliases())
     broadcast_text = _csv_label(broadcast_mention_aliases())
     document_extraction_text = _csv_label(document_extraction_ids())
     forbidden_path_text = _csv_label(forbidden_path_prefixes())
-    return [
+    known_rows = [
         (
             "CEO_PRINCIPAL_NAME",
             principal_name(),
@@ -1017,6 +1022,21 @@ def _system_config_rows() -> list[tuple[str, str, str]]:
             "CEO_FEEDBACK_SPIKE_VERCEL_BASE_URL",
             feedback_spike_vercel_base_url(),
             "对话方反馈页根地址；配置后发出的回复会自动追加赞踩链接并记录 feedback token。",
+        ),
+        (
+            "CEO_WORKSPACE",
+            str(workspace_path()),
+            "本地知识库路径；Codex agent 和 graphify 从这里读取业务材料。",
+        ),
+        (
+            "CEO_WORKER_DB",
+            str(worker_db_path()),
+            "本地 SQLite 运行状态和审计数据库路径。",
+        ),
+        (
+            "CEO_CORPUS_DIR",
+            str(corpus_dir()),
+            "回复风格语料和检索语料的本地目录。",
         ),
         (
             "CEO_WORK_PROFILE_PATH",
@@ -1068,6 +1088,20 @@ def _system_config_rows() -> list[tuple[str, str, str]]:
             str(single_chat_read_recovery_limit()),
             "慢路径私聊恢复扫描最多读取多少个会话。",
         ),
+    ]
+    descriptions = {key: description for key, _, description in known_rows}
+    values = {key: value for key, value, _ in known_rows}
+    ordered_keys = [key for key, _, _ in known_rows]
+    for key in env_values:
+        if key not in values:
+            ordered_keys.append(key)
+    return [
+        (
+            key,
+            env_values.get(key, values.get(key, "")),
+            descriptions.get(key, "来自 .env；服务启动或 prompt/config 渲染时读取。"),
+        )
+        for key in ordered_keys
     ]
 
 
@@ -1163,6 +1197,9 @@ def _editable_system_config_keys() -> set[str]:
         "CEO_ASSISTANT_SIGNATURE",
         "CEO_HANDOFF_ACK",
         "CEO_FEEDBACK_SPIKE_VERCEL_BASE_URL",
+        "CEO_WORKSPACE",
+        "CEO_WORKER_DB",
+        "CEO_CORPUS_DIR",
         "CEO_WORK_PROFILE_PATH",
         "CEO_FORBIDDEN_PATH_PREFIXES",
         "CEO_PRODUCER_INTERVAL_SECONDS",
@@ -1173,6 +1210,7 @@ def _editable_system_config_keys() -> set[str]:
         "MESSAGE_RECOVERY_INTERVAL",
         "SINGLE_CHAT_READ_RECOVERY_WINDOW",
         "SINGLE_CHAT_READ_RECOVERY_LIMIT",
+        *read_env_file().keys(),
     }
 
 
