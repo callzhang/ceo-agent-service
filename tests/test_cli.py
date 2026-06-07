@@ -88,6 +88,13 @@ def test_parser_supports_process_work_items():
     assert args.max_batches == 3
 
 
+def test_parser_supports_scan_task_sources():
+    args = build_parser().parse_args(["scan-task-sources", "--workspace", "/tmp/w"])
+
+    assert args.command == "scan-task-sources"
+    assert args.workspace == "/tmp/w"
+
+
 def test_process_work_items_command_processes_claimed_input(tmp_path, monkeypatch, capsys):
     class FakeTaskAgentCodexRunner:
         last_session_id = "task-session-1"
@@ -206,6 +213,47 @@ def test_process_work_items_command_respects_zero_max_batches(
     assert processed == 0
     assert capsys.readouterr().out == "process-work-items processed=0\n"
     assert len(AutoReplyStore(db_path).claim_work_summary_inputs(limit=1)) == 1
+
+
+def test_scan_task_sources_command_scans_local_and_minutes(
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    from app.cli import scan_task_sources_command
+
+    calls = []
+
+    def fake_local_scan(store, *, workspace):
+        calls.append(("local", store.path, workspace))
+        return 2
+
+    def fake_minutes_scan(store, dws):
+        calls.append(("minutes", store.path, type(dws).__name__))
+        return 3
+
+    class FakeDwsClient:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    monkeypatch.setattr("app.task_scanners.scan_local_workspace_files", fake_local_scan)
+    monkeypatch.setattr("app.task_scanners.scan_ai_minutes", fake_minutes_scan)
+    monkeypatch.setattr(cli, "DwsClient", FakeDwsClient)
+    db_path = tmp_path / "task.sqlite3"
+
+    total = scan_task_sources_command(
+        WorkerSettings(db_path=db_path, workspace=tmp_path)
+    )
+
+    assert total == 5
+    assert calls == [
+        ("local", db_path, tmp_path),
+        ("minutes", db_path, "FakeDwsClient"),
+    ]
+    assert (
+        capsys.readouterr().out
+        == "scan-task-sources local_files=2 ai_minutes=3 total=5\n"
+    )
 
 
 def test_parser_supports_single_service_command(monkeypatch):

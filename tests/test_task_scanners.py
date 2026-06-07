@@ -1,0 +1,89 @@
+from pathlib import Path
+
+from app.store import AutoReplyStore
+from app.task_scanners import scan_ai_minutes, scan_local_workspace_files
+
+
+def test_scan_local_files_only_under_workspace(tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    inside = workspace / "management.md"
+    inside.write_text("P1 项目需要三天内确认进展", encoding="utf-8")
+    outside = tmp_path / "outside.md"
+    outside.write_text("不应该扫描", encoding="utf-8")
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+
+    count = scan_local_workspace_files(
+        store,
+        workspace=workspace,
+        include_globs=("*.md",),
+        exclude_globs=(),
+    )
+
+    assert count == 1
+    claimed = store.claim_work_summary_inputs(limit=10)
+    assert len(claimed) == 1
+    assert str(inside) in claimed[0].source_ref
+    assert str(outside) not in claimed[0].payload_json
+
+
+def test_scan_local_files_rejects_workspace_outside_root(tmp_path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    missing = tmp_path / "missing"
+
+    count = scan_local_workspace_files(store, workspace=missing)
+
+    assert count == 0
+    assert store.get_daily_scan_state("local_files")["last_error"].startswith(
+        "workspace missing"
+    )
+
+
+def test_scan_local_files_uses_incremental_mtime_cursor(tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    first = workspace / "first.md"
+    first.write_text("第一次扫描", encoding="utf-8")
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+
+    assert scan_local_workspace_files(store, workspace=workspace) == 1
+    assert scan_local_workspace_files(store, workspace=workspace) == 0
+
+    second = workspace / "second.md"
+    second.write_text("第二次扫描", encoding="utf-8")
+    assert scan_local_workspace_files(store, workspace=workspace) == 1
+
+
+def test_scan_ai_minutes_enqueues_adapter_items(tmp_path):
+    class FakeDws:
+        def list_minutes(self):
+            return [
+                {
+                    "taskUuid": "minutes-1",
+                    "title": "售前知识库周会",
+                    "createdAt": "2026-06-07 09:00:00",
+                    "summary": "需要补齐来源链接",
+                }
+            ]
+
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+
+    count = scan_ai_minutes(store, FakeDws())
+
+    assert count == 1
+    claimed = store.claim_work_summary_inputs(limit=10)
+    assert len(claimed) == 1
+    assert claimed[0].source_type == "ai_minutes"
+    assert claimed[0].source_ref == "minutes-1"
+    assert "售前知识库周会" in claimed[0].payload_json
+
+
+def test_scan_ai_minutes_records_unavailable_adapter(tmp_path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+
+    count = scan_ai_minutes(store, object())
+
+    assert count == 0
+    state = store.get_daily_scan_state("ai_minutes")
+    assert state is not None
+    assert state["last_error"] == "dws list_minutes unavailable"

@@ -164,6 +164,7 @@ def build_parser() -> argparse.ArgumentParser:
         "consume-once",
         "consume",
         "process-work-items",
+        "scan-task-sources",
         "build-corpus",
         "collect-corpus",
         "refresh-org-cache",
@@ -602,6 +603,26 @@ def process_work_items_command(settings: WorkerSettings) -> int:
             store.record_error(None, None, "task_agent", str(exc))
     print(f"process-work-items processed={processed}", flush=True)
     return processed
+
+
+def scan_task_sources_command(settings: WorkerSettings) -> int:
+    from app.task_scanners import scan_ai_minutes, scan_local_workspace_files
+
+    store = AutoReplyStore(settings.db_path)
+    dws = DwsClient(
+        ding_robot_code=settings.ding_robot_code,
+        ding_robot_name=settings.ding_robot_name,
+        ding_receiver_user_id=settings.ding_receiver_user_id,
+    )
+    local_count = scan_local_workspace_files(store, workspace=settings.workspace)
+    minutes_count = scan_ai_minutes(store, dws)
+    total = local_count + minutes_count
+    print(
+        "scan-task-sources "
+        f"local_files={local_count} ai_minutes={minutes_count} total={total}",
+        flush=True,
+    )
+    return total
 
 
 def _record_service_failure(
@@ -1497,6 +1518,8 @@ def main() -> None:
         )
     elif args.command == "process-work-items":
         process_work_items_command(settings)
+    elif args.command == "scan-task-sources":
+        scan_task_sources_command(settings)
     elif args.command == "build-corpus":
         build_style_corpus(settings.workspace, settings.corpus_dir)
     elif args.command == "collect-corpus":
