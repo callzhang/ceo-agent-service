@@ -4,6 +4,15 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
+from app.task_models import (
+    FollowUpDraft,
+    TaskAgentRun,
+    WorkProject,
+    WorkSummaryInput,
+    WorkTodo,
+    WorkUpdate,
+)
+
 FAST_PATH_UNREAD_BACKOFF_TASK_ERROR = "waiting_fast_path_unread_backoff"
 
 
@@ -303,6 +312,119 @@ class AutoReplyStore:
                 create table if not exists service_state (
                     key text primary key,
                     value text not null,
+                    updated_at text not null default current_timestamp
+                );
+                create table if not exists work_projects (
+                    id integer primary key autoincrement,
+                    title text not null,
+                    category text not null default 'other',
+                    tags_json text not null default '[]',
+                    status text not null default 'active',
+                    priority text not null default 'none',
+                    risk_level text not null default 'none',
+                    needs_derek_attention integer not null default 0,
+                    owner_user_id text not null default '',
+                    owner_name text not null default '',
+                    related_people_json text not null default '[]',
+                    goal text not null default '',
+                    background text not null default '',
+                    facts_json text not null default '[]',
+                    current_state text not null default '',
+                    blocker text not null default '',
+                    next_step text not null default '',
+                    next_follow_up_at text not null default '',
+                    follow_up_mode text not null default 'none',
+                    source_conversations_json text not null default '[]',
+                    memory_context_json text not null default '{}',
+                    created_at text not null default current_timestamp,
+                    updated_at text not null default current_timestamp,
+                    last_activity_at text not null default current_timestamp
+                );
+                create index if not exists idx_work_projects_status_priority
+                    on work_projects(status, priority, updated_at);
+                create table if not exists work_todos (
+                    id integer primary key autoincrement,
+                    project_id integer not null,
+                    title text not null,
+                    owner_user_id text not null default '',
+                    owner_name text not null default '',
+                    status text not null default 'open',
+                    priority text not null default 'none',
+                    deadline_at text not null default '',
+                    next_follow_up_at text not null default '',
+                    follow_up_question text not null default '',
+                    blocker text not null default '',
+                    completion_evidence_json text not null default '{}',
+                    created_from_update_id integer not null default 0,
+                    created_at text not null default current_timestamp,
+                    updated_at text not null default current_timestamp,
+                    completed_at text not null default ''
+                );
+                create index if not exists idx_work_todos_project_status
+                    on work_todos(project_id, status);
+                create index if not exists idx_work_todos_follow_up
+                    on work_todos(status, next_follow_up_at);
+                create table if not exists work_updates (
+                    id integer primary key autoincrement,
+                    project_id integer not null,
+                    source_type text not null,
+                    source_ref text not null,
+                    summary text not null,
+                    changes_json text not null default '{}',
+                    merge_reason text not null default '',
+                    confidence real not null default 0,
+                    created_at text not null default current_timestamp
+                );
+                create index if not exists idx_work_updates_project
+                    on work_updates(project_id, id);
+                create table if not exists work_summary_inputs (
+                    id integer primary key autoincrement,
+                    source_type text not null,
+                    source_ref text not null,
+                    payload_json text not null,
+                    status text not null default 'pending',
+                    attempts integer not null default 0,
+                    error text not null default '',
+                    created_at text not null default current_timestamp,
+                    updated_at text not null default current_timestamp,
+                    unique(source_type, source_ref)
+                );
+                create index if not exists idx_work_summary_inputs_status
+                    on work_summary_inputs(status, id);
+                create table if not exists task_agent_runs (
+                    id integer primary key autoincrement,
+                    summary_input_id integer not null,
+                    codex_session_id text not null default '',
+                    decision_json text not null default '{}',
+                    audit_summary text not null default '',
+                    memory_recall_used integer not null default 0,
+                    created_at text not null default current_timestamp
+                );
+                create index if not exists idx_task_agent_runs_input
+                    on task_agent_runs(summary_input_id, id);
+                create table if not exists follow_up_drafts (
+                    id integer primary key autoincrement,
+                    project_id integer not null,
+                    todo_id integer not null default 0,
+                    owner_user_id text not null default '',
+                    owner_name text not null default '',
+                    target_conversation_id text not null default '',
+                    target_kind text not null default '',
+                    question_text text not null default '',
+                    risk_check_json text not null default '{}',
+                    status text not null default 'draft',
+                    send_result_json text not null default '{}',
+                    scheduled_at text not null default '',
+                    sent_at text not null default '',
+                    created_at text not null default current_timestamp
+                );
+                create index if not exists idx_follow_up_drafts_status
+                    on follow_up_drafts(status, scheduled_at, id);
+                create table if not exists daily_scan_state (
+                    scanner_name text primary key,
+                    last_success_at text not null default '',
+                    cursor_json text not null default '{}',
+                    last_error text not null default '',
                     updated_at text not null default current_timestamp
                 );
                 """
@@ -1734,6 +1856,355 @@ class AutoReplyStore:
                 "select count(*) as count from reply_attempts"
             ).fetchone()
             return int(row["count"])
+
+    def enqueue_work_summary_input(
+        self,
+        *,
+        source_type: str,
+        source_ref: str,
+        payload_json: str,
+    ) -> int:
+        with self._connect() as db:
+            db.execute(
+                """
+                insert into work_summary_inputs (source_type, source_ref, payload_json)
+                values (?, ?, ?)
+                on conflict(source_type, source_ref) do update set
+                    payload_json=excluded.payload_json,
+                    updated_at=current_timestamp
+                """,
+                (source_type, source_ref, payload_json),
+            )
+            row = db.execute(
+                """
+                select id from work_summary_inputs
+                where source_type=? and source_ref=?
+                """,
+                (source_type, source_ref),
+            ).fetchone()
+            return int(row["id"])
+
+    def claim_work_summary_inputs(self, limit: int) -> list[WorkSummaryInput]:
+        if limit <= 0:
+            return []
+        with self._connect() as db:
+            db.execute("begin immediate")
+            rows = db.execute(
+                """
+                select *
+                from work_summary_inputs
+                where status='pending'
+                order by id
+                limit ?
+                """,
+                (limit,),
+            ).fetchall()
+            ids = [row["id"] for row in rows]
+            if not ids:
+                return []
+            placeholders = ",".join("?" for _ in ids)
+            db.execute(
+                f"""
+                update work_summary_inputs
+                set status='processing',
+                    attempts=attempts + 1,
+                    error='',
+                    updated_at=current_timestamp
+                where id in ({placeholders})
+                """,
+                ids,
+            )
+            claimed = db.execute(
+                f"""
+                select *
+                from work_summary_inputs
+                where id in ({placeholders})
+                order by id
+                """,
+                ids,
+            ).fetchall()
+            return [WorkSummaryInput.model_validate(dict(row)) for row in claimed]
+
+    def mark_work_summary_input_done(self, input_id: int) -> None:
+        with self._connect() as db:
+            db.execute(
+                """
+                update work_summary_inputs
+                set status='done', error='', updated_at=current_timestamp
+                where id=?
+                """,
+                (input_id,),
+            )
+
+    def mark_work_summary_input_discarded(self, input_id: int, reason: str) -> None:
+        with self._connect() as db:
+            db.execute(
+                """
+                update work_summary_inputs
+                set status='discarded', error=?, updated_at=current_timestamp
+                where id=?
+                """,
+                (reason, input_id),
+            )
+
+    def mark_work_summary_input_failed(self, input_id: int, error: str) -> None:
+        with self._connect() as db:
+            db.execute(
+                """
+                update work_summary_inputs
+                set status='failed', error=?, updated_at=current_timestamp
+                where id=?
+                """,
+                (error, input_id),
+            )
+
+    def create_work_project(self, **values) -> int:
+        keys = list(values.keys())
+        columns = ", ".join(keys)
+        placeholders = ", ".join("?" for _ in keys)
+        with self._connect() as db:
+            cursor = db.execute(
+                f"insert into work_projects ({columns}) values ({placeholders})",
+                [values[key] for key in keys],
+            )
+            return int(cursor.lastrowid)
+
+    def update_work_project(self, project_id: int, **values) -> None:
+        if not values:
+            return
+        assignments = ", ".join(f"{key}=?" for key in values)
+        with self._connect() as db:
+            db.execute(
+                f"""
+                update work_projects
+                set {assignments},
+                    updated_at=current_timestamp,
+                    last_activity_at=current_timestamp
+                where id=?
+                """,
+                [*values.values(), project_id],
+            )
+
+    def get_work_project(self, project_id: int) -> WorkProject | None:
+        with self._connect() as db:
+            row = db.execute(
+                "select * from work_projects where id=?",
+                (project_id,),
+            ).fetchone()
+            return None if row is None else WorkProject.model_validate(dict(row))
+
+    def list_work_projects(
+        self,
+        *,
+        statuses: tuple[str, ...] | None = None,
+        limit: int | None = None,
+    ) -> list[WorkProject]:
+        query = "select * from work_projects"
+        args: list[str | int] = []
+        if statuses:
+            placeholders = ",".join("?" for _ in statuses)
+            query = f"{query} where status in ({placeholders})"
+            args.extend(statuses)
+        query = f"{query} order by last_activity_at desc, id desc"
+        if limit is not None:
+            query = f"{query} limit ?"
+            args.append(limit)
+        with self._connect() as db:
+            return [
+                WorkProject.model_validate(dict(row)) for row in db.execute(query, args)
+            ]
+
+    def create_work_todo(self, **values) -> int:
+        keys = list(values.keys())
+        columns = ", ".join(keys)
+        placeholders = ", ".join("?" for _ in keys)
+        with self._connect() as db:
+            cursor = db.execute(
+                f"insert into work_todos ({columns}) values ({placeholders})",
+                [values[key] for key in keys],
+            )
+            return int(cursor.lastrowid)
+
+    def update_work_todo(self, todo_id: int, **values) -> None:
+        if not values:
+            return
+        assignments = ", ".join(f"{key}=?" for key in values)
+        with self._connect() as db:
+            db.execute(
+                f"""
+                update work_todos
+                set {assignments}, updated_at=current_timestamp
+                where id=?
+                """,
+                [*values.values(), todo_id],
+            )
+
+    def list_work_todos(
+        self,
+        *,
+        project_id: int | None = None,
+        statuses: tuple[str, ...] | None = None,
+        due_before: str | None = None,
+    ) -> list[WorkTodo]:
+        query = "select * from work_todos"
+        clauses: list[str] = []
+        args: list[str | int] = []
+        if project_id is not None:
+            clauses.append("project_id=?")
+            args.append(project_id)
+        if statuses:
+            clauses.append(f"status in ({','.join('?' for _ in statuses)})")
+            args.extend(statuses)
+        if due_before is not None:
+            clauses.append("next_follow_up_at != '' and next_follow_up_at <= ?")
+            args.append(due_before)
+        if clauses:
+            query = f"{query} where {' and '.join(clauses)}"
+        query = f"{query} order by id"
+        with self._connect() as db:
+            return [WorkTodo.model_validate(dict(row)) for row in db.execute(query, args)]
+
+    def create_work_update(self, **values) -> int:
+        keys = list(values.keys())
+        columns = ", ".join(keys)
+        placeholders = ", ".join("?" for _ in keys)
+        with self._connect() as db:
+            cursor = db.execute(
+                f"insert into work_updates ({columns}) values ({placeholders})",
+                [values[key] for key in keys],
+            )
+            return int(cursor.lastrowid)
+
+    def list_work_updates(self, *, project_id: int, limit: int = 50) -> list[WorkUpdate]:
+        with self._connect() as db:
+            rows = db.execute(
+                """
+                select *
+                from work_updates
+                where project_id=?
+                order by id desc
+                limit ?
+                """,
+                (project_id, limit),
+            ).fetchall()
+            return [WorkUpdate.model_validate(dict(row)) for row in rows]
+
+    def record_task_agent_run(
+        self,
+        *,
+        summary_input_id: int,
+        codex_session_id: str = "",
+        decision_json: str = "{}",
+        audit_summary: str = "",
+        memory_recall_used: bool = False,
+    ) -> int:
+        with self._connect() as db:
+            cursor = db.execute(
+                """
+                insert into task_agent_runs (
+                    summary_input_id,
+                    codex_session_id,
+                    decision_json,
+                    audit_summary,
+                    memory_recall_used
+                )
+                values (?, ?, ?, ?, ?)
+                """,
+                (
+                    summary_input_id,
+                    codex_session_id,
+                    decision_json,
+                    audit_summary,
+                    int(memory_recall_used),
+                ),
+            )
+            return int(cursor.lastrowid)
+
+    def create_follow_up_draft(self, **values) -> int:
+        keys = list(values.keys())
+        columns = ", ".join(keys)
+        placeholders = ", ".join("?" for _ in keys)
+        with self._connect() as db:
+            cursor = db.execute(
+                f"insert into follow_up_drafts ({columns}) values ({placeholders})",
+                [values[key] for key in keys],
+            )
+            return int(cursor.lastrowid)
+
+    def update_follow_up_draft(self, draft_id: int, **values) -> None:
+        if not values:
+            return
+        assignments = ", ".join(f"{key}=?" for key in values)
+        with self._connect() as db:
+            db.execute(
+                f"update follow_up_drafts set {assignments} where id=?",
+                [*values.values(), draft_id],
+            )
+
+    def list_follow_up_drafts(
+        self,
+        *,
+        statuses: tuple[str, ...] | None = None,
+        due_before: str | None = None,
+        limit: int = 200,
+    ) -> list[FollowUpDraft]:
+        query = "select * from follow_up_drafts"
+        clauses: list[str] = []
+        args: list[str | int] = []
+        if statuses:
+            clauses.append(f"status in ({','.join('?' for _ in statuses)})")
+            args.extend(statuses)
+        if due_before is not None:
+            clauses.append("scheduled_at != '' and scheduled_at <= ?")
+            args.append(due_before)
+        if clauses:
+            query = f"{query} where {' and '.join(clauses)}"
+        query = f"{query} order by scheduled_at, id limit ?"
+        args.append(limit)
+        with self._connect() as db:
+            return [
+                FollowUpDraft.model_validate(dict(row))
+                for row in db.execute(query, args)
+            ]
+
+    def set_daily_scan_state(
+        self,
+        scanner_name: str,
+        *,
+        last_success_at: str,
+        cursor_json: str = "{}",
+        last_error: str = "",
+    ) -> None:
+        with self._connect() as db:
+            db.execute(
+                """
+                insert into daily_scan_state (
+                    scanner_name,
+                    last_success_at,
+                    cursor_json,
+                    last_error
+                )
+                values (?, ?, ?, ?)
+                on conflict(scanner_name) do update set
+                    last_success_at=excluded.last_success_at,
+                    cursor_json=excluded.cursor_json,
+                    last_error=excluded.last_error,
+                    updated_at=current_timestamp
+                """,
+                (scanner_name, last_success_at, cursor_json, last_error),
+            )
+
+    def get_daily_scan_state(self, scanner_name: str) -> dict[str, str] | None:
+        with self._connect() as db:
+            row = db.execute(
+                """
+                select scanner_name, last_success_at, cursor_json, last_error
+                from daily_scan_state
+                where scanner_name=?
+                """,
+                (scanner_name,),
+            ).fetchone()
+            return None if row is None else dict(row)
 
     def record_error(
         self,
