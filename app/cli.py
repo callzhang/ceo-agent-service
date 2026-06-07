@@ -165,6 +165,7 @@ def build_parser() -> argparse.ArgumentParser:
         "consume",
         "process-work-items",
         "scan-task-sources",
+        "process-follow-ups",
         "setup-memory-connector",
         "build-corpus",
         "collect-corpus",
@@ -649,6 +650,24 @@ def scan_task_sources_command(settings: WorkerSettings) -> int:
         flush=True,
     )
     return total
+
+
+def process_follow_ups_command(settings: WorkerSettings) -> int:
+    from app.follow_up import process_due_follow_ups
+
+    dws = DwsClient(
+        ding_robot_code=settings.ding_robot_code,
+        ding_robot_name=settings.ding_robot_name,
+        ding_receiver_user_id=settings.ding_receiver_user_id,
+    )
+    sent = process_due_follow_ups(
+        AutoReplyStore(settings.db_path),
+        dws,
+        now=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
+        auto_send=not settings.dry_run,
+    )
+    print(f"process-follow-ups sent={sent}", flush=True)
+    return sent
 
 
 def setup_memory_connector_command(
@@ -1589,6 +1608,8 @@ def main() -> None:
         process_work_items_command(settings)
     elif args.command == "scan-task-sources":
         scan_task_sources_command(settings)
+    elif args.command == "process-follow-ups":
+        process_follow_ups_command(settings)
     elif args.command == "setup-memory-connector":
         setup_memory_connector_command(
             memory_url=args.memory_url,

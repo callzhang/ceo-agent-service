@@ -95,6 +95,12 @@ def test_parser_supports_scan_task_sources():
     assert args.workspace == "/tmp/w"
 
 
+def test_parser_supports_process_follow_ups():
+    args = build_parser().parse_args(["process-follow-ups"])
+
+    assert args.command == "process-follow-ups"
+
+
 def test_parser_supports_setup_memory_connector():
     args = build_parser().parse_args(
         [
@@ -146,6 +152,24 @@ def test_setup_memory_connector_command_requires_memory_url(tmp_path):
             codex_config=str(tmp_path / "config.toml"),
             claude_config=str(tmp_path / "claude.json"),
         )
+
+
+def test_process_follow_ups_command_processes_due_drafts(tmp_path, monkeypatch, capsys):
+    calls = []
+
+    def fake_process(store, dws, *, now, auto_send):
+        calls.append((store.path, type(dws).__name__, bool(now), auto_send))
+        return 2
+
+    monkeypatch.setattr("app.follow_up.process_due_follow_ups", fake_process)
+
+    sent = cli.process_follow_ups_command(
+        WorkerSettings(db_path=tmp_path / "worker.sqlite3", dry_run=False)
+    )
+
+    assert sent == 2
+    assert calls == [(tmp_path / "worker.sqlite3", "DwsClient", True, True)]
+    assert capsys.readouterr().out == "process-follow-ups sent=2\n"
 
 
 def test_process_work_items_command_processes_claimed_input(tmp_path, monkeypatch, capsys):
