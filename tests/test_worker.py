@@ -2518,6 +2518,43 @@ def test_calendar_link_message_is_handled_as_calendar_invite(tmp_path: Path, mon
     assert attempt.codex_reason == "calendar_agent_needs_more_context"
 
 
+def test_calendar_invite_still_injects_calendar_context_before_codex(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message(
+        "明哥看下这个日程 dingtalk://dingtalkclient/action/open_mini_app?"
+        "page=pages%2Fdetail%2Findex%3FuniqueId%3Dinvite-1%26recurrenceId%3D",
+        single_chat=True,
+    )
+    invite = DwsCalendarEvent(
+        event_id="invite-1",
+        title="Hyperion 客户复盘会",
+        start_time="2026-05-30T14:00:00+08:00",
+        end_time="2026-05-30T15:00:00+08:00",
+        description="复盘 Hyperion 客户反馈，并确认下周跟进材料。",
+        organizer="韩露",
+    )
+    dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
+    dws.calendar_invites["msg-1"] = invite
+    codex = FakeCodex(
+        CodexDecision(
+            action=CodexAction.NO_REPLY,
+            reason="日程上下文足够判断。",
+        )
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+
+    worker.run_once()
+
+    assert len(codex.calls) == 1
+    prompt = codex.calls[0][0]
+    assert "Hyperion 客户复盘会" in prompt
+    assert "复盘 Hyperion 客户反馈，并确认下周跟进材料。" in prompt
+    assert dws.read_doc_calls == []
+    assert dws.download_doc_calls == []
+    assert dws.search_document_calls == []
+
+
 def test_bare_calendar_card_uses_unique_pending_invite_from_sender(
     tmp_path: Path, monkeypatch
 ):
