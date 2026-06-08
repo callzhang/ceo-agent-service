@@ -172,6 +172,22 @@ th{background:var(--surface-soft);color:var(--steel);font-size:12px;font-weight:
 .task-state.over-due{background:rgba(212,86,86,.12);border-color:rgba(212,86,86,.24);color:#9a2f2f}
 .task-state.in-progress{background:rgba(55,114,207,.10);border-color:rgba(55,114,207,.24);color:#245aa5}
 .task-state.not-started{background:var(--surface-soft);color:var(--steel)}
+.tasks-table-wrap{width:100%;overflow-x:auto}
+.tasks-table{table-layout:fixed;min-width:1440px}
+.tasks-table .col-project{width:260px}
+.tasks-table .col-status{width:106px}
+.tasks-table .col-category{width:112px}
+.tasks-table .col-priority{width:84px}
+.tasks-table .col-risk{width:88px}
+.tasks-table .col-owner{width:132px}
+.tasks-table .col-state{width:220px}
+.tasks-table .col-next{width:260px}
+.tasks-table .col-open{width:88px}
+.tasks-table .col-todos{width:300px}
+.tasks-table th,.tasks-table td{overflow-wrap:anywhere}
+.tasks-table td:nth-child(2),.tasks-table td:nth-child(3),.tasks-table td:nth-child(4),.tasks-table td:nth-child(5),.tasks-table td:nth-child(9){white-space:nowrap}
+.task-project-title{font-weight:700}
+.task-cell-text{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:4;overflow:hidden}
 .compact-button{display:inline-flex;align-items:center;height:30px;padding:0 12px;border:1px solid var(--hairline);border-radius:999px;background:var(--canvas);color:var(--ink);font-size:13px;font-weight:500;line-height:1;white-space:nowrap}
 .compact-button:hover{border-color:var(--ink);background:var(--surface-soft)}
 .agent-log-button{display:inline-flex;align-items:center;height:34px;padding:0 14px;border:1px solid rgba(55,114,207,.38);border-radius:999px;background:#3772cf;color:#fff;font-size:13px;font-weight:700;line-height:1;white-space:nowrap;box-shadow:0 6px 18px rgba(55,114,207,.18)}
@@ -1845,25 +1861,31 @@ def render_tasks_page(
         state = _task_table_state(project, todos)
         rows.append(
             "<tr>"
-            f"<td><a href=\"/tasks/{project.id}\">{escape(project.title)}</a></td>"
+            f"<td><a class=\"task-project-title\" href=\"/tasks/{project.id}\">{escape(project.title)}</a></td>"
             f"<td>{_task_state_badge(state)}</td>"
             f"<td><span class=\"pill\">{escape(project.category)}</span></td>"
             f"<td><span class=\"pill\">{escape(project.priority)}</span></td>"
             f"<td><span class=\"pill\">{escape(project.risk_level)}</span></td>"
             f"<td>{escape(project.owner_name)}</td>"
-            f"<td>{escape(_excerpt(project.current_state, 90))}</td>"
-            f"<td>{escape(_excerpt(project.next_step, 110))}</td>"
+            f"<td><div class=\"task-cell-text\">{escape(_excerpt(project.current_state, 90))}</div></td>"
+            f"<td><div class=\"task-cell-text\">{escape(_excerpt(project.next_step, 110))}</div></td>"
             f"<td>{open_count} ({open_ratio}%)</td>"
             f"<td>{_task_todo_checklist(todos)}</td>"
             "</tr>"
         )
     table = (
-        "<table><thead><tr>"
+        "<div class=\"tasks-table-wrap\"><table class=\"tasks-table\">"
+        "<colgroup>"
+        "<col class=\"col-project\"><col class=\"col-status\"><col class=\"col-category\">"
+        "<col class=\"col-priority\"><col class=\"col-risk\"><col class=\"col-owner\">"
+        "<col class=\"col-state\"><col class=\"col-next\"><col class=\"col-open\"><col class=\"col-todos\">"
+        "</colgroup>"
+        "<thead><tr>"
         "<th>Project</th><th>Status</th><th>Category</th><th>Priority</th><th>Risk</th>"
         "<th>Owner</th><th>State</th><th>Next</th><th>Open</th><th>ToDos</th>"
         "</tr></thead><tbody>"
         + "".join(rows)
-        + "</tbody></table>"
+        + "</tbody></table></div>"
     )
     empty_message = "No matching tasks." if search_terms else "No work projects recorded."
     toolbar = _task_toolbar(
