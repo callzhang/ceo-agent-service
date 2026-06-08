@@ -341,7 +341,10 @@ class FakeDws:
     def doc_info(self, node: str) -> dict:
         self.doc_info_calls.append(node)
         if node in self.doc_infos:
-            return self.doc_infos[node]
+            result = self.doc_infos[node]
+            if isinstance(result, DwsError):
+                raise result
+            return result
         if node in self.docs:
             return {
                 "contentType": "ALIDOC",
@@ -5381,6 +5384,36 @@ def test_minutes_permission_error_requests_access_instead_of_failing(
     worker.run_once()
 
     assert dws.minutes_info_calls == [minutes_id]
+    assert codex.calls == []
+    assert len(final_sent(dws)) == 1
+    assert "没有权限读取你引用的材料" in final_sent(dws)[0][1]
+    assert dws.reply_messages[0][1] == trigger.open_message_id
+    attempt = worker.store.get_reply_attempt(1)
+    assert attempt.action == "ask_clarifying_question"
+    assert attempt.send_status == "sent"
+    assert "linked_dingtalk_doc_permission_required" in attempt.codex_reason
+    assert worker.store.list_errors() == []
+
+
+def test_alidocs_permission_error_requests_access_instead_of_failing(
+    tmp_path: Path, monkeypatch
+):
+    url = "https://alidocs.dingtalk.com/i/nodes/XPwkYGxZV3BqnwQ0I3dbwZDlWAgozOKL"
+    trigger = message(f"@Alex Chen(明哥) 看下这个材料包：{url}")
+    dws = FakeDws([conversation()], {"cid-1": [trigger]})
+    dws.doc_infos[url] = DwsError(
+        "forbidden.accessDenied: 你没有权限进行此操作",
+        code="forbidden.accessDenied",
+    )
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该调用")
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+
+    worker.run_once()
+
+    assert dws.doc_info_calls == [url]
+    assert dws.read_doc_calls == []
     assert codex.calls == []
     assert len(final_sent(dws)) == 1
     assert "没有权限读取你引用的材料" in final_sent(dws)[0][1]

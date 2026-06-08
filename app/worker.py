@@ -4317,9 +4317,11 @@ class DingTalkAutoReplyWorker:
 
     @staticmethod
     def _is_linked_document_permission_error(error: Exception) -> bool:
-        if isinstance(error, DwsError) and error.code == "B_PERMISSION_NoPermission":
+        permission_codes = {"B_PERMISSION_NoPermission", "forbidden.accessDenied"}
+        if isinstance(error, DwsError) and error.code in permission_codes:
             return True
-        return "B_PERMISSION_NoPermission" in str(error)
+        error_text = str(error)
+        return any(code in error_text for code in permission_codes)
 
     @staticmethod
     def _linked_document_permission_request_reply() -> str:
