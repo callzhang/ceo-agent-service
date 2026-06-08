@@ -1970,7 +1970,7 @@ class DwsClient:
     @classmethod
     def _process_error_code(cls, returncode: int) -> str | None:
         code = str(returncode)
-        if code in cls.RETRYABLE_ERROR_CODES:
+        if code == "2" or code in cls.RETRYABLE_ERROR_CODES:
             return code
         return None
 

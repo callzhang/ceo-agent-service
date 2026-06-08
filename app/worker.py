@@ -137,7 +137,7 @@ MENTION_PATTERN = re.compile(
     r"(?:[（(](?:[^()（）]|[（(][^()（）]*[）)])*[）)])?"
 )
 DINGTALK_DOC_URL_PATTERN = re.compile(
-    r"https://alidocs\.dingtalk\.com/i/nodes/[^\s)\]]+"
+    r"https://(?:alidocs|docs)\.dingtalk\.com/i/nodes/[^\s)\]]+"
 )
 DINGTALK_MINUTES_LINK_PATTERN = re.compile(
     r"(?:dingtalk://[^\s)\]]*flash_minutes_detail[^\s)\]]*|"

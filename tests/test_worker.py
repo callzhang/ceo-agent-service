@@ -5187,6 +5187,50 @@ def test_dingtalk_aitable_link_is_passed_to_codex_without_worker_read(
     assert attempt.send_status == "dry_run"
 
 
+def test_docs_dingtalk_aitable_material_no_reply_retries_without_worker_read(
+    tmp_path: Path, monkeypatch
+):
+    aitable_url = "https://docs.dingtalk.com/i/nodes/base-private?utm_source=im"
+    canonical_url = "https://docs.dingtalk.com/i/nodes/base-private"
+    trigger = message(
+        f"{aitable_url}\n帮我看下这个表格",
+        single_chat=True,
+    )
+    dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
+    codex = SequencedFakeCodex(
+        [
+            CodexDecision(
+                action=CodexAction.NO_REPLY,
+                audit_summary="误判为无需回复。",
+            ),
+            CodexDecision(
+                action=CodexAction.SEND_REPLY,
+                reply_text="我会先读表格材料再判断。",
+                audit_summary="私聊 AI 表格引用触发重试。",
+            ),
+        ]
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch, dry_run=True)
+
+    worker.run_once()
+
+    assert dws.doc_info_calls == []
+    assert dws.read_doc_calls == []
+    assert dws.get_aitable_base_calls == []
+    assert len(codex.calls) == 2
+    first_prompt = codex.calls[0][0]
+    retry_prompt = codex.calls[1][0]
+    assert "待读取材料（由 agent 判断是否读取）:" in first_prompt
+    assert canonical_url in first_prompt
+    assert "私聊" in retry_prompt
+    assert "材料引用" in retry_prompt
+    assert "DWS" in retry_prompt
+    attempt = worker.store.get_reply_attempt(1)
+    assert attempt is not None
+    assert attempt.action == "send_reply"
+    assert attempt.send_status == "dry_run"
+
+
 def test_dingtalk_doc_link_in_context_is_passed_to_codex_without_worker_read(
     tmp_path: Path, monkeypatch
 ):

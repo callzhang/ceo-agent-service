@@ -224,6 +224,23 @@ def test_auth_login_command_shape():
     assert command == ["dws", "auth", "login"]
 
 
+def test_run_json_maps_plain_exit_code_2_to_login_required(monkeypatch):
+    def fake_run(command, text, capture_output, check, timeout):
+        return SimpleNamespace(
+            returncode=2,
+            stdout="",
+            stderr="dws command failed with exit code 2",
+        )
+
+    monkeypatch.setattr("app.dws_client.subprocess.run", fake_run)
+
+    with pytest.raises(DwsError) as error_info:
+        DwsClient().run_json(["dws", "chat", "message", "list"])
+
+    assert error_info.value.code == "2"
+    assert error_info.value.needs_login is True
+
+
 def test_read_doc_command_shape():
     client = DwsClient(dws_bin="dws")
 
