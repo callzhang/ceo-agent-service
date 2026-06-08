@@ -494,6 +494,8 @@ def test_get_resource_download_url_command_uses_chat_download_media():
         "--format",
         "json",
         "--yes",
+        "--timeout",
+        "30",
     ]
 
 
@@ -510,6 +512,35 @@ def test_json_from_mixed_stdout_reads_trailing_json():
                 "result": {"downloadUrl": "https://signed.example/image.png"}
             }
         }
+    }
+
+
+def test_get_resource_download_url_keeps_url_when_dws_download_stage_fails(
+    monkeypatch,
+):
+    def fake_run(*args, **kwargs):
+        del args, kwargs
+        return subprocess.CompletedProcess(
+            args=["dws"],
+            returncode=5,
+            stdout=(
+                "downloadUrl: https://signed.example/message-image.png?token=abc\n"
+            ),
+            stderr="",
+        )
+
+    monkeypatch.setattr(dws_client.subprocess, "run", fake_run)
+    client = DwsClient(dws_bin="dws")
+
+    payload = client.get_resource_download_url(
+        "cid-1",
+        "msg-1",
+        "@img-token-1",
+        "mediaId",
+    )
+
+    assert payload == {
+        "downloadUrl": "https://signed.example/message-image.png?token=abc"
     }
 
 

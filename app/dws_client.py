@@ -901,6 +901,8 @@ class DwsClient:
             "--format",
             "json",
             "--yes",
+            "--timeout",
+            str(self.timeout_seconds),
         ]
 
     def build_download_robot_message_file_command(self, download_code: str) -> list[str]:
@@ -1399,9 +1401,13 @@ class DwsClient:
             text=True,
             capture_output=True,
             check=False,
-            timeout=self.timeout_seconds,
+            timeout=self.timeout_seconds + 15,
         )
         if result.returncode != 0:
+            download_url = self._download_url_from_mixed_stdout(result.stdout)
+            output_path.unlink(missing_ok=True)
+            if download_url:
+                return {"downloadUrl": download_url}
             code = (
                 self._error_code(result.stderr)
                 or self._error_code(result.stdout)
@@ -1414,7 +1420,10 @@ class DwsClient:
         payload = self._json_from_mixed_stdout(result.stdout)
         if not isinstance(payload, dict):
             raise DwsError("invalid resource download response")
-        payload["localPath"] = str(output_path)
+        if output_path.exists() and output_path.stat().st_size > 0:
+            payload["localPath"] = str(output_path)
+        else:
+            output_path.unlink(missing_ok=True)
         return payload
 
     @staticmethod
@@ -1436,6 +1445,14 @@ class DwsClient:
                 continue
             return payload
         raise DwsError("dws command returned invalid JSON")
+
+    @staticmethod
+    def _download_url_from_mixed_stdout(stdout: str) -> str:
+        for line in stdout.splitlines():
+            key, separator, value = line.partition(":")
+            if separator and key.strip() == "downloadUrl":
+                return value.strip()
+        return ""
 
     def download_robot_message_file(self, download_code: str) -> dict[str, Any]:
         payload = self.run_json(self.build_download_robot_message_file_command(download_code))
