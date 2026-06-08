@@ -114,6 +114,26 @@ records an `image_download` error and still calls Codex. The prompt includes a
 `图片读取状态` section with the failed image details and explicitly tells Codex not
 to guess visual content when the question depends on the missing image.
 
+## Material reading boundary
+
+The worker does not pre-read DingTalk documents, AI minutes, or ordinary files
+for ordinary reply decisions. It extracts material references and injects them
+into the CEO agent prompt. The agent decides whether the message can be answered
+from text context, whether to read one or more materials through DWS, and how to
+respond after reading.
+
+The worker still preprocesses:
+
+- Calendar invites, because calendar responses and calendar-context failures are
+  part of the service state machine.
+- Images, because Codex receives local image paths rather than DingTalk media
+  IDs.
+
+For DingTalk documents, AI minutes, and ordinary files, agent-side DWS calls must
+be visible in `audit_tool_events_json`. Permission failures are missing material
+context for the agent to reason about, not ordinary worker failures, unless the
+agent cannot answer without the material.
+
 ## Mentioned arrangements
 
 When a human mentions the configured principal in a group and shares an
