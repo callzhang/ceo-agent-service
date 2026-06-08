@@ -32,6 +32,7 @@ from app.feedback_spike import FeedbackReplyText
 from app.oa_approval import OaApprovalResult
 from app.store import AutoReplyStore
 from app.worker import (
+    DWS_AUTH_LOGIN_STATE_KEY,
     HANDOFF_ACK,
     PROCESSING_ACK,
     DingTalkAutoReplyWorker,
@@ -39,6 +40,15 @@ from app.worker import (
 
 
 CONTEXT_HEADER = "上下文消息（自上次回复后的新信息，最多 20 条）:"
+
+
+class FakeAuthLoginProcess:
+    def __init__(self, pid: int = 1234, returncode: int | None = None):
+        self.pid = pid
+        self.returncode = returncode
+
+    def poll(self) -> int | None:
+        return self.returncode
 
 
 def fixed_worker_now() -> datetime:
@@ -190,6 +200,10 @@ class FakeDws:
         self.upgrade_error: Exception | None = None
         self.upgrade_check_calls = 0
         self.upgrade_calls = 0
+        self.auth_login_processes: list[FakeAuthLoginProcess] = [
+            FakeAuthLoginProcess()
+        ]
+        self.auth_login_starts = 0
         self.client_cids = client_cids or {}
         self.client_cid_calls: list[str] = []
 
@@ -224,6 +238,10 @@ class FakeDws:
         if self.upgrade_error:
             raise self.upgrade_error
         return "upgraded"
+
+    def start_auth_login(self) -> FakeAuthLoginProcess:
+        self.auth_login_starts += 1
+        return self.auth_login_processes.pop(0)
 
     def get_current_user_id(self) -> str:
         return self.current_user_id
@@ -1036,12 +1054,67 @@ def test_produce_once_records_list_unread_failure_without_crashing(
     assert worker.store.count_errors() == 1
     assert notifications == [
         {
+            "title": "CEO DWS auth login required",
+            "message": "Started dws auth login. Please complete DingTalk login.",
+            "url": None,
+        },
+        {
             "title": "CEO read unread conversations failed",
             "message": "not authenticated",
             "url": None,
         }
     ]
     assert codex.calls == []
+
+
+def test_produce_once_starts_dws_auth_login_once_for_login_error(
+    tmp_path: Path, monkeypatch
+):
+    notifications = []
+    dws = FakeDws([], {}, list_error=DwsError("not authenticated", code="2"))
+    codex = FakeCodex(CodexDecision(action=CodexAction.SEND_REPLY, reply_text="收到"))
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+    monkeypatch.setattr(
+        "app.worker.send_macos_notification",
+        lambda **kwargs: notifications.append(kwargs),
+    )
+
+    assert worker.produce_once() == 0
+    assert worker.produce_once() == 0
+
+    assert dws.auth_login_starts == 1
+    state = json.loads(worker.store.get_service_state(DWS_AUTH_LOGIN_STATE_KEY))
+    assert state["status"] == "running"
+    assert state["pid"] == 1234
+    auth_notifications = [
+        notification
+        for notification in notifications
+        if notification["title"] == "CEO DWS auth login required"
+    ]
+    assert auth_notifications == [
+        {
+            "title": "CEO DWS auth login required",
+            "message": "Started dws auth login. Please complete DingTalk login.",
+            "url": None,
+        }
+    ]
+    assert codex.calls == []
+
+
+def test_produce_once_marks_dws_auth_healthy_after_success(
+    tmp_path: Path, monkeypatch
+):
+    dws = FakeDws([], {})
+    worker = make_worker(tmp_path, dws, FakeCodex([]), monkeypatch)
+    worker.store.set_service_state(
+        DWS_AUTH_LOGIN_STATE_KEY,
+        json.dumps({"status": "completed", "pid": 1234}),
+    )
+
+    assert worker.produce_once() == 0
+
+    state = json.loads(worker.store.get_service_state(DWS_AUTH_LOGIN_STATE_KEY))
+    assert state["status"] == "authenticated"
 
 
 def test_produce_once_continues_when_mention_recovery_fails(
@@ -4946,6 +5019,49 @@ def test_single_chat_doc_material_no_reply_retries_without_worker_read(
     assert attempt.send_status == "dry_run"
 
 
+def test_single_chat_file_material_no_reply_retries_without_worker_read(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message(
+        "帮我看下这个文件",
+        quoted_content="[文件] 02_下一步推进建议.md",
+        single_chat=True,
+    )
+    dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
+    codex = SequencedFakeCodex(
+        [
+            CodexDecision(
+                action=CodexAction.NO_REPLY,
+                audit_summary="误判为无需回复。",
+            ),
+            CodexDecision(
+                action=CodexAction.SEND_REPLY,
+                reply_text="我会先读取文件再判断。",
+                audit_summary="私聊文件材料引用触发重试。",
+            ),
+        ]
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch, dry_run=True)
+
+    worker.run_once()
+
+    assert dws.search_document_calls == []
+    assert dws.download_doc_calls == []
+    assert len(codex.calls) == 2
+    first_prompt = codex.calls[0][0]
+    retry_prompt = codex.calls[1][0]
+    assert "待读取材料（由 agent 判断是否读取）:" in first_prompt
+    assert "类型: dingtalk_file" in first_prompt
+    assert "02_下一步推进建议.md" in first_prompt
+    assert "私聊" in retry_prompt
+    assert "材料引用" in retry_prompt
+    assert "DWS" in retry_prompt
+    attempt = worker.store.get_reply_attempt(1)
+    assert attempt is not None
+    assert attempt.action == "send_reply"
+    assert attempt.send_status == "dry_run"
+
+
 def test_single_chat_mixed_minutes_and_doc_material_retries_for_doc(
     tmp_path: Path, monkeypatch
 ):
@@ -5235,7 +5351,7 @@ def test_minutes_link_is_passed_to_codex_without_worker_read(
     ]
 
 
-def test_single_chat_minutes_no_reply_does_not_trigger_document_retry(
+def test_single_chat_minutes_no_reply_does_not_trigger_material_retry(
     tmp_path: Path, monkeypatch
 ):
     minutes_id = "76327569643331323035353732315f3233333438363436305f30"
@@ -5248,11 +5364,18 @@ def test_single_chat_minutes_no_reply_does_not_trigger_document_retry(
         single_chat=True,
     )
     dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
-    codex = FakeCodex(
-        CodexDecision(
-            action=CodexAction.NO_REPLY,
-            audit_summary="单独听记链接按上下文判断无需回复。",
-        )
+    codex = SequencedFakeCodex(
+        [
+            CodexDecision(
+                action=CodexAction.NO_REPLY,
+                audit_summary="单独听记链接按上下文判断无需回复。",
+            ),
+            CodexDecision(
+                action=CodexAction.SEND_REPLY,
+                reply_text="这次不应该被调用。",
+                audit_summary="听记不应触发普通材料重试。",
+            ),
+        ]
     )
     worker = make_worker(tmp_path, dws, codex, monkeypatch)
 

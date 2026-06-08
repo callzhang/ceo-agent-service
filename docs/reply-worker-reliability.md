@@ -114,7 +114,7 @@ records an `image_download` error and still calls Codex. The prompt includes a
 `图片读取状态` section with the failed image details and explicitly tells Codex not
 to guess visual content when the question depends on the missing image.
 
-## Material reading boundary
+## Material Reading Boundary
 
 The worker does not pre-read DingTalk documents, AI minutes, or ordinary files
 for ordinary reply decisions. It extracts material references and injects them
@@ -128,6 +128,9 @@ The worker still preprocesses:
   part of the service state machine.
 - Images, because Codex receives local image paths rather than DingTalk media
   IDs.
+- OA approvals, because approval ownership, task state, comments, and action
+  execution are handled by the audited OA runner instead of the ordinary reply
+  agent.
 
 For DingTalk documents, AI minutes, and ordinary files, agent-side DWS calls must
 be visible in `audit_tool_events_json`. Permission failures are missing material
