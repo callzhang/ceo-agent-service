@@ -4901,6 +4901,94 @@ def test_dingtalk_doc_link_is_passed_to_codex_without_worker_read(
     assert attempt.send_status == "dry_run"
 
 
+def test_single_chat_doc_material_no_reply_retries_without_worker_read(
+    tmp_path: Path, monkeypatch
+):
+    doc_url = "https://alidocs.dingtalk.com/i/nodes/doc-private?utm_source=im"
+    canonical_doc_url = "https://alidocs.dingtalk.com/i/nodes/doc-private"
+    trigger = message(
+        f"{doc_url}\n帮我看下这个方案",
+        single_chat=True,
+    )
+    dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
+    codex = SequencedFakeCodex(
+        [
+            CodexDecision(
+                action=CodexAction.NO_REPLY,
+                audit_summary="误判为无需回复。",
+            ),
+            CodexDecision(
+                action=CodexAction.SEND_REPLY,
+                reply_text="我会先读材料再判断方案。",
+                audit_summary="私聊材料引用触发重试。",
+            ),
+        ]
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch, dry_run=True)
+
+    worker.run_once()
+
+    assert dws.doc_info_calls == []
+    assert dws.read_doc_calls == []
+    assert len(codex.calls) == 2
+    first_prompt = codex.calls[0][0]
+    retry_prompt = codex.calls[1][0]
+    assert "待读取材料（由 agent 判断是否读取）:" in first_prompt
+    assert canonical_doc_url in first_prompt
+    assert "已获取的钉钉材料:" not in first_prompt
+    assert "私聊" in retry_prompt
+    assert "材料引用" in retry_prompt
+    assert "DWS" in retry_prompt
+    assert "已获取" not in retry_prompt
+    attempt = worker.store.get_reply_attempt(1)
+    assert attempt is not None
+    assert attempt.action == "send_reply"
+    assert attempt.send_status == "dry_run"
+
+
+def test_single_chat_mixed_minutes_and_doc_material_retries_for_doc(
+    tmp_path: Path, monkeypatch
+):
+    minutes_id = "76327569643331323035353732315f3233333438363436305f30"
+    doc_url = "https://alidocs.dingtalk.com/i/nodes/doc-private"
+    trigger = message(
+        "听记和方案一起看：\n"
+        "[dingtalk://dingtalkclient/page/flash_minutes_detail?"
+        f"minutesId={minutes_id}&from=8]"
+        "(dingtalk://dingtalkclient/page/flash_minutes_detail?"
+        f"minutesId={minutes_id}&from=8)\n"
+        f"{doc_url}",
+        single_chat=True,
+    )
+    dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
+    codex = SequencedFakeCodex(
+        [
+            CodexDecision(
+                action=CodexAction.NO_REPLY,
+                audit_summary="误判为听记单独场景。",
+            ),
+            CodexDecision(
+                action=CodexAction.SEND_REPLY,
+                reply_text="我会结合方案材料判断。",
+                audit_summary="文档材料触发重试。",
+            ),
+        ]
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch, dry_run=True)
+
+    worker.run_once()
+
+    assert dws.minutes_info_calls == []
+    assert dws.doc_info_calls == []
+    assert len(codex.calls) == 2
+    first_prompt = codex.calls[0][0]
+    assert "类型: dingtalk_minutes" in first_prompt
+    assert "类型: dingtalk_doc" in first_prompt
+    attempt = worker.store.get_reply_attempt(1)
+    assert attempt is not None
+    assert attempt.action == "send_reply"
+
+
 def test_dingtalk_doc_permission_setup_is_irrelevant_to_worker_material_references(
     tmp_path: Path, monkeypatch
 ):

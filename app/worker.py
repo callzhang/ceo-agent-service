@@ -3098,13 +3098,13 @@ class DingTalkAutoReplyWorker:
                 session_id=None,
                 image_paths=image_paths,
             )
-        if self._single_chat_document_no_reply_needs_retry(
+        if self._single_chat_material_no_reply_needs_retry(
             conversation,
-            linked_documents,
+            material_references,
             decision,
         ):
             decision = self.codex.decide(
-                prompt=self._single_chat_document_retry_prompt(),
+                prompt=self._single_chat_material_retry_prompt(),
                 session_id=getattr(self.codex, "last_session_id", None) or session_id,
                 image_paths=image_paths,
             )
@@ -3396,25 +3396,6 @@ class DingTalkAutoReplyWorker:
                 )
             return False
         return False
-
-    def _read_linked_documents(
-        self,
-        new_messages: list[DingTalkMessage],
-        context_messages: list[DingTalkMessage],
-    ) -> list[LinkedDocumentContext]:
-        documents: list[LinkedDocumentContext] = []
-        referenced_messages = self._referenced_document_messages(
-            new_messages, context_messages
-        )
-        for task_uuid in self._dingtalk_minutes_ids(referenced_messages):
-            documents.append(self._read_linked_minutes(task_uuid))
-        for url in self._dingtalk_doc_urls(referenced_messages):
-            documents.append(self._read_linked_alidocs_node(url))
-        for file_name in self._referenced_file_names(new_messages, context_messages):
-            document = self._read_referenced_file(file_name)
-            if document is not None:
-                documents.append(document)
-        return documents
 
     def _read_calendar_linked_documents(
         self,
@@ -5274,29 +5255,29 @@ class DingTalkAutoReplyWorker:
         )
 
     @staticmethod
-    def _single_chat_document_no_reply_needs_retry(
+    def _single_chat_material_no_reply_needs_retry(
         conversation: DingTalkConversation,
-        linked_documents: list[LinkedDocumentContext],
+        material_references: list[MaterialReferenceContext],
         decision: CodexDecision,
     ) -> bool:
         return (
             conversation.single_chat
             and any(
-                not DingTalkAutoReplyWorker._is_minutes_linked_document(document)
-                for document in linked_documents
+                not DingTalkAutoReplyWorker._is_minutes_material_reference(reference)
+                for reference in material_references
             )
             and decision.action == CodexAction.NO_REPLY
         )
 
     @staticmethod
-    def _is_minutes_linked_document(document: LinkedDocumentContext) -> bool:
-        return document.markdown.lstrip().startswith("AI 听记材料:")
+    def _is_minutes_material_reference(reference: MaterialReferenceContext) -> bool:
+        return reference.kind == "dingtalk_minutes"
 
     @staticmethod
-    def _single_chat_document_retry_prompt() -> str:
+    def _single_chat_material_retry_prompt() -> str:
         return (
-            "上一次输出了 no_reply，但当前是私聊，且消息里有钉钉在线文档、AI 听记或普通文件材料引用。"
-            "请判断是否需要读取材料；如果需要，先读取材料再给出处理结果。"
+            "上一次输出了 no_reply，但当前是私聊，且消息里包含钉钉材料引用。"
+            "请重新判断是否需要用 DWS 读取这些材料；如果需要，先读取材料再给出处理结果。"
             "如果材料足够，action 用 send_reply，reply_text 给出结论、修改意见、风险、下一步或需要补充的具体问题；"
             "如果材料不足，action 用 ask_clarifying_question 或 stop_with_error。"
             "不要因为对方只发送文档、没有额外写“请处理/请 review”就 no_reply。"
