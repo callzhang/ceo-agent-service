@@ -25,6 +25,7 @@ from app.audit_web import (
     render_config_page,
     render_developer_prompt_editor,
     render_error_list,
+    render_task_project_detail,
     render_tasks_page,
     render_user_feedback_list,
     run_audit_web,
@@ -616,7 +617,74 @@ def test_tasks_page_renders_projects_todos_and_drafts(tmp_path: Path):
     assert "售前知识库建设" in html
     assert "补齐来源链接" in html
     assert "来源链接补齐到哪一步了" in html
-    assert "/tasks" in html
+    assert f"/tasks/{project_id}" in html
+
+
+def test_task_project_detail_renders_project_todos_and_sources(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    project_id = store.create_work_project(
+        title="售前知识库建设",
+        category="sales",
+        status="active",
+        priority="P1",
+        risk_level="medium",
+        owner_name="Alex",
+        background="销售支持项目。",
+        facts_json=json.dumps(
+            [
+                {
+                    "description": "需要补齐来源链接",
+                    "source": "reply_attempt:7",
+                    "created": "2026-06-07",
+                    "updated": "2026-06-07",
+                }
+            ],
+            ensure_ascii=False,
+        ),
+        current_state="整理中",
+        next_step="补齐来源链接",
+    )
+    todo_id = store.create_work_todo(
+        project_id=project_id,
+        title="补齐来源链接",
+        owner_name="Alex",
+        status="open",
+        priority="P1",
+        deadline_at="2026-06-10 18:00:00",
+        next_follow_up_at="2026-06-09 10:00:00",
+        follow_up_question="来源链接补齐到哪一步了？",
+    )
+    store.create_work_update(
+        project_id=project_id,
+        source_type="reply_attempt",
+        source_ref="7",
+        summary="新增待办",
+        changes_json='{"todo":"created"}',
+        merge_reason="same project",
+        confidence=0.91,
+    )
+    store.create_follow_up_draft(
+        project_id=project_id,
+        todo_id=todo_id,
+        owner_name="Alex",
+        target_conversation_id="cid-1",
+        target_kind="group",
+        question_text="来源链接补齐到哪一步了？",
+        status="draft",
+    )
+
+    status, html = render_task_project_detail(store, project_id)
+
+    assert status == 200
+    assert "售前知识库建设" in html
+    assert "销售支持项目。" in html
+    assert "补齐来源链接" in html
+    assert "Alex" in html
+    assert "2026-06-10" in html
+    assert "需要补齐来源链接" in html
+    assert "reply_attempt:7" in html
+    assert "新增待办" in html
+    assert "来源链接补齐到哪一步了" in html
 
 
 def test_tasks_route_renders_page(tmp_path: Path):
@@ -636,6 +704,41 @@ def test_tasks_route_renders_page(tmp_path: Path):
     assert response.status_code == 200
     assert "售前知识库建设" in response.text
     assert '<span class="nav-item active" aria-current="page">Tasks</span>' in response.text
+
+
+def test_task_project_detail_route_renders_project(tmp_path: Path):
+    db_path = tmp_path / "worker.sqlite3"
+    store = AutoReplyStore(db_path)
+    project_id = store.create_work_project(
+        title="售前知识库建设",
+        category="sales",
+        status="active",
+        priority="P1",
+        risk_level="medium",
+    )
+    store.create_work_todo(
+        project_id=project_id,
+        title="补齐来源链接",
+        owner_name="Alex",
+        status="open",
+        priority="P1",
+    )
+    client = TestClient(create_audit_app(db_path))
+
+    response = client.get(f"/tasks/{project_id}")
+
+    assert response.status_code == 200
+    assert "售前知识库建设" in response.text
+    assert "补齐来源链接" in response.text
+
+
+def test_task_project_detail_route_returns_404_for_missing_project(tmp_path: Path):
+    client = TestClient(create_audit_app(tmp_path / "worker.sqlite3"))
+
+    response = client.get("/tasks/999")
+
+    assert response.status_code == 404
+    assert "Project not found" in response.text
 
 
 def test_non_history_pages_do_not_auto_refresh(tmp_path: Path):

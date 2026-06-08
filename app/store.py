@@ -2314,6 +2314,7 @@ class AutoReplyStore:
     def list_follow_up_drafts(
         self,
         *,
+        project_id: int | None = None,
         statuses: tuple[str, ...] | None = None,
         due_before: str | None = None,
         limit: int = 200,
@@ -2321,6 +2322,9 @@ class AutoReplyStore:
         query = "select * from follow_up_drafts"
         clauses: list[str] = []
         args: list[str | int] = []
+        if project_id is not None:
+            clauses.append("project_id=?")
+            args.append(project_id)
         if statuses:
             clauses.append(f"status in ({','.join('?' for _ in statuses)})")
             args.extend(statuses)

@@ -1791,7 +1791,7 @@ def render_tasks_page(store: AutoReplyStore) -> str:
         todo_text = ", ".join(todo.title for todo in todos)
         rows.append(
             "<tr>"
-            f"<td><a href=\"/tasks#{project.id}\">{escape(project.title)}</a></td>"
+            f"<td><a href=\"/tasks/{project.id}\">{escape(project.title)}</a></td>"
             f"<td><span class=\"pill\">{escape(project.category)}</span></td>"
             f"<td><span class=\"pill\">{escape(project.priority)}</span></td>"
             f"<td><span class=\"pill\">{escape(project.risk_level)}</span></td>"
@@ -1843,6 +1843,222 @@ def render_tasks_page(store: AutoReplyStore) -> str:
         active_nav="tasks",
         user_feedback_pending_count=store.count_pending_user_feedback_items(),
     )
+
+
+def render_task_project_detail(store: AutoReplyStore, project_id: int) -> tuple[int, str]:
+    project = store.get_work_project(project_id)
+    if project is None:
+        body = (
+            "<section class=\"card\"><div class=\"card-head\">"
+            "<h2>Project not found</h2>"
+            "<a class=\"compact-button\" href=\"/tasks\">Back</a>"
+            "</div>"
+            f"<p class=\"muted\">No work project exists for id {project_id}.</p>"
+            "</section>"
+        )
+        return (
+            404,
+            render_page(
+                "Task project",
+                body,
+                active_nav="tasks",
+                user_feedback_pending_count=store.count_pending_user_feedback_items(),
+            ),
+        )
+
+    todos = store.list_work_todos(project_id=project.id)
+    updates = store.list_work_updates(project.id, limit=50)
+    drafts = store.list_follow_up_drafts(project_id=project.id, limit=100)
+
+    detail_rows = _task_project_detail_rows(project)
+    facts = _task_facts_rows(project.facts_json)
+    todo_rows = _task_todo_rows(todos)
+    update_rows = _task_update_rows(updates)
+    draft_rows = _task_follow_up_rows(drafts)
+
+    body = (
+        "<section class=\"card\"><div class=\"card-head\">"
+        "<div>"
+        f"<h2>{escape(project.title)}</h2>"
+        "<div class=\"reply-meta\">"
+        f"<span class=\"pill\">{escape(project.status)}</span>"
+        f"<span class=\"pill\">{escape(project.category)}</span>"
+        f"<span class=\"pill\">{escape(project.priority)}</span>"
+        f"<span class=\"pill\">risk {escape(project.risk_level)}</span>"
+        "</div>"
+        "</div>"
+        "<a class=\"compact-button\" href=\"/tasks\">Back</a>"
+        "</div>"
+        "<div class=\"attempt-detail-grid\">"
+        f"{_task_detail_cell('Owner', project.owner_name or project.owner_user_id or '-')}"
+        f"{_task_detail_cell('Next follow-up', _format_local_time(project.next_follow_up_at) or '-')}"
+        f"{_task_detail_cell('Updated', _format_local_time(project.updated_at))}"
+        f"{_task_detail_cell('Derek attention', 'yes' if project.needs_derek_attention else 'no')}"
+        "</div>"
+        "</section>"
+        "<section class=\"card\"><h2>Project details</h2>"
+        f"{_simple_table(('Field', 'Value'), detail_rows)}"
+        "</section>"
+        "<section class=\"card\"><h2>TODOs</h2>"
+        f"{_simple_table(('ID', 'TODO', 'Owner', 'Status', 'Priority', 'DDL', 'Next follow-up', 'Question', 'Blocker', 'Evidence'), todo_rows) if todo_rows else '<p class=\"muted\">No TODOs recorded.</p>'}"
+        "</section>"
+        "<section class=\"card\"><h2>Facts</h2>"
+        f"{_simple_table(('Description', 'Source', 'Created', 'Updated'), facts) if facts else '<p class=\"muted\">No facts recorded.</p>'}"
+        "</section>"
+        "<section class=\"card\"><h2>Updates</h2>"
+        f"{_simple_table(('Time', 'Source', 'Summary', 'Changes', 'Reason', 'Confidence'), update_rows) if update_rows else '<p class=\"muted\">No updates recorded.</p>'}"
+        "</section>"
+        "<section class=\"card\"><h2>Follow-ups</h2>"
+        f"{_simple_table(('Time', 'Owner', 'Target', 'Status', 'Question', 'Risk', 'Result'), draft_rows) if draft_rows else '<p class=\"muted\">No follow-ups recorded.</p>'}"
+        "</section>"
+        f"{_collapsible_json_card('Memory context', project.memory_context_json)}"
+    )
+    return (
+        200,
+        render_page(
+            project.title,
+            body,
+            active_nav="tasks",
+            user_feedback_pending_count=store.count_pending_user_feedback_items(),
+        ),
+    )
+
+
+def _task_project_detail_rows(project) -> list[tuple[str, str]]:
+    tags = _task_json_compact(project.tags_json, "[]")
+    related_people = _task_json_compact(project.related_people_json, "[]")
+    source_conversations = _task_json_compact(project.source_conversations_json, "[]")
+    return [
+        ("Goal", project.goal),
+        ("Background", project.background),
+        ("Current state", project.current_state),
+        ("Blocker", project.blocker),
+        ("Next step", project.next_step),
+        ("Follow-up mode", str(project.follow_up_mode)),
+        ("Tags", tags),
+        ("Related people", related_people),
+        ("Source conversations", source_conversations),
+        ("Created", _format_local_time(project.created_at)),
+        ("Last activity", _format_local_time(project.last_activity_at)),
+    ]
+
+
+def _task_facts_rows(facts_json: str) -> list[tuple[str, str, str, str]]:
+    rows = []
+    for fact in _json_list(facts_json):
+        if not isinstance(fact, dict):
+            continue
+        rows.append(
+            (
+                str(fact.get("description") or ""),
+                str(fact.get("source") or ""),
+                str(fact.get("created") or ""),
+                str(fact.get("updated") or ""),
+            )
+        )
+    return rows
+
+
+def _task_todo_rows(todos) -> list[tuple[str, str, str, str, str, str, str, str, str, str]]:
+    rows = []
+    for todo in todos:
+        owner = todo.owner_name or todo.owner_user_id
+        rows.append(
+            (
+                str(todo.id),
+                todo.title,
+                owner,
+                str(todo.status),
+                str(todo.priority),
+                _format_local_time(todo.deadline_at) or todo.deadline_at,
+                _format_local_time(todo.next_follow_up_at) or todo.next_follow_up_at,
+                todo.follow_up_question,
+                todo.blocker,
+                _task_json_compact(todo.completion_evidence_json, "{}"),
+            )
+        )
+    return rows
+
+
+def _task_update_rows(updates) -> list[tuple[str, str, str, str, str, str]]:
+    rows = []
+    for update in updates:
+        source = f"{update.source_type}:{update.source_ref}".strip(":")
+        rows.append(
+            (
+                _format_local_time(update.created_at),
+                source,
+                update.summary,
+                _task_json_compact(update.changes_json, "{}"),
+                update.merge_reason,
+                f"{update.confidence:.2f}",
+            )
+        )
+    return rows
+
+
+def _task_follow_up_rows(drafts) -> list[tuple[str, str, str, str, str, str, str]]:
+    rows = []
+    for draft in drafts:
+        target = (
+            f"{draft.target_kind}:{draft.target_conversation_id}"
+            if draft.target_conversation_id
+            else draft.target_kind
+        )
+        rows.append(
+            (
+                _format_local_time(draft.scheduled_at) or draft.scheduled_at,
+                draft.owner_name or draft.owner_user_id,
+                target,
+                str(draft.status),
+                draft.question_text,
+                _task_json_compact(draft.risk_check_json, "{}"),
+                _task_json_compact(draft.send_result_json, "{}"),
+            )
+        )
+    return rows
+
+
+def _task_detail_cell(label: str, value: str) -> str:
+    return (
+        "<div class=\"attempt-detail-cell\">"
+        f"<div class=\"attempt-detail-label\">{escape(label)}</div>"
+        f"<div class=\"attempt-detail-value\">{escape(value)}</div>"
+        "</div>"
+    )
+
+
+def _simple_table(headers: Iterable[str], rows: Iterable[Iterable[str]]) -> str:
+    header_html = "".join(f"<th>{escape(header)}</th>" for header in headers)
+    row_html = "".join(
+        "<tr>" + "".join(f"<td>{escape(value)}</td>" for value in row) + "</tr>"
+        for row in rows
+    )
+    return (
+        "<table><thead><tr>"
+        f"{header_html}"
+        "</tr></thead><tbody>"
+        f"{row_html}"
+        "</tbody></table>"
+    )
+
+
+def _json_list(text: str) -> list:
+    try:
+        payload = json.loads(text or "[]")
+    except json.JSONDecodeError:
+        return []
+    return payload if isinstance(payload, list) else []
+
+
+def _task_json_compact(text: str, default: str) -> str:
+    try:
+        payload = json.loads(text or default)
+    except json.JSONDecodeError:
+        return text
+    if payload in ({}, []):
+        return ""
+    return _excerpt(json.dumps(payload, ensure_ascii=False), 260)
 
 
 def render_user_feedback_list(
@@ -2580,6 +2796,11 @@ def create_audit_app(
     @app.get("/tasks", response_class=HTMLResponse)
     def tasks_page() -> str:
         return render_tasks_page(AutoReplyStore(db_path))
+
+    @app.get("/tasks/{project_id}", response_class=HTMLResponse)
+    def task_project_detail(project_id: int) -> HTMLResponse:
+        status, html = render_task_project_detail(AutoReplyStore(db_path), project_id)
+        return HTMLResponse(html, status_code=status)
 
     @app.get("/errors", response_class=HTMLResponse)
     def error_list(request: Request) -> str:
