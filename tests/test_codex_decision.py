@@ -149,6 +149,13 @@ def test_extract_codex_audit_events_from_jsonl_tool_events():
         {
             "event_type": "item.completed",
             "tool": "exec_command",
+            "input": json.dumps(
+                {
+                    "cmd": "sed -n '1,120p' /Users/principal/Documents/memory/面试/岗位画像.md"
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
             "command": "sed -n '1,120p' /Users/principal/Documents/memory/面试/岗位画像.md",
             "path": "/Users/principal/Documents/memory/面试/岗位画像.md",
         }
@@ -423,6 +430,71 @@ def test_runner_tracks_audit_tool_events(tmp_path: Path):
 
     assert runner.last_audit_tool_events[0]["tool"] == "exec_command"
     assert "rg -n" in runner.last_audit_tool_events[0]["command"]
+
+
+def test_runner_tracks_dws_material_read_audit_events(tmp_path: Path):
+    command = (
+        "dws doc read --node https://alidocs.dingtalk.com/i/nodes/doc123 "
+        "--format json"
+    )
+    executor = FakeExecutor(
+        [
+            "\n".join(
+                [
+                    json.dumps(
+                        {
+                            "type": "item.completed",
+                            "item": {
+                                "type": "tool_call",
+                                "tool_name": "exec_command",
+                                "call_id": "call-dws-read",
+                                "arguments": {"cmd": command},
+                            },
+                        },
+                        ensure_ascii=False,
+                    ),
+                    json.dumps(
+                        {
+                            "type": "item.completed",
+                            "item": {
+                                "type": "tool_result",
+                                "call_id": "call-dws-read",
+                                "output": "OpenAI 合作建议补充版\n建议先补齐材料。",
+                            },
+                        },
+                        ensure_ascii=False,
+                    ),
+                    json.dumps(
+                        {
+                            "action": "no_reply",
+                            "reason": "handled",
+                            "audit_summary": "已读取 DWS 材料。",
+                        },
+                        ensure_ascii=False,
+                    ),
+                ]
+            )
+        ]
+    )
+    runner = make_runner(tmp_path, executor=executor)
+
+    runner.decide(prompt="decide", session_id=None)
+
+    assert runner.last_audit_tool_events == [
+        {
+            "event_type": "item.completed",
+            "tool": "exec_command",
+            "call_id": "call-dws-read",
+            "input": json.dumps({"cmd": command}, ensure_ascii=False, indent=2),
+            "command": command,
+        },
+        {
+            "event_type": "item.completed",
+            "tool": "tool_output",
+            "call_id": "call-dws-read",
+            "output": "OpenAI 合作建议补充版\n建议先补齐材料。",
+        },
+    ]
 
 
 def test_empty_reply_for_reply_action_retries_once(tmp_path: Path):

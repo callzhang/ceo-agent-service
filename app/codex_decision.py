@@ -166,22 +166,42 @@ def _audit_event_from_payload(payload: Any) -> dict[str, str] | None:
     item = payload.get("item")
     source = item if isinstance(item, dict) else payload
     event_type = _string_value(payload, "type")
+    source_type = _string_value(source, "type")
+    output = _output_text(source)
+    is_output = source_type in {"tool_result", "function_call_output"} or (
+        output and source_type in {"tool_output"}
+    )
     tool = (
-        _string_value(source, "tool_name")
+        "tool_output"
+        if is_output
+        else _string_value(source, "tool_name")
         or _string_value(source, "name")
         or _string_value(source, "type")
     )
-    command = _first_string_for_keys(source, {"cmd", "command"})
-    path = _first_pathish_string(source)
-    if not command and not path:
+    call_id = _string_value(source, "call_id") or _string_value(payload, "call_id")
+    arguments = source.get("arguments")
+    input_text = _json_text(arguments)
+    command = _first_string_for_keys(arguments, {"cmd", "command"})
+    if not command:
+        command = _first_string_for_keys(source, {"cmd", "command"})
+    path = _first_pathish_string(output) if output else ""
+    if not path:
+        path = _first_pathish_string(source)
+    if not any([command, path, input_text, output]):
         return None
     event: dict[str, str] = {}
     if event_type:
         event["event_type"] = _short_text(event_type)
     if tool:
         event["tool"] = _short_text(tool)
+    if call_id:
+        event["call_id"] = _short_text(call_id, 500)
+    if input_text:
+        event["input"] = input_text
     if command:
         event["command"] = _short_text(command, 500)
+    if output:
+        event["output"] = output
     if path:
         event["path"] = _short_text(path, 500)
     return event
@@ -190,6 +210,29 @@ def _audit_event_from_payload(payload: Any) -> dict[str, str] | None:
 def _string_value(payload: dict[str, Any], key: str) -> str:
     value = payload.get(key)
     return value if isinstance(value, str) else ""
+
+
+def _json_text(value: Any) -> str:
+    if isinstance(value, str):
+        if not value:
+            return ""
+        try:
+            return json.dumps(json.loads(value), ensure_ascii=False, indent=2)
+        except json.JSONDecodeError:
+            return value
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, ensure_ascii=False, indent=2)
+    return ""
+
+
+def _output_text(payload: dict[str, Any]) -> str:
+    for key in ("output", "result"):
+        value = payload.get(key)
+        if isinstance(value, str):
+            return value
+        if isinstance(value, (dict, list)):
+            return json.dumps(value, ensure_ascii=False, indent=2)
+    return ""
 
 
 def _first_string_for_keys(payload: Any, keys: set[str]) -> str:

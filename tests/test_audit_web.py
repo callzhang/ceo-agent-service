@@ -2250,6 +2250,143 @@ def test_render_attempt_detail_renders_audit_tool_inputs_and_outputs(tmp_path: P
     assert "岗位画像.md:1:项目经理" in html
 
 
+def test_render_attempt_detail_renders_dws_material_tool_events(tmp_path: Path):
+    command = (
+        "dws doc read --node https://alidocs.dingtalk.com/i/nodes/doc123 "
+        "--format json"
+    )
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    attempt_id = store.record_reply_attempt(
+        conversation_id="cid-1",
+        conversation_title="技术部",
+        trigger_message_id="msg-1",
+        trigger_sender="Xiaomin",
+        trigger_text="@Alex Chen 这个怎么处理？",
+        action="send_reply",
+        sensitivity_kind="general",
+        audit_tool_events_json=json.dumps(
+            [
+                {
+                    "event_type": "response_item",
+                    "tool": "exec_command",
+                    "call_id": "call-dws-read",
+                    "input": json.dumps({"cmd": command}, ensure_ascii=False, indent=2),
+                    "command": command,
+                },
+                {
+                    "event_type": "response_item",
+                    "tool": "tool_output",
+                    "call_id": "call-dws-read",
+                    "output": "OpenAI 合作建议补充版\n建议先补齐材料。",
+                },
+            ],
+            ensure_ascii=False,
+        ),
+        audit_summary="已读取 DWS 材料。",
+    )
+
+    status, html = render_attempt_detail(store, attempt_id)
+
+    assert status == 200
+    assert "Audit tool events" in html
+    assert "to exec_command" in html
+    assert "input / command args" in html
+    assert "dws doc read --node" in html
+    assert command in html
+    assert "output" in html
+    assert "OpenAI 合作建议补充版" in html
+
+
+def test_render_attempt_detail_renders_dws_material_events_from_codex_session(
+    tmp_path: Path,
+    monkeypatch,
+):
+    command = (
+        "dws doc read --node https://alidocs.dingtalk.com/i/nodes/doc123 "
+        "--format json"
+    )
+    codex_home = tmp_path / ".codex"
+    monkeypatch.setattr("app.codex_history.DEFAULT_CODEX_HOME", codex_home)
+    session_path = (
+        codex_home
+        / "sessions"
+        / "2026"
+        / "05"
+        / "14"
+        / "rollout-2026-05-14T12-00-00-session-1.jsonl"
+    )
+    session_path.parent.mkdir(parents=True)
+    session_path.write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "timestamp": "2026-05-14T12:00:00Z",
+                        "type": "session_meta",
+                        "payload": {"id": "session-1"},
+                    },
+                    ensure_ascii=False,
+                ),
+                json.dumps(
+                    {
+                        "timestamp": "2026-05-14T12:00:01Z",
+                        "type": "response_item",
+                        "payload": {
+                            "type": "function_call",
+                            "name": "exec_command",
+                            "call_id": "call-dws-read",
+                            "arguments": json.dumps(
+                                {"cmd": command},
+                                ensure_ascii=False,
+                            ),
+                        },
+                    },
+                    ensure_ascii=False,
+                ),
+                json.dumps(
+                    {
+                        "timestamp": "2026-05-14T12:00:02Z",
+                        "type": "response_item",
+                        "payload": {
+                            "type": "function_call_output",
+                            "call_id": "call-dws-read",
+                            "output": "OpenAI 合作建议补充版\n建议先补齐材料。",
+                        },
+                    },
+                    ensure_ascii=False,
+                ),
+            ]
+        ),
+        encoding="utf-8",
+    )
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    attempt_id = store.record_reply_attempt(
+        conversation_id="cid-1",
+        conversation_title="技术部",
+        trigger_message_id="msg-1",
+        trigger_sender="Xiaomin",
+        trigger_text="@Alex Chen 这个怎么处理？",
+        action="send_reply",
+        sensitivity_kind="general",
+        codex_session_id="session-1",
+        codex_transcript_start_line=0,
+        codex_transcript_end_line=3,
+        audit_tool_events_json="[]",
+        audit_summary="已读取 DWS 材料。",
+    )
+
+    status, html = render_attempt_detail(store, attempt_id)
+
+    assert status == 200
+    assert "Audit tool events" in html
+    assert "to exec_command" in html
+    assert "input / command args" in html
+    assert "dws doc read --node" in html
+    assert command in html
+    assert "output" in html
+    assert "OpenAI 合作建议补充版" in html
+
+
 def test_render_attempt_detail_shows_counterparty_feedback(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     attempt_id = seed_attempt(store)

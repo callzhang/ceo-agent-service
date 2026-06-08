@@ -61,6 +61,7 @@ def write_session(codex_home: Path, session_id: str) -> Path:
             "payload": {
                 "type": "function_call",
                 "name": "exec_command",
+                "call_id": "call-1",
                 "arguments": json.dumps(
                     {"cmd": "rg -n 岗位 /Users/principal/Documents/memory/面试"},
                     ensure_ascii=False,
@@ -225,13 +226,90 @@ def test_extract_codex_audit_events_from_session_respects_line_range(tmp_path: P
         {
             "event_type": "response_item",
             "tool": "exec_command",
+            "call_id": "call-1",
+            "input": json.dumps(
+                {"cmd": "rg -n 岗位 /Users/principal/Documents/memory/面试"},
+                ensure_ascii=False,
+                indent=2,
+            ),
             "command": "rg -n 岗位 /Users/principal/Documents/memory/面试",
             "path": "/Users/principal/Documents/memory/面试",
         },
         {
             "event_type": "response_item",
             "tool": "tool_output",
-            "command": "call-1",
+            "call_id": "call-1",
+            "output": "Output:\n岗位画像.md:1:项目经理",
             "path": "岗位画像.md",
+        },
+    ]
+
+
+def test_extract_codex_audit_events_from_session_preserves_dws_material_read(
+    tmp_path: Path,
+):
+    session_id = "019e2c00-dws-session"
+    command = (
+        "dws doc read --node https://alidocs.dingtalk.com/i/nodes/doc123 "
+        "--format json"
+    )
+    session_path = (
+        tmp_path
+        / "sessions"
+        / "2026"
+        / "05"
+        / "14"
+        / f"rollout-2026-05-14T12-00-00-{session_id}.jsonl"
+    )
+    session_path.parent.mkdir(parents=True)
+    lines = [
+        {
+            "timestamp": "2026-05-14T12:00:00Z",
+            "type": "session_meta",
+            "payload": {"id": session_id},
+        },
+        {
+            "timestamp": "2026-05-14T12:00:01Z",
+            "type": "response_item",
+            "payload": {
+                "type": "function_call",
+                "name": "exec_command",
+                "call_id": "call-dws-read",
+                "arguments": json.dumps({"cmd": command}, ensure_ascii=False),
+            },
+        },
+        {
+            "timestamp": "2026-05-14T12:00:02Z",
+            "type": "response_item",
+            "payload": {
+                "type": "function_call_output",
+                "call_id": "call-dws-read",
+                "output": "OpenAI 合作建议补充版\n建议先补齐材料。",
+            },
+        },
+    ]
+    session_path.write_text(
+        "\n".join(json.dumps(line, ensure_ascii=False) for line in lines),
+        encoding="utf-8",
+    )
+
+    events = extract_codex_audit_events_from_session(
+        session_id,
+        codex_home=tmp_path,
+    )
+
+    assert events == [
+        {
+            "event_type": "response_item",
+            "tool": "exec_command",
+            "call_id": "call-dws-read",
+            "input": json.dumps({"cmd": command}, ensure_ascii=False, indent=2),
+            "command": command,
+        },
+        {
+            "event_type": "response_item",
+            "tool": "tool_output",
+            "call_id": "call-dws-read",
+            "output": "OpenAI 合作建议补充版\n建议先补齐材料。",
         },
     ]
