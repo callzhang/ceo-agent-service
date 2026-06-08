@@ -115,6 +115,9 @@ class CachedDwsClient:
     def read_unread_messages(self, conversation):
         return self.dws.read_unread_messages(conversation)
 
+    def list_messages_by_ids(self, message_ids: list[str]):
+        return self.dws.list_messages_by_ids(message_ids)
+
     def read_mentioned_messages(
         self,
         conversation=None,

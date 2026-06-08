@@ -39,9 +39,24 @@ class DingTalkMessage(BaseModel):
     def addresses_principal(self) -> bool:
         return self.mentions_principal() or self.mentions_all()
 
+    def is_recalled(self) -> bool:
+        return self._raw_payload_state("messageStatus") in {
+            "recall",
+            "recalled",
+        } or self._raw_payload_state("status") in {
+            "recall",
+            "recalled",
+        }
+
     def _contains_mention_alias(self, aliases: tuple[str, ...]) -> bool:
         content = self.content.casefold()
         return any(alias.casefold() in content for alias in aliases)
+
+    def _raw_payload_state(self, key: str) -> str:
+        value = self.raw_payload.get(key)
+        if value is None:
+            return ""
+        return str(value).strip().casefold()
 
 
 class CodexAction(StrEnum):

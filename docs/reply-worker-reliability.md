@@ -136,9 +136,11 @@ it reads the unread messages, records the trigger in `reply_tasks` as `pending`,
 and sets the task's availability to `FAST_PATH_UNREAD_BACKOFF` later. This makes
 the pending item visible in history immediately without letting the consumer
 reply while the principal may still be handling it. After the window, if the
-conversation is no longer unread, the task is completed and a `skipped` no-reply
-attempt is recorded. If it is still unread, the consumer can claim the task and
-move it to `processing`.
+original trigger was recalled or is no longer returned by DWS `list-by-ids`, the
+task is completed and a `skipped` no-reply attempt is recorded. If the trigger is
+still active but later context shows the principal already replied after it, the
+task is also skipped. Otherwise the consumer can claim the task and move it to
+`processing`, even if the unread badge has already cleared.
 
 ## Consumer retry behavior
 

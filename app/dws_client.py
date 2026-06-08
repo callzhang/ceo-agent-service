@@ -173,6 +173,24 @@ class DwsClient:
             "json",
         ]
 
+    def build_list_messages_by_ids_command(
+        self, message_ids: list[str],
+    ) -> list[str]:
+        if not message_ids:
+            raise ValueError("at least one DingTalk message id is required")
+        if len(message_ids) > 50:
+            raise ValueError("DingTalk list-by-ids supports at most 50 message ids")
+        return [
+            self.dws_bin,
+            "chat",
+            "message",
+            "list-by-ids",
+            "--msg-ids",
+            ",".join(message_ids),
+            "--format",
+            "json",
+        ]
+
     def build_upgrade_check_command(self) -> list[str]:
         return [self.dws_bin, "upgrade", "--check", "--format", "json"]
 
@@ -1030,6 +1048,16 @@ class DwsClient:
                     single_chat=conversation.single_chat,
                 )
             )
+        )
+
+    def list_messages_by_ids(self, message_ids: list[str]) -> list[DingTalkMessage]:
+        if not message_ids:
+            return []
+        payload = self.run_json(self.build_list_messages_by_ids_command(message_ids))
+        return self.parse_messages(
+            payload,
+            conversation_title="",
+            single_chat=False,
         )
 
     def read_mentioned_messages(

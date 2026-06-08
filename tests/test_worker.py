@@ -148,6 +148,7 @@ class FakeDws:
         self.user_profile_calls: list[str] = []
         self.recent_message_reads: list[str] = []
         self.unread_message_reads: list[str] = []
+        self.messages_by_id_reads: list[list[str]] = []
         self.hr_users: set[str] = set()
         self.manager_chains: dict[str, list[str]] = {}
         self.resolved_senders: dict[str, str] = {}
@@ -273,6 +274,33 @@ class FakeDws:
         if conversation.open_conversation_id in self.unread_errors:
             raise self.unread_errors[conversation.open_conversation_id]
         return self.unread_messages.get(conversation.open_conversation_id, [])
+
+    def list_messages_by_ids(self, message_ids: list[str]) -> list[DingTalkMessage]:
+        self.messages_by_id_reads.append(list(message_ids))
+        wanted = set(message_ids)
+        seen: set[str] = set()
+        result: list[DingTalkMessage] = []
+        sources = (
+            self.messages,
+            self.unread_messages,
+            self.mentioned_messages,
+            self.broadcast_messages,
+        )
+        for source in sources:
+            for messages in source.values():
+                for message in messages:
+                    if (
+                        message.open_message_id in wanted
+                        and message.open_message_id not in seen
+                    ):
+                        result.append(message)
+                        seen.add(message.open_message_id)
+        return [
+            message
+            for message_id in message_ids
+            for message in result
+            if message.open_message_id == message_id
+        ]
 
     def read_mentioned_messages(
         self,
@@ -1628,6 +1656,48 @@ def test_fast_path_backoff_skips_when_current_user_replied_after_trigger(
     assert attempts[0].action == "no_reply"
     assert attempts[0].send_status == "skipped"
     assert attempts[0].codex_reason == "current_user_replied_during_backoff"
+    assert codex.calls == []
+    assert final_sent(dws) == []
+
+
+def test_fast_path_backoff_skips_when_trigger_was_recalled_after_wait(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message("@Alex Chen(明哥) 这个怎么处理？", message_id="msg-unread")
+    recalled_trigger = trigger.model_copy(
+        update={"raw_payload": {"messageStatus": "recalled"}}
+    )
+    dws = FakeDws([conversation()], {"cid-1": [trigger]})
+    dws.mentioned_messages = {"cid-1": [trigger]}
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该调用")
+    )
+    worker = make_worker(
+        tmp_path,
+        dws,
+        codex,
+        monkeypatch,
+        fast_path_unread_backoff=timedelta(minutes=5),
+    )
+    worker.store.set_service_state(
+        "message_recovery_checked_at",
+        "2026-05-13T16:30:00+00:00",
+    )
+
+    assert worker.produce_once() == 1
+    dws.conversations = []
+    dws.messages = {"cid-1": [recalled_trigger]}
+    dws.unread_messages = {"cid-1": []}
+    worker.now_provider = lambda: fixed_worker_now() + timedelta(minutes=6)
+    assert worker.run_once() is None
+
+    attempts = worker.store.list_reply_attempts(limit=10)
+    assert dws.messages_by_id_reads == [["msg-unread"]]
+    assert worker.store.count_reply_tasks(status="done") == 1
+    assert len(attempts) == 1
+    assert attempts[0].action == "no_reply"
+    assert attempts[0].send_status == "skipped"
+    assert attempts[0].codex_reason == "trigger_message_recalled_after_backoff"
     assert codex.calls == []
     assert final_sent(dws) == []
 

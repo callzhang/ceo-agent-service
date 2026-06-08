@@ -133,6 +133,60 @@ def test_list_unread_conversations_command_shape():
     ]
 
 
+def test_list_messages_by_ids_command_shape():
+    client = DwsClient(dws_bin="dws")
+
+    command = client.build_list_messages_by_ids_command(["msg-1", "msg-2"])
+
+    assert command == [
+        "dws",
+        "chat",
+        "message",
+        "list-by-ids",
+        "--msg-ids",
+        "msg-1,msg-2",
+        "--format",
+        "json",
+    ]
+
+
+def test_list_messages_by_ids_returns_parsed_messages():
+    client = RecordingDwsClient(
+        {
+            "result": {
+                "messages": [
+                    {
+                        "openConversationId": "cid-1",
+                        "openMessageId": "msg-1",
+                        "sender": "Mina",
+                        "senderOpenDingTalkId": "sender-1",
+                        "createTime": "2026-05-13 20:25:00",
+                        "content": "这个怎么处理？",
+                    },
+                ]
+            }
+        }
+    )
+
+    messages = client.list_messages_by_ids(["msg-1"])
+
+    assert client.commands == [
+        [
+            "dws",
+            "chat",
+            "message",
+            "list-by-ids",
+            "--msg-ids",
+            "msg-1",
+            "--format",
+            "json",
+        ]
+    ]
+    assert len(messages) == 1
+    assert messages[0].open_message_id == "msg-1"
+    assert messages[0].conversation_title == ""
+
+
 def test_dws_upgrade_check_command_shape():
     client = DwsClient(dws_bin="dws")
 

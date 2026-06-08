@@ -916,6 +916,10 @@ class DingTalkAutoReplyWorker:
         self, conversation: DingTalkConversation, task: ReplyTask
     ) -> bool:
         trigger = DingTalkMessage.model_validate_json(task.trigger_message_json)
+        if not self._queued_trigger_is_still_actionable(conversation, trigger):
+            self._record_trigger_recalled_after_backoff_skip(conversation, trigger)
+            self._mark_seen([trigger])
+            return True
         context_messages, prompt_context_messages = (
             self._queued_task_prompt_context_messages(conversation, trigger)
         )
@@ -956,6 +960,28 @@ class DingTalkAutoReplyWorker:
             raise_on_delivery_failure=True,
         )
         return True
+
+    def _queued_trigger_is_still_actionable(
+        self,
+        conversation: DingTalkConversation,
+        trigger: DingTalkMessage,
+    ) -> bool:
+        list_messages_by_ids = getattr(self.dws, "list_messages_by_ids", None)
+        if list_messages_by_ids is None:
+            return True
+        current_messages = self._call_dws(
+            "list_messages_by_ids",
+            lambda: list_messages_by_ids([trigger.open_message_id]),
+            conversation_id=conversation.open_conversation_id,
+            message_id=trigger.open_message_id,
+            raise_authorization=True,
+            default=None,
+        )
+        if current_messages is None:
+            return True
+        if not current_messages:
+            return False
+        return not any(message.is_recalled() for message in current_messages)
 
     def _queued_task_prompt_context_messages(
         self,
@@ -2588,6 +2614,41 @@ class DingTalkAutoReplyWorker:
             audit_summary=(
                 "快路径首次发现未读后已等待；等待窗口内检测到本人已在该 trigger "
                 "之后回复，因此不再由 agent 自动回复。"
+            ),
+        )
+        self.store.update_reply_attempt(
+            attempt_id,
+            send_status="skipped",
+            send_error="no_reply",
+        )
+
+    def _record_trigger_recalled_after_backoff_skip(
+        self,
+        conversation: DingTalkConversation,
+        message: DingTalkMessage,
+    ) -> None:
+        existing_attempt = self.store.get_latest_reply_attempt_for_trigger(
+            conversation.open_conversation_id,
+            message.open_message_id,
+        )
+        if (
+            existing_attempt
+            and existing_attempt.action == CodexAction.NO_REPLY.value
+            and existing_attempt.send_status == "skipped"
+        ):
+            return
+        attempt_id = self.store.record_reply_attempt_for_trigger(
+            conversation_id=conversation.open_conversation_id,
+            conversation_title=conversation.title,
+            trigger_message_id=message.open_message_id,
+            trigger_sender=message.sender_name,
+            trigger_text=message.content,
+            action=CodexAction.NO_REPLY.value,
+            sensitivity_kind="general",
+            codex_reason="trigger_message_recalled_after_backoff",
+            audit_summary=(
+                "快路径等待窗口结束后复核原 trigger；DWS 返回该消息已撤回或不再可见，"
+                "因此不再由 agent 自动回复。"
             ),
         )
         self.store.update_reply_attempt(
