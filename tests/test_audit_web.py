@@ -602,6 +602,12 @@ def test_tasks_page_renders_projects_and_todos_without_global_followups(tmp_path
         status="open",
         priority="P1",
     )
+    store.create_work_todo(
+        project_id=project_id,
+        title="整理销售材料",
+        status="done",
+        priority="P2",
+    )
     store.create_follow_up_draft(
         project_id=project_id,
         todo_id=todo_id,
@@ -624,6 +630,12 @@ def test_tasks_page_renders_projects_and_todos_without_global_followups(tmp_path
     assert '<span class="tasks-count">1 tasks</span>' in html
     assert 'id="task-search-input"' in html
     assert "Search</button>" not in html
+    assert "<th>Status</th>" in html
+    assert "<th>ToDos</th>" in html
+    assert "<td>1 (50%)</td>" in html
+    assert 'class="task-state in-progress">in progress</span>' in html
+    assert 'class="todo-check done"' in html
+    assert "整理销售材料" in html
 
 
 def test_tasks_page_filters_projects_by_full_text_query(tmp_path: Path):
@@ -720,6 +732,125 @@ def test_tasks_page_respects_page_size(tmp_path: Path):
     assert '<option value="50" selected>50/page</option>' in html
     assert "项目 01" in html
     assert "项目 25" in html
+
+
+def test_tasks_page_filters_by_category(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    store.create_work_project(
+        title="招聘项目",
+        category="recruiting",
+        status="active",
+        priority="P2",
+        risk_level="low",
+    )
+    store.create_work_project(
+        title="销售项目",
+        category="sales",
+        status="active",
+        priority="P1",
+        risk_level="medium",
+    )
+
+    html = render_tasks_page(store, category="recruiting")
+
+    assert "招聘项目" in html
+    assert "销售项目" not in html
+    assert '<option value="recruiting" selected>recruiting</option>' in html
+    assert '<span class="tasks-count">1 tasks</span>' in html
+
+
+def test_tasks_page_sorts_by_priority_and_risk(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    store.create_work_project(
+        title="低优先级高风险",
+        category="projects",
+        status="active",
+        priority="P2",
+        risk_level="high",
+    )
+    store.create_work_project(
+        title="高优先级低风险",
+        category="projects",
+        status="active",
+        priority="P0",
+        risk_level="low",
+    )
+    store.create_work_project(
+        title="中优先级中风险",
+        category="projects",
+        status="active",
+        priority="P1",
+        risk_level="medium",
+    )
+
+    priority_html = render_tasks_page(store, sort="priority_desc")
+    risk_html = render_tasks_page(store, sort="risk_desc")
+
+    assert priority_html.index("高优先级低风险") < priority_html.index("中优先级中风险")
+    assert priority_html.index("中优先级中风险") < priority_html.index("低优先级高风险")
+    assert risk_html.index("低优先级高风险") < risk_html.index("中优先级中风险")
+    assert risk_html.index("中优先级中风险") < risk_html.index("高优先级低风险")
+    assert '<option value="priority_desc" selected>Priority high to low</option>' in priority_html
+    assert '<option value="risk_desc" selected>Risk high to low</option>' in risk_html
+
+
+def test_tasks_page_computes_table_statuses(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    completed_id = store.create_work_project(
+        title="完成项目",
+        category="projects",
+        status="active",
+        priority="P2",
+        risk_level="low",
+    )
+    overdue_id = store.create_work_project(
+        title="逾期项目",
+        category="projects",
+        status="active",
+        priority="P1",
+        risk_level="medium",
+    )
+    in_progress_id = store.create_work_project(
+        title="推进项目",
+        category="projects",
+        status="active",
+        priority="P1",
+        risk_level="medium",
+    )
+    store.create_work_project(
+        title="未开始项目",
+        category="projects",
+        status="active",
+        priority="P2",
+        risk_level="low",
+    )
+    store.create_work_todo(
+        project_id=completed_id,
+        title="已经完成",
+        status="done",
+        priority="P2",
+    )
+    store.create_work_todo(
+        project_id=overdue_id,
+        title="已经逾期",
+        status="open",
+        priority="P1",
+        deadline_at="2020-01-01 00:00:00",
+    )
+    store.create_work_todo(
+        project_id=in_progress_id,
+        title="正在推进",
+        status="open",
+        priority="P1",
+        deadline_at="2099-01-01 00:00:00",
+    )
+
+    html = render_tasks_page(store, page_size=50)
+
+    assert 'class="task-state completed">completed</span>' in html
+    assert 'class="task-state over-due">over due</span>' in html
+    assert 'class="task-state in-progress">in progress</span>' in html
+    assert 'class="task-state not-started">not started</span>' in html
 
 
 def test_task_project_detail_renders_project_todos_and_sources(tmp_path: Path):
@@ -855,6 +986,34 @@ def test_tasks_route_applies_pagination_params(tmp_path: Path):
     assert "候选人项目 05" in response.text
     assert "候选人项目 25" not in response.text
     assert '<option value="20" selected>20/page</option>' in response.text
+
+
+def test_tasks_route_applies_category_and_sort_params(tmp_path: Path):
+    db_path = tmp_path / "worker.sqlite3"
+    store = AutoReplyStore(db_path)
+    store.create_work_project(
+        title="招聘项目",
+        category="recruiting",
+        status="active",
+        priority="P2",
+        risk_level="high",
+    )
+    store.create_work_project(
+        title="销售项目",
+        category="sales",
+        status="active",
+        priority="P0",
+        risk_level="low",
+    )
+    client = TestClient(create_audit_app(db_path))
+
+    response = client.get("/tasks?category=recruiting&sort=risk_desc")
+
+    assert response.status_code == 200
+    assert "招聘项目" in response.text
+    assert "销售项目" not in response.text
+    assert '<option value="recruiting" selected>recruiting</option>' in response.text
+    assert '<option value="risk_desc" selected>Risk high to low</option>' in response.text
 
 
 def test_task_project_detail_route_renders_project(tmp_path: Path):

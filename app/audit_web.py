@@ -91,6 +91,7 @@ from app.store import (
     SentReply,
     UserFeedbackItem,
 )
+from app.task_models import ProjectPriority, ProjectStatus, RiskLevel, TodoStatus
 from app.user_prompt_blocks import USER_PROMPT_BLOCKS, UserPromptBlock
 
 DISPLAY_TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
@@ -155,12 +156,22 @@ th{background:var(--surface-soft);color:var(--steel);font-size:12px;font-weight:
 .tasks-search input[type="text"]{height:34px;padding:7px 34px 7px 12px;border-radius:999px;font-size:13px;line-height:1.3}
 .tasks-search-clear{position:absolute;right:8px;display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:999px;color:var(--steel);font-size:16px;font-weight:700;line-height:1}
 .tasks-search-clear:hover{background:var(--surface-soft);color:var(--ink);text-decoration:none}
+.tasks-filter,.tasks-sort{height:30px;border:1px solid var(--hairline);border-radius:999px;background:var(--canvas);color:var(--ink);padding:0 10px;font-size:12px;font-weight:700}
 .tasks-pages{display:flex;align-items:center;gap:4px;flex-wrap:nowrap}
 .tasks-page-link{display:inline-flex;align-items:center;justify-content:center;height:28px;min-width:28px;padding:0 8px;border:1px solid transparent;border-radius:999px;color:var(--steel);font-size:12px;font-weight:700;line-height:1;white-space:nowrap}
 .tasks-page-link:hover{border-color:var(--hairline);background:var(--surface-soft);color:var(--ink);text-decoration:none}
 .tasks-page-link.active{border-color:rgba(0,180,138,.28);background:#ddfff6;color:#005b49}
 .tasks-page-link.disabled{color:var(--muted);background:transparent;cursor:default}
 .tasks-page-size{height:30px;border:1px solid var(--hairline);border-radius:999px;background:var(--canvas);color:var(--ink);padding:0 10px;font-size:12px;font-weight:700}
+.todo-checklist{display:grid;gap:4px;margin:0;padding:0;list-style:none}
+.todo-checklist li{display:flex;align-items:flex-start;gap:7px;min-width:0;color:var(--charcoal);font-size:13px;line-height:1.35}
+.todo-check{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;width:15px;height:15px;margin-top:1px;border:1px solid var(--hairline);border-radius:4px;color:transparent;font-size:11px;font-weight:900;line-height:1}
+.todo-check.done{border-color:rgba(0,180,138,.46);background:#ddfff6;color:#005b49}
+.task-state{display:inline-flex;align-items:center;height:24px;padding:0 8px;border:1px solid var(--hairline);border-radius:999px;background:var(--surface-soft);font-size:12px;font-weight:800;line-height:1;white-space:nowrap}
+.task-state.completed{background:#ddfff6;border-color:rgba(0,180,138,.46);color:#005b49}
+.task-state.over-due{background:rgba(212,86,86,.12);border-color:rgba(212,86,86,.24);color:#9a2f2f}
+.task-state.in-progress{background:rgba(55,114,207,.10);border-color:rgba(55,114,207,.24);color:#245aa5}
+.task-state.not-started{background:var(--surface-soft);color:var(--steel)}
 .compact-button{display:inline-flex;align-items:center;height:30px;padding:0 12px;border:1px solid var(--hairline);border-radius:999px;background:var(--canvas);color:var(--ink);font-size:13px;font-weight:500;line-height:1;white-space:nowrap}
 .compact-button:hover{border-color:var(--ink);background:var(--surface-soft)}
 .agent-log-button{display:inline-flex;align-items:center;height:34px;padding:0 14px;border:1px solid rgba(55,114,207,.38);border-radius:999px;background:#3772cf;color:#fff;font-size:13px;font-weight:700;line-height:1;white-space:nowrap;box-shadow:0 6px 18px rgba(55,114,207,.18)}
@@ -1799,20 +1810,29 @@ def render_attempt_list(
 def render_tasks_page(
     store: AutoReplyStore,
     query: str = "",
+    category: str = "",
+    sort: str = "",
     page: int = 1,
     page_size: int = DEFAULT_TASK_PAGE_SIZE,
 ) -> str:
     projects = store.list_work_projects(limit=500)
     search_terms = _task_search_terms(query)
-    matched_items = []
+    searched_items = []
     for project in projects:
         all_todos = store.list_work_todos(project_id=project.id)
-        open_todos = [
-            todo for todo in all_todos if str(todo.status) in {"open", "waiting_owner"}
-        ]
         if search_terms and not _task_project_matches_search(project, all_todos, search_terms):
             continue
-        matched_items.append((project, open_todos))
+        searched_items.append((project, all_todos))
+
+    categories = _task_categories(searched_items)
+    category = category.strip()
+    matched_items = [
+        (project, todos)
+        for project, todos in searched_items
+        if not category or str(project.category) == category
+    ]
+    sort = _bounded_task_sort(sort)
+    matched_items = _sort_task_items(matched_items, sort)
 
     page_size = _bounded_task_page_size(page_size)
     total_count = len(matched_items)
@@ -1821,24 +1841,26 @@ def render_tasks_page(
 
     rows = []
     for project, todos in page_items:
-        todo_text = ", ".join(todo.title for todo in todos)
+        open_count, open_ratio = _task_open_summary(todos)
+        state = _task_table_state(project, todos)
         rows.append(
             "<tr>"
             f"<td><a href=\"/tasks/{project.id}\">{escape(project.title)}</a></td>"
+            f"<td>{_task_state_badge(state)}</td>"
             f"<td><span class=\"pill\">{escape(project.category)}</span></td>"
             f"<td><span class=\"pill\">{escape(project.priority)}</span></td>"
             f"<td><span class=\"pill\">{escape(project.risk_level)}</span></td>"
             f"<td>{escape(project.owner_name)}</td>"
             f"<td>{escape(_excerpt(project.current_state, 90))}</td>"
             f"<td>{escape(_excerpt(project.next_step, 110))}</td>"
-            f"<td>{len(todos)}</td>"
-            f"<td>{escape(_excerpt(todo_text, 140))}</td>"
+            f"<td>{open_count} ({open_ratio}%)</td>"
+            f"<td>{_task_todo_checklist(todos)}</td>"
             "</tr>"
         )
     table = (
         "<table><thead><tr>"
-        "<th>Project</th><th>Category</th><th>Priority</th><th>Risk</th>"
-        "<th>Owner</th><th>State</th><th>Next</th><th>Open</th><th>TODOs</th>"
+        "<th>Project</th><th>Status</th><th>Category</th><th>Priority</th><th>Risk</th>"
+        "<th>Owner</th><th>State</th><th>Next</th><th>Open</th><th>ToDos</th>"
         "</tr></thead><tbody>"
         + "".join(rows)
         + "</tbody></table>"
@@ -1847,6 +1869,9 @@ def render_tasks_page(
     toolbar = _task_toolbar(
         total_count=total_count,
         query=query,
+        category=category,
+        categories=categories,
+        sort=sort,
         page=page,
         page_size=page_size,
     )
@@ -1869,15 +1894,115 @@ def _bounded_task_page_size(page_size: int) -> int:
     return page_size if page_size in TASK_PAGE_SIZE_OPTIONS else DEFAULT_TASK_PAGE_SIZE
 
 
+def _task_categories(items) -> list[str]:
+    return sorted({str(project.category) for project, _todos in items if str(project.category)})
+
+
+def _bounded_task_sort(sort: str) -> str:
+    return sort if sort in _task_sort_options() else ""
+
+
+def _task_sort_options() -> dict[str, str]:
+    return {
+        "": "Default order",
+        "priority_desc": "Priority high to low",
+        "priority_asc": "Priority low to high",
+        "risk_desc": "Risk high to low",
+        "risk_asc": "Risk low to high",
+    }
+
+
+def _sort_task_items(items, sort: str):
+    priority_rank = {
+        ProjectPriority.P0.value: 0,
+        ProjectPriority.P1.value: 1,
+        ProjectPriority.P2.value: 2,
+        ProjectPriority.NONE.value: 3,
+    }
+    risk_rank = {
+        RiskLevel.HIGH.value: 0,
+        RiskLevel.MEDIUM.value: 1,
+        RiskLevel.LOW.value: 2,
+        RiskLevel.NONE.value: 3,
+    }
+    if sort == "priority_desc":
+        return sorted(items, key=lambda item: priority_rank.get(str(item[0].priority), 99))
+    if sort == "priority_asc":
+        return sorted(items, key=lambda item: priority_rank.get(str(item[0].priority), 99), reverse=True)
+    if sort == "risk_desc":
+        return sorted(items, key=lambda item: risk_rank.get(str(item[0].risk_level), 99))
+    if sort == "risk_asc":
+        return sorted(items, key=lambda item: risk_rank.get(str(item[0].risk_level), 99), reverse=True)
+    return items
+
+
+def _task_open_summary(todos) -> tuple[int, int]:
+    total = len(todos)
+    open_count = sum(1 for todo in todos if _task_todo_incomplete(todo))
+    if total <= 0:
+        return open_count, 0
+    return open_count, round(open_count * 100 / total)
+
+
+def _task_todo_incomplete(todo) -> bool:
+    return str(todo.status) not in {TodoStatus.DONE.value, TodoStatus.CANCELLED.value}
+
+
+def _task_todo_done(todo) -> bool:
+    return str(todo.status) == TodoStatus.DONE.value
+
+
+def _task_table_state(project, todos) -> str:
+    if str(project.status) == ProjectStatus.DONE.value:
+        return "completed"
+    if todos and not any(_task_todo_incomplete(todo) for todo in todos):
+        return "completed"
+    if any(_task_todo_overdue(todo) for todo in todos if _task_todo_incomplete(todo)):
+        return "over due"
+    if any(_task_todo_incomplete(todo) for todo in todos):
+        return "in progress"
+    return "not started"
+
+
+def _task_todo_overdue(todo) -> bool:
+    deadline = _parse_utc_timestamp(todo.deadline_at)
+    return bool(deadline and deadline < datetime.now(timezone.utc))
+
+
+def _task_state_badge(state: str) -> str:
+    css_class = state.replace(" ", "-")
+    return f"<span class=\"task-state {escape(css_class)}\">{escape(state)}</span>"
+
+
+def _task_todo_checklist(todos) -> str:
+    if not todos:
+        return "<span class=\"muted\">-</span>"
+    items = []
+    for todo in todos:
+        done = _task_todo_done(todo)
+        check_class = "todo-check done" if done else "todo-check"
+        check = "✓" if done else ""
+        items.append(
+            "<li>"
+            f"<span class=\"{check_class}\" aria-hidden=\"true\">{check}</span>"
+            f"<span>{escape(todo.title)}</span>"
+            "</li>"
+        )
+    return f"<ul class=\"todo-checklist\">{''.join(items)}</ul>"
+
+
 def _task_toolbar(
     *,
     total_count: int,
     query: str,
+    category: str,
+    categories: list[str],
+    sort: str,
     page: int,
     page_size: int,
 ) -> str:
     query = query.strip()
-    clear_href = _task_page_href(page=1, page_size=page_size)
+    clear_href = _task_page_href(page=1, page_size=page_size, category=category, sort=sort)
     clear_button = (
         f"<a class=\"tasks-search-clear\" href=\"{escape(clear_href)}\" "
         "aria-label=\"Clear search\" title=\"Clear search\">×</a>"
@@ -1894,10 +2019,12 @@ def _task_toolbar(
         f"placeholder=\"搜索\" data-page-size=\"{page_size}\" autocomplete=\"off\">"
         f"{clear_button}"
         "</label>"
+        f"{_task_category_filter(category=category, categories=categories, query=query, sort=sort, page_size=page_size)}"
         "</div>"
         "<div class=\"tasks-toolbar-right\">"
-        f"{_task_page_links(total_count=total_count, page=page, page_size=page_size, query=query)}"
-        f"{_task_page_size_select(page_size=page_size, query=query)}"
+        f"{_task_sort_select(sort=sort, query=query, category=category, page_size=page_size)}"
+        f"{_task_page_links(total_count=total_count, page=page, page_size=page_size, query=query, category=category, sort=sort)}"
+        f"{_task_page_size_select(page_size=page_size, query=query, category=category, sort=sort)}"
         "</div>"
         "</div>"
     )
@@ -1909,6 +2036,8 @@ def _task_page_links(
     page: int,
     page_size: int,
     query: str,
+    category: str,
+    sort: str,
 ) -> str:
     page_count = _page_count(total_count, page_size)
     if page_count <= 1:
@@ -1919,18 +2048,28 @@ def _task_page_links(
         page=page - 1,
         page_size=page_size,
         query=query,
+        category=category,
+        sort=sort,
     )
     next_href = None if page >= page_count else _task_page_href(
         page=page + 1,
         page_size=page_size,
         query=query,
+        category=category,
+        sort=sort,
     )
     items.append(_task_page_link("<", prev_href, "Previous page"))
     for item in _task_visible_page_items(page, page_count):
         if item is None:
             items.append("<span class=\"tasks-page-link disabled\">...</span>")
             continue
-        href = _task_page_href(page=item, page_size=page_size, query=query)
+        href = _task_page_href(
+            page=item,
+            page_size=page_size,
+            query=query,
+            category=category,
+            sort=sort,
+        )
         items.append(_task_page_link(str(item), href, f"Page {item}", active=item == page))
     items.append(_task_page_link(">", next_href, "Next page"))
     return f"<nav class=\"tasks-pages\" aria-label=\"Task pages\">{''.join(items)}</nav>"
@@ -1971,22 +2110,74 @@ def _task_page_link(
     )
 
 
-def _task_page_size_select(*, page_size: int, query: str) -> str:
+def _task_category_filter(
+    *,
+    category: str,
+    categories: list[str],
+    query: str,
+    sort: str,
+    page_size: int,
+) -> str:
+    options = ["<option value=\"\">All categories</option>"]
+    options.extend(
+        f"<option value=\"{escape(value)}\"{' selected' if value == category else ''}>{escape(value)}</option>"
+        for value in categories
+    )
+    return (
+        "<select id=\"task-category-filter\" class=\"tasks-filter\" "
+        f"data-query=\"{escape(query)}\" data-sort=\"{escape(sort)}\" "
+        f"data-page-size=\"{page_size}\" aria-label=\"Filter by category\">"
+        f"{''.join(options)}</select>"
+    )
+
+
+def _task_sort_select(
+    *,
+    sort: str,
+    query: str,
+    category: str,
+    page_size: int,
+) -> str:
+    options = "".join(
+        f"<option value=\"{escape(value)}\"{' selected' if value == sort else ''}>{escape(label)}</option>"
+        for value, label in _task_sort_options().items()
+    )
+    return (
+        "<select id=\"task-sort\" class=\"tasks-sort\" "
+        f"data-query=\"{escape(query)}\" data-category=\"{escape(category)}\" "
+        f"data-page-size=\"{page_size}\" aria-label=\"Sort tasks\">"
+        f"{options}</select>"
+    )
+
+
+def _task_page_size_select(*, page_size: int, query: str, category: str, sort: str) -> str:
     options = "".join(
         f"<option value=\"{size}\"{' selected' if size == page_size else ''}>{size}/page</option>"
         for size in TASK_PAGE_SIZE_OPTIONS
     )
     return (
         "<select id=\"task-page-size\" class=\"tasks-page-size\" "
-        f"data-query=\"{escape(query)}\" aria-label=\"Tasks per page\">"
+        f"data-query=\"{escape(query)}\" data-category=\"{escape(category)}\" "
+        f"data-sort=\"{escape(sort)}\" aria-label=\"Tasks per page\">"
         f"{options}</select>"
     )
 
 
-def _task_page_href(*, page: int, page_size: int, query: str = "") -> str:
+def _task_page_href(
+    *,
+    page: int,
+    page_size: int,
+    query: str = "",
+    category: str = "",
+    sort: str = "",
+) -> str:
     params: dict[str, str] = {}
     if query.strip():
         params["q"] = query.strip()
+    if category.strip():
+        params["category"] = category.strip()
+    if sort.strip():
+        params["sort"] = sort.strip()
     if page > 1:
         params["page"] = str(page)
     if page_size != DEFAULT_TASK_PAGE_SIZE:
@@ -2000,11 +2191,19 @@ def _task_search_script() -> str:
 (() => {
   const input = document.getElementById("task-search-input");
   const pageSize = document.getElementById("task-page-size");
-  const navigate = (query, size) => {
+  const category = document.getElementById("task-category-filter");
+  const sort = document.getElementById("task-sort");
+  const navigate = (query, size, categoryValue, sortValue) => {
     const params = new URLSearchParams();
     const trimmed = query.trim();
     if (trimmed) {
       params.set("q", trimmed);
+    }
+    if (categoryValue) {
+      params.set("category", categoryValue);
+    }
+    if (sortValue) {
+      params.set("sort", sortValue);
     }
     if (size && size !== "__DEFAULT_TASK_PAGE_SIZE__") {
       params.set("page_size", size);
@@ -2016,11 +2215,40 @@ def _task_search_script() -> str:
     let timer = null;
     input.addEventListener("input", () => {
       window.clearTimeout(timer);
-      timer = window.setTimeout(() => navigate(input.value, input.dataset.pageSize || "__DEFAULT_TASK_PAGE_SIZE__"), 250);
+      timer = window.setTimeout(
+        () => navigate(
+          input.value,
+          input.dataset.pageSize || "__DEFAULT_TASK_PAGE_SIZE__",
+          category ? category.value : "",
+          sort ? sort.value : ""
+        ),
+        250
+      );
     });
   }
+  if (category) {
+    category.addEventListener("change", () => navigate(
+      category.dataset.query || "",
+      category.dataset.pageSize || "__DEFAULT_TASK_PAGE_SIZE__",
+      category.value,
+      category.dataset.sort || ""
+    ));
+  }
+  if (sort) {
+    sort.addEventListener("change", () => navigate(
+      sort.dataset.query || "",
+      sort.dataset.pageSize || "__DEFAULT_TASK_PAGE_SIZE__",
+      sort.dataset.category || "",
+      sort.value
+    ));
+  }
   if (pageSize) {
-    pageSize.addEventListener("change", () => navigate(pageSize.dataset.query || "", pageSize.value));
+    pageSize.addEventListener("change", () => navigate(
+      pageSize.dataset.query || "",
+      pageSize.value,
+      pageSize.dataset.category || "",
+      pageSize.dataset.sort || ""
+    ));
   }
 })();
 </script>
@@ -3026,6 +3254,8 @@ def create_audit_app(
         return render_tasks_page(
             AutoReplyStore(db_path),
             query=str(request.query_params.get("q") or ""),
+            category=str(request.query_params.get("category") or ""),
+            sort=str(request.query_params.get("sort") or ""),
             page=_positive_int_query(request, "page", default=1),
             page_size=_positive_int_query(request, "page_size", default=DEFAULT_TASK_PAGE_SIZE),
         )
