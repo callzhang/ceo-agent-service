@@ -1779,15 +1779,17 @@ def render_attempt_list(
     )
 
 
-def render_tasks_page(store: AutoReplyStore) -> str:
-    projects = store.list_work_projects(limit=100)
-    draft_count = len(store.list_follow_up_drafts(statuses=("draft",), limit=200))
+def render_tasks_page(store: AutoReplyStore, query: str = "") -> str:
+    projects = store.list_work_projects(limit=500)
+    search_terms = _task_search_terms(query)
     rows = []
     for project in projects:
         todos = store.list_work_todos(
             project_id=project.id,
             statuses=("open", "waiting_owner"),
         )
+        if search_terms and not _task_project_matches_search(project, todos, search_terms):
+            continue
         todo_text = ", ".join(todo.title for todo in todos)
         rows.append(
             "<tr>"
@@ -1810,31 +1812,22 @@ def render_tasks_page(store: AutoReplyStore) -> str:
         + "".join(rows)
         + "</tbody></table>"
     )
-    drafts = store.list_follow_up_drafts(statuses=("draft",), limit=50)
-    draft_items = "".join(
-        "<div class=\"attempt-item\">"
-        "<div class=\"attempt-head\">"
-        "<div class=\"attempt-title\">"
-        f"<div class=\"attempt-main\">{escape(draft.owner_name or 'Owner')}</div>"
-        f"<div class=\"attempt-meta\">{escape(draft.target_kind)}</div>"
-        "</div>"
-        f"<time class=\"attempt-time\">{escape(_format_local_time(draft.scheduled_at))}</time>"
-        "</div>"
-        "<div class=\"attempt-lines\">"
-        f"{_attempt_text_line('问', draft.question_text, 240)}"
-        "</div>"
-        "</div>"
-        for draft in drafts
+    empty_message = "No matching tasks." if search_terms else "No work projects recorded."
+    search_form = (
+        "<form class=\"notification-panel\" method=\"get\" action=\"/tasks\">"
+        f"<input type=\"text\" name=\"q\" value=\"{escape(query.strip())}\" "
+        "placeholder=\"Search tasks\">"
+        "<button class=\"compact-button\" type=\"submit\">Search</button>"
+        + ("<a class=\"compact-button\" href=\"/tasks\">Clear</a>" if search_terms else "")
+        + "</form>"
     )
     body = (
         "<section class=\"card\"><div class=\"card-head\">"
         "<h2>Tasks</h2>"
-        f"<span class=\"pill\">Draft follow-ups {draft_count}</span>"
+        f"<span class=\"pill\">{len(rows)} shown</span>"
         "</div>"
-        f"{table if rows else '<p class=\"muted\">No work projects recorded.</p>'}"
-        "</section>"
-        "<section class=\"card\"><h2>Pending follow-ups</h2>"
-        f"{draft_items or '<p class=\"muted\">No pending follow-ups.</p>'}"
+        f"{search_form}"
+        f"{table if rows else f'<p class=\"muted\">{empty_message}</p>'}"
         "</section>"
     )
     return render_page(
@@ -1843,6 +1836,53 @@ def render_tasks_page(store: AutoReplyStore) -> str:
         active_nav="tasks",
         user_feedback_pending_count=store.count_pending_user_feedback_items(),
     )
+
+
+def _task_search_terms(query: str) -> list[str]:
+    return [term.casefold() for term in query.strip().split() if term.strip()]
+
+
+def _task_project_matches_search(project, todos, terms: list[str]) -> bool:
+    haystack = "\n".join(_task_project_search_values(project, todos)).casefold()
+    return all(term in haystack for term in terms)
+
+
+def _task_project_search_values(project, todos) -> list[str]:
+    values = [
+        project.title,
+        str(project.category),
+        project.tags_json,
+        str(project.status),
+        str(project.priority),
+        str(project.risk_level),
+        project.owner_user_id,
+        project.owner_name,
+        project.related_people_json,
+        project.goal,
+        project.background,
+        project.facts_json,
+        project.current_state,
+        project.blocker,
+        project.next_step,
+        project.source_conversations_json,
+        project.memory_context_json,
+    ]
+    for todo in todos:
+        values.extend(
+            [
+                todo.title,
+                todo.owner_user_id,
+                todo.owner_name,
+                str(todo.status),
+                str(todo.priority),
+                todo.deadline_at,
+                todo.next_follow_up_at,
+                todo.follow_up_question,
+                todo.blocker,
+                todo.completion_evidence_json,
+            ]
+        )
+    return [value for value in values if value]
 
 
 def render_task_project_detail(store: AutoReplyStore, project_id: int) -> tuple[int, str]:
@@ -2794,8 +2834,11 @@ def create_audit_app(
         )
 
     @app.get("/tasks", response_class=HTMLResponse)
-    def tasks_page() -> str:
-        return render_tasks_page(AutoReplyStore(db_path))
+    def tasks_page(request: Request) -> str:
+        return render_tasks_page(
+            AutoReplyStore(db_path),
+            query=str(request.query_params.get("q") or ""),
+        )
 
     @app.get("/tasks/{project_id}", response_class=HTMLResponse)
     def task_project_detail(project_id: int) -> HTMLResponse:

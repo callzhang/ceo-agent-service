@@ -584,7 +584,7 @@ def test_top_nav_highlights_current_page_and_disables_current_link(tmp_path: Pat
     assert '<a class="nav-item" href="/tasks">Tasks</a>' not in tasks_html
 
 
-def test_tasks_page_renders_projects_todos_and_drafts(tmp_path: Path):
+def test_tasks_page_renders_projects_and_todos_without_global_followups(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "task.sqlite3")
     project_id = store.create_work_project(
         title="售前知识库建设",
@@ -616,8 +616,56 @@ def test_tasks_page_renders_projects_todos_and_drafts(tmp_path: Path):
 
     assert "售前知识库建设" in html
     assert "补齐来源链接" in html
-    assert "来源链接补齐到哪一步了" in html
+    assert "来源链接补齐到哪一步了" not in html
+    assert "Pending follow-ups" not in html
     assert f"/tasks/{project_id}" in html
+
+
+def test_tasks_page_filters_projects_by_full_text_query(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    matching_project_id = store.create_work_project(
+        title="售前知识库建设",
+        category="sales",
+        status="active",
+        priority="P1",
+        risk_level="medium",
+        owner_name="Alex",
+        background="销售支持项目。",
+        facts_json=json.dumps(
+            [
+                {
+                    "description": "需要补齐来源链接",
+                    "source": "reply_attempt:7",
+                    "created": "2026-06-07",
+                    "updated": "2026-06-07",
+                }
+            ],
+            ensure_ascii=False,
+        ),
+    )
+    store.create_work_todo(
+        project_id=matching_project_id,
+        title="补齐来源链接",
+        owner_name="Alex",
+        status="open",
+        priority="P1",
+    )
+    store.create_work_project(
+        title="招聘专员圆桌",
+        category="recruiting",
+        status="active",
+        priority="P2",
+        risk_level="low",
+        owner_name="Bea",
+        background="候选人流程讨论。",
+    )
+
+    html = render_tasks_page(store, query="来源链接 Alex")
+
+    assert "售前知识库建设" in html
+    assert "补齐来源链接" in html
+    assert "招聘专员圆桌" not in html
+    assert 'value="来源链接 Alex"' in html
 
 
 def test_task_project_detail_renders_project_todos_and_sources(tmp_path: Path):
@@ -704,6 +752,33 @@ def test_tasks_route_renders_page(tmp_path: Path):
     assert response.status_code == 200
     assert "售前知识库建设" in response.text
     assert '<span class="nav-item active" aria-current="page">Tasks</span>' in response.text
+
+
+def test_tasks_route_applies_search_query(tmp_path: Path):
+    db_path = tmp_path / "worker.sqlite3"
+    store = AutoReplyStore(db_path)
+    store.create_work_project(
+        title="售前知识库建设",
+        category="sales",
+        status="active",
+        priority="P1",
+        risk_level="medium",
+        background="销售支持项目。",
+    )
+    store.create_work_project(
+        title="招聘专员圆桌",
+        category="recruiting",
+        status="active",
+        priority="P2",
+        risk_level="low",
+    )
+    client = TestClient(create_audit_app(db_path))
+
+    response = client.get("/tasks?q=销售支持")
+
+    assert response.status_code == 200
+    assert "售前知识库建设" in response.text
+    assert "招聘专员圆桌" not in response.text
 
 
 def test_task_project_detail_route_renders_project(tmp_path: Path):

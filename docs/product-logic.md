@@ -126,9 +126,10 @@ normally become same-day, three-day, or same-week follow-up pressure when the
 source material does not give a clearer deadline.
 
 The `/tasks` audit UI is project-first. The list page shows the active project
-queue and open TODO preview. Each project links to `/tasks/{project_id}`, where
-the detail page shows project background, facts, all TODOs with DDL and owner,
-project updates, and follow-up records.
+queue, open TODO preview, and full-text search over project and TODO context.
+Each project links to `/tasks/{project_id}`, where the detail page shows project
+background, facts, all TODOs with DDL and owner, project updates, and follow-up
+records.
 
 Completion can be inferred automatically from later messages, meetings, or
 documents when the evidence is explicit. If an item is due and still open, the

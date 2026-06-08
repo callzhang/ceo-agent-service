@@ -213,7 +213,7 @@ http://127.0.0.1:8765/
 常用页面：
 
 - `/`：回复历史和待处理任务
-- `/tasks`：work projects、open TODO、next step 和待发送 follow-up 草稿
+- `/tasks`：work projects、open TODO、next step 和全文检索
 - `/tasks/{project_id}`：单个 work project 详情、facts、TODO DDL/owner、更新记录和 follow-up 记录
 - `/attempts/{id}`：单次处理详情
 - `/codex`：本地 Codex session
