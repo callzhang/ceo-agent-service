@@ -165,6 +165,7 @@ PDF_TEXT_PAGE_LIMIT = 30
 DWS_UPGRADE_CHECKED_DATE_STATE_KEY = "dws_upgrade_checked_date"
 MESSAGE_RECOVERY_CHECKED_AT_STATE_KEY = "message_recovery_checked_at"
 MESSAGE_FAST_PATH_CHECKED_AT_STATE_KEY = "message_fast_path_checked_at"
+DWS_AUTH_LOGIN_STATE_KEY = "dws_auth_login"
 DWS_FORBIDDEN_CONVERSATIONS_STATE_KEY = "dws_forbidden_conversations"
 DWS_FORBIDDEN_CONVERSATION_COOLDOWN = timedelta(days=1)
 ORG_CACHE_REFRESH_INTERVAL = timedelta(days=7)
@@ -217,6 +218,7 @@ class DingTalkAutoReplyWorker:
         self.now_provider = now_provider or (lambda: datetime.now().astimezone())
         self.permission_gate = PermissionGate(dws)
         self.oa_approval_runner = oa_approval_runner
+        self._dws_auth_login_process = None
 
     def run_once(self, max_batches: int | None = None) -> None:
         self.produce_once(max_tasks=max_batches)
@@ -239,6 +241,8 @@ class DingTalkAutoReplyWorker:
         except Exception as exc:
             if raise_authorization and self._is_authorization_error(exc):
                 raise
+            if self._is_dws_login_error(exc):
+                self._ensure_dws_auth_login(exc)
             is_forbidden_read = bool(
                 conversation_id and self._is_dws_forbidden_read_error(exc)
             )
@@ -291,6 +295,7 @@ class DingTalkAutoReplyWorker:
         )
         if conversations is None:
             return 0
+        self._mark_dws_auth_healthy()
         if not recovery_due:
             conversations = self._conversations_due_for_fast_path(conversations)
         unread_conversation_ids = {
@@ -784,6 +789,102 @@ class DingTalkAutoReplyWorker:
                 ORG_CACHE_REFRESHED_DATE_STATE_KEY,
                 today.isoformat(),
             )
+
+    @staticmethod
+    def _is_dws_login_error(exc: Exception) -> bool:
+        return isinstance(exc, DwsError) and exc.needs_login
+
+    def _dws_auth_login_state(self) -> dict[str, Any]:
+        raw = self.store.get_service_state(DWS_AUTH_LOGIN_STATE_KEY)
+        if not raw:
+            return {}
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError:
+            return {}
+        return payload if isinstance(payload, dict) else {}
+
+    def _set_dws_auth_login_state(self, state: dict[str, Any]) -> None:
+        self.store.set_service_state(
+            DWS_AUTH_LOGIN_STATE_KEY,
+            json.dumps(state, ensure_ascii=False, sort_keys=True),
+        )
+
+    def _monitor_dws_auth_login(self, state: dict[str, Any]) -> dict[str, Any]:
+        process = self._dws_auth_login_process
+        if process is None:
+            return state
+        exit_code = process.poll()
+        if exit_code is None:
+            if state.get("status") != "running":
+                state = {
+                    **state,
+                    "status": "running",
+                    "updated_at": self._now().astimezone(timezone.utc).isoformat(),
+                }
+                self._set_dws_auth_login_state(state)
+            return state
+        self._dws_auth_login_process = None
+        status = "completed" if exit_code == 0 else "failed"
+        state = {
+            **state,
+            "status": status,
+            "exit_code": exit_code,
+            "updated_at": self._now().astimezone(timezone.utc).isoformat(),
+        }
+        self._set_dws_auth_login_state(state)
+        self._notify(
+            title=f"CEO DWS auth login {status}",
+            message=f"dws auth login exited with code {exit_code}",
+        )
+        return state
+
+    def _ensure_dws_auth_login(self, exc: Exception) -> bool:
+        state = self._monitor_dws_auth_login(self._dws_auth_login_state())
+        if state.get("status") in {"running", "completed", "failed"}:
+            return False
+        try:
+            process = self.dws.start_auth_login()
+        except Exception as start_exc:
+            self.store.record_error(None, None, "dws_auth_login", str(start_exc))
+            self._set_dws_auth_login_state(
+                {
+                    "status": "failed",
+                    "reason": str(exc),
+                    "error": str(start_exc),
+                    "started_at": self._now().astimezone(timezone.utc).isoformat(),
+                }
+            )
+            self._notify(
+                title="CEO DWS auth login failed",
+                message=str(start_exc)[:120],
+            )
+            return False
+        self._dws_auth_login_process = process
+        self._set_dws_auth_login_state(
+            {
+                "status": "running",
+                "pid": process.pid,
+                "reason": str(exc),
+                "started_at": self._now().astimezone(timezone.utc).isoformat(),
+            }
+        )
+        self._notify(
+            title="CEO DWS auth login required",
+            message="Started dws auth login. Please complete DingTalk login.",
+        )
+        return True
+
+    def _mark_dws_auth_healthy(self) -> None:
+        state = self._dws_auth_login_state()
+        if state.get("status") == "authenticated":
+            return
+        self._set_dws_auth_login_state(
+            {
+                "status": "authenticated",
+                "checked_at": self._now().astimezone(timezone.utc).isoformat(),
+            }
+        )
 
     def _skip_messages_outside_recent_window(
         self,

@@ -203,6 +203,27 @@ def test_dws_upgrade_command_shape():
     assert command == ["dws", "upgrade", "-y", "--format", "json"]
 
 
+def test_dws_error_marks_exit_code_2_as_login_required():
+    error = DwsError("dws command failed with exit code 2", code="2")
+
+    assert error.needs_login is True
+
+
+def test_dws_error_does_not_treat_pat_authorization_as_login_required():
+    error = DwsError("PAT requires extra scope", code="PAT_HIGH_RISK_NO_PERMISSION")
+
+    assert error.needs_authorization is True
+    assert error.needs_login is False
+
+
+def test_auth_login_command_shape():
+    client = DwsClient(dws_bin="dws")
+
+    command = client.build_auth_login_command()
+
+    assert command == ["dws", "auth", "login"]
+
+
 def test_read_doc_command_shape():
     client = DwsClient(dws_bin="dws")
 

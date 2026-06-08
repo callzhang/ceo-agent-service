@@ -48,6 +48,10 @@ class DwsError(RuntimeError):
             "PAT_MEDIUM_RISK_NO_PERMISSION",
         }
 
+    @property
+    def needs_login(self) -> bool:
+        return self.code == "2"
+
 
 def native_reply_delivery_payload(
     conversation: DingTalkConversation,
@@ -196,6 +200,9 @@ class DwsClient:
 
     def build_upgrade_command(self) -> list[str]:
         return [self.dws_bin, "upgrade", "-y", "--format", "json"]
+
+    def build_auth_login_command(self) -> list[str]:
+        return [self.dws_bin, "auth", "login"]
 
     def build_list_messages_by_sender_command(
         self,
@@ -978,6 +985,13 @@ class DwsClient:
 
     def upgrade(self) -> str:
         return self.run_text(self.build_upgrade_command())
+
+    def start_auth_login(self) -> subprocess.Popen[str]:
+        return subprocess.Popen(
+            self.build_auth_login_command(),
+            text=True,
+            start_new_session=True,
+        )
 
     def list_messages_by_sender(
         self,

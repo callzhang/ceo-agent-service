@@ -95,6 +95,9 @@ class CachedDwsClient:
     def upgrade(self):
         return self.dws.upgrade()
 
+    def start_auth_login(self):
+        return self.dws.start_auth_login()
+
     def get_current_user_id(self) -> str:
         return self.dws.get_current_user_id()
 
