@@ -141,6 +141,17 @@ def test_codex_runner_does_not_forward_memory_user_id(
     assert "x-memory-user-id" not in " ".join(command)
 
 
+def test_codex_developer_instructions_include_dws_material_reading_guidance():
+    instructions = codex_developer_instructions()
+
+    assert "DingTalk material reading" in instructions
+    assert "dws doc info --node" in instructions
+    assert "dws doc read --node" in instructions
+    assert "dws minutes get info --id" in instructions
+    assert "record why each material command was used" in instructions
+    assert "Do not expose tokens" in instructions
+
+
 def test_codex_command_reads_memory_connector_mcp_url_from_env_file(
     tmp_path: Path, monkeypatch
 ):
