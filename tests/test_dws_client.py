@@ -411,7 +411,7 @@ def test_minutes_transcription_command_shape_with_next_token():
     ]
 
 
-def test_get_resource_download_url_command_uses_mcp_chat_surface():
+def test_get_resource_download_url_command_uses_chat_download_media():
     client = DwsClient(dws_bin="dws")
 
     command = client.build_get_resource_download_url_command(
@@ -419,25 +419,44 @@ def test_get_resource_download_url_command_uses_mcp_chat_surface():
         open_message_id="msg-1",
         resource_id="@img-token-1",
         resource_type="mediaId",
+        output_path="/tmp/message-image",
     )
 
     assert command == [
         "dws",
-        "mcp",
         "chat",
-        "get_resource_download_url",
-        "--json",
-        json.dumps(
-            {
-                "openConversationId": "cid-1",
-                "openMessageId": "msg-1",
-                "resourceId": "@img-token-1",
-                "resourceType": "mediaId",
-            }
-        ),
+        "message",
+        "download-media",
+        "--type",
+        "mediaId",
+        "--resource-id",
+        "@img-token-1",
+        "--message-id",
+        "msg-1",
+        "--open-conversation-id",
+        "cid-1",
+        "--output",
+        "/tmp/message-image",
         "--format",
         "json",
+        "--yes",
     ]
+
+
+def test_json_from_mixed_stdout_reads_trailing_json():
+    payload = DwsClient._json_from_mixed_stdout(
+        "downloadUrl: https://signed.example/image.png\n"
+        "导出完成: /tmp/message-image (10 bytes)\n"
+        '{"response":{"content":{"result":{"downloadUrl":"https://signed.example/image.png"}}}}'
+    )
+
+    assert payload == {
+        "response": {
+            "content": {
+                "result": {"downloadUrl": "https://signed.example/image.png"}
+            }
+        }
+    }
 
 
 def test_download_robot_message_file_command_uses_official_download_api(monkeypatch):

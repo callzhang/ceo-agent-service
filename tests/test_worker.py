@@ -5112,6 +5112,41 @@ def test_media_id_image_is_downloaded_and_passed_to_codex(
     assert image_paths[0].read_bytes() == b"\x89PNG\r\n\x1a\nimage-bytes"
 
 
+def test_media_id_image_uses_dws_local_download_path(tmp_path: Path, monkeypatch):
+    trigger = message(
+        "@Alex Chen(明哥) 看下这个图[图片消息](mediaId=@img-token-1)",
+        message_id="msg-image-1",
+    )
+    dws = FakeDws([conversation()], {"cid-1": [trigger]})
+    dws_local_path = tmp_path / "dws-downloaded-image.png"
+    dws_local_path.write_bytes(b"\x89PNG\r\n\x1a\nlocal-image")
+    dws.resource_download_urls[
+        ("cid-1", "msg-image-1", "@img-token-1", "mediaId")
+    ] = {
+        "localPath": str(dws_local_path),
+        "response": {
+            "content": {
+                "result": {"downloadUrl": "https://signed.example/message-image.png"}
+            }
+        },
+    }
+    codex = FakeCodex(
+        CodexDecision(
+            action=CodexAction.NO_REPLY,
+            reason="image reviewed",
+            audit_summary="只需上下文判断，不需要回复。",
+        )
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+
+    worker.run_once()
+
+    image_paths = codex.calls[0][2]
+    assert len(image_paths) == 1
+    assert image_paths[0].read_bytes() == b"\x89PNG\r\n\x1a\nlocal-image"
+    assert dws_local_path.exists() is False
+
+
 def test_media_id_image_reads_nested_dws_download_url_response(
     tmp_path: Path, monkeypatch
 ):

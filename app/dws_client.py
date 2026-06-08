@@ -863,24 +863,26 @@ class DwsClient:
         open_message_id: str,
         resource_id: str,
         resource_type: str,
+        output_path: str | Path,
     ) -> list[str]:
         return [
             self.dws_bin,
-            "mcp",
             "chat",
-            "get_resource_download_url",
-            "--json",
-            json.dumps(
-                {
-                    "openConversationId": open_conversation_id,
-                    "openMessageId": open_message_id,
-                    "resourceId": resource_id,
-                    "resourceType": resource_type,
-                },
-                ensure_ascii=False,
-            ),
+            "message",
+            "download-media",
+            "--type",
+            resource_type,
+            "--resource-id",
+            resource_id,
+            "--message-id",
+            open_message_id,
+            "--open-conversation-id",
+            open_conversation_id,
+            "--output",
+            str(output_path),
             "--format",
             "json",
+            "--yes",
         ]
 
     def build_download_robot_message_file_command(self, download_code: str) -> list[str]:
@@ -1352,17 +1354,60 @@ class DwsClient:
         resource_id: str,
         resource_type: str,
     ) -> dict[str, Any]:
-        payload = self.run_json(
-            self.build_get_resource_download_url_command(
-                open_conversation_id,
-                open_message_id,
-                resource_id,
-                resource_type,
-            )
+        with tempfile.NamedTemporaryFile(
+            prefix="ceo-dingtalk-media-",
+            delete=False,
+        ) as file:
+            output_path = Path(file.name)
+        command = self.build_get_resource_download_url_command(
+            open_conversation_id,
+            open_message_id,
+            resource_id,
+            resource_type,
+            output_path,
         )
+        result = subprocess.run(
+            command,
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=self.timeout_seconds,
+        )
+        if result.returncode != 0:
+            code = (
+                self._error_code(result.stderr)
+                or self._error_code(result.stdout)
+                or self._process_error_code(result.returncode)
+            )
+            raise DwsError(
+                self._format_command_error(command, result, code),
+                code=code,
+            )
+        payload = self._json_from_mixed_stdout(result.stdout)
         if not isinstance(payload, dict):
             raise DwsError("invalid resource download response")
+        payload["localPath"] = str(output_path)
         return payload
+
+    @staticmethod
+    def _json_from_mixed_stdout(stdout: str) -> Any:
+        text = stdout.strip()
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            pass
+        decoder = json.JSONDecoder()
+        for index, char in enumerate(text):
+            if char != "{":
+                continue
+            try:
+                payload, end = decoder.raw_decode(text[index:])
+            except json.JSONDecodeError:
+                continue
+            if text[index + end :].strip():
+                continue
+            return payload
+        raise DwsError("dws command returned invalid JSON")
 
     def download_robot_message_file(self, download_code: str) -> dict[str, Any]:
         payload = self.run_json(self.build_download_robot_message_file_command(download_code))

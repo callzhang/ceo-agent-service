@@ -3459,6 +3459,13 @@ class DingTalkAutoReplyWorker:
                 payload["media_id"],
                 "mediaId",
             )
+            local_path = self._local_path_from_payload(download_payload)
+            if local_path:
+                try:
+                    data = local_path.read_bytes()
+                finally:
+                    local_path.unlink(missing_ok=True)
+                return self._write_message_image(message, str(local_path), data)
             url = self._download_url_from_payload(download_payload)
         elif kind == "download_code":
             download_payload = self.dws.download_robot_message_file(
@@ -3507,6 +3514,20 @@ class DingTalkAutoReplyWorker:
                 if url:
                     return url
         return ""
+
+    @staticmethod
+    def _local_path_from_payload(payload: object) -> Path | None:
+        if not isinstance(payload, dict):
+            return None
+        value = payload.get("localPath")
+        if not isinstance(value, str) or not value.strip():
+            return None
+        path = Path(value)
+        if not path.exists() or not path.is_file():
+            return None
+        if path.stat().st_size > DOWNLOADED_IMAGE_MAX_BYTES:
+            raise DwsError("dingtalk_image_too_large")
+        return path
 
     def _download_image_bytes(self, url: str) -> bytes:
         data = self._download_resource_bytes(url, {})
