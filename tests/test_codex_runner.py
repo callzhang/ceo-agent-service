@@ -52,7 +52,7 @@ def test_codex_command_exposes_memory_connector_mcp(tmp_path: Path, monkeypatch)
 
     command = runner.build_command(prompt="hello", session_id=None)
 
-    assert "--ignore-user-config" not in command
+    assert "--ignore-user-config" in command
     assert "--disable" not in command
     assert (
         'mcp_servers.memory_connector.url="https://memory.example/mcp/"'
@@ -93,6 +93,37 @@ def test_codex_runner_env_loads_memory_connector_env_file(
     assert env["MEMORY_CONNECTOR_URL"] == "https://memory.example/mcp/"
     assert "MEMORY_CONNECTOR_USER_ID" not in env
     assert "UNRELATED_SECRET" not in env
+
+
+def test_codex_runner_env_loads_memory_connector_from_codex_config(
+    tmp_path: Path, monkeypatch
+):
+    codex_home = tmp_path / ".codex"
+    codex_home.mkdir()
+    (codex_home / "config.toml").write_text(
+        "\n".join(
+            [
+                "[mcp_servers.memory_connector]",
+                'url = "https://memory.example/mcp/"',
+                "",
+                "[mcp_servers.memory_connector.http_headers]",
+                'Authorization = "Bearer secret-token"',
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+    monkeypatch.delenv("CONNECTOR_API_KEY", raising=False)
+    monkeypatch.delenv("MEMORY_CONNECTOR_URL", raising=False)
+    runner = CodexRunner(workspace=tmp_path, codex_bin="codex")
+
+    env = runner.build_env()
+    command = runner.build_command(prompt="hello", session_id=None)
+
+    assert env["CONNECTOR_API_KEY"] == "secret-token"
+    assert env["MEMORY_CONNECTOR_URL"] == "https://memory.example/mcp/"
+    assert "--ignore-user-config" in command
+    assert "secret-token" not in command
 
 
 def test_codex_runner_does_not_forward_memory_user_id(
@@ -163,6 +194,7 @@ def test_builds_new_thread_command(tmp_path: Path):
         "--json",
         "-m",
         "gpt-5.5",
+        "--ignore-user-config",
         "--ignore-rules",
         "-c",
         'approval_policy="untrusted"',
@@ -203,6 +235,7 @@ def test_builds_resume_command(tmp_path: Path):
         "--json",
         "-m",
         "gpt-5.5",
+        "--ignore-user-config",
         "--ignore-rules",
         "-c",
         'approval_policy="untrusted"',

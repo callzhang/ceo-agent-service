@@ -1,6 +1,7 @@
 import json
 import os
 import shlex
+import tomllib
 from pathlib import Path
 
 from app.prompt import ceo_agent_thread_prompt
@@ -62,8 +63,34 @@ def _memory_connector_env() -> dict[str, str]:
     whitelisted_file_env = {
         key: value for key, value in file_env.items() if key in MEMORY_CONNECTOR_ENV_KEYS
     }
-    env = {**whitelisted_file_env, **os.environ}
+    config_env = _memory_connector_env_from_config(_codex_home() / "config.toml")
+    env = {**config_env, **whitelisted_file_env, **os.environ}
     env.pop("MEMORY_CONNECTOR_USER_ID", None)
+    return env
+
+
+def _memory_connector_env_from_config(config_path: Path) -> dict[str, str]:
+    if not config_path.exists():
+        return {}
+    try:
+        payload = tomllib.loads(config_path.read_text(encoding="utf-8"))
+    except tomllib.TOMLDecodeError:
+        return {}
+    memory_config = (payload.get("mcp_servers") or {}).get("memory_connector") or {}
+    if not isinstance(memory_config, dict):
+        return {}
+    env: dict[str, str] = {}
+    url = memory_config.get("url")
+    if isinstance(url, str) and url.strip():
+        env[MEMORY_CONNECTOR_URL_ENV] = url.strip()
+    headers = memory_config.get("http_headers")
+    authorization = headers.get("Authorization") if isinstance(headers, dict) else None
+    if isinstance(authorization, str) and authorization.strip():
+        token = authorization.strip()
+        if token.lower().startswith("bearer "):
+            token = token[7:].strip()
+        if token:
+            env[MEMORY_CONNECTOR_API_KEY_ENV] = token
     return env
 
 
@@ -107,7 +134,7 @@ class CodexRunner:
             "--json",
             "-m",
             "gpt-5.5",
-            *(["--ignore-user-config"] if ignore_user_config else []),
+            "--ignore-user-config",
             "--ignore-rules",
             *memory_connector_config_options(),
             "-c",
