@@ -10,7 +10,7 @@ from pathlib import Path
 import subprocess
 import urllib.error
 import urllib.request
-from urllib.parse import parse_qs, quote, urlparse
+from urllib.parse import parse_qs, quote, urlencode, urlparse
 
 import uvicorn
 from fastapi import FastAPI, Request
@@ -101,6 +101,7 @@ CSS = """
 :root{--ink:#0a0a0a;--charcoal:#1c1c1e;--slate:#3a3a3c;--steel:#5a5a5c;--stone:#888888;--muted:#a8a8aa;--canvas:#ffffff;--surface:#f7f7f7;--surface-soft:#fafafa;--surface-code:#1c1c1e;--hairline:#e5e5e5;--hairline-soft:#ededed;--mint:#00d4a4;--mint-deep:#00b48a;--tag:#3772cf;--error:#d45656}
 *{box-sizing:border-box}
 body{font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;margin:0;background:var(--canvas);color:var(--ink);font-size:14px;line-height:1.5}
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 header{position:sticky;top:0;z-index:10;background:rgba(255,255,255,.94);border-bottom:1px solid var(--hairline);backdrop-filter:saturate(180%) blur(12px)}
 .shell{width:100%;margin:0 auto;padding:0 24px}
 .topbar{display:flex;align-items:center;justify-content:space-between;gap:24px;min-height:72px}
@@ -146,6 +147,20 @@ th{background:var(--surface-soft);color:var(--steel);font-size:12px;font-weight:
 .notification-log{max-height:260px}
 .card-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px;flex-wrap:wrap}
 .card-head h2{margin:0}
+.tasks-page{margin:16px 0}
+.tasks-toolbar{display:flex;align-items:center;justify-content:space-between;gap:18px;margin:0 0 12px;flex-wrap:wrap}
+.tasks-toolbar-left,.tasks-toolbar-right{display:flex;align-items:center;gap:10px;min-width:0;flex-wrap:wrap}
+.tasks-count{color:var(--ink);font-family:"Geist Mono","SF Mono",Menlo,Consolas,monospace;font-size:14px;font-weight:800;line-height:1.3;white-space:nowrap}
+.tasks-search{position:relative;display:flex;align-items:center;width:min(360px,calc(100vw - 48px))}
+.tasks-search input[type="text"]{height:34px;padding:7px 34px 7px 12px;border-radius:999px;font-size:13px;line-height:1.3}
+.tasks-search-clear{position:absolute;right:8px;display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:999px;color:var(--steel);font-size:16px;font-weight:700;line-height:1}
+.tasks-search-clear:hover{background:var(--surface-soft);color:var(--ink);text-decoration:none}
+.tasks-pages{display:flex;align-items:center;gap:4px;flex-wrap:nowrap}
+.tasks-page-link{display:inline-flex;align-items:center;justify-content:center;height:28px;min-width:28px;padding:0 8px;border:1px solid transparent;border-radius:999px;color:var(--steel);font-size:12px;font-weight:700;line-height:1;white-space:nowrap}
+.tasks-page-link:hover{border-color:var(--hairline);background:var(--surface-soft);color:var(--ink);text-decoration:none}
+.tasks-page-link.active{border-color:rgba(0,180,138,.28);background:#ddfff6;color:#005b49}
+.tasks-page-link.disabled{color:var(--muted);background:transparent;cursor:default}
+.tasks-page-size{height:30px;border:1px solid var(--hairline);border-radius:999px;background:var(--canvas);color:var(--ink);padding:0 10px;font-size:12px;font-weight:700}
 .compact-button{display:inline-flex;align-items:center;height:30px;padding:0 12px;border:1px solid var(--hairline);border-radius:999px;background:var(--canvas);color:var(--ink);font-size:13px;font-weight:500;line-height:1;white-space:nowrap}
 .compact-button:hover{border-color:var(--ink);background:var(--surface-soft)}
 .agent-log-button{display:inline-flex;align-items:center;height:34px;padding:0 14px;border:1px solid rgba(55,114,207,.38);border-radius:999px;background:#3772cf;color:#fff;font-size:13px;font-weight:700;line-height:1;white-space:nowrap;box-shadow:0 6px 18px rgba(55,114,207,.18)}
@@ -322,6 +337,8 @@ _BROWSER_NOTIFICATION_HISTORY: deque[dict[str, str]] = deque(maxlen=20)
 _BROWSER_NOTIFICATION_SEQUENCE = count(1)
 _DINGTALK_BRIDGE_STATUS: deque[dict[str, str]] = deque(maxlen=20)
 DEFAULT_ATTEMPT_LIST_LIMIT = 50
+TASK_PAGE_SIZE_OPTIONS = (20, 50, 100)
+DEFAULT_TASK_PAGE_SIZE = 20
 DEFAULT_ERROR_LIST_LIMIT = 50
 HISTORY_CHART_HOURS = 24
 HISTORY_CHART_COLORS = {
@@ -1779,17 +1796,31 @@ def render_attempt_list(
     )
 
 
-def render_tasks_page(store: AutoReplyStore, query: str = "") -> str:
+def render_tasks_page(
+    store: AutoReplyStore,
+    query: str = "",
+    page: int = 1,
+    page_size: int = DEFAULT_TASK_PAGE_SIZE,
+) -> str:
     projects = store.list_work_projects(limit=500)
     search_terms = _task_search_terms(query)
-    rows = []
+    matched_items = []
     for project in projects:
-        todos = store.list_work_todos(
-            project_id=project.id,
-            statuses=("open", "waiting_owner"),
-        )
-        if search_terms and not _task_project_matches_search(project, todos, search_terms):
+        all_todos = store.list_work_todos(project_id=project.id)
+        open_todos = [
+            todo for todo in all_todos if str(todo.status) in {"open", "waiting_owner"}
+        ]
+        if search_terms and not _task_project_matches_search(project, all_todos, search_terms):
             continue
+        matched_items.append((project, open_todos))
+
+    page_size = _bounded_task_page_size(page_size)
+    total_count = len(matched_items)
+    page = _bounded_page(page, page_size, total_count)
+    page_items = matched_items[_page_offset(page, page_size):_page_offset(page, page_size) + page_size]
+
+    rows = []
+    for project, todos in page_items:
         todo_text = ", ".join(todo.title for todo in todos)
         rows.append(
             "<tr>"
@@ -1813,22 +1844,18 @@ def render_tasks_page(store: AutoReplyStore, query: str = "") -> str:
         + "</tbody></table>"
     )
     empty_message = "No matching tasks." if search_terms else "No work projects recorded."
-    search_form = (
-        "<form class=\"notification-panel\" method=\"get\" action=\"/tasks\">"
-        f"<input type=\"text\" name=\"q\" value=\"{escape(query.strip())}\" "
-        "placeholder=\"Search tasks\">"
-        "<button class=\"compact-button\" type=\"submit\">Search</button>"
-        + ("<a class=\"compact-button\" href=\"/tasks\">Clear</a>" if search_terms else "")
-        + "</form>"
+    toolbar = _task_toolbar(
+        total_count=total_count,
+        query=query,
+        page=page,
+        page_size=page_size,
     )
     body = (
-        "<section class=\"card\"><div class=\"card-head\">"
-        "<h2>Tasks</h2>"
-        f"<span class=\"pill\">{len(rows)} shown</span>"
-        "</div>"
-        f"{search_form}"
+        "<section class=\"tasks-page\">"
+        f"{toolbar}"
         f"{table if rows else f'<p class=\"muted\">{empty_message}</p>'}"
         "</section>"
+        f"{_task_search_script()}"
     )
     return render_page(
         "Tasks",
@@ -1837,6 +1864,167 @@ def render_tasks_page(store: AutoReplyStore, query: str = "") -> str:
         user_feedback_pending_count=store.count_pending_user_feedback_items(),
     )
 
+
+def _bounded_task_page_size(page_size: int) -> int:
+    return page_size if page_size in TASK_PAGE_SIZE_OPTIONS else DEFAULT_TASK_PAGE_SIZE
+
+
+def _task_toolbar(
+    *,
+    total_count: int,
+    query: str,
+    page: int,
+    page_size: int,
+) -> str:
+    query = query.strip()
+    clear_href = _task_page_href(page=1, page_size=page_size)
+    clear_button = (
+        f"<a class=\"tasks-search-clear\" href=\"{escape(clear_href)}\" "
+        "aria-label=\"Clear search\" title=\"Clear search\">×</a>"
+        if query
+        else ""
+    )
+    return (
+        "<div class=\"tasks-toolbar\">"
+        "<div class=\"tasks-toolbar-left\">"
+        f"<span class=\"tasks-count\">{total_count} tasks</span>"
+        "<label class=\"tasks-search\">"
+        "<span class=\"sr-only\">Search tasks</span>"
+        f"<input id=\"task-search-input\" type=\"text\" name=\"q\" value=\"{escape(query)}\" "
+        f"placeholder=\"搜索\" data-page-size=\"{page_size}\" autocomplete=\"off\">"
+        f"{clear_button}"
+        "</label>"
+        "</div>"
+        "<div class=\"tasks-toolbar-right\">"
+        f"{_task_page_links(total_count=total_count, page=page, page_size=page_size, query=query)}"
+        f"{_task_page_size_select(page_size=page_size, query=query)}"
+        "</div>"
+        "</div>"
+    )
+
+
+def _task_page_links(
+    *,
+    total_count: int,
+    page: int,
+    page_size: int,
+    query: str,
+) -> str:
+    page_count = _page_count(total_count, page_size)
+    if page_count <= 1:
+        return "<nav class=\"tasks-pages\" aria-label=\"Task pages\"></nav>"
+    page = _bounded_page(page, page_size, total_count)
+    items = []
+    prev_href = None if page <= 1 else _task_page_href(
+        page=page - 1,
+        page_size=page_size,
+        query=query,
+    )
+    next_href = None if page >= page_count else _task_page_href(
+        page=page + 1,
+        page_size=page_size,
+        query=query,
+    )
+    items.append(_task_page_link("<", prev_href, "Previous page"))
+    for item in _task_visible_page_items(page, page_count):
+        if item is None:
+            items.append("<span class=\"tasks-page-link disabled\">...</span>")
+            continue
+        href = _task_page_href(page=item, page_size=page_size, query=query)
+        items.append(_task_page_link(str(item), href, f"Page {item}", active=item == page))
+    items.append(_task_page_link(">", next_href, "Next page"))
+    return f"<nav class=\"tasks-pages\" aria-label=\"Task pages\">{''.join(items)}</nav>"
+
+
+def _task_visible_page_items(page: int, page_count: int) -> list[int | None]:
+    if page_count <= 7:
+        return list(range(1, page_count + 1))
+    pages = {1, page_count, page - 1, page, page + 1}
+    pages = {item for item in pages if 1 <= item <= page_count}
+    result: list[int | None] = []
+    previous = 0
+    for item in sorted(pages):
+        if previous and item - previous > 1:
+            result.append(None)
+        result.append(item)
+        previous = item
+    return result
+
+
+def _task_page_link(
+    label: str,
+    href: str | None,
+    aria_label: str,
+    *,
+    active: bool = False,
+) -> str:
+    classes = "tasks-page-link"
+    if active:
+        classes += " active"
+        return f"<span class=\"{classes}\" aria-label=\"{escape(aria_label)}\">{escape(label)}</span>"
+    if href is None:
+        classes += " disabled"
+        return f"<span class=\"{classes}\" aria-label=\"{escape(aria_label)}\">{escape(label)}</span>"
+    return (
+        f"<a class=\"{classes}\" href=\"{escape(href)}\" "
+        f"aria-label=\"{escape(aria_label)}\">{escape(label)}</a>"
+    )
+
+
+def _task_page_size_select(*, page_size: int, query: str) -> str:
+    options = "".join(
+        f"<option value=\"{size}\"{' selected' if size == page_size else ''}>{size}/page</option>"
+        for size in TASK_PAGE_SIZE_OPTIONS
+    )
+    return (
+        "<select id=\"task-page-size\" class=\"tasks-page-size\" "
+        f"data-query=\"{escape(query)}\" aria-label=\"Tasks per page\">"
+        f"{options}</select>"
+    )
+
+
+def _task_page_href(*, page: int, page_size: int, query: str = "") -> str:
+    params: dict[str, str] = {}
+    if query.strip():
+        params["q"] = query.strip()
+    if page > 1:
+        params["page"] = str(page)
+    if page_size != DEFAULT_TASK_PAGE_SIZE:
+        params["page_size"] = str(page_size)
+    return "/tasks" if not params else f"/tasks?{urlencode(params)}"
+
+
+def _task_search_script() -> str:
+    return """
+<script>
+(() => {
+  const input = document.getElementById("task-search-input");
+  const pageSize = document.getElementById("task-page-size");
+  const navigate = (query, size) => {
+    const params = new URLSearchParams();
+    const trimmed = query.trim();
+    if (trimmed) {
+      params.set("q", trimmed);
+    }
+    if (size && size !== "__DEFAULT_TASK_PAGE_SIZE__") {
+      params.set("page_size", size);
+    }
+    const suffix = params.toString();
+    window.location.assign(suffix ? `/tasks?${suffix}` : "/tasks");
+  };
+  if (input) {
+    let timer = null;
+    input.addEventListener("input", () => {
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => navigate(input.value, input.dataset.pageSize || "__DEFAULT_TASK_PAGE_SIZE__"), 250);
+    });
+  }
+  if (pageSize) {
+    pageSize.addEventListener("change", () => navigate(pageSize.dataset.query || "", pageSize.value));
+  }
+})();
+</script>
+""".replace("__DEFAULT_TASK_PAGE_SIZE__", str(DEFAULT_TASK_PAGE_SIZE))
 
 def _task_search_terms(query: str) -> list[str]:
     return [term.casefold() for term in query.strip().split() if term.strip()]
@@ -2838,6 +3026,8 @@ def create_audit_app(
         return render_tasks_page(
             AutoReplyStore(db_path),
             query=str(request.query_params.get("q") or ""),
+            page=_positive_int_query(request, "page", default=1),
+            page_size=_positive_int_query(request, "page_size", default=DEFAULT_TASK_PAGE_SIZE),
         )
 
     @app.get("/tasks/{project_id}", response_class=HTMLResponse)

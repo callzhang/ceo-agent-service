@@ -619,6 +619,11 @@ def test_tasks_page_renders_projects_and_todos_without_global_followups(tmp_path
     assert "来源链接补齐到哪一步了" not in html
     assert "Pending follow-ups" not in html
     assert f"/tasks/{project_id}" in html
+    assert '<section class="tasks-page">' in html
+    assert '<section class="card">' not in html
+    assert '<span class="tasks-count">1 tasks</span>' in html
+    assert 'id="task-search-input"' in html
+    assert "Search</button>" not in html
 
 
 def test_tasks_page_filters_projects_by_full_text_query(tmp_path: Path):
@@ -666,6 +671,55 @@ def test_tasks_page_filters_projects_by_full_text_query(tmp_path: Path):
     assert "补齐来源链接" in html
     assert "招聘专员圆桌" not in html
     assert 'value="来源链接 Alex"' in html
+    assert '<span class="tasks-count">1 tasks</span>' in html
+    assert 'href="/tasks"' in html
+
+
+def test_tasks_page_paginates_and_preserves_search_params(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    for index in range(25):
+        project_id = store.create_work_project(
+            title=f"候选人项目 {index + 1:02d}",
+            category="recruiting",
+            status="active",
+            priority="P1",
+            risk_level="medium",
+            background="候选人流程。",
+        )
+        store.create_work_todo(
+            project_id=project_id,
+            title=f"补齐候选人材料 {index + 1:02d}",
+            status="open",
+            priority="P1",
+        )
+
+    html = render_tasks_page(store, query="候选人", page=2, page_size=20)
+
+    assert '<span class="tasks-count">25 tasks</span>' in html
+    assert 'href="/tasks?q=%E5%80%99%E9%80%89%E4%BA%BA" aria-label="Page 1"' in html
+    assert '<span class="tasks-page-link active" aria-label="Page 2">2</span>' in html
+    assert '<option value="20" selected>20/page</option>' in html
+    assert "候选人项目 05" in html
+    assert "候选人项目 25" not in html
+
+
+def test_tasks_page_respects_page_size(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    for index in range(25):
+        store.create_work_project(
+            title=f"项目 {index + 1:02d}",
+            category="projects",
+            status="active",
+            priority="P2",
+            risk_level="low",
+        )
+
+    html = render_tasks_page(store, page_size=50)
+
+    assert '<span class="tasks-count">25 tasks</span>' in html
+    assert '<option value="50" selected>50/page</option>' in html
+    assert "项目 01" in html
+    assert "项目 25" in html
 
 
 def test_task_project_detail_renders_project_todos_and_sources(tmp_path: Path):
@@ -779,6 +833,28 @@ def test_tasks_route_applies_search_query(tmp_path: Path):
     assert response.status_code == 200
     assert "售前知识库建设" in response.text
     assert "招聘专员圆桌" not in response.text
+
+
+def test_tasks_route_applies_pagination_params(tmp_path: Path):
+    db_path = tmp_path / "worker.sqlite3"
+    store = AutoReplyStore(db_path)
+    for index in range(25):
+        store.create_work_project(
+            title=f"候选人项目 {index + 1:02d}",
+            category="recruiting",
+            status="active",
+            priority="P1",
+            risk_level="medium",
+            background="候选人流程。",
+        )
+    client = TestClient(create_audit_app(db_path))
+
+    response = client.get("/tasks?q=候选人&page=2&page_size=20")
+
+    assert response.status_code == 200
+    assert "候选人项目 05" in response.text
+    assert "候选人项目 25" not in response.text
+    assert '<option value="20" selected>20/page</option>' in response.text
 
 
 def test_task_project_detail_route_renders_project(tmp_path: Path):
