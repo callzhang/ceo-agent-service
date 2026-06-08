@@ -58,7 +58,7 @@ from app.org_cache import (
     refresh_org_cache,
 )
 from app.permission import PermissionAction, PermissionGate
-from app.prompt import LinkedDocumentContext, build_turn_prompt
+from app.prompt import LinkedDocumentContext, MaterialReferenceContext, build_turn_prompt
 from app.store import (
     FAST_PATH_UNREAD_BACKOFF_TASK_ERROR,
     AutoReplyStore,
@@ -3031,24 +3031,18 @@ class DingTalkAutoReplyWorker:
         ):
             return
         material_messages = comment_target_messages or new_messages
-        try:
-            linked_documents = self._read_linked_documents(
+        material_references = self._material_references(
+            material_messages, context_messages
+        )
+        image_paths, image_download_errors = self._collect_image_paths(
+            material_messages,
+            context_messages,
+        )
+        linked_documents: list[LinkedDocumentContext] = []
+        if calendar_response_event is not None:
+            linked_documents = self._read_calendar_linked_documents(
                 material_messages, context_messages
             )
-            image_paths, image_download_errors = self._collect_image_paths(
-                material_messages,
-                context_messages,
-            )
-        except Exception as exc:
-            handled = self._record_linked_document_error(
-                conversation,
-                trigger,
-                exc,
-                raise_on_delivery_failure=raise_on_delivery_failure,
-            )
-            if raise_on_delivery_failure and not handled:
-                raise ReplyTaskProcessingError(str(exc)) from exc
-            return
         session_id = None
         if not ignore_existing_attempt:
             session_id = self.store.get_codex_session_id(
@@ -3065,6 +3059,7 @@ class DingTalkAutoReplyWorker:
             prompt_context_messages,
             include_thread_prompt=session_id is None,
             linked_documents=linked_documents,
+            material_references=material_references,
             image_download_errors=image_download_errors,
         )
         before_session_id = getattr(self.codex, "last_session_id", None)
@@ -3094,6 +3089,7 @@ class DingTalkAutoReplyWorker:
                 context_messages,
                 include_thread_prompt=True,
                 linked_documents=linked_documents,
+                material_references=material_references,
                 image_download_errors=image_download_errors,
             )
             before_session_id = getattr(self.codex, "last_session_id", None)
@@ -3419,6 +3415,163 @@ class DingTalkAutoReplyWorker:
             if document is not None:
                 documents.append(document)
         return documents
+
+    def _read_calendar_linked_documents(
+        self,
+        new_messages: list[DingTalkMessage],
+        context_messages: list[DingTalkMessage],
+    ) -> list[LinkedDocumentContext]:
+        documents: list[LinkedDocumentContext] = []
+        referenced_messages = self._referenced_document_messages(
+            new_messages, context_messages
+        )
+        for task_uuid in self._dingtalk_minutes_ids(referenced_messages):
+            try:
+                documents.append(self._read_linked_minutes(task_uuid))
+            except Exception as exc:
+                documents.append(self._linked_document_read_failure_context(task_uuid, exc))
+        for url in self._dingtalk_doc_urls(referenced_messages):
+            try:
+                documents.append(self._read_linked_alidocs_node(url))
+            except Exception as exc:
+                documents.append(self._linked_document_read_failure_context(url, exc))
+        for file_name in self._referenced_file_names(new_messages, context_messages):
+            try:
+                document = self._read_referenced_file(file_name)
+            except Exception as exc:
+                documents.append(self._linked_document_read_failure_context(file_name, exc))
+                continue
+            if document is not None:
+                documents.append(document)
+        return documents
+
+    @staticmethod
+    def _linked_document_read_failure_context(
+        reference: str, error: Exception
+    ) -> LinkedDocumentContext:
+        return LinkedDocumentContext(
+            url=reference,
+            title="钉钉材料读取失败",
+            markdown=(
+                "材料读取失败: 当前账号未能读取这份钉钉材料。\n"
+                "处理要求: agent 不能臆测材料内容；如果判断依赖材料正文，"
+                "应说明权限或读取问题，并要求补充正文或开放权限。\n"
+                f"错误: {str(error)}"
+            ),
+        )
+
+    def _material_references(
+        self,
+        new_messages: list[DingTalkMessage],
+        context_messages: list[DingTalkMessage],
+    ) -> list[MaterialReferenceContext]:
+        references: list[MaterialReferenceContext] = []
+        seen: set[tuple[str, str]] = set()
+
+        def add(kind: str, reference: str, message: DingTalkMessage) -> None:
+            if not reference:
+                return
+            key = (kind, reference)
+            if key in seen:
+                return
+            seen.add(key)
+            references.append(
+                MaterialReferenceContext(
+                    kind=kind,
+                    reference=reference,
+                    source_message_id=message.open_message_id,
+                    source_sender=message.sender_name,
+                    source_time=message.create_time,
+                )
+            )
+
+        for message in self._referenced_document_messages(
+            new_messages, context_messages
+        ):
+            for text in (message.content, message.quoted_content or ""):
+                for match in DINGTALK_DOC_URL_PATTERN.finditer(text):
+                    add(
+                        "dingtalk_doc",
+                        self._canonical_doc_url(match.group(0)),
+                        message,
+                    )
+                for match in DINGTALK_SHANJI_DOC_SELECTOR_PATTERN.finditer(text):
+                    add(
+                        "dingtalk_minutes",
+                        self._minutes_task_uuid_from_selector_url(match.group(0)),
+                        message,
+                    )
+                for match in DINGTALK_MINUTES_LINK_PATTERN.finditer(text):
+                    add(
+                        "dingtalk_minutes",
+                        self._minutes_task_uuid_from_url(match.group(0)),
+                        message,
+                    )
+
+        file_names = self._referenced_file_names(new_messages, context_messages)
+        if file_names:
+            file_source_by_name = self._referenced_file_source_messages(
+                new_messages, context_messages
+            )
+            fallback_source = new_messages[-1] if new_messages else None
+            for file_name in file_names:
+                source = file_source_by_name.get(file_name) or fallback_source
+                if source is not None:
+                    add("dingtalk_file", file_name, source)
+        return references
+
+    @classmethod
+    def _referenced_file_source_messages(
+        cls,
+        new_messages: list[DingTalkMessage],
+        context_messages: list[DingTalkMessage],
+    ) -> dict[str, DingTalkMessage]:
+        sources: dict[str, DingTalkMessage] = {}
+
+        def add_from_text(text: str | None, source: DingTalkMessage) -> None:
+            if not text:
+                return
+            match = FILE_MESSAGE_PATTERN.match(text.strip())
+            if not match:
+                return
+            file_name = match.group("name").strip()
+            if file_name and file_name not in sources:
+                sources[file_name] = source
+
+        context_by_message_id = {
+            message.open_message_id: message for message in context_messages
+        }
+        trigger = new_messages[-1] if new_messages else None
+        for message in new_messages:
+            add_from_text(message.content, message)
+            if (
+                message.quoted_message_id
+                and message.quoted_message_id in context_by_message_id
+            ):
+                add_from_text(
+                    context_by_message_id[message.quoted_message_id].content,
+                    context_by_message_id[message.quoted_message_id],
+                )
+            else:
+                add_from_text(message.quoted_content, message)
+
+        if trigger is None:
+            return sources
+
+        trigger_time = datetime.strptime(trigger.create_time, DINGTALK_TIME_FORMAT)
+        window_start = trigger_time - REFERENCED_FILE_CONTEXT_WINDOW
+        for message in context_messages:
+            if message.sender_name != trigger.sender_name:
+                continue
+            try:
+                message_time = datetime.strptime(
+                    message.create_time, DINGTALK_TIME_FORMAT
+                )
+            except ValueError:
+                continue
+            if window_start <= message_time <= trigger_time:
+                add_from_text(message.content, message)
+        return sources
 
     def _collect_image_paths(
         self,
@@ -5142,8 +5295,8 @@ class DingTalkAutoReplyWorker:
     @staticmethod
     def _single_chat_document_retry_prompt() -> str:
         return (
-            "上一次输出了 no_reply，但当前是私聊，且服务已经读取并注入了钉钉在线文档或普通文件正文、摘要或可处理内容。"
-            "请重新阅读已获取的钉钉材料并给出处理结果。"
+            "上一次输出了 no_reply，但当前是私聊，且消息里有钉钉在线文档、AI 听记或普通文件材料引用。"
+            "请判断是否需要读取材料；如果需要，先读取材料再给出处理结果。"
             "如果材料足够，action 用 send_reply，reply_text 给出结论、修改意见、风险、下一步或需要补充的具体问题；"
             "如果材料不足，action 用 ask_clarifying_question 或 stop_with_error。"
             "不要因为对方只发送文档、没有额外写“请处理/请 review”就 no_reply。"
@@ -5174,6 +5327,7 @@ class DingTalkAutoReplyWorker:
         *,
         include_thread_prompt: bool = True,
         linked_documents: list[LinkedDocumentContext] | None = None,
+        material_references: list[MaterialReferenceContext] | None = None,
         image_download_errors: list[str] | None = None,
     ) -> str:
         return build_turn_prompt(
@@ -5187,6 +5341,7 @@ class DingTalkAutoReplyWorker:
             ),
             include_thread_prompt=include_thread_prompt,
             linked_documents=linked_documents,
+            material_references=material_references,
             image_download_errors=image_download_errors,
             known_people_lines=self._known_people_prompt_lines(
                 new_messages,

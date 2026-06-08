@@ -3667,6 +3667,54 @@ def test_calendar_static_review_reads_minutes_accepts_and_comments_material(
     assert attempt.calendar_response_result_json == '{"success": true}'
 
 
+def test_calendar_material_read_failure_is_passed_to_codex(
+    tmp_path: Path, monkeypatch
+):
+    doc_url = "https://alidocs.dingtalk.com/i/nodes/no-access"
+    trigger = message("[日程]", single_chat=True, message_type="calendar")
+    invite = DwsCalendarEvent(
+        event_id="invite-1",
+        title="【静默会】材料审阅",
+        start_time="2026-05-14T10:00:00+08:00",
+        end_time="2026-05-14T11:00:00+08:00",
+        description=f"请阅读材料后给处理结论：{doc_url}",
+        organizer=trigger.sender_name,
+    )
+    dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
+    dws.calendar_invites["msg-1"] = invite
+    dws.doc_infos[doc_url] = DwsError(
+        "forbidden.accessDenied: 你没有权限进行此操作",
+        code="forbidden.accessDenied",
+    )
+    codex = FakeCodex(
+        CodexDecision(
+            action=CodexAction.ASK_CLARIFYING_QUESTION,
+            reply_text="我现在没有权限读取这份材料，麻烦补充正文或开权限。",
+            reason="calendar_material_unreadable",
+            calendar_response_status="accepted",
+            audit_summary="静默会材料读取失败，已说明不能判断正文。",
+        )
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+
+    worker.run_once()
+
+    assert dws.doc_info_calls == [doc_url]
+    assert dws.read_doc_calls == []
+    assert len(codex.calls) == 1
+    prompt = codex.calls[0][0]
+    assert "不能只接受日历" in prompt
+    assert "已获取的钉钉材料:" in prompt
+    assert "材料读取失败" in prompt
+    assert "不能臆测材料内容" in prompt
+    assert "forbidden.accessDenied" in prompt
+    attempt = worker.store.get_reply_attempt(1)
+    assert attempt is not None
+    assert attempt.action == "ask_clarifying_question"
+    assert attempt.send_status == "sent"
+    assert attempt.codex_reason == "calendar_material_unreadable"
+
+
 def test_calendar_invite_with_clear_value_auto_accepts_without_chat_reply(
     tmp_path: Path, monkeypatch
 ):
@@ -3923,7 +3971,9 @@ def test_structured_link_card_is_skipped_before_codex(tmp_path: Path, monkeypatc
     assert worker.store.get_reply_attempt(1).action == "no_reply"
 
 
-def test_single_chat_alidocs_card_reaches_codex(tmp_path: Path, monkeypatch):
+def test_single_chat_alidocs_card_reaches_codex_as_material_reference(
+    tmp_path: Path, monkeypatch
+):
     doc_url = "https://alidocs.dingtalk.com/i/nodes/weekly123?utm_source=im"
     canonical_doc_url = "https://alidocs.dingtalk.com/i/nodes/weekly123"
     trigger = message(
@@ -3939,52 +3989,36 @@ def test_single_chat_alidocs_card_reaches_codex(tmp_path: Path, monkeypatch):
         single_chat=True,
     )
     dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
-    dws.doc_infos[canonical_doc_url] = {
-        "contentType": "ALIDOC",
-        "extension": "adoc",
-        "name": "总裁办每周讨论",
-    }
-    dws.docs[canonical_doc_url] = {
-        "title": "总裁办每周讨论",
-        "markdown": "本周重点：处理项目 owner 和延期问题。",
-    }
-    codex = SequencedFakeCodex(
-        [
-            CodexDecision(
-                action=CodexAction.NO_REPLY,
-                audit_summary="私聊文档卡片已进入 agent 判断。",
-            ),
-            CodexDecision(
-                action=CodexAction.SEND_REPLY,
-                reply_text="这份周会材料需要先明确项目 owner 和延期处理方案。",
-                audit_summary="已读取私聊文档正文并给出处理意见。",
-                audit_documents=[
-                    {
-                        "title": "总裁办每周讨论",
-                        "relevance": "私聊发送的钉钉文档正文",
-                    }
-                ],
-            ),
-        ]
+    codex = FakeCodex(
+        CodexDecision(
+            action=CodexAction.SEND_REPLY,
+            reply_text="这份周会材料需要先读材料再判断。",
+            audit_summary="私聊文档卡片已进入 agent 判断。",
+        )
     )
     worker = make_worker(tmp_path, dws, codex, monkeypatch)
 
     worker.run_once()
 
-    assert len(codex.calls) == 2
-    assert dws.read_doc_calls == [canonical_doc_url]
-    assert "上一次输出了 no_reply" in codex.calls[1][0]
+    assert len(codex.calls) == 1
+    assert dws.doc_info_calls == []
+    assert dws.read_doc_calls == []
+    prompt = codex.calls[0][0]
+    assert "待读取材料（由 agent 判断是否读取）:" in prompt
+    assert canonical_doc_url in prompt
+    assert "dws doc read --node" in prompt
+    assert "本周重点：处理项目 owner" not in prompt
     attempt = worker.store.get_reply_attempt(1)
     assert attempt.action == "send_reply"
     assert attempt.send_status == "sent"
-    assert "明确项目 owner" in attempt.final_reply_text
+    assert "先读材料再判断" in attempt.final_reply_text
     assert final_sent(dws) == [
         (
             "cid-1",
-            "这份周会材料需要先明确项目 owner 和延期处理方案。（by明哥分身）",
+            "这份周会材料需要先读材料再判断。（by明哥分身）",
         )
     ]
-    assert attempt.audit_summary == "已读取私聊文档正文并给出处理意见。"
+    assert attempt.audit_summary == "私聊文档卡片已进入 agent 判断。"
 
 
 def test_structured_approval_card_is_processed_by_oa_runner(
@@ -4768,18 +4802,48 @@ def test_live_send_regenerates_once_when_delivery_text_leaks(
     assert "参考 [1]" not in attempt.final_reply_text
 
 
-def test_dingtalk_doc_link_is_read_before_codex(tmp_path: Path, monkeypatch):
+def test_dingtalk_material_links_are_passed_to_codex_without_worker_reading(
+    tmp_path: Path, monkeypatch
+):
+    doc_url = "https://alidocs.dingtalk.com/i/nodes/doc123?utm_source=im"
+    canonical_doc_url = "https://alidocs.dingtalk.com/i/nodes/doc123"
+    minutes_id = "7632756964333134343836383736303334325f3435313431363430365f35"
+    trigger = message(
+        "\n".join(
+            [
+                f"文档: {doc_url}",
+                f"听记: dingtalk://dingtalkclient/page/flash_minutes_detail?minutesId={minutes_id}&from=8",
+                "@Alex Chen(明哥) 判断这个材料是否能推进",
+            ]
+        )
+    )
+    dws = FakeDws([conversation()], {"cid-1": [trigger]})
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="先读材料再判断")
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch, dry_run=True)
+
+    worker.run_once()
+
+    assert dws.doc_info_calls == []
+    assert dws.read_doc_calls == []
+    assert dws.minutes_info_calls == []
+    assert len(codex.calls) == 1
+    prompt = codex.calls[0][0]
+    assert "待读取材料（由 agent 判断是否读取）:" in prompt
+    assert canonical_doc_url in prompt
+    assert minutes_id in prompt
+    assert "dws doc read --node" in prompt
+    assert "dws minutes get info --id" in prompt
+
+
+def test_dingtalk_doc_link_is_passed_to_codex_without_worker_read(
+    tmp_path: Path, monkeypatch
+):
     doc_url = "https://alidocs.dingtalk.com/i/nodes/doc123?utm_source=im"
     canonical_doc_url = "https://alidocs.dingtalk.com/i/nodes/doc123"
     trigger = message(f"{doc_url} @Alex Chen(明哥) 看下根因和解法")
     dws = FakeDws([conversation()], {"cid-1": [trigger]})
-    dws.docs[canonical_doc_url] = {
-        "title": "数据导入导出业务低效根因和最终解法",
-        "markdown": (
-            "核心结论：根因是协作方式不对。\n"
-            "客户业务逻辑、项目配置确认、数据工具排查被混在一起。"
-        ),
-    }
     codex = FakeCodex(
         CodexDecision(action=CodexAction.SEND_REPLY, reply_text="按协作方式拆分")
     )
@@ -4787,66 +4851,78 @@ def test_dingtalk_doc_link_is_read_before_codex(tmp_path: Path, monkeypatch):
 
     worker.run_once()
 
-    assert dws.read_doc_calls == [canonical_doc_url]
+    assert dws.doc_info_calls == []
+    assert dws.read_doc_calls == []
     assert final_sent(dws) == []
     prompt = codex.calls[0][0]
-    assert "已获取的钉钉材料:" in prompt
-    assert "数据导入导出业务低效根因和最终解法" in prompt
-    assert "根因是协作方式不对" in prompt
+    assert "待读取材料（由 agent 判断是否读取）:" in prompt
+    assert canonical_doc_url in prompt
+    assert "dws doc read --node" in prompt
+    assert "根因是协作方式不对" not in prompt
     attempt = worker.store.get_reply_attempt(1)
     assert attempt is not None
     assert attempt.send_status == "dry_run"
 
 
-def test_dingtalk_aitable_link_is_routed_to_aitable_before_codex(
+def test_dingtalk_doc_permission_setup_is_irrelevant_to_worker_material_references(
+    tmp_path: Path, monkeypatch
+):
+    blocked_url = "https://alidocs.dingtalk.com/i/nodes/blocked123"
+    readable_url = "https://alidocs.dingtalk.com/i/nodes/readable456?utm_source=im"
+    canonical_blocked_url = "https://alidocs.dingtalk.com/i/nodes/blocked123"
+    canonical_readable_url = "https://alidocs.dingtalk.com/i/nodes/readable456"
+    trigger = message(
+        "\n".join(
+            [
+                f"第一份材料：{blocked_url}",
+                f"第二份材料：{readable_url}",
+                "@Alex Chen(明哥) 按第二份材料判断主叙事",
+            ]
+        )
+    )
+    dws = FakeDws([conversation()], {"cid-1": [trigger]})
+    dws.doc_infos[canonical_blocked_url] = DwsError(
+        "forbidden.accessDenied: 你没有权限进行此操作",
+        code="forbidden.accessDenied",
+    )
+    dws.docs[canonical_readable_url] = {
+        "title": "OpenAI 合作建议补充版",
+        "markdown": "核心结论：Stardust 应主打 Expert Signal Flywheel。",
+    }
+    codex = FakeCodex(
+        CodexDecision(
+            action=CodexAction.SEND_REPLY,
+            reply_text="主打 Expert Signal Flywheel",
+        )
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch, dry_run=True)
+
+    worker.run_once()
+
+    assert dws.doc_info_calls == []
+    assert dws.read_doc_calls == []
+    assert len(codex.calls) == 1
+    prompt = codex.calls[0][0]
+    assert "待读取材料（由 agent 判断是否读取）:" in prompt
+    assert canonical_blocked_url in prompt
+    assert canonical_readable_url in prompt
+    assert "钉钉材料权限不足" not in prompt
+    assert "OpenAI 合作建议补充版" not in prompt
+    assert "Expert Signal Flywheel" not in prompt
+    assert final_sent(dws) == []
+    attempt = worker.store.get_reply_attempt(1)
+    assert attempt is not None
+    assert attempt.send_status == "dry_run"
+    assert attempt.action == "send_reply"
+
+
+def test_dingtalk_aitable_link_is_passed_to_codex_without_worker_read(
     tmp_path: Path, monkeypatch
 ):
     aitable_url = "https://alidocs.dingtalk.com/i/nodes/base123?utm_source=im"
     canonical_url = "https://alidocs.dingtalk.com/i/nodes/base123"
     trigger = message(f"{aitable_url} @Alex Chen(明哥) 看下进展")
     dws = FakeDws([conversation()], {"cid-1": [trigger]})
-    dws.doc_infos[canonical_url] = {
-        "contentType": "ALIDOC",
-        "extension": "able",
-        "name": "算法迭代看板",
-        "nodeId": "base123",
-    }
-    dws.aitable_bases["base123"] = {
-        "data": {
-            "baseName": "算法迭代看板",
-            "tables": [{"tableId": "tbl-1", "tableName": "算法优化看板"}],
-        }
-    }
-    dws.aitable_tables[("base123", ("tbl-1",))] = {
-        "data": {
-            "tables": [
-                {
-                    "tableId": "tbl-1",
-                    "tableName": "算法优化看板",
-                    "description": "用于跟踪算法优化项目进展。",
-                    "fields": [
-                        {"fieldId": "name", "fieldName": "迭代名称"},
-                        {"fieldId": "status", "fieldName": "优化状态"},
-                        {"fieldId": "plan", "fieldName": "迭代方案"},
-                    ],
-                }
-            ]
-        }
-    }
-    dws.aitable_records[("base123", "tbl-1")] = {
-        "data": {
-            "records": [
-                {
-                    "recordId": "rec-1",
-                    "cells": {
-                        "name": "关系排序优化",
-                        "status": {"name": "待验证"},
-                        "plan": "移除端点重合加分。",
-                    },
-                }
-            ]
-        }
-    }
     codex = FakeCodex(
         CodexDecision(action=CodexAction.SEND_REPLY, reply_text="优先验证关系排序")
     )
@@ -4854,22 +4930,25 @@ def test_dingtalk_aitable_link_is_routed_to_aitable_before_codex(
 
     worker.run_once()
 
-    assert dws.doc_info_calls == [canonical_url]
+    assert dws.doc_info_calls == []
     assert dws.read_doc_calls == []
-    assert dws.get_aitable_base_calls == ["base123"]
-    assert dws.get_aitable_tables_calls == [("base123", ("tbl-1",))]
-    assert dws.query_aitable_record_calls == [("base123", "tbl-1", 10)]
+    assert dws.get_aitable_base_calls == []
+    assert dws.get_aitable_tables_calls == []
+    assert dws.query_aitable_record_calls == []
     prompt = codex.calls[0][0]
-    assert "已获取的钉钉材料:" in prompt
-    assert "AI表格: 算法迭代看板" in prompt
-    assert "数据表: 算法优化看板" in prompt
-    assert "迭代名称: 关系排序优化" in prompt
+    assert "待读取材料（由 agent 判断是否读取）:" in prompt
+    assert canonical_url in prompt
+    assert "dws doc read --node" in prompt
+    assert "AI表格: 算法迭代看板" not in prompt
+    assert "迭代名称: 关系排序优化" not in prompt
     attempt = worker.store.get_reply_attempt(1)
     assert attempt is not None
     assert attempt.send_status == "dry_run"
 
 
-def test_dingtalk_doc_link_in_context_is_read_before_codex(tmp_path: Path, monkeypatch):
+def test_dingtalk_doc_link_in_context_is_passed_to_codex_without_worker_read(
+    tmp_path: Path, monkeypatch
+):
     doc_url = "https://alidocs.dingtalk.com/i/nodes/doc-in-context?utm_source=im"
     canonical_doc_url = "https://alidocs.dingtalk.com/i/nodes/doc-in-context"
     context_doc = message(
@@ -4882,10 +4961,6 @@ def test_dingtalk_doc_link_in_context_is_read_before_codex(tmp_path: Path, monke
         quoted_content=f"[文档] 方案: {doc_url}",
     )
     dws = FakeDws([conversation()], {"cid-1": [context_doc, trigger]})
-    dws.docs[canonical_doc_url] = {
-        "title": "推进方案",
-        "markdown": "下一步建议：先做客户需求收敛，再做交付排期。",
-    }
     codex = FakeCodex(
         CodexDecision(action=CodexAction.SEND_REPLY, reply_text="先收敛需求")
     )
@@ -4893,13 +4968,17 @@ def test_dingtalk_doc_link_in_context_is_read_before_codex(tmp_path: Path, monke
 
     worker.run_once()
 
-    assert dws.read_doc_calls == [canonical_doc_url]
+    assert dws.doc_info_calls == []
+    assert dws.read_doc_calls == []
     prompt = codex.calls[0][0]
-    assert "已获取的钉钉材料:" in prompt
-    assert "下一步建议：先做客户需求收敛" in prompt
+    assert "待读取材料（由 agent 判断是否读取）:" in prompt
+    assert canonical_doc_url in prompt
+    assert "下一步建议：先做客户需求收敛" not in prompt
 
 
-def test_referenced_file_message_is_located_before_codex(tmp_path: Path, monkeypatch):
+def test_referenced_file_message_is_passed_to_codex_without_worker_read(
+    tmp_path: Path, monkeypatch
+):
     file_message = message(
         "[文件] 02_下一步推进建议.md",
         message_id="file-msg-1",
@@ -4911,19 +4990,6 @@ def test_referenced_file_message_is_located_before_codex(tmp_path: Path, monkeyp
     )
     trigger.quoted_message_id = "file-msg-1"
     dws = FakeDws([conversation()], {"cid-1": [file_message, trigger]})
-    dws.document_search_results["02_下一步推进建议.md"] = [
-        DwsDocumentSearchResult(
-            node_id="node-1",
-            name="02_下一步推进建议",
-            extension="md",
-            content_type="OTHER",
-            node_type="file",
-            doc_url="https://alidocs.dingtalk.com/i/nodes/node-1",
-        )
-    ]
-    dws.download_docs["node-1"] = {
-        "markdown": "建议正文：先明确客户边界，再补 owner 和时间表。"
-    }
     codex = FakeCodex(
         CodexDecision(action=CodexAction.SEND_REPLY, reply_text="建议补边界和owner")
     )
@@ -4931,15 +4997,44 @@ def test_referenced_file_message_is_located_before_codex(tmp_path: Path, monkeyp
 
     worker.run_once()
 
-    assert dws.search_document_calls == [("02_下一步推进建议.md", 5)]
-    assert dws.download_doc_calls == ["node-1"]
+    assert dws.search_document_calls == []
+    assert dws.download_doc_calls == []
     prompt = codex.calls[0][0]
-    assert "已获取的钉钉材料:" in prompt
-    assert "建议正文：先明确客户边界" in prompt
-    assert "dws doc download" not in prompt
+    assert "待读取材料（由 agent 判断是否读取）:" in prompt
+    assert "02_下一步推进建议.md" in prompt
+    assert "普通文件" in prompt
+    assert "建议正文：先明确客户边界" not in prompt
 
 
-def test_referenced_file_metadata_does_not_expose_download_credentials(
+def test_referenced_file_context_is_passed_to_codex_without_worker_read(
+    tmp_path: Path, monkeypatch
+):
+    file_message = message(
+        "[文件] 02_下一步推进建议.md",
+        message_id="file-msg-1",
+    )
+    trigger = message(
+        "@Alex Chen(明哥) 明哥comments一下",
+        message_id="msg-2",
+    )
+    dws = FakeDws([conversation()], {"cid-1": [file_message, trigger]})
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="建议补边界和owner")
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch, dry_run=True)
+
+    worker.run_once()
+
+    assert dws.search_document_calls == []
+    assert dws.download_doc_calls == []
+    prompt = codex.calls[0][0]
+    assert "待读取材料（由 agent 判断是否读取）:" in prompt
+    assert "类型: dingtalk_file" in prompt
+    assert "02_下一步推进建议.md" in prompt
+    assert "来源消息: file-msg-1" in prompt
+
+
+def test_referenced_file_reference_does_not_download_or_expose_credentials(
     tmp_path: Path, monkeypatch
 ):
     trigger = message(
@@ -4947,20 +5042,6 @@ def test_referenced_file_metadata_does_not_expose_download_credentials(
         quoted_content="[文件] 02_下一步推进建议.md",
     )
     dws = FakeDws([conversation()], {"cid-1": [trigger]})
-    dws.document_search_results["02_下一步推进建议.md"] = [
-        DwsDocumentSearchResult(
-            node_id="node-1",
-            name="02_下一步推进建议",
-            extension="md",
-            content_type="OTHER",
-            node_type="file",
-            doc_url="https://alidocs.dingtalk.com/i/nodes/node-1",
-        )
-    ]
-    dws.download_docs["node-1"] = {
-        "markdown": "文件正文：这里是可审阅内容。",
-        "resourceUrl": "https://signed.example/download?authorizationUrl=secret",
-    }
     codex = FakeCodex(
         CodexDecision(
             action=CodexAction.ASK_CLARIFYING_QUESTION,
@@ -4972,12 +5053,14 @@ def test_referenced_file_metadata_does_not_expose_download_credentials(
     worker.run_once()
 
     prompt = codex.calls[0][0]
-    assert dws.download_doc_calls == ["node-1"]
-    assert "文件正文：这里是可审阅内容。" in prompt
+    assert dws.search_document_calls == []
+    assert dws.download_doc_calls == []
+    assert "02_下一步推进建议.md" in prompt
+    assert "文件正文：这里是可审阅内容。" not in prompt
     assert "authorizationUrl" not in prompt
 
 
-def test_minutes_link_reads_material_and_processes_action_items(
+def test_minutes_link_is_passed_to_codex_without_worker_read(
     tmp_path: Path, monkeypatch
 ):
     minutes_id = "76327569643331323035353732315f3233333438363436305f30"
@@ -4993,35 +5076,6 @@ def test_minutes_link_reads_material_and_processes_action_items(
         single_chat=True,
     )
     dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
-    dws.minutes_infos[minutes_id] = {
-        "result": {
-            "taskUuid": minutes_id,
-            "title": "岚图端到端算法开发需求讨论",
-            "url": f"https://shanji.dingtalk.com/app/transcribes/{minutes_id}",
-        }
-    }
-    dws.minutes_summaries[minutes_id] = {
-        "result": {"fullSummary": "会议决定以数据闭环和算法底座为核心准备材料。"}
-    }
-    dws.minutes_todos[minutes_id] = {
-        "result": {
-            "actions": [
-                '{"value":"韩露周三前完成自动驾驶能力图谱初版大纲"}',
-                '{"value":"Alex 今日内确认材料方向"}',
-            ],
-            "dingtalkTodoList": [
-                {"title": "侯光焕协调蓝图汽车技术交流时间"},
-            ],
-        }
-    }
-    dws.minutes_transcriptions[minutes_id] = {
-        "result": {
-            "paragraphList": [
-                {"nickName": "Yuhang Cao", "paragraph": "客户希望看完整能力菜单。"},
-                {"nickName": "Alex", "paragraph": "先聚焦数据闭环和算法底座。"},
-            ]
-        }
-    }
     codex = FakeCodex(
         CodexDecision(
             action=CodexAction.SEND_REPLY,
@@ -5032,17 +5086,16 @@ def test_minutes_link_reads_material_and_processes_action_items(
 
     worker.run_once()
 
-    assert dws.minutes_info_calls == [minutes_id]
-    assert dws.minutes_summary_calls == [minutes_id]
-    assert dws.minutes_todo_calls == [minutes_id]
-    assert dws.minutes_transcription_calls == [(minutes_id, "")]
+    assert dws.minutes_info_calls == []
+    assert dws.minutes_summary_calls == []
+    assert dws.minutes_todo_calls == []
+    assert dws.minutes_transcription_calls == []
     prompt = codex.calls[0][0]
-    assert "AI 听记材料:" in prompt
-    assert "岚图端到端算法开发需求讨论" in prompt
-    assert "处理事项:" in prompt
-    assert "韩露周三前完成自动驾驶能力图谱初版大纲" in prompt
-    assert "文字稿预览:" in prompt
-    assert "先聚焦数据闭环和算法底座" in prompt
+    assert "待读取材料（由 agent 判断是否读取）:" in prompt
+    assert minutes_id in prompt
+    assert "dws minutes get info --id" in prompt
+    assert "AI 听记材料:" not in prompt
+    assert "韩露周三前完成自动驾驶能力图谱初版大纲" not in prompt
     attempt = worker.store.get_reply_attempt(1)
     assert attempt is not None
     assert attempt.action == "send_reply"
@@ -5070,16 +5123,6 @@ def test_single_chat_minutes_no_reply_does_not_trigger_document_retry(
         single_chat=True,
     )
     dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
-    dws.minutes_infos[minutes_id] = {
-        "result": {
-            "taskUuid": minutes_id,
-            "title": "例会听记",
-            "url": f"https://shanji.dingtalk.com/app/transcribes/{minutes_id}",
-        }
-    }
-    dws.minutes_summaries[minutes_id] = {"result": {"fullSummary": "普通例会同步。"}}
-    dws.minutes_todos[minutes_id] = {"result": {}}
-    dws.minutes_transcriptions[minutes_id] = {"result": {}}
     codex = FakeCodex(
         CodexDecision(
             action=CodexAction.NO_REPLY,
@@ -5091,6 +5134,10 @@ def test_single_chat_minutes_no_reply_does_not_trigger_document_retry(
     worker.run_once()
 
     assert len(codex.calls) == 1
+    assert dws.minutes_info_calls == []
+    prompt = codex.calls[0][0]
+    assert "待读取材料（由 agent 判断是否读取）:" in prompt
+    assert minutes_id in prompt
     attempt = worker.store.get_reply_attempt(1)
     assert attempt.action == "no_reply"
     assert attempt.send_status == "skipped"
@@ -5334,35 +5381,42 @@ def test_image_download_failure_is_passed_to_codex_prompt(tmp_path: Path, monkey
     assert "resource download unavailable" in image_error.detail
 
 
-def test_dingtalk_doc_read_failure_blocks_codex(tmp_path: Path, monkeypatch):
+def test_dingtalk_doc_read_failure_setup_does_not_block_codex(
+    tmp_path: Path, monkeypatch
+):
     trigger = message(
         "https://alidocs.dingtalk.com/i/nodes/missing @Alex Chen(明哥) 看下"
     )
+    canonical_url = "https://alidocs.dingtalk.com/i/nodes/missing"
     dws = FakeDws([conversation()], {"cid-1": [trigger]})
-    dws.doc_infos["https://alidocs.dingtalk.com/i/nodes/missing"] = {
+    dws.doc_infos[canonical_url] = {
         "contentType": "ALIDOC",
         "extension": "adoc",
         "name": "缺失文档",
         "nodeId": "missing",
     }
     codex = FakeCodex(
-        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该调用")
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="我先读材料")
     )
     worker = make_worker(tmp_path, dws, codex, monkeypatch)
 
     worker.run_once()
 
-    assert dws.read_doc_calls == ["https://alidocs.dingtalk.com/i/nodes/missing"]
-    assert codex.calls == []
-    assert final_sent(dws) == []
+    assert dws.doc_info_calls == []
+    assert dws.read_doc_calls == []
+    assert len(codex.calls) == 1
+    prompt = codex.calls[0][0]
+    assert "待读取材料（由 agent 判断是否读取）:" in prompt
+    assert canonical_url in prompt
+    assert final_sent(dws) == [("cid-1", "我先读材料（by明哥分身）")]
     attempt = worker.store.get_reply_attempt(1)
     assert attempt is not None
-    assert attempt.action == "stop_with_error"
-    assert attempt.send_status == "failed"
-    assert "linked_dingtalk_doc_read_failed" in attempt.send_error
+    assert attempt.action == "send_reply"
+    assert attempt.send_status == "sent"
+    assert attempt.send_error == ""
 
 
-def test_minutes_permission_error_requests_access_instead_of_failing(
+def test_minutes_permission_setup_is_passed_to_codex_without_worker_read(
     tmp_path: Path, monkeypatch
 ):
     minutes_id = "7632756964333134343836383736303334325f3435313431363430365f35"
@@ -5383,19 +5437,19 @@ def test_minutes_permission_error_requests_access_instead_of_failing(
 
     worker.run_once()
 
-    assert dws.minutes_info_calls == [minutes_id]
-    assert codex.calls == []
-    assert len(final_sent(dws)) == 1
-    assert "没有权限读取你引用的材料" in final_sent(dws)[0][1]
-    assert dws.reply_messages[0][1] == trigger.open_message_id
+    assert dws.minutes_info_calls == []
+    assert len(codex.calls) == 1
+    prompt = codex.calls[0][0]
+    assert "待读取材料（由 agent 判断是否读取）:" in prompt
+    assert minutes_id in prompt
+    assert "B_PERMISSION_NoPermission" not in prompt
     attempt = worker.store.get_reply_attempt(1)
-    assert attempt.action == "ask_clarifying_question"
+    assert attempt.action == "send_reply"
     assert attempt.send_status == "sent"
-    assert "linked_dingtalk_doc_permission_required" in attempt.codex_reason
     assert worker.store.list_errors() == []
 
 
-def test_alidocs_permission_error_requests_access_instead_of_failing(
+def test_alidocs_permission_setup_is_passed_to_codex_without_worker_read(
     tmp_path: Path, monkeypatch
 ):
     url = "https://alidocs.dingtalk.com/i/nodes/XPwkYGxZV3BqnwQ0I3dbwZDlWAgozOKL"
@@ -5412,16 +5466,16 @@ def test_alidocs_permission_error_requests_access_instead_of_failing(
 
     worker.run_once()
 
-    assert dws.doc_info_calls == [url]
+    assert dws.doc_info_calls == []
     assert dws.read_doc_calls == []
-    assert codex.calls == []
-    assert len(final_sent(dws)) == 1
-    assert "没有权限读取你引用的材料" in final_sent(dws)[0][1]
-    assert dws.reply_messages[0][1] == trigger.open_message_id
+    assert len(codex.calls) == 1
+    prompt = codex.calls[0][0]
+    assert "待读取材料（由 agent 判断是否读取）:" in prompt
+    assert url in prompt
+    assert "forbidden.accessDenied" not in prompt
     attempt = worker.store.get_reply_attempt(1)
-    assert attempt.action == "ask_clarifying_question"
+    assert attempt.action == "send_reply"
     assert attempt.send_status == "sent"
-    assert "linked_dingtalk_doc_permission_required" in attempt.codex_reason
     assert worker.store.list_errors() == []
 
 
