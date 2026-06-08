@@ -498,10 +498,10 @@ class DwsClient:
             raise ValueError("missing OA approval comment text")
         return [
             self.dws_bin,
-            "mcp",
             "oa",
-            "dingflow_comments",
-            "--processInstanceId",
+            "approval",
+            "oa-comments",
+            "--instance-id",
             process_instance_id,
             "--text",
             self._literal_cli_value(text),
