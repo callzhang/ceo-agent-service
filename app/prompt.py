@@ -27,6 +27,15 @@ class LinkedDocumentContext:
     markdown: str
 
 
+@dataclass(frozen=True)
+class MaterialReferenceContext:
+    kind: str
+    reference: str
+    source_message_id: str
+    source_sender: str
+    source_time: str
+
+
 def work_profile_instruction() -> str:
     path = work_profile_path()
     if not path.exists():
@@ -62,6 +71,7 @@ def build_turn_prompt(
     style_lines: list[str],
     include_thread_prompt: bool,
     linked_documents: list[LinkedDocumentContext] | None = None,
+    material_references: list[MaterialReferenceContext] | None = None,
     image_download_errors: list[str] | None = None,
     known_people_lines: list[str] | None = None,
     sender_org_lines: list[str] | None = None,
@@ -89,6 +99,26 @@ def build_turn_prompt(
                 "可用组织人员标识（如内部人员问题对象匹配这些人，personnel_subject_user_id 必须使用对应 user_id）:",
                 *known_people_lines,
             ],
+            trailing_newline=True,
+        )
+
+    material_references_block = ""
+    if material_references:
+        material_lines: list[str] = [
+            "待读取材料（由 agent 判断是否读取）:",
+            (
+                "如果判断依赖材料正文，必须先读取材料；如果消息正文已经足够，可以不读取。"
+                "读取失败时不要臆测材料内容，应说明权限或材料问题。"
+            ),
+            "DWS 读取命令提示:",
+            "- 钉钉文档: dws doc info --node <URL> --format json；需要正文时 dws doc read --node <URL> --format json",
+            "- AI 听记: dws minutes get info --id <MINUTES_ID> --format json",
+            "- 普通文件: 先用消息中的文件名和上下文判断是否需要读取；需要时使用 DWS 文件/云盘能力查询或下载。",
+        ]
+        for index, material in enumerate(material_references, start=1):
+            material_lines.extend(material_reference_lines(index, material))
+        material_references_block = _prompt_section_block(
+            material_lines,
             trailing_newline=True,
         )
 
@@ -131,6 +161,7 @@ def build_turn_prompt(
             ),
             "sender_org_block": sender_org_block,
             "known_people_block": known_people_block,
+            "material_references_block": material_references_block,
             "linked_documents_block": linked_documents_block,
             "image_download_block": image_download_block,
             "context_messages_block": context_messages_block,
@@ -204,6 +235,17 @@ def linked_document_lines(index: int, document: LinkedDocumentContext) -> list[s
         f"  链接: {_shorten_url(document.url)}",
         "  正文:",
         *[f"    {line}" for line in markdown.splitlines() if line.strip()],
+    ]
+
+
+def material_reference_lines(index: int, material: MaterialReferenceContext) -> list[str]:
+    return [
+        f"- 材料{index}:",
+        f"  类型: {material.kind}",
+        f"  引用: {_shorten_url(material.reference)}",
+        f"  来源消息: {material.source_message_id}",
+        f"  发送人: {material.source_sender}",
+        f"  时间: {material.source_time}",
     ]
 
 

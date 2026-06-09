@@ -95,6 +95,9 @@ class CachedDwsClient:
     def upgrade(self):
         return self.dws.upgrade()
 
+    def start_auth_login(self):
+        return self.dws.start_auth_login()
+
     def get_current_user_id(self) -> str:
         return self.dws.get_current_user_id()
 
@@ -255,6 +258,8 @@ class CachedDwsClient:
         conversation_id: str | None,
         text: str,
         at_users: list[str] | None = None,
+        at_open_dingtalk_ids: list[str] | None = None,
+        at_open_dingtalk_names: list[str] | None = None,
         user_id: str | None = None,
         open_dingtalk_id: str | None = None,
     ):
@@ -262,6 +267,8 @@ class CachedDwsClient:
             conversation_id,
             text,
             at_users=at_users,
+            at_open_dingtalk_ids=at_open_dingtalk_ids,
+            at_open_dingtalk_names=at_open_dingtalk_names,
             user_id=user_id,
             open_dingtalk_id=open_dingtalk_id,
         )
@@ -272,16 +279,29 @@ class CachedDwsClient:
         ref_message_id: str,
         ref_sender_open_dingtalk_id: str,
         text: str,
+        at_users: list[str] | None = None,
     ):
         return self.dws.reply_message(
             conversation_id,
             ref_message_id,
             ref_sender_open_dingtalk_id,
             text,
+            at_users=at_users,
         )
 
-    def send_reply_to_trigger(self, conversation, trigger, text: str):
-        return self.dws.send_reply_to_trigger(conversation, trigger, text)
+    def send_reply_to_trigger(
+        self,
+        conversation,
+        trigger,
+        text: str,
+        at_users: list[str] | None = None,
+    ):
+        return self.dws.send_reply_to_trigger(
+            conversation,
+            trigger,
+            text,
+            at_users=at_users,
+        )
 
     def recall_bot_message(self, conversation_id: str | None, process_query_key: str):
         return self.dws.recall_bot_message(conversation_id, process_query_key)

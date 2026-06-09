@@ -41,6 +41,40 @@ def make_runner(
     )
 
 
+def _agent_envelope_json(
+    *,
+    mode: str = "no_reply",
+    text: str = "",
+    summary: str = "只需上下文判断。",
+    kind: str = "reply",
+    documents: list[dict[str, str]] | None = None,
+    domain_payload: dict | None = None,
+) -> str:
+    system_actions = (
+        [{"type": "send_dingtalk_reply", "reply_text_ref": "user_response.text"}]
+        if mode == "send_reply"
+        else []
+    )
+    return json.dumps(
+        {
+            "kind": kind,
+            "user_response": {
+                "mode": mode,
+                "text": text,
+                "sensitivity_kind": "general",
+            },
+            "system_actions": system_actions,
+            "domain_payload": domain_payload or {},
+            "audit": {
+                "summary": summary,
+                "documents": documents or [],
+                "confidence": 0.8,
+            },
+        },
+        ensure_ascii=False,
+    )
+
+
 def test_parse_codex_json_accepts_decision_object():
     raw = json.dumps(
         {
@@ -94,6 +128,24 @@ def test_parse_codex_json_accepts_calendar_response_status():
     assert decision.calendar_response_status == "tentative"
 
 
+def test_parse_codex_json_strict_rejects_legacy_decision_object():
+    raw = json.dumps(
+        {
+            "action": "send_reply",
+            "reply_text": "收到",
+            "audit_summary": "旧结构。",
+        },
+        ensure_ascii=False,
+    )
+
+    try:
+        parse_codex_json(raw, allow_legacy=False)
+    except json.JSONDecodeError as exc:
+        assert "AgentEnvelope" in exc.msg
+    else:
+        raise AssertionError("legacy CodexDecision JSON should be rejected")
+
+
 def test_parse_codex_json_accepts_audit_fields():
     raw = json.dumps(
         {
@@ -123,6 +175,99 @@ def test_parse_codex_json_accepts_audit_fields():
     assert "项目闭环" in decision.audit_summary
 
 
+def test_parse_codex_json_accepts_agent_envelope_object():
+    raw = json.dumps(
+        {
+            "kind": "reply",
+            "user_response": {
+                "mode": "send_reply",
+                "text": "收到，我来处理。",
+                "sensitivity_kind": "general",
+            },
+            "system_actions": [
+                {"type": "send_dingtalk_reply", "reply_text_ref": "user_response.text"}
+            ],
+            "domain_payload": {},
+            "audit": {
+                "summary": "已根据当前消息判断需要回复。",
+                "documents": [
+                    {
+                        "title": "当前钉钉消息",
+                        "url": "",
+                        "relevance": "触发用户请求",
+                    }
+                ],
+                "confidence": 0.9,
+            },
+        },
+        ensure_ascii=False,
+    )
+
+    decision = parse_codex_json(raw)
+
+    assert decision.action == CodexAction.SEND_REPLY
+    assert decision.reply_text == "收到，我来处理。"
+    assert decision.reason == "已根据当前消息判断需要回复。"
+    assert decision.audit_summary == "已根据当前消息判断需要回复。"
+    assert decision.audit_documents == [
+        {"title": "当前钉钉消息", "url": "", "relevance": "触发用户请求"}
+    ]
+
+
+def test_parse_codex_json_maps_calendar_response_from_agent_envelope_domain_payload():
+    raw = json.dumps(
+        {
+            "kind": "reply",
+            "user_response": {
+                "mode": "send_reply",
+                "text": "这个会议需要参加。",
+                "sensitivity_kind": "general",
+            },
+            "system_actions": [
+                {"type": "send_dingtalk_reply", "reply_text_ref": "user_response.text"}
+            ],
+            "domain_payload": {"calendar_response_status": "accepted"},
+            "audit": {
+                "summary": "根据会议标题和上下文判断需要参加。",
+                "documents": [],
+                "confidence": 0.8,
+            },
+        },
+        ensure_ascii=False,
+    )
+
+    decision = parse_codex_json(raw, allow_legacy=False)
+
+    assert decision.action == CodexAction.SEND_REPLY
+    assert decision.calendar_response_status == "accepted"
+
+
+def test_parse_codex_json_maps_handoff_agent_envelope():
+    raw = json.dumps(
+        {
+            "kind": "reply",
+            "user_response": {
+                "mode": "handoff_to_human",
+                "text": "",
+                "sensitivity_kind": "general",
+            },
+            "system_actions": [],
+            "domain_payload": {},
+            "audit": {
+                "summary": "对方要求本人立即进入会议，必须转交本人。",
+                "documents": [],
+                "confidence": 0.9,
+            },
+        },
+        ensure_ascii=False,
+    )
+
+    decision = parse_codex_json(raw)
+
+    assert decision.action == CodexAction.HANDOFF_TO_HUMAN
+    assert decision.reason == "对方要求本人立即进入会议，必须转交本人。"
+
+
 def test_extract_codex_audit_events_from_jsonl_tool_events():
     raw = "\n".join(
         [
@@ -149,6 +294,13 @@ def test_extract_codex_audit_events_from_jsonl_tool_events():
         {
             "event_type": "item.completed",
             "tool": "exec_command",
+            "input": json.dumps(
+                {
+                    "cmd": "sed -n '1,120p' /Users/principal/Documents/memory/面试/岗位画像.md"
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
             "command": "sed -n '1,120p' /Users/principal/Documents/memory/面试/岗位画像.md",
             "path": "/Users/principal/Documents/memory/面试/岗位画像.md",
         }
@@ -297,12 +449,10 @@ def test_invalid_json_retries_once(tmp_path: Path):
     executor = FakeExecutor(
         [
             "not json",
-            json.dumps(
-                {
-                    "action": "no_reply",
-                    "reason": "cc only",
-                    "audit_summary": "无需回复，消息只是抄送。",
-                }
+            _agent_envelope_json(
+                kind="no_action",
+                mode="no_reply",
+                summary="无需回复，消息只是抄送。",
             ),
         ]
     )
@@ -328,7 +478,8 @@ def test_invalid_json_retries_once(tmp_path: Path):
     ]
     assert executor.commands[1][-2] == "session-1"
     assert "只输出合法 JSON" in executor.prompts[1]
-    assert "audit_documents" in executor.prompts[1]
+    assert '"kind":"reply|no_action|error"' in executor.prompts[1]
+    assert '"mode":"send_reply|ask_clarifying_question|handoff_to_human|no_reply"' in executor.prompts[1]
 
 
 def test_runner_reads_current_session_when_stdout_has_no_decision(tmp_path: Path):
@@ -355,13 +506,10 @@ def test_runner_reads_current_session_when_stdout_has_no_decision(tmp_path: Path
                             "content": [
                                 {
                                     "type": "output_text",
-                                    "text": json.dumps(
-                                        {
-                                            "action": "send_reply",
-                                            "reply_text": "今晚只放一个主目标。",
-                                            "audit_summary": "只需上下文判断。",
-                                        },
-                                        ensure_ascii=False,
+                                    "text": _agent_envelope_json(
+                                        mode="send_reply",
+                                        text="今晚只放一个主目标。",
+                                        summary="只需上下文判断。",
                                     ),
                                 }
                             ],
@@ -406,11 +554,13 @@ def test_runner_tracks_audit_tool_events(tmp_path: Path):
                         ensure_ascii=False,
                     ),
                     json.dumps(
-                        {
-                            "action": "no_reply",
-                            "reason": "handled",
-                            "audit_summary": "已检查上下文，问题已处理。",
-                        },
+                        json.loads(
+                            _agent_envelope_json(
+                                kind="no_action",
+                                mode="no_reply",
+                                summary="已检查上下文，问题已处理。",
+                            )
+                        ),
                         ensure_ascii=False,
                     ),
                 ]
@@ -425,17 +575,81 @@ def test_runner_tracks_audit_tool_events(tmp_path: Path):
     assert "rg -n" in runner.last_audit_tool_events[0]["command"]
 
 
+def test_runner_tracks_dws_material_read_audit_events(tmp_path: Path):
+    command = (
+        "dws doc read --node https://alidocs.dingtalk.com/i/nodes/doc123 "
+        "--format json"
+    )
+    executor = FakeExecutor(
+        [
+            "\n".join(
+                [
+                    json.dumps(
+                        {
+                            "type": "item.completed",
+                            "item": {
+                                "type": "tool_call",
+                                "tool_name": "exec_command",
+                                "call_id": "call-dws-read",
+                                "arguments": {"cmd": command},
+                            },
+                        },
+                        ensure_ascii=False,
+                    ),
+                    json.dumps(
+                        {
+                            "type": "item.completed",
+                            "item": {
+                                "type": "tool_result",
+                                "call_id": "call-dws-read",
+                                "output": "OpenAI 合作建议补充版\n建议先补齐材料。",
+                            },
+                        },
+                        ensure_ascii=False,
+                    ),
+                    json.dumps(
+                        json.loads(
+                            _agent_envelope_json(
+                                kind="no_action",
+                                mode="no_reply",
+                                summary="已读取 DWS 材料。",
+                            )
+                        ),
+                        ensure_ascii=False,
+                    ),
+                ]
+            )
+        ]
+    )
+    runner = make_runner(tmp_path, executor=executor)
+
+    runner.decide(prompt="decide", session_id=None)
+
+    assert runner.last_audit_tool_events == [
+        {
+            "event_type": "item.completed",
+            "tool": "exec_command",
+            "call_id": "call-dws-read",
+            "input": json.dumps({"cmd": command}, ensure_ascii=False, indent=2),
+            "command": command,
+        },
+        {
+            "event_type": "item.completed",
+            "tool": "tool_output",
+            "call_id": "call-dws-read",
+            "output": "OpenAI 合作建议补充版\n建议先补齐材料。",
+        },
+    ]
+
+
 def test_empty_reply_for_reply_action_retries_once(tmp_path: Path):
     executor = FakeExecutor(
         [
             json.dumps({"action": "send_reply", "reply_text": ""}),
-            json.dumps(
-                {
-                    "action": "send_reply",
-                    "reply_text": "收到，我看一下",
-                    "audit_summary": "只需当前消息判断，基于当前消息可直接确认。",
-                },
-                ensure_ascii=False,
+            _agent_envelope_json(
+                mode="send_reply",
+                text="收到，我看一下",
+                summary="只需当前消息判断，基于当前消息可直接确认。",
             ),
         ]
     )
@@ -446,7 +660,7 @@ def test_empty_reply_for_reply_action_retries_once(tmp_path: Path):
     assert decision.action == CodexAction.SEND_REPLY
     assert decision.reply_text == "收到，我看一下"
     assert len(executor.commands) == 2
-    assert "reply_text 必须非空" in executor.prompts[1]
+    assert "user_response.text 必须非空" in executor.prompts[1]
 
 
 def test_decide_forwards_images_to_initial_and_repair_turns(tmp_path: Path):
@@ -454,13 +668,10 @@ def test_decide_forwards_images_to_initial_and_repair_turns(tmp_path: Path):
     executor = FakeExecutor(
         [
             json.dumps({"action": "send_reply", "reply_text": ""}),
-            json.dumps(
-                {
-                    "action": "send_reply",
-                    "reply_text": "这张图可以放官网。",
-                    "audit_summary": "只需当前消息判断，并结合图片内容；未找到文档证据。",
-                },
-                ensure_ascii=False,
+            _agent_envelope_json(
+                mode="send_reply",
+                text="这张图可以放官网。",
+                summary="只需当前消息判断，并结合图片内容；未找到文档证据。",
             ),
         ]
     )
@@ -486,13 +697,10 @@ def test_first_turn_invalid_json_retries_with_extracted_session_id(tmp_path: Pat
                     json.dumps({"type": "agent_message", "message": "not json"}),
                 ]
             ),
-            json.dumps(
-                {
-                    "action": "no_reply",
-                    "reason": "repaired",
-                    "audit_summary": "修复后判断无需回复。",
-                },
-                ensure_ascii=False,
+            _agent_envelope_json(
+                kind="no_action",
+                mode="no_reply",
+                summary="修复后判断无需回复。",
             ),
         ]
     )
@@ -532,13 +740,10 @@ def test_first_turn_invalid_json_retries_with_thread_started_id(tmp_path: Path):
                     ),
                 ]
             ),
-            json.dumps(
-                {
-                    "action": "no_reply",
-                    "reason": "repaired",
-                    "audit_summary": "修复后判断无需回复。",
-                },
-                ensure_ascii=False,
+            _agent_envelope_json(
+                kind="no_action",
+                mode="no_reply",
+                summary="修复后判断无需回复。",
             ),
         ]
     )
@@ -689,13 +894,10 @@ def test_missing_audit_summary_retries_once(tmp_path: Path):
     executor = FakeExecutor(
         [
             json.dumps({"action": "no_reply", "reason": "cc only"}),
-            json.dumps(
-                {
-                    "action": "no_reply",
-                    "reason": "cc only",
-                    "audit_summary": "消息只是抄送，无需回复。",
-                },
-                ensure_ascii=False,
+            _agent_envelope_json(
+                kind="no_action",
+                mode="no_reply",
+                summary="消息只是抄送，无需回复。",
             ),
         ]
     )
@@ -706,7 +908,7 @@ def test_missing_audit_summary_retries_once(tmp_path: Path):
     assert decision.action == CodexAction.NO_REPLY
     assert decision.audit_summary == "消息只是抄送，无需回复。"
     assert len(executor.commands) == 2
-    assert "audit_summary 必须非空" in executor.prompts[1]
+    assert "audit.summary 必须非空" in executor.prompts[1]
 
 
 def test_reply_with_empty_audit_documents_accepts_nonempty_audit_summary(
@@ -714,14 +916,10 @@ def test_reply_with_empty_audit_documents_accepts_nonempty_audit_summary(
 ):
     executor = FakeExecutor(
         [
-            json.dumps(
-                {
-                    "action": "send_reply",
-                    "reply_text": "先按A方案走",
-                    "audit_documents": [],
-                    "audit_summary": "未使用可作为业务依据的文档材料；本次判断主要基于当前群聊上下文和直接@明哥的管理同步规则。",
-                },
-                ensure_ascii=False,
+            _agent_envelope_json(
+                mode="send_reply",
+                text="先按A方案走",
+                summary="未使用可作为业务依据的文档材料；本次判断主要基于当前群聊上下文和直接@明哥的管理同步规则。",
             ),
         ]
     )
@@ -768,9 +966,10 @@ def test_subprocess_executor_passes_timeout(tmp_path: Path, monkeypatch):
         calls.append((command, kwargs))
         return ProcessRunResult(
             returncode=0,
-            stdout=json.dumps(
-                {"action": "no_reply", "audit_summary": "无需回复。"},
-                ensure_ascii=False,
+            stdout=_agent_envelope_json(
+                kind="no_action",
+                mode="no_reply",
+                summary="无需回复。",
             ),
             stderr="",
         )
@@ -849,18 +1048,20 @@ def test_subprocess_timeout_uses_finished_session_decision(
                         "payload": {
                             "type": "agent_message",
                             "message": json.dumps(
-                                {
-                                    "action": "send_reply",
-                                    "reply_text": "这版可以先发，先改四个硬伤。",
-                                    "audit_summary": "已查看材料并给出反馈。",
-                                    "audit_documents": [
-                                        {
-                                            "path": "tmp/bp.pdf",
-                                            "title": "BP",
-                                            "relevance": "用于审核反馈。",
-                                        }
-                                    ],
-                                },
+                                json.loads(
+                                    _agent_envelope_json(
+                                        mode="send_reply",
+                                        text="这版可以先发，先改四个硬伤。",
+                                        summary="已查看材料并给出反馈。",
+                                        documents=[
+                                            {
+                                                "title": "BP",
+                                                "url": "tmp/bp.pdf",
+                                                "relevance": "用于审核反馈。",
+                                            }
+                                        ],
+                                    )
+                                ),
                                 ensure_ascii=False,
                             ),
                         },
@@ -897,13 +1098,10 @@ def test_subprocess_nonzero_keeps_stdout_decision(tmp_path: Path, monkeypatch):
     def fake_run(command, **kwargs):
         return ProcessRunResult(
             returncode=1,
-            stdout=json.dumps(
-                {
-                    "action": "no_reply",
-                    "reason": "stdout decision",
-                    "audit_summary": "stdout 已经有合法决策。",
-                },
-                ensure_ascii=False,
+            stdout=_agent_envelope_json(
+                kind="no_action",
+                mode="no_reply",
+                summary="stdout 已经有合法决策。",
             ),
             stderr="warning only",
         )
@@ -914,7 +1112,7 @@ def test_subprocess_nonzero_keeps_stdout_decision(tmp_path: Path, monkeypatch):
     decision = runner.decide(prompt="decide", session_id=None)
 
     assert decision.action == CodexAction.NO_REPLY
-    assert decision.reason == "stdout decision"
+    assert decision.reason == "stdout 已经有合法决策。"
 
 
 def test_subprocess_nonzero_preserves_thread_id_for_error(tmp_path: Path, monkeypatch):

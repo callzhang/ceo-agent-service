@@ -213,7 +213,7 @@ http://127.0.0.1:8765/
 常用页面：
 
 - `/`：回复历史和待处理任务
-- `/tasks`：work projects、open TODO、next step 和待发送 follow-up 草稿
+- `/tasks`：work projects、状态、category filter、Priority/Risk 排序、TODO checklist、实时全文检索和分页
 - `/tasks/{project_id}`：单个 work project 详情、facts、TODO DDL/owner、更新记录和 follow-up 记录
 - `/attempts/{id}`：单次处理详情
 - `/codex`：本地 Codex session
@@ -368,7 +368,6 @@ Live smoke tests 默认跳过，只有显式设置环境变量时才会访问真
 - [docs/product-logic.md](docs/product-logic.md)：产品逻辑、审计、安全默认值。
 - [docs/message-routing-rules.md](docs/message-routing-rules.md)：消息类型、路由条件和已实现规则。
 - [docs/dws-capabilities.md](docs/dws-capabilities.md)：项目使用的 DWS 能力。
-- [docs/dws-command-inventory.md](docs/dws-command-inventory.md)：DWS 命令面、外部知识入口和读写风险分类。
 - [docs/work-profile-distillation-tutorial.md](docs/work-profile-distillation-tutorial.md)：工作画像生成教程。
 - [SECURITY.md](SECURITY.md)：安全策略。
 - [CONTRIBUTING.md](CONTRIBUTING.md)：贡献指南。

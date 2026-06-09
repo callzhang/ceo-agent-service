@@ -124,10 +124,20 @@ def test_cached_dws_client_delegates_message_io_and_uses_cached_org(tmp_path):
             conversation_id,
             text,
             at_users=None,
+            at_open_dingtalk_ids=None,
+            at_open_dingtalk_names=None,
             user_id=None,
             open_dingtalk_id=None,
         ):
-            self.sent.append((conversation_id, text, at_users or []))
+            self.sent.append(
+                (
+                    conversation_id,
+                    text,
+                    at_users or [],
+                    at_open_dingtalk_ids or [],
+                    at_open_dingtalk_names or [],
+                )
+            )
 
         def reply_message(
             self,
@@ -135,9 +145,16 @@ def test_cached_dws_client_delegates_message_io_and_uses_cached_org(tmp_path):
             ref_message_id,
             ref_sender_open_dingtalk_id,
             text,
+            at_users=None,
         ):
             self.replies.append(
-                (conversation_id, ref_message_id, ref_sender_open_dingtalk_id, text)
+                (
+                    conversation_id,
+                    ref_message_id,
+                    ref_sender_open_dingtalk_id,
+                    text,
+                    at_users or [],
+                )
             )
 
         def ding_user(self, user_id, text):
@@ -151,8 +168,8 @@ def test_cached_dws_client_delegates_message_io_and_uses_cached_org(tmp_path):
     cached.reply_message("cid-1", "msg-1", "open-1", "reply")
     cached.ding_self("handoff")
 
-    assert cached.dws.sent == [("cid-1", "ok", ["user-1"])]
-    assert cached.dws.replies == [("cid-1", "msg-1", "open-1", "reply")]
+    assert cached.dws.sent == [("cid-1", "ok", ["user-1"], [], [])]
+    assert cached.dws.replies == [("cid-1", "msg-1", "open-1", "reply", [])]
     assert cached.dws.dings == [("principal-user", "handoff")]
     assert cached.is_current_user_message(message(sender_user_id="principal-user")) is True
 

@@ -10,10 +10,26 @@ from app.prompt import ceo_agent_thread_prompt
 CODEX_DECISION_SCHEMA_PATH = (
     Path(__file__).resolve().parent / "schemas" / "codex_decision.schema.json"
 )
+AGENT_ENVELOPE_SCHEMA_PATH = (
+    Path(__file__).resolve().parent / "schemas" / "agent_envelope.schema.json"
+)
 CODEX_DEVELOPER_INSTRUCTIONS_PREFIX = (
     "You are the local CEO DingTalk reply worker. Inspect the workspace before "
     "answering. Return only the requested JSON."
 )
+DWS_MATERIAL_READING_INSTRUCTIONS = """
+DingTalk material reading
+
+- When judgment depends on DingTalk documents, AI minutes, or files, inspect material before deciding.
+- Use DWS read-only commands with `--format json`.
+- Docs: `dws doc info --node <URL> --format json`; if online doc and content needed, `dws doc read --node <URL> --format json`.
+- Minutes: `dws minutes get info --id <MINUTES_ID> --format json`.
+- Ordinary files: use relevant DWS file/drive read/download capability only when text context is insufficient.
+- If permission fails, state the missing permission/material and do not invent contents.
+- If some materials fail but others are readable, use readable materials and mention limitation.
+- record why each material command was used.
+- Do not expose tokens, cookies, OAuth codes, signed URLs, local credential paths, or raw secret-bearing commands.
+""".strip()
 # The CEO worker must call DWS and open local authorization flows. Codex exec
 # resume does not support `-s`, so use the explicit bypass flag for both new and
 # resumed decision threads.
@@ -28,7 +44,11 @@ MEMORY_CONNECTOR_ENV_KEYS = {
 
 
 def codex_developer_instructions() -> str:
-    return f"{CODEX_DEVELOPER_INSTRUCTIONS_PREFIX}\n\n{ceo_agent_thread_prompt()}"
+    return (
+        f"{CODEX_DEVELOPER_INSTRUCTIONS_PREFIX}\n\n"
+        f"{DWS_MATERIAL_READING_INSTRUCTIONS}\n\n"
+        f"{ceo_agent_thread_prompt()}"
+    )
 
 
 def _config_string(key: str, value: str) -> str:
@@ -124,7 +144,7 @@ class CodexRunner:
         prompt: str,
         session_id: str | None,
         image_paths: list[Path] | None = None,
-        output_schema_path: Path | None = CODEX_DECISION_SCHEMA_PATH,
+        output_schema_path: Path | None = AGENT_ENVELOPE_SCHEMA_PATH,
         ignore_user_config: bool = False,
     ) -> list[str]:
         image_options: list[str] = []
@@ -159,6 +179,11 @@ class CodexRunner:
                 "resume",
                 *common_options,
                 CODEX_BYPASS_APPROVALS_AND_SANDBOX,
+                *(
+                    ["--output-schema", str(output_schema_path)]
+                    if output_schema_path
+                    else []
+                ),
                 *image_options,
                 session_id,
                 "-",

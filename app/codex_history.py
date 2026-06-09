@@ -361,11 +361,16 @@ def _audit_event_from_jsonl(payload: dict[str, Any]) -> dict[str, str] | None:
     item_type = _string(item.get("type"))
     if item_type == "function_call":
         name = _string(item.get("name")) or "tool"
-        arguments = _pretty_json_string(_string(item.get("arguments")))
+        arguments = _json_argument_text(item.get("arguments"))
         event: dict[str, str] = {
             "event_type": "response_item",
             "tool": name,
         }
+        call_id = _string(item.get("call_id"))
+        if call_id:
+            event["call_id"] = call_id
+        if arguments:
+            event["input"] = arguments
         command = _command_from_json_text(arguments)
         if command:
             event["command"] = command
@@ -381,7 +386,9 @@ def _audit_event_from_jsonl(payload: dict[str, Any]) -> dict[str, str] | None:
         }
         call_id = _string(item.get("call_id"))
         if call_id:
-            event["command"] = call_id
+            event["call_id"] = call_id
+        if output:
+            event["output"] = output
         path = _first_pathish_token(output)
         if path:
             event["path"] = path
@@ -450,6 +457,14 @@ def _command_from_json_text(text: str) -> str:
     if isinstance(payload, dict):
         value = payload.get("cmd") or payload.get("command")
         return value if isinstance(value, str) else ""
+    return ""
+
+
+def _json_argument_text(value: Any) -> str:
+    if isinstance(value, str):
+        return _pretty_json_string(value)
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, ensure_ascii=False, indent=2)
     return ""
 
 

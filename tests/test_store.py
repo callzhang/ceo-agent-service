@@ -1,6 +1,8 @@
 from pathlib import Path
 import sqlite3
 
+import pytest
+
 from app.store import AutoReplyStore
 
 
@@ -16,6 +18,34 @@ def test_conversation_session_persists(tmp_path: Path):
     loaded = AutoReplyStore(tmp_path / "worker.sqlite3")
 
     assert loaded.get_codex_session_id("cid-1") == "session-1"
+
+
+def test_codex_session_lock_is_exclusive(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+
+    assert store.acquire_codex_session_lock("cid-1", "okr:1") is True
+    assert store.acquire_codex_session_lock("cid-1", "reply:msg-1") is False
+
+    store.release_codex_session_lock("cid-1", "okr:1")
+    assert store.acquire_codex_session_lock("cid-1", "reply:msg-1") is True
+
+
+def test_codex_session_lock_release_requires_owner(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+
+    assert store.acquire_codex_session_lock("cid-1", "okr:1") is True
+    assert store.release_codex_session_lock("cid-1", "other") is False
+    assert store.acquire_codex_session_lock("cid-1", "reply:msg-1") is False
+    assert store.release_codex_session_lock("cid-1", "okr:1") is True
+
+
+def test_codex_session_lock_context_manager_releases_without_swallowing(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+
+    with store.codex_session_lock("cid-1", "okr:1"):
+        assert store.acquire_codex_session_lock("cid-1", "reply:msg-1") is False
+
+    assert store.acquire_codex_session_lock("cid-1", "reply:msg-1") is True
 
 
 def test_reply_task_queue_dedupes_by_conversation_and_message(tmp_path: Path):
@@ -211,6 +241,109 @@ def test_defer_reply_task_for_authorization_refunds_claim_attempt(tmp_path: Path
     assert reclaimed[0].id == claimed[0].id
     assert reclaimed[0].attempts == 1
     assert reclaimed[0].error == "authorization required"
+
+
+def test_create_and_claim_okr_review_request(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    request_id = store.create_okr_review_request(
+        conversation_id="cid-1",
+        conversation_title="韩露",
+        trigger_message_id="msg-1",
+        trigger_sender="韩露",
+        trigger_sender_user_id="user-1",
+        trigger_text="帮我审核 OKR",
+        period_label="2026 Q2",
+        period_start="2026-04-01",
+        period_end="2026-06-30",
+        okr_source_json='{"objectives":[]}',
+    )
+
+    claimed = store.claim_okr_review_requests(limit=1)
+
+    assert [item.id for item in claimed] == [request_id]
+    assert claimed[0].status == "processing"
+
+
+def test_record_okr_review_run_and_items(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    request_id = store.create_okr_review_request(
+        conversation_id="cid-1",
+        conversation_title="韩露",
+        trigger_message_id="msg-1",
+        trigger_sender="韩露",
+        trigger_sender_user_id="user-1",
+        trigger_text="帮我审核 OKR",
+        period_label="2026 Q2",
+        period_start="2026-04-01",
+        period_end="2026-06-30",
+        okr_source_json='{"objectives":[]}',
+    )
+    run_id = store.record_okr_review_run(
+        request_id=request_id,
+        codex_session_id="session-1",
+        codex_transcript_start_line=1,
+        codex_transcript_end_line=10,
+        envelope_json='{"kind":"okr_review"}',
+        audit_tool_events_json='[]',
+        audit_summary="审核完成。",
+    )
+    item_id = store.record_okr_review_item(
+        request_id=request_id,
+        objective_title="O",
+        objective_weight=1.0,
+        kr_title="KR",
+        kr_weight=0.5,
+        item_json='{"kr_title":"KR"}',
+    )
+    store.mark_okr_review_request_done(request_id, codex_session_id="session-1")
+
+    loaded = store.get_okr_review_request(request_id)
+    assert loaded.status == "done"
+    assert run_id > 0
+    assert item_id > 0
+
+
+def test_create_okr_review_request_requires_source_json(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+
+    with pytest.raises(TypeError):
+        store.create_okr_review_request(
+            conversation_id="cid-1",
+            conversation_title="韩露",
+            trigger_message_id="msg-1",
+            trigger_sender="韩露",
+            trigger_sender_user_id="user-1",
+            trigger_text="帮我审核 OKR",
+            period_label="2026 Q2",
+            period_start="2026-04-01",
+            period_end="2026-06-30",
+        )
+
+
+def test_record_okr_review_run_requires_audit_fields(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+
+    with pytest.raises(TypeError):
+        store.record_okr_review_run(
+            request_id=1,
+            codex_session_id="session-1",
+            codex_transcript_start_line=1,
+            codex_transcript_end_line=10,
+            audit_tool_events_json="[]",
+        )
+
+
+def test_record_okr_review_item_requires_item_json(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+
+    with pytest.raises(TypeError):
+        store.record_okr_review_item(
+            request_id=1,
+            objective_title="O",
+            objective_weight=1.0,
+            kr_title="KR",
+            kr_weight=0.5,
+        )
 
 
 def test_reset_codex_sessions_clears_conversation_mapping_only(tmp_path: Path):

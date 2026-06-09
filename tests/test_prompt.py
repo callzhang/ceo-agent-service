@@ -15,12 +15,14 @@ from app.developer_prompt import (
 )
 from app.prompt import (
     LinkedDocumentContext,
+    MaterialReferenceContext,
     build_turn_prompt,
     ceo_agent_thread_prompt,
     message_lines,
     sanitize_dingtalk_prompt_text,
     work_profile_instruction,
 )
+from app.user_prompt_blocks import USER_PROMPT_BLOCKS
 
 
 CARD_CONTENT = """@Alex Chen(明哥) 明哥，董事会报告根据昨天的会议进行了修改，您是否已完成审核？是否可以定稿了？
@@ -97,6 +99,18 @@ def test_developer_prompt_delegates_memory_to_agent_mcp_tools():
     assert "memory_write 失败不应改变最终 JSON" in template
 
 
+def test_developer_prompt_documents_agent_envelope_output_protocol():
+    template = read_developer_prompt_template()
+
+    assert "kind 必须是 reply、no_action 或 error" in template
+    assert "user_response.mode 必须是 send_reply、ask_clarifying_question、handoff_to_human 或 no_reply" in template
+    assert "domain_payload 默认使用空对象" in template
+    assert "domain_payload.calendar_response_status" in template
+    assert "domain_payload.candidate_context_known" in template
+    assert "action 必须是 send_reply" not in template
+    assert "reply_text 必须非空" not in template
+
+
 def test_work_profile_path_default_is_not_user_specific(monkeypatch):
     monkeypatch.delenv("CEO_WORK_PROFILE_PATH", raising=False)
 
@@ -143,9 +157,10 @@ def test_default_user_prompt_template_is_a_separate_file():
         "<code: app.user_prompt_blocks:current_message_block()>",
         "<code: app.user_prompt_blocks:sender_org_block()>",
         "<code: app.user_prompt_blocks:known_people_block()>",
+        "<code: app.user_prompt_blocks:context_messages_block()>",
+        "<code: app.user_prompt_blocks:material_references_block()>",
         "<code: app.user_prompt_blocks:linked_documents_block()>",
         "<code: app.user_prompt_blocks:image_download_block()>",
-        "<code: app.user_prompt_blocks:context_messages_block()>",
     ]
 
     assert template.strip() == "\n---\n".join(code_tags)
@@ -155,6 +170,20 @@ def test_default_user_prompt_template_is_a_separate_file():
     assert "CEO Agent Prompt" not in template
 
 
+def test_user_prompt_block_registry_orders_material_references_before_assets():
+    expressions = [block.expression for block in USER_PROMPT_BLOCKS]
+
+    assert expressions[
+        expressions.index("app.user_prompt_blocks:context_messages_block()") :
+        expressions.index("app.user_prompt_blocks:image_download_block()") + 1
+    ] == [
+        "app.user_prompt_blocks:context_messages_block()",
+        "app.user_prompt_blocks:material_references_block()",
+        "app.user_prompt_blocks:linked_documents_block()",
+        "app.user_prompt_blocks:image_download_block()",
+    ]
+
+
 def test_build_turn_prompt_uses_user_prompt_template_override(tmp_path, monkeypatch):
     template_path = tmp_path / "user.md"
     template_path.write_text(
@@ -162,6 +191,7 @@ def test_build_turn_prompt_uses_user_prompt_template_override(tmp_path, monkeypa
             [
                 "CUSTOM USER PROMPT",
                 "<code: app.user_prompt_blocks:current_message_block()>",
+                "<code: app.user_prompt_blocks:material_references_block()>",
                 "<code: app.user_prompt_blocks:image_download_block()>",
                 "<code: app.user_prompt_blocks:context_messages_block()>",
             ]
@@ -241,7 +271,9 @@ def test_context_messages_block_renders_json_array():
         include_thread_prompt=False,
     )
 
-    json_text = prompt.split("上下文消息（自上次回复后的新信息，最多 20 条）:", 1)[1]
+    json_text = prompt.split("上下文消息（自上次回复后的新信息，最多 20 条）:", 1)[
+        1
+    ].split("\n---", 1)[0]
     records = json.loads(json_text)
 
     assert records == [
@@ -346,7 +378,7 @@ def test_thread_prompt_explains_first_person_single_chat_subject():
     prompt = ceo_agent_thread_prompt()
 
     assert "单聊里可以回答发信人关于他自己的请假、调休" in prompt
-    assert "personnel_subject_user_id 必须填写该消息的 sender_user_id" in prompt
+    assert "domain_payload.personnel_subject_user_id 必须填写该消息的 sender_user_id" in prompt
     assert "不要对 internal_personnel 追问“关于谁”" in prompt
 
 
@@ -625,3 +657,52 @@ def test_build_turn_prompt_includes_prefetched_dingtalk_document():
     assert "utm_source" not in prompt
     assert "<span" not in prompt
     assert "根因是协作方式不对。" in prompt
+
+
+def test_build_turn_prompt_includes_material_references_for_agent_reading():
+    prompt = build_turn_prompt(
+        DingTalkConversation(
+            open_conversation_id="cid-1",
+            title="CEO-2 管理群",
+            single_chat=False,
+            unread_point=1,
+        ),
+        [
+            DingTalkMessage(
+                open_conversation_id="cid-1",
+                open_message_id="msg-1",
+                conversation_title="CEO-2 管理群",
+                single_chat=False,
+                sender_name="韩露",
+                create_time="2026-06-08 18:46:32",
+                content="@Alex Chen(明哥) 看第二份材料",
+            )
+        ],
+        [],
+        style_lines=[],
+        include_thread_prompt=False,
+        material_references=[
+            MaterialReferenceContext(
+                kind="dingtalk_doc",
+                reference="https://alidocs.dingtalk.com/i/nodes/doc123?utm_scene=team_space",
+                source_message_id="msg-1",
+                source_sender="韩露",
+                source_time="2026-06-08 18:46:32",
+            ),
+            MaterialReferenceContext(
+                kind="dingtalk_minutes",
+                reference="7632756964333134343836383736303334325f3435313431363430365f35",
+                source_message_id="msg-1",
+                source_sender="韩露",
+                source_time="2026-06-08 18:46:32",
+            ),
+        ],
+    )
+
+    assert "待读取材料（由 agent 判断是否读取）:" in prompt
+    assert "类型: dingtalk_doc" in prompt
+    assert "dws doc info --node" in prompt
+    assert "dws doc read --node" in prompt
+    assert "类型: dingtalk_minutes" in prompt
+    assert "dws minutes get info --id" in prompt
+    assert "如果判断依赖材料正文，必须先读取材料" in prompt

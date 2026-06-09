@@ -1,6 +1,7 @@
 import argparse
 import json
 import os
+import shlex
 import threading
 import time
 from collections.abc import Callable
@@ -67,6 +68,7 @@ LIVE_SEND_BLOCKERS = (
 LIVE_SEND_GUARD_ENV = "CEO_LIVE_SEND_BLOCKERS_ACCEPTED"
 DEFAULT_DING_ROBOT_NAME = None
 DEFAULT_WORKSPACE = Path.home() / "Documents" / "memory"
+OKR_LIVE_SOURCE_COMMAND_ENV = "CEO_OKR_LIVE_SOURCE_COMMAND"
 SEND_ATTEMPT_TARGET_LOOKBACK_LIMIT = 500
 run_audit_web = None
 
@@ -166,6 +168,7 @@ def build_parser() -> argparse.ArgumentParser:
         "consume-once",
         "consume",
         "process-work-items",
+        "process-okr-reviews",
         "scan-task-sources",
         "process-follow-ups",
         "daily-task-maintenance",
@@ -496,6 +499,8 @@ def settings_from_args(args: argparse.Namespace) -> WorkerSettings:
 
 
 def create_worker(settings: WorkerSettings) -> DingTalkAutoReplyWorker:
+    from app.okr_review import DwsLiveOkrSource, UnconfiguredOkrLiveSource
+
     store = AutoReplyStore(settings.db_path)
     dws = DwsClient(
         ding_robot_code=settings.ding_robot_code,
@@ -526,7 +531,22 @@ def create_worker(settings: WorkerSettings) -> DingTalkAutoReplyWorker:
         style_records=style_records,
     )
     worker.oa_approval_runner = oa_approval_runner
+    command_template = _okr_live_source_command_template()
+    if command_template:
+        worker.okr_live_source = DwsLiveOkrSource(
+            dws=dws,
+            command_template=command_template,
+        )
+    else:
+        worker.okr_live_source = UnconfiguredOkrLiveSource(OKR_LIVE_SOURCE_COMMAND_ENV)
     return worker
+
+
+def _okr_live_source_command_template() -> list[str]:
+    value = os.getenv(OKR_LIVE_SOURCE_COMMAND_ENV, "").strip()
+    if not value:
+        return []
+    return shlex.split(value)
 
 
 def ensure_live_send_allowed(settings: WorkerSettings) -> None:
@@ -665,6 +685,149 @@ def process_work_items_command(settings: WorkerSettings) -> int:
     return processed
 
 
+def process_okr_reviews_command(settings: WorkerSettings) -> int:
+    from app.okr_review import process_okr_review_request
+    from app.structured_agent import AgentSpec, StructuredCodexRunner
+
+    store = AutoReplyStore(settings.db_path)
+    spec = AgentSpec(
+        name="okr_review",
+        schema_path=_repo_root() / "app" / "schemas" / "agent_envelope.schema.json",
+        primary_skill_paths=[
+            Path.home() / ".agents" / "skills" / "dingtang-okr-review" / "SKILL.md"
+        ],
+        reply_visible_skill_paths=[],
+        developer_preamble=(
+            "You are the local CEO Agent OKR review runner. "
+            "Return only AgentEnvelope JSON."
+        ),
+    )
+    runner = StructuredCodexRunner(
+        store=store,
+        workspace=settings.workspace,
+        spec=spec,
+        timeout_seconds=settings.codex_timeout_seconds,
+        idle_timeout_seconds=settings.codex_idle_timeout_seconds,
+    )
+    dws = None
+    if not settings.dry_run:
+        dws = DwsClient(
+            ding_robot_code=settings.ding_robot_code,
+            ding_robot_name=settings.ding_robot_name,
+            ding_receiver_user_id=settings.ding_receiver_user_id,
+            transient_retry_attempts=settings.dws_transient_retry_attempts,
+            transient_retry_delay_seconds=settings.dws_transient_retry_delay_seconds,
+        )
+    processed = 0
+    limit = 20 if settings.max_batches is None else settings.max_batches
+    for request in store.claim_okr_review_requests(limit):
+        try:
+            conversation = DingTalkConversation(
+                open_conversation_id=request.conversation_id,
+                title=request.conversation_title,
+                single_chat=_conversation_single_chat_for_okr_request(store, request),
+                unread_point=0,
+            )
+            trigger = _trigger_message_for_okr_request(
+                store=store,
+                conversation=conversation,
+                request=request,
+            )
+            reply = process_okr_review_request(
+                store=store,
+                runner=runner,
+                request=request,
+                single_chat=conversation.single_chat,
+            )
+        except Exception as exc:
+            store.mark_okr_review_request_failed(request.id, str(exc))
+            store.record_error(
+                request.conversation_id,
+                request.trigger_message_id,
+                "okr_review_process",
+                str(exc),
+            )
+            raise
+        if settings.dry_run:
+            processed += 1
+            continue
+        try:
+            if dws is None:
+                raise RuntimeError("DWS client is not configured for OKR review send")
+            send_result = dws.send_reply_to_trigger(conversation, trigger, reply)
+        except Exception as exc:
+            store.mark_okr_review_request_failed(request.id, str(exc))
+            store.record_error(
+                request.conversation_id,
+                request.trigger_message_id,
+                "okr_review_send",
+                str(exc),
+            )
+            raise
+        store.record_sent_reply(
+            request.conversation_id,
+            request.trigger_message_id,
+            reply,
+            send_result_json=json.dumps(
+                native_reply_delivery_payload(conversation, trigger, send_result),
+                ensure_ascii=False,
+            ),
+            recall_key=DwsClient.extract_recall_key(send_result),
+        )
+        processed += 1
+    print(f"process-okr-reviews processed={processed}", flush=True)
+    return processed
+
+
+def _conversation_single_chat_for_okr_request(
+    store: AutoReplyStore,
+    request,
+) -> bool:
+    task = store.get_reply_task_for_message(
+        request.conversation_id,
+        request.trigger_message_id,
+    )
+    if task is not None:
+        return task.single_chat
+    record = store.get_conversation(request.conversation_id)
+    if record is None:
+        raise RuntimeError(
+            f"conversation not found for OKR review request: {request.conversation_id}"
+        )
+    return record.single_chat
+
+
+def _trigger_message_for_okr_request(
+    *,
+    store: AutoReplyStore,
+    conversation: DingTalkConversation,
+    request,
+) -> DingTalkMessage:
+    task = store.get_reply_task_for_message(
+        request.conversation_id,
+        request.trigger_message_id,
+    )
+    if task is None:
+        raise RuntimeError(
+            f"reply task not found for OKR review trigger: {request.trigger_message_id}"
+        )
+    raw_payload = json.loads(task.trigger_message_json)
+    if not isinstance(raw_payload, dict):
+        raise RuntimeError(
+            f"invalid OKR review trigger payload: {request.trigger_message_id}"
+        )
+    trigger = _trigger_message_from_payload(raw_payload, conversation=conversation)
+    if trigger.open_message_id != request.trigger_message_id:
+        raise RuntimeError(
+            f"OKR review trigger payload message mismatch: {request.trigger_message_id}"
+        )
+    if not trigger.sender_open_dingtalk_id:
+        raise RuntimeError(
+            f"OKR review trigger missing senderOpenDingTalkId: {request.trigger_message_id}"
+        )
+    return trigger
+
+
 def scan_task_sources_command(settings: WorkerSettings) -> int:
     from app.task_scanners import scan_ai_minutes, scan_local_workspace_files
 
@@ -685,8 +848,16 @@ def scan_task_sources_command(settings: WorkerSettings) -> int:
     return total
 
 
-def process_follow_ups_command(settings: WorkerSettings) -> int:
+def process_follow_ups_command(
+    settings: WorkerSettings,
+    *,
+    refresh_evidence: bool = True,
+) -> int:
     from app.follow_up import process_due_follow_ups
+
+    if refresh_evidence:
+        scan_task_sources_command(settings)
+        process_work_items_command(settings)
 
     dws = DwsClient(
         ding_robot_code=settings.ding_robot_code,
@@ -706,15 +877,18 @@ def process_follow_ups_command(settings: WorkerSettings) -> int:
 def daily_task_maintenance_command(settings: WorkerSettings) -> dict[str, int]:
     sources = scan_task_sources_command(settings)
     work_items = process_work_items_command(settings)
-    follow_ups = process_follow_ups_command(settings)
+    okr_reviews = process_okr_reviews_command(settings)
+    follow_ups = process_follow_ups_command(settings, refresh_evidence=False)
     result = {
         "sources": sources,
         "work_items": work_items,
+        "okr_reviews": okr_reviews,
         "follow_ups": follow_ups,
     }
     print(
         "daily-task-maintenance "
-        f"sources={sources} work_items={work_items} follow_ups={follow_ups}",
+        f"sources={sources} work_items={work_items} "
+        f"okr_reviews={okr_reviews} follow_ups={follow_ups}",
         flush=True,
     )
     return result
@@ -1403,10 +1577,13 @@ def run_task_maintenance_loop(
     next_daily_run = monotonic()
     while True:
         process_work_items_command(settings)
+        process_okr_reviews_command(settings)
         now = monotonic()
         if now >= next_daily_run:
             scan_task_sources_command(settings)
-            process_follow_ups_command(settings)
+            process_work_items_command(settings)
+            process_okr_reviews_command(settings)
+            process_follow_ups_command(settings, refresh_evidence=False)
             next_daily_run = now + daily_interval_seconds
         sleep(work_item_interval_seconds)
 
@@ -1683,6 +1860,9 @@ def main() -> None:
         )
     elif args.command == "process-work-items":
         process_work_items_command(settings)
+    elif args.command == "process-okr-reviews":
+        ensure_live_send_allowed(settings)
+        process_okr_reviews_command(settings)
     elif args.command == "scan-task-sources":
         scan_task_sources_command(settings)
     elif args.command == "process-follow-ups":

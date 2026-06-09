@@ -4,6 +4,7 @@ import json
 import pytest
 
 from app.codex_runner import (
+    AGENT_ENVELOPE_SCHEMA_PATH,
     CODEX_DECISION_SCHEMA_PATH,
     CodexRunner,
     codex_developer_instructions,
@@ -63,6 +64,15 @@ def test_codex_command_exposes_memory_connector_mcp(tmp_path: Path, monkeypatch)
         in command
     )
     assert "x-memory-user-id" not in " ".join(command)
+
+
+def test_codex_command_uses_agent_envelope_schema_by_default(tmp_path: Path):
+    runner = CodexRunner(workspace=tmp_path, codex_bin="codex")
+
+    command = runner.build_command(prompt="hello", session_id=None)
+
+    schema_index = command.index("--output-schema") + 1
+    assert command[schema_index].endswith("app/schemas/agent_envelope.schema.json")
 
 
 def test_codex_runner_env_loads_memory_connector_env_file(
@@ -141,6 +151,17 @@ def test_codex_runner_does_not_forward_memory_user_id(
     assert "x-memory-user-id" not in " ".join(command)
 
 
+def test_codex_developer_instructions_include_dws_material_reading_guidance():
+    instructions = codex_developer_instructions()
+
+    assert "DingTalk material reading" in instructions
+    assert "dws doc info --node" in instructions
+    assert "dws doc read --node" in instructions
+    assert "dws minutes get info --id" in instructions
+    assert "record why each material command was used" in instructions
+    assert "Do not expose tokens" in instructions
+
+
 def test_codex_command_reads_memory_connector_mcp_url_from_env_file(
     tmp_path: Path, monkeypatch
 ):
@@ -210,7 +231,7 @@ def test_builds_new_thread_command(tmp_path: Path):
         "include_environment_context=false",
         "--dangerously-bypass-approvals-and-sandbox",
         "--output-schema",
-        str(CODEX_DECISION_SCHEMA_PATH),
+        str(AGENT_ENVELOPE_SCHEMA_PATH),
         "--cd",
         str(tmp_path),
         "-",
@@ -250,6 +271,8 @@ def test_builds_resume_command(tmp_path: Path):
         "-c",
         "include_environment_context=false",
         "--dangerously-bypass-approvals-and-sandbox",
+        "--output-schema",
+        str(AGENT_ENVELOPE_SCHEMA_PATH),
         "abc",
         "-",
     ]
@@ -288,7 +311,9 @@ def test_builds_resume_command_with_images(tmp_path: Path):
         image_paths=[image],
     )
 
-    assert command[-4:] == [
+    assert command[-6:] == [
+        "--output-schema",
+        str(AGENT_ENVELOPE_SCHEMA_PATH),
         "--image",
         str(image),
         "abc",
@@ -311,8 +336,8 @@ def test_codex_developer_instructions_hold_thread_prompt_not_turn_message(monkey
     assert "graphify query" in instructions
     assert "星尘数据的CEO，负责算法部、售前部、市场部、HR部的工作。" in instructions
     assert "只回答“新消息”提出的问题" in instructions
-    assert "audit_documents 用于声明直接依据的材料" in instructions
-    assert "reply_text 不要引用来源" in instructions
+    assert "audit.documents 用于声明直接依据的材料" in instructions
+    assert "user_response.text 不要引用来源" in instructions
     assert "不要加脚注编号" in instructions
     assert "`workspace`" in instructions
     assert "`source=`" in instructions

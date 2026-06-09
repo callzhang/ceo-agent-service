@@ -12,7 +12,11 @@ from urllib.parse import parse_qs, quote, unquote, urlparse, urlsplit, urlunspli
 
 from pypdf import PdfReader
 
-from app.codex_decision import append_signature
+from app.codex_decision import (
+    REPLY_AGENT_ENVELOPE_SCHEMA_HINT,
+    append_signature,
+    codex_decision_from_envelope,
+)
 from app.config import (
     assistant_signature,
     broadcast_mention_aliases,
@@ -53,12 +57,13 @@ from app.leak_check import (
 )
 from app.notification import send_macos_notification
 from app.oa_approval import extract_oa_url
+from app.okr_review import current_quarter_period, is_okr_review_request
 from app.org_cache import (
     ORG_CACHE_REFRESHED_DATE_STATE_KEY,
     refresh_org_cache,
 )
 from app.permission import PermissionAction, PermissionGate
-from app.prompt import LinkedDocumentContext, build_turn_prompt
+from app.prompt import LinkedDocumentContext, MaterialReferenceContext, build_turn_prompt
 from app.store import (
     FAST_PATH_UNREAD_BACKOFF_TASK_ERROR,
     AutoReplyStore,
@@ -71,14 +76,7 @@ HANDOFF_ACK = handoff_ack()
 # Historical auto-ack marker. Keep filtering it from context, but do not send
 # new processing acknowledgements before final replies.
 PROCESSING_ACK = "收到，我正在处理（by 分身）"
-LEAK_CHECK_REGENERATION_SCHEMA = (
-    'JSON schema: {"action":"send_reply|ask_clarifying_question|handoff_to_human|no_reply|stop_with_error",'
-    '"reply_text":"","reason":"","ding_self":false,"macos_notify":true,'
-    '"sensitivity_kind":"general|internal_personnel|external_candidate",'
-    '"personnel_subject_user_id":null,"candidate_context_known":false,"candidate_department_ids":[],'
-    '"calendar_response_status":"",'
-    '"audit_documents":[],"audit_summary":""}'
-)
+LEAK_CHECK_REGENERATION_SCHEMA = REPLY_AGENT_ENVELOPE_SCHEMA_HINT
 SPLIT_PERSON_SIGNATURE = assistant_signature()
 STALE_PROCESSING_TASK_SECONDS = 30 * 60
 MAX_REPLY_TASK_ATTEMPTS = 3
@@ -137,7 +135,7 @@ MENTION_PATTERN = re.compile(
     r"(?:[（(](?:[^()（）]|[（(][^()（）]*[）)])*[）)])?"
 )
 DINGTALK_DOC_URL_PATTERN = re.compile(
-    r"https://alidocs\.dingtalk\.com/i/nodes/[^\s)\]]+"
+    r"https://(?:alidocs|docs)\.dingtalk\.com/i/nodes/[^\s)\]]+"
 )
 DINGTALK_MINUTES_LINK_PATTERN = re.compile(
     r"(?:dingtalk://[^\s)\]]*flash_minutes_detail[^\s)\]]*|"
@@ -165,6 +163,7 @@ PDF_TEXT_PAGE_LIMIT = 30
 DWS_UPGRADE_CHECKED_DATE_STATE_KEY = "dws_upgrade_checked_date"
 MESSAGE_RECOVERY_CHECKED_AT_STATE_KEY = "message_recovery_checked_at"
 MESSAGE_FAST_PATH_CHECKED_AT_STATE_KEY = "message_fast_path_checked_at"
+DWS_AUTH_LOGIN_STATE_KEY = "dws_auth_login"
 DWS_FORBIDDEN_CONVERSATIONS_STATE_KEY = "dws_forbidden_conversations"
 DWS_FORBIDDEN_CONVERSATION_COOLDOWN = timedelta(days=1)
 ORG_CACHE_REFRESH_INTERVAL = timedelta(days=7)
@@ -217,6 +216,7 @@ class DingTalkAutoReplyWorker:
         self.now_provider = now_provider or (lambda: datetime.now().astimezone())
         self.permission_gate = PermissionGate(dws)
         self.oa_approval_runner = oa_approval_runner
+        self._dws_auth_login_process = None
 
     def run_once(self, max_batches: int | None = None) -> None:
         self.produce_once(max_tasks=max_batches)
@@ -239,6 +239,8 @@ class DingTalkAutoReplyWorker:
         except Exception as exc:
             if raise_authorization and self._is_authorization_error(exc):
                 raise
+            if self._is_dws_login_error(exc):
+                self._ensure_dws_auth_login(exc)
             is_forbidden_read = bool(
                 conversation_id and self._is_dws_forbidden_read_error(exc)
             )
@@ -291,6 +293,7 @@ class DingTalkAutoReplyWorker:
         )
         if conversations is None:
             return 0
+        self._mark_dws_auth_healthy()
         if not recovery_due:
             conversations = self._conversations_due_for_fast_path(conversations)
         unread_conversation_ids = {
@@ -785,6 +788,102 @@ class DingTalkAutoReplyWorker:
                 today.isoformat(),
             )
 
+    @staticmethod
+    def _is_dws_login_error(exc: Exception) -> bool:
+        return isinstance(exc, DwsError) and exc.needs_login
+
+    def _dws_auth_login_state(self) -> dict[str, Any]:
+        raw = self.store.get_service_state(DWS_AUTH_LOGIN_STATE_KEY)
+        if not raw:
+            return {}
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError:
+            return {}
+        return payload if isinstance(payload, dict) else {}
+
+    def _set_dws_auth_login_state(self, state: dict[str, Any]) -> None:
+        self.store.set_service_state(
+            DWS_AUTH_LOGIN_STATE_KEY,
+            json.dumps(state, ensure_ascii=False, sort_keys=True),
+        )
+
+    def _monitor_dws_auth_login(self, state: dict[str, Any]) -> dict[str, Any]:
+        process = self._dws_auth_login_process
+        if process is None:
+            return state
+        exit_code = process.poll()
+        if exit_code is None:
+            if state.get("status") != "running":
+                state = {
+                    **state,
+                    "status": "running",
+                    "updated_at": self._now().astimezone(timezone.utc).isoformat(),
+                }
+                self._set_dws_auth_login_state(state)
+            return state
+        self._dws_auth_login_process = None
+        status = "completed" if exit_code == 0 else "failed"
+        state = {
+            **state,
+            "status": status,
+            "exit_code": exit_code,
+            "updated_at": self._now().astimezone(timezone.utc).isoformat(),
+        }
+        self._set_dws_auth_login_state(state)
+        self._notify(
+            title=f"CEO DWS auth login {status}",
+            message=f"dws auth login exited with code {exit_code}",
+        )
+        return state
+
+    def _ensure_dws_auth_login(self, exc: Exception) -> bool:
+        state = self._monitor_dws_auth_login(self._dws_auth_login_state())
+        if state.get("status") in {"running", "completed", "failed"}:
+            return False
+        try:
+            process = self.dws.start_auth_login()
+        except Exception as start_exc:
+            self.store.record_error(None, None, "dws_auth_login", str(start_exc))
+            self._set_dws_auth_login_state(
+                {
+                    "status": "failed",
+                    "reason": str(exc),
+                    "error": str(start_exc),
+                    "started_at": self._now().astimezone(timezone.utc).isoformat(),
+                }
+            )
+            self._notify(
+                title="CEO DWS auth login failed",
+                message=str(start_exc)[:120],
+            )
+            return False
+        self._dws_auth_login_process = process
+        self._set_dws_auth_login_state(
+            {
+                "status": "running",
+                "pid": process.pid,
+                "reason": str(exc),
+                "started_at": self._now().astimezone(timezone.utc).isoformat(),
+            }
+        )
+        self._notify(
+            title="CEO DWS auth login required",
+            message="Started dws auth login. Please complete DingTalk login.",
+        )
+        return True
+
+    def _mark_dws_auth_healthy(self) -> None:
+        state = self._dws_auth_login_state()
+        if state.get("status") == "authenticated":
+            return
+        self._set_dws_auth_login_state(
+            {
+                "status": "authenticated",
+                "checked_at": self._now().astimezone(timezone.utc).isoformat(),
+            }
+        )
+
     def _skip_messages_outside_recent_window(
         self,
         conversation: DingTalkConversation,
@@ -943,6 +1042,12 @@ class DingTalkAutoReplyWorker:
             raise_on_delivery_failure=True,
         ):
             return True
+        if self._handle_okr_review_if_actionable(
+            conversation,
+            trigger,
+            raise_on_delivery_failure=True,
+        ):
+            return True
         if self._handle_oa_approval_if_actionable(
             conversation,
             trigger,
@@ -1064,8 +1169,6 @@ class DingTalkAutoReplyWorker:
     ) -> list[DingTalkMessage]:
         if not messages:
             return []
-        if conversation.single_chat:
-            return [messages[-1]]
         return DingTalkAutoReplyWorker._coalesce_consecutive_messages_by_sender(
             messages
         )
@@ -1235,6 +1338,12 @@ class DingTalkAutoReplyWorker:
             allow_duplicate_send=force_new_decision,
         ):
             return trigger.open_message_id
+        if self._handle_okr_review_if_actionable(
+            conversation,
+            trigger,
+            ignore_existing_attempt=force_new_decision,
+        ):
+            return trigger.open_message_id
         if self._handle_oa_approval_if_actionable(
             conversation,
             trigger,
@@ -1365,6 +1474,76 @@ class DingTalkAutoReplyWorker:
         if minutes_permission_request_from_message is None:
             return None
         return minutes_permission_request_from_message(message)
+
+    def _handle_okr_review_if_actionable(
+        self,
+        conversation: DingTalkConversation,
+        trigger: DingTalkMessage,
+        *,
+        ignore_existing_attempt: bool = False,
+        raise_on_delivery_failure: bool = False,
+    ) -> bool:
+        if not is_okr_review_request(trigger.content):
+            return False
+        if not ignore_existing_attempt and self._handle_existing_attempt(
+            conversation,
+            trigger,
+            [trigger],
+            ignore_system_notification_skip=True,
+        ):
+            return True
+        if not hasattr(self, "okr_live_source"):
+            raise RuntimeError("OKR live source is not configured")
+        period = current_quarter_period()
+        okr_payload = self.okr_live_source.fetch_user_okr(
+            user_id=trigger.sender_user_id or self.dws.resolve_message_sender(trigger),
+            period_label=period.period_label,
+        )
+        request_id = self.store.create_okr_review_request(
+            conversation_id=conversation.open_conversation_id,
+            conversation_title=conversation.title,
+            trigger_message_id=trigger.open_message_id,
+            trigger_sender=trigger.sender_name,
+            trigger_sender_user_id=trigger.sender_user_id or "",
+            trigger_text=trigger.content,
+            period_label=period.period_label,
+            period_start=period.period_start,
+            period_end=period.period_end,
+            okr_source_json=json.dumps(okr_payload, ensure_ascii=False),
+        )
+        reply_text = (
+            f"已受理 {period.period_label} OKR 审核请求，"
+            "正在实时核实 KR 进度和证据。"
+        )
+        attempt_id = self.store.record_reply_attempt_for_trigger(
+            conversation_id=conversation.open_conversation_id,
+            conversation_title=conversation.title,
+            trigger_message_id=trigger.open_message_id,
+            trigger_sender=trigger.sender_name,
+            trigger_text=trigger.content,
+            action="okr_review",
+            sensitivity_kind="internal_personnel",
+            codex_reason=f"okr_review_request:{request_id}",
+            draft_reply_text=reply_text,
+            audit_summary="OKR review request accepted and queued.",
+            send_status="dry_run" if self.dry_run else "pending",
+        )
+        self.store.update_reply_attempt(attempt_id, final_reply_text=reply_text)
+        if not self.dry_run:
+            delivered = self._deliver_trigger_reply(
+                conversation=conversation,
+                trigger=trigger,
+                new_messages=[trigger],
+                attempt_id=attempt_id,
+                reply_text=reply_text,
+                feedback_token="",
+                raise_on_delivery_failure=raise_on_delivery_failure,
+            )
+            if not delivered and raise_on_delivery_failure:
+                raise ReplyDeliveryError("OKR review acknowledgement delivery failed")
+        else:
+            self._mark_seen([trigger])
+        return True
 
     def _handle_oa_approval_if_actionable(
         self,
@@ -2323,10 +2502,10 @@ class DingTalkAutoReplyWorker:
             "请先结合最近上下文事项、会议标题、时间、组织者、会议描述、会议评论和重叠会议判断是否有必要参加；会议描述为空不是自动追问条件。",
             "如果新会议标题、描述或会议评论显示这是静默会、异步评审、材料审阅或明确要求处理事项，这条规则优先于普通文档批阅转交规则；不能只接受日历，也不能只要求对方改去文档里 @，必须把日程标题、描述、会议评论、链接材料和冲突会议当作待处理事项直接处理，输出处理结论或需要补充的材料。",
             "最近聊天上下文只能用于理解背景和判断参加价值，不能替代会议描述、会议评论或链接材料成为静默会任务来源；如果会议内容和评论没有给出可处理材料，应要求补充具体缺失材料。",
-            "只有当日程不是静默会/异步评审/材料审阅/明确处理事项，且只是邀请批阅、review、反馈或评论某个文档但没有提供足够可处理材料时，reply_text 才使用：请直接@我文档让我批阅即可，只有存疑再约会。",
-            "如果最近事项和标题已经能判断本人有必要参加，action 输出 send_reply，reply_text 用一两句话说明接受理由，并设置 calendar_response_status 为 accepted。",
-            "如果最近事项和标题能判断没有必要参加或仅需保留观察，可以 action 输出 no_reply，并设置 calendar_response_status 为 declined 或 tentative。",
-            "这类材料处理可以同时设置 calendar_response_status；如果材料链接支持评论，服务会优先写入原材料评论，不能评论时再回退到原消息回复。",
+            "只有当日程不是静默会/异步评审/材料审阅/明确处理事项，且只是邀请批阅、review、反馈或评论某个文档但没有提供足够可处理材料时，user_response.text 才使用：请直接@我文档让我批阅即可，只有存疑再约会。",
+            "如果最近事项和标题已经能判断本人有必要参加，user_response.mode 输出 send_reply，user_response.text 用一两句话说明接受理由，并设置 domain_payload.calendar_response_status 为 accepted。",
+            "如果最近事项和标题能判断没有必要参加或仅需保留观察，可以 user_response.mode 输出 no_reply，并设置 domain_payload.calendar_response_status 为 declined 或 tentative。",
+            "这类材料处理可以同时设置 domain_payload.calendar_response_status；如果材料链接支持评论，服务会优先写入原材料评论，不能评论时再回退到原消息回复。",
             "如果理由充分但需要聊天同步，回复中说明建议接受这场会议并调整或拒绝哪个重叠会议；如果信息不足，再回复对方原因并请补充。",
             "",
             f"新会议：{context.invite.title or '未命名日程'}",
@@ -2365,11 +2544,11 @@ class DingTalkAutoReplyWorker:
             "请先结合最近上下文事项、会议标题、时间、组织者、会议描述和会议评论判断是否有必要参加；会议描述为空不是自动追问条件。",
             "如果新会议标题、描述或会议评论显示这是静默会、异步评审、材料审阅或明确要求处理事项，这条规则优先于普通文档批阅转交规则；不能只接受日历，也不能只要求对方改去文档里 @，必须把日程标题、描述、会议评论和链接材料当作待处理事项直接处理，输出处理结论或需要补充的材料。",
             "最近聊天上下文只能用于理解背景和判断参加价值，不能替代会议描述、会议评论或链接材料成为静默会任务来源；如果会议内容和评论没有给出可处理材料，应要求补充具体缺失材料。",
-            "只有当日程不是静默会/异步评审/材料审阅/明确处理事项，且只是邀请批阅、review、反馈或评论某个文档但没有提供足够可处理材料时，reply_text 才使用：请直接@我文档让我批阅即可，只有存疑再约会。",
-            "这类材料处理可以同时设置 calendar_response_status；如果材料链接支持评论，服务会优先写入原材料评论，不能评论时再回退到原消息回复。",
-            f"如果最近事项和标题足以判断 {principal_display_name()} 本人有必要参加，action 输出 send_reply，reply_text 用一两句话说明接受理由，并设置 calendar_response_status 为 accepted。",
-            "如果最近事项和标题足以判断先保留但不确认，action 输出 no_reply，并设置 calendar_response_status 为 tentative。",
-            "如果最近事项和标题足以判断本人参加无价值，action 输出 no_reply，并设置 calendar_response_status 为 declined。",
+            "只有当日程不是静默会/异步评审/材料审阅/明确处理事项，且只是邀请批阅、review、反馈或评论某个文档但没有提供足够可处理材料时，user_response.text 才使用：请直接@我文档让我批阅即可，只有存疑再约会。",
+            "这类材料处理可以同时设置 domain_payload.calendar_response_status；如果材料链接支持评论，服务会优先写入原材料评论，不能评论时再回退到原消息回复。",
+            f"如果最近事项和标题足以判断 {principal_display_name()} 本人有必要参加，user_response.mode 输出 send_reply，user_response.text 用一两句话说明接受理由，并设置 domain_payload.calendar_response_status 为 accepted。",
+            "如果最近事项和标题足以判断先保留但不确认，user_response.mode 输出 no_reply，并设置 domain_payload.calendar_response_status 为 tentative。",
+            "如果最近事项和标题足以判断本人参加无价值，user_response.mode 输出 no_reply，并设置 domain_payload.calendar_response_status 为 declined。",
             "如果结合最近事项、标题、时间、组织者、描述和评论后仍不足以判断，再追问补充信息或 handoff。",
             "",
             f"新会议：{context.invite.title or '未命名日程'}",
@@ -3031,24 +3210,18 @@ class DingTalkAutoReplyWorker:
         ):
             return
         material_messages = comment_target_messages or new_messages
-        try:
-            linked_documents = self._read_linked_documents(
+        material_references = self._material_references(
+            material_messages, context_messages
+        )
+        image_paths, image_download_errors = self._collect_image_paths(
+            material_messages,
+            context_messages,
+        )
+        linked_documents: list[LinkedDocumentContext] = []
+        if calendar_response_event is not None:
+            linked_documents = self._read_calendar_linked_documents(
                 material_messages, context_messages
             )
-            image_paths, image_download_errors = self._collect_image_paths(
-                material_messages,
-                context_messages,
-            )
-        except Exception as exc:
-            handled = self._record_linked_document_error(
-                conversation,
-                trigger,
-                exc,
-                raise_on_delivery_failure=raise_on_delivery_failure,
-            )
-            if raise_on_delivery_failure and not handled:
-                raise ReplyTaskProcessingError(str(exc)) from exc
-            return
         session_id = None
         if not ignore_existing_attempt:
             session_id = self.store.get_codex_session_id(
@@ -3065,6 +3238,7 @@ class DingTalkAutoReplyWorker:
             prompt_context_messages,
             include_thread_prompt=session_id is None,
             linked_documents=linked_documents,
+            material_references=material_references,
             image_download_errors=image_download_errors,
         )
         before_session_id = getattr(self.codex, "last_session_id", None)
@@ -3073,6 +3247,7 @@ class DingTalkAutoReplyWorker:
             session_id=session_id,
             image_paths=image_paths,
         )
+        decision = self._normalize_codex_decision(decision)
         resume_attempts = 1
         while (
             resume_attempts < STALE_CODEX_RESUME_ATTEMPTS
@@ -3085,6 +3260,7 @@ class DingTalkAutoReplyWorker:
                 session_id=session_id,
                 image_paths=image_paths,
             )
+            decision = self._normalize_codex_decision(decision)
         if self._is_stale_codex_resume(decision, session_id):
             self.store.clear_codex_session(conversation.open_conversation_id)
             session_id = None
@@ -3094,6 +3270,7 @@ class DingTalkAutoReplyWorker:
                 context_messages,
                 include_thread_prompt=True,
                 linked_documents=linked_documents,
+                material_references=material_references,
                 image_download_errors=image_download_errors,
             )
             before_session_id = getattr(self.codex, "last_session_id", None)
@@ -3102,16 +3279,18 @@ class DingTalkAutoReplyWorker:
                 session_id=None,
                 image_paths=image_paths,
             )
-        if self._single_chat_document_no_reply_needs_retry(
+            decision = self._normalize_codex_decision(decision)
+        if self._single_chat_material_no_reply_needs_retry(
             conversation,
-            linked_documents,
+            material_references,
             decision,
         ):
             decision = self.codex.decide(
-                prompt=self._single_chat_document_retry_prompt(),
+                prompt=self._single_chat_material_retry_prompt(),
                 session_id=getattr(self.codex, "last_session_id", None) or session_id,
                 image_paths=image_paths,
             )
+            decision = self._normalize_codex_decision(decision)
         after_session_id = getattr(self.codex, "last_session_id", None)
         self._persist_codex_session_id(
             conversation,
@@ -3401,7 +3580,7 @@ class DingTalkAutoReplyWorker:
             return False
         return False
 
-    def _read_linked_documents(
+    def _read_calendar_linked_documents(
         self,
         new_messages: list[DingTalkMessage],
         context_messages: list[DingTalkMessage],
@@ -3411,14 +3590,152 @@ class DingTalkAutoReplyWorker:
             new_messages, context_messages
         )
         for task_uuid in self._dingtalk_minutes_ids(referenced_messages):
-            documents.append(self._read_linked_minutes(task_uuid))
+            try:
+                documents.append(self._read_linked_minutes(task_uuid))
+            except Exception as exc:
+                documents.append(self._linked_document_read_failure_context(task_uuid, exc))
         for url in self._dingtalk_doc_urls(referenced_messages):
-            documents.append(self._read_linked_alidocs_node(url))
+            try:
+                documents.append(self._read_linked_alidocs_node(url))
+            except Exception as exc:
+                documents.append(self._linked_document_read_failure_context(url, exc))
         for file_name in self._referenced_file_names(new_messages, context_messages):
-            document = self._read_referenced_file(file_name)
+            try:
+                document = self._read_referenced_file(file_name)
+            except Exception as exc:
+                documents.append(self._linked_document_read_failure_context(file_name, exc))
+                continue
             if document is not None:
                 documents.append(document)
         return documents
+
+    @staticmethod
+    def _linked_document_read_failure_context(
+        reference: str, error: Exception
+    ) -> LinkedDocumentContext:
+        return LinkedDocumentContext(
+            url=reference,
+            title="钉钉材料读取失败",
+            markdown=(
+                "材料读取失败: 当前账号未能读取这份钉钉材料。\n"
+                "处理要求: agent 不能臆测材料内容；如果判断依赖材料正文，"
+                "应说明权限或读取问题，并要求补充正文或开放权限。\n"
+                f"错误: {str(error)}"
+            ),
+        )
+
+    def _material_references(
+        self,
+        new_messages: list[DingTalkMessage],
+        context_messages: list[DingTalkMessage],
+    ) -> list[MaterialReferenceContext]:
+        references: list[MaterialReferenceContext] = []
+        seen: set[tuple[str, str]] = set()
+
+        def add(kind: str, reference: str, message: DingTalkMessage) -> None:
+            if not reference:
+                return
+            key = (kind, reference)
+            if key in seen:
+                return
+            seen.add(key)
+            references.append(
+                MaterialReferenceContext(
+                    kind=kind,
+                    reference=reference,
+                    source_message_id=message.open_message_id,
+                    source_sender=message.sender_name,
+                    source_time=message.create_time,
+                )
+            )
+
+        for message in self._referenced_document_messages(
+            new_messages, context_messages
+        ):
+            for text in (message.content, message.quoted_content or ""):
+                for match in DINGTALK_DOC_URL_PATTERN.finditer(text):
+                    add(
+                        "dingtalk_doc",
+                        self._canonical_doc_url(match.group(0)),
+                        message,
+                    )
+                for match in DINGTALK_SHANJI_DOC_SELECTOR_PATTERN.finditer(text):
+                    add(
+                        "dingtalk_minutes",
+                        self._minutes_task_uuid_from_selector_url(match.group(0)),
+                        message,
+                    )
+                for match in DINGTALK_MINUTES_LINK_PATTERN.finditer(text):
+                    add(
+                        "dingtalk_minutes",
+                        self._minutes_task_uuid_from_url(match.group(0)),
+                        message,
+                    )
+
+        file_names = self._referenced_file_names(new_messages, context_messages)
+        if file_names:
+            file_source_by_name = self._referenced_file_source_messages(
+                new_messages, context_messages
+            )
+            fallback_source = new_messages[-1] if new_messages else None
+            for file_name in file_names:
+                source = file_source_by_name.get(file_name) or fallback_source
+                if source is not None:
+                    add("dingtalk_file", file_name, source)
+        return references
+
+    @classmethod
+    def _referenced_file_source_messages(
+        cls,
+        new_messages: list[DingTalkMessage],
+        context_messages: list[DingTalkMessage],
+    ) -> dict[str, DingTalkMessage]:
+        sources: dict[str, DingTalkMessage] = {}
+
+        def add_from_text(text: str | None, source: DingTalkMessage) -> None:
+            if not text:
+                return
+            match = FILE_MESSAGE_PATTERN.match(text.strip())
+            if not match:
+                return
+            file_name = match.group("name").strip()
+            if file_name and file_name not in sources:
+                sources[file_name] = source
+
+        context_by_message_id = {
+            message.open_message_id: message for message in context_messages
+        }
+        trigger = new_messages[-1] if new_messages else None
+        for message in new_messages:
+            add_from_text(message.content, message)
+            if (
+                message.quoted_message_id
+                and message.quoted_message_id in context_by_message_id
+            ):
+                add_from_text(
+                    context_by_message_id[message.quoted_message_id].content,
+                    context_by_message_id[message.quoted_message_id],
+                )
+            else:
+                add_from_text(message.quoted_content, message)
+
+        if trigger is None:
+            return sources
+
+        trigger_time = datetime.strptime(trigger.create_time, DINGTALK_TIME_FORMAT)
+        window_start = trigger_time - REFERENCED_FILE_CONTEXT_WINDOW
+        for message in context_messages:
+            if message.sender_name != trigger.sender_name:
+                continue
+            try:
+                message_time = datetime.strptime(
+                    message.create_time, DINGTALK_TIME_FORMAT
+                )
+            except ValueError:
+                continue
+            if window_start <= message_time <= trigger_time:
+                add_from_text(message.content, message)
+        return sources
 
     def _collect_image_paths(
         self,
@@ -4395,6 +4712,7 @@ class DingTalkAutoReplyWorker:
             attempt_id=attempt.id,
             reply_text=final_reply_text,
             feedback_token="",
+            at_users=at_users,
             failure_error_kind="send",
             failure_notify_title=f"CEO auto reply failed: {conversation.title}",
             raise_on_delivery_failure=raise_on_delivery_failure,
@@ -4575,7 +4893,6 @@ class DingTalkAutoReplyWorker:
                 raise ReplyDeliveryError(str(exc)) from exc
             return
         direct_user_id = at_users[0] if conversation.single_chat and at_users else None
-        send_at_users = [] if conversation.single_chat else at_users
         reply_text = append_signature(reply_text)
         reply_text = self._format_reply_delivery_text(
             reply_text,
@@ -4595,7 +4912,7 @@ class DingTalkAutoReplyWorker:
             new_messages=new_messages,
             attempt_id=attempt_id,
             final_reply_text=reply_text,
-            at_users=send_at_users,
+            at_users=at_users,
             direct_user_id=direct_user_id,
             direct_open_dingtalk_id=trigger.sender_open_dingtalk_id
             if conversation.single_chat
@@ -4615,6 +4932,7 @@ class DingTalkAutoReplyWorker:
             prompt=feedback_prompt,
             session_id=getattr(self.codex, "last_session_id", None),
         )
+        decision = self._normalize_codex_decision(decision)
         if decision.action not in {
             CodexAction.SEND_REPLY,
             CodexAction.ASK_CLARIFYING_QUESTION,
@@ -4627,8 +4945,10 @@ class DingTalkAutoReplyWorker:
         forbidden_terms = "、".join(f"`{marker}`" for marker in FORBIDDEN_MARKERS)
         return (
             "上一版 reply_text 被发送安全检查拦截，不能发送。\n"
-            "请基于同一个上下文重新输出合法 JSON，只改写 reply_text，不要解释。\n"
-            "reply_text 不要引用来源、不要加脚注编号、不要写参考文献，"
+            "请基于同一个上下文重新输出合法 AgentEnvelope JSON，"
+            "只改写 user_response.text，不要解释。\n"
+            '本次 kind 必须是 reply，例如 "kind":"reply"。\n'
+            "user_response.text 不要引用来源、不要加脚注编号、不要写参考文献，"
             f"也不要出现这些会被发送安全检查拦截的字符串：{forbidden_terms}。\n"
             "如果业务上需要表达产品能力或判断依据，改用普通中文描述，不要照搬上述字符串。\n"
             "上一版最终回复如下，仅用于改写，不要原样复制：\n"
@@ -4738,6 +5058,7 @@ class DingTalkAutoReplyWorker:
             attempt_id=attempt_id,
             reply_text=reply_text,
             feedback_token=feedback_token,
+            at_users=at_users,
             failure_error_kind="send",
             failure_notify_title=f"CEO auto reply failed: {conversation.title}",
             raise_on_delivery_failure=raise_on_delivery_failure,
@@ -4847,6 +5168,7 @@ class DingTalkAutoReplyWorker:
         attempt_id: int,
         reply_text: str,
         feedback_token: str,
+        at_users: list[str] | None = None,
         send_result_json_builder=None,
         failure_error_kind: str = "send",
         failure_send_error=None,
@@ -4857,6 +5179,31 @@ class DingTalkAutoReplyWorker:
         if self.dry_run:
             self.store.update_reply_attempt(attempt_id, send_status="dry_run")
             return True
+        if at_users is None:
+            try:
+                at_users = self._reply_at_users(trigger)
+            except Exception as exc:
+                self.store.update_reply_attempt(
+                    attempt_id,
+                    send_status="failed",
+                    send_error=str(exc),
+                )
+                self.store.record_error(
+                    conversation.open_conversation_id,
+                    trigger.open_message_id,
+                    "reply_at_users",
+                    str(exc),
+                )
+                if raise_on_delivery_failure:
+                    raise ReplyDeliveryError(str(exc)) from exc
+                if failure_notify_title:
+                    self._notify(
+                        title=failure_notify_title,
+                        message=str(exc)[:120],
+                        conversation=conversation,
+                        attempt_id=attempt_id,
+                    )
+                return False
         if not allow_duplicate_send and self.store.has_sent_reply_for_trigger(
             conversation.open_conversation_id,
             trigger.open_message_id,
@@ -4879,6 +5226,7 @@ class DingTalkAutoReplyWorker:
                 conversation,
                 trigger,
                 reply_text,
+                at_users=at_users,
             )
         except Exception as exc:
             send_error = (
@@ -4915,6 +5263,13 @@ class DingTalkAutoReplyWorker:
             if send_result_json_builder is not None
             else (send_result or {})
         )
+        native_reply_extra = (
+            dict(send_result_json_payload)
+            if send_result_json_builder is not None
+            else {"at_user_ids": at_users}
+        )
+        if send_result_json_builder is not None:
+            native_reply_extra["at_user_ids"] = at_users
         self.store.update_reply_attempt(
             attempt_id,
             send_status="sent",
@@ -4930,9 +5285,7 @@ class DingTalkAutoReplyWorker:
                     conversation,
                     trigger,
                     send_result,
-                    extra=send_result_json_payload
-                    if send_result_json_builder is not None
-                    else None,
+                    extra=native_reply_extra,
                 ),
                 ensure_ascii=False,
             ),
@@ -5009,6 +5362,8 @@ class DingTalkAutoReplyWorker:
         conversation: DingTalkConversation,
         trigger: DingTalkMessage,
         text: str,
+        *,
+        at_users: list[str] | None = None,
     ) -> tuple[int, dict | None]:
         errors: list[str] = []
         for attempt_number in range(1, self.send_attempts + 1):
@@ -5017,6 +5372,7 @@ class DingTalkAutoReplyWorker:
                     conversation,
                     trigger,
                     text,
+                    at_users=at_users,
                 )
                 return attempt_number - 1, send_result
             except Exception as exc:
@@ -5121,29 +5477,35 @@ class DingTalkAutoReplyWorker:
         )
 
     @staticmethod
-    def _single_chat_document_no_reply_needs_retry(
+    def _single_chat_material_no_reply_needs_retry(
         conversation: DingTalkConversation,
-        linked_documents: list[LinkedDocumentContext],
+        material_references: list[MaterialReferenceContext],
         decision: CodexDecision,
     ) -> bool:
         return (
             conversation.single_chat
             and any(
-                not DingTalkAutoReplyWorker._is_minutes_linked_document(document)
-                for document in linked_documents
+                not DingTalkAutoReplyWorker._is_minutes_material_reference(reference)
+                for reference in material_references
             )
             and decision.action == CodexAction.NO_REPLY
         )
 
     @staticmethod
-    def _is_minutes_linked_document(document: LinkedDocumentContext) -> bool:
-        return document.markdown.lstrip().startswith("AI 听记材料:")
+    def _is_minutes_material_reference(reference: MaterialReferenceContext) -> bool:
+        return reference.kind == "dingtalk_minutes"
 
     @staticmethod
-    def _single_chat_document_retry_prompt() -> str:
+    def _normalize_codex_decision(decision: Any) -> CodexDecision:
+        if hasattr(decision, "kind") and hasattr(decision, "user_response"):
+            return codex_decision_from_envelope(decision)
+        return decision
+
+    @staticmethod
+    def _single_chat_material_retry_prompt() -> str:
         return (
-            "上一次输出了 no_reply，但当前是私聊，且服务已经读取并注入了钉钉在线文档或普通文件正文、摘要或可处理内容。"
-            "请重新阅读已获取的钉钉材料并给出处理结果。"
+            "上一次输出了 no_reply，但当前是私聊，且消息里包含钉钉材料引用。"
+            "请重新判断是否需要用 DWS 读取这些材料；如果需要，先读取材料再给出处理结果。"
             "如果材料足够，action 用 send_reply，reply_text 给出结论、修改意见、风险、下一步或需要补充的具体问题；"
             "如果材料不足，action 用 ask_clarifying_question 或 stop_with_error。"
             "不要因为对方只发送文档、没有额外写“请处理/请 review”就 no_reply。"
@@ -5174,6 +5536,7 @@ class DingTalkAutoReplyWorker:
         *,
         include_thread_prompt: bool = True,
         linked_documents: list[LinkedDocumentContext] | None = None,
+        material_references: list[MaterialReferenceContext] | None = None,
         image_download_errors: list[str] | None = None,
     ) -> str:
         return build_turn_prompt(
@@ -5187,6 +5550,7 @@ class DingTalkAutoReplyWorker:
             ),
             include_thread_prompt=include_thread_prompt,
             linked_documents=linked_documents,
+            material_references=material_references,
             image_download_errors=image_download_errors,
             known_people_lines=self._known_people_prompt_lines(
                 new_messages,

@@ -203,6 +203,44 @@ def test_dws_upgrade_command_shape():
     assert command == ["dws", "upgrade", "-y", "--format", "json"]
 
 
+def test_dws_error_marks_exit_code_2_as_login_required():
+    error = DwsError("dws command failed with exit code 2", code="2")
+
+    assert error.needs_login is True
+
+
+def test_dws_error_does_not_treat_pat_authorization_as_login_required():
+    error = DwsError("PAT requires extra scope", code="PAT_HIGH_RISK_NO_PERMISSION")
+
+    assert error.needs_authorization is True
+    assert error.needs_login is False
+
+
+def test_auth_login_command_shape():
+    client = DwsClient(dws_bin="dws")
+
+    command = client.build_auth_login_command()
+
+    assert command == ["dws", "auth", "login"]
+
+
+def test_run_json_maps_plain_exit_code_2_to_login_required(monkeypatch):
+    def fake_run(command, text, capture_output, check, timeout):
+        return SimpleNamespace(
+            returncode=2,
+            stdout="",
+            stderr="dws command failed with exit code 2",
+        )
+
+    monkeypatch.setattr("app.dws_client.subprocess.run", fake_run)
+
+    with pytest.raises(DwsError) as error_info:
+        DwsClient().run_json(["dws", "chat", "message", "list"])
+
+    assert error_info.value.code == "2"
+    assert error_info.value.needs_login is True
+
+
 def test_read_doc_command_shape():
     client = DwsClient(dws_bin="dws")
 
@@ -665,7 +703,7 @@ def test_send_message_command_shape():
     command = client.build_send_message_command(
         conversation_id="cid-1",
         text="收到（by明哥分身）",
-        at_users=["user-1"],
+        at_open_dingtalk_ids=["open-1"],
     )
 
     assert command == [
@@ -677,23 +715,23 @@ def test_send_message_command_shape():
         "cid-1",
         "--title",
         "收到（by明哥分身）",
-        "--at-users",
-        "user-1",
+        "--at-open-dingtalk-ids",
+        "open-1",
         "--text",
-        "<@user-1> 收到（by明哥分身）",
+        "收到（by明哥分身）",
         "--format",
         "json",
         "--yes",
     ]
 
 
-def test_send_message_command_does_not_duplicate_existing_at_placeholder():
+def test_send_message_command_keeps_existing_text_without_injecting_at_placeholder():
     client = DwsClient(dws_bin="dws")
 
     command = client.build_send_message_command(
         conversation_id="cid-1",
-        text="<@user-1> 收到（by明哥分身）",
-        at_users=["user-1"],
+        text="<@open-1> 收到（by明哥分身）",
+        at_open_dingtalk_ids=["open-1"],
     )
 
     assert command == [
@@ -705,14 +743,82 @@ def test_send_message_command_does_not_duplicate_existing_at_placeholder():
         "cid-1",
         "--title",
         "收到（by明哥分身）",
-        "--at-users",
-        "user-1",
+        "--at-open-dingtalk-ids",
+        "open-1",
         "--text",
-        "<@user-1> 收到（by明哥分身）",
+        "<@open-1> 收到（by明哥分身）",
         "--format",
         "json",
         "--yes",
     ]
+
+
+def test_send_message_command_does_not_emit_stale_at_users_flag():
+    client = DwsClient(dws_bin="dws")
+
+    command = client.build_send_message_command(
+        conversation_id="cid-1",
+        text="收到（by明哥分身）",
+        at_users=["user-1"],
+    )
+
+    assert "--at-users" not in command
+    assert command[command.index("--text") + 1] == "收到（by明哥分身）"
+
+
+def test_send_message_command_uses_open_dingtalk_id_mentions():
+    client = DwsClient(dws_bin="dws")
+
+    command = client.build_send_message_command(
+        conversation_id="cid-1",
+        text="请同步进展",
+        at_open_dingtalk_ids=["open-owner-1"],
+    )
+
+    assert "--at-users" not in command
+    assert command[command.index("--at-open-dingtalk-ids") + 1] == "open-owner-1"
+    assert command[command.index("--text") + 1] == "请同步进展"
+
+
+def test_send_message_command_adds_visible_names_for_structured_group_mentions():
+    client = DwsClient(dws_bin="dws")
+
+    command = client.build_send_message_command(
+        conversation_id="cid-1",
+        text="请同步进展",
+        at_open_dingtalk_ids=["open-owner-1"],
+        at_open_dingtalk_names=["磊哥"],
+    )
+
+    assert command[command.index("--at-open-dingtalk-ids") + 1] == "open-owner-1"
+    assert command[command.index("--text") + 1] == " @磊哥 请同步进展"
+
+
+def test_send_message_command_does_not_duplicate_existing_visible_mentions():
+    client = DwsClient(dws_bin="dws")
+
+    command = client.build_send_message_command(
+        conversation_id="cid-1",
+        text=" @磊哥 请同步进展",
+        at_open_dingtalk_ids=["open-owner-1"],
+        at_open_dingtalk_names=["磊哥"],
+    )
+
+    assert command[command.index("--text") + 1] == " @磊哥 请同步进展"
+
+
+def test_direct_send_message_ignores_open_dingtalk_id_mentions_without_group_at_flag():
+    client = DwsClient(dws_bin="dws")
+
+    command = client.build_send_message_command(
+        conversation_id=None,
+        text="请同步进展",
+        at_open_dingtalk_ids=["open-owner-1"],
+        user_id="owner-1",
+    )
+
+    assert "--at-open-dingtalk-ids" not in command
+    assert command[command.index("--text") + 1] == "请同步进展"
 
 
 def test_send_message_command_supports_title_override():
@@ -886,6 +992,7 @@ def test_reply_message_command_shape():
         ref_message_id="msg-1",
         ref_sender_open_dingtalk_id="open-1",
         text="收到（by明哥分身）",
+        at_users=["user-1", "user-2"],
     )
 
     assert command == [
@@ -2102,7 +2209,11 @@ def test_read_unread_messages_skips_dws_when_unread_point_is_zero():
 def test_send_message_high_level_method_uses_command():
     client = RecordingDwsClient({"success": True})
 
-    client.send_message("cid-1", "<@user-1> 收到（by明哥分身）", at_users=["user-1"])
+    client.send_message(
+        "cid-1",
+        "收到（by明哥分身）",
+        at_open_dingtalk_ids=["open-1"],
+    )
 
     assert client.commands == [
         [
@@ -2114,10 +2225,10 @@ def test_send_message_high_level_method_uses_command():
             "cid-1",
             "--title",
             "收到（by明哥分身）",
-            "--at-users",
-            "user-1",
+            "--at-open-dingtalk-ids",
+            "open-1",
             "--text",
-            "<@user-1> 收到（by明哥分身）",
+            "收到（by明哥分身）",
             "--format",
             "json",
             "--yes",

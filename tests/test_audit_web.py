@@ -36,6 +36,11 @@ from app.dingtalk_models import DingTalkConversation, DingTalkMessage
 from app.store import AutoReplyStore
 
 
+def task_script_json(html: str, element_id: str):
+    marker = f'<script id="{element_id}" type="application/json">'
+    return json.loads(html.split(marker, 1)[1].split("</script>", 1)[0])
+
+
 def seed_attempt(store: AutoReplyStore) -> int:
     store.upsert_conversation(
         "cid-1",
@@ -584,7 +589,7 @@ def test_top_nav_highlights_current_page_and_disables_current_link(tmp_path: Pat
     assert '<a class="nav-item" href="/tasks">Tasks</a>' not in tasks_html
 
 
-def test_tasks_page_renders_projects_todos_and_drafts(tmp_path: Path):
+def test_tasks_page_renders_projects_and_todos_without_global_followups(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "task.sqlite3")
     project_id = store.create_work_project(
         title="售前知识库建设",
@@ -601,6 +606,14 @@ def test_tasks_page_renders_projects_todos_and_drafts(tmp_path: Path):
         title="补齐来源链接",
         status="open",
         priority="P1",
+        deadline_at="2026-06-10 18:00:00",
+    )
+    store.create_work_todo(
+        project_id=project_id,
+        title="整理销售材料",
+        status="done",
+        priority="P2",
+        deadline_at="2026-06-11 18:00:00",
     )
     store.create_follow_up_draft(
         project_id=project_id,
@@ -616,8 +629,346 @@ def test_tasks_page_renders_projects_todos_and_drafts(tmp_path: Path):
 
     assert "售前知识库建设" in html
     assert "补齐来源链接" in html
-    assert "来源链接补齐到哪一步了" in html
+    assert "来源链接补齐到哪一步了" not in html
+    assert "Pending follow-ups" not in html
     assert f"/tasks/{project_id}" in html
+    assert '<section class="tasks-page">' in html
+    assert '<section class="card">' not in html
+    assert '<span id="tasks-count" class="tasks-count">1 tasks</span>' in html
+    assert 'id="task-search-input"' in html
+    assert "Search</button>" not in html
+    assert 'id="tasks-table"' in html
+    assert "tabulator-tables@6.4.0/dist/css/tabulator.min.css" in html
+    assert "tabulator-tables@6.4.0/dist/js/tabulator.min.js" in html
+    assert 'headerFilter: "select"' in html
+    assert ".tabulator-row.tabulator-selectable:hover" in html
+    assert "background-color:#f5faff" in html
+    assert 'layout: "fitColumns"' in html
+    assert 'layout: "fitDataStretch"' not in html
+    assert "variableHeight: true" in html
+    assert 'title: "Status"' in html
+    assert 'title: "Category"' in html
+    assert 'id="task-sort"' not in html
+    assert 'class="task-sort-link' not in html
+
+    rows = task_script_json(html, "tasks-data")
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["title"] == "售前知识库建设"
+    assert row["status"] == "in progress"
+    assert row["category"] == "sales"
+    assert row["priority"] == "P1"
+    assert row["riskLevel"] == "medium"
+    assert row["openSummary"] == "1 (50%)"
+    assert row["detailUrl"] == f"/tasks/{project_id}"
+    assert row["todos"][0]["title"] == "补齐来源链接"
+    assert row["todos"][0]["due"].startswith("2026-06-10")
+    assert row["todos"][0]["done"] is False
+    assert row["todos"][1]["title"] == "整理销售材料"
+    assert row["todos"][1]["done"] is True
+
+
+def test_tasks_page_filters_projects_by_full_text_query(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    matching_project_id = store.create_work_project(
+        title="售前知识库建设",
+        category="sales",
+        status="active",
+        priority="P1",
+        risk_level="medium",
+        owner_name="Alex",
+        background="销售支持项目。",
+        facts_json=json.dumps(
+            [
+                {
+                    "description": "需要补齐来源链接",
+                    "source": "reply_attempt:7",
+                    "created": "2026-06-07",
+                    "updated": "2026-06-07",
+                }
+            ],
+            ensure_ascii=False,
+        ),
+    )
+    store.create_work_todo(
+        project_id=matching_project_id,
+        title="补齐来源链接",
+        owner_name="Alex",
+        status="open",
+        priority="P1",
+    )
+    store.create_work_project(
+        title="招聘专员圆桌",
+        category="recruiting",
+        status="active",
+        priority="P2",
+        risk_level="low",
+        owner_name="Bea",
+        background="候选人流程讨论。",
+    )
+
+    html = render_tasks_page(store, query="来源链接 Alex")
+
+    assert "售前知识库建设" in html
+    assert "补齐来源链接" in html
+    assert 'value="来源链接 Alex"' in html
+    assert '<span id="tasks-count" class="tasks-count">2 tasks</span>' in html
+    initial = task_script_json(html, "tasks-initial-state")
+    rows = task_script_json(html, "tasks-data")
+    assert initial["query"] == "来源链接 Alex"
+    assert {row["title"] for row in rows} == {"售前知识库建设", "招聘专员圆桌"}
+    assert "来源链接" in next(row for row in rows if row["title"] == "售前知识库建设")["search"]
+    assert "alex" in next(row for row in rows if row["title"] == "售前知识库建设")["search"]
+
+
+def test_tasks_page_paginates_and_preserves_search_params(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    for index in range(25):
+        project_id = store.create_work_project(
+            title=f"候选人项目 {index + 1:02d}",
+            category="recruiting",
+            status="active",
+            priority="P1",
+            risk_level="medium",
+            background="候选人流程。",
+        )
+        store.create_work_todo(
+            project_id=project_id,
+            title=f"补齐候选人材料 {index + 1:02d}",
+            status="open",
+            priority="P1",
+        )
+
+    html = render_tasks_page(store, query="候选人", page=2, page_size=20)
+
+    assert '<span id="tasks-count" class="tasks-count">25 tasks</span>' in html
+    assert 'id="tasks-pages"' in html
+    assert '<option value="20" selected>20/page</option>' in html
+    initial = task_script_json(html, "tasks-initial-state")
+    rows = task_script_json(html, "tasks-data")
+    assert initial["query"] == "候选人"
+    assert initial["page"] == 2
+    assert initial["pageSize"] == 20
+    assert "候选人项目 05" in html
+    assert "候选人项目 25" in html
+    assert len(rows) == 25
+
+
+def test_tasks_page_respects_page_size(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    for index in range(25):
+        store.create_work_project(
+            title=f"项目 {index + 1:02d}",
+            category="projects",
+            status="active",
+            priority="P2",
+            risk_level="low",
+        )
+
+    html = render_tasks_page(store, page_size=50)
+
+    assert '<span id="tasks-count" class="tasks-count">25 tasks</span>' in html
+    assert '<option value="50" selected>50/page</option>' in html
+    assert task_script_json(html, "tasks-initial-state")["pageSize"] == 50
+    assert "项目 01" in html
+    assert "项目 25" in html
+
+
+def test_tasks_page_filters_by_category(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    store.create_work_project(
+        title="招聘项目",
+        category="recruiting",
+        status="active",
+        priority="P2",
+        risk_level="low",
+    )
+    store.create_work_project(
+        title="销售项目",
+        category="sales",
+        status="active",
+        priority="P1",
+        risk_level="medium",
+    )
+
+    html = render_tasks_page(store, category="recruiting")
+
+    assert "招聘项目" in html
+    assert "销售项目" in html
+    assert task_script_json(html, "tasks-initial-state")["category"] == "recruiting"
+    assert task_script_json(html, "tasks-categories") == ["recruiting", "sales"]
+    assert '<span id="tasks-count" class="tasks-count">2 tasks</span>' in html
+    assert 'headerFilterValue: initial.category || ""' in html
+
+
+def test_tasks_page_sorts_by_priority_and_risk(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    store.create_work_project(
+        title="低优先级高风险",
+        category="projects",
+        status="active",
+        priority="P2",
+        risk_level="high",
+    )
+    store.create_work_project(
+        title="高优先级低风险",
+        category="projects",
+        status="active",
+        priority="P0",
+        risk_level="low",
+    )
+    store.create_work_project(
+        title="中优先级中风险",
+        category="projects",
+        status="active",
+        priority="P1",
+        risk_level="medium",
+    )
+
+    priority_html = render_tasks_page(store, sort="priority_desc")
+    risk_html = render_tasks_page(store, sort="risk_desc")
+
+    priority_initial = task_script_json(priority_html, "tasks-initial-state")
+    risk_initial = task_script_json(risk_html, "tasks-initial-state")
+    priority_rows = {row["title"]: row for row in task_script_json(priority_html, "tasks-data")}
+    risk_rows = {row["title"]: row for row in task_script_json(risk_html, "tasks-data")}
+
+    assert priority_initial["sort"] == "priority_desc"
+    assert risk_initial["sort"] == "risk_desc"
+    assert '"priority_desc": ["priorityRank", "asc"]' in priority_html
+    assert '"risk_desc": ["riskRank", "asc"]' in risk_html
+    assert priority_rows["高优先级低风险"]["priorityRank"] == 0
+    assert priority_rows["中优先级中风险"]["priorityRank"] == 1
+    assert priority_rows["低优先级高风险"]["priorityRank"] == 2
+    assert risk_rows["低优先级高风险"]["riskRank"] == 0
+    assert risk_rows["中优先级中风险"]["riskRank"] == 1
+    assert risk_rows["高优先级低风险"]["riskRank"] == 2
+
+
+def test_tasks_page_filters_by_status_and_sorts_by_other_columns(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    project_a = store.create_work_project(
+        title="Alpha",
+        category="projects",
+        status="active",
+        priority="P1",
+        risk_level="medium",
+        owner_name="Zoe",
+        current_state="beta",
+        next_step="call owner",
+    )
+    project_b = store.create_work_project(
+        title="Bravo",
+        category="projects",
+        status="active",
+        priority="P1",
+        risk_level="medium",
+        owner_name="Ada",
+        current_state="alpha",
+        next_step="brief team",
+    )
+    store.create_work_todo(
+        project_id=project_a,
+        title="Alpha todo",
+        status="open",
+        priority="P1",
+    )
+    store.create_work_todo(
+        project_id=project_b,
+        title="Bravo done",
+        status="done",
+        priority="P1",
+    )
+    store.create_work_todo(
+        project_id=project_b,
+        title="Bravo cancelled",
+        status="cancelled",
+        priority="P1",
+    )
+
+    filtered_html = render_tasks_page(store, task_state="completed")
+    owner_html = render_tasks_page(store, sort="owner_asc")
+    open_html = render_tasks_page(store, sort="open_desc")
+    todos_html = render_tasks_page(store, sort="todos_desc")
+
+    assert "Bravo" in filtered_html
+    assert "Alpha" in filtered_html
+    assert task_script_json(filtered_html, "tasks-initial-state")["taskState"] == "completed"
+    assert task_script_json(filtered_html, "tasks-states") == ["in progress", "completed"]
+    assert 'headerFilterValue: initial.taskState || ""' in filtered_html
+    assert task_script_json(owner_html, "tasks-initial-state")["sort"] == "owner_asc"
+    assert task_script_json(open_html, "tasks-initial-state")["sort"] == "open_desc"
+    assert task_script_json(todos_html, "tasks-initial-state")["sort"] == "todos_desc"
+    assert '"owner_asc": ["owner", "asc"]' in owner_html
+    assert '"open_desc": ["openCount", "desc"]' in open_html
+    assert '"todos_desc": ["todoCount", "desc"]' in todos_html
+
+
+def test_tasks_page_computes_table_statuses(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    completed_id = store.create_work_project(
+        title="完成项目",
+        category="projects",
+        status="active",
+        priority="P2",
+        risk_level="low",
+    )
+    overdue_id = store.create_work_project(
+        title="逾期项目",
+        category="projects",
+        status="active",
+        priority="P1",
+        risk_level="medium",
+    )
+    in_progress_id = store.create_work_project(
+        title="推进项目",
+        category="projects",
+        status="active",
+        priority="P1",
+        risk_level="medium",
+    )
+    store.create_work_project(
+        title="未开始项目",
+        category="projects",
+        status="active",
+        priority="P2",
+        risk_level="low",
+    )
+    store.create_work_todo(
+        project_id=completed_id,
+        title="已经完成",
+        status="done",
+        priority="P2",
+    )
+    store.create_work_todo(
+        project_id=overdue_id,
+        title="已经逾期",
+        status="open",
+        priority="P1",
+        deadline_at="2020-01-01 00:00:00",
+    )
+    store.create_work_todo(
+        project_id=in_progress_id,
+        title="正在推进",
+        status="open",
+        priority="P1",
+        deadline_at="2099-01-01 00:00:00",
+    )
+
+    html = render_tasks_page(store, page_size=50)
+
+    rows = {row["title"]: row for row in task_script_json(html, "tasks-data")}
+    assert rows["完成项目"]["status"] == "completed"
+    assert rows["逾期项目"]["status"] == "over due"
+    assert rows["推进项目"]["status"] == "in progress"
+    assert rows["未开始项目"]["status"] == "not started"
+    assert task_script_json(html, "tasks-states") == [
+        "over due",
+        "in progress",
+        "not started",
+        "completed",
+    ]
+    assert 'class="task-state ${escapeHtml(cssClass)}"' in html
 
 
 def test_task_project_detail_renders_project_todos_and_sources(tmp_path: Path):
@@ -704,6 +1055,90 @@ def test_tasks_route_renders_page(tmp_path: Path):
     assert response.status_code == 200
     assert "售前知识库建设" in response.text
     assert '<span class="nav-item active" aria-current="page">Tasks</span>' in response.text
+
+
+def test_tasks_route_applies_search_query(tmp_path: Path):
+    db_path = tmp_path / "worker.sqlite3"
+    store = AutoReplyStore(db_path)
+    store.create_work_project(
+        title="售前知识库建设",
+        category="sales",
+        status="active",
+        priority="P1",
+        risk_level="medium",
+        background="销售支持项目。",
+    )
+    store.create_work_project(
+        title="招聘专员圆桌",
+        category="recruiting",
+        status="active",
+        priority="P2",
+        risk_level="low",
+    )
+    client = TestClient(create_audit_app(db_path))
+
+    response = client.get("/tasks?q=销售支持")
+
+    assert response.status_code == 200
+    assert "售前知识库建设" in response.text
+    assert "招聘专员圆桌" in response.text
+    assert task_script_json(response.text, "tasks-initial-state")["query"] == "销售支持"
+
+
+def test_tasks_route_applies_pagination_params(tmp_path: Path):
+    db_path = tmp_path / "worker.sqlite3"
+    store = AutoReplyStore(db_path)
+    for index in range(25):
+        store.create_work_project(
+            title=f"候选人项目 {index + 1:02d}",
+            category="recruiting",
+            status="active",
+            priority="P1",
+            risk_level="medium",
+            background="候选人流程。",
+        )
+    client = TestClient(create_audit_app(db_path))
+
+    response = client.get("/tasks?q=候选人&page=2&page_size=20")
+
+    assert response.status_code == 200
+    assert "候选人项目 05" in response.text
+    assert "候选人项目 25" in response.text
+    assert '<option value="20" selected>20/page</option>' in response.text
+    initial = task_script_json(response.text, "tasks-initial-state")
+    assert initial["query"] == "候选人"
+    assert initial["page"] == 2
+    assert initial["pageSize"] == 20
+
+
+def test_tasks_route_applies_category_and_sort_params(tmp_path: Path):
+    db_path = tmp_path / "worker.sqlite3"
+    store = AutoReplyStore(db_path)
+    store.create_work_project(
+        title="招聘项目",
+        category="recruiting",
+        status="active",
+        priority="P2",
+        risk_level="high",
+    )
+    store.create_work_project(
+        title="销售项目",
+        category="sales",
+        status="active",
+        priority="P0",
+        risk_level="low",
+    )
+    client = TestClient(create_audit_app(db_path))
+
+    response = client.get("/tasks?category=recruiting&sort=risk_desc")
+
+    assert response.status_code == 200
+    assert "招聘项目" in response.text
+    assert "销售项目" in response.text
+    initial = task_script_json(response.text, "tasks-initial-state")
+    assert initial["category"] == "recruiting"
+    assert initial["sort"] == "risk_desc"
+    assert '"risk_desc": ["riskRank", "asc"]' in response.text
 
 
 def test_task_project_detail_route_renders_project(tmp_path: Path):
@@ -1940,6 +2375,143 @@ def test_render_attempt_detail_renders_audit_tool_inputs_and_outputs(tmp_path: P
     assert "岗位画像.md:1:项目经理" in html
 
 
+def test_render_attempt_detail_renders_dws_material_tool_events(tmp_path: Path):
+    command = (
+        "dws doc read --node https://alidocs.dingtalk.com/i/nodes/doc123 "
+        "--format json"
+    )
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    attempt_id = store.record_reply_attempt(
+        conversation_id="cid-1",
+        conversation_title="技术部",
+        trigger_message_id="msg-1",
+        trigger_sender="Xiaomin",
+        trigger_text="@Alex Chen 这个怎么处理？",
+        action="send_reply",
+        sensitivity_kind="general",
+        audit_tool_events_json=json.dumps(
+            [
+                {
+                    "event_type": "response_item",
+                    "tool": "exec_command",
+                    "call_id": "call-dws-read",
+                    "input": json.dumps({"cmd": command}, ensure_ascii=False, indent=2),
+                    "command": command,
+                },
+                {
+                    "event_type": "response_item",
+                    "tool": "tool_output",
+                    "call_id": "call-dws-read",
+                    "output": "OpenAI 合作建议补充版\n建议先补齐材料。",
+                },
+            ],
+            ensure_ascii=False,
+        ),
+        audit_summary="已读取 DWS 材料。",
+    )
+
+    status, html = render_attempt_detail(store, attempt_id)
+
+    assert status == 200
+    assert "Audit tool events" in html
+    assert "to exec_command" in html
+    assert "input / command args" in html
+    assert "dws doc read --node" in html
+    assert command in html
+    assert "output" in html
+    assert "OpenAI 合作建议补充版" in html
+
+
+def test_render_attempt_detail_renders_dws_material_events_from_codex_session(
+    tmp_path: Path,
+    monkeypatch,
+):
+    command = (
+        "dws doc read --node https://alidocs.dingtalk.com/i/nodes/doc123 "
+        "--format json"
+    )
+    codex_home = tmp_path / ".codex"
+    monkeypatch.setattr("app.codex_history.DEFAULT_CODEX_HOME", codex_home)
+    session_path = (
+        codex_home
+        / "sessions"
+        / "2026"
+        / "05"
+        / "14"
+        / "rollout-2026-05-14T12-00-00-session-1.jsonl"
+    )
+    session_path.parent.mkdir(parents=True)
+    session_path.write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "timestamp": "2026-05-14T12:00:00Z",
+                        "type": "session_meta",
+                        "payload": {"id": "session-1"},
+                    },
+                    ensure_ascii=False,
+                ),
+                json.dumps(
+                    {
+                        "timestamp": "2026-05-14T12:00:01Z",
+                        "type": "response_item",
+                        "payload": {
+                            "type": "function_call",
+                            "name": "exec_command",
+                            "call_id": "call-dws-read",
+                            "arguments": json.dumps(
+                                {"cmd": command},
+                                ensure_ascii=False,
+                            ),
+                        },
+                    },
+                    ensure_ascii=False,
+                ),
+                json.dumps(
+                    {
+                        "timestamp": "2026-05-14T12:00:02Z",
+                        "type": "response_item",
+                        "payload": {
+                            "type": "function_call_output",
+                            "call_id": "call-dws-read",
+                            "output": "OpenAI 合作建议补充版\n建议先补齐材料。",
+                        },
+                    },
+                    ensure_ascii=False,
+                ),
+            ]
+        ),
+        encoding="utf-8",
+    )
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    attempt_id = store.record_reply_attempt(
+        conversation_id="cid-1",
+        conversation_title="技术部",
+        trigger_message_id="msg-1",
+        trigger_sender="Xiaomin",
+        trigger_text="@Alex Chen 这个怎么处理？",
+        action="send_reply",
+        sensitivity_kind="general",
+        codex_session_id="session-1",
+        codex_transcript_start_line=0,
+        codex_transcript_end_line=3,
+        audit_tool_events_json="[]",
+        audit_summary="已读取 DWS 材料。",
+    )
+
+    status, html = render_attempt_detail(store, attempt_id)
+
+    assert status == 200
+    assert "Audit tool events" in html
+    assert "to exec_command" in html
+    assert "input / command args" in html
+    assert "dws doc read --node" in html
+    assert command in html
+    assert "output" in html
+    assert "OpenAI 合作建议补充版" in html
+
+
 def test_render_attempt_detail_shows_counterparty_feedback(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     attempt_id = seed_attempt(store)
@@ -2223,6 +2795,7 @@ def test_handle_reviewed_message_reply_matches_sender_group_and_text(
             conversation_id,
             text,
             at_users=None,
+            at_open_dingtalk_ids=None,
             user_id=None,
             open_dingtalk_id=None,
         ):
@@ -2241,7 +2814,7 @@ def test_handle_reviewed_message_reply_matches_sender_group_and_text(
             )
             return {"result": {"processQueryKey": "recall-1"}}
 
-        def send_reply_to_trigger(self, conversation, trigger, text):
+        def send_reply_to_trigger(self, conversation, trigger, text, at_users=None):
             return self.reply_message(
                 conversation.open_conversation_id,
                 trigger.open_message_id,
@@ -2335,7 +2908,7 @@ def test_handle_reviewed_message_reply_uses_stored_group_and_recent_message(
             )
             return {"result": {"processQueryKey": "recall-site-1"}}
 
-        def send_reply_to_trigger(self, conversation, trigger, text):
+        def send_reply_to_trigger(self, conversation, trigger, text, at_users=None):
             return self.reply_message(
                 conversation.open_conversation_id,
                 trigger.open_message_id,
@@ -2439,6 +3012,7 @@ def test_handle_reviewed_message_reply_matches_private_message_without_mention(
             conversation_id,
             text,
             at_users=None,
+            at_open_dingtalk_ids=None,
             user_id=None,
             open_dingtalk_id=None,
         ):
@@ -2457,7 +3031,7 @@ def test_handle_reviewed_message_reply_matches_private_message_without_mention(
             )
             return {"result": {"processQueryKey": "recall-private-1"}}
 
-        def send_reply_to_trigger(self, conversation, trigger, text):
+        def send_reply_to_trigger(self, conversation, trigger, text, at_users=None):
             return self.reply_message(
                 conversation.open_conversation_id,
                 trigger.open_message_id,
@@ -2542,6 +3116,7 @@ def test_handle_reviewed_message_reply_uses_stored_private_conversation_when_sea
             conversation_id,
             text,
             at_users=None,
+            at_open_dingtalk_ids=None,
             user_id=None,
             open_dingtalk_id=None,
         ):
@@ -2560,7 +3135,7 @@ def test_handle_reviewed_message_reply_uses_stored_private_conversation_when_sea
             )
             return {"result": {"processQueryKey": "recall-private-1"}}
 
-        def send_reply_to_trigger(self, conversation, trigger, text):
+        def send_reply_to_trigger(self, conversation, trigger, text, at_users=None):
             return self.reply_message(
                 conversation.open_conversation_id,
                 trigger.open_message_id,

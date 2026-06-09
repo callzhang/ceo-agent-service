@@ -146,12 +146,13 @@ class FakeDws:
         conversation_id,
         text,
         at_users=None,
+        at_open_dingtalk_ids=None,
         user_id=None,
         open_dingtalk_id=None,
     ):
         self.chat_calls.append(("send_message", conversation_id))
         self.sent.append((conversation_id, text))
-        self.sent_at_users.append(at_users or [])
+        self.sent_at_users.append(at_open_dingtalk_ids or at_users or [])
 
     def reply_message(
         self,
@@ -159,17 +160,19 @@ class FakeDws:
         ref_message_id,
         ref_sender_open_dingtalk_id,
         text,
+        at_users=None,
     ):
         self.chat_calls.append(("reply_message", conversation_id, ref_message_id))
         self.sent.append((conversation_id, text))
-        self.sent_at_users.append([])
+        self.sent_at_users.append(at_users or [])
 
-    def send_reply_to_trigger(self, conversation, trigger, text):
+    def send_reply_to_trigger(self, conversation, trigger, text, at_users=None):
         return self.reply_message(
             conversation.open_conversation_id,
             trigger.open_message_id,
             trigger.sender_open_dingtalk_id,
             text,
+            at_users=at_users,
         )
 
     def ding_user(self, user_id, text):
@@ -234,7 +237,7 @@ def test_local_pipeline_refreshes_org_cache_then_replies_without_runtime_org_cal
     assert final_sent(raw_dws) == [
         ("cid-1", "这个涉及其他人的人事信息，我不能直接回答。（by明哥分身）")
     ]
-    assert final_sent_at_users(raw_dws) == [[]]
+    assert final_sent_at_users(raw_dws) == [["hr-user"]]
     assert store.has_seen("msg-1") is True
     assert store.get_codex_session_id("cid-1") == "session-1"
 

@@ -91,6 +91,7 @@ from app.store import (
     SentReply,
     UserFeedbackItem,
 )
+from app.task_models import ProjectPriority, ProjectStatus, RiskLevel, TodoStatus
 from app.user_prompt_blocks import USER_PROMPT_BLOCKS, UserPromptBlock
 
 DISPLAY_TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
@@ -101,6 +102,7 @@ CSS = """
 :root{--ink:#0a0a0a;--charcoal:#1c1c1e;--slate:#3a3a3c;--steel:#5a5a5c;--stone:#888888;--muted:#a8a8aa;--canvas:#ffffff;--surface:#f7f7f7;--surface-soft:#fafafa;--surface-code:#1c1c1e;--hairline:#e5e5e5;--hairline-soft:#ededed;--mint:#00d4a4;--mint-deep:#00b48a;--tag:#3772cf;--error:#d45656}
 *{box-sizing:border-box}
 body{font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;margin:0;background:var(--canvas);color:var(--ink);font-size:14px;line-height:1.5}
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 header{position:sticky;top:0;z-index:10;background:rgba(255,255,255,.94);border-bottom:1px solid var(--hairline);backdrop-filter:saturate(180%) blur(12px)}
 .shell{width:100%;margin:0 auto;padding:0 24px}
 .topbar{display:flex;align-items:center;justify-content:space-between;gap:24px;min-height:72px}
@@ -146,6 +148,46 @@ th{background:var(--surface-soft);color:var(--steel);font-size:12px;font-weight:
 .notification-log{max-height:260px}
 .card-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px;flex-wrap:wrap}
 .card-head h2{margin:0}
+.tasks-page{margin:16px 0}
+.tasks-toolbar{display:flex;align-items:center;justify-content:space-between;gap:18px;margin:0 0 12px;flex-wrap:wrap}
+.tasks-toolbar-left,.tasks-toolbar-right{display:flex;align-items:center;gap:10px;min-width:0;flex-wrap:wrap}
+.tasks-count{color:var(--ink);font-family:"Geist Mono","SF Mono",Menlo,Consolas,monospace;font-size:14px;font-weight:800;line-height:1.3;white-space:nowrap}
+.tasks-search{position:relative;display:flex;align-items:center;width:min(360px,calc(100vw - 48px))}
+.tasks-search input[type="text"]{height:34px;padding:7px 34px 7px 12px;border-radius:999px;font-size:13px;line-height:1.3}
+.tasks-search-clear{position:absolute;right:8px;display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:999px;color:var(--steel);font-size:16px;font-weight:700;line-height:1}
+.tasks-search-clear:hover{background:var(--surface-soft);color:var(--ink);text-decoration:none}
+.tasks-pages{display:flex;align-items:center;gap:4px;flex-wrap:nowrap}
+.tasks-page-link{display:inline-flex;align-items:center;justify-content:center;height:28px;min-width:28px;padding:0 8px;border:1px solid transparent;border-radius:999px;color:var(--steel);font-size:12px;font-weight:700;line-height:1;white-space:nowrap}
+.tasks-page-link:hover{border-color:var(--hairline);background:var(--surface-soft);color:var(--ink);text-decoration:none}
+.tasks-page-link.active{border-color:rgba(0,180,138,.28);background:#ddfff6;color:#005b49}
+.tasks-page-link.disabled{color:var(--muted);background:transparent;cursor:default}
+.tasks-page-size{height:30px;border:1px solid var(--hairline);border-radius:999px;background:var(--canvas);color:var(--ink);padding:0 10px;font-size:12px;font-weight:700}
+.todo-checklist{display:grid;gap:4px;margin:0;padding:0;list-style:none}
+.todo-checklist li{display:flex;align-items:flex-start;gap:7px;min-width:0;color:var(--charcoal);font-size:13px;line-height:1.35}
+.todo-check{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;width:15px;height:15px;margin-top:1px;border:1px solid var(--hairline);border-radius:4px;color:transparent;font-size:11px;font-weight:900;line-height:1}
+.todo-check.done{border-color:rgba(0,180,138,.46);background:#ddfff6;color:#005b49}
+.todo-copy{display:grid;gap:2px;min-width:0}
+.todo-due{color:var(--steel);font-family:"Geist Mono","SF Mono",Menlo,Consolas,monospace;font-size:11px;line-height:1.3}
+.task-state{display:inline-flex;align-items:center;height:24px;padding:0 8px;border:1px solid var(--hairline);border-radius:999px;background:var(--surface-soft);font-size:12px;font-weight:800;line-height:1;white-space:nowrap}
+.task-state.completed{background:#ddfff6;border-color:rgba(0,180,138,.46);color:#005b49}
+.task-state.over-due{background:rgba(212,86,86,.12);border-color:rgba(212,86,86,.24);color:#9a2f2f}
+.task-state.in-progress{background:rgba(55,114,207,.10);border-color:rgba(55,114,207,.24);color:#245aa5}
+.task-state.not-started{background:var(--surface-soft);color:var(--steel)}
+.tasks-tabulator{width:100%;border:1px solid var(--hairline);border-radius:8px;background:var(--canvas);overflow:hidden}
+.tasks-tabulator.tabulator{font-size:13px;color:var(--charcoal)}
+.tasks-tabulator .tabulator-header{border-bottom:1px solid var(--hairline);background:var(--surface-soft);color:var(--steel);font-size:12px;font-weight:800}
+.tasks-tabulator .tabulator-col{background:var(--surface-soft);border-right:1px solid var(--hairline)}
+.tasks-tabulator .tabulator-tableholder{overflow-x:hidden}
+.tasks-tabulator .tabulator-table{width:100%!important;min-width:0!important}
+.tasks-tabulator .tabulator-col-title{white-space:normal!important;overflow-wrap:anywhere;word-break:break-word}
+.tasks-tabulator .tabulator-header-filter input,.tasks-tabulator .tabulator-header-filter select{height:28px;border:1px solid var(--hairline);border-radius:7px;background:var(--canvas);color:var(--ink);font-size:12px}
+.tasks-tabulator .tabulator-row{border-bottom:1px solid var(--hairline)}
+.tasks-tabulator .tabulator-row.tabulator-row-even{background:#fbfcfd}
+@media (hover:hover) and (pointer:fine){.tasks-tabulator .tabulator-row.tabulator-selectable:hover{background-color:#f5faff}}
+.tasks-tabulator .tabulator-row .tabulator-cell{height:auto!important;border-right:1px solid var(--hairline);padding:9px 10px;white-space:normal!important;overflow:visible;text-overflow:clip;overflow-wrap:anywhere;word-break:break-word}
+.tasks-tabulator .tabulator-footer{display:none}
+.task-project-title{font-weight:700;overflow-wrap:anywhere;word-break:break-word}
+.task-cell-text{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:4;overflow:hidden;white-space:normal;overflow-wrap:anywhere;word-break:break-word}
 .compact-button{display:inline-flex;align-items:center;height:30px;padding:0 12px;border:1px solid var(--hairline);border-radius:999px;background:var(--canvas);color:var(--ink);font-size:13px;font-weight:500;line-height:1;white-space:nowrap}
 .compact-button:hover{border-color:var(--ink);background:var(--surface-soft)}
 .agent-log-button{display:inline-flex;align-items:center;height:34px;padding:0 14px;border:1px solid rgba(55,114,207,.38);border-radius:999px;background:#3772cf;color:#fff;font-size:13px;font-weight:700;line-height:1;white-space:nowrap;box-shadow:0 6px 18px rgba(55,114,207,.18)}
@@ -322,6 +364,10 @@ _BROWSER_NOTIFICATION_HISTORY: deque[dict[str, str]] = deque(maxlen=20)
 _BROWSER_NOTIFICATION_SEQUENCE = count(1)
 _DINGTALK_BRIDGE_STATUS: deque[dict[str, str]] = deque(maxlen=20)
 DEFAULT_ATTEMPT_LIST_LIMIT = 50
+TASK_PAGE_SIZE_OPTIONS = (20, 50, 100)
+DEFAULT_TASK_PAGE_SIZE = 20
+TABULATOR_CSS_URL = "https://cdn.jsdelivr.net/npm/tabulator-tables@6.4.0/dist/css/tabulator.min.css"
+TABULATOR_JS_URL = "https://cdn.jsdelivr.net/npm/tabulator-tables@6.4.0/dist/js/tabulator.min.js"
 DEFAULT_ERROR_LIST_LIMIT = 50
 HISTORY_CHART_HOURS = 24
 HISTORY_CHART_COLORS = {
@@ -347,6 +393,7 @@ def render_page(
     auto_refresh: bool = False,
     active_nav: str | None = None,
     user_feedback_pending_count: int | None = None,
+    head_extra: str = "",
 ) -> str:
     refresh_meta = (
         "<meta http-equiv=\"refresh\" content=\"15\">" if auto_refresh else ""
@@ -358,7 +405,7 @@ def render_page(
         f"{refresh_meta}"
         f"<title>{escape(title)}</title>"
         f"<link rel=\"icon\" href=\"{FAVICON_HREF}\">"
-        f"<style>{CSS}</style></head><body>"
+        f"<style>{CSS}</style>{head_extra}</head><body>"
         "<header><div class=\"shell topbar\"><a class=\"brand brand-home\" href=\"/\" aria-label=\"History home\">"
         "<div class=\"brand-mark\"></div><div>"
         f"<h1>{escape(title)}</h1><div class=\"eyebrow\">Local audit console</div>"
@@ -1779,70 +1826,422 @@ def render_attempt_list(
     )
 
 
-def render_tasks_page(store: AutoReplyStore) -> str:
-    projects = store.list_work_projects(limit=100)
-    draft_count = len(store.list_follow_up_drafts(statuses=("draft",), limit=200))
-    rows = []
-    for project in projects:
-        todos = store.list_work_todos(
-            project_id=project.id,
-            statuses=("open", "waiting_owner"),
-        )
-        todo_text = ", ".join(todo.title for todo in todos)
-        rows.append(
-            "<tr>"
-            f"<td><a href=\"/tasks/{project.id}\">{escape(project.title)}</a></td>"
-            f"<td><span class=\"pill\">{escape(project.category)}</span></td>"
-            f"<td><span class=\"pill\">{escape(project.priority)}</span></td>"
-            f"<td><span class=\"pill\">{escape(project.risk_level)}</span></td>"
-            f"<td>{escape(project.owner_name)}</td>"
-            f"<td>{escape(_excerpt(project.current_state, 90))}</td>"
-            f"<td>{escape(_excerpt(project.next_step, 110))}</td>"
-            f"<td>{len(todos)}</td>"
-            f"<td>{escape(_excerpt(todo_text, 140))}</td>"
-            "</tr>"
-        )
-    table = (
-        "<table><thead><tr>"
-        "<th>Project</th><th>Category</th><th>Priority</th><th>Risk</th>"
-        "<th>Owner</th><th>State</th><th>Next</th><th>Open</th><th>TODOs</th>"
-        "</tr></thead><tbody>"
-        + "".join(rows)
-        + "</tbody></table>"
-    )
-    drafts = store.list_follow_up_drafts(statuses=("draft",), limit=50)
-    draft_items = "".join(
-        "<div class=\"attempt-item\">"
-        "<div class=\"attempt-head\">"
-        "<div class=\"attempt-title\">"
-        f"<div class=\"attempt-main\">{escape(draft.owner_name or 'Owner')}</div>"
-        f"<div class=\"attempt-meta\">{escape(draft.target_kind)}</div>"
-        "</div>"
-        f"<time class=\"attempt-time\">{escape(_format_local_time(draft.scheduled_at))}</time>"
-        "</div>"
-        "<div class=\"attempt-lines\">"
-        f"{_attempt_text_line('问', draft.question_text, 240)}"
-        "</div>"
-        "</div>"
-        for draft in drafts
+def render_tasks_page(
+    store: AutoReplyStore,
+    query: str = "",
+    category: str = "",
+    task_state: str = "",
+    sort: str = "",
+    page: int = 1,
+    page_size: int = DEFAULT_TASK_PAGE_SIZE,
+) -> str:
+    projects = store.list_work_projects(limit=500)
+    items = [
+        (project, store.list_work_todos(project_id=project.id))
+        for project in projects
+    ]
+    categories = _task_categories(items)
+    task_states = _task_states(items)
+    rows = [_task_row_payload(project, todos) for project, todos in items]
+    initial_state = {
+        "query": query.strip(),
+        "category": category.strip(),
+        "taskState": task_state.strip(),
+        "sort": _bounded_task_sort(sort),
+        "page": max(page, 1),
+        "pageSize": _bounded_task_page_size(page_size),
+    }
+    toolbar = _task_toolbar(
+        total_count=len(rows),
+        query=query,
+        page_size=initial_state["pageSize"],
     )
     body = (
-        "<section class=\"card\"><div class=\"card-head\">"
-        "<h2>Tasks</h2>"
-        f"<span class=\"pill\">Draft follow-ups {draft_count}</span>"
-        "</div>"
-        f"{table if rows else '<p class=\"muted\">No work projects recorded.</p>'}"
+        "<section class=\"tasks-page\">"
+        f"{toolbar}"
+        "<div id=\"tasks-table\" class=\"tasks-tabulator\"></div>"
+        f"<script id=\"tasks-data\" type=\"application/json\">{_json_script_payload(rows)}</script>"
+        f"<script id=\"tasks-initial-state\" type=\"application/json\">{_json_script_payload(initial_state)}</script>"
+        f"<script id=\"tasks-categories\" type=\"application/json\">{_json_script_payload(categories)}</script>"
+        f"<script id=\"tasks-states\" type=\"application/json\">{_json_script_payload(task_states)}</script>"
+        f"{_task_tabulator_script()}"
         "</section>"
-        "<section class=\"card\"><h2>Pending follow-ups</h2>"
-        f"{draft_items or '<p class=\"muted\">No pending follow-ups.</p>'}"
-        "</section>"
+    )
+    head_extra = (
+        f"<link rel=\"stylesheet\" href=\"{TABULATOR_CSS_URL}\">"
+        f"<script src=\"{TABULATOR_JS_URL}\"></script>"
     )
     return render_page(
         "Tasks",
         body,
         active_nav="tasks",
         user_feedback_pending_count=store.count_pending_user_feedback_items(),
+        head_extra=head_extra,
     )
+
+
+def _json_script_payload(value) -> str:
+    return json.dumps(value, ensure_ascii=False).replace("</", "<\\/")
+
+
+def _task_row_payload(project, todos) -> dict:
+    open_count, open_ratio = _task_open_summary(todos)
+    state = _task_table_state(project, todos)
+    todo_payloads = []
+    for todo in todos:
+        due = _format_local_time(todo.deadline_at) or todo.deadline_at
+        todo_payloads.append(
+            {
+                "title": todo.title,
+                "owner": todo.owner_name,
+                "status": str(todo.status),
+                "done": _task_todo_done(todo),
+                "due": due,
+            }
+        )
+    return {
+        "id": project.id,
+        "title": project.title,
+        "detailUrl": f"/tasks/{project.id}",
+        "status": state,
+        "statusRank": _task_state_sort_rank().get(state, 99),
+        "category": str(project.category),
+        "priority": str(project.priority),
+        "priorityRank": _task_priority_sort_rank().get(str(project.priority), 99),
+        "riskLevel": str(project.risk_level),
+        "riskRank": _task_risk_sort_rank().get(str(project.risk_level), 99),
+        "owner": project.owner_name,
+        "currentState": _excerpt(project.current_state, 120),
+        "nextStep": _excerpt(project.next_step, 140),
+        "openCount": open_count,
+        "openRatio": open_ratio,
+        "openSummary": f"{open_count} ({open_ratio}%)",
+        "todoCount": len(todos),
+        "todos": todo_payloads,
+        "search": "\n".join(_task_project_search_values(project, todos)).casefold(),
+    }
+
+
+def _task_priority_sort_rank() -> dict[str, int]:
+    return {
+        ProjectPriority.P0.value: 0,
+        ProjectPriority.P1.value: 1,
+        ProjectPriority.P2.value: 2,
+        ProjectPriority.NONE.value: 3,
+    }
+
+
+def _task_risk_sort_rank() -> dict[str, int]:
+    return {
+        RiskLevel.HIGH.value: 0,
+        RiskLevel.MEDIUM.value: 1,
+        RiskLevel.LOW.value: 2,
+        RiskLevel.NONE.value: 3,
+    }
+
+
+def _bounded_task_page_size(page_size: int) -> int:
+    return page_size if page_size in TASK_PAGE_SIZE_OPTIONS else DEFAULT_TASK_PAGE_SIZE
+
+
+def _task_categories(items) -> list[str]:
+    return sorted({str(project.category) for project, _todos in items if str(project.category)})
+
+
+def _task_states(items) -> list[str]:
+    return sorted(
+        {_task_table_state(project, todos) for project, todos in items},
+        key=lambda value: _task_state_sort_rank().get(value, 99),
+    )
+
+
+def _bounded_task_sort(sort: str) -> str:
+    return sort if sort in _task_sort_options() else ""
+
+
+def _task_sort_options() -> dict[str, tuple[str, str]]:
+    return {
+        "": ("", ""),
+        "project_desc": ("title", "desc"),
+        "project_asc": ("title", "asc"),
+        "priority_desc": ("priorityRank", "asc"),
+        "priority_asc": ("priorityRank", "desc"),
+        "risk_desc": ("riskRank", "asc"),
+        "risk_asc": ("riskRank", "desc"),
+        "owner_desc": ("owner", "desc"),
+        "owner_asc": ("owner", "asc"),
+        "state_desc": ("currentState", "desc"),
+        "state_asc": ("currentState", "asc"),
+        "next_desc": ("nextStep", "desc"),
+        "next_asc": ("nextStep", "asc"),
+        "open_desc": ("openCount", "desc"),
+        "open_asc": ("openCount", "asc"),
+        "todos_desc": ("todoCount", "desc"),
+        "todos_asc": ("todoCount", "asc"),
+    }
+
+
+def _task_state_sort_rank() -> dict[str, int]:
+    return {
+        "over due": 0,
+        "in progress": 1,
+        "not started": 2,
+        "completed": 3,
+    }
+
+
+def _task_open_summary(todos) -> tuple[int, int]:
+    total = len(todos)
+    open_count = sum(1 for todo in todos if _task_todo_incomplete(todo))
+    if total <= 0:
+        return open_count, 0
+    return open_count, round(open_count * 100 / total)
+
+
+def _task_todo_incomplete(todo) -> bool:
+    return str(todo.status) not in {TodoStatus.DONE.value, TodoStatus.CANCELLED.value}
+
+
+def _task_todo_done(todo) -> bool:
+    return str(todo.status) == TodoStatus.DONE.value
+
+
+def _task_table_state(project, todos) -> str:
+    if str(project.status) == ProjectStatus.DONE.value:
+        return "completed"
+    if todos and not any(_task_todo_incomplete(todo) for todo in todos):
+        return "completed"
+    if any(_task_todo_overdue(todo) for todo in todos if _task_todo_incomplete(todo)):
+        return "over due"
+    if any(_task_todo_incomplete(todo) for todo in todos):
+        return "in progress"
+    return "not started"
+
+
+def _task_todo_overdue(todo) -> bool:
+    deadline = _parse_utc_timestamp(todo.deadline_at)
+    return bool(deadline and deadline < datetime.now(timezone.utc))
+
+
+def _task_toolbar(
+    *,
+    total_count: int,
+    query: str,
+    page_size: int,
+) -> str:
+    query = query.strip()
+    return (
+        "<div class=\"tasks-toolbar\">"
+        "<div class=\"tasks-toolbar-left\">"
+        f"<span id=\"tasks-count\" class=\"tasks-count\">{total_count} tasks</span>"
+        "<label class=\"tasks-search\">"
+        "<span class=\"sr-only\">Search tasks</span>"
+        f"<input id=\"task-search-input\" type=\"text\" value=\"{escape(query)}\" "
+        "placeholder=\"搜索\" autocomplete=\"off\">"
+        "<button id=\"task-search-clear\" class=\"tasks-search-clear\" type=\"button\" "
+        "aria-label=\"Clear search\" title=\"Clear search\">×</button>"
+        "</label>"
+        "</div>"
+        "<div class=\"tasks-toolbar-right\">"
+        "<nav id=\"tasks-pages\" class=\"tasks-pages\" aria-label=\"Task pages\"></nav>"
+        f"{_task_page_size_select(page_size=page_size)}"
+        "</div>"
+        "</div>"
+    )
+
+
+def _task_page_size_select(
+    *,
+    page_size: int,
+) -> str:
+    options = "".join(
+        f"<option value=\"{size}\"{' selected' if size == page_size else ''}>{size}/page</option>"
+        for size in TASK_PAGE_SIZE_OPTIONS
+    )
+    return (
+        "<select id=\"task-page-size\" class=\"tasks-page-size\" "
+        "aria-label=\"Tasks per page\">"
+        f"{options}</select>"
+    )
+
+
+def _task_tabulator_script() -> str:
+    sort_options_json = _json_script_payload(_task_sort_options())
+    return f"""
+<script>
+(() => {{
+  const rows = JSON.parse(document.getElementById("tasks-data").textContent || "[]");
+  const initial = JSON.parse(document.getElementById("tasks-initial-state").textContent || "{{}}");
+  const categories = JSON.parse(document.getElementById("tasks-categories").textContent || "[]");
+  const states = JSON.parse(document.getElementById("tasks-states").textContent || "[]");
+  const sortOptions = {sort_options_json};
+  const countEl = document.getElementById("tasks-count");
+  const searchInput = document.getElementById("task-search-input");
+  const clearButton = document.getElementById("task-search-clear");
+  const pageSizeSelect = document.getElementById("task-page-size");
+  const pagesEl = document.getElementById("tasks-pages");
+
+  const escapeHtml = (value) => String(value || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+  const filterValues = (items, label) => {{
+    const values = {{"": label}};
+    items.forEach((item) => {{ values[item] = item; }});
+    return values;
+  }};
+  const pill = (value) => `<span class="pill">${{escapeHtml(value || "-")}}</span>`;
+  const badge = (value) => {{
+    const cssClass = String(value || "").replace(/\\s+/g, "-");
+    return `<span class="task-state ${{escapeHtml(cssClass)}}">${{escapeHtml(value || "-")}}</span>`;
+  }};
+  const textCell = (value) => `<div class="task-cell-text">${{escapeHtml(value)}}</div>`;
+  const projectCell = (cell) => {{
+    const row = cell.getRow().getData();
+    return `<a class="task-project-title" href="${{escapeHtml(row.detailUrl)}}">${{escapeHtml(row.title)}}</a>`;
+  }};
+  const todoCell = (cell) => {{
+    const todos = cell.getRow().getData().todos || [];
+    if (!todos.length) {{
+      return `<span class="muted">-</span>`;
+    }}
+    const items = todos.map((todo) => {{
+      const checkClass = todo.done ? "todo-check done" : "todo-check";
+      const check = todo.done ? "✓" : "";
+      const due = todo.due ? `<span class="todo-due">DDL ${{escapeHtml(todo.due)}}</span>` : "";
+      return `<li><span class="${{checkClass}}" aria-hidden="true">${{check}}</span><span class="todo-copy"><span>${{escapeHtml(todo.title)}}</span>${{due}}</span></li>`;
+    }});
+    return `<ul class="todo-checklist">${{items.join("")}}</ul>`;
+  }};
+  const sortConfig = sortOptions[initial.sort] || ["", ""];
+  const initialSort = sortConfig[0] ? [{{column: sortConfig[0], dir: sortConfig[1]}}] : [];
+  const pageSize = Number(initial.pageSize) || {DEFAULT_TASK_PAGE_SIZE};
+  const table = new Tabulator("#tasks-table", {{
+    data: rows,
+    layout: "fitColumns",
+    maxHeight: "calc(100vh - 210px)",
+    pagination: "local",
+    paginationSize: pageSize,
+    paginationInitialPage: Number(initial.page) || 1,
+    paginationSizeSelector: [{", ".join(str(size) for size in TASK_PAGE_SIZE_OPTIONS)}],
+    placeholder: "No matching tasks.",
+    initialSort,
+    columns: [
+      {{title: "Project", field: "title", minWidth: 180, widthGrow: 1.1, sorter: "string", variableHeight: true, formatter: projectCell}},
+      {{title: "Status", field: "status", width: 126, sorter: "string", headerFilter: "select", headerFilterParams: {{values: filterValues(states, "All status")}}, headerFilterValue: initial.taskState || "", formatter: (cell) => badge(cell.getValue())}},
+      {{title: "Category", field: "category", width: 136, sorter: "string", headerFilter: "select", headerFilterParams: {{values: filterValues(categories, "All categories")}}, headerFilterValue: initial.category || "", formatter: (cell) => pill(cell.getValue())}},
+      {{title: "Priority", field: "priorityRank", width: 96, sorter: "number", formatter: (cell) => pill(cell.getRow().getData().priority)}},
+      {{title: "Risk", field: "riskRank", width: 88, sorter: "number", formatter: (cell) => pill(cell.getRow().getData().riskLevel)}},
+      {{title: "Owner", field: "owner", width: 124, sorter: "string", variableHeight: true, formatter: (cell) => escapeHtml(cell.getValue())}},
+      {{title: "State", field: "currentState", minWidth: 160, widthGrow: 1, sorter: "string", variableHeight: true, formatter: (cell) => textCell(cell.getValue())}},
+      {{title: "Next", field: "nextStep", minWidth: 180, widthGrow: 1.1, sorter: "string", variableHeight: true, formatter: (cell) => textCell(cell.getValue())}},
+      {{title: "Open", field: "openCount", width: 86, sorter: "number", hozAlign: "left", formatter: (cell) => escapeHtml(cell.getRow().getData().openSummary)}},
+      {{title: "ToDos", field: "todoCount", minWidth: 220, widthGrow: 1.25, sorter: "number", variableHeight: true, formatter: todoCell}},
+    ],
+  }});
+
+  const activeRows = () => table.getRows("active");
+  const applySearch = () => {{
+    const terms = String(searchInput.value || "").trim().toLowerCase().split(/\\s+/).filter(Boolean);
+    table.setFilter((data) => !terms.length || terms.every((term) => String(data.search || "").includes(term)));
+    clearButton.hidden = !terms.length;
+  }};
+  const updateCount = (_filters, filteredRows) => {{
+    const count = filteredRows ? filteredRows.length : activeRows().length;
+    countEl.textContent = `${{count}} tasks`;
+  }};
+  const updatePages = () => {{
+    const current = table.getPage();
+    const max = table.getPageMax();
+    if (!max || max <= 1) {{
+      pagesEl.innerHTML = "";
+      return;
+    }}
+    const visible = new Set([1, max, current - 1, current, current + 1].filter((page) => page >= 1 && page <= max));
+    const pieces = [];
+    let previous = 0;
+    [...visible].sort((a, b) => a - b).forEach((page) => {{
+      if (previous && page - previous > 1) {{
+        pieces.push(`<span class="tasks-page-link disabled">...</span>`);
+      }}
+      if (page === current) {{
+        pieces.push(`<span class="tasks-page-link active" aria-label="Page ${{page}}">${{page}}</span>`);
+      }} else {{
+        pieces.push(`<button class="tasks-page-link" type="button" data-page="${{page}}" aria-label="Page ${{page}}">${{page}}</button>`);
+      }}
+      previous = page;
+    }});
+    pagesEl.innerHTML = `<button class="tasks-page-link" type="button" data-page="${{Math.max(current - 1, 1)}}" aria-label="Previous page">&lt;</button>${{pieces.join("")}}<button class="tasks-page-link" type="button" data-page="${{Math.min(current + 1, max)}}" aria-label="Next page">&gt;</button>`;
+  }};
+
+  table.on("dataFiltered", updateCount);
+  table.on("dataFiltered", updatePages);
+  table.on("pageLoaded", updatePages);
+  table.on("tableBuilt", () => {{
+    if (initial.query) {{
+      searchInput.value = initial.query;
+      applySearch();
+    }} else {{
+      clearButton.hidden = true;
+      updateCount(null, activeRows());
+    }}
+    updatePages();
+  }});
+  searchInput.addEventListener("input", applySearch);
+  clearButton.addEventListener("click", () => {{
+    searchInput.value = "";
+    applySearch();
+    searchInput.focus();
+  }});
+  pageSizeSelect.addEventListener("change", () => table.setPageSize(Number(pageSizeSelect.value)));
+  pagesEl.addEventListener("click", (event) => {{
+    const button = event.target.closest("button[data-page]");
+    if (button) {{
+      table.setPage(Number(button.dataset.page));
+    }}
+  }});
+}})();
+</script>
+"""
+
+def _task_project_search_values(project, todos) -> list[str]:
+    values = [
+        project.title,
+        str(project.category),
+        project.tags_json,
+        str(project.status),
+        str(project.priority),
+        str(project.risk_level),
+        project.owner_user_id,
+        project.owner_name,
+        project.related_people_json,
+        project.goal,
+        project.background,
+        project.facts_json,
+        project.current_state,
+        project.blocker,
+        project.next_step,
+        project.source_conversations_json,
+        project.memory_context_json,
+    ]
+    for todo in todos:
+        values.extend(
+            [
+                todo.title,
+                todo.owner_user_id,
+                todo.owner_name,
+                str(todo.status),
+                str(todo.priority),
+                todo.deadline_at,
+                todo.next_follow_up_at,
+                todo.follow_up_question,
+                todo.blocker,
+                todo.completion_evidence_json,
+            ]
+        )
+    return [value for value in values if value]
 
 
 def render_task_project_detail(store: AutoReplyStore, project_id: int) -> tuple[int, str]:
@@ -2794,8 +3193,16 @@ def create_audit_app(
         )
 
     @app.get("/tasks", response_class=HTMLResponse)
-    def tasks_page() -> str:
-        return render_tasks_page(AutoReplyStore(db_path))
+    def tasks_page(request: Request) -> str:
+        return render_tasks_page(
+            AutoReplyStore(db_path),
+            query=str(request.query_params.get("q") or ""),
+            category=str(request.query_params.get("category") or ""),
+            task_state=str(request.query_params.get("task_state") or ""),
+            sort=str(request.query_params.get("sort") or ""),
+            page=_positive_int_query(request, "page", default=1),
+            page_size=_positive_int_query(request, "page_size", default=DEFAULT_TASK_PAGE_SIZE),
+        )
 
     @app.get("/tasks/{project_id}", response_class=HTMLResponse)
     def task_project_detail(project_id: int) -> HTMLResponse:

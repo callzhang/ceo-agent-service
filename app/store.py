@@ -154,6 +154,48 @@ class ReplyTask(BaseModel):
     updated_at: str
 
 
+class OkrReviewRequest(BaseModel):
+    id: int
+    conversation_id: str
+    conversation_title: str
+    trigger_message_id: str
+    trigger_sender: str
+    trigger_sender_user_id: str = ""
+    trigger_text: str
+    period_label: str
+    period_start: str
+    period_end: str
+    okr_source_json: str = "{}"
+    status: str
+    error: str = ""
+    codex_session_id: str = ""
+    created_at: str = ""
+    updated_at: str = ""
+
+
+class CodexSessionLock:
+    def __init__(self, store, conversation_id: str, owner: str):
+        self.store = store
+        self.conversation_id = conversation_id
+        self.owner = owner
+
+    def __enter__(self):
+        if not self.store.acquire_codex_session_lock(self.conversation_id, self.owner):
+            raise RuntimeError(f"codex session locked: {self.conversation_id}")
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        released = self.store.release_codex_session_lock(
+            self.conversation_id,
+            self.owner,
+        )
+        if not released and exc_type is None:
+            raise RuntimeError(
+                f"codex session lock release failed: {self.conversation_id}"
+            )
+        return False
+
+
 class AutoReplyStore:
     def __init__(self, path: Path):
         self.path = path
@@ -313,6 +355,53 @@ class AutoReplyStore:
                     key text primary key,
                     value text not null,
                     updated_at text not null default current_timestamp
+                );
+                create table if not exists codex_session_locks (
+                    conversation_id text primary key,
+                    owner text not null,
+                    locked_at text not null default current_timestamp
+                );
+                create table if not exists okr_review_requests (
+                    id integer primary key autoincrement,
+                    conversation_id text not null,
+                    conversation_title text not null,
+                    trigger_message_id text not null,
+                    trigger_sender text not null,
+                    trigger_sender_user_id text not null default '',
+                    trigger_text text not null,
+                    period_label text not null,
+                    period_start text not null,
+                    period_end text not null,
+                    okr_source_json text not null default '{}',
+                    status text not null default 'pending',
+                    error text not null default '',
+                    codex_session_id text not null default '',
+                    created_at text not null default current_timestamp,
+                    updated_at text not null default current_timestamp,
+                    unique(conversation_id, trigger_message_id)
+                );
+                create index if not exists idx_okr_review_requests_status
+                    on okr_review_requests(status, id);
+                create table if not exists okr_review_runs (
+                    id integer primary key autoincrement,
+                    request_id integer not null,
+                    codex_session_id text not null default '',
+                    codex_transcript_start_line integer not null default 0,
+                    codex_transcript_end_line integer not null default 0,
+                    envelope_json text not null default '{}',
+                    audit_tool_events_json text not null default '[]',
+                    audit_summary text not null default '',
+                    created_at text not null default current_timestamp
+                );
+                create table if not exists okr_review_items (
+                    id integer primary key autoincrement,
+                    request_id integer not null,
+                    objective_title text not null,
+                    objective_weight real not null default 0,
+                    kr_title text not null,
+                    kr_weight real not null default 0,
+                    item_json text not null default '{}',
+                    created_at text not null default current_timestamp
                 );
                 create table if not exists work_projects (
                     id integer primary key autoincrement,
@@ -557,6 +646,10 @@ class AutoReplyStore:
             created_at=row["created_at"],
             updated_at=row["updated_at"],
         )
+
+    @staticmethod
+    def _okr_review_request_from_row(row: sqlite3.Row) -> OkrReviewRequest:
+        return OkrReviewRequest.model_validate(dict(row))
 
     def enqueue_reply_task(
         self,
@@ -826,6 +919,216 @@ class AutoReplyStore:
                 return None
             return self._reply_task_from_row(row)
 
+    def create_okr_review_request(
+        self,
+        *,
+        conversation_id: str,
+        conversation_title: str,
+        trigger_message_id: str,
+        trigger_sender: str,
+        trigger_sender_user_id: str,
+        trigger_text: str,
+        period_label: str,
+        period_start: str,
+        period_end: str,
+        okr_source_json: str,
+    ) -> int:
+        with self._connect() as db:
+            db.execute(
+                """
+                insert into okr_review_requests (
+                    conversation_id,
+                    conversation_title,
+                    trigger_message_id,
+                    trigger_sender,
+                    trigger_sender_user_id,
+                    trigger_text,
+                    period_label,
+                    period_start,
+                    period_end,
+                    okr_source_json
+                )
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                on conflict(conversation_id, trigger_message_id) do update set
+                    okr_source_json=excluded.okr_source_json,
+                    updated_at=current_timestamp
+                """,
+                (
+                    conversation_id,
+                    conversation_title,
+                    trigger_message_id,
+                    trigger_sender,
+                    trigger_sender_user_id,
+                    trigger_text,
+                    period_label,
+                    period_start,
+                    period_end,
+                    okr_source_json,
+                ),
+            )
+            row = db.execute(
+                """
+                select id from okr_review_requests
+                where conversation_id=? and trigger_message_id=?
+                """,
+                (conversation_id, trigger_message_id),
+            ).fetchone()
+            return int(row["id"])
+
+    def claim_okr_review_requests(self, limit: int) -> list[OkrReviewRequest]:
+        if limit <= 0:
+            return []
+        with self._connect() as db:
+            db.execute("begin immediate")
+            rows = db.execute(
+                """
+                select *
+                from okr_review_requests
+                where status='pending'
+                order by id
+                limit ?
+                """,
+                (limit,),
+            ).fetchall()
+            ids = [row["id"] for row in rows]
+            if not ids:
+                return []
+            placeholders = ",".join("?" for _ in ids)
+            db.execute(
+                f"""
+                update okr_review_requests
+                set status='processing',
+                    error='',
+                    updated_at=current_timestamp
+                where id in ({placeholders})
+                """,
+                ids,
+            )
+            claimed = db.execute(
+                f"""
+                select *
+                from okr_review_requests
+                where id in ({placeholders})
+                order by id
+                """,
+                ids,
+            ).fetchall()
+            return [self._okr_review_request_from_row(row) for row in claimed]
+
+    def get_okr_review_request(self, request_id: int) -> OkrReviewRequest:
+        with self._connect() as db:
+            row = db.execute(
+                """
+                select *
+                from okr_review_requests
+                where id=?
+                """,
+                (request_id,),
+            ).fetchone()
+            if row is None:
+                raise ValueError(f"okr review request not found: {request_id}")
+            return self._okr_review_request_from_row(row)
+
+    def mark_okr_review_request_done(
+        self, request_id: int, *, codex_session_id: str
+    ) -> None:
+        with self._connect() as db:
+            db.execute(
+                """
+                update okr_review_requests
+                set status='done',
+                    error='',
+                    codex_session_id=?,
+                    updated_at=current_timestamp
+                where id=?
+                """,
+                (codex_session_id, request_id),
+            )
+
+    def mark_okr_review_request_failed(self, request_id: int, error: str) -> None:
+        with self._connect() as db:
+            db.execute(
+                """
+                update okr_review_requests
+                set status='failed',
+                    error=?,
+                    updated_at=current_timestamp
+                where id=?
+                """,
+                (error, request_id),
+            )
+
+    def record_okr_review_run(
+        self,
+        *,
+        request_id: int,
+        codex_session_id: str,
+        codex_transcript_start_line: int,
+        codex_transcript_end_line: int,
+        envelope_json: str,
+        audit_tool_events_json: str,
+        audit_summary: str,
+    ) -> int:
+        with self._connect() as db:
+            cursor = db.execute(
+                """
+                insert into okr_review_runs (
+                    request_id,
+                    codex_session_id,
+                    codex_transcript_start_line,
+                    codex_transcript_end_line,
+                    envelope_json,
+                    audit_tool_events_json,
+                    audit_summary
+                )
+                values (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    request_id,
+                    codex_session_id,
+                    codex_transcript_start_line,
+                    codex_transcript_end_line,
+                    envelope_json,
+                    audit_tool_events_json,
+                    audit_summary,
+                ),
+            )
+            return int(cursor.lastrowid)
+
+    def record_okr_review_item(
+        self,
+        *,
+        request_id: int,
+        objective_title: str,
+        objective_weight: float,
+        kr_title: str,
+        kr_weight: float,
+        item_json: str,
+    ) -> int:
+        with self._connect() as db:
+            cursor = db.execute(
+                """
+                insert into okr_review_items (
+                    request_id,
+                    objective_title,
+                    objective_weight,
+                    kr_title,
+                    kr_weight,
+                    item_json
+                )
+                values (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    request_id,
+                    objective_title,
+                    objective_weight,
+                    kr_title,
+                    kr_weight,
+                    item_json,
+                ),
+            )
+            return int(cursor.lastrowid)
+
     def upsert_conversation(
         self,
         conversation_id: str,
@@ -858,6 +1161,39 @@ class AutoReplyStore:
                 (conversation_id,),
             ).fetchone()
             return None if row is None else row["codex_session_id"]
+
+    def acquire_codex_session_lock(self, conversation_id: str, owner: str) -> bool:
+        if not conversation_id.strip():
+            raise ValueError("missing conversation_id")
+        if not owner.strip():
+            raise ValueError("missing lock owner")
+        with self._connect() as db:
+            cursor = db.execute(
+                """
+                insert or ignore into codex_session_locks (conversation_id, owner)
+                values (?, ?)
+                """,
+                (conversation_id, owner),
+            )
+            return cursor.rowcount == 1
+
+    def release_codex_session_lock(self, conversation_id: str, owner: str) -> bool:
+        if not conversation_id.strip():
+            raise ValueError("missing conversation_id")
+        if not owner.strip():
+            raise ValueError("missing lock owner")
+        with self._connect() as db:
+            cursor = db.execute(
+                """
+                delete from codex_session_locks
+                where conversation_id=? and owner=?
+                """,
+                (conversation_id, owner),
+            )
+            return cursor.rowcount == 1
+
+    def codex_session_lock(self, conversation_id: str, owner: str) -> CodexSessionLock:
+        return CodexSessionLock(self, conversation_id, owner)
 
     def update_reply_task_trigger(
         self,
@@ -2151,6 +2487,14 @@ class AutoReplyStore:
                 """,
                 [*parameters, todo_id],
             )
+
+    def get_work_todo(self, todo_id: int) -> WorkTodo | None:
+        with self._connect() as db:
+            row = db.execute(
+                "select * from work_todos where id=?",
+                (todo_id,),
+            ).fetchone()
+            return None if row is None else WorkTodo.model_validate(dict(row))
 
     def list_work_todos(
         self,

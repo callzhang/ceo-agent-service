@@ -22,6 +22,13 @@ SIGNATURE = assistant_signature()
 CODEX_TIMEOUT_REASON_PREFIX = "codex exec timed out after"
 TIMEOUT_SESSION_DECISION_GRACE_SECONDS = 90
 SESSION_DECISION_GRACE_SECONDS = 15
+REPLY_AGENT_ENVELOPE_SCHEMA_HINT = (
+    'JSON schema: {"kind":"reply|no_action|error",'
+    '"user_response":{"mode":"send_reply|ask_clarifying_question|handoff_to_human|no_reply",'
+    '"text":"","sensitivity_kind":"general|internal_personnel|external_candidate"},'
+    '"system_actions":[],"domain_payload":{},'
+    '"audit":{"summary":"","documents":[{"title":"","url":"","relevance":""}],"confidence":0.8}}'
+)
 
 
 def append_signature(text: str) -> str:
@@ -31,17 +38,79 @@ def append_signature(text: str) -> str:
     return f"{stripped}{SIGNATURE}"
 
 
-def parse_codex_json(raw: str) -> CodexDecision:
+def error_agent_envelope_json(reason: str) -> str:
+    return json.dumps(
+        {
+            "kind": "error",
+            "user_response": {
+                "mode": "no_reply",
+                "text": "",
+                "sensitivity_kind": "general",
+            },
+            "system_actions": [],
+            "domain_payload": {},
+            "audit": {"summary": reason, "documents": [], "confidence": 0},
+        },
+        ensure_ascii=False,
+    )
+
+
+def codex_decision_from_envelope(envelope: Any) -> CodexDecision:
+    from app.agent_envelope import AgentEnvelope, AgentKind, UserResponseMode
+
+    parsed = AgentEnvelope.model_validate(envelope)
+    if parsed.kind == AgentKind.ERROR:
+        return CodexDecision(
+            action=CodexAction.STOP_WITH_ERROR,
+            reason=parsed.audit.summary,
+            audit_summary=parsed.audit.summary,
+        )
+    if parsed.user_response.mode == UserResponseMode.NO_REPLY:
+        action = CodexAction.NO_REPLY
+    elif parsed.user_response.mode == UserResponseMode.ASK_CLARIFYING_QUESTION:
+        action = CodexAction.ASK_CLARIFYING_QUESTION
+    elif parsed.user_response.mode == UserResponseMode.HANDOFF_TO_HUMAN:
+        action = CodexAction.HANDOFF_TO_HUMAN
+    else:
+        action = CodexAction.SEND_REPLY
+    return CodexDecision(
+        action=action,
+        reply_text=parsed.user_response.text,
+        reason=parsed.audit.summary,
+        sensitivity_kind=parsed.user_response.sensitivity_kind.value,
+        personnel_subject_user_id=parsed.domain_payload.get(
+            "personnel_subject_user_id"
+        ),
+        candidate_context_known=bool(
+            parsed.domain_payload.get("candidate_context_known", False)
+        ),
+        candidate_department_ids=parsed.domain_payload.get(
+            "candidate_department_ids", []
+        ),
+        calendar_response_status=parsed.domain_payload.get(
+            "calendar_response_status", ""
+        ),
+        audit_documents=[doc.model_dump() for doc in parsed.audit.documents],
+        audit_summary=parsed.audit.summary,
+    )
+
+
+def parse_codex_json(raw: str, *, allow_legacy: bool = True) -> CodexDecision:
     stripped = raw.strip()
     try:
         payload = json.loads(stripped)
     except json.JSONDecodeError:
-        return _parse_codex_jsonl(stripped)
+        return _parse_codex_jsonl(stripped, allow_legacy=allow_legacy)
 
-    decision = _decision_from_payload(payload)
+    decision = _decision_from_payload(payload, allow_legacy=allow_legacy)
     if decision is not None:
         return decision
-    raise json.JSONDecodeError("No Codex decision JSON found", raw, 0)
+    message = (
+        "No AgentEnvelope JSON found"
+        if not allow_legacy
+        else "No Codex decision JSON found"
+    )
+    raise json.JSONDecodeError(message, raw, 0)
 
 
 def extract_codex_session_id(raw: str) -> str | None:
@@ -64,12 +133,17 @@ def extract_codex_audit_events(raw: str, limit: int = 40) -> list[dict[str, str]
     return events
 
 
-def _parse_codex_jsonl(raw: str) -> CodexDecision:
+def _parse_codex_jsonl(raw: str, *, allow_legacy: bool = True) -> CodexDecision:
     for payload in reversed(list(_iter_json_payloads(raw))):
-        decision = _decision_from_payload(payload)
+        decision = _decision_from_payload(payload, allow_legacy=allow_legacy)
         if decision is not None:
             return decision
-    raise json.JSONDecodeError("No Codex decision JSON found", raw, 0)
+    message = (
+        "No AgentEnvelope JSON found"
+        if not allow_legacy
+        else "No Codex decision JSON found"
+    )
+    raise json.JSONDecodeError(message, raw, 0)
 
 
 def _iter_json_payloads(raw: str) -> list[Any]:
@@ -91,23 +165,38 @@ def _iter_json_payloads(raw: str) -> list[Any]:
         return payloads
 
 
-def _decision_from_payload(payload: Any) -> CodexDecision | None:
+def _decision_from_payload(
+    payload: Any,
+    *,
+    allow_legacy: bool = True,
+) -> CodexDecision | None:
     if isinstance(payload, dict):
-        try:
-            return CodexDecision.model_validate(payload)
-        except ValidationError:
-            pass
+        if _looks_like_agent_envelope(payload):
+            return codex_decision_from_envelope(payload)
+        if allow_legacy:
+            try:
+                return CodexDecision.model_validate(payload)
+            except ValidationError:
+                pass
 
         for text in _decision_text_candidates(payload):
             try:
                 parsed = json.loads(text)
             except json.JSONDecodeError:
                 continue
+            if isinstance(parsed, dict) and _looks_like_agent_envelope(parsed):
+                return codex_decision_from_envelope(parsed)
+            if not allow_legacy:
+                continue
             try:
                 return CodexDecision.model_validate(parsed)
             except ValidationError:
                 continue
     return None
+
+
+def _looks_like_agent_envelope(payload: dict[str, Any]) -> bool:
+    return "kind" in payload and "user_response" in payload
 
 
 def _decision_text_candidates(payload: dict[str, Any]) -> list[str]:
@@ -166,22 +255,42 @@ def _audit_event_from_payload(payload: Any) -> dict[str, str] | None:
     item = payload.get("item")
     source = item if isinstance(item, dict) else payload
     event_type = _string_value(payload, "type")
+    source_type = _string_value(source, "type")
+    output = _output_text(source)
+    is_output = source_type in {"tool_result", "function_call_output"} or (
+        output and source_type in {"tool_output"}
+    )
     tool = (
-        _string_value(source, "tool_name")
+        "tool_output"
+        if is_output
+        else _string_value(source, "tool_name")
         or _string_value(source, "name")
         or _string_value(source, "type")
     )
-    command = _first_string_for_keys(source, {"cmd", "command"})
-    path = _first_pathish_string(source)
-    if not command and not path:
+    call_id = _string_value(source, "call_id") or _string_value(payload, "call_id")
+    arguments = source.get("arguments")
+    input_text = _json_text(arguments)
+    command = _first_string_for_keys(arguments, {"cmd", "command"})
+    if not command:
+        command = _first_string_for_keys(source, {"cmd", "command"})
+    path = _first_pathish_string(output) if output else ""
+    if not path:
+        path = _first_pathish_string(source)
+    if not any([command, path, input_text, output]):
         return None
     event: dict[str, str] = {}
     if event_type:
         event["event_type"] = _short_text(event_type)
     if tool:
         event["tool"] = _short_text(tool)
+    if call_id:
+        event["call_id"] = _short_text(call_id, 500)
+    if input_text:
+        event["input"] = input_text
     if command:
         event["command"] = _short_text(command, 500)
+    if output:
+        event["output"] = output
     if path:
         event["path"] = _short_text(path, 500)
     return event
@@ -190,6 +299,29 @@ def _audit_event_from_payload(payload: Any) -> dict[str, str] | None:
 def _string_value(payload: dict[str, Any], key: str) -> str:
     value = payload.get(key)
     return value if isinstance(value, str) else ""
+
+
+def _json_text(value: Any) -> str:
+    if isinstance(value, str):
+        if not value:
+            return ""
+        try:
+            return json.dumps(json.loads(value), ensure_ascii=False, indent=2)
+        except json.JSONDecodeError:
+            return value
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, ensure_ascii=False, indent=2)
+    return ""
+
+
+def _output_text(payload: dict[str, Any]) -> str:
+    for key in ("output", "result"):
+        value = payload.get(key)
+        if isinstance(value, str):
+            return value
+        if isinstance(value, (dict, list)):
+            return json.dumps(value, ensure_ascii=False, indent=2)
+    return ""
 
 
 def _first_string_for_keys(payload: Any, keys: set[str]) -> str:
@@ -337,7 +469,7 @@ class CodexDecisionRunner:
         raw_outputs.append(first_raw)
         self._remember_session_id(first_raw)
         try:
-            decision = parse_codex_json(first_raw)
+            decision = parse_codex_json(first_raw, allow_legacy=False)
             timeout_session_decision = self._timeout_session_decision(decision)
             if timeout_session_decision is not None:
                 self._remember_audit_tool_events(raw_outputs)
@@ -363,17 +495,13 @@ class CodexDecisionRunner:
                     pass
             retry_session_id = session_id or self.last_session_id
             repair_prompt = (
-                "上一次输出不是合法 JSON，或 action 需要回复但 reply_text 为空。"
-                "只输出合法 JSON，不要解释。send_reply 和 ask_clarifying_question 的 reply_text 必须非空。"
-                "audit_summary 必须非空。"
-                "send_reply/ask_clarifying_question 如果 audit_documents 为空，"
-                "audit_summary 必须说明未找到可用文档证据或只需上下文判断。"
-                'JSON schema: {"action":"send_reply|ask_clarifying_question|handoff_to_human|no_reply|stop_with_error",'
-                '"reply_text":"","reason":"","ding_self":false,"macos_notify":true,'
-                '"sensitivity_kind":"general|internal_personnel|external_candidate",'
-                '"personnel_subject_user_id":null,"candidate_context_known":false,"candidate_department_ids":[],'
-                '"calendar_response_status":"",'
-                '"audit_documents":[],"audit_summary":""}'
+                "上一次输出不是合法 AgentEnvelope JSON，或需要回复但 user_response.text 为空。"
+                "只输出合法 JSON，不要解释。"
+                "send_reply 和 ask_clarifying_question 的 user_response.text 必须非空。"
+                "audit.summary 必须非空。"
+                "send_reply/ask_clarifying_question 如果 audit.documents 为空，"
+                "audit.summary 必须说明未找到可用文档证据或只需上下文判断。"
+                f"{REPLY_AGENT_ENVELOPE_SCHEMA_HINT}"
             )
             second_raw = self.executor(
                 self.runner.build_command(
@@ -386,7 +514,7 @@ class CodexDecisionRunner:
             raw_outputs.append(second_raw)
             self._remember_session_id(second_raw)
             try:
-                decision = parse_codex_json(second_raw)
+                decision = parse_codex_json(second_raw, allow_legacy=False)
                 timeout_session_decision = self._timeout_session_decision(decision)
                 if timeout_session_decision is not None:
                     self._remember_audit_tool_events(raw_outputs)
@@ -463,7 +591,7 @@ class CodexDecisionRunner:
         if not current_turn.strip():
             return None
         try:
-            return parse_codex_json(current_turn)
+            return parse_codex_json(current_turn, allow_legacy=False)
         except (json.JSONDecodeError, ValidationError):
             return None
 
@@ -506,17 +634,10 @@ class CodexDecisionRunner:
         )
         if completed.timed_out:
             stdout = _timeout_output_text(completed.stdout)
-            stop_error = json.dumps(
-                {
-                    "action": "stop_with_error",
-                    "reason": (
-                        completed.timeout_reason
-                        if completed.timeout_kind == "idle"
-                        else f"{CODEX_TIMEOUT_REASON_PREFIX} {self.timeout_seconds} seconds"
-                    ),
-                    "macos_notify": True,
-                },
-                ensure_ascii=False,
+            stop_error = error_agent_envelope_json(
+                completed.timeout_reason
+                if completed.timeout_kind == "idle"
+                else f"{CODEX_TIMEOUT_REASON_PREFIX} {self.timeout_seconds} seconds"
             )
             if stdout:
                 return f"{stdout}\n{stop_error}"
@@ -525,19 +646,12 @@ class CodexDecisionRunner:
             stdout = completed.stdout.strip()
             if stdout:
                 try:
-                    parse_codex_json(stdout)
+                    parse_codex_json(stdout, allow_legacy=False)
                     return stdout
                 except (json.JSONDecodeError, ValidationError):
                     pass
             reason = _subprocess_failure_reason(completed.stderr, stdout)
-            stop_error = json.dumps(
-                {
-                    "action": "stop_with_error",
-                    "reason": reason,
-                    "macos_notify": True,
-                },
-                ensure_ascii=False,
-            )
+            stop_error = error_agent_envelope_json(reason)
             if stdout:
                 return f"{stdout}\n{stop_error}"
             return stop_error

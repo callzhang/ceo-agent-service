@@ -9,6 +9,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 from pydantic import BaseModel, Field, ValidationError, model_validator
 
+from app.agent_envelope import AgentEnvelope, AgentKind
 from app.codex_decision import (
     extract_codex_audit_events,
     extract_codex_session_id,
@@ -18,6 +19,7 @@ from app.codex_history import (
     extract_codex_audit_events_from_session,
 )
 from app.codex_runner import (
+    AGENT_ENVELOPE_SCHEMA_PATH,
     CODEX_BYPASS_APPROVALS_AND_SANDBOX,
     _config_string,
 )
@@ -187,7 +189,7 @@ class OaApprovalCodexRunner:
         raw_outputs.append(raw)
         self._remember_session_id(raw)
         try:
-            result = parse_oa_approval_json(raw)
+            result = parse_oa_approval_json(raw, allow_legacy=False)
         except (json.JSONDecodeError, ValidationError):
             session_result = self._current_session_result(
                 wait_seconds=SESSION_OA_RESULT_GRACE_SECONDS
@@ -202,9 +204,18 @@ class OaApprovalCodexRunner:
             else:
                 retry_session_id = session_id or self.last_session_id
                 repair_prompt = (
-                    "上一次输出不是合法 OA 审批 JSON。不得执行通过、拒绝、退回或评论。"
-                    "只输出合法 JSON，不要解释。action_result 必须是空对象 {}。"
-                    "oa_action 只能是 通过、拒绝、退回 之一；oa_remark、audit_summary 必须非空。"
+                    "上一次输出不是合法 OA 审批 AgentEnvelope JSON。不得执行通过、拒绝、退回或评论。"
+                    "只输出合法 JSON，不要解释。"
+                    'JSON schema: {"kind":"oa_approval",'
+                    '"user_response":{"mode":"no_reply","text":"","sensitivity_kind":"internal_personnel"},'
+                    '"system_actions":[],"domain_payload":{'
+                    '"process_instance_id":"","task_id":"","oa_url":"",'
+                    '"oa_action":"通过|拒绝|退回","oa_remark":"",'
+                    '"action_result":{},"audit_summary":"","audit_documents":[]},'
+                    '"audit":{"summary":"","documents":[],"confidence":0.8}}'
+                    "domain_payload.action_result 必须是空对象 {}。"
+                    "domain_payload.oa_action 只能是 通过、拒绝、退回 之一；"
+                    "domain_payload.oa_remark、domain_payload.audit_summary 必须非空。"
                     "如果无法取得 process_instance_id、task_id 或 oa_url，对应字段填空字符串。"
                 )
                 second_raw = self.executor(
@@ -218,7 +229,7 @@ class OaApprovalCodexRunner:
                 raw_outputs.append(second_raw)
                 self._remember_session_id(second_raw)
                 try:
-                    result = parse_oa_approval_json(second_raw)
+                    result = parse_oa_approval_json(second_raw, allow_legacy=False)
                 except (json.JSONDecodeError, ValidationError):
                     session_result = self._current_session_result(
                         wait_seconds=SESSION_OA_RESULT_GRACE_SECONDS
@@ -333,7 +344,7 @@ class OaApprovalCodexRunner:
         if not current_turn.strip():
             return None
         try:
-            return parse_oa_approval_json(current_turn)
+            return parse_oa_approval_json(current_turn, allow_legacy=False)
         except (json.JSONDecodeError, ValidationError):
             return None
 
@@ -396,7 +407,7 @@ class _OaApprovalCommandBuilder:
                 *common_options,
                 *bypass_options,
                 "--output-schema",
-                str(OA_APPROVAL_SCHEMA_PATH),
+                str(AGENT_ENVELOPE_SCHEMA_PATH),
                 session_id,
                 "-",
             ]
@@ -406,7 +417,7 @@ class _OaApprovalCommandBuilder:
             *common_options,
             *bypass_options,
             "--output-schema",
-            str(OA_APPROVAL_SCHEMA_PATH),
+            str(AGENT_ENVELOPE_SCHEMA_PATH),
             "--cd",
             str(self.workspace),
             "-",
@@ -479,12 +490,17 @@ def _redact_failure_reason(reason: str) -> str:
     return f"{normalized[:1200]}..."
 
 
-def parse_oa_approval_json(raw: str) -> OaApprovalResult:
+def parse_oa_approval_json(raw: str, *, allow_legacy: bool = True) -> OaApprovalResult:
     for payload in reversed(_iter_json_payloads(raw)):
-        result = _result_from_payload(payload)
+        result = _result_from_payload(payload, allow_legacy=allow_legacy)
         if result is not None:
             return result
-    raise json.JSONDecodeError("No OA approval result JSON found", raw, 0)
+    message = (
+        "No OA approval AgentEnvelope JSON found"
+        if not allow_legacy
+        else "No OA approval result JSON found"
+    )
+    raise json.JSONDecodeError(message, raw, 0)
 
 
 def _iter_json_payloads(raw: str) -> list[Any]:
@@ -506,23 +522,62 @@ def _iter_json_payloads(raw: str) -> list[Any]:
         return payloads
 
 
-def _result_from_payload(payload: Any) -> OaApprovalResult | None:
+def _result_from_payload(
+    payload: Any,
+    *,
+    allow_legacy: bool = True,
+) -> OaApprovalResult | None:
     if not isinstance(payload, dict):
         return None
-    try:
-        return OaApprovalResult.model_validate(payload)
-    except ValidationError:
-        pass
+    result = _result_from_agent_envelope_payload(payload)
+    if result is not None:
+        return result
+    if allow_legacy:
+        try:
+            return OaApprovalResult.model_validate(payload)
+        except ValidationError:
+            pass
     for text in _result_text_candidates(payload):
         try:
             parsed = json.loads(text)
         except json.JSONDecodeError:
+            continue
+        result = _result_from_agent_envelope_payload(parsed)
+        if result is not None:
+            return result
+        if not allow_legacy:
             continue
         try:
             return OaApprovalResult.model_validate(parsed)
         except ValidationError:
             continue
     return None
+
+
+def _result_from_agent_envelope_payload(payload: Any) -> OaApprovalResult | None:
+    if not isinstance(payload, dict):
+        return None
+    if "kind" not in payload or "user_response" not in payload:
+        return None
+    envelope = AgentEnvelope.model_validate(payload)
+    if envelope.kind != AgentKind.OA_APPROVAL:
+        raise ValidationError.from_exception_data(
+            "OaApprovalResult",
+            [
+                {
+                    "type": "value_error",
+                    "loc": ("kind",),
+                    "msg": "Value error, agent envelope kind must be oa_approval",
+                    "input": envelope.kind,
+                    "ctx": {
+                        "error": ValueError(
+                            "agent envelope kind must be oa_approval"
+                        )
+                    },
+                }
+            ],
+        )
+    return OaApprovalResult.model_validate(envelope.domain_payload)
 
 
 def _result_text_candidates(payload: dict[str, Any]) -> list[str]:

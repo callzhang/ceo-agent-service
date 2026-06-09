@@ -26,6 +26,7 @@ from app.cli import (
     run_loop,
     run_producer_loop,
     run_service,
+    process_okr_reviews_command,
     process_work_items_command,
     send_attempt_command,
     settings_from_args,
@@ -88,6 +89,13 @@ def test_parser_supports_process_work_items():
 
     assert args.command == "process-work-items"
     assert args.max_batches == 3
+
+
+def test_parser_supports_process_okr_reviews():
+    args = build_parser().parse_args(["process-okr-reviews", "--max-batches", "1"])
+
+    assert args.command == "process-okr-reviews"
+    assert args.max_batches == 1
 
 
 def test_parser_supports_scan_task_sources():
@@ -170,6 +178,16 @@ def test_process_follow_ups_command_processes_due_drafts(tmp_path, monkeypatch, 
         calls.append((store.path, type(dws).__name__, bool(now), auto_send))
         return 2
 
+    monkeypatch.setattr(
+        cli,
+        "scan_task_sources_command",
+        lambda settings: calls.append(("scan", settings.db_path)) or 3,
+    )
+    monkeypatch.setattr(
+        cli,
+        "process_work_items_command",
+        lambda settings: calls.append(("work", settings.db_path)) or 4,
+    )
     monkeypatch.setattr("app.follow_up.process_due_follow_ups", fake_process)
 
     sent = cli.process_follow_ups_command(
@@ -177,7 +195,11 @@ def test_process_follow_ups_command_processes_due_drafts(tmp_path, monkeypatch, 
     )
 
     assert sent == 2
-    assert calls == [(tmp_path / "worker.sqlite3", "DwsClient", True, True)]
+    assert calls == [
+        ("scan", tmp_path / "worker.sqlite3"),
+        ("work", tmp_path / "worker.sqlite3"),
+        (tmp_path / "worker.sqlite3", "DwsClient", True, True),
+    ]
     assert capsys.readouterr().out == "process-follow-ups sent=2\n"
 
 
@@ -196,23 +218,339 @@ def test_daily_task_maintenance_runs_task_pipeline(tmp_path, monkeypatch, capsys
     )
     monkeypatch.setattr(
         cli,
+        "process_okr_reviews_command",
+        lambda settings: calls.append(("okr", settings.db_path)) or 5,
+    )
+    monkeypatch.setattr(
+        cli,
         "process_follow_ups_command",
-        lambda settings: calls.append(("follow", settings.db_path)) or 1,
+        lambda settings, refresh_evidence=True: calls.append(
+            ("follow", settings.db_path, refresh_evidence)
+        )
+        or 1,
     )
 
     result = cli.daily_task_maintenance_command(
         WorkerSettings(db_path=tmp_path / "worker.sqlite3", max_batches=4)
     )
 
-    assert result == {"sources": 3, "work_items": 2, "follow_ups": 1}
+    assert result == {
+        "sources": 3,
+        "work_items": 2,
+        "okr_reviews": 5,
+        "follow_ups": 1,
+    }
     assert calls == [
         ("scan", tmp_path / "worker.sqlite3"),
         ("work", tmp_path / "worker.sqlite3"),
-        ("follow", tmp_path / "worker.sqlite3"),
+        ("okr", tmp_path / "worker.sqlite3"),
+        ("follow", tmp_path / "worker.sqlite3", False),
     ]
     assert capsys.readouterr().out == (
-        "daily-task-maintenance sources=3 work_items=2 follow_ups=1\n"
+        "daily-task-maintenance sources=3 work_items=2 "
+        "okr_reviews=5 follow_ups=1\n"
     )
+
+
+def test_process_okr_reviews_command_processes_and_sends_reply(
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    calls = []
+
+    class FakeStructuredRunner:
+        def __init__(self, **kwargs):
+            calls.append(("runner", kwargs["workspace"], kwargs["spec"].name))
+
+    class FakeDwsClient:
+        def __init__(self, **kwargs):
+            calls.append(("dws", kwargs["transient_retry_attempts"]))
+
+        @staticmethod
+        def extract_recall_key(send_result):
+            return send_result["result"]["processQueryKey"]
+
+        def send_reply_to_trigger(self, conversation, trigger, text, at_users=None):
+            calls.append(
+                (
+                    "send",
+                    conversation.open_conversation_id,
+                    conversation.single_chat,
+                    trigger.open_message_id,
+                    trigger.sender_open_dingtalk_id,
+                    text,
+                )
+            )
+            return {"result": {"processQueryKey": "okr-recall-1"}}
+
+    def fake_process(*, store, runner, request, single_chat):
+        calls.append(
+            (
+                "process",
+                request.id,
+                request.trigger_text,
+                type(runner).__name__,
+                single_chat,
+            )
+        )
+        store.mark_okr_review_request_done(request.id, codex_session_id="session-okr")
+        return "韩露 2026 Q2 OKR 审核结果"
+
+    monkeypatch.setattr("app.structured_agent.StructuredCodexRunner", FakeStructuredRunner)
+    monkeypatch.setattr("app.okr_review.process_okr_review_request", fake_process)
+    monkeypatch.setattr(cli, "DwsClient", FakeDwsClient)
+
+    db_path = tmp_path / "worker.sqlite3"
+    store = AutoReplyStore(db_path)
+    enqueue_trigger_task(
+        store,
+        conversation_id="cid-1",
+        conversation_title="韩露",
+        single_chat=True,
+        trigger_message_id="msg-okr-1",
+        trigger_sender="韩露",
+        trigger_text="帮我审核 OKR",
+        sender_open_dingtalk_id="open-hanlu-1",
+    )
+    request_id = store.create_okr_review_request(
+        conversation_id="cid-1",
+        conversation_title="韩露",
+        trigger_message_id="msg-okr-1",
+        trigger_sender="韩露",
+        trigger_sender_user_id="user-hanlu-1",
+        trigger_text="帮我审核 OKR",
+        period_label="2026 Q2",
+        period_start="2026-04-01",
+        period_end="2026-06-30",
+        okr_source_json='{"objectives":[]}',
+    )
+
+    processed = process_okr_reviews_command(
+        WorkerSettings(
+            db_path=db_path,
+            workspace=tmp_path,
+            dws_transient_retry_attempts=4,
+        )
+    )
+
+    loaded = AutoReplyStore(db_path)
+    request = loaded.get_okr_review_request(request_id)
+    sent_reply = loaded.get_sent_reply("cid-1", "msg-okr-1")
+    assert processed == 1
+    assert request.status == "done"
+    assert sent_reply is not None
+    assert sent_reply.reply_text == "韩露 2026 Q2 OKR 审核结果"
+    assert sent_reply.recall_key == "okr-recall-1"
+    assert calls == [
+        ("runner", tmp_path, "okr_review"),
+        ("dws", 4),
+        ("process", request_id, "帮我审核 OKR", "FakeStructuredRunner", True),
+        (
+            "send",
+            "cid-1",
+            True,
+            "msg-okr-1",
+            "open-hanlu-1",
+            "韩露 2026 Q2 OKR 审核结果",
+        ),
+    ]
+    assert capsys.readouterr().out == "process-okr-reviews processed=1\n"
+
+
+def test_process_okr_reviews_command_dry_run_does_not_send_reply(
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    calls = []
+
+    class FakeStructuredRunner:
+        def __init__(self, **kwargs):
+            calls.append(("runner", kwargs["spec"].name))
+
+    class FakeDwsClient:
+        def __init__(self, **kwargs):
+            raise AssertionError("dry run should not create a DWS client")
+
+        @staticmethod
+        def extract_recall_key(send_result):
+            raise AssertionError("dry run should not record sent replies")
+
+        def send_reply_to_trigger(self, conversation, trigger, text, at_users=None):
+            raise AssertionError("dry run should not send DingTalk replies")
+
+    def fake_process(*, store, runner, request, single_chat):
+        calls.append(("process", request.id, single_chat))
+        store.mark_okr_review_request_done(request.id, codex_session_id="session-okr")
+        return "韩露 2026 Q2 OKR 审核结果"
+
+    monkeypatch.setattr("app.structured_agent.StructuredCodexRunner", FakeStructuredRunner)
+    monkeypatch.setattr("app.okr_review.process_okr_review_request", fake_process)
+    monkeypatch.setattr(cli, "DwsClient", FakeDwsClient)
+
+    db_path = tmp_path / "worker.sqlite3"
+    store = AutoReplyStore(db_path)
+    enqueue_trigger_task(
+        store,
+        conversation_id="cid-1",
+        conversation_title="韩露",
+        single_chat=True,
+        trigger_message_id="msg-okr-1",
+        trigger_sender="韩露",
+        trigger_text="帮我审核 OKR",
+        sender_open_dingtalk_id="open-hanlu-1",
+    )
+    request_id = store.create_okr_review_request(
+        conversation_id="cid-1",
+        conversation_title="韩露",
+        trigger_message_id="msg-okr-1",
+        trigger_sender="韩露",
+        trigger_sender_user_id="user-hanlu-1",
+        trigger_text="帮我审核 OKR",
+        period_label="2026 Q2",
+        period_start="2026-04-01",
+        period_end="2026-06-30",
+        okr_source_json='{"objectives":[]}',
+    )
+
+    processed = process_okr_reviews_command(
+        WorkerSettings(db_path=db_path, workspace=tmp_path, dry_run=True)
+    )
+
+    loaded = AutoReplyStore(db_path)
+    request = loaded.get_okr_review_request(request_id)
+    assert processed == 1
+    assert request.status == "done"
+    assert loaded.get_sent_reply("cid-1", "msg-okr-1") is None
+    assert calls == [
+        ("runner", "okr_review"),
+        ("process", request_id, True),
+    ]
+    assert capsys.readouterr().out == "process-okr-reviews processed=1\n"
+
+
+def test_process_okr_reviews_command_marks_process_failure_and_reraises(
+    tmp_path,
+    monkeypatch,
+):
+    class FakeStructuredRunner:
+        def __init__(self, **kwargs):
+            pass
+
+    class FakeDwsClient:
+        def __init__(self, **kwargs):
+            pass
+
+    def fake_process(*, store, runner, request, single_chat):
+        raise RuntimeError("codex schema failed")
+
+    monkeypatch.setattr("app.structured_agent.StructuredCodexRunner", FakeStructuredRunner)
+    monkeypatch.setattr("app.okr_review.process_okr_review_request", fake_process)
+    monkeypatch.setattr(cli, "DwsClient", FakeDwsClient)
+
+    db_path = tmp_path / "worker.sqlite3"
+    store = AutoReplyStore(db_path)
+    enqueue_trigger_task(
+        store,
+        conversation_id="cid-1",
+        conversation_title="韩露",
+        single_chat=True,
+        trigger_message_id="msg-okr-1",
+        trigger_sender="韩露",
+        trigger_text="帮我审核 OKR",
+        sender_open_dingtalk_id="open-hanlu-1",
+    )
+    request_id = store.create_okr_review_request(
+        conversation_id="cid-1",
+        conversation_title="韩露",
+        trigger_message_id="msg-okr-1",
+        trigger_sender="韩露",
+        trigger_sender_user_id="user-hanlu-1",
+        trigger_text="帮我审核 OKR",
+        period_label="2026 Q2",
+        period_start="2026-04-01",
+        period_end="2026-06-30",
+        okr_source_json='{"objectives":[]}',
+    )
+
+    with pytest.raises(RuntimeError, match="codex schema failed"):
+        process_okr_reviews_command(
+            WorkerSettings(db_path=db_path, workspace=tmp_path)
+        )
+
+    loaded = AutoReplyStore(db_path)
+    request = loaded.get_okr_review_request(request_id)
+    errors = loaded.list_errors(limit=10)
+    assert request.status == "failed"
+    assert request.error == "codex schema failed"
+    assert errors[0].kind == "okr_review_process"
+    assert errors[0].detail == "codex schema failed"
+
+
+def test_create_worker_wires_configured_okr_live_source(
+    tmp_path,
+    monkeypatch,
+):
+    calls = []
+
+    class FakeDwsClient:
+        def __init__(self, **kwargs):
+            calls.append(("init", kwargs["transient_retry_attempts"]))
+
+        def run_json(self, command):
+            calls.append(("run_json", command))
+            return {"objectives": []}
+
+    monkeypatch.setenv(
+        "CEO_OKR_LIVE_SOURCE_COMMAND",
+        "dws api --user-id {user_id} --period {period_label} --format json",
+    )
+    monkeypatch.setattr(cli, "DwsClient", FakeDwsClient)
+
+    worker = create_worker(WorkerSettings(db_path=tmp_path / "worker.sqlite3"))
+    payload = worker.okr_live_source.fetch_user_okr(
+        user_id="user-1",
+        period_label="2026 Q2",
+    )
+
+    assert payload == {"objectives": []}
+    assert calls == [
+        ("init", 3),
+        (
+            "run_json",
+            [
+                "dws",
+                "api",
+                "--user-id",
+                "user-1",
+                "--period",
+                "2026 Q2",
+                "--format",
+                "json",
+            ],
+        ),
+    ]
+
+
+def test_create_worker_wires_unconfigured_okr_live_source(
+    tmp_path,
+    monkeypatch,
+):
+    class FakeDwsClient:
+        def __init__(self, **kwargs):
+            pass
+
+    monkeypatch.delenv("CEO_OKR_LIVE_SOURCE_COMMAND", raising=False)
+    monkeypatch.setattr(cli, "DwsClient", FakeDwsClient)
+
+    worker = create_worker(WorkerSettings(db_path=tmp_path / "worker.sqlite3"))
+
+    with pytest.raises(RuntimeError, match="CEO_OKR_LIVE_SOURCE_COMMAND"):
+        worker.okr_live_source.fetch_user_okr(
+            user_id="user-1",
+            period_label="2026 Q2",
+        )
 
 
 def test_process_work_items_command_processes_claimed_input(tmp_path, monkeypatch, capsys):
@@ -690,7 +1028,7 @@ def test_send_attempt_command_sends_existing_dry_run_without_rerunning_codex(
         def extract_recall_key(send_result):
             return send_result["result"]["processQueryKey"]
 
-        def send_reply_to_trigger(self, conversation, trigger, text):
+        def send_reply_to_trigger(self, conversation, trigger, text, at_users=None):
             sent["reply"] = (
                 conversation.open_conversation_id,
                 trigger.open_message_id,
@@ -808,7 +1146,7 @@ def test_send_attempt_command_appends_feedback_links_when_configured(
         def extract_recall_key(send_result):
             return send_result["result"]["processQueryKey"]
 
-        def send_reply_to_trigger(self, conversation, trigger, text):
+        def send_reply_to_trigger(self, conversation, trigger, text, at_users=None):
             sent["reply"] = (
                 conversation.open_conversation_id,
                 trigger.open_message_id,
@@ -866,7 +1204,7 @@ def test_send_attempt_command_sends_single_chat_as_native_reply(
         def extract_recall_key(send_result):
             return send_result["result"]["processQueryKey"]
 
-        def send_reply_to_trigger(self, conversation, trigger, text):
+        def send_reply_to_trigger(self, conversation, trigger, text, at_users=None):
             sent["reply"] = (
                 conversation.open_conversation_id,
                 trigger.open_message_id,
@@ -937,7 +1275,7 @@ def test_send_attempt_command_resolves_single_chat_trigger_sender_from_recent_me
                 ),
             ]
 
-        def send_reply_to_trigger(self, conversation, trigger, text):
+        def send_reply_to_trigger(self, conversation, trigger, text, at_users=None):
             sent["reply"] = (
                 conversation.open_conversation_id,
                 trigger.open_message_id,
@@ -997,7 +1335,7 @@ def test_send_attempt_command_resolves_single_chat_trigger_sender_near_attempt_t
                 ),
             ]
 
-        def send_reply_to_trigger(self, conversation, trigger, text):
+        def send_reply_to_trigger(self, conversation, trigger, text, at_users=None):
             sent["reply"] = (
                 conversation.open_conversation_id,
                 trigger.open_message_id,
@@ -1059,7 +1397,7 @@ def test_send_attempt_command_uses_single_chat_open_dingtalk_id_when_user_id_abs
                 ),
             ]
 
-        def send_reply_to_trigger(self, conversation, trigger, text):
+        def send_reply_to_trigger(self, conversation, trigger, text, at_users=None):
             sent["reply"] = (
                 conversation.open_conversation_id,
                 trigger.open_message_id,
@@ -1106,7 +1444,7 @@ def test_send_attempt_command_uses_saved_snake_case_trigger_payload(
         def extract_recall_key(send_result):
             return send_result["result"]["processQueryKey"]
 
-        def send_reply_to_trigger(self, conversation, trigger, text):
+        def send_reply_to_trigger(self, conversation, trigger, text, at_users=None):
             sent["reply"] = (
                 conversation.open_conversation_id,
                 trigger.open_message_id,
@@ -1247,7 +1585,7 @@ def test_send_attempt_command_resolves_single_chat_target_forward_from_attempt_t
                 ),
             ]
 
-        def send_reply_to_trigger(self, conversation, trigger, text):
+        def send_reply_to_trigger(self, conversation, trigger, text, at_users=None):
             sent["reply"] = (
                 conversation.open_conversation_id,
                 trigger.open_message_id,
@@ -1318,6 +1656,7 @@ def test_send_attempt_command_regenerates_runtime_leaks_before_sending(
             conversation_id,
             text,
             at_users=None,
+            at_open_dingtalk_ids=None,
             user_id=None,
             open_dingtalk_id=None,
         ):
@@ -2445,8 +2784,16 @@ def test_task_maintenance_loop_processes_work_and_daily_steps(monkeypatch, tmp_p
     )
     monkeypatch.setattr(
         cli,
+        "process_okr_reviews_command",
+        lambda received: calls.append(("okr", received.db_path)) or 5,
+    )
+    monkeypatch.setattr(
+        cli,
         "process_follow_ups_command",
-        lambda received: calls.append(("follow", received.db_path)) or 1,
+        lambda received, refresh_evidence=True: calls.append(
+            ("follow", received.db_path, refresh_evidence)
+        )
+        or 1,
     )
 
     def sleep(seconds):
@@ -2464,8 +2811,11 @@ def test_task_maintenance_loop_processes_work_and_daily_steps(monkeypatch, tmp_p
 
     assert calls == [
         ("work", tmp_path / "worker.sqlite3"),
+        ("okr", tmp_path / "worker.sqlite3"),
         ("scan", tmp_path / "worker.sqlite3"),
-        ("follow", tmp_path / "worker.sqlite3"),
+        ("work", tmp_path / "worker.sqlite3"),
+        ("okr", tmp_path / "worker.sqlite3"),
+        ("follow", tmp_path / "worker.sqlite3", False),
         ("sleep", 31),
     ]
 

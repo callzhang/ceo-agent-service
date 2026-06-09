@@ -48,6 +48,10 @@ class DwsError(RuntimeError):
             "PAT_MEDIUM_RISK_NO_PERMISSION",
         }
 
+    @property
+    def needs_login(self) -> bool:
+        return self.code == "2"
+
 
 def native_reply_delivery_payload(
     conversation: DingTalkConversation,
@@ -197,6 +201,9 @@ class DwsClient:
     def build_upgrade_command(self) -> list[str]:
         return [self.dws_bin, "upgrade", "-y", "--format", "json"]
 
+    def build_auth_login_command(self) -> list[str]:
+        return [self.dws_bin, "auth", "login"]
+
     def build_list_messages_by_sender_command(
         self,
         sender_user_id: str,
@@ -278,6 +285,8 @@ class DwsClient:
         conversation_id: str | None,
         text: str,
         at_users: list[str] | None = None,
+        at_open_dingtalk_ids: list[str] | None = None,
+        at_open_dingtalk_names: list[str] | None = None,
         user_id: str | None = None,
         open_dingtalk_id: str | None = None,
         title: str | None = None,
@@ -310,10 +319,21 @@ class DwsClient:
                 ),
             ]
         )
-        if at_users:
-            command.extend(["--at-users", ",".join(at_users)])
-            text = self._with_at_placeholders(text, at_users)
-        command.extend(["--text", self._literal_cli_value(text), "--format", "json", "--yes"])
+        if at_open_dingtalk_ids:
+            if conversation_id is not None:
+                command.extend(
+                    ["--at-open-dingtalk-ids", ",".join(at_open_dingtalk_ids)]
+                )
+        del at_users
+        send_text = text
+        if conversation_id is not None and at_open_dingtalk_ids:
+            send_text = self._with_visible_at_mentions(
+                text,
+                at_open_dingtalk_names or [],
+            )
+        command.extend(
+            ["--text", self._literal_cli_value(send_text), "--format", "json", "--yes"]
+        )
         return command
 
     def build_reply_message_command(
@@ -322,7 +342,9 @@ class DwsClient:
         ref_message_id: str,
         ref_sender_open_dingtalk_id: str,
         text: str,
+        at_users: list[str] | None = None,
     ) -> list[str]:
+        del at_users
         if not conversation_id or not ref_message_id or not ref_sender_open_dingtalk_id:
             raise ValueError("conversation id, ref message id, and ref sender are required")
         return [
@@ -979,6 +1001,13 @@ class DwsClient:
     def upgrade(self) -> str:
         return self.run_text(self.build_upgrade_command())
 
+    def start_auth_login(self) -> subprocess.Popen[str]:
+        return subprocess.Popen(
+            self.build_auth_login_command(),
+            text=True,
+            start_new_session=True,
+        )
+
     def list_messages_by_sender(
         self,
         sender_user_id: str,
@@ -1465,6 +1494,8 @@ class DwsClient:
         conversation_id: str | None,
         text: str,
         at_users: list[str] | None = None,
+        at_open_dingtalk_ids: list[str] | None = None,
+        at_open_dingtalk_names: list[str] | None = None,
         user_id: str | None = None,
         open_dingtalk_id: str | None = None,
         title: str | None = None,
@@ -1474,6 +1505,8 @@ class DwsClient:
                 conversation_id,
                 text,
                 at_users,
+                at_open_dingtalk_ids=at_open_dingtalk_ids,
+                at_open_dingtalk_names=at_open_dingtalk_names,
                 user_id=user_id,
                 open_dingtalk_id=open_dingtalk_id,
                 title=title,
@@ -1486,6 +1519,7 @@ class DwsClient:
         ref_message_id: str,
         ref_sender_open_dingtalk_id: str,
         text: str,
+        at_users: list[str] | None = None,
     ) -> dict[str, Any]:
         return self.run_json(
             self.build_reply_message_command(
@@ -1493,6 +1527,7 @@ class DwsClient:
                 ref_message_id,
                 ref_sender_open_dingtalk_id,
                 text,
+                at_users=at_users,
             )
         )
 
@@ -1501,6 +1536,7 @@ class DwsClient:
         conversation: DingTalkConversation,
         trigger: DingTalkMessage,
         text: str,
+        at_users: list[str] | None = None,
     ) -> dict[str, Any]:
         if not trigger.sender_open_dingtalk_id:
             raise DwsError("missing trigger senderOpenDingTalkId for native reply")
@@ -1509,6 +1545,7 @@ class DwsClient:
             trigger.open_message_id,
             trigger.sender_open_dingtalk_id,
             text,
+            at_users=at_users,
         )
 
     @staticmethod
@@ -1888,15 +1925,6 @@ class DwsClient:
         return cls._preview(json.dumps(safe_fields, ensure_ascii=False))
 
     @staticmethod
-    def _with_at_placeholders(text: str, at_users: list[str]) -> str:
-        missing_placeholders = [
-            f"<@{user_id}>" for user_id in at_users if f"<@{user_id}>" not in text
-        ]
-        if not missing_placeholders:
-            return text
-        return f"{' '.join(missing_placeholders)} {text}"
-
-    @staticmethod
     def _message_title(text: str) -> str:
         source = DwsClient._message_title_source(text)
         matches = list(TITLE_WORD_OR_CJK_PATTERN.finditer(source))
@@ -1911,6 +1939,22 @@ class DwsClient:
             prefix = TITLE_AT_FILE_ESCAPE_PREFIX if is_title else TEXT_AT_FILE_ESCAPE_PREFIX
             return f"{prefix}{value}"
         return value
+
+    @staticmethod
+    def _with_visible_at_mentions(text: str, names: list[str]) -> str:
+        mention_names = []
+        for name in names:
+            clean_name = name.strip()
+            if clean_name.startswith("@"):
+                clean_name = clean_name[1:].strip()
+            if clean_name:
+                mention_names.append(clean_name)
+        if not mention_names:
+            return text
+        mention_text = " ".join(f"@{name}" for name in mention_names)
+        if text.lstrip().startswith(mention_text):
+            return text
+        return f" {mention_text} {text}"
 
     @staticmethod
     def _message_title_source(text: str) -> str:
@@ -1956,7 +2000,7 @@ class DwsClient:
     @classmethod
     def _process_error_code(cls, returncode: int) -> str | None:
         code = str(returncode)
-        if code in cls.RETRYABLE_ERROR_CODES:
+        if code == "2" or code in cls.RETRYABLE_ERROR_CODES:
             return code
         return None
 
