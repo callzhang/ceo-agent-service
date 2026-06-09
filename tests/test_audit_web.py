@@ -2800,8 +2800,10 @@ def test_handle_reviewed_message_reply_matches_sender_group_and_text(
             user_id=None,
             open_dingtalk_id=None,
         ):
-            del at_open_dingtalk_ids, at_open_dingtalk_names, open_dingtalk_id
-            self.sent_messages.append((conversation_id, text, at_users, user_id))
+            del at_open_dingtalk_names, open_dingtalk_id
+            self.sent_messages.append(
+                (conversation_id, text, at_open_dingtalk_ids or at_users or [], user_id)
+            )
             return {"result": {"processQueryKey": "recall-1"}}
 
         def reply_message(
@@ -2825,7 +2827,14 @@ def test_handle_reviewed_message_reply_matches_sender_group_and_text(
             at_open_dingtalk_ids=None,
             at_open_dingtalk_names=None,
         ):
-            del at_open_dingtalk_ids, at_open_dingtalk_names
+            if not conversation.single_chat and at_open_dingtalk_ids:
+                return self.send_message(
+                    conversation.open_conversation_id,
+                    text,
+                    at_users=at_users,
+                    at_open_dingtalk_ids=at_open_dingtalk_ids,
+                    at_open_dingtalk_names=at_open_dingtalk_names,
+                )
             return self.reply_message(
                 conversation.open_conversation_id,
                 trigger.open_message_id,
@@ -2857,17 +2866,17 @@ def test_handle_reviewed_message_reply_matches_sender_group_and_text(
     assert attempt.trigger_text == "@Alex Chen(明哥) 明哥分身，大模型项目经理需要具备什么能力"
     assert (
         attempt.final_reply_text
-        == "这个岗位核心看业务拆解、模型理解、项目推进和学习速度。（by明哥分身）"
+        == "@Mina 邹 这个岗位核心看业务拆解、模型理解、项目推进和学习速度。（by明哥分身）"
     )
-    assert dws.sent_messages == []
-    assert dws.reply_messages == [
+    assert dws.sent_messages == [
         (
             "cid-1",
-            "msg-1",
-            "open-mina",
             attempt.final_reply_text,
+            ["open-mina"],
+            None,
         )
     ]
+    assert dws.reply_messages == []
     assert sent_reply is not None
     assert sent_reply.recall_key == "recall-1"
 
@@ -2878,6 +2887,7 @@ def test_handle_reviewed_message_reply_uses_stored_group_and_recent_message(
 ):
     class FakeDws:
         def __init__(self):
+            self.sent_messages = []
             self.reply_messages = []
 
         def search_conversations(self, query):
@@ -2907,6 +2917,22 @@ def test_handle_reviewed_message_reply_uses_stored_group_and_recent_message(
         def read_unread_messages(self, conversation):
             return []
 
+        def send_message(
+            self,
+            conversation_id,
+            text,
+            at_users=None,
+            at_open_dingtalk_ids=None,
+            at_open_dingtalk_names=None,
+            user_id=None,
+            open_dingtalk_id=None,
+        ):
+            del at_open_dingtalk_names, open_dingtalk_id
+            self.sent_messages.append(
+                (conversation_id, text, at_open_dingtalk_ids or at_users or [], user_id)
+            )
+            return {"result": {"processQueryKey": "recall-site-1"}}
+
         def reply_message(
             self,
             conversation_id,
@@ -2928,7 +2954,14 @@ def test_handle_reviewed_message_reply_uses_stored_group_and_recent_message(
             at_open_dingtalk_ids=None,
             at_open_dingtalk_names=None,
         ):
-            del at_users, at_open_dingtalk_ids, at_open_dingtalk_names
+            if not conversation.single_chat and at_open_dingtalk_ids:
+                return self.send_message(
+                    conversation.open_conversation_id,
+                    text,
+                    at_users=at_users,
+                    at_open_dingtalk_ids=at_open_dingtalk_ids,
+                    at_open_dingtalk_names=at_open_dingtalk_names,
+                )
             return self.reply_message(
                 conversation.open_conversation_id,
                 trigger.open_message_id,
@@ -2966,21 +2999,22 @@ def test_handle_reviewed_message_reply_uses_stored_group_and_recent_message(
     assert attempt is not None
     assert (
         attempt.final_reply_text
-        == "我已经完成审核，会把核心 comment 补到 tracker。（by明哥分身）"
+        == "@Claire 我已经完成审核，会把核心 comment 补到 tracker。（by明哥分身）"
     )
     assert (
         attempt.reviewer_feedback
         == "官网是 marketing 重要内容，CEO 直接相关；这类消息需要审核并回复。"
     )
     assert attempt.corrected_reply_text == "我已经完成审核，会把核心 comment 补到 tracker。"
-    assert dws.reply_messages == [
+    assert dws.sent_messages == [
         (
             "cid-site",
-            "msg-site-1",
-            "open-claire",
             attempt.final_reply_text,
+            ["open-claire"],
+            None,
         )
     ]
+    assert dws.reply_messages == []
 
 
 def test_handle_reviewed_message_reply_matches_private_message_without_mention(

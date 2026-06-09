@@ -1720,18 +1720,11 @@ def test_fast_path_backoff_processes_trigger_when_unread_clears_without_user_rep
     assert final_sent(dws) == [
         (
             "cid-1",
-            "可以，先推进（by明哥分身）",
+            "@周俊杰 可以，先推进（by明哥分身）",
         )
     ]
-    assert dws.reply_messages == [
-        (
-            "cid-1",
-            "msg-unread",
-            "sender-1",
-            "可以，先推进（by明哥分身）",
-        )
-    ]
-    assert final_sent_at_users(dws) == [["sender-user-1"]]
+    assert dws.reply_messages == []
+    assert final_sent_at_users(dws) == [["sender-1"]]
 
 
 def test_reply_agent_envelope_send_reply_is_delivered(tmp_path: Path, monkeypatch):
@@ -1790,7 +1783,7 @@ def test_queued_task_falls_back_to_trigger_when_context_read_fails(
 
     assert len(codex.calls) == 1
     assert "这是新的工作流" in codex.calls[0][0]
-    assert final_sent(dws) == [("cid-1", "这个方向可以（by明哥分身）")]
+    assert final_sent(dws) == [("cid-1", "@周俊杰 这个方向可以（by明哥分身）")]
     attempt = worker.store.get_latest_reply_attempt_for_trigger(
         "cid-1",
         "msg-context-error",
@@ -2282,7 +2275,7 @@ def test_consume_once_does_not_send_processing_ack(
     processed = worker.consume_once(max_tasks=1)
 
     assert processed == 1
-    assert dws.sent == [("cid-1", "先按A方案走（by明哥分身）")]
+    assert dws.sent == [("cid-1", "@周俊杰 先按A方案走（by明哥分身）")]
 
 
 def test_repeated_produce_once_does_not_duplicate_pending_task(
@@ -2405,7 +2398,7 @@ def test_consume_once_processes_queued_task(tmp_path: Path, monkeypatch):
 
     assert processed == 1
     assert worker.store.count_reply_tasks(status="done") == 1
-    assert final_sent(dws) == [("cid-1", "先按A方案走（by明哥分身）")]
+    assert final_sent(dws) == [("cid-1", "@周俊杰 先按A方案走（by明哥分身）")]
 
 
 def test_sent_reply_enqueues_conversation_work_item(tmp_path: Path, monkeypatch):
@@ -2456,7 +2449,7 @@ def test_consume_once_appends_feedback_links_when_configured(
 
     assert processed == 1
     sent_text = final_sent(dws)[0][1]
-    assert sent_text.startswith("先按A方案走（by明哥分身）")
+    assert sent_text.startswith("@周俊杰 先按A方案走（by明哥分身）")
     assert "反馈：[👍](https://feedback.example.com/api/dingtalk-feedback-spike" in sent_text
     assert "rating=up" in sent_text
     assert "rating=down" in sent_text
@@ -4938,18 +4931,11 @@ def test_group_mention_sends_signed_reply(tmp_path: Path, monkeypatch):
     assert final_sent(dws) == [
         (
             "cid-1",
-            "先按A方案走（by明哥分身）",
+            "@周俊杰 先按A方案走（by明哥分身）",
         )
     ]
-    assert final_sent_at_users(dws) == [["sender-user-1", "mentioned-user-1"]]
-    assert dws.reply_messages == [
-        (
-            "cid-1",
-            "msg-1",
-            "sender-1",
-            "先按A方案走（by明哥分身）",
-        )
-    ]
+    assert final_sent_at_users(dws) == [["sender-1"]]
+    assert dws.reply_messages == []
     assert len(codex.calls) == 1
     prompt = codex.calls[0][0]
     assert "当前待处理消息:" in prompt
@@ -5034,6 +5020,40 @@ def test_group_reply_structures_explicit_reply_mentions(
     assert send_result["delivery"]["kind"] == "group_send_with_at"
     assert send_result["at_open_dingtalk_ids"] == ["open-et", "open-roy"]
     assert send_result["at_open_dingtalk_names"] == ["ET", "Roy Han"]
+
+
+def test_group_reply_replaces_leading_name_with_structured_at(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message("@Alex Chen(明哥) 帮忙看一下")
+    trigger.sender_name = "ET"
+    trigger.sender_open_dingtalk_id = "open-et"
+    group = conversation()
+    dws = FakeDws([group], {"cid-1": [trigger]})
+    codex = FakeCodex(
+        CodexDecision(
+            action=CodexAction.SEND_REPLY,
+            reply_text="ET你要再往下收一层",
+        )
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+
+    worker.run_once()
+
+    assert dws.reply_messages == []
+    assert final_sent(dws) == [
+        (
+            "cid-1",
+            "@ET 你要再往下收一层（by明哥分身）",
+        )
+    ]
+    assert final_sent_at_users(dws) == [["open-et"]]
+    sent_reply = worker.store.get_sent_reply("cid-1", "msg-1")
+    assert sent_reply is not None
+    send_result = json.loads(sent_reply.send_result_json)
+    assert send_result["delivery"]["kind"] == "group_send_with_at"
+    assert send_result["at_open_dingtalk_ids"] == ["open-et"]
+    assert send_result["at_open_dingtalk_names"] == ["ET"]
 
 
 def test_success_notification_keeps_full_reply_text(tmp_path: Path, monkeypatch):
@@ -5198,7 +5218,9 @@ def test_live_send_regenerates_once_when_delivery_text_leaks(
     assert len(codex.calls) == 2
     assert "发送安全检查拦截" in codex.calls[1][0]
     assert len(feedback_calls) == 2
-    assert final_sent(dws) == [("cid-1", "改写后继续推进（by明哥分身）\n\n反馈：OK")]
+    assert final_sent(dws) == [
+        ("cid-1", "@周俊杰 改写后继续推进（by明哥分身）\n\n反馈：OK")
+    ]
     attempt = worker.store.get_reply_attempt(1)
     assert attempt is not None
     assert attempt.send_status == "sent"
@@ -5995,7 +6017,7 @@ def test_dingtalk_doc_read_failure_setup_does_not_block_codex(
     prompt = codex.calls[0][0]
     assert "待读取材料（由 agent 判断是否读取）:" in prompt
     assert canonical_url in prompt
-    assert final_sent(dws) == [("cid-1", "我先读材料（by明哥分身）")]
+    assert final_sent(dws) == [("cid-1", "@周俊杰 我先读材料（by明哥分身）")]
     attempt = worker.store.get_reply_attempt(1)
     assert attempt is not None
     assert attempt.action == "send_reply"
@@ -6621,11 +6643,11 @@ def test_rerun_message_can_force_new_codex_decision(tmp_path: Path, monkeypatch)
     assert attempt is not None
     assert attempt.send_status == "sent"
     assert attempt.draft_reply_text == "改走B方案"
-    assert attempt.final_reply_text == "改走B方案（by明哥分身）"
+    assert attempt.final_reply_text == "@周俊杰 改走B方案（by明哥分身）"
     assert final_sent(dws) == [
         (
             "cid-1",
-            "改走B方案（by明哥分身）",
+            "@周俊杰 改走B方案（by明哥分身）",
         )
     ]
 
@@ -6656,7 +6678,7 @@ def test_rerun_message_looks_up_trigger_by_id_when_recent_context_expired(
     assert dws.unread_message_reads == ["cid-1"]
     assert dws.messages_by_id_reads == [["msg-1"]]
     assert len(codex.calls) == 1
-    assert final_sent(dws) == [("cid-1", "改走B方案（by明哥分身）")]
+    assert final_sent(dws) == [("cid-1", "@周俊杰 改走B方案（by明哥分身）")]
 
 
 def test_rerun_message_does_not_resend_when_trigger_already_has_sent_reply(
@@ -6725,11 +6747,11 @@ def test_force_new_rerun_can_resend_when_trigger_already_has_sent_reply(
     worker.rerun_message(conversation(), "msg-1", force_new_decision=True)
 
     assert len(codex.calls) == 1
-    assert final_sent(dws) == [("cid-1", "改走B方案（by明哥分身）")]
+    assert final_sent(dws) == [("cid-1", "@周俊杰 改走B方案（by明哥分身）")]
     attempt = worker.store.get_reply_attempt(attempt_id)
     assert attempt is not None
     assert attempt.draft_reply_text == "改走B方案"
-    assert attempt.final_reply_text == "改走B方案（by明哥分身）"
+    assert attempt.final_reply_text == "@周俊杰 改走B方案（by明哥分身）"
     assert attempt.send_status == "sent"
     assert attempt.send_error == ""
     assert worker.store.count_sent_replies() == 2
@@ -7143,7 +7165,7 @@ def test_algorithm_owner_multi_mention_is_framed_as_principal_responsibility(
 
     worker.run_once()
 
-    assert final_sent(dws) == [("cid-1", "可以，算法这边应该参与（by明哥分身）")]
+    assert final_sent(dws) == [("cid-1", "@周俊杰 可以，算法这边应该参与（by明哥分身）")]
     prompt = codex.calls[0][0]
     assert "aijam是否可以把算法大神们纳入进来？" in prompt
     assert "当前待处理消息:" in prompt
@@ -7178,7 +7200,7 @@ def test_group_direct_mention_found_in_recent_context_is_queued(
     worker.run_once()
 
     assert len(codex.calls) == 1
-    assert final_sent(dws) == [("cid-1", "我看一下（by明哥分身）")]
+    assert final_sent(dws) == [("cid-1", "@周俊杰 我看一下（by明哥分身）")]
 
 
 def test_group_seen_direct_mention_found_in_recent_context_does_not_queue(
@@ -7702,23 +7724,22 @@ def test_handoff_sends_ack_dings_self_and_records_message_result(
     worker.run_once()
 
     expected_ack = HANDOFF_ACK
-    assert final_sent(dws) == [("cid-1", expected_ack)]
-    assert dws.reply_messages == [
-        ("cid-1", "msg-1", "sender-1", expected_ack)
-    ]
-    assert final_sent_at_users(dws) == [["sender-user-1"]]
+    expected_sent_ack = f"@周俊杰 {expected_ack}"
+    assert final_sent(dws) == [("cid-1", expected_sent_ack)]
+    assert dws.reply_messages == []
+    assert final_sent_at_users(dws) == [["sender-1"]]
     assert len(dws.dings) == 1
     assert "Friday" in dws.dings[0]
     assert "不要分身" in dws.dings[0]
     assert "previous split-person reply: none" in dws.dings[0]
     attempt = store.get_reply_attempt(1)
     assert attempt is not None
-    assert attempt.final_reply_text == expected_ack
+    assert attempt.final_reply_text == expected_sent_ack
     assert attempt.send_status == "sent"
     sent_reply = store.get_sent_reply("cid-1", "msg-1")
     assert sent_reply is not None
-    assert '"kind": "native_reply"' in sent_reply.send_result_json
-    assert '"ref_message_id": "msg-1"' in sent_reply.send_result_json
+    assert '"kind": "group_send_with_at"' in sent_reply.send_result_json
+    assert '"at_open_dingtalk_ids": ["sender-1"]' in sent_reply.send_result_json
 
 
 def test_new_principal_mention_is_processed(
@@ -7749,12 +7770,12 @@ def test_new_principal_mention_is_processed(
     worker.run_once()
 
     assert codex.calls
-    assert final_sent(dws) == [("cid-1", "战略主线建议这样调整（by明哥分身）")]
+    assert final_sent(dws) == [("cid-1", "@Melody 战略主线建议这样调整（by明哥分身）")]
     assert store.has_seen("msg-after-handoff") is True
     assert notifications == [
             {
                 "title": "CEO auto reply: 26年董事会筹备组",
-                "message": "战略主线建议这样调整（by明哥分身）",
+                "message": "@Melody 战略主线建议这样调整（by明哥分身）",
                 "url": (
                     "http://127.0.0.1:8765/open-dingtalk"
                     "?conversation_id=cid-1&attempt_id=1"
@@ -8130,7 +8151,7 @@ def test_read_failure_records_error_and_continues_next_conversation(
     assert final_sent(dws) == [
         (
             "cid-good",
-            "先按A方案走（by明哥分身）",
+            "@周俊杰 先按A方案走（by明哥分身）",
         )
     ]
 
@@ -8832,7 +8853,7 @@ def test_internal_personnel_question_never_replies_sensitive_detail_in_group(
     worker.run_once()
 
     assert final_sent(dws) == [
-        ("cid-1", "这个涉及个人敏感信息，不适合在群里展开，单独同步我。（by明哥分身）")
+        ("cid-1", "@周俊杰 这个涉及个人敏感信息，不适合在群里展开，单独同步我。（by明哥分身）")
     ]
 
 
@@ -9119,7 +9140,7 @@ def test_handoff_ding_failure_does_not_block_ack(
 
     worker.run_once()
 
-    assert final_sent(dws) == [("cid-1", HANDOFF_ACK)]
+    assert final_sent(dws) == [("cid-1", f"@周俊杰 {HANDOFF_ACK}")]
     assert store.has_seen("msg-1") is True
     assert store.count_errors() == 1
     assert store.count_reply_tasks(status="done") == 1

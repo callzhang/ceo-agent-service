@@ -3610,10 +3610,6 @@ class DingTalkAutoReplyWorker:
                 "handoff",
                 decision.reason,
             )
-            self.store.update_reply_attempt(
-                attempt_id,
-                final_reply_text=handoff_reply_text,
-            )
             if not handoff_notified_locally:
                 self._notify(
                     title=f"CEO handoff: {conversation.title}",
@@ -5049,12 +5045,9 @@ class DingTalkAutoReplyWorker:
                 raise ReplyDeliveryError(str(exc)) from exc
             return
         at_users = [target.user_id for target in at_targets if target.user_id]
-        at_open_dingtalk_ids = [
-            target.open_dingtalk_id for target in at_targets if target.open_dingtalk_id
-        ] if explicit_at_targets else []
-        at_open_dingtalk_names = [
-            target.name for target in at_targets if target.name
-        ] if explicit_at_targets else []
+        at_open_dingtalk_ids, at_open_dingtalk_names = (
+            self._structured_reply_at_payload(conversation, at_targets)
+        )
         direct_user_id = at_users[0] if conversation.single_chat and at_users else None
         reply_text = append_signature(reply_text)
         reply_text = self._format_reply_delivery_text(
@@ -5176,6 +5169,13 @@ class DingTalkAutoReplyWorker:
                     direct_user_id=direct_user_id or "",
                     direct_open_dingtalk_id=direct_open_dingtalk_id or "",
                 )
+        reply_text = self._apply_reply_at_mentions(reply_text, at_open_dingtalk_names)
+        self.store.update_reply_attempt(
+            attempt_id,
+            final_reply_text=reply_text,
+            direct_user_id=direct_user_id or "",
+            direct_open_dingtalk_id=direct_open_dingtalk_id or "",
+        )
         if contains_forbidden_leak(reply_text):
             self.store.update_reply_attempt(
                 attempt_id,
@@ -5381,16 +5381,13 @@ class DingTalkAutoReplyWorker:
                     )
                 return False
             at_users = [target.user_id for target in at_targets if target.user_id]
-            at_open_dingtalk_ids = [
-                target.open_dingtalk_id
-                for target in at_targets
-                if target.open_dingtalk_id
-            ] if explicit_at_targets else []
-            at_open_dingtalk_names = [
-                target.name for target in at_targets if target.name
-            ] if explicit_at_targets else []
+            at_open_dingtalk_ids, at_open_dingtalk_names = (
+                self._structured_reply_at_payload(conversation, at_targets)
+            )
         at_open_dingtalk_ids = at_open_dingtalk_ids or []
         at_open_dingtalk_names = at_open_dingtalk_names or []
+        reply_text = self._apply_reply_at_mentions(reply_text, at_open_dingtalk_names)
+        self.store.update_reply_attempt(attempt_id, final_reply_text=reply_text)
         if not allow_duplicate_send and self.store.has_sent_reply_for_trigger(
             conversation.open_conversation_id,
             trigger.open_message_id,
@@ -5636,6 +5633,52 @@ class DingTalkAutoReplyWorker:
             for target in self._default_reply_at_targets(trigger)
             if target.user_id
         ]
+
+    @staticmethod
+    def _structured_reply_at_payload(
+        conversation: DingTalkConversation, targets: list[ReplyAtTarget]
+    ) -> tuple[list[str], list[str]]:
+        if conversation.single_chat:
+            return [], []
+        ids: list[str] = []
+        names: list[str] = []
+        for target in targets:
+            if not target.open_dingtalk_id:
+                continue
+            ids.append(target.open_dingtalk_id)
+            names.append(target.name.strip())
+        return ids, names
+
+    @staticmethod
+    def _apply_reply_at_mentions(reply_text: str, names: list[str]) -> str:
+        cleaned_names: list[str] = []
+        for name in names:
+            clean_name = name.strip()
+            if clean_name and clean_name not in cleaned_names:
+                cleaned_names.append(clean_name)
+        if not cleaned_names:
+            return reply_text
+
+        text = reply_text.strip()
+        missing_names: list[str] = []
+        for name in cleaned_names:
+            if f"@{name}" in text:
+                continue
+            stripped = text.lstrip()
+            leading = text[: len(text) - len(stripped)]
+            if stripped.startswith(name):
+                tail = stripped[len(name) :].lstrip()
+                if tail:
+                    text = f"{leading}@{name} {tail}"
+                else:
+                    text = f"{leading}@{name}"
+                continue
+            missing_names.append(name)
+
+        if not missing_names:
+            return text
+        prefix = " ".join(f"@{name}" for name in missing_names)
+        return f"{prefix} {text.lstrip()}"
 
     @staticmethod
     def _visible_mention_names(text: str) -> list[str]:
