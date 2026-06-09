@@ -193,10 +193,10 @@ class FakeDws:
         self.oa_approval_comment_result: dict = {"errcode": 0, "errmsg": "ok"}
         self.oa_approval_comment_error: Exception | None = None
         self.pending_oa_approvals: list[DwsOaApprovalCandidate] = []
-        self.oa_approval_details: dict[str, dict] = {}
-        self.oa_approval_records: dict[str, dict] = {}
-        self.oa_approval_tasks: dict[str, dict] = {}
-        self.openapi_oa_details: dict[str, dict] = {}
+        self.oa_approval_details: dict[str, dict | Exception] = {}
+        self.oa_approval_records: dict[str, dict | Exception] = {}
+        self.oa_approval_tasks: dict[str, dict | Exception] = {}
+        self.openapi_oa_details: dict[str, dict | Exception] = {}
         self.upgrade_check_response: dict = {"needs_upgrade": False}
         self.upgrade_error: Exception | None = None
         self.upgrade_check_calls = 0
@@ -620,19 +620,31 @@ class FakeDws:
         return self.pending_oa_approvals
 
     def read_oa_approval_detail(self, process_instance_id: str) -> dict:
-        return self.oa_approval_details.get(
+        payload = self.oa_approval_details.get(
             process_instance_id,
             {"result": {"formValueVOS": [{"details": []}]}},
         )
+        if isinstance(payload, Exception):
+            raise payload
+        return payload
 
     def read_oa_approval_records(self, process_instance_id: str) -> dict:
-        return self.oa_approval_records.get(process_instance_id, {})
+        payload = self.oa_approval_records.get(process_instance_id, {})
+        if isinstance(payload, Exception):
+            raise payload
+        return payload
 
     def read_oa_approval_tasks(self, process_instance_id: str) -> dict:
-        return self.oa_approval_tasks.get(process_instance_id, {})
+        payload = self.oa_approval_tasks.get(process_instance_id, {})
+        if isinstance(payload, Exception):
+            raise payload
+        return payload
 
     def read_oa_process_instance_openapi(self, process_instance_id: str) -> dict:
-        return self.openapi_oa_details.get(process_instance_id, {})
+        payload = self.openapi_oa_details.get(process_instance_id, {})
+        if isinstance(payload, Exception):
+            raise payload
+        return payload
 
 
 class FakeCodex:
@@ -4746,6 +4758,49 @@ def test_ding_approval_reminder_injects_openapi_detail_when_dws_form_is_empty(
     assert "openapi_detail" in detail_text
     assert "试用期工作内容和转正要求" in detail_text
     assert "3个月内完成 Friday 场景闭环" in detail_text
+
+
+def test_oa_approval_detail_login_error_is_reported_as_tool_issue(
+    tmp_path: Path, monkeypatch
+):
+    notifications = []
+    trigger = message(
+        "[Ding]刘瑞安提醒您审批他的录用申请 "
+        "https://aflow.dingtalk.com/detail?procInstId=proc-1&taskId=task-1",
+        single_chat=True,
+    )
+    dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
+    dws.oa_approval_details["proc-1"] = DwsError("not authenticated", code="2")
+    dws.oa_approval_records["proc-1"] = DwsError("not authenticated", code="2")
+    dws.oa_approval_tasks["proc-1"] = DwsError("not authenticated", code="2")
+    dws.openapi_oa_details["proc-1"] = DwsError("not authenticated", code="2")
+    codex = FakeCodex(CodexDecision(action=CodexAction.NO_REPLY))
+    oa_runner = FakeOaApprovalRunner()
+    worker = make_worker(
+        tmp_path,
+        dws,
+        codex,
+        monkeypatch,
+        oa_approval_runner=oa_runner,
+    )
+    monkeypatch.setattr(
+        "app.worker.send_macos_notification",
+        lambda **kwargs: notifications.append(kwargs),
+    )
+
+    worker.run_once()
+
+    detail = json.loads(oa_runner.approval_detail_texts[0])
+    assert detail["tool_status"] == "dws_login_required"
+    assert detail["tool_issue"] == "DWS 未登录或登录态失效，当前不是审批材料缺失。"
+    assert detail["dws_detail"]["error_kind"] == "dws_login_required"
+    assert "not authenticated" in detail["dws_detail"]["message"]
+    assert dws.auth_login_starts == 1
+    assert {
+        "title": "CEO DWS auth login required",
+        "message": "Started dws auth login. Please complete DingTalk login.",
+        "url": None,
+    } in notifications
 
 
 def test_oa_approval_dry_run_uses_review_only_mode_and_keeps_live_retry_open(

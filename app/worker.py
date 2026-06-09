@@ -1875,7 +1875,7 @@ class DingTalkAutoReplyWorker:
         try:
             documents["current_user_id"] = self.dws.get_current_user_id()
         except Exception as exc:
-            documents["current_user_id_error"] = str(exc)
+            documents["current_user_id_error"] = self._dws_tool_error_payload(exc)
         for key, reader in (
             ("dws_detail", self.dws.read_oa_approval_detail),
             ("dws_records", self.dws.read_oa_approval_records),
@@ -1884,15 +1884,51 @@ class DingTalkAutoReplyWorker:
             try:
                 documents[key] = reader(process_instance_id)
             except Exception as exc:
-                documents[key] = {"error": str(exc)}
+                documents[key] = self._dws_tool_error_payload(exc)
         if self._oa_detail_has_empty_form(documents.get("dws_detail")):
             try:
                 documents["openapi_detail"] = self.dws.read_oa_process_instance_openapi(
                     process_instance_id
                 )
             except Exception as exc:
-                documents["openapi_detail"] = {"error": str(exc)}
+                documents["openapi_detail"] = self._dws_tool_error_payload(exc)
+        self._annotate_oa_tool_status(documents)
         return json.dumps(documents, ensure_ascii=False)
+
+    def _dws_tool_error_payload(self, exc: Exception) -> dict[str, str]:
+        if self._is_dws_login_error(exc):
+            self._ensure_dws_auth_login(exc)
+            return {
+                "error_kind": "dws_login_required",
+                "message": str(exc),
+            }
+        if self._is_authorization_error(exc):
+            return {
+                "error_kind": "dws_authorization_required",
+                "message": str(exc),
+            }
+        return {
+            "error_kind": "dws_error",
+            "message": str(exc),
+        }
+
+    @staticmethod
+    def _annotate_oa_tool_status(documents: dict[str, Any]) -> None:
+        error_kinds = {
+            value.get("error_kind")
+            for value in documents.values()
+            if isinstance(value, dict) and isinstance(value.get("error_kind"), str)
+        }
+        if "dws_login_required" in error_kinds:
+            documents["tool_status"] = "dws_login_required"
+            documents["tool_issue"] = (
+                "DWS 未登录或登录态失效，当前不是审批材料缺失。"
+            )
+        elif "dws_authorization_required" in error_kinds:
+            documents["tool_status"] = "dws_authorization_required"
+            documents["tool_issue"] = (
+                "DWS 权限不足，当前不是审批材料缺失。"
+            )
 
     @staticmethod
     def _oa_process_instance_id_from_url(oa_url: str) -> str:

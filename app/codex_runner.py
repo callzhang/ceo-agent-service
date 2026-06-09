@@ -27,6 +27,7 @@ DingTalk material reading
 - Docs: `dws doc info --node <URL> --format json`; if online doc and content needed, `dws doc read --node <URL> --format json`.
 - Minutes: `dws minutes get info --id <MINUTES_ID> --format json`.
 - Ordinary files: use relevant DWS file/drive read/download capability only when text context is insufficient.
+- If DWS reports not_authenticated, not authenticated, exit code 2, or a login/session problem, classify it as a DWS login/tool issue, not as missing material from the sender.
 - If permission fails, state the missing permission/material and do not invent contents.
 - If some materials fail but others are readable, use readable materials and mention limitation.
 - record why each material command was used.

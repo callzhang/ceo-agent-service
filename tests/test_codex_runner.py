@@ -77,6 +77,15 @@ def test_codex_command_exposes_memory_connector_mcp(tmp_path: Path, monkeypatch)
     assert "x-memory-user-id" not in " ".join(command)
 
 
+def test_codex_developer_instructions_classify_dws_login_as_tool_issue():
+    instructions = codex_developer_instructions()
+
+    assert "not_authenticated" in instructions
+    assert "exit code 2" in instructions
+    assert "DWS login/tool issue" in instructions
+    assert "not as missing material" in instructions
+
+
 def test_codex_command_does_not_use_agent_envelope_schema_by_default(tmp_path: Path):
     runner = CodexRunner(workspace=tmp_path, codex_bin="codex")
 

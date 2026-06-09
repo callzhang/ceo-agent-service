@@ -35,6 +35,7 @@
 - 如果 prompt 中有“发信人组织信息(JSON)”，回复前必须先结合对方的 title、org_labels、manager、departments 和 has_subordinate 判断回复口径；没有列出的字段不要编造职位或上下级关系，应该使用dws查找职级关系。
 - 当问题依赖本地知识图谱关系、跨文档背景或历史决策链时，可以使用 graphify。先阅读 `graphify-out/GRAPH_REPORT.md` 的相关部分，再用 `graphify query "<具体问题>"`、`graphify explain "<具体概念>"` 或 `graphify path "<A>" "<B>"` 找关系，并只打开与当前回复直接相关的文件。
 - 如果“新消息”或“引用”里有 `https://alidocs.dingtalk.com/i/nodes/` 链接，必须先识别链接类型再判断；优先使用 prompt 中“已获取的钉钉材料”内容，材料足够时不要重复调用 dws 或本地检索。如果没有该区块，先调用 `dws doc info --node "<链接>" --format json` 探测类型：`extension=adoc` 才调用 `dws doc read --node "<链接>" --format json` 读取正文；`extension=able` 是 AI 表格，改用 `dws aitable` 读取表格信息，禁止当作文档读。禁止用 curl、HTTP API 或浏览器直接读钉钉材料；如果材料读不到，不能凭感觉回复，返回 stop_with_error 并在 audit_summary 说明失败原因。
+- 如果 dws 返回 not_authenticated、not authenticated、exit code 2、未登录或登录态失效，要明确判断为 DWS 登录/工具问题，不要说成对方没有提供材料、材料缺失或让对方补材料；audit_summary 里要如实写工具未登录导致无法读取或判断。
 - 普通钉钉文件不同于钉钉在线文档：在线文档可以通过 dws doc/aitable 读取；普通文件必须有正文、可下载内容或已抽取文本才能作为依据。如果“已获取的钉钉材料”里已有普通文件正文，必须基于正文回答；如果只定位到文件名但没有正文，当对方要求 comments、审核、总结、判断或修改意见时，不能只凭文件名回复，应返回 stop_with_error 或追问可访问正文。
 - 回答外部候选人是否匹配、是否推进、是否降级评估前，必须先检索 workspace 里的岗位要求/JD/岗位画像，并查看上下文提到的简历文件或链接内容；如果拿不到岗位要求或简历内容，不能凭一句消息下结论，应追问补充材料或说明材料齐全后再判断。
 

@@ -695,6 +695,39 @@ def test_execute_handle_warns_return_becomes_service_comment(tmp_path: Path):
     assert "不会用拒绝冒充退回" in prompts[0]
 
 
+def test_handle_warns_dws_login_failure_is_tool_issue(tmp_path: Path):
+    skill_path = tmp_path / "skill.md"
+    skill_path.write_text("# OA Skill", encoding="utf-8")
+    prompts: list[str] = []
+
+    def fake_executor(command: list[str], prompt: str) -> str:
+        del command
+        prompts.append(prompt)
+        return _oa_envelope_json(
+            action="退回",
+            remark="DWS 未登录，当前无法读取审批材料。",
+            summary="DWS 未登录导致工具不可用。",
+        )
+
+    runner = OaApprovalCodexRunner(
+        workspace=tmp_path,
+        executor=fake_executor,
+        skill_path=skill_path,
+    )
+
+    runner.handle(
+        "触发消息",
+        "",
+        "https://aflow.dingtalk.com/detail?procInstId=proc-1&taskId=task-1",
+        approval_detail_text='{"tool_status":"dws_login_required"}',
+        execute=False,
+    )
+
+    assert "DWS 未登录" in prompts[0]
+    assert "工具问题" in prompts[0]
+    assert "不要表述为申请人没有提供材料" in prompts[0]
+
+
 def test_read_only_handle_rejects_mutating_result_or_tool_event(tmp_path: Path):
     skill_path = tmp_path / "skill.md"
     skill_path.write_text("# OA Skill", encoding="utf-8")

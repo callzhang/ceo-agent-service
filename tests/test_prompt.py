@@ -501,6 +501,8 @@ def test_thread_prompt_requires_dws_doc_read_for_alidocs_links():
     assert "dws aitable" in prompt
     assert "禁止用 curl、HTTP API 或浏览器直接读钉钉材料" in prompt
     assert "材料读不到，不能凭感觉回复" in prompt
+    assert "DWS 登录/工具问题" in prompt
+    assert "不要说成对方没有提供材料" in prompt
 
 
 def test_thread_prompt_defaults_to_business_context_retrieval():

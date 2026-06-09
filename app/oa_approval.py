@@ -284,6 +284,10 @@ class OaApprovalCodexRunner:
         prompt = (
             "请审阅并处理下面这条 DingTalk OA 审批消息。\n\n"
             f"{mode}\n\n"
+            "如果服务侧审批详情或你执行的 DWS 命令显示 DWS 未登录、登录态失效、"
+            "not_authenticated、not authenticated、exit code 2 或 tool_status=dws_login_required，"
+            "这是工具问题，不是申请人没有提供材料；audit_summary 和 oa_remark 必须如实说明"
+            "当前因为 DWS 登录/工具问题无法读取或判断，不要表述为申请人没有提供材料。\n\n"
             f"OA URL:\n{oa_url}\n\n"
             f"触发消息:\n{trigger_text}\n\n"
             f"服务侧已读取的审批 API 详情:\n{approval_detail_text}\n\n"
