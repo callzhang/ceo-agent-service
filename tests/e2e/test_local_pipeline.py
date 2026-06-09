@@ -147,9 +147,11 @@ class FakeDws:
         text,
         at_users=None,
         at_open_dingtalk_ids=None,
+        at_open_dingtalk_names=None,
         user_id=None,
         open_dingtalk_id=None,
     ):
+        del at_open_dingtalk_names
         self.chat_calls.append(("send_message", conversation_id))
         self.sent.append((conversation_id, text))
         self.sent_at_users.append(at_open_dingtalk_ids or at_users or [])
@@ -166,7 +168,16 @@ class FakeDws:
         self.sent.append((conversation_id, text))
         self.sent_at_users.append(at_users or [])
 
-    def send_reply_to_trigger(self, conversation, trigger, text, at_users=None):
+    def send_reply_to_trigger(
+        self,
+        conversation,
+        trigger,
+        text,
+        at_users=None,
+        at_open_dingtalk_ids=None,
+        at_open_dingtalk_names=None,
+    ):
+        del at_open_dingtalk_ids, at_open_dingtalk_names
         return self.reply_message(
             conversation.open_conversation_id,
             trigger.open_message_id,

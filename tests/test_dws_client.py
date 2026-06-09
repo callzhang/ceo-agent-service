@@ -807,6 +807,21 @@ def test_send_message_command_does_not_duplicate_existing_visible_mentions():
     assert command[command.index("--text") + 1] == " @磊哥 请同步进展"
 
 
+def test_send_message_command_does_not_duplicate_mentions_already_in_body():
+    client = DwsClient(dws_bin="dws")
+
+    command = client.build_send_message_command(
+        conversation_id="cid-1",
+        text="@ET(张毅倜) 先出方案；@Roy Han(韩露) 补材料。",
+        at_open_dingtalk_ids=["open-et", "open-roy"],
+        at_open_dingtalk_names=["ET", "Roy Han"],
+    )
+
+    assert command[command.index("--text") + 1] == (
+        " @ET(张毅倜) 先出方案；@Roy Han(韩露) 补材料。"
+    )
+
+
 def test_direct_send_message_ignores_open_dingtalk_id_mentions_without_group_at_flag():
     client = DwsClient(dws_bin="dws")
 
@@ -1011,6 +1026,54 @@ def test_reply_message_command_shape():
         "--format",
         "json",
         "--yes",
+    ]
+
+
+def test_send_reply_to_trigger_uses_group_send_for_structured_mentions():
+    client = RecordingDwsClient({"success": True})
+    conversation = DingTalkConversation(
+        open_conversation_id="cid-1",
+        title="CEO-2 管理群",
+        single_chat=False,
+        unread_point=1,
+    )
+    trigger = DingTalkMessage(
+        open_conversation_id="cid-1",
+        open_message_id="msg-1",
+        conversation_title="CEO-2 管理群",
+        single_chat=False,
+        sender_name="Lily",
+        sender_open_dingtalk_id="open-lily",
+        create_time="2026-06-09 09:00:00",
+        content="@Derek Zen(磊哥) 看一下",
+    )
+
+    client.send_reply_to_trigger(
+        conversation,
+        trigger,
+        "@ET(张毅倜) 先出方案。",
+        at_open_dingtalk_ids=["open-et"],
+        at_open_dingtalk_names=["ET"],
+    )
+
+    assert client.commands == [
+        [
+            "dws",
+            "chat",
+            "message",
+            "send",
+            "--group",
+            "cid-1",
+            "--title",
+            "回复：@ET(张毅倜) 先出方案。",
+            "--at-open-dingtalk-ids",
+            "open-et",
+            "--text",
+            " @ET(张毅倜) 先出方案。",
+            "--format",
+            "json",
+            "--yes",
+        ]
     ]
 
 

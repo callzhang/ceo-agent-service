@@ -181,6 +181,13 @@ class CalendarConflictContext:
     conflicts: list[DwsCalendarEvent]
 
 
+@dataclass(frozen=True)
+class ReplyAtTarget:
+    user_id: str = ""
+    open_dingtalk_id: str = ""
+    name: str = ""
+
+
 class ReplyDeliveryError(RuntimeError):
     """Raised after recording a delivery failure so queued tasks can retry."""
 
@@ -5018,7 +5025,8 @@ class DingTalkAutoReplyWorker:
             )
             return
         try:
-            at_users = self._reply_at_users(trigger)
+            explicit_at_targets = self._explicit_reply_at_targets(trigger, reply_text)
+            at_targets = explicit_at_targets or self._default_reply_at_targets(trigger)
         except Exception as exc:
             self.store.update_reply_attempt(
                 attempt_id,
@@ -5040,6 +5048,13 @@ class DingTalkAutoReplyWorker:
             if raise_on_delivery_failure:
                 raise ReplyDeliveryError(str(exc)) from exc
             return
+        at_users = [target.user_id for target in at_targets if target.user_id]
+        at_open_dingtalk_ids = [
+            target.open_dingtalk_id for target in at_targets if target.open_dingtalk_id
+        ] if explicit_at_targets else []
+        at_open_dingtalk_names = [
+            target.name for target in at_targets if target.name
+        ] if explicit_at_targets else []
         direct_user_id = at_users[0] if conversation.single_chat and at_users else None
         reply_text = append_signature(reply_text)
         reply_text = self._format_reply_delivery_text(
@@ -5061,6 +5076,8 @@ class DingTalkAutoReplyWorker:
             attempt_id=attempt_id,
             final_reply_text=reply_text,
             at_users=at_users,
+            at_open_dingtalk_ids=at_open_dingtalk_ids,
+            at_open_dingtalk_names=at_open_dingtalk_names,
             direct_user_id=direct_user_id,
             direct_open_dingtalk_id=trigger.sender_open_dingtalk_id
             if conversation.single_chat
@@ -5112,6 +5129,8 @@ class DingTalkAutoReplyWorker:
         attempt_id: int,
         final_reply_text: str,
         at_users: list[str],
+        at_open_dingtalk_ids: list[str],
+        at_open_dingtalk_names: list[str],
         direct_user_id: str | None,
         direct_open_dingtalk_id: str | None,
         comment_target_messages: list[DingTalkMessage] | None = None,
@@ -5207,6 +5226,8 @@ class DingTalkAutoReplyWorker:
             reply_text=reply_text,
             feedback_token=feedback_token,
             at_users=at_users,
+            at_open_dingtalk_ids=at_open_dingtalk_ids,
+            at_open_dingtalk_names=at_open_dingtalk_names,
             failure_error_kind="send",
             failure_notify_title=f"CEO auto reply failed: {conversation.title}",
             raise_on_delivery_failure=raise_on_delivery_failure,
@@ -5317,6 +5338,8 @@ class DingTalkAutoReplyWorker:
         reply_text: str,
         feedback_token: str,
         at_users: list[str] | None = None,
+        at_open_dingtalk_ids: list[str] | None = None,
+        at_open_dingtalk_names: list[str] | None = None,
         send_result_json_builder=None,
         failure_error_kind: str = "send",
         failure_send_error=None,
@@ -5329,7 +5352,12 @@ class DingTalkAutoReplyWorker:
             return True
         if at_users is None:
             try:
-                at_users = self._reply_at_users(trigger)
+                explicit_at_targets = self._explicit_reply_at_targets(
+                    trigger, reply_text
+                )
+                at_targets = explicit_at_targets or self._default_reply_at_targets(
+                    trigger
+                )
             except Exception as exc:
                 self.store.update_reply_attempt(
                     attempt_id,
@@ -5352,6 +5380,17 @@ class DingTalkAutoReplyWorker:
                         attempt_id=attempt_id,
                     )
                 return False
+            at_users = [target.user_id for target in at_targets if target.user_id]
+            at_open_dingtalk_ids = [
+                target.open_dingtalk_id
+                for target in at_targets
+                if target.open_dingtalk_id
+            ] if explicit_at_targets else []
+            at_open_dingtalk_names = [
+                target.name for target in at_targets if target.name
+            ] if explicit_at_targets else []
+        at_open_dingtalk_ids = at_open_dingtalk_ids or []
+        at_open_dingtalk_names = at_open_dingtalk_names or []
         if not allow_duplicate_send and self.store.has_sent_reply_for_trigger(
             conversation.open_conversation_id,
             trigger.open_message_id,
@@ -5375,6 +5414,8 @@ class DingTalkAutoReplyWorker:
                 trigger,
                 reply_text,
                 at_users=at_users,
+                at_open_dingtalk_ids=at_open_dingtalk_ids,
+                at_open_dingtalk_names=at_open_dingtalk_names,
             )
         except Exception as exc:
             send_error = (
@@ -5414,10 +5455,21 @@ class DingTalkAutoReplyWorker:
         native_reply_extra = (
             dict(send_result_json_payload)
             if send_result_json_builder is not None
-            else {"at_user_ids": at_users}
+            else {
+                "at_user_ids": at_users,
+                "at_open_dingtalk_ids": at_open_dingtalk_ids,
+                "at_open_dingtalk_names": at_open_dingtalk_names,
+            }
         )
         if send_result_json_builder is not None:
             native_reply_extra["at_user_ids"] = at_users
+            native_reply_extra["at_open_dingtalk_ids"] = at_open_dingtalk_ids
+            native_reply_extra["at_open_dingtalk_names"] = at_open_dingtalk_names
+        delivery_kind = (
+            "group_send_with_at"
+            if not conversation.single_chat and at_open_dingtalk_ids
+            else "native_reply"
+        )
         self.store.update_reply_attempt(
             attempt_id,
             send_status="sent",
@@ -5434,6 +5486,7 @@ class DingTalkAutoReplyWorker:
                     trigger,
                     send_result,
                     extra=native_reply_extra,
+                    delivery_kind=delivery_kind,
                 ),
                 ensure_ascii=False,
             ),
@@ -5512,6 +5565,8 @@ class DingTalkAutoReplyWorker:
         text: str,
         *,
         at_users: list[str] | None = None,
+        at_open_dingtalk_ids: list[str] | None = None,
+        at_open_dingtalk_names: list[str] | None = None,
     ) -> tuple[int, dict | None]:
         errors: list[str] = []
         for attempt_number in range(1, self.send_attempts + 1):
@@ -5521,6 +5576,8 @@ class DingTalkAutoReplyWorker:
                     trigger,
                     text,
                     at_users=at_users,
+                    at_open_dingtalk_ids=at_open_dingtalk_ids,
+                    at_open_dingtalk_names=at_open_dingtalk_names,
                 )
                 return attempt_number - 1, send_result
             except Exception as exc:
@@ -5534,20 +5591,120 @@ class DingTalkAutoReplyWorker:
             return
         self.dws.ding_self(text)
 
-    def _reply_at_users(self, trigger: DingTalkMessage) -> list[str]:
+    def _explicit_reply_at_targets(
+        self, trigger: DingTalkMessage, reply_text: str
+    ) -> list[ReplyAtTarget]:
+        targets: list[ReplyAtTarget] = []
+        for mention_name in self._visible_mention_names(reply_text):
+            target = self._reply_at_target_for_name(trigger, mention_name)
+            if target is not None:
+                self._append_reply_at_target(targets, target)
+        return targets
+
+    def _default_reply_at_targets(self, trigger: DingTalkMessage) -> list[ReplyAtTarget]:
         current_user_id = self.store.get_current_user_id()
-        sender_user_id = trigger.sender_user_id or self.dws.resolve_message_sender(
-            trigger
-        )
-        users: list[str] = []
-        for user_id in [sender_user_id, *trigger.mentioned_user_ids]:
+        targets: list[ReplyAtTarget] = []
+        sender_user_id = trigger.sender_user_id
+        if not sender_user_id:
+            try:
+                sender_user_id = self.dws.resolve_message_sender(trigger)
+            except Exception:
+                if trigger.sender_open_dingtalk_id:
+                    self._append_reply_at_target(
+                        targets,
+                        ReplyAtTarget(
+                            open_dingtalk_id=trigger.sender_open_dingtalk_id,
+                            name=trigger.sender_name,
+                        ),
+                    )
+                else:
+                    raise
+        for user_id in [sender_user_id or "", *trigger.mentioned_user_ids]:
             if not user_id:
                 continue
             if current_user_id and user_id == current_user_id:
                 continue
-            if user_id not in users:
-                users.append(user_id)
-        return users
+            self._append_reply_at_target(
+                targets,
+                self._reply_at_target_for_user_id(user_id, trigger),
+            )
+        return targets
+
+    def _reply_at_users(self, trigger: DingTalkMessage) -> list[str]:
+        return [
+            target.user_id
+            for target in self._default_reply_at_targets(trigger)
+            if target.user_id
+        ]
+
+    @staticmethod
+    def _visible_mention_names(text: str) -> list[str]:
+        names: list[str] = []
+        for match in MENTION_PATTERN.finditer(text):
+            token = match.group().strip()
+            if not token.startswith("@"):
+                continue
+            name = token[1:].strip()
+            for separator in ("(", "（"):
+                position = name.find(separator)
+                if position >= 0:
+                    name = name[:position].strip()
+            if name and name not in names:
+                names.append(name)
+        return names
+
+    def _reply_at_target_for_name(
+        self, trigger: DingTalkMessage, name: str
+    ) -> ReplyAtTarget | None:
+        if name == trigger.sender_name and trigger.sender_open_dingtalk_id:
+            return ReplyAtTarget(
+                user_id=trigger.sender_user_id or "",
+                open_dingtalk_id=trigger.sender_open_dingtalk_id,
+                name=trigger.sender_name,
+            )
+        matches = self.store.find_org_users_by_name(name)
+        if len(matches) != 1:
+            return None
+        profile = matches[0]
+        current_user_id = self.store.get_current_user_id()
+        if current_user_id and profile.user_id == current_user_id:
+            return None
+        return ReplyAtTarget(
+            user_id=profile.user_id,
+            open_dingtalk_id=profile.open_dingtalk_id or "",
+            name=profile.name,
+        )
+
+    def _reply_at_target_for_user_id(
+        self, user_id: str, trigger: DingTalkMessage
+    ) -> ReplyAtTarget:
+        if trigger.sender_user_id == user_id:
+            return ReplyAtTarget(
+                user_id=user_id,
+                open_dingtalk_id=trigger.sender_open_dingtalk_id or "",
+                name=trigger.sender_name,
+            )
+        profile = self.store.get_org_user_profile(user_id)
+        if profile is None:
+            return ReplyAtTarget(user_id=user_id)
+        return ReplyAtTarget(
+            user_id=profile.user_id,
+            open_dingtalk_id=profile.open_dingtalk_id or "",
+            name=profile.name,
+        )
+
+    @staticmethod
+    def _append_reply_at_target(
+        targets: list[ReplyAtTarget], target: ReplyAtTarget
+    ) -> None:
+        for existing in targets:
+            if target.open_dingtalk_id and (
+                existing.open_dingtalk_id == target.open_dingtalk_id
+            ):
+                return
+            if target.user_id and existing.user_id == target.user_id:
+                return
+        targets.append(target)
 
     @staticmethod
     def _format_reply_delivery_text(

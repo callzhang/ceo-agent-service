@@ -439,9 +439,11 @@ class FakeDws:
         text: str,
         at_users: list[str] | None = None,
         at_open_dingtalk_ids: list[str] | None = None,
+        at_open_dingtalk_names: list[str] | None = None,
         user_id: str | None = None,
         open_dingtalk_id: str | None = None,
     ) -> None:
+        del at_open_dingtalk_names
         self.send_attempt_count += 1
         if self.send_error:
             raise self.send_error
@@ -477,7 +479,17 @@ class FakeDws:
         trigger,
         text: str,
         at_users: list[str] | None = None,
+        at_open_dingtalk_ids: list[str] | None = None,
+        at_open_dingtalk_names: list[str] | None = None,
     ) -> None:
+        if not conversation.single_chat and at_open_dingtalk_ids:
+            return self.send_message(
+                conversation.open_conversation_id,
+                text,
+                at_users=at_users,
+                at_open_dingtalk_ids=at_open_dingtalk_ids,
+                at_open_dingtalk_names=at_open_dingtalk_names,
+            )
         return self.reply_message(
             conversation.open_conversation_id,
             trigger.open_message_id,
@@ -4947,6 +4959,81 @@ def test_group_mention_sends_signed_reply(tmp_path: Path, monkeypatch):
     assert "@Alex Chen(明哥) @晓民 这个怎么处理？" in prompt
     assert "引用: 这个ACL表看一下" in prompt
     assert "前面上下文" in prompt
+
+
+def test_group_reply_structures_explicit_reply_mentions(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message(
+        "@Alex Chen(明哥) 这几个融资支持待办看一下",
+        sender_user_id=None,
+    )
+    trigger.sender_name = "Lily"
+    trigger.sender_open_dingtalk_id = "open-lily"
+    group = conversation()
+    dws = FakeDws([group], {"cid-1": [trigger]})
+    codex = FakeCodex([])
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+    worker.store.upsert_org_user_profile(
+        user_id="user-et",
+        name="ET",
+        title="",
+        open_dingtalk_id="open-et",
+        manager_user_id="",
+        manager_name="",
+        department_ids=set(),
+        department_names=set(),
+        org_labels=[],
+        has_subordinate=None,
+    )
+    worker.store.upsert_org_user_profile(
+        user_id="user-roy",
+        name="Roy Han",
+        title="",
+        open_dingtalk_id="open-roy",
+        manager_user_id="",
+        manager_name="",
+        department_ids=set(),
+        department_names=set(),
+        org_labels=[],
+        has_subordinate=None,
+    )
+
+    attempt_id = worker.store.record_reply_attempt(
+        conversation_id=group.open_conversation_id,
+        conversation_title=group.title,
+        trigger_message_id=trigger.open_message_id,
+        trigger_sender=trigger.sender_name,
+        trigger_text=trigger.content,
+        action="send_reply",
+        sensitivity_kind="general",
+        draft_reply_text="@ET(张毅倜) 先出方案；@Roy Han(韩露) 补材料。",
+        send_status="processing",
+    )
+
+    worker._send_reply(
+        conversation=group,
+        trigger=trigger,
+        new_messages=[trigger],
+        reply_text="@ET(张毅倜) 先出方案；@Roy Han(韩露) 补材料。",
+        reason="test",
+        attempt_id=attempt_id,
+    )
+
+    assert dws.reply_messages == []
+    assert final_sent(dws) == [
+        (
+            "cid-1",
+            "@ET(张毅倜) 先出方案；@Roy Han(韩露) 补材料。（by明哥分身）",
+        )
+    ]
+    assert final_sent_at_users(dws) == [["open-et", "open-roy"]]
+    sent_reply = worker.store.get_sent_reply("cid-1", "msg-1")
+    assert sent_reply is not None
+    send_result = json.loads(sent_reply.send_result_json)
+    assert send_result["delivery"]["kind"] == "group_send_with_at"
+    assert send_result["at_open_dingtalk_ids"] == ["open-et", "open-roy"]
+    assert send_result["at_open_dingtalk_names"] == ["ET", "Roy Han"]
 
 
 def test_success_notification_keeps_full_reply_text(tmp_path: Path, monkeypatch):

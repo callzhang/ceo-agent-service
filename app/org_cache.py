@@ -295,12 +295,16 @@ class CachedDwsClient:
         trigger,
         text: str,
         at_users: list[str] | None = None,
+        at_open_dingtalk_ids: list[str] | None = None,
+        at_open_dingtalk_names: list[str] | None = None,
     ):
         return self.dws.send_reply_to_trigger(
             conversation,
             trigger,
             text,
             at_users=at_users,
+            at_open_dingtalk_ids=at_open_dingtalk_ids,
+            at_open_dingtalk_names=at_open_dingtalk_names,
         )
 
     def recall_bot_message(self, conversation_id: str | None, process_query_key: str):

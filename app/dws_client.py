@@ -59,10 +59,11 @@ def native_reply_delivery_payload(
     send_result: dict[str, Any] | None,
     *,
     extra: dict[str, Any] | None = None,
+    delivery_kind: str = "native_reply",
 ) -> dict[str, Any]:
     payload: dict[str, Any] = dict(extra or {})
     payload["delivery"] = {
-        "kind": "native_reply",
+        "kind": delivery_kind,
         "conversation_id": conversation.open_conversation_id,
         "ref_message_id": trigger.open_message_id,
         "ref_sender_open_dingtalk_id": trigger.sender_open_dingtalk_id or "",
@@ -1537,7 +1538,17 @@ class DwsClient:
         trigger: DingTalkMessage,
         text: str,
         at_users: list[str] | None = None,
+        at_open_dingtalk_ids: list[str] | None = None,
+        at_open_dingtalk_names: list[str] | None = None,
     ) -> dict[str, Any]:
+        if not conversation.single_chat and at_open_dingtalk_ids:
+            return self.send_message(
+                conversation.open_conversation_id,
+                text,
+                at_users=at_users,
+                at_open_dingtalk_ids=at_open_dingtalk_ids,
+                at_open_dingtalk_names=at_open_dingtalk_names,
+            )
         if not trigger.sender_open_dingtalk_id:
             raise DwsError("missing trigger senderOpenDingTalkId for native reply")
         return self.reply_message(
@@ -1947,7 +1958,7 @@ class DwsClient:
             clean_name = name.strip()
             if clean_name.startswith("@"):
                 clean_name = clean_name[1:].strip()
-            if clean_name:
+            if clean_name and f"@{clean_name}" not in text:
                 mention_names.append(clean_name)
         if not mention_names:
             return text

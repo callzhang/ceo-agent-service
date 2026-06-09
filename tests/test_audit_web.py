@@ -2796,9 +2796,11 @@ def test_handle_reviewed_message_reply_matches_sender_group_and_text(
             text,
             at_users=None,
             at_open_dingtalk_ids=None,
+            at_open_dingtalk_names=None,
             user_id=None,
             open_dingtalk_id=None,
         ):
+            del at_open_dingtalk_ids, at_open_dingtalk_names, open_dingtalk_id
             self.sent_messages.append((conversation_id, text, at_users, user_id))
             return {"result": {"processQueryKey": "recall-1"}}
 
@@ -2814,7 +2816,16 @@ def test_handle_reviewed_message_reply_matches_sender_group_and_text(
             )
             return {"result": {"processQueryKey": "recall-1"}}
 
-        def send_reply_to_trigger(self, conversation, trigger, text, at_users=None):
+        def send_reply_to_trigger(
+            self,
+            conversation,
+            trigger,
+            text,
+            at_users=None,
+            at_open_dingtalk_ids=None,
+            at_open_dingtalk_names=None,
+        ):
+            del at_open_dingtalk_ids, at_open_dingtalk_names
             return self.reply_message(
                 conversation.open_conversation_id,
                 trigger.open_message_id,
@@ -2908,7 +2919,16 @@ def test_handle_reviewed_message_reply_uses_stored_group_and_recent_message(
             )
             return {"result": {"processQueryKey": "recall-site-1"}}
 
-        def send_reply_to_trigger(self, conversation, trigger, text, at_users=None):
+        def send_reply_to_trigger(
+            self,
+            conversation,
+            trigger,
+            text,
+            at_users=None,
+            at_open_dingtalk_ids=None,
+            at_open_dingtalk_names=None,
+        ):
+            del at_users, at_open_dingtalk_ids, at_open_dingtalk_names
             return self.reply_message(
                 conversation.open_conversation_id,
                 trigger.open_message_id,
@@ -3013,9 +3033,11 @@ def test_handle_reviewed_message_reply_matches_private_message_without_mention(
             text,
             at_users=None,
             at_open_dingtalk_ids=None,
+            at_open_dingtalk_names=None,
             user_id=None,
             open_dingtalk_id=None,
         ):
+            del at_open_dingtalk_ids, at_open_dingtalk_names, open_dingtalk_id
             self.sent_messages.append((conversation_id, text, at_users, user_id))
             return {"result": {"processQueryKey": "recall-private-1"}}
 
@@ -3031,7 +3053,16 @@ def test_handle_reviewed_message_reply_matches_private_message_without_mention(
             )
             return {"result": {"processQueryKey": "recall-private-1"}}
 
-        def send_reply_to_trigger(self, conversation, trigger, text, at_users=None):
+        def send_reply_to_trigger(
+            self,
+            conversation,
+            trigger,
+            text,
+            at_users=None,
+            at_open_dingtalk_ids=None,
+            at_open_dingtalk_names=None,
+        ):
+            del at_users, at_open_dingtalk_ids, at_open_dingtalk_names
             return self.reply_message(
                 conversation.open_conversation_id,
                 trigger.open_message_id,
@@ -3117,9 +3148,11 @@ def test_handle_reviewed_message_reply_uses_stored_private_conversation_when_sea
             text,
             at_users=None,
             at_open_dingtalk_ids=None,
+            at_open_dingtalk_names=None,
             user_id=None,
             open_dingtalk_id=None,
         ):
+            del at_open_dingtalk_ids, at_open_dingtalk_names, open_dingtalk_id
             self.sent_messages.append((conversation_id, text, at_users, user_id))
             return {"result": {"processQueryKey": "recall-private-1"}}
 
@@ -3135,7 +3168,16 @@ def test_handle_reviewed_message_reply_uses_stored_private_conversation_when_sea
             )
             return {"result": {"processQueryKey": "recall-private-1"}}
 
-        def send_reply_to_trigger(self, conversation, trigger, text, at_users=None):
+        def send_reply_to_trigger(
+            self,
+            conversation,
+            trigger,
+            text,
+            at_users=None,
+            at_open_dingtalk_ids=None,
+            at_open_dingtalk_names=None,
+        ):
+            del at_users, at_open_dingtalk_ids, at_open_dingtalk_names
             return self.reply_message(
                 conversation.open_conversation_id,
                 trigger.open_message_id,
