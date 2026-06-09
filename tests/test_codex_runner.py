@@ -1,5 +1,6 @@
-from pathlib import Path
+import base64
 import json
+from pathlib import Path
 
 import pytest
 
@@ -44,6 +45,16 @@ def _without_developer_instructions(command: list[str]) -> list[str]:
             continue
         cleaned.append(item)
     return cleaned
+
+
+def _unsigned_jwt(payload: dict) -> str:
+    header = {"alg": "none"}
+
+    def encode(value: dict) -> str:
+        raw = json.dumps(value, separators=(",", ":")).encode()
+        return base64.urlsafe_b64encode(raw).decode().rstrip("=")
+
+    return f"{encode(header)}.{encode(payload)}."
 
 
 def test_codex_command_exposes_memory_connector_mcp(tmp_path: Path, monkeypatch):
@@ -150,6 +161,37 @@ def test_codex_runner_env_loads_memory_connector_from_codex_config(
     assert "secret-token" not in command
 
 
+def test_codex_runner_skips_expired_memory_connector_token_from_codex_config(
+    tmp_path: Path, monkeypatch
+):
+    codex_home = tmp_path / ".codex"
+    codex_home.mkdir()
+    expired_token = _unsigned_jwt({"exp": 1})
+    (codex_home / "config.toml").write_text(
+        "\n".join(
+            [
+                "[mcp_servers.memory_connector]",
+                'url = "https://memory.example/mcp/"',
+                "",
+                "[mcp_servers.memory_connector.http_headers]",
+                f'Authorization = "Bearer {expired_token}"',
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+    monkeypatch.delenv("CONNECTOR_API_KEY", raising=False)
+    monkeypatch.delenv("MEMORY_CONNECTOR_URL", raising=False)
+    runner = CodexRunner(workspace=tmp_path, codex_bin="codex")
+
+    env = runner.build_env()
+    command = runner.build_command(prompt="hello", session_id=None)
+
+    assert "CONNECTOR_API_KEY" not in env
+    assert "MEMORY_CONNECTOR_URL" in env
+    assert not any("mcp_servers.memory_connector" in item for item in command)
+
+
 def test_codex_runner_does_not_forward_memory_user_id(
     tmp_path: Path,
     monkeypatch,
@@ -233,6 +275,8 @@ def test_builds_new_thread_command(tmp_path: Path):
         "--ignore-rules",
         "--disable",
         "hooks",
+        "--disable",
+        "plugins",
         "-c",
         'approval_policy="untrusted"',
         "-c",
@@ -274,6 +318,8 @@ def test_builds_resume_command(tmp_path: Path):
         "--ignore-rules",
         "--disable",
         "hooks",
+        "--disable",
+        "plugins",
         "-c",
         'approval_policy="untrusted"',
         "-c",

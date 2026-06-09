@@ -1318,11 +1318,18 @@ class DingTalkAutoReplyWorker:
             for message in prompt_context_messages
             if message.open_message_id == message_id
         ]
-        if not candidates:
+        trigger = candidates[-1] if candidates else self._lookup_rerun_message_by_id(
+            conversation,
+            message_id,
+        )
+        if trigger is None:
             raise ValueError(
                 f"message not found in recent DingTalk context: {message_id}"
             )
-        trigger = candidates[-1]
+        if trigger.is_recalled():
+            self._record_trigger_recalled_after_backoff_skip(conversation, trigger)
+            self._mark_seen([trigger])
+            return trigger.open_message_id
         if self._handle_minutes_permission_request_if_actionable(
             conversation,
             trigger,
@@ -1364,6 +1371,40 @@ class DingTalkAutoReplyWorker:
             allow_duplicate_send=force_new_decision,
         )
         return trigger.open_message_id
+
+    def _lookup_rerun_message_by_id(
+        self,
+        conversation: DingTalkConversation,
+        message_id: str,
+    ) -> DingTalkMessage | None:
+        list_messages_by_ids = getattr(self.dws, "list_messages_by_ids", None)
+        if list_messages_by_ids is None:
+            return None
+        messages = self._call_dws(
+            "list_messages_by_ids_rerun",
+            lambda: list_messages_by_ids([message_id]),
+            conversation_id=conversation.open_conversation_id,
+            message_id=message_id,
+            raise_authorization=True,
+            default=[],
+        )
+        for message in messages:
+            if message.open_message_id != message_id:
+                continue
+            if (
+                message.open_conversation_id
+                and message.open_conversation_id != conversation.open_conversation_id
+            ):
+                continue
+            return message.model_copy(
+                update={
+                    "open_conversation_id": conversation.open_conversation_id,
+                    "conversation_title": message.conversation_title
+                    or conversation.title,
+                    "single_chat": conversation.single_chat,
+                }
+            )
+        return None
 
     def _skip_system_or_notification_messages(
         self,
@@ -1492,13 +1533,31 @@ class DingTalkAutoReplyWorker:
             ignore_system_notification_skip=True,
         ):
             return True
-        if not hasattr(self, "okr_live_source"):
-            raise RuntimeError("OKR live source is not configured")
         period = current_quarter_period()
-        okr_payload = self.okr_live_source.fetch_user_okr(
-            user_id=trigger.sender_user_id or self.dws.resolve_message_sender(trigger),
-            period_label=period.period_label,
-        )
+        if not hasattr(self, "okr_live_source"):
+            self._record_okr_review_source_unavailable(
+                conversation=conversation,
+                trigger=trigger,
+                period_label=period.period_label,
+                error="OKR live source is not configured",
+                raise_on_delivery_failure=raise_on_delivery_failure,
+            )
+            return True
+        try:
+            okr_payload = self.okr_live_source.fetch_user_okr(
+                user_id=trigger.sender_user_id
+                or self.dws.resolve_message_sender(trigger),
+                period_label=period.period_label,
+            )
+        except Exception as exc:
+            self._record_okr_review_source_unavailable(
+                conversation=conversation,
+                trigger=trigger,
+                period_label=period.period_label,
+                error=str(exc),
+                raise_on_delivery_failure=raise_on_delivery_failure,
+            )
+            return True
         request_id = self.store.create_okr_review_request(
             conversation_id=conversation.open_conversation_id,
             conversation_title=conversation.title,
@@ -1544,6 +1603,59 @@ class DingTalkAutoReplyWorker:
         else:
             self._mark_seen([trigger])
         return True
+
+    def _record_okr_review_source_unavailable(
+        self,
+        *,
+        conversation: DingTalkConversation,
+        trigger: DingTalkMessage,
+        period_label: str,
+        error: str,
+        raise_on_delivery_failure: bool = False,
+    ) -> None:
+        reply_text = (
+            f"现在无法获取 {period_label} 实时 OKR 数据，暂时不能完成审核。"
+            "请稍后再试。"
+        )
+        attempt_id = self.store.record_reply_attempt_for_trigger(
+            conversation_id=conversation.open_conversation_id,
+            conversation_title=conversation.title,
+            trigger_message_id=trigger.open_message_id,
+            trigger_sender=trigger.sender_name,
+            trigger_text=trigger.content,
+            action="okr_review",
+            sensitivity_kind="internal_personnel",
+            codex_reason="okr_review_source_unavailable",
+            draft_reply_text=reply_text,
+            audit_summary=(
+                "OKR review request could not load live OKR data: "
+                f"{error}"
+            ),
+            send_status="dry_run" if self.dry_run else "pending",
+        )
+        self.store.update_reply_attempt(
+            attempt_id,
+            final_reply_text=reply_text,
+            send_error=error,
+        )
+        self.store.record_error(
+            conversation.open_conversation_id,
+            trigger.open_message_id,
+            "okr_review_source",
+            error,
+        )
+        if not self.dry_run:
+            self._deliver_trigger_reply(
+                conversation=conversation,
+                trigger=trigger,
+                new_messages=[trigger],
+                attempt_id=attempt_id,
+                reply_text=reply_text,
+                feedback_token="",
+                raise_on_delivery_failure=raise_on_delivery_failure,
+            )
+        else:
+            self._mark_seen([trigger])
 
     def _handle_oa_approval_if_actionable(
         self,

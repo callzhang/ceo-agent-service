@@ -1070,7 +1070,10 @@ def test_consumer_uses_profile_to_ask_for_missing_candidate_materials(
     assert len(sent) == 1
     assert "先把岗位要求和候选人简历补齐" in sent[0][1]
     assert "可以推进。（by" not in sent[0][1]
-    attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
+    attempt = worker.store.get_latest_reply_attempt_for_trigger(
+        "cid-1",
+        "msg-1",
+    )
     assert attempt is not None
     assert attempt.action == CodexAction.ASK_CLARIFYING_QUESTION.value
     assert "按 profile 先追问材料" in attempt.audit_summary
@@ -1764,7 +1767,11 @@ def test_queued_task_falls_back_to_trigger_when_context_read_fails(
     assert len(codex.calls) == 1
     assert "这是新的工作流" in codex.calls[0][0]
     assert final_sent(dws) == [("cid-1", "这个方向可以（by明哥分身）")]
-    attempt = worker.store.get_reply_attempt(1)
+    attempt = worker.store.get_latest_reply_attempt_for_trigger(
+        "cid-1",
+        "msg-context-error",
+    )
+    assert attempt is not None
     assert attempt.action == "send_reply"
     assert attempt.send_status == "sent"
     errors = worker.store.list_errors(limit=10)
@@ -2606,7 +2613,8 @@ def test_single_chat_rendered_schedule_asks_for_readable_calendar_detail(
     assert "请补充" in final_sent(dws)[0][1]
     assert dws.dings == []
     assert worker.store.has_seen("msg-1") is True
-    attempt = worker.store.get_reply_attempt(1)
+    attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
+    assert attempt is not None
     assert attempt is not None
     assert attempt.action == "ask_clarifying_question"
     assert attempt.send_status == "sent"
@@ -6480,6 +6488,35 @@ def test_rerun_message_can_force_new_codex_decision(tmp_path: Path, monkeypatch)
     ]
 
 
+def test_rerun_message_looks_up_trigger_by_id_when_recent_context_expired(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message("@Alex Chen(明哥) 这个怎么处理？")
+    dws = FakeDws(
+        [conversation()],
+        {"cid-1": []},
+        unread_messages={"cid-1": []},
+    )
+    dws.mentioned_messages["cid-1"] = [trigger]
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="改走B方案")
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+
+    processed = worker.rerun_message(
+        conversation(),
+        "msg-1",
+        force_new_decision=True,
+    )
+
+    assert processed == "msg-1"
+    assert dws.recent_message_reads == ["cid-1"]
+    assert dws.unread_message_reads == ["cid-1"]
+    assert dws.messages_by_id_reads == [["msg-1"]]
+    assert len(codex.calls) == 1
+    assert final_sent(dws) == [("cid-1", "改走B方案（by明哥分身）")]
+
+
 def test_rerun_message_does_not_resend_when_trigger_already_has_sent_reply(
     tmp_path: Path, monkeypatch
 ):
@@ -7181,6 +7218,65 @@ def test_okr_review_request_is_enqueued_before_generic_codex(
     attempt = worker.store.get_reply_attempt(1)
     assert attempt.action == "okr_review"
     assert "已受理" in attempt.final_reply_text
+
+
+def test_okr_review_missing_live_source_records_history_without_generic_codex(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message("帮我审核 OKR", single_chat=True)
+    dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该走普通回复")
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+
+    worker.run_once()
+
+    assert codex.calls == []
+    assert worker.store.claim_okr_review_requests(1) == []
+    attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
+    assert attempt is not None
+    assert attempt.action == "okr_review"
+    assert attempt.codex_reason == "okr_review_source_unavailable"
+    assert "现在无法获取 2026 Q2 实时 OKR 数据" in attempt.final_reply_text
+    assert attempt.send_status == "sent"
+    assert attempt.send_error == ""
+    assert "OKR live source is not configured" in attempt.audit_summary
+    assert final_sent(dws) == [("cid-1", attempt.final_reply_text)]
+
+
+def test_okr_review_live_source_error_records_history_without_generic_codex(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message("帮我审核 OKR", single_chat=True)
+    dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该走普通回复")
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+    worker.okr_live_source = type(
+        "LiveSource",
+        (),
+        {
+            "fetch_user_okr": lambda self, user_id, period_label: (_ for _ in ()).throw(
+                RuntimeError("okr unavailable")
+            )
+        },
+    )()
+
+    worker.run_once()
+
+    assert codex.calls == []
+    assert worker.store.claim_okr_review_requests(1) == []
+    attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
+    assert attempt is not None
+    assert attempt.action == "okr_review"
+    assert attempt.codex_reason == "okr_review_source_unavailable"
+    assert "现在无法获取 2026 Q2 实时 OKR 数据" in attempt.final_reply_text
+    assert attempt.send_status == "sent"
+    assert attempt.send_error == ""
+    assert "okr unavailable" in attempt.audit_summary
+    assert final_sent(dws) == [("cid-1", attempt.final_reply_text)]
 
 
 def test_queued_okr_review_ack_delivery_failure_requeues_without_generic_codex(

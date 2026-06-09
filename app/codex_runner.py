@@ -1,6 +1,8 @@
+import base64
 import json
 import os
 import shlex
+import time
 import tomllib
 from pathlib import Path
 
@@ -86,6 +88,9 @@ def _memory_connector_env() -> dict[str, str]:
     config_env = _memory_connector_env_from_config(_codex_home() / "config.toml")
     env = {**config_env, **whitelisted_file_env, **os.environ}
     env.pop("MEMORY_CONNECTOR_USER_ID", None)
+    token = env.get(MEMORY_CONNECTOR_API_KEY_ENV)
+    if token and _jwt_token_is_expired(token):
+        env.pop(MEMORY_CONNECTOR_API_KEY_ENV, None)
     return env
 
 
@@ -117,7 +122,8 @@ def _memory_connector_env_from_config(config_path: Path) -> dict[str, str]:
 def memory_connector_config_options() -> list[str]:
     env = _memory_connector_env()
     url = env.get(MEMORY_CONNECTOR_URL_ENV)
-    if not url:
+    token = env.get(MEMORY_CONNECTOR_API_KEY_ENV)
+    if not url or not token:
         return []
     return [
         "-c",
@@ -128,6 +134,22 @@ def memory_connector_config_options() -> list[str]:
             MEMORY_CONNECTOR_API_KEY_ENV,
         ),
     ]
+
+
+def _jwt_token_is_expired(token: str, *, now: float | None = None) -> bool:
+    parts = token.split(".")
+    if len(parts) < 2:
+        return False
+    payload_segment = parts[1]
+    try:
+        padded = payload_segment + "=" * ((4 - len(payload_segment) % 4) % 4)
+        payload = json.loads(base64.urlsafe_b64decode(padded))
+    except (ValueError, json.JSONDecodeError):
+        return False
+    exp = payload.get("exp")
+    if not isinstance(exp, int | float):
+        return False
+    return exp <= (time.time() if now is None else now)
 
 
 class CodexRunner:
@@ -158,6 +180,8 @@ class CodexRunner:
             "--ignore-rules",
             "--disable",
             "hooks",
+            "--disable",
+            "plugins",
             *memory_connector_config_options(),
             "-c",
             'approval_policy="untrusted"',

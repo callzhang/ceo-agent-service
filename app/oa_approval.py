@@ -410,6 +410,8 @@ class _OaApprovalCommandBuilder:
             "--ignore-rules",
             "--disable",
             "hooks",
+            "--disable",
+            "plugins",
             *safety_options,
             "-c",
             _config_string("developer_instructions", self._developer_instructions()),
