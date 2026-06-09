@@ -460,7 +460,10 @@ class FakeDws:
         ref_sender_open_dingtalk_id: str,
         text: str,
         at_users: list[str] | None = None,
+        at_open_dingtalk_ids: list[str] | None = None,
+        at_open_dingtalk_names: list[str] | None = None,
     ) -> None:
+        del at_open_dingtalk_names
         self.send_attempt_count += 1
         if self.send_error:
             raise self.send_error
@@ -482,13 +485,14 @@ class FakeDws:
         at_open_dingtalk_ids: list[str] | None = None,
         at_open_dingtalk_names: list[str] | None = None,
     ) -> None:
-        del at_open_dingtalk_ids, at_open_dingtalk_names
         return self.reply_message(
             conversation.open_conversation_id,
             trigger.open_message_id,
             trigger.sender_open_dingtalk_id,
             text,
             at_users=at_users,
+            at_open_dingtalk_ids=at_open_dingtalk_ids,
+            at_open_dingtalk_names=at_open_dingtalk_names,
         )
 
     def ding_self(self, text: str) -> None:
@@ -5097,8 +5101,8 @@ def test_group_reply_structures_explicit_reply_mentions(
     send_result = json.loads(sent_reply.send_result_json)
     assert send_result["delivery"]["kind"] == "native_reply"
     assert send_result["delivery"]["ref_message_id"] == "msg-1"
-    assert send_result["at_open_dingtalk_ids"] == []
-    assert send_result["at_open_dingtalk_names"] == []
+    assert send_result["at_open_dingtalk_ids"] == ["open-et", "open-roy"]
+    assert send_result["at_open_dingtalk_names"] == ["ET", "Roy Han"]
 
 
 def test_group_reply_replaces_leading_name_with_structured_at(
@@ -5139,8 +5143,8 @@ def test_group_reply_replaces_leading_name_with_structured_at(
     send_result = json.loads(sent_reply.send_result_json)
     assert send_result["delivery"]["kind"] == "native_reply"
     assert send_result["delivery"]["ref_message_id"] == "msg-1"
-    assert send_result["at_open_dingtalk_ids"] == []
-    assert send_result["at_open_dingtalk_names"] == []
+    assert send_result["at_open_dingtalk_ids"] == ["open-et"]
+    assert send_result["at_open_dingtalk_names"] == ["ET"]
 
 
 def test_success_notification_keeps_full_reply_text(tmp_path: Path, monkeypatch):

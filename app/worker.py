@@ -5100,9 +5100,28 @@ class DingTalkAutoReplyWorker:
                 raise ReplyDeliveryError(str(exc)) from exc
             return
         at_users = [target.user_id for target in at_targets if target.user_id]
-        reply_at_names = self._reply_at_display_names(conversation, at_targets)
-        at_open_dingtalk_ids: list[str] = []
-        at_open_dingtalk_names: list[str] = []
+        at_open_dingtalk_ids = (
+            [
+                target.open_dingtalk_id
+                for target in at_targets
+                if target.open_dingtalk_id
+            ]
+            if not conversation.single_chat
+            else []
+        )
+        at_open_dingtalk_names = (
+            [
+                target.name
+                for target in at_targets
+                if target.open_dingtalk_id and target.name
+            ]
+            if not conversation.single_chat
+            else []
+        )
+        reply_at_names = self._reply_at_display_names(
+            conversation,
+            at_targets,
+        )
         direct_user_id = at_users[0] if conversation.single_chat and at_users else None
         reply_text = append_signature(reply_text)
         reply_text = self._format_reply_delivery_text(
@@ -5440,9 +5459,28 @@ class DingTalkAutoReplyWorker:
                     )
                 return False
             at_users = [target.user_id for target in at_targets if target.user_id]
-            reply_at_names = self._reply_at_display_names(conversation, at_targets)
-            at_open_dingtalk_ids = []
-            at_open_dingtalk_names = []
+            at_open_dingtalk_ids = (
+                [
+                    target.open_dingtalk_id
+                    for target in at_targets
+                    if target.open_dingtalk_id
+                ]
+                if not conversation.single_chat
+                else []
+            )
+            at_open_dingtalk_names = (
+                [
+                    target.name
+                    for target in at_targets
+                    if target.open_dingtalk_id and target.name
+                ]
+                if not conversation.single_chat
+                else []
+            )
+            reply_at_names = self._reply_at_display_names(
+                conversation,
+                at_targets,
+            )
         at_open_dingtalk_ids = at_open_dingtalk_ids or []
         at_open_dingtalk_names = at_open_dingtalk_names or []
         reply_text = self._apply_reply_at_mentions(reply_text, reply_at_names or [])

@@ -344,8 +344,10 @@ class DwsClient:
         ref_sender_open_dingtalk_id: str,
         text: str,
         at_users: list[str] | None = None,
+        at_open_dingtalk_ids: list[str] | None = None,
+        at_open_dingtalk_names: list[str] | None = None,
     ) -> list[str]:
-        del at_users
+        del at_users, at_open_dingtalk_ids, at_open_dingtalk_names
         if not conversation_id or not ref_message_id or not ref_sender_open_dingtalk_id:
             raise ValueError("conversation id, ref message id, and ref sender are required")
         return [
@@ -1521,6 +1523,8 @@ class DwsClient:
         ref_sender_open_dingtalk_id: str,
         text: str,
         at_users: list[str] | None = None,
+        at_open_dingtalk_ids: list[str] | None = None,
+        at_open_dingtalk_names: list[str] | None = None,
     ) -> dict[str, Any]:
         return self.run_json(
             self.build_reply_message_command(
@@ -1529,6 +1533,8 @@ class DwsClient:
                 ref_sender_open_dingtalk_id,
                 text,
                 at_users=at_users,
+                at_open_dingtalk_ids=at_open_dingtalk_ids,
+                at_open_dingtalk_names=at_open_dingtalk_names,
             )
         )
 
@@ -1541,7 +1547,6 @@ class DwsClient:
         at_open_dingtalk_ids: list[str] | None = None,
         at_open_dingtalk_names: list[str] | None = None,
     ) -> dict[str, Any]:
-        del at_open_dingtalk_ids, at_open_dingtalk_names
         if not trigger.sender_open_dingtalk_id:
             raise DwsError("missing trigger senderOpenDingTalkId for native reply")
         return self.reply_message(
@@ -1550,6 +1555,8 @@ class DwsClient:
             trigger.sender_open_dingtalk_id,
             text,
             at_users=at_users,
+            at_open_dingtalk_ids=at_open_dingtalk_ids,
+            at_open_dingtalk_names=at_open_dingtalk_names,
         )
 
     @staticmethod
