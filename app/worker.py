@@ -87,6 +87,8 @@ CALENDAR_PENDING_INVITE_NO_CHANGE_TIME_START_LOOKAHEAD = timedelta(hours=24)
 CALENDAR_CONTEXT_MATCH_MIN_SCORE = 0.05
 CALENDAR_CONTEXT_MATCH_LOOKBACK = timedelta(minutes=10)
 CALENDAR_ORGANIZER_RESPONSE_ERROR = "Cannot change response status of event organizer"
+DWS_TRANSIENT_ERROR_STATE_PREFIX = "dws_transient_error_count:"
+DWS_TRANSIENT_NOTIFY_THRESHOLD = 3
 T = TypeVar("T")
 CALENDAR_ACTION_SEND_STATUS = "calendar"
 TEXT_MESSAGE_TYPES = {"text"}
@@ -242,7 +244,9 @@ class DingTalkAutoReplyWorker:
         default: T,
     ) -> T:
         try:
-            return call()
+            result = call()
+            self._clear_dws_transient_error(kind)
+            return result
         except Exception as exc:
             if raise_authorization and self._is_authorization_error(exc):
                 raise
@@ -255,12 +259,61 @@ class DingTalkAutoReplyWorker:
                 self._mark_dws_read_forbidden(conversation_id)
             if record_forbidden_error or not is_forbidden_read:
                 self.store.record_error(conversation_id, message_id, kind, str(exc))
-            if notify_title:
+            should_notify = bool(notify_title)
+            if notify_title and self._is_dws_transient_error(exc):
+                should_notify = self._record_dws_transient_error(kind, str(exc))
+            if should_notify and notify_title:
                 self._notify(
                     title=notify_title,
                     message=str(exc)[:120],
                 )
             return default
+
+    @staticmethod
+    def _is_dws_transient_error(exc: Exception) -> bool:
+        return isinstance(exc, DwsError) and exc.code in DwsClient.RETRYABLE_ERROR_CODES
+
+    def _record_dws_transient_error(self, kind: str, detail: str) -> bool:
+        key = f"{DWS_TRANSIENT_ERROR_STATE_PREFIX}{kind}"
+        current = self.store.get_service_state(key)
+        count = 0
+        if current:
+            try:
+                payload = json.loads(current)
+            except json.JSONDecodeError:
+                payload = {}
+            if isinstance(payload, dict):
+                count = int(payload.get("count") or 0)
+        count += 1
+        self.store.set_service_state(
+            key,
+            json.dumps(
+                {
+                    "count": count,
+                    "last_error": detail[:500],
+                    "updated_at": self._now().astimezone(timezone.utc).isoformat(),
+                },
+                ensure_ascii=False,
+            ),
+        )
+        return count == DWS_TRANSIENT_NOTIFY_THRESHOLD
+
+    def _clear_dws_transient_error(self, kind: str) -> None:
+        key = f"{DWS_TRANSIENT_ERROR_STATE_PREFIX}{kind}"
+        current = self.store.get_service_state(key)
+        if not current:
+            return
+        self.store.set_service_state(
+            key,
+            json.dumps(
+                {
+                    "count": 0,
+                    "last_error": "",
+                    "updated_at": self._now().astimezone(timezone.utc).isoformat(),
+                },
+                ensure_ascii=False,
+            ),
+        )
 
     def _read_conversation_messages(
         self,

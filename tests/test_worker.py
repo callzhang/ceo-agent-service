@@ -1140,6 +1140,68 @@ def test_produce_once_records_list_unread_failure_without_crashing(
     assert codex.calls == []
 
 
+def test_produce_once_suppresses_transient_list_unread_notification_until_threshold(
+    tmp_path: Path, monkeypatch
+):
+    notifications = []
+    dws = FakeDws([], {}, list_error=DwsError("transient discovery timeout", code="6"))
+    codex = FakeCodex(CodexDecision(action=CodexAction.SEND_REPLY, reply_text="收到"))
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+    monkeypatch.setattr(
+        "app.worker.send_macos_notification",
+        lambda **kwargs: notifications.append(kwargs),
+    )
+
+    assert worker.produce_once() == 0
+    assert worker.produce_once() == 0
+    assert notifications == []
+    assert worker.store.count_errors() == 2
+
+    assert worker.produce_once() == 0
+
+    assert notifications == [
+        {
+            "title": "CEO read unread conversations failed",
+            "message": "transient discovery timeout",
+            "url": None,
+        }
+    ]
+    state = json.loads(
+        worker.store.get_service_state(
+            "dws_transient_error_count:list_unread_conversations"
+        )
+        or "{}"
+    )
+    assert state["count"] == 3
+
+
+def test_produce_once_clears_transient_list_unread_error_after_success(
+    tmp_path: Path, monkeypatch
+):
+    notifications = []
+    dws = FakeDws([], {}, list_error=DwsError("transient discovery timeout", code="6"))
+    codex = FakeCodex(CodexDecision(action=CodexAction.SEND_REPLY, reply_text="收到"))
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+    monkeypatch.setattr(
+        "app.worker.send_macos_notification",
+        lambda **kwargs: notifications.append(kwargs),
+    )
+
+    assert worker.produce_once() == 0
+    dws.list_error = None
+    assert worker.produce_once() == 0
+
+    assert notifications == []
+    state = json.loads(
+        worker.store.get_service_state(
+            "dws_transient_error_count:list_unread_conversations"
+        )
+        or "{}"
+    )
+    assert state["count"] == 0
+    assert state["last_error"] == ""
+
+
 def test_produce_once_starts_dws_auth_login_once_for_login_error(
     tmp_path: Path, monkeypatch
 ):
