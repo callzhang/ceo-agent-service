@@ -1155,7 +1155,7 @@ def test_produce_once_suppresses_transient_list_unread_notification_until_thresh
     assert worker.produce_once() == 0
     assert worker.produce_once() == 0
     assert notifications == []
-    assert worker.store.count_errors() == 2
+    assert worker.store.count_errors() == 0
 
     assert worker.produce_once() == 0
 
@@ -1166,6 +1166,7 @@ def test_produce_once_suppresses_transient_list_unread_notification_until_thresh
             "url": None,
         }
     ]
+    assert worker.store.count_errors() == 1
     state = json.loads(
         worker.store.get_service_state(
             "dws_transient_error_count:list_unread_conversations"
@@ -1192,6 +1193,7 @@ def test_produce_once_clears_transient_list_unread_error_after_success(
     assert worker.produce_once() == 0
 
     assert notifications == []
+    assert worker.store.count_errors() == 0
     state = json.loads(
         worker.store.get_service_state(
             "dws_transient_error_count:list_unread_conversations"
