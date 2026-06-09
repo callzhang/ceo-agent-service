@@ -5045,9 +5045,9 @@ class DingTalkAutoReplyWorker:
                 raise ReplyDeliveryError(str(exc)) from exc
             return
         at_users = [target.user_id for target in at_targets if target.user_id]
-        at_open_dingtalk_ids, at_open_dingtalk_names = (
-            self._structured_reply_at_payload(conversation, at_targets)
-        )
+        reply_at_names = self._reply_at_display_names(conversation, at_targets)
+        at_open_dingtalk_ids: list[str] = []
+        at_open_dingtalk_names: list[str] = []
         direct_user_id = at_users[0] if conversation.single_chat and at_users else None
         reply_text = append_signature(reply_text)
         reply_text = self._format_reply_delivery_text(
@@ -5075,6 +5075,7 @@ class DingTalkAutoReplyWorker:
             direct_open_dingtalk_id=trigger.sender_open_dingtalk_id
             if conversation.single_chat
             else None,
+            reply_at_names=reply_at_names,
             comment_target_messages=comment_target_messages,
             raise_on_delivery_failure=raise_on_delivery_failure,
             allow_duplicate_send=allow_duplicate_send,
@@ -5126,6 +5127,7 @@ class DingTalkAutoReplyWorker:
         at_open_dingtalk_names: list[str],
         direct_user_id: str | None,
         direct_open_dingtalk_id: str | None,
+        reply_at_names: list[str] | None = None,
         comment_target_messages: list[DingTalkMessage] | None = None,
         raise_on_delivery_failure: bool = False,
         allow_duplicate_send: bool = False,
@@ -5169,7 +5171,7 @@ class DingTalkAutoReplyWorker:
                     direct_user_id=direct_user_id or "",
                     direct_open_dingtalk_id=direct_open_dingtalk_id or "",
                 )
-        reply_text = self._apply_reply_at_mentions(reply_text, at_open_dingtalk_names)
+        reply_text = self._apply_reply_at_mentions(reply_text, reply_at_names or [])
         self.store.update_reply_attempt(
             attempt_id,
             final_reply_text=reply_text,
@@ -5228,6 +5230,7 @@ class DingTalkAutoReplyWorker:
             at_users=at_users,
             at_open_dingtalk_ids=at_open_dingtalk_ids,
             at_open_dingtalk_names=at_open_dingtalk_names,
+            reply_at_names=reply_at_names,
             failure_error_kind="send",
             failure_notify_title=f"CEO auto reply failed: {conversation.title}",
             raise_on_delivery_failure=raise_on_delivery_failure,
@@ -5340,6 +5343,7 @@ class DingTalkAutoReplyWorker:
         at_users: list[str] | None = None,
         at_open_dingtalk_ids: list[str] | None = None,
         at_open_dingtalk_names: list[str] | None = None,
+        reply_at_names: list[str] | None = None,
         send_result_json_builder=None,
         failure_error_kind: str = "send",
         failure_send_error=None,
@@ -5381,12 +5385,12 @@ class DingTalkAutoReplyWorker:
                     )
                 return False
             at_users = [target.user_id for target in at_targets if target.user_id]
-            at_open_dingtalk_ids, at_open_dingtalk_names = (
-                self._structured_reply_at_payload(conversation, at_targets)
-            )
+            reply_at_names = self._reply_at_display_names(conversation, at_targets)
+            at_open_dingtalk_ids = []
+            at_open_dingtalk_names = []
         at_open_dingtalk_ids = at_open_dingtalk_ids or []
         at_open_dingtalk_names = at_open_dingtalk_names or []
-        reply_text = self._apply_reply_at_mentions(reply_text, at_open_dingtalk_names)
+        reply_text = self._apply_reply_at_mentions(reply_text, reply_at_names or [])
         self.store.update_reply_attempt(attempt_id, final_reply_text=reply_text)
         if not allow_duplicate_send and self.store.has_sent_reply_for_trigger(
             conversation.open_conversation_id,
@@ -5463,9 +5467,7 @@ class DingTalkAutoReplyWorker:
             native_reply_extra["at_open_dingtalk_ids"] = at_open_dingtalk_ids
             native_reply_extra["at_open_dingtalk_names"] = at_open_dingtalk_names
         delivery_kind = (
-            "group_send_with_at"
-            if not conversation.single_chat and at_open_dingtalk_ids
-            else "native_reply"
+            "native_reply"
         )
         self.store.update_reply_attempt(
             attempt_id,
@@ -5635,19 +5637,18 @@ class DingTalkAutoReplyWorker:
         ]
 
     @staticmethod
-    def _structured_reply_at_payload(
+    def _reply_at_display_names(
         conversation: DingTalkConversation, targets: list[ReplyAtTarget]
-    ) -> tuple[list[str], list[str]]:
+    ) -> list[str]:
         if conversation.single_chat:
-            return [], []
-        ids: list[str] = []
+            return []
         names: list[str] = []
         for target in targets:
-            if not target.open_dingtalk_id:
+            name = target.name.strip()
+            if not name:
                 continue
-            ids.append(target.open_dingtalk_id)
-            names.append(target.name.strip())
-        return ids, names
+            names.append(name)
+        return names
 
     @staticmethod
     def _apply_reply_at_mentions(reply_text: str, names: list[str]) -> str:

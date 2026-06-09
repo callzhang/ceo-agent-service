@@ -1029,7 +1029,7 @@ def test_reply_message_command_shape():
     ]
 
 
-def test_send_reply_to_trigger_uses_group_send_for_structured_mentions():
+def test_send_reply_to_trigger_prefers_native_reply_over_group_at_send():
     client = RecordingDwsClient({"success": True})
     conversation = DingTalkConversation(
         open_conversation_id="cid-1",
@@ -1061,13 +1061,13 @@ def test_send_reply_to_trigger_uses_group_send_for_structured_mentions():
             "dws",
             "chat",
             "message",
-            "send",
-            "--group",
+            "reply",
+            "--conversation-id",
             "cid-1",
-            "--title",
-            "回复：@ET(张毅倜) 先出方案。",
-            "--at-open-dingtalk-ids",
-            "open-et",
+            "--ref-msg-id",
+            "msg-1",
+            "--ref-sender",
+            "open-lily",
             "--text",
             " @ET(张毅倜) 先出方案。",
             "--format",

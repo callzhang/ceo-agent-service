@@ -1541,14 +1541,7 @@ class DwsClient:
         at_open_dingtalk_ids: list[str] | None = None,
         at_open_dingtalk_names: list[str] | None = None,
     ) -> dict[str, Any]:
-        if not conversation.single_chat and at_open_dingtalk_ids:
-            return self.send_message(
-                conversation.open_conversation_id,
-                text,
-                at_users=at_users,
-                at_open_dingtalk_ids=at_open_dingtalk_ids,
-                at_open_dingtalk_names=at_open_dingtalk_names,
-            )
+        del at_open_dingtalk_ids, at_open_dingtalk_names
         if not trigger.sender_open_dingtalk_id:
             raise DwsError("missing trigger senderOpenDingTalkId for native reply")
         return self.reply_message(

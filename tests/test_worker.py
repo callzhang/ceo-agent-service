@@ -482,14 +482,7 @@ class FakeDws:
         at_open_dingtalk_ids: list[str] | None = None,
         at_open_dingtalk_names: list[str] | None = None,
     ) -> None:
-        if not conversation.single_chat and at_open_dingtalk_ids:
-            return self.send_message(
-                conversation.open_conversation_id,
-                text,
-                at_users=at_users,
-                at_open_dingtalk_ids=at_open_dingtalk_ids,
-                at_open_dingtalk_names=at_open_dingtalk_names,
-            )
+        del at_open_dingtalk_ids, at_open_dingtalk_names
         return self.reply_message(
             conversation.open_conversation_id,
             trigger.open_message_id,
@@ -1723,8 +1716,15 @@ def test_fast_path_backoff_processes_trigger_when_unread_clears_without_user_rep
             "@周俊杰 可以，先推进（by明哥分身）",
         )
     ]
-    assert dws.reply_messages == []
-    assert final_sent_at_users(dws) == [["sender-1"]]
+    assert dws.reply_messages == [
+        (
+            "cid-1",
+            "msg-unread",
+            "sender-1",
+            "@周俊杰 可以，先推进（by明哥分身）",
+        )
+    ]
+    assert final_sent_at_users(dws) == [["sender-user-1"]]
 
 
 def test_reply_agent_envelope_send_reply_is_delivered(tmp_path: Path, monkeypatch):
@@ -4934,8 +4934,15 @@ def test_group_mention_sends_signed_reply(tmp_path: Path, monkeypatch):
             "@周俊杰 先按A方案走（by明哥分身）",
         )
     ]
-    assert final_sent_at_users(dws) == [["sender-1"]]
-    assert dws.reply_messages == []
+    assert final_sent_at_users(dws) == [["sender-user-1", "mentioned-user-1"]]
+    assert dws.reply_messages == [
+        (
+            "cid-1",
+            "msg-1",
+            "sender-1",
+            "@周俊杰 先按A方案走（by明哥分身）",
+        )
+    ]
     assert len(codex.calls) == 1
     prompt = codex.calls[0][0]
     assert "当前待处理消息:" in prompt
@@ -5006,20 +5013,28 @@ def test_group_reply_structures_explicit_reply_mentions(
         attempt_id=attempt_id,
     )
 
-    assert dws.reply_messages == []
+    assert dws.reply_messages == [
+        (
+            "cid-1",
+            "msg-1",
+            "open-lily",
+            "@ET(张毅倜) 先出方案；@Roy Han(韩露) 补材料。（by明哥分身）",
+        )
+    ]
     assert final_sent(dws) == [
         (
             "cid-1",
             "@ET(张毅倜) 先出方案；@Roy Han(韩露) 补材料。（by明哥分身）",
         )
     ]
-    assert final_sent_at_users(dws) == [["open-et", "open-roy"]]
+    assert final_sent_at_users(dws) == [["user-et", "user-roy"]]
     sent_reply = worker.store.get_sent_reply("cid-1", "msg-1")
     assert sent_reply is not None
     send_result = json.loads(sent_reply.send_result_json)
-    assert send_result["delivery"]["kind"] == "group_send_with_at"
-    assert send_result["at_open_dingtalk_ids"] == ["open-et", "open-roy"]
-    assert send_result["at_open_dingtalk_names"] == ["ET", "Roy Han"]
+    assert send_result["delivery"]["kind"] == "native_reply"
+    assert send_result["delivery"]["ref_message_id"] == "msg-1"
+    assert send_result["at_open_dingtalk_ids"] == []
+    assert send_result["at_open_dingtalk_names"] == []
 
 
 def test_group_reply_replaces_leading_name_with_structured_at(
@@ -5040,20 +5055,28 @@ def test_group_reply_replaces_leading_name_with_structured_at(
 
     worker.run_once()
 
-    assert dws.reply_messages == []
+    assert dws.reply_messages == [
+        (
+            "cid-1",
+            "msg-1",
+            "open-et",
+            "@ET 你要再往下收一层（by明哥分身）",
+        )
+    ]
     assert final_sent(dws) == [
         (
             "cid-1",
             "@ET 你要再往下收一层（by明哥分身）",
         )
     ]
-    assert final_sent_at_users(dws) == [["open-et"]]
+    assert final_sent_at_users(dws) == [["sender-user-1"]]
     sent_reply = worker.store.get_sent_reply("cid-1", "msg-1")
     assert sent_reply is not None
     send_result = json.loads(sent_reply.send_result_json)
-    assert send_result["delivery"]["kind"] == "group_send_with_at"
-    assert send_result["at_open_dingtalk_ids"] == ["open-et"]
-    assert send_result["at_open_dingtalk_names"] == ["ET"]
+    assert send_result["delivery"]["kind"] == "native_reply"
+    assert send_result["delivery"]["ref_message_id"] == "msg-1"
+    assert send_result["at_open_dingtalk_ids"] == []
+    assert send_result["at_open_dingtalk_names"] == []
 
 
 def test_success_notification_keeps_full_reply_text(tmp_path: Path, monkeypatch):
@@ -7726,8 +7749,10 @@ def test_handoff_sends_ack_dings_self_and_records_message_result(
     expected_ack = HANDOFF_ACK
     expected_sent_ack = f"@周俊杰 {expected_ack}"
     assert final_sent(dws) == [("cid-1", expected_sent_ack)]
-    assert dws.reply_messages == []
-    assert final_sent_at_users(dws) == [["sender-1"]]
+    assert dws.reply_messages == [
+        ("cid-1", "msg-1", "sender-1", expected_sent_ack)
+    ]
+    assert final_sent_at_users(dws) == [["sender-user-1"]]
     assert len(dws.dings) == 1
     assert "Friday" in dws.dings[0]
     assert "不要分身" in dws.dings[0]
@@ -7738,8 +7763,8 @@ def test_handoff_sends_ack_dings_self_and_records_message_result(
     assert attempt.send_status == "sent"
     sent_reply = store.get_sent_reply("cid-1", "msg-1")
     assert sent_reply is not None
-    assert '"kind": "group_send_with_at"' in sent_reply.send_result_json
-    assert '"at_open_dingtalk_ids": ["sender-1"]' in sent_reply.send_result_json
+    assert '"kind": "native_reply"' in sent_reply.send_result_json
+    assert '"ref_message_id": "msg-1"' in sent_reply.send_result_json
 
 
 def test_new_principal_mention_is_processed(

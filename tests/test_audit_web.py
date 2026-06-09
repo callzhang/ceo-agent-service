@@ -2827,14 +2827,7 @@ def test_handle_reviewed_message_reply_matches_sender_group_and_text(
             at_open_dingtalk_ids=None,
             at_open_dingtalk_names=None,
         ):
-            if not conversation.single_chat and at_open_dingtalk_ids:
-                return self.send_message(
-                    conversation.open_conversation_id,
-                    text,
-                    at_users=at_users,
-                    at_open_dingtalk_ids=at_open_dingtalk_ids,
-                    at_open_dingtalk_names=at_open_dingtalk_names,
-                )
+            del at_users, at_open_dingtalk_ids, at_open_dingtalk_names
             return self.reply_message(
                 conversation.open_conversation_id,
                 trigger.open_message_id,
@@ -2868,15 +2861,15 @@ def test_handle_reviewed_message_reply_matches_sender_group_and_text(
         attempt.final_reply_text
         == "@Mina 邹 这个岗位核心看业务拆解、模型理解、项目推进和学习速度。（by明哥分身）"
     )
-    assert dws.sent_messages == [
+    assert dws.sent_messages == []
+    assert dws.reply_messages == [
         (
             "cid-1",
+            "msg-1",
+            "open-mina",
             attempt.final_reply_text,
-            ["open-mina"],
-            None,
         )
     ]
-    assert dws.reply_messages == []
     assert sent_reply is not None
     assert sent_reply.recall_key == "recall-1"
 
@@ -2954,14 +2947,7 @@ def test_handle_reviewed_message_reply_uses_stored_group_and_recent_message(
             at_open_dingtalk_ids=None,
             at_open_dingtalk_names=None,
         ):
-            if not conversation.single_chat and at_open_dingtalk_ids:
-                return self.send_message(
-                    conversation.open_conversation_id,
-                    text,
-                    at_users=at_users,
-                    at_open_dingtalk_ids=at_open_dingtalk_ids,
-                    at_open_dingtalk_names=at_open_dingtalk_names,
-                )
+            del at_users, at_open_dingtalk_ids, at_open_dingtalk_names
             return self.reply_message(
                 conversation.open_conversation_id,
                 trigger.open_message_id,
@@ -3006,15 +2992,15 @@ def test_handle_reviewed_message_reply_uses_stored_group_and_recent_message(
         == "官网是 marketing 重要内容，CEO 直接相关；这类消息需要审核并回复。"
     )
     assert attempt.corrected_reply_text == "我已经完成审核，会把核心 comment 补到 tracker。"
-    assert dws.sent_messages == [
+    assert dws.sent_messages == []
+    assert dws.reply_messages == [
         (
             "cid-site",
+            "msg-site-1",
+            "open-claire",
             attempt.final_reply_text,
-            ["open-claire"],
-            None,
         )
     ]
-    assert dws.reply_messages == []
 
 
 def test_handle_reviewed_message_reply_matches_private_message_without_mention(
