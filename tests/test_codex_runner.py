@@ -54,7 +54,7 @@ def test_codex_command_exposes_memory_connector_mcp(tmp_path: Path, monkeypatch)
     command = runner.build_command(prompt="hello", session_id=None)
 
     assert "--ignore-user-config" in command
-    assert "--disable" not in command
+    assert command[command.index("--disable") + 1] == "hooks"
     assert (
         'mcp_servers.memory_connector.url="https://memory.example/mcp/"'
         in command
@@ -66,13 +66,27 @@ def test_codex_command_exposes_memory_connector_mcp(tmp_path: Path, monkeypatch)
     assert "x-memory-user-id" not in " ".join(command)
 
 
-def test_codex_command_uses_agent_envelope_schema_by_default(tmp_path: Path):
+def test_codex_command_does_not_use_agent_envelope_schema_by_default(tmp_path: Path):
     runner = CodexRunner(workspace=tmp_path, codex_bin="codex")
 
     command = runner.build_command(prompt="hello", session_id=None)
 
+    assert "--output-schema" not in command
+    assert str(AGENT_ENVELOPE_SCHEMA_PATH) not in command
+
+
+def test_codex_command_can_use_explicit_output_schema(tmp_path: Path):
+    runner = CodexRunner(workspace=tmp_path, codex_bin="codex")
+    schema = tmp_path / "strict.schema.json"
+
+    command = runner.build_command(
+        prompt="hello",
+        session_id=None,
+        output_schema_path=schema,
+    )
+
     schema_index = command.index("--output-schema") + 1
-    assert command[schema_index].endswith("app/schemas/agent_envelope.schema.json")
+    assert command[schema_index] == str(schema)
 
 
 def test_codex_runner_env_loads_memory_connector_env_file(
@@ -217,6 +231,8 @@ def test_builds_new_thread_command(tmp_path: Path):
         "gpt-5.5",
         "--ignore-user-config",
         "--ignore-rules",
+        "--disable",
+        "hooks",
         "-c",
         'approval_policy="untrusted"',
         "-c",
@@ -230,8 +246,6 @@ def test_builds_new_thread_command(tmp_path: Path):
         "-c",
         "include_environment_context=false",
         "--dangerously-bypass-approvals-and-sandbox",
-        "--output-schema",
-        str(AGENT_ENVELOPE_SCHEMA_PATH),
         "--cd",
         str(tmp_path),
         "-",
@@ -258,6 +272,8 @@ def test_builds_resume_command(tmp_path: Path):
         "gpt-5.5",
         "--ignore-user-config",
         "--ignore-rules",
+        "--disable",
+        "hooks",
         "-c",
         'approval_policy="untrusted"',
         "-c",
@@ -271,8 +287,6 @@ def test_builds_resume_command(tmp_path: Path):
         "-c",
         "include_environment_context=false",
         "--dangerously-bypass-approvals-and-sandbox",
-        "--output-schema",
-        str(AGENT_ENVELOPE_SCHEMA_PATH),
         "abc",
         "-",
     ]
@@ -311,9 +325,7 @@ def test_builds_resume_command_with_images(tmp_path: Path):
         image_paths=[image],
     )
 
-    assert command[-6:] == [
-        "--output-schema",
-        str(AGENT_ENVELOPE_SCHEMA_PATH),
+    assert command[-4:] == [
         "--image",
         str(image),
         "abc",

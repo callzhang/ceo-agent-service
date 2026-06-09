@@ -46,6 +46,43 @@ class AgentAudit(StrictBaseModel):
     documents: list[AgentAuditDocument]
     confidence: float = Field(ge=0, le=1)
 
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_documents(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        documents = data.get("documents")
+        if not isinstance(documents, list):
+            return data
+        normalized = []
+        changed = False
+        for document in documents:
+            if isinstance(document, str):
+                normalized.append(
+                    {"title": document, "url": "", "relevance": "mentioned"}
+                )
+                changed = True
+            elif isinstance(document, dict) and "title" not in document:
+                name = document.get("name")
+                if isinstance(name, str):
+                    status = document.get("status")
+                    summary = document.get("summary")
+                    normalized.append(
+                        {
+                            "title": name,
+                            "url": str(document.get("url") or ""),
+                            "relevance": str(summary or status or "mentioned"),
+                        }
+                    )
+                    changed = True
+                else:
+                    normalized.append(document)
+            else:
+                normalized.append(document)
+        if not changed:
+            return data
+        return {**data, "documents": normalized}
+
 
 class SendDingTalkReplyAction(StrictBaseModel):
     type: Literal["send_dingtalk_reply"]

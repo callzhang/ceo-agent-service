@@ -1765,6 +1765,20 @@ def test_corpus_dir_can_be_configured_from_env(monkeypatch):
     assert str(settings.corpus_dir) == "/tmp/ceo-corpus"
 
 
+def test_settings_expands_tilde_paths(monkeypatch):
+    monkeypatch.setenv("CEO_WORKSPACE", "~/Documents/memory")
+    monkeypatch.setenv("CEO_WORKER_DB", "~/tmp/worker.sqlite3")
+    monkeypatch.setenv("CEO_CORPUS_DIR", "~/tmp/corpus")
+    parser = build_parser()
+
+    args = parser.parse_args(["run-once"])
+    settings = settings_from_args(args)
+
+    assert settings.workspace == Path.home() / "Documents" / "memory"
+    assert settings.db_path == Path.home() / "tmp" / "worker.sqlite3"
+    assert settings.corpus_dir == Path.home() / "tmp" / "corpus"
+
+
 def test_ding_config_can_be_configured_from_env(monkeypatch):
     monkeypatch.setenv("CEO_DING_ROBOT_CODE", "robot-code")
     monkeypatch.setenv("CEO_DING_RECEIVER_USER_ID", "user-1")

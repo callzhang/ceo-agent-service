@@ -6,10 +6,7 @@ from pydantic import ValidationError
 
 import app.oa_approval as oa_approval
 from app.agent_envelope import AgentEnvelope
-from app.codex_runner import (
-    AGENT_ENVELOPE_SCHEMA_PATH,
-    CODEX_BYPASS_APPROVALS_AND_SANDBOX,
-)
+from app.codex_runner import CODEX_BYPASS_APPROVALS_AND_SANDBOX
 from app.oa_approval import (
     OA_APPROVAL_SCHEMA_PATH,
     OaApprovalCodexRunner,
@@ -248,10 +245,8 @@ def test_runner_injects_skill_uses_schema_parses_result_and_records_session(
     assert "# OA Skill" in developer_arg
     assert "审批前先审阅。" in developer_arg
     assert CODEX_BYPASS_APPROVALS_AND_SANDBOX in command
-    assert "--output-schema" in command
-    assert command[command.index("--output-schema") + 1] == str(
-        AGENT_ENVELOPE_SCHEMA_PATH
-    )
+    assert command[command.index("--disable") + 1] == "hooks"
+    assert "--output-schema" not in command
     assert runner.runner.build_env()["HOME"] == "/Users/principal"
     assert prompt == "请审批"
     assert result.process_instance_id == "proc-1"
@@ -266,7 +261,7 @@ def test_runner_injects_skill_uses_schema_parses_result_and_records_session(
     ]
 
 
-def test_resume_command_also_uses_output_schema(tmp_path: Path):
+def test_resume_command_omits_agent_envelope_output_schema(tmp_path: Path):
     skill_path = tmp_path / "skill.md"
     skill_path.write_text("# OA Skill", encoding="utf-8")
     calls: list[list[str]] = []
@@ -289,10 +284,8 @@ def test_resume_command_also_uses_output_schema(tmp_path: Path):
 
     command = calls[0]
     assert command[:3] == ["codex", "exec", "resume"]
-    assert "--output-schema" in command
-    assert command[command.index("--output-schema") + 1] == str(
-        AGENT_ENVELOPE_SCHEMA_PATH
-    )
+    assert command[command.index("--disable") + 1] == "hooks"
+    assert "--output-schema" not in command
 
 
 def test_parse_oa_approval_json_accepts_item_completed_message_output_text():
@@ -334,6 +327,51 @@ def test_parse_oa_approval_json_accepts_item_completed_message_output_text():
     assert result.process_instance_id == "proc-1"
     assert result.oa_action == "退回"
     assert result.oa_remark.startswith("请补充付款依据")
+
+
+def test_parse_oa_approval_json_ignores_empty_task_id_query_value():
+    result_json = {
+        "process_instance_id": "proc-1",
+        "task_id": "task-1",
+        "oa_url": "https://aflow.dingtalk.com/detail?procInstId=proc-1&taskId=",
+        "oa_action": "退回",
+        "oa_remark": "请补充面试记录和试用期考核标准。",
+        "action_result": {},
+        "audit_summary": "已审阅审批详情，材料不足。",
+        "audit_documents": [],
+    }
+    raw = json.dumps(
+        {
+            "type": "item.completed",
+            "item": {
+                "type": "agent_message",
+                "text": json.dumps(
+                    {
+                        "kind": "oa_approval",
+                        "user_response": {
+                            "mode": "no_reply",
+                            "text": "",
+                            "sensitivity_kind": "internal_personnel",
+                        },
+                        "system_actions": [],
+                        "domain_payload": result_json,
+                        "audit": {
+                            "summary": "已审阅审批详情，材料不足。",
+                            "documents": [],
+                            "confidence": 0.8,
+                        },
+                    },
+                    ensure_ascii=False,
+                ),
+            },
+        },
+        ensure_ascii=False,
+    )
+
+    result = oa_approval.parse_oa_approval_json(raw, allow_legacy=False)
+
+    assert result.task_id == "task-1"
+    assert result.oa_action == "退回"
 
 
 def test_parse_oa_approval_json_accepts_task_complete_last_agent_message():
@@ -410,6 +448,42 @@ def test_parse_oa_approval_json_accepts_agent_envelope_domain_payload():
     assert result.task_id == "task-1"
     assert result.oa_action == "通过"
     assert result.oa_remark == "同意。"
+
+
+def test_parse_oa_approval_json_normalizes_string_audit_documents():
+    raw = json.dumps(
+        {
+            "kind": "oa_approval",
+            "user_response": {
+                "mode": "no_reply",
+                "text": "",
+                "sensitivity_kind": "internal_personnel",
+            },
+            "system_actions": [],
+            "domain_payload": {
+                "process_instance_id": "proc-1",
+                "task_id": "task-1",
+                "oa_url": "https://aflow.dingtalk.com/detail?procInstId=proc-1",
+                "oa_action": "退回",
+                "oa_remark": "请补充材料。",
+                "action_result": {},
+                "audit_summary": "已审阅，材料不足。",
+                "audit_documents": ["OA审批表单详情"],
+            },
+            "audit": {
+                "summary": "已审阅，材料不足。",
+                "documents": ["OA审批表单详情"],
+                "confidence": 0.8,
+            },
+        },
+        ensure_ascii=False,
+    )
+
+    result = oa_approval.parse_oa_approval_json(raw, allow_legacy=False)
+
+    assert result.audit_documents == [
+        {"name": "OA审批表单详情", "status": "mentioned"}
+    ]
 
 
 def test_parse_oa_approval_json_strict_rejects_legacy_result():

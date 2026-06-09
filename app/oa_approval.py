@@ -19,7 +19,6 @@ from app.codex_history import (
     extract_codex_audit_events_from_session,
 )
 from app.codex_runner import (
-    AGENT_ENVELOPE_SCHEMA_PATH,
     CODEX_BYPASS_APPROVALS_AND_SANDBOX,
     _config_string,
 )
@@ -58,6 +57,26 @@ class OaApprovalResult(BaseModel):
     audit_summary: str = Field(min_length=1)
     audit_documents: list[dict[str, str]]
 
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_audit_documents(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        documents = data.get("audit_documents")
+        if not isinstance(documents, list):
+            return data
+        normalized = []
+        changed = False
+        for document in documents:
+            if isinstance(document, str):
+                normalized.append({"name": document, "status": "mentioned"})
+                changed = True
+            else:
+                normalized.append(document)
+        if not changed:
+            return data
+        return {**data, "audit_documents": normalized}
+
     @model_validator(mode="after")
     def validate_oa_identifiers(self) -> "OaApprovalResult":
         if not self.oa_url:
@@ -70,6 +89,7 @@ class OaApprovalResult(BaseModel):
             value
             for key in ("procInstId", "processInstanceId", "process_instance_id")
             for value in query.get(key, [])
+            if value
         }
         if process_values and self.process_instance_id not in process_values:
             raise ValueError("process_instance_id does not match oa_url")
@@ -77,6 +97,7 @@ class OaApprovalResult(BaseModel):
             value
             for key in ("taskId", "task_id")
             for value in query.get(key, [])
+            if value
         }
         if task_values and self.task_id not in task_values:
             raise ValueError("task_id does not match oa_url")
@@ -387,6 +408,8 @@ class _OaApprovalCommandBuilder:
             "gpt-5.5",
             "--ignore-user-config",
             "--ignore-rules",
+            "--disable",
+            "hooks",
             *safety_options,
             "-c",
             _config_string("developer_instructions", self._developer_instructions()),
@@ -406,8 +429,6 @@ class _OaApprovalCommandBuilder:
                 "resume",
                 *common_options,
                 *bypass_options,
-                "--output-schema",
-                str(AGENT_ENVELOPE_SCHEMA_PATH),
                 session_id,
                 "-",
             ]
@@ -416,8 +437,6 @@ class _OaApprovalCommandBuilder:
             "exec",
             *common_options,
             *bypass_options,
-            "--output-schema",
-            str(AGENT_ENVELOPE_SCHEMA_PATH),
             "--cd",
             str(self.workspace),
             "-",

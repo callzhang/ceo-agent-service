@@ -36,6 +36,60 @@ def test_agent_envelope_accepts_typed_system_action():
     assert envelope.user_response.text == "收到，我来处理。"
 
 
+def test_agent_envelope_normalizes_string_audit_documents():
+    envelope = AgentEnvelope.model_validate(
+        {
+            "kind": "reply",
+            "user_response": {
+                "mode": "no_reply",
+                "text": "",
+                "sensitivity_kind": "general",
+            },
+            "system_actions": [],
+            "domain_payload": {},
+            "audit": {
+                "summary": "已查看上下文。",
+                "documents": ["OA审批表单详情"],
+                "confidence": 0.8,
+            },
+        }
+    )
+
+    assert envelope.audit.documents[0].title == "OA审批表单详情"
+    assert envelope.audit.documents[0].url == ""
+    assert envelope.audit.documents[0].relevance == "mentioned"
+
+
+def test_agent_envelope_normalizes_named_audit_documents():
+    envelope = AgentEnvelope.model_validate(
+        {
+            "kind": "reply",
+            "user_response": {
+                "mode": "no_reply",
+                "text": "",
+                "sensitivity_kind": "general",
+            },
+            "system_actions": [],
+            "domain_payload": {},
+            "audit": {
+                "summary": "已查看上下文。",
+                "documents": [
+                    {
+                        "name": "OA 表单详情",
+                        "status": "read",
+                        "summary": "确认当前任务属于 Derek。",
+                    }
+                ],
+                "confidence": 0.8,
+            },
+        }
+    )
+
+    assert envelope.audit.documents[0].title == "OA 表单详情"
+    assert envelope.audit.documents[0].url == ""
+    assert envelope.audit.documents[0].relevance == "确认当前任务属于 Derek。"
+
+
 def test_agent_envelope_requires_non_empty_audit_summary():
     with pytest.raises(ValidationError):
         AgentEnvelope.model_validate(

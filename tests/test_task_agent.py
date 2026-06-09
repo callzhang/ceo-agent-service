@@ -590,6 +590,7 @@ def test_task_agent_codex_runner_uses_process_runner_signature(tmp_path):
     assert calls[0][1]["idle_timeout_seconds"] == 3
     assert "--output-schema" in command
     assert "--ignore-user-config" in command
+    assert command[command.index("--disable") + 1] == "hooks"
     assert str(TASK_AGENT_DECISION_SCHEMA_PATH) in command
     assert str(CODEX_DECISION_SCHEMA_PATH) not in command
 

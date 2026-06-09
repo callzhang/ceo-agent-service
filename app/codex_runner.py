@@ -144,7 +144,7 @@ class CodexRunner:
         prompt: str,
         session_id: str | None,
         image_paths: list[Path] | None = None,
-        output_schema_path: Path | None = AGENT_ENVELOPE_SCHEMA_PATH,
+        output_schema_path: Path | None = None,
         ignore_user_config: bool = False,
     ) -> list[str]:
         image_options: list[str] = []
@@ -156,6 +156,8 @@ class CodexRunner:
             "gpt-5.5",
             "--ignore-user-config",
             "--ignore-rules",
+            "--disable",
+            "hooks",
             *memory_connector_config_options(),
             "-c",
             'approval_policy="untrusted"',

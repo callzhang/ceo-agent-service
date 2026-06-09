@@ -470,9 +470,9 @@ def build_parser() -> argparse.ArgumentParser:
 
 def settings_from_args(args: argparse.Namespace) -> WorkerSettings:
     return WorkerSettings(
-        workspace=Path(args.workspace),
-        db_path=Path(args.db),
-        corpus_dir=Path(args.corpus_dir),
+        workspace=_expand_path_arg(args.workspace),
+        db_path=_expand_path_arg(args.db),
+        corpus_dir=_expand_path_arg(args.corpus_dir),
         dry_run=bool(args.dry_run),
         poll_interval_seconds=args.poll_interval_seconds,
         batch_seconds=args.batch_seconds,
@@ -496,6 +496,10 @@ def settings_from_args(args: argparse.Namespace) -> WorkerSettings:
         ),
         max_batches=args.max_batches,
     )
+
+
+def _expand_path_arg(value: str | Path) -> Path:
+    return Path(value).expanduser()
 
 
 def create_worker(settings: WorkerSettings) -> DingTalkAutoReplyWorker:
