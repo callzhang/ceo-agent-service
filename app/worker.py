@@ -218,7 +218,7 @@ MESSAGE_RECOVERY_CHECKED_AT_STATE_KEY = "message_recovery_checked_at"
 MESSAGE_FAST_PATH_CHECKED_AT_STATE_KEY = "message_fast_path_checked_at"
 DWS_AUTH_LOGIN_STATE_KEY = "dws_auth_login"
 DWS_FORBIDDEN_CONVERSATIONS_STATE_KEY = "dws_forbidden_conversations"
-DWS_FORBIDDEN_CONVERSATION_COOLDOWN = timedelta(days=1)
+DWS_FORBIDDEN_CONVERSATION_COOLDOWN = timedelta(minutes=5)
 ORG_CACHE_REFRESH_INTERVAL = timedelta(days=7)
 AITABLE_TABLE_PREVIEW_LIMIT = 5
 AITABLE_RECORD_PREVIEW_LIMIT = 10
@@ -297,6 +297,8 @@ class DingTalkAutoReplyWorker:
         try:
             result = call()
             self._clear_dws_transient_error(kind)
+            if conversation_id:
+                self._clear_dws_read_forbidden(conversation_id)
             return result
         except Exception as exc:
             if raise_authorization and self._is_authorization_error(exc):
@@ -794,9 +796,26 @@ class DingTalkAutoReplyWorker:
             return False
         forbidden_until = self._parse_service_state_datetime(forbidden_until_text)
         if forbidden_until is None:
+            self._clear_dws_read_forbidden(conversation_id)
             return False
-        return self._now().astimezone(timezone.utc) < forbidden_until.astimezone(
-            timezone.utc
+        now_utc = self._now().astimezone(timezone.utc)
+        forbidden_until_utc = forbidden_until.astimezone(timezone.utc)
+        if forbidden_until_utc <= now_utc:
+            self._clear_dws_read_forbidden(conversation_id)
+            return False
+        if forbidden_until_utc - now_utc > DWS_FORBIDDEN_CONVERSATION_COOLDOWN:
+            self._clear_dws_read_forbidden(conversation_id)
+            return False
+        return True
+
+    def _clear_dws_read_forbidden(self, conversation_id: str) -> None:
+        state = self._dws_forbidden_conversations()
+        if conversation_id not in state:
+            return
+        del state[conversation_id]
+        self.store.set_service_state(
+            DWS_FORBIDDEN_CONVERSATIONS_STATE_KEY,
+            json.dumps(state, ensure_ascii=False, sort_keys=True),
         )
 
     def _dws_forbidden_conversations(self) -> dict[str, str]:

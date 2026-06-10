@@ -2630,6 +2630,73 @@ def test_produce_once_suppresses_repeated_forbidden_unread_reads(
     assert worker.store.count_reply_tasks(status="pending") == 0
 
 
+def test_forbidden_read_cache_only_suppresses_during_short_cooldown(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message("窗口打开时也要能恢复", single_chat=True)
+    dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
+    worker = make_worker(
+        tmp_path,
+        dws,
+        FakeCodex(CodexDecision(action=CodexAction.NO_REPLY, reason="test")),
+        monkeypatch,
+    )
+    forbidden_until = (
+        fixed_worker_now().astimezone(ZoneInfo("UTC"))
+        + worker_module.DWS_FORBIDDEN_CONVERSATION_COOLDOWN
+        - timedelta(seconds=1)
+    ).isoformat()
+    worker.store.set_service_state(
+        "dws_forbidden_conversations",
+        json.dumps({"cid-1": forbidden_until}),
+    )
+
+    messages = worker._read_conversation_messages(
+        "read_recent_messages",
+        conversation(single_chat=True),
+        lambda: dws.read_recent_messages(conversation(single_chat=True)),
+        default=[],
+    )
+
+    assert messages == []
+    assert dws.recent_message_reads == []
+
+
+def test_stale_forbidden_read_cache_does_not_block_recovered_single_chat(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message("窗口打开时也要能恢复", single_chat=True)
+    dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
+    worker = make_worker(
+        tmp_path,
+        dws,
+        FakeCodex(CodexDecision(action=CodexAction.NO_REPLY, reason="test")),
+        monkeypatch,
+    )
+    forbidden_until = (
+        fixed_worker_now().astimezone(ZoneInfo("UTC"))
+        + worker_module.DWS_FORBIDDEN_CONVERSATION_COOLDOWN
+        + timedelta(hours=1)
+    ).isoformat()
+    worker.store.set_service_state(
+        "dws_forbidden_conversations",
+        json.dumps({"cid-1": forbidden_until}),
+    )
+
+    messages = worker._read_conversation_messages(
+        "read_recent_messages",
+        conversation(single_chat=True),
+        lambda: dws.read_recent_messages(conversation(single_chat=True)),
+        default=[],
+    )
+
+    assert [item.open_message_id for item in messages] == [trigger.open_message_id]
+    assert dws.recent_message_reads == ["cid-1"]
+    assert json.loads(
+        worker.store.get_service_state("dws_forbidden_conversations") or "{}"
+    ) == {}
+
+
 def test_produce_once_does_not_notify_when_only_recent_context_read_fails(
     tmp_path: Path, monkeypatch
 ):
