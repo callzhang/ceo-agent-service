@@ -121,6 +121,8 @@ def test_cached_dws_client_delegates_message_io_and_uses_cached_org(tmp_path):
             self.emojis = []
             self.text_emotions = []
             self.created_text_emotions = []
+            self.doc_comments = []
+            self.markdown_docs = []
 
         def send_message(
             self,
@@ -199,6 +201,14 @@ def test_cached_dws_client_delegates_message_io_and_uses_cached_org(tmp_path):
             self.created_text_emotions.append((text, emotion_name, background_id))
             return {"emotionId": "created-1"}
 
+        def create_doc_comment(self, node_id, content):
+            self.doc_comments.append((node_id, content))
+            return {"result": {"commentKey": "comment-1"}}
+
+        def create_markdown_doc(self, name, content):
+            self.markdown_docs.append((name, content))
+            return {"result": {"url": "https://alidocs.example/doc-1"}}
+
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.set_current_user_id("principal-user")
     cached = CachedDwsClient(FakeDws(), CachedOrgDirectory(store))
@@ -219,6 +229,8 @@ def test_cached_dws_client_delegates_message_io_and_uses_cached_org(tmp_path):
         emotion_name="我去摇人",
         background_id="im_bg_5",
     )
+    cached.create_doc_comment("https://alidocs.example/doc", "处理好了")
+    cached.create_markdown_doc("CEO回复", "# 正文")
     cached.ding_self("handoff")
 
     assert cached.dws.sent == [("cid-1", "ok", ["user-1"], [], [])]
@@ -228,6 +240,10 @@ def test_cached_dws_client_delegates_message_io_and_uses_cached_org(tmp_path):
         ("cid-1", "msg-1", "收到", "ok", "OK", "blue")
     ]
     assert cached.dws.created_text_emotions == [("我去摇人", "我去摇人", "im_bg_5")]
+    assert cached.dws.doc_comments == [
+        ("https://alidocs.example/doc", "处理好了")
+    ]
+    assert cached.dws.markdown_docs == [("CEO回复", "# 正文")]
     assert cached.dws.dings == [("principal-user", "handoff")]
     assert cached.is_current_user_message(message(sender_user_id="principal-user")) is True
 

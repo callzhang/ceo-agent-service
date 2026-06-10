@@ -347,6 +347,12 @@ class CachedDwsClient:
             background_id=background_id,
         )
 
+    def create_doc_comment(self, node_id: str, content: str):
+        return self.dws.create_doc_comment(node_id, content)
+
+    def create_markdown_doc(self, name: str, content: str):
+        return self.dws.create_markdown_doc(name, content)
+
     def recall_bot_message(self, conversation_id: str | None, process_query_key: str):
         return self.dws.recall_bot_message(conversation_id, process_query_key)
 
