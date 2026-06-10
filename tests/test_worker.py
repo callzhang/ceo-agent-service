@@ -131,6 +131,8 @@ class FakeDws:
         self.robot_message_file_download_calls: list[str] = []
         self.sent: list[tuple[str, str]] = []
         self.reply_messages: list[tuple[str, str, str, str]] = []
+        self.send_visible = True
+        self.reply_visible = True
         self.message_emojis: list[tuple[str, str, str]] = []
         self.message_text_emotions: list[tuple[str, str, str, str, str, str]] = []
         self.created_text_emotions: list[tuple[str, str, str]] = []
@@ -454,6 +456,8 @@ class FakeDws:
         self.sent_at_users.append(at_users or [])
         self.direct_user_ids.append(user_id)
         self.direct_open_dingtalk_ids.append(open_dingtalk_id)
+        if conversation_id and self.send_visible:
+            self._append_visible_message(conversation_id, text)
         return self.send_result
 
     def reply_message(
@@ -477,7 +481,22 @@ class FakeDws:
         self.sent_at_users.append(at_users or [])
         self.direct_user_ids.append(None)
         self.direct_open_dingtalk_ids.append(None)
+        if self.reply_visible:
+            self._append_visible_message(conversation_id, text)
         return self.send_result
+
+    def _append_visible_message(self, conversation_id: str, text: str) -> None:
+        visible = DingTalkMessage(
+            open_conversation_id=conversation_id,
+            open_message_id=f"sent-{len(self.sent)}",
+            conversation_title="CEO-2 管理群",
+            single_chat=False,
+            sender_name="磊哥",
+            sender_open_dingtalk_id="principal-open-1",
+            create_time="2026-05-13 18:00:00",
+            content=text,
+        )
+        self.messages.setdefault(conversation_id, []).insert(0, visible)
 
     def send_reply_to_trigger(
         self,
@@ -1975,6 +1994,40 @@ def test_worker_splits_long_reply_before_sending(tmp_path: Path, monkeypatch):
     assert sent_at_users == [["sender-user-1"], [], []]
 
 
+def test_worker_falls_back_to_group_send_when_native_reply_is_not_visible(
+    tmp_path: Path,
+    monkeypatch,
+):
+    monkeypatch.setenv("CEO_REPLY_VISIBILITY_RECHECK_SECONDS", "0")
+    trigger = message("@Alex Chen(明哥) 帮我看下")
+    dws = FakeDws([conversation()], {"cid-1": [trigger]})
+    dws.reply_visible = False
+    codex = FakeCodex(
+        CodexDecision(
+            action=CodexAction.SEND_REPLY,
+            reply_text="A" * 6000,
+            sensitivity_kind=SensitivityKind.GENERAL,
+        )
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch, dry_run=False)
+
+    worker.run_once()
+
+    assert len(dws.reply_messages) == 3
+    sent = final_sent(dws)
+    assert len(sent) == 6
+    assert sent[3][1].startswith("【1/3】\n@周俊杰 ")
+    assert sent[4][1].startswith("【2/3】\n")
+    assert sent[5][1].startswith("【3/3】\n")
+    assert final_sent_at_users(dws)[3:] == [["sender-user-1"], [], []]
+    attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
+    assert attempt is not None
+    assert attempt.send_status == "sent"
+    sent_reply = worker.store.get_sent_reply("cid-1", "msg-1")
+    assert sent_reply is not None
+    assert "group_message_after_invisible_reply" in sent_reply.send_result_json
+
+
 def test_queued_task_falls_back_to_trigger_when_context_read_fails(
     tmp_path: Path, monkeypatch
 ):
@@ -2015,7 +2068,8 @@ def test_queued_task_falls_back_to_trigger_when_context_read_fails(
     assert attempt.send_status == "sent"
     errors = worker.store.list_errors(limit=10)
     assert errors == []
-    assert dws.recent_message_reads == ["cid-1"]
+    assert dws.recent_message_reads[0] == "cid-1"
+    assert dws.recent_message_reads.count("cid-1") == 2
     assert dws.unread_message_reads == []
 
 
@@ -6956,7 +7010,8 @@ def test_rerun_message_looks_up_trigger_by_id_when_recent_context_expired(
     )
 
     assert processed == "msg-1"
-    assert dws.recent_message_reads == ["cid-1"]
+    assert dws.recent_message_reads[0] == "cid-1"
+    assert dws.recent_message_reads.count("cid-1") == 2
     assert dws.unread_message_reads == ["cid-1"]
     assert dws.messages_by_id_reads == [["msg-1"]]
     assert len(codex.calls) == 1

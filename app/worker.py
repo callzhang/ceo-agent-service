@@ -1,5 +1,7 @@
 import json
+import os
 import re
+import time
 import urllib.request
 import zipfile
 from collections.abc import Callable
@@ -5838,7 +5840,9 @@ class DingTalkAutoReplyWorker:
             native_reply_extra["at_open_dingtalk_ids"] = at_open_dingtalk_ids
             native_reply_extra["at_open_dingtalk_names"] = at_open_dingtalk_names
         delivery_kind = (
-            "native_reply"
+            "group_message_after_invisible_reply"
+            if self._send_result_used_invisible_reply_fallback(send_result)
+            else "native_reply"
         )
         self.store.update_reply_attempt(
             attempt_id,
@@ -5959,7 +5963,121 @@ class DingTalkAutoReplyWorker:
             chunk_results.append(
                 {"index": index, "text": chunk, "send_result": send_result}
             )
-        return max_retry_count, {"chunks": chunk_results}
+        result: dict[str, Any] = {"chunks": chunk_results}
+        if (
+            not conversation.single_chat
+            and not self._sent_chunks_visible(conversation, chunks)
+        ):
+            fallback_retry_count, fallback_results = (
+                self._send_group_message_chunks_with_retry(
+                    conversation,
+                    chunks,
+                    at_users=at_users,
+                    at_open_dingtalk_ids=at_open_dingtalk_ids,
+                    at_open_dingtalk_names=at_open_dingtalk_names,
+                )
+            )
+            max_retry_count = max(max_retry_count, fallback_retry_count)
+            result["fallback"] = "group_message_after_invisible_reply"
+            result["fallback_chunks"] = fallback_results
+            if not self._sent_chunks_visible(conversation, chunks):
+                raise RuntimeError(
+                    "DingTalk reply succeeded but was not visible after fallback send"
+                )
+        return max_retry_count, result
+
+    def _send_group_message_chunks_with_retry(
+        self,
+        conversation: DingTalkConversation,
+        chunks: list[str],
+        *,
+        at_users: list[str] | None = None,
+        at_open_dingtalk_ids: list[str] | None = None,
+        at_open_dingtalk_names: list[str] | None = None,
+    ) -> tuple[int, list[dict[str, Any]]]:
+        max_retry_count = 0
+        results = []
+        for index, chunk in enumerate(chunks, start=1):
+            chunk_at_users = at_users if index == 1 else []
+            chunk_at_open_dingtalk_ids = at_open_dingtalk_ids if index == 1 else []
+            chunk_at_open_dingtalk_names = at_open_dingtalk_names if index == 1 else []
+            retry_count, send_result = self._send_single_group_message_with_retry(
+                conversation,
+                chunk,
+                at_users=chunk_at_users,
+                at_open_dingtalk_ids=chunk_at_open_dingtalk_ids,
+                at_open_dingtalk_names=chunk_at_open_dingtalk_names,
+            )
+            max_retry_count = max(max_retry_count, retry_count)
+            results.append({"index": index, "text": chunk, "send_result": send_result})
+        return max_retry_count, results
+
+    def _send_single_group_message_with_retry(
+        self,
+        conversation: DingTalkConversation,
+        text: str,
+        *,
+        at_users: list[str] | None = None,
+        at_open_dingtalk_ids: list[str] | None = None,
+        at_open_dingtalk_names: list[str] | None = None,
+    ) -> tuple[int, dict | None]:
+        errors: list[str] = []
+        for attempt_number in range(1, self.send_attempts + 1):
+            try:
+                send_result = self.dws.send_message(
+                    conversation.open_conversation_id,
+                    text,
+                    at_users=at_users,
+                    at_open_dingtalk_ids=at_open_dingtalk_ids,
+                    at_open_dingtalk_names=at_open_dingtalk_names,
+                )
+                return attempt_number - 1, send_result
+            except Exception as exc:
+                if getattr(exc, "needs_authorization", False):
+                    raise exc
+                errors.append(f"attempt {attempt_number}: {exc}")
+        raise RuntimeError(" | ".join(errors))
+
+    def _sent_chunks_visible(
+        self,
+        conversation: DingTalkConversation,
+        chunks: list[str],
+    ) -> bool:
+        if not chunks:
+            return False
+        if self._recent_messages_contain_chunks(conversation, chunks):
+            return True
+        time.sleep(float(os.getenv("CEO_REPLY_VISIBILITY_RECHECK_SECONDS", "2")))
+        return self._recent_messages_contain_chunks(conversation, chunks)
+
+    def _recent_messages_contain_chunks(
+        self,
+        conversation: DingTalkConversation,
+        chunks: list[str],
+    ) -> bool:
+        try:
+            recent_messages = self.dws.read_recent_messages(conversation)
+        except Exception as exc:
+            del exc
+            return True
+        recent_texts = [
+            self._normalize_visible_message_text(message.content)
+            for message in recent_messages
+        ]
+        return all(
+            self._normalize_visible_message_text(chunk) in recent_texts
+            for chunk in chunks
+        )
+
+    @staticmethod
+    def _normalize_visible_message_text(text: str) -> str:
+        return "\n".join(line.strip() for line in text.splitlines() if line.strip())
+
+    @staticmethod
+    def _send_result_used_invisible_reply_fallback(send_result: dict | None) -> bool:
+        return isinstance(send_result, dict) and send_result.get("fallback") == (
+            "group_message_after_invisible_reply"
+        )
 
     def _send_single_reply_to_trigger_with_retry(
         self,
