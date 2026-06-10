@@ -599,11 +599,18 @@ def normalize_okr_review_domain_payload(payload: dict) -> dict:
     normalized = dict(payload)
     summary = normalized.get("summary")
     if isinstance(summary, dict):
-        normalized["summary"] = str(
+        text = str(
             summary.get("overall_comment")
+            or summary.get("overall_assessment")
             or summary.get("summary")
-            or json.dumps(summary, ensure_ascii=False)
-        )
+            or ""
+        ).strip()
+        gaps = summary.get("key_gaps")
+        if isinstance(gaps, list) and gaps:
+            text = (
+                text + "\n\n关键差距：\n" + "\n".join(f"- {gap}" for gap in gaps)
+            ).strip()
+        normalized["summary"] = text or json.dumps(summary, ensure_ascii=False)
     items = normalized.get("items")
     if isinstance(items, list):
         normalized["items"] = [_normalize_okr_review_item(item) for item in items]
@@ -650,7 +657,9 @@ def _normalize_okr_review_item(item: object) -> object:
         claim_text = "；".join(str(claim) for claim in employee_claims)
     else:
         claim_text = str(employee_claims or item.get("claim_text") or "")
-    claim_score = _number(item.get("employee_claim_score"))
+    claim_score = _number(
+        _first_present_value(item, ("employee_claim_score", "claim_score"))
+    )
     return {
         **item,
         "objective_title": str(item.get("objective") or item.get("objective_title") or ""),

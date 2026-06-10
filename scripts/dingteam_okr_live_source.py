@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import base64
 import json
+import os
 import subprocess
 import sys
 import time
@@ -34,12 +35,46 @@ end run
 """
 
 
+# Open the 叮当OKR tab automatically if none is present, reusing the existing
+# Chrome login session.
+_CORP_ID = os.getenv("CEO_OKR_DINGTEAM_CORPID", "ding8ffc70a4ef94915f35c2f4657eb6378f")
+_APP_ID = os.getenv("CEO_OKR_DINGTEAM_APPID", "40707")
+_SUITE_ID = os.getenv("CEO_OKR_DINGTEAM_SUITEID", "9242001")
+DINGTEAM_URL = os.getenv(
+    "CEO_OKR_DINGTEAM_URL",
+    "https://dingokr.dingteam.com/web/okr/pc/index.html"
+    f"?corpid={_CORP_ID}&appid={_APP_ID}&suiteid={_SUITE_ID}",
+)
+
+OPEN_TAB_APPLESCRIPT = """
+on run argv
+  set targetUrl to item 1 of argv
+  tell application "Google Chrome"
+    repeat with w in windows
+      repeat with t in tabs of w
+        if (URL of t) contains "dingokr.dingteam.com" then
+          return "exists"
+        end if
+      end repeat
+    end repeat
+    if (count of windows) = 0 then
+      make new window
+    end if
+    tell front window to make new tab with properties {URL:targetUrl}
+    return "opened"
+  end tell
+end run
+"""
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--user-id", required=True)
     parser.add_argument("--period-label", required=True)
     parser.add_argument("--timeout-seconds", type=float, default=24.0)
     args = parser.parse_args()
+
+    _ensure_dingteam_tab()
 
     result_attribute = f"data-codex-dingteam-okr-live-{uuid.uuid4().hex}"
     page_script = _build_page_script(
@@ -77,6 +112,38 @@ def _execute_in_dingteam_tab(script: str) -> str:
     if completed.returncode != 0:
         raise RuntimeError(completed.stderr.strip() or completed.stdout.strip())
     return completed.stdout.strip()
+
+
+def _ensure_dingteam_tab(wait_seconds: float = 25.0) -> None:
+    """Ensure an authorized dingokr.dingteam.com tab exists; open one if not.
+
+    Opening reuses the existing Chrome login session. If the user is not logged
+    in, the new tab lands on the DingTalk login wall and the extraction will
+    fail clearly afterwards.
+    """
+    completed = subprocess.run(
+        ["osascript", "-e", OPEN_TAB_APPLESCRIPT, DINGTEAM_URL],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        raise RuntimeError(completed.stderr.strip() or completed.stdout.strip())
+    if completed.stdout.strip() == "exists":
+        return
+    # A new tab was opened; wait for the SPA bundle to be ready before injecting.
+    deadline = time.monotonic() + wait_seconds
+    while time.monotonic() < deadline:
+        try:
+            ready = _execute_in_dingteam_tab(
+                "(function(){try{return window.webpackChunkallinone?'ready':'loading';}"
+                "catch(e){return 'loading';}})()"
+            )
+            if ready == "ready":
+                return
+        except Exception:
+            pass
+        time.sleep(1.0)
 
 
 def _inject_script(page_script: str) -> str:

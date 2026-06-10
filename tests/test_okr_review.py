@@ -352,6 +352,60 @@ def test_normalize_okr_review_domain_payload_accepts_final_score_aliases():
     assert payload.items[0].verified_score == 20
 
 
+def test_normalize_okr_review_domain_payload_accepts_claim_score_alias():
+    # The agent emits `claim_score` (not `employee_claim_score`); both must work.
+    normalized = normalize_okr_review_domain_payload(
+        {
+            "person_name": "韩露",
+            "period_label": "2026 Q2",
+            "summary": "已审核。",
+            "items": [
+                {
+                    "objective": "O1",
+                    "kr": "LLM数据领先性",
+                    "kr_weight": 30,
+                    "claim_score": 35,
+                    "base_score": 30,
+                    "final_score": 30,
+                    "time_discount": "未适用",
+                    "evidence_used": ["VLM 立项方案存在。"],
+                    "evidence_gaps": "缺发布证明。",
+                    "suggested_follow_up": "补版本发布链接。",
+                }
+            ],
+        }
+    )
+
+    payload = OkrReviewPayload.model_validate(normalized)
+    assert payload.items[0].claim_score == 35
+    assert payload.items[0].claim_base_score == 35
+    assert payload.items[0].verified_score == 30
+
+
+def test_normalize_okr_review_domain_payload_renders_assessment_and_gaps():
+    # A summary dict with overall_assessment + key_gaps must render as readable
+    # text, not a raw JSON blob.
+    normalized = normalize_okr_review_domain_payload(
+        {
+            "person_name": "韩露",
+            "period_label": "2026 Q2",
+            "summary": {
+                "overall_assessment": "有真实推进，但缺硬结果。",
+                "key_gaps": ["缺发布证明。", "缺 CRM 成单数据。"],
+                "claim_weighted_score": 32,
+            },
+            "items": [],
+        }
+    )
+
+    summary = normalized["summary"]
+    assert summary.startswith("有真实推进，但缺硬结果。")
+    assert "关键差距：" in summary
+    assert "- 缺发布证明。" in summary
+    assert "- 缺 CRM 成单数据。" in summary
+    assert "{" not in summary  # no raw JSON
+
+
 class FakeStructuredRunnerForOkr:
     def __init__(self, envelope):
         self.envelope = envelope
