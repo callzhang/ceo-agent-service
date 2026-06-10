@@ -168,6 +168,7 @@ th{background:var(--surface-soft);color:var(--steel);font-size:12px;font-weight:
 .todo-check.done{border-color:rgba(0,180,138,.46);background:#ddfff6;color:#005b49}
 .todo-copy{display:grid;gap:2px;min-width:0}
 .todo-due{color:var(--steel);font-family:"Geist Mono","SF Mono",Menlo,Consolas,monospace;font-size:11px;line-height:1.3}
+.todo-total{color:var(--steel);font-family:"Geist Mono","SF Mono",Menlo,Consolas,monospace;font-size:11px;font-weight:700;line-height:1.3}
 .task-state{display:inline-flex;align-items:center;height:24px;padding:0 8px;border:1px solid var(--hairline);border-radius:999px;background:var(--surface-soft);font-size:12px;font-weight:800;line-height:1;white-space:nowrap}
 .task-state.completed{background:#ddfff6;border-color:rgba(0,180,138,.46);color:#005b49}
 .task-state.over-due{background:rgba(212,86,86,.12);border-color:rgba(212,86,86,.24);color:#9a2f2f}
@@ -2107,12 +2108,16 @@ def _task_tabulator_script() -> str:
     if (!todos.length) {{
       return `<span class="muted">-</span>`;
     }}
-    const items = todos.map((todo) => {{
+    const visibleTodos = todos.slice(0, 3);
+    const items = visibleTodos.map((todo) => {{
       const checkClass = todo.done ? "todo-check done" : "todo-check";
       const check = todo.done ? "✓" : "";
       const due = todo.due ? `<span class="todo-due">DDL ${{escapeHtml(todo.due)}}</span>` : "";
       return `<li><span class="${{checkClass}}" aria-hidden="true">${{check}}</span><span class="todo-copy"><span>${{escapeHtml(todo.title)}}</span>${{due}}</span></li>`;
     }});
+    if (todos.length > visibleTodos.length) {{
+      items.push(`<li class="todo-total">总共 ${{todos.length}} 条</li>`);
+    }}
     return `<ul class="todo-checklist">${{items.join("")}}</ul>`;
   }};
   const sortConfig = sortOptions[initial.sort] || ["", ""];

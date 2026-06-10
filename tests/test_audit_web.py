@@ -668,6 +668,32 @@ def test_tasks_page_renders_projects_and_todos_without_global_followups(tmp_path
     assert row["todos"][1]["done"] is True
 
 
+def test_tasks_page_todo_cell_limits_visible_items(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    project_id = store.create_work_project(
+        title="多待办项目",
+        category="projects",
+        status="active",
+        priority="P1",
+        risk_level="medium",
+    )
+    for index in range(5):
+        store.create_work_todo(
+            project_id=project_id,
+            title=f"待办 {index + 1}",
+            status="open",
+            priority="P1",
+        )
+
+    html = render_tasks_page(store)
+    rows = task_script_json(html, "tasks-data")
+
+    assert len(rows[0]["todos"]) == 5
+    assert "todos.slice(0, 3)" in html
+    assert "todo-total" in html
+    assert "总共 ${todos.length} 条" in html
+
+
 def test_tasks_page_filters_projects_by_full_text_query(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "task.sqlite3")
     matching_project_id = store.create_work_project(
