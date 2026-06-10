@@ -510,6 +510,7 @@ class DingTalkAutoReplyWorker:
             trigger_messages = self._reply_task_trigger_messages(
                 conversation,
                 new_messages,
+                source_messages=candidate_source_messages,
             )
             for message in trigger_messages:
                 available_at = ""
@@ -1135,7 +1136,10 @@ class DingTalkAutoReplyWorker:
         context_messages, prompt_context_messages = (
             self._queued_task_prompt_context_messages(conversation, trigger)
         )
-        if self._has_current_user_reply_after_trigger(context_messages, trigger):
+        if (
+            task.error == FAST_PATH_UNREAD_BACKOFF_TASK_ERROR
+            and self._has_current_user_reply_after_trigger(context_messages, trigger)
+        ):
             self._record_current_user_replied_during_backoff_skip(
                 conversation,
                 trigger,
@@ -1275,16 +1279,61 @@ class DingTalkAutoReplyWorker:
         )
         return updated > 0
 
-    @staticmethod
     def _reply_task_trigger_messages(
+        self,
         conversation: DingTalkConversation,
         messages: list[DingTalkMessage],
+        *,
+        source_messages: list[DingTalkMessage] | None = None,
     ) -> list[DingTalkMessage]:
         if not messages:
             return []
+        if conversation.single_chat and source_messages is not None:
+            return self._coalesce_candidate_messages_preserving_context_boundaries(
+                messages,
+                source_messages,
+            )
         return DingTalkAutoReplyWorker._coalesce_consecutive_messages_by_sender(
             messages
         )
+
+    def _coalesce_candidate_messages_preserving_context_boundaries(
+        self,
+        messages: list[DingTalkMessage],
+        source_messages: list[DingTalkMessage],
+    ) -> list[DingTalkMessage]:
+        candidate_by_id = {message.open_message_id: message for message in messages}
+        groups: list[list[DingTalkMessage]] = []
+        current_group: list[DingTalkMessage] = []
+        current_sender_key = ""
+
+        def flush_group() -> None:
+            nonlocal current_group, current_sender_key
+            if current_group:
+                groups.append(current_group)
+            current_group = []
+            current_sender_key = ""
+
+        for source_message in sorted(
+            source_messages,
+            key=lambda message: message.create_time,
+        ):
+            candidate = candidate_by_id.get(source_message.open_message_id)
+            if candidate is None:
+                flush_group()
+                continue
+            sender_key = self._message_sender_key(candidate)
+            if current_group and sender_key == current_sender_key:
+                current_group.append(candidate)
+            else:
+                flush_group()
+                current_group.append(candidate)
+                current_sender_key = sender_key
+        flush_group()
+        return [
+            DingTalkAutoReplyWorker._coalesced_message(group)
+            for group in groups
+        ]
 
     @staticmethod
     def _coalesce_consecutive_messages_by_sender(
@@ -3183,20 +3232,21 @@ class DingTalkAutoReplyWorker:
         conversation: DingTalkConversation,
         messages: list[DingTalkMessage],
     ) -> list[DingTalkMessage]:
-        current_user_message_times = [
-            message.create_time
-            for message in messages
-            if self._is_current_user_message_for_candidate_filter(message)
-            and not self._is_split_person_auto_reply_message(message)
-            and not self._is_processing_ack_message(message)
-            and not self._is_system_or_notification_message(message)
-        ]
-        latest_current_user_message_time = (
-            max(current_user_message_times) if current_user_message_times else None
-        )
         if conversation.single_chat:
             eligible_messages = messages
+            latest_current_user_message_time = None
         else:
+            current_user_message_times = [
+                message.create_time
+                for message in messages
+                if self._is_current_user_message_for_candidate_filter(message)
+                and not self._is_split_person_auto_reply_message(message)
+                and not self._is_processing_ack_message(message)
+                and not self._is_system_or_notification_message(message)
+            ]
+            latest_current_user_message_time = (
+                max(current_user_message_times) if current_user_message_times else None
+            )
             eligible_messages = [
                 message
                 for message in messages
@@ -3320,19 +3370,14 @@ class DingTalkAutoReplyWorker:
         for message in unread_messages:
             add(message)
 
-        latest_seen_context_time: str | None = None
-        for message in context_messages:
-            if self.store.has_seen(message.open_message_id):
-                latest_seen_context_time = max(
-                    latest_seen_context_time or message.create_time,
-                    message.create_time,
-                )
-        if latest_seen_context_time is None:
+        has_seen_context = any(
+            self.store.has_seen(message.open_message_id)
+            for message in context_messages
+        )
+        if not has_seen_context:
             return sorted(result, key=lambda message: message.create_time)
 
         for message in context_messages:
-            if message.create_time <= latest_seen_context_time:
-                continue
             if self.store.has_seen(message.open_message_id):
                 continue
             add(message)

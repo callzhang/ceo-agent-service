@@ -1529,7 +1529,7 @@ def test_produce_once_fast_path_task_is_claimable_after_backoff(
     assert claimed_before_backoff == []
     assert len(claimed_after_backoff) == 1
     assert claimed_after_backoff[0].status == "processing"
-    assert claimed_after_backoff[0].error == ""
+    assert claimed_after_backoff[0].error == "waiting_fast_path_unread_backoff"
     assert claimed_after_backoff[0].available_at == ""
 
 
@@ -7911,6 +7911,99 @@ def test_single_chat_recent_context_after_seen_is_processed_when_unread_empty(
     assert "我倾向先推 HSW。" in final_sent(dws)[0][1]
     attempts = worker.store.list_reply_attempts(limit=10)
     assert attempts[0].trigger_message_id == "msg-new-peer-2"
+
+
+def test_single_chat_recovery_processes_unseen_gap_before_later_seen_anchor(
+    tmp_path: Path, monkeypatch
+):
+    handled = message("前面已经处理过", message_id="msg-seen-old", single_chat=True)
+    handled.create_time = "2026-05-13 16:50:00"
+    missed = message(
+        "这条如果窗口开着也要处理",
+        message_id="msg-missed-gap",
+        single_chat=True,
+    )
+    missed.create_time = "2026-05-13 17:10:00"
+    manual_context = principal_message(
+        "后面我手动说了另一件事",
+        message_id="msg-principal-after-gap",
+        create_time="2026-05-13 17:20:00",
+    )
+    later_seen = message("后面这条已经处理", message_id="msg-seen-new", single_chat=True)
+    later_seen.create_time = "2026-05-13 17:30:00"
+    dws = FakeDws(
+        [],
+        {
+            "cid-1": [
+                later_seen,
+                manual_context,
+                missed,
+                handled,
+            ]
+        },
+        unread_messages={"cid-1": []},
+    )
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="我会处理这条。")
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+    worker.store.upsert_conversation("cid-1", "韩露", True, None)
+    worker.store.mark_seen("msg-seen-old", "cid-1")
+    worker.store.mark_seen("msg-seen-new", "cid-1")
+
+    worker.run_once()
+
+    assert len(codex.calls) == 1
+    prompt = codex.calls[0][0]
+    new_messages_section = prompt.split("新消息:", 1)[1].split(CONTEXT_HEADER, 1)[0]
+    assert "这条如果窗口开着也要处理" in new_messages_section
+    assert "后面我手动说了另一件事" not in new_messages_section
+    attempts = worker.store.list_reply_attempts(limit=10)
+    assert attempts[0].trigger_message_id == "msg-missed-gap"
+
+
+def test_single_chat_recovery_does_not_coalesce_across_current_user_context(
+    tmp_path: Path, monkeypatch
+):
+    seen_anchor = message("已经处理过", message_id="msg-seen-anchor", single_chat=True)
+    seen_anchor.create_time = "2026-05-13 16:50:00"
+    first_missed = message("第一段要处理", message_id="msg-first-missed", single_chat=True)
+    first_missed.create_time = "2026-05-13 17:10:00"
+    current_user = principal_message(
+        "中间我说了另一件事",
+        message_id="msg-current-user-between",
+        create_time="2026-05-13 17:20:00",
+    )
+    second_missed = message("第二段也要处理", message_id="msg-second-missed", single_chat=True)
+    second_missed.create_time = "2026-05-13 17:30:00"
+    dws = FakeDws(
+        [],
+        {
+            "cid-1": [
+                second_missed,
+                current_user,
+                first_missed,
+                seen_anchor,
+            ]
+        },
+        unread_messages={"cid-1": []},
+    )
+    worker = make_worker(
+        tmp_path,
+        dws,
+        FakeCodex(CodexDecision(action=CodexAction.NO_REPLY, reason="test")),
+        monkeypatch,
+    )
+    worker.store.upsert_conversation("cid-1", "韩露", True, None)
+    worker.store.mark_seen("msg-seen-anchor", "cid-1")
+
+    assert worker.produce_once() == 2
+
+    tasks = sorted(worker.store.list_reply_tasks(limit=10), key=lambda task: task.id)
+    assert [task.trigger_message_id for task in tasks] == [
+        "msg-first-missed",
+        "msg-second-missed",
+    ]
 
 
 def test_single_chat_empty_unread_without_seen_anchor_does_not_process_old_context(

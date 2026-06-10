@@ -122,7 +122,7 @@ def test_claim_reply_tasks_waits_until_available_at(tmp_path: Path):
     assert len(after) == 1
     assert after[0].status == "processing"
     assert after[0].available_at == ""
-    assert after[0].error == ""
+    assert after[0].error == "waiting_fast_path_unread_backoff"
 
 
 def test_complete_reply_task_for_message_marks_matching_task_done(tmp_path: Path):

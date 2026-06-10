@@ -729,14 +729,10 @@ class AutoReplyStore:
                     attempts=attempts + 1,
                     locked_at=current_timestamp,
                     available_at='',
-                    error=case
-                        when error=? then ''
-                        else error
-                    end,
                     updated_at=current_timestamp
                 where id in ({placeholders})
                 """,
-                [FAST_PATH_UNREAD_BACKOFF_TASK_ERROR, *task_ids],
+                task_ids,
             )
             claimed_rows = db.execute(
                 f"""
