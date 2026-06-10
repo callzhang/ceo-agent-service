@@ -173,7 +173,12 @@ def _decision_from_payload(
 ) -> CodexDecision | None:
     if isinstance(payload, dict):
         if _looks_like_agent_envelope(payload):
-            return codex_decision_from_envelope(payload)
+            try:
+                return codex_decision_from_envelope(payload)
+            except Exception:
+                decision = _decision_from_agent_envelope_like(payload)
+                if decision is not None:
+                    return decision
         if allow_legacy:
             try:
                 return CodexDecision.model_validate(payload)
@@ -186,7 +191,12 @@ def _decision_from_payload(
             except json.JSONDecodeError:
                 continue
             if isinstance(parsed, dict) and _looks_like_agent_envelope(parsed):
-                return codex_decision_from_envelope(parsed)
+                try:
+                    return codex_decision_from_envelope(parsed)
+                except Exception:
+                    decision = _decision_from_agent_envelope_like(parsed)
+                    if decision is not None:
+                        return decision
             if not allow_legacy:
                 continue
             try:
@@ -198,6 +208,67 @@ def _decision_from_payload(
 
 def _looks_like_agent_envelope(payload: dict[str, Any]) -> bool:
     return "kind" in payload and "user_response" in payload
+
+
+def _decision_from_agent_envelope_like(
+    payload: dict[str, Any],
+) -> CodexDecision | None:
+    user_response = payload.get("user_response")
+    if not isinstance(user_response, dict):
+        return None
+    try:
+        action = CodexAction(str(user_response.get("mode") or ""))
+    except ValueError:
+        return None
+    reply_text = _string_value(user_response, "text")
+    sensitivity_kind = _string_value(user_response, "sensitivity_kind") or "general"
+    audit = payload.get("audit")
+    audit_summary = ""
+    audit_documents: list[dict[str, str]] = []
+    if isinstance(audit, dict):
+        audit_summary = (
+            _string_value(audit, "summary")
+            or _string_value(audit, "evidence_summary")
+            or _string_value(audit, "reason")
+        )
+        audit_documents = _audit_documents_from_payload(audit.get("documents"))
+    if not audit_summary:
+        audit_summary = "Agent returned a non-standard envelope; extracted user_response."
+    system_actions = payload.get("system_actions")
+    return CodexDecision(
+        action=action,
+        reply_text=reply_text,
+        reason=audit_summary,
+        sensitivity_kind=sensitivity_kind,
+        system_actions=system_actions if isinstance(system_actions, list) else [],
+        audit_documents=audit_documents,
+        audit_summary=audit_summary,
+    )
+
+
+def _audit_documents_from_payload(value: Any) -> list[dict[str, str]]:
+    if not isinstance(value, list):
+        return []
+    documents = []
+    for item in value:
+        if isinstance(item, str):
+            documents.append({"title": item, "url": "", "relevance": "mentioned"})
+            continue
+        if not isinstance(item, dict):
+            continue
+        documents.append(
+            {
+                "title": str(item.get("title") or item.get("name") or ""),
+                "url": str(item.get("url") or ""),
+                "relevance": str(
+                    item.get("relevance")
+                    or item.get("summary")
+                    or item.get("status")
+                    or "mentioned"
+                ),
+            }
+        )
+    return documents
 
 
 def _decision_text_candidates(payload: dict[str, Any]) -> list[str]:

@@ -415,6 +415,53 @@ def test_parse_codex_json_accepts_live_item_completed_agent_message_text():
     assert decision.reason == "live final"
 
 
+def test_parse_codex_json_accepts_nonstandard_envelope_with_user_response():
+    raw = "\n".join(
+        [
+            json.dumps({"type": "thread.started", "thread_id": "thread-1"}),
+            json.dumps(
+                {
+                    "type": "event_msg",
+                    "payload": {
+                        "type": "agent_message",
+                        "message": json.dumps(
+                            {
+                                "kind": "dingtalk_reply",
+                                "user_response": {
+                                    "mode": "send_reply",
+                                    "text": "可以，我先按这个日报每天看当天新增。",
+                                    "sensitivity_kind": "internal_personnel",
+                                },
+                                "system_actions": [
+                                    {
+                                        "type": "persist_daily_doc_review_watch",
+                                        "doc_url": "https://alidocs.dingtalk.com/i/nodes/doc",
+                                    }
+                                ],
+                                "domain_payload": {"doc_title": "项目日报"},
+                                "audit": {
+                                    "material_read": True,
+                                    "evidence_summary": "已读取日报并判断风险。",
+                                },
+                            },
+                            ensure_ascii=False,
+                        ),
+                    },
+                },
+                ensure_ascii=False,
+            ),
+        ]
+    )
+
+    decision = parse_codex_json(raw, allow_legacy=False)
+
+    assert decision.action == CodexAction.SEND_REPLY
+    assert decision.reply_text == "可以，我先按这个日报每天看当天新增。"
+    assert decision.sensitivity_kind == "internal_personnel"
+    assert decision.audit_summary == "已读取日报并判断风险。"
+    assert decision.system_actions[0]["type"] == "persist_daily_doc_review_watch"
+
+
 def test_parse_codex_json_accepts_event_msg_agent_message_payload():
     raw = "\n".join(
         [
