@@ -333,6 +333,100 @@ def test_structured_runner_retries_fresh_after_session_refresh_error(tmp_path):
     assert store.get_codex_session_id("cid-1") == "new-session"
 
 
+def test_structured_runner_reads_audit_events_from_session_transcript(
+    tmp_path, monkeypatch
+):
+    schema = tmp_path / "schema.json"
+    schema.write_text("{}", encoding="utf-8")
+    skill = tmp_path / "skill.md"
+    skill.write_text("# Skill", encoding="utf-8")
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    session_id = "019eb102-dc3e-7620-b0e9-16bcc2cb7038"
+    session_path = (
+        tmp_path
+        / "sessions"
+        / "2026"
+        / "06"
+        / "10"
+        / f"rollout-2026-06-10T03-10-15-{session_id}.jsonl"
+    )
+    session_path.parent.mkdir(parents=True)
+    command = 'dws doc search --query "Friday PMF Claire" --format json'
+    session_path.write_text(
+        "\n".join(
+            [
+                json.dumps({"type": "session_meta", "payload": {"id": session_id}}),
+                json.dumps(
+                    {
+                        "type": "response_item",
+                        "payload": {
+                            "type": "function_call",
+                            "name": "exec_command",
+                            "call_id": "call-dws-search",
+                            "arguments": json.dumps({"cmd": command}),
+                        },
+                    },
+                    ensure_ascii=False,
+                ),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("app.structured_agent._codex_home", lambda: tmp_path)
+
+    def executor(command_args, prompt, env):
+        return "\n".join(
+            [
+                json.dumps({"type": "session_meta", "payload": {"id": session_id}}),
+                json.dumps(
+                    {
+                        "kind": "reply",
+                        "user_response": {
+                            "mode": "send_reply",
+                            "text": "ok",
+                            "sensitivity_kind": "general",
+                        },
+                        "system_actions": [
+                            {
+                                "type": "send_dingtalk_reply",
+                                "reply_text_ref": "user_response.text",
+                            }
+                        ],
+                        "domain_payload": {},
+                        "audit": {
+                            "summary": "valid",
+                            "documents": [],
+                            "confidence": 0.8,
+                        },
+                    }
+                ),
+            ]
+        )
+
+    spec = AgentSpec("reply", schema, [skill], [], "Return JSON.")
+    runner = StructuredCodexRunner(
+        store=store,
+        workspace=tmp_path,
+        spec=spec,
+        executor=executor,
+        session_exists=lambda _session_id: True,
+    )
+
+    result = runner.run("cid-1", "Friday", True, "hello", owner="reply:msg-1")
+
+    assert result.transcript_end_line == 2
+    assert result.audit_tool_events == [
+        {
+            "event_type": "response_item",
+            "tool": "exec_command",
+            "call_id": "call-dws-search",
+            "input": json.dumps({"cmd": command}, ensure_ascii=False, indent=2),
+            "command": command,
+        }
+    ]
+
+
 def test_structured_runner_default_executor_uses_process_runner_signature(tmp_path):
     schema = tmp_path / "schema.json"
     schema.write_text("{}", encoding="utf-8")

@@ -179,6 +179,59 @@ def test_build_okr_review_prompt_compacts_raw_live_source():
     assert '"krTitle": "KR"' in prompt
 
 
+def test_build_okr_review_prompt_preserves_kr_progress_comments():
+    prompt = build_okr_review_prompt(
+        request_id=7,
+        person_name="Claire",
+        period_label="2026 Q2",
+        okr_source_json=json.dumps(
+            {
+                "source": {"system": "叮当OKR Dingteam Web"},
+                "period": {"name": "2026年2季度"},
+                "processed": {
+                    "objectives": [
+                        {
+                            "title": "打穿 Friday PMF",
+                            "keyResults": [
+                                {
+                                    "title": "拿到首批付费用户",
+                                    "progressUpdates": [
+                                        {
+                                            "createdAt": "2026-06-07T17:53:40.000Z",
+                                            "progressChange": "进度 20%",
+                                            "content": "subway 的 2 个 poc 马上开始",
+                                        }
+                                    ],
+                                    "progressUpdatesAggregated": (
+                                        "2026-06-07T17:53:40.000Z | 进度 20% | "
+                                        "subway 的 2 个 poc 马上开始"
+                                    ),
+                                }
+                            ],
+                        }
+                    ],
+                    "okrRows": [
+                        {
+                            "level": "KR",
+                            "krTitle": "拿到首批付费用户",
+                            "krDetailsUpdatesAggregated": (
+                                "2026-06-07T17:53:40.000Z | 进度 20% | "
+                                "subway 的 2 个 poc 马上开始"
+                            ),
+                        }
+                    ],
+                },
+            },
+            ensure_ascii=False,
+        ),
+        trigger_text="帮我审核 OKR",
+    )
+
+    assert "subway 的 2 个 poc 马上开始" in prompt
+    assert "progressUpdates" in prompt
+    assert "krDetailsUpdatesAggregated" in prompt
+
+
 def test_compact_okr_source_requires_processed_rows():
     with pytest.raises(ValueError, match="processed"):
         compact_okr_source_for_review_prompt('{"objectiveList":[]}')
@@ -247,7 +300,7 @@ def test_normalize_okr_review_domain_payload_accepts_agent_aliases():
                     "actual_completion_time": "未完成",
                     "fact_checked_base_score": 10,
                     "time_discount": "未适用",
-                    "fact_checked_final_score": 10,
+                    "fact_checked_score": 10,
                     "ceo_comment": "POC 不等于付费用户。",
                     "suggested_follow_up": "补充合同或付款证据。",
                 }
@@ -261,7 +314,42 @@ def test_normalize_okr_review_domain_payload_accepts_agent_aliases():
     assert payload.items[0].objective_title == "打穿 Friday PMF"
     assert payload.items[0].kr_title == "拿到首批付费用户"
     assert payload.items[0].kr_weight == pytest.approx(0.3333)
+    assert payload.items[0].verified_score == 10
     assert payload.items[0].evidence_used[0].summary == "Subway POC 仍在 proposal 阶段"
+
+
+def test_normalize_okr_review_domain_payload_accepts_final_score_aliases():
+    normalized = normalize_okr_review_domain_payload(
+        {
+            "person_name": "韩露",
+            "period_label": "2026 Q2",
+            "summary": "已审核。",
+            "items": [
+                {
+                    "objective": "O1 标准Offer与高质量解决方案",
+                    "kr": "LLM数据领先性",
+                    "kr_weight": 30,
+                    "self_progress": 0,
+                    "kr_progress_notes": "[未撰写进度]",
+                    "employee_claim_score": 0,
+                    "evidence_used": ["VLM 立项方案存在，但缺发布证明。"],
+                    "evidence_gaps": "缺发布证明。",
+                    "deadline": "2026 Q2",
+                    "actual_completion_time": "未验证完成",
+                    "base_score": 20,
+                    "time_discount": "未适用",
+                    "final_score": 20,
+                    "ceo_comment": "只能认定为早期推进。",
+                    "suggested_follow_up": "补版本发布链接。",
+                }
+            ],
+        }
+    )
+
+    payload = OkrReviewPayload.model_validate(normalized)
+
+    assert payload.items[0].verified_base_score == 20
+    assert payload.items[0].verified_score == 20
 
 
 class FakeStructuredRunnerForOkr:

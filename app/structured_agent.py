@@ -7,6 +7,7 @@ from app.agent_envelope import AgentEnvelope
 from app.codex_decision import (
     _subprocess_failure_reason,
     extract_codex_audit_events,
+    extract_codex_audit_events_from_session,
     extract_codex_session_id,
 )
 from app.codex_history import find_codex_session_path
@@ -102,6 +103,7 @@ class StructuredCodexRunner:
     ) -> StructuredAgentRun:
         with self.store.codex_session_lock(conversation_id, owner):
             session_id = self._usable_session_id(conversation_id)
+            transcript_start_line = self._session_line_count(session_id)
             command = self._build_command(prompt, session_id)
             try:
                 raw = self._execute(command, prompt)
@@ -110,10 +112,18 @@ class StructuredCodexRunner:
                     raise
                 self.store.clear_codex_session(conversation_id)
                 session_id = None
+                transcript_start_line = 0
                 command = self._build_command(prompt, session_id)
                 raw = self._execute(command, prompt)
             parsed_session_id = extract_codex_session_id(raw) or session_id or ""
             envelope = parse_agent_envelope(raw)
+            transcript_end_line = self._session_line_count(parsed_session_id)
+            audit_tool_events = self._audit_tool_events(
+                raw=raw,
+                session_id=parsed_session_id,
+                start_line=transcript_start_line,
+                end_line=transcript_end_line,
+            )
             if parsed_session_id:
                 self.store.upsert_conversation(
                     conversation_id,
@@ -124,9 +134,9 @@ class StructuredCodexRunner:
             return StructuredAgentRun(
                 envelope=envelope,
                 codex_session_id=parsed_session_id,
-                transcript_start_line=0,
-                transcript_end_line=0,
-                audit_tool_events=extract_codex_audit_events(raw),
+                transcript_start_line=transcript_start_line,
+                transcript_end_line=transcript_end_line,
+                audit_tool_events=audit_tool_events,
             )
 
     def _usable_session_id(self, conversation_id: str) -> str | None:
@@ -141,6 +151,33 @@ class StructuredCodexRunner:
     @staticmethod
     def _local_session_exists(session_id: str) -> bool:
         return find_codex_session_path(session_id, codex_home=_codex_home()) is not None
+
+    @staticmethod
+    def _session_line_count(session_id: str | None) -> int:
+        if not session_id:
+            return 0
+        path = find_codex_session_path(session_id, codex_home=_codex_home())
+        if path is None:
+            return 0
+        return len(path.read_text(encoding="utf-8").splitlines())
+
+    @staticmethod
+    def _audit_tool_events(
+        *,
+        raw: str,
+        session_id: str,
+        start_line: int,
+        end_line: int,
+    ) -> list[dict[str, str]]:
+        session_events = []
+        if session_id and end_line >= start_line:
+            session_events = extract_codex_audit_events_from_session(
+                session_id,
+                codex_home=_codex_home(),
+                start_line=start_line,
+                end_line=end_line,
+            )
+        return session_events or extract_codex_audit_events(raw)
 
     def _execute(self, command: list[str], prompt: str) -> str:
         env = self.runner.build_env()

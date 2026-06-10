@@ -615,8 +615,23 @@ def _normalize_okr_review_item(item: object) -> object:
         return item
     if "objective_title" in item and "kr_title" in item:
         return item
-    verified_base_score = _number(item.get("fact_checked_base_score"))
-    verified_score = _number(item.get("fact_checked_final_score"))
+    verified_base_score = _number(
+        _first_present_value(
+            item,
+            ("fact_checked_base_score", "verified_base_score", "base_score"),
+        )
+    )
+    verified_score = _number(
+        _first_present_value(
+            item,
+            (
+                "fact_checked_final_score",
+                "fact_checked_score",
+                "verified_score",
+                "final_score",
+            ),
+        )
+    )
     verified_discount_factor = 1.0
     if verified_base_score > 0 and verified_score <= verified_base_score:
         verified_discount_factor = max(0.3, min(1.0, verified_score / verified_base_score))
@@ -680,6 +695,14 @@ def _normalize_weight(value: object, *, default: float) -> float:
     if number > 1:
         number = number / 100
     return max(0.0, min(1.0, number))
+
+
+def _first_present_value(payload: dict, keys: tuple[str, ...]) -> object:
+    for key in keys:
+        value = payload.get(key)
+        if value is not None:
+            return value
+    return None
 
 
 def _number(value: object, *, default: float = 0.0) -> float:
