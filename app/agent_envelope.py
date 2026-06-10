@@ -170,9 +170,12 @@ class AgentEnvelope(StrictBaseModel):
                     "dws_message_reaction requires user_response.mode=no_reply"
                 )
             return self
-        if self.user_response.mode != UserResponseMode.SEND_REPLY:
+        if self.user_response.mode not in {
+            UserResponseMode.SEND_REPLY,
+            UserResponseMode.ASK_CLARIFYING_QUESTION,
+        }:
             raise ValueError(
-                "send_dingtalk_reply requires user_response.mode=send_reply"
+                "send_dingtalk_reply requires user_response.mode=send_reply or ask_clarifying_question"
             )
         if not self.user_response.text.strip():
             raise ValueError(

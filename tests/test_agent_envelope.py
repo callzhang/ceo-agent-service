@@ -37,6 +37,31 @@ def test_agent_envelope_accepts_typed_system_action():
     assert envelope.user_response.text == "收到，我来处理。"
 
 
+def test_agent_envelope_accepts_clarifying_question_reply_action():
+    envelope = AgentEnvelope.model_validate(
+        {
+            "kind": "reply",
+            "user_response": {
+                "mode": "ask_clarifying_question",
+                "text": "你给一个时间段和时长，我来约。",
+                "sensitivity_kind": "general",
+            },
+            "system_actions": [
+                {"type": "send_dingtalk_reply", "reply_text_ref": "user_response.text"}
+            ],
+            "domain_payload": {},
+            "audit": {
+                "summary": "对方要求安排会议，但缺少时间边界，需要追问。",
+                "documents": [],
+                "confidence": 0.9,
+            },
+        }
+    )
+
+    assert isinstance(envelope.system_actions[0], SendDingTalkReplyAction)
+    assert envelope.user_response.mode == "ask_clarifying_question"
+
+
 def test_agent_envelope_normalizes_string_audit_documents():
     envelope = AgentEnvelope.model_validate(
         {
