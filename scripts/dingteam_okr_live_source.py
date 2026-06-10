@@ -237,6 +237,62 @@ def _build_page_script(*, user_id: str, period_label: str, result_attribute: str
     }}).join('\\n');
   }}
 
+  function commentText(raw) {{
+    if (!raw || typeof raw !== 'string') return '';
+    const parsed = JSON.parse(raw);
+    const parts = [];
+    function visit(node) {{
+      if (!node || typeof node !== 'object') return;
+      if (node.type === 'at' && node.atName) parts.push('@' + node.atName);
+      else if (typeof node.text === 'string') parts.push(node.text);
+      if (Array.isArray(node.children)) node.children.forEach(visit);
+    }}
+    if (Array.isArray(parsed)) parsed.forEach(visit);
+    return parts.join('').replace(/[ \\t]+/g, ' ').trim();
+  }}
+
+  function krMatchKey(text) {{
+    return String(text || '').replace(/\\s+/g, '').slice(0, 20);
+  }}
+
+  function aggregateComments(comments) {{
+    return comments.map(function(c) {{
+      const ts = (formatTimestamp(c.createAt) || '').slice(0, 10) || '时间未知';
+      return ts + ' | ' + (c.author || '?') + ' | ' + c.text;
+    }}).join('\\n');
+  }}
+
+  function mergeUpdates(historyAgg, commentAgg) {{
+    const pieces = [];
+    if (historyAgg && historyAgg !== '[未撰写进度]') pieces.push(historyAgg);
+    if (commentAgg) pieces.push(commentAgg);
+    return pieces.length ? pieces.join('\\n') : '[未撰写进度]';
+  }}
+
+  async function fetchObjectiveComments(objectiveId) {{
+    const payload = await api.objective.findCommentListV2({{
+      objectiveId: objectiveId, pageNo: 1, pageSize: 100,
+      sort: false, logTypeCells: [], krId: '', commentId: ''
+    }});
+    const list = Array.isArray(payload.list) ? payload.list : [];
+    const out = [];
+    list.forEach(function(item) {{
+      if (!item || item.type !== 5) return;
+      const text = commentText(item.richTextContent);
+      if (!text) return;
+      const krInfo = (item.krInfo && typeof item.krInfo === 'object') ? item.krInfo : {{}};
+      const creator = (item.creator && typeof item.creator === 'object') ? item.creator : {{}};
+      out.push({{
+        createAt: item.createAt,
+        author: creator.name || creator.userName || '',
+        text: text,
+        krId: krInfo.krId || '',
+        krName: krInfo.name || ''
+      }});
+    }});
+    return out;
+  }}
+
   window.webpackChunkallinone.push([[Date.now()], {{}}, function(require) {{
     window.__codexDingteamOkrRequire = require;
   }}]);
@@ -272,6 +328,20 @@ def _build_page_script(*, user_id: str, period_label: str, result_attribute: str
     const objectiveWeight = objective.weight ?? '';
     const objectiveProgress = progressPercent(objective.progress);
     const krCells = Array.isArray(objective.krCells) ? objective.krCells : [];
+
+    const objComments = await fetchObjectiveComments(objectiveId);
+    const commentsByKrId = {{}};
+    const commentsByKrKey = {{}};
+    const objectiveLevelComments = [];
+    objComments.forEach(function(c) {{
+      if (c.krId) {{ (commentsByKrId[c.krId] = commentsByKrId[c.krId] || []).push(c); }}
+      else if (c.krName) {{
+        const k = krMatchKey(c.krName);
+        (commentsByKrKey[k] = commentsByKrKey[k] || []).push(c);
+      }} else {{ objectiveLevelComments.push(c); }}
+    }});
+    const objectiveCommentsAggregated = aggregateComments(objectiveLevelComments);
+
     const objectiveRow = {{
       objectiveId: objectiveId,
       title: objectiveTitle,
@@ -280,6 +350,7 @@ def _build_page_script(*, user_id: str, period_label: str, result_attribute: str
       owner: objective.owner || '',
       ownerName: objective.ownerName || '',
       latestProgressText: '',
+      objectiveCommentsAggregated: objectiveCommentsAggregated,
       keyResults: [],
       unscopedProgressUpdates: []
     }};
@@ -294,7 +365,7 @@ def _build_page_script(*, user_id: str, period_label: str, result_attribute: str
       krTitle: '',
       krWeight: '',
       krProgress: '',
-      krDetailsUpdatesAggregated: ''
+      krDetailsUpdatesAggregated: objectiveCommentsAggregated
     }});
 
     const detailRows = await Promise.all(krCells.map(async function(kr) {{
@@ -322,8 +393,12 @@ def _build_page_script(*, user_id: str, period_label: str, result_attribute: str
           childFiles: history.childFiles || []
         }};
       }});
-      const aggregated = aggregateHistory(histories);
       const krTitle = (detail.content || (kr && kr.content) || textFromRichText(detail.contentRichText) || '').trim();
+      const krComments = commentsByKrId[detailRow.krId]
+        || commentsByKrKey[krMatchKey(krTitle)]
+        || commentsByKrKey[krMatchKey(kr && kr.content)]
+        || [];
+      const aggregated = mergeUpdates(aggregateHistory(histories), aggregateComments(krComments));
       const keyResultRow = {{
         keyResultId: detailRow.krId,
         title: krTitle,

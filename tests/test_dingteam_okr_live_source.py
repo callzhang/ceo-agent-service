@@ -27,6 +27,10 @@ def test_page_script_uses_page_api_without_browser_storage_access():
     assert "data-result" in script
     assert "webpackChunkallinone" in script
     assert "api.objective.log.progressHistory" in script
+    assert "api.objective.findCommentListV2" in script
+    assert "mergeUpdates(aggregateHistory(histories), aggregateComments(krComments))" in script
+    assert "progressUpdatesAggregated: aggregated" in script
+    assert "krDetailsUpdatesAggregated: aggregated" in script
     assert "cookie" not in script.casefold()
     assert "localstorage" not in script.casefold()
     assert "sessionstorage" not in script.casefold()
