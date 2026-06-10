@@ -216,6 +216,39 @@ def test_approved_follow_up_sends_direct_message_when_live_send_enabled(tmp_path
     assert not dws.sent[0]["text"].startswith("<@")
 
 
+def test_direct_follow_up_with_conversation_id_uses_conversation_target(tmp_path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    project_id = store.create_work_project(
+        title="售前圆桌",
+        category="projects",
+        status="active",
+        priority="P1",
+        risk_level="medium",
+    )
+    store.create_follow_up_draft(
+        project_id=project_id,
+        owner_name="Alex",
+        target_conversation_id="direct-cid-1",
+        target_kind="direct",
+        question_text="请同步这个事项的最新进展。",
+        risk_check_json=json.dumps({"owner_in_group": True, "sensitive": False}),
+        scheduled_at="2026-06-07 09:00:00",
+    )
+    dws = FakeDws()
+
+    sent = process_due_follow_ups(
+        store,
+        dws,
+        now="2026-06-07 10:00:00",
+        auto_send=True,
+    )
+
+    assert sent == 1
+    assert dws.sent[0]["conversation_id"] == "direct-cid-1"
+    assert dws.sent[0]["user_id"] is None
+    assert dws.sent[0]["open_dingtalk_id"] is None
+
+
 def test_dry_run_does_not_send_approved_follow_up(tmp_path):
     store = AutoReplyStore(tmp_path / "task.sqlite3")
     project_id = store.create_work_project(

@@ -105,19 +105,19 @@ def process_due_follow_ups(
             )
             at_open_dingtalk_ids = [open_dingtalk_id] if open_dingtalk_id else []
             at_open_dingtalk_names = [at_name] if at_name else []
-            if draft.target_kind == "direct" or not draft.target_conversation_id:
-                result = dws.send_message(
-                    None,
-                    draft.question_text,
-                    at_open_dingtalk_ids=at_open_dingtalk_ids,
-                    user_id=draft.owner_user_id or None,
-                )
-            else:
+            if draft.target_conversation_id:
                 result = dws.send_message(
                     draft.target_conversation_id,
                     draft.question_text,
                     at_open_dingtalk_ids=at_open_dingtalk_ids,
                     at_open_dingtalk_names=at_open_dingtalk_names,
+                )
+            else:
+                result = dws.send_message(
+                    None,
+                    draft.question_text,
+                    at_open_dingtalk_ids=at_open_dingtalk_ids,
+                    user_id=draft.owner_user_id or None,
                 )
         except Exception as exc:
             store.update_follow_up_draft(
