@@ -74,6 +74,81 @@
       "title": "AgentSensitivityKind",
       "type": "string"
     },
+    "DwsMarkdownDocumentReplyAction": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "dws_markdown_document_reply",
+          "title": "Type",
+          "type": "string"
+        },
+        "reply_text_ref": {
+          "const": "user_response.text",
+          "title": "Reply Text Ref",
+          "type": "string"
+        },
+        "title": {
+          "default": "",
+          "title": "Title",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "reply_text_ref"
+      ],
+      "title": "DwsMarkdownDocumentReplyAction",
+      "type": "object"
+    },
+    "DwsMessageReactionAction": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "dws_message_reaction",
+          "title": "Type",
+          "type": "string"
+        },
+        "reaction_type": {
+          "default": "emoji",
+          "enum": [
+            "emoji",
+            "text_emotion"
+          ],
+          "title": "Reaction Type",
+          "type": "string"
+        },
+        "emoji": {
+          "default": "",
+          "title": "Emoji",
+          "type": "string"
+        },
+        "text": {
+          "default": "",
+          "title": "Text",
+          "type": "string"
+        },
+        "emotion_id": {
+          "default": "",
+          "title": "Emotion Id",
+          "type": "string"
+        },
+        "emotion_name": {
+          "default": "",
+          "title": "Emotion Name",
+          "type": "string"
+        },
+        "background_id": {
+          "default": "",
+          "title": "Background Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "title": "DwsMessageReactionAction",
+      "type": "object"
+    },
     "DwsOaApprovalAction": {
       "additionalProperties": false,
       "properties": {
@@ -160,55 +235,6 @@
       "title": "PersistOkrReviewAction",
       "type": "object"
     },
-    "DwsMessageReactionAction": {
-      "additionalProperties": false,
-      "properties": {
-        "type": {
-          "const": "dws_message_reaction",
-          "title": "Type",
-          "type": "string"
-        },
-        "reaction_type": {
-          "default": "emoji",
-          "enum": [
-            "emoji",
-            "text_emotion"
-          ],
-          "title": "Reaction Type",
-          "type": "string"
-        },
-        "emoji": {
-          "default": "",
-          "title": "Emoji",
-          "type": "string"
-        },
-        "text": {
-          "default": "",
-          "title": "Text",
-          "type": "string"
-        },
-        "emotion_id": {
-          "default": "",
-          "title": "Emotion Id",
-          "type": "string"
-        },
-        "emotion_name": {
-          "default": "",
-          "title": "Emotion Name",
-          "type": "string"
-        },
-        "background_id": {
-          "default": "",
-          "title": "Background Id",
-          "type": "string"
-        }
-      },
-      "required": [
-        "type"
-      ],
-      "title": "DwsMessageReactionAction",
-      "type": "object"
-    },
     "SendDingTalkReplyAction": {
       "additionalProperties": false,
       "properties": {
@@ -275,9 +301,10 @@
       "items": {
         "discriminator": {
           "mapping": {
+            "dws_markdown_document_reply": "#/$defs/DwsMarkdownDocumentReplyAction",
+            "dws_message_reaction": "#/$defs/DwsMessageReactionAction",
             "dws_oa_approval_action": "#/$defs/DwsOaApprovalAction",
             "dws_oa_approval_comment": "#/$defs/DwsOaApprovalCommentAction",
-            "dws_message_reaction": "#/$defs/DwsMessageReactionAction",
             "persist_okr_review": "#/$defs/PersistOkrReviewAction",
             "send_dingtalk_reply": "#/$defs/SendDingTalkReplyAction"
           },
@@ -286,6 +313,9 @@
         "oneOf": [
           {
             "$ref": "#/$defs/SendDingTalkReplyAction"
+          },
+          {
+            "$ref": "#/$defs/DwsMarkdownDocumentReplyAction"
           },
           {
             "$ref": "#/$defs/DwsOaApprovalAction"

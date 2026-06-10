@@ -761,6 +761,26 @@ class DwsClient:
             "json",
         ]
 
+    def build_create_markdown_doc_command(self, name: str, content: str) -> list[str]:
+        if not name.strip():
+            raise ValueError("missing doc name")
+        if not content.strip():
+            raise ValueError("missing doc content")
+        return [
+            self.dws_bin,
+            "doc",
+            "create",
+            "--name",
+            name,
+            "--content",
+            content,
+            "--content-format",
+            "markdown",
+            "--format",
+            "json",
+            "--yes",
+        ]
+
     def build_aitable_base_get_command(self, base_id: str) -> list[str]:
         return [
             self.dws_bin,
@@ -1548,6 +1568,12 @@ class DwsClient:
         payload = self.run_json(self.build_doc_info_command(node))
         if not isinstance(payload, dict):
             raise DwsError("invalid doc info response")
+        return payload
+
+    def create_markdown_doc(self, name: str, content: str) -> dict[str, Any]:
+        payload = self.run_json(self.build_create_markdown_doc_command(name, content))
+        if not isinstance(payload, dict):
+            raise DwsError("invalid doc create response")
         return payload
 
     def get_aitable_base(self, base_id: str) -> dict[str, Any]:

@@ -6,6 +6,7 @@ from pydantic import ValidationError
 from app.agent_envelope import (
     AgentEnvelope,
     AgentKind,
+    DwsMarkdownDocumentReplyAction,
     DwsMessageReactionAction,
     SendDingTalkReplyAction,
 )
@@ -60,6 +61,63 @@ def test_agent_envelope_accepts_clarifying_question_reply_action():
 
     assert isinstance(envelope.system_actions[0], SendDingTalkReplyAction)
     assert envelope.user_response.mode == "ask_clarifying_question"
+
+
+def test_agent_envelope_accepts_markdown_document_reply_action():
+    envelope = AgentEnvelope.model_validate(
+        {
+            "kind": "reply",
+            "user_response": {
+                "mode": "send_reply",
+                "text": "# 方案\n\n先按 A 路径推进。",
+                "sensitivity_kind": "general",
+            },
+            "system_actions": [
+                {"type": "send_dingtalk_reply", "reply_text_ref": "user_response.text"},
+                {
+                    "type": "dws_markdown_document_reply",
+                    "reply_text_ref": "user_response.text",
+                    "title": "方案建议",
+                },
+            ],
+            "domain_payload": {},
+            "audit": {
+                "summary": "对方要求写方案，适合创建文档回复。",
+                "documents": [],
+                "confidence": 0.9,
+            },
+        }
+    )
+
+    assert isinstance(envelope.system_actions[1], DwsMarkdownDocumentReplyAction)
+    assert envelope.system_actions[1].title == "方案建议"
+
+
+def test_agent_envelope_rejects_markdown_document_reply_without_reply_text():
+    with pytest.raises(ValidationError):
+        AgentEnvelope.model_validate(
+            {
+                "kind": "no_action",
+                "user_response": {
+                    "mode": "no_reply",
+                    "text": "",
+                    "sensitivity_kind": "general",
+                },
+                "system_actions": [
+                    {
+                        "type": "dws_markdown_document_reply",
+                        "reply_text_ref": "user_response.text",
+                        "title": "方案建议",
+                    }
+                ],
+                "domain_payload": {},
+                "audit": {
+                    "summary": "invalid markdown document reply",
+                    "documents": [],
+                    "confidence": 0.9,
+                },
+            }
+        )
 
 
 def test_agent_envelope_normalizes_string_audit_documents():

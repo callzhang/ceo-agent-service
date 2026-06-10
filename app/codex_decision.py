@@ -26,7 +26,8 @@ REPLY_AGENT_ENVELOPE_SCHEMA_HINT = (
     'JSON schema: {"kind":"reply|no_action|error",'
     '"user_response":{"mode":"send_reply|ask_clarifying_question|handoff_to_human|no_reply",'
     '"text":"","sensitivity_kind":"general|internal_personnel|external_candidate"},'
-    '"system_actions":[],"domain_payload":{},'
+    '"system_actions":[{"type":"send_dingtalk_reply|dws_markdown_document_reply|dws_message_reaction"}],'
+    '"domain_payload":{},'
     '"audit":{"summary":"","documents":[{"title":"","url":"","relevance":""}],"confidence":0.8}}'
 )
 

@@ -189,6 +189,32 @@ def test_list_messages_by_ids_returns_parsed_messages():
     assert messages[0].conversation_title == ""
 
 
+def test_create_markdown_doc_command_shape_and_response():
+    client = RecordingDwsClient(
+        {"result": {"nodeId": "doc-1", "url": "https://alidocs.example/doc-1"}}
+    )
+
+    payload = client.create_markdown_doc("CEO回复", "# 标题\n\n正文")
+
+    assert payload["result"]["url"] == "https://alidocs.example/doc-1"
+    assert client.commands == [
+        [
+            "dws",
+            "doc",
+            "create",
+            "--name",
+            "CEO回复",
+            "--content",
+            "# 标题\n\n正文",
+            "--content-format",
+            "markdown",
+            "--format",
+            "json",
+            "--yes",
+        ]
+    ]
+
+
 def test_dws_upgrade_check_command_shape():
     client = DwsClient(dws_bin="dws")
 

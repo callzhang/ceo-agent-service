@@ -3626,6 +3626,7 @@ class DingTalkAutoReplyWorker:
                         reply_text=decision.reason or "已接受这个日程。",
                         reason=decision.reason,
                         attempt_id=attempt_id,
+                        system_actions=decision.system_actions,
                         comment_target_messages=comment_target_messages,
                         raise_on_delivery_failure=raise_on_delivery_failure,
                         allow_duplicate_send=allow_duplicate_send,
@@ -3786,6 +3787,7 @@ class DingTalkAutoReplyWorker:
                 reply_text=permission.reply_text,
                 reason=permission.reason,
                 attempt_id=attempt_id,
+                system_actions=decision.system_actions,
                 comment_target_messages=comment_target_messages,
                 raise_on_delivery_failure=raise_on_delivery_failure,
                 allow_duplicate_send=allow_duplicate_send,
@@ -3799,6 +3801,7 @@ class DingTalkAutoReplyWorker:
             reply_text=decision.reply_text,
             reason=decision.reason,
             attempt_id=attempt_id,
+            system_actions=decision.system_actions,
             comment_target_messages=comment_target_messages,
             raise_on_delivery_failure=raise_on_delivery_failure,
             allow_duplicate_send=allow_duplicate_send,
@@ -5396,6 +5399,7 @@ class DingTalkAutoReplyWorker:
         reply_text: str,
         reason: str,
         attempt_id: int,
+        system_actions: list[dict] | None = None,
         comment_target_messages: list[DingTalkMessage] | None = None,
         raise_on_delivery_failure: bool = False,
         allow_duplicate_send: bool = False,
@@ -5494,6 +5498,7 @@ class DingTalkAutoReplyWorker:
             if conversation.single_chat
             else None,
             reply_at_names=reply_at_names,
+            system_actions=system_actions or [],
             comment_target_messages=comment_target_messages,
             raise_on_delivery_failure=raise_on_delivery_failure,
             allow_duplicate_send=allow_duplicate_send,
@@ -5546,6 +5551,7 @@ class DingTalkAutoReplyWorker:
         direct_user_id: str | None,
         direct_open_dingtalk_id: str | None,
         reply_at_names: list[str] | None = None,
+        system_actions: list[dict] | None = None,
         comment_target_messages: list[DingTalkMessage] | None = None,
         raise_on_delivery_failure: bool = False,
         allow_duplicate_send: bool = False,
@@ -5649,6 +5655,7 @@ class DingTalkAutoReplyWorker:
             at_open_dingtalk_ids=at_open_dingtalk_ids,
             at_open_dingtalk_names=at_open_dingtalk_names,
             reply_at_names=reply_at_names,
+            system_actions=system_actions or [],
             failure_error_kind="send",
             failure_notify_title=f"CEO auto reply failed: {conversation.title}",
             raise_on_delivery_failure=raise_on_delivery_failure,
@@ -5762,6 +5769,7 @@ class DingTalkAutoReplyWorker:
         at_open_dingtalk_ids: list[str] | None = None,
         at_open_dingtalk_names: list[str] | None = None,
         reply_at_names: list[str] | None = None,
+        system_actions: list[dict] | None = None,
         send_result_json_builder=None,
         failure_error_kind: str = "send",
         failure_send_error=None,
@@ -5846,6 +5854,39 @@ class DingTalkAutoReplyWorker:
             )
             self._mark_seen(new_messages)
             return False
+        document_delivery_payload = None
+        try:
+            document_delivery_payload = self._create_markdown_document_reply_if_needed(
+                conversation=conversation,
+                reply_text=reply_text,
+                system_actions=system_actions or [],
+            )
+        except Exception as exc:
+            self.store.update_reply_attempt(
+                attempt_id,
+                send_status="failed",
+                send_error=str(exc),
+                retry_count=0,
+            )
+            self.store.record_error(
+                conversation.open_conversation_id,
+                trigger.open_message_id,
+                "doc_reply_create",
+                str(exc),
+            )
+            if raise_on_delivery_failure:
+                raise ReplyDeliveryError(str(exc)) from exc
+            if failure_notify_title:
+                self._notify(
+                    title=failure_notify_title,
+                    message=str(exc)[:120],
+                    conversation=conversation,
+                    attempt_id=attempt_id,
+                )
+            return False
+        if document_delivery_payload is not None:
+            reply_text = document_delivery_payload["reply_text"]
+            self.store.update_reply_attempt(attempt_id, final_reply_text=reply_text)
         try:
             retry_count, send_result = self._send_reply_to_trigger_with_retry(
                 conversation,
@@ -5899,6 +5940,12 @@ class DingTalkAutoReplyWorker:
                 "at_open_dingtalk_names": at_open_dingtalk_names,
             }
         )
+        if document_delivery_payload is not None:
+            native_reply_extra["markdown_document_reply"] = {
+                key: value
+                for key, value in document_delivery_payload.items()
+                if key != "reply_text"
+            }
         if send_result_json_builder is not None:
             native_reply_extra["at_user_ids"] = at_users
             native_reply_extra["at_open_dingtalk_ids"] = at_open_dingtalk_ids
@@ -5943,6 +5990,84 @@ class DingTalkAutoReplyWorker:
             )
         self._mark_seen(new_messages)
         return True
+
+    def _create_markdown_document_reply_if_needed(
+        self,
+        *,
+        conversation: DingTalkConversation,
+        reply_text: str,
+        system_actions: list[dict],
+    ) -> dict[str, Any] | None:
+        action = self._markdown_document_reply_action(system_actions)
+        chunks = split_dingtalk_text(reply_text)
+        if action is None and len(chunks) <= 1:
+            return None
+        title = self._markdown_document_reply_title(conversation, action)
+        doc_result = self.dws.create_markdown_doc(title, reply_text)
+        doc_url = self._markdown_document_url(doc_result)
+        if not doc_url:
+            raise RuntimeError("dws doc create did not return a document URL")
+        intro = (
+            "内容我写成了文档："
+            if action is not None
+            else "内容较长，我写成了文档："
+        )
+        return {
+            "title": title,
+            "url": doc_url,
+            "reason": "requested_document" if action is not None else "message_too_long",
+            "doc_result": doc_result,
+            "reply_text": append_signature(f"{intro}{title}\n{doc_url}"),
+        }
+
+    @staticmethod
+    def _markdown_document_reply_action(
+        system_actions: list[dict],
+    ) -> dict[str, Any] | None:
+        for action in system_actions:
+            if (
+                isinstance(action, dict)
+                and action.get("type") == "dws_markdown_document_reply"
+            ):
+                return action
+        return None
+
+    def _markdown_document_reply_title(
+        self,
+        conversation: DingTalkConversation,
+        action: dict[str, Any] | None,
+    ) -> str:
+        if action is not None:
+            title = str(action.get("title") or "").strip()
+            if title:
+                return title[:80]
+        timestamp = self._now().astimezone().strftime("%Y%m%d-%H%M")
+        source = conversation.title.strip() or "DingTalk"
+        return f"CEO回复-{source[:40]}-{timestamp}"
+
+    @staticmethod
+    def _markdown_document_url(payload: object) -> str:
+        if not isinstance(payload, dict):
+            return ""
+        candidates = [
+            payload.get("url"),
+            payload.get("docUrl"),
+            payload.get("doc_url"),
+        ]
+        result = payload.get("result")
+        if isinstance(result, dict):
+            candidates.extend(
+                [
+                    result.get("url"),
+                    result.get("docUrl"),
+                    result.get("doc_url"),
+                    result.get("nodeUrl"),
+                ]
+            )
+        for candidate in candidates:
+            if isinstance(candidate, str) and candidate.strip():
+                return candidate.strip()
+        return ""
 
     def _enqueue_conversation_work_item(
         self,

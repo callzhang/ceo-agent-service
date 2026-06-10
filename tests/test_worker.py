@@ -131,6 +131,7 @@ class FakeDws:
         self.robot_message_file_download_calls: list[str] = []
         self.sent: list[tuple[str, str]] = []
         self.reply_messages: list[tuple[str, str, str, str]] = []
+        self.created_markdown_docs: list[tuple[str, str]] = []
         self.send_visible = True
         self.reply_visible = True
         self.message_emojis: list[tuple[str, str, str]] = []
@@ -484,6 +485,17 @@ class FakeDws:
         if self.reply_visible:
             self._append_visible_message(conversation_id, text)
         return self.send_result
+
+    def create_markdown_doc(self, name: str, content: str) -> dict:
+        self.created_markdown_docs.append((name, content))
+        index = len(self.created_markdown_docs)
+        return {
+            "result": {
+                "nodeId": f"doc-{index}",
+                "url": f"https://alidocs.dingtalk.com/i/nodes/doc-{index}",
+                "name": name,
+            }
+        }
 
     def _append_visible_message(self, conversation_id: str, text: str) -> None:
         visible = DingTalkMessage(
@@ -1970,7 +1982,10 @@ def test_no_reply_agent_envelope_text_emotion_creates_and_adds_reaction(
     assert final_sent(dws) == []
 
 
-def test_worker_splits_long_reply_before_sending(tmp_path: Path, monkeypatch):
+def test_worker_creates_markdown_doc_for_long_reply_before_sending(
+    tmp_path: Path,
+    monkeypatch,
+):
     trigger = message("@Alex Chen(明哥) 帮我看下")
     dws = FakeDws([conversation()], {"cid-1": [trigger]})
     codex = FakeCodex(
@@ -1986,12 +2001,48 @@ def test_worker_splits_long_reply_before_sending(tmp_path: Path, monkeypatch):
 
     sent = final_sent(dws)
     sent_at_users = final_sent_at_users(dws)
-    assert len(sent) == 3
-    assert sent[0][1].startswith("【1/3】\n@周俊杰 ")
-    assert sent[1][1].startswith("【2/3】\n")
-    assert sent[2][1].startswith("【3/3】\n")
-    assert all(len(text) <= 2800 for _, text in sent)
-    assert sent_at_users == [["sender-user-1"], [], []]
+    assert len(dws.created_markdown_docs) == 1
+    assert dws.created_markdown_docs[0][0].startswith("CEO回复-Friday-")
+    assert dws.created_markdown_docs[0][1].startswith("@周俊杰 " + "A" * 50)
+    assert len(sent) == 1
+    assert "内容较长，我写成了文档：" in sent[0][1]
+    assert "https://alidocs.dingtalk.com/i/nodes/doc-1" in sent[0][1]
+    assert "【1/" not in sent[0][1]
+    assert sent_at_users == [["sender-user-1"]]
+
+
+def test_worker_creates_markdown_doc_when_decision_requests_document_reply(
+    tmp_path: Path,
+    monkeypatch,
+):
+    trigger = message("@Alex Chen(明哥) 写一版方案")
+    dws = FakeDws([conversation()], {"cid-1": [trigger]})
+    codex = FakeCodex(
+        CodexDecision(
+            action=CodexAction.SEND_REPLY,
+            reply_text="# 方案\n\n先按 A 路径推进。",
+            sensitivity_kind=SensitivityKind.GENERAL,
+            system_actions=[
+                {"type": "send_dingtalk_reply", "reply_text_ref": "user_response.text"},
+                {
+                    "type": "dws_markdown_document_reply",
+                    "reply_text_ref": "user_response.text",
+                    "title": "方案建议",
+                },
+            ],
+        )
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch, dry_run=False)
+
+    worker.run_once()
+
+    sent = final_sent(dws)
+    assert dws.created_markdown_docs == [
+        ("方案建议", "@周俊杰 # 方案\n\n先按 A 路径推进。（by明哥分身）")
+    ]
+    assert len(sent) == 1
+    assert "内容我写成了文档：方案建议" in sent[0][1]
+    assert "https://alidocs.dingtalk.com/i/nodes/doc-1" in sent[0][1]
 
 
 def test_worker_falls_back_to_group_send_when_native_reply_is_not_visible(
@@ -2013,13 +2064,13 @@ def test_worker_falls_back_to_group_send_when_native_reply_is_not_visible(
 
     worker.run_once()
 
-    assert len(dws.reply_messages) == 3
+    assert len(dws.created_markdown_docs) == 1
+    assert len(dws.reply_messages) == 1
     sent = final_sent(dws)
-    assert len(sent) == 6
-    assert sent[3][1].startswith("【1/3】\n@周俊杰 ")
-    assert sent[4][1].startswith("【2/3】\n")
-    assert sent[5][1].startswith("【3/3】\n")
-    assert final_sent_at_users(dws)[3:] == [["sender-user-1"], [], []]
+    assert len(sent) == 2
+    assert sent[0][1].startswith("内容较长，我写成了文档：CEO回复-Friday-")
+    assert sent[1][1].startswith("内容较长，我写成了文档：CEO回复-Friday-")
+    assert final_sent_at_users(dws) == [["sender-user-1"], ["sender-user-1"]]
     attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
     assert attempt is not None
     assert attempt.send_status == "sent"

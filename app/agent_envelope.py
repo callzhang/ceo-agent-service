@@ -89,6 +89,12 @@ class SendDingTalkReplyAction(StrictBaseModel):
     reply_text_ref: Literal["user_response.text"]
 
 
+class DwsMarkdownDocumentReplyAction(StrictBaseModel):
+    type: Literal["dws_markdown_document_reply"]
+    reply_text_ref: Literal["user_response.text"]
+    title: str = ""
+
+
 class DwsOaApprovalAction(StrictBaseModel):
     type: Literal["dws_oa_approval_action"]
     process_instance_id: str
@@ -134,6 +140,7 @@ class DwsMessageReactionAction(StrictBaseModel):
 SystemAction = Annotated[
     Union[
         SendDingTalkReplyAction,
+        DwsMarkdownDocumentReplyAction,
         DwsOaApprovalAction,
         DwsOaApprovalCommentAction,
         PersistOkrReviewAction,
@@ -161,7 +168,11 @@ class AgentEnvelope(StrictBaseModel):
             isinstance(action, SendDingTalkReplyAction)
             for action in self.system_actions
         )
-        if not has_reply_action:
+        has_markdown_document_reply_action = any(
+            isinstance(action, DwsMarkdownDocumentReplyAction)
+            for action in self.system_actions
+        )
+        if not has_reply_action and not has_markdown_document_reply_action:
             if any(
                 isinstance(action, DwsMessageReactionAction)
                 for action in self.system_actions
@@ -175,10 +186,10 @@ class AgentEnvelope(StrictBaseModel):
             UserResponseMode.ASK_CLARIFYING_QUESTION,
         }:
             raise ValueError(
-                "send_dingtalk_reply requires user_response.mode=send_reply or ask_clarifying_question"
+                "reply system actions require user_response.mode=send_reply or ask_clarifying_question"
             )
         if not self.user_response.text.strip():
             raise ValueError(
-                "send_dingtalk_reply requires non-empty user_response.text"
+                "reply system actions require non-empty user_response.text"
             )
         return self

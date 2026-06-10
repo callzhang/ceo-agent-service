@@ -615,6 +615,14 @@ def test_thread_prompt_prevents_interjecting_on_group_broadcasts():
     assert "优先用 dws_message_reaction 表达支持" in prompt
 
 
+def test_thread_prompt_allows_markdown_document_reply():
+    prompt = ceo_agent_thread_prompt()
+
+    assert "dws_markdown_document_reply" in prompt
+    assert "正文仍完整写在 user_response.text" in prompt
+    assert "服务会创建 Markdown 文档并在聊天里回复文档链接" in prompt
+
+
 def test_thread_prompt_prefers_text_emotion_for_light_human_handoff():
     prompt = ceo_agent_thread_prompt()
 
