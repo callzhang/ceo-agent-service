@@ -506,7 +506,12 @@ trigger_text: {trigger_text}
 - 使用本地文件、memory_recall、DWS 搜索和读取进行事实核实。
 - 给出事实核实后打分。
 - 两套分数都必须考虑超期、时差、业务影响和表述是否可衡量。
-- 只输出 AgentEnvelope JSON，kind=okr_review，domain_payload 必须符合 OkrReviewPayload。
+- 只输出当前 AgentEnvelope JSON，不要输出旧格式 `request_id/status/result`。
+- 顶层必须包含 `kind`、`user_response`、`system_actions`、`domain_payload`、`audit`。
+- `kind` 必须是 "okr_review"。
+- `user_response` 使用 {{"mode":"send_reply","text":"OKR review completed.","sensitivity_kind":"internal_personnel"}}。
+- `system_actions` 必须包含 {{"type":"persist_okr_review","request_id":{request_id}}}。
+- `domain_payload` 必须符合 OkrReviewPayload：包含 `person_name`、`period_label`、`summary`、`items`。
 """
 
 
@@ -563,7 +568,9 @@ def process_okr_review_request(*, store, runner, request, single_chat: bool) -> 
         prompt,
         owner=f"okr_review:{request.id}",
     )
-    payload = OkrReviewPayload.model_validate(run.envelope.domain_payload)
+    payload = OkrReviewPayload.model_validate(
+        normalize_okr_review_domain_payload(run.envelope.domain_payload)
+    )
     store.record_okr_review_run(
         request_id=request.id,
         codex_session_id=run.codex_session_id,
@@ -584,3 +591,103 @@ def process_okr_review_request(*, store, runner, request, single_chat: bool) -> 
         )
     store.mark_okr_review_request_done(request.id, codex_session_id=run.codex_session_id)
     return render_okr_review_reply(payload)
+
+
+def normalize_okr_review_domain_payload(payload: dict) -> dict:
+    if not isinstance(payload, dict):
+        return payload
+    normalized = dict(payload)
+    summary = normalized.get("summary")
+    if isinstance(summary, dict):
+        normalized["summary"] = str(
+            summary.get("overall_comment")
+            or summary.get("summary")
+            or json.dumps(summary, ensure_ascii=False)
+        )
+    items = normalized.get("items")
+    if isinstance(items, list):
+        normalized["items"] = [_normalize_okr_review_item(item) for item in items]
+    return normalized
+
+
+def _normalize_okr_review_item(item: object) -> object:
+    if not isinstance(item, dict):
+        return item
+    if "objective_title" in item and "kr_title" in item:
+        return item
+    verified_base_score = _number(item.get("fact_checked_base_score"))
+    verified_score = _number(item.get("fact_checked_final_score"))
+    verified_discount_factor = 1.0
+    if verified_base_score > 0 and verified_score <= verified_base_score:
+        verified_discount_factor = max(0.3, min(1.0, verified_score / verified_base_score))
+    evidence_used = item.get("evidence_used")
+    if isinstance(evidence_used, list):
+        normalized_evidence = [
+            evidence
+            if isinstance(evidence, dict)
+            else {"source": "agent evidence", "summary": str(evidence)}
+            for evidence in evidence_used
+        ]
+    else:
+        normalized_evidence = []
+    employee_claims = item.get("employee_claims")
+    if isinstance(employee_claims, list):
+        claim_text = "；".join(str(claim) for claim in employee_claims)
+    else:
+        claim_text = str(employee_claims or item.get("claim_text") or "")
+    claim_score = _number(item.get("employee_claim_score"))
+    return {
+        **item,
+        "objective_title": str(item.get("objective") or item.get("objective_title") or ""),
+        "objective_weight": _normalize_weight(item.get("objective_weight"), default=1.0),
+        "kr_title": str(item.get("kr") or item.get("kr_title") or ""),
+        "kr_weight": _normalize_weight(item.get("kr_weight"), default=1.0),
+        "self_progress": str(item.get("self_progress") or ""),
+        "kr_progress_update": str(
+            item.get("kr_progress_update") or item.get("kr_progress_notes") or ""
+        ),
+        "claim_text": claim_text,
+        "claim_completion_time": str(
+            item.get("claim_completion_time") or item.get("actual_completion_time") or ""
+        ),
+        "deadline": str(item.get("deadline") or ""),
+        "claim_base_score": claim_score,
+        "claim_discount_factor": 1.0,
+        "claim_discount_reason": str(
+            item.get("claim_discount_reason") or "按员工自述原始评分。"
+        ),
+        "claim_score": claim_score,
+        "verified_completion_time": str(
+            item.get("verified_completion_time")
+            or item.get("actual_completion_time")
+            or ""
+        ),
+        "verified_base_score": verified_base_score,
+        "verified_discount_factor": verified_discount_factor,
+        "verified_discount_reason": str(
+            item.get("verified_discount_reason") or item.get("time_discount") or ""
+        ),
+        "verified_score": verified_score,
+        "evidence_used": normalized_evidence,
+        "evidence_gap": str(item.get("evidence_gap") or item.get("evidence_gaps") or ""),
+        "review_comment": str(item.get("review_comment") or item.get("ceo_comment") or ""),
+        "suggested_follow_up": str(item.get("suggested_follow_up") or ""),
+    }
+
+
+def _normalize_weight(value: object, *, default: float) -> float:
+    number = _number(value, default=default)
+    if number > 1:
+        number = number / 100
+    return max(0.0, min(1.0, number))
+
+
+def _number(value: object, *, default: float = 0.0) -> float:
+    if isinstance(value, int | float):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value.strip().rstrip("%"))
+        except ValueError:
+            return default
+    return default

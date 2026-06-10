@@ -103,7 +103,15 @@ class StructuredCodexRunner:
         with self.store.codex_session_lock(conversation_id, owner):
             session_id = self._usable_session_id(conversation_id)
             command = self._build_command(prompt, session_id)
-            raw = self._execute(command, prompt)
+            try:
+                raw = self._execute(command, prompt)
+            except RuntimeError as exc:
+                if not session_id or not _is_codex_session_refresh_error(str(exc)):
+                    raise
+                self.store.clear_codex_session(conversation_id)
+                session_id = None
+                command = self._build_command(prompt, session_id)
+                raw = self._execute(command, prompt)
             parsed_session_id = extract_codex_session_id(raw) or session_id or ""
             envelope = parse_agent_envelope(raw)
             if parsed_session_id:
@@ -217,8 +225,79 @@ def parse_agent_envelope(raw: str) -> AgentEnvelope:
                 return AgentEnvelope.model_validate(payload)
             item = payload.get("item")
             if isinstance(item, dict) and isinstance(item.get("text"), str):
-                return AgentEnvelope.model_validate(json.loads(item["text"]))
+                return _parse_agent_envelope_payload(json.loads(item["text"]))
             message = payload.get("message")
             if isinstance(message, str) and message.strip().startswith("{"):
-                return AgentEnvelope.model_validate(json.loads(message))
+                return _parse_agent_envelope_payload(json.loads(message))
     raise ValueError("no valid AgentEnvelope found")
+
+
+def _parse_agent_envelope_payload(payload: object) -> AgentEnvelope:
+    if not isinstance(payload, dict):
+        raise ValueError("AgentEnvelope payload must be an object")
+    if "kind" in payload and "user_response" in payload:
+        return AgentEnvelope.model_validate(_normalize_agent_envelope_payload(payload))
+    if payload.get("kind") == "okr_review" and isinstance(payload.get("result"), dict):
+        request_id = payload.get("request_id")
+        if not isinstance(request_id, int):
+            raise ValueError("legacy okr_review payload requires integer request_id")
+        return AgentEnvelope.model_validate(
+            {
+                "kind": "okr_review",
+                "user_response": {
+                    "mode": "send_reply",
+                    "text": "OKR review completed.",
+                    "sensitivity_kind": "internal_personnel",
+                },
+                "system_actions": [
+                    {"type": "persist_okr_review", "request_id": request_id}
+                ],
+                "domain_payload": payload["result"],
+                "audit": {
+                    "summary": str(
+                        payload.get("audit_summary")
+                        or payload["result"].get("summary")
+                        or "OKR review completed."
+                    ),
+                    "documents": [],
+                    "confidence": 0.7,
+                },
+            }
+        )
+    return AgentEnvelope.model_validate(payload)
+
+
+def _normalize_agent_envelope_payload(payload: dict) -> dict:
+    if payload.get("kind") != "okr_review":
+        return payload
+    audit = payload.get("audit")
+    if not isinstance(audit, dict):
+        return payload
+    if all(key in audit for key in ("summary", "documents", "confidence")):
+        return payload
+    domain_payload = payload.get("domain_payload")
+    domain_summary = (
+        domain_payload.get("summary")
+        if isinstance(domain_payload, dict)
+        and isinstance(domain_payload.get("summary"), str)
+        else ""
+    )
+    summary = audit.get("summary") or audit.get("method") or domain_summary
+    if not isinstance(summary, str) or not summary.strip():
+        summary = "OKR review completed."
+    return {
+        **payload,
+        "audit": {
+            "summary": summary.strip(),
+            "documents": [],
+            "confidence": 0.7,
+        },
+    }
+
+
+def _is_codex_session_refresh_error(message: str) -> bool:
+    normalized = message.casefold()
+    return (
+        "failed to refresh token" in normalized
+        or "your session has ended" in normalized
+    )

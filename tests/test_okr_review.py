@@ -11,6 +11,7 @@ from app.okr_review import (
     compact_okr_source_for_review_prompt,
     current_quarter_period,
     is_okr_review_request,
+    normalize_okr_review_domain_payload,
     process_okr_review_request,
     render_okr_review_reply,
 )
@@ -146,6 +147,9 @@ def test_build_okr_review_prompt_includes_live_source_and_claim_scoring():
     assert "KR进度更新" in prompt
     assert "员工主张信息打分" in prompt
     assert "事实核实后打分" in prompt
+    assert "不要输出旧格式 `request_id/status/result`" in prompt
+    assert "`system_actions` 必须包含" in prompt
+    assert '"request_id":7' in prompt
 
 
 def test_build_okr_review_prompt_compacts_raw_live_source():
@@ -220,6 +224,44 @@ def test_render_okr_review_reply_includes_two_scores():
     assert "员工主张分: 60" in reply
     assert "事实核实分: 0" in reply
     assert "缺少验收记录" in reply
+
+
+def test_normalize_okr_review_domain_payload_accepts_agent_aliases():
+    normalized = normalize_okr_review_domain_payload(
+        {
+            "person_name": "Claire",
+            "period_label": "2026 Q2",
+            "summary": {"overall_comment": "整体有进展，但缺硬结果。"},
+            "items": [
+                {
+                    "objective": "打穿 Friday PMF",
+                    "kr": "拿到首批付费用户",
+                    "kr_weight": 33.33,
+                    "self_progress": 20,
+                    "kr_progress_notes": "Subway 的 2 个 POC 即将开始",
+                    "employee_claims": ["Subway 的 2 个 POC 即将开始"],
+                    "employee_claim_score": 20,
+                    "evidence_used": ["Subway POC 仍在 proposal 阶段"],
+                    "evidence_gaps": "缺少付费用户证据。",
+                    "deadline": "2026 Q2",
+                    "actual_completion_time": "未完成",
+                    "fact_checked_base_score": 10,
+                    "time_discount": "未适用",
+                    "fact_checked_final_score": 10,
+                    "ceo_comment": "POC 不等于付费用户。",
+                    "suggested_follow_up": "补充合同或付款证据。",
+                }
+            ],
+        }
+    )
+
+    payload = OkrReviewPayload.model_validate(normalized)
+
+    assert payload.summary == "整体有进展，但缺硬结果。"
+    assert payload.items[0].objective_title == "打穿 Friday PMF"
+    assert payload.items[0].kr_title == "拿到首批付费用户"
+    assert payload.items[0].kr_weight == pytest.approx(0.3333)
+    assert payload.items[0].evidence_used[0].summary == "Subway POC 仍在 proposal 阶段"
 
 
 class FakeStructuredRunnerForOkr:
