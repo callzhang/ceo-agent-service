@@ -91,5 +91,6 @@ class CodexDecision(BaseModel):
     candidate_context_known: bool = False
     candidate_department_ids: list[str] = []
     calendar_response_status: CalendarResponseStatus = CalendarResponseStatus.NONE
+    system_actions: list[dict] = Field(default_factory=list)
     audit_documents: list[dict[str, str]] = Field(default_factory=list)
     audit_summary: str = ""

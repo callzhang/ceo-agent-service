@@ -8,12 +8,15 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, unquote, urlencode
+from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, Field
 
+from app.config import read_env_file
 from app.dingtalk_models import DingTalkConversation, DingTalkMessage
+from app.message_split import split_dingtalk_text
 
 TITLE_INFORMATION_UNIT_LIMIT = 20
 TITLE_WORD_OR_CJK_PATTERN = re.compile(
@@ -34,6 +37,32 @@ def local_time_zone_name() -> str:
         if marker in path:
             return path.split(marker, 1)[1]
     return str(_local_time_zone())
+
+
+def extract_recall_key_from_send_result(send_result: dict[str, Any] | None) -> str:
+    if not send_result:
+        return ""
+    chunks = send_result.get("chunks")
+    if isinstance(chunks, list):
+        for chunk in chunks:
+            if not isinstance(chunk, dict):
+                continue
+            recall_key = extract_recall_key_from_send_result(chunk.get("send_result"))
+            if recall_key:
+                return recall_key
+        return ""
+    result = send_result.get("result")
+    if not isinstance(result, dict):
+        return ""
+    recall_key = result.get("processQueryKey")
+    if isinstance(recall_key, str):
+        return recall_key
+    recall_keys = result.get("processQueryKeys")
+    if isinstance(recall_keys, list) and recall_keys:
+        first = recall_keys[0]
+        if isinstance(first, str):
+            return first
+    return ""
 
 
 class DwsError(RuntimeError):
@@ -142,6 +171,12 @@ class DwsClient:
         "--client-secret",
         "--access-token",
         "--token",
+    }
+    CLI_AUTH_ENV_KEYS = {
+        "DWS_CLIENT_ID",
+        "DWS_CLIENT_SECRET",
+        "DINGTALK_APP_KEY",
+        "DINGTALK_APP_SECRET",
     }
 
     def __init__(
@@ -991,6 +1026,133 @@ class DwsClient:
         command.extend(["--keys", process_query_key, "--format", "json", "--yes"])
         return command
 
+    def build_recall_message_command(
+        self, conversation_id: str, message_id: str
+    ) -> list[str]:
+        if not conversation_id or not message_id:
+            raise ValueError("conversation id and message id are required")
+        return [
+            self.dws_bin,
+            "chat",
+            "message",
+            "recall",
+            "--conversation-id",
+            conversation_id,
+            "--msg-id",
+            message_id,
+            "--format",
+            "json",
+            "--yes",
+        ]
+
+    def build_query_message_send_status_command(self, open_task_id: str) -> list[str]:
+        if not open_task_id:
+            raise ValueError("open task id is required")
+        return [
+            self.dws_bin,
+            "chat",
+            "message",
+            "query-send-status",
+            "--open-task-id",
+            open_task_id,
+            "--format",
+            "json",
+        ]
+
+    def build_add_message_emoji_command(
+        self,
+        conversation_id: str,
+        message_id: str,
+        emoji: str,
+    ) -> list[str]:
+        if not conversation_id or not message_id or not emoji.strip():
+            raise ValueError("conversation id, message id, and emoji are required")
+        return [
+            self.dws_bin,
+            "chat",
+            "message",
+            "add-emoji",
+            "--group",
+            conversation_id,
+            "--msg-id",
+            message_id,
+            "--emoji",
+            emoji.strip(),
+            "--format",
+            "json",
+            "--yes",
+        ]
+
+    def build_add_message_text_emotion_command(
+        self,
+        conversation_id: str,
+        message_id: str,
+        *,
+        text: str,
+        emotion_id: str,
+        emotion_name: str,
+        background_id: str,
+    ) -> list[str]:
+        if not all(
+            value.strip()
+            for value in (
+                conversation_id,
+                message_id,
+                text,
+                emotion_id,
+                emotion_name,
+                background_id,
+            )
+        ):
+            raise ValueError(
+                "conversation id, message id, text, emotion id, emotion name, and background id are required"
+            )
+        return [
+            self.dws_bin,
+            "chat",
+            "message",
+            "add-text-emotion",
+            "--group",
+            conversation_id,
+            "--msg-id",
+            message_id,
+            "--text",
+            text.strip(),
+            "--emotion-id",
+            emotion_id.strip(),
+            "--emotion-name",
+            emotion_name.strip(),
+            "--background-id",
+            background_id.strip(),
+            "--format",
+            "json",
+            "--yes",
+        ]
+
+    def build_create_message_text_emotion_command(
+        self,
+        *,
+        text: str,
+        emotion_name: str,
+        background_id: str = "",
+    ) -> list[str]:
+        if not text.strip() or not emotion_name.strip():
+            raise ValueError("text and emotion name are required")
+        command = [
+            self.dws_bin,
+            "chat",
+            "message",
+            "create-text-emotion",
+            "--text",
+            text.strip(),
+            "--emotion-name",
+            emotion_name.strip(),
+        ]
+        if background_id.strip():
+            command.extend(["--background-id", background_id.strip()])
+        command.extend(["--format", "json", "--yes"])
+        return command
+
     def list_unread_conversations(self, count: int) -> list[DingTalkConversation]:
         payload = self.run_json(self.build_list_unread_conversations_command(count))
         return self.parse_unread_conversations(payload)
@@ -1009,6 +1171,7 @@ class DwsClient:
             self.build_auth_login_command(),
             text=True,
             start_new_session=True,
+            env=self._cli_environment(),
         )
 
     def list_messages_by_sender(
@@ -1269,6 +1432,95 @@ class DwsClient:
             },
         )
 
+    def read_agoal_objective_rule_list(
+        self,
+        *,
+        page_number: int = 1,
+        page_size: int = 100,
+        config_path: str | None = None,
+    ) -> dict[str, Any]:
+        return self._dingtalk_api_json(
+            "GET",
+            "/v1.0/agoal/objectiveRuleLists/query",
+            params={"pageNumber": page_number, "pageSize": page_size},
+            config_path=config_path,
+        )
+
+    def read_agoal_org_objective_rule_list(
+        self,
+        *,
+        config_path: str | None = None,
+    ) -> dict[str, Any]:
+        return self._dingtalk_api_json(
+            "GET",
+            "/v1.0/agoal/objectiveRules/lists",
+            config_path=config_path,
+        )
+
+    def read_agoal_objective_rule_period_list(
+        self,
+        objective_rule_id: str,
+        *,
+        config_path: str | None = None,
+    ) -> dict[str, Any]:
+        return self._dingtalk_api_json(
+            "GET",
+            "/v1.0/agoal/objectiveRules/periodLists",
+            params={"objectiveRuleId": objective_rule_id},
+            config_path=config_path,
+        )
+
+    def read_agoal_user_objective_list(
+        self,
+        *,
+        ding_user_id: str,
+        objective_rule_id: str,
+        period_ids: list[str],
+        config_path: str | None = None,
+    ) -> dict[str, Any]:
+        return self._dingtalk_api_json(
+            "POST",
+            "/v1.0/agoal/users/objectiveLists/query",
+            payload={
+                "dingUserId": ding_user_id,
+                "objectiveRuleId": objective_rule_id,
+                "periodIds": period_ids,
+            },
+            config_path=config_path,
+        )
+
+    def read_agoal_objective_detail(
+        self,
+        objective_id: str,
+        *,
+        config_path: str | None = None,
+    ) -> dict[str, Any]:
+        return self._dingtalk_api_json(
+            "GET",
+            "/v1.0/agoal/objectives/details",
+            params={"objectiveId": objective_id},
+            config_path=config_path,
+        )
+
+    def read_agoal_objective_progress_list(
+        self,
+        objective_id: str,
+        *,
+        page_number: int = 1,
+        page_size: int = 100,
+        config_path: str | None = None,
+    ) -> dict[str, Any]:
+        return self._dingtalk_api_json(
+            "GET",
+            "/v1.0/agoal/objectives/progresses/lists",
+            params={
+                "objectiveId": objective_id,
+                "pageNumber": page_number,
+                "pageSize": page_size,
+            },
+            config_path=config_path,
+        )
+
     def read_doc(self, node: str) -> dict[str, Any]:
         payload = self.run_json(self.build_read_doc_command(node))
         if not isinstance(payload, dict):
@@ -1434,6 +1686,7 @@ class DwsClient:
             capture_output=True,
             check=False,
             timeout=self.timeout_seconds + 15,
+            env=self._cli_environment(),
         )
         if result.returncode != 0:
             download_url = self._download_url_from_mixed_stdout(result.stdout)
@@ -1559,6 +1812,41 @@ class DwsClient:
             at_open_dingtalk_names=at_open_dingtalk_names,
         )
 
+    def send_reply_to_trigger_chunks(
+        self,
+        conversation: DingTalkConversation,
+        trigger: DingTalkMessage,
+        text: str,
+        *,
+        at_users: list[str] | None = None,
+        at_open_dingtalk_ids: list[str] | None = None,
+        at_open_dingtalk_names: list[str] | None = None,
+    ) -> dict[str, Any]:
+        chunks = split_dingtalk_text(text)
+        if not chunks:
+            raise DwsError("empty DingTalk reply text")
+        results = []
+        for index, chunk in enumerate(chunks):
+            chunk_at_users = at_users if index == 0 else []
+            chunk_at_open_dingtalk_ids = at_open_dingtalk_ids if index == 0 else []
+            chunk_at_open_dingtalk_names = at_open_dingtalk_names if index == 0 else []
+            results.append(
+                self.send_reply_to_trigger(
+                    conversation,
+                    trigger,
+                    chunk,
+                    at_users=chunk_at_users,
+                    at_open_dingtalk_ids=chunk_at_open_dingtalk_ids,
+                    at_open_dingtalk_names=chunk_at_open_dingtalk_names,
+                )
+            )
+        return {
+            "chunks": [
+                {"index": index, "text": chunk, "send_result": result}
+                for index, (chunk, result) in enumerate(zip(chunks, results), start=1)
+            ]
+        }
+
     @staticmethod
     def native_reply_delivery_payload(
         conversation: DingTalkConversation,
@@ -1581,22 +1869,65 @@ class DwsClient:
             self.build_recall_bot_message_command(conversation_id, process_query_key)
         )
 
+    def recall_message(self, conversation_id: str, message_id: str) -> dict[str, Any]:
+        return self.run_json(
+            self.build_recall_message_command(conversation_id, message_id)
+        )
+
+    def query_message_send_status(self, open_task_id: str) -> dict[str, Any]:
+        return self.run_json(
+            self.build_query_message_send_status_command(open_task_id)
+        )
+
+    def add_message_emoji(
+        self,
+        conversation_id: str,
+        message_id: str,
+        emoji: str,
+    ) -> dict[str, Any]:
+        return self.run_json(
+            self.build_add_message_emoji_command(conversation_id, message_id, emoji)
+        )
+
+    def add_message_text_emotion(
+        self,
+        conversation_id: str,
+        message_id: str,
+        *,
+        text: str,
+        emotion_id: str,
+        emotion_name: str,
+        background_id: str,
+    ) -> dict[str, Any]:
+        return self.run_json(
+            self.build_add_message_text_emotion_command(
+                conversation_id,
+                message_id,
+                text=text,
+                emotion_id=emotion_id,
+                emotion_name=emotion_name,
+                background_id=background_id,
+            )
+        )
+
+    def create_message_text_emotion(
+        self,
+        *,
+        text: str,
+        emotion_name: str,
+        background_id: str = "",
+    ) -> dict[str, Any]:
+        return self.run_json(
+            self.build_create_message_text_emotion_command(
+                text=text,
+                emotion_name=emotion_name,
+                background_id=background_id,
+            )
+        )
+
     @staticmethod
     def extract_recall_key(send_result: dict[str, Any] | None) -> str:
-        if not send_result:
-            return ""
-        result = send_result.get("result")
-        if not isinstance(result, dict):
-            return ""
-        process_query_key = result.get("processQueryKey")
-        if isinstance(process_query_key, str):
-            return process_query_key
-        process_query_keys = result.get("processQueryKeys")
-        if isinstance(process_query_keys, list) and process_query_keys:
-            first = process_query_keys[0]
-            if isinstance(first, str):
-                return first
-        return ""
+        return extract_recall_key_from_send_result(send_result)
 
     def ding_user(self, user_id: str, text: str) -> None:
         self.run_json(self.build_ding_self_command(user_id, text))
@@ -1776,6 +2107,7 @@ class DwsClient:
                     capture_output=True,
                     check=False,
                     timeout=self.timeout_seconds,
+                    env=self._cli_environment(),
                 )
             except subprocess.TimeoutExpired as exc:
                 if remaining_retries > 0:
@@ -1817,6 +2149,7 @@ class DwsClient:
                 capture_output=True,
                 check=False,
                 timeout=self.timeout_seconds,
+                env=self._cli_environment(),
             )
         except subprocess.TimeoutExpired as exc:
             raise DwsError(
@@ -1833,6 +2166,13 @@ class DwsClient:
                 code=code,
             )
         return result.stdout.strip()
+
+    @classmethod
+    def _cli_environment(cls) -> dict[str, str]:
+        env = os.environ.copy()
+        for key in cls.CLI_AUTH_ENV_KEYS:
+            env.pop(key, None)
+        return env
 
     def _sleep_before_retry(self, attempt_index: int) -> None:
         if self.transient_retry_delay_seconds <= 0:
@@ -1863,6 +2203,7 @@ class DwsClient:
                 capture_output=True,
                 check=False,
                 timeout=self.timeout_seconds,
+                env=self._cli_environment(),
             )
         except subprocess.TimeoutExpired:
             return
@@ -2919,6 +3260,20 @@ class DwsClient:
     def _read_dingtalk_skill_credentials(
         config_path: str | None = None,
     ) -> dict[str, str]:
+        if config_path is None:
+            env_file_values = read_env_file()
+            env_values = {
+                "DINGTALK_APP_KEY": os.getenv("DWS_CLIENT_ID")
+                or env_file_values.get("DWS_CLIENT_ID", "")
+                or os.getenv("DINGTALK_APP_KEY", "")
+                or env_file_values.get("DINGTALK_APP_KEY", ""),
+                "DINGTALK_APP_SECRET": os.getenv("DWS_CLIENT_SECRET")
+                or env_file_values.get("DWS_CLIENT_SECRET", "")
+                or os.getenv("DINGTALK_APP_SECRET", "")
+                or env_file_values.get("DINGTALK_APP_SECRET", ""),
+            }
+            if env_values["DINGTALK_APP_KEY"] and env_values["DINGTALK_APP_SECRET"]:
+                return env_values
         path = config_path or os.path.expanduser("~/.dingtalk-skills/config")
         values: dict[str, str] = {}
         with open(path, encoding="utf-8") as file:
@@ -2937,20 +3292,69 @@ class DwsClient:
             raise DwsError("DingTalk OpenAPI config is missing required credentials")
         return values
 
+    def _read_dingtalk_app_access_token(
+        self,
+        config_path: str | None = None,
+    ) -> str:
+        credentials = self._read_dingtalk_skill_credentials(config_path)
+        token_payload = self._http_json(
+            "POST",
+            "https://api.dingtalk.com/v1.0/oauth2/accessToken",
+            {
+                "appKey": credentials["DINGTALK_APP_KEY"],
+                "appSecret": credentials["DINGTALK_APP_SECRET"],
+            },
+        )
+        token = token_payload.get("accessToken")
+        if not isinstance(token, str) or not token:
+            raise DwsError("DingTalk OpenAPI token response did not include accessToken")
+        return token
+
+    def _dingtalk_api_json(
+        self,
+        method: str,
+        path: str,
+        *,
+        params: dict[str, Any] | None = None,
+        payload: dict[str, Any] | None = None,
+        config_path: str | None = None,
+    ) -> dict[str, Any]:
+        if not path.startswith("/"):
+            raise DwsError("DingTalk OpenAPI path must start with /")
+        token = self._read_dingtalk_app_access_token(config_path)
+        url = f"https://api.dingtalk.com{path}"
+        if params:
+            url = f"{url}?{urlencode(params, doseq=True)}"
+        return self._http_json(
+            method,
+            url,
+            payload,
+            headers={"x-acs-dingtalk-access-token": token},
+        )
+
     @staticmethod
     def _http_json(
         method: str,
         url: str,
         payload: dict[str, Any] | None = None,
+        *,
+        headers: dict[str, str] | None = None,
     ) -> dict[str, Any]:
         data = None
-        headers = {"Content-Type": "application/json"}
+        request_headers = {"Content-Type": "application/json"}
+        if headers:
+            request_headers.update(headers)
         if payload is not None:
             data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-        request = Request(url, data=data, method=method, headers=headers)
+        request = Request(url, data=data, method=method, headers=request_headers)
         try:
             with urlopen(request, timeout=30) as response:
                 raw = response.read().decode("utf-8")
+        except HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="replace")[:500]
+            raise DwsError(
+                f"DingTalk OpenAPI request failed: HTTP {exc.code} {detail}"
+            ) from exc
         except Exception as exc:
             raise DwsError("DingTalk OpenAPI request failed") from exc
         try:

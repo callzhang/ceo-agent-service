@@ -1160,3 +1160,73 @@ def test_subprocess_nonzero_reports_error_line_before_startup_warning(
     assert "ERROR codex_api" in decision.reason
     assert "401 Unauthorized" in decision.reason
     assert "startup_remote_sync" not in decision.reason
+
+
+def test_subprocess_nonzero_reports_stdout_error_before_warning_only_stderr(
+    tmp_path: Path, monkeypatch
+):
+    stdout = "\n".join(
+        [
+            json.dumps({"type": "thread.started", "thread_id": "thread-1"}),
+            json.dumps({"type": "turn.started"}),
+            json.dumps(
+                {
+                    "type": "error",
+                    "message": "Your workspace is out of credits. Ask your workspace owner to refill in order to continue.",
+                }
+            ),
+            json.dumps({"type": "turn.failed"}),
+        ]
+    )
+    stderr = (
+        "2026-06-10T00:01:15.198160Z WARN codex_file_watcher: "
+        "failed to unwatch /Users/derek/Documents/memory/.agents/skills: No watch was found."
+    )
+
+    def fake_run(command, **kwargs):
+        return ProcessRunResult(
+            returncode=1,
+            stdout=stdout,
+            stderr=stderr,
+        )
+
+    monkeypatch.setattr(codex_decision, "run_process_with_idle_timeout", fake_run)
+    runner = make_runner(tmp_path)
+
+    decision = runner.decide(prompt="decide", session_id=None)
+
+    assert decision.action == CodexAction.STOP_WITH_ERROR
+    assert "out of credits" in decision.reason
+    assert "failed to unwatch" not in decision.reason
+
+
+def test_subprocess_nonzero_warning_only_stderr_uses_generic_failure_reason(
+    tmp_path: Path, monkeypatch
+):
+    stdout = "\n".join(
+        [
+            json.dumps({"type": "thread.started", "thread_id": "thread-1"}),
+            json.dumps({"type": "turn.started"}),
+            json.dumps({"type": "task_complete", "last_agent_message": None}),
+        ]
+    )
+    stderr = (
+        "2026-06-10T00:01:15.198160Z WARN codex_file_watcher: "
+        "failed to unwatch /Users/derek/Documents/memory/.agents/skills: No watch was found."
+    )
+
+    def fake_run(command, **kwargs):
+        return ProcessRunResult(
+            returncode=1,
+            stdout=stdout,
+            stderr=stderr,
+        )
+
+    monkeypatch.setattr(codex_decision, "run_process_with_idle_timeout", fake_run)
+    runner = make_runner(tmp_path)
+
+    decision = runner.decide(prompt="decide", session_id=None)
+
+    assert decision.action == CodexAction.STOP_WITH_ERROR
+    assert decision.reason == "codex exec failed without a valid AgentEnvelope"
+    assert "failed to unwatch" not in decision.reason

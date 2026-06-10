@@ -108,12 +108,36 @@ class PersistOkrReviewAction(StrictBaseModel):
     request_id: int
 
 
+class DwsMessageReactionAction(StrictBaseModel):
+    type: Literal["dws_message_reaction"]
+    reaction_type: Literal["emoji", "text_emotion"] = "emoji"
+    emoji: str = ""
+    text: str = ""
+    emotion_id: str = ""
+    emotion_name: str = ""
+    background_id: str = ""
+
+    @model_validator(mode="after")
+    def validate_reaction_payload(self) -> "DwsMessageReactionAction":
+        if self.reaction_type == "emoji":
+            if not self.emoji.strip():
+                raise ValueError("emoji reaction requires emoji")
+            return self
+        missing = [field for field in ("text",) if not getattr(self, field).strip()]
+        if missing:
+            raise ValueError(
+                "text emotion reaction requires " + ", ".join(missing)
+            )
+        return self
+
+
 SystemAction = Annotated[
     Union[
         SendDingTalkReplyAction,
         DwsOaApprovalAction,
         DwsOaApprovalCommentAction,
         PersistOkrReviewAction,
+        DwsMessageReactionAction,
     ],
     Field(discriminator="type"),
 ]
@@ -138,6 +162,13 @@ class AgentEnvelope(StrictBaseModel):
             for action in self.system_actions
         )
         if not has_reply_action:
+            if any(
+                isinstance(action, DwsMessageReactionAction)
+                for action in self.system_actions
+            ) and self.user_response.mode != UserResponseMode.NO_REPLY:
+                raise ValueError(
+                    "dws_message_reaction requires user_response.mode=no_reply"
+                )
             return self
         if self.user_response.mode != UserResponseMode.SEND_REPLY:
             raise ValueError(

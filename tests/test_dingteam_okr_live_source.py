@@ -1,0 +1,44 @@
+import importlib.util
+from pathlib import Path
+
+
+SCRIPT_PATH = Path(__file__).resolve().parents[1] / "scripts" / "dingteam_okr_live_source.py"
+
+
+def load_module():
+    spec = importlib.util.spec_from_file_location("dingteam_okr_live_source", SCRIPT_PATH)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_page_script_uses_page_api_without_browser_storage_access():
+    module = load_module()
+
+    script = module._build_page_script(
+        user_id="user-1",
+        period_label="2026 Q2",
+        result_attribute="data-result",
+    )
+
+    assert "user-1" in script
+    assert "2026 Q2" in script
+    assert "data-result" in script
+    assert "webpackChunkallinone" in script
+    assert "api.objective.log.progressHistory" in script
+    assert "cookie" not in script.casefold()
+    assert "localstorage" not in script.casefold()
+    assert "sessionstorage" not in script.casefold()
+    assert ".catch(" not in script
+    assert "try {" not in script
+
+
+def test_injected_script_does_not_inline_page_source():
+    module = load_module()
+
+    injected = module._inject_script("window.__dingteamTest = '叮当OKR';")
+
+    assert "sourceBase64" in injected
+    assert "TextDecoder" in injected
+    assert "叮当OKR" not in injected

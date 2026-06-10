@@ -44,6 +44,12 @@ MEMORY_CONNECTOR_ENV_KEYS = {
     MEMORY_CONNECTOR_API_KEY_ENV,
     MEMORY_CONNECTOR_URL_ENV,
 }
+DWS_CLI_AUTH_ENV_KEYS = {
+    "DWS_CLIENT_ID",
+    "DWS_CLIENT_SECRET",
+    "DINGTALK_APP_KEY",
+    "DINGTALK_APP_SECRET",
+}
 
 
 def codex_developer_instructions() -> str:
@@ -160,6 +166,8 @@ class CodexRunner:
 
     def build_env(self) -> dict[str, str]:
         env = _memory_connector_env()
+        for key in DWS_CLI_AUTH_ENV_KEYS:
+            env.pop(key, None)
         return env.copy()
 
     def build_command(

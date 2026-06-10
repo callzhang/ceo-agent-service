@@ -224,6 +224,7 @@ th{background:var(--surface-soft);color:var(--steel);font-size:12px;font-weight:
 .attempt-line{display:grid;grid-template-columns:24px minmax(0,1fr);gap:8px;align-items:start;min-width:0}
 .attempt-label{color:var(--steel);font-size:12px;font-weight:700;line-height:1.45}
 .attempt-copy{color:var(--charcoal);font-size:13px;line-height:1.45;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden}
+.attempt-reaction-copy{display:inline-flex;align-items:center;width:max-content;max-width:100%;padding:4px 9px;border-radius:999px;background:#fff4d6;border:1px solid #f4d06f;color:#5f4200;font-size:13px;line-height:1.2;-webkit-line-clamp:1;box-shadow:inset 0 -1px 0 rgba(95,66,0,.08)}
 .attempt-foot{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:6px;flex-wrap:wrap}
 .attempt-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .attempt-warning{color:#8a2626;font-size:12px;line-height:1.4}
@@ -1791,7 +1792,7 @@ def render_attempt_list(
             "</div>"
             "<div class=\"attempt-lines\">"
             f"{_attempt_text_line('问', attempt.trigger_text, 260)}"
-            f"{_attempt_text_line('答', _reply_preview_text(attempt), 320)}"
+            f"{_attempt_reply_line(attempt)}"
             "</div>"
             f"{_attempt_feedback_summary(feedback_events, sent_reply)}"
             f"{foot_section}"
@@ -3027,17 +3028,49 @@ def handle_recall_post(
         attempt.conversation_id,
         attempt.trigger_message_id,
     )
-    if sent_reply is None or not sent_reply.recall_key:
+    if sent_reply is None:
         return (
             400,
             {},
             render_page(
                 "撤销不可用",
-                "<p>撤销不可用：没有可撤销 key，当前发送方式不支持自动撤销。</p>",
+                "<p>撤销不可用：没有找到这条 attempt 对应的已发送回复。</p>",
+            ),
+        )
+    message_id = _sent_reply_recall_message_id(sent_reply)
+    if not message_id:
+        open_task_id = _sent_reply_open_task_id(sent_reply)
+        if open_task_id and hasattr(dws, "query_message_send_status"):
+            try:
+                message_id = _find_string_value(
+                    dws.query_message_send_status(open_task_id),
+                    _DWS_MESSAGE_ID_KEYS,
+                )
+            except Exception as exc:
+                store.update_sent_reply_recall(
+                    sent_reply.id,
+                    recall_status="failed",
+                    recall_error=str(exc),
+                )
+                return (
+                    500,
+                    {},
+                    render_page("撤销失败", f"<p>{escape(str(exc))}</p>"),
+                )
+    if not message_id and not sent_reply.recall_key:
+        return (
+            400,
+            {},
+            render_page(
+                "撤销不可用",
+                "<p>撤销不可用：没有可撤销消息 ID 或 key，当前发送方式不支持自动撤销。</p>",
             ),
         )
     try:
-        dws.recall_bot_message(attempt.conversation_id, sent_reply.recall_key)
+        if message_id:
+            dws.recall_message(attempt.conversation_id, message_id)
+        else:
+            dws.recall_bot_message(attempt.conversation_id, sent_reply.recall_key)
     except Exception as exc:
         store.update_sent_reply_recall(
             sent_reply.id,
@@ -3731,6 +3764,108 @@ def _counterparty_feedback_card(
     )
 
 
+_DWS_MESSAGE_ID_KEYS = {
+    "openMessageId",
+    "open_message_id",
+    "messageId",
+    "message_id",
+    "msgId",
+    "msg_id",
+    "openMsgId",
+    "open_msg_id",
+}
+_DWS_OPEN_TASK_ID_KEYS = {
+    "openTaskId",
+    "open_task_id",
+    "open_taskId",
+}
+
+
+def _sent_reply_send_result_payload(sent_reply: SentReply | None) -> dict[str, object]:
+    if sent_reply is None or not sent_reply.send_result_json.strip():
+        return {}
+    try:
+        payload = json.loads(sent_reply.send_result_json)
+    except json.JSONDecodeError:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _find_string_value(payload: object, keys: set[str]) -> str:
+    if isinstance(payload, dict):
+        for key, value in payload.items():
+            if key in keys and isinstance(value, str) and value.strip():
+                return value.strip()
+        for value in payload.values():
+            found = _find_string_value(value, keys)
+            if found:
+                return found
+    if isinstance(payload, list):
+        for item in payload:
+            found = _find_string_value(item, keys)
+            if found:
+                return found
+    return ""
+
+
+def _sent_reply_recall_message_id(sent_reply: SentReply | None) -> str:
+    return _find_string_value(
+        _sent_reply_send_result_payload(sent_reply),
+        _DWS_MESSAGE_ID_KEYS,
+    )
+
+
+def _sent_reply_open_task_id(sent_reply: SentReply | None) -> str:
+    return _find_string_value(
+        _sent_reply_send_result_payload(sent_reply),
+        _DWS_OPEN_TASK_ID_KEYS,
+    )
+
+
+def _sent_reply_has_recall_target(sent_reply: SentReply | None) -> bool:
+    if sent_reply is None:
+        return False
+    return bool(
+        _sent_reply_recall_message_id(sent_reply)
+        or _sent_reply_open_task_id(sent_reply)
+        or sent_reply.recall_key.strip()
+    )
+
+
+def _recall_card(attempt: ReplyAttempt, sent_reply: SentReply | None) -> str:
+    if sent_reply is None:
+        return ""
+    status = sent_reply.recall_status.strip().lower()
+    status_html = ""
+    if status == "recalled":
+        recalled_at = _format_local_time(sent_reply.recalled_at or "")
+        return (
+            "<section class=\"card recall-card\"><h2>撤销发送</h2>"
+            f"<p><span class=\"pill status-sent\">已撤销</span> "
+            f"<span class=\"muted\">{escape(recalled_at)}</span></p></section>"
+        )
+    if status == "failed":
+        status_html = (
+            "<p><span class=\"pill status-failed\">上次撤销失败</span></p>"
+            f"<pre class=\"mini-pre\">{escape(sent_reply.recall_error)}</pre>"
+        )
+    if not _sent_reply_has_recall_target(sent_reply):
+        return status_html and (
+            "<section class=\"card recall-card\"><h2>撤销发送</h2>"
+            f"{status_html}"
+            "<p class=\"muted\">没有可撤销消息 ID 或 key。</p></section>"
+        )
+    return (
+        "<section class=\"card recall-card\"><h2>撤销发送</h2>"
+        "<p class=\"muted\">撤回这条 attempt 已发送到钉钉的回复。</p>"
+        f"{status_html}"
+        f"<form method=\"post\" action=\"/attempts/{attempt.id}/recall\" "
+        "onsubmit=\"return confirm('确认撤销这条已发送消息？')\">"
+        "<button class=\"danger\" type=\"submit\">撤销发送</button>"
+        "</form></section>"
+    )
+
+
 def _feedback_event_html(event: FeedbackEvent) -> str:
     rating = event.rating_label or event.rating or "feedback"
     comment = event.comment.strip() or "未填写评语"
@@ -3753,7 +3888,7 @@ def _review_panel(
 ) -> str:
     reply_text = attempt.final_reply_text or attempt.draft_reply_text
     if not reply_text.strip():
-        reply_text = "No generated reply recorded."
+        reply_text = _reaction_display_text(attempt) or "No generated reply recorded."
     return (
         "<section class=\"review-grid\">"
         "<div class=\"card\">"
@@ -3768,6 +3903,7 @@ def _review_panel(
         f"<pre class=\"reply-pre\">{escape(reply_text)}</pre>"
         "</div>"
         "<div class=\"review-side\">"
+        f"{_recall_card(attempt, sent_reply)}"
         f"{_feedback_form(attempt)}"
         f"{_counterparty_feedback_card(sent_reply, feedback_events)}"
         "</div>"
@@ -3863,11 +3999,7 @@ def _attempt_action_pills(attempt: ReplyAttempt) -> str:
         attempt.send_status.strip().lower() == "calendar"
         and attempt.calendar_response_status.strip()
     )
-    actions = (
-        []
-        if calendar_only
-        else [(f"💬 {_display_action_state(attempt.send_status)}", attempt.send_status)]
-    )
+    actions = [] if calendar_only else [_send_status_action(attempt)]
     if attempt.oa_action.strip():
         actions.append((f"🧾 {attempt.oa_action.strip()}", attempt.oa_action))
     if attempt.calendar_response_status.strip():
@@ -3895,7 +4027,7 @@ def _attempt_action_label_text(attempt: ReplyAttempt) -> str:
             (
                 ""
                 if calendar_only
-                else f"💬 {_display_action_state(attempt.send_status)}"
+                else _send_status_action(attempt)[0]
             ),
             (
                 f"🧾 {attempt.oa_action.strip()}"
@@ -3918,6 +4050,13 @@ def _display_action_state(value: str) -> str:
         for part in value.replace("-", "_").split("_")
         if part
     )
+
+
+def _send_status_action(attempt: ReplyAttempt) -> tuple[str, str]:
+    send_status = attempt.send_status
+    if send_status.strip().lower() == "reacted":
+        return "🙂 Reacted", send_status
+    return f"💬 {_display_action_state(send_status)}", send_status
 
 
 def _action_state_class(value: str) -> str:
@@ -4088,13 +4227,43 @@ def _attempt_text_line(label: str, text: str, length: int) -> str:
     )
 
 
+def _attempt_reply_line(attempt: ReplyAttempt) -> str:
+    reaction = _reaction_display_text(attempt)
+    if reaction:
+        return (
+            "<div class=\"attempt-line\">"
+            "<span class=\"attempt-label\">答</span>"
+            f"<span class=\"attempt-copy attempt-reaction-copy\">{escape(reaction)}</span>"
+            "</div>"
+        )
+    return _attempt_text_line("答", _reply_preview_text(attempt), 320)
+
+
 def _reply_preview_text(attempt: ReplyAttempt) -> str:
     text = attempt.final_reply_text or attempt.draft_reply_text
+    if not text.strip():
+        return _reaction_display_text(attempt)
     lines = text.splitlines()
     while lines and (not lines[0].strip() or lines[0].lstrip().startswith(">")):
         lines.pop(0)
     preview = "\n".join(lines).strip()
     return preview or text
+
+
+def _reaction_display_text(attempt: ReplyAttempt) -> str:
+    if attempt.send_status.strip().lower() != "reacted":
+        return ""
+    summary = attempt.send_error.strip()
+    if not summary or summary == "message_reaction":
+        return ""
+    values = []
+    for part in summary.split(", "):
+        kind, separator, value = part.partition(":")
+        if separator and kind.strip().lower() in {"emoji", "text_emotion"}:
+            value = value.strip()
+            if value:
+                values.append(value)
+    return " ".join(values) if values else summary
 
 
 def _text_card(title: str, text: str) -> str:

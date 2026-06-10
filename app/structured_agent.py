@@ -9,9 +9,11 @@ from app.codex_decision import (
     extract_codex_audit_events,
     extract_codex_session_id,
 )
+from app.codex_history import find_codex_session_path
 from app.codex_runner import (
     CODEX_BYPASS_APPROVALS_AND_SANDBOX,
     CodexRunner,
+    _codex_home,
     _config_string,
     memory_connector_config_options,
 )
@@ -74,6 +76,7 @@ class StructuredCodexRunner:
         spec: AgentSpec,
         codex_bin: str = "codex",
         executor: Callable[[list[str], str, dict[str, str]], str] | None = None,
+        session_exists: Callable[[str], bool] | None = None,
         timeout_seconds: int = 420,
         idle_timeout_seconds: int = 180,
     ):
@@ -82,6 +85,7 @@ class StructuredCodexRunner:
         self.spec = spec
         self.codex_bin = codex_bin
         self.executor = executor
+        self.session_exists = session_exists or self._local_session_exists
         self.timeout_seconds = timeout_seconds
         self.idle_timeout_seconds = idle_timeout_seconds
         self.runner = CodexRunner(workspace=workspace, codex_bin=codex_bin)
@@ -97,7 +101,7 @@ class StructuredCodexRunner:
         owner: str,
     ) -> StructuredAgentRun:
         with self.store.codex_session_lock(conversation_id, owner):
-            session_id = self.store.get_codex_session_id(conversation_id)
+            session_id = self._usable_session_id(conversation_id)
             command = self._build_command(prompt, session_id)
             raw = self._execute(command, prompt)
             parsed_session_id = extract_codex_session_id(raw) or session_id or ""
@@ -116,6 +120,19 @@ class StructuredCodexRunner:
                 transcript_end_line=0,
                 audit_tool_events=extract_codex_audit_events(raw),
             )
+
+    def _usable_session_id(self, conversation_id: str) -> str | None:
+        session_id = self.store.get_codex_session_id(conversation_id)
+        if not session_id:
+            return None
+        if self.session_exists(session_id):
+            return session_id
+        self.store.clear_codex_session(conversation_id)
+        return None
+
+    @staticmethod
+    def _local_session_exists(session_id: str) -> bool:
+        return find_codex_session_path(session_id, codex_home=_codex_home()) is not None
 
     def _execute(self, command: list[str], prompt: str) -> str:
         env = self.runner.build_env()

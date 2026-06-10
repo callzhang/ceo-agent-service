@@ -131,6 +131,9 @@ class FakeDws:
         self.robot_message_file_download_calls: list[str] = []
         self.sent: list[tuple[str, str]] = []
         self.reply_messages: list[tuple[str, str, str, str]] = []
+        self.message_emojis: list[tuple[str, str, str]] = []
+        self.message_text_emotions: list[tuple[str, str, str, str, str, str]] = []
+        self.created_text_emotions: list[tuple[str, str, str]] = []
         self.sent_at_users: list[list[str]] = []
         self.direct_user_ids: list[str | None] = []
         self.direct_open_dingtalk_ids: list[str | None] = []
@@ -448,7 +451,7 @@ class FakeDws:
         if self.send_error:
             raise self.send_error
         self.sent.append((conversation_id or "", text))
-        self.sent_at_users.append(at_open_dingtalk_ids or at_users or [])
+        self.sent_at_users.append(at_users or [])
         self.direct_user_ids.append(user_id)
         self.direct_open_dingtalk_ids.append(open_dingtalk_id)
         return self.send_result
@@ -494,6 +497,43 @@ class FakeDws:
             at_open_dingtalk_ids=at_open_dingtalk_ids,
             at_open_dingtalk_names=at_open_dingtalk_names,
         )
+
+    def add_message_emoji(
+        self,
+        conversation_id: str,
+        message_id: str,
+        emoji: str,
+    ) -> dict:
+        self.message_emojis.append((conversation_id, message_id, emoji))
+        return {"success": True}
+
+    def add_message_text_emotion(
+        self,
+        conversation_id: str,
+        message_id: str,
+        *,
+        text: str,
+        emotion_id: str,
+        emotion_name: str,
+        background_id: str,
+    ) -> dict:
+        self.message_text_emotions.append(
+            (conversation_id, message_id, text, emotion_id, emotion_name, background_id)
+        )
+        return {"success": True}
+
+    def create_message_text_emotion(
+        self,
+        *,
+        text: str,
+        emotion_name: str,
+        background_id: str = "",
+    ) -> dict:
+        self.created_text_emotions.append((text, emotion_name, background_id))
+        return {
+            "emotionId": f"created-{len(self.created_text_emotions)}",
+            "backgroundId": "created-bg",
+        }
 
     def ding_self(self, text: str) -> None:
         if self.ding_error:
@@ -1819,6 +1859,120 @@ def test_reply_agent_envelope_send_reply_is_delivered(tmp_path: Path, monkeypatc
     worker.run_once()
 
     assert final_sent(dws)[0] == ("cid-1", "可以，我看一下。（by明哥分身）")
+
+
+def test_no_reply_agent_envelope_reaction_adds_emoji_without_text_reply(
+    tmp_path: Path,
+    monkeypatch,
+):
+    trigger = message(
+        "[群公告]群公告@所有人 咱们大问题都改的差不多了，日清并重新打包。",
+    )
+    dws = FakeDws([conversation()], {"cid-1": [trigger]})
+    envelope = AgentEnvelope.model_validate(
+        {
+            "kind": "no_action",
+            "user_response": {
+                "mode": "no_reply",
+                "text": "",
+                "sensitivity_kind": "general",
+            },
+            "system_actions": [
+                {
+                    "type": "dws_message_reaction",
+                    "reaction_type": "emoji",
+                    "emoji": "👍",
+                }
+            ],
+            "domain_payload": {},
+            "audit": {
+                "summary": "群公告无需正式回复，但适合用表情表示支持。",
+                "documents": [],
+                "confidence": 0.9,
+            },
+        }
+    )
+    codex = FakeEnvelopeCodex(envelope)
+    worker = make_worker(tmp_path, dws, codex, monkeypatch, dry_run=False)
+
+    worker.run_once()
+
+    attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
+    assert attempt is not None
+    assert attempt.action == "no_reply"
+    assert attempt.send_status == "reacted"
+    assert dws.message_emojis == [("cid-1", "msg-1", "👍")]
+    assert final_sent(dws) == []
+
+
+def test_no_reply_agent_envelope_text_emotion_creates_and_adds_reaction(
+    tmp_path: Path,
+    monkeypatch,
+):
+    trigger = message("@Alex Chen(明哥) Hello磊哥，有后端开发工程师面试，我们线上等您哈")
+    dws = FakeDws([conversation()], {"cid-1": [trigger]})
+    envelope = AgentEnvelope.model_validate(
+        {
+            "kind": "no_action",
+            "user_response": {
+                "mode": "no_reply",
+                "text": "",
+                "sensitivity_kind": "general",
+            },
+            "system_actions": [
+                {
+                    "type": "dws_message_reaction",
+                    "reaction_type": "text_emotion",
+                    "text": "我去摇人",
+                }
+            ],
+            "domain_payload": {},
+            "audit": {
+                "summary": "只是呼叫本人进入会议，用文字表情轻量承接。",
+                "documents": [],
+                "confidence": 0.9,
+            },
+        }
+    )
+    codex = FakeEnvelopeCodex(envelope)
+    worker = make_worker(tmp_path, dws, codex, monkeypatch, dry_run=False)
+
+    worker.run_once()
+
+    attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
+    assert attempt is not None
+    assert attempt.action == "no_reply"
+    assert attempt.send_status == "reacted"
+    assert attempt.send_error == "text_emotion: 我去摇人"
+    assert dws.created_text_emotions == [("我去摇人", "我去摇人", "im_bg_5")]
+    assert dws.message_text_emotions == [
+        ("cid-1", "msg-1", "我去摇人", "created-1", "我去摇人", "created-bg")
+    ]
+    assert final_sent(dws) == []
+
+
+def test_worker_splits_long_reply_before_sending(tmp_path: Path, monkeypatch):
+    trigger = message("@Alex Chen(明哥) 帮我看下")
+    dws = FakeDws([conversation()], {"cid-1": [trigger]})
+    codex = FakeCodex(
+        CodexDecision(
+            action=CodexAction.SEND_REPLY,
+            reply_text="A" * 6000,
+            sensitivity_kind=SensitivityKind.GENERAL,
+        )
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch, dry_run=False)
+
+    worker.run_once()
+
+    sent = final_sent(dws)
+    sent_at_users = final_sent_at_users(dws)
+    assert len(sent) == 3
+    assert sent[0][1].startswith("【1/3】\n@周俊杰 ")
+    assert sent[1][1].startswith("【2/3】\n")
+    assert sent[2][1].startswith("【3/3】\n")
+    assert all(len(text) <= 2800 for _, text in sent)
+    assert sent_at_users == [["sender-user-1"], [], []]
 
 
 def test_queued_task_falls_back_to_trigger_when_context_read_fails(
@@ -6210,6 +6364,43 @@ def test_codex_stop_with_error_sends_macos_notification(tmp_path: Path, monkeypa
     }
 
 
+def test_codex_login_required_stop_with_error_is_blocked(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message("@Alex Chen(明哥) 这个怎么处理？")
+    dws = FakeDws([conversation()], {"cid-1": [trigger]})
+    reason = (
+        "Failed to refresh token: 400 Bad Request: "
+        "Your session has ended. Please log in again."
+    )
+    codex = FakeCodex(
+        CodexDecision(
+            action=CodexAction.STOP_WITH_ERROR,
+            reason=reason,
+            macos_notify=False,
+        )
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch, dry_run=True)
+    notifications: list[dict[str, str | None]] = []
+    monkeypatch.setattr(
+        "app.worker.send_macos_notification",
+        lambda **kwargs: notifications.append(kwargs),
+    )
+
+    worker.run_once()
+
+    attempt = worker.store.get_reply_attempt(1)
+    assert attempt is not None
+    assert attempt.action == "stop_with_error"
+    assert attempt.send_status == "blocked"
+    assert attempt.send_error.startswith("codex_login_required:")
+    assert notifications[0] == {
+        "title": "CEO agent blocked: Friday",
+        "message": f"codex_login_required: {reason}"[:120],
+        "url": "http://127.0.0.1:8765/open-dingtalk?conversation_id=cid-1",
+    }
+
+
 def test_codex_stop_with_error_keeps_queued_task_retryable(
     tmp_path: Path, monkeypatch
 ):
@@ -7475,7 +7666,7 @@ def test_okr_review_request_is_enqueued_before_generic_codex(
     assert "已受理" in attempt.final_reply_text
 
 
-def test_okr_review_missing_live_source_records_history_without_generic_codex(
+def test_okr_review_missing_live_source_fails_task_without_generic_codex_or_reply(
     tmp_path: Path, monkeypatch
 ):
     trigger = message("帮我审核 OKR", single_chat=True)
@@ -7483,24 +7674,22 @@ def test_okr_review_missing_live_source_records_history_without_generic_codex(
     codex = FakeCodex(
         CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该走普通回复")
     )
-    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+    worker = make_worker(tmp_path, dws, codex, monkeypatch, max_task_attempts=1)
 
     worker.run_once()
 
     assert codex.calls == []
     assert worker.store.claim_okr_review_requests(1) == []
-    attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
-    assert attempt is not None
-    assert attempt.action == "okr_review"
-    assert attempt.codex_reason == "okr_review_source_unavailable"
-    assert "现在无法获取 2026 Q2 实时 OKR 数据" in attempt.final_reply_text
-    assert attempt.send_status == "sent"
-    assert attempt.send_error == ""
-    assert "OKR live source is not configured" in attempt.audit_summary
-    assert final_sent(dws) == [("cid-1", attempt.final_reply_text)]
+    assert worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1") is None
+    assert worker.store.count_reply_tasks(status="failed") == 1
+    errors = worker.store.list_errors(limit=10)
+    assert [error.kind for error in errors] == ["reply_task", "okr_review_source"]
+    assert "OKR live source is not configured" in errors[0].detail
+    assert "OKR live source is not configured" in errors[1].detail
+    assert final_sent(dws) == []
 
 
-def test_okr_review_live_source_error_records_history_without_generic_codex(
+def test_okr_review_live_source_error_fails_task_without_generic_codex_or_reply(
     tmp_path: Path, monkeypatch
 ):
     trigger = message("帮我审核 OKR", single_chat=True)
@@ -7508,7 +7697,7 @@ def test_okr_review_live_source_error_records_history_without_generic_codex(
     codex = FakeCodex(
         CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该走普通回复")
     )
-    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+    worker = make_worker(tmp_path, dws, codex, monkeypatch, max_task_attempts=1)
     worker.okr_live_source = type(
         "LiveSource",
         (),
@@ -7523,15 +7712,13 @@ def test_okr_review_live_source_error_records_history_without_generic_codex(
 
     assert codex.calls == []
     assert worker.store.claim_okr_review_requests(1) == []
-    attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
-    assert attempt is not None
-    assert attempt.action == "okr_review"
-    assert attempt.codex_reason == "okr_review_source_unavailable"
-    assert "现在无法获取 2026 Q2 实时 OKR 数据" in attempt.final_reply_text
-    assert attempt.send_status == "sent"
-    assert attempt.send_error == ""
-    assert "okr unavailable" in attempt.audit_summary
-    assert final_sent(dws) == [("cid-1", attempt.final_reply_text)]
+    assert worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1") is None
+    assert worker.store.count_reply_tasks(status="failed") == 1
+    errors = worker.store.list_errors(limit=10)
+    assert [error.kind for error in errors] == ["reply_task", "okr_review_source"]
+    assert "okr unavailable" in errors[0].detail
+    assert "okr unavailable" in errors[1].detail
+    assert final_sent(dws) == []
 
 
 def test_queued_okr_review_ack_delivery_failure_requeues_without_generic_codex(

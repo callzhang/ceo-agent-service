@@ -6,6 +6,7 @@ from pydantic import ValidationError
 from app.agent_envelope import (
     AgentEnvelope,
     AgentKind,
+    DwsMessageReactionAction,
     SendDingTalkReplyAction,
 )
 
@@ -58,6 +59,63 @@ def test_agent_envelope_normalizes_string_audit_documents():
     assert envelope.audit.documents[0].title == "OA审批表单详情"
     assert envelope.audit.documents[0].url == ""
     assert envelope.audit.documents[0].relevance == "mentioned"
+
+
+def test_agent_envelope_accepts_no_reply_message_reaction_action():
+    envelope = AgentEnvelope.model_validate(
+        {
+            "kind": "no_action",
+            "user_response": {
+                "mode": "no_reply",
+                "text": "",
+                "sensitivity_kind": "general",
+            },
+            "system_actions": [
+                {
+                    "type": "dws_message_reaction",
+                    "reaction_type": "emoji",
+                    "emoji": "👍",
+                }
+            ],
+            "domain_payload": {},
+            "audit": {
+                "summary": "公告无需正式回复，但适合用表情表示支持。",
+                "documents": [],
+                "confidence": 0.9,
+            },
+        }
+    )
+
+    assert isinstance(envelope.system_actions[0], DwsMessageReactionAction)
+
+
+def test_agent_envelope_accepts_text_emotion_without_precreated_ids():
+    envelope = AgentEnvelope.model_validate(
+        {
+            "kind": "no_action",
+            "user_response": {
+                "mode": "no_reply",
+                "text": "",
+                "sensitivity_kind": "general",
+            },
+            "system_actions": [
+                {
+                    "type": "dws_message_reaction",
+                    "reaction_type": "text_emotion",
+                    "text": "我去摇人",
+                }
+            ],
+            "domain_payload": {},
+            "audit": {
+                "summary": "只需要轻量承接真人处理。",
+                "documents": [],
+                "confidence": 0.9,
+            },
+        }
+    )
+
+    assert isinstance(envelope.system_actions[0], DwsMessageReactionAction)
+    assert envelope.system_actions[0].text == "我去摇人"
 
 
 def test_agent_envelope_normalizes_named_audit_documents():

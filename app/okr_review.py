@@ -1,9 +1,25 @@
 import json
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime, timezone
+from html import unescape
+from html.parser import HTMLParser
 
 from app.external_retry import run_external
 from app.okr_models import OkrReviewPayload
+
+
+class _HtmlTextExtractor(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.parts: list[str] = []
+
+    def handle_data(self, data: str) -> None:
+        text = data.strip()
+        if text:
+            self.parts.append(text)
+
+    def text(self) -> str:
+        return " ".join(self.parts)
 
 
 @dataclass(frozen=True)
@@ -38,14 +54,401 @@ class DwsLiveOkrSource:
         return payload
 
 
+class DwsAgoalApiOkrSource:
+    def __init__(
+        self,
+        *,
+        dws,
+        objective_rule_id: str | None = None,
+        page_size: int = 100,
+        max_attempts: int = 3,
+    ):
+        self.dws = dws
+        self.objective_rule_id = (objective_rule_id or "").strip()
+        self.page_size = page_size
+        self.max_attempts = max_attempts
+
+    def fetch_user_okr(self, *, user_id: str, period_label: str) -> dict:
+        if not user_id.strip():
+            raise ValueError("missing OKR user_id")
+        objective_rule_id = self._resolve_objective_rule_id()
+        period_payload = run_external(
+            "dingtalk agoal objective rule periods",
+            lambda: self.dws.read_agoal_objective_rule_period_list(objective_rule_id),
+            max_attempts=self.max_attempts,
+        )
+        period = self._select_period(period_payload, period_label)
+        period_id = self._required_string(period, "periodId")
+        objectives_payload = run_external(
+            "dingtalk agoal user objectives",
+            lambda: self.dws.read_agoal_user_objective_list(
+                ding_user_id=user_id,
+                objective_rule_id=objective_rule_id,
+                period_ids=[period_id],
+            ),
+            max_attempts=self.max_attempts,
+        )
+        objectives = self._extract_list_payload(objectives_payload)
+        objective_details = []
+        objective_progresses = []
+        for objective in objectives:
+            objective_id = self._objective_id(objective)
+            detail = run_external(
+                "dingtalk agoal objective detail",
+                lambda objective_id=objective_id: self.dws.read_agoal_objective_detail(
+                    objective_id
+                ),
+                max_attempts=self.max_attempts,
+            )
+            progress = run_external(
+                "dingtalk agoal objective progresses",
+                lambda objective_id=objective_id: self.dws.read_agoal_objective_progress_list(
+                    objective_id,
+                    page_size=self.page_size,
+                ),
+                max_attempts=self.max_attempts,
+            )
+            objective_details.append(
+                {"objectiveId": objective_id, "payload": self._unwrap_content(detail)}
+            )
+            objective_progresses.append(
+                {
+                    "objectiveId": objective_id,
+                    "payload": self._unwrap_content(progress),
+                }
+            )
+        processed = self._build_processed_payload(
+            objectives=objectives,
+            objective_details=objective_details,
+            objective_progresses=objective_progresses,
+        )
+        return {
+            "source": {
+                "system": "叮当OKR Agoal OpenAPI",
+                "api": "agoal_1.0",
+                "objectiveRuleId": objective_rule_id,
+            },
+            "userId": user_id,
+            "periodLabel": period_label,
+            "period": period,
+            "objectives": objectives,
+            "objectiveDetails": objective_details,
+            "objectiveProgresses": objective_progresses,
+            "processed": processed,
+        }
+
+    def _build_processed_payload(
+        self,
+        *,
+        objectives: list[dict],
+        objective_details: list[dict],
+        objective_progresses: list[dict],
+    ) -> dict:
+        details_by_id = {
+            row["objectiveId"]: row["payload"]
+            for row in objective_details
+            if isinstance(row.get("payload"), dict)
+        }
+        progress_by_id = {
+            row["objectiveId"]: self._progress_items(row["payload"])
+            for row in objective_progresses
+            if isinstance(row.get("payload"), dict)
+        }
+        processed_objectives = []
+        okr_rows = []
+        for objective in objectives:
+            objective_id = self._objective_id(objective)
+            detail = details_by_id.get(objective_id, objective)
+            objective_payload = detail if isinstance(detail, dict) else objective
+            objective_title = self._required_string(objective_payload, "title")
+            objective_weight = self._first_present(
+                objective_payload.get("weight"),
+                objective.get("weight"),
+            )
+            objective_progress = self._first_present(
+                objective_payload.get("progress"),
+                objective.get("progress"),
+            )
+            objective_row = {
+                "objectiveId": objective_id,
+                "title": objective_title,
+                "weight": objective_weight,
+                "progress": objective_progress,
+                "latestProgressText": self._latest_progress_text(objective_payload),
+                "keyResults": [],
+                "unscopedProgressUpdates": [],
+            }
+            okr_rows.append(
+                {
+                    "level": "O",
+                    "objectiveId": objective_id,
+                    "objectiveTitle": objective_title,
+                    "objectiveWeight": objective_weight,
+                    "objectiveProgress": objective_progress,
+                    "krId": "",
+                    "krTitle": "",
+                    "krWeight": "",
+                    "krProgress": "",
+                    "krDetailsUpdatesAggregated": "",
+                }
+            )
+            key_results = self._dict_list(objective_payload.get("keyResults"))
+            progress_items = progress_by_id.get(objective_id, [])
+            for key_result in key_results:
+                key_result_id = self._key_result_id(key_result)
+                updates, unscoped = self._updates_for_key_result(
+                    progress_items=progress_items,
+                    key_result_id=key_result_id,
+                )
+                objective_row["unscopedProgressUpdates"].extend(unscoped)
+                aggregated = self._aggregate_progress_updates(updates)
+                key_result_row = {
+                    "keyResultId": key_result_id,
+                    "title": self._required_string(key_result, "title"),
+                    "weight": key_result.get("weight"),
+                    "progress": key_result.get("progress"),
+                    "status": key_result.get("status"),
+                    "progressUpdates": updates,
+                    "progressUpdatesAggregated": aggregated,
+                }
+                objective_row["keyResults"].append(key_result_row)
+                okr_rows.append(
+                    {
+                        "level": "KR",
+                        "objectiveId": objective_id,
+                        "objectiveTitle": objective_title,
+                        "objectiveWeight": objective_weight,
+                        "objectiveProgress": objective_progress,
+                        "krId": key_result_id,
+                        "krTitle": key_result_row["title"],
+                        "krWeight": key_result.get("weight"),
+                        "krProgress": key_result.get("progress"),
+                        "krDetailsUpdatesAggregated": aggregated,
+                    }
+                )
+            processed_objectives.append(objective_row)
+        return {"objectives": processed_objectives, "okrRows": okr_rows}
+
+    def _progress_items(self, payload) -> list[dict]:
+        if isinstance(payload, list):
+            return self._require_dict_items(payload)
+        if isinstance(payload, dict):
+            for key in ("result", "items", "records", "list"):
+                value = payload.get(key)
+                if isinstance(value, list):
+                    return self._require_dict_items(value)
+        raise ValueError("invalid Agoal objective progress payload")
+
+    def _updates_for_key_result(
+        self,
+        *,
+        progress_items: list[dict],
+        key_result_id: str,
+    ) -> tuple[list[dict], list[dict]]:
+        updates = []
+        unscoped = []
+        for item in progress_items:
+            progress_key_results = self._dict_list(item.get("keyResults"))
+            matched = [
+                row
+                for row in progress_key_results
+                if self._key_result_id(row) == key_result_id
+            ]
+            if not progress_key_results:
+                unscoped.append(self._progress_update_row(item, None))
+                continue
+            for key_result in matched:
+                updates.append(self._progress_update_row(item, key_result))
+        return updates, unscoped
+
+    def _progress_update_row(
+        self,
+        item: dict,
+        key_result: dict | None,
+    ) -> dict:
+        return {
+            "progressId": self._required_string(item, "progressId"),
+            "createdAt": self._format_timestamp(item.get("created")),
+            "updatedAt": self._format_timestamp(item.get("updated")),
+            "objectiveProgress": item.get("progress"),
+            "htmlContent": self._clean_html(self._required_string(item, "htmlContent")),
+            "keyResultProgress": key_result.get("progress") if key_result else None,
+            "keyResultStatus": key_result.get("status") if key_result else None,
+            "keyResultTitle": self._required_string(key_result or {}, "title"),
+        }
+
+    def _aggregate_progress_updates(self, updates: list[dict]) -> str:
+        if not updates:
+            return "[未撰写进度]"
+        parts = []
+        for item in updates:
+            timestamp = item.get("updatedAt") or item.get("createdAt") or "时间未知"
+            progress = item.get("keyResultProgress")
+            content = item.get("htmlContent") or "未填写说明"
+            parts.append(f"{timestamp} | KR进度={progress} | {content}")
+        return "\n".join(parts)
+
+    def _latest_progress_text(self, objective: dict) -> str:
+        latest_progress = objective.get("latestProgress")
+        if not isinstance(latest_progress, dict):
+            return ""
+        return self._clean_html(self._required_string(latest_progress, "htmldescription"))
+
+    @staticmethod
+    def _clean_html(value: str) -> str:
+        if not value:
+            return ""
+        parser = _HtmlTextExtractor()
+        parser.feed(value)
+        text = parser.text() or value
+        return " ".join(unescape(text).split())
+
+    @staticmethod
+    def _format_timestamp(value) -> str:
+        if not isinstance(value, int | float):
+            return ""
+        seconds = value / 1000 if value > 10_000_000_000 else value
+        return datetime.fromtimestamp(seconds, tz=timezone.utc).isoformat()
+
+    @staticmethod
+    def _first_present(*values):
+        for value in values:
+            if value is not None:
+                return value
+        return None
+
+    def _resolve_objective_rule_id(self) -> str:
+        if self.objective_rule_id:
+            return self.objective_rule_id
+        rules_payload = run_external(
+            "dingtalk agoal objective rules",
+            self.dws.read_agoal_objective_rule_list,
+            max_attempts=self.max_attempts,
+        )
+        rules = self._extract_list_payload(rules_payload)
+        candidates = [
+            rule for rule in rules if self._required_string(rule, "objectiveRuleId")
+        ]
+        if len(candidates) != 1:
+            names = [
+                f"{rule.get('objectiveRuleName', '')}:{rule.get('objectiveRuleId', '')}"
+                for rule in candidates
+            ]
+            raise RuntimeError(
+                "unable to resolve Agoal objective rule; "
+                "set CEO_OKR_OBJECTIVE_RULE_ID or verify Agoal.ObjectiveRule.Read; "
+                f"candidates={names}"
+            )
+        return self._required_string(candidates[0], "objectiveRuleId")
+
+    def _select_period(self, payload: dict, period_label: str) -> dict:
+        periods = self._extract_list_payload(payload)
+        expected = self._period_key(period_label)
+        matches = [
+            period
+            for period in periods
+            if self._period_key(str(period.get("name") or "")) == expected
+        ]
+        if len(matches) != 1:
+            names = [str(period.get("name") or "") for period in periods]
+            raise RuntimeError(
+                "unable to resolve Agoal OKR period; "
+                f"period_label={period_label}; available={names}"
+            )
+        return matches[0]
+
+    @staticmethod
+    def _period_key(value: str) -> str:
+        compact = value.casefold().replace(" ", "").replace("年", "").replace("第", "")
+        for marker in ("季度", "季"):
+            marker_index = compact.find(marker)
+            if marker_index <= 0:
+                continue
+            quarter_text = compact[marker_index - 1]
+            quarter = DwsAgoalApiOkrSource._quarter_number(quarter_text)
+            if quarter:
+                suffix_start = marker_index + len(marker)
+                return f"{compact[:marker_index - 1]}q{quarter}{compact[suffix_start:]}"
+        return compact
+
+    @staticmethod
+    def _quarter_number(value: str) -> str:
+        if value.isdigit():
+            return value
+        return {"一": "1", "二": "2", "三": "3", "四": "4"}.get(value, "")
+
+    @classmethod
+    def _extract_list_payload(cls, payload: dict) -> list[dict]:
+        content = cls._unwrap_content(payload)
+        if isinstance(content, list):
+            return cls._require_dict_items(content)
+        if isinstance(content, dict):
+            for key in ("result", "items", "records", "list"):
+                value = content.get(key)
+                if isinstance(value, list):
+                    return cls._require_dict_items(value)
+        raise ValueError("invalid Agoal API list payload")
+
+    @staticmethod
+    def _require_dict_items(items: list) -> list[dict]:
+        if not all(isinstance(item, dict) for item in items):
+            raise ValueError("invalid Agoal API item payload")
+        return items
+
+    @classmethod
+    def _unwrap_content(cls, payload: dict):
+        if not isinstance(payload, dict):
+            raise ValueError("invalid Agoal API payload")
+        body = payload.get("body")
+        if isinstance(body, dict):
+            payload = body
+        response = payload.get("response")
+        if isinstance(response, dict):
+            response_content = response.get("content")
+            if isinstance(response_content, dict):
+                payload = response_content
+        return payload.get("content", payload)
+
+    @classmethod
+    def _objective_id(cls, objective: dict) -> str:
+        for key in ("objectiveId", "objective_id", "id"):
+            value = cls._required_string(objective, key)
+            if value:
+                return value
+        raise ValueError("Agoal objective is missing objectiveId")
+
+    @classmethod
+    def _key_result_id(cls, key_result: dict) -> str:
+        for key in ("keyResultId", "key_result_id", "id"):
+            value = cls._required_string(key_result, key)
+            if value:
+                return value
+        raise ValueError("Agoal key result is missing keyResultId")
+
+    @classmethod
+    def _dict_list(cls, value) -> list[dict]:
+        if value is None:
+            return []
+        if isinstance(value, list):
+            return cls._require_dict_items(value)
+        raise ValueError("invalid Agoal nested list payload")
+
+    @staticmethod
+    def _required_string(payload: dict, key: str) -> str:
+        value = payload.get(key)
+        if isinstance(value, str):
+            return value.strip()
+        return ""
+
+
 class UnconfiguredOkrLiveSource:
     def __init__(self, env_name: str):
         self.env_name = env_name
 
     def fetch_user_okr(self, *, user_id: str, period_label: str) -> dict:
         raise RuntimeError(
-            "missing OKR live source command template; "
-            f"set {self.env_name} to the configured DWS/OpenAPI command"
+            "missing Dingteam OKR live source command template; "
+            f"set {self.env_name} to the configured Dingteam Web/OpenAPI command"
         )
 
 
@@ -84,7 +487,7 @@ def build_okr_review_prompt(
     okr_source_json: str,
     trigger_text: str,
 ) -> str:
-    json.loads(okr_source_json)
+    compact_okr_source_json = compact_okr_source_for_review_prompt(okr_source_json)
     return f"""你是 CEO Agent OKR review task。
 
 request_id: {request_id}
@@ -93,10 +496,11 @@ period_label: {period_label}
 trigger_text: {trigger_text}
 
 实时叮当 OKR JSON:
-{okr_source_json}
+{compact_okr_source_json}
 
 任务:
-- 逐 KR 阅读 KR进度更新。
+- 优先使用实时 JSON 中的 `processed.okrRows` 和 `processed.objectives`；这是 worker 在触发 runner 前整理好的 O/KR 层级结构。
+- 逐 KR 阅读 `krDetailsUpdatesAggregated` 和 KR progress updates。
 - 从 KR进度更新中抽取员工主张、完成时间、产出和指标。
 - 给出员工主张信息打分。
 - 使用本地文件、memory_recall、DWS 搜索和读取进行事实核实。
@@ -104,6 +508,27 @@ trigger_text: {trigger_text}
 - 两套分数都必须考虑超期、时差、业务影响和表述是否可衡量。
 - 只输出 AgentEnvelope JSON，kind=okr_review，domain_payload 必须符合 OkrReviewPayload。
 """
+
+
+def compact_okr_source_for_review_prompt(okr_source_json: str) -> str:
+    payload = json.loads(okr_source_json)
+    if not isinstance(payload, dict):
+        raise ValueError("OKR source JSON must be an object")
+    processed = payload.get("processed")
+    if not isinstance(processed, dict):
+        raise ValueError("OKR source JSON must contain processed")
+    if not isinstance(processed.get("objectives"), list):
+        raise ValueError("OKR source JSON must contain processed.objectives")
+    if not isinstance(processed.get("okrRows"), list):
+        raise ValueError("OKR source JSON must contain processed.okrRows")
+    compact = {
+        "source": payload.get("source", {}),
+        "userId": payload.get("userId", ""),
+        "periodLabel": payload.get("periodLabel", ""),
+        "period": payload.get("period", {}),
+        "processed": processed,
+    }
+    return json.dumps(compact, ensure_ascii=False)
 
 
 def render_okr_review_reply(payload: OkrReviewPayload) -> str:

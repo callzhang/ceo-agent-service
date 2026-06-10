@@ -55,6 +55,7 @@ from app.leak_check import (
     FORBIDDEN_MARKERS,
     contains_forbidden_leak,
 )
+from app.message_split import split_dingtalk_text
 from app.notification import send_macos_notification
 from app.oa_approval import extract_oa_url
 from app.okr_review import current_quarter_period, is_okr_review_request
@@ -76,6 +77,8 @@ HANDOFF_ACK = handoff_ack()
 # Historical auto-ack marker. Keep filtering it from context, but do not send
 # new processing acknowledgements before final replies.
 PROCESSING_ACK = "收到，我正在处理（by 分身）"
+CODEX_LOGIN_REQUIRED_PREFIX = "codex_login_required"
+DEFAULT_TEXT_EMOTION_BACKGROUND_ID = "im_bg_5"
 LEAK_CHECK_REGENERATION_SCHEMA = REPLY_AGENT_ENVELOPE_SCHEMA_HINT
 SPLIT_PERSON_SIGNATURE = assistant_signature()
 STALE_PROCESSING_TASK_SECONDS = 30 * 60
@@ -149,6 +152,52 @@ DINGTALK_SHANJI_DOC_SELECTOR_PATTERN = re.compile(
     r"resourceType=SHANJI[^\s)\]]*",
     re.IGNORECASE,
 )
+
+
+def _is_codex_login_required_error(reason: str) -> bool:
+    normalized = reason.lower()
+    return (
+        "failed to refresh token" in normalized
+        and "session has ended" in normalized
+    ) or "token_invalidated" in normalized
+
+
+def _extract_text_emotion_id(payload: object) -> str:
+    if isinstance(payload, dict):
+        for key in ("emotionId", "emotion_id", "id"):
+            value = payload.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        for value in payload.values():
+            found = _extract_text_emotion_id(value)
+            if found:
+                return found
+    if isinstance(payload, list):
+        for value in payload:
+            found = _extract_text_emotion_id(value)
+            if found:
+                return found
+    return ""
+
+
+def _extract_text_emotion_background_id(payload: object) -> str:
+    if isinstance(payload, dict):
+        for key in ("backgroundId", "background_id"):
+            value = payload.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        for value in payload.values():
+            found = _extract_text_emotion_background_id(value)
+            if found:
+                return found
+    if isinstance(payload, list):
+        for value in payload:
+            found = _extract_text_emotion_background_id(value)
+            if found:
+                return found
+    return ""
+
+
 MINUTES_SUMMARY_MAX_CHARS = 5000
 MINUTES_TRANSCRIPTION_PARAGRAPH_LIMIT = 20
 FILE_MESSAGE_PATTERN = re.compile(r"^\s*\[文件]\s*(?P<name>.+?)\s*$")
@@ -1597,14 +1646,14 @@ class DingTalkAutoReplyWorker:
             return True
         period = current_quarter_period()
         if not hasattr(self, "okr_live_source"):
-            self._record_okr_review_source_unavailable(
-                conversation=conversation,
-                trigger=trigger,
-                period_label=period.period_label,
-                error="OKR live source is not configured",
-                raise_on_delivery_failure=raise_on_delivery_failure,
+            error = "OKR live source is not configured"
+            self.store.record_error(
+                conversation.open_conversation_id,
+                trigger.open_message_id,
+                "okr_review_source",
+                error,
             )
-            return True
+            raise RuntimeError(error)
         try:
             okr_payload = self.okr_live_source.fetch_user_okr(
                 user_id=trigger.sender_user_id
@@ -1612,14 +1661,13 @@ class DingTalkAutoReplyWorker:
                 period_label=period.period_label,
             )
         except Exception as exc:
-            self._record_okr_review_source_unavailable(
-                conversation=conversation,
-                trigger=trigger,
-                period_label=period.period_label,
-                error=str(exc),
-                raise_on_delivery_failure=raise_on_delivery_failure,
+            self.store.record_error(
+                conversation.open_conversation_id,
+                trigger.open_message_id,
+                "okr_review_source",
+                str(exc),
             )
-            return True
+            raise
         request_id = self.store.create_okr_review_request(
             conversation_id=conversation.open_conversation_id,
             conversation_title=conversation.title,
@@ -1665,59 +1713,6 @@ class DingTalkAutoReplyWorker:
         else:
             self._mark_seen([trigger])
         return True
-
-    def _record_okr_review_source_unavailable(
-        self,
-        *,
-        conversation: DingTalkConversation,
-        trigger: DingTalkMessage,
-        period_label: str,
-        error: str,
-        raise_on_delivery_failure: bool = False,
-    ) -> None:
-        reply_text = (
-            f"现在无法获取 {period_label} 实时 OKR 数据，暂时不能完成审核。"
-            "请稍后再试。"
-        )
-        attempt_id = self.store.record_reply_attempt_for_trigger(
-            conversation_id=conversation.open_conversation_id,
-            conversation_title=conversation.title,
-            trigger_message_id=trigger.open_message_id,
-            trigger_sender=trigger.sender_name,
-            trigger_text=trigger.content,
-            action="okr_review",
-            sensitivity_kind="internal_personnel",
-            codex_reason="okr_review_source_unavailable",
-            draft_reply_text=reply_text,
-            audit_summary=(
-                "OKR review request could not load live OKR data: "
-                f"{error}"
-            ),
-            send_status="dry_run" if self.dry_run else "pending",
-        )
-        self.store.update_reply_attempt(
-            attempt_id,
-            final_reply_text=reply_text,
-            send_error=error,
-        )
-        self.store.record_error(
-            conversation.open_conversation_id,
-            trigger.open_message_id,
-            "okr_review_source",
-            error,
-        )
-        if not self.dry_run:
-            self._deliver_trigger_reply(
-                conversation=conversation,
-                trigger=trigger,
-                new_messages=[trigger],
-                attempt_id=attempt_id,
-                reply_text=reply_text,
-                feedback_token="",
-                raise_on_delivery_failure=raise_on_delivery_failure,
-            )
-        else:
-            self._mark_seen([trigger])
 
     def _handle_oa_approval_if_actionable(
         self,
@@ -3595,6 +3590,16 @@ class DingTalkAutoReplyWorker:
                 return
 
         if decision.action == CodexAction.NO_REPLY:
+            if self._message_reaction_actions(decision):
+                self._execute_message_reactions(
+                    conversation=conversation,
+                    trigger=trigger,
+                    new_messages=new_messages,
+                    attempt_id=attempt_id,
+                    decision=decision,
+                    raise_on_delivery_failure=raise_on_delivery_failure,
+                )
+                return
             self.store.update_reply_attempt(
                 attempt_id,
                 send_status="skipped",
@@ -3603,24 +3608,34 @@ class DingTalkAutoReplyWorker:
             self._mark_seen(new_messages)
             return
         if decision.action == CodexAction.STOP_WITH_ERROR:
+            login_required = _is_codex_login_required_error(decision.reason)
+            send_error = (
+                f"{CODEX_LOGIN_REQUIRED_PREFIX}: {decision.reason}"
+                if login_required
+                else decision.reason
+            )
             self.store.update_reply_attempt(
                 attempt_id,
-                send_status="failed",
-                send_error=decision.reason,
+                send_status="blocked" if login_required else "failed",
+                send_error=send_error,
             )
             self.store.record_error(
                 conversation.open_conversation_id,
                 trigger.open_message_id,
                 "codex",
-                decision.reason,
+                send_error,
             )
             self._notify(
-                title=f"CEO agent error: {conversation.title}",
-                message=decision.reason[:120],
+                title=(
+                    f"CEO agent blocked: {conversation.title}"
+                    if login_required
+                    else f"CEO agent error: {conversation.title}"
+                ),
+                message=send_error[:120],
                 conversation=conversation,
             )
             if raise_on_delivery_failure:
-                raise ReplyTaskProcessingError(decision.reason)
+                raise ReplyTaskProcessingError(send_error)
             return
         if decision.action == CodexAction.HANDOFF_TO_HUMAN:
             handoff_reply_text = self._format_reply_delivery_text(HANDOFF_ACK)
@@ -3721,6 +3736,269 @@ class DingTalkAutoReplyWorker:
             comment_target_messages=comment_target_messages,
             raise_on_delivery_failure=raise_on_delivery_failure,
             allow_duplicate_send=allow_duplicate_send,
+        )
+
+    @staticmethod
+    def _message_reaction_actions(decision: CodexDecision) -> list[dict]:
+        return [
+            action
+            for action in decision.system_actions
+            if isinstance(action, dict)
+            and action.get("type") == "dws_message_reaction"
+        ]
+
+    def _execute_message_reactions(
+        self,
+        *,
+        conversation: DingTalkConversation,
+        trigger: DingTalkMessage,
+        new_messages: list[DingTalkMessage],
+        attempt_id: int,
+        decision: CodexDecision,
+        raise_on_delivery_failure: bool = False,
+    ) -> bool:
+        actions = self._message_reaction_actions(decision)
+        if not actions:
+            return False
+        if self.dry_run:
+            self.store.update_reply_attempt(
+                attempt_id,
+                send_status="dry_run",
+                send_error="message_reaction",
+            )
+            return True
+        events: list[dict[str, str]] = []
+        summaries: list[str] = []
+        try:
+            for index, action in enumerate(actions, start=1):
+                call_id = f"message_reaction_{index}"
+                result = self._execute_message_reaction(
+                    conversation=conversation,
+                    trigger=trigger,
+                    action=action,
+                    call_id=call_id,
+                    events=events,
+                )
+                summaries.append(self._message_reaction_summary(action))
+                events.append(
+                    {
+                        "tool": "tool_output",
+                        "call_id": call_id,
+                        "output": json.dumps(result or {}, ensure_ascii=False),
+                    }
+                )
+        except Exception as exc:
+            self._append_attempt_audit_tool_events(attempt_id, events)
+            self.store.update_reply_attempt(
+                attempt_id,
+                send_status="failed",
+                send_error=str(exc),
+            )
+            self.store.record_error(
+                conversation.open_conversation_id,
+                trigger.open_message_id,
+                "message_reaction",
+                str(exc),
+            )
+            self._notify(
+                title=f"CEO message reaction failed: {conversation.title}",
+                message=str(exc)[:120],
+                conversation=conversation,
+                attempt_id=attempt_id,
+            )
+            if raise_on_delivery_failure:
+                raise ReplyTaskProcessingError(str(exc)) from exc
+            return False
+        self._append_attempt_audit_tool_events(attempt_id, events)
+        self.store.update_reply_attempt(
+            attempt_id,
+            send_status="reacted",
+            send_error=", ".join(summaries),
+            retry_count=0,
+        )
+        self._mark_seen(new_messages)
+        return True
+
+    def _execute_message_reaction(
+        self,
+        *,
+        conversation: DingTalkConversation,
+        trigger: DingTalkMessage,
+        action: dict,
+        call_id: str,
+        events: list[dict[str, str]],
+    ) -> dict:
+        reaction_type = str(action.get("reaction_type") or "emoji").strip()
+        if reaction_type == "emoji":
+            emoji = str(action.get("emoji") or "").strip()
+            command = [
+                "dws",
+                "chat",
+                "message",
+                "add-emoji",
+                "--group",
+                conversation.open_conversation_id,
+                "--msg-id",
+                trigger.open_message_id,
+                "--emoji",
+                emoji,
+                "--format",
+                "json",
+                "--yes",
+            ]
+            events.append(
+                {
+                    "tool": "dws",
+                    "call_id": call_id,
+                    "command": " ".join(command),
+                    "input": json.dumps(
+                        {
+                            "conversation_id": conversation.open_conversation_id,
+                            "message_id": trigger.open_message_id,
+                            "emoji": emoji,
+                        },
+                        ensure_ascii=False,
+                    ),
+                }
+            )
+            return self.dws.add_message_emoji(
+                conversation.open_conversation_id,
+                trigger.open_message_id,
+                emoji,
+            )
+        if reaction_type == "text_emotion":
+            text = str(action.get("text") or "").strip()
+            emotion_id = str(action.get("emotion_id") or "").strip()
+            emotion_name = str(action.get("emotion_name") or "").strip() or text
+            background_id = (
+                str(action.get("background_id") or "").strip()
+                or DEFAULT_TEXT_EMOTION_BACKGROUND_ID
+            )
+            if not emotion_id:
+                create_command = [
+                    "dws",
+                    "chat",
+                    "message",
+                    "create-text-emotion",
+                    "--text",
+                    text,
+                    "--emotion-name",
+                    emotion_name,
+                    "--background-id",
+                    background_id,
+                    "--format",
+                    "json",
+                    "--yes",
+                ]
+                events.append(
+                    {
+                        "tool": "dws",
+                        "call_id": f"{call_id}_create",
+                        "command": " ".join(create_command),
+                        "input": json.dumps(
+                            {
+                                "text": text,
+                                "emotion_name": emotion_name,
+                                "background_id": background_id,
+                            },
+                            ensure_ascii=False,
+                        ),
+                    }
+                )
+                create_result = self.dws.create_message_text_emotion(
+                    text=text,
+                    emotion_name=emotion_name,
+                    background_id=background_id,
+                )
+                events[-1]["output"] = json.dumps(
+                    create_result,
+                    ensure_ascii=False,
+                )
+                emotion_id = _extract_text_emotion_id(create_result)
+                if not emotion_id:
+                    raise ValueError("create-text-emotion returned no emotion id")
+                background_id = (
+                    _extract_text_emotion_background_id(create_result)
+                    or background_id
+                )
+            command = [
+                "dws",
+                "chat",
+                "message",
+                "add-text-emotion",
+                "--group",
+                conversation.open_conversation_id,
+                "--msg-id",
+                trigger.open_message_id,
+                "--text",
+                text,
+                "--emotion-id",
+                emotion_id,
+                "--emotion-name",
+                emotion_name,
+                "--background-id",
+                background_id,
+                "--format",
+                "json",
+                "--yes",
+            ]
+            events.append(
+                {
+                    "tool": "dws",
+                    "call_id": call_id,
+                    "command": " ".join(command),
+                    "input": json.dumps(
+                        {
+                            "conversation_id": conversation.open_conversation_id,
+                            "message_id": trigger.open_message_id,
+                            "text": text,
+                            "emotion_id": emotion_id,
+                            "emotion_name": emotion_name,
+                            "background_id": background_id,
+                        },
+                        ensure_ascii=False,
+                    ),
+                }
+            )
+            return self.dws.add_message_text_emotion(
+                conversation.open_conversation_id,
+                trigger.open_message_id,
+                text=text,
+                emotion_id=emotion_id,
+                emotion_name=emotion_name,
+                background_id=background_id,
+            )
+        raise ValueError(f"unsupported message reaction type: {reaction_type}")
+
+    @staticmethod
+    def _message_reaction_summary(action: dict) -> str:
+        reaction_type = str(action.get("reaction_type") or "emoji").strip()
+        if reaction_type == "emoji":
+            return f"emoji: {str(action.get('emoji') or '').strip()}"
+        return f"text_emotion: {str(action.get('text') or '').strip()}"
+
+    def _append_attempt_audit_tool_events(
+        self,
+        attempt_id: int,
+        events: list[dict[str, str]],
+    ) -> None:
+        if not events:
+            return
+        attempt = self.store.get_reply_attempt(attempt_id)
+        if attempt is None:
+            return
+        try:
+            existing = json.loads(attempt.audit_tool_events_json or "[]")
+        except json.JSONDecodeError:
+            existing = []
+        if not isinstance(existing, list):
+            existing = []
+        self.store.update_reply_attempt(
+            attempt_id,
+            audit_tool_events_json=json.dumps(
+                [*existing, *events],
+                ensure_ascii=False,
+            ),
         )
 
     def _handle_existing_attempt(
@@ -5651,6 +5929,39 @@ class DingTalkAutoReplyWorker:
         )
 
     def _send_reply_to_trigger_with_retry(
+        self,
+        conversation: DingTalkConversation,
+        trigger: DingTalkMessage,
+        text: str,
+        *,
+        at_users: list[str] | None = None,
+        at_open_dingtalk_ids: list[str] | None = None,
+        at_open_dingtalk_names: list[str] | None = None,
+    ) -> tuple[int, dict | None]:
+        chunks = split_dingtalk_text(text)
+        if not chunks:
+            raise RuntimeError("empty DingTalk reply text")
+        max_retry_count = 0
+        chunk_results = []
+        for index, chunk in enumerate(chunks, start=1):
+            chunk_at_users = at_users if index == 1 else []
+            chunk_at_open_dingtalk_ids = at_open_dingtalk_ids if index == 1 else []
+            chunk_at_open_dingtalk_names = at_open_dingtalk_names if index == 1 else []
+            retry_count, send_result = self._send_single_reply_to_trigger_with_retry(
+                conversation,
+                trigger,
+                chunk,
+                at_users=chunk_at_users,
+                at_open_dingtalk_ids=chunk_at_open_dingtalk_ids,
+                at_open_dingtalk_names=chunk_at_open_dingtalk_names,
+            )
+            max_retry_count = max(max_retry_count, retry_count)
+            chunk_results.append(
+                {"index": index, "text": chunk, "send_result": send_result}
+            )
+        return max_retry_count, {"chunks": chunk_results}
+
+    def _send_single_reply_to_trigger_with_retry(
         self,
         conversation: DingTalkConversation,
         trigger: DingTalkMessage,

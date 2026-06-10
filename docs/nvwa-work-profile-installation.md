@@ -3,6 +3,12 @@
 This guide describes the local dependency needed to generate a reviewed
 `profiles/work_profile.md`.
 
+For a full machine setup, including `dws`, Codex CLI, Memory Connector,
+interactive parameters, corpus preparation, audit web management, launchd, and
+permission checks, use
+[docs/agent-installation-runbook.md](agent-installation-runbook.md). This file
+only covers the Nvwa/profile part of that flow.
+
 ## What Nvwa Does
 
 Nvwa is the persona-distillation skill used after evidence collection. The CEO

@@ -1,7 +1,5 @@
 # CEO Agent Service Instructions
 
-Before doing repo work, read `/Users/derek/.agents/AGENT.md` and follow it as the canonical shared instruction file.
-
 ## Local Service Reload
 
 This project is normally run by launchd as `com.ceo-agent-service.main`. Python code changes are not hot-reloaded by the running service process.

@@ -2075,6 +2075,48 @@ def test_attempt_history_and_detail_render_calendar_response_metadata(
     assert "Calendar response result" in detail_html
 
 
+def test_attempt_history_renders_message_reaction_status(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    attempt_id = store.record_reply_attempt(
+        conversation_id="cid-1",
+        conversation_title="Friday",
+        trigger_message_id="msg-1",
+        trigger_sender="Xiaomin",
+        trigger_text="[群公告]@所有人 今天 bug 日清。",
+        action="no_reply",
+        sensitivity_kind="general",
+        codex_reason="群公告无需正式回复，但适合用表情表示支持。",
+    )
+    store.update_reply_attempt(attempt_id, send_status="reacted", send_error="emoji: 👍")
+
+    list_html = render_attempt_list(store)
+    status, detail_html = render_attempt_detail(store, attempt_id)
+
+    assert (
+        'class="pill status-action action-state-reacted">🙂 Reacted</span>'
+        in list_html
+    )
+    assert 'class="pill status-action action-state-reacted">🙂 👍</span>' not in list_html
+    assert (
+        '<span class="attempt-label">答</span>'
+        '<span class="attempt-copy attempt-reaction-copy">👍</span>'
+        in list_html
+    )
+    assert ".attempt-copy{" in list_html
+    assert ".attempt-copy{color:var(--charcoal);font-size:13px;" in list_html
+    assert ".attempt-reaction-copy{" in list_html
+    reaction_css = list_html.split(".attempt-reaction-copy{", 1)[1].split("}", 1)[0]
+    assert "font-size:13px" in reaction_css
+    assert "font-size:16px" not in reaction_css
+    assert status == 200
+    assert (
+        'class="pill status-action action-state-reacted">🙂 Reacted</span>'
+        in detail_html
+    )
+    assert 'class="pill status-action action-state-reacted">🙂 👍</span>' not in detail_html
+    assert '<pre class="reply-pre">👍</pre>' in detail_html
+
+
 def test_render_attempt_list_uses_unified_emoji_action_pills(
     tmp_path: Path,
 ):
@@ -2677,7 +2719,7 @@ def test_render_codex_session_detail_shows_related_history_when_file_missing(
     assert "明哥，这个怎么处理？" in html
 
 
-def test_render_attempt_detail_hides_recall_button_when_recall_key_exists(
+def test_render_attempt_detail_shows_recall_button_when_sent_reply_is_recallable(
     tmp_path: Path,
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
@@ -2686,16 +2728,17 @@ def test_render_attempt_detail_hides_recall_button_when_recall_key_exists(
         "cid-1",
         "msg-1",
         "先按A方案走（by明哥分身）",
-        recall_key="key-1",
+        send_result_json=json.dumps(
+            {"send_result": {"result": {"openMessageId": "sent-msg-1"}}}
+        ),
     )
 
     status, html = render_attempt_detail(store, attempt_id)
 
     assert status == 200
-    assert "撤销发送" not in html
-    assert f'action="/attempts/{attempt_id}/recall"' not in html
-    assert "确认撤销这条已发送消息？" not in html
-    assert "撤销这条消息" not in html
+    assert "撤销发送" in html
+    assert f'action="/attempts/{attempt_id}/recall"' in html
+    assert "确认撤销这条已发送消息？" in html
 
 
 def test_render_attempt_detail_returns_404_when_missing(tmp_path: Path):
@@ -2726,7 +2769,79 @@ def test_handle_feedback_post_updates_attempt_and_redirects(tmp_path: Path):
     assert attempt.corrected_reply_text == "先看材料"
 
 
-def test_handle_recall_post_calls_dws_and_records_success(tmp_path: Path):
+def test_handle_recall_post_calls_dws_message_recall_and_records_success(
+    tmp_path: Path,
+):
+    class FakeDws:
+        def __init__(self):
+            self.calls = []
+
+        def recall_message(self, conversation_id, message_id):
+            self.calls.append((conversation_id, message_id))
+            return {"success": True}
+
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    attempt_id = seed_attempt(store)
+    store.record_sent_reply(
+        "cid-1",
+        "msg-1",
+        "先按A方案走（by明哥分身）",
+        send_result_json=json.dumps(
+            {"send_result": {"result": {"openMessageId": "sent-msg-1"}}}
+        ),
+    )
+    dws = FakeDws()
+
+    status, headers, html = handle_recall_post(store, dws, attempt_id)
+
+    sent_reply = store.get_sent_reply("cid-1", "msg-1")
+    assert status == 303
+    assert headers["Location"] == f"/attempts/{attempt_id}"
+    assert html == ""
+    assert dws.calls == [("cid-1", "sent-msg-1")]
+    assert sent_reply is not None
+    assert sent_reply.recall_status == "recalled"
+    assert sent_reply.recalled_at is not None
+
+
+def test_handle_recall_post_queries_open_task_id_before_message_recall(
+    tmp_path: Path,
+):
+    class FakeDws:
+        def __init__(self):
+            self.status_queries = []
+            self.recall_calls = []
+
+        def query_message_send_status(self, open_task_id):
+            self.status_queries.append(open_task_id)
+            return {"result": {"openMessageId": "sent-msg-1"}}
+
+        def recall_message(self, conversation_id, message_id):
+            self.recall_calls.append((conversation_id, message_id))
+            return {"success": True}
+
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    attempt_id = seed_attempt(store)
+    store.record_sent_reply(
+        "cid-1",
+        "msg-1",
+        "先按A方案走（by明哥分身）",
+        send_result_json=json.dumps(
+            {"send_result": {"result": {"openTaskId": "task-1"}}}
+        ),
+    )
+    dws = FakeDws()
+
+    status, headers, html = handle_recall_post(store, dws, attempt_id)
+
+    assert status == 303
+    assert headers["Location"] == f"/attempts/{attempt_id}"
+    assert html == ""
+    assert dws.status_queries == ["task-1"]
+    assert dws.recall_calls == [("cid-1", "sent-msg-1")]
+
+
+def test_handle_recall_post_falls_back_to_bot_key_and_records_success(tmp_path: Path):
     class FakeDws:
         def __init__(self):
             self.calls = []
@@ -2759,6 +2874,9 @@ def test_handle_recall_post_calls_dws_and_records_success(tmp_path: Path):
 
 def test_handle_recall_post_blocks_without_recall_key(tmp_path: Path):
     class FakeDws:
+        def recall_message(self, conversation_id, message_id):
+            raise AssertionError("should not call dws")
+
         def recall_bot_message(self, conversation_id, process_query_key):
             raise AssertionError("should not call dws")
 

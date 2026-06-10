@@ -606,9 +606,24 @@ def test_thread_prompt_prevents_interjecting_on_group_broadcasts():
     prompt = ceo_agent_thread_prompt()
 
     assert "全员通知、流程提醒、OKR/复盘/会议安排等广播消息" in prompt
+    assert "@所有人不是自动跳过的理由" in prompt
+    assert "先判断是否需要 明哥 处理、确认、决策、表态或执行动作" in prompt
     assert "没有点名要求 明哥 处理、确认或决策" in prompt
     assert "默认 no_reply" in prompt
     assert "不要因为 明哥 可以补充管理建议就插嘴" in prompt
+    assert "正向推进团队共识、执行承诺、复盘改进或协作氛围" in prompt
+    assert "优先用 dws_message_reaction 表达支持" in prompt
+
+
+def test_thread_prompt_prefers_text_emotion_for_light_human_handoff():
+    prompt = ceo_agent_thread_prompt()
+
+    assert "我让明哥本人看一下" in prompt
+    assert "不要发送“我让明哥本人看一下”这类正式文字回复" in prompt
+    assert "reaction_type\":\"text_emotion\"" in prompt
+    assert "我去摇人" in prompt
+    assert "呼叫中" in prompt
+    assert "不要编造 emotion_id、background_id" in prompt
 
 
 def test_thread_prompt_requires_polite_reply_for_direct_thanks():

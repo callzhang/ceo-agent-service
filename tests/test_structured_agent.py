@@ -91,6 +91,7 @@ def test_structured_runner_uses_conversation_session_lock_and_persists_session(
         workspace=tmp_path,
         spec=spec,
         executor=executor,
+        session_exists=lambda _session_id: True,
     )
 
     result = runner.run(
@@ -105,6 +106,68 @@ def test_structured_runner_uses_conversation_session_lock_and_persists_session(
     assert store.get_codex_session_id("cid-1") == "session-2"
     assert calls[0][0][:3] == ["codex", "exec", "resume"]
     assert "session-1" in calls[0][0]
+
+
+def test_structured_runner_clears_missing_local_session_before_exec(tmp_path):
+    schema = tmp_path / "schema.json"
+    schema.write_text("{}", encoding="utf-8")
+    skill = tmp_path / "skill.md"
+    skill.write_text("# Skill", encoding="utf-8")
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.upsert_conversation("cid-1", "Friday", True, "missing-session")
+    calls = []
+
+    def executor(command, prompt, env):
+        calls.append((command, prompt, env))
+        return "\n".join(
+            [
+                json.dumps({"type": "session", "id": "session-2"}),
+                json.dumps(
+                    {
+                        "kind": "reply",
+                        "user_response": {
+                            "mode": "send_reply",
+                            "text": "ok",
+                            "sensitivity_kind": "general",
+                        },
+                        "system_actions": [
+                            {
+                                "type": "send_dingtalk_reply",
+                                "reply_text_ref": "user_response.text",
+                            }
+                        ],
+                        "domain_payload": {},
+                        "audit": {
+                            "summary": "valid",
+                            "documents": [],
+                            "confidence": 0.8,
+                        },
+                    }
+                ),
+            ]
+        )
+
+    spec = AgentSpec("reply", schema, [skill], [], "Return JSON.")
+    runner = StructuredCodexRunner(
+        store=store,
+        workspace=tmp_path,
+        spec=spec,
+        executor=executor,
+        session_exists=lambda _session_id: False,
+    )
+
+    runner.run(
+        conversation_id="cid-1",
+        conversation_title="Friday",
+        single_chat=True,
+        prompt="hello",
+        owner="reply:msg-1",
+    )
+
+    assert calls[0][0][:2] == ["codex", "exec"]
+    assert calls[0][0][2] != "resume"
+    assert "missing-session" not in calls[0][0]
+    assert store.get_codex_session_id("cid-1") == "session-2"
 
 
 def test_structured_runner_default_executor_uses_process_runner_signature(tmp_path):

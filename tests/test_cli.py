@@ -506,6 +506,7 @@ def test_create_worker_wires_configured_okr_live_source(
         "CEO_OKR_LIVE_SOURCE_COMMAND",
         "dws api --user-id {user_id} --period {period_label} --format json",
     )
+    monkeypatch.delenv("CEO_OKR_SOURCE_KIND", raising=False)
     monkeypatch.setattr(cli, "DwsClient", FakeDwsClient)
 
     worker = create_worker(WorkerSettings(db_path=tmp_path / "worker.sqlite3"))
@@ -533,24 +534,83 @@ def test_create_worker_wires_configured_okr_live_source(
     ]
 
 
-def test_create_worker_wires_unconfigured_okr_live_source(
+def test_create_worker_requires_dingteam_web_live_source_by_default(
     tmp_path,
     monkeypatch,
 ):
     class FakeDwsClient:
         def __init__(self, **kwargs):
-            pass
+            self.calls = []
 
     monkeypatch.delenv("CEO_OKR_LIVE_SOURCE_COMMAND", raising=False)
+    monkeypatch.delenv("CEO_OKR_SOURCE_KIND", raising=False)
+    monkeypatch.setattr(cli, "DwsClient", FakeDwsClient)
+
+    with pytest.raises(ValueError, match="missing OKR live source command template"):
+        create_worker(WorkerSettings(db_path=tmp_path / "worker.sqlite3"))
+
+
+def test_create_worker_wires_explicit_agoal_api_okr_live_source(
+    tmp_path,
+    monkeypatch,
+):
+    class FakeDwsClient:
+        def __init__(self, **kwargs):
+            self.calls = []
+
+        def read_agoal_objective_rule_list(self):
+            self.calls.append(("rules",))
+            return {
+                "content": {
+                    "result": [
+                        {
+                            "objectiveRuleId": "rule-1",
+                            "objectiveRuleName": "公司 OKR",
+                        }
+                    ]
+                }
+            }
+
+        def read_agoal_objective_rule_period_list(self, objective_rule_id):
+            self.calls.append(("periods", objective_rule_id))
+            return {"content": [{"periodId": "period-q2", "name": "2026年二季度"}]}
+
+        def read_agoal_user_objective_list(
+            self,
+            *,
+            ding_user_id,
+            objective_rule_id,
+            period_ids,
+        ):
+            self.calls.append(("objectives", ding_user_id, objective_rule_id, period_ids))
+            return {"content": [{"objectiveId": "objective-1", "title": "O"}]}
+
+        def read_agoal_objective_detail(self, objective_id):
+            self.calls.append(("detail", objective_id))
+            return {"content": {"objectiveId": objective_id, "title": "O"}}
+
+        def read_agoal_objective_progress_list(self, objective_id, page_size):
+            self.calls.append(("progress", objective_id, page_size))
+            return {"content": {"result": []}}
+
+    monkeypatch.delenv("CEO_OKR_LIVE_SOURCE_COMMAND", raising=False)
+    monkeypatch.setenv(
+        "CEO_OKR_LIVE_SOURCE_COMMAND",
+        "dws api --user-id {user_id} --period {period_label} --format json",
+    )
+    monkeypatch.setenv("CEO_OKR_SOURCE_KIND", "agoal")
+    monkeypatch.delenv("CEO_OKR_OBJECTIVE_RULE_ID", raising=False)
     monkeypatch.setattr(cli, "DwsClient", FakeDwsClient)
 
     worker = create_worker(WorkerSettings(db_path=tmp_path / "worker.sqlite3"))
 
-    with pytest.raises(RuntimeError, match="CEO_OKR_LIVE_SOURCE_COMMAND"):
-        worker.okr_live_source.fetch_user_okr(
-            user_id="user-1",
-            period_label="2026 Q2",
-        )
+    payload = worker.okr_live_source.fetch_user_okr(
+        user_id="user-1",
+        period_label="2026 Q2",
+    )
+
+    assert payload["source"]["system"] == "叮当OKR Agoal OpenAPI"
+    assert payload["objectives"] == [{"objectiveId": "objective-1", "title": "O"}]
 
 
 def test_process_work_items_command_processes_claimed_input(tmp_path, monkeypatch, capsys):
@@ -2075,6 +2135,7 @@ def test_create_worker_wires_store_dws_codex_and_dry_run(monkeypatch, tmp_path):
     monkeypatch.setattr(cli, "CachedDwsClient", FakeCachedDwsClient)
     monkeypatch.setattr(cli, "CodexDecisionRunner", FakeCodex)
     monkeypatch.setattr(cli, "DingTalkAutoReplyWorker", FakeWorker)
+    monkeypatch.setenv("CEO_OKR_SOURCE_KIND", "agoal")
 
     settings = WorkerSettings(
         workspace=tmp_path / "workspace",

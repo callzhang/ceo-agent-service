@@ -118,6 +118,9 @@ def test_cached_dws_client_delegates_message_io_and_uses_cached_org(tmp_path):
             self.sent = []
             self.replies = []
             self.dings = []
+            self.emojis = []
+            self.text_emotions = []
+            self.created_text_emotions = []
 
         def send_message(
             self,
@@ -160,16 +163,71 @@ def test_cached_dws_client_delegates_message_io_and_uses_cached_org(tmp_path):
         def ding_user(self, user_id, text):
             self.dings.append((user_id, text))
 
+        def add_message_emoji(self, conversation_id, message_id, emoji):
+            self.emojis.append((conversation_id, message_id, emoji))
+            return {"success": True}
+
+        def add_message_text_emotion(
+            self,
+            conversation_id,
+            message_id,
+            *,
+            text,
+            emotion_id,
+            emotion_name,
+            background_id,
+        ):
+            self.text_emotions.append(
+                (
+                    conversation_id,
+                    message_id,
+                    text,
+                    emotion_id,
+                    emotion_name,
+                    background_id,
+                )
+            )
+            return {"success": True}
+
+        def create_message_text_emotion(
+            self,
+            *,
+            text,
+            emotion_name,
+            background_id="",
+        ):
+            self.created_text_emotions.append((text, emotion_name, background_id))
+            return {"emotionId": "created-1"}
+
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.set_current_user_id("principal-user")
     cached = CachedDwsClient(FakeDws(), CachedOrgDirectory(store))
 
     cached.send_message("cid-1", "ok", at_users=["user-1"])
     cached.reply_message("cid-1", "msg-1", "open-1", "reply")
+    cached.add_message_emoji("cid-1", "msg-1", "👍")
+    cached.add_message_text_emotion(
+        "cid-1",
+        "msg-1",
+        text="收到",
+        emotion_id="ok",
+        emotion_name="OK",
+        background_id="blue",
+    )
+    cached.create_message_text_emotion(
+        text="我去摇人",
+        emotion_name="我去摇人",
+        background_id="im_bg_5",
+    )
     cached.ding_self("handoff")
 
     assert cached.dws.sent == [("cid-1", "ok", ["user-1"], [], [])]
     assert cached.dws.replies == [("cid-1", "msg-1", "open-1", "reply", [])]
+    assert cached.dws.emojis == [("cid-1", "msg-1", "👍")]
+    assert cached.dws.text_emotions == [
+        ("cid-1", "msg-1", "收到", "ok", "OK", "blue")
+    ]
+    assert cached.dws.created_text_emotions == [("我去摇人", "我去摇人", "im_bg_5")]
     assert cached.dws.dings == [("principal-user", "handoff")]
     assert cached.is_current_user_message(message(sender_user_id="principal-user")) is True
 

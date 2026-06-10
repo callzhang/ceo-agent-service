@@ -1,7 +1,9 @@
 import subprocess
 from datetime import datetime, timedelta
+from io import BytesIO
 import json
 from types import SimpleNamespace
+from urllib.error import HTTPError
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -225,7 +227,7 @@ def test_auth_login_command_shape():
 
 
 def test_run_json_maps_plain_exit_code_2_to_login_required(monkeypatch):
-    def fake_run(command, text, capture_output, check, timeout):
+    def fake_run(command, text, capture_output, check, timeout, env=None):
         return SimpleNamespace(
             returncode=2,
             stdout="",
@@ -239,6 +241,27 @@ def test_run_json_maps_plain_exit_code_2_to_login_required(monkeypatch):
 
     assert error_info.value.code == "2"
     assert error_info.value.needs_login is True
+
+
+def test_run_json_does_not_pass_app_oauth_env_to_dws_cli(monkeypatch):
+    monkeypatch.setenv("DWS_CLIENT_ID", "app-client-id")
+    monkeypatch.setenv("DWS_CLIENT_SECRET", "app-client-secret")
+    monkeypatch.setenv("DINGTALK_APP_KEY", "app-key")
+    monkeypatch.setenv("DINGTALK_APP_SECRET", "app-secret")
+
+    def fake_run(command, text, capture_output, check, timeout, env=None):
+        assert env is not None
+        assert "DWS_CLIENT_ID" not in env
+        assert "DWS_CLIENT_SECRET" not in env
+        assert "DINGTALK_APP_KEY" not in env
+        assert "DINGTALK_APP_SECRET" not in env
+        return SimpleNamespace(returncode=0, stdout='{"success": true}', stderr="")
+
+    monkeypatch.setattr("app.dws_client.subprocess.run", fake_run)
+
+    assert DwsClient().run_json(["dws", "auth", "status", "--format", "json"]) == {
+        "success": True
+    }
 
 
 def test_read_doc_command_shape():
@@ -600,6 +623,182 @@ def test_download_robot_message_file_command_uses_official_download_api(monkeypa
         "robotCode": "ding-robot-1",
     }
     assert command[-2:] == ["--format", "json"]
+
+
+def test_read_agoal_user_objective_list_calls_official_api():
+    calls = []
+
+    class ApiRecordingClient(DwsClient):
+        def _read_dingtalk_app_access_token(self, config_path=None):
+            calls.append(("token", config_path))
+            return "access-token-1"
+
+        def _http_json(self, method, url, payload=None, *, headers=None):
+            calls.append((method, url, payload, headers))
+            return {"content": [{"objectiveId": "objective-1"}]}
+
+    client = ApiRecordingClient()
+
+    payload = client.read_agoal_user_objective_list(
+        ding_user_id="ding-user-1",
+        objective_rule_id="rule-1",
+        period_ids=["period-q2"],
+        config_path="/tmp/dingtalk-config",
+    )
+
+    assert payload == {"content": [{"objectiveId": "objective-1"}]}
+    assert calls == [
+        ("token", "/tmp/dingtalk-config"),
+        (
+            "POST",
+            "https://api.dingtalk.com/v1.0/agoal/users/objectiveLists/query",
+            {
+                "dingUserId": "ding-user-1",
+                "objectiveRuleId": "rule-1",
+                "periodIds": ["period-q2"],
+            },
+            {"x-acs-dingtalk-access-token": "access-token-1"},
+        ),
+    ]
+
+
+def test_dingtalk_access_token_prefers_dws_client_env(monkeypatch):
+    calls = []
+
+    class ApiRecordingClient(DwsClient):
+        def _http_json(self, method, url, payload=None, *, headers=None):
+            del headers
+            calls.append((method, url, payload))
+            return {"accessToken": "access-token-1"}
+
+    monkeypatch.setenv("DWS_CLIENT_ID", "ding-env-client")
+    monkeypatch.setenv("DWS_CLIENT_SECRET", "secret-env-client")
+    monkeypatch.setenv("DINGTALK_APP_KEY", "ding-config-client")
+    monkeypatch.setenv("DINGTALK_APP_SECRET", "secret-config-client")
+
+    token = ApiRecordingClient()._read_dingtalk_app_access_token()
+
+    assert token == "access-token-1"
+    assert calls == [
+        (
+            "POST",
+            "https://api.dingtalk.com/v1.0/oauth2/accessToken",
+            {
+                "appKey": "ding-env-client",
+                "appSecret": "secret-env-client",
+            },
+        )
+    ]
+
+
+def test_read_agoal_org_objective_rule_list_calls_official_api():
+    calls = []
+
+    class ApiRecordingClient(DwsClient):
+        def _read_dingtalk_app_access_token(self, config_path=None):
+            calls.append(("token", config_path))
+            return "access-token-1"
+
+        def _http_json(self, method, url, payload=None, *, headers=None):
+            calls.append((method, url, payload, headers))
+            return {"content": [{"objectiveRuleId": "rule-1"}]}
+
+    client = ApiRecordingClient()
+
+    client.read_agoal_org_objective_rule_list()
+
+    assert calls == [
+        ("token", None),
+        (
+            "GET",
+            "https://api.dingtalk.com/v1.0/agoal/objectiveRules/lists",
+            None,
+            {"x-acs-dingtalk-access-token": "access-token-1"},
+        ),
+    ]
+
+
+def test_read_agoal_objective_rule_list_calls_official_api():
+    calls = []
+
+    class ApiRecordingClient(DwsClient):
+        def _read_dingtalk_app_access_token(self, config_path=None):
+            calls.append(("token", config_path))
+            return "access-token-1"
+
+        def _http_json(self, method, url, payload=None, *, headers=None):
+            calls.append((method, url, payload, headers))
+            return {"content": {"result": [{"objectiveRuleId": "rule-1"}]}}
+
+    client = ApiRecordingClient()
+
+    payload = client.read_agoal_objective_rule_list(
+        page_number=2,
+        page_size=50,
+        config_path="/tmp/dingtalk-config",
+    )
+
+    assert payload == {"content": {"result": [{"objectiveRuleId": "rule-1"}]}}
+    assert calls == [
+        ("token", "/tmp/dingtalk-config"),
+        (
+            "GET",
+            "https://api.dingtalk.com/v1.0/agoal/objectiveRuleLists/query?pageNumber=2&pageSize=50",
+            None,
+            {"x-acs-dingtalk-access-token": "access-token-1"},
+        ),
+    ]
+
+
+def test_read_agoal_objective_progress_list_calls_official_api():
+    calls = []
+
+    class ApiRecordingClient(DwsClient):
+        def _read_dingtalk_app_access_token(self, config_path=None):
+            calls.append(("token", config_path))
+            return "access-token-1"
+
+        def _http_json(self, method, url, payload=None, *, headers=None):
+            calls.append((method, url, payload, headers))
+            return {"content": {"result": []}}
+
+    client = ApiRecordingClient()
+
+    client.read_agoal_objective_progress_list(
+        "objective-1",
+        page_number=2,
+        page_size=50,
+    )
+
+    assert calls == [
+        ("token", None),
+        (
+            "GET",
+            "https://api.dingtalk.com/v1.0/agoal/objectives/progresses/lists?objectiveId=objective-1&pageNumber=2&pageSize=50",
+            None,
+            {"x-acs-dingtalk-access-token": "access-token-1"},
+        ),
+    ]
+
+
+def test_http_json_exposes_openapi_http_error(monkeypatch):
+    def fake_urlopen(request, timeout):
+        del request, timeout
+        raise HTTPError(
+            url="https://api.dingtalk.com/v1.0/agoal/objectiveRules/lists",
+            code=403,
+            msg="Forbidden",
+            hdrs=None,
+            fp=BytesIO(b'{"code":"Forbidden"}'),
+        )
+
+    monkeypatch.setattr(dws_client, "urlopen", fake_urlopen)
+
+    with pytest.raises(DwsError, match='HTTP 403 .*Forbidden'):
+        DwsClient._http_json(
+            "GET",
+            "https://api.dingtalk.com/v1.0/agoal/objectiveRules/lists",
+        )
 
 
 def test_build_doc_list_command_uses_read_only_list():
@@ -1077,6 +1276,47 @@ def test_send_reply_to_trigger_prefers_native_reply_over_group_at_send():
     ]
 
 
+def test_send_reply_to_trigger_chunks_splits_long_text_and_extracts_recall_key():
+    client = SequenceRecordingDwsClient(
+        [
+            {"result": {"processQueryKey": "recall-1"}},
+            {"result": {"processQueryKey": "recall-2"}},
+        ]
+    )
+    conversation = DingTalkConversation(
+        open_conversation_id="cid-1",
+        title="CEO-2 管理群",
+        single_chat=False,
+        unread_point=1,
+    )
+    trigger = DingTalkMessage(
+        open_conversation_id="cid-1",
+        open_message_id="msg-1",
+        conversation_title="CEO-2 管理群",
+        single_chat=False,
+        sender_name="Lily",
+        sender_open_dingtalk_id="open-lily",
+        create_time="2026-06-09 09:00:00",
+        content="@Derek Zen(磊哥) 看一下",
+    )
+
+    result = client.send_reply_to_trigger_chunks(
+        conversation,
+        trigger,
+        "第一段" * 500 + "\n\n" + "第二段" * 500,
+        at_users=["user-lily"],
+    )
+
+    assert len(result["chunks"]) == 2
+    assert result["chunks"][0]["text"].startswith("【1/2】")
+    assert DwsClient.extract_recall_key(result) == "recall-1"
+    first_text = client.commands[0][client.commands[0].index("--text") + 1]
+    second_text = client.commands[1][client.commands[1].index("--text") + 1]
+    assert first_text.startswith("【1/2】")
+    assert second_text.startswith("【2/2】")
+    assert "--at-user-ids" not in client.commands[1]
+
+
 def test_send_message_title_uses_reply_body_after_fake_quote():
     client = DwsClient(dws_bin="dws")
 
@@ -1162,6 +1402,116 @@ def test_recall_bot_message_command_shape():
         "cid-1",
         "--keys",
         "key-1",
+        "--format",
+        "json",
+        "--yes",
+    ]
+
+
+def test_recall_message_command_shape():
+    client = DwsClient(dws_bin="dws")
+
+    command = client.build_recall_message_command(
+        conversation_id="cid-1",
+        message_id="msg-1",
+    )
+
+    assert command == [
+        "dws",
+        "chat",
+        "message",
+        "recall",
+        "--conversation-id",
+        "cid-1",
+        "--msg-id",
+        "msg-1",
+        "--format",
+        "json",
+        "--yes",
+    ]
+
+
+def test_add_message_emoji_command_shape():
+    client = DwsClient(dws_bin="dws")
+
+    command = client.build_add_message_emoji_command(
+        conversation_id="cid-1",
+        message_id="msg-1",
+        emoji="👍",
+    )
+
+    assert command == [
+        "dws",
+        "chat",
+        "message",
+        "add-emoji",
+        "--group",
+        "cid-1",
+        "--msg-id",
+        "msg-1",
+        "--emoji",
+        "👍",
+        "--format",
+        "json",
+        "--yes",
+    ]
+
+
+def test_add_message_text_emotion_command_shape():
+    client = DwsClient(dws_bin="dws")
+
+    command = client.build_add_message_text_emotion_command(
+        conversation_id="cid-1",
+        message_id="msg-1",
+        text="收到",
+        emotion_id="emotion-1",
+        emotion_name="收到",
+        background_id="bg-1",
+    )
+
+    assert command == [
+        "dws",
+        "chat",
+        "message",
+        "add-text-emotion",
+        "--group",
+        "cid-1",
+        "--msg-id",
+        "msg-1",
+        "--text",
+        "收到",
+        "--emotion-id",
+        "emotion-1",
+        "--emotion-name",
+        "收到",
+        "--background-id",
+        "bg-1",
+        "--format",
+        "json",
+        "--yes",
+    ]
+
+
+def test_create_message_text_emotion_command_shape():
+    client = DwsClient(dws_bin="dws")
+
+    command = client.build_create_message_text_emotion_command(
+        text="我去摇人",
+        emotion_name="我去摇人",
+        background_id="im_bg_5",
+    )
+
+    assert command == [
+        "dws",
+        "chat",
+        "message",
+        "create-text-emotion",
+        "--text",
+        "我去摇人",
+        "--emotion-name",
+        "我去摇人",
+        "--background-id",
+        "im_bg_5",
         "--format",
         "json",
         "--yes",
@@ -2530,7 +2880,7 @@ def test_is_current_user_message_does_not_use_display_name_without_sender_id():
 
 
 def test_run_json_raises_dws_error_on_nonzero_exit(monkeypatch):
-    def fake_run(command, text, capture_output, check, timeout):
+    def fake_run(command, text, capture_output, check, timeout, env=None):
         assert command == ["dws", "probe"]
         assert text is True
         assert capture_output is True
@@ -2554,7 +2904,7 @@ def test_run_json_extracts_error_code_from_stdout_and_retries_transient_timeout(
         '"message":"请求超时。服务响应较慢，请稍后重试"}}'
     )
 
-    def fake_run(command, text, capture_output, check, timeout):
+    def fake_run(command, text, capture_output, check, timeout, env=None):
         calls.append(command)
         if len(calls) == 1:
             return SimpleNamespace(returncode=1, stdout=timeout_payload, stderr="1")
@@ -2580,7 +2930,7 @@ def test_run_json_prefers_specific_server_error_code_over_generic_nested_code(
         '"message":"business error: success=false","reason":"business_error"}}'
     )
 
-    def fake_run(command, text, capture_output, check, timeout):
+    def fake_run(command, text, capture_output, check, timeout, env=None):
         calls.append(command)
         if len(calls) == 1:
             return SimpleNamespace(returncode=1, stdout="", stderr=timeout_payload)
@@ -2603,7 +2953,7 @@ def test_run_json_refreshes_cache_before_retrying_dws_discovery_code(monkeypatch
         '"message":"request to DingTalk gateway failed"}}'
     )
 
-    def fake_run(command, text, capture_output, check, timeout):
+    def fake_run(command, text, capture_output, check, timeout, env=None):
         calls.append(command)
         if len(calls) == 1:
             return SimpleNamespace(returncode=6, stdout="", stderr=timeout_payload)
@@ -2628,7 +2978,7 @@ def test_run_json_still_retries_when_discovery_cache_refresh_times_out(monkeypat
     sleeps = []
     timeout_payload = '{"error":{"category":"discovery","code":6}}'
 
-    def fake_run(command, text, capture_output, check, timeout):
+    def fake_run(command, text, capture_output, check, timeout, env=None):
         calls.append(command)
         if len(calls) == 1:
             return SimpleNamespace(returncode=6, stdout="", stderr=timeout_payload)
@@ -2665,7 +3015,7 @@ def test_run_json_retries_doc_read_internal_error(monkeypatch):
         "json",
     ]
 
-    def fake_run(command_arg, text, capture_output, check, timeout):
+    def fake_run(command_arg, text, capture_output, check, timeout, env=None):
         calls.append(command_arg)
         if len(calls) == 1:
             return SimpleNamespace(returncode=1, stdout="", stderr=internal_error_payload)
@@ -2687,7 +3037,7 @@ def test_run_json_does_not_retry_send_internal_error(monkeypatch):
     )
     command = ["dws", "chat", "message", "send", "--group", "cid-1"]
 
-    def fake_run(command_arg, text, capture_output, check, timeout):
+    def fake_run(command_arg, text, capture_output, check, timeout, env=None):
         calls.append(command_arg)
         return SimpleNamespace(returncode=1, stdout="", stderr=internal_error_payload)
 
@@ -2717,7 +3067,7 @@ def test_run_json_retries_chat_message_list_system_error(monkeypatch):
         "json",
     ]
 
-    def fake_run(command_arg, text, capture_output, check, timeout):
+    def fake_run(command_arg, text, capture_output, check, timeout, env=None):
         calls.append(command_arg)
         if len(calls) == 1:
             return SimpleNamespace(returncode=1, stdout="", stderr=system_error_payload)
@@ -2739,7 +3089,7 @@ def test_run_json_does_not_retry_chat_message_send_system_error(monkeypatch):
     )
     command = ["dws", "chat", "message", "send", "--group", "cid-1"]
 
-    def fake_run(command_arg, text, capture_output, check, timeout):
+    def fake_run(command_arg, text, capture_output, check, timeout, env=None):
         calls.append(command_arg)
         return SimpleNamespace(returncode=1, stdout="", stderr=system_error_payload)
 
@@ -2755,7 +3105,7 @@ def test_run_json_uses_process_exit_code_when_dws_stderr_is_not_json(monkeypatch
     calls = []
     sleeps = []
 
-    def fake_run(command, text, capture_output, check, timeout):
+    def fake_run(command, text, capture_output, check, timeout, env=None):
         calls.append(command)
         if len(calls) == 1:
             return SimpleNamespace(
@@ -2787,7 +3137,7 @@ def test_run_json_uses_configured_retry_count_and_linear_backoff(monkeypatch):
     sleeps = []
     timeout_payload = '{"error":{"category":"discovery","code":6}}'
 
-    def fake_run(command, text, capture_output, check, timeout):
+    def fake_run(command, text, capture_output, check, timeout, env=None):
         calls.append(command)
         if len([call for call in calls if call == ["dws", "probe"]]) <= 3:
             return SimpleNamespace(returncode=6, stdout="", stderr=timeout_payload)
@@ -2812,7 +3162,7 @@ def test_run_json_uses_configured_retry_count_and_linear_backoff(monkeypatch):
 
 
 def test_run_json_error_includes_sanitized_command_and_output_previews(monkeypatch):
-    def fake_run(command, text, capture_output, check, timeout):
+    def fake_run(command, text, capture_output, check, timeout, env=None):
         return SimpleNamespace(returncode=1, stdout="raw stdout", stderr="raw stderr")
 
     monkeypatch.setattr("app.dws_client.subprocess.run", fake_run)
@@ -2836,7 +3186,7 @@ def test_run_json_sanitizes_pat_authorization_error(monkeypatch):
         '"requiredScopes":[{"scope":"chat.message:send"}]}}'
     )
 
-    def fake_run(command, text, capture_output, check, timeout):
+    def fake_run(command, text, capture_output, check, timeout, env=None):
         return SimpleNamespace(returncode=4, stdout="", stderr=stderr)
 
     monkeypatch.setattr("app.dws_client.subprocess.run", fake_run)
@@ -2853,7 +3203,7 @@ def test_run_json_sanitizes_pat_authorization_error(monkeypatch):
 
 
 def test_run_json_raises_dws_error_on_invalid_json(monkeypatch):
-    def fake_run(command, text, capture_output, check, timeout):
+    def fake_run(command, text, capture_output, check, timeout, env=None):
         assert timeout == 30
         return SimpleNamespace(returncode=0, stdout="not json", stderr="")
 
@@ -2864,7 +3214,7 @@ def test_run_json_raises_dws_error_on_invalid_json(monkeypatch):
 
 
 def test_run_text_returns_stdout_on_success(monkeypatch):
-    def fake_run(command, text, capture_output, check, timeout):
+    def fake_run(command, text, capture_output, check, timeout, env=None):
         assert command == ["dws", "upgrade", "-y", "--format", "json"]
         assert text is True
         assert capture_output is True
@@ -2883,7 +3233,7 @@ def test_run_text_returns_stdout_on_success(monkeypatch):
 
 
 def test_run_text_raises_dws_error_on_nonzero_exit(monkeypatch):
-    def fake_run(command, text, capture_output, check, timeout):
+    def fake_run(command, text, capture_output, check, timeout, env=None):
         return SimpleNamespace(returncode=1, stdout="", stderr="permission denied")
 
     monkeypatch.setattr("app.dws_client.subprocess.run", fake_run)
@@ -2893,7 +3243,7 @@ def test_run_text_raises_dws_error_on_nonzero_exit(monkeypatch):
 
 
 def test_run_json_raises_dws_error_on_timeout(monkeypatch):
-    def fake_run(command, text, capture_output, check, timeout):
+    def fake_run(command, text, capture_output, check, timeout, env=None):
         raise subprocess.TimeoutExpired(command, timeout)
 
     monkeypatch.setattr("app.dws_client.subprocess.run", fake_run)

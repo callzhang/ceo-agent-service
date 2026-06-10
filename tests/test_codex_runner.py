@@ -216,6 +216,24 @@ def test_codex_runner_does_not_forward_memory_user_id(
     assert "x-memory-user-id" not in " ".join(command)
 
 
+def test_codex_runner_does_not_forward_dws_oauth_override_env(
+    tmp_path: Path,
+    monkeypatch,
+):
+    monkeypatch.setenv("DWS_CLIENT_ID", "wrong-client-id")
+    monkeypatch.setenv("DWS_CLIENT_SECRET", "wrong-client-secret")
+    monkeypatch.setenv("DINGTALK_APP_KEY", "wrong-app-key")
+    monkeypatch.setenv("DINGTALK_APP_SECRET", "wrong-app-secret")
+    runner = CodexRunner(workspace=tmp_path, codex_bin="codex")
+
+    env = runner.build_env()
+
+    assert "DWS_CLIENT_ID" not in env
+    assert "DWS_CLIENT_SECRET" not in env
+    assert "DINGTALK_APP_KEY" not in env
+    assert "DINGTALK_APP_SECRET" not in env
+
+
 def test_codex_developer_instructions_include_dws_material_reading_guidance():
     instructions = codex_developer_instructions()
 

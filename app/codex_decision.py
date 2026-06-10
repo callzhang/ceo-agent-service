@@ -90,6 +90,7 @@ def codex_decision_from_envelope(envelope: Any) -> CodexDecision:
         calendar_response_status=parsed.domain_payload.get(
             "calendar_response_status", ""
         ),
+        system_actions=[action.model_dump() for action in parsed.system_actions],
         audit_documents=[doc.model_dump() for doc in parsed.audit.documents],
         audit_summary=parsed.audit.summary,
     )
@@ -392,7 +393,21 @@ def _short_text(text: str, limit: int = 240) -> str:
     return f"{normalized[:limit]}..."
 
 
+def _codex_stdout_error_reason(stdout: str) -> str:
+    for payload in reversed(_iter_json_payloads(stdout)):
+        if not isinstance(payload, dict) or payload.get("type") != "error":
+            continue
+        message = payload.get("message")
+        if not isinstance(message, str) or not message.strip():
+            continue
+        return _short_text(message, 1200)
+    return ""
+
+
 def _subprocess_failure_reason(stderr: str, stdout: str) -> str:
+    stdout_error = _codex_stdout_error_reason(stdout)
+    if stdout_error:
+        return stdout_error
     stderr_lines = [line.strip() for line in stderr.splitlines() if line.strip()]
     for line in stderr_lines:
         if " ERROR " in f" {line} ":
@@ -400,7 +415,7 @@ def _subprocess_failure_reason(stderr: str, stdout: str) -> str:
     for line in stderr_lines:
         if " WARN " not in f" {line} ":
             return _short_text(line, 1200)
-    return _short_text(stderr.strip() or stdout, 1200)
+    return "codex exec failed without a valid AgentEnvelope"
 
 
 def _timeout_output_text(output: bytes | str | None) -> str:

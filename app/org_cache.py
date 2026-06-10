@@ -307,6 +307,46 @@ class CachedDwsClient:
             at_open_dingtalk_names=at_open_dingtalk_names,
         )
 
+    def add_message_emoji(
+        self,
+        conversation_id: str,
+        message_id: str,
+        emoji: str,
+    ):
+        return self.dws.add_message_emoji(conversation_id, message_id, emoji)
+
+    def add_message_text_emotion(
+        self,
+        conversation_id: str,
+        message_id: str,
+        *,
+        text: str,
+        emotion_id: str,
+        emotion_name: str,
+        background_id: str,
+    ):
+        return self.dws.add_message_text_emotion(
+            conversation_id,
+            message_id,
+            text=text,
+            emotion_id=emotion_id,
+            emotion_name=emotion_name,
+            background_id=background_id,
+        )
+
+    def create_message_text_emotion(
+        self,
+        *,
+        text: str,
+        emotion_name: str,
+        background_id: str = "",
+    ):
+        return self.dws.create_message_text_emotion(
+            text=text,
+            emotion_name=emotion_name,
+            background_id=background_id,
+        )
+
     def recall_bot_message(self, conversation_id: str | None, process_query_key: str):
         return self.dws.recall_bot_message(conversation_id, process_query_key)
 

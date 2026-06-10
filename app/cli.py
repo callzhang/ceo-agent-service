@@ -31,6 +31,7 @@ from app.dws_client import (
     DINGTALK_MESSAGE_TIME_ZONE,
     DwsClient,
     DwsError,
+    extract_recall_key_from_send_result,
     local_time_zone_name,
     native_reply_delivery_payload,
 )
@@ -40,6 +41,7 @@ from app.feedback_spike import (
     send_feedback_spike_links,
 )
 from app.leak_check import contains_forbidden_leak
+from app.message_split import split_dingtalk_text
 from app.dingtalk_models import CodexAction, DingTalkConversation, DingTalkMessage
 from app.notification import send_macos_notification
 from app.oa_approval import OaApprovalCodexRunner
@@ -69,6 +71,10 @@ LIVE_SEND_GUARD_ENV = "CEO_LIVE_SEND_BLOCKERS_ACCEPTED"
 DEFAULT_DING_ROBOT_NAME = None
 DEFAULT_WORKSPACE = Path.home() / "Documents" / "memory"
 OKR_LIVE_SOURCE_COMMAND_ENV = "CEO_OKR_LIVE_SOURCE_COMMAND"
+OKR_SOURCE_KIND_ENV = "CEO_OKR_SOURCE_KIND"
+OKR_OBJECTIVE_RULE_ID_ENV = "CEO_OKR_OBJECTIVE_RULE_ID"
+OKR_REVIEW_CODEX_TIMEOUT_SECONDS = 900
+OKR_REVIEW_CODEX_IDLE_TIMEOUT_SECONDS = 600
 SEND_ATTEMPT_TARGET_LOOKBACK_LIMIT = 500
 run_audit_web = None
 
@@ -503,7 +509,11 @@ def _expand_path_arg(value: str | Path) -> Path:
 
 
 def create_worker(settings: WorkerSettings) -> DingTalkAutoReplyWorker:
-    from app.okr_review import DwsLiveOkrSource, UnconfiguredOkrLiveSource
+    from app.okr_review import (
+        DwsAgoalApiOkrSource,
+        DwsLiveOkrSource,
+        UnconfiguredOkrLiveSource,
+    )
 
     store = AutoReplyStore(settings.db_path)
     dws = DwsClient(
@@ -535,15 +545,29 @@ def create_worker(settings: WorkerSettings) -> DingTalkAutoReplyWorker:
         style_records=style_records,
     )
     worker.oa_approval_runner = oa_approval_runner
-    command_template = _okr_live_source_command_template()
-    if command_template:
+    okr_source_kind = _okr_source_kind()
+    if okr_source_kind == "agoal":
+        worker.okr_live_source = DwsAgoalApiOkrSource(
+            dws=dws,
+            objective_rule_id=os.getenv(OKR_OBJECTIVE_RULE_ID_ENV, ""),
+        )
+    elif okr_source_kind == "dingteam_web":
         worker.okr_live_source = DwsLiveOkrSource(
             dws=dws,
-            command_template=command_template,
+            command_template=_okr_live_source_command_template(),
         )
     else:
-        worker.okr_live_source = UnconfiguredOkrLiveSource(OKR_LIVE_SOURCE_COMMAND_ENV)
+        worker.okr_live_source = UnconfiguredOkrLiveSource(OKR_SOURCE_KIND_ENV)
     return worker
+
+
+def _okr_source_kind() -> str:
+    value = os.getenv(OKR_SOURCE_KIND_ENV, "dingteam_web").strip().casefold()
+    if value not in {"dingteam_web", "agoal"}:
+        raise ValueError(
+            f"{OKR_SOURCE_KIND_ENV} must be dingteam_web or agoal, got {value!r}"
+        )
+    return value
 
 
 def _okr_live_source_command_template() -> list[str]:
@@ -710,8 +734,13 @@ def process_okr_reviews_command(settings: WorkerSettings) -> int:
         store=store,
         workspace=settings.workspace,
         spec=spec,
-        timeout_seconds=settings.codex_timeout_seconds,
-        idle_timeout_seconds=settings.codex_idle_timeout_seconds,
+        timeout_seconds=max(
+            settings.codex_timeout_seconds, OKR_REVIEW_CODEX_TIMEOUT_SECONDS
+        ),
+        idle_timeout_seconds=max(
+            settings.codex_idle_timeout_seconds,
+            OKR_REVIEW_CODEX_IDLE_TIMEOUT_SECONDS,
+        ),
     )
     dws = None
     if not settings.dry_run:
@@ -758,7 +787,9 @@ def process_okr_reviews_command(settings: WorkerSettings) -> int:
         try:
             if dws is None:
                 raise RuntimeError("DWS client is not configured for OKR review send")
-            send_result = dws.send_reply_to_trigger(conversation, trigger, reply)
+            send_result = _send_reply_to_trigger_chunks(
+                dws, conversation, trigger, reply
+            )
         except Exception as exc:
             store.mark_okr_review_request_failed(request.id, str(exc))
             store.record_error(
@@ -776,7 +807,7 @@ def process_okr_reviews_command(settings: WorkerSettings) -> int:
                 native_reply_delivery_payload(conversation, trigger, send_result),
                 ensure_ascii=False,
             ),
-            recall_key=DwsClient.extract_recall_key(send_result),
+            recall_key=extract_recall_key_from_send_result(send_result),
         )
         processed += 1
     print(f"process-okr-reviews processed={processed}", flush=True)
@@ -1132,10 +1163,8 @@ def send_attempt_command(settings: WorkerSettings, attempt_id: int) -> dict[str,
             raise SystemExit(f"reply attempt {attempt_id} blocked by leak_check")
     store.update_reply_attempt(attempt.id, final_reply_text=reply_text)
     try:
-        send_result = dws.send_reply_to_trigger(
-            dingtalk_conversation,
-            trigger,
-            reply_text,
+        send_result = _send_reply_to_trigger_chunks(
+            dws, dingtalk_conversation, trigger, reply_text
         )
     except Exception as exc:
         store.update_reply_attempt(
@@ -1164,7 +1193,7 @@ def send_attempt_command(settings: WorkerSettings, attempt_id: int) -> dict[str,
             ),
             ensure_ascii=False,
         ),
-        recall_key=DwsClient.extract_recall_key(send_result),
+        recall_key=extract_recall_key_from_send_result(send_result),
         feedback_token=feedback_token,
     )
     result = {
@@ -1178,6 +1207,22 @@ def send_attempt_command(settings: WorkerSettings, attempt_id: int) -> dict[str,
     }
     print(json.dumps(result, ensure_ascii=False), flush=True)
     return result
+
+
+def _send_reply_to_trigger_chunks(dws, conversation, trigger, text: str) -> dict:
+    chunks = split_dingtalk_text(text)
+    if not chunks:
+        raise RuntimeError("empty DingTalk reply text")
+    return {
+        "chunks": [
+            {
+                "index": index,
+                "text": chunk,
+                "send_result": dws.send_reply_to_trigger(conversation, trigger, chunk),
+            }
+            for index, chunk in enumerate(chunks, start=1)
+        ]
+    }
 
 
 def _regenerate_send_attempt_after_leak_check(

@@ -951,6 +951,9 @@ class AutoReplyStore:
                 values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 on conflict(conversation_id, trigger_message_id) do update set
                     okr_source_json=excluded.okr_source_json,
+                    status='pending',
+                    error='',
+                    codex_session_id='',
                     updated_at=current_timestamp
                 """,
                 (
@@ -2004,6 +2007,7 @@ class AutoReplyStore:
         calendar_event_id: str | None = None,
         calendar_response_status: str | None = None,
         calendar_response_result_json: str | None = None,
+        audit_tool_events_json: str | None = None,
         send_status: str | None = None,
         send_error: str | None = None,
         retry_count: int | None = None,
@@ -2026,6 +2030,7 @@ class AutoReplyStore:
             ("calendar_event_id", calendar_event_id),
             ("calendar_response_status", calendar_response_status),
             ("calendar_response_result_json", calendar_response_result_json),
+            ("audit_tool_events_json", audit_tool_events_json),
             ("send_status", send_status),
             ("send_error", send_error),
             ("retry_count", retry_count),

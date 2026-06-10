@@ -5,8 +5,10 @@ from pydantic import ValidationError
 
 from app.agent_envelope import AgentEnvelope
 from app.okr_review import (
+    DwsAgoalApiOkrSource,
     DwsLiveOkrSource,
     build_okr_review_prompt,
+    compact_okr_source_for_review_prompt,
     current_quarter_period,
     is_okr_review_request,
     process_okr_review_request,
@@ -136,7 +138,7 @@ def test_build_okr_review_prompt_includes_live_source_and_claim_scoring():
         request_id=7,
         person_name="韩露",
         period_label="2026 Q2",
-        okr_source_json='{"objectives":[]}',
+        okr_source_json='{"processed":{"objectives":[],"okrRows":[]}}',
         trigger_text="帮我审核 OKR",
     )
 
@@ -144,6 +146,38 @@ def test_build_okr_review_prompt_includes_live_source_and_claim_scoring():
     assert "KR进度更新" in prompt
     assert "员工主张信息打分" in prompt
     assert "事实核实后打分" in prompt
+
+
+def test_build_okr_review_prompt_compacts_raw_live_source():
+    prompt = build_okr_review_prompt(
+        request_id=7,
+        person_name="韩露",
+        period_label="2026 Q2",
+        okr_source_json=json.dumps(
+            {
+                "source": {"system": "叮当OKR Dingteam Web"},
+                "period": {"name": "2026年2季度"},
+                "objectiveList": [{"large": "raw-objective"}],
+                "objectiveDetails": [{"large": "raw-detail"}],
+                "processed": {
+                    "objectives": [{"title": "O"}],
+                    "okrRows": [{"level": "KR", "krTitle": "KR"}],
+                },
+            },
+            ensure_ascii=False,
+        ),
+        trigger_text="帮我审核 OKR",
+    )
+
+    assert "raw-objective" not in prompt
+    assert "raw-detail" not in prompt
+    assert "叮当OKR Dingteam Web" in prompt
+    assert '"krTitle": "KR"' in prompt
+
+
+def test_compact_okr_source_requires_processed_rows():
+    with pytest.raises(ValueError, match="processed"):
+        compact_okr_source_for_review_prompt('{"objectiveList":[]}')
 
 
 def test_render_okr_review_reply_includes_two_scores():
@@ -220,7 +254,7 @@ def test_process_okr_review_request_persists_items_and_marks_done(tmp_path):
         period_label="2026 Q2",
         period_start="2026-04-01",
         period_end="2026-06-30",
-        okr_source_json='{"objectives":[]}',
+        okr_source_json='{"processed":{"objectives":[],"okrRows":[]}}',
     )
     request = store.claim_okr_review_requests(1)[0]
     envelope = AgentEnvelope.model_validate(
@@ -295,7 +329,7 @@ def test_process_okr_review_request_preserves_group_conversation_kind(tmp_path):
         period_label="2026 Q2",
         period_start="2026-04-01",
         period_end="2026-06-30",
-        okr_source_json='{"objectives":[]}',
+        okr_source_json='{"processed":{"objectives":[],"okrRows":[]}}',
     )
     request = store.claim_okr_review_requests(1)[0]
     envelope = AgentEnvelope.model_validate(
@@ -366,6 +400,95 @@ class FakeDwsForOkr:
         return self.payload
 
 
+class FakeAgoalDws:
+    def __init__(self, *, rules=None, progress_items=None):
+        self.rules = rules or [
+            {
+                "objectiveRuleId": "rule-1",
+                "objectiveRuleName": "公司 OKR",
+            }
+        ]
+        self.progress_items = progress_items
+        self.calls = []
+
+    def read_agoal_objective_rule_list(self):
+        self.calls.append(("rules",))
+        return {"content": {"result": self.rules}}
+
+    def read_agoal_objective_rule_period_list(self, objective_rule_id):
+        self.calls.append(("periods", objective_rule_id))
+        return {
+            "content": [
+                {
+                    "periodId": "period-q2",
+                    "name": "2026年二季度",
+                    "startDate": 1774915200000,
+                    "endDate": 1782748799000,
+                }
+            ]
+        }
+
+    def read_agoal_user_objective_list(
+        self,
+        *,
+        ding_user_id,
+        objective_rule_id,
+        period_ids,
+    ):
+        self.calls.append(("objectives", ding_user_id, objective_rule_id, period_ids))
+        return {
+            "content": [
+                {
+                    "objectiveId": "objective-1",
+                    "title": "提升交付质量",
+                    "weight": 1.0,
+                }
+            ]
+        }
+
+    def read_agoal_objective_detail(self, objective_id):
+        self.calls.append(("detail", objective_id))
+        return {
+            "content": {
+                "objectiveId": objective_id,
+                "title": "提升交付质量",
+                "keyResults": [
+                    {
+                        "keyResultId": "kr-1",
+                        "title": "完成 3 个客户验收",
+                        "weight": 0.5,
+                        "progress": 60,
+                    }
+                ],
+            }
+        }
+
+    def read_agoal_objective_progress_list(self, objective_id, page_size):
+        self.calls.append(("progress", objective_id, page_size))
+        progress_items = self.progress_items
+        if progress_items is None:
+            progress_items = [
+                {
+                    "progressId": "progress-1",
+                    "objectiveId": objective_id,
+                    "updated": 1782000000000,
+                    "htmlContent": "6 月完成两个客户验收。",
+                    "keyResults": [
+                        {
+                            "keyResultId": "kr-1",
+                            "title": "完成 3 个客户验收",
+                            "progress": 60,
+                        }
+                    ],
+                }
+            ]
+        return {
+            "content": {
+                "result": progress_items
+            }
+        }
+
+
 def test_dws_live_okr_source_uses_single_configured_command():
     dws = FakeDwsForOkr(payload={"objectives": [{"title": "O"}]})
     source = DwsLiveOkrSource(
@@ -404,3 +527,85 @@ def test_dws_live_okr_source_retries_then_reraises_source_error():
         source.fetch_user_okr(user_id="user-1", period_label="2026 Q2")
 
     assert len(dws.calls) == 2
+
+
+def test_agoal_api_okr_source_fetches_objectives_details_and_progresses():
+    dws = FakeAgoalDws()
+    source = DwsAgoalApiOkrSource(dws=dws, max_attempts=1)
+
+    payload = source.fetch_user_okr(user_id="ding-user-1", period_label="2026 Q2")
+
+    assert payload["source"]["system"] == "叮当OKR Agoal OpenAPI"
+    assert payload["source"]["objectiveRuleId"] == "rule-1"
+    assert payload["period"]["periodId"] == "period-q2"
+    assert payload["objectives"][0]["objectiveId"] == "objective-1"
+    assert (
+        payload["objectiveDetails"][0]["payload"]["keyResults"][0]["title"]
+        == "完成 3 个客户验收"
+    )
+    assert (
+        payload["objectiveProgresses"][0]["payload"]["result"][0]["htmlContent"]
+        == "6 月完成两个客户验收。"
+    )
+    assert payload["processed"]["okrRows"] == [
+        {
+            "level": "O",
+            "objectiveId": "objective-1",
+            "objectiveTitle": "提升交付质量",
+            "objectiveWeight": 1.0,
+            "objectiveProgress": None,
+            "krId": "",
+            "krTitle": "",
+            "krWeight": "",
+            "krProgress": "",
+            "krDetailsUpdatesAggregated": "",
+        },
+        {
+            "level": "KR",
+            "objectiveId": "objective-1",
+            "objectiveTitle": "提升交付质量",
+            "objectiveWeight": 1.0,
+            "objectiveProgress": None,
+            "krId": "kr-1",
+            "krTitle": "完成 3 个客户验收",
+            "krWeight": 0.5,
+            "krProgress": 60,
+            "krDetailsUpdatesAggregated": "2026-06-21T00:00:00+00:00 | KR进度=60 | 6 月完成两个客户验收。",
+        },
+    ]
+    assert dws.calls == [
+        ("rules",),
+        ("periods", "rule-1"),
+        ("objectives", "ding-user-1", "rule-1", ["period-q2"]),
+        ("detail", "objective-1"),
+        ("progress", "objective-1", 100),
+    ]
+
+
+def test_agoal_api_okr_source_requires_explicit_rule_when_multiple_rules_exist():
+    dws = FakeAgoalDws(
+        rules=[
+            {"objectiveRuleId": "rule-1", "objectiveRuleName": "公司 OKR"},
+            {"objectiveRuleId": "rule-2", "objectiveRuleName": "销售 PBC"},
+        ]
+    )
+    source = DwsAgoalApiOkrSource(dws=dws, max_attempts=1)
+
+    with pytest.raises(RuntimeError, match="CEO_OKR_OBJECTIVE_RULE_ID"):
+        source.fetch_user_okr(user_id="ding-user-1", period_label="2026 Q2")
+
+
+def test_agoal_api_okr_source_marks_missing_kr_progress_as_not_written():
+    dws = FakeAgoalDws(progress_items=[])
+    source = DwsAgoalApiOkrSource(dws=dws, max_attempts=1)
+
+    payload = source.fetch_user_okr(user_id="ding-user-1", period_label="2026 Q2")
+
+    kr_row = payload["processed"]["okrRows"][1]
+    assert kr_row["krDetailsUpdatesAggregated"] == "[未撰写进度]"
+    assert (
+        payload["processed"]["objectives"][0]["keyResults"][0][
+            "progressUpdatesAggregated"
+        ]
+        == "[未撰写进度]"
+    )
