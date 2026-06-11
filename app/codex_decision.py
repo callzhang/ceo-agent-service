@@ -236,11 +236,27 @@ def _decision_from_agent_envelope_like(
     if not audit_summary:
         audit_summary = "Agent returned a non-standard envelope; extracted user_response."
     system_actions = payload.get("system_actions")
+    domain_payload = payload.get("domain_payload")
+    if not isinstance(domain_payload, dict):
+        domain_payload = {}
+    candidate_department_ids = domain_payload.get("candidate_department_ids", [])
+    if not isinstance(candidate_department_ids, list):
+        candidate_department_ids = []
     return CodexDecision(
         action=action,
         reply_text=reply_text,
         reason=audit_summary,
         sensitivity_kind=sensitivity_kind,
+        personnel_subject_user_id=domain_payload.get("personnel_subject_user_id"),
+        candidate_context_known=bool(
+            domain_payload.get("candidate_context_known", False)
+        ),
+        candidate_department_ids=[
+            str(department_id)
+            for department_id in candidate_department_ids
+            if str(department_id).strip()
+        ],
+        calendar_response_status=domain_payload.get("calendar_response_status", ""),
         system_actions=system_actions if isinstance(system_actions, list) else [],
         audit_documents=audit_documents,
         audit_summary=audit_summary,

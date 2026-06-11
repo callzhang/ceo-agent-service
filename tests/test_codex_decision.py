@@ -9,7 +9,12 @@ from app.codex_decision import (
     extract_codex_session_id,
     parse_codex_json,
 )
-from app.dingtalk_models import CodexAction, CodexDecision
+from app.dingtalk_models import (
+    CalendarResponseStatus,
+    CodexAction,
+    CodexDecision,
+    SensitivityKind,
+)
 from app.leak_check import contains_forbidden_leak
 from app.process_runner import ProcessRunResult
 
@@ -460,6 +465,41 @@ def test_parse_codex_json_accepts_nonstandard_envelope_with_user_response():
     assert decision.sensitivity_kind == "internal_personnel"
     assert decision.audit_summary == "已读取日报并判断风险。"
     assert decision.system_actions[0]["type"] == "persist_daily_doc_review_watch"
+
+
+def test_parse_nonstandard_envelope_preserves_domain_payload():
+    raw = json.dumps(
+        {
+            "kind": "reply",
+            "user_response": {
+                "mode": "send_reply",
+                "text": "这个会可以接。",
+                "sensitivity_kind": "external_candidate",
+            },
+            "system_actions": [
+                {"type": "send_dingtalk_reply", "reply_text_ref": "user_response.text"}
+            ],
+            "domain_payload": {
+                "candidate_context_known": True,
+                "candidate_department_ids": ["dept-ai"],
+                "calendar_response_status": "accepted",
+            },
+            "audit": {
+                "summary": "已结合岗位信息判断。",
+                "documents": [],
+            },
+        },
+        ensure_ascii=False,
+    )
+
+    decision = parse_codex_json(raw, allow_legacy=False)
+
+    assert decision.action == CodexAction.SEND_REPLY
+    assert decision.reply_text == "这个会可以接。"
+    assert decision.sensitivity_kind == SensitivityKind.EXTERNAL_CANDIDATE
+    assert decision.candidate_context_known is True
+    assert decision.candidate_department_ids == ["dept-ai"]
+    assert decision.calendar_response_status == CalendarResponseStatus.ACCEPTED
 
 
 def test_parse_codex_json_accepts_event_msg_agent_message_payload():
