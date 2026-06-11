@@ -94,6 +94,55 @@ def test_due_low_risk_follow_up_sends_group_message(tmp_path):
     assert send_result["at_open_dingtalk_names"] == ["Alex"]
 
 
+def test_due_follow_up_uses_reply_postfix_and_feedback_links(tmp_path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    project_id = store.create_work_project(
+        title="客户交付",
+        category="projects",
+        status="active",
+        priority="P0",
+        risk_level="high",
+    )
+    store.create_work_todo(
+        project_id=project_id,
+        title="给客户交付 ETA",
+        owner_user_id="owner-1",
+        owner_name="Alex",
+        status="open",
+        priority="P0",
+        next_follow_up_at="2026-06-07 09:00:00",
+    )
+    store.create_follow_up_draft(
+        project_id=project_id,
+        owner_user_id="owner-1",
+        owner_name="Alex",
+        target_conversation_id="cid-1",
+        target_kind="group",
+        question_text="请同步这个事项的最新进展。",
+        risk_check_json=json.dumps({"owner_in_group": True, "sensitive": False}),
+        scheduled_at="2026-06-07 09:00:00",
+    )
+    dws = FakeDws()
+
+    sent = process_due_follow_ups(
+        store,
+        dws,
+        now="2026-06-07 10:00:00",
+        auto_send=True,
+        feedback_base_url="https://feedback.example.com",
+    )
+
+    assert sent == 1
+    sent_text = dws.sent[0]["text"]
+    assert sent_text.startswith("请同步这个事项的最新进展。")
+    assert "（by明哥分身）" in sent_text
+    assert "/api/dingtalk-feedback-spike?feedback_token=" in sent_text
+    send_result = json.loads(
+        store.list_follow_up_drafts(statuses=("sent",))[0].send_result_json
+    )
+    assert send_result["feedback_token"].startswith("spike_")
+
+
 def test_due_follow_up_skips_when_todo_completion_evidence_exists(tmp_path):
     store = AutoReplyStore(tmp_path / "task.sqlite3")
     project_id = store.create_work_project(

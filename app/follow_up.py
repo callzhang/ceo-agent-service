@@ -1,5 +1,7 @@
 import json
 
+from app.codex_decision import append_signature
+from app.feedback_spike import append_feedback_links
 from app.store import AutoReplyStore
 from app.task_models import ProjectStatus, TodoStatus
 
@@ -78,6 +80,7 @@ def process_due_follow_ups(
     *,
     now: str,
     auto_send: bool,
+    feedback_base_url: str = "",
     limit: int = 50,
 ) -> int:
     sent = 0
@@ -105,17 +108,27 @@ def process_due_follow_ups(
             )
             at_open_dingtalk_ids = [open_dingtalk_id] if open_dingtalk_id else []
             at_open_dingtalk_names = [at_name] if at_name else []
+            question_text = append_signature(draft.question_text)
+            feedback_token = ""
+            if feedback_base_url:
+                feedback_reply = append_feedback_links(
+                    vercel_base_url=feedback_base_url,
+                    reply_text=question_text,
+                    original_text=draft.question_text,
+                )
+                question_text = feedback_reply.text
+                feedback_token = feedback_reply.feedback_token
             if draft.target_conversation_id:
                 result = dws.send_message(
                     draft.target_conversation_id,
-                    draft.question_text,
+                    question_text,
                     at_open_dingtalk_ids=at_open_dingtalk_ids,
                     at_open_dingtalk_names=at_open_dingtalk_names,
                 )
             else:
                 result = dws.send_message(
                     None,
-                    draft.question_text,
+                    question_text,
                     at_open_dingtalk_ids=at_open_dingtalk_ids,
                     user_id=draft.owner_user_id or None,
                 )
@@ -139,6 +152,7 @@ def process_due_follow_ups(
                 {
                     "at_open_dingtalk_ids": at_open_dingtalk_ids,
                     "at_open_dingtalk_names": at_open_dingtalk_names,
+                    "feedback_token": feedback_token,
                     "send_result": result or {},
                 },
                 ensure_ascii=False,

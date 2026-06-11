@@ -905,6 +905,7 @@ def process_follow_ups_command(
         dws,
         now=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
         auto_send=not settings.dry_run,
+        feedback_base_url=feedback_spike_vercel_base_url(),
     )
     print(f"process-follow-ups sent={sent}", flush=True)
     return sent
