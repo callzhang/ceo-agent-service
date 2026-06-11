@@ -741,6 +741,7 @@ def process_okr_reviews_command(settings: WorkerSettings) -> int:
             settings.codex_idle_timeout_seconds,
             OKR_REVIEW_CODEX_IDLE_TIMEOUT_SECONDS,
         ),
+        persist_conversation_session=False,
     )
     dws = None
     if not settings.dry_run:

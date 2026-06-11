@@ -273,6 +273,65 @@ def test_structured_runner_clears_missing_local_session_before_exec(tmp_path):
     assert store.get_codex_session_id("cid-1") == "session-2"
 
 
+def test_structured_runner_can_skip_persisting_shared_conversation_session(tmp_path):
+    schema = tmp_path / "schema.json"
+    schema.write_text("{}", encoding="utf-8")
+    skill = tmp_path / "skill.md"
+    skill.write_text("# Skill", encoding="utf-8")
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.upsert_conversation("cid-1", "Friday", True, "chat-session")
+
+    def executor(command, prompt, env):
+        return "\n".join(
+            [
+                json.dumps({"type": "session", "id": "structured-session"}),
+                json.dumps(
+                    {
+                        "kind": "reply",
+                        "user_response": {
+                            "mode": "send_reply",
+                            "text": "ok",
+                            "sensitivity_kind": "general",
+                        },
+                        "system_actions": [
+                            {
+                                "type": "send_dingtalk_reply",
+                                "reply_text_ref": "user_response.text",
+                            }
+                        ],
+                        "domain_payload": {},
+                        "audit": {
+                            "summary": "valid",
+                            "documents": [],
+                            "confidence": 0.8,
+                        },
+                    }
+                ),
+            ]
+        )
+
+    spec = AgentSpec("okr_review", schema, [skill], [], "Return JSON.")
+    runner = StructuredCodexRunner(
+        store=store,
+        workspace=tmp_path,
+        spec=spec,
+        executor=executor,
+        session_exists=lambda _session_id: True,
+        persist_conversation_session=False,
+    )
+
+    result = runner.run(
+        conversation_id="cid-1",
+        conversation_title="Friday",
+        single_chat=True,
+        prompt="hello",
+        owner="okr_review:1",
+    )
+
+    assert result.codex_session_id == "structured-session"
+    assert store.get_codex_session_id("cid-1") == "chat-session"
+
+
 def test_structured_runner_retries_fresh_after_session_refresh_error(tmp_path):
     schema = tmp_path / "schema.json"
     schema.write_text("{}", encoding="utf-8")

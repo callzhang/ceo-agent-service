@@ -80,6 +80,7 @@ class StructuredCodexRunner:
         session_exists: Callable[[str], bool] | None = None,
         timeout_seconds: int = 420,
         idle_timeout_seconds: int = 180,
+        persist_conversation_session: bool = True,
     ):
         self.store = store
         self.workspace = workspace
@@ -89,6 +90,7 @@ class StructuredCodexRunner:
         self.session_exists = session_exists or self._local_session_exists
         self.timeout_seconds = timeout_seconds
         self.idle_timeout_seconds = idle_timeout_seconds
+        self.persist_conversation_session = persist_conversation_session
         self.runner = CodexRunner(workspace=workspace, codex_bin=codex_bin)
         self._run_process_with_idle_timeout = run_process_with_idle_timeout
 
@@ -124,7 +126,7 @@ class StructuredCodexRunner:
                 start_line=transcript_start_line,
                 end_line=transcript_end_line,
             )
-            if parsed_session_id:
+            if parsed_session_id and self.persist_conversation_session:
                 self.store.upsert_conversation(
                     conversation_id,
                     conversation_title,
