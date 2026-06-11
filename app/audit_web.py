@@ -1,6 +1,6 @@
 import json
 import asyncio
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from collections import deque
 from datetime import datetime, timedelta, timezone, tzinfo
 from html import escape
@@ -3090,6 +3090,70 @@ def handle_recall_post(
     return 303, {"Location": f"/attempts/{attempt_id}"}, ""
 
 
+def _audit_worker_settings(db_path: Path):
+    from app.cli import DEFAULT_DING_ROBOT_NAME, WorkerSettings
+
+    return WorkerSettings(
+        workspace=workspace_path(),
+        db_path=db_path,
+        corpus_dir=corpus_dir(),
+        dry_run=False,
+        ding_robot_code=os.getenv("CEO_DING_ROBOT_CODE")
+        or os.getenv("DINGTALK_DING_ROBOT_CODE"),
+        ding_robot_name=os.getenv("CEO_DING_ROBOT_NAME", DEFAULT_DING_ROBOT_NAME),
+        ding_receiver_user_id=os.getenv("CEO_DING_RECEIVER_USER_ID"),
+    )
+
+
+def _create_audit_worker(settings):
+    from app.cli import create_worker
+
+    return create_worker(settings)
+
+
+def handle_rerun_attempt_post(
+    store: AutoReplyStore,
+    attempt_id: int,
+    *,
+    worker_factory: Callable[[object], object] | None = None,
+) -> tuple[int, dict[str, str], str]:
+    attempt = store.get_reply_attempt(attempt_id)
+    if attempt is None:
+        return 404, {}, render_page("Attempt not found", "Attempt not found")
+    conversation_record = store.get_conversation(attempt.conversation_id)
+    if conversation_record is None:
+        return (
+            404,
+            {},
+            render_page(
+                "Conversation not found",
+                f"<p>Conversation not found: {escape(attempt.conversation_id)}</p>",
+            ),
+        )
+    settings = _audit_worker_settings(store.path)
+    worker = (worker_factory or _create_audit_worker)(settings)
+    conversation = DingTalkConversation(
+        open_conversation_id=conversation_record.conversation_id,
+        title=conversation_record.title,
+        single_chat=conversation_record.single_chat,
+        unread_point=1,
+    )
+    try:
+        processed_message_id = worker.rerun_message(
+            conversation,
+            attempt.trigger_message_id,
+            force_new_decision=True,
+            oa_url=attempt.oa_url,
+        )
+    except (SystemExit, ValueError) as exc:
+        return 400, {}, render_page("重跑失败", f"<p>{escape(str(exc))}</p>")
+    store.complete_reply_task_for_message(
+        attempt.conversation_id,
+        processed_message_id,
+    )
+    return 303, {"Location": f"/attempts/{attempt_id}"}, ""
+
+
 def handle_reviewed_message_reply(
     store: AutoReplyStore,
     dws: DwsClient,
@@ -3433,6 +3497,14 @@ def create_audit_app(
         status, headers, html = handle_recall_post(
             AutoReplyStore(db_path),
             DwsClient(ding_robot_code=ding_robot_code, ding_robot_name=ding_robot_name),
+            attempt_id,
+        )
+        return _fastapi_post_response(status, headers, html)
+
+    @app.post("/attempts/{attempt_id}/rerun")
+    def rerun_attempt(attempt_id: int):
+        status, headers, html = handle_rerun_attempt_post(
+            AutoReplyStore(db_path),
             attempt_id,
         )
         return _fastapi_post_response(status, headers, html)
@@ -3866,6 +3938,19 @@ def _recall_card(attempt: ReplyAttempt, sent_reply: SentReply | None) -> str:
     )
 
 
+def _rerun_card(attempt: ReplyAttempt) -> str:
+    return (
+        "<section class=\"card compact-card rerun-card\">"
+        "<h2>重跑 attempt</h2>"
+        "<p class=\"muted\">用当前代码和 prompt 重新处理原 trigger。"
+        "可能实际发送回复、处理日历或执行审批。</p>"
+        f"<form method=\"post\" action=\"/attempts/{attempt.id}/rerun\" "
+        "onsubmit=\"return confirm('确认重跑这条 attempt？可能会实际发送新回复或执行日历/OA动作。')\">"
+        "<button type=\"submit\">重跑</button>"
+        "</form></section>"
+    )
+
+
 def _feedback_event_html(event: FeedbackEvent) -> str:
     rating = event.rating_label or event.rating or "feedback"
     comment = event.comment.strip() or "未填写评语"
@@ -3903,6 +3988,7 @@ def _review_panel(
         f"<pre class=\"reply-pre\">{escape(reply_text)}</pre>"
         "</div>"
         "<div class=\"review-side\">"
+        f"{_rerun_card(attempt)}"
         f"{_recall_card(attempt, sent_reply)}"
         f"{_feedback_form(attempt)}"
         f"{_counterparty_feedback_card(sent_reply, feedback_events)}"

@@ -14,6 +14,7 @@ from app.audit_web import (
     handle_system_config_post,
     handle_user_prompt_post,
     handle_feedback_post,
+    handle_rerun_attempt_post,
     handle_user_feedback_resolve_post,
     handle_user_feedback_sync_post,
     handle_recall_post,
@@ -2741,6 +2742,18 @@ def test_render_attempt_detail_shows_recall_button_when_sent_reply_is_recallable
     assert "确认撤销这条已发送消息？" in html
 
 
+def test_render_attempt_detail_shows_rerun_button(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    attempt_id = seed_attempt(store)
+
+    status, html = render_attempt_detail(store, attempt_id)
+
+    assert status == 200
+    assert "重跑 attempt" in html
+    assert f'action="/attempts/{attempt_id}/rerun"' in html
+    assert "确认重跑这条 attempt？" in html
+
+
 def test_render_attempt_detail_returns_404_when_missing(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
 
@@ -2767,6 +2780,52 @@ def test_handle_feedback_post_updates_attempt_and_redirects(tmp_path: Path):
     assert attempt is not None
     assert attempt.reviewer_feedback == "需要更严谨"
     assert attempt.corrected_reply_text == "先看材料"
+
+
+def test_handle_rerun_attempt_post_calls_worker_and_redirects(tmp_path: Path):
+    class FakeWorker:
+        def __init__(self):
+            self.calls = []
+
+        def rerun_message(
+            self,
+            conversation,
+            message_id,
+            *,
+            force_new_decision=False,
+            oa_url="",
+        ):
+            self.calls.append(
+                {
+                    "conversation": conversation,
+                    "message_id": message_id,
+                    "force_new_decision": force_new_decision,
+                    "oa_url": oa_url,
+                }
+            )
+            return message_id
+
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    attempt_id = seed_attempt(store)
+    worker = FakeWorker()
+
+    status, headers, html = handle_rerun_attempt_post(
+        store,
+        attempt_id,
+        worker_factory=lambda settings: worker,
+    )
+
+    assert status == 303
+    assert headers["Location"] == f"/attempts/{attempt_id}"
+    assert html == ""
+    assert len(worker.calls) == 1
+    call = worker.calls[0]
+    assert call["conversation"].open_conversation_id == "cid-1"
+    assert call["conversation"].title == "技术部"
+    assert call["conversation"].single_chat is False
+    assert call["message_id"] == "msg-1"
+    assert call["force_new_decision"] is True
+    assert call["oa_url"] == ""
 
 
 def test_handle_recall_post_calls_dws_message_recall_and_records_success(
