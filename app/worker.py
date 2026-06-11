@@ -650,6 +650,13 @@ class DingTalkAutoReplyWorker:
         return event.status.strip().lower() != "cancelled"
 
     @staticmethod
+    def _calendar_event_has_attendee(event: DwsCalendarEvent, attendee_name: str) -> bool:
+        expected = attendee_name.strip()
+        if not expected:
+            return False
+        return any(attendee.strip() == expected for attendee in event.attendees)
+
+    @staticmethod
     def _calendar_event_raw_payload(event: DwsCalendarEvent) -> dict[str, Any]:
         return {
             "id": event.event_id,
@@ -2312,6 +2319,17 @@ class DingTalkAutoReplyWorker:
         if matched is not None:
             return matched
         if message.single_chat:
+            sender_attendee_candidates = [
+                event
+                for event in candidates
+                if self._calendar_event_has_attendee(event, sender_name)
+            ]
+            matched = self._calendar_pending_invite_from_candidates(
+                sender_attendee_candidates,
+                message,
+            )
+            if matched is not None:
+                return matched
             return self._calendar_pending_invite_from_context(
                 candidates,
                 message,

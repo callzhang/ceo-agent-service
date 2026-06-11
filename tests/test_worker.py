@@ -3612,7 +3612,7 @@ def test_bare_calendar_card_uses_closest_recent_pending_invite_from_sender(
     assert dws.calendar_responses == [("invite-1", "accepted")]
 
 
-def test_bare_calendar_card_requires_recent_sender_created_pending_invite(
+def test_bare_calendar_card_uses_single_chat_sender_attendee_invite(
     tmp_path: Path, monkeypatch
 ):
     trigger = message("[日程]", single_chat=True, message_type="calendar")
@@ -3649,11 +3649,13 @@ def test_bare_calendar_card_requires_recent_sender_created_pending_invite(
 
     worker.run_once()
 
-    assert codex.calls == []
+    assert len(codex.calls) == 1
+    assert "管理工作讨论" in codex.calls[0][0]
     assert len(final_sent(dws)) == 1
-    assert "只看到日程卡片" in final_sent(dws)[0][1]
-    assert "管理工作讨论" not in final_sent(dws)[0][1]
-    assert dws.calendar_responses == []
+    assert final_sent(dws)[0][1] == "标题和描述足以判断需要参加。（by明哥分身）"
+    assert dws.calendar_responses == [("invite-1", "accepted")]
+    attempt = worker.store.get_reply_attempt(1)
+    assert attempt.calendar_event_id == "invite-1"
 
 
 def test_bare_calendar_card_ignores_sender_pending_invite_changed_too_early(
