@@ -114,6 +114,13 @@ def test_render_attempt_list_shows_history_rows(tmp_path: Path):
     assert "attempt-feed" in html
     assert "attempt-item" in html
     assert "attempt-line" in html
+    assert "history-table-header" in html
+    assert "history-type-filter" in html
+    assert "sent" in html
+    assert "reacted" in html
+    assert "skipped" in html
+    assert "failed" in html
+    assert "20/页" in html
     assert "问" in html
     assert "答" in html
     assert "attempt-body" not in html
@@ -134,6 +141,7 @@ def test_render_attempt_list_paginates_attempts(tmp_path: Path):
         trigger_text="older question",
         action="send_reply",
         sensitivity_kind="general",
+        send_status="sent",
     )
     newer_id = store.record_reply_attempt(
         conversation_id="cid-new",
@@ -143,14 +151,15 @@ def test_render_attempt_list_paginates_attempts(tmp_path: Path):
         trigger_text="newer question",
         action="send_reply",
         sensitivity_kind="general",
+        send_status="sent",
     )
 
-    first_page = render_attempt_list(store, limit=1, page=1)
-    second_page = render_attempt_list(store, limit=1, page=2)
+    first_page = render_attempt_list(store, limit=1, page=1, type_filter="sent")
+    second_page = render_attempt_list(store, limit=1, page=2, type_filter="sent")
 
     assert f"/attempts/{newer_id}" in first_page
     assert f"/attempts/{older_id}" not in first_page
-    assert 'href="/?page=2"' in first_page
+    assert 'href="/?page=2&amp;limit=1&amp;type=sent"' in first_page
     assert "1-1" in first_page
     assert "1 / 2" in first_page
     assert 'aria-label="第一页"' in first_page
@@ -161,7 +170,7 @@ def test_render_attempt_list_paginates_attempts(tmp_path: Path):
     assert 'pagination-button is-disabled pagination-arrow" aria-label="上一页"' in first_page
     assert f"/attempts/{older_id}" in second_page
     assert f"/attempts/{newer_id}" not in second_page
-    assert 'href="/"' in second_page
+    assert 'href="/?limit=1&amp;type=sent"' in second_page
     assert "2-2" in second_page
     assert "2 / 2" in second_page
     assert 'pagination-button is-disabled pagination-arrow" aria-label="下一页"' in second_page
@@ -186,12 +195,56 @@ def test_history_route_reads_page_query(tmp_path: Path):
     app = create_audit_app(store.path)
     client = TestClient(app)
 
-    response = client.get("/?page=2")
+    response = client.get("/?page=2&limit=50")
 
     assert response.status_code == 200
     assert f"/attempts/{first_id}" in response.text
     assert "51-100" in response.text
     assert "2 / 2" in response.text
+
+
+def test_render_attempt_list_filters_by_type_and_preserves_query(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    sent_id = store.record_reply_attempt(
+        conversation_id="cid-sent",
+        conversation_title="Sent Group",
+        trigger_message_id="msg-sent",
+        trigger_sender="Mina",
+        trigger_text="sent question",
+        action="send_reply",
+        sensitivity_kind="general",
+        send_status="sent",
+    )
+    reacted_id = store.record_reply_attempt(
+        conversation_id="cid-reacted",
+        conversation_title="Reacted Group",
+        trigger_message_id="msg-reacted",
+        trigger_sender="Mina",
+        trigger_text="reacted question",
+        action="add_emoji",
+        sensitivity_kind="general",
+        send_status="reacted",
+    )
+    store.record_reply_attempt(
+        conversation_id="cid-skipped",
+        conversation_title="Skipped Group",
+        trigger_message_id="msg-skipped",
+        trigger_sender="Mina",
+        trigger_text="skipped question",
+        action="no_reply",
+        sensitivity_kind="general",
+        send_status="skipped",
+    )
+
+    html = render_attempt_list(store, limit=1, page=1, type_filter="reacted")
+
+    assert f"/attempts/{reacted_id}" in html
+    assert f"/attempts/{sent_id}" not in html
+    assert "Reacted Group" in html
+    assert "Sent Group" not in html
+    assert 'class="history-type-link active" href="/?limit=1&amp;type=reacted">reacted</a>' in html
+    assert 'href="/?limit=1&amp;type=sent"' in html
+    assert "共 1 条" in html
 
 
 def test_render_attempt_list_shows_counterparty_feedback(tmp_path: Path):

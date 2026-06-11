@@ -2095,18 +2095,25 @@ class AutoReplyStore:
             return ReplyAttempt.model_validate(dict(row))
 
     def list_reply_attempts(
-        self, limit: int | None = None, offset: int = 0
+        self,
+        limit: int | None = None,
+        offset: int = 0,
+        *,
+        send_status: str | None = None,
     ) -> list[ReplyAttempt]:
         with self._connect() as db:
             query = """
                 select *
                 from reply_attempts
-                order by id desc
             """
-            args: tuple[int, ...] = ()
+            args: tuple[object, ...] = ()
+            if send_status:
+                query = f"{query} where send_status=?"
+                args = (send_status,)
+            query = f"{query} order by id desc"
             if limit is not None:
                 query = f"{query} limit ? offset ?"
-                args = (limit, max(0, offset))
+                args = (*args, limit, max(0, offset))
             rows = db.execute(query, args).fetchall()
             return [ReplyAttempt.model_validate(dict(row)) for row in rows]
 
@@ -2187,11 +2194,17 @@ class AutoReplyStore:
             rows = db.execute(query, args).fetchall()
             return [ReplyAttempt.model_validate(dict(row)) for row in rows]
 
-    def count_reply_attempts(self) -> int:
+    def count_reply_attempts(self, *, send_status: str | None = None) -> int:
         with self._connect() as db:
-            row = db.execute(
-                "select count(*) as count from reply_attempts"
-            ).fetchone()
+            if send_status:
+                row = db.execute(
+                    "select count(*) as count from reply_attempts where send_status=?",
+                    (send_status,),
+                ).fetchone()
+            else:
+                row = db.execute(
+                    "select count(*) as count from reply_attempts"
+                ).fetchone()
             return int(row["count"])
 
     def enqueue_work_summary_input(
