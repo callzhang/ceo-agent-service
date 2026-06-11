@@ -106,6 +106,11 @@ def process_due_follow_ups(
                 owner_user_id=draft.owner_user_id,
                 fallback_name=draft.owner_name,
             )
+            at_users = (
+                [draft.owner_user_id]
+                if draft.target_kind == "group" and draft.owner_user_id
+                else []
+            )
             at_open_dingtalk_ids = [open_dingtalk_id] if open_dingtalk_id else []
             at_open_dingtalk_names = [at_name] if at_name else []
             question_text = append_signature(draft.question_text)
@@ -122,6 +127,7 @@ def process_due_follow_ups(
                 result = dws.send_message(
                     draft.target_conversation_id,
                     question_text,
+                    at_users=at_users,
                     at_open_dingtalk_ids=at_open_dingtalk_ids,
                     at_open_dingtalk_names=at_open_dingtalk_names,
                 )
@@ -150,6 +156,7 @@ def process_due_follow_ups(
             status="sent",
             send_result_json=json.dumps(
                 {
+                    "at_users": at_users,
                     "at_open_dingtalk_ids": at_open_dingtalk_ids,
                     "at_open_dingtalk_names": at_open_dingtalk_names,
                     "feedback_token": feedback_token,

@@ -82,7 +82,7 @@ def test_due_low_risk_follow_up_sends_group_message(tmp_path):
 
     assert sent == 1
     assert dws.sent[0]["conversation_id"] == "cid-1"
-    assert dws.sent[0]["at_users"] == []
+    assert dws.sent[0]["at_users"] == ["owner-1"]
     assert dws.sent[0]["at_open_dingtalk_ids"] == ["open-owner-1"]
     assert dws.sent[0]["at_open_dingtalk_names"] == ["Alex"]
     assert not dws.sent[0]["text"].startswith("<@")
@@ -90,6 +90,7 @@ def test_due_low_risk_follow_up_sends_group_message(tmp_path):
     sent_draft = store.list_follow_up_drafts(statuses=("sent",))[0]
     assert sent_draft.id == draft_id
     send_result = json.loads(sent_draft.send_result_json)
+    assert send_result["at_users"] == ["owner-1"]
     assert send_result["at_open_dingtalk_ids"] == ["open-owner-1"]
     assert send_result["at_open_dingtalk_names"] == ["Alex"]
 
