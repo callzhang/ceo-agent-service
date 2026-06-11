@@ -54,18 +54,32 @@ class PermissionGate:
                 reply_text=INTERNAL_PERSONNEL_GROUP_REFUSAL,
                 reason="internal personnel detail in group chat",
             )
+        try:
+            requester_user_id = self.dws.resolve_message_sender(trigger)
+        except Exception as exc:
+            if decision.personnel_subject_user_id:
+                return PermissionResult(action=PermissionAction.ERROR, reason=str(exc))
+            return PermissionResult(
+                action=PermissionAction.REPLY,
+                reply_text=INTERNAL_PERSONNEL_PRIVATE_REFUSAL,
+                reason="missing personnel subject",
+            )
+        if (
+            decision.personnel_subject_user_id
+            and requester_user_id == decision.personnel_subject_user_id
+        ):
+            return PermissionResult(action=PermissionAction.ALLOW)
+        try:
+            if self.dws.is_hr_user(requester_user_id):
+                return PermissionResult(action=PermissionAction.ALLOW)
+        except Exception:
+            pass
         if not decision.personnel_subject_user_id:
             return PermissionResult(
                 action=PermissionAction.REPLY,
                 reply_text=INTERNAL_PERSONNEL_PRIVATE_REFUSAL,
                 reason="missing personnel subject",
             )
-        try:
-            requester_user_id = self.dws.resolve_message_sender(trigger)
-            if requester_user_id == decision.personnel_subject_user_id:
-                return PermissionResult(action=PermissionAction.ALLOW)
-        except Exception as exc:
-            return PermissionResult(action=PermissionAction.ERROR, reason=str(exc))
         return PermissionResult(
             action=PermissionAction.REPLY,
             reply_text=INTERNAL_PERSONNEL_PRIVATE_REFUSAL,

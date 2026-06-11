@@ -9331,7 +9331,7 @@ def test_internal_personnel_question_allows_private_self_subject(
     ]
 
 
-def test_internal_personnel_question_does_not_auto_allow_hr_or_manager(
+def test_internal_personnel_question_allows_private_hr_requester(
     tmp_path: Path, monkeypatch
 ):
     dws = FakeDws(
@@ -9339,6 +9339,31 @@ def test_internal_personnel_question_does_not_auto_allow_hr_or_manager(
         {"cid-1": [message("张三绩效怎么定？", single_chat=True)]},
     )
     dws.hr_users.add("sender-user-1")
+    dws.manager_chains["subject-user-1"] = ["sender-user-1"]
+    codex = FakeCodex(
+        CodexDecision(
+            action=CodexAction.SEND_REPLY,
+            reply_text="先按事实反馈",
+            sensitivity_kind=SensitivityKind.INTERNAL_PERSONNEL,
+            personnel_subject_user_id="subject-user-1",
+        )
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+
+    worker.run_once()
+
+    assert final_sent(dws) == [
+        ("cid-1", "先按事实反馈（by明哥分身）")
+    ]
+
+
+def test_internal_personnel_question_does_not_auto_allow_manager(
+    tmp_path: Path, monkeypatch
+):
+    dws = FakeDws(
+        [conversation(single_chat=True)],
+        {"cid-1": [message("张三绩效怎么定？", single_chat=True)]},
+    )
     dws.manager_chains["subject-user-1"] = ["sender-user-1"]
     codex = FakeCodex(
         CodexDecision(

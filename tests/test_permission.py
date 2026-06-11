@@ -26,7 +26,7 @@ def test_internal_personnel_private_requester_cannot_receive_other_person_reply(
             return message.sender_user_id
 
         def is_hr_user(self, user_id):
-            raise RuntimeError("HR membership should not be needed")
+            return False
 
         def user_in_manager_chain(self, manager_user_id, subject_user_id):
             raise RuntimeError("manager chain should not be called")
@@ -45,13 +45,52 @@ def test_internal_personnel_private_requester_cannot_receive_other_person_reply(
     assert result.reason == "private requester is not personnel subject"
 
 
+def test_internal_personnel_hr_private_requester_can_receive_other_person_reply():
+    class Dws:
+        def resolve_message_sender(self, message):
+            return message.sender_user_id
+
+        def is_hr_user(self, user_id):
+            return True
+
+    result = PermissionGate(Dws()).evaluate(
+        CodexDecision(
+            action=CodexAction.SEND_REPLY,
+            sensitivity_kind=SensitivityKind.INTERNAL_PERSONNEL,
+            personnel_subject_user_id="subject-user-1",
+        ),
+        trigger(),
+    )
+
+    assert result.action == PermissionAction.ALLOW
+
+
+def test_internal_personnel_hr_private_requester_can_receive_reply_without_subject():
+    class Dws:
+        def resolve_message_sender(self, message):
+            return message.sender_user_id
+
+        def is_hr_user(self, user_id):
+            return True
+
+    result = PermissionGate(Dws()).evaluate(
+        CodexDecision(
+            action=CodexAction.SEND_REPLY,
+            sensitivity_kind=SensitivityKind.INTERNAL_PERSONNEL,
+        ),
+        trigger(),
+    )
+
+    assert result.action == PermissionAction.ALLOW
+
+
 def test_internal_personnel_private_request_without_subject_refuses_instead_of_asking():
     class Dws:
         def resolve_message_sender(self, message):
-            raise RuntimeError("sender resolution should not be needed")
+            return message.sender_user_id
 
         def is_hr_user(self, user_id):
-            raise RuntimeError("HR membership should not be needed")
+            return False
 
     result = PermissionGate(Dws()).evaluate(
         CodexDecision(
