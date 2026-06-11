@@ -1,6 +1,6 @@
 import json
 import asyncio
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 from collections import deque
 from datetime import datetime, timedelta, timezone, tzinfo
 from html import escape
@@ -118,6 +118,8 @@ table{width:100%;border-collapse:separate;border-spacing:0;background:var(--canv
 th,td{border-bottom:1px solid var(--hairline-soft);padding:12px 14px;text-align:left;vertical-align:top;font-size:14px;line-height:1.45}
 tr:last-child td{border-bottom:0}
 th{background:var(--surface-soft);color:var(--steel);font-size:12px;font-weight:600;line-height:1.4}
+.column-sized-table{table-layout:fixed}
+.column-sized-table th,.column-sized-table td{overflow-wrap:anywhere;word-break:break-word}
 .config-variable-table th,.config-variable-table td{padding:5px 8px}
 .config-variable-table th:first-child,.config-variable-table td:first-child{width:360px}
 .config-variable-table td:first-child .config-value{white-space:nowrap;word-break:normal}
@@ -2539,13 +2541,13 @@ def render_task_project_detail(store: AutoReplyStore, project_id: int) -> tuple[
         f"{_simple_table(('ID', 'TODO', 'Owner', 'Status', 'Priority', 'DDL', 'Next follow-up', 'Question', 'Blocker', 'Evidence'), todo_rows) if todo_rows else '<p class=\"muted\">No TODOs recorded.</p>'}"
         "</section>"
         "<section class=\"card\"><h2>Facts</h2>"
-        f"{_simple_table(('Description', 'Source', 'Created', 'Updated'), facts) if facts else '<p class=\"muted\">No facts recorded.</p>'}"
+        f"{_simple_table(('Description', 'Source', 'Created', 'Updated'), facts, column_widths={'Source': '118px', 'Created': '132px', 'Updated': '132px'}) if facts else '<p class=\"muted\">No facts recorded.</p>'}"
         "</section>"
         "<section class=\"card\"><h2>Updates</h2>"
-        f"{_simple_table(('Time', 'Source', 'Summary', 'Changes', 'Reason', 'Confidence'), update_rows) if update_rows else '<p class=\"muted\">No updates recorded.</p>'}"
+        f"{_simple_table(('Time', 'Source', 'Summary', 'Changes', 'Reason', 'Confidence'), update_rows, column_widths={'Time': '148px', 'Source': '124px', 'Changes': '170px', 'Reason': '150px', 'Confidence': '96px'}) if update_rows else '<p class=\"muted\">No updates recorded.</p>'}"
         "</section>"
         "<section class=\"card\"><h2>Follow-ups</h2>"
-        f"{_simple_table(('Time', 'Owner', 'Target', 'Status', 'Question', 'Risk', 'Result'), draft_rows) if draft_rows else '<p class=\"muted\">No follow-ups recorded.</p>'}"
+        f"{_simple_table(('Time', 'Owner', 'Target', 'Status', 'Question', 'Risk', 'Result'), draft_rows, column_widths={'Time': '148px', 'Owner': '110px', 'Target': '118px', 'Status': '104px', 'Risk': '170px'}) if draft_rows else '<p class=\"muted\">No follow-ups recorded.</p>'}"
         "</section>"
         f"{_collapsible_json_card('Memory context', project.memory_context_json)}"
     )
@@ -2664,14 +2666,29 @@ def _task_detail_cell(label: str, value: str) -> str:
     )
 
 
-def _simple_table(headers: Iterable[str], rows: Iterable[Iterable[str]]) -> str:
-    header_html = "".join(f"<th>{escape(header)}</th>" for header in headers)
+def _simple_table(
+    headers: Iterable[str],
+    rows: Iterable[Iterable[str]],
+    *,
+    column_widths: Mapping[str, str] | None = None,
+) -> str:
+    header_values = tuple(headers)
+    column_widths = column_widths or {}
+    colgroup_html = "".join(
+        f"<col style=\"width:{escape(column_widths.get(header, 'auto'))}\">"
+        for header in header_values
+    )
+    header_html = "".join(f"<th>{escape(header)}</th>" for header in header_values)
     row_html = "".join(
         "<tr>" + "".join(f"<td>{escape(value)}</td>" for value in row) + "</tr>"
         for row in rows
     )
+    table_class = ' class="column-sized-table"' if column_widths else ""
+    colgroup = f"<colgroup>{colgroup_html}</colgroup>" if column_widths else ""
     return (
-        "<table><thead><tr>"
+        f"<table{table_class}>"
+        f"{colgroup}"
+        "<thead><tr>"
         f"{header_html}"
         "</tr></thead><tbody>"
         f"{row_html}"
