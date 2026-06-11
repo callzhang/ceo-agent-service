@@ -274,6 +274,47 @@ def test_follow_up_drafts_are_created_with_risk_check(tmp_path):
     }
 
 
+def test_follow_up_draft_requires_owner_user_id_at_generation(tmp_path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    decision = TaskAgentDecision.model_validate(
+        {
+            "action": "create_project",
+            "project": {
+                "title": "Henry/BMW 自动驾驶数据挖掘商机技术响应推进",
+                "category": "sales",
+                "status": "active",
+            },
+            "todo_changes": [],
+            "follow_up_drafts": [
+                {
+                    "owner_user_id": "",
+                    "owner_name": "Jack He(Yunguang He)",
+                    "target_conversation_id": "cid-henry",
+                    "target_kind": "group",
+                    "question_text": "Henry/BMW 数据挖掘昨天客户沟通结果怎样？",
+                    "scheduled_at": "2026-06-11 09:00:00",
+                    "risk_check": {"owner_in_group": True, "sensitive": False},
+                    "status": "draft",
+                }
+            ],
+            "update_summary": "生成跟进草稿。",
+            "merge_reason": "",
+            "memory_recall_used": False,
+            "confidence": 0.7,
+        }
+    )
+
+    with pytest.raises(ValueError, match="follow_up_draft.owner_user_id"):
+        apply_task_agent_decision(
+            store,
+            summary_input_id=0,
+            work_item=_work_item("Henry/BMW 自动驾驶数据挖掘商机技术响应推进"),
+            decision=decision,
+        )
+
+    assert store.list_follow_up_drafts(statuses=("draft",)) == []
+
+
 def test_update_project_without_id_raises_value_error(tmp_path):
     store = AutoReplyStore(tmp_path / "task.sqlite3")
     decision = TaskAgentDecision.model_validate(
@@ -572,6 +613,18 @@ def test_task_agent_decision_exposes_task_worthiness_risk_fields():
     assert schema["properties"]["failure_risk"]["type"] == "string"
     assert schema["properties"]["failure_risk_score"]["minimum"] == 0
     assert schema["properties"]["failure_risk_score"]["maximum"] == 1
+
+
+def test_task_agent_schema_requires_follow_up_owner_user_id_to_be_non_empty():
+    from app.task_agent import TASK_AGENT_DECISION_SCHEMA_PATH
+
+    schema = json.loads(TASK_AGENT_DECISION_SCHEMA_PATH.read_text(encoding="utf-8"))
+    owner_user_id_schema = schema["$defs"]["follow_up_draft"]["properties"][
+        "owner_user_id"
+    ]
+
+    assert owner_user_id_schema["type"] == "string"
+    assert owner_user_id_schema["minLength"] == 1
 
 
 def test_task_agent_codex_runner_uses_process_runner_signature(tmp_path):

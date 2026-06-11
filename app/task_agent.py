@@ -130,6 +130,7 @@ def build_task_agent_prompt(work_item: WorkItem, candidate_prompt: str) -> str:
 - 创建新项目时，如果 memory_connector 可用，必须使用 memory_recall 查历史背景；不要传入或编造 user_id。
 - 如果上下文无法支撑稳定项目名称，不要创建模糊项目；生成 follow_up_draft 询问项目、目标、owner。
 - 只有消息、会议纪要或文档明确证明 TODO 完成时，才能自动清理 TODO，并写入 completion_evidence。
+- 生成 follow_up_draft 前必须确定 owner_user_id；只有 owner_name 不够。如果上下文缺少 userId，先用 dws 或已有联系人信息补齐；仍无法唯一确定时，不要生成 follow_up_draft。
 - 跟进时间指导：P0 今天跟进；P1 在 3 天内跟进；P2 在上下文或 OKR 暗示需要时本周内跟进。
 
 输出要求：
@@ -138,6 +139,7 @@ def build_task_agent_prompt(work_item: WorkItem, candidate_prompt: str) -> str:
 - failure_risk 和 failure_risk_score 必须始终填写；低风险一次性事项通常 action=discard。
 - update_project 必须引用候选或已确认项目 id。
 - todo_changes 的 close/cancel/update 必须引用 todo_id。
+- follow_up_drafts 的 owner_user_id 不能为空。
 
 Work Item JSON:
 {work_item_json}
@@ -241,6 +243,9 @@ def _validate_task_agent_decision(decision: TaskAgentDecision) -> None:
     for todo_change in decision.todo_changes:
         if todo_change.action != "create" and todo_change.todo_id is None:
             raise ValueError(f"{todo_change.action} requires todo_id")
+    for draft in decision.follow_up_drafts:
+        if not draft.owner_user_id.strip():
+            raise ValueError("follow_up_draft.owner_user_id is required")
     if decision.action == "discard":
         return
     if decision.project is None:
