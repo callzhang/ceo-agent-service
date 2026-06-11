@@ -41,6 +41,18 @@ class FakeDws:
             open_dingtalk_id=f"open-{user_id}",
         )
 
+    def search_user_profiles(self, query):
+        if query == "Jack He(Yunguang He)":
+            return [
+                DwsUserProfile(
+                    user_id="jack-user-1",
+                    name="何耘光",
+                    nick="Jack He(Yunguang He)",
+                    open_dingtalk_id="open-jack-1",
+                )
+            ]
+        return []
+
 
 def test_due_low_risk_follow_up_sends_group_message(tmp_path):
     store = AutoReplyStore(tmp_path / "task.sqlite3")
@@ -142,6 +154,45 @@ def test_due_follow_up_uses_reply_postfix_and_feedback_links(tmp_path):
         store.list_follow_up_drafts(statuses=("sent",))[0].send_result_json
     )
     assert send_result["feedback_token"].startswith("spike_")
+
+
+def test_group_follow_up_resolves_owner_name_before_sending_at_user(tmp_path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    project_id = store.create_work_project(
+        title="Henry/BMW 自动驾驶数据挖掘商机技术响应推进",
+        category="sales",
+        status="active",
+        priority="P0",
+        risk_level="high",
+    )
+    store.create_follow_up_draft(
+        project_id=project_id,
+        owner_user_id="",
+        owner_name="Jack He(Yunguang He)",
+        target_conversation_id="cid-henry",
+        target_kind="group",
+        question_text="Henry/BMW 数据挖掘昨天客户沟通结果怎样？",
+        risk_check_json=json.dumps({"owner_in_group": True, "sensitive": False}),
+        scheduled_at="2026-06-11 09:00:00",
+    )
+    dws = FakeDws()
+
+    sent = process_due_follow_ups(
+        store,
+        dws,
+        now="2026-06-11 10:00:00",
+        auto_send=True,
+    )
+
+    assert sent == 1
+    assert dws.sent[0]["at_users"] == ["jack-user-1"]
+    assert dws.sent[0]["at_open_dingtalk_ids"] == ["open-jack-1"]
+    assert dws.sent[0]["at_open_dingtalk_names"] == ["何耘光"]
+    send_result = json.loads(
+        store.list_follow_up_drafts(statuses=("sent",))[0].send_result_json
+    )
+    assert send_result["at_users"] == ["jack-user-1"]
+    assert send_result["at_open_dingtalk_ids"] == ["open-jack-1"]
 
 
 def test_due_follow_up_skips_when_todo_completion_evidence_exists(tmp_path):

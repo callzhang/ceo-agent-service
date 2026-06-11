@@ -62,16 +62,30 @@ def _skip_completed_follow_up(store: AutoReplyStore, draft, *, now: str, reason:
     )
 
 
-def _owner_open_dingtalk_target(
+def _owner_dingtalk_target(
     dws,
     *,
     owner_user_id: str,
     fallback_name: str,
-) -> tuple[str, str]:
+) -> tuple[str, str, str]:
+    owner_user_id = owner_user_id.strip()
+    fallback_name = fallback_name.strip()
     if not owner_user_id:
-        return "", fallback_name.strip()
+        if not fallback_name:
+            return "", "", ""
+        profiles = dws.search_user_profiles(fallback_name)
+        if len(profiles) != 1:
+            return "", "", fallback_name
+        profile = profiles[0]
+        return (
+            profile.user_id,
+            profile.open_dingtalk_id or "",
+            (profile.name or fallback_name).strip(),
+        )
     profile = dws.get_user_profile(owner_user_id)
-    return profile.open_dingtalk_id or "", (profile.name or fallback_name).strip()
+    return owner_user_id, profile.open_dingtalk_id or "", (
+        profile.name or fallback_name
+    ).strip()
 
 
 def process_due_follow_ups(
@@ -101,14 +115,18 @@ def process_due_follow_ups(
             _skip_completed_follow_up(store, draft, now=now, reason=reason)
             continue
         try:
-            open_dingtalk_id, at_name = _owner_open_dingtalk_target(
+            owner_user_id, open_dingtalk_id, at_name = _owner_dingtalk_target(
                 dws,
                 owner_user_id=draft.owner_user_id,
                 fallback_name=draft.owner_name,
             )
+            if draft.target_kind == "group" and not owner_user_id:
+                raise ValueError(
+                    f"follow-up owner is not resolvable: {draft.owner_name}"
+                )
             at_users = (
-                [draft.owner_user_id]
-                if draft.target_kind == "group" and draft.owner_user_id
+                [owner_user_id]
+                if draft.target_kind == "group" and owner_user_id
                 else []
             )
             at_open_dingtalk_ids = [open_dingtalk_id] if open_dingtalk_id else []
@@ -136,7 +154,7 @@ def process_due_follow_ups(
                     None,
                     question_text,
                     at_open_dingtalk_ids=at_open_dingtalk_ids,
-                    user_id=draft.owner_user_id or None,
+                    user_id=owner_user_id or None,
                 )
         except Exception as exc:
             store.update_follow_up_draft(
@@ -156,6 +174,7 @@ def process_due_follow_ups(
             status="sent",
             send_result_json=json.dumps(
                 {
+                    "owner_user_id": owner_user_id,
                     "at_users": at_users,
                     "at_open_dingtalk_ids": at_open_dingtalk_ids,
                     "at_open_dingtalk_names": at_open_dingtalk_names,
