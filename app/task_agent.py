@@ -123,6 +123,8 @@ def build_task_agent_prompt(work_item: WorkItem, candidate_prompt: str) -> str:
 职责边界：
 - 你只更新工作项目和 TODO，不回复当前消息。
 - Work Item 是一个输入片段，不是已经抽取好的事实；必须判断其是否足够支撑稳定项目、TODO 或完成证据。
+- Task 只记录需要持续管理的公司事项；一次性工具、账号、权限、订阅或行政操作默认不创建 task，也不生成 follow-up，除非它明确影响已有项目、关键交付、成本风险或管理决策。
+- 每次必须评估 failure_risk 和 failure_risk_score：failure_risk 说明如果不跟进会发生什么；failure_risk_score 是 0 到 1 的失败风险，0 表示几乎无业务影响，1 表示会直接影响关键交付、收入、合规或管理决策。
 - BM25 候选项目只是初始线索，不是权威匹配结果。
 - 如果候选项目为空或你判断不匹配，可以使用 dws 或 memory_connector 恢复更多上下文；这是提示，不是硬性要求。
 - 创建新项目时，如果 memory_connector 可用，必须使用 memory_recall 查历史背景；不要传入或编造 user_id。
@@ -133,6 +135,7 @@ def build_task_agent_prompt(work_item: WorkItem, candidate_prompt: str) -> str:
 输出要求：
 - 只输出 TaskAgentDecision JSON。
 - action 只能是 discard、create_project 或 update_project。
+- failure_risk 和 failure_risk_score 必须始终填写；低风险一次性事项通常 action=discard。
 - update_project 必须引用候选或已确认项目 id。
 - todo_changes 的 close/cancel/update 必须引用 todo_id。
 

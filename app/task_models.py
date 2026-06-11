@@ -176,6 +176,8 @@ class TaskAgentDecision(BaseModel):
     merge_reason: str = ""
     memory_recall_used: bool = False
     confidence: float = 0.0
+    failure_risk: str = ""
+    failure_risk_score: float = Field(default=0.0, ge=0.0, le=1.0)
 
 
 class WorkProject(BaseModel):

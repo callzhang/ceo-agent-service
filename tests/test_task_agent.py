@@ -545,6 +545,35 @@ def test_task_agent_schema_uses_strict_object_shapes():
     visit(schema)
 
 
+def test_task_agent_decision_exposes_task_worthiness_risk_fields():
+    from app.task_agent import TASK_AGENT_DECISION_SCHEMA_PATH
+
+    decision = TaskAgentDecision.model_validate(
+        {
+            "action": "discard",
+            "discard_reason": "只是一次性账号配置。",
+            "project": None,
+            "todo_changes": [],
+            "follow_up_drafts": [],
+            "update_summary": "不创建 task。",
+            "merge_reason": "",
+            "memory_recall_used": False,
+            "confidence": 0.8,
+            "failure_risk": "如果不跟进，只会影响单次工具账号使用，不影响公司项目。",
+            "failure_risk_score": 0.1,
+        }
+    )
+    schema = json.loads(TASK_AGENT_DECISION_SCHEMA_PATH.read_text(encoding="utf-8"))
+
+    assert decision.failure_risk == "如果不跟进，只会影响单次工具账号使用，不影响公司项目。"
+    assert decision.failure_risk_score == 0.1
+    assert "failure_risk" in schema["required"]
+    assert "failure_risk_score" in schema["required"]
+    assert schema["properties"]["failure_risk"]["type"] == "string"
+    assert schema["properties"]["failure_risk_score"]["minimum"] == 0
+    assert schema["properties"]["failure_risk_score"]["maximum"] == 1
+
+
 def test_task_agent_codex_runner_uses_process_runner_signature(tmp_path):
     from app.task_agent import TaskAgentCodexRunner
     from app.task_agent import TASK_AGENT_DECISION_SCHEMA_PATH

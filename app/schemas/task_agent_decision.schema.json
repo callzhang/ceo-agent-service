@@ -12,7 +12,9 @@
     "update_summary",
     "merge_reason",
     "memory_recall_used",
-    "confidence"
+    "confidence",
+    "failure_risk",
+    "failure_risk_score"
   ],
   "properties": {
     "action": {
@@ -54,6 +56,14 @@
       "type": "boolean"
     },
     "confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "failure_risk": {
+      "type": "string"
+    },
+    "failure_risk_score": {
       "type": "number",
       "minimum": 0,
       "maximum": 1
