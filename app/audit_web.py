@@ -206,10 +206,18 @@ th{background:var(--surface-soft);color:var(--steel);font-size:12px;font-weight:
 .pagination-button.is-disabled{color:var(--muted);background:var(--surface-soft);cursor:default}
 .pagination-button.is-disabled:hover{border-color:transparent;color:var(--muted);background:var(--surface-soft)}
 .history-table-header{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);align-items:center;gap:12px;margin:0 0 12px;padding:8px 10px;border:1px solid var(--hairline);border-radius:8px;background:var(--surface-soft)}
-.history-type-filter{display:flex;align-items:center;gap:4px;min-width:0;flex-wrap:wrap}
-.history-type-link{display:inline-flex;align-items:center;height:28px;padding:0 10px;border:1px solid transparent;border-radius:999px;color:var(--steel);font-size:12px;font-weight:800;line-height:1;white-space:nowrap}
-.history-type-link:hover{border-color:var(--hairline);background:var(--canvas);color:var(--ink);text-decoration:none}
-.history-type-link.active{border-color:rgba(0,180,138,.28);background:#ddfff6;color:#005b49}
+.history-type-filter{position:relative;justify-self:start;min-width:0}
+.history-type-summary{display:inline-flex;align-items:center;height:30px;padding:0 11px;border:1px solid var(--hairline);border-radius:999px;background:var(--canvas);color:var(--ink);font-size:12px;font-weight:800;line-height:1;white-space:nowrap;cursor:pointer;list-style:none}
+.history-type-summary::-webkit-details-marker{display:none}
+.history-type-summary::after{content:"⌄";margin-left:8px;color:var(--steel);font-size:12px;line-height:1}
+.history-type-filter[open] .history-type-summary{border-color:rgba(55,114,207,.36);background:#eaf1ff;color:#245aa5}
+.history-type-menu{position:absolute;top:calc(100% + 6px);left:0;z-index:20;display:grid;gap:8px;min-width:190px;padding:10px;border:1px solid var(--hairline);border-radius:8px;background:var(--canvas);box-shadow:0 14px 34px rgba(17,24,39,.13)}
+.history-type-option{display:flex;align-items:center;gap:8px;min-height:26px;color:var(--charcoal);font-size:13px;font-weight:700;line-height:1.35;white-space:nowrap}
+.history-type-option input{margin:0}
+.history-type-actions{display:flex;align-items:center;justify-content:space-between;gap:8px;padding-top:4px;border-top:1px solid var(--hairline-soft)}
+.history-type-apply{height:28px;border:1px solid rgba(0,180,138,.32);border-radius:999px;background:#ddfff6;color:#005b49;padding:0 10px;font-size:12px;font-weight:800;line-height:1;cursor:pointer}
+.history-type-clear{display:inline-flex;align-items:center;height:28px;color:var(--steel);font-size:12px;font-weight:800;line-height:1}
+.history-type-clear:hover{color:var(--ink)}
 .history-page-links{display:flex;align-items:center;justify-content:center;gap:4px;min-width:0;white-space:nowrap}
 .history-page-link,.history-page-arrow,.history-page-ellipsis{display:inline-flex;align-items:center;justify-content:center;height:28px;min-width:28px;padding:0 8px;border:1px solid transparent;border-radius:999px;color:var(--steel);font-size:12px;font-weight:800;line-height:1}
 .history-page-arrow{font-size:16px}
@@ -381,7 +389,7 @@ _BROWSER_NOTIFICATION_SEQUENCE = count(1)
 _DINGTALK_BRIDGE_STATUS: deque[dict[str, str]] = deque(maxlen=20)
 DEFAULT_ATTEMPT_LIST_LIMIT = 20
 ATTEMPT_LIST_LIMIT_OPTIONS = (20, 50, 100)
-HISTORY_TYPE_FILTERS = ("all", "sent", "reacted", "skipped", "failed")
+HISTORY_TYPE_FILTERS = ("sent", "reacted", "skipped", "failed")
 TASK_PAGE_SIZE_OPTIONS = (20, 50, 100)
 DEFAULT_TASK_PAGE_SIZE = 20
 TABULATOR_CSS_URL = "https://cdn.jsdelivr.net/npm/tabulator-tables@6.4.0/dist/css/tabulator.min.css"
@@ -1483,9 +1491,21 @@ def _bounded_page(page: int, limit: int | None, total_count: int) -> int:
     return min(max(1, page), _page_count(total_count, limit))
 
 
-def _history_type_filter(value: str) -> str:
-    cleaned = value.strip().lower()
-    return cleaned if cleaned in HISTORY_TYPE_FILTERS else "all"
+def _history_type_filters(values: str | Iterable[str]) -> tuple[str, ...]:
+    raw_values = [values] if isinstance(values, str) else list(values)
+    selected: list[str] = []
+    for raw_value in raw_values:
+        for part in str(raw_value).split(","):
+            cleaned = part.strip().lower()
+            if cleaned in HISTORY_TYPE_FILTERS and cleaned not in selected:
+                selected.append(cleaned)
+    return tuple(selected)
+
+
+def _history_type_filter_label(type_filters: tuple[str, ...]) -> str:
+    if not type_filters:
+        return "type: all"
+    return "type: " + ", ".join(type_filters)
 
 
 def _attempt_list_limit(value: int) -> int:
@@ -1497,19 +1517,19 @@ def _page_href(
     page: int,
     *,
     limit: int | None = None,
-    type_filter: str = "all",
+    type_filters: tuple[str, ...] = (),
     include_limit: bool = False,
 ) -> str:
-    query: dict[str, str] = {}
+    query: dict[str, str | list[str]] = {}
     if page > 1:
         query["page"] = str(page)
     if include_limit and limit is not None and limit != DEFAULT_ATTEMPT_LIST_LIMIT:
         query["limit"] = str(limit)
-    if type_filter != "all":
-        query["type"] = type_filter
+    if type_filters:
+        query["type"] = list(type_filters)
     if not query:
         return base_path
-    return f"{base_path}?{urlencode(query)}"
+    return f"{base_path}?{urlencode(query, doseq=True)}"
 
 
 def _format_local_time(value: str, *, local_tz: tzinfo | None = None) -> str:
@@ -1745,7 +1765,7 @@ def _history_page_button(
     page: int,
     current_page: int,
     limit: int | None,
-    type_filter: str,
+    type_filters: tuple[str, ...],
 ) -> str:
     if page == current_page:
         return (
@@ -1754,7 +1774,7 @@ def _history_page_button(
         )
     return (
         f"<a class=\"history-page-link\" href=\""
-        f"{escape(_page_href(base_path, page, limit=limit, type_filter=type_filter, include_limit=True))}"
+        f"{escape(_page_href(base_path, page, limit=limit, type_filters=type_filters, include_limit=True))}"
         f"\">{page}</a>"
     )
 
@@ -1765,34 +1785,37 @@ def _history_table_header(
     page: int,
     limit: int | None,
     total_count: int,
-    type_filter: str,
+    type_filters: tuple[str, ...],
 ) -> str:
     page_count = _page_count(total_count, limit)
     page = min(max(1, page), page_count)
-    type_links = []
+    type_options = []
     for value in HISTORY_TYPE_FILTERS:
-        label = "all" if value == "all" else value
-        classes = "history-type-link active" if value == type_filter else "history-type-link"
-        href = _page_href(
-            base_path,
-            1,
-            limit=limit,
-            type_filter=value,
-            include_limit=True,
+        checked = " checked" if value in type_filters else ""
+        type_options.append(
+            "<label class=\"history-type-option\">"
+            f"<input type=\"checkbox\" name=\"type\" value=\"{escape(value)}\"{checked}>"
+            f"{escape(value)}"
+            "</label>"
         )
-        type_links.append(f"<a class=\"{classes}\" href=\"{escape(href)}\">{escape(label)}</a>")
+    type_limit_hidden = (
+        ""
+        if limit is None or limit == DEFAULT_ATTEMPT_LIST_LIMIT
+        else f"<input type=\"hidden\" name=\"limit\" value=\"{limit}\">"
+    )
+    type_clear_href = _page_href(base_path, 1, limit=limit, include_limit=True)
     prev_href = None if page <= 1 else _page_href(
         base_path,
         page - 1,
         limit=limit,
-        type_filter=type_filter,
+        type_filters=type_filters,
         include_limit=True,
     )
     next_href = None if page >= page_count else _page_href(
         base_path,
         page + 1,
         limit=limit,
-        type_filter=type_filter,
+        type_filters=type_filters,
         include_limit=True,
     )
     prev_html = (
@@ -1816,26 +1839,33 @@ def _history_table_header(
                     page=item,
                     current_page=page,
                     limit=limit,
-                    type_filter=type_filter,
+                    type_filters=type_filters,
                 )
             )
     limit_options = "".join(
         f"<option value=\"{value}\"{' selected' if value == limit else ''}>{value}/页</option>"
         for value in ATTEMPT_LIST_LIMIT_OPTIONS
     )
-    hidden_type = (
-        "" if type_filter == "all" else f"<input type=\"hidden\" name=\"type\" value=\"{escape(type_filter)}\">"
+    hidden_types = "".join(
+        f"<input type=\"hidden\" name=\"type\" value=\"{escape(value)}\">"
+        for value in type_filters
     )
     return (
         "<div class=\"history-table-header\">"
-        "<nav class=\"history-type-filter\" aria-label=\"type filter\">"
-        + "".join(type_links)
-        + "</nav>"
+        "<details class=\"history-type-filter\">"
+        f"<summary class=\"history-type-summary\">{escape(_history_type_filter_label(type_filters))}</summary>"
+        "<form class=\"history-type-menu\" method=\"get\" action=\"/\">"
+        f"{type_limit_hidden}"
+        + "".join(type_options)
+        + "<div class=\"history-type-actions\">"
+        "<button class=\"history-type-apply\" type=\"submit\">Apply</button>"
+        f"<a class=\"history-type-clear\" href=\"{escape(type_clear_href)}\">Clear</a>"
+        "</div></form></details>"
         "<nav class=\"history-page-links\" aria-label=\"分页导航\">"
         f"{prev_html}{''.join(page_links)}{next_html}"
         "</nav>"
         "<form class=\"history-limit-form\" method=\"get\" action=\"/\">"
-        f"{hidden_type}"
+        f"{hidden_types}"
         f"<select class=\"history-limit-select\" name=\"limit\" onchange=\"this.form.submit()\">{limit_options}</select>"
         f"<span class=\"history-total\">共 {total_count} 条</span>"
         "</form>"
@@ -1850,7 +1880,7 @@ def _pagination_controls(
     limit: int | None,
     total_count: int,
     bottom: bool = False,
-    type_filter: str = "all",
+    type_filters: tuple[str, ...] = (),
     include_limit: bool = False,
 ) -> str:
     page_count = _page_count(total_count, limit)
@@ -1868,7 +1898,7 @@ def _pagination_controls(
             base_path,
             1,
             limit=limit,
-            type_filter=type_filter,
+            type_filters=type_filters,
             include_limit=include_limit,
         ),
     )
@@ -1881,7 +1911,7 @@ def _pagination_controls(
             base_path,
             page - 1,
             limit=limit,
-            type_filter=type_filter,
+            type_filters=type_filters,
             include_limit=include_limit,
         ),
         arrow=True,
@@ -1895,7 +1925,7 @@ def _pagination_controls(
             base_path,
             page + 1,
             limit=limit,
-            type_filter=type_filter,
+            type_filters=type_filters,
             include_limit=include_limit,
         ),
         arrow=True,
@@ -1909,7 +1939,7 @@ def _pagination_controls(
             base_path,
             page_count,
             limit=limit,
-            type_filter=type_filter,
+            type_filters=type_filters,
             include_limit=include_limit,
         ),
     )
@@ -1931,15 +1961,15 @@ def render_attempt_list(
     store: AutoReplyStore,
     limit: int | None = DEFAULT_ATTEMPT_LIST_LIMIT,
     page: int = 1,
-    type_filter: str = "all",
+    type_filter: str | Iterable[str] = (),
 ) -> str:
-    type_filter = _history_type_filter(type_filter)
-    send_status_filter = None if type_filter == "all" else type_filter
-    total_count = store.count_reply_attempts(send_status=send_status_filter)
+    type_filters = _history_type_filters(type_filter)
+    send_status_filters = type_filters or None
+    total_count = store.count_reply_attempts(send_statuses=send_status_filters)
     page = _bounded_page(page, limit, total_count)
     offset = _page_offset(page, limit)
     items = []
-    if page == 1 and type_filter == "all":
+    if page == 1 and not type_filters:
         for task in store.list_reply_tasks(
             statuses=("pending", "processing"),
             limit=limit,
@@ -1948,7 +1978,7 @@ def render_attempt_list(
     attempts = store.list_reply_attempts(
         limit=limit,
         offset=offset,
-        send_status=send_status_filter,
+        send_statuses=send_status_filters,
     )
     sent_replies_by_attempt = store.list_sent_replies_for_attempts(attempts)
     feedback_events_by_token = _feedback_events_by_sent_reply(
@@ -2000,7 +2030,7 @@ def render_attempt_list(
     if not items:
         body = (
             f"{_render_history_chart(store)}"
-            f"{_history_table_header(base_path='/', page=page, limit=limit, total_count=total_count, type_filter=type_filter)}"
+            f"{_history_table_header(base_path='/', page=page, limit=limit, total_count=total_count, type_filters=type_filters)}"
             "<section class=\"card\"><p class=\"muted\">No reply attempts recorded.</p>"
             f"<p class=\"muted\">DB: {escape(str(store.path))}</p></section>"
         )
@@ -2010,7 +2040,7 @@ def render_attempt_list(
             page=page,
             limit=limit,
             total_count=total_count,
-            type_filter=type_filter,
+            type_filters=type_filters,
         )
         body = (
             f"{_render_history_chart(store)}"
@@ -2018,7 +2048,7 @@ def render_attempt_list(
             "<section class=\"attempt-feed\">"
             + "".join(items)
             + "</section>"
-            f"{_pagination_controls(base_path='/', page=page, limit=limit, total_count=total_count, bottom=True, type_filter=type_filter, include_limit=True)}"
+            f"{_pagination_controls(base_path='/', page=page, limit=limit, total_count=total_count, bottom=True, type_filters=type_filters, include_limit=True)}"
         )
     return render_page(
         "CEO Agent Audit",
@@ -3493,7 +3523,7 @@ def create_audit_app(
                 )
             ),
             page=_positive_int_query(request, "page", default=1),
-            type_filter=request.query_params.get("type", "all"),
+            type_filter=request.query_params.getlist("type"),
         )
 
     @app.get("/user-feedback", response_class=HTMLResponse)

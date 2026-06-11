@@ -116,6 +116,10 @@ def test_render_attempt_list_shows_history_rows(tmp_path: Path):
     assert "attempt-line" in html
     assert "history-table-header" in html
     assert "history-type-filter" in html
+    assert "history-type-summary" in html
+    assert "history-type-menu" in html
+    assert "type: all" in html
+    assert 'type="checkbox" name="type" value="sent"' in html
     assert "sent" in html
     assert "reacted" in html
     assert "skipped" in html
@@ -154,8 +158,8 @@ def test_render_attempt_list_paginates_attempts(tmp_path: Path):
         send_status="sent",
     )
 
-    first_page = render_attempt_list(store, limit=1, page=1, type_filter="sent")
-    second_page = render_attempt_list(store, limit=1, page=2, type_filter="sent")
+    first_page = render_attempt_list(store, limit=1, page=1, type_filter=("sent",))
+    second_page = render_attempt_list(store, limit=1, page=2, type_filter=("sent",))
 
     assert f"/attempts/{newer_id}" in first_page
     assert f"/attempts/{older_id}" not in first_page
@@ -203,6 +207,51 @@ def test_history_route_reads_page_query(tmp_path: Path):
     assert "2 / 2" in response.text
 
 
+def test_history_route_reads_multi_type_query(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.record_reply_attempt(
+        conversation_id="cid-sent",
+        conversation_title="Sent Group",
+        trigger_message_id="msg-sent",
+        trigger_sender="Mina",
+        trigger_text="sent question",
+        action="send_reply",
+        sensitivity_kind="general",
+        send_status="sent",
+    )
+    reacted_id = store.record_reply_attempt(
+        conversation_id="cid-reacted",
+        conversation_title="Reacted Group",
+        trigger_message_id="msg-reacted",
+        trigger_sender="Mina",
+        trigger_text="reacted question",
+        action="add_emoji",
+        sensitivity_kind="general",
+        send_status="reacted",
+    )
+    store.record_reply_attempt(
+        conversation_id="cid-skipped",
+        conversation_title="Skipped Group",
+        trigger_message_id="msg-skipped",
+        trigger_sender="Mina",
+        trigger_text="skipped question",
+        action="no_reply",
+        sensitivity_kind="general",
+        send_status="skipped",
+    )
+    app = create_audit_app(store.path)
+    client = TestClient(app)
+
+    response = client.get("/?type=sent&type=reacted&limit=1")
+
+    assert response.status_code == 200
+    assert f"/attempts/{reacted_id}" in response.text
+    assert "Skipped Group" not in response.text
+    assert "type: sent, reacted" in response.text
+    assert 'value="sent" checked' in response.text
+    assert 'value="reacted" checked' in response.text
+
+
 def test_render_attempt_list_filters_by_type_and_preserves_query(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     sent_id = store.record_reply_attempt(
@@ -236,15 +285,23 @@ def test_render_attempt_list_filters_by_type_and_preserves_query(tmp_path: Path)
         send_status="skipped",
     )
 
-    html = render_attempt_list(store, limit=1, page=1, type_filter="reacted")
+    html = render_attempt_list(
+        store,
+        limit=1,
+        page=1,
+        type_filter=("sent", "reacted"),
+    )
 
     assert f"/attempts/{reacted_id}" in html
     assert f"/attempts/{sent_id}" not in html
     assert "Reacted Group" in html
     assert "Sent Group" not in html
-    assert 'class="history-type-link active" href="/?limit=1&amp;type=reacted">reacted</a>' in html
-    assert 'href="/?limit=1&amp;type=sent"' in html
-    assert "共 1 条" in html
+    assert 'value="sent" checked' in html
+    assert 'value="reacted" checked' in html
+    assert 'value="skipped" checked' not in html
+    assert 'href="/?page=2&amp;limit=1&amp;type=sent&amp;type=reacted"' in html
+    assert "type: sent, reacted" in html
+    assert "共 2 条" in html
 
 
 def test_render_attempt_list_shows_counterparty_feedback(tmp_path: Path):

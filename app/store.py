@@ -2100,6 +2100,7 @@ class AutoReplyStore:
         offset: int = 0,
         *,
         send_status: str | None = None,
+        send_statuses: tuple[str, ...] | None = None,
     ) -> list[ReplyAttempt]:
         with self._connect() as db:
             query = """
@@ -2107,9 +2108,11 @@ class AutoReplyStore:
                 from reply_attempts
             """
             args: tuple[object, ...] = ()
-            if send_status:
-                query = f"{query} where send_status=?"
-                args = (send_status,)
+            statuses = send_statuses or ((send_status,) if send_status else ())
+            if statuses:
+                placeholders = ",".join("?" for _ in statuses)
+                query = f"{query} where send_status in ({placeholders})"
+                args = (*statuses,)
             query = f"{query} order by id desc"
             if limit is not None:
                 query = f"{query} limit ? offset ?"
@@ -2194,12 +2197,20 @@ class AutoReplyStore:
             rows = db.execute(query, args).fetchall()
             return [ReplyAttempt.model_validate(dict(row)) for row in rows]
 
-    def count_reply_attempts(self, *, send_status: str | None = None) -> int:
+    def count_reply_attempts(
+        self,
+        *,
+        send_status: str | None = None,
+        send_statuses: tuple[str, ...] | None = None,
+    ) -> int:
         with self._connect() as db:
-            if send_status:
+            statuses = send_statuses or ((send_status,) if send_status else ())
+            if statuses:
+                placeholders = ",".join("?" for _ in statuses)
                 row = db.execute(
-                    "select count(*) as count from reply_attempts where send_status=?",
-                    (send_status,),
+                    "select count(*) as count from reply_attempts "
+                    f"where send_status in ({placeholders})",
+                    statuses,
                 ).fetchone()
             else:
                 row = db.execute(
