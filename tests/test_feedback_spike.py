@@ -12,6 +12,7 @@ from app.feedback_spike import (
     build_feedback_spike_link_message,
     extract_feedback_link_context,
     normalize_vercel_base_url,
+    prepare_outgoing_reply_text,
     send_feedback_spike_links,
 )
 
@@ -119,6 +120,20 @@ def test_append_feedback_links_does_not_duplicate_existing_links():
     assert second.feedback_token == "spike_1_abcd"
     assert second.text == first.text
     assert second.text.count("/api/dingtalk-feedback-spike") == 2
+
+
+def test_prepare_outgoing_reply_text_applies_signature_and_feedback_once():
+    prepared = prepare_outgoing_reply_text(
+        reply_text="收到",
+        original_text="帮我看一下",
+        feedback_base_url="https://feedback.example.com",
+        feedback_token="spike_1_abcd",
+    )
+
+    assert prepared.feedback_token == "spike_1_abcd"
+    assert prepared.text.startswith("收到（by明哥分身）")
+    assert prepared.text.count("（by明哥分身）") == 1
+    assert prepared.text.count("/api/dingtalk-feedback-spike") == 2
 
 
 def test_callback_url_does_not_embed_long_feedback_context():

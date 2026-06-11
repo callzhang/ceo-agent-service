@@ -39,7 +39,7 @@ from app.dws_client import (
     DwsError,
     native_reply_delivery_payload,
 )
-from app.feedback_spike import append_feedback_links
+from app.feedback_spike import append_feedback_links, prepare_outgoing_reply_text
 from app.corpus import (
     MEDIA_OR_LINK_PATTERN,
     CorpusRecord,
@@ -5575,16 +5575,15 @@ class DingTalkAutoReplyWorker:
         allow_duplicate_send: bool = False,
     ) -> None:
         reply_text = self._native_reply_body(final_reply_text)
-        feedback_token = ""
         feedback_base_url = feedback_spike_vercel_base_url()
-        if feedback_base_url:
-            feedback_reply = append_feedback_links(
-                vercel_base_url=feedback_base_url,
-                reply_text=reply_text,
-                original_text=trigger.content,
-            )
-            reply_text = feedback_reply.text
-            feedback_token = feedback_reply.feedback_token
+        outgoing_text = prepare_outgoing_reply_text(
+            reply_text=reply_text,
+            original_text=trigger.content,
+            feedback_base_url=feedback_base_url,
+            feedback_link_appender=append_feedback_links,
+        )
+        reply_text = outgoing_text.text
+        feedback_token = outgoing_text.feedback_token
         self.store.update_reply_attempt(
             attempt_id,
             final_reply_text=reply_text,
@@ -5598,15 +5597,14 @@ class DingTalkAutoReplyWorker:
             if regenerated_reply_text:
                 reply_text = append_signature(regenerated_reply_text)
                 reply_text = self._format_reply_delivery_text(reply_text)
-                feedback_token = ""
-                if feedback_base_url:
-                    feedback_reply = append_feedback_links(
-                        vercel_base_url=feedback_base_url,
-                        reply_text=reply_text,
-                        original_text=trigger.content,
-                    )
-                    reply_text = feedback_reply.text
-                    feedback_token = feedback_reply.feedback_token
+                outgoing_text = prepare_outgoing_reply_text(
+                    reply_text=reply_text,
+                    original_text=trigger.content,
+                    feedback_base_url=feedback_base_url,
+                    feedback_link_appender=append_feedback_links,
+                )
+                reply_text = outgoing_text.text
+                feedback_token = outgoing_text.feedback_token
                 self.store.update_reply_attempt(
                     attempt_id,
                     final_reply_text=reply_text,

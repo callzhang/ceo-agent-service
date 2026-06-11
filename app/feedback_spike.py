@@ -1,9 +1,11 @@
 import re
 import secrets
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from urllib.parse import parse_qs, urlencode, urlparse
 
+from app.codex_decision import append_signature
 from app.dws_client import DwsClient
 
 MAX_FEEDBACK_CONTEXT_CHARS = 100
@@ -19,6 +21,12 @@ class FeedbackSpikeLinkMessage:
 
 @dataclass(frozen=True)
 class FeedbackReplyText:
+    feedback_token: str
+    text: str
+
+
+@dataclass(frozen=True)
+class PreparedOutgoingReplyText:
     feedback_token: str
     text: str
 
@@ -162,6 +170,29 @@ def append_feedback_links(
         feedback_token=feedback_token,
     )
     return FeedbackReplyText(feedback_token=message.feedback_token, text=message.text)
+
+
+def prepare_outgoing_reply_text(
+    *,
+    reply_text: str,
+    original_text: str = "",
+    feedback_base_url: str = "",
+    feedback_token: str | None = None,
+    feedback_link_appender: Callable[..., FeedbackReplyText] = append_feedback_links,
+) -> PreparedOutgoingReplyText:
+    text = append_signature(reply_text)
+    if not feedback_base_url:
+        return PreparedOutgoingReplyText(feedback_token="", text=text)
+    feedback_reply = feedback_link_appender(
+        vercel_base_url=feedback_base_url,
+        reply_text=text,
+        original_text=original_text,
+        feedback_token=feedback_token,
+    )
+    return PreparedOutgoingReplyText(
+        feedback_token=feedback_reply.feedback_token,
+        text=feedback_reply.text,
+    )
 
 
 def send_feedback_spike_links(

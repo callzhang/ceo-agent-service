@@ -38,6 +38,7 @@ from app.dws_client import (
 from app.feedback_spike import (
     append_feedback_links,
     build_events_url,
+    prepare_outgoing_reply_text,
     send_feedback_spike_links,
 )
 from app.leak_check import contains_forbidden_leak
@@ -1126,13 +1127,14 @@ def send_attempt_command(settings: WorkerSettings, attempt_id: int) -> dict[str,
     feedback_token = ""
     feedback_base_url = feedback_spike_vercel_base_url()
     if feedback_base_url:
-        feedback_reply = append_feedback_links(
-            vercel_base_url=feedback_base_url,
+        outgoing_text = prepare_outgoing_reply_text(
             reply_text=reply_text,
             original_text=attempt.trigger_text,
+            feedback_base_url=feedback_base_url,
+            feedback_link_appender=append_feedback_links,
         )
-        reply_text = feedback_reply.text
-        feedback_token = feedback_reply.feedback_token
+        reply_text = outgoing_text.text
+        feedback_token = outgoing_text.feedback_token
         store.update_reply_attempt(attempt.id, final_reply_text=reply_text)
         if contains_forbidden_leak(reply_text):
             regenerated_reply_text = _regenerate_send_attempt_after_leak_check(
@@ -1142,13 +1144,14 @@ def send_attempt_command(settings: WorkerSettings, attempt_id: int) -> dict[str,
             )
             if regenerated_reply_text:
                 clean_reply_text = append_signature(regenerated_reply_text)
-                feedback_reply = append_feedback_links(
-                    vercel_base_url=feedback_base_url,
+                outgoing_text = prepare_outgoing_reply_text(
                     reply_text=clean_reply_text,
                     original_text=attempt.trigger_text,
+                    feedback_base_url=feedback_base_url,
+                    feedback_link_appender=append_feedback_links,
                 )
-                reply_text = feedback_reply.text
-                feedback_token = feedback_reply.feedback_token
+                reply_text = outgoing_text.text
+                feedback_token = outgoing_text.feedback_token
                 store.update_reply_attempt(attempt.id, final_reply_text=reply_text)
         if contains_forbidden_leak(reply_text):
             store.update_reply_attempt(

@@ -1,7 +1,6 @@
 import json
 
-from app.codex_decision import append_signature
-from app.feedback_spike import append_feedback_links
+from app.feedback_spike import prepare_outgoing_reply_text
 from app.store import AutoReplyStore
 from app.task_models import ProjectStatus, TodoStatus
 
@@ -131,16 +130,13 @@ def process_due_follow_ups(
             )
             at_open_dingtalk_ids = [open_dingtalk_id] if open_dingtalk_id else []
             at_open_dingtalk_names = [at_name] if at_name else []
-            question_text = append_signature(draft.question_text)
-            feedback_token = ""
-            if feedback_base_url:
-                feedback_reply = append_feedback_links(
-                    vercel_base_url=feedback_base_url,
-                    reply_text=question_text,
-                    original_text=draft.question_text,
-                )
-                question_text = feedback_reply.text
-                feedback_token = feedback_reply.feedback_token
+            outgoing_text = prepare_outgoing_reply_text(
+                reply_text=draft.question_text,
+                original_text=draft.question_text,
+                feedback_base_url=feedback_base_url,
+            )
+            question_text = outgoing_text.text
+            feedback_token = outgoing_text.feedback_token
             if draft.target_conversation_id:
                 result = dws.send_message(
                     draft.target_conversation_id,
