@@ -27,6 +27,12 @@ class FakeCodexWithoutSession(FakeCodex):
     last_session_id = None
 
 
+class FakeCodexWithAuditEvents(FakeCodex):
+    def __init__(self, payload, audit_tool_events):
+        super().__init__(payload)
+        self.last_audit_tool_events = audit_tool_events
+
+
 def _work_item(project_name="售前知识库"):
     return WorkItem.model_validate(
         {
@@ -48,6 +54,22 @@ def _work_item(project_name="售前知识库"):
             },
         }
     )
+
+
+def _memory_context():
+    return {
+        "query": "售前知识库",
+        "summary": "售前知识库历史背景来自 memory_recall。",
+        "memories": [
+            {
+                "source": "memory_recall",
+                "uuid": "mem-1",
+                "text": "售前知识库历史背景：材料沉淀在 business/售前知识库。",
+                "summary": "材料沉淀在 business/售前知识库。",
+                "created_at": "2026-06-05",
+            }
+        ],
+    }
 
 
 def test_process_work_item_creates_project_todo_update_and_run(tmp_path):
@@ -76,6 +98,7 @@ def test_process_work_item_creates_project_todo_update_and_run(tmp_path):
                 "related_people": [],
                 "goal": "沉淀售前材料",
                 "background": "售前知识库项目。",
+                "memory_context": _memory_context(),
                 "facts": [
                     {
                         "description": "需要补齐来源链接。",
@@ -118,6 +141,7 @@ def test_process_work_item_creates_project_todo_update_and_run(tmp_path):
     projects = store.list_work_projects()
     assert len(projects) == 1
     assert projects[0].title == "售前知识库建设"
+    assert json.loads(projects[0].memory_context_json) == _memory_context()
     assert store.list_work_todos(project_id=projects[0].id)[0].title == "补齐来源链接"
     assert store.list_work_updates(project_id=projects[0].id)[0].summary == "创建售前知识库项目。"
     assert store.claim_work_summary_inputs(limit=1) == []
@@ -156,7 +180,12 @@ def test_apply_decision_closes_todo_with_completion_evidence(tmp_path):
     decision = TaskAgentDecision.model_validate(
         {
             "action": "update_project",
-            "project": {"id": project_id, "title": "客户交付", "category": "projects"},
+            "project": {
+                "id": project_id,
+                "title": "客户交付",
+                "category": "projects",
+                "memory_context": _memory_context(),
+            },
             "todo_changes": [
                 {
                     "action": "close",
@@ -173,7 +202,7 @@ def test_apply_decision_closes_todo_with_completion_evidence(tmp_path):
             "follow_up_drafts": [],
             "update_summary": "关闭 ETA 待办。",
             "merge_reason": "同一客户交付项目。",
-            "memory_recall_used": False,
+            "memory_recall_used": True,
             "confidence": 0.93,
         }
     )
@@ -236,6 +265,7 @@ def test_follow_up_drafts_are_created_with_risk_check(tmp_path):
                 "title": "售前知识库建设",
                 "category": "sales",
                 "status": "active",
+                "memory_context": _memory_context(),
             },
             "todo_changes": [],
             "follow_up_drafts": [
@@ -252,7 +282,7 @@ def test_follow_up_drafts_are_created_with_risk_check(tmp_path):
             ],
             "update_summary": "需要追问项目边界。",
             "merge_reason": "",
-            "memory_recall_used": False,
+            "memory_recall_used": True,
             "confidence": 0.7,
         }
     )
@@ -283,6 +313,7 @@ def test_follow_up_draft_requires_owner_user_id_at_generation(tmp_path):
                 "title": "Henry/BMW 自动驾驶数据挖掘商机技术响应推进",
                 "category": "sales",
                 "status": "active",
+                "memory_context": _memory_context(),
             },
             "todo_changes": [],
             "follow_up_drafts": [
@@ -299,7 +330,7 @@ def test_follow_up_draft_requires_owner_user_id_at_generation(tmp_path):
             ],
             "update_summary": "生成跟进草稿。",
             "merge_reason": "",
-            "memory_recall_used": False,
+            "memory_recall_used": True,
             "confidence": 0.7,
         }
     )
@@ -315,17 +346,118 @@ def test_follow_up_draft_requires_owner_user_id_at_generation(tmp_path):
     assert store.list_follow_up_drafts(statuses=("draft",)) == []
 
 
+def test_non_discard_decision_requires_memory_recall_used(tmp_path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    decision = TaskAgentDecision.model_validate(
+        {
+            "action": "create_project",
+            "project": {
+                "title": "售前知识库建设",
+                "category": "sales",
+                "status": "active",
+                "memory_context": _memory_context(),
+            },
+            "todo_changes": [],
+            "follow_up_drafts": [],
+            "update_summary": "创建项目。",
+            "merge_reason": "事项需要持续跟进。",
+            "memory_recall_used": False,
+            "confidence": 0.8,
+        }
+    )
+
+    with pytest.raises(ValueError, match="memory_recall_used"):
+        apply_task_agent_decision(
+            store,
+            summary_input_id=0,
+            work_item=_work_item(),
+            decision=decision,
+        )
+
+
+def test_non_discard_decision_requires_memory_context(tmp_path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    decision = TaskAgentDecision.model_validate(
+        {
+            "action": "create_project",
+            "project": {
+                "title": "售前知识库建设",
+                "category": "sales",
+                "status": "active",
+            },
+            "todo_changes": [],
+            "follow_up_drafts": [],
+            "update_summary": "创建项目。",
+            "merge_reason": "事项需要持续跟进。",
+            "memory_recall_used": True,
+            "confidence": 0.8,
+        }
+    )
+
+    with pytest.raises(ValueError, match="memory_context"):
+        apply_task_agent_decision(
+            store,
+            summary_input_id=0,
+            work_item=_work_item(),
+            decision=decision,
+        )
+
+
+def test_process_work_item_requires_actual_memory_recall_tool_event(tmp_path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    item = _work_item()
+    input_id = store.enqueue_work_summary_input(
+        source_type=item.source.type.value,
+        source_ref=item.source.ref,
+        payload_json=item.model_dump_json(),
+    )
+    work_input = store.claim_work_summary_inputs(limit=1)[0]
+    codex = FakeCodexWithAuditEvents(
+        {
+            "action": "create_project",
+            "project": {
+                "title": "售前知识库建设",
+                "category": "sales",
+                "status": "active",
+                "memory_context": _memory_context(),
+            },
+            "todo_changes": [],
+            "follow_up_drafts": [],
+            "update_summary": "创建项目。",
+            "merge_reason": "事项需要持续跟进。",
+            "memory_recall_used": True,
+            "confidence": 0.8,
+        },
+        audit_tool_events=[{"tool": "exec_command", "command": "rg 售前"}],
+    )
+
+    with pytest.raises(ValueError, match="memory_recall tool event"):
+        process_work_item(store, TaskAgentRunner(codex), work_input)
+
+    with sqlite3.connect(tmp_path / "task.sqlite3") as db:
+        input_row = db.execute(
+            "select status, error from work_summary_inputs where id=?",
+            (input_id,),
+        ).fetchone()
+    assert input_row[0] == "failed"
+    assert "memory_recall tool event" in input_row[1]
+
+
 def test_update_project_without_id_raises_value_error(tmp_path):
     store = AutoReplyStore(tmp_path / "task.sqlite3")
     decision = TaskAgentDecision.model_validate(
         {
             "action": "update_project",
-            "project": {"title": "客户交付", "category": "projects"},
+            "project": {
+                "title": "客户交付",
+                "category": "projects",
+                "memory_context": _memory_context(),
+            },
             "todo_changes": [],
             "follow_up_drafts": [],
             "update_summary": "更新客户交付。",
             "merge_reason": "",
-            "memory_recall_used": False,
+            "memory_recall_used": True,
             "confidence": 0.5,
         }
     )
@@ -351,12 +483,16 @@ def test_process_work_item_failure_does_not_create_partial_project(tmp_path):
     codex = FakeCodex(
         {
             "action": "create_project",
-            "project": {"title": "售前知识库建设", "category": "sales"},
+            "project": {
+                "title": "售前知识库建设",
+                "category": "sales",
+                "memory_context": _memory_context(),
+            },
             "todo_changes": [{"action": "close", "title": "补齐来源链接"}],
             "follow_up_drafts": [],
             "update_summary": "坏的待办更新。",
             "merge_reason": "",
-            "memory_recall_used": False,
+            "memory_recall_used": True,
             "confidence": 0.4,
         }
     )
@@ -396,7 +532,12 @@ def test_sparse_todo_update_preserves_existing_status_and_priority(tmp_path):
     decision = TaskAgentDecision.model_validate(
         {
             "action": "update_project",
-            "project": {"id": project_id, "title": "客户交付", "category": "projects"},
+            "project": {
+                "id": project_id,
+                "title": "客户交付",
+                "category": "projects",
+                "memory_context": _memory_context(),
+            },
             "todo_changes": [
                 {
                     "action": "update",
@@ -407,7 +548,7 @@ def test_sparse_todo_update_preserves_existing_status_and_priority(tmp_path):
             "follow_up_drafts": [],
             "update_summary": "补充阻塞原因。",
             "merge_reason": "同一客户交付项目。",
-            "memory_recall_used": False,
+            "memory_recall_used": True,
             "confidence": 0.8,
         }
     )
@@ -625,6 +766,21 @@ def test_task_agent_schema_requires_follow_up_owner_user_id_to_be_non_empty():
 
     assert owner_user_id_schema["type"] == "string"
     assert owner_user_id_schema["minLength"] == 1
+
+
+def test_task_agent_schema_requires_project_memory_context():
+    from app.task_agent import TASK_AGENT_DECISION_SCHEMA_PATH
+
+    schema = json.loads(TASK_AGENT_DECISION_SCHEMA_PATH.read_text(encoding="utf-8"))
+    project_schema = schema["$defs"]["project"]
+    memory_context_schema = schema["$defs"]["memory_context"]
+
+    assert "memory_context" in project_schema["required"]
+    assert project_schema["properties"]["memory_context"] == {
+        "$ref": "#/$defs/memory_context"
+    }
+    assert memory_context_schema["required"] == ["query", "summary", "memories"]
+    assert memory_context_schema["properties"]["query"]["minLength"] == 1
 
 
 def test_task_agent_codex_runner_uses_process_runner_signature(tmp_path):

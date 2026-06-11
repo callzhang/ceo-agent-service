@@ -630,12 +630,25 @@ def test_process_work_items_command_processes_claimed_input(tmp_path, monkeypatc
                         "title": "售前知识库建设",
                         "category": "sales",
                         "status": "active",
+                        "memory_context": {
+                            "query": "售前知识库",
+                            "summary": "售前知识库历史背景来自 memory_recall。",
+                            "memories": [
+                                {
+                                    "source": "memory_recall",
+                                    "uuid": "mem-1",
+                                    "text": "售前知识库材料沉淀在 business/售前知识库。",
+                                    "summary": "材料沉淀在 business/售前知识库。",
+                                    "created_at": "2026-06-05",
+                                }
+                            ],
+                        },
                     },
                     "todo_changes": [],
                     "follow_up_drafts": [],
                     "update_summary": "创建项目。",
                     "merge_reason": "事项名称稳定。",
-                    "memory_recall_used": False,
+                    "memory_recall_used": True,
                     "confidence": 0.8,
                 }
             )
@@ -677,6 +690,9 @@ def test_process_work_items_command_processes_claimed_input(tmp_path, monkeypatc
     assert processed == 1
     assert capsys.readouterr().out == "process-work-items processed=1\n"
     assert loaded.list_work_projects()[0].title == "售前知识库建设"
+    assert json.loads(loaded.list_work_projects()[0].memory_context_json)[
+        "memories"
+    ][0]["uuid"] == "mem-1"
     assert loaded.claim_work_summary_inputs(limit=1) == []
     with loaded._connect() as db:
         status = db.execute(

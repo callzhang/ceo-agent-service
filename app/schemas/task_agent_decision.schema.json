@@ -89,6 +89,48 @@
         }
       }
     },
+    "memory_context_item": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source", "uuid", "text", "summary", "created_at"],
+      "properties": {
+        "source": {
+          "type": "string"
+        },
+        "uuid": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "created_at": {
+          "type": "string"
+        }
+      }
+    },
+    "memory_context": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["query", "summary", "memories"],
+      "properties": {
+        "query": {
+          "type": "string",
+          "minLength": 1
+        },
+        "summary": {
+          "type": "string"
+        },
+        "memories": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/memory_context_item"
+          }
+        }
+      }
+    },
     "project": {
       "type": "object",
       "additionalProperties": false,
@@ -106,6 +148,7 @@
         "related_people",
         "goal",
         "background",
+        "memory_context",
         "facts",
         "current_state",
         "blocker",
@@ -190,6 +233,9 @@
         },
         "background": {
           "type": "string"
+        },
+        "memory_context": {
+          "$ref": "#/$defs/memory_context"
         },
         "facts": {
           "type": "array",

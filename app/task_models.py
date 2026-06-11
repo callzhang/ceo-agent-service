@@ -116,6 +116,20 @@ class ProjectFact(BaseModel):
     updated: str = ""
 
 
+class ProjectMemoryContextItem(BaseModel):
+    source: str = "memory_recall"
+    uuid: str = ""
+    text: str = ""
+    summary: str = ""
+    created_at: str = ""
+
+
+class ProjectMemoryContext(BaseModel):
+    query: str = ""
+    summary: str = ""
+    memories: list[ProjectMemoryContextItem] = Field(default_factory=list)
+
+
 class TaskProjectPatch(BaseModel):
     id: int | None = None
     title: str = ""
@@ -130,6 +144,7 @@ class TaskProjectPatch(BaseModel):
     related_people: list[dict[str, str]] = Field(default_factory=list)
     goal: str = ""
     background: str = ""
+    memory_context: ProjectMemoryContext = Field(default_factory=ProjectMemoryContext)
     facts: list[ProjectFact] = Field(default_factory=list)
     current_state: str = ""
     blocker: str = ""

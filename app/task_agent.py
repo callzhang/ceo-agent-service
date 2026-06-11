@@ -127,7 +127,8 @@ def build_task_agent_prompt(work_item: WorkItem, candidate_prompt: str) -> str:
 - 每次必须评估 failure_risk 和 failure_risk_score：failure_risk 说明如果不跟进会发生什么；failure_risk_score 是 0 到 1 的失败风险，0 表示几乎无业务影响，1 表示会直接影响关键交付、收入、合规或管理决策。
 - BM25 候选项目只是初始线索，不是权威匹配结果。
 - 如果候选项目为空或你判断不匹配，可以使用 dws 或 memory_connector 恢复更多上下文；这是提示，不是硬性要求。
-- 创建新项目时，如果 memory_connector 可用，必须使用 memory_recall 查历史背景；不要传入或编造 user_id。
+- create_project 或 update_project 前，必须使用 memory_recall 查历史背景；不要传入或编造 user_id。
+- project.memory_context 必须写入本次 memory_recall 的查询、摘要和关键记忆证据；如果没有命中，也要写明查询和无命中的结论。
 - 如果上下文无法支撑稳定项目名称，不要创建模糊项目；生成 follow_up_draft 询问项目、目标、owner。
 - 只有消息、会议纪要或文档明确证明 TODO 完成时，才能自动清理 TODO，并写入 completion_evidence。
 - 生成 follow_up_draft 前必须确定 owner_user_id；只有 owner_name 不够。如果上下文缺少 userId，先用 dws 或已有联系人信息补齐；仍无法唯一确定时，不要生成 follow_up_draft。
@@ -140,6 +141,7 @@ def build_task_agent_prompt(work_item: WorkItem, candidate_prompt: str) -> str:
 - update_project 必须引用候选或已确认项目 id。
 - todo_changes 的 close/cancel/update 必须引用 todo_id。
 - follow_up_drafts 的 owner_user_id 不能为空。
+- 非 discard 决策的 memory_recall_used 必须为 true，且 project.memory_context 不能为空。
 
 Work Item JSON:
 {work_item_json}
@@ -162,6 +164,10 @@ def process_work_item(
             project_name=work_item.project_name,
         )
         decision = runner.decide(work_item, render_candidate_prompt(candidates))
+        _validate_memory_recall_tool_event(
+            decision,
+            getattr(runner.codex, "last_audit_tool_events", None),
+        )
         codex_session_id = getattr(runner.codex, "last_session_id", None) or ""
         apply_task_agent_decision(
             store,
@@ -248,10 +254,34 @@ def _validate_task_agent_decision(decision: TaskAgentDecision) -> None:
             raise ValueError("follow_up_draft.owner_user_id is required")
     if decision.action == "discard":
         return
+    if not decision.memory_recall_used:
+        raise ValueError("non-discard task decision requires memory_recall_used")
     if decision.project is None:
         raise ValueError(f"{decision.action} requires project")
+    memory_context = decision.project.memory_context
+    if not memory_context.query.strip() or (
+        not memory_context.summary.strip() and not memory_context.memories
+    ):
+        raise ValueError("non-discard task decision requires project.memory_context")
     if decision.action == "update_project" and decision.project.id is None:
         raise ValueError("update_project requires project.id")
+
+
+def _validate_memory_recall_tool_event(
+    decision: TaskAgentDecision,
+    audit_tool_events: object,
+) -> None:
+    if decision.action == "discard" or audit_tool_events is None:
+        return
+    if not isinstance(audit_tool_events, list):
+        return
+    for event in audit_tool_events:
+        if not isinstance(event, dict):
+            continue
+        tool = str(event.get("tool") or "")
+        if "memory_recall" in tool:
+            return
+    raise ValueError("non-discard task decision requires memory_recall tool event")
 
 
 def _apply_project(store: AutoReplyStore, decision: TaskAgentDecision) -> int:
@@ -281,6 +311,7 @@ def _project_values(project, only_fields: set[str] | None = None) -> dict[str, o
         "related_people": "related_people_json",
         "goal": "goal",
         "background": "background",
+        "memory_context": "memory_context_json",
         "facts": "facts_json",
         "current_state": "current_state",
         "blocker": "blocker",
@@ -297,6 +328,7 @@ def _project_values(project, only_fields: set[str] | None = None) -> dict[str, o
         if model_field in {
             "tags",
             "related_people",
+            "memory_context",
             "facts",
             "source_conversations",
         }:

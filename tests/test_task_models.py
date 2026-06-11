@@ -12,6 +12,22 @@ from app.task_models import (
 )
 
 
+def _memory_context():
+    return {
+        "query": "售前知识库",
+        "summary": "售前知识库历史背景来自 memory_recall。",
+        "memories": [
+            {
+                "source": "memory_recall",
+                "uuid": "mem-1",
+                "text": "售前知识库历史背景：材料沉淀在 business/售前知识库。",
+                "summary": "材料沉淀在 business/售前知识库。",
+                "created_at": "2026-06-05",
+            }
+        ],
+    }
+
+
 def test_work_item_keeps_input_small():
     item = WorkItem.model_validate(
         {
@@ -83,6 +99,7 @@ def test_task_agent_decision_accepts_project_todo_and_follow_up():
                 "related_people": [],
                 "goal": "沉淀可复用售前材料",
                 "background": "这是销售支持项目。",
+                "memory_context": _memory_context(),
                 "facts": [
                     {
                         "description": "已确认放在 business/售前知识库。",
@@ -136,5 +153,6 @@ def test_task_agent_decision_accepts_project_todo_and_follow_up():
     assert decision.project.category == ProjectCategory.SALES
     assert decision.project.priority == ProjectPriority.P1
     assert decision.project.status == ProjectStatus.ACTIVE
+    assert decision.project.memory_context.memories[0].uuid == "mem-1"
     assert decision.todo_changes[0].status == TodoStatus.OPEN
     assert decision.follow_up_drafts[0].status == FollowUpDraftStatus.DRAFT
