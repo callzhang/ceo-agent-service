@@ -1227,15 +1227,18 @@ def test_task_project_detail_renders_project_todos_and_sources(tmp_path: Path):
     assert "reply_attempt:7" in html
     assert "新增待办" in html
     assert "来源链接补齐到哪一步了" in html
-    assert html.count('class="column-sized-table"') == 3
+    assert html.count('class="column-sized-table"') == 2
     assert html.count('<col style="width:118px">') == 2
     assert '<col style="width:240px">' in html
-    assert '<span id="todo-' in html
-    assert f'<tr class="todo-followup-row" data-parent-todo="{todo_id}">' in html
+    assert 'class="todo-detail-list"' in html
+    assert f'<article class="todo-detail-item" id="todo-{todo_id}">' in html
+    assert 'class="todo-detail-title"' in html
+    assert 'class="todo-detail-fields"' in html
+    assert f'<div class="todo-detail-followups" data-parent-todo="{todo_id}">' in html
     assert "Follow-ups (1)" in html
     assert "group:cid-1" in html
     assert "Unlinked follow-ups" not in html
-    assert "<td>-</td>" in html
+    assert '<div class="todo-detail-value">-</div>' in html
 
 
 def test_task_project_detail_keeps_unlinked_followups_separate(tmp_path: Path):
@@ -1271,7 +1274,7 @@ def test_task_project_detail_keeps_unlinked_followups_separate(tmp_path: Path):
     assert "Unlinked follow-ups" in html
     assert "这个 follow-up 还缺少明确 TODO 归属。" in html
     assert '<a href="#todo-9999">#9999</a>' in html
-    assert '<tr class="todo-followup-row"' not in html
+    assert '<div class="todo-detail-followups"' not in html
 
 
 def test_tasks_route_renders_page(tmp_path: Path):

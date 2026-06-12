@@ -195,8 +195,22 @@ th{background:var(--surface-soft);color:var(--steel);font-size:12px;font-weight:
 .todo-copy{display:grid;gap:2px;min-width:0}
 .todo-due{color:var(--steel);font-family:"Geist Mono","SF Mono",Menlo,Consolas,monospace;font-size:11px;line-height:1.3}
 .todo-total{color:var(--steel);font-family:"Geist Mono","SF Mono",Menlo,Consolas,monospace;font-size:11px;font-weight:700;line-height:1.3}
-.todo-followup-row td{border-top:0;background:var(--surface-soft)}
-.todo-followup-cell{display:grid;gap:8px;padding:10px 10px 10px 28px;border-left:2px solid rgba(55,114,207,.24);color:var(--charcoal)}
+.todo-detail-list{display:grid;gap:0}
+.todo-detail-item{display:grid;gap:10px;padding:12px 0;border-bottom:1px solid var(--hairline-soft)}
+.todo-detail-item:first-child{padding-top:0}
+.todo-detail-item:last-child{border-bottom:0;padding-bottom:0}
+.todo-detail-main{display:grid;grid-template-columns:18px minmax(0,1fr);gap:10px;align-items:start}
+.todo-detail-check{display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;margin-top:3px;border:1px solid var(--hairline);border-radius:4px;background:var(--canvas);color:transparent;font-size:11px;font-weight:900;line-height:1}
+.todo-detail-check.done{border-color:rgba(0,180,138,.46);background:#ddfff6;color:#005b49}
+.todo-detail-body{display:grid;gap:7px;min-width:0}
+.todo-detail-title-row{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;min-width:0}
+.todo-detail-title{min-width:0;margin:0;color:var(--ink);font-size:15px;font-weight:760;line-height:1.4;overflow-wrap:anywhere;word-break:break-word}
+.todo-detail-meta{display:flex;flex-wrap:wrap;gap:5px 10px;color:var(--steel);font-family:"Geist Mono","SF Mono",Menlo,Consolas,monospace;font-size:11px;font-weight:700;line-height:1.35}
+.todo-detail-fields{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-top:2px}
+.todo-detail-field{min-width:0}
+.todo-detail-label{margin-bottom:2px;color:var(--steel);font-size:11px;font-weight:800;line-height:1.25;text-transform:uppercase}
+.todo-detail-value{color:var(--charcoal);font-size:13px;line-height:1.45;overflow-wrap:anywhere;word-break:break-word}
+.todo-detail-followups{display:grid;gap:8px;margin-left:28px;padding:10px 0 0 12px;border-left:2px solid rgba(55,114,207,.24);color:var(--charcoal)}
 .todo-followup-heading{color:var(--steel);font-size:12px;font-weight:800;line-height:1.25}
 .todo-followup-list{display:grid;gap:8px;margin:0;padding:0;list-style:none}
 .todo-followup-item{display:grid;grid-template-columns:136px 120px minmax(0,1fr);gap:10px;align-items:start}
@@ -400,7 +414,7 @@ label{display:block;margin:14px 0 7px;color:var(--slate);font-size:13px;font-wei
 .danger{background:#9f1d1d}
 .muted{color:var(--steel)}
 @media (max-width:900px){.attempt-head{align-items:flex-start;flex-direction:column}.attempt-title{flex-wrap:wrap}.attempt-side{align-items:flex-start;flex-direction:column;gap:6px}.attempt-main,.attempt-meta{white-space:normal}.attempt-time{text-align:left}.attempt-copy{-webkit-line-clamp:3}.review-grid{grid-template-columns:1fr}.attempt-detail-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
-@media (max-width:760px){.shell,main{padding-left:12px;padding-right:12px}.topbar{align-items:flex-start;flex-direction:column;padding:14px 0}.grid{grid-template-columns:1fr}th,td{padding:10px 12px}.attempt-foot{align-items:flex-start;flex-direction:column}.attempt-conversation-banner{align-items:flex-start;flex-direction:column}.attempt-detail-grid{grid-template-columns:1fr}.history-chart{height:220px}.history-table-header{grid-template-columns:1fr}.history-page-links{justify-content:flex-start}.history-limit-form{justify-content:flex-start}}
+@media (max-width:760px){.shell,main{padding-left:12px;padding-right:12px}.topbar{align-items:flex-start;flex-direction:column;padding:14px 0}.grid{grid-template-columns:1fr}th,td{padding:10px 12px}.attempt-foot{align-items:flex-start;flex-direction:column}.attempt-conversation-banner{align-items:flex-start;flex-direction:column}.attempt-detail-grid{grid-template-columns:1fr}.todo-detail-fields{grid-template-columns:1fr}.todo-followup-item{grid-template-columns:1fr}.history-chart{height:220px}.history-table-header{grid-template-columns:1fr}.history-page-links{justify-content:flex-start}.history-limit-form{justify-content:flex-start}}
 """
 
 FAVICON_HREF = (
@@ -2757,7 +2771,7 @@ def render_task_project_detail(store: AutoReplyStore, project_id: int) -> tuple[
 
     detail_rows = _task_project_detail_rows(project)
     facts = _task_facts_rows(project.facts_json)
-    todo_table = _task_todos_table(todos, drafts)
+    todo_panel = _task_todos_panel(todos, drafts)
     update_rows = _task_update_rows(updates)
     draft_rows = _task_follow_up_rows(_unlinked_follow_up_drafts(todos, drafts))
 
@@ -2785,7 +2799,7 @@ def render_task_project_detail(store: AutoReplyStore, project_id: int) -> tuple[
         f"{_simple_table(('Field', 'Value'), detail_rows)}"
         "</section>"
         "<section class=\"card\"><h2>TODOs</h2>"
-        f"{todo_table if todos else '<p class=\"muted\">No TODOs recorded.</p>'}"
+        f"{todo_panel if todos else '<p class=\"muted\">No TODOs recorded.</p>'}"
         "</section>"
         "<section class=\"card\"><h2>Facts</h2>"
         f"{_simple_table(('Description', 'Source', 'Created', 'Updated'), facts, column_widths={'Source': '118px', 'Created': '132px', 'Updated': '132px'}) if facts else '<p class=\"muted\">No facts recorded.</p>'}"
@@ -2848,55 +2862,13 @@ def _task_facts_rows(facts_json: str) -> list[tuple[str, str, str, str]]:
     return rows
 
 
-_TASK_TODO_HEADERS = (
-    "ID",
-    "TODO",
-    "Owner",
-    "Status",
-    "Priority",
-    "DDL",
-    "Next follow-up",
-    "Question",
-    "Blocker",
-    "Evidence",
-)
-
-_TASK_TODO_COLUMN_WIDTHS = {
-    "ID": "64px",
-    "TODO": "240px",
-    "Owner": "110px",
-    "Status": "110px",
-    "Priority": "84px",
-    "DDL": "142px",
-    "Next follow-up": "142px",
-    "Question": "220px",
-    "Blocker": "160px",
-    "Evidence": "180px",
-}
-
-
-def _task_todos_table(todos, drafts) -> str:
+def _task_todos_panel(todos, drafts) -> str:
     follow_ups_by_todo = _follow_up_drafts_by_todo(todos, drafts)
-    colgroup_html = "".join(
-        f"<col style=\"width:{escape(_TASK_TODO_COLUMN_WIDTHS.get(header, 'auto'))}\">"
-        for header in _TASK_TODO_HEADERS
+    items = "".join(
+        _task_todo_detail_item(todo, follow_ups_by_todo.get(todo.id, []))
+        for todo in todos
     )
-    header_html = "".join(f"<th>{escape(header)}</th>" for header in _TASK_TODO_HEADERS)
-    row_html = []
-    for todo, row in zip(todos, _task_todo_rows(todos)):
-        row_html.append(_simple_table_row(_TASK_TODO_HEADERS, row, {"ID"}))
-        follow_ups = follow_ups_by_todo.get(todo.id, [])
-        if follow_ups:
-            row_html.append(_task_follow_up_child_row(todo.id, follow_ups))
-    return (
-        '<table class="column-sized-table">'
-        f"<colgroup>{colgroup_html}</colgroup>"
-        "<thead><tr>"
-        f"{header_html}"
-        "</tr></thead><tbody>"
-        f"{''.join(row_html)}"
-        "</tbody></table>"
-    )
+    return f'<div class="todo-detail-list">{items}</div>'
 
 
 def _follow_up_drafts_by_todo(todos, drafts) -> dict[int, list]:
@@ -2913,19 +2885,69 @@ def _unlinked_follow_up_drafts(todos, drafts) -> list:
     return [draft for draft in drafts if draft.todo_id not in todo_ids]
 
 
-def _task_follow_up_child_row(todo_id: int, drafts) -> str:
+def _task_todo_detail_item(todo, follow_ups) -> str:
+    owner = todo.owner_name or todo.owner_user_id or "-"
+    status = str(todo.status)
+    priority = str(todo.priority)
+    deadline = _format_local_time(todo.deadline_at) or todo.deadline_at or "-"
+    next_follow_up = (
+        _format_local_time(todo.next_follow_up_at) or todo.next_follow_up_at or "-"
+    )
+    evidence = _task_json_compact(todo.completion_evidence_json, "{}") or "-"
+    check_class = "todo-detail-check done" if _task_todo_done(todo) else "todo-detail-check"
+    status_class = _task_status_class(status)
+    follow_up_panel = (
+        _task_follow_up_child_panel(todo.id, follow_ups) if follow_ups else ""
+    )
+    return (
+        f'<article class="todo-detail-item" id="todo-{todo.id}">'
+        '<div class="todo-detail-main">'
+        f'<span class="{check_class}">✓</span>'
+        '<div class="todo-detail-body">'
+        '<div class="todo-detail-title-row">'
+        f'<h3 class="todo-detail-title">{escape(todo.title or "-")}</h3>'
+        f'<span class="task-state {escape(status_class)}">{escape(status)}</span>'
+        "</div>"
+        '<div class="todo-detail-meta">'
+        f"<span>#{todo.id}</span>"
+        f"<span>{escape(owner)}</span>"
+        f"<span>{escape(priority)}</span>"
+        f"<span>DDL {escape(deadline)}</span>"
+        f"<span>Next {escape(next_follow_up)}</span>"
+        "</div>"
+        '<div class="todo-detail-fields">'
+        f"{_task_todo_detail_field('Question', todo.follow_up_question or '-')}"
+        f"{_task_todo_detail_field('Blocker', todo.blocker or '-')}"
+        f"{_task_todo_detail_field('Evidence', evidence)}"
+        "</div>"
+        "</div>"
+        "</div>"
+        f"{follow_up_panel}"
+        "</article>"
+    )
+
+
+def _task_status_class(status: str) -> str:
+    return status.strip().lower().replace("_", "-").replace(" ", "-") or "unknown"
+
+
+def _task_todo_detail_field(label: str, value: str) -> str:
+    return (
+        '<div class="todo-detail-field">'
+        f'<div class="todo-detail-label">{escape(label)}</div>'
+        f'<div class="todo-detail-value">{escape(value)}</div>'
+        "</div>"
+    )
+
+
+def _task_follow_up_child_panel(todo_id: int, drafts) -> str:
     items = "".join(_task_follow_up_child_item(draft) for draft in drafts)
     label = f"Follow-ups ({len(drafts)})"
     return (
-        f'<tr class="todo-followup-row" data-parent-todo="{todo_id}">'
-        "<td></td>"
-        f"<td colspan=\"{len(_TASK_TODO_HEADERS) - 1}\">"
-        "<div class=\"todo-followup-cell\">"
+        f'<div class="todo-detail-followups" data-parent-todo="{todo_id}">'
         f"<div class=\"todo-followup-heading\">{escape(label)}</div>"
         f"<ul class=\"todo-followup-list\">{items}</ul>"
         "</div>"
-        "</td>"
-        "</tr>"
     )
 
 
@@ -2950,28 +2972,6 @@ def _task_follow_up_target(draft) -> str:
         if draft.target_conversation_id
         else draft.target_kind or "-"
     )
-
-
-def _task_todo_rows(todos) -> list[tuple[str, str, str, str, str, str, str, str, str, str]]:
-    rows = []
-    for todo in todos:
-        owner = todo.owner_name or todo.owner_user_id
-        evidence = _task_json_compact(todo.completion_evidence_json, "{}") or "-"
-        rows.append(
-            (
-                f"<span id=\"todo-{todo.id}\">{todo.id}</span>",
-                todo.title,
-                owner,
-                str(todo.status),
-                str(todo.priority),
-                _format_local_time(todo.deadline_at) or todo.deadline_at,
-                _format_local_time(todo.next_follow_up_at) or todo.next_follow_up_at,
-                todo.follow_up_question,
-                todo.blocker,
-                evidence,
-            )
-        )
-    return rows
 
 
 def _task_update_rows(updates) -> list[tuple[str, str, str, str, str, str]]:
