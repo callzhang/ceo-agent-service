@@ -1213,16 +1213,11 @@ def test_produce_once_records_list_unread_failure_without_crashing(
     queued = worker.produce_once()
 
     assert queued == 0
-    assert worker.store.count_errors() == 1
+    assert worker.store.count_errors() == 0
     assert notifications == [
         {
             "title": "CEO DWS auth login required",
             "message": "Started dws auth login. Please complete DingTalk login.",
-            "url": None,
-        },
-        {
-            "title": "CEO read unread conversations failed",
-            "message": "not authenticated",
             "url": None,
         }
     ]

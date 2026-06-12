@@ -312,6 +312,8 @@ class DingTalkAutoReplyWorker:
                 raise
             if self._is_dws_login_error(exc):
                 self._ensure_dws_auth_login(exc)
+                if self._dws_auth_login_state().get("status") == "running":
+                    return default
             is_forbidden_read = bool(
                 conversation_id and self._is_dws_forbidden_read_error(exc)
             )
