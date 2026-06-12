@@ -79,6 +79,21 @@ class ReplyError(BaseModel):
     created_at: str
 
 
+class OperationLog(BaseModel):
+    id: str
+    source_table: str
+    source_id: int
+    occurred_at: str
+    category: str
+    action: str
+    status: str
+    context: str = ""
+    summary: str = ""
+    detail: str = ""
+    conversation_id: str = ""
+    message_id: str = ""
+
+
 class SentReply(BaseModel):
     id: int
     conversation_id: str
@@ -2860,6 +2875,136 @@ class AutoReplyStore:
         with self._connect() as db:
             row = db.execute("select count(*) as count from errors").fetchone()
             return int(row["count"])
+
+    def list_operation_logs(
+        self,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> list[OperationLog]:
+        query = """
+            select *
+            from (
+                select
+                    'error:' || id as id,
+                    'errors' as source_table,
+                    id as source_id,
+                    created_at as occurred_at,
+                    'Error' as category,
+                    kind as action,
+                    'active' as status,
+                    coalesce(conversation_id, '') as context,
+                    detail as summary,
+                    detail as detail,
+                    coalesce(conversation_id, '') as conversation_id,
+                    coalesce(message_id, '') as message_id
+                from errors
+                union all
+                select
+                    'reply-task:' || id as id,
+                    'reply_tasks' as source_table,
+                    id as source_id,
+                    updated_at as occurred_at,
+                    'Reply task' as category,
+                    status as action,
+                    status as status,
+                    conversation_title as context,
+                    trigger_text as summary,
+                    error as detail,
+                    conversation_id as conversation_id,
+                    trigger_message_id as message_id
+                from reply_tasks
+                union all
+                select
+                    'reply:' || id as id,
+                    'reply_attempts' as source_table,
+                    id as source_id,
+                    updated_at as occurred_at,
+                    'Reply' as category,
+                    action as action,
+                    send_status as status,
+                    conversation_title as context,
+                    trigger_text as summary,
+                    send_error as detail,
+                    conversation_id as conversation_id,
+                    trigger_message_id as message_id
+                from reply_attempts
+                union all
+                select
+                    'task-input:' || id as id,
+                    'work_summary_inputs' as source_table,
+                    id as source_id,
+                    updated_at as occurred_at,
+                    'Task input' as category,
+                    source_type || ':' || source_ref as action,
+                    status as status,
+                    source_type || ':' || source_ref as context,
+                    payload_json as summary,
+                    error as detail,
+                    '' as conversation_id,
+                    '' as message_id
+                from work_summary_inputs
+                union all
+                select
+                    'task-update:' || id as id,
+                    'work_updates' as source_table,
+                    id as source_id,
+                    created_at as occurred_at,
+                    'Task update' as category,
+                    source_type || ':' || source_ref as action,
+                    'done' as status,
+                    'project #' || project_id as context,
+                    summary as summary,
+                    changes_json as detail,
+                    '' as conversation_id,
+                    '' as message_id
+                from work_updates
+                union all
+                select
+                    'follow-up:' || id as id,
+                    'follow_up_drafts' as source_table,
+                    id as source_id,
+                    coalesce(nullif(sent_at, ''), nullif(scheduled_at, ''), created_at) as occurred_at,
+                    'Follow-up' as category,
+                    target_kind as action,
+                    status as status,
+                    'project #' || project_id || ' todo #' || todo_id as context,
+                    question_text as summary,
+                    send_result_json as detail,
+                    target_conversation_id as conversation_id,
+                    '' as message_id
+                from follow_up_drafts
+            )
+            order by occurred_at desc, source_table desc, source_id desc
+        """
+        args: tuple[int, ...] = ()
+        if limit is not None:
+            query = f"{query} limit ? offset ?"
+            args = (limit, max(0, offset))
+        with self._connect() as db:
+            rows = db.execute(query, args).fetchall()
+            return [OperationLog.model_validate(dict(row)) for row in rows]
+
+    def count_operation_logs(self) -> int:
+        with self._connect() as db:
+            row = db.execute(
+                """
+                select sum(count) as count
+                from (
+                    select count(*) as count from errors
+                    union all
+                    select count(*) as count from reply_tasks
+                    union all
+                    select count(*) as count from reply_attempts
+                    union all
+                    select count(*) as count from work_summary_inputs
+                    union all
+                    select count(*) as count from work_updates
+                    union all
+                    select count(*) as count from follow_up_drafts
+                )
+                """
+            ).fetchone()
+            return int(row["count"] or 0)
 
     def set_service_state(self, key: str, value: str) -> None:
         with self._connect() as db:

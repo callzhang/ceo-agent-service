@@ -86,6 +86,7 @@ from app.store import (
     FAST_PATH_UNREAD_BACKOFF_TASK_ERROR,
     AutoReplyStore,
     FeedbackEvent,
+    OperationLog,
     ReplyAttempt,
     ReplyError,
     ReplyTask,
@@ -555,7 +556,7 @@ def render_tutorial_page() -> str:
         "<div class=\"tutorial-links\">"
         "<a class=\"tutorial-link\" href=\"/config?tab=system\">系统参数</a>"
         "<a class=\"tutorial-link\" href=\"/tasks\">Tasks</a>"
-        "<a class=\"tutorial-link\" href=\"/errors\">Errors</a>"
+        "<a class=\"tutorial-link\" href=\"/logs\">Logs</a>"
         "</div>"
         "</div>"
         f"<ol class=\"tutorial-steps\">{steps_html}</ol>"
@@ -640,7 +641,7 @@ def _tutorial_steps() -> list[_TutorialStep]:
                 "dws auth status",
                 "codex --version",
             ],
-            "links": [("Config", "/config"), ("Errors", "/errors")],
+            "links": [("Config", "/config"), ("Logs", "/logs")],
         },
         {
             "phase": "Phase 2",
@@ -689,7 +690,7 @@ def _tutorial_steps() -> list[_TutorialStep]:
                 ".venv/bin/ceo-agent build-work-profile --workspace \"$HOME/Documents/memory\" --corpus-dir ./corpus",
                 ".venv/bin/pytest tests/test_work_profile.py tests/test_prompt.py tests/test_worker.py::test_consumer_codex_command_embeds_work_profile_content -q",
             ],
-            "links": [("Config", "/config"), ("Errors", "/errors")],
+            "links": [("Config", "/config"), ("Logs", "/logs")],
         },
         {
             "phase": "Phase 6",
@@ -706,7 +707,7 @@ def _tutorial_steps() -> list[_TutorialStep]:
                 ".venv/bin/python -m app.cli audit-web --reload --host 127.0.0.1 --port 8765",
                 "CEO_NOT_SEND_MESSAGE=1 .venv/bin/ceo-agent run-once --not-send-message",
             ],
-            "links": [("History", "/"), ("Errors", "/errors"), ("Tasks", "/tasks")],
+            "links": [("History", "/"), ("Logs", "/logs"), ("Tasks", "/tasks")],
         },
         {
             "phase": "Phase 8",
@@ -723,7 +724,7 @@ def _tutorial_steps() -> list[_TutorialStep]:
                 "launchctl print gui/$(id -u)/com.ceo-agent-service.main | sed -n '1,80p'",
                 "CEO_NOT_SEND_MESSAGE=0 CEO_LIVE_SEND_BLOCKERS_ACCEPTED=1 .venv/bin/ceo-agent send-attempt --attempt-id <reviewed-attempt-id>",
             ],
-            "links": [("History", "/"), ("Errors", "/errors")],
+            "links": [("History", "/"), ("Logs", "/logs")],
         },
     ]
 
@@ -1204,7 +1205,7 @@ def _top_nav(
         ("user-feedback", "用户反馈", "/user-feedback"),
         ("codex", "Codex Sessions", "/codex"),
         ("config", "Config", "/config"),
-        ("errors", "Errors", "/errors"),
+        ("logs", "Logs", "/logs"),
     ]
     item_html = "".join(
         _top_nav_item(
@@ -3469,48 +3470,77 @@ def render_error_list(
     limit: int | None = DEFAULT_ERROR_LIST_LIMIT,
     page: int = 1,
 ) -> str:
-    total_count = store.count_errors()
+    return render_log_list(store, limit=limit, page=page)
+
+
+def render_log_list(
+    store: AutoReplyStore,
+    limit: int | None = DEFAULT_ERROR_LIST_LIMIT,
+    page: int = 1,
+) -> str:
+    total_count = store.count_operation_logs()
     page = _bounded_page(page, limit, total_count)
     offset = _page_offset(page, limit)
     rows = []
-    for error in store.list_errors(limit=limit, offset=offset):
-        resolution = _error_resolution_label(store, error)
-        status_class = (
-            "status-resolved"
-            if resolution.startswith("resolved")
-            else "status-active"
-        )
+    for log in store.list_operation_logs(limit=limit, offset=offset):
+        status = _operation_log_status(store, log)
+        status_class = _operation_status_class(status)
         rows.append(
             "<tr>"
-            f"<td>#{error.id}</td>"
-            f"<td>{escape(_format_local_time(error.created_at))}</td>"
-            f"<td>{escape(error.conversation_id or '')}</td>"
-            f"<td>{escape(error.message_id or '')}</td>"
-            f"<td><span class=\"pill status-failed\">{escape(error.kind)}</span></td>"
-            f"<td><span class=\"pill {status_class}\">{escape(resolution)}</span></td>"
-            f"<td>{escape(error.detail)}</td>"
+            f"<td>{escape(log.id)}</td>"
+            f"<td>{escape(_format_local_time(log.occurred_at))}</td>"
+            f"<td><span class=\"pill\">{escape(log.category)}</span></td>"
+            f"<td>{escape(log.action)}</td>"
+            f"<td><span class=\"pill {status_class}\">{escape(status)}</span></td>"
+            f"<td>{escape(log.context)}</td>"
+            f"<td>{escape(_excerpt(log.summary, 220))}</td>"
+            f"<td>{escape(_excerpt(log.detail, 220))}</td>"
             "</tr>"
         )
     pagination = _pagination_controls(
-        base_path="/errors",
+        base_path="/logs",
         page=page,
         limit=limit,
         total_count=total_count,
     )
     table = (
         f"{pagination}"
-        "<table><thead><tr><th>ID</th><th>Time</th><th>Conversation</th>"
-        "<th>Message</th><th>Kind</th><th>Status</th><th>Detail</th></tr></thead><tbody>"
+        "<table><thead><tr><th>ID</th><th>Time</th><th>Type</th>"
+        "<th>Action</th><th>Status</th><th>Context</th><th>Summary</th>"
+        "<th>Detail</th></tr></thead><tbody>"
         + "".join(rows)
         + "</tbody></table>"
-        f"{_pagination_controls(base_path='/errors', page=page, limit=limit, total_count=total_count, bottom=True)}"
+        f"{_pagination_controls(base_path='/logs', page=page, limit=limit, total_count=total_count, bottom=True)}"
     )
     return render_page(
-        "Errors",
+        "Logs",
         table,
-        active_nav="errors",
+        active_nav="logs",
         user_feedback_pending_count=store.count_pending_user_feedback_items(),
     )
+
+
+def _operation_log_status(store: AutoReplyStore, log: OperationLog) -> str:
+    if log.source_table != "errors":
+        return log.status
+    error = ReplyError(
+        id=log.source_id,
+        conversation_id=log.conversation_id or None,
+        message_id=log.message_id or None,
+        kind=log.action,
+        detail=log.detail,
+        created_at=log.occurred_at,
+    )
+    return _error_resolution_label(store, error)
+
+
+def _operation_status_class(status: str) -> str:
+    normalized = status.strip().lower()
+    if normalized.startswith("resolved") or normalized in {"sent", "done", "completed"}:
+        return "status-resolved"
+    if normalized in {"failed", "blocked"}:
+        return "status-failed"
+    return "status-active"
 
 
 def _config_tabs(active_tab: str) -> str:
@@ -4059,12 +4089,16 @@ def create_audit_app(
         status, html = render_task_project_detail(AutoReplyStore(db_path), project_id)
         return HTMLResponse(html, status_code=status)
 
-    @app.get("/errors", response_class=HTMLResponse)
-    def error_list(request: Request) -> str:
-        return render_error_list(
+    @app.get("/logs", response_class=HTMLResponse)
+    def log_list(request: Request) -> str:
+        return render_log_list(
             AutoReplyStore(db_path),
             page=_positive_int_query(request, "page", default=1),
         )
+
+    @app.get("/errors", response_class=HTMLResponse)
+    def error_list(request: Request) -> str:
+        return log_list(request)
 
     @app.get("/codex", response_class=HTMLResponse)
     def codex_session_list() -> str:

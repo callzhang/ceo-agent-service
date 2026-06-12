@@ -26,6 +26,7 @@ from app.audit_web import (
     render_config_page,
     render_developer_prompt_editor,
     render_error_list,
+    render_log_list,
     render_task_project_detail,
     render_tasks_page,
     render_tutorial_page,
@@ -699,8 +700,8 @@ def test_top_nav_highlights_current_page_and_disables_current_link(tmp_path: Pat
     assert '<span class="nav-item active" aria-current="page">Codex Sessions</span>' in codex_html
     assert '<a class="nav-item" href="/codex">Codex Sessions</a>' not in codex_html
 
-    assert '<span class="nav-item active" aria-current="page">Errors</span>' in errors_html
-    assert '<a class="nav-item" href="/errors">Errors</a>' not in errors_html
+    assert '<span class="nav-item active" aria-current="page">Logs</span>' in errors_html
+    assert '<a class="nav-item" href="/logs">Logs</a>' not in errors_html
 
     assert '<span class="nav-item active" aria-current="page">Tasks</span>' in tasks_html
     assert '<a class="nav-item" href="/tasks">Tasks</a>' not in tasks_html
@@ -731,7 +732,7 @@ def test_render_tutorial_page_guides_first_time_setup():
     assert "launchctl" in html
     assert "CEO_LIVE_SEND_BLOCKERS_ACCEPTED=1" in html
     assert "/config?tab=system" in html
-    assert "/errors" in html
+    assert "/logs" in html
     assert "/tasks" in html
     assert "Tutorial" in html
     assert "Landing page" not in html
@@ -3714,40 +3715,81 @@ def test_handle_reviewed_message_reply_uses_stored_private_conversation_when_sea
     ]
 
 
-def test_render_error_list_shows_recent_errors(tmp_path: Path):
+def test_render_log_list_shows_recent_operations(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.record_error("cid-1", "msg-1", "send", "authorization required")
+    store.record_reply_attempt(
+        conversation_id="cid-2",
+        conversation_title="融资群",
+        trigger_message_id="msg-2",
+        trigger_sender="Lily",
+        trigger_text="@Alex 这个怎么看？",
+        action="send_reply",
+        sensitivity_kind="general",
+        draft_reply_text="先按这个口径回复。",
+    )
+    project_id = store.create_work_project(
+        title="售前知识库建设",
+        category="sales",
+        status="active",
+        priority="P1",
+        risk_level="medium",
+    )
+    store.enqueue_work_summary_input("reply_attempt", "7", '{"summary":"新增任务"}')
+    store.create_work_update(
+        project_id=project_id,
+        source_type="reply_attempt",
+        source_ref="7",
+        summary="新增待办",
+        changes_json='{"todo":"created"}',
+    )
+    store.create_follow_up_draft(
+        project_id=project_id,
+        todo_id=1,
+        owner_name="Alex",
+        target_conversation_id="cid-3",
+        target_kind="group",
+        question_text="进展如何？",
+        status="draft",
+    )
 
-    html = render_error_list(store)
+    html = render_log_list(store)
 
-    assert "Errors" in html
+    assert "Logs" in html
+    assert "Reply" in html
+    assert "Task input" in html
+    assert "Task update" in html
+    assert "Follow-up" in html
+    assert "send_reply" in html
+    assert "新增待办" in html
+    assert "进展如何？" in html
     assert "send" in html
     assert "authorization required" in html
     assert "cid-1" in html
     assert "active" in html
 
 
-def test_render_error_list_paginates(tmp_path: Path):
+def test_render_log_list_paginates(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.record_error("cid-1", "msg-1", "codex", "older error")
     store.record_error("cid-2", "msg-2", "send", "newer error")
 
-    first_page = render_error_list(store, limit=1, page=1)
-    second_page = render_error_list(store, limit=1, page=2)
+    first_page = render_log_list(store, limit=1, page=1)
+    second_page = render_log_list(store, limit=1, page=2)
 
     assert "newer error" in first_page
     assert "older error" not in first_page
-    assert 'href="/errors?page=2"' in first_page
+    assert 'href="/logs?page=2"' in first_page
     assert "1-1" in first_page
     assert "1 / 2" in first_page
     assert "older error" in second_page
     assert "newer error" not in second_page
-    assert 'href="/errors"' in second_page
+    assert 'href="/logs"' in second_page
     assert "2-2" in second_page
     assert "2 / 2" in second_page
 
 
-def test_render_error_list_marks_sent_trigger_errors_resolved(tmp_path: Path):
+def test_render_log_list_marks_sent_trigger_errors_resolved(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.record_error(
         "cid-1",
@@ -3772,10 +3814,28 @@ def test_render_error_list_marks_sent_trigger_errors_resolved(tmp_path: Path):
     )
     store.record_sent_reply("cid-1", "msg-1", "先按这个口径回复。")
 
-    html = render_error_list(store)
+    html = render_log_list(store)
 
     assert "resolved: sent" in html
     assert '<span class="pill status-active">active</span>' not in html
+
+
+def test_logs_route_renders_logs_and_errors_route_remains_compatible(tmp_path: Path):
+    db_path = tmp_path / "worker.sqlite3"
+    store = AutoReplyStore(db_path)
+    store.record_error("cid-1", "msg-1", "send", "authorization required")
+    client = TestClient(create_audit_app(db_path))
+
+    logs_response = client.get("/logs")
+    errors_response = client.get("/errors")
+
+    assert logs_response.status_code == 200
+    assert "Logs" in logs_response.text
+    assert "authorization required" in logs_response.text
+    assert '<span class="nav-item active" aria-current="page">Logs</span>' in logs_response.text
+    assert errors_response.status_code == 200
+    assert "Logs" in errors_response.text
+    assert "authorization required" in errors_response.text
 
 
 def test_run_audit_web_uses_stable_uvicorn_protocols(monkeypatch, tmp_path: Path):
