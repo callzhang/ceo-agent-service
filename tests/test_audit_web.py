@@ -3756,6 +3756,10 @@ def test_render_log_list_shows_recent_operations(tmp_path: Path):
     html = render_log_list(store)
 
     assert "Logs" in html
+    assert 'class="log-feed"' in html
+    assert 'class="log-item"' in html
+    assert 'class="log-main"' in html
+    assert "<table>" not in html
     assert "Reply" in html
     assert "Task input" in html
     assert "Task update" in html

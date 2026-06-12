@@ -373,6 +373,19 @@ a.nav-item:hover{color:var(--ink);text-decoration:none;border-color:var(--ink)}
 .action-state-pending,.action-state-processing,.action-state-dry-run,.action-state-commented{background:rgba(55,114,207,.10);color:#245aa5;border-color:rgba(55,114,207,.24)}
 .action-state-tentative,.action-state-returned{background:rgba(195,125,13,.12);color:#8a5a08;border-color:rgba(195,125,13,.24)}
 .action-state-failed,.action-state-blocked,.action-state-declined,.action-state-rejected{background:rgba(212,86,86,.12);color:#9a2f2f;border-color:rgba(212,86,86,.24)}
+.log-feed{display:grid;gap:8px}
+.log-item{display:grid;gap:8px;padding:11px 12px;border:1px solid var(--hairline);border-radius:8px;background:var(--canvas)}
+.log-main{display:grid;gap:8px;min-width:0}
+.log-head{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;align-items:start}
+.log-title{display:flex;align-items:center;gap:8px;min-width:0;flex-wrap:wrap}
+.log-action{min-width:0;color:var(--ink);font-size:14px;font-weight:760;line-height:1.35;overflow-wrap:anywhere;word-break:break-word}
+.log-time{color:var(--steel);font-family:"Geist Mono","SF Mono",Menlo,Consolas,monospace;font-size:11px;font-weight:700;line-height:1.35;text-align:right;white-space:nowrap}
+.log-meta{display:flex;gap:6px 10px;flex-wrap:wrap;min-width:0;color:var(--steel);font-family:"Geist Mono","SF Mono",Menlo,Consolas,monospace;font-size:11px;font-weight:700;line-height:1.35}
+.log-context{min-width:0;overflow-wrap:anywhere;word-break:break-word}
+.log-body{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:8px}
+.log-field{min-width:0;padding:8px 9px;border:1px solid var(--hairline-soft);border-radius:7px;background:var(--surface-soft)}
+.log-label{margin-bottom:3px;color:var(--steel);font-size:11px;font-weight:800;line-height:1.25;text-transform:uppercase}
+.log-value{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;overflow:hidden;color:var(--charcoal);font-size:12px;line-height:1.45;overflow-wrap:anywhere;word-break:break-word}
 .quality-warning{border-color:rgba(212,86,86,.28);background:rgba(212,86,86,.08)}
 .quality-warning ul{margin:8px 0 0;padding-left:20px;color:#8a2626}
 .context-only-info{display:inline-flex;align-items:center;gap:8px}
@@ -421,7 +434,7 @@ label{display:block;margin:14px 0 7px;color:var(--slate);font-size:13px;font-wei
 .danger{background:#9f1d1d}
 .muted{color:var(--steel)}
 @media (max-width:900px){.attempt-head{align-items:flex-start;flex-direction:column}.attempt-title{flex-wrap:wrap}.attempt-side{align-items:flex-start;flex-direction:column;gap:6px}.attempt-main,.attempt-meta{white-space:normal}.attempt-time{text-align:left}.attempt-copy{-webkit-line-clamp:3}.review-grid{grid-template-columns:1fr}.attempt-detail-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
-@media (max-width:760px){.shell,main{padding-left:12px;padding-right:12px}.topbar{align-items:flex-start;flex-direction:column;padding:14px 0}.grid{grid-template-columns:1fr}th,td{padding:10px 12px}.attempt-foot{align-items:flex-start;flex-direction:column}.attempt-conversation-banner{align-items:flex-start;flex-direction:column}.attempt-detail-grid{grid-template-columns:1fr}.todo-detail-fields{grid-template-columns:1fr}.todo-followup-time{margin-left:0}.history-chart{height:220px}.history-table-header{grid-template-columns:1fr}.history-page-links{justify-content:flex-start}.history-limit-form{justify-content:flex-start}}
+@media (max-width:760px){.shell,main{padding-left:12px;padding-right:12px}.topbar{align-items:flex-start;flex-direction:column;padding:14px 0}.grid{grid-template-columns:1fr}th,td{padding:10px 12px}.attempt-foot{align-items:flex-start;flex-direction:column}.attempt-conversation-banner{align-items:flex-start;flex-direction:column}.attempt-detail-grid{grid-template-columns:1fr}.todo-detail-fields{grid-template-columns:1fr}.todo-followup-time{margin-left:0}.log-head{grid-template-columns:1fr}.log-time{text-align:left}.log-body{grid-template-columns:1fr}.history-chart{height:220px}.history-table-header{grid-template-columns:1fr}.history-page-links{justify-content:flex-start}.history-limit-form{justify-content:flex-start}}
 """
 
 FAVICON_HREF = (
@@ -3481,42 +3494,63 @@ def render_log_list(
     total_count = store.count_operation_logs()
     page = _bounded_page(page, limit, total_count)
     offset = _page_offset(page, limit)
-    rows = []
+    items = []
     for log in store.list_operation_logs(limit=limit, offset=offset):
         status = _operation_log_status(store, log)
         status_class = _operation_status_class(status)
-        rows.append(
-            "<tr>"
-            f"<td>{escape(log.id)}</td>"
-            f"<td>{escape(_format_local_time(log.occurred_at))}</td>"
-            f"<td><span class=\"pill\">{escape(log.category)}</span></td>"
-            f"<td>{escape(log.action)}</td>"
-            f"<td><span class=\"pill {status_class}\">{escape(status)}</span></td>"
-            f"<td>{escape(log.context)}</td>"
-            f"<td>{escape(_excerpt(log.summary, 220))}</td>"
-            f"<td>{escape(_excerpt(log.detail, 220))}</td>"
-            "</tr>"
-        )
+        items.append(_operation_log_item(log, status, status_class))
     pagination = _pagination_controls(
         base_path="/logs",
         page=page,
         limit=limit,
         total_count=total_count,
     )
-    table = (
+    body = (
         f"{pagination}"
-        "<table><thead><tr><th>ID</th><th>Time</th><th>Type</th>"
-        "<th>Action</th><th>Status</th><th>Context</th><th>Summary</th>"
-        "<th>Detail</th></tr></thead><tbody>"
-        + "".join(rows)
-        + "</tbody></table>"
+        f"<section class=\"log-feed\">{''.join(items)}</section>"
         f"{_pagination_controls(base_path='/logs', page=page, limit=limit, total_count=total_count, bottom=True)}"
     )
     return render_page(
         "Logs",
-        table,
+        body,
         active_nav="logs",
         user_feedback_pending_count=store.count_pending_user_feedback_items(),
+    )
+
+
+def _operation_log_item(log: OperationLog, status: str, status_class: str) -> str:
+    summary = _excerpt(log.summary, 420) if log.summary else "-"
+    detail = _excerpt(log.detail, 420) if log.detail else "-"
+    return (
+        "<article class=\"log-item\">"
+        "<div class=\"log-main\">"
+        "<div class=\"log-head\">"
+        "<div class=\"log-title\">"
+        f"<span class=\"pill\">{escape(log.category)}</span>"
+        f"<span class=\"log-action\">{escape(log.action or '-')}</span>"
+        f"<span class=\"pill {status_class}\">{escape(status or '-')}</span>"
+        "</div>"
+        f"<time class=\"log-time\">{escape(_format_local_time(log.occurred_at))}</time>"
+        "</div>"
+        "<div class=\"log-meta\">"
+        f"<span>{escape(log.id)}</span>"
+        f"<span class=\"log-context\">{escape(log.context or '-')}</span>"
+        "</div>"
+        "<div class=\"log-body\">"
+        f"{_operation_log_field('Summary', summary)}"
+        f"{_operation_log_field('Detail', detail)}"
+        "</div>"
+        "</div>"
+        "</article>"
+    )
+
+
+def _operation_log_field(label: str, value: str) -> str:
+    return (
+        "<div class=\"log-field\">"
+        f"<div class=\"log-label\">{escape(label)}</div>"
+        f"<div class=\"log-value\">{escape(value)}</div>"
+        "</div>"
     )
 
 
