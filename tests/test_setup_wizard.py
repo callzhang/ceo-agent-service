@@ -220,6 +220,22 @@ def test_build_wizard_status_allows_next_step_after_dependency_done(tmp_path: Pa
     ]
 
 
+def test_build_wizard_status_handles_unknown_persisted_status(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.upsert_setup_wizard_step(
+        step_id="preflight",
+        status="stale",
+        summary="old state",
+    )
+
+    status = build_wizard_status(store)
+    steps = {step.step_id: step for step in status.steps}
+
+    assert steps["preflight"].status == "failed"
+    assert steps["preflight"].summary == "Invalid persisted status: stale"
+    assert steps["cli_components"].status == "blocked"
+
+
 def test_redact_setup_output_removes_secrets_and_session_ids():
     text = (
         "Authorization: Bearer abc.def token=secret123 "
@@ -236,3 +252,22 @@ def test_redact_setup_output_removes_secrets_and_session_ids():
     assert "[REDACTED_TOKEN]" in redacted
     assert "[REDACTED_SESSION]" in redacted
     assert "[REDACTED_PATH]" in redacted
+
+
+def test_redact_setup_output_removes_common_secret_shapes_and_tmp_paths():
+    text = (
+        'api_key: sk-abc secret: nope token: abc "token": "json-secret" '
+        "apiKey=camel /tmp/config.toml /private/tmp/agent.log"
+    )
+
+    redacted = redact_setup_output(text)
+
+    assert "sk-abc" not in redacted
+    assert "nope" not in redacted
+    assert "abc" not in redacted
+    assert "json-secret" not in redacted
+    assert "camel" not in redacted
+    assert "/tmp/config.toml" not in redacted
+    assert "/private/tmp/agent.log" not in redacted
+    assert redacted.count("[REDACTED_TOKEN]") == 5
+    assert redacted.count("[REDACTED_PATH]") == 2

@@ -2,6 +2,7 @@ import re
 
 from app.setup_wizard_models import (
     SetupAction,
+    SetupStatus,
     SetupStepDefinition,
     SetupStepStatus,
     SetupWizardStatus,
@@ -10,10 +11,14 @@ from app.store import AutoReplyStore
 
 
 BEARER_RE = re.compile(r"Bearer\s+[A-Za-z0-9._~+/=-]+")
-TOKEN_RE = re.compile(r"(?i)(token|api[_-]?key|secret)=\S+")
+TOKEN_RE = re.compile(
+    r"(?i)([\"']?(?:token|api[_-]?key|apikey|secret)[\"']?\s*[:=]\s*)"
+    r"(?:[\"'][^\"'\s<>]+[\"']|[^\s<>]+)"
+)
 SESSION_RE = re.compile(r"\b[0-9a-f]{8}-[0-9a-f]{4,}(?:-[0-9a-f]{4,})+\b")
 SESSION_KEY_RE = re.compile(r"(?i)session[_-]?id=\S+")
-LOCAL_PATH_RE = re.compile(r"/Users/[^\s'\"<>]+")
+LOCAL_PATH_RE = re.compile(r"(?:/Users|/private/tmp|/tmp)/[^\s'\"<>]+")
+SETUP_STATUS_VALUES = set(SetupStatus.__args__)
 
 
 SETUP_WIZARD_STEPS: tuple[SetupStepDefinition, ...] = (
@@ -202,7 +207,7 @@ def get_step_definition(step_id: str) -> SetupStepDefinition:
 def redact_setup_output(text: str) -> str:
     redacted = BEARER_RE.sub("Bearer [REDACTED_BEARER]", text)
     redacted = TOKEN_RE.sub(
-        lambda match: f"{match.group(1)}=[REDACTED_TOKEN]",
+        lambda match: f"{match.group(1)}[REDACTED_TOKEN]",
         redacted,
     )
     redacted = SESSION_KEY_RE.sub("[REDACTED_SESSION]", redacted)
@@ -243,12 +248,19 @@ def build_wizard_status(store: AutoReplyStore) -> SetupWizardStatus:
             )
             continue
 
+        persisted_status = row["status"] if row else "not_started"
+        if persisted_status not in SETUP_STATUS_VALUES:
+            persisted_status = "failed"
+            summary = f"Invalid persisted status: {row['status']}"
+        else:
+            summary = row["summary"] if row else ""
+
         statuses.append(
             SetupStepStatus(
                 step_id=definition.id,
                 title=definition.title,
-                status=row["status"] if row else "not_started",
-                summary=row["summary"] if row else "",
+                status=persisted_status,
+                summary=summary,
                 available_actions=definition.actions,
                 updated_at=row["updated_at"] if row else "",
             )
