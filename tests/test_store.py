@@ -1061,6 +1061,37 @@ def test_setup_wizard_running_event_is_not_finished(tmp_path):
     assert events[0]["finished_at"] == ""
 
 
+def test_setup_wizard_running_event_ignores_legacy_finished_default(tmp_path):
+    db_path = tmp_path / "worker.sqlite3"
+    with sqlite3.connect(db_path) as db:
+        db.executescript(
+            """
+            create table setup_wizard_events (
+                id integer primary key autoincrement,
+                step_id text not null,
+                action_id text not null,
+                status text not null,
+                summary text not null default '',
+                evidence_json text not null default '{}',
+                stdout_excerpt text not null default '',
+                stderr_excerpt text not null default '',
+                started_at text not null default current_timestamp,
+                finished_at text not null default current_timestamp
+            );
+            """
+        )
+    store = AutoReplyStore(db_path)
+
+    store.record_setup_wizard_event(
+        step_id="mcp",
+        action_id="setup_mcp",
+        status="running",
+    )
+
+    events = store.list_setup_wizard_events("mcp")
+    assert events[0]["finished_at"] == ""
+
+
 def test_setup_wizard_steps_list_has_stable_tie_breaker(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.upsert_setup_wizard_step(step_id="mcp", status="done", summary="ok")

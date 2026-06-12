@@ -3136,9 +3136,10 @@ class AutoReplyStore:
                     summary,
                     evidence_json,
                     stdout_excerpt,
-                    stderr_excerpt
+                    stderr_excerpt,
+                    finished_at
                 )
-                values (?, ?, ?, ?, ?, ?, ?)
+                values (?, ?, ?, ?, ?, ?, ?, case when ? = 'running' then '' else current_timestamp end)
                 """,
                 (
                     step_id,
@@ -3148,6 +3149,7 @@ class AutoReplyStore:
                     evidence_json,
                     stdout_excerpt,
                     stderr_excerpt,
+                    status,
                 ),
             )
             return int(cursor.lastrowid)
