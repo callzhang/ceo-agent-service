@@ -296,6 +296,57 @@ def test_context_messages_block_renders_json_array():
     ]
 
 
+def test_context_messages_block_includes_existing_reactions():
+    context_message = DingTalkMessage(
+        open_conversation_id="cid-1",
+        open_message_id="ctx-1",
+        conversation_title="产品群",
+        single_chat=False,
+        sender_name="Mina",
+        create_time="2026-05-15 12:59:00",
+        content="上文背景",
+        raw_payload={
+            "emotionReplyList": [
+                {"emoji": "OK", "replyUsers": ["明哥"]},
+                {"text": "我去摇人", "replyUsers": ["Alex"]},
+            ]
+        },
+    )
+
+    prompt = build_turn_prompt(
+        DingTalkConversation(
+            open_conversation_id="cid-1",
+            title="产品群",
+            single_chat=False,
+            unread_point=1,
+        ),
+        [
+            DingTalkMessage(
+                open_conversation_id="cid-1",
+                open_message_id="msg-1",
+                conversation_title="产品群",
+                single_chat=False,
+                sender_name="Mina",
+                create_time="2026-05-15 13:00:00",
+                content="@Alex Chen(明哥) 看下",
+            )
+        ],
+        [context_message],
+        style_lines=[],
+        include_thread_prompt=False,
+    )
+
+    json_text = prompt.split("上下文消息（自上次回复后的新信息，最多 20 条）:", 1)[
+        1
+    ].split("\n---", 1)[0]
+    records = json.loads(json_text)
+
+    assert records[0]["reactions"] == [
+        {"reaction": "OK", "users": ["明哥"]},
+        {"reaction": "我去摇人", "users": ["Alex"]},
+    ]
+
+
 def test_message_lines_remove_repeated_card_images_and_shorten_links():
     lines = message_lines(
         DingTalkMessage(
@@ -321,6 +372,30 @@ def test_message_lines_remove_repeated_card_images_and_shorten_links():
         "https://alidocs.dingtalk.com/i/nodes/vy20BglGWOKXmP5zs0OGQn6DWA7depqY"
         in rendered
     )
+
+
+def test_message_lines_include_existing_reactions():
+    lines = message_lines(
+        DingTalkMessage(
+            open_conversation_id="cid-1",
+            open_message_id="msg-1",
+            conversation_title="产品群",
+            single_chat=False,
+            sender_name="Mina",
+            create_time="2026-05-15 13:00:00",
+            content="@Alex Chen(明哥) 看下",
+            raw_payload={
+                "emotionReplyList": [
+                    {"emoji": "OK", "replyUsers": ["明哥"]},
+                    {"emoji": "👍", "replyUsers": ["Mina", "Alex"]},
+                ]
+            },
+        )
+    )
+
+    rendered = "\n".join(lines)
+
+    assert "已有 reaction: OK（明哥）；👍（Mina, Alex）" in rendered
 
 
 def test_sanitize_dingtalk_prompt_text_keeps_malformed_url_text():
@@ -654,6 +729,15 @@ def test_thread_prompt_prefers_reaction_for_low_information_single_chat_closings
     assert "用 `dws_message_reaction` 轻量表达收到或认可" in prompt
     assert "不要为了“礼貌收口”发送“收到”“好的”这类低信息增益文字" in prompt
     assert "确认本身会影响执行责任、交付边界、时间安排、权限/费用/审批等正式事项" in prompt
+
+
+def test_thread_prompt_treats_existing_principal_reaction_as_handled():
+    prompt = ceo_agent_thread_prompt()
+
+    assert "如果“新消息”里显示已有" in prompt
+    assert "或当前用户的 reaction" in prompt
+    assert "通常说明真人已经用轻量方式处理过" in prompt
+    assert "否则输出 no_reply，不要再补发文字" in prompt
 
 
 def test_build_turn_prompt_includes_prefetched_dingtalk_document():

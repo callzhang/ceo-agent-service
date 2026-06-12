@@ -210,6 +210,9 @@ def _context_message_record(message: DingTalkMessage) -> dict:
         if message.quoted_content:
             quoted["content"] = sanitize_dingtalk_prompt_text(message.quoted_content)
         record["quoted"] = quoted
+    reactions = _message_reaction_records(message.raw_payload)
+    if reactions:
+        record["reactions"] = reactions
     return record
 
 
@@ -225,7 +228,71 @@ def message_lines(message: DingTalkMessage) -> list[str]:
         quoted_content = sanitize_dingtalk_prompt_text(message.quoted_content)
         if quoted_content and not _all_lines_present(quoted_content, content):
             lines.append(f"  引用: {quoted_content}")
+    reaction_lines = _message_reaction_lines(message.raw_payload)
+    if reaction_lines:
+        lines.append(f"  已有 reaction: {'；'.join(reaction_lines)}")
     return lines
+
+
+def _message_reaction_lines(raw_payload: dict) -> list[str]:
+    return [
+        _format_message_reaction(record)
+        for record in _message_reaction_records(raw_payload)
+    ]
+
+
+def _message_reaction_records(raw_payload: dict) -> list[dict[str, object]]:
+    raw_reactions = raw_payload.get("emotionReplyList")
+    if not isinstance(raw_reactions, list):
+        return []
+
+    records: list[dict[str, object]] = []
+    for raw_reaction in raw_reactions:
+        if not isinstance(raw_reaction, dict):
+            continue
+        reaction = _first_non_empty_string(
+            raw_reaction,
+            ("emoji", "text", "emotion", "emotionName", "emotionId"),
+        )
+        users = _string_list(raw_reaction.get("replyUsers"))
+        if not reaction and not users:
+            continue
+
+        record: dict[str, object] = {}
+        if reaction:
+            record["reaction"] = reaction
+        if users:
+            record["users"] = users
+        records.append(record)
+    return records
+
+
+def _format_message_reaction(record: dict[str, object]) -> str:
+    reaction = str(record.get("reaction") or "未知")
+    users = record.get("users")
+    if isinstance(users, list) and users:
+        return f"{reaction}（{', '.join(str(user) for user in users)}）"
+    return reaction
+
+
+def _first_non_empty_string(raw: dict, keys: tuple[str, ...]) -> str:
+    for key in keys:
+        value = raw.get(key)
+        if value is None:
+            continue
+        text = str(value).strip()
+        if text:
+            return text
+    return ""
+
+
+def _string_list(value: object) -> list[str]:
+    if isinstance(value, list):
+        return [text for item in value if (text := str(item).strip())]
+    if value is None:
+        return []
+    text = str(value).strip()
+    return [text] if text else []
 
 
 def linked_document_lines(index: int, document: LinkedDocumentContext) -> list[str]:
