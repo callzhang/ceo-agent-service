@@ -18,9 +18,11 @@ displays incoming worker notifications with Chrome's Web Notification API.
 `http://127.0.0.1:8765/notifications` remains available as a hidden
 authorization and diagnostics page, but it is not required for normal operation.
 Clicking the Chrome notification calls the local URL
-`http://127.0.0.1:8765/open-dingtalk?cid=...` in the background; the audit web
-service then runs `/usr/bin/open dingtalk://dingtalkclient/page/conversation?...`.
-The click handler does not open a new browser tab.
+`http://127.0.0.1:8765/open-dingtalk?conversation_id=...` in the background; the
+audit web service then opens a DingTalk `page/link` bridge page inside the
+desktop client. That bridge calls the current DingTalk JSAPI
+`dd.openChatByConversationId` with the message's `openConversationId`. The click
+handler does not open a new browser tab.
 
 If no browser notification page is connected, the worker falls back to an
 AppleScript `display notification` call. That fallback is only a visibility path:

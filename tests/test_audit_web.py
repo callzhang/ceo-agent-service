@@ -1690,16 +1690,16 @@ def test_dingtalk_open_chat_bridge_calls_open_conversation_jsapi(tmp_path: Path)
     assert response.status_code == 200
     assert "https://g.alicdn.com/dingding/dingtalk-jsapi/" in response.text
     assert "dd.openChatByConversationId" in response.text
-    assert "toConversationByOpenConversationId" in response.text
-    assert "biz.chat.toConversation" in response.text
-    assert "for (const [label, invoke] of attempts)" in response.text
-    assert "const ok = await invokeWithCallbackTimeout(label, invoke)" in response.text
+    assert "toConversationByOpenConversationId" not in response.text
+    assert "biz.chat.toConversation" not in response.text
+    assert "invokeWithCallbackTimeout" not in response.text
     assert "if (ok)" in response.text
     assert "/dingtalk/bridge-status" in response.text
     assert "window.dd.ready" in response.text
     assert "dd-ready-timeout" in response.text
     assert "dd.closePage" in response.text
-    assert "全部跳转失败" in response.text
+    assert "当前会话 API" in response.text
+    assert "openChatByConversationId 会话跳转能力" in response.text
     assert "jumpToChat" not in response.text
 
 
