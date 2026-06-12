@@ -615,6 +615,17 @@ def test_thread_prompt_prevents_interjecting_on_group_broadcasts():
     assert "优先用 dws_message_reaction 表达支持" in prompt
 
 
+def test_thread_prompt_prefers_reaction_for_low_information_group_mentions():
+    prompt = ceo_agent_thread_prompt()
+
+    assert "即使对方直接 @明哥" in prompt
+    assert "和当前业务决策、交付、客户、招聘、审批、日程、文档处理无关" in prompt
+    assert "强行发表观点" in prompt
+    assert "用 dws_message_reaction 做机智、贴合上下文的轻量回应" in prompt
+    assert "不要为了显得参与而发送低信息增益文字" in prompt
+    assert "只有需要明确业务判断、承诺、解释原因、给出下一步、纠偏误解或同步具体决定" in prompt
+
+
 def test_thread_prompt_allows_markdown_document_reply():
     prompt = ceo_agent_thread_prompt()
 
