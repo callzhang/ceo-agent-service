@@ -757,6 +757,105 @@ def test_handle_tells_agent_to_use_recovered_openapi_detail(tmp_path: Path):
     assert "`--fields`" in prompts[0]
 
 
+def test_recovered_openapi_detail_retries_if_agent_reads_dws_detail(tmp_path: Path):
+    skill_path = tmp_path / "skill.md"
+    skill_path.write_text("# OA Skill", encoding="utf-8")
+    prompts: list[str] = []
+
+    def fake_executor(command: list[str], prompt: str) -> str:
+        del command
+        prompts.append(prompt)
+        if len(prompts) == 1:
+            return "\n".join(
+                [
+                    json.dumps(
+                        {
+                            "item": {
+                                "type": "tool_call",
+                                "tool_name": "functions.exec_command",
+                                "cmd": "dws oa approval detail proc-1 --format raw",
+                            }
+                        }
+                    ),
+                    _oa_envelope_json(
+                        action="通过",
+                        remark="第一次错误读取 detail。",
+                        summary="不应接受第一次结果。",
+                    ),
+                ]
+            )
+        return _oa_envelope_json(
+            action="通过",
+            remark="已直接使用 OpenAPI 详情。",
+            summary="第二次未重复读取 DWS detail。",
+        )
+
+    runner = OaApprovalReviewClient(
+        workspace=tmp_path,
+        executor=fake_executor,
+        skill_path=skill_path,
+    )
+
+    result = runner.handle(
+        "触发消息",
+        "",
+        "https://aflow.dingtalk.com/detail?procInstId=proc-1&taskId=task-1",
+        approval_detail_text=json.dumps(
+            {"dws_detail_status": {"status": "recovered_by_openapi"}},
+            ensure_ascii=False,
+        ),
+        execute=False,
+    )
+
+    assert result.oa_remark == "已直接使用 OpenAPI 详情。"
+    assert len(prompts) == 2
+    assert "不要再读取 DWS detail" in prompts[1]
+
+
+def test_recovered_openapi_detail_rejects_repeated_dws_detail_read(tmp_path: Path):
+    skill_path = tmp_path / "skill.md"
+    skill_path.write_text("# OA Skill", encoding="utf-8")
+
+    def fake_executor(command: list[str], prompt: str) -> str:
+        del command, prompt
+        return "\n".join(
+            [
+                json.dumps(
+                    {
+                        "item": {
+                            "type": "tool_call",
+                            "tool_name": "functions.exec_command",
+                            "cmd": "dws oa approval detail proc-1 --fields form",
+                        }
+                    }
+                ),
+                _oa_envelope_json(
+                    action="通过",
+                    remark="仍然重复读取 detail。",
+                    summary="不应接受。",
+                ),
+            ]
+        )
+
+    runner = OaApprovalReviewClient(
+        workspace=tmp_path,
+        executor=fake_executor,
+        skill_path=skill_path,
+    )
+
+    with pytest.raises(RuntimeError, match="must not call dws oa approval detail"):
+        runner.handle(
+            "触发消息",
+            "",
+            "https://aflow.dingtalk.com/detail?procInstId=proc-1&taskId=task-1",
+            approval_detail_text=json.dumps(
+                {"dws_detail_status": {"status": "recovered_by_openapi"}},
+                ensure_ascii=False,
+            ),
+            execute=False,
+        )
+
+
 def test_read_only_runner_can_use_local_dws_auth(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("DWS_CLIENT_ID", "wrong-client-id")
     monkeypatch.setenv("DWS_CLIENT_SECRET", "wrong-client-secret")

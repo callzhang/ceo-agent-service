@@ -27,6 +27,10 @@ OA_MUTATING_COMMAND_PATTERN = re.compile(
     r"\bdws\s+oa\s+approval\s+(?:approve|reject|return)\b",
     re.IGNORECASE,
 )
+OA_DETAIL_COMMAND_PATTERN = re.compile(
+    r"\bdws\s+oa\s+approval\s+detail\b",
+    re.IGNORECASE,
+)
 
 
 class OaApprovalResult(BaseModel):
@@ -253,7 +257,27 @@ class OaApprovalReviewClient:
             f"服务侧已读取的审批 API 详情:\n{approval_detail_text}\n\n"
             f"会话上下文:\n{context_text}"
         )
-        return self.run(prompt, session_id=None, allow_side_effects=execute)
+        recovered_by_openapi = _approval_detail_recovered_by_openapi(
+            approval_detail_text
+        )
+        result = self.run(prompt, session_id=None, allow_side_effects=execute)
+        if not recovered_by_openapi:
+            return result
+        try:
+            _validate_no_redundant_oa_detail_read(self.last_audit_tool_events)
+        except RuntimeError:
+            if execute:
+                raise
+            result = self.run(
+                prompt
+                + "\n\n上一次审阅已经拿到 worker 注入的 openapi_detail，"
+                "但又调用了 dws oa approval detail。不要再读取 DWS detail；"
+                "直接使用服务侧材料输出 AgentEnvelope JSON。",
+                session_id=None,
+                allow_side_effects=False,
+            )
+            _validate_no_redundant_oa_detail_read(self.last_audit_tool_events)
+        return result
 
     def _run_once(self, prompt: str, *, allow_side_effects: bool) -> OaApprovalResult:
         run = self.runner.run(
@@ -355,6 +379,29 @@ def _validate_read_only_result(
         command = str(event.get("command") or event.get("cmd") or "")
         if OA_MUTATING_COMMAND_PATTERN.search(command):
             raise RuntimeError("read-only OA approval review attempted a mutating action")
+
+
+def _approval_detail_recovered_by_openapi(approval_detail_text: str) -> bool:
+    try:
+        documents = json.loads(approval_detail_text)
+    except json.JSONDecodeError:
+        return False
+    if not isinstance(documents, dict):
+        return False
+    status = documents.get("dws_detail_status")
+    return isinstance(status, dict) and status.get("status") == "recovered_by_openapi"
+
+
+def _validate_no_redundant_oa_detail_read(
+    audit_tool_events: list[dict[str, str]],
+) -> None:
+    for event in audit_tool_events:
+        command = str(event.get("command") or event.get("cmd") or "")
+        if OA_DETAIL_COMMAND_PATTERN.search(command):
+            raise RuntimeError(
+                "OA detail already recovered by OpenAPI; agent must not call "
+                "dws oa approval detail again"
+            )
 
 
 def parse_oa_approval_json(raw: str, *, allow_legacy: bool = True) -> OaApprovalResult:
