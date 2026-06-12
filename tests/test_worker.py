@@ -5211,6 +5211,75 @@ def test_ding_approval_reminder_injects_openapi_detail_when_dws_form_is_empty(
     assert "3个月内完成 Friday 场景闭环" in detail_text
 
 
+def test_oa_approval_detail_always_includes_openapi_comments(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message(
+        "[Ding]郑威格提醒您审批他的项目立项 "
+        "https://aflow.dingtalk.com/detail?procInstId=proc-1&taskId=task-1",
+        single_chat=True,
+    )
+    dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
+    dws.oa_approval_details["proc-1"] = {
+        "result": {
+            "formValueVOS": [
+                {"name": "项目名称", "value": "奥迪第三曲线项目"}
+            ]
+        }
+    }
+    dws.oa_approval_records["proc-1"] = {
+        "result": {
+            "operationRecords": [
+                {"operationType": "ADD_REMARK", "userId": "principal-user-1"}
+            ]
+        }
+    }
+    dws.oa_approval_tasks["proc-1"] = {
+        "result": {"taskIdList": [{"taskId": "task-1"}]}
+    }
+    dws.openapi_oa_details["proc-1"] = {
+        "process_instance": {
+            "title": "郑威格提交的项目立项全流程（第三曲线）",
+            "form_component_values": [
+                {"name": "项目名称", "value": "奥迪第三曲线项目"}
+            ],
+            "operation_records": [
+                {
+                    "operation_type": "ADD_REMARK",
+                    "userid": "principal-user-1",
+                    "remark": "证据不严谨，需要补充模型对比结论。",
+                }
+            ],
+            "tasks": [
+                {
+                    "taskid": "task-1",
+                    "task_status": "RUNNING",
+                    "userid": "principal-user-1",
+                }
+            ],
+        }
+    }
+    codex = FakeCodex(CodexDecision(action=CodexAction.NO_REPLY))
+    oa_runner = FakeOaApprovalRunner()
+    worker = make_worker(
+        tmp_path,
+        dws,
+        codex,
+        monkeypatch,
+        oa_approval_runner=oa_runner,
+    )
+
+    worker.run_once()
+
+    detail = json.loads(oa_runner.approval_detail_texts[0])
+    assert detail["dws_detail"]["result"]["formValueVOS"][0]["value"] == (
+        "奥迪第三曲线项目"
+    )
+    assert detail["openapi_detail"]["process_instance"]["operation_records"][0][
+        "remark"
+    ] == "证据不严谨，需要补充模型对比结论。"
+
+
 def test_oa_approval_detail_param_error_is_recovered_by_openapi(
     tmp_path: Path, monkeypatch
 ):

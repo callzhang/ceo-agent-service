@@ -2044,12 +2044,12 @@ class DingTalkAutoReplyWorker:
                 documents[key] = reader(process_instance_id)
             except Exception as exc:
                 documents[key] = self._dws_tool_error_payload(exc)
-        if self._oa_detail_needs_openapi(documents.get("dws_detail")):
-            try:
-                documents["openapi_detail"] = self.dws.read_oa_process_instance_openapi(
-                    process_instance_id
-                )
-            except Exception as exc:
+        try:
+            documents["openapi_detail"] = self.dws.read_oa_process_instance_openapi(
+                process_instance_id
+            )
+        except Exception as exc:
+            if self._oa_detail_needs_openapi(documents.get("dws_detail")):
                 documents["openapi_detail"] = self._dws_tool_error_payload(exc)
         self._append_oa_attachment_fallbacks(documents)
         self._annotate_oa_detail_recovery(documents)
