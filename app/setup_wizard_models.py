@@ -1,6 +1,6 @@
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 SetupStatus = Literal[
@@ -16,6 +16,8 @@ SetupActionStatus = Literal["not_started", "running", "done", "failed"]
 
 
 class SetupAction(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
     id: str
     label: str
     step_id: str
@@ -25,12 +27,14 @@ class SetupAction(BaseModel):
 
 
 class SetupStepDefinition(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
     id: str
     title: str
     phase: str
     description: str
-    depends_on: list[str] = Field(default_factory=list)
-    actions: list[SetupAction] = Field(default_factory=list)
+    depends_on: tuple[str, ...] = Field(default_factory=tuple)
+    actions: tuple[SetupAction, ...] = Field(default_factory=tuple)
 
 
 class SetupStepStatus(BaseModel):

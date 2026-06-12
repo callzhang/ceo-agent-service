@@ -1,5 +1,8 @@
+import pytest
+from pydantic import ValidationError
+
 from app.setup_wizard import SETUP_WIZARD_STEPS, get_step_definition
-from app.setup_wizard_models import SetupStepStatus, SetupWizardStatus
+from app.setup_wizard_models import SetupAction, SetupStepStatus, SetupWizardStatus
 
 
 def test_setup_wizard_steps_are_ordered_and_gated():
@@ -14,9 +17,25 @@ def test_setup_wizard_steps_are_ordered_and_gated():
         "launchd",
         "live_send",
     ]
-    assert get_step_definition("mcp").depends_on == ["cli_components"]
-    assert get_step_definition("launchd").depends_on == ["dry_run"]
-    assert get_step_definition("live_send").depends_on == ["dry_run"]
+    assert get_step_definition("mcp").depends_on == ("cli_components",)
+    assert get_step_definition("launchd").depends_on == ("dry_run",)
+    assert get_step_definition("live_send").depends_on == ("dry_run",)
+
+
+def test_setup_wizard_static_definitions_are_immutable():
+    preflight = get_step_definition("preflight")
+
+    with pytest.raises(AttributeError):
+        preflight.actions.append(
+            SetupAction(
+                id="mutate",
+                label="Mutate",
+                step_id="preflight",
+                kind="run",
+            )
+        )
+    with pytest.raises(ValidationError):
+        preflight.actions[0].label = "Mutated"
 
 
 def test_setup_step_status_defaults_to_not_started():
