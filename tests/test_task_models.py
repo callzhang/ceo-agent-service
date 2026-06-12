@@ -119,6 +119,7 @@ def test_task_agent_decision_accepts_project_todo_and_follow_up():
                 {
                     "action": "create",
                     "todo_id": None,
+                    "todo_ref": "source-links",
                     "title": "补齐售前材料来源链接",
                     "owner_user_id": "owner-1",
                     "owner_name": "Alex",
@@ -134,6 +135,7 @@ def test_task_agent_decision_accepts_project_todo_and_follow_up():
             "follow_up_drafts": [
                 {
                     "todo_id": None,
+                    "todo_ref": "source-links",
                     "owner_user_id": "owner-1",
                     "owner_name": "Alex",
                     "target_conversation_id": "cid-1",
@@ -155,4 +157,6 @@ def test_task_agent_decision_accepts_project_todo_and_follow_up():
     assert decision.project.status == ProjectStatus.ACTIVE
     assert decision.project.memory_context.memories[0].uuid == "mem-1"
     assert decision.todo_changes[0].status == TodoStatus.OPEN
+    assert decision.todo_changes[0].todo_ref == "source-links"
+    assert decision.follow_up_drafts[0].todo_ref == "source-links"
     assert decision.follow_up_drafts[0].status == FollowUpDraftStatus.DRAFT

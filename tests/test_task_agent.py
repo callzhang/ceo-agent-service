@@ -267,9 +267,23 @@ def test_follow_up_drafts_are_created_with_risk_check(tmp_path):
                 "status": "active",
                 "memory_context": _memory_context(),
             },
-            "todo_changes": [],
+            "todo_changes": [
+                {
+                    "action": "create",
+                    "todo_ref": "confirm-project-boundary",
+                    "title": "确认项目边界",
+                    "owner_user_id": "owner-1",
+                    "owner_name": "Alex",
+                    "status": "open",
+                    "priority": "P1",
+                    "follow_up_question": "项目目标和 owner 是否确认？",
+                    "completion_evidence": None,
+                    "blocker": "",
+                }
+            ],
             "follow_up_drafts": [
                 {
+                    "todo_ref": "confirm-project-boundary",
                     "owner_user_id": "owner-1",
                     "owner_name": "Alex",
                     "target_conversation_id": "cid-1",
@@ -295,13 +309,106 @@ def test_follow_up_drafts_are_created_with_risk_check(tmp_path):
     )
 
     drafts = store.list_follow_up_drafts(statuses=("draft",))
+    todos = store.list_work_todos(project_id=project_id)
     assert project_id is not None
     assert drafts[0].project_id == project_id
+    assert drafts[0].todo_id == todos[0].id
     assert drafts[0].question_text == "项目目标和 owner 是否确认？"
     assert json.loads(drafts[0].risk_check_json) == {
         "owner_in_group": True,
         "sensitive": False,
     }
+
+
+def test_follow_up_draft_requires_todo_binding(tmp_path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    decision = TaskAgentDecision.model_validate(
+        {
+            "action": "create_project",
+            "project": {
+                "title": "售前知识库建设",
+                "category": "sales",
+                "status": "active",
+                "memory_context": _memory_context(),
+            },
+            "todo_changes": [],
+            "follow_up_drafts": [
+                {
+                    "owner_user_id": "owner-1",
+                    "owner_name": "Alex",
+                    "target_conversation_id": "cid-1",
+                    "target_kind": "group",
+                    "question_text": "项目目标和 owner 是否确认？",
+                    "scheduled_at": "2026-06-08 09:00:00",
+                    "risk_check": {"owner_in_group": True, "sensitive": False},
+                    "status": "draft",
+                }
+            ],
+            "update_summary": "需要追问项目边界。",
+            "merge_reason": "",
+            "memory_recall_used": True,
+            "confidence": 0.7,
+        }
+    )
+
+    with pytest.raises(ValueError, match="follow_up_draft requires todo_id or todo_ref"):
+        apply_task_agent_decision(
+            store,
+            summary_input_id=0,
+            work_item=_work_item(),
+            decision=decision,
+        )
+
+
+def test_follow_up_draft_rejects_todo_from_another_project(tmp_path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    other_project_id = store.create_work_project(
+        title="另一个项目",
+        category="sales",
+        status="active",
+    )
+    other_todo_id = store.create_work_todo(
+        project_id=other_project_id,
+        title="不属于当前项目的 TODO",
+        owner_user_id="owner-1",
+    )
+    decision = TaskAgentDecision.model_validate(
+        {
+            "action": "create_project",
+            "project": {
+                "title": "售前知识库建设",
+                "category": "sales",
+                "status": "active",
+                "memory_context": _memory_context(),
+            },
+            "todo_changes": [],
+            "follow_up_drafts": [
+                {
+                    "todo_id": other_todo_id,
+                    "owner_user_id": "owner-1",
+                    "owner_name": "Alex",
+                    "target_conversation_id": "cid-1",
+                    "target_kind": "group",
+                    "question_text": "项目目标和 owner 是否确认？",
+                    "scheduled_at": "2026-06-08 09:00:00",
+                    "risk_check": {"owner_in_group": True, "sensitive": False},
+                    "status": "draft",
+                }
+            ],
+            "update_summary": "需要追问项目边界。",
+            "merge_reason": "",
+            "memory_recall_used": True,
+            "confidence": 0.7,
+        }
+    )
+
+    with pytest.raises(ValueError, match="does not belong to project"):
+        apply_task_agent_decision(
+            store,
+            summary_input_id=0,
+            work_item=_work_item(),
+            decision=decision,
+        )
 
 
 def test_follow_up_draft_requires_owner_user_id_at_generation(tmp_path):

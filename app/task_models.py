@@ -157,6 +157,7 @@ class TaskProjectPatch(BaseModel):
 class TodoChange(BaseModel):
     action: Literal["create", "update", "close", "cancel"]
     todo_id: int | None = None
+    todo_ref: str = ""
     title: str = ""
     owner_user_id: str = ""
     owner_name: str = ""
@@ -171,6 +172,7 @@ class TodoChange(BaseModel):
 
 class FollowUpDraftDecision(BaseModel):
     todo_id: int | None = None
+    todo_ref: str = ""
     owner_user_id: str = ""
     owner_name: str = ""
     target_conversation_id: str = ""

@@ -290,6 +290,7 @@
       "required": [
         "action",
         "todo_id",
+        "todo_ref",
         "title",
         "owner_user_id",
         "owner_name",
@@ -308,6 +309,9 @@
         },
         "todo_id": {
           "type": ["integer", "null"]
+        },
+        "todo_ref": {
+          "type": "string"
         },
         "title": {
           "type": "string"
@@ -361,6 +365,7 @@
       "additionalProperties": false,
       "required": [
         "todo_id",
+        "todo_ref",
         "owner_user_id",
         "owner_name",
         "target_conversation_id",
@@ -373,6 +378,9 @@
       "properties": {
         "todo_id": {
           "type": ["integer", "null"]
+        },
+        "todo_ref": {
+          "type": "string"
         },
         "owner_user_id": {
           "type": "string",

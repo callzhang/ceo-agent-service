@@ -132,6 +132,7 @@ def build_task_agent_prompt(work_item: WorkItem, candidate_prompt: str) -> str:
 - 如果上下文无法支撑稳定项目名称，不要创建模糊项目；生成 follow_up_draft 询问项目、目标、owner。
 - 只有消息、会议纪要或文档明确证明 TODO 完成时，才能自动清理 TODO，并写入 completion_evidence。
 - 生成 follow_up_draft 前必须确定 owner_user_id；只有 owner_name 不够。如果上下文缺少 userId，先用 dws 或已有联系人信息补齐；仍无法唯一确定时，不要生成 follow_up_draft。
+- 每个 follow_up_draft 必须绑定一个 TODO：跟进已有 TODO 时填写 todo_id；跟进本次新建 TODO 时，todo_changes.create 和 follow_up_drafts 使用相同的 todo_ref，系统会把 todo_ref 转成真实 todo_id。不能生成没有 TODO 绑定的 follow_up_draft。
 - 跟进时间指导：P0 今天跟进；P1 在 3 天内跟进；P2 在上下文或 OKR 暗示需要时本周内跟进。
 
 输出要求：
@@ -140,7 +141,7 @@ def build_task_agent_prompt(work_item: WorkItem, candidate_prompt: str) -> str:
 - failure_risk 和 failure_risk_score 必须始终填写；低风险一次性事项通常 action=discard。
 - update_project 必须引用候选或已确认项目 id。
 - todo_changes 的 close/cancel/update 必须引用 todo_id。
-- follow_up_drafts 的 owner_user_id 不能为空。
+- follow_up_drafts 的 owner_user_id 不能为空，且必须有 todo_id 或 todo_ref。
 - 非 discard 决策的 memory_recall_used 必须为 true，且 project.memory_context 不能为空。
 
 Work Item JSON:
@@ -233,15 +234,23 @@ def apply_task_agent_decision(
         merge_reason=decision.merge_reason,
         confidence=decision.confidence,
     )
+    todo_refs: dict[str, int] = {}
     for todo_change in decision.todo_changes:
-        _apply_todo_change(
+        todo_id = _apply_todo_change(
             store,
             project_id=project_id,
             update_id=update_id,
             change=todo_change,
         )
+        if todo_change.action == "create" and todo_change.todo_ref.strip():
+            todo_refs[todo_change.todo_ref.strip()] = todo_id
     for draft in decision.follow_up_drafts:
-        _create_follow_up_draft(store, project_id=project_id, draft=draft)
+        _create_follow_up_draft(
+            store,
+            project_id=project_id,
+            draft=draft,
+            todo_refs=todo_refs,
+        )
     return project_id
 
 
@@ -252,6 +261,8 @@ def _validate_task_agent_decision(decision: TaskAgentDecision) -> None:
     for draft in decision.follow_up_drafts:
         if not draft.owner_user_id.strip():
             raise ValueError("follow_up_draft.owner_user_id is required")
+        if draft.todo_id is None and not draft.todo_ref.strip():
+            raise ValueError("follow_up_draft requires todo_id or todo_ref")
     if decision.action == "discard":
         return
     if not decision.memory_recall_used:
@@ -401,6 +412,8 @@ def _todo_change_audit_payload(change: TodoChange) -> dict[str, object]:
     payload: dict[str, object] = {"action": change.action}
     if change.todo_id is not None:
         payload["todo_id"] = change.todo_id
+    if change.todo_ref:
+        payload["todo_ref"] = change.todo_ref
     if change.action == "create":
         payload.update(_todo_values(change))
         return payload
@@ -422,10 +435,17 @@ def _create_follow_up_draft(
     *,
     project_id: int,
     draft: FollowUpDraftDecision,
+    todo_refs: dict[str, int],
 ) -> int:
+    todo_id = _resolve_follow_up_todo_id(
+        store,
+        project_id=project_id,
+        draft=draft,
+        todo_refs=todo_refs,
+    )
     return store.create_follow_up_draft(
         project_id=project_id,
-        todo_id=draft.todo_id or 0,
+        todo_id=todo_id,
         owner_user_id=draft.owner_user_id,
         owner_name=draft.owner_name,
         target_conversation_id=draft.target_conversation_id,
@@ -435,6 +455,30 @@ def _create_follow_up_draft(
         status=_enum_value(draft.status),
         scheduled_at=draft.scheduled_at,
     )
+
+
+def _resolve_follow_up_todo_id(
+    store: AutoReplyStore,
+    *,
+    project_id: int,
+    draft: FollowUpDraftDecision,
+    todo_refs: dict[str, int],
+) -> int:
+    todo_id = draft.todo_id
+    if todo_id is None and draft.todo_ref.strip():
+        todo_id = todo_refs.get(draft.todo_ref.strip())
+        if todo_id is None:
+            raise ValueError(f"unknown follow_up_draft.todo_ref: {draft.todo_ref}")
+    if todo_id is None or todo_id <= 0:
+        raise ValueError("follow_up_draft requires todo_id or todo_ref")
+    todo = store.get_work_todo(todo_id)
+    if todo is None:
+        raise ValueError(f"follow_up_draft.todo_id not found: {todo_id}")
+    if todo.project_id != project_id:
+        raise ValueError(
+            f"follow_up_draft.todo_id {todo_id} does not belong to project {project_id}"
+        )
+    return todo_id
 
 
 def _json_dumps(value: object) -> str:
