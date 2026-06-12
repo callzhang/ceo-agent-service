@@ -3127,6 +3127,162 @@ def test_run_json_does_not_retry_chat_message_send_system_error(monkeypatch):
     assert calls == [command]
 
 
+def test_run_json_retries_chat_message_list_mentions_token_verified_failed(
+    monkeypatch,
+):
+    calls = []
+    sleeps = []
+    token_error_payload = (
+        '{"error":{"code":1,"server_error_code":"TOKEN_VERIFIED_FAILED",'
+        '"message":"business error: success=false","reason":"business_error"}}'
+    )
+    command = [
+        "dws",
+        "chat",
+        "message",
+        "list-mentions",
+        "--start",
+        "2026-06-10T19:00:09.208579-07:00",
+        "--end",
+        "2026-06-11T19:00:09.208579-07:00",
+        "--format",
+        "json",
+    ]
+
+    def fake_run(command_arg, text, capture_output, check, timeout, env=None):
+        calls.append(command_arg)
+        if len(calls) == 1:
+            return SimpleNamespace(returncode=1, stdout="", stderr=token_error_payload)
+        return SimpleNamespace(returncode=0, stdout='{"ok":true}', stderr="")
+
+    monkeypatch.setattr("app.dws_client.subprocess.run", fake_run)
+    monkeypatch.setattr("app.dws_client.time.sleep", sleeps.append)
+
+    assert DwsClient().run_json(command) == {"ok": True}
+    assert calls == [command, command]
+    assert sleeps == [1.0]
+
+
+def test_run_json_retries_chat_message_list_token_verified_failed(monkeypatch):
+    calls = []
+    sleeps = []
+    token_error_payload = (
+        '{"error":{"code":1,"server_error_code":"TOKEN_VERIFIED_FAILED",'
+        '"message":"business error: success=false","reason":"business_error"}}'
+    )
+    command = [
+        "dws",
+        "chat",
+        "message",
+        "list",
+        "--group",
+        "cid-1",
+        "--format",
+        "json",
+    ]
+
+    def fake_run(command_arg, text, capture_output, check, timeout, env=None):
+        calls.append(command_arg)
+        if len(calls) == 1:
+            return SimpleNamespace(returncode=1, stdout="", stderr=token_error_payload)
+        return SimpleNamespace(returncode=0, stdout='{"ok":true}', stderr="")
+
+    monkeypatch.setattr("app.dws_client.subprocess.run", fake_run)
+    monkeypatch.setattr("app.dws_client.time.sleep", sleeps.append)
+
+    assert DwsClient().run_json(command) == {"ok": True}
+    assert calls == [command, command]
+    assert sleeps == [1.0]
+
+
+def test_run_json_retries_calendar_event_get_token_verified_failed(monkeypatch):
+    calls = []
+    sleeps = []
+    token_error_payload = (
+        '{"error":{"code":1,"server_error_code":"TOKEN_VERIFIED_FAILED",'
+        '"message":"business error: success=false","reason":"business_error"}}'
+    )
+    command = [
+        "dws",
+        "calendar",
+        "event",
+        "get",
+        "--id",
+        "event-1",
+        "--format",
+        "json",
+    ]
+
+    def fake_run(command_arg, text, capture_output, check, timeout, env=None):
+        calls.append(command_arg)
+        if len(calls) == 1:
+            return SimpleNamespace(returncode=1, stdout="", stderr=token_error_payload)
+        return SimpleNamespace(returncode=0, stdout='{"ok":true}', stderr="")
+
+    monkeypatch.setattr("app.dws_client.subprocess.run", fake_run)
+    monkeypatch.setattr("app.dws_client.time.sleep", sleeps.append)
+
+    assert DwsClient().run_json(command) == {"ok": True}
+    assert calls == [command, command]
+    assert sleeps == [1.0]
+
+
+def test_run_json_does_not_retry_chat_message_send_token_verified_failed(
+    monkeypatch,
+):
+    calls = []
+    token_error_payload = (
+        '{"error":{"code":1,"server_error_code":"TOKEN_VERIFIED_FAILED",'
+        '"message":"business error: success=false","reason":"business_error"}}'
+    )
+    command = ["dws", "chat", "message", "send", "--group", "cid-1"]
+
+    def fake_run(command_arg, text, capture_output, check, timeout, env=None):
+        calls.append(command_arg)
+        return SimpleNamespace(returncode=1, stdout="", stderr=token_error_payload)
+
+    monkeypatch.setattr("app.dws_client.subprocess.run", fake_run)
+    monkeypatch.setattr("app.dws_client.time.sleep", lambda seconds: None)
+
+    with pytest.raises(DwsError, match="TOKEN_VERIFIED_FAILED"):
+        DwsClient().run_json(command)
+    assert calls == [command]
+
+
+def test_run_json_does_not_retry_calendar_event_respond_token_verified_failed(
+    monkeypatch,
+):
+    calls = []
+    token_error_payload = (
+        '{"error":{"code":1,"server_error_code":"TOKEN_VERIFIED_FAILED",'
+        '"message":"business error: success=false","reason":"business_error"}}'
+    )
+    command = [
+        "dws",
+        "calendar",
+        "event",
+        "respond",
+        "--id",
+        "event-1",
+        "--status",
+        "accepted",
+        "--format",
+        "json",
+        "--yes",
+    ]
+
+    def fake_run(command_arg, text, capture_output, check, timeout, env=None):
+        calls.append(command_arg)
+        return SimpleNamespace(returncode=1, stdout="", stderr=token_error_payload)
+
+    monkeypatch.setattr("app.dws_client.subprocess.run", fake_run)
+    monkeypatch.setattr("app.dws_client.time.sleep", lambda seconds: None)
+
+    with pytest.raises(DwsError, match="TOKEN_VERIFIED_FAILED"):
+        DwsClient().run_json(command)
+    assert calls == [command]
+
+
 def test_run_json_uses_process_exit_code_when_dws_stderr_is_not_json(monkeypatch):
     calls = []
     sleeps = []

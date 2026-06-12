@@ -164,6 +164,19 @@ class DwsClient:
     DISCOVERY_CACHE_REFRESH_CODES = {"6"}
     DOC_READ_RETRYABLE_ERROR_CODES = {"internalError"}
     MESSAGE_LIST_RETRYABLE_ERROR_CODES = {"SYSTEM_ERROR"}
+    TOKEN_VERIFIED_RETRYABLE_ERROR_CODES = {"TOKEN_VERIFIED_FAILED"}
+    TOKEN_VERIFIED_RETRYABLE_READ_COMMANDS = {
+        ("calendar", "event", "get"),
+        ("calendar", "event", "list"),
+        ("chat", "conversation-info"),
+        ("chat", "message", "list"),
+        ("chat", "message", "list-by-ids"),
+        ("chat", "message", "list-by-sender"),
+        ("chat", "message", "list-mentions"),
+        ("chat", "message", "search"),
+        ("chat", "message", "list-unread-conversations"),
+        ("chat", "search"),
+    }
     SENSITIVE_COMMAND_FLAGS = {
         "--robot-code",
         "--webhook",
@@ -2215,6 +2228,12 @@ class DwsClient:
             and command[1:4] == ["chat", "message", "list"]
         ):
             return True
+        if code in cls.TOKEN_VERIFIED_RETRYABLE_ERROR_CODES:
+            command_path = tuple(command[1:])
+            return any(
+                command_path[: len(retryable_path)] == retryable_path
+                for retryable_path in cls.TOKEN_VERIFIED_RETRYABLE_READ_COMMANDS
+            )
         return (
             code in cls.DOC_READ_RETRYABLE_ERROR_CODES
             and len(command) >= 3
