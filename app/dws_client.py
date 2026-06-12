@@ -66,6 +66,16 @@ def extract_recall_key_from_send_result(send_result: dict[str, Any] | None) -> s
 
 
 class DwsError(RuntimeError):
+    LOGIN_ERROR_CODES = {"2", "not_authenticated"}
+    LOGIN_ERROR_MARKERS = (
+        "not_authenticated",
+        "not authenticated",
+        "your session has ended",
+        "failed to refresh token",
+        "未登录",
+        "登录态失效",
+    )
+
     def __init__(self, message: str, code: str | None = None):
         super().__init__(message)
         self.code = code
@@ -79,7 +89,10 @@ class DwsError(RuntimeError):
 
     @property
     def needs_login(self) -> bool:
-        return self.code == "2"
+        if self.code in self.LOGIN_ERROR_CODES:
+            return True
+        message = str(self).casefold()
+        return any(marker in message for marker in self.LOGIN_ERROR_MARKERS)
 
 
 def native_reply_delivery_payload(
@@ -2423,6 +2436,14 @@ class DwsClient:
             return None
         if not isinstance(payload, dict):
             return None
+        dotted_error_code = payload.get("error.code")
+        if isinstance(dotted_error_code, str) and dotted_error_code:
+            return dotted_error_code
+        if isinstance(dotted_error_code, int):
+            return str(dotted_error_code)
+        dotted_error_reason = payload.get("error.reason")
+        if isinstance(dotted_error_reason, str) and dotted_error_reason:
+            return dotted_error_reason
         code = payload.get("code")
         if isinstance(code, str) and code:
             return code

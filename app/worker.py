@@ -1009,7 +1009,7 @@ class DingTalkAutoReplyWorker:
 
     def _ensure_dws_auth_login(self, exc: Exception) -> bool:
         state = self._monitor_dws_auth_login(self._dws_auth_login_state())
-        if state.get("status") in {"running", "completed", "failed"}:
+        if state.get("status") == "running":
             return False
         try:
             process = self.dws.start_auth_login()

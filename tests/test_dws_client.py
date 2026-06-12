@@ -237,6 +237,23 @@ def test_dws_error_marks_exit_code_2_as_login_required():
     assert error.needs_login is True
 
 
+def test_dws_error_marks_session_ended_as_login_required():
+    error = DwsError(
+        "Failed to refresh token: 400 Bad Request: Your session has ended."
+    )
+
+    assert error.needs_login is True
+
+
+def test_dws_error_marks_not_authenticated_reason_as_login_required():
+    error = DwsError(
+        'dws command failed; stderr={"error.reason":"not_authenticated"}',
+        code="not_authenticated",
+    )
+
+    assert error.needs_login is True
+
+
 def test_dws_error_does_not_treat_pat_authorization_as_login_required():
     error = DwsError("PAT requires extra scope", code="PAT_HIGH_RISK_NO_PERMISSION")
 
@@ -258,6 +275,27 @@ def test_run_json_maps_plain_exit_code_2_to_login_required(monkeypatch):
             returncode=2,
             stdout="",
             stderr="dws command failed with exit code 2",
+        )
+
+    monkeypatch.setattr("app.dws_client.subprocess.run", fake_run)
+
+    with pytest.raises(DwsError) as error_info:
+        DwsClient().run_json(["dws", "chat", "message", "list"])
+
+    assert error_info.value.code == "2"
+    assert error_info.value.needs_login is True
+
+
+def test_run_json_maps_dotted_error_code_to_login_required(monkeypatch):
+    def fake_run(command, text, capture_output, check, timeout, env=None):
+        return SimpleNamespace(
+            returncode=1,
+            stdout="",
+            stderr=(
+                '{"error.code":2,'
+                '"error.message":"未登录，请先执行 dws auth login",'
+                '"error.reason":"not_authenticated"}'
+            ),
         )
 
     monkeypatch.setattr("app.dws_client.subprocess.run", fake_run)

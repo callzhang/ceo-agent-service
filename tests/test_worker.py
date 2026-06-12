@@ -1359,6 +1359,39 @@ def test_produce_once_restarts_stale_persisted_dws_auth_login(
     )
 
 
+@pytest.mark.parametrize("previous_status", ["completed", "failed", "authenticated"])
+def test_produce_once_restarts_dws_auth_login_after_previous_terminal_state(
+    tmp_path: Path, monkeypatch, previous_status: str
+):
+    notifications = []
+    dws = FakeDws([], {}, list_error=DwsError("not authenticated", code="2"))
+    worker = make_worker(
+        tmp_path,
+        dws,
+        FakeCodex(CodexDecision(action=CodexAction.SEND_REPLY, reply_text="收到")),
+        monkeypatch,
+    )
+    worker.store.set_service_state(
+        DWS_AUTH_LOGIN_STATE_KEY,
+        json.dumps({"status": previous_status, "pid": 1234}),
+    )
+    monkeypatch.setattr(
+        "app.worker.send_macos_notification",
+        lambda **kwargs: notifications.append(kwargs),
+    )
+
+    assert worker.produce_once() == 0
+
+    assert dws.auth_login_starts == 1
+    state = json.loads(worker.store.get_service_state(DWS_AUTH_LOGIN_STATE_KEY))
+    assert state["status"] == "running"
+    assert state["pid"] == 1234
+    assert any(
+        notification["title"] == "CEO DWS auth login required"
+        for notification in notifications
+    )
+
+
 def test_produce_once_marks_dws_auth_healthy_after_success(
     tmp_path: Path, monkeypatch
 ):
