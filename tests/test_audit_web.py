@@ -827,7 +827,7 @@ def test_tasks_page_renders_projects_and_todos_without_global_followups(tmp_path
     assert 'title: "Progress"' in html
     assert "progress-bar" in html
     assert 'title: "Open"' not in html
-    assert "rowClick:" in html
+    assert 'table.on("rowClick"' in html
     assert "window.location.href = row.getData().detailUrl" in html
     assert "<a class=\"task-project-title\"" not in html
     assert 'title: "ToDos", field: "todoCount", minWidth: 320, widthGrow: 2' in html

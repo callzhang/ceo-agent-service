@@ -2641,9 +2641,12 @@ def _task_tabulator_script() -> str:
       {{title: "Progress", field: "progressRatio", width: 136, sorter: "number", hozAlign: "left", formatter: progressCell}},
       {{title: "ToDos", field: "todoCount", minWidth: 320, widthGrow: 2, sorter: "number", variableHeight: true, formatter: todoCell}},
     ],
-    rowClick: (_event, row) => {{
-      window.location.href = row.getData().detailUrl;
-    }},
+  }});
+  table.on("rowClick", (event, row) => {{
+    if (event.target.closest("a,button,input,select,textarea,label")) {{
+      return;
+    }}
+    window.location.href = row.getData().detailUrl;
   }});
 
   const activeRows = () => table.getRows("active");
