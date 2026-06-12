@@ -2963,7 +2963,7 @@ class AutoReplyStore:
                     'follow-up:' || id as id,
                     'follow_up_drafts' as source_table,
                     id as source_id,
-                    coalesce(nullif(sent_at, ''), nullif(scheduled_at, ''), created_at) as occurred_at,
+                    coalesce(nullif(sent_at, ''), created_at) as occurred_at,
                     'Follow-up' as category,
                     target_kind as action,
                     status as status,

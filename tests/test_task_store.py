@@ -258,3 +258,52 @@ def test_scan_state_round_trip(tmp_path: Path):
     assert updated_state["last_success_at"] == "2026-06-08 10:00:00"
     assert updated_state["cursor_json"] == '{"last_id":"m2"}'
     assert updated_state["last_error"] == "boom"
+
+
+def test_operation_logs_sort_follow_up_by_operation_time_not_schedule(tmp_path: Path):
+    store = _store(tmp_path)
+    project_id = store.create_work_project(
+        title="售前知识库建设",
+        category="sales",
+        status="active",
+        priority="P1",
+        risk_level="medium",
+    )
+    draft_id = store.create_follow_up_draft(
+        project_id=project_id,
+        todo_id=1,
+        owner_name="Alex",
+        target_kind="group",
+        target_conversation_id="cid-1",
+        question_text="进展如何？",
+        scheduled_at="2099-01-01 10:00:00",
+        status="draft",
+    )
+    attempt_id = store.record_reply_attempt(
+        conversation_id="cid-2",
+        conversation_title="融资群",
+        trigger_message_id="msg-2",
+        trigger_sender="Lily",
+        trigger_text="@Alex 这个怎么看？",
+        action="send_reply",
+        sensitivity_kind="general",
+        draft_reply_text="先按这个口径回复。",
+    )
+    with store._connect() as db:
+        db.execute(
+            "update follow_up_drafts set created_at='2026-06-01 10:00:00' where id=?",
+            (draft_id,),
+        )
+        db.execute(
+            """
+            update reply_attempts
+            set created_at='2026-06-02 10:00:00',
+                updated_at='2026-06-02 10:00:00'
+            where id=?
+            """,
+            (attempt_id,),
+        )
+
+    logs = store.list_operation_logs(limit=2)
+
+    assert [log.category for log in logs] == ["Reply", "Follow-up"]
