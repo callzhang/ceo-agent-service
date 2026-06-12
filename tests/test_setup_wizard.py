@@ -7,6 +7,9 @@ from pydantic import ValidationError
 from app.setup_wizard import (
     SETUP_WIZARD_STEPS,
     build_wizard_status,
+    check_data_corpus,
+    check_service_config,
+    check_work_profile,
     get_step_definition,
     redact_setup_output,
 )
@@ -271,3 +274,64 @@ def test_redact_setup_output_removes_common_secret_shapes_and_tmp_paths():
     assert "/private/tmp/agent.log" not in redacted
     assert redacted.count("[REDACTED_TOKEN]") == 5
     assert redacted.count("[REDACTED_PATH]") == 2
+
+
+def test_check_service_config_detects_missing_env(tmp_path: Path):
+    result = check_service_config(repo_root=tmp_path)
+
+    assert result.status == "needs_action"
+    assert result.summary == ".env is missing."
+    assert result.evidence["env_exists"] is False
+
+
+def test_check_service_config_accepts_env_and_directories(tmp_path: Path):
+    (tmp_path / ".env").write_text(
+        "CEO_WORKSPACE=workspace\nCEO_WORKER_DB=data/auto-reply.sqlite3\nCEO_CORPUS_DIR=corpus\nCEO_NOT_SEND_MESSAGE=1\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "workspace").mkdir()
+    (tmp_path / "data").mkdir()
+    (tmp_path / "corpus").mkdir()
+
+    result = check_service_config(repo_root=tmp_path)
+
+    assert result.status == "done"
+    assert result.summary == "Service config and runtime directories are ready."
+    assert result.evidence["dry_run_enabled"] is True
+
+
+def test_check_data_corpus_requires_style_corpus(tmp_path: Path):
+    result = check_data_corpus(repo_root=tmp_path)
+
+    assert result.status == "needs_action"
+    assert result.summary == "corpus/style_corpus.csv is missing."
+
+
+def test_check_work_profile_requires_profile_and_evidence(tmp_path: Path):
+    result = check_work_profile(repo_root=tmp_path)
+
+    assert result.status == "needs_action"
+    assert result.summary == "profiles/work_profile.md is missing."
+
+
+def test_check_work_profile_flags_leaked_local_path(tmp_path: Path):
+    (tmp_path / "profiles").mkdir()
+    (tmp_path / "data" / "profile-evidence").mkdir(parents=True)
+    (tmp_path / "corpus").mkdir()
+    (tmp_path / "profiles" / "work_profile.md").write_text(
+        "Evidence from /Users/derek/Documents/private.md",
+        encoding="utf-8",
+    )
+    (tmp_path / "data" / "profile-evidence" / "evidence_index.jsonl").write_text(
+        "{}\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "corpus" / "style_corpus.csv").write_text(
+        "source,text\n",
+        encoding="utf-8",
+    )
+
+    result = check_work_profile(repo_root=tmp_path)
+
+    assert result.status == "failed"
+    assert result.summary == "profiles/work_profile.md contains sensitive local evidence."
