@@ -817,13 +817,20 @@ def test_tasks_page_renders_projects_and_todos_without_global_followups(tmp_path
     assert row["category"] == "sales"
     assert row["priority"] == "P1"
     assert row["riskLevel"] == "medium"
-    assert row["openSummary"] == "1 (50%)"
+    assert row["progressSummary"] == "1/2 (50%)"
     assert row["detailUrl"] == f"/tasks/{project_id}"
     assert row["todos"][0]["title"] == "补齐来源链接"
     assert row["todos"][0]["due"].startswith("2026-06-20")
     assert row["todos"][0]["done"] is False
     assert row["todos"][1]["title"] == "整理销售材料"
     assert row["todos"][1]["done"] is True
+    assert 'title: "Progress"' in html
+    assert "progress-bar" in html
+    assert 'title: "Open"' not in html
+    assert "rowClick:" in html
+    assert "window.location.href = row.getData().detailUrl" in html
+    assert "<a class=\"task-project-title\"" not in html
+    assert 'title: "ToDos", field: "todoCount", minWidth: 320, widthGrow: 2' in html
 
 
 def test_tasks_page_todo_cell_limits_visible_items(tmp_path: Path):
@@ -1072,7 +1079,7 @@ def test_tasks_page_filters_by_status_and_sorts_by_other_columns(tmp_path: Path)
 
     filtered_html = render_tasks_page(store, task_state="completed")
     owner_html = render_tasks_page(store, sort="owner_asc")
-    open_html = render_tasks_page(store, sort="open_desc")
+    progress_html = render_tasks_page(store, sort="progress_desc")
     todos_html = render_tasks_page(store, sort="todos_desc")
 
     assert "Bravo" in filtered_html
@@ -1081,10 +1088,10 @@ def test_tasks_page_filters_by_status_and_sorts_by_other_columns(tmp_path: Path)
     assert task_script_json(filtered_html, "tasks-states") == ["in progress", "completed"]
     assert 'headerFilterValue: initial.taskState || ""' in filtered_html
     assert task_script_json(owner_html, "tasks-initial-state")["sort"] == "owner_asc"
-    assert task_script_json(open_html, "tasks-initial-state")["sort"] == "open_desc"
+    assert task_script_json(progress_html, "tasks-initial-state")["sort"] == "progress_desc"
     assert task_script_json(todos_html, "tasks-initial-state")["sort"] == "todos_desc"
     assert '"owner_asc": ["owner", "asc"]' in owner_html
-    assert '"open_desc": ["openCount", "desc"]' in open_html
+    assert '"progress_desc": ["progressRatio", "desc"]' in progress_html
     assert '"todos_desc": ["todoCount", "desc"]' in todos_html
 
 
@@ -1220,9 +1227,12 @@ def test_task_project_detail_renders_project_todos_and_sources(tmp_path: Path):
     assert "reply_attempt:7" in html
     assert "新增待办" in html
     assert "来源链接补齐到哪一步了" in html
-    assert html.count('class="column-sized-table"') == 3
+    assert html.count('class="column-sized-table"') == 4
     assert html.count('<col style="width:118px">') == 2
-    assert '<col style="width:124px">' in html
+    assert '<col style="width:240px">' in html
+    assert '<span id="todo-' in html
+    assert f'<a href="#todo-{todo_id}">#{todo_id}</a>' in html
+    assert "<td>-</td>" in html
 
 
 def test_tasks_route_renders_page(tmp_path: Path):

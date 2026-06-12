@@ -195,6 +195,10 @@ th{background:var(--surface-soft);color:var(--steel);font-size:12px;font-weight:
 .todo-copy{display:grid;gap:2px;min-width:0}
 .todo-due{color:var(--steel);font-family:"Geist Mono","SF Mono",Menlo,Consolas,monospace;font-size:11px;line-height:1.3}
 .todo-total{color:var(--steel);font-family:"Geist Mono","SF Mono",Menlo,Consolas,monospace;font-size:11px;font-weight:700;line-height:1.3}
+.progress-cell{display:grid;gap:5px;min-width:0}
+.progress-meter{height:6px;border-radius:999px;background:var(--surface-soft);overflow:hidden}
+.progress-bar{height:100%;border-radius:999px;background:#3772cf}
+.progress-label{color:var(--steel);font-family:"Geist Mono","SF Mono",Menlo,Consolas,monospace;font-size:11px;font-weight:800;line-height:1.25;white-space:nowrap}
 .task-state{display:inline-flex;align-items:center;height:24px;padding:0 8px;border:1px solid var(--hairline);border-radius:999px;background:var(--surface-soft);font-size:12px;font-weight:800;line-height:1;white-space:nowrap}
 .task-state.completed{background:#ddfff6;border-color:rgba(0,180,138,.46);color:#005b49}
 .task-state.over-due{background:rgba(212,86,86,.12);border-color:rgba(212,86,86,.24);color:#9a2f2f}
@@ -210,6 +214,7 @@ th{background:var(--surface-soft);color:var(--steel);font-size:12px;font-weight:
 .tasks-tabulator .tabulator-header-filter input,.tasks-tabulator .tabulator-header-filter select{height:28px;border:1px solid var(--hairline);border-radius:7px;background:var(--canvas);color:var(--ink);font-size:12px}
 .tasks-tabulator .tabulator-row{border-bottom:1px solid var(--hairline)}
 .tasks-tabulator .tabulator-row.tabulator-row-even{background:#fbfcfd}
+.tasks-tabulator .tabulator-row.tabulator-selectable{cursor:pointer}
 @media (hover:hover) and (pointer:fine){.tasks-tabulator .tabulator-row.tabulator-selectable:hover{background-color:#f5faff}}
 .tasks-tabulator .tabulator-row .tabulator-cell{height:auto!important;border-right:1px solid var(--hairline);padding:9px 10px;white-space:normal!important;overflow:visible;text-overflow:clip;overflow-wrap:anywhere;word-break:break-word}
 .tasks-tabulator .tabulator-footer{display:none}
@@ -2358,6 +2363,7 @@ def _json_script_payload(value) -> str:
 
 def _task_row_payload(project, todos) -> dict:
     open_count, open_ratio = _task_open_summary(todos)
+    progress_count, progress_ratio = _task_progress_summary(todos)
     state = _task_table_state(project, todos)
     todo_payloads = []
     for todo in todos:
@@ -2388,6 +2394,10 @@ def _task_row_payload(project, todos) -> dict:
         "openCount": open_count,
         "openRatio": open_ratio,
         "openSummary": f"{open_count} ({open_ratio}%)",
+        "progressCount": progress_count,
+        "progressTotal": len(todos),
+        "progressRatio": progress_ratio,
+        "progressSummary": f"{progress_count}/{len(todos)} ({progress_ratio}%)",
         "todoCount": len(todos),
         "todos": todo_payloads,
         "search": "\n".join(_task_project_search_values(project, todos)).casefold(),
@@ -2448,6 +2458,8 @@ def _task_sort_options() -> dict[str, tuple[str, str]]:
         "next_asc": ("nextStep", "asc"),
         "open_desc": ("openCount", "desc"),
         "open_asc": ("openCount", "asc"),
+        "progress_desc": ("progressRatio", "desc"),
+        "progress_asc": ("progressRatio", "asc"),
         "todos_desc": ("todoCount", "desc"),
         "todos_asc": ("todoCount", "asc"),
     }
@@ -2468,6 +2480,14 @@ def _task_open_summary(todos) -> tuple[int, int]:
     if total <= 0:
         return open_count, 0
     return open_count, round(open_count * 100 / total)
+
+
+def _task_progress_summary(todos) -> tuple[int, int]:
+    total = len(todos)
+    done_count = sum(1 for todo in todos if _task_todo_done(todo))
+    if total <= 0:
+        return done_count, 0
+    return done_count, round(done_count * 100 / total)
 
 
 def _task_todo_incomplete(todo) -> bool:
@@ -2572,7 +2592,12 @@ def _task_tabulator_script() -> str:
   const textCell = (value) => `<div class="task-cell-text">${{escapeHtml(value)}}</div>`;
   const projectCell = (cell) => {{
     const row = cell.getRow().getData();
-    return `<a class="task-project-title" href="${{escapeHtml(row.detailUrl)}}">${{escapeHtml(row.title)}}</a>`;
+    return `<div class="task-project-title">${{escapeHtml(row.title)}}</div>`;
+  }};
+  const progressCell = (cell) => {{
+    const row = cell.getRow().getData();
+    const ratio = Math.max(0, Math.min(100, Number(row.progressRatio) || 0));
+    return `<div class="progress-cell"><div class="progress-meter"><div class="progress-bar" style="width:${{ratio}}%"></div></div><div class="progress-label">${{escapeHtml(row.progressSummary)}}</div></div>`;
   }};
   const todoCell = (cell) => {{
     const todos = cell.getRow().getData().todos || [];
@@ -2611,11 +2636,14 @@ def _task_tabulator_script() -> str:
       {{title: "Priority", field: "priorityRank", width: 96, sorter: "number", formatter: (cell) => pill(cell.getRow().getData().priority)}},
       {{title: "Risk", field: "riskRank", width: 88, sorter: "number", formatter: (cell) => pill(cell.getRow().getData().riskLevel)}},
       {{title: "Owner", field: "owner", width: 124, sorter: "string", variableHeight: true, formatter: (cell) => escapeHtml(cell.getValue())}},
-      {{title: "State", field: "currentState", minWidth: 160, widthGrow: 1, sorter: "string", variableHeight: true, formatter: (cell) => textCell(cell.getValue())}},
-      {{title: "Next", field: "nextStep", minWidth: 180, widthGrow: 1.1, sorter: "string", variableHeight: true, formatter: (cell) => textCell(cell.getValue())}},
-      {{title: "Open", field: "openCount", width: 86, sorter: "number", hozAlign: "left", formatter: (cell) => escapeHtml(cell.getRow().getData().openSummary)}},
-      {{title: "ToDos", field: "todoCount", minWidth: 220, widthGrow: 1.25, sorter: "number", variableHeight: true, formatter: todoCell}},
+      {{title: "State", field: "currentState", minWidth: 140, widthGrow: .8, sorter: "string", variableHeight: true, formatter: (cell) => textCell(cell.getValue())}},
+      {{title: "Next", field: "nextStep", minWidth: 150, widthGrow: .9, sorter: "string", variableHeight: true, formatter: (cell) => textCell(cell.getValue())}},
+      {{title: "Progress", field: "progressRatio", width: 136, sorter: "number", hozAlign: "left", formatter: progressCell}},
+      {{title: "ToDos", field: "todoCount", minWidth: 320, widthGrow: 2, sorter: "number", variableHeight: true, formatter: todoCell}},
     ],
+    rowClick: (_event, row) => {{
+      window.location.href = row.getData().detailUrl;
+    }},
   }});
 
   const activeRows = () => table.getRows("active");
@@ -2749,7 +2777,7 @@ def render_task_project_detail(store: AutoReplyStore, project_id: int) -> tuple[
     facts = _task_facts_rows(project.facts_json)
     todo_rows = _task_todo_rows(todos)
     update_rows = _task_update_rows(updates)
-    draft_rows = _task_follow_up_rows(drafts)
+    draft_rows = _task_follow_up_rows(drafts, todos)
 
     body = (
         "<section class=\"card\"><div class=\"card-head\">"
@@ -2775,16 +2803,16 @@ def render_task_project_detail(store: AutoReplyStore, project_id: int) -> tuple[
         f"{_simple_table(('Field', 'Value'), detail_rows)}"
         "</section>"
         "<section class=\"card\"><h2>TODOs</h2>"
-        f"{_simple_table(('ID', 'TODO', 'Owner', 'Status', 'Priority', 'DDL', 'Next follow-up', 'Question', 'Blocker', 'Evidence'), todo_rows) if todo_rows else '<p class=\"muted\">No TODOs recorded.</p>'}"
+        f"{_simple_table(('ID', 'TODO', 'Owner', 'Status', 'Priority', 'DDL', 'Next follow-up', 'Question', 'Blocker', 'Evidence'), todo_rows, column_widths={'ID': '64px', 'TODO': '240px', 'Owner': '110px', 'Status': '110px', 'Priority': '84px', 'DDL': '142px', 'Next follow-up': '142px', 'Question': '220px', 'Blocker': '160px', 'Evidence': '180px'}, html_columns={'ID'}) if todo_rows else '<p class=\"muted\">No TODOs recorded.</p>'}"
         "</section>"
         "<section class=\"card\"><h2>Facts</h2>"
         f"{_simple_table(('Description', 'Source', 'Created', 'Updated'), facts, column_widths={'Source': '118px', 'Created': '132px', 'Updated': '132px'}) if facts else '<p class=\"muted\">No facts recorded.</p>'}"
         "</section>"
         "<section class=\"card\"><h2>Updates</h2>"
-        f"{_simple_table(('Time', 'Source', 'Summary', 'Changes', 'Reason', 'Confidence'), update_rows, column_widths={'Time': '148px', 'Source': '124px', 'Changes': '170px', 'Reason': '150px', 'Confidence': '96px'}) if update_rows else '<p class=\"muted\">No updates recorded.</p>'}"
+        f"{_simple_table(('Time', 'Source', 'Summary', 'Changes', 'Reason', 'Confidence'), update_rows, column_widths={'Time': '148px', 'Source': '118px', 'Summary': '240px', 'Changes': '220px', 'Reason': '180px', 'Confidence': '96px'}) if update_rows else '<p class=\"muted\">No updates recorded.</p>'}"
         "</section>"
         "<section class=\"card\"><h2>Follow-ups</h2>"
-        f"{_simple_table(('Time', 'Owner', 'Target', 'Status', 'Question', 'Risk', 'Result'), draft_rows, column_widths={'Time': '148px', 'Owner': '110px', 'Target': '118px', 'Status': '104px', 'Risk': '170px'}) if draft_rows else '<p class=\"muted\">No follow-ups recorded.</p>'}"
+        f"{_simple_table(('Time', 'Owner', 'TODO', 'Target', 'Status', 'Question', 'Risk', 'Result'), draft_rows, column_widths={'Time': '148px', 'Owner': '110px', 'TODO': '88px', 'Target': '112px', 'Status': '104px', 'Question': '240px', 'Risk': '170px', 'Result': '180px'}, html_columns={'TODO'}) if draft_rows else '<p class=\"muted\">No follow-ups recorded.</p>'}"
         "</section>"
         f"{_collapsible_json_card('Memory context', project.memory_context_json)}"
     )
@@ -2838,9 +2866,10 @@ def _task_todo_rows(todos) -> list[tuple[str, str, str, str, str, str, str, str,
     rows = []
     for todo in todos:
         owner = todo.owner_name or todo.owner_user_id
+        evidence = _task_json_compact(todo.completion_evidence_json, "{}") or "-"
         rows.append(
             (
-                str(todo.id),
+                f"<span id=\"todo-{todo.id}\">{todo.id}</span>",
                 todo.title,
                 owner,
                 str(todo.status),
@@ -2849,7 +2878,7 @@ def _task_todo_rows(todos) -> list[tuple[str, str, str, str, str, str, str, str,
                 _format_local_time(todo.next_follow_up_at) or todo.next_follow_up_at,
                 todo.follow_up_question,
                 todo.blocker,
-                _task_json_compact(todo.completion_evidence_json, "{}"),
+                evidence,
             )
         )
     return rows
@@ -2872,7 +2901,7 @@ def _task_update_rows(updates) -> list[tuple[str, str, str, str, str, str]]:
     return rows
 
 
-def _task_follow_up_rows(drafts) -> list[tuple[str, str, str, str, str, str, str]]:
+def _task_follow_up_rows(drafts, _todos) -> list[tuple[str, str, str, str, str, str, str, str]]:
     rows = []
     for draft in drafts:
         target = (
@@ -2880,10 +2909,14 @@ def _task_follow_up_rows(drafts) -> list[tuple[str, str, str, str, str, str, str
             if draft.target_conversation_id
             else draft.target_kind
         )
+        todo_link = "-"
+        if draft.todo_id:
+            todo_link = f"<a href=\"#todo-{draft.todo_id}\">#{draft.todo_id}</a>"
         rows.append(
             (
                 _format_local_time(draft.scheduled_at) or draft.scheduled_at,
                 draft.owner_name or draft.owner_user_id,
+                todo_link,
                 target,
                 str(draft.status),
                 draft.question_text,
@@ -2908,16 +2941,23 @@ def _simple_table(
     rows: Iterable[Iterable[str]],
     *,
     column_widths: Mapping[str, str] | None = None,
+    html_columns: set[str] | None = None,
 ) -> str:
     header_values = tuple(headers)
     column_widths = column_widths or {}
+    html_columns = html_columns or set()
     colgroup_html = "".join(
         f"<col style=\"width:{escape(column_widths.get(header, 'auto'))}\">"
         for header in header_values
     )
     header_html = "".join(f"<th>{escape(header)}</th>" for header in header_values)
     row_html = "".join(
-        "<tr>" + "".join(f"<td>{escape(value)}</td>" for value in row) + "</tr>"
+        "<tr>"
+        + "".join(
+            f"<td>{value if header in html_columns else escape(value)}</td>"
+            for header, value in zip(header_values, row)
+        )
+        + "</tr>"
         for row in rows
     )
     table_class = ' class="column-sized-table"' if column_widths else ""
