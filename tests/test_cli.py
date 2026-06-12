@@ -9,6 +9,7 @@ import pytest
 from app import cli
 from app.cli import (
     WorkerSettings,
+    backfill_task_memory_context_command,
     build_work_profile_command,
     build_parser,
     build_style_corpus,
@@ -89,6 +90,15 @@ def test_parser_supports_process_work_items():
 
     assert args.command == "process-work-items"
     assert args.max_batches == 3
+
+
+def test_parser_supports_backfill_task_memory_context():
+    args = build_parser().parse_args(
+        ["backfill-task-memory-context", "--max-batches", "2"]
+    )
+
+    assert args.command == "backfill-task-memory-context"
+    assert args.max_batches == 2
 
 
 def test_parser_supports_process_okr_reviews():
@@ -747,6 +757,131 @@ def test_process_work_items_command_respects_zero_max_batches(
     assert processed == 0
     assert capsys.readouterr().out == "process-work-items processed=0\n"
     assert len(AutoReplyStore(db_path).claim_work_summary_inputs(limit=1)) == 1
+
+
+def test_backfill_task_memory_context_command_updates_missing_context(
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    class FakeProjectMemoryContextCodexRunner:
+        last_audit_tool_events = [{"tool": "memory_recall"}]
+
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        def build(self, *, project, todos, updates):
+            assert project.title == "候选人筛选项目"
+            assert [todo.title for todo in todos] == ["确认候选人名单"]
+            assert [update.summary for update in updates] == ["新增候选人筛选待办"]
+            return {
+                "query": "候选人筛选项目 recruiting",
+                "summary": "memory_recall 显示候选人筛选和招聘项目相关。",
+                "memories": [
+                    {
+                        "source": "memory_recall",
+                        "uuid": "mem-candidate",
+                        "text": "历史记录提到候选人筛选项目。",
+                        "summary": "候选人筛选项目已有上下文。",
+                        "created_at": "2026-06-08",
+                    }
+                ],
+            }
+
+    monkeypatch.setattr(
+        cli,
+        "ProjectMemoryContextCodexRunner",
+        FakeProjectMemoryContextCodexRunner,
+    )
+    db_path = tmp_path / "task.sqlite3"
+    store = AutoReplyStore(db_path)
+    project_id = store.create_work_project(
+        title="候选人筛选项目",
+        category="recruiting",
+        status="active",
+        priority="P1",
+        risk_level="medium",
+    )
+    store.create_work_project(
+        title="已有背景项目",
+        category="sales",
+        status="active",
+        priority="P2",
+        risk_level="low",
+        memory_context_json='{"query":"已有","summary":"已有背景","memories":[]}',
+    )
+    todo_id = store.create_work_todo(
+        project_id=project_id,
+        title="确认候选人名单",
+        owner_name="Derek",
+        priority="P1",
+    )
+    store.create_work_update(
+        project_id=project_id,
+        source_type="reply_attempt",
+        source_ref="1",
+        summary="新增候选人筛选待办",
+    )
+
+    updated = backfill_task_memory_context_command(
+        WorkerSettings(db_path=db_path, workspace=tmp_path, max_batches=5)
+    )
+
+    project = AutoReplyStore(db_path).get_work_project(project_id)
+    assert project is not None
+    context = json.loads(project.memory_context_json)
+    assert updated == 1
+    assert context["memories"][0]["uuid"] == "mem-candidate"
+    assert capsys.readouterr().out == (
+        "backfill-task-memory-context updated=1 failed=0\n"
+    )
+    assert [todo.id for todo in AutoReplyStore(db_path).list_work_todos()] == [todo_id]
+
+
+def test_backfill_task_memory_context_command_records_missing_memory_recall(
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    class FakeProjectMemoryContextCodexRunner:
+        last_audit_tool_events = []
+
+        def __init__(self, **kwargs):
+            pass
+
+        def build(self, *, project, todos, updates):
+            return {
+                "query": "候选人筛选项目",
+                "summary": "缺少真实工具事件。",
+                "memories": [],
+            }
+
+    monkeypatch.setattr(
+        cli,
+        "ProjectMemoryContextCodexRunner",
+        FakeProjectMemoryContextCodexRunner,
+    )
+    db_path = tmp_path / "task.sqlite3"
+    store = AutoReplyStore(db_path)
+    store.create_work_project(
+        title="候选人筛选项目",
+        category="recruiting",
+        status="active",
+        priority="P1",
+        risk_level="medium",
+    )
+
+    updated = backfill_task_memory_context_command(
+        WorkerSettings(db_path=db_path, workspace=tmp_path, max_batches=5)
+    )
+
+    assert updated == 0
+    assert capsys.readouterr().out == (
+        "backfill-task-memory-context updated=0 failed=1\n"
+    )
+    errors = AutoReplyStore(db_path).list_errors(limit=1)
+    assert errors[0].kind == "task_memory_backfill"
+    assert "memory_recall tool event" in errors[0].detail
 
 
 def test_scan_task_sources_command_scans_local_and_minutes(

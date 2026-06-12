@@ -354,6 +354,7 @@ def _audit_event_from_payload(payload: Any) -> dict[str, str] | None:
         if is_output
         else _string_value(source, "tool_name")
         or _string_value(source, "name")
+        or _string_value(source, "tool")
         or _string_value(source, "type")
     )
     call_id = _string_value(source, "call_id") or _string_value(payload, "call_id")

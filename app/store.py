@@ -2420,6 +2420,22 @@ class AutoReplyStore:
                 [*filtered.values(), project_id],
             )
 
+    def update_work_project_memory_context(
+        self,
+        project_id: int,
+        memory_context_json: str,
+    ) -> None:
+        with self._connect() as db:
+            db.execute(
+                """
+                update work_projects
+                set memory_context_json=?,
+                    updated_at=current_timestamp
+                where id=?
+                """,
+                (memory_context_json, project_id),
+            )
+
     def get_work_project(self, project_id: int) -> WorkProject | None:
         with self._connect() as db:
             row = db.execute(
@@ -2440,6 +2456,25 @@ class AutoReplyStore:
             query = f"{query} where status in ({placeholders})"
             args.extend(statuses)
         query = f"{query} order by last_activity_at desc, id desc"
+        if limit is not None:
+            query = f"{query} limit ?"
+            args.append(limit)
+        with self._connect() as db:
+            return [
+                WorkProject.model_validate(dict(row)) for row in db.execute(query, args)
+            ]
+
+    def list_work_projects_missing_memory_context(
+        self,
+        limit: int | None = None,
+    ) -> list[WorkProject]:
+        query = """
+            select *
+            from work_projects
+            where trim(coalesce(memory_context_json, '')) in ('', '{}')
+            order by last_activity_at desc, id desc
+        """
+        args: list[int] = []
         if limit is not None:
             query = f"{query} limit ?"
             args.append(limit)

@@ -53,6 +53,11 @@ from app.org_cache import (
 )
 from app.store import AutoReplyStore
 from app.task_agent import TaskAgentCodexRunner, TaskAgentRunner, process_work_item
+from app.task_memory_backfill import (
+    ProjectMemoryContextCodexRunner,
+    validate_project_memory_context,
+)
+from app.task_models import ProjectMemoryContext
 from app.work_profile import (
     build_initial_profile,
     collect_dingtalk_kb_evidence,
@@ -175,6 +180,7 @@ def build_parser() -> argparse.ArgumentParser:
         "consume-once",
         "consume",
         "process-work-items",
+        "backfill-task-memory-context",
         "process-okr-reviews",
         "scan-task-sources",
         "process-follow-ups",
@@ -712,6 +718,53 @@ def process_work_items_command(settings: WorkerSettings) -> int:
             store.record_error(None, None, "task_agent", str(exc))
     print(f"process-work-items processed={processed}", flush=True)
     return processed
+
+
+def backfill_task_memory_context_command(settings: WorkerSettings) -> int:
+    store = AutoReplyStore(settings.db_path)
+    limit = 20 if settings.max_batches is None else settings.max_batches
+    runner = ProjectMemoryContextCodexRunner(
+        workspace=settings.workspace,
+        timeout_seconds=settings.codex_timeout_seconds,
+        idle_timeout_seconds=settings.codex_idle_timeout_seconds,
+    )
+    updated = 0
+    failed = 0
+    for project in store.list_work_projects_missing_memory_context(limit=limit):
+        try:
+            context = ProjectMemoryContext.model_validate(
+                runner.build(
+                    project=project,
+                    todos=store.list_work_todos(project_id=project.id),
+                    updates=store.list_work_updates(project.id),
+                )
+            )
+            validate_project_memory_context(
+                context,
+                getattr(runner, "last_audit_tool_events", None),
+            )
+            store.update_work_project_memory_context(
+                project.id,
+                json.dumps(
+                    context.model_dump(mode="json"),
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                ),
+            )
+            updated += 1
+        except Exception as exc:
+            failed += 1
+            store.record_error(
+                None,
+                None,
+                "task_memory_backfill",
+                f"project_id={project.id}: {exc}",
+            )
+    print(
+        f"backfill-task-memory-context updated={updated} failed={failed}",
+        flush=True,
+    )
+    return updated
 
 
 def process_okr_reviews_command(settings: WorkerSettings) -> int:
@@ -1914,6 +1967,8 @@ def main() -> None:
         )
     elif args.command == "process-work-items":
         process_work_items_command(settings)
+    elif args.command == "backfill-task-memory-context":
+        backfill_task_memory_context_command(settings)
     elif args.command == "process-okr-reviews":
         ensure_live_send_allowed(settings)
         process_okr_reviews_command(settings)

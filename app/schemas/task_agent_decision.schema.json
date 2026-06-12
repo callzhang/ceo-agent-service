@@ -104,7 +104,8 @@
           "type": "string"
         },
         "summary": {
-          "type": "string"
+          "type": "string",
+          "minLength": 1
         },
         "created_at": {
           "type": "string"

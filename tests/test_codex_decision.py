@@ -312,6 +312,26 @@ def test_extract_codex_audit_events_from_jsonl_tool_events():
     ]
 
 
+def test_extract_codex_audit_events_preserves_mcp_tool_name():
+    raw = json.dumps(
+        {
+            "type": "item.completed",
+            "item": {
+                "type": "mcp_tool_call",
+                "server": "codex_apps",
+                "tool": "friday memory_memory_recall",
+                "arguments": {"query": "候选人筛选项目", "limit": 10},
+            },
+        },
+        ensure_ascii=False,
+    )
+
+    events = extract_codex_audit_events(raw)
+
+    assert events[0]["tool"] == "friday memory_memory_recall"
+    assert "候选人筛选项目" in events[0]["input"]
+
+
 def test_extract_codex_session_id_accepts_session_meta():
     raw = json.dumps(
         {
