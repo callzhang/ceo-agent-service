@@ -953,6 +953,16 @@ class DingTalkAutoReplyWorker:
     def _monitor_dws_auth_login(self, state: dict[str, Any]) -> dict[str, Any]:
         process = self._dws_auth_login_process
         if process is None:
+            if state.get("status") == "running" and not self._dws_auth_login_pid_alive(
+                state
+            ):
+                state = {
+                    **state,
+                    "status": "stale",
+                    "error": "dws auth login process is no longer running",
+                    "updated_at": self._now().astimezone(timezone.utc).isoformat(),
+                }
+                self._set_dws_auth_login_state(state)
             return state
         exit_code = process.poll()
         if exit_code is None:
@@ -978,6 +988,19 @@ class DingTalkAutoReplyWorker:
             message=f"dws auth login exited with code {exit_code}",
         )
         return state
+
+    @staticmethod
+    def _dws_auth_login_pid_alive(state: dict[str, Any]) -> bool:
+        pid = state.get("pid")
+        if not isinstance(pid, int) or pid <= 0:
+            return False
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True
+        return True
 
     def _ensure_dws_auth_login(self, exc: Exception) -> bool:
         state = self._monitor_dws_auth_login(self._dws_auth_login_state())
