@@ -1465,6 +1465,50 @@ class DwsClient:
             },
         )
 
+    def download_oa_process_attachment(
+        self,
+        process_instance_id: str,
+        file_id: str,
+        *,
+        config_path: str | None = None,
+    ) -> bytes:
+        attempts = max(self.transient_retry_attempts, 1)
+        last_error: Exception | None = None
+        for attempt in range(attempts):
+            try:
+                payload = self._dingtalk_api_json(
+                    "POST",
+                    "/v1.0/workflow/processInstances/spaces/files/urls/download",
+                    payload={
+                        "processInstanceId": process_instance_id,
+                        "fileId": file_id,
+                    },
+                    config_path=config_path,
+                )
+                result = payload.get("result")
+                if not isinstance(result, dict):
+                    raise DwsError(
+                        "DingTalk OA attachment response did not include result"
+                    )
+                download_uri = result.get("downloadUri")
+                if not isinstance(download_uri, str) or not download_uri:
+                    raise DwsError(
+                        "DingTalk OA attachment response did not include downloadUri"
+                    )
+                with urlopen(
+                    download_uri,
+                    timeout=max(self.timeout_seconds, 90),
+                ) as response:
+                    return response.read()
+            except (OSError, TimeoutError) as exc:
+                last_error = exc
+                if attempt + 1 >= attempts:
+                    break
+                time.sleep(self.transient_retry_delay_seconds * (attempt + 1))
+        if last_error is not None:
+            raise last_error
+        raise DwsError("DingTalk OA attachment download failed")
+
     def read_agoal_objective_rule_list(
         self,
         *,
@@ -2598,24 +2642,45 @@ class DwsClient:
                     conversation_payload.get("singleChat", single_chat)
                 )
                 for message in conversation_messages:
-                    parsed_messages.append(
-                        DwsClient._parse_message(
-                            message,
-                            conversation_title=payload_title,
-                            single_chat=payload_single_chat,
-                        )
+                    parsed_message = DwsClient._parse_message_or_none(
+                        message,
+                        conversation_title=payload_title,
+                        single_chat=payload_single_chat,
                     )
+                    if parsed_message is not None:
+                        parsed_messages.append(parsed_message)
             return parsed_messages
         parsed_messages = []
         for message in messages:
-            parsed_messages.append(
-                DwsClient._parse_message(
-                    message,
-                    conversation_title=conversation_title,
-                    single_chat=single_chat,
-                )
+            parsed_message = DwsClient._parse_message_or_none(
+                message,
+                conversation_title=conversation_title,
+                single_chat=single_chat,
             )
+            if parsed_message is not None:
+                parsed_messages.append(parsed_message)
         return parsed_messages
+
+    @staticmethod
+    def _parse_message_or_none(
+        message: Any, conversation_title: str, single_chat: bool
+    ) -> DingTalkMessage | None:
+        if not isinstance(message, dict):
+            return None
+        required_keys = (
+            "openConversationId",
+            "openMessageId",
+            "sender",
+            "createTime",
+            "content",
+        )
+        if any(key not in message for key in required_keys):
+            return None
+        return DwsClient._parse_message(
+            message,
+            conversation_title=conversation_title,
+            single_chat=single_chat,
+        )
 
     @staticmethod
     def _parse_message(
@@ -3183,7 +3248,7 @@ class DwsClient:
         result = payload.get("result", {})
         records = []
         if isinstance(result, dict):
-            for key in ("list", "items", "processInstances"):
+            for key in ("list", "items", "processInstances", "processInstanceList"):
                 if isinstance(result.get(key), list):
                     records = result[key]
                     break

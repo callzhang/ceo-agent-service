@@ -35,6 +35,18 @@ Expected path:
 ~/.agents/skills/nvwa/SKILL.md
 ```
 
+Checker:
+
+```bash
+test -f ~/.agents/skills/nvwa/SKILL.md && echo "PASS nvwa skill installed"
+```
+
+Satisfies when:
+
+- The command prints `PASS nvwa skill installed`.
+- The skill is local under `~/.agents/skills/nvwa/SKILL.md`.
+- No generated profile has been rebuilt yet; this check only verifies the review
+  skill dependency.
 
 ## Step 1: Refresh The Style Corpus
 
@@ -54,6 +66,21 @@ Append recent DingTalk sent-message examples:
   --workspace /Users/principal/Documents/memory \
   --corpus-dir /Users/principal/Documents/Projects/ceo-agent-service/corpus
 ```
+
+Checker:
+
+```bash
+test -s corpus/style_corpus.csv && echo "PASS style corpus exists"
+test -s corpus/style_profile.md && echo "PASS style profile exists"
+```
+
+Satisfies when:
+
+- `corpus/style_corpus.csv` exists and is non-empty.
+- `corpus/style_profile.md` exists and is non-empty.
+- `build-corpus` output reported scanned local AI meeting-note files.
+- `collect-corpus` output reported the current `dws` sender user and collected
+  records, or explicitly reported `records=0` for a no-new-data run.
 
 ## Step 2: Build The Work Profile
 
@@ -82,6 +109,25 @@ Use these flags when you need a narrower run:
 .venv/bin/ceo-agent build-work-profile --skip-dingtalk-kb
 ```
 
+Checker:
+
+```bash
+test -s data/profile-evidence/evidence_index.jsonl && echo "PASS evidence index exists"
+test -s profiles/work_profile.md && echo "PASS work profile exists"
+test ! -e profiles/work_profile.json && echo "PASS no work_profile.json generated"
+test ! -e profiles/work-skill/SKILL.md && echo "PASS no derived work skill generated"
+test ! -d data/profile-evidence/dingtalk_kb_cache && echo "PASS no DingTalk KB cache directory generated"
+```
+
+Satisfies when:
+
+- `data/profile-evidence/evidence_index.jsonl` exists and is non-empty.
+- `profiles/work_profile.md` exists and is non-empty.
+- The command did not generate `profiles/work_profile.json`.
+- The command did not generate `profiles/work-skill/SKILL.md`.
+- The command did not generate `data/profile-evidence/dingtalk_kb_cache/`.
+- Any skipped source is intentional and visible from the command flags.
+
 ## Outputs
 
 The committed outputs are:
@@ -106,6 +152,22 @@ After `build-work-profile` prepares the evidence and runtime profile file, run a
 Codex session with the Nvwa skill loaded and ask it to rewrite only
 `profiles/work_profile.md` from `data/profile-evidence/evidence_index.jsonl`,
 `corpus/style_corpus.csv`, and `profiles/work_profile.md`.
+
+Checker:
+
+```bash
+test -s profiles/work_profile.md && echo "PASS reviewed work profile exists"
+```
+
+Satisfies when:
+
+- The Nvwa review step explicitly read `data/profile-evidence/evidence_index.jsonl`.
+- The Nvwa review step explicitly read `corpus/style_corpus.csv`.
+- The Nvwa review step explicitly read the initial `profiles/work_profile.md`.
+- `profiles/work_profile.md` is rewritten as a profile, not as a transcript or
+  evidence dump.
+- Claims in the profile can be traced back to evidence records without exposing
+  raw sensitive excerpts.
 
 ## Review Checklist
 
@@ -134,3 +196,17 @@ Run the full local-service suite before committing behavior changes:
 .venv/bin/pytest -q
 ```
 
+Final checker:
+
+```bash
+git status --short profiles data/profile-evidence corpus
+```
+
+Satisfies when:
+
+- `profiles/work_profile.md` appears if the reviewed profile changed.
+- `data/profile-evidence/` runtime evidence is not staged or committed.
+- `corpus/` runtime corpus files are not staged or committed unless the project
+  deliberately changes the corpus policy.
+- Focused tests pass before relying on the regenerated profile.
+- Full local-service tests pass before committing behavior changes.

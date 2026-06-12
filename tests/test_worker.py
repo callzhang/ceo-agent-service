@@ -1,9 +1,11 @@
 from datetime import datetime
 from datetime import timedelta
+from io import BytesIO
 import importlib
 import json
 from pathlib import Path
 import sqlite3
+import zipfile
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -34,7 +36,6 @@ from app.oa_approval import OaApprovalResult
 from app.store import AutoReplyStore
 from app.worker import (
     DWS_AUTH_LOGIN_STATE_KEY,
-    HANDOFF_ACK,
     PROCESSING_ACK,
     DingTalkAutoReplyWorker,
 )
@@ -203,6 +204,8 @@ class FakeDws:
         self.oa_approval_records: dict[str, dict | Exception] = {}
         self.oa_approval_tasks: dict[str, dict | Exception] = {}
         self.openapi_oa_details: dict[str, dict | Exception] = {}
+        self.oa_attachment_downloads: dict[tuple[str, str], bytes | Exception] = {}
+        self.download_oa_attachment_calls: list[tuple[str, str]] = []
         self.upgrade_check_response: dict = {"needs_upgrade": False}
         self.upgrade_error: Exception | None = None
         self.upgrade_check_calls = 0
@@ -722,6 +725,17 @@ class FakeDws:
 
     def read_oa_process_instance_openapi(self, process_instance_id: str) -> dict:
         payload = self.openapi_oa_details.get(process_instance_id, {})
+        if isinstance(payload, Exception):
+            raise payload
+        return payload
+
+    def download_oa_process_attachment(
+        self,
+        process_instance_id: str,
+        file_id: str,
+    ) -> bytes:
+        self.download_oa_attachment_calls.append((process_instance_id, file_id))
+        payload = self.oa_attachment_downloads.get((process_instance_id, file_id), b"")
         if isinstance(payload, Exception):
             raise payload
         return payload
@@ -5138,7 +5152,11 @@ def test_ding_approval_reminder_injects_openapi_detail_when_dws_form_is_empty(
                 {"name": "试用期工作内容和转正要求", "value": "3个月内完成 Friday 场景闭环"}
             ],
             "tasks": [
-                {"taskid": "task-1", "task_status": "RUNNING", "userid": "principal-user-1"}
+                {
+                    "taskid": "task-1",
+                    "task_status": "RUNNING",
+                    "userid": "principal-user-1",
+                }
             ],
         }
     }
@@ -5159,6 +5177,169 @@ def test_ding_approval_reminder_injects_openapi_detail_when_dws_form_is_empty(
     assert "openapi_detail" in detail_text
     assert "试用期工作内容和转正要求" in detail_text
     assert "3个月内完成 Friday 场景闭环" in detail_text
+
+
+def test_oa_approval_detail_param_error_is_recovered_by_openapi(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message(
+        "[Ding]郑威格提醒您审批他的项目立项 "
+        "https://aflow.dingtalk.com/detail?procInstId=proc-1&taskId=task-1",
+        single_chat=True,
+    )
+    dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
+    dws.oa_approval_details["proc-1"] = DwsError(
+        "dws command failed: server_error_code=PARAM_ERROR",
+        code="1",
+    )
+    dws.oa_approval_records["proc-1"] = {
+        "result": {"operationRecords": [{"operationType": "START_PROCESS_INSTANCE"}]}
+    }
+    dws.oa_approval_tasks["proc-1"] = {
+        "result": {"taskIdList": [{"taskId": "task-1"}]}
+    }
+    dws.openapi_oa_details["proc-1"] = {
+        "process_instance": {
+            "title": "郑威格提交的项目立项全流程（第三曲线）",
+            "form_component_values": [
+                {"name": "项目名称", "value": "奥迪第三曲线项目"}
+            ],
+            "tasks": [
+                {
+                    "taskid": "task-1",
+                    "task_status": "RUNNING",
+                    "userid": "principal-user-1",
+                }
+            ],
+        }
+    }
+    codex = FakeCodex(CodexDecision(action=CodexAction.NO_REPLY))
+    oa_runner = FakeOaApprovalRunner()
+    worker = make_worker(
+        tmp_path,
+        dws,
+        codex,
+        monkeypatch,
+        oa_approval_runner=oa_runner,
+    )
+
+    worker.run_once()
+
+    detail = json.loads(oa_runner.approval_detail_texts[0])
+    assert detail["dws_detail"]["error_kind"] == "dws_error"
+    assert "PARAM_ERROR" in detail["dws_detail"]["message"]
+    assert detail["openapi_detail"]["process_instance"]["title"] == (
+        "郑威格提交的项目立项全流程（第三曲线）"
+    )
+    assert detail["dws_detail_recovery"]["status"] == "recovered_by_openapi"
+    assert "instead of retrying the same detail command" in detail[
+        "dws_detail_recovery"
+    ]["message"]
+
+
+def docx_bytes(paragraphs: list[str]) -> bytes:
+    body = "".join(
+        "<w:p><w:r><w:t>"
+        + paragraph
+        + "</w:t></w:r></w:p>"
+        for paragraph in paragraphs
+    )
+    document = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+        f"<w:body>{body}</w:body></w:document>"
+    )
+    buffer = BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr("word/document.xml", document)
+    return buffer.getvalue()
+
+
+def test_oa_approval_detail_searches_and_reads_openapi_attachments(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message("[Ding]郑威格提醒您审批他的项目立项", single_chat=True)
+    dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
+    dws.pending_oa_approvals = [
+        DwsOaApprovalCandidate(
+            process_instance_id="proc-1",
+            title="郑威格提交的项目立项全流程（第三曲线）",
+            process_name="项目立项全流程（第三曲线）",
+        )
+    ]
+    dws.oa_approval_details["proc-1"] = {
+        "result": {"formValueVOS": [{"details": []}]}
+    }
+    dws.openapi_oa_details["proc-1"] = {
+        "process_instance": {
+            "title": "郑威格提交的项目立项全流程（第三曲线）",
+            "form_component_values": [
+                {
+                    "name": "项目实施计划文档链接",
+                    "component_type": "DDAttachment",
+                    "value": json.dumps(
+                        [
+                            {
+                                "fileName": "项目实施计划（第三曲线大模型解决方案）(2)(2)(1).docx",
+                                "fileId": "224596585916",
+                                "spaceId": "671896910",
+                                "fileType": "docx",
+                            }
+                        ],
+                        ensure_ascii=False,
+                    ),
+                }
+            ],
+            "tasks": [
+                {
+                    "taskid": "task-1",
+                    "task_status": "RUNNING",
+                    "userid": "principal-user-1",
+                }
+            ],
+        }
+    }
+    dws.document_search_results["项目实施计划（第三曲线大模型解决方案）"] = [
+        DwsDocumentSearchResult(
+            node_id="doc-1",
+            name="项目实施计划（第三曲线大模型解决方案）",
+            extension="adoc",
+            content_type="ALIDOC",
+        )
+    ]
+    dws.docs["doc-1"] = {
+        "markdown": "## 项目范围\n\n"
+    }
+    dws.oa_attachment_downloads[("proc-1", "224596585916")] = docx_bytes(
+        [
+            "项目范围",
+            "本项目包含奥迪 ADAS 场景挖掘、搜索界面开发和标注平台优化。",
+            "项目里程碑 T+30 交付全量切片数据，T+60 交付完整搜索网页。",
+        ]
+    )
+    codex = FakeCodex(CodexDecision(action=CodexAction.NO_REPLY))
+    oa_runner = FakeOaApprovalRunner()
+    worker = make_worker(
+        tmp_path,
+        dws,
+        codex,
+        monkeypatch,
+        oa_approval_runner=oa_runner,
+    )
+
+    worker.run_once()
+
+    detail = json.loads(oa_runner.approval_detail_texts[0])
+    assert dws.download_oa_attachment_calls == [("proc-1", "224596585916")]
+    assert dws.search_document_calls == [
+        ("项目实施计划（第三曲线大模型解决方案）", 5)
+    ]
+    assert dws.read_doc_calls == ["doc-1"]
+    fallback = detail["oa_attachment_fallbacks"][0]
+    assert fallback["file_id"] == "224596585916"
+    assert "T+60 交付完整搜索网页" in fallback["downloaded_attachment"]["text"]
+    assert fallback["matches"][0]["node_id"] == "doc-1"
+    assert fallback["read_document"]["markdown"] == "## 项目范围\n\n"
 
 
 def test_oa_approval_detail_login_error_is_reported_as_tool_issue(
@@ -8248,7 +8429,7 @@ def test_no_reply_action_does_not_send(tmp_path: Path, monkeypatch):
     assert attempt.codex_reason == "cc only"
 
 
-def test_handoff_sends_ack_dings_self_and_records_message_result(
+def test_handoff_adds_text_emotion_dings_self_and_records_reaction(
     tmp_path: Path, monkeypatch
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
@@ -8269,25 +8450,23 @@ def test_handoff_sends_ack_dings_self_and_records_message_result(
 
     worker.run_once()
 
-    expected_ack = HANDOFF_ACK
-    expected_sent_ack = f"@周俊杰 {expected_ack}"
-    assert final_sent(dws) == [("cid-1", expected_sent_ack)]
-    assert dws.reply_messages == [
-        ("cid-1", "msg-1", "sender-1", expected_sent_ack)
+    assert final_sent(dws) == []
+    assert dws.reply_messages == []
+    assert dws.created_text_emotions == [("我去叫", "我去叫", "im_bg_5")]
+    assert dws.message_text_emotions == [
+        ("cid-1", "msg-1", "我去叫", "created-1", "我去叫", "created-bg")
     ]
-    assert final_sent_at_users(dws) == [["sender-user-1"]]
     assert len(dws.dings) == 1
     assert "Friday" in dws.dings[0]
     assert "不要分身" in dws.dings[0]
     assert "previous split-person reply: none" in dws.dings[0]
     attempt = store.get_reply_attempt(1)
     assert attempt is not None
-    assert attempt.final_reply_text == expected_sent_ack
-    assert attempt.send_status == "sent"
+    assert attempt.final_reply_text == ""
+    assert attempt.send_status == "reacted"
+    assert attempt.send_error == "text_emotion: 我去叫"
     sent_reply = store.get_sent_reply("cid-1", "msg-1")
-    assert sent_reply is not None
-    assert '"kind": "native_reply"' in sent_reply.send_result_json
-    assert '"ref_message_id": "msg-1"' in sent_reply.send_result_json
+    assert sent_reply is None
 
 
 def test_new_principal_mention_is_processed(
@@ -9713,7 +9892,10 @@ def test_handoff_ding_failure_does_not_block_ack(
 
     worker.run_once()
 
-    assert final_sent(dws) == [("cid-1", f"@周俊杰 {HANDOFF_ACK}")]
+    assert final_sent(dws) == []
+    assert dws.message_text_emotions == [
+        ("cid-1", "msg-1", "我去叫", "created-1", "我去叫", "created-bg")
+    ]
     assert store.has_seen("msg-1") is True
     assert store.count_errors() == 1
     assert store.count_reply_tasks(status="done") == 1

@@ -639,6 +639,10 @@ def _normalize_okr_review_item(item: object) -> object:
             ),
         )
     )
+    # Some agent runs emit only the final verified score and omit the base; treat
+    # the final as the base (no time discount) so it does not render as "基础 0".
+    if verified_base_score <= 0 and verified_score > 0:
+        verified_base_score = verified_score
     verified_discount_factor = 1.0
     if verified_base_score > 0 and verified_score <= verified_base_score:
         verified_discount_factor = max(0.3, min(1.0, verified_score / verified_base_score))

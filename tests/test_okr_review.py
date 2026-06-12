@@ -382,6 +382,37 @@ def test_normalize_okr_review_domain_payload_accepts_claim_score_alias():
     assert payload.items[0].verified_score == 30
 
 
+def test_normalize_okr_review_item_defaults_verified_base_to_final():
+    # An agent run that emits only the final verified score (no base) must not
+    # render "基础 0"; the base falls back to the final (no discount).
+    normalized = normalize_okr_review_domain_payload(
+        {
+            "person_name": "Claire",
+            "period_label": "2026 Q2",
+            "summary": "已审核。",
+            "items": [
+                {
+                    "objective": "O1",
+                    "kr": "拿到首批付费用户",
+                    "kr_weight": 30,
+                    "employee_claim_score": 25,
+                    "fact_checked_score": 20,
+                    "time_discount": "未适用",
+                    "evidence_used": ["会议证据。"],
+                    "evidence_gaps": "缺付款证据。",
+                    "suggested_follow_up": "补付款记录。",
+                }
+            ],
+        }
+    )
+
+    payload = OkrReviewPayload.model_validate(normalized)
+    assert payload.items[0].claim_score == 25
+    assert payload.items[0].verified_score == 20
+    assert payload.items[0].verified_base_score == 20  # not 0
+    assert payload.items[0].verified_discount_factor == 1.0
+
+
 def test_normalize_okr_review_domain_payload_renders_assessment_and_gaps():
     # A summary dict with overall_assessment + key_gaps must render as readable
     # text, not a raw JSON blob.

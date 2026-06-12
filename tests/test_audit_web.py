@@ -28,6 +28,7 @@ from app.audit_web import (
     render_error_list,
     render_task_project_detail,
     render_tasks_page,
+    render_tutorial_page,
     render_user_feedback_list,
     run_audit_web,
 )
@@ -673,6 +674,7 @@ def test_top_nav_highlights_current_page_and_disables_current_link(tmp_path: Pat
     seed_attempt(store)
 
     history_html = render_attempt_list(store)
+    tutorial_html = render_tutorial_page()
     user_feedback_html = render_user_feedback_list(store)
     config_html = render_config_page()
     codex_html = render_codex_session_list(store)
@@ -681,8 +683,12 @@ def test_top_nav_highlights_current_page_and_disables_current_link(tmp_path: Pat
 
     assert '<span class="nav-item active" aria-current="page">History</span>' in history_html
     assert '<a class="nav-item" href="/">History</a>' not in history_html
+    assert '<a class="nav-item" href="/tutorial">Tutorial</a>' in history_html
     assert '<a class="nav-item" href="/user-feedback">用户反馈</a>' in history_html
     assert '<a class="nav-item" href="/config">Config</a>' in history_html
+
+    assert '<span class="nav-item active" aria-current="page">Tutorial</span>' in tutorial_html
+    assert '<a class="nav-item" href="/tutorial">Tutorial</a>' not in tutorial_html
 
     assert '<span class="nav-item active" aria-current="page">用户反馈</span>' in user_feedback_html
     assert '<a class="nav-item" href="/user-feedback">用户反馈</a>' not in user_feedback_html
@@ -698,6 +704,47 @@ def test_top_nav_highlights_current_page_and_disables_current_link(tmp_path: Pat
 
     assert '<span class="nav-item active" aria-current="page">Tasks</span>' in tasks_html
     assert '<a class="nav-item" href="/tasks">Tasks</a>' not in tasks_html
+
+
+def test_render_tutorial_page_guides_first_time_setup():
+    html = render_tutorial_page()
+
+    assert "初始化 Tutorial" in html
+    assert "Agent Installation Runbook" in html
+    assert "Start in dry-run mode" in html
+    assert "不要让使用者逐条复制终端命令完成安装" in html
+    assert "Phase 0" in html
+    assert "Phase 1" in html
+    assert "Phase 2" in html
+    assert "Memory Connector MCP" in html
+    assert "setup-memory-connector" in html
+    assert "Codex CLI" in html
+    assert "dws auth status" in html
+    assert "CEO_WORKSPACE" in html
+    assert "build-corpus" in html
+    assert "collect-corpus" in html
+    assert "build-work-profile" in html
+    assert "profiles/work_profile.md" in html
+    assert "data/profile-evidence/evidence_index.jsonl" in html
+    assert "Nvwa" in html
+    assert "run-once --not-send-message" in html
+    assert "launchctl" in html
+    assert "CEO_LIVE_SEND_BLOCKERS_ACCEPTED=1" in html
+    assert "/config?tab=system" in html
+    assert "/errors" in html
+    assert "/tasks" in html
+    assert "Tutorial" in html
+    assert "Landing page" not in html
+
+
+def test_tutorial_route_renders_first_time_setup(tmp_path: Path):
+    client = TestClient(create_audit_app(tmp_path / "worker.sqlite3"))
+
+    response = client.get("/tutorial")
+
+    assert response.status_code == 200
+    assert "初始化 Tutorial" in response.text
+    assert '<span class="nav-item active" aria-current="page">Tutorial</span>' in response.text
 
 
 def test_tasks_page_renders_projects_and_todos_without_global_followups(tmp_path: Path):
@@ -717,7 +764,7 @@ def test_tasks_page_renders_projects_and_todos_without_global_followups(tmp_path
         title="补齐来源链接",
         status="open",
         priority="P1",
-        deadline_at="2026-06-10 18:00:00",
+        deadline_at="2026-06-20 18:00:00",
     )
     store.create_work_todo(
         project_id=project_id,
@@ -773,7 +820,7 @@ def test_tasks_page_renders_projects_and_todos_without_global_followups(tmp_path
     assert row["openSummary"] == "1 (50%)"
     assert row["detailUrl"] == f"/tasks/{project_id}"
     assert row["todos"][0]["title"] == "补齐来源链接"
-    assert row["todos"][0]["due"].startswith("2026-06-10")
+    assert row["todos"][0]["due"].startswith("2026-06-20")
     assert row["todos"][0]["done"] is False
     assert row["todos"][1]["title"] == "整理销售材料"
     assert row["todos"][1]["done"] is True
@@ -3101,7 +3148,18 @@ def test_handle_reviewed_message_reply_matches_sender_group_and_text(
             ]
 
         def read_recent_messages(self, conversation):
-            return []
+            return [
+                DingTalkMessage(
+                    open_conversation_id=conversation.open_conversation_id,
+                    open_message_id=f"sent-{index}",
+                    conversation_title=conversation.title,
+                    single_chat=conversation.single_chat,
+                    sender_name="Alex Chen(明哥)",
+                    create_time="2026-05-25 13:31:00",
+                    content=reply[3],
+                )
+                for index, reply in enumerate(self.reply_messages, start=1)
+            ]
 
         def read_unread_messages(self, conversation):
             return []
@@ -3128,6 +3186,9 @@ def test_handle_reviewed_message_reply_matches_sender_group_and_text(
             ref_message_id,
             ref_sender_open_dingtalk_id,
             text,
+            *,
+            at_open_dingtalk_ids=None,
+            at_open_dingtalk_names=None,
         ):
             self.reply_messages.append(
                 (conversation_id, ref_message_id, ref_sender_open_dingtalk_id, text)
@@ -3209,7 +3270,7 @@ def test_handle_reviewed_message_reply_uses_stored_group_and_recent_message(
         def read_recent_messages(self, conversation):
             assert conversation.open_conversation_id == "cid-site"
             assert conversation.single_chat is False
-            return [
+            messages = [
                 DingTalkMessage(
                     open_conversation_id="cid-site",
                     open_message_id="msg-site-1",
@@ -3222,6 +3283,19 @@ def test_handle_reviewed_message_reply_uses_stored_group_and_recent_message(
                     content="@All 新的官网更新一共16页，请大家打开每一个的html文档",
                 )
             ]
+            messages.extend(
+                DingTalkMessage(
+                    open_conversation_id=conversation.open_conversation_id,
+                    open_message_id=f"sent-{index}",
+                    conversation_title=conversation.title,
+                    single_chat=conversation.single_chat,
+                    sender_name="Alex Chen(明哥)",
+                    create_time="2026-05-28 04:05:00",
+                    content=reply[3],
+                )
+                for index, reply in enumerate(self.reply_messages, start=1)
+            )
+            return messages
 
         def read_unread_messages(self, conversation):
             return []
@@ -3248,6 +3322,9 @@ def test_handle_reviewed_message_reply_uses_stored_group_and_recent_message(
             ref_message_id,
             ref_sender_open_dingtalk_id,
             text,
+            *,
+            at_open_dingtalk_ids=None,
+            at_open_dingtalk_names=None,
         ):
             self.reply_messages.append(
                 (conversation_id, ref_message_id, ref_sender_open_dingtalk_id, text)
@@ -3383,6 +3460,9 @@ def test_handle_reviewed_message_reply_matches_private_message_without_mention(
             ref_message_id,
             ref_sender_open_dingtalk_id,
             text,
+            *,
+            at_open_dingtalk_ids=None,
+            at_open_dingtalk_names=None,
         ):
             self.reply_messages.append(
                 (conversation_id, ref_message_id, ref_sender_open_dingtalk_id, text)
@@ -3498,6 +3578,9 @@ def test_handle_reviewed_message_reply_uses_stored_private_conversation_when_sea
             ref_message_id,
             ref_sender_open_dingtalk_id,
             text,
+            *,
+            at_open_dingtalk_ids=None,
+            at_open_dingtalk_names=None,
         ):
             self.reply_messages.append(
                 (conversation_id, ref_message_id, ref_sender_open_dingtalk_id, text)

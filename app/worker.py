@@ -11,6 +11,7 @@ from io import BytesIO
 from pathlib import Path
 from typing import Any, TypeVar
 from urllib.parse import parse_qs, quote, unquote, urlparse, urlsplit, urlunsplit
+from xml.etree import ElementTree as ET
 
 from pypdf import PdfReader
 
@@ -76,6 +77,7 @@ from app.store import (
 from app.task_models import WorkItem
 
 HANDOFF_ACK = handoff_ack()
+HANDOFF_TEXT_EMOTION = "我去叫"
 # Historical auto-ack marker. Keep filtering it from context, but do not send
 # new processing acknowledgements before final replies.
 PROCESSING_ACK = "收到，我正在处理（by 分身）"
@@ -2026,8 +2028,239 @@ class DingTalkAutoReplyWorker:
                 )
             except Exception as exc:
                 documents["openapi_detail"] = self._dws_tool_error_payload(exc)
+        self._append_oa_attachment_fallbacks(documents)
+        self._annotate_oa_detail_recovery(documents)
         self._annotate_oa_tool_status(documents)
         return json.dumps(documents, ensure_ascii=False)
+
+    def _append_oa_attachment_fallbacks(self, documents: dict[str, Any]) -> None:
+        openapi_detail = documents.get("openapi_detail")
+        if not isinstance(openapi_detail, dict):
+            return
+        process = openapi_detail.get("process_instance")
+        if not isinstance(process, dict):
+            return
+        attachments = self._oa_attachment_records(
+            process.get("form_component_values")
+        )
+        if not attachments:
+            return
+        process_instance_id = str(documents.get("process_instance_id") or "")
+        documents["oa_attachment_fallbacks"] = [
+            self._oa_attachment_fallback(process_instance_id, attachment)
+            for attachment in attachments[:12]
+        ]
+
+    def _oa_attachment_fallback(
+        self,
+        process_instance_id: str,
+        attachment: dict[str, Any],
+    ) -> dict[str, Any]:
+        file_name = str(attachment.get("fileName") or attachment.get("file_name") or "")
+        file_id = str(attachment.get("fileId") or attachment.get("file_id") or "")
+        fallback: dict[str, Any] = {
+            "file_name": file_name,
+            "file_id": file_id,
+            "space_id": str(
+                attachment.get("spaceId") or attachment.get("space_id") or ""
+            ),
+            "file_type": str(
+                attachment.get("fileType") or attachment.get("file_type") or ""
+            ),
+        }
+        if process_instance_id and file_id:
+            try:
+                data = self.dws.download_oa_process_attachment(
+                    process_instance_id,
+                    file_id,
+                )
+                fallback["downloaded_attachment"] = {
+                    "bytes": len(data),
+                    "text": self._oa_attachment_text(file_name, data)[:12000],
+                }
+            except Exception as exc:
+                fallback["download_error"] = self._dws_tool_error_payload(exc)
+        query = self._oa_attachment_search_query(file_name)
+        fallback["search_query"] = query
+        if not query:
+            fallback["search_error"] = "missing attachment file name"
+            return fallback
+        try:
+            matches = self.dws.search_documents(query, page_size=5)
+        except Exception as exc:
+            fallback["search_error"] = self._dws_tool_error_payload(exc)
+            return fallback
+        fallback["matches"] = [
+            {
+                "node_id": match.node_id,
+                "name": match.name,
+                "extension": match.extension,
+                "content_type": match.content_type,
+                "doc_url": match.doc_url,
+            }
+            for match in matches[:5]
+        ]
+        readable = next(
+            (
+                match
+                for match in matches
+                if match.extension.lower() == "adoc"
+                or match.content_type.upper() == "ALIDOC"
+            ),
+            None,
+        )
+        if readable is None:
+            return fallback
+        try:
+            content = self.dws.read_doc(readable.node_id)
+        except Exception as exc:
+            fallback["read_error"] = self._dws_tool_error_payload(exc)
+            return fallback
+        fallback["read_document"] = {
+            "node_id": readable.node_id,
+            "name": readable.name,
+            "markdown": str(content.get("markdown") or content.get("content") or "")[
+                :12000
+            ],
+        }
+        return fallback
+
+    @classmethod
+    def _oa_attachment_text(cls, file_name: str, data: bytes) -> str:
+        suffix = Path(file_name).suffix.lower()
+        if suffix == ".docx":
+            return cls._docx_text(data)
+        if suffix == ".xlsx":
+            return cls._xlsx_text(data)
+        if suffix == ".pdf":
+            return cls._pdf_text(data)
+        return ""
+
+    @staticmethod
+    def _docx_text(data: bytes) -> str:
+        with zipfile.ZipFile(BytesIO(data)) as archive:
+            document_xml = archive.read("word/document.xml")
+        root = ET.fromstring(document_xml)
+        namespace = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
+        paragraphs = []
+        for paragraph in root.findall(".//w:p", namespace):
+            text = "".join(
+                node.text or "" for node in paragraph.findall(".//w:t", namespace)
+            ).strip()
+            if text:
+                paragraphs.append(text)
+        return "\n".join(paragraphs)
+
+    @staticmethod
+    def _xlsx_text(data: bytes) -> str:
+        with zipfile.ZipFile(BytesIO(data)) as archive:
+            shared_strings: list[str] = []
+            if "xl/sharedStrings.xml" in archive.namelist():
+                root = ET.fromstring(archive.read("xl/sharedStrings.xml"))
+                shared_strings = [
+                    "".join(node.itertext())
+                    for node in root.findall(
+                        ".//{http://schemas.openxmlformats.org/spreadsheetml/2006/main}si"
+                    )
+                ]
+            sheet_names = [
+                name
+                for name in archive.namelist()
+                if re.match(r"xl/worksheets/sheet\d+\.xml$", name)
+            ]
+            rows = []
+            namespace = {
+                "x": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+            }
+            for sheet_name in sheet_names[:5]:
+                root = ET.fromstring(archive.read(sheet_name))
+                for row in root.findall(".//x:row", namespace)[:120]:
+                    values = []
+                    for cell in row.findall("x:c", namespace):
+                        value_node = cell.find("x:v", namespace)
+                        inline_node = cell.find("x:is/x:t", namespace)
+                        if inline_node is not None and inline_node.text:
+                            values.append(inline_node.text)
+                            continue
+                        if value_node is None or value_node.text is None:
+                            continue
+                        value = value_node.text
+                        if cell.get("t") == "s" and value.isdigit():
+                            index = int(value)
+                            if 0 <= index < len(shared_strings):
+                                value = shared_strings[index]
+                        values.append(value)
+                    if values:
+                        rows.append("\t".join(values))
+        return "\n".join(rows)
+
+    @staticmethod
+    def _pdf_text(data: bytes) -> str:
+        reader = PdfReader(BytesIO(data))
+        pages = []
+        for page in reader.pages[:20]:
+            text = page.extract_text() or ""
+            if text.strip():
+                pages.append(text.strip())
+        return "\n\n".join(pages)
+
+    @staticmethod
+    def _oa_attachment_search_query(file_name: str) -> str:
+        stem = Path(file_name).stem.strip()
+        stem = re.sub(r"(?:\([^)]*\))+$", "", stem).strip()
+        return stem or file_name.strip()
+
+    @classmethod
+    def _oa_attachment_records(cls, value: Any) -> list[dict[str, Any]]:
+        attachments: list[dict[str, Any]] = []
+        cls._collect_oa_attachment_records(value, attachments)
+        deduped: list[dict[str, Any]] = []
+        seen = set()
+        for attachment in attachments:
+            file_name = str(
+                attachment.get("fileName") or attachment.get("file_name") or ""
+            )
+            file_id = str(attachment.get("fileId") or attachment.get("file_id") or "")
+            key = (file_id, file_name)
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(attachment)
+        return deduped
+
+    @classmethod
+    def _collect_oa_attachment_records(
+        cls,
+        value: Any,
+        attachments: list[dict[str, Any]],
+    ) -> None:
+        if isinstance(value, str):
+            text = value.strip()
+            if not text:
+                return
+            try:
+                parsed = json.loads(text)
+            except json.JSONDecodeError:
+                return
+            cls._collect_oa_attachment_records(parsed, attachments)
+            return
+        if isinstance(value, list):
+            for item in value:
+                cls._collect_oa_attachment_records(item, attachments)
+            return
+        if not isinstance(value, dict):
+            return
+        if value.get("fileName") or value.get("fileId"):
+            attachments.append(value)
+        component_type = str(
+            value.get("componentType") or value.get("component_type") or ""
+        )
+        if component_type == "DDAttachment":
+            cls._collect_oa_attachment_records(value.get("value"), attachments)
+        for nested_key in ("value", "extendValue", "rowValue"):
+            nested = value.get(nested_key)
+            if isinstance(nested, (dict, list, str)):
+                cls._collect_oa_attachment_records(nested, attachments)
 
     def _dws_tool_error_payload(self, exc: Exception) -> dict[str, str]:
         if self._is_dws_login_error(exc):
@@ -2044,6 +2277,26 @@ class DingTalkAutoReplyWorker:
         return {
             "error_kind": "dws_error",
             "message": str(exc),
+        }
+
+    @staticmethod
+    def _annotate_oa_detail_recovery(documents: dict[str, Any]) -> None:
+        dws_detail = documents.get("dws_detail")
+        openapi_detail = documents.get("openapi_detail")
+        if not (
+            isinstance(dws_detail, dict)
+            and dws_detail.get("error_kind") == "dws_error"
+            and isinstance(openapi_detail, dict)
+            and not openapi_detail.get("error_kind")
+        ):
+            return
+        documents["dws_detail_recovery"] = {
+            "status": "recovered_by_openapi",
+            "message": (
+                "dws oa approval detail failed; use openapi_detail, "
+                "dws_records, dws_tasks, and oa_attachment_fallbacks instead "
+                "of retrying the same detail command."
+            ),
         }
 
     @staticmethod
@@ -3723,12 +3976,11 @@ class DingTalkAutoReplyWorker:
                 raise ReplyTaskProcessingError(send_error)
             return
         if decision.action == CodexAction.HANDOFF_TO_HUMAN:
-            handoff_reply_text = self._format_reply_delivery_text(HANDOFF_ACK)
             if self.dry_run:
                 self.store.update_reply_attempt(
                     attempt_id,
-                    final_reply_text=handoff_reply_text,
                     send_status="dry_run",
+                    send_error="message_reaction",
                 )
                 self._notify(
                     title=f"CEO handoff: {conversation.title}",
@@ -3736,23 +3988,15 @@ class DingTalkAutoReplyWorker:
                     conversation=conversation,
                 )
                 return
-            self.store.update_reply_attempt(
-                attempt_id,
-                final_reply_text=handoff_reply_text,
-            )
-            delivered = self._deliver_trigger_reply(
+            reacted = self._execute_message_reactions(
                 conversation=conversation,
                 trigger=trigger,
                 new_messages=new_messages,
                 attempt_id=attempt_id,
-                reply_text=handoff_reply_text,
-                feedback_token="",
-                failure_error_kind="handoff_delivery",
-                failure_notify_title=f"CEO handoff failed: {conversation.title}",
+                decision=self._handoff_reaction_decision(decision),
                 raise_on_delivery_failure=raise_on_delivery_failure,
-                allow_duplicate_send=allow_duplicate_send,
             )
-            if not delivered:
+            if not reacted:
                 return
             handoff_notified_locally = self._notify_handoff(
                 conversation=conversation,
@@ -3833,6 +4077,23 @@ class DingTalkAutoReplyWorker:
             if isinstance(action, dict)
             and action.get("type") == "dws_message_reaction"
         ]
+
+    @staticmethod
+    def _handoff_reaction_decision(decision: CodexDecision) -> CodexDecision:
+        return CodexDecision(
+            action=CodexAction.NO_REPLY,
+            reason=decision.reason,
+            sensitivity_kind=decision.sensitivity_kind,
+            system_actions=[
+                {
+                    "type": "dws_message_reaction",
+                    "reaction_type": "text_emotion",
+                    "text": HANDOFF_TEXT_EMOTION,
+                }
+            ],
+            audit_documents=decision.audit_documents,
+            audit_summary=decision.audit_summary,
+        )
 
     def _execute_message_reactions(
         self,

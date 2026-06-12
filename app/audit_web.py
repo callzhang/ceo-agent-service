@@ -8,6 +8,7 @@ from itertools import count, zip_longest
 import os
 from pathlib import Path
 import subprocess
+from typing import TypedDict
 import urllib.error
 import urllib.request
 from urllib.parse import parse_qs, quote, urlencode, urlparse
@@ -146,6 +147,29 @@ th{background:var(--surface-soft);color:var(--steel);font-size:12px;font-weight:
 .logic-section dl{display:grid;gap:9px;margin:0}
 .logic-section dt{color:var(--steel);font-size:12px;font-weight:700;line-height:1.4}
 .logic-section dd{margin:2px 0 0;color:var(--charcoal);font-size:14px;line-height:1.5}
+.tutorial-intro{display:grid;gap:12px;margin:0 0 14px}
+.tutorial-summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin:0}
+.tutorial-summary-item{border:1px solid var(--hairline);border-radius:8px;background:var(--surface-soft);padding:12px}
+.tutorial-summary-label{display:block;margin-bottom:4px;color:var(--steel);font-size:11px;font-weight:800;line-height:1.35;text-transform:uppercase;letter-spacing:.03em}
+.tutorial-summary-value{color:var(--ink);font-size:14px;font-weight:750;line-height:1.35}
+.tutorial-steps{display:grid;gap:12px;margin:0;padding:0;list-style:none;counter-reset:tutorial-step}
+.tutorial-step{display:grid;grid-template-columns:42px minmax(0,1fr);gap:14px;border:1px solid var(--hairline);border-radius:8px;background:var(--canvas);padding:14px;counter-increment:tutorial-step}
+.tutorial-step-number{display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;border:1px solid rgba(0,180,138,.28);border-radius:8px;background:#ddfff6;color:#005b49;font-family:"Geist Mono","SF Mono",Menlo,Consolas,monospace;font-size:13px;font-weight:900;line-height:1}
+.tutorial-step-number::before{content:counter(tutorial-step)}
+.tutorial-step-body{display:grid;gap:8px;min-width:0}
+.tutorial-step-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;flex-wrap:wrap}
+.tutorial-step h3{margin:0;color:var(--ink);font-size:16px;font-weight:750;line-height:1.35}
+.tutorial-phase{display:inline-flex;align-items:center;height:24px;padding:0 8px;border:1px solid var(--hairline);border-radius:999px;background:var(--surface-soft);color:var(--steel);font-family:"Geist Mono","SF Mono",Menlo,Consolas,monospace;font-size:11px;font-weight:800;line-height:1;white-space:nowrap}
+.tutorial-step p{margin:0;color:var(--charcoal);font-size:14px;line-height:1.5}
+.tutorial-lists{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:10px}
+.tutorial-list{margin:0;padding:10px 12px 10px 28px;border:1px solid var(--hairline-soft);border-radius:8px;background:var(--surface-soft);color:var(--charcoal)}
+.tutorial-list li{margin:3px 0;font-size:13px;line-height:1.45}
+.tutorial-command-list{display:grid;gap:6px;margin:0}
+.tutorial-command-list code{display:block;padding:8px 10px;border:1px solid var(--hairline-soft);border-radius:7px;background:var(--surface-code);color:#f7f7f7;font-family:"Geist Mono","SF Mono",Menlo,Consolas,monospace;font-size:12px;line-height:1.45;white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word}
+.tutorial-links{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.tutorial-link{display:inline-flex;align-items:center;height:28px;padding:0 10px;border:1px solid var(--hairline);border-radius:999px;background:var(--canvas);color:var(--ink);font-size:12px;font-weight:700;line-height:1;white-space:nowrap}
+.tutorial-link:hover{border-color:var(--ink);background:var(--surface-soft);text-decoration:none}
+@media (max-width:900px){.tutorial-summary,.tutorial-lists{grid-template-columns:1fr}.tutorial-step{grid-template-columns:1fr}.tutorial-step-number{width:30px;height:30px}}
 .notification-panel{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:12px 0}
 .notification-log{max-height:260px}
 .card-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px;flex-wrap:wrap}
@@ -414,6 +438,15 @@ HISTORY_CHART_COLORS = {
 }
 
 
+class _TutorialStep(TypedDict):
+    phase: str
+    title: str
+    description: str
+    checks: list[str]
+    commands: list[str]
+    links: list[tuple[str, str]]
+
+
 def render_page(
     title: str,
     body: str,
@@ -457,6 +490,209 @@ def render_browser_notifications_page() -> str:
 </section>
 """
     return render_page("Notifications", body, active_nav="notifications")
+
+
+def render_tutorial_page() -> str:
+    summary_html = "".join(
+        "<div class=\"tutorial-summary-item\">"
+        f"<span class=\"tutorial-summary-label\">{escape(label)}</span>"
+        f"<span class=\"tutorial-summary-value\">{escape(value)}</span>"
+        "</div>"
+        for label, value in [
+            ("目标", "verified local service"),
+            ("默认", "Start in dry-run mode"),
+            ("入口", "Agent Installation Runbook"),
+            ("完成", "dry-run reviewed, no backlog"),
+        ]
+    )
+    steps_html = "".join(_tutorial_step_html(step) for step in _tutorial_steps())
+    body = (
+        "<section class=\"card tutorial-intro\">"
+        "<h2>初始化 Tutorial</h2>"
+        "<p class=\"muted\">"
+        "首次使用时按这里检查前提条件。页面内容来自 README 和 "
+        "<code>docs/agent-installation-runbook.md</code>："
+        "agent 负责运行命令、检查输出、编辑本机配置；不要让使用者逐条复制终端命令完成安装。"
+        "</p>"
+        f"<div class=\"tutorial-summary\">{summary_html}</div>"
+        "</section>"
+        "<section class=\"card\">"
+        "<div class=\"card-head\">"
+        "<h2>安装检查流程</h2>"
+        "<div class=\"tutorial-links\">"
+        "<a class=\"tutorial-link\" href=\"/config?tab=system\">系统参数</a>"
+        "<a class=\"tutorial-link\" href=\"/tasks\">Tasks</a>"
+        "<a class=\"tutorial-link\" href=\"/errors\">Errors</a>"
+        "</div>"
+        "</div>"
+        f"<ol class=\"tutorial-steps\">{steps_html}</ol>"
+        "</section>"
+    )
+    return render_page("Tutorial", body, active_nav="tutorial")
+
+
+def _tutorial_step_html(step: _TutorialStep) -> str:
+    checks_html = _tutorial_list_html(step["checks"], class_name="tutorial-list")
+    commands_html = _tutorial_command_list_html(step["commands"])
+    links_html = "".join(
+        f"<a class=\"tutorial-link\" href=\"{escape(href)}\">{escape(label)}</a>"
+        for label, href in step["links"]
+    )
+    return (
+        "<li class=\"tutorial-step\">"
+        "<div class=\"tutorial-step-number\" aria-hidden=\"true\"></div>"
+        "<div class=\"tutorial-step-body\">"
+        "<div class=\"tutorial-step-head\">"
+        f"<h3>{escape(str(step['title']))}</h3>"
+        f"<span class=\"tutorial-phase\">{escape(str(step['phase']))}</span>"
+        "</div>"
+        f"<p>{escape(str(step['description']))}</p>"
+        "<div class=\"tutorial-lists\">"
+        f"{checks_html}"
+        f"{commands_html}"
+        "</div>"
+        f"<div class=\"tutorial-links\">{links_html}</div>"
+        "</div>"
+        "</li>"
+    )
+
+
+def _tutorial_list_html(items: list[str], *, class_name: str) -> str:
+    return (
+        f"<ul class=\"{escape(class_name)}\">"
+        + "".join(f"<li>{escape(str(item))}</li>" for item in items)
+        + "</ul>"
+    )
+
+
+def _tutorial_command_list_html(commands: list[str]) -> str:
+    return (
+        "<div class=\"tutorial-command-list\">"
+        + "".join(f"<code>{escape(str(command))}</code>" for command in commands)
+        + "</div>"
+    )
+
+
+def _tutorial_steps() -> list[_TutorialStep]:
+    return [
+        {
+            "phase": "Phase 0",
+            "title": "收集交互参数",
+            "description": "先确认本机路径和身份参数，再改配置；不知道的值先检查机器，只有授权、扫码、策略选择才打断用户。",
+            "checks": [
+                "Repository path: ~/Documents/Projects/ceo-agent-service",
+                "Workspace path: ~/Documents/memory",
+                "Principal display name, mention aliases, signature, handoff acknowledgement",
+                "Memory Connector MCP URL and DingTalk KB workspace are optional",
+            ],
+            "commands": [
+                "sed -n '1,240p' ~/.agents/AGENT.md",
+                "git status --short --branch",
+            ],
+            "links": [("Runbook", "/config"), ("System config", "/config?tab=system")],
+        },
+        {
+            "phase": "Phase 1",
+            "title": "准备本地依赖和 CLI",
+            "description": "确认 Python 环境、dws CLI、Codex CLI 和仓库依赖可用；HOME 必须是真实用户目录，不能指向项目目录。",
+            "checks": [
+                "Python 3.11+ and editable package install",
+                "dws auth status and dws doctor pass under the real user account",
+                "Codex CLI can run codex exec through the local runtime",
+                "Start in dry-run mode until the audit UI is reviewed",
+            ],
+            "commands": [
+                "python3 -m venv .venv",
+                ".venv/bin/pip install -e '.[dev]'",
+                "dws auth status",
+                "codex --version",
+            ],
+            "links": [("Config", "/config"), ("Errors", "/errors")],
+        },
+        {
+            "phase": "Phase 2",
+            "title": "配置 MCP 和基础环境",
+            "description": "按 README 配置 Memory Connector MCP、.env、workspace、SQLite 和 corpus 目录；MCP 身份使用已安装 Authorization header，不单独填写 user_id。",
+            "checks": [
+                ".env comes from .env.example and stays uncommitted",
+                "CEO_WORKSPACE, CEO_WORKER_DB, CEO_CORPUS_DIR point at local paths",
+                "Memory Connector MCP is optional but must use the authenticated OAuth identity",
+                "CEO_NOT_SEND_MESSAGE=1 or CEO_DRY_RUN=1 remains enabled",
+            ],
+            "commands": [
+                "cp .env.example .env",
+                ".venv/bin/ceo-agent setup-memory-connector --memory-url '<memory-mcp-url>'",
+                "mkdir -p data corpus \"$HOME/Documents/memory\"",
+            ],
+            "links": [("System config", "/config?tab=system")],
+        },
+        {
+            "phase": "Phase 4",
+            "title": "准备本地数据和风格语料",
+            "description": "把 AI 听记、SOP、招聘、战略和 Thinking 材料放在 CEO_WORKSPACE 或其他忽略路径，不把私有数据放进 Git。",
+            "checks": [
+                "Workspace contains AI听记, management/OA, management/strategy, recruiting, Thinking",
+                "build-corpus reads local AI minutes and writes style outputs",
+                "collect-corpus appends recent DingTalk sent-message samples through current dws identity",
+                "corpus/style_corpus.csv is local runtime data, not source code",
+            ],
+            "commands": [
+                ".venv/bin/ceo-agent build-corpus --workspace \"$HOME/Documents/memory\" --corpus-dir ./corpus",
+                ".venv/bin/ceo-agent collect-corpus --workspace \"$HOME/Documents/memory\" --corpus-dir ./corpus",
+            ],
+            "links": [("Tasks", "/tasks")],
+        },
+        {
+            "phase": "Phase 5",
+            "title": "生成并复核工作画像蒸馏",
+            "description": "build-work-profile 生成证据索引和初版 profile；Nvwa 只在准备/复核阶段使用，运行时只读取 profiles/work_profile.md。",
+            "checks": [
+                "Expected outputs: profiles/work_profile.md, data/profile-evidence/evidence_index.jsonl, corpus/style_corpus.csv",
+                "Nvwa review rewrites only profiles/work_profile.md",
+                "Profile must not contain raw private excerpts, absolute paths, tokens, session ids, or DingTalk cache content",
+                "Runtime consumes the profile through work_profile_instruction()",
+            ],
+            "commands": [
+                ".venv/bin/ceo-agent build-work-profile --workspace \"$HOME/Documents/memory\" --corpus-dir ./corpus",
+                ".venv/bin/pytest tests/test_work_profile.py tests/test_prompt.py tests/test_worker.py::test_consumer_codex_command_embeds_work_profile_content -q",
+            ],
+            "links": [("Config", "/config"), ("Errors", "/errors")],
+        },
+        {
+            "phase": "Phase 6",
+            "title": "验证权限和 dry-run 审计",
+            "description": "先做只读权限探测，再运行一次 dry-run；审计页必须能解释路由、证据、错误和未发送状态。",
+            "checks": [
+                "dws can read unread conversations, docs, AI tables, contacts, calendar, OA, and AI minutes needed by the deployment",
+                "Audit UI loads on 127.0.0.1:8765",
+                "Dry-run has no unexpected live send",
+                "No unresolved failed or processing backlog remains",
+            ],
+            "commands": [
+                ".venv/bin/ceo-agent probe-dws",
+                ".venv/bin/python -m app.cli audit-web --reload --host 127.0.0.1 --port 8765",
+                "CEO_NOT_SEND_MESSAGE=1 .venv/bin/ceo-agent run-once --not-send-message",
+            ],
+            "links": [("History", "/"), ("Errors", "/errors"), ("Tasks", "/tasks")],
+        },
+        {
+            "phase": "Phase 8",
+            "title": "安装 launchd，最后再决定 live send",
+            "description": "launchd 只在 dry-run 行为被审阅后安装；真实发送需要明确设置 CEO_NOT_SEND_MESSAGE=0 和 CEO_LIVE_SEND_BLOCKERS_ACCEPTED=1。",
+            "checks": [
+                "Inspect launchd/com.ceo-agent-service.main.plist before installation",
+                "launchctl print confirms com.ceo-agent-service.main is running",
+                "Live send scope is reviewed per chat, alias, action, OA/calendar/follow-up boundary",
+                "CEO_LIVE_SEND_BLOCKERS_ACCEPTED=1 is never implied by installation success",
+            ],
+            "commands": [
+                "scripts/install-auto-reply-agents.sh",
+                "launchctl print gui/$(id -u)/com.ceo-agent-service.main | sed -n '1,80p'",
+                "CEO_NOT_SEND_MESSAGE=0 CEO_LIVE_SEND_BLOCKERS_ACCEPTED=1 .venv/bin/ceo-agent send-attempt --attempt-id <reviewed-attempt-id>",
+            ],
+            "links": [("History", "/"), ("Errors", "/errors")],
+        },
+    ]
 
 
 def _browser_notification_client_script() -> str:
@@ -959,6 +1195,7 @@ def _top_nav(
 ) -> str:
     items = [
         ("history", "History", "/"),
+        ("tutorial", "Tutorial", "/tutorial"),
         ("tasks", "Tasks", "/tasks"),
         ("user-feedback", "用户反馈", "/user-feedback"),
         ("codex", "Codex Sessions", "/codex"),
@@ -3549,6 +3786,10 @@ def create_audit_app(
             AutoReplyStore(db_path),
             page=_positive_int_query(request, "page", default=1),
         )
+
+    @app.get("/tutorial", response_class=HTMLResponse)
+    def tutorial_page() -> str:
+        return render_tutorial_page()
 
     @app.get("/tasks", response_class=HTMLResponse)
     def tasks_page(request: Request) -> str:

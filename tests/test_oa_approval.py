@@ -644,7 +644,7 @@ def test_output_schema_uses_strict_object_shapes_required_by_codex():
     assert_strict_objects(schema)
 
 
-def test_read_only_handle_uses_hard_sandbox_and_requires_empty_action_result(
+def test_read_only_handle_allows_dws_reads_and_requires_empty_action_result(
     tmp_path: Path,
 ):
     skill_path = tmp_path / "skill.md"
@@ -665,9 +665,9 @@ def test_read_only_handle_uses_hard_sandbox_and_requires_empty_action_result(
 
     command = calls[0]
     assert result.action_result == {}
-    assert CODEX_BYPASS_APPROVALS_AND_SANDBOX not in command
+    assert CODEX_BYPASS_APPROVALS_AND_SANDBOX in command
     assert 'approval_policy="never"' in command
-    assert 'sandbox_mode="read-only"' in command
+    assert 'sandbox_mode="read-only"' not in command
 
 
 def test_execute_handle_warns_return_becomes_service_comment(tmp_path: Path):
@@ -726,6 +726,35 @@ def test_handle_warns_dws_login_failure_is_tool_issue(tmp_path: Path):
     assert "DWS 未登录" in prompts[0]
     assert "工具问题" in prompts[0]
     assert "不要表述为申请人没有提供材料" in prompts[0]
+
+
+def test_read_only_runner_can_use_local_dws_auth(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("DWS_CLIENT_ID", "wrong-client-id")
+    monkeypatch.setenv("DWS_CLIENT_SECRET", "wrong-client-secret")
+    monkeypatch.setenv("DINGTALK_APP_KEY", "wrong-app-key")
+    monkeypatch.setenv("DINGTALK_APP_SECRET", "wrong-app-secret")
+    skill_path = tmp_path / "skill.md"
+    skill_path.write_text("# OA Skill", encoding="utf-8")
+
+    runner = OaApprovalCodexRunner(
+        workspace=tmp_path,
+        skill_path=skill_path,
+    )
+
+    env = runner.runner.build_env()
+    command = runner.runner.build_command(
+        "review only",
+        session_id=None,
+        allow_side_effects=False,
+    )
+
+    assert "DWS_CLIENT_ID" not in env
+    assert "DWS_CLIENT_SECRET" not in env
+    assert "DINGTALK_APP_KEY" not in env
+    assert "DINGTALK_APP_SECRET" not in env
+    assert CODEX_BYPASS_APPROVALS_AND_SANDBOX in command
+    assert 'sandbox_mode="read-only"' not in command
+    assert 'approval_policy="never"' in command
 
 
 def test_read_only_handle_rejects_mutating_result_or_tool_event(tmp_path: Path):

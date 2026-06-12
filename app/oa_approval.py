@@ -1,5 +1,4 @@
 import json
-import os
 import re
 import time
 from collections.abc import Callable
@@ -20,7 +19,9 @@ from app.codex_history import (
 )
 from app.codex_runner import (
     CODEX_BYPASS_APPROVALS_AND_SANDBOX,
+    DWS_CLI_AUTH_ENV_KEYS,
     _config_string,
+    _memory_connector_env,
 )
 from app.process_runner import run_process_with_idle_timeout
 
@@ -381,7 +382,10 @@ class _OaApprovalCommandBuilder:
         self.skill_path = skill_path
 
     def build_env(self) -> dict[str, str]:
-        return os.environ.copy()
+        env = _memory_connector_env()
+        for key in DWS_CLI_AUTH_ENV_KEYS:
+            env.pop(key, None)
+        return env.copy()
 
     def build_command(
         self,
@@ -402,10 +406,8 @@ class _OaApprovalCommandBuilder:
             safety_options = [
                 "-c",
                 'approval_policy="never"',
-                "-c",
-                'sandbox_mode="read-only"',
             ]
-            bypass_options = []
+            bypass_options = [CODEX_BYPASS_APPROVALS_AND_SANDBOX]
         common_options = [
             "--json",
             "-m",

@@ -1224,6 +1224,30 @@ def test_list_pending_oa_approvals_command_and_parser():
     ]
 
 
+def test_parse_pending_oa_approvals_accepts_process_instance_list():
+    approvals = DwsClient.parse_pending_oa_approvals(
+        {
+            "result": {
+                "processInstanceList": [
+                    {
+                        "processInstanceId": "proc-1",
+                        "processInstanceTitle": "郑威格提交的项目立项全流程（第三曲线）",
+                        "processName": "项目立项全流程（第三曲线）",
+                    }
+                ]
+            }
+        }
+    )
+
+    assert approvals == [
+        DwsOaApprovalCandidate(
+            process_instance_id="proc-1",
+            title="郑威格提交的项目立项全流程（第三曲线）",
+            process_name="项目立项全流程（第三曲线）",
+        )
+    ]
+
+
 def test_reply_message_command_shape():
     client = DwsClient(dws_bin="dws")
 
@@ -2465,6 +2489,45 @@ def test_read_mentioned_messages_parses_conversation_messages_list(monkeypatch):
     assert messages[0].open_message_id == "msg-1"
 
 
+def test_parse_messages_skips_malformed_message_payloads():
+    payload = {
+        "result": {
+            "conversationMessagesList": [
+                {
+                    "openConversationId": "cid-1",
+                    "singleChat": False,
+                    "title": "Friday",
+                    "messages": [
+                        {
+                            "openConversationId": "cid-1",
+                            "sender": "Broken",
+                            "createTime": "2026-05-25 13:30:20",
+                            "content": "missing message id",
+                        },
+                        "not-a-message",
+                        {
+                            "openConversationId": "cid-1",
+                            "openMessageId": "msg-1",
+                            "sender": "Mina 邹",
+                            "senderOpenDingTalkId": "open-1",
+                            "createTime": "2026-05-25 13:30:26",
+                            "content": "@Alex Chen(明哥) 明哥分身，大模型项目经理需要具备什么能力",
+                        },
+                    ],
+                }
+            ]
+        }
+    }
+
+    messages = DwsClient.parse_messages(
+        payload,
+        conversation_title="",
+        single_chat=False,
+    )
+
+    assert [message.open_message_id for message in messages] == ["msg-1"]
+
+
 def test_read_mentioned_messages_without_conversation_uses_global_mentions(
     monkeypatch,
 ):
@@ -3433,3 +3496,53 @@ def test_run_json_raises_dws_error_on_timeout(monkeypatch):
 
     with pytest.raises(DwsError, match="timed out"):
         DwsClient(timeout_seconds=3).run_json(["dws", "probe"])
+
+
+def test_download_oa_process_attachment_uses_official_download_url(monkeypatch):
+    calls = []
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+        def read(self):
+            return b"docx-bytes"
+
+    class FakeClient(DwsClient):
+        def _dingtalk_api_json(
+            self,
+            method,
+            path,
+            *,
+            params=None,
+            payload=None,
+            config_path=None,
+        ):
+            calls.append((method, path, params, payload, config_path))
+            return {"result": {"downloadUri": "https://signed.example/download"}}
+
+    def fake_urlopen(url, timeout):
+        assert url == "https://signed.example/download"
+        assert timeout == 90
+        return FakeResponse()
+
+    monkeypatch.setattr(dws_client, "urlopen", fake_urlopen)
+
+    data = FakeClient(timeout_seconds=3).download_oa_process_attachment(
+        "proc-1",
+        "file-1",
+    )
+
+    assert data == b"docx-bytes"
+    assert calls == [
+        (
+            "POST",
+            "/v1.0/workflow/processInstances/spaces/files/urls/download",
+            None,
+            {"processInstanceId": "proc-1", "fileId": "file-1"},
+            None,
+        )
+    ]
