@@ -1,9 +1,12 @@
+from typing import get_args
+
 import pytest
 from pydantic import ValidationError
 
 from app.setup_wizard import SETUP_WIZARD_STEPS, get_step_definition
 from app.setup_wizard_models import (
     SetupAction,
+    SetupActionStatus,
     SetupStepStatus,
     SetupWizardEvent,
     SetupWizardStatus,
@@ -163,6 +166,10 @@ def test_setup_wizard_event_defaults_and_serialization():
     assert payload["evidence"] == {"configured": True}
     assert payload["stdout_excerpt"] == ""
     assert payload["stderr_excerpt"] == ""
+
+
+def test_setup_action_status_values_are_locked():
+    assert get_args(SetupActionStatus) == ("not_started", "running", "done", "failed")
 
 
 @pytest.mark.parametrize("status", ["not_started", "running", "done", "failed"])
