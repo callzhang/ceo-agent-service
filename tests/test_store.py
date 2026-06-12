@@ -1045,3 +1045,29 @@ def test_setup_wizard_event_history_round_trips(tmp_path):
     assert events[0]["step_id"] == "mcp"
     assert events[0]["action_id"] == "setup_mcp"
     assert events[0]["evidence_json"] == '{"codex_config": "/tmp/config.toml"}'
+
+
+def test_setup_wizard_running_event_is_not_finished(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+
+    store.record_setup_wizard_event(
+        step_id="mcp",
+        action_id="setup_mcp",
+        status="running",
+    )
+    events = store.list_setup_wizard_events("mcp")
+
+    assert events[0]["started_at"]
+    assert events[0]["finished_at"] == ""
+
+
+def test_setup_wizard_steps_list_has_stable_tie_breaker(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.upsert_setup_wizard_step(step_id="mcp", status="done", summary="ok")
+    store.upsert_setup_wizard_step(step_id="preflight", status="done", summary="ok")
+    with sqlite3.connect(tmp_path / "worker.sqlite3") as db:
+        db.execute("update setup_wizard_steps set updated_at='2026-06-12 12:00:00'")
+
+    rows = store.list_setup_wizard_steps()
+
+    assert [row["step_id"] for row in rows] == ["mcp", "preflight"]

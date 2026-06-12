@@ -389,7 +389,7 @@ class AutoReplyStore:
                     stdout_excerpt text not null default '',
                     stderr_excerpt text not null default '',
                     started_at text not null default current_timestamp,
-                    finished_at text not null default current_timestamp
+                    finished_at text not null default ''
                 );
                 create index if not exists idx_setup_wizard_events_step
                     on setup_wizard_events(step_id, id);
@@ -3110,7 +3110,7 @@ class AutoReplyStore:
                 select step_id, status, summary, manual_confirmed_at,
                        manual_confirmed_by, updated_at
                 from setup_wizard_steps
-                order by updated_at desc
+                order by updated_at desc, step_id
                 """
             ).fetchall()
             return [dict(row) for row in rows]
