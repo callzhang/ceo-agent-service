@@ -3759,6 +3759,7 @@ def test_render_log_list_shows_recent_operations(tmp_path: Path):
     assert 'class="log-feed"' in html
     assert 'class="log-item"' in html
     assert 'class="log-main"' in html
+    assert 'class="log-body single"' in html
     assert "<table>" not in html
     assert "Reply" in html
     assert "Task input" in html
@@ -3768,7 +3769,7 @@ def test_render_log_list_shows_recent_operations(tmp_path: Path):
     assert "新增待办" in html
     assert "进展如何？" in html
     assert "send" in html
-    assert "authorization required" in html
+    assert html.count("authorization required") == 1
     assert "cid-1" in html
     assert "active" in html
 

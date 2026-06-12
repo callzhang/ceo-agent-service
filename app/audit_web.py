@@ -383,6 +383,7 @@ a.nav-item:hover{color:var(--ink);text-decoration:none;border-color:var(--ink)}
 .log-meta{display:flex;gap:6px 10px;flex-wrap:wrap;min-width:0;color:var(--steel);font-family:"Geist Mono","SF Mono",Menlo,Consolas,monospace;font-size:11px;font-weight:700;line-height:1.35}
 .log-context{min-width:0;overflow-wrap:anywhere;word-break:break-word}
 .log-body{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:8px}
+.log-body.single{grid-template-columns:1fr}
 .log-field{min-width:0;padding:8px 9px;border:1px solid var(--hairline-soft);border-radius:7px;background:var(--surface-soft)}
 .log-label{margin-bottom:3px;color:var(--steel);font-size:11px;font-weight:800;line-height:1.25;text-transform:uppercase}
 .log-value{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;overflow:hidden;color:var(--charcoal);font-size:12px;line-height:1.45;overflow-wrap:anywhere;word-break:break-word}
@@ -3519,8 +3520,21 @@ def render_log_list(
 
 
 def _operation_log_item(log: OperationLog, status: str, status_class: str) -> str:
-    summary = _excerpt(log.summary, 420) if log.summary else "-"
-    detail = _excerpt(log.detail, 420) if log.detail else "-"
+    summary = _excerpt(log.summary, 420) if log.summary else ""
+    detail = _excerpt(log.detail, 420) if log.detail else ""
+    if not detail or detail == summary:
+        body = (
+            "<div class=\"log-body single\">"
+            f"{_operation_log_field('Summary', summary or '-')}"
+            "</div>"
+        )
+    else:
+        body = (
+            "<div class=\"log-body\">"
+            f"{_operation_log_field('Summary', summary or '-')}"
+            f"{_operation_log_field('Detail', detail)}"
+            "</div>"
+        )
     return (
         "<article class=\"log-item\">"
         "<div class=\"log-main\">"
@@ -3536,10 +3550,7 @@ def _operation_log_item(log: OperationLog, status: str, status_class: str) -> st
         f"<span>{escape(log.id)}</span>"
         f"<span class=\"log-context\">{escape(log.context or '-')}</span>"
         "</div>"
-        "<div class=\"log-body\">"
-        f"{_operation_log_field('Summary', summary)}"
-        f"{_operation_log_field('Detail', detail)}"
-        "</div>"
+        f"{body}"
         "</div>"
         "</article>"
     )
