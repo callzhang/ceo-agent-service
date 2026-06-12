@@ -213,10 +213,14 @@ th{background:var(--surface-soft);color:var(--steel);font-size:12px;font-weight:
 .todo-detail-followups{display:grid;gap:8px;margin-left:28px;padding:10px 0 0 12px;border-left:2px solid rgba(55,114,207,.24);color:var(--charcoal)}
 .todo-followup-heading{color:var(--steel);font-size:12px;font-weight:800;line-height:1.25}
 .todo-followup-list{display:grid;gap:8px;margin:0;padding:0;list-style:none}
-.todo-followup-item{display:grid;grid-template-columns:136px 120px minmax(0,1fr);gap:10px;align-items:start}
-.todo-followup-meta{color:var(--steel);font-family:"Geist Mono","SF Mono",Menlo,Consolas,monospace;font-size:11px;font-weight:700;line-height:1.35;overflow-wrap:anywhere;word-break:break-word}
-.todo-followup-target{color:var(--steel);font-size:12px;line-height:1.35;overflow-wrap:anywhere;word-break:break-word}
-.todo-followup-question{font-size:13px;line-height:1.45;overflow-wrap:anywhere;word-break:break-word}
+.todo-followup-item{display:flex;min-width:0}
+.todo-followup-bubble{display:grid;gap:7px;width:min(760px,100%);padding:10px 12px;border:1px solid rgba(55,114,207,.16);border-radius:12px 12px 12px 4px;background:#f5faff;color:var(--charcoal);box-shadow:0 1px 0 rgba(17,24,39,.03)}
+.todo-followup-head{display:flex;align-items:center;gap:7px;min-width:0;flex-wrap:wrap}
+.todo-followup-recipient{min-width:0;color:var(--ink);font-size:12px;font-weight:800;line-height:1.25;overflow-wrap:anywhere;word-break:break-word}
+.todo-followup-status{display:inline-flex;align-items:center;height:20px;padding:0 7px;border:1px solid rgba(55,114,207,.18);border-radius:999px;background:var(--canvas);color:#245aa5;font-size:11px;font-weight:800;line-height:1;white-space:nowrap}
+.todo-followup-time{margin-left:auto;color:var(--steel);font-family:"Geist Mono","SF Mono",Menlo,Consolas,monospace;font-size:11px;font-weight:700;line-height:1.3;white-space:nowrap}
+.todo-followup-message{color:var(--ink);font-size:13px;line-height:1.5;overflow-wrap:anywhere;word-break:break-word}
+.todo-followup-target{color:var(--steel);font-family:"Geist Mono","SF Mono",Menlo,Consolas,monospace;font-size:11px;font-weight:700;line-height:1.35;overflow-wrap:anywhere;word-break:break-word}
 .progress-cell{display:grid;gap:5px;min-width:0}
 .progress-meter{height:6px;border-radius:999px;background:var(--surface-soft);overflow:hidden}
 .progress-bar{height:100%;border-radius:999px;background:#3772cf}
@@ -414,7 +418,7 @@ label{display:block;margin:14px 0 7px;color:var(--slate);font-size:13px;font-wei
 .danger{background:#9f1d1d}
 .muted{color:var(--steel)}
 @media (max-width:900px){.attempt-head{align-items:flex-start;flex-direction:column}.attempt-title{flex-wrap:wrap}.attempt-side{align-items:flex-start;flex-direction:column;gap:6px}.attempt-main,.attempt-meta{white-space:normal}.attempt-time{text-align:left}.attempt-copy{-webkit-line-clamp:3}.review-grid{grid-template-columns:1fr}.attempt-detail-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
-@media (max-width:760px){.shell,main{padding-left:12px;padding-right:12px}.topbar{align-items:flex-start;flex-direction:column;padding:14px 0}.grid{grid-template-columns:1fr}th,td{padding:10px 12px}.attempt-foot{align-items:flex-start;flex-direction:column}.attempt-conversation-banner{align-items:flex-start;flex-direction:column}.attempt-detail-grid{grid-template-columns:1fr}.todo-detail-fields{grid-template-columns:1fr}.todo-followup-item{grid-template-columns:1fr}.history-chart{height:220px}.history-table-header{grid-template-columns:1fr}.history-page-links{justify-content:flex-start}.history-limit-form{justify-content:flex-start}}
+@media (max-width:760px){.shell,main{padding-left:12px;padding-right:12px}.topbar{align-items:flex-start;flex-direction:column;padding:14px 0}.grid{grid-template-columns:1fr}th,td{padding:10px 12px}.attempt-foot{align-items:flex-start;flex-direction:column}.attempt-conversation-banner{align-items:flex-start;flex-direction:column}.attempt-detail-grid{grid-template-columns:1fr}.todo-detail-fields{grid-template-columns:1fr}.todo-followup-time{margin-left:0}.history-chart{height:220px}.history-table-header{grid-template-columns:1fr}.history-page-links{justify-content:flex-start}.history-limit-form{justify-content:flex-start}}
 """
 
 FAVICON_HREF = (
@@ -2955,13 +2959,17 @@ def _task_follow_up_child_item(draft) -> str:
     scheduled = _format_local_time(draft.scheduled_at) or draft.scheduled_at or "-"
     owner = draft.owner_name or draft.owner_user_id or "-"
     target = _task_follow_up_target(draft)
-    meta = f"{scheduled} | {draft.status}"
-    target_text = f"{owner} | {target}"
     return (
         "<li class=\"todo-followup-item\">"
-        f"<div class=\"todo-followup-meta\">{escape(meta)}</div>"
-        f"<div class=\"todo-followup-target\">{escape(target_text)}</div>"
-        f"<div class=\"todo-followup-question\">{escape(draft.question_text)}</div>"
+        "<div class=\"todo-followup-bubble\">"
+        "<div class=\"todo-followup-head\">"
+        f"<span class=\"todo-followup-recipient\">{escape(owner)}</span>"
+        f"<span class=\"todo-followup-status\">{escape(draft.status)}</span>"
+        f"<span class=\"todo-followup-time\">{escape(scheduled)}</span>"
+        "</div>"
+        f"<div class=\"todo-followup-message\">{escape(draft.question_text)}</div>"
+        f"<div class=\"todo-followup-target\">{escape(target)}</div>"
+        "</div>"
         "</li>"
     )
 

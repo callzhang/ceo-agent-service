@@ -1235,6 +1235,12 @@ def test_task_project_detail_renders_project_todos_and_sources(tmp_path: Path):
     assert 'class="todo-detail-title"' in html
     assert 'class="todo-detail-fields"' in html
     assert f'<div class="todo-detail-followups" data-parent-todo="{todo_id}">' in html
+    assert 'class="todo-followup-bubble"' in html
+    assert 'class="todo-followup-head"' in html
+    assert '<span class="todo-followup-recipient">Alex</span>' in html
+    assert '<span class="todo-followup-status">draft</span>' in html
+    assert '<div class="todo-followup-message">来源链接补齐到哪一步了？</div>' in html
+    assert '<div class="todo-followup-meta">' not in html
     assert "Follow-ups (1)" in html
     assert "group:cid-1" in html
     assert "Unlinked follow-ups" not in html
