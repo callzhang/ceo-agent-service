@@ -1006,3 +1006,42 @@ def test_missing_service_state_returns_none(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
 
     assert store.get_service_state("missing") is None
+
+
+def test_setup_wizard_step_state_round_trips(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+
+    store.upsert_setup_wizard_step(
+        step_id="mcp",
+        status="done",
+        summary="Codex config contains memory_connector",
+        manual_confirmed_by="",
+    )
+    row = store.get_setup_wizard_step("mcp")
+
+    assert row["step_id"] == "mcp"
+    assert row["status"] == "done"
+    assert row["summary"] == "Codex config contains memory_connector"
+    assert row["manual_confirmed_by"] == ""
+    assert row["updated_at"]
+
+
+def test_setup_wizard_event_history_round_trips(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+
+    event_id = store.record_setup_wizard_event(
+        step_id="mcp",
+        action_id="setup_mcp",
+        status="done",
+        summary="wrote config",
+        evidence_json='{"codex_config": "/tmp/config.toml"}',
+        stdout_excerpt="setup-memory-connector codex_config=/tmp/config.toml",
+        stderr_excerpt="",
+    )
+    events = store.list_setup_wizard_events("mcp")
+
+    assert event_id > 0
+    assert len(events) == 1
+    assert events[0]["step_id"] == "mcp"
+    assert events[0]["action_id"] == "setup_mcp"
+    assert events[0]["evidence_json"] == '{"codex_config": "/tmp/config.toml"}'

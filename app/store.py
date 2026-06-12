@@ -371,6 +371,28 @@ class AutoReplyStore:
                     value text not null,
                     updated_at text not null default current_timestamp
                 );
+                create table if not exists setup_wizard_steps (
+                    step_id text primary key,
+                    status text not null,
+                    summary text not null default '',
+                    manual_confirmed_at text not null default '',
+                    manual_confirmed_by text not null default '',
+                    updated_at text not null default current_timestamp
+                );
+                create table if not exists setup_wizard_events (
+                    id integer primary key autoincrement,
+                    step_id text not null,
+                    action_id text not null,
+                    status text not null,
+                    summary text not null default '',
+                    evidence_json text not null default '{}',
+                    stdout_excerpt text not null default '',
+                    stderr_excerpt text not null default '',
+                    started_at text not null default current_timestamp,
+                    finished_at text not null default current_timestamp
+                );
+                create index if not exists idx_setup_wizard_events_step
+                    on setup_wizard_events(step_id, id);
                 create table if not exists codex_session_locks (
                     conversation_id text primary key,
                     owner text not null,
@@ -3026,6 +3048,135 @@ class AutoReplyStore:
                 (key,),
             ).fetchone()
             return None if row is None else row["value"]
+
+    def upsert_setup_wizard_step(
+        self,
+        *,
+        step_id: str,
+        status: str,
+        summary: str,
+        manual_confirmed_by: str = "",
+    ) -> None:
+        with self._connect() as db:
+            db.execute(
+                """
+                insert into setup_wizard_steps (
+                    step_id,
+                    status,
+                    summary,
+                    manual_confirmed_at,
+                    manual_confirmed_by
+                )
+                values (?, ?, ?, case when ? != '' then current_timestamp else '' end, ?)
+                on conflict(step_id) do update set
+                    status=excluded.status,
+                    summary=excluded.summary,
+                    manual_confirmed_at=case
+                        when excluded.manual_confirmed_by != '' then current_timestamp
+                        else setup_wizard_steps.manual_confirmed_at
+                    end,
+                    manual_confirmed_by=case
+                        when excluded.manual_confirmed_by != '' then excluded.manual_confirmed_by
+                        else setup_wizard_steps.manual_confirmed_by
+                    end,
+                    updated_at=current_timestamp
+                """,
+                (
+                    step_id,
+                    status,
+                    summary,
+                    manual_confirmed_by,
+                    manual_confirmed_by,
+                ),
+            )
+
+    def get_setup_wizard_step(self, step_id: str) -> dict[str, str] | None:
+        with self._connect() as db:
+            row = db.execute(
+                """
+                select step_id, status, summary, manual_confirmed_at,
+                       manual_confirmed_by, updated_at
+                from setup_wizard_steps
+                where step_id=?
+                """,
+                (step_id,),
+            ).fetchone()
+            return dict(row) if row is not None else None
+
+    def list_setup_wizard_steps(self) -> list[dict[str, str]]:
+        with self._connect() as db:
+            rows = db.execute(
+                """
+                select step_id, status, summary, manual_confirmed_at,
+                       manual_confirmed_by, updated_at
+                from setup_wizard_steps
+                order by updated_at desc
+                """
+            ).fetchall()
+            return [dict(row) for row in rows]
+
+    def record_setup_wizard_event(
+        self,
+        *,
+        step_id: str,
+        action_id: str,
+        status: str,
+        summary: str = "",
+        evidence_json: str = "{}",
+        stdout_excerpt: str = "",
+        stderr_excerpt: str = "",
+    ) -> int:
+        with self._connect() as db:
+            cursor = db.execute(
+                """
+                insert into setup_wizard_events (
+                    step_id,
+                    action_id,
+                    status,
+                    summary,
+                    evidence_json,
+                    stdout_excerpt,
+                    stderr_excerpt
+                )
+                values (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    step_id,
+                    action_id,
+                    status,
+                    summary,
+                    evidence_json,
+                    stdout_excerpt,
+                    stderr_excerpt,
+                ),
+            )
+            return int(cursor.lastrowid)
+
+    def list_setup_wizard_events(
+        self,
+        step_id: str | None = None,
+        *,
+        limit: int = 20,
+    ) -> list[dict[str, str | int]]:
+        with self._connect() as db:
+            args: list[str | int] = []
+            where = ""
+            if step_id is not None:
+                where = "where step_id=?"
+                args.append(step_id)
+            args.append(limit)
+            rows = db.execute(
+                f"""
+                select id, step_id, action_id, status, summary, evidence_json,
+                       stdout_excerpt, stderr_excerpt, started_at, finished_at
+                from setup_wizard_events
+                {where}
+                order by id desc
+                limit ?
+                """,
+                args,
+            ).fetchall()
+            return [dict(row) for row in rows]
 
     def upsert_org_user_profile(
         self,
