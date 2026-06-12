@@ -28,22 +28,70 @@ def test_setup_wizard_steps_are_ordered_and_gated():
 
 
 def test_setup_wizard_action_metadata_is_gated():
-    actions = {
-        step.id: {
-            action.id: action
+    assert {
+        step.id: [
+            (
+                action.id,
+                action.label,
+                action.step_id,
+                action.kind,
+                action.destructive,
+                action.external_side_effect,
+            )
             for action in step.actions
-        }
+        ]
         for step in SETUP_WIZARD_STEPS
+    } == {
+        "preflight": [
+            ("check_preflight", "Check", "preflight", "check", False, False),
+        ],
+        "cli_components": [
+            ("check_cli_components", "Check", "cli_components", "check", False, False),
+        ],
+        "mcp": [
+            ("check_mcp", "Check", "mcp", "check", False, False),
+            ("setup_mcp", "Fix automatically", "mcp", "run", False, False),
+        ],
+        "service_config": [
+            ("check_service_config", "Check", "service_config", "check", False, False),
+            (
+                "setup_service_config",
+                "Fix automatically",
+                "service_config",
+                "run",
+                False,
+                False,
+            ),
+        ],
+        "data_corpus": [
+            ("check_data_corpus", "Check", "data_corpus", "check", False, False),
+            ("build_data_corpus", "Run", "data_corpus", "run", False, False),
+        ],
+        "work_profile": [
+            ("check_work_profile", "Check", "work_profile", "check", False, False),
+            ("build_work_profile", "Run", "work_profile", "run", False, False),
+        ],
+        "dry_run": [
+            ("check_dry_run", "Check", "dry_run", "check", False, False),
+            ("run_dry_run", "Run", "dry_run", "run", False, False),
+        ],
+        "launchd": [
+            ("check_launchd", "Check", "launchd", "check", False, False),
+            ("install_launchd", "Run", "launchd", "run", False, True),
+        ],
+        "live_send": [
+            ("check_live_send", "Check", "live_send", "check", False, False),
+            ("verify_live_send", "Run", "live_send", "run", False, True),
+            (
+                "confirm_live_send",
+                "Confirm after page inspection",
+                "live_send",
+                "confirm",
+                False,
+                False,
+            ),
+        ],
     }
-
-    assert [(action.id, action.label, action.kind) for action in actions["mcp"].values()] == [
-        ("check_mcp", "Check", "check"),
-        ("setup_mcp", "Fix automatically", "run"),
-    ]
-    assert actions["launchd"]["install_launchd"].external_side_effect is True
-    assert actions["live_send"]["verify_live_send"].external_side_effect is True
-    assert actions["live_send"]["confirm_live_send"].kind == "confirm"
-    assert actions["live_send"]["confirm_live_send"].label == "Confirm after page inspection"
 
 
 def test_get_step_definition_rejects_unknown_step():
@@ -115,3 +163,15 @@ def test_setup_wizard_event_defaults_and_serialization():
     assert payload["evidence"] == {"configured": True}
     assert payload["stdout_excerpt"] == ""
     assert payload["stderr_excerpt"] == ""
+
+
+@pytest.mark.parametrize("status", ["not_started", "running", "done", "failed"])
+def test_setup_wizard_event_accepts_action_statuses(status: str):
+    event = SetupWizardEvent(step_id="mcp", action_id="setup_mcp", status=status)
+
+    assert event.status == status
+
+
+def test_setup_wizard_event_rejects_unknown_action_status():
+    with pytest.raises(ValidationError):
+        SetupWizardEvent(step_id="mcp", action_id="setup_mcp", status="skipped")
