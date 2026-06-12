@@ -1,4 +1,5 @@
 import re
+import os
 from pathlib import Path
 
 from app.setup_wizard_models import (
@@ -243,7 +244,7 @@ def _env_values(env_path: Path) -> dict[str, str]:
         if not line or line.startswith("#") or "=" not in line:
             continue
         key, value = line.split("=", 1)
-        values[key.strip()] = value.strip().strip('"').strip("'")
+        values[key.strip()] = os.path.expandvars(value.strip().strip('"').strip("'"))
     return values
 
 
@@ -252,6 +253,24 @@ def _resolve_repo_path(repo_root: Path, value: str) -> Path:
     if path.is_absolute():
         return path
     return repo_root / path
+
+
+def _configured_corpus_dir(repo_root: Path) -> Path:
+    values = _env_values(repo_root / ".env")
+    return _resolve_repo_path(repo_root, values.get("CEO_CORPUS_DIR", "corpus"))
+
+
+def _contains_sensitive_profile_evidence(text: str) -> bool:
+    return any(
+        pattern.search(text)
+        for pattern in (
+            BEARER_RE,
+            TOKEN_RE,
+            SESSION_KEY_RE,
+            SESSION_RE,
+            LOCAL_PATH_RE,
+        )
+    )
 
 
 def check_service_config(*, repo_root: Path) -> SetupStepStatus:
@@ -310,7 +329,7 @@ def check_service_config(*, repo_root: Path) -> SetupStepStatus:
 
 
 def check_data_corpus(*, repo_root: Path) -> SetupStepStatus:
-    style_corpus = repo_root / "corpus" / "style_corpus.csv"
+    style_corpus = _configured_corpus_dir(repo_root) / "style_corpus.csv"
     if not style_corpus.exists():
         return _status(
             "data_corpus",
@@ -331,7 +350,7 @@ def check_data_corpus(*, repo_root: Path) -> SetupStepStatus:
 def check_work_profile(*, repo_root: Path) -> SetupStepStatus:
     profile = repo_root / "profiles" / "work_profile.md"
     evidence = repo_root / "data" / "profile-evidence" / "evidence_index.jsonl"
-    style_corpus = repo_root / "corpus" / "style_corpus.csv"
+    style_corpus = _configured_corpus_dir(repo_root) / "style_corpus.csv"
     if not profile.exists():
         return _status(
             "work_profile",
@@ -355,11 +374,7 @@ def check_work_profile(*, repo_root: Path) -> SetupStepStatus:
             summary="corpus/style_corpus.csv is missing.",
         )
     profile_text = profile.read_text(encoding="utf-8")
-    if (
-        "/Users/" in profile_text
-        or "Bearer " in profile_text
-        or "session_id=" in profile_text
-    ):
+    if _contains_sensitive_profile_evidence(profile_text):
         return _status(
             "work_profile",
             title="Work Profile Distillation",

@@ -300,11 +300,48 @@ def test_check_service_config_accepts_env_and_directories(tmp_path: Path):
     assert result.evidence["dry_run_enabled"] is True
 
 
+def test_check_service_config_expands_home_environment_value(
+    monkeypatch,
+    tmp_path: Path,
+):
+    home = tmp_path / "home"
+    workspace = home / "Documents" / "memory"
+    workspace.mkdir(parents=True)
+    (tmp_path / "data").mkdir()
+    (tmp_path / "corpus").mkdir()
+    (tmp_path / ".env").write_text(
+        "CEO_WORKSPACE=$HOME/Documents/memory\n"
+        "CEO_WORKER_DB=data/auto-reply.sqlite3\n"
+        "CEO_CORPUS_DIR=corpus\n"
+        "CEO_NOT_SEND_MESSAGE=1\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("HOME", str(home))
+
+    result = check_service_config(repo_root=tmp_path)
+
+    assert result.status == "done"
+
+
 def test_check_data_corpus_requires_style_corpus(tmp_path: Path):
     result = check_data_corpus(repo_root=tmp_path)
 
     assert result.status == "needs_action"
     assert result.summary == "corpus/style_corpus.csv is missing."
+
+
+def test_check_data_corpus_uses_configured_corpus_dir(tmp_path: Path):
+    external_corpus = tmp_path / "external-corpus"
+    external_corpus.mkdir()
+    (external_corpus / "style_corpus.csv").write_text("source,text\n", encoding="utf-8")
+    (tmp_path / ".env").write_text(
+        f"CEO_CORPUS_DIR={external_corpus}\n",
+        encoding="utf-8",
+    )
+
+    result = check_data_corpus(repo_root=tmp_path)
+
+    assert result.status == "done"
 
 
 def test_check_work_profile_requires_profile_and_evidence(tmp_path: Path):
@@ -328,6 +365,34 @@ def test_check_work_profile_flags_leaked_local_path(tmp_path: Path):
     )
     (tmp_path / "corpus" / "style_corpus.csv").write_text(
         "source,text\n",
+        encoding="utf-8",
+    )
+
+    result = check_work_profile(repo_root=tmp_path)
+
+    assert result.status == "failed"
+    assert result.summary == "profiles/work_profile.md contains sensitive local evidence."
+
+
+def test_check_work_profile_uses_configured_corpus_dir_and_redaction_patterns(
+    tmp_path: Path,
+):
+    external_corpus = tmp_path / "external-corpus"
+    external_corpus.mkdir()
+    (external_corpus / "style_corpus.csv").write_text("source,text\n", encoding="utf-8")
+    (tmp_path / ".env").write_text(
+        f"CEO_CORPUS_DIR={external_corpus}\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "profiles").mkdir()
+    (tmp_path / "data" / "profile-evidence").mkdir(parents=True)
+    (tmp_path / "profiles" / "work_profile.md").write_text(
+        "api_key: sk-secret /tmp/private-cache "
+        "019eb3e7-dfc2-7fd2-8deb-81f76fcfcdf1",
+        encoding="utf-8",
+    )
+    (tmp_path / "data" / "profile-evidence" / "evidence_index.jsonl").write_text(
+        "{}\n",
         encoding="utf-8",
     )
 
