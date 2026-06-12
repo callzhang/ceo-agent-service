@@ -1,9 +1,15 @@
+from pathlib import Path
 from typing import get_args
 
 import pytest
 from pydantic import ValidationError
 
-from app.setup_wizard import SETUP_WIZARD_STEPS, get_step_definition
+from app.setup_wizard import (
+    SETUP_WIZARD_STEPS,
+    build_wizard_status,
+    get_step_definition,
+    redact_setup_output,
+)
 from app.setup_wizard_models import (
     SetupAction,
     SetupActionStatus,
@@ -11,6 +17,7 @@ from app.setup_wizard_models import (
     SetupWizardEvent,
     SetupWizardStatus,
 )
+from app.store import AutoReplyStore
 
 
 def test_setup_wizard_steps_are_ordered_and_gated():
@@ -182,3 +189,50 @@ def test_setup_wizard_event_accepts_action_statuses(status: str):
 def test_setup_wizard_event_rejects_unknown_action_status():
     with pytest.raises(ValidationError):
         SetupWizardEvent(step_id="mcp", action_id="setup_mcp", status="skipped")
+
+
+def test_build_wizard_status_blocks_dependent_steps(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+
+    status = build_wizard_status(store)
+    steps = {step.step_id: step for step in status.steps}
+
+    assert steps["preflight"].status == "not_started"
+    assert steps["mcp"].status == "blocked"
+    assert steps["mcp"].summary == "Blocked until CLI Components is complete."
+    assert steps["mcp"].available_actions == []
+
+
+def test_build_wizard_status_allows_next_step_after_dependency_done(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.upsert_setup_wizard_step(
+        step_id="preflight",
+        status="done",
+        summary="ok",
+    )
+
+    status = build_wizard_status(store)
+    steps = {step.step_id: step for step in status.steps}
+
+    assert steps["cli_components"].status == "not_started"
+    assert [action.id for action in steps["cli_components"].available_actions] == [
+        "check_cli_components"
+    ]
+
+
+def test_redact_setup_output_removes_secrets_and_session_ids():
+    text = (
+        "Authorization: Bearer abc.def token=secret123 "
+        "session_id=019eb3e7-dfc2 path=/Users/derek/Documents/private.md"
+    )
+
+    redacted = redact_setup_output(text)
+
+    assert "abc.def" not in redacted
+    assert "secret123" not in redacted
+    assert "019eb3e7-dfc2" not in redacted
+    assert "/Users/derek/Documents/private.md" not in redacted
+    assert "[REDACTED_BEARER]" in redacted
+    assert "[REDACTED_TOKEN]" in redacted
+    assert "[REDACTED_SESSION]" in redacted
+    assert "[REDACTED_PATH]" in redacted

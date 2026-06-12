@@ -1,4 +1,19 @@
-from app.setup_wizard_models import SetupAction, SetupStepDefinition
+import re
+
+from app.setup_wizard_models import (
+    SetupAction,
+    SetupStepDefinition,
+    SetupStepStatus,
+    SetupWizardStatus,
+)
+from app.store import AutoReplyStore
+
+
+BEARER_RE = re.compile(r"Bearer\s+[A-Za-z0-9._~+/=-]+")
+TOKEN_RE = re.compile(r"(?i)(token|api[_-]?key|secret)=\S+")
+SESSION_RE = re.compile(r"\b[0-9a-f]{8}-[0-9a-f]{4,}(?:-[0-9a-f]{4,})+\b")
+SESSION_KEY_RE = re.compile(r"(?i)session[_-]?id=\S+")
+LOCAL_PATH_RE = re.compile(r"/Users/[^\s'\"<>]+")
 
 
 SETUP_WIZARD_STEPS: tuple[SetupStepDefinition, ...] = (
@@ -182,3 +197,61 @@ def get_step_definition(step_id: str) -> SetupStepDefinition:
         if step.id == step_id:
             return step
     raise KeyError(step_id)
+
+
+def redact_setup_output(text: str) -> str:
+    redacted = BEARER_RE.sub("Bearer [REDACTED_BEARER]", text)
+    redacted = TOKEN_RE.sub(
+        lambda match: f"{match.group(1)}=[REDACTED_TOKEN]",
+        redacted,
+    )
+    redacted = SESSION_KEY_RE.sub("[REDACTED_SESSION]", redacted)
+    redacted = SESSION_RE.sub("[REDACTED_SESSION]", redacted)
+    redacted = LOCAL_PATH_RE.sub("[REDACTED_PATH]", redacted)
+    return redacted
+
+
+def build_wizard_status(store: AutoReplyStore) -> SetupWizardStatus:
+    persisted = {row["step_id"]: row for row in store.list_setup_wizard_steps()}
+    complete = {
+        step_id
+        for step_id, row in persisted.items()
+        if row["status"] == "done"
+    }
+    statuses: list[SetupStepStatus] = []
+
+    for definition in SETUP_WIZARD_STEPS:
+        row = persisted.get(definition.id)
+        missing_dependency = next(
+            (
+                dependency
+                for dependency in definition.depends_on
+                if dependency not in complete
+            ),
+            "",
+        )
+        if missing_dependency:
+            dependency_title = get_step_definition(missing_dependency).title
+            statuses.append(
+                SetupStepStatus(
+                    step_id=definition.id,
+                    title=definition.title,
+                    status="blocked",
+                    summary=f"Blocked until {dependency_title} is complete.",
+                    updated_at=row["updated_at"] if row else "",
+                )
+            )
+            continue
+
+        statuses.append(
+            SetupStepStatus(
+                step_id=definition.id,
+                title=definition.title,
+                status=row["status"] if row else "not_started",
+                summary=row["summary"] if row else "",
+                available_actions=definition.actions,
+                updated_at=row["updated_at"] if row else "",
+            )
+        )
+
+    return SetupWizardStatus(steps=statuses)
