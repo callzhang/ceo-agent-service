@@ -645,12 +645,15 @@ def test_thread_prompt_prefers_text_emotion_for_light_human_handoff():
     assert "不要编造 emotion_id、background_id" in prompt
 
 
-def test_thread_prompt_requires_polite_reply_for_direct_thanks():
+def test_thread_prompt_prefers_reaction_for_low_information_single_chat_closings():
     prompt = ceo_agent_thread_prompt()
 
     assert "单聊里如果对方只是" in prompt
     assert "表示感谢、确认收到、认可或客气收口" in prompt
-    assert "不要因为“只是感谢/客气”直接 no_reply" in prompt
+    assert "优先输出 no_reply" in prompt
+    assert "用 `dws_message_reaction` 轻量表达收到或认可" in prompt
+    assert "不要为了“礼貌收口”发送“收到”“好的”这类低信息增益文字" in prompt
+    assert "确认本身会影响执行责任、交付边界、时间安排、权限/费用/审批等正式事项" in prompt
 
 
 def test_build_turn_prompt_includes_prefetched_dingtalk_document():
