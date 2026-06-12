@@ -716,6 +716,47 @@ def test_handle_warns_dws_login_failure_is_tool_issue(tmp_path: Path):
     assert "不要表述为申请人没有提供材料" in prompts[0]
 
 
+def test_handle_tells_agent_to_use_recovered_openapi_detail(tmp_path: Path):
+    skill_path = tmp_path / "skill.md"
+    skill_path.write_text("# OA Skill", encoding="utf-8")
+    prompts: list[str] = []
+
+    def fake_executor(command: list[str], prompt: str) -> str:
+        del command
+        prompts.append(prompt)
+        return _oa_envelope_json(
+            action="通过",
+            remark="OpenAPI 材料完整，同意。",
+            summary="已使用 worker 注入的 OpenAPI 详情审阅。",
+        )
+
+    runner = OaApprovalReviewClient(
+        workspace=tmp_path,
+        executor=fake_executor,
+        skill_path=skill_path,
+    )
+
+    runner.handle(
+        "触发消息",
+        "",
+        "https://aflow.dingtalk.com/detail?procInstId=proc-1&taskId=task-1",
+        approval_detail_text=json.dumps(
+            {
+                "dws_detail_status": {"status": "recovered_by_openapi"},
+                "openapi_detail": {"process_instance": {"title": "项目立项"}},
+            },
+            ensure_ascii=False,
+        ),
+        execute=False,
+    )
+
+    assert "worker 已经用 OpenAPI 读取到审批详情" in prompts[0]
+    assert "必须直接使用 openapi_detail" in prompts[0]
+    assert "不要再调用 `dws oa approval detail`" in prompts[0]
+    assert "`--format raw`" in prompts[0]
+    assert "`--fields`" in prompts[0]
+
+
 def test_read_only_runner_can_use_local_dws_auth(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("DWS_CLIENT_ID", "wrong-client-id")
     monkeypatch.setenv("DWS_CLIENT_SECRET", "wrong-client-secret")

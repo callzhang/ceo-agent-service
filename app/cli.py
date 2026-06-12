@@ -552,7 +552,7 @@ def create_worker(settings: WorkerSettings) -> DingTalkAutoReplyWorker:
         style_profile=style_profile,
         style_records=style_records,
     )
-    worker.oa_approval_runner = oa_approval_reviewer
+    worker.oa_approval_handler = oa_approval_reviewer
     okr_source_kind = _okr_source_kind()
     if okr_source_kind == "agoal":
         worker.okr_live_source = DwsAgoalApiOkrSource(

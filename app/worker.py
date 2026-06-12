@@ -264,7 +264,7 @@ class DingTalkAutoReplyWorker:
         send_attempts: int = 2,
         max_task_attempts: int = MAX_REPLY_TASK_ATTEMPTS,
         now_provider: Callable[[], datetime] | None = None,
-        oa_approval_runner=None,
+        oa_approval_handler=None,
     ):
         self.store = store
         self.dws = dws
@@ -277,7 +277,7 @@ class DingTalkAutoReplyWorker:
         self.max_task_attempts = max_task_attempts
         self.now_provider = now_provider or (lambda: datetime.now().astimezone())
         self.permission_gate = PermissionGate(dws)
-        self.oa_approval_runner = oa_approval_runner
+        self.oa_approval_handler = oa_approval_handler
         self._dws_auth_login_process = None
 
     def run_once(self, max_batches: int | None = None) -> None:
@@ -1825,7 +1825,7 @@ class DingTalkAutoReplyWorker:
         ignore_existing_attempt: bool = False,
         oa_url_override: str = "",
     ) -> bool:
-        if self.oa_approval_runner is None:
+        if self.oa_approval_handler is None:
             return False
         if not self._is_oa_approval_message(trigger):
             return False
@@ -1838,7 +1838,7 @@ class DingTalkAutoReplyWorker:
             return True
         oa_url = oa_url_override.strip() or extract_oa_url(trigger.content)
         approval_detail_text = self._oa_approval_detail_text(trigger, oa_url)
-        result = self.oa_approval_runner.handle(
+        result = self.oa_approval_handler.handle(
             trigger_text=trigger.content,
             context_text=self._oa_approval_context_text(context_messages),
             oa_url=oa_url,
@@ -1897,20 +1897,20 @@ class DingTalkAutoReplyWorker:
             sensitivity_kind="internal_personnel",
             codex_reason=result.oa_action,
             draft_reply_text=result.oa_remark,
-            codex_session_id=getattr(self.oa_approval_runner, "last_session_id", "")
+            codex_session_id=getattr(self.oa_approval_handler, "last_session_id", "")
             or "",
             codex_transcript_start_line=getattr(
-                self.oa_approval_runner, "last_transcript_start_line", 0
+                self.oa_approval_handler, "last_transcript_start_line", 0
             ),
             codex_transcript_end_line=getattr(
-                self.oa_approval_runner, "last_transcript_end_line", 0
+                self.oa_approval_handler, "last_transcript_end_line", 0
             ),
             audit_documents_json=json.dumps(
                 result.audit_documents,
                 ensure_ascii=False,
             ),
             audit_tool_events_json=json.dumps(
-                getattr(self.oa_approval_runner, "last_audit_tool_events", []),
+                getattr(self.oa_approval_handler, "last_audit_tool_events", []),
                 ensure_ascii=False,
             ),
             audit_summary=result.audit_summary,
@@ -2318,10 +2318,11 @@ class DingTalkAutoReplyWorker:
             "status": "recovered_by_openapi",
             "message": (
                 "dws oa approval detail failed because the DWS detail command "
-                "could not parse this process instance. Use openapi_detail, "
+                "could not parse this process instance. The worker already "
+                "recovered the approval detail through OpenAPI. Use openapi_detail, "
                 "dws_records, dws_tasks, and oa_attachment_fallbacks as the "
-                "source of truth. Do not retry dws oa approval detail, "
-                "--format raw, or --fields for this instance."
+                "source of truth. Do not call dws oa approval detail again, "
+                "and do not try --format raw or --fields variants for this instance."
             ),
         }
 

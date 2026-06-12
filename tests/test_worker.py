@@ -814,7 +814,7 @@ class SequencedFakeCodex:
         return self.decisions[len(self.calls) - 1]
 
 
-class FakeOaApprovalRunner:
+class FakeOaApprovalHandler:
     def __init__(self):
         self.calls: list[tuple[str, str, str, bool]] = []
         self.approval_detail_texts: list[str] = []
@@ -846,7 +846,7 @@ class FakeOaApprovalRunner:
         )
 
 
-class ReturnOaApprovalRunner(FakeOaApprovalRunner):
+class ReturnOaApprovalHandler(FakeOaApprovalHandler):
     def handle(
         self,
         trigger_text: str,
@@ -870,7 +870,7 @@ class ReturnOaApprovalRunner(FakeOaApprovalRunner):
         )
 
 
-class MissingTargetOaApprovalRunner(FakeOaApprovalRunner):
+class MissingTargetOaApprovalHandler(FakeOaApprovalHandler):
     def handle(
         self,
         trigger_text: str,
@@ -977,7 +977,7 @@ def make_worker(
     style_records: list[CorpusRecord] | None = None,
     dry_run: bool = False,
     max_task_attempts: int = 3,
-    oa_approval_runner=None,
+    oa_approval_handler=None,
     fast_path_unread_backoff: timedelta = timedelta(0),
 ) -> DingTalkAutoReplyWorker:
     monkeypatch.setattr(
@@ -998,7 +998,7 @@ def make_worker(
         style_records=style_records,
         now_provider=fixed_worker_now,
         max_task_attempts=max_task_attempts,
-        oa_approval_runner=oa_approval_runner,
+        oa_approval_handler=oa_approval_handler,
     )
 
 
@@ -4723,7 +4723,7 @@ def test_single_chat_alidocs_card_reaches_codex_as_material_reference(
     assert attempt.audit_summary == "私聊文档卡片已进入 agent 判断。"
 
 
-def test_structured_approval_card_is_processed_by_oa_runner(
+def test_structured_approval_card_is_processed_by_oa_handler(
     tmp_path: Path, monkeypatch
 ):
     trigger = message(
@@ -4750,19 +4750,19 @@ def test_structured_approval_card_is_processed_by_oa_runner(
             audit_summary="结构化 OA 卡片需要按审批审阅原则处理。",
         )
     )
-    oa_runner = FakeOaApprovalRunner()
+    oa_handler = FakeOaApprovalHandler()
     worker = make_worker(
         tmp_path,
         dws,
         codex,
         monkeypatch,
-        oa_approval_runner=oa_runner,
+        oa_approval_handler=oa_handler,
     )
 
     worker.run_once()
 
     assert codex.calls == []
-    assert len(oa_runner.calls) == 1
+    assert len(oa_handler.calls) == 1
     assert worker.store.has_seen("msg-1") is True
     assert worker.store.count_reply_attempts() == 1
     attempt = worker.store.get_reply_attempt(1)
@@ -4787,7 +4787,7 @@ def test_structured_approval_card_is_processed_by_oa_runner(
     assert attempt.oa_url.startswith("https://aflow.dingtalk.com/")
     assert attempt.oa_action == "拒绝"
     assert attempt.oa_remark == "请补充预算来源和项目归属后重新提交。"
-    assert oa_runner.calls[0][3] is False
+    assert oa_handler.calls[0][3] is False
     assert dws.oa_approval_actions == [
         (
             "proc-1",
@@ -4814,14 +4814,14 @@ def test_oa_return_action_is_left_as_approval_comment_instead_of_reject(
     codex = FakeCodex(
         CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该走聊天回复")
     )
-    oa_runner = ReturnOaApprovalRunner()
+    oa_handler = ReturnOaApprovalHandler()
     worker = make_worker(
         tmp_path,
         dws,
         codex,
         monkeypatch,
         dry_run=False,
-        oa_approval_runner=oa_runner,
+        oa_approval_handler=oa_handler,
     )
 
     worker.run_once()
@@ -4852,14 +4852,14 @@ def test_existing_commented_oa_attempt_is_terminal(tmp_path: Path, monkeypatch):
     codex = FakeCodex(
         CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该重新生成")
     )
-    oa_runner = FakeOaApprovalRunner()
+    oa_handler = FakeOaApprovalHandler()
     worker = make_worker(
         tmp_path,
         dws,
         codex,
         monkeypatch,
         dry_run=False,
-        oa_approval_runner=oa_runner,
+        oa_approval_handler=oa_handler,
     )
     worker.store.record_reply_attempt(
         conversation_id="cid-1",
@@ -4881,7 +4881,7 @@ def test_existing_commented_oa_attempt_is_terminal(tmp_path: Path, monkeypatch):
     worker.run_once()
 
     assert codex.calls == []
-    assert oa_runner.calls == []
+    assert oa_handler.calls == []
     assert dws.oa_approval_actions == []
     assert dws.oa_approval_comments == []
     assert worker.store.has_seen("msg-1") is True
@@ -5049,7 +5049,7 @@ def test_ai_minutes_permission_request_is_auto_approved_without_codex_or_reply(
     assert "已自动通过 AI 听记权限申请" in attempt.audit_summary
 
 
-def test_ding_approval_reminder_is_processed_by_oa_runner(
+def test_ding_approval_reminder_is_processed_by_oa_handler(
     tmp_path: Path, monkeypatch
 ):
     trigger = message("[Ding]张静提醒您审批他的录用申请", single_chat=True)
@@ -5061,21 +5061,21 @@ def test_ding_approval_reminder_is_processed_by_oa_runner(
             audit_summary="审批催办需要按 OA 审阅原则处理。",
         )
     )
-    oa_runner = FakeOaApprovalRunner()
+    oa_handler = FakeOaApprovalHandler()
     worker = make_worker(
         tmp_path,
         dws,
         codex,
         monkeypatch,
-        oa_approval_runner=oa_runner,
+        oa_approval_handler=oa_handler,
     )
 
     worker.run_once()
 
     assert codex.calls == []
-    assert len(oa_runner.calls) == 1
-    assert oa_runner.calls[0][2] == ""
-    assert oa_runner.calls[0][3] is False
+    assert len(oa_handler.calls) == 1
+    assert oa_handler.calls[0][2] == ""
+    assert oa_handler.calls[0][3] is False
     assert dws.oa_approval_actions == [
         (
             "proc-1",
@@ -5097,13 +5097,13 @@ def test_oa_approval_missing_target_records_review_without_executing_action(
     codex = FakeCodex(
         CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该走聊天回复")
     )
-    oa_runner = MissingTargetOaApprovalRunner()
+    oa_handler = MissingTargetOaApprovalHandler()
     worker = make_worker(
         tmp_path,
         dws,
         codex,
         monkeypatch,
-        oa_approval_runner=oa_runner,
+        oa_approval_handler=oa_handler,
     )
 
     worker.run_once()
@@ -5139,14 +5139,14 @@ def test_oa_approval_does_not_execute_task_that_is_not_current_user(
     codex = FakeCodex(
         CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该走聊天回复")
     )
-    oa_runner = FakeOaApprovalRunner()
+    oa_handler = FakeOaApprovalHandler()
     worker = make_worker(
         tmp_path,
         dws,
         codex,
         monkeypatch,
         dry_run=False,
-        oa_approval_runner=oa_runner,
+        oa_approval_handler=oa_handler,
     )
 
     worker.run_once()
@@ -5193,18 +5193,18 @@ def test_ding_approval_reminder_injects_openapi_detail_when_dws_form_is_empty(
         }
     }
     codex = FakeCodex(CodexDecision(action=CodexAction.NO_REPLY))
-    oa_runner = FakeOaApprovalRunner()
+    oa_handler = FakeOaApprovalHandler()
     worker = make_worker(
         tmp_path,
         dws,
         codex,
         monkeypatch,
-        oa_approval_runner=oa_runner,
+        oa_approval_handler=oa_handler,
     )
 
     worker.run_once()
 
-    detail_text = oa_runner.approval_detail_texts[0]
+    detail_text = oa_handler.approval_detail_texts[0]
     assert "\"process_instance_id\": \"proc-1\"" in detail_text
     assert "openapi_detail" in detail_text
     assert "试用期工作内容和转正要求" in detail_text
@@ -5260,18 +5260,18 @@ def test_oa_approval_detail_always_includes_openapi_comments(
         }
     }
     codex = FakeCodex(CodexDecision(action=CodexAction.NO_REPLY))
-    oa_runner = FakeOaApprovalRunner()
+    oa_handler = FakeOaApprovalHandler()
     worker = make_worker(
         tmp_path,
         dws,
         codex,
         monkeypatch,
-        oa_approval_runner=oa_runner,
+        oa_approval_handler=oa_handler,
     )
 
     worker.run_once()
 
-    detail = json.loads(oa_runner.approval_detail_texts[0])
+    detail = json.loads(oa_handler.approval_detail_texts[0])
     assert detail["dws_detail"]["result"]["formValueVOS"][0]["value"] == (
         "奥迪第三曲线项目"
     )
@@ -5315,26 +5315,31 @@ def test_oa_approval_detail_param_error_is_recovered_by_openapi(
         }
     }
     codex = FakeCodex(CodexDecision(action=CodexAction.NO_REPLY))
-    oa_runner = FakeOaApprovalRunner()
+    oa_handler = FakeOaApprovalHandler()
     worker = make_worker(
         tmp_path,
         dws,
         codex,
         monkeypatch,
-        oa_approval_runner=oa_runner,
+        oa_approval_handler=oa_handler,
     )
 
     worker.run_once()
 
-    detail = json.loads(oa_runner.approval_detail_texts[0])
+    detail = json.loads(oa_handler.approval_detail_texts[0])
     assert "dws_detail" not in detail
     assert detail["openapi_detail"]["process_instance"]["title"] == (
         "郑威格提交的项目立项全流程（第三曲线）"
     )
     assert detail["dws_detail_status"]["status"] == "recovered_by_openapi"
-    assert "Do not retry dws oa approval detail" in detail["dws_detail_status"][
+    assert "worker already recovered the approval detail through OpenAPI" in detail[
+        "dws_detail_status"
+    ][
         "message"
     ]
+    assert "Do not call dws oa approval detail again" in detail[
+        "dws_detail_status"
+    ]["message"]
     assert "--format raw" in detail["dws_detail_status"]["message"]
     assert "--fields" in detail["dws_detail_status"]["message"]
 
@@ -5420,18 +5425,18 @@ def test_oa_approval_detail_searches_and_reads_openapi_attachments(
         ]
     )
     codex = FakeCodex(CodexDecision(action=CodexAction.NO_REPLY))
-    oa_runner = FakeOaApprovalRunner()
+    oa_handler = FakeOaApprovalHandler()
     worker = make_worker(
         tmp_path,
         dws,
         codex,
         monkeypatch,
-        oa_approval_runner=oa_runner,
+        oa_approval_handler=oa_handler,
     )
 
     worker.run_once()
 
-    detail = json.loads(oa_runner.approval_detail_texts[0])
+    detail = json.loads(oa_handler.approval_detail_texts[0])
     assert dws.download_oa_attachment_calls == [("proc-1", "224596585916")]
     assert dws.search_document_calls == [
         ("项目实施计划（第三曲线大模型解决方案）", 5)
@@ -5459,13 +5464,13 @@ def test_oa_approval_detail_login_error_is_reported_as_tool_issue(
     dws.oa_approval_tasks["proc-1"] = DwsError("not authenticated", code="2")
     dws.openapi_oa_details["proc-1"] = DwsError("not authenticated", code="2")
     codex = FakeCodex(CodexDecision(action=CodexAction.NO_REPLY))
-    oa_runner = FakeOaApprovalRunner()
+    oa_handler = FakeOaApprovalHandler()
     worker = make_worker(
         tmp_path,
         dws,
         codex,
         monkeypatch,
-        oa_approval_runner=oa_runner,
+        oa_approval_handler=oa_handler,
     )
     monkeypatch.setattr(
         "app.worker.send_macos_notification",
@@ -5474,7 +5479,7 @@ def test_oa_approval_detail_login_error_is_reported_as_tool_issue(
 
     worker.run_once()
 
-    detail = json.loads(oa_runner.approval_detail_texts[0])
+    detail = json.loads(oa_handler.approval_detail_texts[0])
     assert detail["tool_status"] == "dws_login_required"
     assert detail["tool_issue"] == "DWS 未登录或登录态失效，当前不是审批材料缺失。"
     assert detail["dws_detail"]["error_kind"] == "dws_login_required"
@@ -5499,21 +5504,21 @@ def test_oa_approval_dry_run_uses_review_only_mode_and_keeps_live_retry_open(
     codex = FakeCodex(
         CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该走聊天回复")
     )
-    oa_runner = FakeOaApprovalRunner()
+    oa_handler = FakeOaApprovalHandler()
     worker = make_worker(
         tmp_path,
         dws,
         codex,
         monkeypatch,
         dry_run=True,
-        oa_approval_runner=oa_runner,
+        oa_approval_handler=oa_handler,
     )
 
     worker.run_once()
 
     assert codex.calls == []
-    assert len(oa_runner.calls) == 1
-    assert oa_runner.calls[0][3] is False
+    assert len(oa_handler.calls) == 1
+    assert oa_handler.calls[0][3] is False
     attempt = worker.store.get_reply_attempt(1)
     assert attempt is not None
     assert attempt.action == "oa_approval"
@@ -5521,14 +5526,14 @@ def test_oa_approval_dry_run_uses_review_only_mode_and_keeps_live_retry_open(
     assert worker.store.count_reply_tasks(status="pending") == 1
     assert worker.store.count_reply_tasks(status="done") == 0
 
-    live_runner = FakeOaApprovalRunner()
+    live_runner = FakeOaApprovalHandler()
     live_worker = DingTalkAutoReplyWorker(
         store=worker.store,
         dws=dws,
         codex=codex,
         dry_run=False,
         now_provider=fixed_worker_now,
-        oa_approval_runner=live_runner,
+        oa_approval_handler=live_runner,
     )
 
     live_worker.run_once()
@@ -5553,7 +5558,7 @@ def test_oa_approval_dry_run_uses_review_only_mode_and_keeps_live_retry_open(
     assert live_attempt.send_status == "skipped"
 
 
-def test_bare_dingtalk_approval_wrapper_is_not_skipped_before_oa_runner(
+def test_bare_dingtalk_approval_wrapper_is_not_skipped_before_oa_handler(
     tmp_path: Path, monkeypatch
 ):
     trigger = message(
@@ -5567,19 +5572,19 @@ def test_bare_dingtalk_approval_wrapper_is_not_skipped_before_oa_runner(
     codex = FakeCodex(
         CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该走聊天回复")
     )
-    oa_runner = FakeOaApprovalRunner()
+    oa_handler = FakeOaApprovalHandler()
     worker = make_worker(
         tmp_path,
         dws,
         codex,
         monkeypatch,
-        oa_approval_runner=oa_runner,
+        oa_approval_handler=oa_handler,
     )
 
     worker.run_once()
 
     assert codex.calls == []
-    assert len(oa_runner.calls) == 1
+    assert len(oa_handler.calls) == 1
     attempt = worker.store.get_reply_attempt(1)
     assert attempt is not None
     assert attempt.action == "oa_approval"
@@ -7530,13 +7535,13 @@ def test_rerun_message_uses_explicit_oa_url_when_trigger_has_no_link(
         }
     }
     codex = FakeCodex(CodexDecision(action=CodexAction.NO_REPLY))
-    oa_runner = FakeOaApprovalRunner()
+    oa_handler = FakeOaApprovalHandler()
     worker = make_worker(
         tmp_path,
         dws,
         codex,
         monkeypatch,
-        oa_approval_runner=oa_runner,
+        oa_approval_handler=oa_handler,
     )
 
     worker.rerun_message(
@@ -7546,13 +7551,13 @@ def test_rerun_message_uses_explicit_oa_url_when_trigger_has_no_link(
         oa_url="https://aflow.dingtalk.com/detail?procInstId=proc-1&taskId=task-1",
     )
 
-    assert len(oa_runner.calls) == 1
-    assert oa_runner.calls[0][2] == (
+    assert len(oa_handler.calls) == 1
+    assert oa_handler.calls[0][2] == (
         "https://aflow.dingtalk.com/detail?procInstId=proc-1&taskId=task-1"
     )
-    assert "\"current_user_id\": \"principal-user-1\"" in oa_runner.approval_detail_texts[0]
-    assert "\"process_instance_id\": \"proc-1\"" in oa_runner.approval_detail_texts[0]
-    assert "完成 PM 关键项目交付" in oa_runner.approval_detail_texts[0]
+    assert "\"current_user_id\": \"principal-user-1\"" in oa_handler.approval_detail_texts[0]
+    assert "\"process_instance_id\": \"proc-1\"" in oa_handler.approval_detail_texts[0]
+    assert "完成 PM 关键项目交付" in oa_handler.approval_detail_texts[0]
 
 
 def test_reply_attempt_records_codex_audit_fields(tmp_path: Path, monkeypatch):
