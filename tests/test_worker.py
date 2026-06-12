@@ -6892,6 +6892,55 @@ def test_codex_stop_with_error_keeps_queued_task_retryable(
     assert attempt.send_status == "failed"
 
 
+def test_critical_info_unavailable_stop_with_error_fails_queued_task(
+    tmp_path: Path, monkeypatch
+):
+    notifications = []
+    trigger = message("@Alex Chen(明哥) 帮忙看一下这个审批材料")
+    dws = FakeDws([conversation()], {"cid-1": [trigger]})
+    reason = (
+        "critical_info_unavailable: dws oa approval detail failed and "
+        "required approval material is unavailable"
+    )
+    codex = FakeCodex(
+        CodexDecision(
+            action=CodexAction.STOP_WITH_ERROR,
+            reason=reason,
+        )
+    )
+    worker = make_worker(
+        tmp_path,
+        dws,
+        codex,
+        monkeypatch,
+        max_task_attempts=3,
+    )
+    monkeypatch.setattr(
+        "app.worker.send_macos_notification",
+        lambda **kwargs: notifications.append(kwargs),
+    )
+    worker.produce_once()
+
+    assert worker.consume_once(max_tasks=1) == 0
+
+    assert worker.store.count_reply_tasks(status="failed") == 1
+    assert worker.store.count_reply_tasks(status="pending") == 0
+    assert worker.store.count_reply_tasks(status="done") == 0
+    task = worker.store.list_reply_tasks(statuses=("failed",), limit=1)[0]
+    assert task.error == reason
+    attempt = worker.store.get_reply_attempt(1)
+    assert attempt is not None
+    assert attempt.action == "stop_with_error"
+    assert attempt.send_status == "failed"
+    assert attempt.send_error == reason
+    assert final_sent(dws) == []
+    assert [
+        notification["title"]
+        for notification in notifications
+        if "failed" in notification["title"]
+    ] == ["CEO task failed: Friday"]
+
+
 def test_queued_stop_with_error_retry_does_not_create_duplicate_attempt(
     tmp_path: Path, monkeypatch
 ):

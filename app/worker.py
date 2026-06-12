@@ -82,6 +82,7 @@ HANDOFF_TEXT_EMOTION = "我去叫"
 # new processing acknowledgements before final replies.
 PROCESSING_ACK = "收到，我正在处理（by 分身）"
 CODEX_LOGIN_REQUIRED_PREFIX = "codex_login_required"
+CRITICAL_INFO_UNAVAILABLE_PREFIX = "critical_info_unavailable:"
 DEFAULT_TEXT_EMOTION_BACKGROUND_ID = "im_bg_5"
 LEAK_CHECK_REGENERATION_SCHEMA = REPLY_AGENT_ENVELOPE_SCHEMA_HINT
 SPLIT_PERSON_SIGNATURE = assistant_signature()
@@ -249,6 +250,10 @@ class ReplyDeliveryError(RuntimeError):
 
 class ReplyTaskProcessingError(RuntimeError):
     """Raised after recording a processing failure so queued tasks can retry."""
+
+
+class CriticalInformationUnavailableError(ReplyTaskProcessingError):
+    """Raised when required material/tool output is unavailable and retrying is unsafe."""
 
 
 class DingTalkAutoReplyWorker:
@@ -1120,6 +1125,21 @@ class DingTalkAutoReplyWorker:
             )
             try:
                 should_complete_task = self._process_queued_task(conversation, task)
+            except CriticalInformationUnavailableError as exc:
+                error = str(exc)
+                self.store.fail_reply_task(task.id, error)
+                self.store.record_error(
+                    task.conversation_id,
+                    task.trigger_message_id,
+                    "reply_task_critical_info_unavailable",
+                    error,
+                )
+                self._notify(
+                    title=f"CEO task failed: {task.conversation_title}",
+                    message=error[:120],
+                    conversation=conversation,
+                )
+                continue
             except Exception as exc:
                 error = str(exc)
                 if self._is_authorization_error(exc):
@@ -3984,6 +4004,9 @@ class DingTalkAutoReplyWorker:
             return
         if decision.action == CodexAction.STOP_WITH_ERROR:
             login_required = _is_codex_login_required_error(decision.reason)
+            critical_info_unavailable = self._is_critical_info_unavailable_reason(
+                decision.reason
+            )
             send_error = (
                 f"{CODEX_LOGIN_REQUIRED_PREFIX}: {decision.reason}"
                 if login_required
@@ -4000,6 +4023,8 @@ class DingTalkAutoReplyWorker:
                 "codex",
                 send_error,
             )
+            if critical_info_unavailable and raise_on_delivery_failure:
+                raise CriticalInformationUnavailableError(send_error)
             self._notify(
                 title=(
                     f"CEO agent blocked: {conversation.title}"
@@ -5472,6 +5497,7 @@ class DingTalkAutoReplyWorker:
             )
             return True
         reason = f"linked_dingtalk_doc_read_failed: {error_text}"
+        reason = f"{CRITICAL_INFO_UNAVAILABLE_PREFIX} {reason}"
         attempt_id = self.store.record_reply_attempt_for_trigger(
             conversation_id=conversation.open_conversation_id,
             conversation_title=conversation.title,
@@ -5494,6 +5520,8 @@ class DingTalkAutoReplyWorker:
             "linked_dingtalk_doc_read",
             error_text,
         )
+        if raise_on_delivery_failure:
+            raise CriticalInformationUnavailableError(reason)
         self._notify(
             title=f"CEO doc read failed: {conversation.title}",
             message=error_text[:120],
@@ -6874,6 +6902,10 @@ class DingTalkAutoReplyWorker:
         if hasattr(decision, "kind") and hasattr(decision, "user_response"):
             return codex_decision_from_envelope(decision)
         return decision
+
+    @staticmethod
+    def _is_critical_info_unavailable_reason(reason: str) -> bool:
+        return reason.strip().startswith(CRITICAL_INFO_UNAVAILABLE_PREFIX)
 
     @staticmethod
     def _single_chat_material_retry_prompt() -> str:

@@ -180,6 +180,15 @@ original message retryable instead of completing the task with a failed attempt.
 When the maximum is reached, the task is marked `failed`, the final error is
 recorded, and a local notification is sent.
 
+If the agent can prove that required material or a required tool result is
+unavailable and continuing would guess at the answer, it must return
+`stop_with_error` with a reason starting `critical_info_unavailable:`. The worker
+treats that prefix as a non-retryable task failure: it records the failed
+attempt, marks the queued `reply_tasks` row `failed`, and sends the normal
+`CEO task failed` notification for human handling. Tool calls that are merely
+discouraged, such as retrying a DWS detail command after an OpenAPI recovery,
+stay as prompt guidance and audit evidence; they are not blocked by the runner.
+
 Processing tasks older than the stale-task threshold are also moved back to
 `pending`; this recovery path sends a local notification so the operator can see
 that an interrupted task was retried.
