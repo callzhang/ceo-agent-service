@@ -195,6 +195,14 @@ th{background:var(--surface-soft);color:var(--steel);font-size:12px;font-weight:
 .todo-copy{display:grid;gap:2px;min-width:0}
 .todo-due{color:var(--steel);font-family:"Geist Mono","SF Mono",Menlo,Consolas,monospace;font-size:11px;line-height:1.3}
 .todo-total{color:var(--steel);font-family:"Geist Mono","SF Mono",Menlo,Consolas,monospace;font-size:11px;font-weight:700;line-height:1.3}
+.todo-followup-row td{border-top:0;background:var(--surface-soft)}
+.todo-followup-cell{display:grid;gap:8px;padding:10px 10px 10px 28px;border-left:2px solid rgba(55,114,207,.24);color:var(--charcoal)}
+.todo-followup-heading{color:var(--steel);font-size:12px;font-weight:800;line-height:1.25}
+.todo-followup-list{display:grid;gap:8px;margin:0;padding:0;list-style:none}
+.todo-followup-item{display:grid;grid-template-columns:136px 120px minmax(0,1fr);gap:10px;align-items:start}
+.todo-followup-meta{color:var(--steel);font-family:"Geist Mono","SF Mono",Menlo,Consolas,monospace;font-size:11px;font-weight:700;line-height:1.35;overflow-wrap:anywhere;word-break:break-word}
+.todo-followup-target{color:var(--steel);font-size:12px;line-height:1.35;overflow-wrap:anywhere;word-break:break-word}
+.todo-followup-question{font-size:13px;line-height:1.45;overflow-wrap:anywhere;word-break:break-word}
 .progress-cell{display:grid;gap:5px;min-width:0}
 .progress-meter{height:6px;border-radius:999px;background:var(--surface-soft);overflow:hidden}
 .progress-bar{height:100%;border-radius:999px;background:#3772cf}
@@ -2778,9 +2786,9 @@ def render_task_project_detail(store: AutoReplyStore, project_id: int) -> tuple[
 
     detail_rows = _task_project_detail_rows(project)
     facts = _task_facts_rows(project.facts_json)
-    todo_rows = _task_todo_rows(todos)
+    todo_table = _task_todos_table(todos, drafts)
     update_rows = _task_update_rows(updates)
-    draft_rows = _task_follow_up_rows(drafts, todos)
+    draft_rows = _task_follow_up_rows(_unlinked_follow_up_drafts(todos, drafts))
 
     body = (
         "<section class=\"card\"><div class=\"card-head\">"
@@ -2806,7 +2814,7 @@ def render_task_project_detail(store: AutoReplyStore, project_id: int) -> tuple[
         f"{_simple_table(('Field', 'Value'), detail_rows)}"
         "</section>"
         "<section class=\"card\"><h2>TODOs</h2>"
-        f"{_simple_table(('ID', 'TODO', 'Owner', 'Status', 'Priority', 'DDL', 'Next follow-up', 'Question', 'Blocker', 'Evidence'), todo_rows, column_widths={'ID': '64px', 'TODO': '240px', 'Owner': '110px', 'Status': '110px', 'Priority': '84px', 'DDL': '142px', 'Next follow-up': '142px', 'Question': '220px', 'Blocker': '160px', 'Evidence': '180px'}, html_columns={'ID'}) if todo_rows else '<p class=\"muted\">No TODOs recorded.</p>'}"
+        f"{todo_table if todos else '<p class=\"muted\">No TODOs recorded.</p>'}"
         "</section>"
         "<section class=\"card\"><h2>Facts</h2>"
         f"{_simple_table(('Description', 'Source', 'Created', 'Updated'), facts, column_widths={'Source': '118px', 'Created': '132px', 'Updated': '132px'}) if facts else '<p class=\"muted\">No facts recorded.</p>'}"
@@ -2814,10 +2822,14 @@ def render_task_project_detail(store: AutoReplyStore, project_id: int) -> tuple[
         "<section class=\"card\"><h2>Updates</h2>"
         f"{_simple_table(('Time', 'Source', 'Summary', 'Changes', 'Reason', 'Confidence'), update_rows, column_widths={'Time': '148px', 'Source': '118px', 'Summary': '240px', 'Changes': '220px', 'Reason': '180px', 'Confidence': '96px'}) if update_rows else '<p class=\"muted\">No updates recorded.</p>'}"
         "</section>"
-        "<section class=\"card\"><h2>Follow-ups</h2>"
-        f"{_simple_table(('Time', 'Owner', 'TODO', 'Target', 'Status', 'Question', 'Risk', 'Result'), draft_rows, column_widths={'Time': '148px', 'Owner': '110px', 'TODO': '88px', 'Target': '112px', 'Status': '104px', 'Question': '240px', 'Risk': '170px', 'Result': '180px'}, html_columns={'TODO'}) if draft_rows else '<p class=\"muted\">No follow-ups recorded.</p>'}"
-        "</section>"
-        f"{_collapsible_json_card('Memory context', project.memory_context_json)}"
+        + (
+            "<section class=\"card\"><h2>Unlinked follow-ups</h2>"
+            f"{_simple_table(('Time', 'Owner', 'TODO', 'Target', 'Status', 'Question', 'Risk', 'Result'), draft_rows, column_widths={'Time': '148px', 'Owner': '110px', 'TODO': '88px', 'Target': '112px', 'Status': '104px', 'Question': '240px', 'Risk': '170px', 'Result': '180px'}, html_columns={'TODO'})}"
+            "</section>"
+            if draft_rows
+            else ""
+        )
+        + f"{_collapsible_json_card('Memory context', project.memory_context_json)}"
     )
     return (
         200,
@@ -2865,6 +2877,110 @@ def _task_facts_rows(facts_json: str) -> list[tuple[str, str, str, str]]:
     return rows
 
 
+_TASK_TODO_HEADERS = (
+    "ID",
+    "TODO",
+    "Owner",
+    "Status",
+    "Priority",
+    "DDL",
+    "Next follow-up",
+    "Question",
+    "Blocker",
+    "Evidence",
+)
+
+_TASK_TODO_COLUMN_WIDTHS = {
+    "ID": "64px",
+    "TODO": "240px",
+    "Owner": "110px",
+    "Status": "110px",
+    "Priority": "84px",
+    "DDL": "142px",
+    "Next follow-up": "142px",
+    "Question": "220px",
+    "Blocker": "160px",
+    "Evidence": "180px",
+}
+
+
+def _task_todos_table(todos, drafts) -> str:
+    follow_ups_by_todo = _follow_up_drafts_by_todo(todos, drafts)
+    colgroup_html = "".join(
+        f"<col style=\"width:{escape(_TASK_TODO_COLUMN_WIDTHS.get(header, 'auto'))}\">"
+        for header in _TASK_TODO_HEADERS
+    )
+    header_html = "".join(f"<th>{escape(header)}</th>" for header in _TASK_TODO_HEADERS)
+    row_html = []
+    for todo, row in zip(todos, _task_todo_rows(todos)):
+        row_html.append(_simple_table_row(_TASK_TODO_HEADERS, row, {"ID"}))
+        follow_ups = follow_ups_by_todo.get(todo.id, [])
+        if follow_ups:
+            row_html.append(_task_follow_up_child_row(todo.id, follow_ups))
+    return (
+        '<table class="column-sized-table">'
+        f"<colgroup>{colgroup_html}</colgroup>"
+        "<thead><tr>"
+        f"{header_html}"
+        "</tr></thead><tbody>"
+        f"{''.join(row_html)}"
+        "</tbody></table>"
+    )
+
+
+def _follow_up_drafts_by_todo(todos, drafts) -> dict[int, list]:
+    todo_ids = {todo.id for todo in todos}
+    grouped = {todo.id: [] for todo in todos}
+    for draft in drafts:
+        if draft.todo_id in todo_ids:
+            grouped[draft.todo_id].append(draft)
+    return grouped
+
+
+def _unlinked_follow_up_drafts(todos, drafts) -> list:
+    todo_ids = {todo.id for todo in todos}
+    return [draft for draft in drafts if draft.todo_id not in todo_ids]
+
+
+def _task_follow_up_child_row(todo_id: int, drafts) -> str:
+    items = "".join(_task_follow_up_child_item(draft) for draft in drafts)
+    label = f"Follow-ups ({len(drafts)})"
+    return (
+        f'<tr class="todo-followup-row" data-parent-todo="{todo_id}">'
+        "<td></td>"
+        f"<td colspan=\"{len(_TASK_TODO_HEADERS) - 1}\">"
+        "<div class=\"todo-followup-cell\">"
+        f"<div class=\"todo-followup-heading\">{escape(label)}</div>"
+        f"<ul class=\"todo-followup-list\">{items}</ul>"
+        "</div>"
+        "</td>"
+        "</tr>"
+    )
+
+
+def _task_follow_up_child_item(draft) -> str:
+    scheduled = _format_local_time(draft.scheduled_at) or draft.scheduled_at or "-"
+    owner = draft.owner_name or draft.owner_user_id or "-"
+    target = _task_follow_up_target(draft)
+    meta = f"{scheduled} | {draft.status}"
+    target_text = f"{owner} | {target}"
+    return (
+        "<li class=\"todo-followup-item\">"
+        f"<div class=\"todo-followup-meta\">{escape(meta)}</div>"
+        f"<div class=\"todo-followup-target\">{escape(target_text)}</div>"
+        f"<div class=\"todo-followup-question\">{escape(draft.question_text)}</div>"
+        "</li>"
+    )
+
+
+def _task_follow_up_target(draft) -> str:
+    return (
+        f"{draft.target_kind}:{draft.target_conversation_id}"
+        if draft.target_conversation_id
+        else draft.target_kind or "-"
+    )
+
+
 def _task_todo_rows(todos) -> list[tuple[str, str, str, str, str, str, str, str, str, str]]:
     rows = []
     for todo in todos:
@@ -2904,14 +3020,10 @@ def _task_update_rows(updates) -> list[tuple[str, str, str, str, str, str]]:
     return rows
 
 
-def _task_follow_up_rows(drafts, _todos) -> list[tuple[str, str, str, str, str, str, str, str]]:
+def _task_follow_up_rows(drafts) -> list[tuple[str, str, str, str, str, str, str, str]]:
     rows = []
     for draft in drafts:
-        target = (
-            f"{draft.target_kind}:{draft.target_conversation_id}"
-            if draft.target_conversation_id
-            else draft.target_kind
-        )
+        target = _task_follow_up_target(draft)
         todo_link = "-"
         if draft.todo_id:
             todo_link = f"<a href=\"#todo-{draft.todo_id}\">#{draft.todo_id}</a>"
@@ -2954,15 +3066,7 @@ def _simple_table(
         for header in header_values
     )
     header_html = "".join(f"<th>{escape(header)}</th>" for header in header_values)
-    row_html = "".join(
-        "<tr>"
-        + "".join(
-            f"<td>{value if header in html_columns else escape(value)}</td>"
-            for header, value in zip(header_values, row)
-        )
-        + "</tr>"
-        for row in rows
-    )
+    row_html = "".join(_simple_table_row(header_values, row, html_columns) for row in rows)
     table_class = ' class="column-sized-table"' if column_widths else ""
     colgroup = f"<colgroup>{colgroup_html}</colgroup>" if column_widths else ""
     return (
@@ -2973,6 +3077,21 @@ def _simple_table(
         "</tr></thead><tbody>"
         f"{row_html}"
         "</tbody></table>"
+    )
+
+
+def _simple_table_row(
+    header_values: tuple[str, ...],
+    row: Iterable[str],
+    html_columns: set[str],
+) -> str:
+    return (
+        "<tr>"
+        + "".join(
+            f"<td>{value if header in html_columns else escape(value)}</td>"
+            for header, value in zip(header_values, row)
+        )
+        + "</tr>"
     )
 
 

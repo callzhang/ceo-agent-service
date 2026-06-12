@@ -1227,12 +1227,51 @@ def test_task_project_detail_renders_project_todos_and_sources(tmp_path: Path):
     assert "reply_attempt:7" in html
     assert "新增待办" in html
     assert "来源链接补齐到哪一步了" in html
-    assert html.count('class="column-sized-table"') == 4
+    assert html.count('class="column-sized-table"') == 3
     assert html.count('<col style="width:118px">') == 2
     assert '<col style="width:240px">' in html
     assert '<span id="todo-' in html
-    assert f'<a href="#todo-{todo_id}">#{todo_id}</a>' in html
+    assert f'<tr class="todo-followup-row" data-parent-todo="{todo_id}">' in html
+    assert "Follow-ups (1)" in html
+    assert "group:cid-1" in html
+    assert "Unlinked follow-ups" not in html
     assert "<td>-</td>" in html
+
+
+def test_task_project_detail_keeps_unlinked_followups_separate(tmp_path: Path):
+    db_path = tmp_path / "worker.sqlite3"
+    store = AutoReplyStore(db_path)
+    project_id = store.create_work_project(
+        title="售前知识库建设",
+        category="sales",
+        status="active",
+        priority="P1",
+        risk_level="medium",
+    )
+    store.create_work_todo(
+        project_id=project_id,
+        title="补齐来源链接",
+        owner_name="Alex",
+        status="open",
+        priority="P1",
+    )
+    store.create_follow_up_draft(
+        project_id=project_id,
+        todo_id=9999,
+        owner_name="Alex",
+        target_conversation_id="cid-2",
+        target_kind="single",
+        question_text="这个 follow-up 还缺少明确 TODO 归属。",
+        status="draft",
+    )
+
+    status, html = render_task_project_detail(store, project_id)
+
+    assert status == 200
+    assert "Unlinked follow-ups" in html
+    assert "这个 follow-up 还缺少明确 TODO 归属。" in html
+    assert '<a href="#todo-9999">#9999</a>' in html
+    assert '<tr class="todo-followup-row"' not in html
 
 
 def test_tasks_route_renders_page(tmp_path: Path):
