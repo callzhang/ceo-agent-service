@@ -2,7 +2,12 @@ import pytest
 from pydantic import ValidationError
 
 from app.setup_wizard import SETUP_WIZARD_STEPS, get_step_definition
-from app.setup_wizard_models import SetupAction, SetupStepStatus, SetupWizardStatus
+from app.setup_wizard_models import (
+    SetupAction,
+    SetupStepStatus,
+    SetupWizardEvent,
+    SetupWizardStatus,
+)
 
 
 def test_setup_wizard_steps_are_ordered_and_gated():
@@ -20,6 +25,32 @@ def test_setup_wizard_steps_are_ordered_and_gated():
     assert get_step_definition("mcp").depends_on == ("cli_components",)
     assert get_step_definition("launchd").depends_on == ("dry_run",)
     assert get_step_definition("live_send").depends_on == ("dry_run",)
+
+
+def test_setup_wizard_action_metadata_is_gated():
+    actions = {
+        step.id: {
+            action.id: action
+            for action in step.actions
+        }
+        for step in SETUP_WIZARD_STEPS
+    }
+
+    assert [(action.id, action.label, action.kind) for action in actions["mcp"].values()] == [
+        ("check_mcp", "Check", "check"),
+        ("setup_mcp", "Fix automatically", "run"),
+    ]
+    assert actions["launchd"]["install_launchd"].external_side_effect is True
+    assert actions["live_send"]["verify_live_send"].external_side_effect is True
+    assert actions["live_send"]["confirm_live_send"].kind == "confirm"
+    assert actions["live_send"]["confirm_live_send"].label == "Confirm after page inspection"
+
+
+def test_get_step_definition_rejects_unknown_step():
+    with pytest.raises(KeyError) as error:
+        get_step_definition("unknown")
+
+    assert error.value.args == ("unknown",)
 
 
 def test_setup_wizard_static_definitions_are_immutable():
@@ -64,3 +95,23 @@ def test_setup_wizard_status_serializes_steps():
     assert payload["steps"][0]["step_id"] == "preflight"
     assert payload["steps"][0]["status"] == "done"
     assert payload["steps"][0]["summary"] == "Python is available"
+
+
+def test_setup_wizard_event_defaults_and_serialization():
+    event = SetupWizardEvent(
+        step_id="mcp",
+        action_id="setup_mcp",
+        status="done",
+        evidence={"configured": True},
+    )
+
+    payload = event.model_dump()
+
+    assert payload["id"] == 0
+    assert payload["step_id"] == "mcp"
+    assert payload["action_id"] == "setup_mcp"
+    assert payload["status"] == "done"
+    assert payload["summary"] == ""
+    assert payload["evidence"] == {"configured": True}
+    assert payload["stdout_excerpt"] == ""
+    assert payload["stderr_excerpt"] == ""
