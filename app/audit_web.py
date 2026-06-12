@@ -210,6 +210,8 @@ th{background:var(--surface-soft);color:var(--steel);font-size:12px;font-weight:
 .todo-detail-field{min-width:0}
 .todo-detail-label{margin-bottom:2px;color:var(--steel);font-size:11px;font-weight:800;line-height:1.25;text-transform:uppercase}
 .todo-detail-value{color:var(--charcoal);font-size:13px;line-height:1.45;overflow-wrap:anywhere;word-break:break-word}
+.detail-pill-list{display:flex;align-items:flex-start;gap:6px;flex-wrap:wrap;min-width:0}
+.detail-pill{display:inline-flex;align-items:center;min-height:24px;padding:3px 9px;border:1px solid var(--hairline);border-radius:999px;background:var(--surface-soft);color:var(--charcoal);font-size:12px;font-weight:800;line-height:1.25;overflow-wrap:anywhere;word-break:break-word}
 .todo-detail-followups{display:grid;gap:8px;margin-left:28px;padding:10px 0 0 12px;border-left:2px solid rgba(55,114,207,.24);color:var(--charcoal)}
 .todo-followup-heading{color:var(--steel);font-size:12px;font-weight:800;line-height:1.25}
 .todo-followup-list{display:grid;gap:8px;margin:0;padding:0;list-style:none}
@@ -2775,9 +2777,13 @@ def render_task_project_detail(store: AutoReplyStore, project_id: int) -> tuple[
 
     detail_rows = _task_project_detail_rows(project)
     facts = _task_facts_rows(project.facts_json)
-    todo_panel = _task_todos_panel(todos, drafts)
+    conversation_titles = _task_conversation_title_map(project.source_conversations_json)
+    todo_panel = _task_todos_panel(todos, drafts, conversation_titles)
     update_rows = _task_update_rows(updates)
-    draft_rows = _task_follow_up_rows(_unlinked_follow_up_drafts(todos, drafts))
+    draft_rows = _task_follow_up_rows(
+        _unlinked_follow_up_drafts(todos, drafts),
+        conversation_titles,
+    )
 
     body = (
         "<section class=\"card\"><div class=\"card-head\">"
@@ -2800,7 +2806,7 @@ def render_task_project_detail(store: AutoReplyStore, project_id: int) -> tuple[
         "</div>"
         "</section>"
         "<section class=\"card\"><h2>Project details</h2>"
-        f"{_simple_table(('Field', 'Value'), detail_rows)}"
+        f"{_task_project_detail_table(detail_rows)}"
         "</section>"
         "<section class=\"card\"><h2>TODOs</h2>"
         f"{todo_panel if todos else '<p class=\"muted\">No TODOs recorded.</p>'}"
@@ -2831,23 +2837,106 @@ def render_task_project_detail(store: AutoReplyStore, project_id: int) -> tuple[
     )
 
 
-def _task_project_detail_rows(project) -> list[tuple[str, str]]:
-    tags = _task_json_compact(project.tags_json, "[]")
-    related_people = _task_json_compact(project.related_people_json, "[]")
-    source_conversations = _task_json_compact(project.source_conversations_json, "[]")
+def _task_project_detail_rows(project) -> list[tuple[str, str, bool]]:
+    tags = _task_detail_pills(_task_simple_labels(project.tags_json))
+    related_people = _task_detail_pills(_task_people_labels(project.related_people_json))
+    source_conversations = _task_detail_pills(
+        _task_conversation_labels(project.source_conversations_json)
+    )
     return [
-        ("Goal", project.goal),
-        ("Background", project.background),
-        ("Current state", project.current_state),
-        ("Blocker", project.blocker),
-        ("Next step", project.next_step),
-        ("Follow-up mode", str(project.follow_up_mode)),
-        ("Tags", tags),
-        ("Related people", related_people),
-        ("Source conversations", source_conversations),
-        ("Created", _format_local_time(project.created_at)),
-        ("Last activity", _format_local_time(project.last_activity_at)),
+        ("Goal", project.goal, False),
+        ("Background", project.background, False),
+        ("Current state", project.current_state, False),
+        ("Blocker", project.blocker, False),
+        ("Next step", project.next_step, False),
+        ("Follow-up mode", str(project.follow_up_mode), False),
+        ("Tags", tags, True),
+        ("Related people", related_people, True),
+        ("Source conversations", source_conversations, True),
+        ("Created", _format_local_time(project.created_at), False),
+        ("Last activity", _format_local_time(project.last_activity_at), False),
     ]
+
+
+def _task_project_detail_table(rows: Iterable[tuple[str, str, bool]]) -> str:
+    row_html = "".join(
+        "<tr>"
+        f"<td>{escape(field)}</td>"
+        f"<td>{value if is_html else escape(value)}</td>"
+        "</tr>"
+        for field, value, is_html in rows
+    )
+    return (
+        "<table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>"
+        f"{row_html}"
+        "</tbody></table>"
+    )
+
+
+def _task_detail_pills(labels: Iterable[str]) -> str:
+    pills = "".join(
+        f'<span class="detail-pill">{escape(label)}</span>'
+        for label in labels
+        if label
+    )
+    return f'<div class="detail-pill-list">{pills}</div>' if pills else "-"
+
+
+def _task_simple_labels(text: str) -> list[str]:
+    labels = []
+    for item in _json_list(text):
+        label = str(item).strip()
+        if label:
+            labels.append(label)
+    return labels
+
+
+def _task_people_labels(text: str) -> list[str]:
+    labels = []
+    for item in _json_list(text):
+        if isinstance(item, dict):
+            label = str(item.get("name") or item.get("user_id") or "").strip()
+        else:
+            label = str(item).strip()
+        if label:
+            labels.append(label)
+    return labels
+
+
+def _task_conversation_labels(text: str) -> list[str]:
+    labels = []
+    for item in _json_list(text):
+        if isinstance(item, dict):
+            label = str(item.get("title") or item.get("name") or "").strip()
+            if not label:
+                label = str(
+                    item.get("conversation_id")
+                    or item.get("id")
+                    or item.get("open_conversation_id")
+                    or ""
+                ).strip()
+        else:
+            label = str(item).strip()
+        if label:
+            labels.append(label)
+    return labels
+
+
+def _task_conversation_title_map(text: str) -> dict[str, str]:
+    titles = {}
+    for item in _json_list(text):
+        if not isinstance(item, dict):
+            continue
+        conversation_id = str(
+            item.get("conversation_id")
+            or item.get("id")
+            or item.get("open_conversation_id")
+            or ""
+        ).strip()
+        title = str(item.get("title") or item.get("name") or "").strip()
+        if conversation_id and title:
+            titles[conversation_id] = title
+    return titles
 
 
 def _task_facts_rows(facts_json: str) -> list[tuple[str, str, str, str]]:
@@ -2866,10 +2955,14 @@ def _task_facts_rows(facts_json: str) -> list[tuple[str, str, str, str]]:
     return rows
 
 
-def _task_todos_panel(todos, drafts) -> str:
+def _task_todos_panel(todos, drafts, conversation_titles: Mapping[str, str]) -> str:
     follow_ups_by_todo = _follow_up_drafts_by_todo(todos, drafts)
     items = "".join(
-        _task_todo_detail_item(todo, follow_ups_by_todo.get(todo.id, []))
+        _task_todo_detail_item(
+            todo,
+            follow_ups_by_todo.get(todo.id, []),
+            conversation_titles,
+        )
         for todo in todos
     )
     return f'<div class="todo-detail-list">{items}</div>'
@@ -2889,7 +2982,7 @@ def _unlinked_follow_up_drafts(todos, drafts) -> list:
     return [draft for draft in drafts if draft.todo_id not in todo_ids]
 
 
-def _task_todo_detail_item(todo, follow_ups) -> str:
+def _task_todo_detail_item(todo, follow_ups, conversation_titles: Mapping[str, str]) -> str:
     owner = todo.owner_name or todo.owner_user_id or "-"
     status = str(todo.status)
     priority = str(todo.priority)
@@ -2901,7 +2994,9 @@ def _task_todo_detail_item(todo, follow_ups) -> str:
     check_class = "todo-detail-check done" if _task_todo_done(todo) else "todo-detail-check"
     status_class = _task_status_class(status)
     follow_up_panel = (
-        _task_follow_up_child_panel(todo.id, follow_ups) if follow_ups else ""
+        _task_follow_up_child_panel(todo.id, follow_ups, conversation_titles)
+        if follow_ups
+        else ""
     )
     return (
         f'<article class="todo-detail-item" id="todo-{todo.id}">'
@@ -2944,8 +3039,14 @@ def _task_todo_detail_field(label: str, value: str) -> str:
     )
 
 
-def _task_follow_up_child_panel(todo_id: int, drafts) -> str:
-    items = "".join(_task_follow_up_child_item(draft) for draft in drafts)
+def _task_follow_up_child_panel(
+    todo_id: int,
+    drafts,
+    conversation_titles: Mapping[str, str],
+) -> str:
+    items = "".join(
+        _task_follow_up_child_item(draft, conversation_titles) for draft in drafts
+    )
     label = f"Follow-ups ({len(drafts)})"
     return (
         f'<div class="todo-detail-followups" data-parent-todo="{todo_id}">'
@@ -2955,10 +3056,10 @@ def _task_follow_up_child_panel(todo_id: int, drafts) -> str:
     )
 
 
-def _task_follow_up_child_item(draft) -> str:
+def _task_follow_up_child_item(draft, conversation_titles: Mapping[str, str]) -> str:
     scheduled = _format_local_time(draft.scheduled_at) or draft.scheduled_at or "-"
     owner = draft.owner_name or draft.owner_user_id or "-"
-    target = _task_follow_up_target(draft)
+    target = _task_follow_up_target(draft, conversation_titles)
     return (
         "<li class=\"todo-followup-item\">"
         "<div class=\"todo-followup-bubble\">"
@@ -2974,7 +3075,13 @@ def _task_follow_up_child_item(draft) -> str:
     )
 
 
-def _task_follow_up_target(draft) -> str:
+def _task_follow_up_target(
+    draft,
+    conversation_titles: Mapping[str, str] | None = None,
+) -> str:
+    conversation_titles = conversation_titles or {}
+    if draft.target_conversation_id and draft.target_conversation_id in conversation_titles:
+        return conversation_titles[draft.target_conversation_id]
     return (
         f"{draft.target_kind}:{draft.target_conversation_id}"
         if draft.target_conversation_id
@@ -2999,10 +3106,13 @@ def _task_update_rows(updates) -> list[tuple[str, str, str, str, str, str]]:
     return rows
 
 
-def _task_follow_up_rows(drafts) -> list[tuple[str, str, str, str, str, str, str, str]]:
+def _task_follow_up_rows(
+    drafts,
+    conversation_titles: Mapping[str, str],
+) -> list[tuple[str, str, str, str, str, str, str, str]]:
     rows = []
     for draft in drafts:
-        target = _task_follow_up_target(draft)
+        target = _task_follow_up_target(draft, conversation_titles)
         todo_link = "-"
         if draft.todo_id:
             todo_link = f"<a href=\"#todo-{draft.todo_id}\">#{draft.todo_id}</a>"

@@ -1171,6 +1171,15 @@ def test_task_project_detail_renders_project_todos_and_sources(tmp_path: Path):
         priority="P1",
         risk_level="medium",
         owner_name="Alex",
+        tags_json=json.dumps(["售前", "知识库"], ensure_ascii=False),
+        related_people_json=json.dumps(
+            [{"name": "Alex", "user_id": "owner-1", "role": "owner"}],
+            ensure_ascii=False,
+        ),
+        source_conversations_json=json.dumps(
+            [{"id": "cid-1", "title": "售前项目群", "kind": "group"}],
+            ensure_ascii=False,
+        ),
         background="销售支持项目。",
         facts_json=json.dumps(
             [
@@ -1227,6 +1236,11 @@ def test_task_project_detail_renders_project_todos_and_sources(tmp_path: Path):
     assert "reply_attempt:7" in html
     assert "新增待办" in html
     assert "来源链接补齐到哪一步了" in html
+    assert '<span class="detail-pill">售前</span>' in html
+    assert '<span class="detail-pill">知识库</span>' in html
+    assert '<span class="detail-pill">Alex</span>' in html
+    assert '<span class="detail-pill">售前项目群</span>' in html
+    assert "&quot;售前&quot;" not in html
     assert html.count('class="column-sized-table"') == 2
     assert html.count('<col style="width:118px">') == 2
     assert '<col style="width:240px">' in html
@@ -1242,7 +1256,8 @@ def test_task_project_detail_renders_project_todos_and_sources(tmp_path: Path):
     assert '<div class="todo-followup-message">来源链接补齐到哪一步了？</div>' in html
     assert '<div class="todo-followup-meta">' not in html
     assert "Follow-ups (1)" in html
-    assert "group:cid-1" in html
+    assert "售前项目群" in html
+    assert "group:cid-1" not in html
     assert "Unlinked follow-ups" not in html
     assert '<div class="todo-detail-value">-</div>' in html
 
