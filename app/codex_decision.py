@@ -1,4 +1,5 @@
 import json
+import re
 import shlex
 import time
 from collections.abc import Callable
@@ -29,6 +30,13 @@ REPLY_AGENT_ENVELOPE_SCHEMA_HINT = (
     '"system_actions":[{"type":"send_dingtalk_reply|dws_markdown_document_reply|dws_message_reaction"}],'
     '"domain_payload":{},'
     '"audit":{"summary":"","documents":[{"title":"","url":"","relevance":""}],"confidence":0.8}}'
+)
+SECRET_PATTERNS = (
+    re.compile(r"access_token=[^\s&]+", re.IGNORECASE),
+    re.compile(r"appsecret=[^\s]+", re.IGNORECASE),
+    re.compile(r"appkey=[^\s]+", re.IGNORECASE),
+    re.compile(r"cookie[:=][^\s]+", re.IGNORECASE),
+    re.compile(r"oauth[_-]?code=[^\s&]+", re.IGNORECASE),
 )
 
 
@@ -477,6 +485,8 @@ def _looks_like_path(value: str) -> bool:
 
 def _short_text(text: str, limit: int = 240) -> str:
     normalized = " ".join(text.split())
+    for pattern in SECRET_PATTERNS:
+        normalized = pattern.sub("[REDACTED]", normalized)
     if len(normalized) <= limit:
         return normalized
     return f"{normalized[:limit]}..."
@@ -489,7 +499,18 @@ def _codex_stdout_error_reason(stdout: str) -> str:
         message = payload.get("message")
         if not isinstance(message, str) or not message.strip():
             continue
-        return _short_text(message, 1200)
+        detail = message
+        code = ""
+        try:
+            parsed = json.loads(message)
+        except json.JSONDecodeError:
+            parsed = None
+        if isinstance(parsed, dict):
+            error = parsed.get("error")
+            if isinstance(error, dict):
+                code = str(error.get("code") or "")
+                detail = str(error.get("message") or detail)
+        return _short_text(f"{code}: {detail}" if code else detail, 1200)
     return ""
 
 

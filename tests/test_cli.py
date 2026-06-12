@@ -184,8 +184,16 @@ def test_setup_memory_connector_command_requires_memory_url(tmp_path):
 def test_process_follow_ups_command_processes_due_drafts(tmp_path, monkeypatch, capsys):
     calls = []
 
-    def fake_process(store, dws, *, now, auto_send):
-        calls.append((store.path, type(dws).__name__, bool(now), auto_send))
+    def fake_process(store, dws, *, now, auto_send, feedback_base_url=""):
+        calls.append(
+            (
+                store.path,
+                type(dws).__name__,
+                bool(now),
+                auto_send,
+                feedback_base_url,
+            )
+        )
         return 2
 
     monkeypatch.setattr(
@@ -208,7 +216,7 @@ def test_process_follow_ups_command_processes_due_drafts(tmp_path, monkeypatch, 
     assert calls == [
         ("scan", tmp_path / "worker.sqlite3"),
         ("work", tmp_path / "worker.sqlite3"),
-        (tmp_path / "worker.sqlite3", "DwsClient", True, True),
+        (tmp_path / "worker.sqlite3", "DwsClient", True, True, ""),
     ]
     assert capsys.readouterr().out == "process-follow-ups sent=2\n"
 

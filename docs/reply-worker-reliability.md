@@ -129,8 +129,9 @@ The worker still preprocesses:
 - Images, because Codex receives local image paths rather than DingTalk media
   IDs.
 - OA approvals, because approval ownership, task state, comments, and action
-  execution are handled by the audited OA runner instead of the ordinary reply
-  agent.
+  execution are handled by the OA handler. The handler uses the unified
+  structured Codex runner with the OA skill injected, then performs the
+  service-owned approval action or comment.
 
 For DingTalk documents, AI minutes, and ordinary files, agent-side DWS calls must
 be visible in `audit_tool_events_json`. Permission failures are missing material

@@ -102,11 +102,16 @@ class StructuredCodexRunner:
         prompt: str,
         *,
         owner: str,
+        allow_side_effects: bool = True,
     ) -> StructuredAgentRun:
         with self.store.codex_session_lock(conversation_id, owner):
             session_id = self._usable_session_id(conversation_id)
             transcript_start_line = self._session_line_count(session_id)
-            command = self._build_command(prompt, session_id)
+            command = self._build_command(
+                prompt,
+                session_id,
+                allow_side_effects=allow_side_effects,
+            )
             try:
                 raw = self._execute(command, prompt)
             except RuntimeError as exc:
@@ -115,7 +120,11 @@ class StructuredCodexRunner:
                 self.store.clear_codex_session(conversation_id)
                 session_id = None
                 transcript_start_line = 0
-                command = self._build_command(prompt, session_id)
+                command = self._build_command(
+                    prompt,
+                    session_id,
+                    allow_side_effects=allow_side_effects,
+                )
                 raw = self._execute(command, prompt)
             parsed_session_id = extract_codex_session_id(raw) or session_id or ""
             envelope = parse_agent_envelope(raw)
@@ -208,7 +217,26 @@ class StructuredCodexRunner:
             )
         return completed.stdout
 
-    def _build_command(self, prompt: str, session_id: str | None) -> list[str]:
+    def _build_command(
+        self,
+        prompt: str,
+        session_id: str | None,
+        *,
+        allow_side_effects: bool = True,
+    ) -> list[str]:
+        safety_options = (
+            [
+                "-c",
+                'approval_policy="untrusted"',
+                "-c",
+                'approvals_reviewer="auto_review"',
+            ]
+            if allow_side_effects
+            else [
+                "-c",
+                'approval_policy="never"',
+            ]
+        )
         common = [
             "--json",
             "-m",
@@ -220,10 +248,7 @@ class StructuredCodexRunner:
             "--disable",
             "plugins",
             *memory_connector_config_options(),
-            "-c",
-            'approval_policy="untrusted"',
-            "-c",
-            'approvals_reviewer="auto_review"',
+            *safety_options,
             "-c",
             _config_string("developer_instructions", self.spec.developer_instructions()),
             "-c",

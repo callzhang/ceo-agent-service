@@ -1,7 +1,7 @@
 import json
 import re
-import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import parse_qs, unquote, urlparse
@@ -9,21 +9,10 @@ from urllib.parse import parse_qs, unquote, urlparse
 from pydantic import BaseModel, Field, ValidationError, model_validator
 
 from app.agent_envelope import AgentEnvelope, AgentKind
-from app.codex_decision import (
-    extract_codex_audit_events,
-    extract_codex_session_id,
+from app.structured_agent import (
+    AgentSpec,
+    StructuredCodexRunner,
 )
-from app.codex_history import (
-    count_codex_session_lines,
-    extract_codex_audit_events_from_session,
-)
-from app.codex_runner import (
-    CODEX_BYPASS_APPROVALS_AND_SANDBOX,
-    DWS_CLI_AUTH_ENV_KEYS,
-    _config_string,
-    _memory_connector_env,
-)
-from app.process_runner import run_process_with_idle_timeout
 
 
 OA_APPROVAL_SCHEMA_PATH = (
@@ -34,18 +23,10 @@ DEFAULT_OA_APPROVAL_SKILL_PATH = (
 )
 AFLOW_HOST = "aflow.dingtalk.com"
 URL_TRAILING_CHARS = "\"'`>,.。；;，"
-SECRET_PATTERNS = (
-    re.compile(r"access_token=[^\s&]+", re.IGNORECASE),
-    re.compile(r"appsecret=[^\s&]+", re.IGNORECASE),
-    re.compile(r"appkey=[^\s&]+", re.IGNORECASE),
-    re.compile(r"cookie[:=][^\s]+", re.IGNORECASE),
-    re.compile(r"oauth[_-]?code=[^\s&]+", re.IGNORECASE),
-)
 OA_MUTATING_COMMAND_PATTERN = re.compile(
     r"\bdws\s+oa\s+approval\s+(?:approve|reject|return)\b",
     re.IGNORECASE,
 )
-SESSION_OA_RESULT_GRACE_SECONDS = 15
 
 
 class OaApprovalResult(BaseModel):
@@ -163,7 +144,7 @@ def _nested_aflow_url(value: str) -> str:
     return ""
 
 
-class OaApprovalCodexRunner:
+class OaApprovalReviewClient:
     def __init__(
         self,
         workspace: Path,
@@ -173,20 +154,39 @@ class OaApprovalCodexRunner:
         idle_timeout_seconds: int = 180,
         codex_home: Path | None = None,
         skill_path: Path | None = None,
+        store: Any | None = None,
     ):
-        self.runner = _OaApprovalCommandBuilder(
-            workspace=workspace,
-            codex_bin=codex_bin,
-            skill_path=skill_path or DEFAULT_OA_APPROVAL_SKILL_PATH,
-        )
-        self.executor = executor or self._subprocess_executor
-        self.timeout_seconds = timeout_seconds
-        self.idle_timeout_seconds = idle_timeout_seconds
         self.codex_home = codex_home
         self.last_session_id: str | None = None
         self.last_audit_tool_events: list[dict[str, str]] = []
         self.last_transcript_start_line: int = 0
         self.last_transcript_end_line: int = 0
+        self._store = store or _EphemeralStructuredStore()
+        self._conversation_id = "__oa_approval__"
+        self.runner = StructuredCodexRunner(
+            store=self._store,
+            workspace=workspace,
+            spec=AgentSpec(
+                name="oa_approval",
+                schema_path=Path(__file__).resolve().parent
+                / "schemas"
+                / "agent_envelope.schema.json",
+                primary_skill_paths=[skill_path or DEFAULT_OA_APPROVAL_SKILL_PATH],
+                reply_visible_skill_paths=[],
+                developer_preamble=(
+                    "You are the local CEO Agent OA approval handler. "
+                    "Follow the injected dingtalk-oa-approval skill exactly. "
+                    "Return only AgentEnvelope JSON. Do not expose tokens, "
+                    "AppKey, AppSecret, cookies, OAuth codes, signed URLs, "
+                    "or local credential paths."
+                ),
+            ),
+            codex_bin=codex_bin,
+            executor=_adapt_executor(executor) if executor is not None else None,
+            timeout_seconds=timeout_seconds,
+            idle_timeout_seconds=idle_timeout_seconds,
+            persist_conversation_session=False,
+        )
 
     def run(
         self,
@@ -194,76 +194,30 @@ class OaApprovalCodexRunner:
         session_id: str | None = None,
         allow_side_effects: bool = True,
     ) -> OaApprovalResult:
-        raw_outputs: list[str] = []
-        self.last_audit_tool_events = []
-        self.last_session_id = session_id
-        self.last_transcript_start_line = self._session_line_count(session_id)
-        self.last_transcript_end_line = self.last_transcript_start_line
-
-        raw = self.executor(
-            self.runner.build_command(
-                prompt,
+        if session_id:
+            self._store.upsert_conversation(
+                self._conversation_id,
+                "OA approval",
+                True,
                 session_id,
-                allow_side_effects=allow_side_effects,
-            ),
-            prompt,
-        )
-        raw_outputs.append(raw)
-        self._remember_session_id(raw)
-        try:
-            result = parse_oa_approval_json(raw, allow_legacy=False)
-        except (json.JSONDecodeError, ValidationError):
-            session_result = self._current_session_result(
-                wait_seconds=SESSION_OA_RESULT_GRACE_SECONDS
             )
-            if session_result is not None:
-                result = session_result
-            elif allow_side_effects:
-                self._remember_audit_tool_events(raw_outputs)
+        try:
+            result = self._run_once(
+                prompt,
+                allow_side_effects=allow_side_effects,
+            )
+        except (ValueError, ValidationError) as exc:
+            if allow_side_effects:
+                raise RuntimeError("invalid OA approval AgentEnvelope JSON") from exc
+            try:
+                result = self._run_once(
+                    self._repair_prompt(),
+                    allow_side_effects=False,
+                )
+            except (ValueError, ValidationError) as second_exc:
                 raise RuntimeError(
-                    f"invalid OA approval JSON: {raw[:200]}"
-                ) from None
-            else:
-                retry_session_id = session_id or self.last_session_id
-                repair_prompt = (
-                    "上一次输出不是合法 OA 审批 AgentEnvelope JSON。不得执行通过、拒绝、退回或评论。"
-                    "只输出合法 JSON，不要解释。"
-                    'JSON schema: {"kind":"oa_approval",'
-                    '"user_response":{"mode":"no_reply","text":"","sensitivity_kind":"internal_personnel"},'
-                    '"system_actions":[],"domain_payload":{'
-                    '"process_instance_id":"","task_id":"","oa_url":"",'
-                    '"oa_action":"通过|拒绝|退回","oa_remark":"",'
-                    '"action_result":{},"audit_summary":"","audit_documents":[]},'
-                    '"audit":{"summary":"","documents":[],"confidence":0.8}}'
-                    "domain_payload.action_result 必须是空对象 {}。"
-                    "domain_payload.oa_action 只能是 通过、拒绝、退回 之一；"
-                    "domain_payload.oa_remark、domain_payload.audit_summary 必须非空。"
-                    "如果无法取得 process_instance_id、task_id 或 oa_url，对应字段填空字符串。"
-                )
-                second_raw = self.executor(
-                    self.runner.build_command(
-                        repair_prompt,
-                        retry_session_id,
-                        allow_side_effects=False,
-                    ),
-                    repair_prompt,
-                )
-                raw_outputs.append(second_raw)
-                self._remember_session_id(second_raw)
-                try:
-                    result = parse_oa_approval_json(second_raw, allow_legacy=False)
-                except (json.JSONDecodeError, ValidationError):
-                    session_result = self._current_session_result(
-                        wait_seconds=SESSION_OA_RESULT_GRACE_SECONDS
-                    )
-                    if session_result is None:
-                        self._remember_audit_tool_events(raw_outputs)
-                        raise RuntimeError(
-                            "invalid OA approval JSON twice: "
-                            f"{raw[:200]} | {second_raw[:200]}"
-                        ) from None
-                    result = session_result
-        self._remember_audit_tool_events(raw_outputs)
+                    "invalid OA approval AgentEnvelope JSON twice"
+                ) from second_exc
         if not allow_side_effects:
             _validate_read_only_result(result, self.last_audit_tool_events)
         return result
@@ -296,170 +250,94 @@ class OaApprovalCodexRunner:
         )
         return self.run(prompt, session_id=None, allow_side_effects=execute)
 
-    def _remember_session_id(self, raw: str) -> None:
-        session_id = extract_codex_session_id(raw)
-        if session_id:
-            self.last_session_id = session_id
-
-    def _remember_audit_tool_events(self, raw_outputs: list[str]) -> None:
-        session_id = self.last_session_id
-        self.last_transcript_end_line = self._session_line_count(session_id)
-        session_events = []
-        if session_id:
-            session_events = extract_codex_audit_events_from_session(
-                session_id,
-                codex_home=self.codex_home,
-                start_line=self.last_transcript_start_line,
-                end_line=self.last_transcript_end_line,
-            )
-        self.last_audit_tool_events = session_events or extract_codex_audit_events(
-            "\n".join(raw_outputs)
-        )
-
-    def _subprocess_executor(self, command: list[str], prompt: str) -> str:
-        completed = run_process_with_idle_timeout(
-            command,
+    def _run_once(self, prompt: str, *, allow_side_effects: bool) -> OaApprovalResult:
+        run = self.runner.run(
+            conversation_id=self._conversation_id,
+            conversation_title="OA approval",
+            single_chat=True,
             prompt=prompt,
-            env=self.runner.build_env(),
-            total_timeout_seconds=self.timeout_seconds,
-            idle_timeout_seconds=self.idle_timeout_seconds,
+            owner="oa_approval",
+            allow_side_effects=allow_side_effects,
         )
-        if completed.timed_out:
-            raise RuntimeError(completed.timeout_reason)
-        if completed.returncode != 0:
-            raise RuntimeError(
-                _codex_stdout_error_reason(completed.stdout)
-                or _subprocess_failure_reason(completed.stderr)
+        self.last_session_id = run.codex_session_id
+        self.last_transcript_start_line = run.transcript_start_line
+        self.last_transcript_end_line = run.transcript_end_line
+        self.last_audit_tool_events = run.audit_tool_events
+        if run.envelope.kind != AgentKind.OA_APPROVAL:
+            raise ValidationError.from_exception_data(
+                "OaApprovalResult",
+                [
+                    {
+                        "type": "value_error",
+                        "loc": ("kind",),
+                        "msg": "Value error, agent envelope kind must be oa_approval",
+                        "input": run.envelope.kind,
+                        "ctx": {
+                            "error": ValueError(
+                                "agent envelope kind must be oa_approval"
+                            )
+                        },
+                    }
+                ],
             )
-        return completed.stdout.strip()
+        return OaApprovalResult.model_validate(run.envelope.domain_payload)
 
-    def _session_line_count(self, session_id: str | None) -> int:
-        if not session_id:
-            return 0
-        return count_codex_session_lines(session_id, codex_home=self.codex_home)
-
-    def _current_session_result(
-        self,
-        wait_seconds: int = 0,
-    ) -> OaApprovalResult | None:
-        if not self.last_session_id:
-            return None
-        deadline = time.monotonic() + wait_seconds
-        while True:
-            result = self._read_current_session_result()
-            if result is not None:
-                return result
-            if time.monotonic() >= deadline:
-                return None
-            time.sleep(5)
-
-    def _read_current_session_result(self) -> OaApprovalResult | None:
-        session_id = self.last_session_id
-        if not session_id:
-            return None
-        from app.codex_history import find_codex_session_path
-
-        path = find_codex_session_path(session_id, codex_home=self.codex_home)
-        if path is None:
-            return None
-        current_turn = "\n".join(
-            path.read_text(encoding="utf-8").splitlines()[
-                self.last_transcript_start_line :
-            ]
-        )
-        if not current_turn.strip():
-            return None
-        try:
-            return parse_oa_approval_json(current_turn, allow_legacy=False)
-        except (json.JSONDecodeError, ValidationError):
-            return None
-
-
-class _OaApprovalCommandBuilder:
-    def __init__(self, workspace: Path, codex_bin: str, skill_path: Path):
-        self.workspace = workspace
-        self.codex_bin = codex_bin
-        self.skill_path = skill_path
-
-    def build_env(self) -> dict[str, str]:
-        env = _memory_connector_env()
-        for key in DWS_CLI_AUTH_ENV_KEYS:
-            env.pop(key, None)
-        return env.copy()
-
-    def build_command(
-        self,
-        prompt: str,
-        session_id: str | None,
-        *,
-        allow_side_effects: bool = True,
-    ) -> list[str]:
-        if allow_side_effects:
-            safety_options = [
-                "-c",
-                'approval_policy="untrusted"',
-                "-c",
-                'approvals_reviewer="auto_review"',
-            ]
-            bypass_options = [CODEX_BYPASS_APPROVALS_AND_SANDBOX]
-        else:
-            safety_options = [
-                "-c",
-                'approval_policy="never"',
-            ]
-            bypass_options = [CODEX_BYPASS_APPROVALS_AND_SANDBOX]
-        common_options = [
-            "--json",
-            "-m",
-            "gpt-5.5",
-            "--ignore-user-config",
-            "--ignore-rules",
-            "--disable",
-            "hooks",
-            "--disable",
-            "plugins",
-            *safety_options,
-            "-c",
-            _config_string("developer_instructions", self._developer_instructions()),
-            "-c",
-            'model_reasoning_summary="concise"',
-            "-c",
-            "include_permissions_instructions=false",
-            "-c",
-            "include_apps_instructions=false",
-            "-c",
-            "include_environment_context=false",
-        ]
-        if session_id:
-            return [
-                self.codex_bin,
-                "exec",
-                "resume",
-                *common_options,
-                *bypass_options,
-                session_id,
-                "-",
-            ]
-        return [
-            self.codex_bin,
-            "exec",
-            *common_options,
-            *bypass_options,
-            "--cd",
-            str(self.workspace),
-            "-",
-        ]
-
-    def _developer_instructions(self) -> str:
-        skill_text = self.skill_path.read_text(encoding="utf-8")
+    @staticmethod
+    def _repair_prompt() -> str:
         return (
-            "You are the local DingTalk OA approval runner. Follow the injected "
-            "dingtalk-oa-approval skill exactly. Return only the requested JSON. "
-            "Do not expose tokens, AppKey, AppSecret, cookies, OAuth codes, "
-            "signed URLs, or local credential paths.\n\n"
-            "# Injected dingtalk-oa-approval skill\n\n"
-            f"{skill_text}"
+            "上一次输出不是合法 OA 审批 AgentEnvelope JSON。不得执行通过、拒绝、退回或评论。"
+            "只输出合法 JSON，不要解释。"
+            'JSON schema: {"kind":"oa_approval",'
+            '"user_response":{"mode":"no_reply","text":"","sensitivity_kind":"internal_personnel"},'
+            '"system_actions":[],"domain_payload":{'
+            '"process_instance_id":"","task_id":"","oa_url":"",'
+            '"oa_action":"通过|拒绝|退回","oa_remark":"",'
+            '"action_result":{},"audit_summary":"","audit_documents":[]},'
+            '"audit":{"summary":"","documents":[],"confidence":0.8}}'
+            "domain_payload.action_result 必须是空对象 {}。"
+            "domain_payload.oa_action 只能是 通过、拒绝、退回 之一；"
+            "domain_payload.oa_remark、domain_payload.audit_summary 必须非空。"
+            "如果无法取得 process_instance_id、task_id 或 oa_url，对应字段填空字符串。"
         )
+
+
+class _EphemeralStructuredStore:
+    def __init__(self) -> None:
+        self._sessions: dict[str, str] = {}
+
+    @contextmanager
+    def codex_session_lock(
+        self,
+        conversation_id: str,
+        owner: str,
+        stale_after_seconds: int = 600,
+    ) -> Iterator[None]:
+        yield
+
+    def get_codex_session_id(self, conversation_id: str) -> str | None:
+        return self._sessions.get(conversation_id)
+
+    def clear_codex_session(self, conversation_id: str) -> None:
+        self._sessions.pop(conversation_id, None)
+
+    def upsert_conversation(
+        self,
+        conversation_id: str,
+        title: str,
+        single_chat: bool,
+        codex_session_id: str | None = None,
+    ) -> None:
+        if codex_session_id:
+            self._sessions[conversation_id] = codex_session_id
+
+
+def _adapt_executor(
+    executor: Callable[[list[str], str], str],
+) -> Callable[[list[str], str, dict[str, str]], str]:
+    def wrapped(command: list[str], prompt: str, env: dict[str, str]) -> str:
+        return executor(command, prompt)
+
+    return wrapped
 
 
 def _validate_read_only_result(
@@ -472,49 +350,6 @@ def _validate_read_only_result(
         command = str(event.get("command") or event.get("cmd") or "")
         if OA_MUTATING_COMMAND_PATTERN.search(command):
             raise RuntimeError("read-only OA approval review attempted a mutating action")
-
-
-def _subprocess_failure_reason(stderr: str) -> str:
-    normalized = " ".join(line.strip() for line in stderr.splitlines() if line.strip())
-    if not normalized:
-        return "codex exec failed without stderr"
-    for pattern in SECRET_PATTERNS:
-        normalized = pattern.sub("[REDACTED]", normalized)
-    if len(normalized) <= 1200:
-        return normalized
-    return f"{normalized[:1200]}..."
-
-
-def _codex_stdout_error_reason(stdout: str) -> str:
-    for payload in reversed(_iter_json_payloads(stdout)):
-        if not isinstance(payload, dict) or payload.get("type") != "error":
-            continue
-        message = payload.get("message")
-        if not isinstance(message, str):
-            continue
-        code = ""
-        detail = message
-        try:
-            parsed = json.loads(message)
-        except json.JSONDecodeError:
-            parsed = None
-        if isinstance(parsed, dict):
-            error = parsed.get("error")
-            if isinstance(error, dict):
-                code = str(error.get("code") or "")
-                detail = str(error.get("message") or detail)
-        normalized = f"{code}: {detail}" if code else detail
-        return _redact_failure_reason(normalized)
-    return ""
-
-
-def _redact_failure_reason(reason: str) -> str:
-    normalized = " ".join(line.strip() for line in reason.splitlines() if line.strip())
-    for pattern in SECRET_PATTERNS:
-        normalized = pattern.sub("[REDACTED]", normalized)
-    if len(normalized) <= 1200:
-        return normalized
-    return f"{normalized[:1200]}..."
 
 
 def parse_oa_approval_json(raw: str, *, allow_legacy: bool = True) -> OaApprovalResult:

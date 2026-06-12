@@ -9,11 +9,12 @@ from app.agent_envelope import AgentEnvelope
 from app.codex_runner import CODEX_BYPASS_APPROVALS_AND_SANDBOX
 from app.oa_approval import (
     OA_APPROVAL_SCHEMA_PATH,
-    OaApprovalCodexRunner,
+    OaApprovalReviewClient,
     OaApprovalResult,
     extract_oa_url,
 )
 from app.process_runner import ProcessRunResult
+from app.structured_agent import StructuredCodexRunner
 
 
 def _developer_instructions_arg(command: list[str]) -> str:
@@ -231,7 +232,7 @@ def test_runner_injects_skill_uses_schema_parses_result_and_records_session(
             ]
         )
 
-    runner = OaApprovalCodexRunner(
+    runner = OaApprovalReviewClient(
         workspace=tmp_path,
         codex_bin="codex",
         executor=fake_executor,
@@ -247,7 +248,7 @@ def test_runner_injects_skill_uses_schema_parses_result_and_records_session(
     assert CODEX_BYPASS_APPROVALS_AND_SANDBOX in command
     assert command[command.index("--disable") + 1] == "hooks"
     assert "--output-schema" not in command
-    assert runner.runner.build_env()["HOME"] == "/Users/principal"
+    assert isinstance(runner.runner, StructuredCodexRunner)
     assert prompt == "请审批"
     assert result.process_instance_id == "proc-1"
     assert runner.last_session_id == "session-1"
@@ -274,11 +275,12 @@ def test_resume_command_omits_agent_envelope_output_schema(tmp_path: Path):
             summary="已审阅。",
         )
 
-    runner = OaApprovalCodexRunner(
+    runner = OaApprovalReviewClient(
         workspace=tmp_path,
         executor=fake_executor,
         skill_path=skill_path,
     )
+    runner.runner.session_exists = lambda _session_id: True
 
     runner.run("继续处理", session_id="session-1")
 
@@ -526,13 +528,16 @@ def test_parse_oa_approval_json_rejects_wrong_agent_envelope_kind():
         oa_approval.parse_oa_approval_json(envelope.model_dump_json())
 
 
-def test_invalid_oa_json_waits_for_session_result_before_repair(tmp_path: Path):
+def test_invalid_oa_json_retries_once_with_repair_prompt(tmp_path: Path):
     skill_path = tmp_path / "skill.md"
     skill_path.write_text("# OA Skill", encoding="utf-8")
-    calls: list[list[str]] = []
+    prompts: list[str] = []
 
     def fake_executor(command: list[str], prompt: str) -> str:
-        calls.append(command)
+        del command
+        prompts.append(prompt)
+        if len(prompts) == 2:
+            return _oa_envelope_json()
         return "\n".join(
             [
                 json.dumps({"type": "thread.started", "thread_id": "thread-1"}),
@@ -546,34 +551,17 @@ def test_invalid_oa_json_waits_for_session_result_before_repair(tmp_path: Path):
             ]
         )
 
-    runner = OaApprovalCodexRunner(
+    runner = OaApprovalReviewClient(
         workspace=tmp_path,
         executor=fake_executor,
         skill_path=skill_path,
     )
-    waits: list[int] = []
-    session_result = OaApprovalResult(
-        process_instance_id="proc-1",
-        task_id="task-1",
-        oa_url="https://aflow.dingtalk.com/detail?procInstId=proc-1",
-        oa_action="退回",
-        oa_remark="请补充材料。",
-        action_result={},
-        audit_summary="已审阅，材料不足。",
-        audit_documents=[],
-    )
-
-    def fake_current_session_result(wait_seconds: int = 0):
-        waits.append(wait_seconds)
-        return session_result if wait_seconds > 0 else None
-
-    runner._current_session_result = fake_current_session_result  # type: ignore[method-assign]
 
     result = runner.run("处理审批", allow_side_effects=False)
 
     assert result.oa_action == "退回"
-    assert waits == [15]
-    assert len(calls) == 1
+    assert len(prompts) == 2
+    assert "上一次输出不是合法 OA 审批 AgentEnvelope JSON" in prompts[1]
 
 
 def test_invalid_oa_json_repair_prompt_requests_agent_envelope(tmp_path: Path):
@@ -612,7 +600,7 @@ def test_invalid_oa_json_repair_prompt_requests_agent_envelope(tmp_path: Path):
             }
         ).model_dump_json()
 
-    runner = OaApprovalCodexRunner(
+    runner = OaApprovalReviewClient(
         workspace=tmp_path,
         executor=fake_executor,
         skill_path=skill_path,
@@ -655,7 +643,7 @@ def test_read_only_handle_allows_dws_reads_and_requires_empty_action_result(
         calls.append(command)
         return _oa_envelope_json(summary="只读审阅，未执行审批动作。")
 
-    runner = OaApprovalCodexRunner(
+    runner = OaApprovalReviewClient(
         workspace=tmp_path,
         executor=fake_executor,
         skill_path=skill_path,
@@ -683,7 +671,7 @@ def test_execute_handle_warns_return_becomes_service_comment(tmp_path: Path):
             summary="已审阅。",
         )
 
-    runner = OaApprovalCodexRunner(
+    runner = OaApprovalReviewClient(
         workspace=tmp_path,
         executor=fake_executor,
         skill_path=skill_path,
@@ -709,7 +697,7 @@ def test_handle_warns_dws_login_failure_is_tool_issue(tmp_path: Path):
             summary="DWS 未登录导致工具不可用。",
         )
 
-    runner = OaApprovalCodexRunner(
+    runner = OaApprovalReviewClient(
         workspace=tmp_path,
         executor=fake_executor,
         skill_path=skill_path,
@@ -736,13 +724,13 @@ def test_read_only_runner_can_use_local_dws_auth(tmp_path: Path, monkeypatch):
     skill_path = tmp_path / "skill.md"
     skill_path.write_text("# OA Skill", encoding="utf-8")
 
-    runner = OaApprovalCodexRunner(
+    runner = OaApprovalReviewClient(
         workspace=tmp_path,
         skill_path=skill_path,
     )
 
-    env = runner.runner.build_env()
-    command = runner.runner.build_command(
+    env = runner.runner.runner.build_env()
+    command = runner.runner._build_command(
         "review only",
         session_id=None,
         allow_side_effects=False,
@@ -769,7 +757,7 @@ def test_read_only_handle_rejects_mutating_result_or_tool_event(tmp_path: Path):
             summary="不应被接受。",
         )
 
-    runner = OaApprovalCodexRunner(
+    runner = OaApprovalReviewClient(
         workspace=tmp_path,
         executor=nonempty_action_result,
         skill_path=skill_path,
@@ -797,7 +785,7 @@ def test_read_only_handle_rejects_mutating_result_or_tool_event(tmp_path: Path):
             ]
         )
 
-    runner = OaApprovalCodexRunner(
+    runner = OaApprovalReviewClient(
         workspace=tmp_path,
         executor=mutating_tool_event,
         skill_path=skill_path,
@@ -817,7 +805,7 @@ def test_read_only_runner_repairs_empty_stdout_once(tmp_path: Path):
             return ""
         return _oa_envelope_json()
 
-    runner = OaApprovalCodexRunner(
+    runner = OaApprovalReviewClient(
         workspace=tmp_path,
         executor=fake_executor,
         skill_path=skill_path,
@@ -844,8 +832,8 @@ def test_subprocess_failure_redacts_sensitive_stderr(tmp_path: Path, monkeypatch
             ),
         )
 
-    monkeypatch.setattr(oa_approval, "run_process_with_idle_timeout", fake_run)
-    runner = OaApprovalCodexRunner(workspace=tmp_path, skill_path=skill_path)
+    monkeypatch.setattr("app.structured_agent.run_process_with_idle_timeout", fake_run)
+    runner = OaApprovalReviewClient(workspace=tmp_path, skill_path=skill_path)
 
     with pytest.raises(RuntimeError) as excinfo:
         runner.run("处理审批")
@@ -887,8 +875,8 @@ def test_subprocess_failure_reports_codex_json_stdout_error(
             stderr="",
         )
 
-    monkeypatch.setattr(oa_approval, "run_process_with_idle_timeout", fake_run)
-    runner = OaApprovalCodexRunner(workspace=tmp_path, skill_path=skill_path)
+    monkeypatch.setattr("app.structured_agent.run_process_with_idle_timeout", fake_run)
+    runner = OaApprovalReviewClient(workspace=tmp_path, skill_path=skill_path)
 
     with pytest.raises(RuntimeError, match="invalid_json_schema: Invalid schema"):
         runner.run("处理审批")

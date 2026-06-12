@@ -150,14 +150,14 @@ not need a separate reply engine.
 - Local task source scanning is limited to the configured `CEO_WORKSPACE` path.
 - DingTalk media/calendar placeholders and DingTalk internal link-only cards are
   skipped before Codex, except approval/OA links.
-- OA approval cards and reminders are routed to a dedicated OA approval agent.
-  The service injects the `dingtalk-oa-approval` skill into that agent, records
-  the Codex session, tool events, approval URL, approval action, approval remark,
-  and action result on the existing reply attempt audit row, and does not create
-  a separate OA audit page.
-- The OA agent may use authorized DingTalk OA API detail reads when DWS does not
-  return complete approval detail. Secrets and signed URLs must not be written
-  to logs, SQLite, audit summaries, reports, or DingTalk replies.
+- OA approval cards and reminders are routed to the OA handler. The handler uses
+  the unified structured Codex runner with `dingtalk-oa-approval` injected,
+  records the Codex session, tool events, approval URL, approval action,
+  approval remark, and action result on the existing reply attempt audit row,
+  and does not create a separate OA audit page.
+- The OA handler may use authorized DingTalk OA API detail reads when DWS does
+  not return complete approval detail. Secrets and signed URLs must not be
+  written to logs, SQLite, audit summaries, reports, or DingTalk replies.
 - See `docs/message-routing-rules.md` for the full message-type inventory,
   implemented regexes, candidate regexes, and message types that should remain
   agent-reviewed.
