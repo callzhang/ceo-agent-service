@@ -5258,15 +5258,16 @@ def test_oa_approval_detail_param_error_is_recovered_by_openapi(
     worker.run_once()
 
     detail = json.loads(oa_runner.approval_detail_texts[0])
-    assert detail["dws_detail"]["error_kind"] == "dws_error"
-    assert "PARAM_ERROR" in detail["dws_detail"]["message"]
+    assert "dws_detail" not in detail
     assert detail["openapi_detail"]["process_instance"]["title"] == (
         "郑威格提交的项目立项全流程（第三曲线）"
     )
-    assert detail["dws_detail_recovery"]["status"] == "recovered_by_openapi"
-    assert "instead of retrying the same detail command" in detail[
-        "dws_detail_recovery"
-    ]["message"]
+    assert detail["dws_detail_status"]["status"] == "recovered_by_openapi"
+    assert "Do not retry dws oa approval detail" in detail["dws_detail_status"][
+        "message"
+    ]
+    assert "--format raw" in detail["dws_detail_status"]["message"]
+    assert "--fields" in detail["dws_detail_status"]["message"]
 
 
 def docx_bytes(paragraphs: list[str]) -> bytes:

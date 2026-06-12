@@ -2044,7 +2044,7 @@ class DingTalkAutoReplyWorker:
                 documents[key] = reader(process_instance_id)
             except Exception as exc:
                 documents[key] = self._dws_tool_error_payload(exc)
-        if self._oa_detail_has_empty_form(documents.get("dws_detail")):
+        if self._oa_detail_needs_openapi(documents.get("dws_detail")):
             try:
                 documents["openapi_detail"] = self.dws.read_oa_process_instance_openapi(
                     process_instance_id
@@ -2313,14 +2313,27 @@ class DingTalkAutoReplyWorker:
             and not openapi_detail.get("error_kind")
         ):
             return
-        documents["dws_detail_recovery"] = {
+        documents.pop("dws_detail", None)
+        documents["dws_detail_status"] = {
             "status": "recovered_by_openapi",
             "message": (
-                "dws oa approval detail failed; use openapi_detail, "
-                "dws_records, dws_tasks, and oa_attachment_fallbacks instead "
-                "of retrying the same detail command."
+                "dws oa approval detail failed because the DWS detail command "
+                "could not parse this process instance. Use openapi_detail, "
+                "dws_records, dws_tasks, and oa_attachment_fallbacks as the "
+                "source of truth. Do not retry dws oa approval detail, "
+                "--format raw, or --fields for this instance."
             ),
         }
+
+    @staticmethod
+    def _oa_detail_needs_openapi(payload: Any) -> bool:
+        return DingTalkAutoReplyWorker._dws_tool_payload_is_error(
+            payload
+        ) or DingTalkAutoReplyWorker._oa_detail_has_empty_form(payload)
+
+    @staticmethod
+    def _dws_tool_payload_is_error(payload: Any) -> bool:
+        return isinstance(payload, dict) and bool(payload.get("error_kind"))
 
     @staticmethod
     def _annotate_oa_tool_status(documents: dict[str, Any]) -> None:
