@@ -279,7 +279,7 @@ def _redact_evidence_path(path: Path) -> str:
 
 def _configured_corpus_dir(repo_root: Path) -> Path:
     values = _env_values(repo_root / ".env")
-    return _resolve_repo_path(repo_root, values.get("CEO_CORPUS_DIR", "corpus"))
+    return _resolve_repo_path(repo_root, values.get("CEO_CORPUS_DIR", "data/corpus"))
 
 
 def _contains_sensitive_profile_evidence(text: str) -> bool:
@@ -357,7 +357,7 @@ def check_data_corpus(*, repo_root: Path) -> SetupStepStatus:
             "data_corpus",
             title="Data Corpus",
             status="needs_action",
-            summary="corpus/style_corpus.csv is missing.",
+            summary="data/corpus/style_corpus.csv is missing.",
             evidence={"style_corpus_exists": False},
         )
     return _status(
@@ -393,7 +393,7 @@ def check_work_profile(*, repo_root: Path) -> SetupStepStatus:
             "work_profile",
             title="Work Profile Distillation",
             status="needs_action",
-            summary="corpus/style_corpus.csv is missing.",
+            summary="data/corpus/style_corpus.csv is missing.",
         )
     profile_text = profile.read_text(encoding="utf-8")
     if _contains_sensitive_profile_evidence(profile_text):
@@ -439,7 +439,7 @@ def _setup_service_config(
     defaults = {
         "CEO_WORKSPACE": "workspace",
         "CEO_WORKER_DB": "data/auto-reply.sqlite3",
-        "CEO_CORPUS_DIR": "corpus",
+        "CEO_CORPUS_DIR": "data/corpus",
         "CEO_NOT_SEND_MESSAGE": "1",
     }
     for key, default in defaults.items():

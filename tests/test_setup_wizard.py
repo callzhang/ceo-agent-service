@@ -287,12 +287,12 @@ def test_check_service_config_detects_missing_env(tmp_path: Path):
 
 def test_check_service_config_accepts_env_and_directories(tmp_path: Path):
     (tmp_path / ".env").write_text(
-        "CEO_WORKSPACE=workspace\nCEO_WORKER_DB=data/auto-reply.sqlite3\nCEO_CORPUS_DIR=corpus\nCEO_NOT_SEND_MESSAGE=1\n",
+        "CEO_WORKSPACE=workspace\nCEO_WORKER_DB=data/auto-reply.sqlite3\nCEO_CORPUS_DIR=data/corpus\nCEO_NOT_SEND_MESSAGE=1\n",
         encoding="utf-8",
     )
     (tmp_path / "workspace").mkdir()
     (tmp_path / "data").mkdir()
-    (tmp_path / "corpus").mkdir()
+    (tmp_path / "data" / "corpus").mkdir()
 
     result = check_service_config(repo_root=tmp_path)
 
@@ -309,11 +309,11 @@ def test_check_service_config_expands_home_environment_value(
     workspace = home / "Documents" / "memory"
     workspace.mkdir(parents=True)
     (tmp_path / "data").mkdir()
-    (tmp_path / "corpus").mkdir()
+    (tmp_path / "data" / "corpus").mkdir()
     (tmp_path / ".env").write_text(
         "CEO_WORKSPACE=$HOME/Documents/memory\n"
         "CEO_WORKER_DB=data/auto-reply.sqlite3\n"
-        "CEO_CORPUS_DIR=corpus\n"
+        "CEO_CORPUS_DIR=data/corpus\n"
         "CEO_NOT_SEND_MESSAGE=1\n",
         encoding="utf-8",
     )
@@ -328,7 +328,7 @@ def test_check_data_corpus_requires_style_corpus(tmp_path: Path):
     result = check_data_corpus(repo_root=tmp_path)
 
     assert result.status == "needs_action"
-    assert result.summary == "corpus/style_corpus.csv is missing."
+    assert result.summary == "data/corpus/style_corpus.csv is missing."
 
 
 def test_check_data_corpus_uses_configured_corpus_dir(tmp_path: Path):
@@ -355,7 +355,7 @@ def test_check_work_profile_requires_profile_and_evidence(tmp_path: Path):
 def test_check_work_profile_flags_leaked_local_path(tmp_path: Path):
     (tmp_path / "profiles").mkdir()
     (tmp_path / "data" / "profile-evidence").mkdir(parents=True)
-    (tmp_path / "corpus").mkdir()
+    (tmp_path / "data" / "corpus").mkdir(parents=True)
     (tmp_path / "profiles" / "work_profile.md").write_text(
         "Evidence from /Users/derek/Documents/private.md",
         encoding="utf-8",
@@ -364,7 +364,7 @@ def test_check_work_profile_flags_leaked_local_path(tmp_path: Path):
         "{}\n",
         encoding="utf-8",
     )
-    (tmp_path / "corpus" / "style_corpus.csv").write_text(
+    (tmp_path / "data" / "corpus" / "style_corpus.csv").write_text(
         "source,text\n",
         encoding="utf-8",
     )
@@ -414,7 +414,7 @@ def test_run_setup_service_config_creates_env_and_directories(tmp_path: Path):
         env={
             "CEO_WORKSPACE": "workspace",
             "CEO_WORKER_DB": "data/auto-reply.sqlite3",
-            "CEO_CORPUS_DIR": "corpus",
+            "CEO_CORPUS_DIR": "data/corpus",
             "CEO_NOT_SEND_MESSAGE": "1",
         },
     )
@@ -423,7 +423,7 @@ def test_run_setup_service_config_creates_env_and_directories(tmp_path: Path):
     assert (tmp_path / ".env").exists()
     assert (tmp_path / "workspace").is_dir()
     assert (tmp_path / "data").is_dir()
-    assert (tmp_path / "corpus").is_dir()
+    assert (tmp_path / "data" / "corpus").is_dir()
     assert "CEO_NOT_SEND_MESSAGE=1" in (tmp_path / ".env").read_text(
         encoding="utf-8"
     )
@@ -437,7 +437,7 @@ def test_run_setup_service_config_expands_example_environment_values(
     (tmp_path / ".env.example").write_text(
         "CEO_WORKSPACE=$HOME/Documents/memory\n"
         "CEO_WORKER_DB=data/auto-reply.sqlite3\n"
-        "CEO_CORPUS_DIR=corpus\n"
+        "CEO_CORPUS_DIR=data/corpus\n"
         "CEO_NOT_SEND_MESSAGE=1\n",
         encoding="utf-8",
     )
