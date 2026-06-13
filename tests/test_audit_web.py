@@ -36,6 +36,7 @@ from app.audit_web import (
 from app.developer_prompt import read_developer_prompt_template
 from app.config import load_env_file
 from app.dingtalk_models import DingTalkConversation, DingTalkMessage
+from app.setup_wizard_models import SetupStepStatus, SetupWizardEvent
 from app.store import AutoReplyStore
 
 
@@ -707,30 +708,21 @@ def test_top_nav_highlights_current_page_and_disables_current_link(tmp_path: Pat
     assert '<a class="nav-item" href="/tasks">Tasks</a>' not in tasks_html
 
 
-def test_render_tutorial_page_guides_first_time_setup():
-    html = render_tutorial_page()
+def test_render_tutorial_page_shows_wizard_status(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.upsert_setup_wizard_step(
+        step_id="preflight",
+        status="done",
+        summary="Python is available",
+    )
 
-    assert "初始化 Tutorial" in html
-    assert "Agent Installation Runbook" in html
-    assert "Start in dry-run mode" in html
-    assert "不要让使用者逐条复制终端命令完成安装" in html
-    assert "Phase 0" in html
-    assert "Phase 1" in html
-    assert "Phase 2" in html
-    assert "Memory Connector MCP" in html
-    assert "setup-memory-connector" in html
-    assert "Codex CLI" in html
-    assert "dws auth status" in html
-    assert "CEO_WORKSPACE" in html
-    assert "build-corpus" in html
-    assert "collect-corpus" in html
-    assert "build-work-profile" in html
-    assert "profiles/work_profile.md" in html
-    assert "data/profile-evidence/evidence_index.jsonl" in html
-    assert "Nvwa" in html
-    assert "run-once --not-send-message" in html
-    assert "launchctl" in html
-    assert "CEO_LIVE_SEND_BLOCKERS_ACCEPTED=1" in html
+    html = render_tutorial_page(store=store)
+
+    assert "Initialization Wizard" in html
+    assert "Python is available" in html
+    assert 'class="setup-step-status setup-status-done"' in html
+    assert 'data-action-id="check_cli_components"' in html
+    assert "安装检查流程" not in html
     assert "/config?tab=system" in html
     assert "/logs" in html
     assert "/tasks" in html
@@ -744,8 +736,85 @@ def test_tutorial_route_renders_first_time_setup(tmp_path: Path):
     response = client.get("/tutorial")
 
     assert response.status_code == 200
-    assert "初始化 Tutorial" in response.text
+    assert "Initialization Wizard" in response.text
     assert '<span class="nav-item active" aria-current="page">Tutorial</span>' in response.text
+
+
+def test_tutorial_status_route_returns_json(tmp_path: Path):
+    client = TestClient(create_audit_app(tmp_path / "worker.sqlite3"))
+
+    response = client.get("/tutorial/status")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["steps"][0]["step_id"] == "preflight"
+    assert payload["steps"][0]["title"] == "Preflight"
+
+
+def test_tutorial_check_route_records_step_status(monkeypatch, tmp_path: Path):
+    def fake_check(step_id, *, repo_root, store):
+        del repo_root, store
+        assert step_id == "service_config"
+        return SetupStepStatus(
+            step_id="service_config",
+            title="Service Config",
+            status="done",
+            summary="ready",
+        )
+
+    monkeypatch.setattr(audit_web_module, "check_setup_step", fake_check)
+    client = TestClient(create_audit_app(tmp_path / "worker.sqlite3"))
+
+    response = client.post("/tutorial/check/service_config")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "done"
+    row = AutoReplyStore(tmp_path / "worker.sqlite3").get_setup_wizard_step(
+        "service_config"
+    )
+    assert row is not None
+    assert row["summary"] == "ready"
+
+
+def test_tutorial_run_route_records_action_event(monkeypatch, tmp_path: Path):
+    def fake_run(action_id, *, repo_root, env):
+        del repo_root, env
+        assert action_id == "setup_service_config"
+        return SetupWizardEvent(
+            step_id="service_config",
+            action_id="setup_service_config",
+            status="done",
+            summary="created",
+        )
+
+    monkeypatch.setattr(audit_web_module, "run_setup_action", fake_run)
+    client = TestClient(create_audit_app(tmp_path / "worker.sqlite3"))
+
+    response = client.post("/tutorial/run/setup_service_config")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "done"
+    events = AutoReplyStore(tmp_path / "worker.sqlite3").list_setup_wizard_events(
+        "service_config"
+    )
+    assert events[0]["action_id"] == "setup_service_config"
+
+
+def test_tutorial_confirm_route_accepts_form_submission(tmp_path: Path):
+    client = TestClient(create_audit_app(tmp_path / "worker.sqlite3"))
+
+    response = client.post(
+        "/tutorial/confirm/live_send",
+        data={"confirmed_by": "tester"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "done"
+    row = AutoReplyStore(tmp_path / "worker.sqlite3").get_setup_wizard_step(
+        "live_send"
+    )
+    assert row is not None
+    assert row["manual_confirmed_by"] == "tester"
 
 
 def test_tasks_page_renders_projects_and_todos_without_global_followups(tmp_path: Path):

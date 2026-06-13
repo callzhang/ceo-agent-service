@@ -93,6 +93,12 @@ from app.store import (
     SentReply,
     UserFeedbackItem,
 )
+from app.setup_wizard import (
+    build_wizard_status,
+    get_step_definition,
+    run_setup_action,
+)
+from app.setup_wizard_models import SetupStepStatus, SetupWizardEvent
 from app.task_models import ProjectPriority, ProjectStatus, RiskLevel, TodoStatus
 from app.user_prompt_blocks import USER_PROMPT_BLOCKS, UserPromptBlock
 
@@ -170,6 +176,12 @@ th{background:var(--surface-soft);color:var(--steel);font-size:12px;font-weight:
 .tutorial-links{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .tutorial-link{display:inline-flex;align-items:center;height:28px;padding:0 10px;border:1px solid var(--hairline);border-radius:999px;background:var(--canvas);color:var(--ink);font-size:12px;font-weight:700;line-height:1;white-space:nowrap}
 .tutorial-link:hover{border-color:var(--ink);background:var(--surface-soft);text-decoration:none}
+.setup-step-status{display:inline-flex;align-items:center;height:24px;padding:0 8px;border:1px solid var(--hairline);border-radius:999px;background:var(--surface-soft);font-family:"Geist Mono","SF Mono",Menlo,Consolas,monospace;font-size:11px;font-weight:800;line-height:1;white-space:nowrap}
+.setup-status-done{background:#ddfff6;border-color:rgba(0,180,138,.46);color:#005b49}
+.setup-status-running,.setup-status-checking{background:rgba(55,114,207,.10);border-color:rgba(55,114,207,.24);color:#245aa5}
+.setup-status-needs_action{background:rgba(195,125,13,.12);border-color:rgba(195,125,13,.24);color:#8a5a08}
+.setup-status-failed,.setup-status-blocked{background:rgba(212,86,86,.12);border-color:rgba(212,86,86,.24);color:#9a2f2f}
+.setup-wizard-step form{margin:0}
 @media (max-width:900px){.tutorial-summary,.tutorial-lists{grid-template-columns:1fr}.tutorial-step{grid-template-columns:1fr}.tutorial-step-number{width:30px;height:30px}}
 .notification-panel{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:12px 0}
 .notification-log{max-height:260px}
@@ -540,43 +552,72 @@ def render_browser_notifications_page() -> str:
     return render_page("Notifications", body, active_nav="notifications")
 
 
-def render_tutorial_page() -> str:
-    summary_html = "".join(
-        "<div class=\"tutorial-summary-item\">"
-        f"<span class=\"tutorial-summary-label\">{escape(label)}</span>"
-        f"<span class=\"tutorial-summary-value\">{escape(value)}</span>"
-        "</div>"
-        for label, value in [
-            ("目标", "verified local service"),
-            ("默认", "Start in dry-run mode"),
-            ("入口", "Agent Installation Runbook"),
-            ("完成", "dry-run reviewed, no backlog"),
-        ]
-    )
-    steps_html = "".join(_tutorial_step_html(step) for step in _tutorial_steps())
+def render_tutorial_page(*, store: AutoReplyStore | None = None) -> str:
+    if store is None:
+        configured_db_path = os.environ.get("CEO_WORKER_DB")
+        store = AutoReplyStore(Path(configured_db_path or "data/auto-reply.sqlite3"))
+    status = build_wizard_status(store)
+    steps_html = "".join(_setup_wizard_step_html(step) for step in status.steps)
     body = (
         "<section class=\"card tutorial-intro\">"
-        "<h2>初始化 Tutorial</h2>"
+        "<h2>Initialization Wizard</h2>"
         "<p class=\"muted\">"
-        "首次使用时按这里检查前提条件。页面内容来自 README 和 "
-        "<code>docs/agent-installation-runbook.md</code>："
-        "agent 负责运行命令、检查输出、编辑本机配置；不要让使用者逐条复制终端命令完成安装。"
+        "This wizard checks and configures the local CEO Agent Service setup. "
+        "A step is checked only after the system verifies it."
         "</p>"
-        f"<div class=\"tutorial-summary\">{summary_html}</div>"
         "</section>"
         "<section class=\"card\">"
         "<div class=\"card-head\">"
-        "<h2>安装检查流程</h2>"
+        "<h2>Setup steps</h2>"
         "<div class=\"tutorial-links\">"
         "<a class=\"tutorial-link\" href=\"/config?tab=system\">系统参数</a>"
         "<a class=\"tutorial-link\" href=\"/tasks\">Tasks</a>"
         "<a class=\"tutorial-link\" href=\"/logs\">Logs</a>"
         "</div>"
         "</div>"
-        f"<ol class=\"tutorial-steps\">{steps_html}</ol>"
+        f"<ol class=\"tutorial-steps setup-wizard-steps\">{steps_html}</ol>"
         "</section>"
     )
     return render_page("Tutorial", body, active_nav="tutorial")
+
+
+def _setup_wizard_step_html(step: SetupStepStatus) -> str:
+    action_html = "".join(
+        "<form method=\"post\" action=\"/tutorial/"
+        f"{'check' if action.kind == 'check' else 'run' if action.kind == 'run' else 'confirm'}"
+        f"/{escape(action.id if action.kind == 'run' else step.step_id)}\">"
+        f"<button type=\"submit\" data-action-id=\"{escape(action.id)}\">"
+        f"{escape(action.label)}</button>"
+        "</form>"
+        for action in step.available_actions
+        if action.kind != "confirm" or step.manual_confirmation_allowed
+    )
+    evidence_html = "".join(
+        "<li>"
+        f"<code>{escape(str(key))}</code>: {escape(str(value))}"
+        "</li>"
+        for key, value in step.evidence.items()
+    )
+    evidence_list = (
+        f"<ul class=\"tutorial-list\">{evidence_html}</ul>"
+        if evidence_html
+        else ""
+    )
+    return (
+        "<li class=\"tutorial-step setup-wizard-step\">"
+        "<div class=\"tutorial-step-number\" aria-hidden=\"true\"></div>"
+        "<div class=\"tutorial-step-body\">"
+        "<div class=\"tutorial-step-head\">"
+        f"<h3>{escape(step.title)}</h3>"
+        f"<span class=\"setup-step-status setup-status-{escape(step.status)}\">"
+        f"{escape(step.status)}</span>"
+        "</div>"
+        f"<p>{escape(step.summary or 'Not checked yet.')}</p>"
+        f"{evidence_list}"
+        f"<div class=\"tutorial-links\">{action_html}</div>"
+        "</div>"
+        "</li>"
+    )
 
 
 def _tutorial_step_html(step: _TutorialStep) -> str:
@@ -618,6 +659,50 @@ def _tutorial_command_list_html(commands: list[str]) -> str:
         "<div class=\"tutorial-command-list\">"
         + "".join(f"<code>{escape(str(command))}</code>" for command in commands)
         + "</div>"
+    )
+
+
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parent.parent
+
+
+def check_setup_step(
+    step_id: str,
+    *,
+    repo_root: Path,
+    store: AutoReplyStore,
+) -> SetupStepStatus:
+    del repo_root, store
+    definition = get_step_definition(step_id)
+    return SetupStepStatus(
+        step_id=definition.id,
+        title=definition.title,
+        status="needs_action",
+        summary=f"No automated checker is implemented for {definition.title}.",
+    )
+
+
+def confirm_setup_step(
+    step_id: str,
+    *,
+    store: AutoReplyStore,
+    confirmed_by: str,
+    evidence: dict[str, str],
+) -> SetupWizardEvent:
+    definition = get_step_definition(step_id)
+    summary = f"Manually confirmed {definition.title}."
+    store.upsert_setup_wizard_step(
+        step_id=definition.id,
+        status="done",
+        summary=summary,
+        manual_confirmed_by=confirmed_by,
+    )
+    return SetupWizardEvent(
+        step_id=definition.id,
+        action_id=f"confirm_{definition.id}",
+        status="done",
+        summary=summary,
+        evidence=evidence,
     )
 
 
@@ -4115,7 +4200,77 @@ def create_audit_app(
 
     @app.get("/tutorial", response_class=HTMLResponse)
     def tutorial_page() -> str:
-        return render_tutorial_page()
+        return render_tutorial_page(store=AutoReplyStore(db_path))
+
+    @app.get("/tutorial/status")
+    def tutorial_status() -> JSONResponse:
+        return JSONResponse(build_wizard_status(AutoReplyStore(db_path)).model_dump())
+
+    @app.post("/tutorial/check/{step_id}")
+    def tutorial_check(step_id: str) -> JSONResponse:
+        store = AutoReplyStore(db_path)
+        status = check_setup_step(step_id, repo_root=_repo_root(), store=store)
+        store.upsert_setup_wizard_step(
+            step_id=status.step_id,
+            status=status.status,
+            summary=status.summary,
+        )
+        return JSONResponse(status.model_dump())
+
+    @app.post("/tutorial/run/{action_id}")
+    def tutorial_run(action_id: str) -> JSONResponse:
+        store = AutoReplyStore(db_path)
+        event = run_setup_action(action_id, repo_root=_repo_root(), env=dict(os.environ))
+        store.record_setup_wizard_event(
+            step_id=event.step_id,
+            action_id=event.action_id,
+            status=event.status,
+            summary=event.summary,
+            evidence_json=json.dumps(event.evidence, ensure_ascii=False),
+            stdout_excerpt=event.stdout_excerpt,
+            stderr_excerpt=event.stderr_excerpt,
+        )
+        if event.status == "done":
+            store.upsert_setup_wizard_step(
+                step_id=event.step_id,
+                status="done",
+                summary=event.summary,
+            )
+        return JSONResponse(event.model_dump())
+
+    @app.post("/tutorial/confirm/{step_id}")
+    async def tutorial_confirm(step_id: str, request: Request) -> JSONResponse:
+        content_type = request.headers.get("content-type", "")
+        if "application/json" in content_type:
+            payload = await request.json()
+        else:
+            form_values = parse_qs(
+                (await request.body()).decode(),
+                keep_blank_values=True,
+            )
+            payload = {key: values[-1] for key, values in form_values.items()}
+        evidence = payload.get("evidence")
+        evidence_payload = evidence if isinstance(evidence, Mapping) else {}
+        store = AutoReplyStore(db_path)
+        event = confirm_setup_step(
+            step_id,
+            store=store,
+            confirmed_by=str(payload.get("confirmed_by") or "local-user"),
+            evidence={
+                key: str(value)
+                for key, value in evidence_payload.items()
+            },
+        )
+        store.record_setup_wizard_event(
+            step_id=event.step_id,
+            action_id=event.action_id,
+            status=event.status,
+            summary=event.summary,
+            evidence_json=json.dumps(event.evidence, ensure_ascii=False),
+            stdout_excerpt=event.stdout_excerpt,
+            stderr_excerpt=event.stderr_excerpt,
+        )
+        return JSONResponse(event.model_dump())
 
     @app.get("/tasks", response_class=HTMLResponse)
     def tasks_page(request: Request) -> str:
