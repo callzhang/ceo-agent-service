@@ -181,16 +181,22 @@ class CodexRunner:
         image_options: list[str] = []
         for image_path in image_paths or []:
             image_options.extend(["--image", str(image_path)])
+        config_isolation_options = (
+            ["--ignore-user-config", "--disable", "hooks", "--disable", "plugins"]
+            if ignore_user_config
+            else []
+        )
+        schema_options = (
+            ["--output-schema", str(output_schema_path)]
+            if output_schema_path is not None
+            else ["--output-schema", str(CODEX_DECISION_SCHEMA_PATH)]
+        )
         common_options = [
             "--json",
             "-m",
             "gpt-5.5",
-            "--ignore-user-config",
+            *config_isolation_options,
             "--ignore-rules",
-            "--disable",
-            "hooks",
-            "--disable",
-            "plugins",
             *memory_connector_config_options(),
             "-c",
             'approval_policy="untrusted"',
@@ -216,7 +222,7 @@ class CodexRunner:
                 CODEX_BYPASS_APPROVALS_AND_SANDBOX,
                 *(
                     ["--output-schema", str(output_schema_path)]
-                    if output_schema_path
+                    if output_schema_path is not None
                     else []
                 ),
                 *image_options,
@@ -228,11 +234,7 @@ class CodexRunner:
             "exec",
             *common_options,
             CODEX_BYPASS_APPROVALS_AND_SANDBOX,
-            *(
-                ["--output-schema", str(output_schema_path)]
-                if output_schema_path
-                else []
-            ),
+            *schema_options,
             *image_options,
             "--cd",
             str(self.workspace),
