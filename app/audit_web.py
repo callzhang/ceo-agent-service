@@ -190,19 +190,25 @@ th{background:var(--surface-soft);color:var(--steel);font-size:12px;font-weight:
 .card-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px;flex-wrap:wrap}
 .card-head h2{margin:0}
 .tasks-page{margin:16px 0}
-.tasks-toolbar{display:flex;align-items:center;justify-content:space-between;gap:18px;margin:0 0 12px;flex-wrap:wrap}
-.tasks-toolbar-left,.tasks-toolbar-right{display:flex;align-items:center;gap:10px;min-width:0;flex-wrap:wrap}
-.tasks-count{color:var(--ink);font-family:"Geist Mono","SF Mono",Menlo,Consolas,monospace;font-size:14px;font-weight:800;line-height:1.3;white-space:nowrap}
-.tasks-search{position:relative;display:flex;align-items:center;width:min(360px,calc(100vw - 48px))}
-.tasks-search input[type="text"]{height:34px;padding:7px 34px 7px 12px;border-radius:999px;font-size:13px;line-height:1.3}
-.tasks-search-clear{position:absolute;right:8px;display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:999px;color:var(--steel);font-size:16px;font-weight:700;line-height:1}
-.tasks-search-clear:hover{background:var(--surface-soft);color:var(--ink);text-decoration:none}
-.tasks-pages{display:flex;align-items:center;gap:4px;flex-wrap:nowrap}
-.tasks-page-link{display:inline-flex;align-items:center;justify-content:center;height:28px;min-width:28px;padding:0 8px;border:1px solid transparent;border-radius:999px;color:var(--steel);font-size:12px;font-weight:700;line-height:1;white-space:nowrap}
-.tasks-page-link:hover{border-color:var(--hairline);background:var(--surface-soft);color:var(--ink);text-decoration:none}
-.tasks-page-link.active{border-color:rgba(0,180,138,.28);background:#ddfff6;color:#005b49}
-.tasks-page-link.disabled{color:var(--muted);background:transparent;cursor:default}
-.tasks-page-size{height:30px;border:1px solid var(--hairline);border-radius:999px;background:var(--canvas);color:var(--ink);padding:0 10px;font-size:12px;font-weight:700}
+.table-toolbar{display:grid;grid-template-columns:minmax(280px,1fr) auto minmax(190px,1fr);align-items:center;gap:12px;margin:0 0 12px}
+.table-toolbar-left,.table-toolbar-right{display:flex;align-items:center;gap:8px;min-width:0;flex-wrap:wrap}
+.table-toolbar-center{display:flex;align-items:center;justify-content:center;min-width:0}
+.table-toolbar-right{justify-content:flex-end}
+.table-toolbar-search{position:relative;display:flex;align-items:center;margin:0;width:320px;max-width:100%}
+.table-toolbar-search input[type="text"]{height:32px;padding:7px 32px 7px 12px;border-radius:999px;font-size:13px;line-height:1.3}
+.table-search-clear{position:absolute;right:7px;display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:999px;color:var(--steel);font-size:16px;font-weight:700;line-height:1}
+.table-search-clear[hidden]{display:none}
+.table-search-clear:hover{background:var(--surface-soft);color:var(--ink);text-decoration:none}
+.table-type-select,.table-page-size{height:32px;border:1px solid var(--hairline);border-radius:999px;background:var(--canvas);color:var(--ink);padding:0 10px;font-size:12px;font-weight:750}
+.table-type-select{width:116px}
+.table-page-links{display:flex;align-items:center;justify-content:center;gap:3px;width:204px;min-width:0;white-space:nowrap}
+.table-page-link,.table-page-arrow,.table-page-ellipsis{display:inline-flex;align-items:center;justify-content:center;height:32px;min-width:28px;padding:0 8px;border:1px solid transparent;border-radius:999px;color:var(--steel);font-size:12px;font-weight:800;line-height:1;background:transparent}
+.table-page-arrow{font-size:18px}
+.table-page-link:hover,.table-page-arrow:hover{border-color:var(--hairline);background:var(--surface-soft);color:var(--ink);text-decoration:none}
+.table-page-link.active{border-color:rgba(0,180,138,.28);background:#ddfff6;color:#005b49}
+.table-page-arrow.disabled,.table-page-ellipsis{color:var(--muted);cursor:default}
+.table-toolbar-total{min-width:72px;text-align:right;color:var(--steel);font-size:12px;font-weight:700;line-height:1.35;white-space:nowrap}
+.tasks-count{display:none}
 .todo-checklist{display:grid;gap:4px;margin:0;padding:0;list-style:none}
 .todo-checklist li{display:flex;align-items:flex-start;gap:7px;min-width:0;color:var(--charcoal);font-size:13px;line-height:1.35}
 .todo-check{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;width:15px;height:15px;margin-top:1px;border:1px solid var(--hairline);border-radius:4px;color:transparent;font-size:11px;font-weight:900;line-height:1}
@@ -279,28 +285,6 @@ th{background:var(--surface-soft);color:var(--steel);font-size:12px;font-weight:
 .pagination-arrow{min-width:28px;padding:0 8px;font-size:16px}
 .pagination-button.is-disabled{color:var(--muted);background:var(--surface-soft);cursor:default}
 .pagination-button.is-disabled:hover{border-color:transparent;color:var(--muted);background:var(--surface-soft)}
-.history-table-header{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);align-items:center;gap:12px;margin:0 0 12px;padding:8px 10px;border:1px solid var(--hairline);border-radius:8px;background:var(--surface-soft)}
-.history-type-filter{position:relative;justify-self:start;min-width:0}
-.history-type-summary{display:inline-flex;align-items:center;height:30px;padding:0 11px;border:1px solid var(--hairline);border-radius:999px;background:var(--canvas);color:var(--ink);font-size:12px;font-weight:800;line-height:1;white-space:nowrap;cursor:pointer;list-style:none}
-.history-type-summary::-webkit-details-marker{display:none}
-.history-type-summary::after{content:"⌄";margin-left:8px;color:var(--steel);font-size:12px;line-height:1}
-.history-type-filter[open] .history-type-summary{border-color:rgba(55,114,207,.36);background:#eaf1ff;color:#245aa5}
-.history-type-menu{position:absolute;top:calc(100% + 6px);left:0;z-index:20;display:grid;gap:8px;min-width:190px;padding:10px;border:1px solid var(--hairline);border-radius:8px;background:var(--canvas);box-shadow:0 14px 34px rgba(17,24,39,.13)}
-.history-type-option{display:flex;align-items:center;gap:8px;min-height:26px;color:var(--charcoal);font-size:13px;font-weight:700;line-height:1.35;white-space:nowrap}
-.history-type-option input{margin:0}
-.history-type-actions{display:flex;align-items:center;justify-content:space-between;gap:8px;padding-top:4px;border-top:1px solid var(--hairline-soft)}
-.history-type-apply{height:28px;border:1px solid rgba(0,180,138,.32);border-radius:999px;background:#ddfff6;color:#005b49;padding:0 10px;font-size:12px;font-weight:800;line-height:1;cursor:pointer}
-.history-type-clear{display:inline-flex;align-items:center;height:28px;color:var(--steel);font-size:12px;font-weight:800;line-height:1}
-.history-type-clear:hover{color:var(--ink)}
-.history-page-links{display:flex;align-items:center;justify-content:center;gap:4px;min-width:0;white-space:nowrap}
-.history-page-link,.history-page-arrow,.history-page-ellipsis{display:inline-flex;align-items:center;justify-content:center;height:28px;min-width:28px;padding:0 8px;border:1px solid transparent;border-radius:999px;color:var(--steel);font-size:12px;font-weight:800;line-height:1}
-.history-page-arrow{font-size:16px}
-.history-page-link:hover,.history-page-arrow:hover{border-color:var(--hairline);background:var(--canvas);color:var(--ink);text-decoration:none}
-.history-page-link.active{border-color:rgba(55,114,207,.26);background:#eaf1ff;color:#245aa5}
-.history-page-arrow.disabled,.history-page-ellipsis{color:var(--muted);cursor:default}
-.history-limit-form{display:flex;align-items:center;justify-content:flex-end;gap:8px;min-width:0}
-.history-limit-select{height:30px;border:1px solid var(--hairline);border-radius:999px;background:var(--canvas);color:var(--ink);padding:0 10px;font-size:12px;font-weight:800}
-.history-total{color:var(--steel);font-size:12px;font-weight:700;line-height:1.35;white-space:nowrap}
 .history-chart-card{padding:16px 18px;margin:0 0 12px}
 .history-chart-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:10px;flex-wrap:wrap}
 .history-chart-title{margin:0;color:var(--ink);font-size:16px;font-weight:700;line-height:1.35}
@@ -449,7 +433,7 @@ label{display:block;margin:14px 0 7px;color:var(--slate);font-size:13px;font-wei
 .danger{background:#9f1d1d}
 .muted{color:var(--steel)}
 @media (max-width:900px){.attempt-head{align-items:flex-start;flex-direction:column}.attempt-title{flex-wrap:wrap}.attempt-side{align-items:flex-start;flex-direction:column;gap:6px}.attempt-main,.attempt-meta{white-space:normal}.attempt-time{text-align:left}.attempt-copy{-webkit-line-clamp:3}.review-grid{grid-template-columns:1fr}.attempt-detail-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
-@media (max-width:760px){.shell,main{padding-left:12px;padding-right:12px}.topbar{align-items:flex-start;flex-direction:column;padding:14px 0}.grid{grid-template-columns:1fr}th,td{padding:10px 12px}.attempt-foot{align-items:flex-start;flex-direction:column}.attempt-conversation-banner{align-items:flex-start;flex-direction:column}.attempt-detail-grid{grid-template-columns:1fr}.todo-detail-fields{grid-template-columns:1fr}.todo-followup-time{margin-left:0}.log-head{grid-template-columns:1fr}.log-time{text-align:left}.log-body{grid-template-columns:1fr}.history-chart{height:220px}.history-table-header{grid-template-columns:1fr}.history-page-links{justify-content:flex-start}.history-limit-form{justify-content:flex-start}}
+@media (max-width:760px){.shell,main{padding-left:12px;padding-right:12px}.topbar{align-items:flex-start;flex-direction:column;padding:14px 0}.grid{grid-template-columns:1fr}th,td{padding:10px 12px}.attempt-foot{align-items:flex-start;flex-direction:column}.attempt-conversation-banner{align-items:flex-start;flex-direction:column}.attempt-detail-grid{grid-template-columns:1fr}.todo-detail-fields{grid-template-columns:1fr}.todo-followup-time{margin-left:0}.log-head{grid-template-columns:1fr}.log-time{text-align:left}.log-body{grid-template-columns:1fr}.history-chart{height:220px}.table-toolbar{grid-template-columns:1fr}.table-toolbar-center{justify-content:flex-start}.table-toolbar-right{justify-content:flex-start}}
 """
 
 FAVICON_HREF = (
@@ -480,9 +464,10 @@ ATTEMPT_LIST_LIMIT_OPTIONS = (20, 50, 100)
 HISTORY_TYPE_FILTERS = ("sent", "reacted", "skipped", "failed")
 TASK_PAGE_SIZE_OPTIONS = (20, 50, 100)
 DEFAULT_TASK_PAGE_SIZE = 20
+LOG_PAGE_SIZE_OPTIONS = (20, 50, 100)
 TABULATOR_CSS_URL = "https://cdn.jsdelivr.net/npm/tabulator-tables@6.4.0/dist/css/tabulator.min.css"
 TABULATOR_JS_URL = "https://cdn.jsdelivr.net/npm/tabulator-tables@6.4.0/dist/js/tabulator.min.js"
-DEFAULT_ERROR_LIST_LIMIT = 50
+DEFAULT_ERROR_LIST_LIMIT = 20
 HISTORY_CHART_HOURS = 24
 HISTORY_CHART_COLORS = {
     "💬 Sent": "#00b48a",
@@ -554,10 +539,20 @@ def render_browser_notifications_page() -> str:
     return render_page("Notifications", body, active_nav="notifications")
 
 
+def _expand_configured_path(value: str) -> Path:
+    return Path(os.path.expandvars(value)).expanduser()
+
+
+def _configured_worker_db_path() -> Path:
+    configured_db_path = os.environ.get("CEO_WORKER_DB", "").strip()
+    if not configured_db_path:
+        return Path("data/auto-reply.sqlite3")
+    return _expand_configured_path(configured_db_path)
+
+
 def render_tutorial_page(*, store: AutoReplyStore | None = None) -> str:
     if store is None:
-        configured_db_path = os.environ.get("CEO_WORKER_DB")
-        store = AutoReplyStore(Path(configured_db_path or "data/auto-reply.sqlite3"))
+        store = AutoReplyStore(_configured_worker_db_path())
     status = build_wizard_status(store)
     steps_html = "".join(_setup_wizard_step_html(step) for step in status.steps)
     body = (
@@ -792,7 +787,7 @@ def _tutorial_steps() -> list[_TutorialStep]:
             "commands": [
                 "cp .env.example .env",
                 ".venv/bin/ceo-agent setup-memory-connector --memory-url '<memory-mcp-url>'",
-                "mkdir -p data corpus \"$HOME/Documents/memory\"",
+                "mkdir -p data/corpus \"$HOME/Documents/memory\"",
             ],
             "links": [("System config", "/config?tab=system")],
         },
@@ -804,26 +799,26 @@ def _tutorial_steps() -> list[_TutorialStep]:
                 "Workspace contains AI听记, management/OA, management/strategy, recruiting, Thinking",
                 "build-corpus reads local AI minutes and writes style outputs",
                 "collect-corpus appends recent DingTalk sent-message samples through current dws identity",
-                "corpus/style_corpus.csv is local runtime data, not source code",
+                "data/corpus/style_corpus.csv is local runtime data, not source code",
             ],
             "commands": [
-                ".venv/bin/ceo-agent build-corpus --workspace \"$HOME/Documents/memory\" --corpus-dir ./corpus",
-                ".venv/bin/ceo-agent collect-corpus --workspace \"$HOME/Documents/memory\" --corpus-dir ./corpus",
+                ".venv/bin/ceo-agent build-corpus --workspace \"$HOME/Documents/memory\" --corpus-dir ./data/corpus",
+                ".venv/bin/ceo-agent collect-corpus --workspace \"$HOME/Documents/memory\" --corpus-dir ./data/corpus",
             ],
             "links": [("Tasks", "/tasks")],
         },
         {
             "phase": "Phase 5",
             "title": "生成并复核工作画像蒸馏",
-            "description": "build-work-profile 生成证据索引和初版 profile；Nvwa 只在准备/复核阶段使用，运行时只读取 profiles/work_profile.md。",
+            "description": "build-work-profile 生成证据索引和初版 profile；Nvwa 只在准备/复核阶段使用，运行时只读取 data/work-profile/work_profile.md。",
             "checks": [
-                "Expected outputs: profiles/work_profile.md, data/profile-evidence/evidence_index.jsonl, corpus/style_corpus.csv",
-                "Nvwa review rewrites only profiles/work_profile.md",
+                "Expected outputs: data/work-profile/work_profile.md, data/profile-evidence/evidence_index.jsonl, data/corpus/style_corpus.csv",
+                "Nvwa review rewrites only data/work-profile/work_profile.md",
                 "Profile must not contain raw private excerpts, absolute paths, tokens, session ids, or DingTalk cache content",
                 "Runtime consumes the profile through work_profile_instruction()",
             ],
             "commands": [
-                ".venv/bin/ceo-agent build-work-profile --workspace \"$HOME/Documents/memory\" --corpus-dir ./corpus",
+                ".venv/bin/ceo-agent build-work-profile --workspace \"$HOME/Documents/memory\" --corpus-dir ./data/corpus",
                 ".venv/bin/pytest tests/test_work_profile.py tests/test_prompt.py tests/test_worker.py::test_consumer_codex_command_embeds_work_profile_content -q",
             ],
             "links": [("Config", "/config"), ("Logs", "/logs")],
@@ -1651,8 +1646,11 @@ def _render_system_config(*, db_path: Path | None = None) -> str:
 
 
 def _runtime_identity_cache_html(db_path: Path | None) -> str:
-    configured_db_path = os.environ.get("CEO_WORKER_DB")
-    store_path = db_path or (Path(configured_db_path) if configured_db_path else None)
+    configured_db_path = os.environ.get("CEO_WORKER_DB", "").strip()
+    store_path = (
+        db_path
+        or (_expand_configured_path(configured_db_path) if configured_db_path else None)
+    )
     current_user_id = ""
     if store_path is not None and store_path.exists():
         current_user_id = AutoReplyStore(store_path).get_current_user_id() or ""
@@ -2159,6 +2157,205 @@ def _history_page_button(
     )
 
 
+def _table_page_button(
+    *,
+    page: int,
+    current_page: int,
+    href: str,
+) -> str:
+    if page == current_page:
+        return (
+            "<span class=\"table-page-link active\" aria-current=\"page\">"
+            f"{page}</span>"
+        )
+    return f"<a class=\"table-page-link\" href=\"{escape(href)}\">{page}</a>"
+
+
+def _table_page_links(
+    *,
+    page: int,
+    page_count: int,
+    href_for_page,
+) -> str:
+    page = min(max(1, page), page_count)
+    prev_href = None if page <= 1 else href_for_page(page - 1)
+    next_href = None if page >= page_count else href_for_page(page + 1)
+    prev_html = (
+        "<span class=\"table-page-arrow disabled\" aria-label=\"上一页\">&lsaquo;</span>"
+        if prev_href is None
+        else f"<a class=\"table-page-arrow\" href=\"{escape(prev_href)}\" aria-label=\"上一页\">&lsaquo;</a>"
+    )
+    next_html = (
+        "<span class=\"table-page-arrow disabled\" aria-label=\"下一页\">&rsaquo;</span>"
+        if next_href is None
+        else f"<a class=\"table-page-arrow\" href=\"{escape(next_href)}\" aria-label=\"下一页\">&rsaquo;</a>"
+    )
+    page_links = []
+    for item in _history_page_window(page, page_count):
+        if item is None:
+            page_links.append("<span class=\"table-page-ellipsis\">...</span>")
+        else:
+            page_links.append(
+                _table_page_button(
+                    page=item,
+                    current_page=page,
+                    href=href_for_page(item),
+                )
+            )
+    return (
+        "<nav class=\"table-page-links\" aria-label=\"分页导航\">"
+        f"{prev_html}{''.join(page_links)}{next_html}</nav>"
+    )
+
+
+def _table_toolbar(
+    *,
+    name: str,
+    search_label: str,
+    query: str,
+    type_select_html: str,
+    page_links_html: str,
+    page_size_select_html: str,
+    total_count: int,
+    action: str | None = None,
+    search_input_id: str | None = None,
+    search_name: str | None = None,
+    search_clear_id: str | None = None,
+    left_prefix_html: str = "",
+    total_id: str | None = None,
+) -> str:
+    live_search_attr = " data-live-search=\"server\"" if action else ""
+    open_tag = (
+        f"<form class=\"table-toolbar\" data-table-toolbar=\"{escape(name)}\""
+        f"{live_search_attr} method=\"get\" action=\"{escape(action)}\">"
+        if action
+        else f"<div class=\"table-toolbar\" data-table-toolbar=\"{escape(name)}\">"
+    )
+    close_tag = "</form>" if action else "</div>"
+    input_attrs = [
+        "type=\"text\"",
+        "data-live-search-input",
+        f"value=\"{escape(query.strip())}\"",
+        "placeholder=\"搜索\"",
+        "autocomplete=\"off\"",
+    ]
+    if search_input_id:
+        input_attrs.insert(0, f"id=\"{escape(search_input_id)}\"")
+    if search_name:
+        input_attrs.insert(1, f"name=\"{escape(search_name)}\"")
+    clear_attrs = [
+        "class=\"table-search-clear\"",
+        "type=\"button\"",
+        "data-live-search-clear",
+        "aria-label=\"Clear search\"",
+    ]
+    if search_clear_id:
+        clear_attrs.insert(0, f"id=\"{escape(search_clear_id)}\"")
+    if not query.strip():
+        clear_attrs.append("hidden")
+    total_attrs = "class=\"table-toolbar-total\""
+    if total_id:
+        total_attrs = f"id=\"{escape(total_id)}\" {total_attrs}"
+    toolbar_html = "".join(
+        [
+            open_tag,
+            "<div class=\"table-toolbar-left\">",
+            left_prefix_html,
+            "<label class=\"table-toolbar-search\">",
+            f"<span class=\"sr-only\">{escape(search_label)}</span>",
+            f"<input {' '.join(input_attrs)}>",
+            f"<button {' '.join(clear_attrs)}>×</button>",
+            "</label>",
+            type_select_html,
+            "</div>",
+            f"<div class=\"table-toolbar-center\">{page_links_html}</div>",
+            "<div class=\"table-toolbar-right\">",
+            page_size_select_html,
+            f"<span {total_attrs}>共 {total_count} 条</span>",
+            "</div>",
+            close_tag,
+        ]
+    )
+    if action:
+        toolbar_html += _table_toolbar_live_search_script()
+    return toolbar_html
+
+
+def _table_toolbar_live_search_script() -> str:
+    return """
+<script data-table-toolbar-live-search>
+(() => {
+  document.querySelectorAll("form.table-toolbar[data-live-search='server']").forEach((form) => {
+    const input = form.querySelector("[data-live-search-input]");
+    if (!input) {
+      return;
+    }
+    const toolbarName = form.getAttribute("data-table-toolbar");
+    const clearButton = form.querySelector("[data-live-search-clear]");
+    let timer = null;
+    let requestId = 0;
+    const submitSearch = async () => {
+      const params = new URLSearchParams(new FormData(form));
+      params.delete("page");
+      if (input.name && !String(input.value || "").trim()) {
+        params.delete(input.name);
+      }
+      Array.from(params.entries()).forEach(([key, value]) => {
+        if (!value) {
+          params.delete(key);
+        }
+      });
+      const query = params.toString();
+      const action = form.getAttribute("action") || window.location.pathname;
+      const targetUrl = new URL(action, window.location.origin);
+      targetUrl.search = query;
+      const currentRequestId = ++requestId;
+      const response = await fetch(targetUrl.toString(), {
+        headers: {"X-Requested-With": "fetch"},
+      });
+      if (!response.ok || currentRequestId !== requestId) {
+        return;
+      }
+      const nextDoc = new DOMParser().parseFromString(await response.text(), "text/html");
+      const nextToolbar = nextDoc.querySelector(`[data-table-toolbar="${toolbarName}"]`);
+      const currentRegion = document.querySelector(`[data-live-search-region="${toolbarName}"]`);
+      const nextRegion = nextDoc.querySelector(`[data-live-search-region="${toolbarName}"]`);
+      if (!nextToolbar || !currentRegion || !nextRegion) {
+        return;
+      }
+      const nextCenter = nextToolbar.querySelector(".table-toolbar-center");
+      const nextRight = nextToolbar.querySelector(".table-toolbar-right");
+      const currentCenter = form.querySelector(".table-toolbar-center");
+      const currentRight = form.querySelector(".table-toolbar-right");
+      if (nextCenter && currentCenter) {
+        currentCenter.innerHTML = nextCenter.innerHTML;
+      }
+      if (nextRight && currentRight) {
+        currentRight.innerHTML = nextRight.innerHTML;
+      }
+      currentRegion.innerHTML = nextRegion.innerHTML;
+      history.replaceState(null, "", `${targetUrl.pathname}${targetUrl.search}`);
+    };
+    const scheduleSearch = () => {
+      if (clearButton) {
+        clearButton.hidden = !String(input.value || "").trim();
+      }
+      clearTimeout(timer);
+      timer = setTimeout(submitSearch, 250);
+    };
+    input.addEventListener("input", scheduleSearch);
+    if (clearButton) {
+      clearButton.addEventListener("click", () => {
+        input.value = "";
+        submitSearch();
+      });
+    }
+  });
+})();
+</script>
+"""
+
+
 def _history_table_header(
     *,
     base_path: str,
@@ -2166,90 +2363,85 @@ def _history_table_header(
     limit: int | None,
     total_count: int,
     type_filters: tuple[str, ...],
+    query: str = "",
 ) -> str:
     page_count = _page_count(total_count, limit)
     page = min(max(1, page), page_count)
-    type_options = []
-    for value in HISTORY_TYPE_FILTERS:
-        checked = " checked" if value in type_filters else ""
-        type_options.append(
-            "<label class=\"history-type-option\">"
-            f"<input type=\"checkbox\" name=\"type\" value=\"{escape(value)}\"{checked}>"
-            f"{escape(value)}"
-            "</label>"
-        )
-    type_limit_hidden = (
-        ""
-        if limit is None or limit == DEFAULT_ATTEMPT_LIST_LIMIT
-        else f"<input type=\"hidden\" name=\"limit\" value=\"{limit}\">"
+    page_links = _table_page_links(
+        page=page,
+        page_count=page_count,
+        href_for_page=lambda value: _history_page_href(
+            base_path=base_path,
+            page=value,
+            limit=limit,
+            query=query,
+            type_filters=type_filters,
+        ),
     )
-    type_clear_href = _page_href(base_path, 1, limit=limit, include_limit=True)
-    prev_href = None if page <= 1 else _page_href(
-        base_path,
-        page - 1,
-        limit=limit,
-        type_filters=type_filters,
-        include_limit=True,
+    return _table_toolbar(
+        name="history",
+        action=base_path,
+        search_label="Search history",
+        search_name="q",
+        query=query,
+        type_select_html=_history_type_select(type_filters),
+        page_links_html=page_links,
+        page_size_select_html=_history_limit_select(limit),
+        total_count=total_count,
     )
-    next_href = None if page >= page_count else _page_href(
-        base_path,
-        page + 1,
-        limit=limit,
-        type_filters=type_filters,
-        include_limit=True,
-    )
-    prev_html = (
-        "<span class=\"history-page-arrow disabled\" aria-label=\"上一页\">&lsaquo;</span>"
-        if prev_href is None
-        else f"<a class=\"history-page-arrow\" href=\"{escape(prev_href)}\" aria-label=\"上一页\">&lsaquo;</a>"
-    )
-    next_html = (
-        "<span class=\"history-page-arrow disabled\" aria-label=\"下一页\">&rsaquo;</span>"
-        if next_href is None
-        else f"<a class=\"history-page-arrow\" href=\"{escape(next_href)}\" aria-label=\"下一页\">&rsaquo;</a>"
-    )
-    page_links = []
-    for item in _history_page_window(page, page_count):
-        if item is None:
-            page_links.append("<span class=\"history-page-ellipsis\">...</span>")
-        else:
-            page_links.append(
-                _history_page_button(
-                    base_path=base_path,
-                    page=item,
-                    current_page=page,
-                    limit=limit,
-                    type_filters=type_filters,
-                )
-            )
-    limit_options = "".join(
-        f"<option value=\"{value}\"{' selected' if value == limit else ''}>{value}/页</option>"
-        for value in ATTEMPT_LIST_LIMIT_OPTIONS
-    )
-    hidden_types = "".join(
-        f"<input type=\"hidden\" name=\"type\" value=\"{escape(value)}\">"
-        for value in type_filters
+
+
+def _history_page_href(
+    *,
+    base_path: str,
+    page: int,
+    limit: int | None,
+    query: str,
+    type_filters: tuple[str, ...],
+) -> str:
+    params: dict[str, str | list[str]] = {}
+    if page > 1:
+        params["page"] = str(page)
+    if limit is not None and limit != DEFAULT_ATTEMPT_LIST_LIMIT:
+        params["limit"] = str(limit)
+    if query:
+        params["q"] = query
+    if type_filters:
+        params["type"] = list(type_filters)
+    if not params:
+        return base_path
+    return f"{base_path}?{urlencode(params, doseq=True)}"
+
+
+def _history_type_select(type_filters: tuple[str, ...]) -> str:
+    selected_value = type_filters[0] if len(type_filters) == 1 else ""
+    all_label = _history_type_filter_label(type_filters)
+    options = [
+        f"<option value=\"\"{' selected' if not selected_value else ''}>{escape(all_label)}</option>"
+    ]
+    options.extend(
+        f"<option value=\"{escape(value)}\"{' selected' if value == selected_value else ''}>"
+        f"{escape(value)}</option>"
+        for value in HISTORY_TYPE_FILTERS
     )
     return (
-        "<div class=\"history-table-header\">"
-        "<details class=\"history-type-filter\">"
-        f"<summary class=\"history-type-summary\">{escape(_history_type_filter_label(type_filters))}</summary>"
-        "<form class=\"history-type-menu\" method=\"get\" action=\"/\">"
-        f"{type_limit_hidden}"
-        + "".join(type_options)
-        + "<div class=\"history-type-actions\">"
-        "<button class=\"history-type-apply\" type=\"submit\">Apply</button>"
-        f"<a class=\"history-type-clear\" href=\"{escape(type_clear_href)}\">Clear</a>"
-        "</div></form></details>"
-        "<nav class=\"history-page-links\" aria-label=\"分页导航\">"
-        f"{prev_html}{''.join(page_links)}{next_html}"
-        "</nav>"
-        "<form class=\"history-limit-form\" method=\"get\" action=\"/\">"
-        f"{hidden_types}"
-        f"<select class=\"history-limit-select\" name=\"limit\" onchange=\"this.form.submit()\">{limit_options}</select>"
-        f"<span class=\"history-total\">共 {total_count} 条</span>"
-        "</form>"
-        "</div>"
+        "<select name=\"type\" class=\"table-type-select\" "
+        "aria-label=\"History type filter\" onchange=\"this.form.submit()\">"
+        f"{''.join(options)}</select>"
+    )
+
+
+def _history_limit_select(limit: int | None) -> str:
+    selected_limit = limit or DEFAULT_ATTEMPT_LIST_LIMIT
+    option_values = sorted({*ATTEMPT_LIST_LIMIT_OPTIONS, selected_limit})
+    options = "".join(
+        f"<option value=\"{value}\"{' selected' if value == selected_limit else ''}>{value}/页</option>"
+        for value in option_values
+    )
+    return (
+        "<select class=\"table-page-size history-limit-select\" name=\"limit\" "
+        "onchange=\"this.form.submit()\">"
+        f"{options}</select>"
     )
 
 
@@ -2342,14 +2534,19 @@ def render_attempt_list(
     limit: int | None = DEFAULT_ATTEMPT_LIST_LIMIT,
     page: int = 1,
     type_filter: str | Iterable[str] = (),
+    query: str = "",
 ) -> str:
+    query = query.strip()
     type_filters = _history_type_filters(type_filter)
     send_status_filters = type_filters or None
-    total_count = store.count_reply_attempts(send_statuses=send_status_filters)
+    total_count = store.count_reply_attempts(
+        send_statuses=send_status_filters,
+        query_text=query,
+    )
     page = _bounded_page(page, limit, total_count)
     offset = _page_offset(page, limit)
     items = []
-    if page == 1 and not type_filters:
+    if page == 1 and not type_filters and not query:
         for task in store.list_reply_tasks(
             statuses=("pending", "processing"),
             limit=limit,
@@ -2359,6 +2556,7 @@ def render_attempt_list(
         limit=limit,
         offset=offset,
         send_statuses=send_status_filters,
+        query_text=query,
     )
     sent_replies_by_attempt = store.list_sent_replies_for_attempts(attempts)
     feedback_events_by_token = _feedback_events_by_sent_reply(
@@ -2410,9 +2608,11 @@ def render_attempt_list(
     if not items:
         body = (
             f"{_render_history_chart(store)}"
-            f"{_history_table_header(base_path='/', page=page, limit=limit, total_count=total_count, type_filters=type_filters)}"
+            f"{_history_table_header(base_path='/', page=page, limit=limit, total_count=total_count, type_filters=type_filters, query=query)}"
+            "<div data-live-search-region=\"history\">"
             "<section class=\"card\"><p class=\"muted\">No reply attempts recorded.</p>"
             f"<p class=\"muted\">DB: {escape(str(store.path))}</p></section>"
+            "</div>"
         )
     else:
         header = _history_table_header(
@@ -2421,14 +2621,16 @@ def render_attempt_list(
             limit=limit,
             total_count=total_count,
             type_filters=type_filters,
+            query=query,
         )
         body = (
             f"{_render_history_chart(store)}"
             f"{header}"
+            "<div data-live-search-region=\"history\">"
             "<section class=\"attempt-feed\">"
             + "".join(items)
             + "</section>"
-            f"{_pagination_controls(base_path='/', page=page, limit=limit, total_count=total_count, bottom=True, type_filters=type_filters, include_limit=True)}"
+            + "</div>"
         )
     return render_page(
         "CEO Agent Audit",
@@ -2467,6 +2669,8 @@ def render_tasks_page(
     toolbar = _task_toolbar(
         total_count=len(rows),
         query=query,
+        category=initial_state["category"],
+        categories=categories,
         page_size=initial_state["pageSize"],
     )
     body = (
@@ -2562,6 +2766,10 @@ def _bounded_task_page_size(page_size: int) -> int:
     return page_size if page_size in TASK_PAGE_SIZE_OPTIONS else DEFAULT_TASK_PAGE_SIZE
 
 
+def _bounded_log_page_size(page_size: int) -> int:
+    return page_size if page_size in LOG_PAGE_SIZE_OPTIONS else DEFAULT_ERROR_LIST_LIMIT
+
+
 def _task_categories(items) -> list[str]:
     return sorted({str(project.category) for project, _todos in items if str(project.category)})
 
@@ -2655,26 +2863,42 @@ def _task_toolbar(
     *,
     total_count: int,
     query: str,
+    category: str,
+    categories: list[str],
     page_size: int,
 ) -> str:
     query = query.strip()
+    return _table_toolbar(
+        name="tasks",
+        search_label="Search tasks",
+        query=query,
+        search_input_id="task-search-input",
+        search_clear_id="task-search-clear",
+        left_prefix_html=(
+            f"<span id=\"tasks-count\" class=\"tasks-count\">{total_count} tasks</span>"
+        ),
+        type_select_html=_task_type_select(category=category, categories=categories),
+        page_links_html=(
+            "<nav id=\"tasks-pages\" class=\"table-page-links tasks-pages\" "
+            "aria-label=\"Task pages\"></nav>"
+        ),
+        page_size_select_html=_task_page_size_select(page_size=page_size),
+        total_count=total_count,
+        total_id="tasks-total",
+    )
+
+
+def _task_type_select(*, category: str, categories: list[str]) -> str:
+    options = [f"<option value=\"\"{' selected' if not category else ''}>type: all</option>"]
+    options.extend(
+        f"<option value=\"{escape(value)}\"{' selected' if value == category else ''}>"
+        f"{escape(value)}</option>"
+        for value in categories
+    )
     return (
-        "<div class=\"tasks-toolbar\">"
-        "<div class=\"tasks-toolbar-left\">"
-        f"<span id=\"tasks-count\" class=\"tasks-count\">{total_count} tasks</span>"
-        "<label class=\"tasks-search\">"
-        "<span class=\"sr-only\">Search tasks</span>"
-        f"<input id=\"task-search-input\" type=\"text\" value=\"{escape(query)}\" "
-        "placeholder=\"搜索\" autocomplete=\"off\">"
-        "<button id=\"task-search-clear\" class=\"tasks-search-clear\" type=\"button\" "
-        "aria-label=\"Clear search\" title=\"Clear search\">×</button>"
-        "</label>"
-        "</div>"
-        "<div class=\"tasks-toolbar-right\">"
-        "<nav id=\"tasks-pages\" class=\"tasks-pages\" aria-label=\"Task pages\"></nav>"
-        f"{_task_page_size_select(page_size=page_size)}"
-        "</div>"
-        "</div>"
+        "<select id=\"task-type-filter\" class=\"table-type-select\" "
+        "aria-label=\"Task type filter\">"
+        f"{''.join(options)}</select>"
     )
 
 
@@ -2683,11 +2907,11 @@ def _task_page_size_select(
     page_size: int,
 ) -> str:
     options = "".join(
-        f"<option value=\"{size}\"{' selected' if size == page_size else ''}>{size}/page</option>"
+        f"<option value=\"{size}\"{' selected' if size == page_size else ''}>{size}/页</option>"
         for size in TASK_PAGE_SIZE_OPTIONS
     )
     return (
-        "<select id=\"task-page-size\" class=\"tasks-page-size\" "
+        "<select id=\"task-page-size\" class=\"table-page-size tasks-page-size\" "
         "aria-label=\"Tasks per page\">"
         f"{options}</select>"
     )
@@ -2704,8 +2928,10 @@ def _task_tabulator_script() -> str:
   const states = JSON.parse(document.getElementById("tasks-states").textContent || "[]");
   const sortOptions = {sort_options_json};
   const countEl = document.getElementById("tasks-count");
+  const totalEl = document.getElementById("tasks-total");
   const searchInput = document.getElementById("task-search-input");
   const clearButton = document.getElementById("task-search-clear");
+  const typeFilter = document.getElementById("task-type-filter");
   const pageSizeSelect = document.getElementById("task-page-size");
   const pagesEl = document.getElementById("tasks-pages");
 
@@ -2794,6 +3020,7 @@ def _task_tabulator_script() -> str:
   const updateCount = (_filters, filteredRows) => {{
     const count = filteredRows ? filteredRows.length : activeRows().length;
     countEl.textContent = `${{count}} tasks`;
+    totalEl.textContent = `共 ${{count}} 条`;
   }};
   const updatePages = () => {{
     const current = table.getPage();
@@ -2807,22 +3034,28 @@ def _task_tabulator_script() -> str:
     let previous = 0;
     [...visible].sort((a, b) => a - b).forEach((page) => {{
       if (previous && page - previous > 1) {{
-        pieces.push(`<span class="tasks-page-link disabled">...</span>`);
+        pieces.push(`<span class="table-page-ellipsis">...</span>`);
       }}
       if (page === current) {{
-        pieces.push(`<span class="tasks-page-link active" aria-label="Page ${{page}}">${{page}}</span>`);
+        pieces.push(`<span class="table-page-link active" aria-current="page" aria-label="Page ${{page}}">${{page}}</span>`);
       }} else {{
-        pieces.push(`<button class="tasks-page-link" type="button" data-page="${{page}}" aria-label="Page ${{page}}">${{page}}</button>`);
+        pieces.push(`<button class="table-page-link" type="button" data-page="${{page}}" aria-label="Page ${{page}}">${{page}}</button>`);
       }}
       previous = page;
     }});
-    pagesEl.innerHTML = `<button class="tasks-page-link" type="button" data-page="${{Math.max(current - 1, 1)}}" aria-label="Previous page">&lt;</button>${{pieces.join("")}}<button class="tasks-page-link" type="button" data-page="${{Math.min(current + 1, max)}}" aria-label="Next page">&gt;</button>`;
+    const prevClass = current <= 1 ? "table-page-arrow disabled" : "table-page-arrow";
+    const nextClass = current >= max ? "table-page-arrow disabled" : "table-page-arrow";
+    pagesEl.innerHTML = `<button class="${{prevClass}}" type="button" data-page="${{Math.max(current - 1, 1)}}" aria-label="Previous page">‹</button>${{pieces.join("")}}<button class="${{nextClass}}" type="button" data-page="${{Math.min(current + 1, max)}}" aria-label="Next page">›</button>`;
   }};
 
   table.on("dataFiltered", updateCount);
   table.on("dataFiltered", updatePages);
   table.on("pageLoaded", updatePages);
   table.on("tableBuilt", () => {{
+    if (initial.category) {{
+      typeFilter.value = initial.category;
+      table.setHeaderFilterValue("category", initial.category);
+    }}
     if (initial.query) {{
       searchInput.value = initial.query;
       applySearch();
@@ -2838,6 +3071,7 @@ def _task_tabulator_script() -> str:
     applySearch();
     searchInput.focus();
   }});
+  typeFilter.addEventListener("change", () => table.setHeaderFilterValue("category", typeFilter.value));
   pageSizeSelect.addEventListener("change", () => table.setPageSize(Number(pageSizeSelect.value)));
   pagesEl.addEventListener("click", (event) => {{
     const button = event.target.closest("button[data-page]");
@@ -3613,31 +3847,119 @@ def render_log_list(
     store: AutoReplyStore,
     limit: int | None = DEFAULT_ERROR_LIST_LIMIT,
     page: int = 1,
+    query: str = "",
+    log_type: str = "",
 ) -> str:
-    total_count = store.count_operation_logs()
+    query = query.strip()
+    log_type = log_type.strip()
+    total_count = store.count_operation_logs(query=query, log_type=log_type)
     page = _bounded_page(page, limit, total_count)
     offset = _page_offset(page, limit)
     items = []
-    for log in store.list_operation_logs(limit=limit, offset=offset):
+    for log in store.list_operation_logs(
+        limit=limit,
+        offset=offset,
+        query=query,
+        log_type=log_type,
+    ):
         status = _operation_log_status(store, log)
         status_class = _operation_status_class(status)
         items.append(_operation_log_item(log, status, status_class))
-    pagination = _pagination_controls(
-        base_path="/logs",
+    toolbar = _log_toolbar(
+        query=query,
+        log_type=log_type,
+        log_types=store.list_operation_log_types(),
         page=page,
         limit=limit,
         total_count=total_count,
     )
     body = (
-        f"{pagination}"
+        f"{toolbar}"
+        "<div data-live-search-region=\"logs\">"
         f"<section class=\"log-feed\">{''.join(items)}</section>"
-        f"{_pagination_controls(base_path='/logs', page=page, limit=limit, total_count=total_count, bottom=True)}"
+        "</div>"
     )
     return render_page(
         "Logs",
         body,
         active_nav="logs",
         user_feedback_pending_count=store.count_pending_user_feedback_items(),
+    )
+
+
+def _log_toolbar(
+    *,
+    query: str,
+    log_type: str,
+    log_types: list[str],
+    page: int,
+    limit: int | None,
+    total_count: int,
+) -> str:
+    page_count = _page_count(total_count, limit)
+    page_links = _table_page_links(
+        page=page,
+        page_count=page_count,
+        href_for_page=lambda value: _log_page_href(
+            page=value,
+            limit=limit,
+            query=query,
+            log_type=log_type,
+        ),
+    )
+    return _table_toolbar(
+        name="logs",
+        action="/logs",
+        search_label="Search logs",
+        search_name="q",
+        query=query,
+        type_select_html=_log_type_select(log_type=log_type, log_types=log_types),
+        page_links_html=page_links,
+        page_size_select_html=_log_page_size_select(limit=limit),
+        total_count=total_count,
+    )
+
+
+def _log_page_href(*, page: int, limit: int | None, query: str, log_type: str) -> str:
+    params: dict[str, str] = {}
+    if page > 1:
+        params["page"] = str(page)
+    if limit is not None and limit != DEFAULT_ERROR_LIST_LIMIT:
+        params["limit"] = str(limit)
+    if query:
+        params["q"] = query
+    if log_type:
+        params["type"] = log_type
+    if not params:
+        return "/logs"
+    return f"/logs?{urlencode(params)}"
+
+
+def _log_type_select(*, log_type: str, log_types: list[str]) -> str:
+    options = [f"<option value=\"\"{' selected' if not log_type else ''}>type: all</option>"]
+    options.extend(
+        f"<option value=\"{escape(value)}\"{' selected' if value == log_type else ''}>"
+        f"{escape(value)}</option>"
+        for value in log_types
+    )
+    return (
+        "<select name=\"type\" class=\"table-type-select\" "
+        "aria-label=\"Log type filter\" onchange=\"this.form.submit()\">"
+        f"{''.join(options)}</select>"
+    )
+
+
+def _log_page_size_select(*, limit: int | None) -> str:
+    selected_limit = limit or DEFAULT_ERROR_LIST_LIMIT
+    options_values = sorted({*LOG_PAGE_SIZE_OPTIONS, selected_limit})
+    options = "".join(
+        f"<option value=\"{size}\"{' selected' if size == selected_limit else ''}>{size}/页</option>"
+        for size in options_values
+    )
+    return (
+        "<select name=\"limit\" class=\"table-page-size\" "
+        "aria-label=\"Logs per page\" onchange=\"this.form.submit()\">"
+        f"{options}</select>"
     )
 
 
@@ -4226,6 +4548,7 @@ def create_audit_app(
             ),
             page=_positive_int_query(request, "page", default=1),
             type_filter=request.query_params.getlist("type"),
+            query=str(request.query_params.get("q", "")),
         )
 
     @app.get("/user-feedback", response_class=HTMLResponse)
@@ -4340,7 +4663,12 @@ def create_audit_app(
     def log_list(request: Request) -> str:
         return render_log_list(
             AutoReplyStore(db_path),
+            limit=_bounded_log_page_size(
+                _positive_int_query(request, "limit", default=DEFAULT_ERROR_LIST_LIMIT)
+            ),
             page=_positive_int_query(request, "page", default=1),
+            query=str(request.query_params.get("q", "")),
+            log_type=str(request.query_params.get("type", "")),
         )
 
     @app.get("/errors", response_class=HTMLResponse)
@@ -4559,7 +4887,7 @@ def create_audit_app(
 
 def create_default_audit_app() -> FastAPI:
     return create_audit_app(
-        Path(os.environ["CEO_WORKER_DB"]),
+        _configured_worker_db_path(),
         ding_robot_code=os.getenv("CEO_DING_ROBOT_CODE")
         or os.getenv("DINGTALK_DING_ROBOT_CODE"),
         ding_robot_name=os.getenv("CEO_DING_ROBOT_NAME"),

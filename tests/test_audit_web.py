@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 import app.audit_web as audit_web_module
 from app.audit_web import (
     create_audit_app,
+    create_default_audit_app,
     handle_developer_prompt_post,
     handle_prompt_variables_post,
     handle_system_config_post,
@@ -117,12 +118,11 @@ def test_render_attempt_list_shows_history_rows(tmp_path: Path):
     assert "attempt-feed" in html
     assert "attempt-item" in html
     assert "attempt-line" in html
-    assert "history-table-header" in html
-    assert "history-type-filter" in html
-    assert "history-type-summary" in html
-    assert "history-type-menu" in html
+    assert 'class="table-toolbar"' in html
+    assert 'class="table-toolbar-search"' in html
+    assert 'class="table-type-select"' in html
     assert "type: all" in html
-    assert 'type="checkbox" name="type" value="sent"' in html
+    assert '<option value="sent">sent</option>' in html
     assert "sent" in html
     assert "reacted" in html
     assert "skipped" in html
@@ -136,6 +136,43 @@ def test_render_attempt_list_shows_history_rows(tmp_path: Path):
     assert "查看/反馈" in html
     assert ">Codex</a>" not in html
     assert "/codex/session-1" not in html
+
+
+def test_table_toolbar_uses_fixed_alignment_metrics(tmp_path: Path):
+    html = render_attempt_list(AutoReplyStore(tmp_path / "worker.sqlite3"))
+
+    assert ".table-toolbar-search{position:relative;display:flex;align-items:center;margin:0;width:320px;max-width:100%}" in html
+    assert ".table-type-select{width:116px}" in html
+    assert ".table-page-links{display:flex;align-items:center;justify-content:center;gap:3px;width:204px" in html
+    assert ".table-page-link,.table-page-arrow,.table-page-ellipsis{display:inline-flex;align-items:center;justify-content:center;height:32px" in html
+    assert ".table-toolbar-total{min-width:72px;text-align:right" in html
+
+
+def test_table_toolbar_uses_shared_component_and_live_search(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+
+    history_html = render_attempt_list(store)
+    tasks_html = render_tasks_page(store)
+    logs_html = render_log_list(store)
+
+    assert 'data-table-toolbar="history"' in history_html
+    assert 'data-table-toolbar="tasks"' in tasks_html
+    assert 'data-table-toolbar="logs"' in logs_html
+    assert 'data-live-search="server"' in history_html
+    assert 'data-live-search="server"' in logs_html
+    assert 'data-live-search="server"' not in tasks_html
+    assert history_html.count("data-table-toolbar-live-search") == 1
+    assert logs_html.count("data-table-toolbar-live-search") == 1
+    assert 'data-live-search-input' in history_html
+    assert 'data-live-search-input' in tasks_html
+    assert 'data-live-search-input' in logs_html
+    assert 'params.delete("page")' in history_html
+    assert 'setTimeout(submitSearch, 250)' in logs_html
+    assert 'data-live-search-region="history"' in history_html
+    assert 'data-live-search-region="logs"' in logs_html
+    assert "window.location.assign(query" not in history_html
+    assert "fetch(targetUrl.toString()" in history_html
+    assert "history.replaceState" in logs_html
 
 
 def test_render_attempt_list_paginates_attempts(tmp_path: Path):
@@ -161,27 +198,37 @@ def test_render_attempt_list_paginates_attempts(tmp_path: Path):
         send_status="sent",
     )
 
-    first_page = render_attempt_list(store, limit=1, page=1, type_filter=("sent",))
-    second_page = render_attempt_list(store, limit=1, page=2, type_filter=("sent",))
+    first_page = render_attempt_list(
+        store,
+        limit=1,
+        page=1,
+        type_filter=("sent",),
+        query="question",
+    )
+    second_page = render_attempt_list(
+        store,
+        limit=1,
+        page=2,
+        type_filter=("sent",),
+        query="question",
+    )
 
     assert f"/attempts/{newer_id}" in first_page
     assert f"/attempts/{older_id}" not in first_page
-    assert 'href="/?page=2&amp;limit=1&amp;type=sent"' in first_page
-    assert "1-1" in first_page
-    assert "1 / 2" in first_page
-    assert 'aria-label="第一页"' in first_page
+    assert 'value="question"' in first_page
+    assert '<option value="sent" selected>sent</option>' in first_page
+    assert '<option value="1" selected>1/页</option>' in first_page
+    assert '<span class="table-toolbar-total">共 2 条</span>' in first_page
+    assert 'href="/?page=2&amp;limit=1&amp;q=question&amp;type=sent"' in first_page
     assert 'aria-label="上一页"' in first_page
     assert 'aria-label="下一页"' in first_page
-    assert 'aria-label="最后一页"' in first_page
-    assert 'pagination-button is-disabled" aria-label="第一页"' in first_page
-    assert 'pagination-button is-disabled pagination-arrow" aria-label="上一页"' in first_page
+    assert 'class="table-page-link active" aria-current="page">1</span>' in first_page
+    assert 'class="table-page-arrow disabled" aria-label="上一页"' in first_page
     assert f"/attempts/{older_id}" in second_page
     assert f"/attempts/{newer_id}" not in second_page
-    assert 'href="/?limit=1&amp;type=sent"' in second_page
-    assert "2-2" in second_page
-    assert "2 / 2" in second_page
-    assert 'pagination-button is-disabled pagination-arrow" aria-label="下一页"' in second_page
-    assert 'pagination-button is-disabled" aria-label="最后一页"' in second_page
+    assert 'href="/?limit=1&amp;q=question&amp;type=sent"' in second_page
+    assert 'class="table-page-link active" aria-current="page">2</span>' in second_page
+    assert 'class="table-page-arrow disabled" aria-label="下一页"' in second_page
 
 
 def test_history_route_reads_page_query(tmp_path: Path):
@@ -206,8 +253,8 @@ def test_history_route_reads_page_query(tmp_path: Path):
 
     assert response.status_code == 200
     assert f"/attempts/{first_id}" in response.text
-    assert "51-100" in response.text
-    assert "2 / 2" in response.text
+    assert 'class="table-page-link active" aria-current="page">2</span>' in response.text
+    assert '<option value="50" selected>50/页</option>' in response.text
 
 
 def test_history_route_reads_multi_type_query(tmp_path: Path):
@@ -251,8 +298,8 @@ def test_history_route_reads_multi_type_query(tmp_path: Path):
     assert f"/attempts/{reacted_id}" in response.text
     assert "Skipped Group" not in response.text
     assert "type: sent, reacted" in response.text
-    assert 'value="sent" checked' in response.text
-    assert 'value="reacted" checked' in response.text
+    assert '<option value="sent">sent</option>' in response.text
+    assert '<option value="reacted">reacted</option>' in response.text
 
 
 def test_render_attempt_list_filters_by_type_and_preserves_query(tmp_path: Path):
@@ -299,11 +346,10 @@ def test_render_attempt_list_filters_by_type_and_preserves_query(tmp_path: Path)
     assert f"/attempts/{sent_id}" not in html
     assert "Reacted Group" in html
     assert "Sent Group" not in html
-    assert 'value="sent" checked' in html
-    assert 'value="reacted" checked' in html
-    assert 'value="skipped" checked' not in html
+    assert '<option value="sent">sent</option>' in html
+    assert '<option value="reacted">reacted</option>' in html
+    assert '<option value="skipped">skipped</option>' in html
     assert 'href="/?page=2&amp;limit=1&amp;type=sent&amp;type=reacted"' in html
-    assert "type: sent, reacted" in html
     assert "共 2 条" in html
 
 
@@ -730,6 +776,39 @@ def test_render_tutorial_page_shows_wizard_status(tmp_path: Path):
     assert "Landing page" not in html
 
 
+def test_render_tutorial_page_expands_tilde_worker_db(
+    monkeypatch,
+    tmp_path: Path,
+):
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("CEO_WORKER_DB", "~/dbs/worker.sqlite3")
+    monkeypatch.chdir(tmp_path)
+
+    html = render_tutorial_page()
+
+    assert "Initialization Wizard" in html
+    assert (home / "dbs" / "worker.sqlite3").exists()
+    assert not (tmp_path / "~").exists()
+
+
+def test_create_default_audit_app_expands_tilde_worker_db(
+    monkeypatch,
+    tmp_path: Path,
+):
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("CEO_WORKER_DB", "~/dbs/default.sqlite3")
+    monkeypatch.chdir(tmp_path)
+
+    client = TestClient(create_default_audit_app())
+    response = client.get("/tutorial")
+
+    assert response.status_code == 200
+    assert (home / "dbs" / "default.sqlite3").exists()
+    assert not (tmp_path / "~").exists()
+
+
 def test_tutorial_route_renders_first_time_setup(tmp_path: Path):
     client = TestClient(create_audit_app(tmp_path / "worker.sqlite3"))
 
@@ -1032,8 +1111,12 @@ def test_tasks_page_paginates_and_preserves_search_params(tmp_path: Path):
     html = render_tasks_page(store, query="候选人", page=2, page_size=20)
 
     assert '<span id="tasks-count" class="tasks-count">25 tasks</span>' in html
+    assert 'class="table-toolbar"' in html
+    assert 'class="table-toolbar-search"' in html
+    assert '<select id="task-type-filter"' in html
     assert 'id="tasks-pages"' in html
-    assert '<option value="20" selected>20/page</option>' in html
+    assert '<option value="20" selected>20/页</option>' in html
+    assert '<span id="tasks-total" class="table-toolbar-total">共 25 条</span>' in html
     initial = task_script_json(html, "tasks-initial-state")
     rows = task_script_json(html, "tasks-data")
     assert initial["query"] == "候选人"
@@ -1058,7 +1141,7 @@ def test_tasks_page_respects_page_size(tmp_path: Path):
     html = render_tasks_page(store, page_size=50)
 
     assert '<span id="tasks-count" class="tasks-count">25 tasks</span>' in html
-    assert '<option value="50" selected>50/page</option>' in html
+    assert '<option value="50" selected>50/页</option>' in html
     assert task_script_json(html, "tasks-initial-state")["pageSize"] == 50
     assert "项目 01" in html
     assert "项目 25" in html
@@ -1463,7 +1546,7 @@ def test_tasks_route_applies_pagination_params(tmp_path: Path):
     assert response.status_code == 200
     assert "候选人项目 05" in response.text
     assert "候选人项目 25" in response.text
-    assert '<option value="20" selected>20/page</option>' in response.text
+    assert '<option value="20" selected>20/页</option>' in response.text
     initial = task_script_json(response.text, "tasks-initial-state")
     assert initial["query"] == "候选人"
     assert initial["page"] == 2
@@ -3877,19 +3960,35 @@ def test_render_log_list_paginates(tmp_path: Path):
     store.record_error("cid-1", "msg-1", "codex", "older error")
     store.record_error("cid-2", "msg-2", "send", "newer error")
 
-    first_page = render_log_list(store, limit=1, page=1)
-    second_page = render_log_list(store, limit=1, page=2)
+    first_page = render_log_list(
+        store,
+        limit=1,
+        page=1,
+        query="error",
+        log_type="Error",
+    )
+    second_page = render_log_list(
+        store,
+        limit=1,
+        page=2,
+        query="error",
+        log_type="Error",
+    )
 
     assert "newer error" in first_page
     assert "older error" not in first_page
-    assert 'href="/logs?page=2"' in first_page
-    assert "1-1" in first_page
-    assert "1 / 2" in first_page
+    assert 'class="table-toolbar"' in first_page
+    assert 'class="table-toolbar-search"' in first_page
+    assert 'value="error"' in first_page
+    assert '<option value="Error" selected>Error</option>' in first_page
+    assert '<option value="1" selected>1/页</option>' in first_page
+    assert '<span class="table-toolbar-total">共 2 条</span>' in first_page
+    assert 'href="/logs?page=2&amp;limit=1&amp;q=error&amp;type=Error"' in first_page
+    assert 'class="table-page-link active" aria-current="page">1</span>' in first_page
     assert "older error" in second_page
     assert "newer error" not in second_page
-    assert 'href="/logs"' in second_page
-    assert "2-2" in second_page
-    assert "2 / 2" in second_page
+    assert 'href="/logs?limit=1&amp;q=error&amp;type=Error"' in second_page
+    assert 'class="table-page-link active" aria-current="page">2</span>' in second_page
 
 
 def test_render_log_list_marks_sent_trigger_errors_resolved(tmp_path: Path):

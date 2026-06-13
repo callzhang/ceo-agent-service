@@ -2208,22 +2208,24 @@ class AutoReplyStore:
         *,
         send_status: str | None = None,
         send_statuses: tuple[str, ...] | None = None,
+        query_text: str = "",
     ) -> list[ReplyAttempt]:
         with self._connect() as db:
             query = """
                 select *
                 from reply_attempts
             """
-            args: tuple[object, ...] = ()
-            statuses = send_statuses or ((send_status,) if send_status else ())
-            if statuses:
-                placeholders = ",".join("?" for _ in statuses)
-                query = f"{query} where send_status in ({placeholders})"
-                args = (*statuses,)
+            filters, args = self._reply_attempt_filters(
+                send_status=send_status,
+                send_statuses=send_statuses,
+                query_text=query_text,
+            )
+            if filters:
+                query = f"{query} where {' and '.join(filters)}"
             query = f"{query} order by id desc"
             if limit is not None:
                 query = f"{query} limit ? offset ?"
-                args = (*args, limit, max(0, offset))
+                args.extend([limit, max(0, offset)])
             rows = db.execute(query, args).fetchall()
             return [ReplyAttempt.model_validate(dict(row)) for row in rows]
 
@@ -2309,21 +2311,54 @@ class AutoReplyStore:
         *,
         send_status: str | None = None,
         send_statuses: tuple[str, ...] | None = None,
+        query_text: str = "",
     ) -> int:
         with self._connect() as db:
-            statuses = send_statuses or ((send_status,) if send_status else ())
-            if statuses:
-                placeholders = ",".join("?" for _ in statuses)
-                row = db.execute(
-                    "select count(*) as count from reply_attempts "
-                    f"where send_status in ({placeholders})",
-                    statuses,
-                ).fetchone()
-            else:
-                row = db.execute(
-                    "select count(*) as count from reply_attempts"
-                ).fetchone()
+            filters, args = self._reply_attempt_filters(
+                send_status=send_status,
+                send_statuses=send_statuses,
+                query_text=query_text,
+            )
+            where_sql = f" where {' and '.join(filters)}" if filters else ""
+            row = db.execute(
+                f"select count(*) as count from reply_attempts{where_sql}",
+                args,
+            ).fetchone()
             return int(row["count"])
+
+    def _reply_attempt_filters(
+        self,
+        *,
+        send_status: str | None = None,
+        send_statuses: tuple[str, ...] | None = None,
+        query_text: str = "",
+    ) -> tuple[list[str], list[object]]:
+        filters: list[str] = []
+        args: list[object] = []
+        statuses = send_statuses or ((send_status,) if send_status else ())
+        if statuses:
+            placeholders = ",".join("?" for _ in statuses)
+            filters.append(f"send_status in ({placeholders})")
+            args.extend(statuses)
+        if query_text.strip():
+            needle = f"%{query_text.strip().lower()}%"
+            filters.append(
+                """(
+                    lower(coalesce(conversation_id, '')) like ?
+                    or lower(coalesce(conversation_title, '')) like ?
+                    or lower(coalesce(trigger_message_id, '')) like ?
+                    or lower(coalesce(trigger_sender, '')) like ?
+                    or lower(coalesce(trigger_text, '')) like ?
+                    or lower(coalesce(draft_reply_text, '')) like ?
+                    or lower(coalesce(final_reply_text, '')) like ?
+                    or lower(coalesce(corrected_reply_text, '')) like ?
+                    or lower(coalesce(action, '')) like ?
+                    or lower(coalesce(send_status, '')) like ?
+                    or lower(coalesce(send_error, '')) like ?
+                )"""
+            )
+            args.extend([needle] * 11)
+        return filters, args
 
     def enqueue_work_summary_input(
         self,
@@ -2972,8 +3007,52 @@ class AutoReplyStore:
         self,
         limit: int | None = None,
         offset: int = 0,
+        query: str = "",
+        log_type: str = "",
     ) -> list[OperationLog]:
-        query = """
+        sql = self._operation_logs_base_query()
+        where_sql, where_args = self._operation_log_filters(query=query, log_type=log_type)
+        sql = f"""
+            {sql}
+            {where_sql}
+            order by occurred_at desc, source_table desc, source_id desc
+        """
+        args: list[object] = [*where_args]
+        if limit is not None:
+            sql = f"{sql} limit ? offset ?"
+            args.extend([limit, max(0, offset)])
+        with self._connect() as db:
+            rows = db.execute(sql, tuple(args)).fetchall()
+            return [OperationLog.model_validate(dict(row)) for row in rows]
+
+    def list_operation_log_types(self) -> list[str]:
+        with self._connect() as db:
+            rows = db.execute(
+                f"""
+                select distinct category
+                from ({self._operation_logs_base_query()})
+                order by category asc
+                """
+            ).fetchall()
+            return [str(row["category"]) for row in rows if row["category"]]
+
+    def count_operation_logs(self, query: str = "", log_type: str = "") -> int:
+        where_sql, where_args = self._operation_log_filters(
+            query=query,
+            log_type=log_type,
+        )
+        with self._connect() as db:
+            row = db.execute(
+                f"""
+                select count(*) as count
+                from ({self._operation_logs_base_query()} {where_sql})
+                """,
+                tuple(where_args),
+            ).fetchone()
+            return int(row["count"] or 0)
+
+    def _operation_logs_base_query(self) -> str:
+        return """
             select *
             from (
                 select
@@ -3066,37 +3145,31 @@ class AutoReplyStore:
                     '' as message_id
                 from follow_up_drafts
             )
-            order by occurred_at desc, source_table desc, source_id desc
         """
-        args: tuple[int, ...] = ()
-        if limit is not None:
-            query = f"{query} limit ? offset ?"
-            args = (limit, max(0, offset))
-        with self._connect() as db:
-            rows = db.execute(query, args).fetchall()
-            return [OperationLog.model_validate(dict(row)) for row in rows]
 
-    def count_operation_logs(self) -> int:
-        with self._connect() as db:
-            row = db.execute(
-                """
-                select sum(count) as count
-                from (
-                    select count(*) as count from errors
-                    union all
-                    select count(*) as count from reply_tasks
-                    union all
-                    select count(*) as count from reply_attempts
-                    union all
-                    select count(*) as count from work_summary_inputs
-                    union all
-                    select count(*) as count from work_updates
-                    union all
-                    select count(*) as count from follow_up_drafts
-                )
-                """
-            ).fetchone()
-            return int(row["count"] or 0)
+    def _operation_log_filters(self, query: str = "", log_type: str = "") -> tuple[str, list[object]]:
+        filters: list[str] = []
+        args: list[object] = []
+        if log_type.strip():
+            filters.append("category = ?")
+            args.append(log_type.strip())
+        if query.strip():
+            needle = f"%{query.strip().lower()}%"
+            filters.append(
+                """(
+                    lower(coalesce(id, '')) like ?
+                    or lower(coalesce(category, '')) like ?
+                    or lower(coalesce(action, '')) like ?
+                    or lower(coalesce(status, '')) like ?
+                    or lower(coalesce(context, '')) like ?
+                    or lower(coalesce(summary, '')) like ?
+                    or lower(coalesce(detail, '')) like ?
+                )"""
+            )
+            args.extend([needle] * 7)
+        if not filters:
+            return "", args
+        return "where " + " and ".join(filters), args
 
     def set_service_state(self, key: str, value: str) -> None:
         with self._connect() as db:
