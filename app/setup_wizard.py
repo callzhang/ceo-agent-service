@@ -1,6 +1,7 @@
 import json
 import os
 import re
+import shutil
 from contextlib import redirect_stderr, redirect_stdout
 from io import StringIO
 from pathlib import Path
@@ -211,6 +212,14 @@ def get_step_definition(step_id: str) -> SetupStepDefinition:
     raise KeyError(step_id)
 
 
+def get_action_definition(action_id: str) -> SetupAction:
+    for step in SETUP_WIZARD_STEPS:
+        for action in step.actions:
+            if action.id == action_id:
+                return action
+    raise KeyError(action_id)
+
+
 def redact_setup_output(text: str) -> str:
     redacted = BEARER_RE.sub("Bearer [REDACTED_BEARER]", text)
     redacted = TOKEN_RE.sub(
@@ -411,6 +420,101 @@ def check_work_profile(*, repo_root: Path) -> SetupStepStatus:
     )
 
 
+def check_setup_step(
+    step_id: str,
+    *,
+    repo_root: Path,
+    store: AutoReplyStore | None = None,
+) -> SetupStepStatus:
+    del store
+    if step_id == "preflight":
+        return _check_preflight(repo_root=repo_root)
+    if step_id == "cli_components":
+        return _check_cli_components(repo_root=repo_root)
+    if step_id == "service_config":
+        return check_service_config(repo_root=repo_root)
+    if step_id == "data_corpus":
+        return check_data_corpus(repo_root=repo_root)
+    if step_id == "work_profile":
+        return check_work_profile(repo_root=repo_root)
+    definition = get_step_definition(step_id)
+    return _status(
+        definition.id,
+        title=definition.title,
+        status="needs_action",
+        summary=f"{definition.title} requires a run action or external verification.",
+    )
+
+
+def _check_preflight(*, repo_root: Path) -> SetupStepStatus:
+    missing = [
+        name
+        for name in ("README.md", "app", "tests")
+        if not (repo_root / name).exists()
+    ]
+    python_ready = (repo_root / ".venv" / "bin" / "python").exists()
+    if missing:
+        return _status(
+            "preflight",
+            title="Preflight",
+            status="needs_action",
+            summary="Repository checkout is incomplete: " + ", ".join(missing),
+            evidence={"python_venv": python_ready},
+        )
+    return _status(
+        "preflight",
+        title="Preflight",
+        status="done" if python_ready else "needs_action",
+        summary=(
+            "Repository checkout and virtualenv are ready."
+            if python_ready
+            else "Repository checkout is present, but .venv/bin/python is missing."
+        ),
+        evidence={"python_venv": python_ready},
+    )
+
+
+def _check_cli_components(*, repo_root: Path) -> SetupStepStatus:
+    del repo_root
+    dws_ready = shutil.which("dws") is not None
+    codex_ready = shutil.which("codex") is not None
+    nvwa_ready = any(
+        path.exists()
+        for path in (
+            Path.home() / ".agents" / "skills" / "nuwa" / "SKILL.md",
+            Path.home() / ".agents" / "skills" / "huashu-nuwa" / "SKILL.md",
+        )
+    )
+    missing = [
+        label
+        for label, ready in (
+            ("dws", dws_ready),
+            ("codex", codex_ready),
+            ("Nvwa skill", nvwa_ready),
+        )
+        if not ready
+    ]
+    if missing:
+        return _status(
+            "cli_components",
+            title="CLI Components",
+            status="needs_action",
+            summary="Missing CLI components: " + ", ".join(missing),
+            evidence={
+                "dws": dws_ready,
+                "codex": codex_ready,
+                "nvwa_skill": nvwa_ready,
+            },
+        )
+    return _status(
+        "cli_components",
+        title="CLI Components",
+        status="done",
+        summary="dws, Codex CLI, and Nvwa skill are available.",
+        evidence={"dws": True, "codex": True, "nvwa_skill": True},
+    )
+
+
 def run_setup_action(
     action_id: str,
     *,
@@ -586,6 +690,9 @@ def build_wizard_status(store: AutoReplyStore) -> SetupWizardStatus:
                 status=persisted_status,
                 summary=summary,
                 available_actions=definition.actions,
+                manual_confirmation_allowed=any(
+                    action.kind == "confirm" for action in definition.actions
+                ),
                 updated_at=row["updated_at"] if row else "",
             )
         )

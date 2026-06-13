@@ -36,7 +36,7 @@ from app.audit_web import (
 from app.developer_prompt import read_developer_prompt_template
 from app.config import load_env_file
 from app.dingtalk_models import DingTalkConversation, DingTalkMessage
-from app.setup_wizard_models import SetupStepStatus, SetupWizardEvent
+from app.setup_wizard_models import SetupWizardEvent
 from app.store import AutoReplyStore
 
 
@@ -751,29 +751,17 @@ def test_tutorial_status_route_returns_json(tmp_path: Path):
     assert payload["steps"][0]["title"] == "Preflight"
 
 
-def test_tutorial_check_route_records_step_status(monkeypatch, tmp_path: Path):
-    def fake_check(step_id, *, repo_root, store):
-        del repo_root, store
-        assert step_id == "service_config"
-        return SetupStepStatus(
-            step_id="service_config",
-            title="Service Config",
-            status="done",
-            summary="ready",
-        )
+def test_tutorial_check_route_records_real_step_status(tmp_path: Path):
+    db_path = tmp_path / "worker.sqlite3"
+    client = TestClient(create_audit_app(db_path))
 
-    monkeypatch.setattr(audit_web_module, "check_setup_step", fake_check)
-    client = TestClient(create_audit_app(tmp_path / "worker.sqlite3"))
-
-    response = client.post("/tutorial/check/service_config")
+    response = client.post("/tutorial/check/preflight")
 
     assert response.status_code == 200
-    assert response.json()["status"] == "done"
-    row = AutoReplyStore(tmp_path / "worker.sqlite3").get_setup_wizard_step(
-        "service_config"
-    )
+    assert response.json()["step_id"] == "preflight"
+    row = AutoReplyStore(db_path).get_setup_wizard_step("preflight")
     assert row is not None
-    assert row["summary"] == "ready"
+    assert row["summary"]
 
 
 def test_tutorial_run_route_records_action_event(monkeypatch, tmp_path: Path):
@@ -788,33 +776,74 @@ def test_tutorial_run_route_records_action_event(monkeypatch, tmp_path: Path):
         )
 
     monkeypatch.setattr(audit_web_module, "run_setup_action", fake_run)
-    client = TestClient(create_audit_app(tmp_path / "worker.sqlite3"))
+    db_path = tmp_path / "worker.sqlite3"
+    store = AutoReplyStore(db_path)
+    for step_id in ("preflight", "cli_components", "mcp"):
+        store.upsert_setup_wizard_step(step_id=step_id, status="done", summary="ok")
+    client = TestClient(create_audit_app(db_path))
 
     response = client.post("/tutorial/run/setup_service_config")
 
     assert response.status_code == 200
     assert response.json()["status"] == "done"
-    events = AutoReplyStore(tmp_path / "worker.sqlite3").list_setup_wizard_events(
-        "service_config"
-    )
+    events = AutoReplyStore(db_path).list_setup_wizard_events("service_config")
     assert events[0]["action_id"] == "setup_service_config"
 
 
-def test_tutorial_confirm_route_accepts_form_submission(tmp_path: Path):
+def test_tutorial_run_route_rejects_blocked_action(tmp_path: Path):
     client = TestClient(create_audit_app(tmp_path / "worker.sqlite3"))
+
+    response = client.post("/tutorial/run/setup_service_config")
+
+    assert response.status_code == 409
+
+
+def test_tutorial_run_route_persists_failed_action_status(tmp_path: Path):
+    db_path = tmp_path / "worker.sqlite3"
+    store = AutoReplyStore(db_path)
+    store.upsert_setup_wizard_step(step_id="preflight", status="done", summary="ok")
+    store.upsert_setup_wizard_step(
+        step_id="cli_components",
+        status="done",
+        summary="ok",
+    )
+    client = TestClient(create_audit_app(db_path))
+
+    response = client.post("/tutorial/run/setup_mcp")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "failed"
+    row = AutoReplyStore(db_path).get_setup_wizard_step("mcp")
+    assert row is not None
+    assert row["status"] == "failed"
+    assert row["summary"] == "MEMORY_CONNECTOR_URL is missing."
+
+
+def test_tutorial_confirm_route_accepts_form_submission(tmp_path: Path):
+    db_path = tmp_path / "worker.sqlite3"
+    store = AutoReplyStore(db_path)
+    store.upsert_setup_wizard_step(step_id="dry_run", status="done", summary="ok")
+    client = TestClient(create_audit_app(db_path))
 
     response = client.post(
         "/tutorial/confirm/live_send",
         data={"confirmed_by": "tester"},
+        follow_redirects=False,
     )
 
-    assert response.status_code == 200
-    assert response.json()["status"] == "done"
-    row = AutoReplyStore(tmp_path / "worker.sqlite3").get_setup_wizard_step(
-        "live_send"
-    )
+    assert response.status_code == 303
+    assert response.headers["location"] == "/tutorial"
+    row = AutoReplyStore(db_path).get_setup_wizard_step("live_send")
     assert row is not None
     assert row["manual_confirmed_by"] == "tester"
+
+
+def test_tutorial_confirm_route_rejects_non_confirmable_step(tmp_path: Path):
+    client = TestClient(create_audit_app(tmp_path / "worker.sqlite3"))
+
+    response = client.post("/tutorial/confirm/service_config")
+
+    assert response.status_code == 404
 
 
 def test_tasks_page_renders_projects_and_todos_without_global_followups(tmp_path: Path):

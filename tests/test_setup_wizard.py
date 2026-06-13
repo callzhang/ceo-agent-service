@@ -9,7 +9,9 @@ from app.setup_wizard import (
     build_wizard_status,
     check_data_corpus,
     check_service_config,
+    check_setup_step,
     check_work_profile,
+    get_action_definition,
     get_step_definition,
     redact_setup_output,
     run_setup_action,
@@ -39,6 +41,7 @@ def test_setup_wizard_steps_are_ordered_and_gated():
     assert get_step_definition("mcp").depends_on == ("cli_components",)
     assert get_step_definition("launchd").depends_on == ("dry_run",)
     assert get_step_definition("live_send").depends_on == ("dry_run",)
+    assert get_action_definition("setup_mcp").step_id == "mcp"
 
 
 def test_setup_wizard_action_metadata_is_gated():
@@ -224,6 +227,25 @@ def test_build_wizard_status_allows_next_step_after_dependency_done(tmp_path: Pa
     ]
 
 
+def test_build_wizard_status_allows_live_send_manual_confirmation(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.upsert_setup_wizard_step(
+        step_id="dry_run",
+        status="done",
+        summary="ok",
+    )
+
+    status = build_wizard_status(store)
+    steps = {step.step_id: step for step in status.steps}
+
+    assert steps["live_send"].manual_confirmation_allowed is True
+    assert [action.id for action in steps["live_send"].available_actions] == [
+        "check_live_send",
+        "verify_live_send",
+        "confirm_live_send",
+    ]
+
+
 def test_build_wizard_status_handles_unknown_persisted_status(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.upsert_setup_wizard_step(
@@ -283,6 +305,14 @@ def test_check_service_config_detects_missing_env(tmp_path: Path):
     assert result.status == "needs_action"
     assert result.summary == ".env is missing."
     assert result.evidence["env_exists"] is False
+
+
+def test_check_setup_step_dispatches_real_service_config_checker(tmp_path: Path):
+    result = check_setup_step("service_config", repo_root=tmp_path)
+
+    assert result.step_id == "service_config"
+    assert result.status == "needs_action"
+    assert result.summary == ".env is missing."
 
 
 def test_check_service_config_accepts_env_and_directories(tmp_path: Path):

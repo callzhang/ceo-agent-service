@@ -14,7 +14,7 @@ import urllib.request
 from urllib.parse import parse_qs, quote, urlencode, urlparse
 
 import uvicorn
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import (
     HTMLResponse,
     JSONResponse,
@@ -95,6 +95,8 @@ from app.store import (
 )
 from app.setup_wizard import (
     build_wizard_status,
+    check_setup_step,
+    get_action_definition,
     get_step_definition,
     run_setup_action,
 )
@@ -666,22 +668,6 @@ def _repo_root() -> Path:
     return Path(__file__).resolve().parent.parent
 
 
-def check_setup_step(
-    step_id: str,
-    *,
-    repo_root: Path,
-    store: AutoReplyStore,
-) -> SetupStepStatus:
-    del repo_root, store
-    definition = get_step_definition(step_id)
-    return SetupStepStatus(
-        step_id=definition.id,
-        title=definition.title,
-        status="needs_action",
-        summary=f"No automated checker is implemented for {definition.title}.",
-    )
-
-
 def confirm_setup_step(
     step_id: str,
     *,
@@ -689,7 +675,17 @@ def confirm_setup_step(
     confirmed_by: str,
     evidence: dict[str, str],
 ) -> SetupWizardEvent:
-    definition = get_step_definition(step_id)
+    try:
+        definition = get_step_definition(step_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Unknown setup step") from exc
+    if not any(action.kind == "confirm" for action in definition.actions):
+        raise HTTPException(
+            status_code=409,
+            detail=f"{definition.title} does not allow manual confirmation.",
+        )
+    if not confirmed_by.strip():
+        raise HTTPException(status_code=400, detail="confirmed_by is required.")
     summary = f"Manually confirmed {definition.title}."
     store.upsert_setup_wizard_step(
         step_id=definition.id,
@@ -704,6 +700,47 @@ def confirm_setup_step(
         summary=summary,
         evidence=evidence,
     )
+
+
+def _setup_status_map(store: AutoReplyStore) -> dict[str, SetupStepStatus]:
+    return {step.step_id: step for step in build_wizard_status(store).steps}
+
+
+def _require_available_setup_action(
+    store: AutoReplyStore,
+    action_id: str,
+    *,
+    kind: str,
+):
+    try:
+        definition = get_action_definition(action_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Unknown setup action") from exc
+    if definition.kind != kind:
+        raise HTTPException(status_code=400, detail="Wrong setup action type.")
+    step_status = _setup_status_map(store).get(definition.step_id)
+    if step_status is None:
+        raise HTTPException(status_code=404, detail="Unknown setup step")
+    if not any(action.id == action_id for action in step_status.available_actions):
+        raise HTTPException(
+            status_code=409,
+            detail=f"{step_status.title} is not ready for this action.",
+        )
+    return definition
+
+
+def _wants_setup_redirect(request: Request) -> bool:
+    content_type = request.headers.get("content-type", "")
+    return (
+        "application/x-www-form-urlencoded" in content_type
+        or "multipart/form-data" in content_type
+    )
+
+
+def _setup_action_response(request: Request, payload) -> Response:
+    if _wants_setup_redirect(request):
+        return RedirectResponse("/tutorial", status_code=303)
+    return JSONResponse(payload.model_dump())
 
 
 def _tutorial_steps() -> list[_TutorialStep]:
@@ -4206,20 +4243,26 @@ def create_audit_app(
     def tutorial_status() -> JSONResponse:
         return JSONResponse(build_wizard_status(AutoReplyStore(db_path)).model_dump())
 
-    @app.post("/tutorial/check/{step_id}")
-    def tutorial_check(step_id: str) -> JSONResponse:
+    @app.post("/tutorial/check/{step_id}", response_model=None)
+    def tutorial_check(step_id: str, request: Request) -> Response:
         store = AutoReplyStore(db_path)
+        try:
+            step = get_step_definition(step_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Unknown setup step") from exc
+        _require_available_setup_action(store, f"check_{step.id}", kind="check")
         status = check_setup_step(step_id, repo_root=_repo_root(), store=store)
         store.upsert_setup_wizard_step(
             step_id=status.step_id,
             status=status.status,
             summary=status.summary,
         )
-        return JSONResponse(status.model_dump())
+        return _setup_action_response(request, status)
 
-    @app.post("/tutorial/run/{action_id}")
-    def tutorial_run(action_id: str) -> JSONResponse:
+    @app.post("/tutorial/run/{action_id}", response_model=None)
+    def tutorial_run(action_id: str, request: Request) -> Response:
         store = AutoReplyStore(db_path)
+        _require_available_setup_action(store, action_id, kind="run")
         event = run_setup_action(action_id, repo_root=_repo_root(), env=dict(os.environ))
         store.record_setup_wizard_event(
             step_id=event.step_id,
@@ -4230,16 +4273,19 @@ def create_audit_app(
             stdout_excerpt=event.stdout_excerpt,
             stderr_excerpt=event.stderr_excerpt,
         )
-        if event.status == "done":
+        if event.step_id != "unknown":
             store.upsert_setup_wizard_step(
                 step_id=event.step_id,
-                status="done",
+                status="done" if event.status == "done" else "failed",
                 summary=event.summary,
             )
-        return JSONResponse(event.model_dump())
+        return _setup_action_response(request, event)
 
-    @app.post("/tutorial/confirm/{step_id}")
-    async def tutorial_confirm(step_id: str, request: Request) -> JSONResponse:
+    @app.post("/tutorial/confirm/{step_id}", response_model=None)
+    async def tutorial_confirm(
+        step_id: str,
+        request: Request,
+    ) -> Response:
         content_type = request.headers.get("content-type", "")
         if "application/json" in content_type:
             payload = await request.json()
@@ -4252,6 +4298,7 @@ def create_audit_app(
         evidence = payload.get("evidence")
         evidence_payload = evidence if isinstance(evidence, Mapping) else {}
         store = AutoReplyStore(db_path)
+        _require_available_setup_action(store, f"confirm_{step_id}", kind="confirm")
         event = confirm_setup_step(
             step_id,
             store=store,
@@ -4270,7 +4317,7 @@ def create_audit_app(
             stdout_excerpt=event.stdout_excerpt,
             stderr_excerpt=event.stderr_excerpt,
         )
-        return JSONResponse(event.model_dump())
+        return _setup_action_response(request, event)
 
     @app.get("/tasks", response_class=HTMLResponse)
     def tasks_page(request: Request) -> str:
