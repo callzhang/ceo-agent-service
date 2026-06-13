@@ -720,6 +720,101 @@ def test_process_work_items_command_processes_claimed_input(tmp_path, monkeypatc
     assert status == "done"
 
 
+def test_process_work_items_command_reclaims_stale_processing_input(
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    class FakeTaskAgentCodexRunner:
+        last_session_id = "task-session-1"
+        last_audit_tool_events = [{"tool": "memory_recall"}]
+        last_transcript_start_line = 0
+        last_transcript_end_line = 0
+
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        def decide(self, *, prompt, session_id=None):
+            return TaskAgentDecision.model_validate(
+                {
+                    "action": "create_project",
+                    "project": {
+                        "title": "售前知识库建设",
+                        "category": "sales",
+                        "status": "active",
+                        "memory_context": {
+                            "query": "售前知识库",
+                            "summary": "售前知识库历史背景来自 memory_recall。",
+                            "memories": [
+                                {
+                                    "source": "memory_recall",
+                                    "uuid": "mem-1",
+                                    "text": "售前知识库材料沉淀在 business/售前知识库。",
+                                    "summary": "材料沉淀在 business/售前知识库。",
+                                    "created_at": "2026-06-05",
+                                }
+                            ],
+                        },
+                    },
+                    "todo_changes": [],
+                    "follow_up_drafts": [],
+                    "update_summary": "创建项目。",
+                    "merge_reason": "事项名称稳定。",
+                    "memory_recall_used": True,
+                    "confidence": 0.8,
+                }
+            )
+
+    monkeypatch.setattr(cli, "TaskAgentCodexRunner", FakeTaskAgentCodexRunner)
+    db_path = tmp_path / "task.sqlite3"
+    store = AutoReplyStore(db_path)
+    item = WorkItem.model_validate(
+        {
+            "source": {
+                "type": "reply_attempt",
+                "ref": "1",
+                "title": "售前推进",
+                "conversation_id": "cid-1",
+                "conversation_title": "售前群",
+                "created_at": "2026-06-07 09:00:00",
+            },
+            "summary": "售前知识库需要补齐来源链接。",
+            "project_name": "售前知识库",
+            "context": {
+                "sender": "Mina",
+                "participants": ["Alex"],
+                "source_conversation_kind": "group",
+                "source_conversation_title": "售前群",
+            },
+        }
+    )
+    input_id = store.enqueue_work_summary_input(
+        item.source.type.value,
+        item.source.ref,
+        item.model_dump_json(),
+    )
+    claimed = store.claim_work_summary_inputs(limit=1)
+    with store._connect() as db:
+        db.execute(
+            "update work_summary_inputs set updated_at=datetime('now', '-31 minutes') where id=?",
+            (claimed[0].id,),
+        )
+
+    processed = process_work_items_command(
+        WorkerSettings(db_path=db_path, workspace=tmp_path, max_batches=5)
+    )
+
+    loaded = AutoReplyStore(db_path)
+    assert processed == 1
+    assert capsys.readouterr().out == "process-work-items processed=1\n"
+    with loaded._connect() as db:
+        row = db.execute(
+            "select status, attempts from work_summary_inputs where id=?",
+            (input_id,),
+        ).fetchone()
+    assert dict(row) == {"status": "done", "attempts": 2}
+
+
 def test_process_work_items_command_respects_zero_max_batches(
     tmp_path,
     monkeypatch,

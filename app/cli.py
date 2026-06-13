@@ -81,6 +81,7 @@ OKR_SOURCE_KIND_ENV = "CEO_OKR_SOURCE_KIND"
 OKR_OBJECTIVE_RULE_ID_ENV = "CEO_OKR_OBJECTIVE_RULE_ID"
 OKR_REVIEW_CODEX_TIMEOUT_SECONDS = 900
 OKR_REVIEW_CODEX_IDLE_TIMEOUT_SECONDS = 600
+WORK_SUMMARY_INPUT_STALE_SECONDS = 30 * 60
 SEND_ATTEMPT_TARGET_LOOKBACK_LIMIT = 500
 run_audit_web = None
 
@@ -702,6 +703,10 @@ def consume_once(settings: WorkerSettings) -> int:
 def process_work_items_command(settings: WorkerSettings) -> int:
     store = AutoReplyStore(settings.db_path)
     limit = 20 if settings.max_batches is None else settings.max_batches
+    if limit <= 0:
+        print("process-work-items processed=0", flush=True)
+        return 0
+    store.reset_stale_processing_work_summary_inputs(WORK_SUMMARY_INPUT_STALE_SECONDS)
     runner = TaskAgentRunner(
         TaskAgentCodexRunner(
             workspace=settings.workspace,

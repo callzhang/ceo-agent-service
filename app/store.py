@@ -2437,6 +2437,23 @@ class AutoReplyStore:
             ).fetchall()
             return [WorkSummaryInput.model_validate(dict(row)) for row in claimed]
 
+    def reset_stale_processing_work_summary_inputs(self, max_age_seconds: int) -> int:
+        if max_age_seconds <= 0:
+            return 0
+        with self._connect() as db:
+            cursor = db.execute(
+                """
+                update work_summary_inputs
+                set status='pending',
+                    error='',
+                    updated_at=current_timestamp
+                where status='processing'
+                  and datetime(updated_at) <= datetime('now', ?)
+                """,
+                (f"-{int(max_age_seconds)} seconds",),
+            )
+            return cursor.rowcount
+
     def mark_work_summary_input_done(self, input_id: int) -> None:
         with self._connect() as db:
             db.execute(
