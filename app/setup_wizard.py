@@ -1,6 +1,8 @@
 import json
 import os
 import re
+from contextlib import redirect_stderr, redirect_stdout
+from io import StringIO
 from pathlib import Path
 
 from app.cli import setup_memory_connector_command
@@ -22,7 +24,7 @@ TOKEN_RE = re.compile(
 )
 SESSION_RE = re.compile(r"\b[0-9a-f]{8}-[0-9a-f]{4,}(?:-[0-9a-f]{4,})+\b")
 SESSION_KEY_RE = re.compile(r"(?i)session[_-]?id=\S+")
-LOCAL_PATH_RE = re.compile(r"(?:/Users|/private/tmp|/tmp)/[^\s'\"<>]+")
+LOCAL_PATH_RE = re.compile(r"(?:/Users|/private/tmp|/private/var|/tmp)/[^\s'\"<>]+")
 SETUP_STATUS_VALUES = set(SetupStatus.__args__)
 
 
@@ -265,10 +267,14 @@ def _raw_env_values(env_path: Path) -> dict[str, str]:
 
 
 def _resolve_repo_path(repo_root: Path, value: str) -> Path:
-    path = Path(value).expanduser()
+    path = Path(os.path.expandvars(value)).expanduser()
     if path.is_absolute():
         return path
     return repo_root / path
+
+
+def _redact_evidence_path(path: Path) -> str:
+    return redact_setup_output(str(path))
 
 
 def _configured_corpus_dir(repo_root: Path) -> Path:
@@ -457,10 +463,10 @@ def _setup_service_config(
         status="done",
         summary="Created .env and runtime directories.",
         evidence={
-            "env_path": str(env_path),
-            "workspace": str(workspace),
-            "db_parent": str(db_parent),
-            "corpus_dir": str(corpus_dir),
+            "env_path": _redact_evidence_path(env_path),
+            "workspace": _redact_evidence_path(workspace),
+            "db_parent": _redact_evidence_path(db_parent),
+            "corpus_dir": _redact_evidence_path(corpus_dir),
         },
     )
 
@@ -469,7 +475,7 @@ def _setup_mcp(
     repo_root: Path,
     env: dict[str, str],
 ) -> SetupWizardEvent:
-    memory_url = env.get("MEMORY_CONNECTOR_URL") or os.getenv("MEMORY_CONNECTOR_URL", "")
+    memory_url = (env.get("MEMORY_CONNECTOR_URL") or os.getenv("MEMORY_CONNECTOR_URL", "")).strip()
     if not memory_url:
         return SetupWizardEvent(
             step_id="mcp",
@@ -478,7 +484,7 @@ def _setup_mcp(
             summary="MEMORY_CONNECTOR_URL is missing.",
         )
 
-    codex_config = env.get("CODEX_CONFIG_PATH")
+    codex_config = env.get("CODEX_CONFIG_PATH") or os.getenv("CODEX_CONFIG_PATH", "")
     if not codex_config:
         codex_home = env.get("CODEX_HOME") or os.getenv("CODEX_HOME", "~/.codex")
         codex_config = str(Path(codex_home).expanduser() / "config.toml")
@@ -493,10 +499,32 @@ def _setup_mcp(
         ),
     )
 
-    result = setup_memory_connector_command(
-        memory_url=memory_url,
-        codex_config=codex_config,
-        claude_config=claude_config,
+    stdout = StringIO()
+    stderr = StringIO()
+    try:
+        with redirect_stdout(stdout), redirect_stderr(stderr):
+            result = setup_memory_connector_command(
+                memory_url=memory_url,
+                codex_config=codex_config,
+                claude_config=claude_config,
+            )
+    except BaseException as exc:
+        return SetupWizardEvent(
+            step_id="mcp",
+            action_id="setup_mcp",
+            status="failed",
+            summary=redact_setup_output(str(exc)),
+            stdout_excerpt=redact_setup_output(stdout.getvalue()),
+            stderr_excerpt=redact_setup_output(stderr.getvalue()),
+        )
+
+    stdout_excerpt = "\n".join(
+        part
+        for part in (
+            stdout.getvalue().strip(),
+            json.dumps(result, ensure_ascii=False, sort_keys=True),
+        )
+        if part
     )
     return SetupWizardEvent(
         step_id="mcp",
@@ -504,12 +532,11 @@ def _setup_mcp(
         status="done",
         summary="Memory Connector MCP config checked.",
         evidence={
-            "codex_config": result["codex_config"],
+            "codex_config": redact_setup_output(result["codex_config"]),
             "claude_status": result["claude_status"],
         },
-        stdout_excerpt=redact_setup_output(
-            json.dumps(result, ensure_ascii=False, sort_keys=True)
-        ),
+        stdout_excerpt=redact_setup_output(stdout_excerpt),
+        stderr_excerpt=redact_setup_output(stderr.getvalue()),
     )
 
 

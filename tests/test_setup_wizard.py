@@ -429,6 +429,31 @@ def test_run_setup_service_config_creates_env_and_directories(tmp_path: Path):
     )
 
 
+def test_run_setup_service_config_expands_example_environment_values(
+    monkeypatch,
+    tmp_path: Path,
+):
+    home = tmp_path / "home"
+    (tmp_path / ".env.example").write_text(
+        "CEO_WORKSPACE=$HOME/Documents/memory\n"
+        "CEO_WORKER_DB=data/auto-reply.sqlite3\n"
+        "CEO_CORPUS_DIR=corpus\n"
+        "CEO_NOT_SEND_MESSAGE=1\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("HOME", str(home))
+
+    event = run_setup_action("setup_service_config", repo_root=tmp_path, env={})
+    check = check_service_config(repo_root=tmp_path)
+
+    assert event.status == "done"
+    assert (home / "Documents" / "memory").is_dir()
+    assert not (tmp_path / "$HOME").exists()
+    assert check.status == "done"
+    assert "[REDACTED_PATH]" in event.evidence["workspace"]
+    assert str(home) not in event.evidence["workspace"]
+
+
 def test_run_setup_mcp_writes_codex_config(tmp_path: Path):
     codex_config = tmp_path / "config.toml"
 
@@ -444,4 +469,57 @@ def test_run_setup_mcp_writes_codex_config(tmp_path: Path):
 
     assert event.status == "done"
     assert "memory_connector" in codex_config.read_text(encoding="utf-8")
-    assert event.evidence["codex_config"] == str(codex_config)
+    assert event.evidence["codex_config"] == "[REDACTED_PATH]"
+
+
+def test_run_setup_mcp_uses_os_config_path_and_redacts_output(
+    monkeypatch,
+    tmp_path: Path,
+):
+    codex_config = tmp_path / "config.toml"
+    monkeypatch.setenv("MEMORY_CONNECTOR_URL", "https://memory.example/mcp/")
+    monkeypatch.setenv("CODEX_CONFIG_PATH", str(codex_config))
+    monkeypatch.setenv("CLAUDE_CONFIG_PATH", str(tmp_path / "claude.json"))
+
+    event = run_setup_action("setup_mcp", repo_root=tmp_path, env={})
+
+    assert event.status == "done"
+    assert "memory_connector" in codex_config.read_text(encoding="utf-8")
+    assert event.evidence["codex_config"] == "[REDACTED_PATH]"
+    assert str(tmp_path) not in event.stdout_excerpt
+    assert "[REDACTED_PATH]" in event.stdout_excerpt
+
+
+def test_run_setup_mcp_handles_missing_and_failed_setup(monkeypatch, tmp_path: Path):
+    missing = run_setup_action(
+        "setup_mcp",
+        repo_root=tmp_path,
+        env={"MEMORY_CONNECTOR_URL": "   "},
+    )
+
+    assert missing.status == "failed"
+    assert missing.summary == "MEMORY_CONNECTOR_URL is missing."
+
+    def fail_setup(**kwargs):
+        del kwargs
+        raise OSError("cannot write /tmp/config.toml")
+
+    monkeypatch.setattr("app.setup_wizard.setup_memory_connector_command", fail_setup)
+    failed = run_setup_action(
+        "setup_mcp",
+        repo_root=tmp_path,
+        env={
+            "MEMORY_CONNECTOR_URL": "https://memory.example/mcp/",
+            "CODEX_CONFIG_PATH": str(tmp_path / "config.toml"),
+        },
+    )
+
+    assert failed.status == "failed"
+    assert "cannot write [REDACTED_PATH]" in failed.summary
+
+
+def test_run_setup_action_rejects_unknown_action(tmp_path: Path):
+    event = run_setup_action("unknown", repo_root=tmp_path, env={})
+
+    assert event.status == "failed"
+    assert event.step_id == "unknown"
