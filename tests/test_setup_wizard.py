@@ -553,3 +553,13 @@ def test_run_setup_action_rejects_unknown_action(tmp_path: Path):
 
     assert event.status == "failed"
     assert event.step_id == "unknown"
+
+
+def test_run_setup_action_keeps_known_unimplemented_action_on_own_step(
+    tmp_path: Path,
+):
+    event = run_setup_action("build_data_corpus", repo_root=tmp_path, env={})
+
+    assert event.status == "failed"
+    assert event.step_id == "data_corpus"
+    assert event.summary == "Run is not automated yet."

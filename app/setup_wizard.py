@@ -525,11 +525,20 @@ def run_setup_action(
         return _setup_service_config(repo_root, env or {})
     if action_id == "setup_mcp":
         return _setup_mcp(repo_root, env or {})
+    try:
+        action = get_action_definition(action_id)
+    except KeyError:
+        return SetupWizardEvent(
+            step_id="unknown",
+            action_id=action_id,
+            status="failed",
+            summary=f"Unknown setup action: {action_id}",
+        )
     return SetupWizardEvent(
-        step_id="unknown",
+        step_id=action.step_id,
         action_id=action_id,
         status="failed",
-        summary=f"Unknown setup action: {action_id}",
+        summary=f"{action.label} is not automated yet.",
     )
 
 
