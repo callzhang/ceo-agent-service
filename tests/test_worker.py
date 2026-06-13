@@ -1536,8 +1536,9 @@ def test_produce_once_fast_path_enqueues_pending_before_backoff(
 
 
 def test_produce_once_fast_path_skips_bare_minutes_link_before_backoff(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, monkeypatch, caplog
 ):
+    caplog.set_level("INFO", logger="app.worker")
     minutes_id = "76327569643331373139373932355f313131333531383337385f30"
     trigger = message(
         "[dingtalk://dingtalkclient/page/flash_minutes_detail?"
@@ -1573,11 +1574,10 @@ def test_produce_once_fast_path_skips_bare_minutes_link_before_backoff(
     attempts = worker.store.list_reply_attempts(limit=10)
     assert queued == 0
     assert worker.store.count_reply_tasks() == 0
-    assert len(attempts) == 1
-    assert attempts[0].trigger_message_id == "msg-minutes-only"
-    assert attempts[0].action == "no_reply"
-    assert attempts[0].send_status == "skipped"
-    assert attempts[0].codex_reason == "system_or_notification_message"
+    assert attempts == []
+    assert worker.store.has_seen("msg-minutes-only") is True
+    assert "producer skipped message" in caplog.text
+    assert "system_or_notification_message" in caplog.text
     assert codex.calls == []
 
 
@@ -2231,12 +2231,9 @@ def test_fast_path_backoff_skips_when_current_user_replied_after_trigger(
     worker.now_provider = lambda: fixed_worker_now() + timedelta(minutes=6)
     assert worker.run_once() is None
 
-    attempts = worker.store.list_reply_attempts(limit=10)
     assert worker.store.count_reply_tasks(status="done") == 1
-    assert len(attempts) == 1
-    assert attempts[0].action == "no_reply"
-    assert attempts[0].send_status == "skipped"
-    assert attempts[0].codex_reason == "current_user_replied_during_backoff"
+    assert worker.store.list_reply_attempts(limit=10) == []
+    assert worker.store.has_seen("msg-unread") is True
     assert codex.calls == []
     assert final_sent(dws) == []
 
@@ -2272,13 +2269,10 @@ def test_fast_path_backoff_skips_when_trigger_was_recalled_after_wait(
     worker.now_provider = lambda: fixed_worker_now() + timedelta(minutes=6)
     assert worker.run_once() is None
 
-    attempts = worker.store.list_reply_attempts(limit=10)
     assert dws.messages_by_id_reads == [["msg-unread"]]
     assert worker.store.count_reply_tasks(status="done") == 1
-    assert len(attempts) == 1
-    assert attempts[0].action == "no_reply"
-    assert attempts[0].send_status == "skipped"
-    assert attempts[0].codex_reason == "trigger_message_recalled_after_backoff"
+    assert worker.store.list_reply_attempts(limit=10) == []
+    assert worker.store.has_seen("msg-unread") is True
     assert codex.calls == []
     assert final_sent(dws) == []
 
@@ -4698,7 +4692,8 @@ def test_structured_link_card_is_skipped_before_codex(tmp_path: Path, monkeypatc
 
     assert codex.calls == []
     assert final_sent(dws) == []
-    assert worker.store.get_reply_attempt(1).action == "no_reply"
+    assert worker.store.count_reply_attempts() == 0
+    assert worker.store.has_seen("msg-1") is True
 
 
 def test_single_chat_alidocs_card_reaches_codex_as_material_reference(
@@ -4929,7 +4924,8 @@ def test_automatic_sync_notification_is_skipped_before_codex(
 
     assert codex.calls == []
     assert final_sent(dws) == []
-    assert worker.store.get_reply_attempt(1).action == "no_reply"
+    assert worker.store.count_reply_attempts() == 0
+    assert worker.store.has_seen("msg-1") is True
 
 
 def test_file_state_notification_is_skipped_before_codex(tmp_path: Path, monkeypatch):
@@ -4944,7 +4940,8 @@ def test_file_state_notification_is_skipped_before_codex(tmp_path: Path, monkeyp
 
     assert codex.calls == []
     assert final_sent(dws) == []
-    assert worker.store.get_reply_attempt(1).action == "no_reply"
+    assert worker.store.count_reply_attempts() == 0
+    assert worker.store.has_seen("msg-1") is True
 
 
 def test_project_status_notification_is_skipped_before_codex(
@@ -4961,7 +4958,8 @@ def test_project_status_notification_is_skipped_before_codex(
 
     assert codex.calls == []
     assert final_sent(dws) == []
-    assert worker.store.get_reply_attempt(1).action == "no_reply"
+    assert worker.store.count_reply_attempts() == 0
+    assert worker.store.has_seen("msg-1") is True
 
 
 def test_status_like_message_with_followup_request_is_processed_by_codex(
@@ -5039,7 +5037,8 @@ def test_bare_dingtalk_internal_link_is_skipped_before_codex(
 
     assert codex.calls == []
     assert final_sent(dws) == []
-    assert worker.store.get_reply_attempt(1).action == "no_reply"
+    assert worker.store.count_reply_attempts() == 0
+    assert worker.store.has_seen("msg-1") is True
 
 
 def test_ai_minutes_permission_request_is_auto_approved_without_codex_or_reply(
@@ -6918,6 +6917,51 @@ def test_codex_stop_with_error_keeps_queued_task_retryable(
     attempt = worker.store.get_reply_attempt(1)
     assert attempt is not None
     assert attempt.send_status == "failed"
+
+
+def test_stale_processing_task_with_terminal_attempt_is_completed_not_requeued(
+    tmp_path: Path, monkeypatch
+):
+    db_path = tmp_path / "worker.sqlite3"
+    trigger = message("[日程] 晚饭", message_id="msg-calendar", message_type="calendar")
+    dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该重跑")
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+    worker.store.enqueue_reply_task(
+        conversation_id="cid-1",
+        conversation_title="Melody",
+        single_chat=True,
+        trigger_message_id="msg-calendar",
+        trigger_create_time="2026-05-13 18:00:00",
+        trigger_sender="Melody",
+        trigger_text=trigger.content,
+        trigger_message_json=trigger.model_dump_json(),
+    )
+    claimed = worker.store.claim_reply_tasks(limit=1)[0]
+    worker.store.record_reply_attempt(
+        conversation_id="cid-1",
+        conversation_title="Melody",
+        trigger_message_id="msg-calendar",
+        trigger_sender="Melody",
+        trigger_text=trigger.content,
+        action="send_reply",
+        sensitivity_kind="general",
+        send_status="calendar",
+    )
+    with sqlite3.connect(db_path) as db:
+        db.execute(
+            "update reply_tasks set locked_at=datetime('now', '-31 minutes') where id=?",
+            (claimed.id,),
+        )
+
+    assert worker.consume_once(max_tasks=1) == 1
+
+    assert worker.store.count_reply_tasks(status="done") == 1
+    assert worker.store.count_reply_tasks(status="pending") == 0
+    assert worker.store.count_errors() == 0
+    assert codex.calls == []
 
 
 def test_critical_info_unavailable_stop_with_error_fails_queued_task(

@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import re
 import time
@@ -76,6 +77,8 @@ from app.store import (
 )
 from app.task_models import WorkItem
 
+logger = logging.getLogger(__name__)
+
 HANDOFF_ACK = handoff_ack()
 HANDOFF_TEXT_EMOTION = "我去叫"
 # Historical auto-ack marker. Keep filtering it from context, but do not send
@@ -99,6 +102,13 @@ DWS_TRANSIENT_ERROR_STATE_PREFIX = "dws_transient_error_count:"
 DWS_TRANSIENT_NOTIFY_THRESHOLD = 3
 T = TypeVar("T")
 CALENDAR_ACTION_SEND_STATUS = "calendar"
+SUCCESSFUL_TERMINAL_ATTEMPT_STATUSES = {
+    "sent",
+    "skipped",
+    "reacted",
+    "commented",
+    CALENDAR_ACTION_SEND_STATUS,
+}
 TEXT_MESSAGE_TYPES = {"text"}
 RENDERED_NON_TEXT_PREFIXES = (
     "[文件]",
@@ -1094,11 +1104,17 @@ class DingTalkAutoReplyWorker:
         stale_tasks = self.store.list_stale_processing_reply_tasks(
             STALE_PROCESSING_TASK_SECONDS
         )
+        stale_tasks_to_requeue = []
+        for stale_task in stale_tasks:
+            if self._complete_stale_task_with_terminal_attempt(stale_task):
+                processed_tasks += 1
+            else:
+                stale_tasks_to_requeue.append(stale_task)
         reset_count = self.store.reset_stale_processing_reply_tasks(
             STALE_PROCESSING_TASK_SECONDS
         )
         if reset_count:
-            for stale_task in stale_tasks:
+            for stale_task in stale_tasks_to_requeue:
                 self.store.record_error(
                     stale_task.conversation_id,
                     stale_task.trigger_message_id,
@@ -1186,6 +1202,33 @@ class DingTalkAutoReplyWorker:
             else:
                 self.store.defer_reply_task(task.id, "dry_run")
         return processed_tasks
+
+    def _complete_stale_task_with_terminal_attempt(self, task: ReplyTask) -> bool:
+        attempt = self.store.get_latest_reply_attempt_for_trigger(
+            task.conversation_id,
+            task.trigger_message_id,
+        )
+        if attempt is None:
+            return False
+        if attempt.send_status.strip().lower() not in SUCCESSFUL_TERMINAL_ATTEMPT_STATUSES:
+            return False
+        if (
+            task.locked_at
+            and attempt.updated_at
+            and attempt.updated_at < task.locked_at
+        ):
+            return False
+        self.store.complete_reply_task(task.id)
+        logger.info(
+            "completed stale processing task from terminal attempt "
+            "task_id=%s attempt_id=%s status=%s conversation_id=%s message_id=%s",
+            task.id,
+            attempt.id,
+            attempt.send_status,
+            task.conversation_id,
+            task.trigger_message_id,
+        )
+        return True
 
     @staticmethod
     def _is_authorization_error(exc: Exception) -> bool:
@@ -3344,31 +3387,11 @@ class DingTalkAutoReplyWorker:
         conversation: DingTalkConversation,
         message: DingTalkMessage,
     ) -> None:
-        existing_attempt = self.store.get_latest_reply_attempt_for_trigger(
-            conversation.open_conversation_id,
-            message.open_message_id,
-        )
-        if (
-            existing_attempt
-            and existing_attempt.action == CodexAction.NO_REPLY.value
-            and existing_attempt.send_status == "skipped"
-        ):
-            return
-        attempt_id = self.store.record_reply_attempt_for_trigger(
-            conversation_id=conversation.open_conversation_id,
-            conversation_title=conversation.title,
-            trigger_message_id=message.open_message_id,
-            trigger_sender=message.sender_name,
-            trigger_text=message.content,
-            action=CodexAction.NO_REPLY.value,
-            sensitivity_kind="general",
-            codex_reason="system_or_notification_message",
+        self._log_producer_skip(
+            conversation,
+            message,
+            reason="system_or_notification_message",
             audit_summary="系统类或通知类消息，无需自动回复。",
-        )
-        self.store.update_reply_attempt(
-            attempt_id,
-            send_status="skipped",
-            send_error="no_reply",
         )
 
     def _record_current_user_replied_during_backoff_skip(
@@ -3376,34 +3399,14 @@ class DingTalkAutoReplyWorker:
         conversation: DingTalkConversation,
         message: DingTalkMessage,
     ) -> None:
-        existing_attempt = self.store.get_latest_reply_attempt_for_trigger(
-            conversation.open_conversation_id,
-            message.open_message_id,
-        )
-        if (
-            existing_attempt
-            and existing_attempt.action == CodexAction.NO_REPLY.value
-            and existing_attempt.send_status == "skipped"
-        ):
-            return
-        attempt_id = self.store.record_reply_attempt_for_trigger(
-            conversation_id=conversation.open_conversation_id,
-            conversation_title=conversation.title,
-            trigger_message_id=message.open_message_id,
-            trigger_sender=message.sender_name,
-            trigger_text=message.content,
-            action=CodexAction.NO_REPLY.value,
-            sensitivity_kind="general",
-            codex_reason="current_user_replied_during_backoff",
+        self._log_producer_skip(
+            conversation,
+            message,
+            reason="current_user_replied_during_backoff",
             audit_summary=(
                 "快路径首次发现未读后已等待；等待窗口内检测到本人已在该 trigger "
                 "之后回复，因此不再由 agent 自动回复。"
             ),
-        )
-        self.store.update_reply_attempt(
-            attempt_id,
-            send_status="skipped",
-            send_error="no_reply",
         )
 
     def _record_trigger_recalled_after_backoff_skip(
@@ -3411,34 +3414,14 @@ class DingTalkAutoReplyWorker:
         conversation: DingTalkConversation,
         message: DingTalkMessage,
     ) -> None:
-        existing_attempt = self.store.get_latest_reply_attempt_for_trigger(
-            conversation.open_conversation_id,
-            message.open_message_id,
-        )
-        if (
-            existing_attempt
-            and existing_attempt.action == CodexAction.NO_REPLY.value
-            and existing_attempt.send_status == "skipped"
-        ):
-            return
-        attempt_id = self.store.record_reply_attempt_for_trigger(
-            conversation_id=conversation.open_conversation_id,
-            conversation_title=conversation.title,
-            trigger_message_id=message.open_message_id,
-            trigger_sender=message.sender_name,
-            trigger_text=message.content,
-            action=CodexAction.NO_REPLY.value,
-            sensitivity_kind="general",
-            codex_reason="trigger_message_recalled_after_backoff",
+        self._log_producer_skip(
+            conversation,
+            message,
+            reason="trigger_message_recalled_after_backoff",
             audit_summary=(
                 "快路径等待窗口结束后复核原 trigger；DWS 返回该消息已撤回或不再可见，"
                 "因此不再由 agent 自动回复。"
             ),
-        )
-        self.store.update_reply_attempt(
-            attempt_id,
-            send_status="skipped",
-            send_error="no_reply",
         )
 
     def _record_stale_message_skip(
@@ -3446,31 +3429,31 @@ class DingTalkAutoReplyWorker:
         conversation: DingTalkConversation,
         message: DingTalkMessage,
     ) -> None:
-        existing_attempt = self.store.get_latest_reply_attempt_for_trigger(
-            conversation.open_conversation_id,
-            message.open_message_id,
-        )
-        if (
-            existing_attempt
-            and existing_attempt.action == CodexAction.NO_REPLY.value
-            and existing_attempt.send_status == "skipped"
-        ):
-            return
-        attempt_id = self.store.record_reply_attempt_for_trigger(
-            conversation_id=conversation.open_conversation_id,
-            conversation_title=conversation.title,
-            trigger_message_id=message.open_message_id,
-            trigger_sender=message.sender_name,
-            trigger_text=message.content,
-            action=CodexAction.NO_REPLY.value,
-            sensitivity_kind="general",
-            codex_reason="message_older_than_24h",
+        self._log_producer_skip(
+            conversation,
+            message,
+            reason="message_older_than_24h",
             audit_summary="消息超过最近 24 小时窗口，不自动回复。",
         )
-        self.store.update_reply_attempt(
-            attempt_id,
-            send_status="skipped",
-            send_error="no_reply",
+
+    def _log_producer_skip(
+        self,
+        conversation: DingTalkConversation,
+        message: DingTalkMessage,
+        *,
+        reason: str,
+        audit_summary: str,
+    ) -> None:
+        logger.info(
+            "producer skipped message status=skipped reason=%s "
+            "conversation_id=%s message_id=%s conversation_title=%r "
+            "sender=%r audit_summary=%s",
+            reason,
+            conversation.open_conversation_id,
+            message.open_message_id,
+            conversation.title,
+            message.sender_name,
+            audit_summary,
         )
 
     @staticmethod
