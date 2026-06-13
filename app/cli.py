@@ -94,7 +94,7 @@ def _default_data_dir() -> Path:
 
 
 def _default_corpus_dir() -> Path:
-    return _repo_root() / "corpus"
+    return _repo_root() / "data" / "corpus"
 
 
 class WorkerSettings(BaseModel):

@@ -153,7 +153,7 @@ Use repo-local paths.
 Committed project assets:
 
 ```text
-profiles/work_profile.md
+data/work-profile/work_profile.md
 ```
 
 Ignored runtime evidence data:
@@ -169,7 +169,7 @@ and do not overwrite it.
 
 ## Profile Shape
 
-`profiles/work_profile.md` should be concise and readable. It should
+`data/work-profile/work_profile.md` should be concise and readable. It should
 include:
 
 - purpose and scope
@@ -188,7 +188,7 @@ include:
 Add a prompt rule equivalent to:
 
 ```text
-If profiles/work_profile.md exists in this repository, read it before
+If data/work-profile/work_profile.md exists in this repository, read it before
 making work-context judgments about reply style, follow-up questions, refusal,
 handoff, or decision framing.
 ```
@@ -241,10 +241,10 @@ Alex should review:
 
 The first implementation is complete when:
 
-- `profiles/work_profile.md` exists
+- `data/work-profile/work_profile.md` exists
 - `data/profile-evidence/evidence_index.jsonl` is produced as ignored evidence
   data
-- no `profiles/work_profile.json`, `profiles/work-skill/SKILL.md`, or
+- no `data/work-profile/work_profile.json`, `data/work-profile/work-skill/SKILL.md`, or
   `data/profile-evidence/dingtalk_kb_cache/` is produced by the builder
 - prompt integration reads the profile when present
 - profile absence keeps existing behavior unchanged

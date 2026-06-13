@@ -8,7 +8,7 @@ def repo_root() -> Path:
 
 
 def env_path(name: str, default: Path | str) -> Path:
-    return Path(os.getenv(name, str(default))).expanduser()
+    return Path(os.path.expandvars(os.getenv(name, str(default)))).expanduser()
 
 
 def env_file_path() -> Path:
@@ -84,7 +84,7 @@ load_env_file()
 def work_profile_path() -> Path:
     return env_path(
         "CEO_WORK_PROFILE_PATH",
-        repo_root() / "profiles" / "work_profile.md",
+        repo_root() / "data" / "work-profile" / "work_profile.md",
     )
 
 
@@ -104,7 +104,7 @@ def worker_db_path() -> Path:
 
 
 def corpus_dir() -> Path:
-    return env_path("CEO_CORPUS_DIR", repo_root() / "corpus")
+    return env_path("CEO_CORPUS_DIR", repo_root() / "data" / "corpus")
 
 
 def env_csv(name: str, default: tuple[str, ...]) -> tuple[str, ...]:

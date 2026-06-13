@@ -35,7 +35,7 @@ the local machine first and ask only when inspection cannot answer it.
 | Repository path | `~/Documents/Projects/ceo-agent-service` | Must be the service checkout. |
 | Workspace path | `~/Documents/memory` | Local knowledge corpus, AI minutes, SOPs, and source docs. |
 | Database path | `./data/auto-reply.sqlite3` | Local SQLite runtime state. |
-| Corpus path | `./corpus` | Ignored by Git; contains style corpus. |
+| Corpus path | `./data/corpus` | Ignored by Git; contains style corpus. |
 | Principal display name | user supplied | Used in prompts, aliases, and handoff text. |
 | Mention aliases | user supplied | Include exact DingTalk @ aliases, comma-separated. |
 | Assistant signature | user supplied | Text appended to automated replies. |
@@ -182,7 +182,7 @@ not in `~/.agents/skills`.
    ```text
    CEO_WORKSPACE=$HOME/Documents/memory
    CEO_WORKER_DB=./data/auto-reply.sqlite3
-   CEO_CORPUS_DIR=./corpus
+   CEO_CORPUS_DIR=./data/corpus
    CEO_DRY_RUN=1
    CEO_PRINCIPAL_NAME=<principal display name>
    USER_ALIAS=<principal display name>
@@ -200,7 +200,7 @@ not in `~/.agents/skills`.
 4. Verify important paths exist:
 
    ```sh
-   mkdir -p data corpus "$HOME/Documents/memory"
+   mkdir -p data/corpus "$HOME/Documents/memory"
    test -d "$HOME/Documents/memory"
    ```
 
@@ -230,7 +230,7 @@ Agent tasks:
    ```sh
    .venv/bin/ceo-agent build-corpus \
      --workspace "$HOME/Documents/memory" \
-     --corpus-dir ./corpus
+     --corpus-dir ./data/corpus
    ```
 
 4. Append recent DingTalk sent-message samples:
@@ -238,7 +238,7 @@ Agent tasks:
    ```sh
    .venv/bin/ceo-agent collect-corpus \
      --workspace "$HOME/Documents/memory" \
-     --corpus-dir ./corpus
+     --corpus-dir ./data/corpus
    ```
 
 This reads through the current `dws` identity. If the command fails on auth or
@@ -251,7 +251,7 @@ permission, fix `dws` before continuing.
    ```sh
    .venv/bin/ceo-agent build-work-profile \
      --workspace "$HOME/Documents/memory" \
-     --corpus-dir ./corpus
+     --corpus-dir ./data/corpus
    ```
 
 2. If the user provided a DingTalk KB workspace id or URL, include it:
@@ -259,27 +259,27 @@ permission, fix `dws` before continuing.
    ```sh
    .venv/bin/ceo-agent build-work-profile \
      --workspace "$HOME/Documents/memory" \
-     --corpus-dir ./corpus \
+     --corpus-dir ./data/corpus \
      --dingtalk-kb-workspace '<workspace-id-or-url>'
    ```
 
 3. Expected outputs:
 
    ```text
-   profiles/work_profile.md
+   data/work-profile/work_profile.md
    data/profile-evidence/evidence_index.jsonl
-   corpus/style_corpus.csv
+   data/corpus/style_corpus.csv
    ```
 
 4. Run a Nvwa review pass over:
 
    ```text
-   profiles/work_profile.md
+   data/work-profile/work_profile.md
    data/profile-evidence/evidence_index.jsonl
-   corpus/style_corpus.csv
+   data/corpus/style_corpus.csv
    ```
 
-5. The Nvwa pass must rewrite only `profiles/work_profile.md`. It must not add
+5. The Nvwa pass must rewrite only `data/work-profile/work_profile.md`. It must not add
    raw private excerpts, absolute local paths, tokens, session ids, or DingTalk
    cache content.
 
@@ -445,7 +445,7 @@ Only after reviewing dry-run attempts with the user:
 - Workspace and corpus directories exist outside committed source data.
 - `build-corpus`, `collect-corpus`, and `build-work-profile` completed or have
   documented blockers.
-- `profiles/work_profile.md` reviewed and contains no private raw evidence.
+- `data/work-profile/work_profile.md` reviewed and contains no private raw evidence.
 - Audit web UI loads on `127.0.0.1:8765`.
 - Dry-run `run-once` has been reviewed in the UI.
 - launchd is installed only after dry-run approval.

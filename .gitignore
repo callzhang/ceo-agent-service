@@ -1,4 +1,11 @@
 .DS_Store
+._*
+* 2.*
+* 2
+* 3.*
+* 3
+* 4.*
+* 4
 .env
 .env.*
 !.env.example
@@ -7,15 +14,29 @@ node_modules/
 .next/
 dist/
 coverage/
+prompts/
+profiles/
 .venv/
 __pycache__/
 .pytest_cache/
 .mypy_cache/
+.ruff_cache/
 *.pyc
 *.egg-info/
+*.log
+*.sqlite3
+*.sqlite3.*
+*.bak
+*.bak-*
+*.backup-*
+*.before-*
 data/*
-!data/.gitkeep
+!data/README.md
+data/prompts/
+data/work-profile/
 logs/
 corpus/
+data/corpus/
 .vercel
+.vercel/output/
 outputs/

@@ -7,6 +7,11 @@ from io import StringIO
 from pathlib import Path
 
 from app.cli import setup_memory_connector_command
+from app.developer_prompt import (
+    SEED_DEVELOPER_PROMPT_TEMPLATE,
+    SEED_USER_PROMPT_TEMPLATE,
+)
+from app.prompt import DEFAULT_WORK_PROFILE_TEXT
 from app.setup_wizard_models import (
     SetupAction,
     SetupStatus,
@@ -116,7 +121,7 @@ SETUP_WIZARD_STEPS: tuple[SetupStepDefinition, ...] = (
         id="work_profile",
         title="Work Profile Distillation",
         phase="Phase 5",
-        description="Generate and verify profiles/work_profile.md and evidence index.",
+        description="Generate and verify data/work-profile/work_profile.md and evidence index.",
         depends_on=["data_corpus"],
         actions=[
             SetupAction(
@@ -291,6 +296,14 @@ def _configured_corpus_dir(repo_root: Path) -> Path:
     return _resolve_repo_path(repo_root, values.get("CEO_CORPUS_DIR", "data/corpus"))
 
 
+def _configured_work_profile_path(repo_root: Path) -> Path:
+    values = _env_values(repo_root / ".env")
+    return _resolve_repo_path(
+        repo_root,
+        values.get("CEO_WORK_PROFILE_PATH", "data/work-profile/work_profile.md"),
+    )
+
+
 def _contains_sensitive_profile_evidence(text: str) -> bool:
     return any(
         pattern.search(text)
@@ -379,7 +392,7 @@ def check_data_corpus(*, repo_root: Path) -> SetupStepStatus:
 
 
 def check_work_profile(*, repo_root: Path) -> SetupStepStatus:
-    profile = repo_root / "profiles" / "work_profile.md"
+    profile = _configured_work_profile_path(repo_root)
     evidence = repo_root / "data" / "profile-evidence" / "evidence_index.jsonl"
     style_corpus = _configured_corpus_dir(repo_root) / "style_corpus.csv"
     if not profile.exists():
@@ -387,7 +400,7 @@ def check_work_profile(*, repo_root: Path) -> SetupStepStatus:
             "work_profile",
             title="Work Profile Distillation",
             status="needs_action",
-            summary="profiles/work_profile.md is missing.",
+            summary="data/work-profile/work_profile.md is missing.",
             evidence={"profile_exists": False},
         )
     if not evidence.exists():
@@ -410,7 +423,7 @@ def check_work_profile(*, repo_root: Path) -> SetupStepStatus:
             "work_profile",
             title="Work Profile Distillation",
             status="failed",
-            summary="profiles/work_profile.md contains sensitive local evidence.",
+            summary="data/work-profile/work_profile.md contains sensitive local evidence.",
         )
     return _status(
         "work_profile",
@@ -553,6 +566,9 @@ def _setup_service_config(
         "CEO_WORKSPACE": "workspace",
         "CEO_WORKER_DB": "data/auto-reply.sqlite3",
         "CEO_CORPUS_DIR": "data/corpus",
+        "CEO_WORK_PROFILE_PATH": "data/work-profile/work_profile.md",
+        "CEO_DEVELOPER_PROMPT_TEMPLATE_PATH": "data/prompts/developer_prompt.md",
+        "CEO_USER_PROMPT_TEMPLATE_PATH": "data/prompts/user_prompt.md",
         "CEO_NOT_SEND_MESSAGE": "1",
     }
     for key, default in defaults.items():
@@ -566,22 +582,50 @@ def _setup_service_config(
     workspace = _resolve_repo_path(repo_root, values["CEO_WORKSPACE"])
     db_parent = _resolve_repo_path(repo_root, values["CEO_WORKER_DB"]).parent
     corpus_dir = _resolve_repo_path(repo_root, values["CEO_CORPUS_DIR"])
+    work_profile = _resolve_repo_path(repo_root, values["CEO_WORK_PROFILE_PATH"])
+    developer_prompt = _resolve_repo_path(
+        repo_root,
+        values["CEO_DEVELOPER_PROMPT_TEMPLATE_PATH"],
+    )
+    user_prompt = _resolve_repo_path(
+        repo_root,
+        values["CEO_USER_PROMPT_TEMPLATE_PATH"],
+    )
     workspace.mkdir(parents=True, exist_ok=True)
     db_parent.mkdir(parents=True, exist_ok=True)
     corpus_dir.mkdir(parents=True, exist_ok=True)
+    _seed_missing_file(
+        developer_prompt,
+        SEED_DEVELOPER_PROMPT_TEMPLATE.read_text(encoding="utf-8"),
+    )
+    _seed_missing_file(
+        user_prompt,
+        SEED_USER_PROMPT_TEMPLATE.read_text(encoding="utf-8"),
+    )
+    _seed_missing_file(work_profile, DEFAULT_WORK_PROFILE_TEXT)
 
     return SetupWizardEvent(
         step_id="service_config",
         action_id="setup_service_config",
         status="done",
-        summary="Created .env and runtime directories.",
+        summary="Created .env, runtime directories, and default runtime files.",
         evidence={
             "env_path": _redact_evidence_path(env_path),
             "workspace": _redact_evidence_path(workspace),
             "db_parent": _redact_evidence_path(db_parent),
             "corpus_dir": _redact_evidence_path(corpus_dir),
+            "work_profile": _redact_evidence_path(work_profile),
+            "developer_prompt": _redact_evidence_path(developer_prompt),
+            "user_prompt": _redact_evidence_path(user_prompt),
         },
     )
+
+
+def _seed_missing_file(path: Path, content: str) -> None:
+    if path.exists():
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8")
 
 
 def _setup_mcp(

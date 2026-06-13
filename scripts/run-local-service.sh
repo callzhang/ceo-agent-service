@@ -15,7 +15,7 @@ export CEO_POLL_INTERVAL_SECONDS="${CEO_POLL_INTERVAL_SECONDS:-30}"
 export CEO_PRODUCER_INTERVAL_SECONDS="${CEO_PRODUCER_INTERVAL_SECONDS:-60}"
 export CEO_CONSUMER_POLL_INTERVAL_SECONDS="${CEO_CONSUMER_POLL_INTERVAL_SECONDS:-10}"
 export CEO_BATCH_SECONDS="${CEO_BATCH_SECONDS:-120}"
-export CEO_CORPUS_DIR="${CEO_CORPUS_DIR:-${repo_root}/corpus}"
+export CEO_CORPUS_DIR="${CEO_CORPUS_DIR:-${repo_root}/data/corpus}"
 
 ceo_agent_cmd=(.venv/bin/python -c 'from app.cli import main; main()')
 if [[ -x .venv/bin/ceo-agent ]]; then

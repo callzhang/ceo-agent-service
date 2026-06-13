@@ -18,6 +18,14 @@ MARKDOWN_LINK_RE = re.compile(r"\[([^\]]+)]\((https?://[^)]+)\)")
 RAW_URL_RE = re.compile(r"https?://[^\s)]+")
 HTML_TAG_RE = re.compile(r"<[^>]+>")
 LINKED_DOCUMENT_MARKDOWN_LIMIT = 20000
+DEFAULT_WORK_PROFILE_TEXT = """# Work Profile
+
+No distilled work profile has been generated yet.
+
+This placeholder lets the service start before local corpus/profile preparation
+has finished. Replace it by running `build-work-profile` or by setting
+`CEO_WORK_PROFILE_PATH` to another Markdown profile file.
+"""
 
 
 @dataclass(frozen=True)
@@ -39,7 +47,8 @@ class MaterialReferenceContext:
 def work_profile_instruction() -> str:
     path = work_profile_path()
     if not path.exists():
-        return ""
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(DEFAULT_WORK_PROFILE_TEXT, encoding="utf-8")
     profile = path.read_text(encoding="utf-8").strip()
     if not profile:
         return ""

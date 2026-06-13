@@ -128,9 +128,9 @@ The first implementation should follow the runbook phases:
 6. **Work Profile Distillation**
    - Run `build-work-profile`.
    - Verify:
-     - `profiles/work_profile.md`
+     - `data/work-profile/work_profile.md`
      - `data/profile-evidence/evidence_index.jsonl`
-     - `corpus/style_corpus.csv`
+     - `data/corpus/style_corpus.csv`
    - Check generated profile for obvious path, token, session id, or raw cache
      leakage.
    - Verify runtime consumption tests for `work_profile_instruction()`.

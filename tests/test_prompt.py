@@ -40,8 +40,43 @@ def test_developer_prompt_template_path_can_be_overridden(tmp_path, monkeypatch)
     assert developer_prompt_template_path() == template_path
 
 
+def test_prompt_template_paths_default_to_ignored_data_files(monkeypatch):
+    monkeypatch.delenv("CEO_DEVELOPER_PROMPT_TEMPLATE_PATH", raising=False)
+    monkeypatch.delenv("CEO_USER_PROMPT_TEMPLATE_PATH", raising=False)
+
+    assert developer_prompt_template_path() == repo_root() / "data" / "prompts" / "developer_prompt.md"
+    assert user_prompt_template_path() == repo_root() / "data" / "prompts" / "user_prompt.md"
+
+
+def test_prompt_template_paths_expand_home(monkeypatch):
+    monkeypatch.setenv("CEO_DEVELOPER_PROMPT_TEMPLATE_PATH", "~/developer.md")
+    monkeypatch.setenv("CEO_USER_PROMPT_TEMPLATE_PATH", "~/user.md")
+
+    assert developer_prompt_template_path() == Path.home() / "developer.md"
+    assert user_prompt_template_path() == Path.home() / "user.md"
+
+
+def test_read_prompt_templates_seed_missing_configured_files(tmp_path, monkeypatch):
+    developer_path = tmp_path / "data" / "prompts" / "developer_prompt.md"
+    user_path = tmp_path / "data" / "prompts" / "user_prompt.md"
+    monkeypatch.setenv("CEO_DEVELOPER_PROMPT_TEMPLATE_PATH", str(developer_path))
+    monkeypatch.setenv("CEO_USER_PROMPT_TEMPLATE_PATH", str(user_path))
+
+    developer_template = read_developer_prompt_template()
+    user_template = read_user_prompt_template()
+
+    assert developer_path.exists()
+    assert user_path.exists()
+    assert "<var: principal>" in developer_template
+    assert "<code: app.prompt:work_profile_instruction()>" in developer_template
+    assert "<code: app.user_prompt_blocks:current_message_block()>" in user_template
+    assert "CEO Agent Prompt" not in user_template
+
+
 def test_developer_prompt_template_renders_vars_files_and_code(tmp_path, monkeypatch):
-    profile = repo_root() / "profiles" / "work_profile.md"
+    del tmp_path
+    profile = repo_root() / ".developer_prompt_test_profile.md"
+    profile.write_text("- profile line\n", encoding="utf-8")
     script = repo_root() / ".developer_prompt_test_script.py"
     script.write_text(
         "def dynamic_rule():\n"
@@ -59,7 +94,7 @@ def test_developer_prompt_template_renders_vars_files_and_code(tmp_path, monkeyp
                     "</vars>",
                     "",
                     "principal=<var: principal>",
-                    "profile=<file: profiles/work_profile.md>",
+                    f"profile=<file: {profile}>",
                     "code=<code: .developer_prompt_test_script.py:dynamic_rule()>",
                     "handoff=<var: handoff>",
                 ]
@@ -67,9 +102,10 @@ def test_developer_prompt_template_renders_vars_files_and_code(tmp_path, monkeyp
         )
     finally:
         script.unlink(missing_ok=True)
+        profile.unlink(missing_ok=True)
 
     assert "principal=Alex" in rendered
-    assert profile.read_text(encoding="utf-8").splitlines()[0] in rendered
+    assert "- profile line" in rendered
     assert "code=runtime rule from code" in rendered
     assert "handoff=Alex" in rendered
 
@@ -114,13 +150,13 @@ def test_developer_prompt_documents_agent_envelope_output_protocol():
 def test_work_profile_path_default_is_not_user_specific(monkeypatch):
     monkeypatch.delenv("CEO_WORK_PROFILE_PATH", raising=False)
 
-    assert work_profile_path() == repo_root() / "profiles" / "work_profile.md"
+    assert work_profile_path() == repo_root() / "data" / "work-profile" / "work_profile.md"
 
 
 def test_config_paths_expand_home(monkeypatch):
     monkeypatch.setenv("CEO_ENV_FILE", "~/.ceo-agent-test.env")
     monkeypatch.setenv("CEO_WORK_PROFILE_PATH", "~/profile.md")
-    monkeypatch.setenv("CEO_PROFILE_EVIDENCE_DIR", "~/profile-evidence")
+    monkeypatch.setenv("CEO_PROFILE_EVIDENCE_DIR", "$HOME/profile-evidence")
 
     assert env_file_path() == Path.home() / ".ceo-agent-test.env"
     assert work_profile_path() == Path.home() / "profile.md"
@@ -141,6 +177,23 @@ def test_work_profile_instruction_uses_configured_principal_name(
     assert "the principal 工作人格 Profile" not in instruction
     assert "更接近 Alex 的判断顺序" in instruction
     assert "更接近 the principal 的判断顺序" not in instruction
+
+
+def test_work_profile_instruction_seeds_missing_configured_profile(
+    tmp_path,
+    monkeypatch,
+):
+    profile = tmp_path / "data" / "work-profile" / "work_profile.md"
+    monkeypatch.setenv("CEO_WORK_PROFILE_PATH", str(profile))
+    monkeypatch.setenv("USER_ALIAS", "Alex")
+
+    instruction = work_profile_instruction()
+
+    assert profile.exists()
+    assert "Alex 工作人格 Profile" in instruction
+    assert "No distilled work profile has been generated yet." in profile.read_text(
+        encoding="utf-8"
+    )
 
 
 def test_user_prompt_template_path_can_be_overridden(tmp_path, monkeypatch):
@@ -602,17 +655,28 @@ def test_thread_prompt_requires_sender_org_context_when_available():
     assert "本 thread 必须主动使用 graphify" not in prompt
 
 
-def test_thread_prompt_injects_work_profile_without_exposing_path(monkeypatch):
+def test_thread_prompt_injects_work_profile_without_exposing_path(
+    monkeypatch,
+    tmp_path,
+):
+    profile = tmp_path / "work_profile.md"
+    profile.write_text(
+        "# Work Profile\n\n"
+        "This profile is a runtime work-judgment profile.\n\n"
+        "## Core Operating Loop\n\n"
+        "- Decide whether to reply.\n",
+        encoding="utf-8",
+    )
     monkeypatch.setenv(
         "CEO_WORK_PROFILE_PATH",
-        str(repo_root() / "profiles" / "work_profile.md"),
+        str(profile),
     )
 
     prompt = ceo_agent_thread_prompt()
 
     assert "明哥 工作人格 Profile" in prompt
     assert (
-        "/Users/principal/Documents/Projects/ceo-agent-service/profiles/work_profile.md"
+        "/Users/principal/Documents/Projects/ceo-agent-service/data/work-profile/work_profile.md"
         not in prompt
     )
     assert "不要再尝试读取 profile 文件路径" in prompt

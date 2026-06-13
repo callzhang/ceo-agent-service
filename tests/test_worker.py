@@ -760,6 +760,7 @@ class FakeCodex:
         self.last_transcript_end_line = transcript_end_line
         self.before_decide = before_decide
         self.calls: list[tuple[str, str | None, list[Path]]] = []
+        self.image_bytes_calls: list[list[bytes]] = []
 
     def decide(
         self,
@@ -769,7 +770,9 @@ class FakeCodex:
     ) -> CodexDecision:
         if self.before_decide is not None:
             self.before_decide(prompt, session_id)
-        self.calls.append((prompt, session_id, image_paths or []))
+        paths = image_paths or []
+        self.image_bytes_calls.append([path.read_bytes() for path in paths])
+        self.calls.append((prompt, session_id, paths))
         if self.next_session_id is not None:
             self.last_session_id = self.next_session_id
         return self.decision
@@ -6657,7 +6660,9 @@ def test_media_id_image_is_downloaded_and_passed_to_codex(
     image_paths = codex.calls[0][2]
     assert len(image_paths) == 1
     assert image_paths[0].suffix == ".png"
-    assert image_paths[0].read_bytes() == b"\x89PNG\r\n\x1a\nimage-bytes"
+    assert codex.image_bytes_calls == [[b"\x89PNG\r\n\x1a\nimage-bytes"]]
+    assert image_paths[0].exists() is False
+    assert not (tmp_path / "image-attachments").exists()
 
 
 def test_media_id_image_uses_dws_local_download_path(tmp_path: Path, monkeypatch):
@@ -6691,7 +6696,8 @@ def test_media_id_image_uses_dws_local_download_path(tmp_path: Path, monkeypatch
 
     image_paths = codex.calls[0][2]
     assert len(image_paths) == 1
-    assert image_paths[0].read_bytes() == b"\x89PNG\r\n\x1a\nlocal-image"
+    assert codex.image_bytes_calls == [[b"\x89PNG\r\n\x1a\nlocal-image"]]
+    assert image_paths[0].exists() is False
     assert dws_local_path.exists() is False
 
 
@@ -6730,7 +6736,8 @@ def test_media_id_image_reads_nested_dws_download_url_response(
 
     image_paths = codex.calls[0][2]
     assert len(image_paths) == 1
-    assert image_paths[0].read_bytes() == b"\x89PNG\r\n\x1a\nnested-image"
+    assert codex.image_bytes_calls == [[b"\x89PNG\r\n\x1a\nnested-image"]]
+    assert image_paths[0].exists() is False
 
 
 def test_robot_download_code_image_is_downloaded_and_passed_to_codex(
@@ -6768,7 +6775,8 @@ def test_robot_download_code_image_is_downloaded_and_passed_to_codex(
     image_paths = codex.calls[0][2]
     assert len(image_paths) == 1
     assert image_paths[0].suffix == ".jpeg"
-    assert image_paths[0].read_bytes() == b"\xff\xd8\xffimage-bytes"
+    assert codex.image_bytes_calls == [[b"\xff\xd8\xffimage-bytes"]]
+    assert image_paths[0].exists() is False
 
 
 def test_image_download_failure_is_passed_to_codex_prompt(tmp_path: Path, monkeypatch):

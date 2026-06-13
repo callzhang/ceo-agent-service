@@ -1199,7 +1199,7 @@ def test_settings_defaults_point_to_memory_home():
 
     assert settings.workspace == Path.home() / "Documents" / "memory"
     assert settings.db_path == repo_root / "data" / "auto-reply.sqlite3"
-    assert settings.corpus_dir == repo_root / "corpus"
+    assert settings.corpus_dir == repo_root / "data" / "corpus"
     assert settings.batch_seconds == 120
     assert settings.poll_interval_seconds == 300
     assert settings.codex_timeout_seconds == 420

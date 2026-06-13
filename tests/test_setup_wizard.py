@@ -379,14 +379,14 @@ def test_check_work_profile_requires_profile_and_evidence(tmp_path: Path):
     result = check_work_profile(repo_root=tmp_path)
 
     assert result.status == "needs_action"
-    assert result.summary == "profiles/work_profile.md is missing."
+    assert result.summary == "data/work-profile/work_profile.md is missing."
 
 
 def test_check_work_profile_flags_leaked_local_path(tmp_path: Path):
-    (tmp_path / "profiles").mkdir()
+    (tmp_path / "data" / "work-profile").mkdir(parents=True)
     (tmp_path / "data" / "profile-evidence").mkdir(parents=True)
     (tmp_path / "data" / "corpus").mkdir(parents=True)
-    (tmp_path / "profiles" / "work_profile.md").write_text(
+    (tmp_path / "data" / "work-profile" / "work_profile.md").write_text(
         "Evidence from /Users/derek/Documents/private.md",
         encoding="utf-8",
     )
@@ -402,7 +402,7 @@ def test_check_work_profile_flags_leaked_local_path(tmp_path: Path):
     result = check_work_profile(repo_root=tmp_path)
 
     assert result.status == "failed"
-    assert result.summary == "profiles/work_profile.md contains sensitive local evidence."
+    assert result.summary == "data/work-profile/work_profile.md contains sensitive local evidence."
 
 
 def test_check_work_profile_uses_configured_corpus_dir_and_redaction_patterns(
@@ -415,9 +415,9 @@ def test_check_work_profile_uses_configured_corpus_dir_and_redaction_patterns(
         f"CEO_CORPUS_DIR={external_corpus}\n",
         encoding="utf-8",
     )
-    (tmp_path / "profiles").mkdir()
+    (tmp_path / "data" / "work-profile").mkdir(parents=True)
     (tmp_path / "data" / "profile-evidence").mkdir(parents=True)
-    (tmp_path / "profiles" / "work_profile.md").write_text(
+    (tmp_path / "data" / "work-profile" / "work_profile.md").write_text(
         "api_key: sk-secret /tmp/private-cache "
         "019eb3e7-dfc2-7fd2-8deb-81f76fcfcdf1",
         encoding="utf-8",
@@ -430,7 +430,7 @@ def test_check_work_profile_uses_configured_corpus_dir_and_redaction_patterns(
     result = check_work_profile(repo_root=tmp_path)
 
     assert result.status == "failed"
-    assert result.summary == "profiles/work_profile.md contains sensitive local evidence."
+    assert result.summary == "data/work-profile/work_profile.md contains sensitive local evidence."
 
 
 def test_run_setup_service_config_creates_env_and_directories(tmp_path: Path):
@@ -454,6 +454,18 @@ def test_run_setup_service_config_creates_env_and_directories(tmp_path: Path):
     assert (tmp_path / "workspace").is_dir()
     assert (tmp_path / "data").is_dir()
     assert (tmp_path / "data" / "corpus").is_dir()
+    assert (tmp_path / "data" / "prompts" / "developer_prompt.md").exists()
+    assert (tmp_path / "data" / "prompts" / "user_prompt.md").exists()
+    assert (tmp_path / "data" / "work-profile" / "work_profile.md").exists()
+    assert "CEO_DEVELOPER_PROMPT_TEMPLATE_PATH=data/prompts/developer_prompt.md" in (
+        tmp_path / ".env"
+    ).read_text(encoding="utf-8")
+    assert "CEO_USER_PROMPT_TEMPLATE_PATH=data/prompts/user_prompt.md" in (
+        tmp_path / ".env"
+    ).read_text(encoding="utf-8")
+    assert "CEO_WORK_PROFILE_PATH=data/work-profile/work_profile.md" in (
+        tmp_path / ".env"
+    ).read_text(encoding="utf-8")
     assert "CEO_NOT_SEND_MESSAGE=1" in (tmp_path / ".env").read_text(
         encoding="utf-8"
     )

@@ -22,8 +22,11 @@ CODE_RE = re.compile(
 )
 VARIABLE_BLOCK_RE = re.compile(r"\A\s*<vars>\s*\n(?P<body>.*?)\n</vars>\s*", re.DOTALL)
 VARIABLE_DEFINITION_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$")
-DEFAULT_DEVELOPER_PROMPT_TEMPLATE = repo_root() / "prompts" / "developer_prompt.md"
-DEFAULT_USER_PROMPT_TEMPLATE = repo_root() / "prompts" / "user_prompt.md"
+DEFAULTS_DIR = Path(__file__).resolve().parent / "defaults"
+DEFAULT_DEVELOPER_PROMPT_TEMPLATE = repo_root() / "data" / "prompts" / "developer_prompt.md"
+DEFAULT_USER_PROMPT_TEMPLATE = repo_root() / "data" / "prompts" / "user_prompt.md"
+SEED_DEVELOPER_PROMPT_TEMPLATE = DEFAULTS_DIR / "developer_prompt.md"
+SEED_USER_PROMPT_TEMPLATE = DEFAULTS_DIR / "user_prompt.md"
 PROMPT_VARIABLE_ENV_PREFIX = "CEO_PROMPT_VAR_"
 CONFIGURABLE_PROMPT_VARIABLE_DEFAULTS = {
     "responsibility_summary": (
@@ -41,30 +44,41 @@ class DeveloperPromptTemplateError(ValueError):
 
 
 def developer_prompt_template_path() -> Path:
-    return Path(
-        os.getenv(
-            "CEO_DEVELOPER_PROMPT_TEMPLATE_PATH",
-            str(DEFAULT_DEVELOPER_PROMPT_TEMPLATE),
-        )
+    return _configured_template_path(
+        "CEO_DEVELOPER_PROMPT_TEMPLATE_PATH",
+        DEFAULT_DEVELOPER_PROMPT_TEMPLATE,
     )
 
 
 def user_prompt_template_path() -> Path:
-    return Path(
-        os.getenv(
-            "CEO_USER_PROMPT_TEMPLATE_PATH",
-            str(DEFAULT_USER_PROMPT_TEMPLATE),
-        )
+    return _configured_template_path(
+        "CEO_USER_PROMPT_TEMPLATE_PATH",
+        DEFAULT_USER_PROMPT_TEMPLATE,
     )
+
+
+def _configured_template_path(name: str, default: Path) -> Path:
+    return Path(os.path.expandvars(os.getenv(name, str(default)))).expanduser()
+
+
+def _ensure_template_file(template_path: Path, seed_path: Path) -> None:
+    if template_path.exists():
+        return
+    template_path.parent.mkdir(parents=True, exist_ok=True)
+    template_path.write_text(seed_path.read_text(encoding="utf-8"), encoding="utf-8")
 
 
 def read_developer_prompt_template(path: Path | None = None) -> str:
     template_path = path or developer_prompt_template_path()
+    if path is None:
+        _ensure_template_file(template_path, SEED_DEVELOPER_PROMPT_TEMPLATE)
     return template_path.read_text(encoding="utf-8")
 
 
 def read_user_prompt_template(path: Path | None = None) -> str:
     template_path = path or user_prompt_template_path()
+    if path is None:
+        _ensure_template_file(template_path, SEED_USER_PROMPT_TEMPLATE)
     return template_path.read_text(encoding="utf-8")
 
 

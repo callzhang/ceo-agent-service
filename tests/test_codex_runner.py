@@ -431,17 +431,26 @@ def test_codex_developer_instructions_hold_thread_prompt_not_turn_message(monkey
 
 def test_codex_developer_instructions_inject_work_profile_content_without_path(
     monkeypatch,
+    tmp_path,
 ):
+    profile = tmp_path / "work_profile.md"
+    profile.write_text(
+        "# Work Profile\n\n"
+        "## Core Operating Loop\n\n"
+        "- Keep the loop tight.\n\n"
+        "心智模型、决策启发式、表达DNA\n",
+        encoding="utf-8",
+    )
     monkeypatch.setenv(
         "CEO_WORK_PROFILE_PATH",
-        str(repo_root() / "profiles" / "work_profile.md"),
+        str(profile),
     )
 
     instructions = codex_developer_instructions()
 
     assert "明哥 工作人格 Profile" in instructions
     assert (
-        "/Users/principal/Documents/Projects/ceo-agent-service/profiles/work_profile.md"
+        "/Users/principal/Documents/Projects/ceo-agent-service/data/work-profile/work_profile.md"
         not in instructions
     )
     assert "# Work Profile" in instructions

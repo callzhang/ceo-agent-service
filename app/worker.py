@@ -2,6 +2,7 @@ import json
 import logging
 import os
 import re
+import shutil
 import time
 import urllib.request
 import zipfile
@@ -290,8 +291,16 @@ class DingTalkAutoReplyWorker:
         self._dws_auth_login_process = None
 
     def run_once(self, max_batches: int | None = None) -> None:
-        self.produce_once(max_tasks=max_batches)
-        self.consume_once(max_tasks=max_batches)
+        try:
+            self.produce_once(max_tasks=max_batches)
+            self.consume_once(max_tasks=max_batches)
+        finally:
+            self._cleanup_image_attachment_cache()
+
+    def _cleanup_image_attachment_cache(self) -> None:
+        image_dir = self.store.path.parent / "image-attachments"
+        if image_dir.exists():
+            shutil.rmtree(image_dir)
 
     def _call_dws(
         self,
