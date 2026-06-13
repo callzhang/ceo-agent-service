@@ -223,6 +223,7 @@ DWS_UPGRADE_CHECKED_DATE_STATE_KEY = "dws_upgrade_checked_date"
 MESSAGE_RECOVERY_CHECKED_AT_STATE_KEY = "message_recovery_checked_at"
 MESSAGE_FAST_PATH_CHECKED_AT_STATE_KEY = "message_fast_path_checked_at"
 DWS_AUTH_LOGIN_STATE_KEY = "dws_auth_login"
+DWS_AUTH_LOGIN_REQUEST_SUPPRESSION_WINDOW = timedelta(hours=1)
 DWS_FORBIDDEN_CONVERSATIONS_STATE_KEY = "dws_forbidden_conversations"
 DWS_FORBIDDEN_CONVERSATION_COOLDOWN = timedelta(minutes=5)
 ORG_CACHE_REFRESH_INTERVAL = timedelta(days=7)
@@ -314,8 +315,7 @@ class DingTalkAutoReplyWorker:
             if raise_authorization and self._is_authorization_error(exc):
                 raise
             if self._is_dws_login_error(exc):
-                self._ensure_dws_auth_login(exc)
-                if self._dws_auth_login_state().get("status") == "running":
+                if self._ensure_dws_auth_login(exc):
                     return default
             is_forbidden_read = bool(
                 conversation_id and self._is_dws_forbidden_read_error(exc)
@@ -1012,10 +1012,26 @@ class DingTalkAutoReplyWorker:
             return True
         return True
 
+    def _dws_auth_login_request_is_recent(self, state: dict[str, Any]) -> bool:
+        if state.get("status") not in {"running", "stale", "failed"}:
+            return False
+        if not isinstance(state.get("pid"), int):
+            return False
+        started_at = state.get("started_at")
+        if not isinstance(started_at, str):
+            return False
+        started = self._parse_service_state_datetime(started_at)
+        if started is None:
+            return False
+        age = self._now().astimezone(timezone.utc) - started.astimezone(timezone.utc)
+        return timedelta(0) <= age < DWS_AUTH_LOGIN_REQUEST_SUPPRESSION_WINDOW
+
     def _ensure_dws_auth_login(self, exc: Exception) -> bool:
         state = self._monitor_dws_auth_login(self._dws_auth_login_state())
-        if state.get("status") == "running":
-            return False
+        if state.get("status") == "running" or self._dws_auth_login_request_is_recent(
+            state
+        ):
+            return True
         try:
             process = self.dws.start_auth_login()
         except Exception as start_exc:

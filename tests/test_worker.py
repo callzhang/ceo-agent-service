@@ -1354,6 +1354,41 @@ def test_produce_once_restarts_stale_persisted_dws_auth_login(
     )
 
 
+def test_produce_once_does_not_start_second_dws_auth_login_for_recent_request(
+    tmp_path: Path, monkeypatch
+):
+    notifications = []
+    dws = FakeDws([], {}, list_error=DwsError("not authenticated", code="2"))
+    worker = make_worker(
+        tmp_path,
+        dws,
+        FakeCodex(CodexDecision(action=CodexAction.SEND_REPLY, reply_text="收到")),
+        monkeypatch,
+    )
+    worker.store.set_service_state(
+        DWS_AUTH_LOGIN_STATE_KEY,
+        json.dumps(
+            {
+                "status": "running",
+                "pid": 99999999,
+                "started_at": "2026-05-13T16:45:00+00:00",
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        "app.worker.send_macos_notification",
+        lambda **kwargs: notifications.append(kwargs),
+    )
+
+    assert worker.produce_once() == 0
+
+    assert dws.auth_login_starts == 0
+    state = json.loads(worker.store.get_service_state(DWS_AUTH_LOGIN_STATE_KEY))
+    assert state["status"] == "stale"
+    assert state["pid"] == 99999999
+    assert notifications == []
+
+
 @pytest.mark.parametrize("previous_status", ["completed", "failed", "authenticated"])
 def test_produce_once_restarts_dws_auth_login_after_previous_terminal_state(
     tmp_path: Path, monkeypatch, previous_status: str
