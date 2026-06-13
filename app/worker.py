@@ -102,13 +102,6 @@ DWS_TRANSIENT_ERROR_STATE_PREFIX = "dws_transient_error_count:"
 DWS_TRANSIENT_NOTIFY_THRESHOLD = 3
 T = TypeVar("T")
 CALENDAR_ACTION_SEND_STATUS = "calendar"
-SUCCESSFUL_TERMINAL_ATTEMPT_STATUSES = {
-    "sent",
-    "skipped",
-    "reacted",
-    "commented",
-    CALENDAR_ACTION_SEND_STATUS,
-}
 TEXT_MESSAGE_TYPES = {"text"}
 RENDERED_NON_TEXT_PREFIXES = (
     "[文件]",
@@ -1104,17 +1097,11 @@ class DingTalkAutoReplyWorker:
         stale_tasks = self.store.list_stale_processing_reply_tasks(
             STALE_PROCESSING_TASK_SECONDS
         )
-        stale_tasks_to_requeue = []
-        for stale_task in stale_tasks:
-            if self._complete_stale_task_with_terminal_attempt(stale_task):
-                processed_tasks += 1
-            else:
-                stale_tasks_to_requeue.append(stale_task)
         reset_count = self.store.reset_stale_processing_reply_tasks(
             STALE_PROCESSING_TASK_SECONDS
         )
         if reset_count:
-            for stale_task in stale_tasks_to_requeue:
+            for stale_task in stale_tasks:
                 self.store.record_error(
                     stale_task.conversation_id,
                     stale_task.trigger_message_id,
@@ -1197,38 +1184,12 @@ class DingTalkAutoReplyWorker:
                 )
                 continue
             if should_complete_task:
-                self.store.complete_reply_task(task.id)
+                if not self.store.reply_task_is_done(task.id):
+                    self.store.complete_reply_task(task.id)
                 processed_tasks += 1
             else:
                 self.store.defer_reply_task(task.id, "dry_run")
         return processed_tasks
-
-    def _complete_stale_task_with_terminal_attempt(self, task: ReplyTask) -> bool:
-        attempt = self.store.get_latest_reply_attempt_for_trigger(
-            task.conversation_id,
-            task.trigger_message_id,
-        )
-        if attempt is None:
-            return False
-        if attempt.send_status.strip().lower() not in SUCCESSFUL_TERMINAL_ATTEMPT_STATUSES:
-            return False
-        if (
-            task.locked_at
-            and attempt.updated_at
-            and attempt.updated_at < task.locked_at
-        ):
-            return False
-        self.store.complete_reply_task(task.id)
-        logger.info(
-            "completed stale processing task from terminal attempt "
-            "task_id=%s attempt_id=%s status=%s conversation_id=%s message_id=%s",
-            task.id,
-            attempt.id,
-            attempt.send_status,
-            task.conversation_id,
-            task.trigger_message_id,
-        )
-        return True
 
     @staticmethod
     def _is_authorization_error(exc: Exception) -> bool:
@@ -1273,6 +1234,7 @@ class DingTalkAutoReplyWorker:
             trigger,
             prompt_context_messages,
             raise_on_delivery_failure=True,
+            complete_task_id=task.id,
         ):
             return True
         if self._handle_okr_review_if_actionable(
@@ -2504,6 +2466,7 @@ class DingTalkAutoReplyWorker:
         include_resolved_calendar_invites: bool = False,
         raise_on_delivery_failure: bool = False,
         allow_duplicate_send: bool = False,
+        complete_task_id: int | None = None,
     ) -> bool:
         calendar_context = self._calendar_invite_context(
             conversation,
@@ -2568,6 +2531,7 @@ class DingTalkAutoReplyWorker:
                 calendar_response_event=calendar_context.invite,
                 comment_target_messages=[trigger, calendar_prompt_message],
                 allow_duplicate_send=allow_duplicate_send,
+                complete_task_id=complete_task_id,
             )
             return True
         calendar_prompt_message = self._calendar_conflict_prompt_message(
@@ -2585,6 +2549,7 @@ class DingTalkAutoReplyWorker:
             calendar_response_event=calendar_context.invite,
             comment_target_messages=[trigger, calendar_prompt_message],
             allow_duplicate_send=allow_duplicate_send,
+            complete_task_id=complete_task_id,
         )
         return True
 
@@ -3232,6 +3197,7 @@ class DingTalkAutoReplyWorker:
         reason: str,
         raise_on_delivery_failure: bool = False,
         allow_duplicate_send: bool = False,
+        complete_task_id: int | None = None,
     ) -> None:
         succeeded = self._execute_calendar_response(
             conversation=conversation,
@@ -3241,6 +3207,7 @@ class DingTalkAutoReplyWorker:
             attempt_id=attempt_id,
             mark_attempt_terminal=True,
             raise_on_delivery_failure=raise_on_delivery_failure,
+            complete_task_id=complete_task_id,
         )
         if not succeeded:
             return
@@ -3265,6 +3232,7 @@ class DingTalkAutoReplyWorker:
         response_status: str,
         send_status: str | None,
         send_error: str,
+        complete_task_id: int | None = None,
     ) -> None:
         result = {
             "success": True,
@@ -3283,7 +3251,14 @@ class DingTalkAutoReplyWorker:
         }
         if send_status is not None:
             updates["send_status"] = send_status
-        self.store.update_reply_attempt(attempt_id, **updates)
+        if complete_task_id is not None and send_status == CALENDAR_ACTION_SEND_STATUS:
+            self.store.update_reply_attempt_and_complete_task(
+                attempt_id,
+                complete_task_id,
+                **updates,
+            )
+        else:
+            self.store.update_reply_attempt(attempt_id, **updates)
 
     def _execute_calendar_response(
         self,
@@ -3295,6 +3270,7 @@ class DingTalkAutoReplyWorker:
         attempt_id: int,
         mark_attempt_terminal: bool,
         raise_on_delivery_failure: bool = False,
+        complete_task_id: int | None = None,
     ) -> bool:
         if not event.event_id.strip():
             error = "missing_calendar_event_id"
@@ -3343,6 +3319,7 @@ class DingTalkAutoReplyWorker:
                     if mark_attempt_terminal
                     else None,
                     send_error="calendar_event_organizer_noop",
+                    complete_task_id=complete_task_id,
                 )
                 return True
             updates = {
@@ -3379,7 +3356,14 @@ class DingTalkAutoReplyWorker:
         }
         if mark_attempt_terminal:
             updates["send_status"] = CALENDAR_ACTION_SEND_STATUS
-        self.store.update_reply_attempt(attempt_id, **updates)
+        if complete_task_id is not None and mark_attempt_terminal:
+            self.store.update_reply_attempt_and_complete_task(
+                attempt_id,
+                complete_task_id,
+                **updates,
+            )
+        else:
+            self.store.update_reply_attempt(attempt_id, **updates)
         return True
 
     def _record_system_or_notification_skip(
@@ -3784,6 +3768,7 @@ class DingTalkAutoReplyWorker:
         calendar_response_event: DwsCalendarEvent | None = None,
         comment_target_messages: list[DingTalkMessage] | None = None,
         allow_duplicate_send: bool = False,
+        complete_task_id: int | None = None,
     ) -> None:
         trigger = new_messages[-1]
         if not ignore_existing_attempt and self._handle_existing_attempt(
@@ -3925,6 +3910,7 @@ class DingTalkAutoReplyWorker:
                         attempt_id=attempt_id,
                         mark_attempt_terminal=True,
                         raise_on_delivery_failure=raise_on_delivery_failure,
+                        complete_task_id=None,
                     )
                     if not accepted:
                         return
@@ -3955,6 +3941,7 @@ class DingTalkAutoReplyWorker:
                     reason=decision.reason,
                     raise_on_delivery_failure=raise_on_delivery_failure,
                     allow_duplicate_send=allow_duplicate_send,
+                    complete_task_id=complete_task_id,
                 )
                 return
             calendar_response_succeeded = self._execute_calendar_response(
@@ -3965,6 +3952,7 @@ class DingTalkAutoReplyWorker:
                 attempt_id=attempt_id,
                 mark_attempt_terminal=True,
                 raise_on_delivery_failure=raise_on_delivery_failure,
+                complete_task_id=None,
             )
             if not calendar_response_succeeded:
                 return

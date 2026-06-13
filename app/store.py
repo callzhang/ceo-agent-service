@@ -2045,42 +2045,112 @@ class AutoReplyStore:
         send_error: str | None = None,
         retry_count: int | None = None,
     ) -> None:
-        assignments = []
-        values = []
-        for column, value in (
-            ("action", action),
-            ("final_reply_text", final_reply_text),
-            ("permission_action", permission_action),
-            ("permission_reason", permission_reason),
-            ("direct_user_id", direct_user_id),
-            ("direct_open_dingtalk_id", direct_open_dingtalk_id),
-            ("oa_process_instance_id", oa_process_instance_id),
-            ("oa_task_id", oa_task_id),
-            ("oa_url", oa_url),
-            ("oa_action", oa_action),
-            ("oa_remark", oa_remark),
-            ("oa_action_result_json", oa_action_result_json),
-            ("calendar_event_id", calendar_event_id),
-            ("calendar_response_status", calendar_response_status),
-            ("calendar_response_result_json", calendar_response_result_json),
-            ("audit_tool_events_json", audit_tool_events_json),
-            ("send_status", send_status),
-            ("send_error", send_error),
-            ("retry_count", retry_count),
-        ):
-            if value is None:
-                continue
-            assignments.append(f"{column}=?")
-            values.append(value)
-        if not assignments:
+        updates = self._reply_attempt_update_values(
+            action=action,
+            final_reply_text=final_reply_text,
+            permission_action=permission_action,
+            permission_reason=permission_reason,
+            direct_user_id=direct_user_id,
+            direct_open_dingtalk_id=direct_open_dingtalk_id,
+            oa_process_instance_id=oa_process_instance_id,
+            oa_task_id=oa_task_id,
+            oa_url=oa_url,
+            oa_action=oa_action,
+            oa_remark=oa_remark,
+            oa_action_result_json=oa_action_result_json,
+            calendar_event_id=calendar_event_id,
+            calendar_response_status=calendar_response_status,
+            calendar_response_result_json=calendar_response_result_json,
+            audit_tool_events_json=audit_tool_events_json,
+            send_status=send_status,
+            send_error=send_error,
+            retry_count=retry_count,
+        )
+        if not updates:
             return
+        with self._connect() as db:
+            self._update_reply_attempt_in_connection(db, attempt_id, updates)
+
+    def update_reply_attempt_and_complete_task(
+        self,
+        attempt_id: int,
+        task_id: int,
+        **updates: object,
+    ) -> None:
+        update_values = self._reply_attempt_update_values(**updates)
+        with self._connect() as db:
+            if update_values:
+                self._update_reply_attempt_in_connection(
+                    db,
+                    attempt_id,
+                    update_values,
+                )
+            db.execute(
+                """
+                update reply_tasks
+                set status='done',
+                    locked_at=null,
+                    error='',
+                    available_at='',
+                    updated_at=current_timestamp
+                where id=?
+                """,
+                (task_id,),
+            )
+
+    def reply_task_is_done(self, task_id: int) -> bool:
+        with self._connect() as db:
+            row = db.execute(
+                "select status from reply_tasks where id=?",
+                (task_id,),
+            ).fetchone()
+        return bool(row and row["status"] == "done")
+
+    @staticmethod
+    def _reply_attempt_update_values(**updates: object) -> dict[str, object]:
+        allowed_columns = {
+            "action",
+            "final_reply_text",
+            "permission_action",
+            "permission_reason",
+            "direct_user_id",
+            "direct_open_dingtalk_id",
+            "oa_process_instance_id",
+            "oa_task_id",
+            "oa_url",
+            "oa_action",
+            "oa_remark",
+            "oa_action_result_json",
+            "calendar_event_id",
+            "calendar_response_status",
+            "calendar_response_result_json",
+            "audit_tool_events_json",
+            "send_status",
+            "send_error",
+            "retry_count",
+        }
+        unknown = set(updates) - allowed_columns
+        if unknown:
+            raise ValueError(
+                "unknown reply_attempt update column: "
+                + ", ".join(sorted(unknown))
+            )
+        return {column: value for column, value in updates.items() if value is not None}
+
+    @staticmethod
+    def _update_reply_attempt_in_connection(
+        db: sqlite3.Connection,
+        attempt_id: int,
+        updates: dict[str, object],
+    ) -> None:
+        assignments = [f"{column}=?" for column in updates]
+        values = list(updates.values())
         assignments.append("updated_at=current_timestamp")
         values.append(attempt_id)
-        with self._connect() as db:
-            db.execute(
-                f"update reply_attempts set {', '.join(assignments)} where id=?",
-                values,
-            )
+        db.execute(
+            f"update reply_attempts set {', '.join(assignments)} where id=?",
+            values,
+        )
 
     def record_reply_feedback(
         self,

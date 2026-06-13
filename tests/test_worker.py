@@ -4668,6 +4668,56 @@ def test_calendar_invite_agent_can_decline_without_chat_reply(
     assert attempt.send_error == ""
 
 
+def test_queued_calendar_response_completes_task_with_terminal_attempt_update(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message("[日程]", single_chat=True, message_type="calendar")
+    invite = DwsCalendarEvent(
+        event_id="invite-1",
+        title="状态同步会",
+        start_time="2026-05-14T10:00:00+08:00",
+        end_time="2026-05-14T11:00:00+08:00",
+        description="同步信息，不需要 Alex 输入。",
+        organizer="Mina",
+    )
+    dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
+    dws.calendar_invites["msg-1"] = invite
+    codex = FakeCodex(
+        CodexDecision(
+            action=CodexAction.NO_REPLY,
+            reason="会议只是状态同步，不需要本人参加。",
+            calendar_response_status="declined",
+            audit_summary="已读取日程；描述显示只是同步信息，不需要本人输入。",
+        )
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+    worker.store.enqueue_reply_task(
+        conversation_id="cid-1",
+        conversation_title="Friday",
+        single_chat=True,
+        trigger_message_id="msg-1",
+        trigger_create_time=trigger.create_time,
+        trigger_sender=trigger.sender_name,
+        trigger_text=trigger.content,
+        trigger_message_json=trigger.model_dump_json(),
+    )
+
+    def fail_outer_task_completion(task_id: int) -> None:
+        raise AssertionError(
+            "calendar terminal attempt should complete the queued task"
+        )
+
+    monkeypatch.setattr(worker.store, "complete_reply_task", fail_outer_task_completion)
+
+    assert worker.consume_once(max_tasks=1) == 1
+
+    assert dws.calendar_responses == [("invite-1", "declined")]
+    assert worker.store.count_reply_tasks(status="done") == 1
+    attempt = worker.store.get_reply_attempt(1)
+    assert attempt.send_status == "calendar"
+    assert attempt.calendar_response_status == "declined"
+
+
 def test_structured_link_card_is_skipped_before_codex(tmp_path: Path, monkeypatch):
     trigger = message(
         "\n".join(
@@ -6919,7 +6969,7 @@ def test_codex_stop_with_error_keeps_queued_task_retryable(
     assert attempt.send_status == "failed"
 
 
-def test_stale_processing_task_with_terminal_attempt_is_completed_not_requeued(
+def test_stale_processing_task_with_terminal_attempt_is_requeued_not_completed(
     tmp_path: Path, monkeypatch
 ):
     db_path = tmp_path / "worker.sqlite3"
@@ -6955,11 +7005,16 @@ def test_stale_processing_task_with_terminal_attempt_is_completed_not_requeued(
             "update reply_tasks set locked_at=datetime('now', '-31 minutes') where id=?",
             (claimed.id,),
         )
+    monkeypatch.setattr(
+        worker.store,
+        "reset_stale_processing_reply_tasks",
+        lambda _max_age_seconds: 0,
+    )
 
-    assert worker.consume_once(max_tasks=1) == 1
+    assert worker.consume_once(max_tasks=1) == 0
 
-    assert worker.store.count_reply_tasks(status="done") == 1
-    assert worker.store.count_reply_tasks(status="pending") == 0
+    assert worker.store.count_reply_tasks(status="done") == 0
+    assert worker.store.count_reply_tasks(status="processing") == 1
     assert worker.store.count_errors() == 0
     assert codex.calls == []
 
