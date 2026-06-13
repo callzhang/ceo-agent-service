@@ -12,6 +12,7 @@ from app.setup_wizard import (
     check_work_profile,
     get_step_definition,
     redact_setup_output,
+    run_setup_action,
 )
 from app.setup_wizard_models import (
     SetupAction,
@@ -400,3 +401,47 @@ def test_check_work_profile_uses_configured_corpus_dir_and_redaction_patterns(
 
     assert result.status == "failed"
     assert result.summary == "profiles/work_profile.md contains sensitive local evidence."
+
+
+def test_run_setup_service_config_creates_env_and_directories(tmp_path: Path):
+    (tmp_path / ".env.example").write_text(
+        "CEO_WORKSPACE=\nCEO_WORKER_DB=\nCEO_CORPUS_DIR=\nCEO_NOT_SEND_MESSAGE=\n",
+        encoding="utf-8",
+    )
+    event = run_setup_action(
+        "setup_service_config",
+        repo_root=tmp_path,
+        env={
+            "CEO_WORKSPACE": "workspace",
+            "CEO_WORKER_DB": "data/auto-reply.sqlite3",
+            "CEO_CORPUS_DIR": "corpus",
+            "CEO_NOT_SEND_MESSAGE": "1",
+        },
+    )
+
+    assert event.status == "done"
+    assert (tmp_path / ".env").exists()
+    assert (tmp_path / "workspace").is_dir()
+    assert (tmp_path / "data").is_dir()
+    assert (tmp_path / "corpus").is_dir()
+    assert "CEO_NOT_SEND_MESSAGE=1" in (tmp_path / ".env").read_text(
+        encoding="utf-8"
+    )
+
+
+def test_run_setup_mcp_writes_codex_config(tmp_path: Path):
+    codex_config = tmp_path / "config.toml"
+
+    event = run_setup_action(
+        "setup_mcp",
+        repo_root=tmp_path,
+        env={
+            "MEMORY_CONNECTOR_URL": "https://memory.example/mcp/",
+            "CODEX_CONFIG_PATH": str(codex_config),
+            "CLAUDE_CONFIG_PATH": str(tmp_path / "claude.json"),
+        },
+    )
+
+    assert event.status == "done"
+    assert "memory_connector" in codex_config.read_text(encoding="utf-8")
+    assert event.evidence["codex_config"] == str(codex_config)

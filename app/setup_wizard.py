@@ -1,12 +1,15 @@
-import re
+import json
 import os
+import re
 from pathlib import Path
 
+from app.cli import setup_memory_connector_command
 from app.setup_wizard_models import (
     SetupAction,
     SetupStatus,
     SetupStepDefinition,
     SetupStepStatus,
+    SetupWizardEvent,
     SetupWizardStatus,
 )
 from app.store import AutoReplyStore
@@ -248,6 +251,19 @@ def _env_values(env_path: Path) -> dict[str, str]:
     return values
 
 
+def _raw_env_values(env_path: Path) -> dict[str, str]:
+    values: dict[str, str] = {}
+    if not env_path.exists():
+        return values
+    for raw_line in env_path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        values[key.strip()] = value.strip().strip('"').strip("'")
+    return values
+
+
 def _resolve_repo_path(repo_root: Path, value: str) -> Path:
     path = Path(value).expanduser()
     if path.is_absolute():
@@ -386,6 +402,114 @@ def check_work_profile(*, repo_root: Path) -> SetupStepStatus:
         title="Work Profile Distillation",
         status="done",
         summary="Work profile artifacts are ready.",
+    )
+
+
+def run_setup_action(
+    action_id: str,
+    *,
+    repo_root: Path,
+    env: dict[str, str] | None = None,
+) -> SetupWizardEvent:
+    if action_id == "setup_service_config":
+        return _setup_service_config(repo_root, env or {})
+    if action_id == "setup_mcp":
+        return _setup_mcp(repo_root, env or {})
+    return SetupWizardEvent(
+        step_id="unknown",
+        action_id=action_id,
+        status="failed",
+        summary=f"Unknown setup action: {action_id}",
+    )
+
+
+def _setup_service_config(
+    repo_root: Path,
+    env: dict[str, str],
+) -> SetupWizardEvent:
+    env_path = repo_root / ".env"
+    source_path = env_path if env_path.exists() else repo_root / ".env.example"
+    values = _raw_env_values(source_path)
+    defaults = {
+        "CEO_WORKSPACE": "workspace",
+        "CEO_WORKER_DB": "data/auto-reply.sqlite3",
+        "CEO_CORPUS_DIR": "corpus",
+        "CEO_NOT_SEND_MESSAGE": "1",
+    }
+    for key, default in defaults.items():
+        values[key] = env.get(key, values.get(key) or default)
+
+    env_path.write_text(
+        "".join(f"{key}={values[key]}\n" for key in sorted(values)),
+        encoding="utf-8",
+    )
+
+    workspace = _resolve_repo_path(repo_root, values["CEO_WORKSPACE"])
+    db_parent = _resolve_repo_path(repo_root, values["CEO_WORKER_DB"]).parent
+    corpus_dir = _resolve_repo_path(repo_root, values["CEO_CORPUS_DIR"])
+    workspace.mkdir(parents=True, exist_ok=True)
+    db_parent.mkdir(parents=True, exist_ok=True)
+    corpus_dir.mkdir(parents=True, exist_ok=True)
+
+    return SetupWizardEvent(
+        step_id="service_config",
+        action_id="setup_service_config",
+        status="done",
+        summary="Created .env and runtime directories.",
+        evidence={
+            "env_path": str(env_path),
+            "workspace": str(workspace),
+            "db_parent": str(db_parent),
+            "corpus_dir": str(corpus_dir),
+        },
+    )
+
+
+def _setup_mcp(
+    repo_root: Path,
+    env: dict[str, str],
+) -> SetupWizardEvent:
+    memory_url = env.get("MEMORY_CONNECTOR_URL") or os.getenv("MEMORY_CONNECTOR_URL", "")
+    if not memory_url:
+        return SetupWizardEvent(
+            step_id="mcp",
+            action_id="setup_mcp",
+            status="failed",
+            summary="MEMORY_CONNECTOR_URL is missing.",
+        )
+
+    codex_config = env.get("CODEX_CONFIG_PATH")
+    if not codex_config:
+        codex_home = env.get("CODEX_HOME") or os.getenv("CODEX_HOME", "~/.codex")
+        codex_config = str(Path(codex_home).expanduser() / "config.toml")
+    claude_config = env.get("CLAUDE_CONFIG_PATH") or os.getenv(
+        "CLAUDE_CONFIG_PATH",
+        str(
+            Path.home()
+            / "Library"
+            / "Application Support"
+            / "Claude"
+            / "claude_desktop_config.json"
+        ),
+    )
+
+    result = setup_memory_connector_command(
+        memory_url=memory_url,
+        codex_config=codex_config,
+        claude_config=claude_config,
+    )
+    return SetupWizardEvent(
+        step_id="mcp",
+        action_id="setup_mcp",
+        status="done",
+        summary="Memory Connector MCP config checked.",
+        evidence={
+            "codex_config": result["codex_config"],
+            "claude_status": result["claude_status"],
+        },
+        stdout_excerpt=redact_setup_output(
+            json.dumps(result, ensure_ascii=False, sort_keys=True)
+        ),
     )
 
 
