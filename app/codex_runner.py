@@ -182,7 +182,7 @@ class CodexRunner:
         for image_path in image_paths or []:
             image_options.extend(["--image", str(image_path)])
         config_isolation_options = (
-            ["--ignore-user-config", "--disable", "hooks", "--disable", "plugins"]
+            ["--ignore-user-config", "--disable", "plugins"]
             if ignore_user_config
             else []
         )
@@ -197,6 +197,8 @@ class CodexRunner:
             "gpt-5.5",
             *config_isolation_options,
             "--ignore-rules",
+            "--disable",
+            "hooks",
             *memory_connector_config_options(),
             "-c",
             'approval_policy="untrusted"',

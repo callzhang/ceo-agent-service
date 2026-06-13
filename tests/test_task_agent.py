@@ -6,6 +6,7 @@ import pytest
 from app.process_runner import ProcessRunResult
 from app.store import AutoReplyStore
 from app.task_agent import TaskAgentRunner, apply_task_agent_decision, process_work_item
+from app.task_agent import TaskAgentCodexRunner
 from app.task_models import TaskAgentDecision, WorkItem
 
 
@@ -550,6 +551,43 @@ def test_process_work_item_requires_actual_memory_recall_tool_event(tmp_path):
     assert "memory_recall tool event" in input_row[1]
 
 
+def test_task_agent_codex_runner_keeps_user_config_for_memory_recall(tmp_path):
+    captured = {}
+
+    def executor(command, prompt):
+        captured["command"] = command
+        return json.dumps(
+            {
+                "action": "discard",
+                "discard_reason": "输入不足以形成稳定项目。",
+                "todo_changes": [],
+                "follow_up_drafts": [],
+                "update_summary": "跳过。",
+                "failure_risk": "无持续跟进风险。",
+                "failure_risk_score": 0,
+                "memory_recall_used": False,
+                "confidence": 0.8,
+            }
+        )
+
+    runner = TaskAgentCodexRunner(workspace=tmp_path, executor=executor)
+
+    runner.decide(prompt="{}", session_id=None)
+
+    command = captured["command"]
+    assert "--ignore-user-config" not in command
+    assert "plugins" not in [
+        command[index + 1]
+        for index, value in enumerate(command[:-1])
+        if value == "--disable"
+    ]
+    assert "hooks" in [
+        command[index + 1]
+        for index, value in enumerate(command[:-1])
+        if value == "--disable"
+    ]
+
+
 def test_update_project_without_id_raises_value_error(tmp_path):
     store = AutoReplyStore(tmp_path / "task.sqlite3")
     decision = TaskAgentDecision.model_validate(
@@ -934,8 +972,13 @@ def test_task_agent_codex_runner_uses_process_runner_signature(tmp_path):
     assert calls[0][1]["total_timeout_seconds"] == 7
     assert calls[0][1]["idle_timeout_seconds"] == 3
     assert "--output-schema" in command
-    assert "--ignore-user-config" in command
+    assert "--ignore-user-config" not in command
     assert command[command.index("--disable") + 1] == "hooks"
+    assert "plugins" not in [
+        command[index + 1]
+        for index, value in enumerate(command[:-1])
+        if value == "--disable"
+    ]
     assert str(TASK_AGENT_DECISION_SCHEMA_PATH) in command
     assert str(CODEX_DECISION_SCHEMA_PATH) not in command
 
