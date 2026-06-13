@@ -56,7 +56,7 @@ Build the local AI meeting-note corpus:
 cd /path/to/ceo-agent-service
 .venv/bin/ceo-agent build-corpus \
   --workspace /Users/principal/Documents/memory \
-  --corpus-dir /Users/principal/Documents/Projects/ceo-agent-service/corpus
+  --corpus-dir /Users/principal/Documents/Projects/ceo-agent-service/data/corpus
 ```
 
 Append recent DingTalk sent-message examples:
@@ -64,20 +64,20 @@ Append recent DingTalk sent-message examples:
 ```bash
 .venv/bin/ceo-agent collect-corpus \
   --workspace /Users/principal/Documents/memory \
-  --corpus-dir /Users/principal/Documents/Projects/ceo-agent-service/corpus
+  --corpus-dir /Users/principal/Documents/Projects/ceo-agent-service/data/corpus
 ```
 
 Checker:
 
 ```bash
-test -s corpus/style_corpus.csv && echo "PASS style corpus exists"
-test -s corpus/style_profile.md && echo "PASS style profile exists"
+test -s data/corpus/style_corpus.csv && echo "PASS style corpus exists"
+test -s data/corpus/style_profile.md && echo "PASS style profile exists"
 ```
 
 Satisfies when:
 
-- `corpus/style_corpus.csv` exists and is non-empty.
-- `corpus/style_profile.md` exists and is non-empty.
+- `data/corpus/style_corpus.csv` exists and is non-empty.
+- `data/corpus/style_profile.md` exists and is non-empty.
 - `build-corpus` output reported scanned local AI meeting-note files.
 - `collect-corpus` output reported the current `dws` sender user and collected
   records, or explicitly reported `records=0` for a no-new-data run.
@@ -89,7 +89,7 @@ Run the profile builder:
 ```bash
 .venv/bin/ceo-agent build-work-profile \
   --workspace /Users/principal/Documents/memory \
-  --corpus-dir /Users/principal/Documents/Projects/ceo-agent-service/corpus
+  --corpus-dir /Users/principal/Documents/Projects/ceo-agent-service/data/corpus
 ```
 
 By default this command:
@@ -99,7 +99,7 @@ By default this command:
 - scans local work documents
 - reads DingTalk knowledge base documents through `dws`
 - writes `data/profile-evidence/evidence_index.jsonl`
-- writes `profiles/work_profile.md`
+- writes `data/work-profile/work_profile.md`
 
 Use these flags when you need a narrower run:
 
@@ -113,58 +113,53 @@ Checker:
 
 ```bash
 test -s data/profile-evidence/evidence_index.jsonl && echo "PASS evidence index exists"
-test -s profiles/work_profile.md && echo "PASS work profile exists"
-test ! -e profiles/work_profile.json && echo "PASS no work_profile.json generated"
-test ! -e profiles/work-skill/SKILL.md && echo "PASS no derived work skill generated"
+test -s data/work-profile/work_profile.md && echo "PASS work profile exists"
+test ! -e data/work-profile/work_profile.json && echo "PASS no work_profile.json generated"
+test ! -e data/work-profile/work-skill/SKILL.md && echo "PASS no derived work skill generated"
 test ! -d data/profile-evidence/dingtalk_kb_cache && echo "PASS no DingTalk KB cache directory generated"
 ```
 
 Satisfies when:
 
 - `data/profile-evidence/evidence_index.jsonl` exists and is non-empty.
-- `profiles/work_profile.md` exists and is non-empty.
-- The command did not generate `profiles/work_profile.json`.
-- The command did not generate `profiles/work-skill/SKILL.md`.
+- `data/work-profile/work_profile.md` exists and is non-empty.
+- The command did not generate `data/work-profile/work_profile.json`.
+- The command did not generate `data/work-profile/work-skill/SKILL.md`.
 - The command did not generate `data/profile-evidence/dingtalk_kb_cache/`.
 - Any skipped source is intentional and visible from the command flags.
 
 ## Outputs
 
-The committed outputs are:
+The local runtime outputs are ignored by Git:
 
 ```text
-profiles/work_profile.md
-```
-
-The local evidence output is ignored by Git:
-
-```text
+data/work-profile/work_profile.md
 data/profile-evidence/evidence_index.jsonl
 ```
 
-The runtime consumes `profiles/work_profile.md` directly. The builder should not
-generate `profiles/work_profile.json`, `profiles/work-skill/SKILL.md`, or a
+The runtime consumes `data/work-profile/work_profile.md` directly. The builder should not
+generate `data/work-profile/work_profile.json`, `data/work-profile/work-skill/SKILL.md`, or a
 `data/profile-evidence/dingtalk_kb_cache/` directory.
 
 ## Step 3: Review With Nvwa
 
 After `build-work-profile` prepares the evidence and runtime profile file, run a
 Codex session with the Nvwa skill loaded and ask it to rewrite only
-`profiles/work_profile.md` from `data/profile-evidence/evidence_index.jsonl`,
-`corpus/style_corpus.csv`, and `profiles/work_profile.md`.
+`data/work-profile/work_profile.md` from `data/profile-evidence/evidence_index.jsonl`,
+`data/corpus/style_corpus.csv`, and `data/work-profile/work_profile.md`.
 
 Checker:
 
 ```bash
-test -s profiles/work_profile.md && echo "PASS reviewed work profile exists"
+test -s data/work-profile/work_profile.md && echo "PASS reviewed work profile exists"
 ```
 
 Satisfies when:
 
 - The Nvwa review step explicitly read `data/profile-evidence/evidence_index.jsonl`.
-- The Nvwa review step explicitly read `corpus/style_corpus.csv`.
-- The Nvwa review step explicitly read the initial `profiles/work_profile.md`.
-- `profiles/work_profile.md` is rewritten as a profile, not as a transcript or
+- The Nvwa review step explicitly read `data/corpus/style_corpus.csv`.
+- The Nvwa review step explicitly read the initial `data/work-profile/work_profile.md`.
+- `data/work-profile/work_profile.md` is rewritten as a profile, not as a transcript or
   evidence dump.
 - Claims in the profile can be traced back to evidence records without exposing
   raw sensitive excerpts.
@@ -199,14 +194,14 @@ Run the full local-service suite before committing behavior changes:
 Final checker:
 
 ```bash
-git status --short profiles data/profile-evidence corpus
+git status --short data/work-profile data/profile-evidence data/corpus
 ```
 
 Satisfies when:
 
-- `profiles/work_profile.md` appears if the reviewed profile changed.
+- `data/work-profile/work_profile.md` appears if the reviewed profile changed.
 - `data/profile-evidence/` runtime evidence is not staged or committed.
-- `corpus/` runtime corpus files are not staged or committed unless the project
+- `data/corpus/` runtime corpus files are not staged or committed unless the project
   deliberately changes the corpus policy.
 - Focused tests pass before relying on the regenerated profile.
 - Full local-service tests pass before committing behavior changes.

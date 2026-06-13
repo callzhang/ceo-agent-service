@@ -24,7 +24,8 @@ Safe to delete:
 - SQLite backups such as `auto-reply.sqlite3.bak-*` or
   `auto-reply.sqlite3.before-*` after the live database has been verified.
 - One-off migration/backfill outputs such as `backfill_*.jsonl` after review.
-- Optional export files such as `feedback.jsonl`.
+- Optional export files such as `feedback.jsonl`; do not treat these as durable
+  project files.
 - Cache directories such as `image-attachments/`; the service recreates them as
   needed and removes them after each run.
 - Temporary export folders created for reports or smoke tests.
