@@ -815,6 +815,68 @@ def test_process_work_items_command_reclaims_stale_processing_input(
     assert dict(row) == {"status": "done", "attempts": 2}
 
 
+def test_process_work_items_command_uses_task_agent_timeouts(
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    constructed = {}
+
+    class FakeTaskAgentCodexRunner:
+        last_session_id = "task-session-1"
+        last_transcript_start_line = 0
+        last_transcript_end_line = 0
+
+        def __init__(self, **kwargs):
+            constructed.update(kwargs)
+
+        def decide(self, *, prompt, session_id=None):
+            return TaskAgentDecision.model_validate(
+                {
+                    "action": "discard",
+                    "todo_changes": [],
+                    "follow_up_drafts": [],
+                    "update_summary": "不是持续跟进事项。",
+                    "discard_reason": "一次性信息。",
+                    "failure_risk": "无持续业务风险。",
+                    "failure_risk_score": 0.0,
+                    "memory_recall_used": False,
+                    "confidence": 0.9,
+                }
+            )
+
+    monkeypatch.setattr(cli, "TaskAgentCodexRunner", FakeTaskAgentCodexRunner)
+    db_path = tmp_path / "task.sqlite3"
+    store = AutoReplyStore(db_path)
+    item = WorkItem.model_validate(
+        {
+            "source": {"type": "ai_minutes", "ref": "minutes-1"},
+            "summary": "一次同步，不需要持续跟进。",
+            "project_name": "同步会",
+            "context": {
+                "sender": "",
+                "participants": [],
+                "source_conversation_kind": "minutes",
+                "source_conversation_title": "同步会",
+            },
+        }
+    )
+    store.enqueue_work_summary_input(
+        item.source.type.value,
+        item.source.ref,
+        item.model_dump_json(),
+    )
+
+    processed = process_work_items_command(
+        WorkerSettings(db_path=db_path, workspace=tmp_path, max_batches=1)
+    )
+
+    assert processed == 1
+    assert capsys.readouterr().out == "process-work-items processed=1\n"
+    assert constructed["timeout_seconds"] == 900
+    assert constructed["idle_timeout_seconds"] == 600
+
+
 def test_process_work_items_command_respects_zero_max_batches(
     tmp_path,
     monkeypatch,
@@ -1299,6 +1361,8 @@ def test_settings_defaults_point_to_memory_home():
     assert settings.poll_interval_seconds == 300
     assert settings.codex_timeout_seconds == 420
     assert settings.codex_idle_timeout_seconds == 180
+    assert settings.task_codex_timeout_seconds == 900
+    assert settings.task_codex_idle_timeout_seconds == 600
     assert settings.task_work_item_interval_seconds == 60
     assert settings.task_daily_interval_seconds == 86_400
     assert settings.max_batches is None
@@ -2340,6 +2404,24 @@ def test_parser_supports_codex_timeout_option():
 
     assert settings.codex_timeout_seconds == 480
     assert settings.codex_idle_timeout_seconds == 180
+
+
+def test_parser_supports_task_codex_timeout_options():
+    parser = build_parser()
+
+    args = parser.parse_args(
+        [
+            "process-work-items",
+            "--task-codex-timeout-seconds",
+            "1200",
+            "--task-codex-idle-timeout-seconds",
+            "700",
+        ]
+    )
+    settings = settings_from_args(args)
+
+    assert settings.task_codex_timeout_seconds == 1200
+    assert settings.task_codex_idle_timeout_seconds == 700
 
 
 def test_create_worker_wires_store_dws_codex_and_dry_run(monkeypatch, tmp_path):

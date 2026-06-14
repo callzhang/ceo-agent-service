@@ -112,6 +112,8 @@ class WorkerSettings(BaseModel):
     dws_transient_retry_delay_seconds: float = 1.0
     codex_timeout_seconds: PositiveInt = 420
     codex_idle_timeout_seconds: PositiveInt = 180
+    task_codex_timeout_seconds: PositiveInt = 900
+    task_codex_idle_timeout_seconds: PositiveInt = 600
     task_work_item_interval_seconds: PositiveInt = 60
     task_daily_interval_seconds: PositiveInt = 86_400
     max_batches: NonNegativeInt | None = None
@@ -271,6 +273,28 @@ def build_parser() -> argparse.ArgumentParser:
                 )
             ),
             help="maximum seconds to wait without Codex stdout/stderr output",
+        )
+        subparser.add_argument(
+            "--task-codex-timeout-seconds",
+            type=_positive_int,
+            default=_positive_int(
+                os.getenv(
+                    "CEO_TASK_CODEX_TIMEOUT_SECONDS",
+                    str(defaults.task_codex_timeout_seconds),
+                )
+            ),
+            help="maximum seconds to wait for one task-agent Codex decision",
+        )
+        subparser.add_argument(
+            "--task-codex-idle-timeout-seconds",
+            type=_positive_int,
+            default=_positive_int(
+                os.getenv(
+                    "CEO_TASK_CODEX_IDLE_TIMEOUT_SECONDS",
+                    str(defaults.task_codex_idle_timeout_seconds),
+                )
+            ),
+            help="maximum seconds to wait without task-agent Codex stdout/stderr output",
         )
         if command == "refresh-org-cache":
             subparser.add_argument("--user-id", action="append", default=[])
@@ -498,6 +522,8 @@ def settings_from_args(args: argparse.Namespace) -> WorkerSettings:
         dws_transient_retry_delay_seconds=args.dws_transient_retry_delay_seconds,
         codex_timeout_seconds=args.codex_timeout_seconds,
         codex_idle_timeout_seconds=args.codex_idle_timeout_seconds,
+        task_codex_timeout_seconds=args.task_codex_timeout_seconds,
+        task_codex_idle_timeout_seconds=args.task_codex_idle_timeout_seconds,
         task_work_item_interval_seconds=getattr(
             args,
             "task_work_item_interval_seconds",
@@ -710,8 +736,8 @@ def process_work_items_command(settings: WorkerSettings) -> int:
     runner = TaskAgentRunner(
         TaskAgentCodexRunner(
             workspace=settings.workspace,
-            timeout_seconds=settings.codex_timeout_seconds,
-            idle_timeout_seconds=settings.codex_idle_timeout_seconds,
+            timeout_seconds=settings.task_codex_timeout_seconds,
+            idle_timeout_seconds=settings.task_codex_idle_timeout_seconds,
         )
     )
     processed = 0
