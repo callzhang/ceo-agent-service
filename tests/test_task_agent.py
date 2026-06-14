@@ -1016,17 +1016,22 @@ def test_task_agent_codex_runner_reads_audit_events_from_session(tmp_path):
     )
     runner._extract_codex_audit_events = lambda raw: []
     runner._session_line_count = lambda session_id: 8 if session_id else 0
-    runner._extract_codex_audit_events_from_session = (
-        lambda session_id, start_line=0, end_line=None: [
-            {"tool": "mcp__memory_connector__memory_recall", "arguments": "{}"}
-        ]
-    )
+    observed_limits = []
+
+    def fake_session_events(session_id, start_line=0, end_line=None, limit=40):
+        observed_limits.append(limit)
+        if limit <= 40:
+            return [{"tool": "exec_command", "arguments": "{}"}]
+        return [{"tool": "mcp__memory_connector__memory_recall", "arguments": "{}"}]
+
+    runner._extract_codex_audit_events_from_session = fake_session_events
 
     decision = runner.decide(prompt="decide")
 
     assert decision.action == "create_project"
     assert runner.last_transcript_start_line == 0
     assert runner.last_transcript_end_line == 8
+    assert observed_limits == [200]
     assert runner.last_audit_tool_events == [
         {"tool": "mcp__memory_connector__memory_recall", "arguments": "{}"}
     ]

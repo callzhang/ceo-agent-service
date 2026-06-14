@@ -18,6 +18,7 @@ from app.task_retrieval import render_candidate_prompt, retrieve_project_candida
 TASK_AGENT_DECISION_SCHEMA_PATH = (
     Path(__file__).resolve().parent / "schemas" / "task_agent_decision.schema.json"
 )
+TASK_AGENT_AUDIT_EVENT_LIMIT = 200
 
 
 class TaskCodex(Protocol):
@@ -99,6 +100,7 @@ class TaskAgentCodexRunner:
                 self.last_session_id,
                 start_line=self.last_transcript_start_line,
                 end_line=self.last_transcript_end_line,
+                limit=TASK_AGENT_AUDIT_EVENT_LIMIT,
             )
         self.last_audit_tool_events = (
             session_events or self._extract_codex_audit_events(raw)
