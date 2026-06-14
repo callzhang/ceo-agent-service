@@ -983,6 +983,55 @@ def test_task_agent_codex_runner_uses_process_runner_signature(tmp_path):
     assert str(CODEX_DECISION_SCHEMA_PATH) not in command
 
 
+def test_task_agent_codex_runner_reads_audit_events_from_session(tmp_path):
+    from app.task_agent import TaskAgentCodexRunner
+
+    def fake_run(command, **kwargs):
+        return ProcessRunResult(
+            returncode=0,
+            stdout=json.dumps(
+                {
+                    "action": "create_project",
+                    "project": {
+                        "title": "候选人跟进",
+                        "category": "recruiting",
+                        "memory_context": _memory_context(),
+                    },
+                    "todo_changes": [],
+                    "follow_up_drafts": [],
+                    "update_summary": "记录候选人跟进。",
+                    "merge_reason": "",
+                    "memory_recall_used": True,
+                    "confidence": 0.7,
+                },
+                ensure_ascii=False,
+            ),
+            stderr="",
+        )
+
+    runner = TaskAgentCodexRunner(workspace=tmp_path)
+    runner._run_process_with_idle_timeout = fake_run
+    runner._extract_codex_session_id = (
+        lambda raw: "019f0000-0000-7000-8000-000000000000"
+    )
+    runner._extract_codex_audit_events = lambda raw: []
+    runner._session_line_count = lambda session_id: 8 if session_id else 0
+    runner._extract_codex_audit_events_from_session = (
+        lambda session_id, start_line=0, end_line=None: [
+            {"tool": "mcp__memory_connector__memory_recall", "arguments": "{}"}
+        ]
+    )
+
+    decision = runner.decide(prompt="decide")
+
+    assert decision.action == "create_project"
+    assert runner.last_transcript_start_line == 0
+    assert runner.last_transcript_end_line == 8
+    assert runner.last_audit_tool_events == [
+        {"tool": "mcp__memory_connector__memory_recall", "arguments": "{}"}
+    ]
+
+
 def test_task_agent_codex_runner_timeout_raises_reason(tmp_path):
     from app.task_agent import TaskAgentCodexRunner
 

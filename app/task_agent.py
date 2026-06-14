@@ -58,6 +58,10 @@ class TaskAgentCodexRunner:
             extract_codex_audit_events,
             extract_codex_session_id,
         )
+        from app.codex_history import (
+            count_codex_session_lines,
+            extract_codex_audit_events_from_session,
+        )
         from app.codex_runner import CodexRunner
         from app.process_runner import run_process_with_idle_timeout
 
@@ -69,6 +73,10 @@ class TaskAgentCodexRunner:
         self._run_process_with_idle_timeout = run_process_with_idle_timeout
         self._extract_codex_session_id = extract_codex_session_id
         self._extract_codex_audit_events = extract_codex_audit_events
+        self._extract_codex_audit_events_from_session = (
+            extract_codex_audit_events_from_session
+        )
+        self._session_line_count = count_codex_session_lines
         self._subprocess_failure_reason = _subprocess_failure_reason
         self.last_session_id: str | None = None
         self.last_audit_tool_events: list[dict[str, str]] = []
@@ -81,9 +89,20 @@ class TaskAgentCodexRunner:
         prompt: str,
         session_id: str | None = None,
     ) -> TaskAgentDecision:
+        self.last_transcript_start_line = self._session_line_count(session_id)
         raw = self._execute(prompt=prompt, session_id=session_id)
         self.last_session_id = self._extract_codex_session_id(raw) or session_id
-        self.last_audit_tool_events = self._extract_codex_audit_events(raw)
+        self.last_transcript_end_line = self._session_line_count(self.last_session_id)
+        session_events = []
+        if self.last_session_id:
+            session_events = self._extract_codex_audit_events_from_session(
+                self.last_session_id,
+                start_line=self.last_transcript_start_line,
+                end_line=self.last_transcript_end_line,
+            )
+        self.last_audit_tool_events = (
+            session_events or self._extract_codex_audit_events(raw)
+        )
         return _parse_task_agent_decision(raw)
 
     def _execute(self, *, prompt: str, session_id: str | None) -> str:
