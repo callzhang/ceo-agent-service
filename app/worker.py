@@ -6222,6 +6222,7 @@ class DingTalkAutoReplyWorker:
                 conversation=conversation,
                 reply_text=reply_text,
                 system_actions=system_actions or [],
+                reader_user_ids=at_users or [trigger.sender_user_id or ""],
             )
         except Exception as exc:
             self.store.update_reply_attempt(
@@ -6359,6 +6360,7 @@ class DingTalkAutoReplyWorker:
         conversation: DingTalkConversation,
         reply_text: str,
         system_actions: list[dict],
+        reader_user_ids: list[str],
     ) -> dict[str, Any] | None:
         action = self._markdown_document_reply_action(system_actions)
         chunks = split_dingtalk_text(reply_text)
@@ -6369,6 +6371,16 @@ class DingTalkAutoReplyWorker:
         doc_url = self._markdown_document_url(doc_result)
         if not doc_url:
             raise RuntimeError("dws doc create did not return a document URL")
+        doc_node_id = self._markdown_document_node_id(doc_result, doc_url)
+        if not doc_node_id:
+            raise RuntimeError("dws doc create did not return a document nodeId")
+        normalized_reader_user_ids = self._document_reader_user_ids(reader_user_ids)
+        if not normalized_reader_user_ids:
+            raise RuntimeError("dws doc reply has no recipient userId for permission")
+        permission_result = self.dws.add_doc_reader_permission(
+            doc_node_id,
+            normalized_reader_user_ids,
+        )
         intro = (
             "内容我写成了文档："
             if action is not None
@@ -6379,6 +6391,9 @@ class DingTalkAutoReplyWorker:
             "url": doc_url,
             "reason": "requested_document" if action is not None else "message_too_long",
             "doc_result": doc_result,
+            "node_id": doc_node_id,
+            "reader_user_ids": normalized_reader_user_ids,
+            "permission_result": permission_result,
             "reply_text": append_signature(f"{intro}{title}\n{doc_url}"),
         }
 
@@ -6430,6 +6445,43 @@ class DingTalkAutoReplyWorker:
             if isinstance(candidate, str) and candidate.strip():
                 return candidate.strip()
         return ""
+
+    @classmethod
+    def _markdown_document_node_id(cls, payload: object, doc_url: str = "") -> str:
+        if isinstance(payload, dict):
+            candidates: list[object] = [
+                payload.get("nodeId"),
+                payload.get("node_id"),
+                payload.get("dentryUuid"),
+            ]
+            result = payload.get("result")
+            if isinstance(result, dict):
+                candidates.extend(
+                    [
+                        result.get("nodeId"),
+                        result.get("node_id"),
+                        result.get("dentryUuid"),
+                    ]
+                )
+            for candidate in candidates:
+                if isinstance(candidate, str) and candidate.strip():
+                    return candidate.strip()
+        match = re.search(r"/nodes/([^/?#]+)", doc_url)
+        if match:
+            return match.group(1)
+        return ""
+
+    @staticmethod
+    def _document_reader_user_ids(user_ids: list[str]) -> list[str]:
+        result: list[str] = []
+        seen: set[str] = set()
+        for user_id in user_ids:
+            normalized = str(user_id).strip()
+            if not normalized or normalized in seen:
+                continue
+            seen.add(normalized)
+            result.append(normalized)
+        return result
 
     def _enqueue_conversation_work_item(
         self,

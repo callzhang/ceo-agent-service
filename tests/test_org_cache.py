@@ -123,6 +123,7 @@ def test_cached_dws_client_delegates_message_io_and_uses_cached_org(tmp_path):
             self.created_text_emotions = []
             self.doc_comments = []
             self.markdown_docs = []
+            self.doc_reader_permissions = []
 
         def send_message(
             self,
@@ -209,6 +210,10 @@ def test_cached_dws_client_delegates_message_io_and_uses_cached_org(tmp_path):
             self.markdown_docs.append((name, content))
             return {"result": {"url": "https://alidocs.example/doc-1"}}
 
+        def add_doc_reader_permission(self, node, user_ids):
+            self.doc_reader_permissions.append((node, user_ids))
+            return {"success": True}
+
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.set_current_user_id("principal-user")
     cached = CachedDwsClient(FakeDws(), CachedOrgDirectory(store))
@@ -231,6 +236,7 @@ def test_cached_dws_client_delegates_message_io_and_uses_cached_org(tmp_path):
     )
     cached.create_doc_comment("https://alidocs.example/doc", "处理好了")
     cached.create_markdown_doc("CEO回复", "# 正文")
+    cached.add_doc_reader_permission("doc-1", ["user-1"])
     cached.ding_self("handoff")
 
     assert cached.dws.sent == [("cid-1", "ok", ["user-1"], [], [])]
@@ -244,6 +250,7 @@ def test_cached_dws_client_delegates_message_io_and_uses_cached_org(tmp_path):
         ("https://alidocs.example/doc", "处理好了")
     ]
     assert cached.dws.markdown_docs == [("CEO回复", "# 正文")]
+    assert cached.dws.doc_reader_permissions == [("doc-1", ["user-1"])]
     assert cached.dws.dings == [("principal-user", "handoff")]
     assert cached.is_current_user_message(message(sender_user_id="principal-user")) is True
 

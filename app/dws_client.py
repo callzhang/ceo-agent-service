@@ -809,6 +809,33 @@ class DwsClient:
             "--yes",
         ]
 
+    def build_add_doc_reader_permission_command(
+        self,
+        node: str,
+        user_ids: list[str],
+    ) -> list[str]:
+        node = node.strip()
+        normalized_user_ids = self._unique_non_empty(user_ids)
+        if not node:
+            raise ValueError("missing doc node")
+        if not normalized_user_ids:
+            raise ValueError("missing doc reader user ids")
+        return [
+            self.dws_bin,
+            "doc",
+            "permission",
+            "add",
+            "--node",
+            node,
+            "--user",
+            ",".join(normalized_user_ids),
+            "--role",
+            "READER",
+            "--format",
+            "json",
+            "--yes",
+        ]
+
     def build_aitable_base_get_command(self, base_id: str) -> list[str]:
         return [
             self.dws_bin,
@@ -1648,6 +1675,18 @@ class DwsClient:
             raise DwsError("invalid doc create response")
         return payload
 
+    def add_doc_reader_permission(
+        self,
+        node: str,
+        user_ids: list[str],
+    ) -> dict[str, Any]:
+        payload = self.run_json(
+            self.build_add_doc_reader_permission_command(node, user_ids)
+        )
+        if not isinstance(payload, dict):
+            raise DwsError("invalid doc permission response")
+        return payload
+
     def get_aitable_base(self, base_id: str) -> dict[str, Any]:
         payload = self.run_json(self.build_aitable_base_get_command(base_id))
         if not isinstance(payload, dict):
@@ -2276,6 +2315,18 @@ class DwsClient:
         if self.transient_retry_delay_seconds <= 0:
             return
         time.sleep(self.transient_retry_delay_seconds * (attempt_index + 1))
+
+    @staticmethod
+    def _unique_non_empty(values: list[str]) -> list[str]:
+        result: list[str] = []
+        seen: set[str] = set()
+        for value in values:
+            normalized = str(value).strip()
+            if not normalized or normalized in seen:
+                continue
+            seen.add(normalized)
+            result.append(normalized)
+        return result
 
     @classmethod
     def _is_retryable_error(cls, command: list[str], code: str | None) -> bool:

@@ -215,6 +215,34 @@ def test_create_markdown_doc_command_shape_and_response():
     ]
 
 
+def test_add_doc_reader_permission_command_shape_and_response():
+    client = RecordingDwsClient({"success": True})
+
+    payload = client.add_doc_reader_permission(
+        "doc-1",
+        ["user-1", "user-1", " user-2 "],
+    )
+
+    assert payload == {"success": True}
+    assert client.commands == [
+        [
+            "dws",
+            "doc",
+            "permission",
+            "add",
+            "--node",
+            "doc-1",
+            "--user",
+            "user-1,user-2",
+            "--role",
+            "READER",
+            "--format",
+            "json",
+            "--yes",
+        ]
+    ]
+
+
 def test_dws_upgrade_check_command_shape():
     client = DwsClient(dws_bin="dws")
 
