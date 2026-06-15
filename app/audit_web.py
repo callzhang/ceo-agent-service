@@ -335,7 +335,7 @@ th{background:var(--surface-soft);color:var(--steel);font-size:12px;font-weight:
 .user-feedback-actions form{display:inline-flex;margin:0}
 .user-feedback-actions button{display:inline-flex;align-items:center;height:30px;padding:0 12px;border:1px solid var(--hairline);border-radius:999px;background:var(--canvas);color:var(--ink);font-size:13px;font-weight:500;line-height:1;white-space:nowrap}
 .user-feedback-actions button:hover{border-color:var(--ink);background:var(--surface-soft)}
-.audit-tool-list{display:grid;gap:12px;margin-top:8px}
+.audit-tool-list{display:grid;gap:12px;margin:8px 24px 24px}
 .audit-tool-event{border:1px solid var(--hairline);border-radius:8px;background:var(--canvas);padding:12px}
 .audit-tool-head{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:10px}
 .audit-tool-title{display:flex;align-items:center;gap:8px;min-width:0;color:var(--ink);font-size:14px;font-weight:750}
@@ -345,6 +345,23 @@ th{background:var(--surface-soft);color:var(--steel);font-size:12px;font-weight:
 .audit-tool-section{display:grid;gap:4px}
 .audit-tool-label{color:var(--steel);font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.03em}
 .audit-tool-pre{margin:0;max-height:420px;overflow:auto;border:1px solid var(--hairline);border-radius:7px;background:var(--surface-soft);padding:9px 10px;color:var(--charcoal);font-size:12px;line-height:1.45;white-space:pre-wrap;word-break:break-word}
+.audit-tool-meta{display:grid;grid-template-columns:120px minmax(0,1fr);gap:6px 12px;margin:8px 0 10px;padding:10px;border:1px solid var(--hairline-soft);border-radius:7px;background:var(--surface-soft)}
+.audit-tool-meta-label{color:var(--steel);font-size:12px;font-weight:800;line-height:1.35;text-transform:uppercase}
+.audit-tool-meta-value{min-width:0;color:var(--charcoal);font-size:13px;line-height:1.4;overflow-wrap:anywhere;word-break:break-word}
+.audit-tool-output{border:1px solid var(--hairline);border-radius:7px;background:var(--surface-soft);overflow:hidden}
+.audit-tool-output summary{display:grid;grid-template-columns:auto minmax(0,1fr);gap:10px;align-items:center;padding:8px 10px;cursor:pointer}
+.audit-tool-output summary::after{display:none}
+.audit-tool-output-preview{min-width:0;color:var(--steel);font-size:12px;line-height:1.35;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.audit-tool-output-body{max-height:420px;overflow:auto;border-top:1px solid var(--hairline);padding:10px}
+.audit-tool-output-body pre{margin:0;border:0;border-radius:0;background:transparent;padding:0}
+.audit-tool-rendered-text{color:var(--charcoal);font-size:13px;line-height:1.5}
+.audit-tool-rendered-text p{margin:0 0 8px}
+.audit-tool-rendered-text ul{margin:0 0 8px 18px;padding:0}
+.audit-tool-rendered-text li{margin:2px 0}
+.audit-tool-rendered-text h1,.audit-tool-rendered-text h2,.audit-tool-rendered-text h3{margin:8px 0 6px;color:var(--ink);font-weight:700;line-height:1.3}
+.audit-tool-rendered-text h1{font-size:17px}
+.audit-tool-rendered-text h2{font-size:16px}
+.audit-tool-rendered-text h3{font-size:15px}
 .attempt-info{position:relative;display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border:1px solid #d29a12;border-radius:50%;color:#8a5a08;background:#fff3c4;font-size:11px;font-weight:700;line-height:1;cursor:help;flex:0 0 auto}
 .attempt-info:hover,.attempt-info:focus{background:#ffe7a3;border-color:#b77908;outline:0}
 .attempt-info::after{content:attr(data-tooltip);display:none;position:absolute;left:0;bottom:calc(100% + 8px);z-index:30;width:max-content;max-width:min(320px,calc(100vw - 48px));padding:7px 9px;border-radius:6px;background:#1f2937;color:#fff;box-shadow:0 8px 24px rgba(15,23,42,.18);font-size:12px;font-weight:500;line-height:1.4;text-align:left;white-space:normal}
@@ -4979,8 +4996,7 @@ def _attempt_detail_body(
         f"{_oa_metadata_card(attempt)}"
         f"{_calendar_metadata_card(attempt)}"
         f"{_text_card('Audit summary', attempt.audit_summary)}"
-        f"{_collapsible_json_card('Audit documents', attempt.audit_documents_json)}"
-        f"{_audit_tool_events_card(attempt)}"
+        f"{_audit_tool_uses_card(attempt)}"
         f"{_text_card('Draft reply (raw Codex reply)', attempt.draft_reply_text)}"
     )
 
@@ -5728,16 +5744,93 @@ def _collapsible_json_card(title: str, text: str) -> str:
     )
 
 
-def _audit_tool_events_card(attempt: ReplyAttempt) -> str:
-    events = _audit_tool_events_for_attempt(attempt)
-    if not events:
-        return _collapsible_json_card("Audit tool events", attempt.audit_tool_events_json)
+def _audit_tool_uses_card(attempt: ReplyAttempt) -> str:
+    uses = _audit_tool_uses_for_attempt(attempt)
+    if not uses:
+        return _collapsible_json_card("Tool uses", "[]")
     return (
         "<details class=\"card collapsible-card\">"
-        "<summary><h2>Audit tool events</h2></summary>"
-        f"<div class=\"audit-tool-list\">{_audit_tool_events_html(events)}</div>"
+        "<summary><h2>Tool uses</h2></summary>"
+        f"<div class=\"audit-tool-list\">{_audit_tool_uses_html(uses)}</div>"
         "</details>"
     )
+
+
+def _audit_tool_uses_for_attempt(attempt: ReplyAttempt) -> list[dict[str, object]]:
+    return [
+        *_audit_document_uses_for_attempt(attempt),
+        *_audit_event_uses_for_attempt(attempt),
+    ]
+
+
+def _audit_document_uses_for_attempt(attempt: ReplyAttempt) -> list[dict[str, object]]:
+    documents = _json_list(attempt.audit_documents_json)
+    uses: list[dict[str, object]] = []
+    for document in documents:
+        if not isinstance(document, dict):
+            continue
+        title = _first_nonempty_string(
+            document,
+            ("title", "name", "path", "url", "mcp_name", "tool"),
+        )
+        source = _audit_source_text(document)
+        args = _audit_args_payload(document)
+        uses.append(
+            {
+                "title": title or "Audit document",
+                "tool": _first_nonempty_string(document, ("tool", "type")) or "document",
+                "relevance": _first_nonempty_string(
+                    document,
+                    ("relevance", "reason", "description"),
+                ),
+                "source": source,
+                "args": args,
+                "output": _first_nonempty_string(document, ("output", "content")),
+                "call_id": _first_nonempty_string(document, ("call_id",)),
+            }
+        )
+    return uses
+
+
+def _audit_event_uses_for_attempt(attempt: ReplyAttempt) -> list[dict[str, object]]:
+    events = _audit_tool_events_for_attempt(attempt)
+    calls: list[dict[str, object]] = []
+    by_call_id: dict[str, dict[str, object]] = {}
+    for event in events:
+        tool = str(event.get("tool") or "tool").strip() or "tool"
+        call_id = str(event.get("call_id") or "").strip()
+        if tool == "tool_output":
+            target = by_call_id.get(call_id) if call_id else None
+            if target is not None:
+                target["output"] = str(event.get("output") or "")
+                if not target.get("source"):
+                    target["source"] = _audit_source_text(event)
+                continue
+            calls.append(
+                {
+                    "title": _audit_tool_title(event, "Tool output"),
+                    "tool": "tool_output",
+                    "call_id": call_id,
+                    "relevance": _audit_relevance_text(event),
+                    "source": _audit_source_text(event),
+                    "args": _audit_args_payload(event),
+                    "output": str(event.get("output") or ""),
+                }
+            )
+            continue
+        call = {
+            "title": _audit_tool_title(event, tool),
+            "tool": tool,
+            "call_id": call_id,
+            "relevance": _audit_relevance_text(event),
+            "source": _audit_source_text(event),
+            "args": _audit_args_payload(event),
+            "output": "",
+        }
+        calls.append(call)
+        if call_id:
+            by_call_id[call_id] = call
+    return calls
 
 
 def _audit_tool_events_for_attempt(attempt: ReplyAttempt) -> list[dict[str, str]]:
@@ -5762,96 +5855,211 @@ def _audit_tool_events_for_attempt(attempt: ReplyAttempt) -> list[dict[str, str]
     return [event for event in payload if isinstance(event, dict)]
 
 
-def _audit_tool_events_html(events: list[dict[str, str]]) -> str:
-    calls: list[dict[str, object]] = []
-    by_call_id: dict[str, dict[str, object]] = {}
-    for event in events:
-        tool = str(event.get("tool") or "tool").strip() or "tool"
-        call_id = str(event.get("call_id") or "").strip()
-        if tool == "tool_output":
-            target = by_call_id.get(call_id) if call_id else None
-            if target is not None:
-                target["output"] = str(event.get("output") or "")
-                target["output_event"] = event
-                continue
-            calls.append(
-                {
-                    "tool": "tool_output",
-                    "call_id": call_id,
-                    "input": "",
-                    "output": str(event.get("output") or ""),
-                    "command": str(event.get("command") or ""),
-                    "event": event,
-                }
-            )
-            continue
-        call = {
-            "tool": tool,
-            "call_id": call_id,
-            "input": _audit_tool_input_text(event),
-            "output": "",
-            "command": str(event.get("command") or ""),
-            "event": event,
-        }
-        calls.append(call)
-        if call_id:
-            by_call_id[call_id] = call
-    return "".join(_audit_tool_call_html(index, call) for index, call in enumerate(calls, 1))
+def _audit_tool_uses_html(uses: list[dict[str, object]]) -> str:
+    return "".join(_audit_tool_use_html(index, use) for index, use in enumerate(uses, 1))
 
 
-def _audit_tool_input_text(event: dict[str, str]) -> str:
-    value = str(event.get("input") or "").strip()
-    if value:
-        return value
-    command = str(event.get("command") or "").strip()
-    path = str(event.get("path") or "").strip()
-    fallback = {key: val for key, val in {"command": command, "path": path}.items() if val}
-    if fallback:
-        return json.dumps(fallback, ensure_ascii=False, indent=2)
-    return json.dumps(event, ensure_ascii=False, indent=2)
-
-
-def _audit_tool_call_html(index: int, call: dict[str, object]) -> str:
-    tool = str(call.get("tool") or "tool")
-    command = str(call.get("command") or "").strip()
-    call_id = str(call.get("call_id") or "").strip()
-    input_text = str(call.get("input") or "").strip()
-    output_text = str(call.get("output") or "").strip()
-    command_line = (
-        f"<div class=\"audit-tool-command\">{escape(command)}</div>"
-        if command and command != call_id
-        else ""
-    )
+def _audit_tool_use_html(index: int, use: dict[str, object]) -> str:
+    title = str(use.get("title") or "Tool use").strip()
+    tool = str(use.get("tool") or "").strip()
+    call_id = str(use.get("call_id") or "").strip()
     call_id_line = (
         f"<span class=\"pill\">{escape(call_id)}</span>" if call_id else ""
     )
+    tool_line = f"<span class=\"pill\">{escape(tool)}</span>" if tool else ""
+    metadata = _audit_tool_metadata_html(use)
     return (
         "<div class=\"audit-tool-event\">"
         "<div class=\"audit-tool-head\">"
         "<div class=\"audit-tool-title\">"
         f"<span class=\"audit-tool-index\">#{index}</span>"
-        f"<span>to {escape(tool)}</span>"
+        f"<span>{escape(title)}</span>"
+        f"{tool_line}"
         f"{call_id_line}"
         "</div>"
-        f"{command_line}"
         "</div>"
+        f"{metadata}"
         "<div class=\"audit-tool-io\">"
-        f"{_audit_tool_section_html('input / command args', input_text)}"
-        f"{_audit_tool_section_html('output', output_text)}"
+        f"{_audit_tool_args_html(use.get('args'))}"
+        f"{_audit_tool_output_html(str(use.get('output') or ''))}"
         "</div>"
         "</div>"
     )
 
 
-def _audit_tool_section_html(label: str, text: str) -> str:
-    if not text.strip():
+def _audit_tool_metadata_html(use: dict[str, object]) -> str:
+    rows = []
+    for label, key in (
+        ("relevance", "relevance"),
+        ("source", "source"),
+    ):
+        value = str(use.get(key) or "").strip()
+        if value:
+            rows.append(
+                f"<div class=\"audit-tool-meta-label\">{escape(label)}</div>"
+                f"<div class=\"audit-tool-meta-value\">{escape(value)}</div>"
+            )
+    if not rows:
         return ""
     return (
-        "<div class=\"audit-tool-section\">"
-        f"<div class=\"audit-tool-label\">{escape(label)}</div>"
-        f"<pre class=\"audit-tool-pre\">{escape(text)}</pre>"
+        "<div class=\"audit-tool-meta\">"
+        f"{''.join(rows)}"
         "</div>"
     )
+
+
+def _audit_tool_args_html(value: object) -> str:
+    if value in (None, "", {}, []):
+        return ""
+    return (
+        "<div class=\"audit-tool-section audit-tool-args\">"
+        "<div class=\"audit-tool-label\">args</div>"
+        f"<div class=\"audit-tool-pre\">{_audit_render_payload_html(value)}</div>"
+        "</div>"
+    )
+
+
+def _audit_tool_output_html(text: str) -> str:
+    if not text.strip():
+        return ""
+    preview = _audit_output_preview(text)
+    return (
+        "<details class=\"audit-tool-output\">"
+        "<summary>"
+        "<span class=\"audit-tool-label\">output</span>"
+        f"<span class=\"audit-tool-output-preview\">{escape(preview)}</span>"
+        "</summary>"
+        f"<div class=\"audit-tool-output-body\">{_audit_render_payload_html(text)}</div>"
+        "</details>"
+    )
+
+
+def _audit_tool_title(event: dict[str, str], default: str) -> str:
+    return _first_nonempty_string(event, ("title", "name", "command")) or default
+
+
+def _audit_relevance_text(event: dict[str, str]) -> str:
+    return _first_nonempty_string(event, ("relevance", "reason", "description"))
+
+
+def _audit_source_text(payload: Mapping[str, object]) -> str:
+    values = []
+    for key in ("path", "url", "mcp_name", "tool", "command"):
+        value = payload.get(key)
+        if isinstance(value, str) and value.strip():
+            values.append(value.strip())
+    return " · ".join(dict.fromkeys(values))
+
+
+def _audit_args_payload(payload: Mapping[str, object]) -> object:
+    args = payload.get("args")
+    if args not in (None, "", {}, []):
+        return args
+    input_text = str(payload.get("input") or "").strip()
+    if input_text:
+        return _decode_json_text(input_text) or input_text
+    values = {
+        key: payload[key]
+        for key in ("command", "path", "url", "mcp_name")
+        if isinstance(payload.get(key), str) and str(payload[key]).strip()
+    }
+    return values
+
+
+def _first_nonempty_string(payload: Mapping[str, object], keys: tuple[str, ...]) -> str:
+    for key in keys:
+        value = payload.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
+def _json_list(text: str) -> list[object]:
+    try:
+        payload = json.loads(text or "[]")
+    except json.JSONDecodeError:
+        return []
+    return payload if isinstance(payload, list) else []
+
+
+def _audit_render_payload_html(value: object) -> str:
+    expanded = _expand_nested_json_strings(value)
+    if isinstance(expanded, (dict, list)):
+        return (
+            f"<pre class=\"json-pre\">"
+            f"{_json_value_html(expanded, 0)}</pre>"
+        )
+    text = str(expanded)
+    parsed = _decode_json_text(text)
+    if parsed is not None:
+        parsed = _expand_nested_json_strings(parsed)
+        return (
+            f"<pre class=\"json-pre\">"
+            f"{_json_value_html(parsed, 0)}</pre>"
+        )
+    return _audit_markdown_html(text)
+
+
+def _expand_nested_json_strings(value: object) -> object:
+    if isinstance(value, dict):
+        return {key: _expand_nested_json_strings(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_expand_nested_json_strings(item) for item in value]
+    if isinstance(value, str):
+        parsed = _decode_json_text(value)
+        if parsed is not None:
+            return _expand_nested_json_strings(parsed)
+    return value
+
+
+def _decode_json_text(text: str) -> object | None:
+    stripped = text.strip()
+    if not stripped or stripped[0] not in "[{":
+        return None
+    try:
+        return json.loads(stripped)
+    except json.JSONDecodeError:
+        return None
+
+
+def _audit_output_preview(text: str) -> str:
+    expanded = _expand_nested_json_strings(text)
+    if isinstance(expanded, (dict, list)):
+        compact = json.dumps(expanded, ensure_ascii=False, separators=(",", ":"))
+        return _excerpt(compact, 160)
+    return _excerpt(str(expanded).replace("\n", " "), 160)
+
+
+def _audit_markdown_html(text: str) -> str:
+    blocks: list[str] = []
+    list_items: list[str] = []
+
+    def flush_list() -> None:
+        if list_items:
+            blocks.append("<ul>" + "".join(list_items) + "</ul>")
+            list_items.clear()
+
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line:
+            flush_list()
+            continue
+        if line.startswith("- ") or line.startswith("* "):
+            list_items.append(f"<li>{escape(line[2:].strip())}</li>")
+            continue
+        flush_list()
+        if line.startswith("### "):
+            blocks.append(f"<h3>{escape(line[4:].strip())}</h3>")
+        elif line.startswith("## "):
+            blocks.append(f"<h2>{escape(line[3:].strip())}</h2>")
+        elif line.startswith("# "):
+            blocks.append(f"<h1>{escape(line[2:].strip())}</h1>")
+        else:
+            blocks.append(f"<p>{escape(line)}</p>")
+    flush_list()
+    if not blocks:
+        return "<div class=\"audit-tool-rendered-text\"></div>"
+    return f"<div class=\"audit-tool-rendered-text\">{''.join(blocks)}</div>"
 
 
 def _trigger_text(attempt: ReplyAttempt) -> str:

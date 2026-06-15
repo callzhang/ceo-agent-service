@@ -2792,16 +2792,15 @@ def test_render_attempt_detail_shows_full_decision_and_feedback_form(tmp_path: P
     assert "@Alex Chen 这个怎么处理？" in html
     assert "Audit summary" in html
     assert "查看岗位画像后建议先按A方案走" in html
-    assert "Audit documents" in html
+    assert "Tool uses" in html
     assert '<details class="card collapsible-card">' in html
-    assert html.index("Audit documents") < html.index("面试/岗位画像.md")
+    assert html.index("Tool uses") < html.index("面试/岗位画像.md")
     assert "面试/岗位画像.md" in html
-    assert "Audit tool events" in html
-    assert html.index("Audit tool events") < html.index("rg 岗位")
+    assert "Audit documents" not in html
+    assert "Audit tool events" not in html
+    assert html.index("Tool uses") < html.index("rg 岗位")
     assert "rg 岗位" in html
-    assert "json-pre" in html
-    assert "json-key" in html
-    assert "json-string" in html
+    assert "audit-tool-args" in html
     assert "\n  " in html
     assert "先按A方案走" in html
     assert "Draft reply (raw Codex reply)" in html
@@ -2828,12 +2827,25 @@ def test_render_attempt_detail_renders_audit_tool_inputs_and_outputs(tmp_path: P
         action="send_reply",
         sensitivity_kind="general",
         codex_session_id="session-1",
+        audit_documents_json=json.dumps(
+            [
+                {
+                    "title": "岗位画像",
+                    "relevance": "判断岗位要求",
+                    "path": "面试/岗位画像.md",
+                    "args": {"section": "requirements"},
+                }
+            ],
+            ensure_ascii=False,
+        ),
         audit_tool_events_json=json.dumps(
             [
                 {
                     "event_type": "response_item",
                     "tool": "exec_command",
                     "call_id": "call-1",
+                    "title": "Search role profile",
+                    "relevance": "确认岗位画像是否提到项目经理",
                     "input": '{\n  "cmd": "rg -n 岗位 /Users/principal/Documents/memory/面试"\n}',
                     "command": "rg -n 岗位 /Users/principal/Documents/memory/面试",
                 },
@@ -2841,7 +2853,18 @@ def test_render_attempt_detail_renders_audit_tool_inputs_and_outputs(tmp_path: P
                     "event_type": "response_item",
                     "tool": "tool_output",
                     "call_id": "call-1",
-                    "output": "Output:\n岗位画像.md:1:项目经理",
+                    "output": json.dumps(
+                        {
+                            "result": json.dumps(
+                                {
+                                    "ok": "success",
+                                    "matches": ["岗位画像.md:1:项目经理"],
+                                },
+                                ensure_ascii=False,
+                            )
+                        },
+                        ensure_ascii=False,
+                    ),
                 },
             ],
             ensure_ascii=False,
@@ -2852,10 +2875,21 @@ def test_render_attempt_detail_renders_audit_tool_inputs_and_outputs(tmp_path: P
     status, html = render_attempt_detail(store, attempt_id)
 
     assert status == 200
-    assert "to exec_command" in html
-    assert "input / command args" in html
+    assert "Tool uses" in html
+    assert "岗位画像" in html
+    assert "判断岗位要求" in html
+    assert "面试/岗位画像.md" in html
+    assert "Search role profile" in html
+    assert "确认岗位画像是否提到项目经理" in html
+    assert "exec_command" in html
+    assert "args" in html
     assert "rg -n 岗位 /Users/principal/Documents/memory/面试" in html
     assert "output" in html
+    assert "audit-tool-output-preview" in html
+    assert "audit-tool-output-body" in html
+    assert '"result": "{' not in html
+    assert "ok" in html
+    assert "success" in html
     assert "岗位画像.md:1:项目经理" in html
 
 
@@ -2897,9 +2931,9 @@ def test_render_attempt_detail_renders_dws_material_tool_events(tmp_path: Path):
     status, html = render_attempt_detail(store, attempt_id)
 
     assert status == 200
-    assert "Audit tool events" in html
-    assert "to exec_command" in html
-    assert "input / command args" in html
+    assert "Tool uses" in html
+    assert "exec_command" in html
+    assert "args" in html
     assert "dws doc read --node" in html
     assert command in html
     assert "output" in html
@@ -2987,9 +3021,9 @@ def test_render_attempt_detail_renders_dws_material_events_from_codex_session(
     status, html = render_attempt_detail(store, attempt_id)
 
     assert status == 200
-    assert "Audit tool events" in html
-    assert "to exec_command" in html
-    assert "input / command args" in html
+    assert "Tool uses" in html
+    assert "exec_command" in html
+    assert "args" in html
     assert "dws doc read --node" in html
     assert command in html
     assert "output" in html
