@@ -455,7 +455,7 @@ class UnconfiguredOkrLiveSource:
 def is_okr_review_request(text: str) -> bool:
     normalized = " ".join(text.strip().split()).casefold()
     review_markers = ("审核", "review", "看看", "打分", "评价")
-    okr_markers = ("okr", "kr", "目标")
+    okr_markers = ("okr", "kr")
     return any(marker in normalized for marker in review_markers) and any(
         marker in normalized for marker in okr_markers
     )
