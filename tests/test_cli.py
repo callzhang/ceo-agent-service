@@ -815,6 +815,90 @@ def test_process_work_items_command_reclaims_stale_processing_input(
     assert dict(row) == {"status": "done", "attempts": 2}
 
 
+def test_process_work_items_command_does_not_batch_claim_after_failure(
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    class FakeTaskAgentCodexRunner:
+        last_session_id = "task-session-1"
+        last_audit_tool_events = []
+        last_transcript_start_line = 0
+        last_transcript_end_line = 0
+
+        def __init__(self, **kwargs):
+            pass
+
+        def decide(self, *, prompt, session_id=None):
+            raise RuntimeError("task agent unavailable")
+
+    monkeypatch.setattr(cli, "TaskAgentCodexRunner", FakeTaskAgentCodexRunner)
+    db_path = tmp_path / "task.sqlite3"
+    store = AutoReplyStore(db_path)
+    first = WorkItem.model_validate(
+        {
+            "source": {"type": "reply_attempt", "ref": "1"},
+            "summary": "第一条会失败。",
+            "project_name": "失败项目",
+            "context": {
+                "sender": "Mina",
+                "participants": [],
+                "source_conversation_kind": "group",
+                "source_conversation_title": "测试群",
+            },
+        }
+    )
+    second = WorkItem.model_validate(
+        {
+            "source": {"type": "reply_attempt", "ref": "2"},
+            "summary": "第二条不能被同批提前领取。",
+            "project_name": "后续项目",
+            "context": {
+                "sender": "Mina",
+                "participants": [],
+                "source_conversation_kind": "group",
+                "source_conversation_title": "测试群",
+            },
+        }
+    )
+    first_id = store.enqueue_work_summary_input(
+        first.source.type.value,
+        first.source.ref,
+        first.model_dump_json(),
+    )
+    second_id = store.enqueue_work_summary_input(
+        second.source.type.value,
+        second.source.ref,
+        second.model_dump_json(),
+    )
+
+    processed = process_work_items_command(
+        WorkerSettings(db_path=db_path, workspace=tmp_path, max_batches=1)
+    )
+
+    assert processed == 0
+    assert capsys.readouterr().out == "process-work-items processed=0\n"
+    with AutoReplyStore(db_path)._connect() as db:
+        rows = db.execute(
+            """
+            select id, status, attempts, error
+            from work_summary_inputs
+            where id in (?, ?)
+            order by id
+            """,
+            (first_id, second_id),
+        ).fetchall()
+    assert [dict(row) for row in rows] == [
+        {
+            "id": first_id,
+            "status": "failed",
+            "attempts": 1,
+            "error": "task agent unavailable",
+        },
+        {"id": second_id, "status": "pending", "attempts": 0, "error": ""},
+    ]
+
+
 def test_process_work_items_command_uses_task_agent_timeouts(
     tmp_path,
     monkeypatch,

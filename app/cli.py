@@ -741,7 +741,11 @@ def process_work_items_command(settings: WorkerSettings) -> int:
         )
     )
     processed = 0
-    for work_input in store.claim_work_summary_inputs(limit=limit):
+    for _ in range(limit):
+        claimed = store.claim_work_summary_inputs(limit=1)
+        if not claimed:
+            break
+        work_input = claimed[0]
         try:
             process_work_item(store, runner, work_input)
             processed += 1
