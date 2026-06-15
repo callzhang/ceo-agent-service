@@ -809,7 +809,7 @@ class DwsClient:
             "--yes",
         ]
 
-    def build_add_doc_reader_permission_command(
+    def build_add_doc_editor_permission_command(
         self,
         node: str,
         user_ids: list[str],
@@ -819,7 +819,7 @@ class DwsClient:
         if not node:
             raise ValueError("missing doc node")
         if not normalized_user_ids:
-            raise ValueError("missing doc reader user ids")
+            raise ValueError("missing doc editor user ids")
         return [
             self.dws_bin,
             "doc",
@@ -830,7 +830,7 @@ class DwsClient:
             "--user",
             ",".join(normalized_user_ids),
             "--role",
-            "READER",
+            "EDITOR",
             "--format",
             "json",
             "--yes",
@@ -1675,13 +1675,13 @@ class DwsClient:
             raise DwsError("invalid doc create response")
         return payload
 
-    def add_doc_reader_permission(
+    def add_doc_editor_permission(
         self,
         node: str,
         user_ids: list[str],
     ) -> dict[str, Any]:
         payload = self.run_json(
-            self.build_add_doc_reader_permission_command(node, user_ids)
+            self.build_add_doc_editor_permission_command(node, user_ids)
         )
         if not isinstance(payload, dict):
             raise DwsError("invalid doc permission response")

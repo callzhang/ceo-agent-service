@@ -133,8 +133,8 @@ class FakeDws:
         self.sent: list[tuple[str, str]] = []
         self.reply_messages: list[tuple[str, str, str, str]] = []
         self.created_markdown_docs: list[tuple[str, str]] = []
-        self.doc_reader_permissions: list[tuple[str, list[str]]] = []
-        self.doc_reader_permission_error: Exception | None = None
+        self.doc_editor_permissions: list[tuple[str, list[str]]] = []
+        self.doc_editor_permission_error: Exception | None = None
         self.send_visible = True
         self.reply_visible = True
         self.message_emojis: list[tuple[str, str, str]] = []
@@ -502,10 +502,10 @@ class FakeDws:
             }
         }
 
-    def add_doc_reader_permission(self, node: str, user_ids: list[str]) -> dict:
-        if self.doc_reader_permission_error:
-            raise self.doc_reader_permission_error
-        self.doc_reader_permissions.append((node, user_ids))
+    def add_doc_editor_permission(self, node: str, user_ids: list[str]) -> dict:
+        if self.doc_editor_permission_error:
+            raise self.doc_editor_permission_error
+        self.doc_editor_permissions.append((node, user_ids))
         return {"success": True, "nodeId": node, "userIds": user_ids}
 
     def _append_visible_message(self, conversation_id: str, text: str) -> None:
@@ -2136,7 +2136,7 @@ def test_worker_creates_markdown_doc_for_long_reply_before_sending(
     assert len(dws.created_markdown_docs) == 1
     assert dws.created_markdown_docs[0][0].startswith("CEO回复-Friday-")
     assert dws.created_markdown_docs[0][1].startswith("@周俊杰 " + "A" * 50)
-    assert dws.doc_reader_permissions == [("doc-1", ["sender-user-1"])]
+    assert dws.doc_editor_permissions == [("doc-1", ["sender-user-1"])]
     assert len(sent) == 1
     assert "内容较长，我写成了文档：" in sent[0][1]
     assert "https://alidocs.dingtalk.com/i/nodes/doc-1" in sent[0][1]
@@ -2173,7 +2173,7 @@ def test_worker_creates_markdown_doc_when_decision_requests_document_reply(
     assert dws.created_markdown_docs == [
         ("方案建议", "@周俊杰 # 方案\n\n先按 A 路径推进。（by明哥分身）")
     ]
-    assert dws.doc_reader_permissions == [("doc-1", ["sender-user-1"])]
+    assert dws.doc_editor_permissions == [("doc-1", ["sender-user-1"])]
     assert len(sent) == 1
     assert "内容我写成了文档：方案建议" in sent[0][1]
     assert "https://alidocs.dingtalk.com/i/nodes/doc-1" in sent[0][1]
@@ -2185,7 +2185,7 @@ def test_worker_does_not_send_markdown_doc_link_when_permission_fails(
 ):
     trigger = message("@Alex Chen(明哥) 写一版方案")
     dws = FakeDws([conversation()], {"cid-1": [trigger]})
-    dws.doc_reader_permission_error = DwsError("doc permission add failed")
+    dws.doc_editor_permission_error = DwsError("doc permission add failed")
     codex = FakeCodex(
         CodexDecision(
             action=CodexAction.SEND_REPLY,
