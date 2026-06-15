@@ -832,8 +832,12 @@ class FakeOaApprovalHandler:
         context_text: str,
         oa_url: str,
         approval_detail_text: str = "",
+        conversation_id: str = "",
+        conversation_title: str = "",
+        single_chat: bool = True,
         execute: bool = True,
     ) -> OaApprovalResult:
+        del conversation_id, conversation_title, single_chat
         self.calls.append((trigger_text, context_text, oa_url, execute))
         self.approval_detail_texts.append(approval_detail_text)
         return OaApprovalResult(
@@ -856,8 +860,12 @@ class ReturnOaApprovalHandler(FakeOaApprovalHandler):
         context_text: str,
         oa_url: str,
         approval_detail_text: str = "",
+        conversation_id: str = "",
+        conversation_title: str = "",
+        single_chat: bool = True,
         execute: bool = True,
     ) -> OaApprovalResult:
+        del conversation_id, conversation_title, single_chat
         self.calls.append((trigger_text, context_text, oa_url, execute))
         self.approval_detail_texts.append(approval_detail_text)
         return OaApprovalResult(
@@ -880,8 +888,12 @@ class MissingTargetOaApprovalHandler(FakeOaApprovalHandler):
         context_text: str,
         oa_url: str,
         approval_detail_text: str = "",
+        conversation_id: str = "",
+        conversation_title: str = "",
+        single_chat: bool = True,
         execute: bool = True,
     ) -> OaApprovalResult:
+        del conversation_id, conversation_title, single_chat
         self.calls.append((trigger_text, context_text, oa_url, execute))
         self.approval_detail_texts.append(approval_detail_text)
         return OaApprovalResult(

@@ -45,7 +45,7 @@ from app.leak_check import contains_forbidden_leak
 from app.message_split import split_dingtalk_text
 from app.dingtalk_models import CodexAction, DingTalkConversation, DingTalkMessage
 from app.notification import send_macos_notification
-from app.oa_approval import OaApprovalReviewClient
+from app.oa_approval import OaApprovalSpecHandler
 from app.org_cache import (
     CachedDwsClient,
     CachedOrgDirectory,
@@ -563,7 +563,7 @@ def create_worker(settings: WorkerSettings) -> DingTalkAutoReplyWorker:
         timeout_seconds=settings.codex_timeout_seconds,
         idle_timeout_seconds=settings.codex_idle_timeout_seconds,
     )
-    oa_approval_reviewer = OaApprovalReviewClient(
+    oa_approval_handler = OaApprovalSpecHandler(
         workspace=settings.workspace,
         timeout_seconds=settings.codex_timeout_seconds,
         idle_timeout_seconds=settings.codex_idle_timeout_seconds,
@@ -579,7 +579,7 @@ def create_worker(settings: WorkerSettings) -> DingTalkAutoReplyWorker:
         style_profile=style_profile,
         style_records=style_records,
     )
-    worker.oa_approval_handler = oa_approval_reviewer
+    worker.oa_approval_handler = oa_approval_handler
     okr_source_kind = _okr_source_kind()
     if okr_source_kind == "agoal":
         worker.okr_live_source = DwsAgoalApiOkrSource(

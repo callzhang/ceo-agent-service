@@ -144,7 +144,7 @@ def _nested_aflow_url(value: str) -> str:
     return ""
 
 
-class OaApprovalReviewClient:
+class OaApprovalSpecHandler:
     def __init__(
         self,
         workspace: Path,
@@ -162,8 +162,7 @@ class OaApprovalReviewClient:
         self.last_transcript_start_line: int = 0
         self.last_transcript_end_line: int = 0
         self._store = store or _EphemeralStructuredStore()
-        self._conversation_id = "__oa_approval__"
-        self.runner = StructuredCodexRunner(
+        self.structured_runner = StructuredCodexRunner(
             store=self._store,
             workspace=workspace,
             spec=AgentSpec(
@@ -174,7 +173,7 @@ class OaApprovalReviewClient:
                 primary_skill_paths=[skill_path or DEFAULT_OA_APPROVAL_SKILL_PATH],
                 reply_visible_skill_paths=[],
                 developer_preamble=(
-                    "You are the local CEO Agent OA approval handler. "
+                    "You are the CEO Agent processing an OA approval task. "
                     "Follow the injected dingtalk-oa-approval skill exactly. "
                     "Return only AgentEnvelope JSON. Do not expose tokens, "
                     "AppKey, AppSecret, cookies, OAuth codes, signed URLs, "
@@ -191,19 +190,26 @@ class OaApprovalReviewClient:
     def run(
         self,
         prompt: str,
+        *,
+        conversation_id: str,
+        conversation_title: str,
+        single_chat: bool,
         session_id: str | None = None,
         allow_side_effects: bool = True,
     ) -> OaApprovalResult:
         if session_id:
             self._store.upsert_conversation(
-                self._conversation_id,
-                "OA approval",
-                True,
+                conversation_id,
+                conversation_title,
+                single_chat,
                 session_id,
             )
         try:
             result = self._run_once(
                 prompt,
+                conversation_id=conversation_id,
+                conversation_title=conversation_title,
+                single_chat=single_chat,
                 allow_side_effects=allow_side_effects,
             )
         except (ValueError, ValidationError) as exc:
@@ -212,6 +218,9 @@ class OaApprovalReviewClient:
             try:
                 result = self._run_once(
                     self._repair_prompt(),
+                    conversation_id=conversation_id,
+                    conversation_title=conversation_title,
+                    single_chat=single_chat,
                     allow_side_effects=False,
                 )
             except (ValueError, ValidationError) as second_exc:
@@ -227,7 +236,10 @@ class OaApprovalReviewClient:
         trigger_text: str,
         context_text: str,
         oa_url: str,
-        approval_detail_text: str = "",
+        approval_detail_text: str,
+        conversation_id: str,
+        conversation_title: str,
+        single_chat: bool,
         execute: bool = True,
     ) -> OaApprovalResult:
         mode = (
@@ -253,13 +265,28 @@ class OaApprovalReviewClient:
             f"服务侧已读取的审批 API 详情:\n{approval_detail_text}\n\n"
             f"会话上下文:\n{context_text}"
         )
-        return self.run(prompt, session_id=None, allow_side_effects=execute)
+        return self.run(
+            prompt,
+            conversation_id=conversation_id,
+            conversation_title=conversation_title,
+            single_chat=single_chat,
+            session_id=None,
+            allow_side_effects=execute,
+        )
 
-    def _run_once(self, prompt: str, *, allow_side_effects: bool) -> OaApprovalResult:
-        run = self.runner.run(
-            conversation_id=self._conversation_id,
-            conversation_title="OA approval",
-            single_chat=True,
+    def _run_once(
+        self,
+        prompt: str,
+        *,
+        conversation_id: str,
+        conversation_title: str,
+        single_chat: bool,
+        allow_side_effects: bool,
+    ) -> OaApprovalResult:
+        run = self.structured_runner.run(
+            conversation_id=conversation_id,
+            conversation_title=conversation_title,
+            single_chat=single_chat,
             prompt=prompt,
             owner="oa_approval",
             allow_side_effects=allow_side_effects,
