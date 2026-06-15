@@ -5234,6 +5234,45 @@ def test_oa_approval_missing_target_records_review_without_executing_action(
     assert attempt.send_error == "missing_oa_approval_target"
 
 
+def test_oa_approval_uses_worker_url_target_when_agent_omits_identifiers(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message(
+        "[Ding]刘瑞安提醒您审批他的录用申请 "
+        "https://aflow.dingtalk.com/detail?procInstId=proc-1&taskId=task-1",
+        single_chat=True,
+    )
+    dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该走聊天回复")
+    )
+    oa_handler = MissingTargetOaApprovalHandler()
+    worker = make_worker(
+        tmp_path,
+        dws,
+        codex,
+        monkeypatch,
+        dry_run=False,
+        oa_approval_handler=oa_handler,
+    )
+
+    worker.run_once()
+
+    attempt = worker.store.get_reply_attempt(1)
+    assert attempt is not None
+    assert attempt.action == "oa_approval"
+    assert attempt.send_status == "commented"
+    assert attempt.send_error == ""
+    assert attempt.oa_process_instance_id == "proc-1"
+    assert attempt.oa_task_id == "task-1"
+    assert attempt.oa_url == (
+        "https://aflow.dingtalk.com/detail?procInstId=proc-1&taskId=task-1"
+    )
+    assert dws.oa_approval_comments == [
+        ("proc-1", "材料不足，暂不执行审批动作。")
+    ]
+
+
 def test_oa_approval_does_not_execute_task_that_is_not_current_user(
     tmp_path: Path, monkeypatch
 ):

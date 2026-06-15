@@ -1897,11 +1897,17 @@ class DingTalkAutoReplyWorker:
             approval_detail_text=approval_detail_text,
             execute=False,
         )
+        url_process_instance_id = self._oa_process_instance_id_from_url(oa_url)
+        url_task_id = self._oa_task_id_from_url(oa_url)
+        effective_oa_process_instance_id = (
+            result.process_instance_id.strip() or url_process_instance_id
+        )
+        effective_oa_task_id = result.task_id.strip() or url_task_id
+        effective_oa_url = result.oa_url.strip() or oa_url
         target_status = self._oa_target_status_for_current_user(
             approval_detail_text,
-            result.task_id,
+            effective_oa_task_id,
         )
-        effective_oa_task_id = result.task_id
         target_error = ""
         if target_status is False:
             effective_oa_task_id = ""
@@ -1911,13 +1917,14 @@ class DingTalkAutoReplyWorker:
         send_error = ""
         if not self.dry_run:
             has_approval_target = bool(
-                result.process_instance_id.strip() and effective_oa_task_id.strip()
+                effective_oa_process_instance_id.strip()
+                and effective_oa_task_id.strip()
             )
             if has_approval_target:
                 if result.oa_action == "退回":
                     try:
                         action_result = self.dws.comment_oa_approval(
-                            result.process_instance_id,
+                            effective_oa_process_instance_id,
                             result.oa_remark,
                         )
                         send_status = "commented"
@@ -1927,7 +1934,7 @@ class DingTalkAutoReplyWorker:
                 else:
                     try:
                         action_result = self.dws.execute_oa_approval_action(
-                            result.process_instance_id,
+                            effective_oa_process_instance_id,
                             effective_oa_task_id,
                             result.oa_action,
                             result.oa_remark,
@@ -1966,9 +1973,9 @@ class DingTalkAutoReplyWorker:
                 ensure_ascii=False,
             ),
             audit_summary=result.audit_summary,
-            oa_process_instance_id=result.process_instance_id,
+            oa_process_instance_id=effective_oa_process_instance_id,
             oa_task_id=effective_oa_task_id,
-            oa_url=result.oa_url,
+            oa_url=effective_oa_url,
             oa_action=result.oa_action,
             oa_remark=result.oa_remark,
             oa_action_result_json=json.dumps(
@@ -2413,6 +2420,18 @@ class DingTalkAutoReplyWorker:
         parsed = urlparse(oa_url)
         query = parse_qs(parsed.query)
         for key in ("procInstId", "processInstanceId", "process_instance_id"):
+            values = query.get(key)
+            if values:
+                return values[0]
+        return ""
+
+    @staticmethod
+    def _oa_task_id_from_url(oa_url: str) -> str:
+        if not oa_url:
+            return ""
+        parsed = urlparse(oa_url)
+        query = parse_qs(parsed.query)
+        for key in ("taskId", "task_id"):
             values = query.get(key)
             if values:
                 return values[0]
