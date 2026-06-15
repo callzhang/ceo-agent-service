@@ -25,6 +25,7 @@ TITLE_WORD_OR_CJK_PATTERN = re.compile(
 TITLE_AT_FILE_ESCAPE_PREFIX = "回复："
 TEXT_AT_FILE_ESCAPE_PREFIX = " "
 DINGTALK_MESSAGE_TIME_ZONE = ZoneInfo("Asia/Shanghai")
+MIN_UNREAD_MESSAGE_LIST_LIMIT = 5
 
 
 def _local_time_zone():
@@ -441,9 +442,10 @@ class DwsClient:
     def build_read_unread_messages_command(
         self, conversation: DingTalkConversation
     ) -> list[str]:
+        # DWS rejects tiny windows when multiple messages share the cursor timestamp.
         return self.build_message_list_command(
             conversation=conversation,
-            limit=max(conversation.unread_point, 1),
+            limit=max(conversation.unread_point, MIN_UNREAD_MESSAGE_LIST_LIMIT),
             forward=False,
         )
 

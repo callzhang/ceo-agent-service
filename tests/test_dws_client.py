@@ -2616,10 +2616,26 @@ def test_build_read_unread_messages_command_reads_latest_unread_window(
         expected_time,
         "--forward=false",
         "--limit",
-        "3",
+        "5",
         "--format",
         "json",
     ]
+
+
+def test_build_read_unread_messages_command_keeps_larger_unread_window(monkeypatch):
+    monkeypatch.setattr(dws_client, "_local_time_zone", lambda: TEST_LOCAL_TZ)
+    client = DwsClient(dws_bin="dws")
+    conversation = DingTalkConversation(
+        open_conversation_id="cid-1",
+        title="Friday",
+        single_chat=False,
+        unread_point=9,
+        last_message_create_at=1778666181403,
+    )
+
+    command = client.build_read_unread_messages_command(conversation)
+
+    assert command[command.index("--limit") + 1] == "9"
 
 
 def test_build_list_messages_by_sender_command_uses_sender_and_cursor():
@@ -2708,7 +2724,7 @@ def test_read_unread_messages_reads_latest_window_and_returns_chronological_orde
             expected_time,
             "--forward=false",
             "--limit",
-            "2",
+            "5",
             "--format",
             "json",
         ]
