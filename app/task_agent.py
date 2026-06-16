@@ -5,6 +5,7 @@ from typing import Protocol
 from pydantic import ValidationError
 
 from app.store import AutoReplyStore
+from app.codex_runner import memory_connector_config_issue
 from app.task_models import (
     FollowUpDraftDecision,
     TaskAgentDecision,
@@ -185,17 +186,25 @@ def process_work_item(
             project_name=work_item.project_name,
         )
         decision = runner.decide(work_item, render_candidate_prompt(candidates))
+        codex_session_id = getattr(runner.codex, "last_session_id", None) or ""
+        store.record_task_agent_run(
+            summary_input_id=work_input.id,
+            codex_session_id=codex_session_id,
+            decision_json=_json_dumps(decision.model_dump(mode="json")),
+            audit_summary=decision.update_summary,
+            memory_recall_used=decision.memory_recall_used,
+        )
         _validate_memory_recall_tool_event(
             decision,
             getattr(runner.codex, "last_audit_tool_events", None),
         )
-        codex_session_id = getattr(runner.codex, "last_session_id", None) or ""
         apply_task_agent_decision(
             store,
             summary_input_id=work_input.id,
             work_item=work_item,
             decision=decision,
             codex_session_id=codex_session_id,
+            record_run=False,
         )
         if decision.action == "discard":
             store.mark_work_summary_input_discarded(
@@ -216,14 +225,16 @@ def apply_task_agent_decision(
     work_item: WorkItem,
     decision: TaskAgentDecision,
     codex_session_id: str = "",
+    record_run: bool = True,
 ) -> int | None:
-    store.record_task_agent_run(
-        summary_input_id=summary_input_id,
-        codex_session_id=codex_session_id,
-        decision_json=_json_dumps(decision.model_dump(mode="json")),
-        audit_summary=decision.update_summary,
-        memory_recall_used=decision.memory_recall_used,
-    )
+    if record_run:
+        store.record_task_agent_run(
+            summary_input_id=summary_input_id,
+            codex_session_id=codex_session_id,
+            decision_json=_json_dumps(decision.model_dump(mode="json")),
+            audit_summary=decision.update_summary,
+            memory_recall_used=decision.memory_recall_used,
+        )
     _validate_task_agent_decision(decision)
 
     if decision.action == "discard":
@@ -312,6 +323,9 @@ def _validate_memory_recall_tool_event(
         tool = str(event.get("tool") or "")
         if "memory_recall" in tool:
             return
+    issue = memory_connector_config_issue()
+    if issue:
+        raise ValueError(f"critical_info_unavailable: memory_recall unavailable: {issue}")
     raise ValueError("non-discard task decision requires memory_recall tool event")
 
 

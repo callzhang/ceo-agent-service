@@ -126,6 +126,22 @@ def _memory_connector_env_from_config(config_path: Path) -> dict[str, str]:
     return env
 
 
+def memory_connector_config_issue() -> str:
+    env = _memory_connector_env()
+    url = env.get(MEMORY_CONNECTOR_URL_ENV)
+    token = env.get(MEMORY_CONNECTOR_API_KEY_ENV)
+    if not url:
+        return "memory connector URL is missing"
+    if token:
+        return ""
+
+    config_env = _memory_connector_env_from_config(_codex_home() / "config.toml")
+    configured_token = config_env.get(MEMORY_CONNECTOR_API_KEY_ENV)
+    if configured_token and _jwt_token_is_expired(configured_token):
+        return "memory connector token is expired"
+    return "memory connector token is missing"
+
+
 def memory_connector_config_options() -> list[str]:
     env = _memory_connector_env()
     url = env.get(MEMORY_CONNECTOR_URL_ENV)

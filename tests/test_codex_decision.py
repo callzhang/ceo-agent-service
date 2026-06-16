@@ -9,6 +9,7 @@ from app.codex_decision import (
     extract_codex_session_id,
     parse_codex_json,
 )
+from app.codex_runner import memory_connector_config_issue
 from app.dingtalk_models import (
     CalendarResponseStatus,
     CodexAction,
@@ -330,6 +331,23 @@ def test_extract_codex_audit_events_preserves_mcp_tool_name():
 
     assert events[0]["tool"] == "friday memory_memory_recall"
     assert "候选人筛选项目" in events[0]["input"]
+
+
+def test_memory_connector_config_issue_reports_expired_token(tmp_path, monkeypatch):
+    config = tmp_path / "config.toml"
+    config.write_text(
+        """
+[mcp_servers.memory_connector]
+url = "https://memory.example/mcp/"
+
+[mcp_servers.memory_connector.http_headers]
+Authorization = "Bearer eyJhbGciOiJub25lIn0.eyJleHAiOjF9."
+""".strip(),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path))
+
+    assert memory_connector_config_issue() == "memory connector token is expired"
 
 
 def test_extract_codex_session_id_accepts_session_meta():

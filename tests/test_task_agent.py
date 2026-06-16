@@ -511,7 +511,11 @@ def test_non_discard_decision_requires_memory_context(tmp_path):
         )
 
 
-def test_process_work_item_requires_actual_memory_recall_tool_event(tmp_path):
+def test_process_work_item_requires_actual_memory_recall_tool_event(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setattr("app.task_agent.memory_connector_config_issue", lambda: "")
     store = AutoReplyStore(tmp_path / "task.sqlite3")
     item = _work_item()
     input_id = store.enqueue_work_summary_input(
@@ -547,8 +551,67 @@ def test_process_work_item_requires_actual_memory_recall_tool_event(tmp_path):
             "select status, error from work_summary_inputs where id=?",
             (input_id,),
         ).fetchone()
+        run_row = db.execute(
+            """
+            select summary_input_id, codex_session_id, audit_summary, memory_recall_used
+            from task_agent_runs
+            """
+        ).fetchone()
     assert input_row[0] == "failed"
     assert "memory_recall tool event" in input_row[1]
+    assert run_row == (input_id, "task-session-1", "创建项目。", 1)
+
+
+def test_process_work_item_reports_memory_connector_issue(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        "app.task_agent.memory_connector_config_issue",
+        lambda: "memory connector token is expired",
+    )
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    item = _work_item()
+    input_id = store.enqueue_work_summary_input(
+        item.source.type.value,
+        item.source.ref,
+        item.model_dump_json(),
+    )
+    work_input = store.claim_work_summary_inputs(limit=1)[0]
+    codex = FakeCodexWithAuditEvents(
+        {
+            "action": "create_project",
+            "project": {
+                "title": "售前知识库建设",
+                "category": "sales",
+                "status": "active",
+                "memory_context": _memory_context(),
+            },
+            "todo_changes": [],
+            "follow_up_drafts": [],
+            "update_summary": "创建项目。",
+            "merge_reason": "事项需要持续跟进。",
+            "memory_recall_used": True,
+            "confidence": 0.8,
+        },
+        audit_tool_events=[],
+    )
+
+    with pytest.raises(ValueError, match="critical_info_unavailable"):
+        process_work_item(store, TaskAgentRunner(codex), work_input)
+
+    with sqlite3.connect(tmp_path / "task.sqlite3") as db:
+        input_row = db.execute(
+            "select status, error from work_summary_inputs where id=?",
+            (input_id,),
+        ).fetchone()
+        run_count = db.execute("select count(*) from task_agent_runs").fetchone()[0]
+    assert input_row == (
+        "failed",
+        "critical_info_unavailable: memory_recall unavailable: "
+        "memory connector token is expired",
+    )
+    assert run_count == 1
 
 
 def test_task_agent_codex_runner_keeps_user_config_for_memory_recall(tmp_path):
