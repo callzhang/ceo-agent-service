@@ -556,6 +556,7 @@ class DingTalkAutoReplyWorker:
                     ),
                     available_at=available_at,
                     error=error,
+                    replace_pending_single_chat=len(trigger_messages) == 1,
                 ):
                     queued_tasks += 1
                 if max_tasks is not None and queued_tasks >= max_tasks:
@@ -1344,6 +1345,7 @@ class DingTalkAutoReplyWorker:
         context_messages: list[DingTalkMessage] | None = None,
         available_at: str = "",
         error: str = "",
+        replace_pending_single_chat: bool = True,
     ) -> bool:
         if self._is_calendar_message(trigger):
             full_context_messages = self._read_conversation_messages(
@@ -1360,6 +1362,19 @@ class DingTalkAutoReplyWorker:
             trigger,
             context_messages,
         )
+        if conversation.single_chat and replace_pending_single_chat:
+            updated = self.store.replace_pending_single_chat_reply_task_trigger(
+                conversation_id=conversation.open_conversation_id,
+                trigger_message_id=trigger.open_message_id,
+                trigger_create_time=trigger.create_time,
+                trigger_sender=trigger.sender_name,
+                trigger_text=trigger.content,
+                trigger_message_json=trigger.model_dump_json(),
+                available_at=available_at,
+                error=error,
+            )
+            if updated:
+                return True
         inserted = self.store.enqueue_reply_task(
             conversation_id=conversation.open_conversation_id,
             conversation_title=conversation.title,
@@ -1391,16 +1406,16 @@ class DingTalkAutoReplyWorker:
     ) -> list[DingTalkMessage]:
         if not messages:
             return []
-        if conversation.single_chat and source_messages is not None:
-            return self._coalesce_candidate_messages_preserving_context_boundaries(
-                messages,
-                source_messages,
-            )
-        return DingTalkAutoReplyWorker._coalesce_consecutive_messages_by_sender(
-            messages
-        )
+        if conversation.single_chat:
+            if source_messages is not None:
+                return self._latest_candidate_messages_preserving_context_boundaries(
+                    messages,
+                    source_messages,
+                )
+            return [self._latest_trigger_message(messages)]
+        return DingTalkAutoReplyWorker._group_chat_trigger_messages(messages)
 
-    def _coalesce_candidate_messages_preserving_context_boundaries(
+    def _latest_candidate_messages_preserving_context_boundaries(
         self,
         messages: list[DingTalkMessage],
         source_messages: list[DingTalkMessage],
@@ -1434,27 +1449,51 @@ class DingTalkAutoReplyWorker:
                 current_sender_key = sender_key
         flush_group()
         return [
-            DingTalkAutoReplyWorker._coalesced_message(group)
+            DingTalkAutoReplyWorker._latest_trigger_message(group)
             for group in groups
         ]
 
     @staticmethod
-    def _coalesce_consecutive_messages_by_sender(
+    def _group_chat_trigger_messages(
         messages: list[DingTalkMessage],
     ) -> list[DingTalkMessage]:
-        grouped: list[list[DingTalkMessage]] = []
-        for message in messages:
+        groups: list[list[DingTalkMessage]] = []
+        thread_group_by_key: dict[str, list[DingTalkMessage]] = {}
+        for message in sorted(
+            messages,
+            key=DingTalkAutoReplyWorker._message_create_time_as_instant,
+        ):
+            thread_key = DingTalkAutoReplyWorker._message_thread_key(message)
+            if thread_key:
+                group = thread_group_by_key.get(thread_key)
+                if group is None:
+                    group = []
+                    groups.append(group)
+                    thread_group_by_key[thread_key] = group
+                group.append(message)
+                continue
             sender_key = DingTalkAutoReplyWorker._message_sender_key(message)
-            if grouped and DingTalkAutoReplyWorker._message_sender_key(
-                grouped[-1][-1]
-            ) == sender_key:
-                grouped[-1].append(message)
+            if (
+                groups
+                and not DingTalkAutoReplyWorker._message_thread_key(groups[-1][-1])
+                and DingTalkAutoReplyWorker._message_sender_key(groups[-1][-1])
+                == sender_key
+            ):
+                groups[-1].append(message)
             else:
-                grouped.append([message])
-        return [
-            DingTalkAutoReplyWorker._coalesced_message(group)
-            for group in grouped
+                groups.append([message])
+        triggers = [
+            DingTalkAutoReplyWorker._latest_trigger_message(group)
+            for group in groups
         ]
+        return sorted(
+            triggers,
+            key=DingTalkAutoReplyWorker._message_create_time_as_instant,
+        )
+
+    @staticmethod
+    def _message_thread_key(message: DingTalkMessage) -> str:
+        return message.quoted_message_id or ""
 
     @staticmethod
     def _message_sender_key(message: DingTalkMessage) -> str:
@@ -1465,23 +1504,22 @@ class DingTalkAutoReplyWorker:
         )
 
     @staticmethod
-    def _coalesced_message(messages: list[DingTalkMessage]) -> DingTalkMessage:
-        if len(messages) == 1:
-            return messages[0]
-        latest = messages[-1]
-        content = "\n\n".join(
-            f"[{message.create_time}] {message.content}" for message in messages
+    def _latest_trigger_message(messages: list[DingTalkMessage]) -> DingTalkMessage:
+        latest = max(
+            messages,
+            key=DingTalkAutoReplyWorker._message_create_time_as_instant,
         )
+        if len(messages) == 1:
+            return latest
         raw_payload = dict(latest.raw_payload)
         raw_payload["coalesced_message_ids"] = [
-            message.open_message_id for message in messages
+            message.open_message_id
+            for message in sorted(
+                messages,
+                key=DingTalkAutoReplyWorker._message_create_time_as_instant,
+            )
         ]
-        return latest.model_copy(
-            update={
-                "content": content,
-                "raw_payload": raw_payload,
-            }
-        )
+        return latest.model_copy(update={"raw_payload": raw_payload})
 
     def _mentioned_messages_by_conversation(
         self, conversations: list[DingTalkConversation]

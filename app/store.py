@@ -1288,6 +1288,89 @@ class AutoReplyStore:
             )
             return cursor.rowcount
 
+    def replace_pending_single_chat_reply_task_trigger(
+        self,
+        *,
+        conversation_id: str,
+        trigger_message_id: str,
+        trigger_create_time: str,
+        trigger_sender: str,
+        trigger_text: str,
+        trigger_message_json: str,
+        available_at: str = "",
+        error: str = "",
+    ) -> int:
+        with self._connect() as db:
+            target = db.execute(
+                """
+                select id
+                from reply_tasks
+                where conversation_id=?
+                  and single_chat=1
+                  and status='pending'
+                  and attempts=0
+                  and trigger_create_time <= ?
+                order by trigger_create_time desc, id desc
+                limit 1
+                """,
+                (conversation_id, trigger_create_time),
+            ).fetchone()
+            if target is None:
+                return 0
+            task_id = int(target["id"])
+            cursor = db.execute(
+                """
+                update reply_tasks
+                set trigger_message_id=?,
+                    trigger_create_time=?,
+                    trigger_sender=?,
+                    trigger_text=?,
+                    trigger_message_json=?,
+                    available_at=?,
+                    error=?,
+                    updated_at=current_timestamp
+                where id=?
+                  and (
+                    trigger_message_id != ?
+                    or trigger_create_time != ?
+                    or trigger_sender != ?
+                    or trigger_text != ?
+                    or trigger_message_json != ?
+                    or available_at != ?
+                    or error != ?
+                  )
+                """,
+                (
+                    trigger_message_id,
+                    trigger_create_time,
+                    trigger_sender,
+                    trigger_text,
+                    trigger_message_json,
+                    available_at,
+                    error,
+                    task_id,
+                    trigger_message_id,
+                    trigger_create_time,
+                    trigger_sender,
+                    trigger_text,
+                    trigger_message_json,
+                    available_at,
+                    error,
+                ),
+            )
+            db.execute(
+                """
+                delete from reply_tasks
+                where conversation_id=?
+                  and single_chat=1
+                  and status='pending'
+                  and attempts=0
+                  and id != ?
+                """,
+                (conversation_id, task_id),
+            )
+            return cursor.rowcount
+
     def reset_codex_sessions(self) -> int:
         with self._connect() as db:
             cursor = db.execute(

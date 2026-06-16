@@ -9355,7 +9355,7 @@ def test_group_mention_from_unread_payload_is_processed_when_mention_lookup_miss
     assert attempts[0].send_status == "dry_run"
 
 
-def test_produce_once_coalesces_consecutive_group_mentions_from_same_sender(
+def test_produce_once_triggers_only_latest_consecutive_group_mention_from_same_sender(
     tmp_path: Path, monkeypatch
 ):
     first = message(
@@ -9389,13 +9389,110 @@ def test_produce_once_coalesces_consecutive_group_mentions_from_same_sender(
     assert queued == 1
     assert len(tasks) == 1
     assert tasks[0].trigger_message_id == "msg-mentioned-3"
-    assert "@Alex Chen(明哥) 先看第一点" in tasks[0].trigger_text
-    assert "@曹宇航(Yuhang Cao) @Alex Chen(明哥) 再看第二点" in tasks[0].trigger_text
-    assert "@Alex Chen(明哥) @曹宇航(Yuhang Cao) 最后总结一下" in tasks[0].trigger_text
+    assert tasks[0].trigger_text == "@Alex Chen(明哥) @曹宇航(Yuhang Cao) 最后总结一下"
     assert codex.calls == []
 
 
-def test_single_chat_coalesces_oa_card_with_followup_instruction(
+def test_produce_once_triggers_only_latest_single_chat_message(
+    tmp_path: Path, monkeypatch
+):
+    first = message("先看第一点", message_id="msg-single-1", single_chat=True)
+    first.create_time = "2026-05-28 13:21:54"
+    second = message("再看第二点", message_id="msg-single-2", single_chat=True)
+    second.create_time = "2026-05-28 13:24:02"
+    dws = FakeDws(
+        [conversation(single_chat=True)],
+        {"cid-1": [first, second]},
+        unread_messages={"cid-1": [first, second]},
+    )
+    worker = make_worker(tmp_path, dws, FakeCodex([]), monkeypatch)
+
+    queued = worker.produce_once()
+
+    tasks = worker.store.claim_reply_tasks(limit=10)
+    assert queued == 1
+    assert len(tasks) == 1
+    assert tasks[0].trigger_message_id == "msg-single-2"
+    assert tasks[0].trigger_text == "再看第二点"
+
+
+def test_produce_once_replaces_pending_single_chat_task_with_latest_message(
+    tmp_path: Path, monkeypatch
+):
+    first = message("先看第一点", message_id="msg-single-1", single_chat=True)
+    first.create_time = "2026-05-28 13:21:54"
+    second = message("再看第二点", message_id="msg-single-2", single_chat=True)
+    second.create_time = "2026-05-28 13:24:02"
+    dws = FakeDws(
+        [conversation(single_chat=True)],
+        {"cid-1": [first]},
+        unread_messages={"cid-1": [first]},
+    )
+    worker = make_worker(
+        tmp_path,
+        dws,
+        FakeCodex([]),
+        monkeypatch,
+        fast_path_unread_backoff=timedelta(minutes=5),
+    )
+
+    assert worker.produce_once() == 1
+
+    dws.messages = {"cid-1": [first, second]}
+    dws.unread_messages = {"cid-1": [first, second]}
+    assert worker.produce_once() == 1
+
+    tasks = worker.store.list_reply_tasks(statuses=("pending",), limit=10)
+    assert len(tasks) == 1
+    assert tasks[0].trigger_message_id == "msg-single-2"
+    assert tasks[0].trigger_text == "再看第二点"
+
+
+def test_produce_once_triggers_only_latest_group_thread_reply(
+    tmp_path: Path, monkeypatch
+):
+    first_thread_reply = message(
+        "@Alex Chen(明哥) 这个 thread 先看第一点",
+        message_id="msg-thread-1",
+        quoted_content="同一个 thread",
+        sender_user_id="sender-user-1",
+    )
+    first_thread_reply.create_time = "2026-05-28 13:21:54"
+    other_topic = message(
+        "@Alex Chen(明哥) 另一个话题",
+        message_id="msg-other-topic",
+        sender_user_id="sender-user-2",
+    )
+    other_topic.create_time = "2026-05-28 13:22:54"
+    latest_thread_reply = message(
+        "@Alex Chen(明哥) 这个 thread 最后看这里",
+        message_id="msg-thread-2",
+        quoted_content="同一个 thread",
+        sender_user_id="sender-user-3",
+    )
+    latest_thread_reply.create_time = "2026-05-28 13:24:02"
+    dws = FakeDws(
+        [conversation()],
+        {"cid-1": [first_thread_reply, other_topic, latest_thread_reply]},
+        unread_messages={"cid-1": [first_thread_reply, other_topic, latest_thread_reply]},
+    )
+    worker = make_worker(tmp_path, dws, FakeCodex([]), monkeypatch)
+
+    queued = worker.produce_once()
+
+    tasks = sorted(
+        worker.store.claim_reply_tasks(limit=10),
+        key=lambda task: task.trigger_create_time,
+    )
+    assert queued == 2
+    assert [task.trigger_message_id for task in tasks] == [
+        "msg-other-topic",
+        "msg-thread-2",
+    ]
+    assert tasks[1].trigger_text == "@Alex Chen(明哥) 这个 thread 最后看这里"
+
+
+def test_single_chat_oa_card_followup_triggers_followup_only(
     tmp_path: Path, monkeypatch
 ):
     oa_card = message(
@@ -9429,17 +9526,12 @@ def test_single_chat_coalesces_oa_card_with_followup_instruction(
     assert queued == 1
     assert len(tasks) == 1
     assert tasks[0].trigger_message_id == "msg-followup"
-    assert "Roy Han's 招聘需求申请" in tasks[0].trigger_text
-    assert "dinghash%3Dapproval" in tasks[0].trigger_text
-    assert "磊哥请你的分身审核一遍" in tasks[0].trigger_text
+    assert tasks[0].trigger_text == "磊哥请你的分身审核一遍，并判断这个需求是否必要，以及是否有其他建议"
     merged = DingTalkMessage.model_validate_json(tasks[0].trigger_message_json)
-    assert merged.raw_payload["coalesced_message_ids"] == [
-        "msg-oa-card",
-        "msg-followup",
-    ]
+    assert merged.open_message_id == "msg-followup"
 
 
-def test_mark_seen_tracks_all_coalesced_message_ids(tmp_path: Path, monkeypatch):
+def test_mark_seen_tracks_all_latest_trigger_message_ids(tmp_path: Path, monkeypatch):
     first = message("@Alex Chen(明哥) 先看第一点", message_id="msg-mentioned-1")
     second = message("@Alex Chen(明哥) 再看第二点", message_id="msg-mentioned-2")
     third = message("@Alex Chen(明哥) 最后总结一下", message_id="msg-mentioned-3")
@@ -9448,9 +9540,9 @@ def test_mark_seen_tracks_all_coalesced_message_ids(tmp_path: Path, monkeypatch)
         CodexDecision(action=CodexAction.NO_REPLY, reason="no action needed")
     )
     worker = make_worker(tmp_path, dws, codex, monkeypatch)
-    coalesced = DingTalkAutoReplyWorker._coalesced_message([first, second, third])
+    trigger = DingTalkAutoReplyWorker._latest_trigger_message([first, second, third])
 
-    worker._mark_seen([coalesced])
+    worker._mark_seen([trigger])
 
     assert worker.store.has_seen("msg-mentioned-1") is True
     assert worker.store.has_seen("msg-mentioned-2") is True
@@ -9806,8 +9898,7 @@ def test_group_mentions_are_processed_by_message_time_not_fetch_order(
     assert len(codex.calls) == 1
     assert len(attempts) == 1
     assert attempts[0].trigger_message_id == "msg-newer-mention"
-    assert "怎么规避客户拿给别的 vendor 比价" in attempts[0].trigger_text
-    assert "请审一下这个文档" in attempts[0].trigger_text
+    assert attempts[0].trigger_text == "@Alex Chen(明哥) 明哥请审一下这个文档，给一下意见"
 
 
 def test_current_user_file_does_not_hide_unanswered_group_mention(
