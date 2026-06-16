@@ -2759,12 +2759,20 @@ def test_fastapi_app_records_feedback_and_redirects(tmp_path: Path):
 def test_render_attempt_detail_shows_full_decision_and_feedback_form(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     attempt_id = seed_attempt(store)
-    store.record_sent_reply("cid-1", "msg-1", "先按A方案走（by明哥分身）")
+    store.record_sent_reply(
+        "cid-1",
+        "msg-1",
+        "先按A方案走（by明哥分身）",
+        send_result_json=json.dumps(
+            {"send_result": {"result": {"openMessageId": "sent-msg-1"}}}
+        ),
+    )
 
     status, html = render_attempt_detail(store, attempt_id)
 
     assert status == 200
     assert "attempt-conversation-banner" in html
+    assert "attempt-banner-actions" in html
     assert "群名" in html
     assert "技术部" in html
     assert "触发人：Xiaomin" in html
@@ -2779,10 +2787,14 @@ def test_render_attempt_detail_shows_full_decision_and_feedback_form(tmp_path: P
     assert "allow" in detail_grid
     assert "permission reason" not in html
     assert "agent 执行记录" in html
+    assert f'action="/attempts/{attempt_id}/rerun?return_to=/attempts/{attempt_id}"' in html
+    assert f'action="/attempts/{attempt_id}/recall?return_to=/attempts/{attempt_id}"' in html
+    assert "/open-dingtalk?conversation_id=cid-1" in html
     assert html.index("群名") < html.index("内部反馈/建议修改")
     assert html.index('class="agent-log-button" href="/codex/session-1"') < html.index(
         "内部反馈/建议修改"
     )
+    assert html.index("attempt-banner-actions") < html.index("trigger message id")
     assert html.index("Trigger") < html.index("生成回复")
     assert html.index("Trigger") < html.index("先按A方案走（by明哥分身）")
     assert html.index("Codex reason") < html.index("生成回复")
@@ -2813,7 +2825,6 @@ def test_render_attempt_detail_shows_full_decision_and_feedback_form(tmp_path: P
     assert "/codex/session-1" in html
     assert "Codex local history" not in html
     assert "Final reply (send-ready text)" not in html
-    assert "撤销发送" not in html
 
 
 def test_render_attempt_detail_renders_audit_tool_inputs_and_outputs(tmp_path: Path):
@@ -3198,21 +3209,22 @@ def test_render_attempt_detail_does_not_show_recall_action_card(
     status, html = render_attempt_detail(store, attempt_id)
 
     assert status == 200
-    assert "撤销发送" not in html
-    assert f'action="/attempts/{attempt_id}/recall"' not in html
-    assert "确认撤销这条已发送消息？" not in html
+    assert "attempt-banner-actions" in html
+    assert f'action="/attempts/{attempt_id}/recall?return_to=/attempts/{attempt_id}"' in html
+    assert "recall-card" not in html
 
 
-def test_render_attempt_detail_does_not_show_rerun_action_card(tmp_path: Path):
+def test_render_attempt_detail_shows_rerun_only_in_banner_actions(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     attempt_id = seed_attempt(store)
 
     status, html = render_attempt_detail(store, attempt_id)
 
     assert status == 200
+    assert "attempt-banner-actions" in html
+    assert f'action="/attempts/{attempt_id}/rerun?return_to=/attempts/{attempt_id}"' in html
     assert "重跑 attempt" not in html
-    assert f'action="/attempts/{attempt_id}/rerun"' not in html
-    assert "确认重跑这条 attempt？" not in html
+    assert "rerun-card" not in html
 
 
 def test_render_attempt_detail_returns_404_when_missing(tmp_path: Path):

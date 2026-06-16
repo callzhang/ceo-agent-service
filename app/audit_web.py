@@ -316,14 +316,16 @@ th{background:var(--surface-soft);color:var(--steel);font-size:12px;font-weight:
 .attempt-warning{color:#8a2626;font-size:12px;line-height:1.4}
 .attempt-conversation-banner{display:flex;align-items:center;justify-content:space-between;gap:14px;border:1px solid rgba(0,180,138,.34);background:#f3fffb}
 .attempt-conversation-left{display:flex;align-items:center;gap:14px;min-width:0}
+.attempt-banner-actions{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex:0 0 auto;flex-wrap:wrap}
 .attempt-conversation-label{display:inline-flex;align-items:center;height:28px;padding:0 10px;border-radius:999px;background:#ddfff6;border:1px solid rgba(0,180,138,.42);color:#005b49;font-size:12px;font-weight:800;white-space:nowrap}
 .attempt-conversation-main{min-width:0}
 .attempt-conversation-title{color:var(--ink);font-size:20px;font-weight:750;line-height:1.3;word-break:break-word}
 .attempt-conversation-sub{margin-top:2px;color:var(--steel);font-size:12px;font-weight:600;line-height:1.4}
-.attempt-detail-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
-.attempt-detail-cell{min-width:0;padding:10px 12px;border:1px solid var(--hairline);border-radius:8px;background:var(--surface-soft)}
-.attempt-detail-label{margin-bottom:4px;color:var(--steel);font-size:12px;font-weight:700;line-height:1.35}
-.attempt-detail-value{color:var(--ink);font-size:13px;font-weight:600;line-height:1.45;word-break:break-word}
+.attempt-detail-grid{display:flex;align-items:stretch;gap:8px;overflow-x:auto;padding-bottom:2px}
+.attempt-detail-cell{flex:0 0 auto;min-width:118px;max-width:260px;padding:8px 10px;border:1px solid var(--hairline);border-radius:8px;background:var(--surface-soft)}
+.attempt-detail-cell:first-child{min-width:220px}
+.attempt-detail-label{margin-bottom:3px;color:var(--steel);font-size:11px;font-weight:800;line-height:1.3;text-transform:uppercase}
+.attempt-detail-value{color:var(--ink);font-size:12px;font-weight:650;line-height:1.35;word-break:break-word}
 .feedback-chip{display:inline-flex;align-items:center;max-width:100%;min-height:24px;padding:3px 9px;border-radius:999px;background:#ddfff6;border:1px solid rgba(0,180,138,.42);color:#005b49;font-size:12px;font-weight:700;line-height:1.35;white-space:nowrap}
 .feedback-card{border-color:rgba(0,180,138,.28);background:linear-gradient(180deg,#ffffff 0%,#f6fffc 100%)}
 .feedback-event{border:1px solid var(--hairline);border-radius:8px;background:var(--canvas);padding:12px;margin-top:10px}
@@ -5006,7 +5008,7 @@ def _attempt_detail_body(
         ("reviewed", _format_local_time(attempt.reviewed_at or "")),
     ]
     return (
-        f"{_attempt_conversation_banner(attempt, codex_session_id)}"
+        f"{_attempt_conversation_banner(attempt, sent_reply, codex_session_id)}"
         f"{_attempt_detail_grid(fields)}"
         f"{_review_panel(attempt, sent_reply, feedback_events)}"
         f"{_quality_warning_card(attempt)}"
@@ -5028,7 +5030,9 @@ def _permission_display(attempt: ReplyAttempt) -> str:
 
 
 def _attempt_conversation_banner(
-    attempt: ReplyAttempt, codex_session_id: str | None
+    attempt: ReplyAttempt,
+    sent_reply: SentReply | None,
+    codex_session_id: str | None,
 ) -> str:
     subtitle = (
         f"<div class=\"attempt-conversation-sub\">触发人：{escape(attempt.trigger_sender)}</div>"
@@ -5050,7 +5054,10 @@ def _attempt_conversation_banner(
         f"{subtitle}"
         "</div>"
         "</div>"
+        "<div class=\"attempt-banner-actions\">"
         f"{agent_log}"
+        f"{_attempt_row_actions(attempt, sent_reply)}"
+        "</div>"
         "</section>"
     )
 
