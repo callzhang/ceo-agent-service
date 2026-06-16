@@ -1873,6 +1873,26 @@ def test_open_dingtalk_bridge_opens_pc_jsapi_bridge_for_open_conversation_id(
     ]
 
 
+def test_open_dingtalk_popup_fetches_open_route_and_auto_closes(tmp_path: Path):
+    client = TestClient(create_audit_app(tmp_path / "worker.sqlite3"))
+
+    response = client.get("/open-dingtalk-popup?conversation_id=cid-1")
+
+    assert response.status_code == 200
+    assert "正在打开钉钉消息" in response.text
+    assert 'fetch("/open-dingtalk?conversation_id=cid-1", {cache: "no-store"})' in response.text
+    assert "window.close()" in response.text
+
+
+def test_open_dingtalk_popup_rejects_missing_target(tmp_path: Path):
+    client = TestClient(create_audit_app(tmp_path / "worker.sqlite3"))
+
+    response = client.get("/open-dingtalk-popup")
+
+    assert response.status_code == 400
+    assert response.text == "missing cid or conversation_id"
+
+
 def test_open_dingtalk_bridge_rejects_missing_cid(tmp_path: Path, monkeypatch):
     commands = []
     monkeypatch.setattr(
@@ -2789,7 +2809,10 @@ def test_render_attempt_detail_shows_full_decision_and_feedback_form(tmp_path: P
     assert "agent 执行记录" in html
     assert f'action="/attempts/{attempt_id}/rerun?return_to=/attempts/{attempt_id}"' in html
     assert f'action="/attempts/{attempt_id}/recall?return_to=/attempts/{attempt_id}"' in html
-    assert "/open-dingtalk?conversation_id=cid-1" in html
+    assert "/open-dingtalk-popup?conversation_id=cid-1" in html
+    assert "window.open(this.href,'ceo-open-dingtalk','popup,width=420,height=260')" in html
+    assert 'class="compact-button open-dingtalk-action"' in html
+    assert '<button class="rerun" type="submit">重跑</button>' in html
     assert html.index("群名") < html.index("内部反馈/建议修改")
     assert html.index('class="agent-log-button" href="/codex/session-1"') < html.index(
         "内部反馈/建议修改"
@@ -3145,7 +3168,7 @@ def test_render_codex_session_detail_uses_local_rendered_history(
     assert f"/attempts/{attempt_id}" in html
     assert f'action="/attempts/{attempt_id}/rerun?return_to=/codex/session-1"' in html
     assert f'action="/attempts/{attempt_id}/recall?return_to=/codex/session-1"' in html
-    assert "/open-dingtalk?conversation_id=cid-1" in html
+    assert "/open-dingtalk-popup?conversation_id=cid-1" in html
     assert "查看钉钉消息" in html
     assert "@Alex Chen 这个怎么处理？" in html
     assert '<details class="event event-assistant" open>' in html

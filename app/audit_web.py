@@ -309,10 +309,15 @@ th{background:var(--surface-soft);color:var(--steel);font-size:12px;font-weight:
 .attempt-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .attempt-row-actions{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
 .attempt-row-actions form{display:inline-flex;margin:0}
-.attempt-row-actions .compact-button,.attempt-row-actions button{display:inline-flex;align-items:center;height:28px;padding:0 10px;border:1px solid var(--hairline);border-radius:999px;background:var(--canvas);color:var(--ink);font-size:12px;font-weight:650;line-height:1;white-space:nowrap}
-.attempt-row-actions .compact-button:hover,.attempt-row-actions button:hover{border-color:var(--ink);background:var(--surface-soft);text-decoration:none}
+.attempt-row-actions .compact-button,.attempt-row-actions button{display:inline-flex;align-items:center;justify-content:center;width:96px;height:30px;padding:0 10px;border:1px solid var(--hairline);border-radius:999px;background:var(--canvas);color:var(--ink);font-size:12px;font-weight:700;line-height:1;white-space:nowrap}
+.attempt-row-actions .compact-button:hover,.attempt-row-actions button:hover{border-color:var(--ink);text-decoration:none}
+.attempt-row-actions button.rerun{border-color:rgba(55,114,207,.34);color:#245aa5;background:rgba(55,114,207,.10)}
+.attempt-row-actions button.rerun:hover{background:rgba(55,114,207,.16)}
 .attempt-row-actions button.danger{border-color:rgba(212,86,86,.32);color:#9a2f2f;background:rgba(212,86,86,.08)}
-.attempt-row-actions .disabled-action{display:inline-flex;align-items:center;height:28px;padding:0 10px;border:1px solid var(--hairline);border-radius:999px;background:var(--surface-soft);color:var(--muted);font-size:12px;font-weight:650;line-height:1;white-space:nowrap}
+.attempt-row-actions button.danger:hover{background:rgba(212,86,86,.14)}
+.attempt-row-actions .open-dingtalk-action{border-color:rgba(0,180,138,.38);color:#005b49;background:#ddfff6}
+.attempt-row-actions .open-dingtalk-action:hover{background:#cafff1}
+.attempt-row-actions .disabled-action{display:inline-flex;align-items:center;justify-content:center;width:96px;height:30px;padding:0 10px;border:1px solid var(--hairline);border-radius:999px;background:var(--surface-soft);color:var(--muted);font-size:12px;font-weight:700;line-height:1;white-space:nowrap}
 .attempt-warning{color:#8a2626;font-size:12px;line-height:1.4}
 .attempt-conversation-banner{display:flex;align-items:center;justify-content:space-between;gap:14px;border:1px solid rgba(0,180,138,.34);background:#f3fffb}
 .attempt-conversation-left{display:flex;align-items:center;gap:14px;min-width:0}
@@ -1314,6 +1319,54 @@ def render_dingtalk_open_chat_bridge(open_conversation_id: str) -> str:
       setTimeout(openChat, 350);
     }}
     window.addEventListener("load", openWhenReady);
+  </script>
+</body>
+</html>"""
+
+
+def render_dingtalk_open_popup(*, cid: str = "", conversation_id: str = "") -> str:
+    query: dict[str, str] = {}
+    if conversation_id.strip():
+        query["conversation_id"] = conversation_id.strip()
+    if cid.strip():
+        query["cid"] = cid.strip()
+    open_url = "/open-dingtalk"
+    if query:
+        open_url = f"{open_url}?{urlencode(query)}"
+    escaped_open_url = json.dumps(open_url)
+    return f"""<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>打开钉钉消息</title>
+  <style>
+    body{{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;margin:0;padding:22px;background:#fff;color:#111;line-height:1.45}}
+    .card{{border:1px solid #e5e5e5;border-radius:12px;padding:16px;background:#fafafa}}
+    h1{{margin:0 0 8px;font-size:16px}}
+    p{{margin:0;color:#555;font-size:13px}}
+  </style>
+</head>
+<body>
+  <section class="card">
+    <h1>正在打开钉钉消息</h1>
+    <p id="status">请稍候...</p>
+  </section>
+  <script>
+    const statusEl = document.getElementById("status");
+    function closeSoon() {{
+      setTimeout(() => window.close(), 900);
+    }}
+    fetch({escaped_open_url}, {{cache: "no-store"}})
+      .then((response) => response.json())
+      .then((payload) => {{
+        statusEl.textContent = payload && payload.ok ? "已发送打开请求，即将关闭。" : "打开请求失败，即将关闭。";
+        closeSoon();
+      }})
+      .catch(() => {{
+        statusEl.textContent = "打开请求失败，即将关闭。";
+        closeSoon();
+      }});
   </script>
 </body>
 </html>"""
@@ -4796,6 +4849,14 @@ def create_audit_app(
     def dingtalk_bridge_status_list() -> JSONResponse:
         return JSONResponse({"events": list(_DINGTALK_BRIDGE_STATUS)})
 
+    @app.get("/open-dingtalk-popup", response_class=HTMLResponse)
+    def open_dingtalk_popup(cid: str = "", conversation_id: str = "") -> HTMLResponse:
+        if not cid.strip() and not conversation_id.strip():
+            return HTMLResponse("missing cid or conversation_id", status_code=400)
+        return HTMLResponse(
+            render_dingtalk_open_popup(cid=cid, conversation_id=conversation_id)
+        )
+
     @app.get("/open-dingtalk")
     def open_dingtalk(request: Request, cid: str = "", conversation_id: str = "") -> JSONResponse:
         cleaned_conversation_id = conversation_id.strip()
@@ -5677,7 +5738,7 @@ def _attempt_row_actions(
     return_to = f"/codex/{quote(session_id, safe='')}" if session_id else f"/attempts/{attempt.id}"
     return_to_query = quote(return_to, safe="/")
     dingtalk_href = (
-        "/open-dingtalk?"
+        "/open-dingtalk-popup?"
         f"conversation_id={quote(attempt.conversation_id, safe='')}"
     )
     recall_html = (
@@ -5692,10 +5753,12 @@ def _attempt_row_actions(
         "<div class=\"attempt-row-actions\">"
         f"<form method=\"post\" action=\"/attempts/{attempt.id}/rerun?return_to={return_to_query}\" "
         "onsubmit=\"return confirm('确认重跑这条 attempt？可能会实际发送新回复或执行日历/OA动作。')\">"
-        "<button type=\"submit\">重跑</button>"
+        "<button class=\"rerun\" type=\"submit\">重跑</button>"
         "</form>"
         f"{recall_html}"
-        f"<a class=\"compact-button\" href=\"{dingtalk_href}\">查看钉钉消息</a>"
+        f"<a class=\"compact-button open-dingtalk-action\" href=\"{dingtalk_href}\" "
+        "onclick=\"window.open(this.href,'ceo-open-dingtalk','popup,width=420,height=260'); return false;\" "
+        "target=\"ceo-open-dingtalk\" rel=\"noopener\">查看钉钉消息</a>"
         "</div>"
     )
 
