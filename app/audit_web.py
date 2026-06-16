@@ -307,6 +307,12 @@ th{background:var(--surface-soft);color:var(--steel);font-size:12px;font-weight:
 .attempt-reaction-copy{display:inline-flex;align-items:center;width:max-content;max-width:100%;padding:4px 9px;border-radius:999px;background:#fff4d6;border:1px solid #f4d06f;color:#5f4200;font-size:13px;line-height:1.2;-webkit-line-clamp:1;box-shadow:inset 0 -1px 0 rgba(95,66,0,.08)}
 .attempt-foot{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:6px;flex-wrap:wrap}
 .attempt-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.attempt-row-actions{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.attempt-row-actions form{display:inline-flex;margin:0}
+.attempt-row-actions .compact-button,.attempt-row-actions button{display:inline-flex;align-items:center;height:28px;padding:0 10px;border:1px solid var(--hairline);border-radius:999px;background:var(--canvas);color:var(--ink);font-size:12px;font-weight:650;line-height:1;white-space:nowrap}
+.attempt-row-actions .compact-button:hover,.attempt-row-actions button:hover{border-color:var(--ink);background:var(--surface-soft);text-decoration:none}
+.attempt-row-actions button.danger{border-color:rgba(212,86,86,.32);color:#9a2f2f;background:rgba(212,86,86,.08)}
+.attempt-row-actions .disabled-action{display:inline-flex;align-items:center;height:28px;padding:0 10px;border:1px solid var(--hairline);border-radius:999px;background:var(--surface-soft);color:var(--muted);font-size:12px;font-weight:650;line-height:1;white-space:nowrap}
 .attempt-warning{color:#8a2626;font-size:12px;line-height:1.4}
 .attempt-conversation-banner{display:flex;align-items:center;justify-content:space-between;gap:14px;border:1px solid rgba(0,180,138,.34);background:#f3fffb}
 .attempt-conversation-left{display:flex;align-items:center;gap:14px;min-width:0}
@@ -3811,7 +3817,7 @@ def render_codex_session_detail(
                 "<p class=\"muted\">The local Codex transcript file for this session "
                 "is no longer available on this machine.</p>"
                 f"<p class=\"muted\">{escape(session_id)}</p></section>"
-                f"{_related_history_card(related_attempts)}"
+                f"{_related_history_card(related_attempts, session_id=session_id, store=store)}"
             )
             return 200, render_page(
                 "Codex session unavailable",
@@ -3831,7 +3837,9 @@ def render_codex_session_detail(
         )
     events = "".join(_codex_event_card(event) for event in rendered.events)
     related_history = _related_history_card(
-        store.list_reply_attempts_for_codex_session(session_id) if store else []
+        store.list_reply_attempts_for_codex_session(session_id) if store else [],
+        session_id=session_id,
+        store=store,
     )
     body = (
         "<section class=\"card\"><div class=\"grid\">"
@@ -4291,7 +4299,7 @@ def handle_user_prompt_post(body: bytes) -> tuple[int, dict[str, str], str]:
 
 
 def handle_recall_post(
-    store: AutoReplyStore, dws, attempt_id: int
+    store: AutoReplyStore, dws, attempt_id: int, *, return_to: str = ""
 ) -> tuple[int, dict[str, str], str]:
     attempt = store.get_reply_attempt(attempt_id)
     if attempt is None:
@@ -4359,7 +4367,7 @@ def handle_recall_post(
         recall_status="recalled",
         recall_error="",
     )
-    return 303, {"Location": f"/attempts/{attempt_id}"}, ""
+    return 303, {"Location": _safe_action_return_to(return_to, attempt_id)}, ""
 
 
 def _audit_worker_settings(db_path: Path):
@@ -4387,6 +4395,7 @@ def handle_rerun_attempt_post(
     store: AutoReplyStore,
     attempt_id: int,
     *,
+    return_to: str = "",
     worker_factory: Callable[[object], object] | None = None,
 ) -> tuple[int, dict[str, str], str]:
     attempt = store.get_reply_attempt(attempt_id)
@@ -4423,7 +4432,14 @@ def handle_rerun_attempt_post(
         attempt.conversation_id,
         processed_message_id,
     )
-    return 303, {"Location": f"/attempts/{attempt_id}"}, ""
+    return 303, {"Location": _safe_action_return_to(return_to, attempt_id)}, ""
+
+
+def _safe_action_return_to(return_to: str, attempt_id: int) -> str:
+    cleaned = return_to.strip()
+    if cleaned.startswith("/codex/") or cleaned == f"/attempts/{attempt_id}":
+        return cleaned
+    return f"/attempts/{attempt_id}"
 
 
 def handle_reviewed_message_reply(
@@ -4867,19 +4883,21 @@ def create_audit_app(
         return _fastapi_post_response(status, headers, html)
 
     @app.post("/attempts/{attempt_id}/recall")
-    def recall(attempt_id: int):
+    def recall(attempt_id: int, request: Request):
         status, headers, html = handle_recall_post(
             AutoReplyStore(db_path),
             DwsClient(ding_robot_code=ding_robot_code, ding_robot_name=ding_robot_name),
             attempt_id,
+            return_to=request.query_params.get("return_to", ""),
         )
         return _fastapi_post_response(status, headers, html)
 
     @app.post("/attempts/{attempt_id}/rerun")
-    def rerun_attempt(attempt_id: int):
+    def rerun_attempt(attempt_id: int, request: Request):
         status, headers, html = handle_rerun_attempt_post(
             AutoReplyStore(db_path),
             attempt_id,
+            return_to=request.query_params.get("return_to", ""),
         )
         return _fastapi_post_response(status, headers, html)
 
@@ -5361,8 +5379,6 @@ def _review_panel(
         f"<pre class=\"reply-pre\">{escape(reply_text)}</pre>"
         "</div>"
         "<div class=\"review-side\">"
-        f"{_rerun_card(attempt)}"
-        f"{_recall_card(attempt, sent_reply)}"
         f"{_feedback_form(attempt)}"
         f"{_counterparty_feedback_card(sent_reply, feedback_events)}"
         "</div>"
@@ -5607,7 +5623,12 @@ def _json_array_has_items(text: str) -> bool:
     return isinstance(payload, list) and len(payload) > 0
 
 
-def _related_history_card(attempts: list[ReplyAttempt]) -> str:
+def _related_history_card(
+    attempts: list[ReplyAttempt],
+    *,
+    session_id: str = "",
+    store: AutoReplyStore | None = None,
+) -> str:
     if not attempts:
         return (
             "<section class=\"card\"><h2>Related history</h2>"
@@ -5616,6 +5637,11 @@ def _related_history_card(attempts: list[ReplyAttempt]) -> str:
         )
     rows = []
     for attempt in attempts:
+        sent_reply = (
+            store.get_sent_reply(attempt.conversation_id, attempt.trigger_message_id)
+            if store is not None
+            else None
+        )
         rows.append(
             "<tr>"
             f"<td>{_attempt_link(attempt)}</td>"
@@ -5623,14 +5649,47 @@ def _related_history_card(attempts: list[ReplyAttempt]) -> str:
             f"<td>{escape(attempt.trigger_sender)}</td>"
             f"<td>{_attempt_action_pills(attempt)}</td>"
             f"<td>{escape(_excerpt(attempt.trigger_text, 120))}</td>"
+            f"<td>{_attempt_row_actions(attempt, sent_reply, session_id=session_id)}</td>"
             "</tr>"
         )
     return (
         "<section class=\"card\"><h2>Related history</h2>"
         "<table><thead><tr><th>Attempt</th><th>Time</th><th>Sender</th>"
-        "<th>Actions</th><th>Trigger</th></tr></thead><tbody>"
+        "<th>Result</th><th>Trigger</th><th>操作</th></tr></thead><tbody>"
         + "".join(rows)
         + "</tbody></table></section>"
+    )
+
+
+def _attempt_row_actions(
+    attempt: ReplyAttempt,
+    sent_reply: SentReply | None,
+    *,
+    session_id: str = "",
+) -> str:
+    return_to = f"/codex/{quote(session_id, safe='')}" if session_id else f"/attempts/{attempt.id}"
+    return_to_query = quote(return_to, safe="/")
+    dingtalk_href = (
+        "/open-dingtalk?"
+        f"conversation_id={quote(attempt.conversation_id, safe='')}"
+    )
+    recall_html = (
+        f"<form method=\"post\" action=\"/attempts/{attempt.id}/recall?return_to={return_to_query}\" "
+        "onsubmit=\"return confirm('确认撤销这条已发送消息？')\">"
+        "<button class=\"danger\" type=\"submit\">撤销发送</button>"
+        "</form>"
+        if _sent_reply_has_recall_target(sent_reply)
+        else "<span class=\"disabled-action\" title=\"没有可撤销消息 ID 或 key\">撤销发送</span>"
+    )
+    return (
+        "<div class=\"attempt-row-actions\">"
+        f"<form method=\"post\" action=\"/attempts/{attempt.id}/rerun?return_to={return_to_query}\" "
+        "onsubmit=\"return confirm('确认重跑这条 attempt？可能会实际发送新回复或执行日历/OA动作。')\">"
+        "<button type=\"submit\">重跑</button>"
+        "</form>"
+        f"{recall_html}"
+        f"<a class=\"compact-button\" href=\"{dingtalk_href}\">查看钉钉消息</a>"
+        "</div>"
     )
 
 

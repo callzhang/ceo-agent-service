@@ -3092,6 +3092,14 @@ def test_render_codex_session_detail_uses_local_rendered_history(
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     attempt_id = seed_attempt(store)
+    store.record_sent_reply(
+        "cid-1",
+        "msg-1",
+        "先按A方案走（by明哥分身）",
+        send_result_json=json.dumps(
+            {"send_result": {"result": {"openMessageId": "sent-msg-1"}}}
+        ),
+    )
     codex_home = tmp_path / ".codex"
     session_path = (
         codex_home
@@ -3124,6 +3132,10 @@ def test_render_codex_session_detail_uses_local_rendered_history(
     assert "已查看岗位画像" in html
     assert "Related history" in html
     assert f"/attempts/{attempt_id}" in html
+    assert f'action="/attempts/{attempt_id}/rerun?return_to=/codex/session-1"' in html
+    assert f'action="/attempts/{attempt_id}/recall?return_to=/codex/session-1"' in html
+    assert "/open-dingtalk?conversation_id=cid-1" in html
+    assert "查看钉钉消息" in html
     assert "@Alex Chen 这个怎么处理？" in html
     assert '<details class="event event-assistant" open>' in html
     assert '<details class="event event-session">' in html
@@ -3169,7 +3181,7 @@ def test_render_codex_session_detail_shows_related_history_when_file_missing(
     assert "明哥，这个怎么处理？" in html
 
 
-def test_render_attempt_detail_shows_recall_button_when_sent_reply_is_recallable(
+def test_render_attempt_detail_does_not_show_recall_action_card(
     tmp_path: Path,
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
@@ -3186,21 +3198,21 @@ def test_render_attempt_detail_shows_recall_button_when_sent_reply_is_recallable
     status, html = render_attempt_detail(store, attempt_id)
 
     assert status == 200
-    assert "撤销发送" in html
-    assert f'action="/attempts/{attempt_id}/recall"' in html
-    assert "确认撤销这条已发送消息？" in html
+    assert "撤销发送" not in html
+    assert f'action="/attempts/{attempt_id}/recall"' not in html
+    assert "确认撤销这条已发送消息？" not in html
 
 
-def test_render_attempt_detail_shows_rerun_button(tmp_path: Path):
+def test_render_attempt_detail_does_not_show_rerun_action_card(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     attempt_id = seed_attempt(store)
 
     status, html = render_attempt_detail(store, attempt_id)
 
     assert status == 200
-    assert "重跑 attempt" in html
-    assert f'action="/attempts/{attempt_id}/rerun"' in html
-    assert "确认重跑这条 attempt？" in html
+    assert "重跑 attempt" not in html
+    assert f'action="/attempts/{attempt_id}/rerun"' not in html
+    assert "确认重跑这条 attempt？" not in html
 
 
 def test_render_attempt_detail_returns_404_when_missing(tmp_path: Path):
