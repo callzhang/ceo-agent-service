@@ -39,9 +39,19 @@ class TaskAgentRunner:
     def __init__(self, codex: TaskCodex):
         self.codex = codex
 
-    def decide(self, work_item: WorkItem, candidate_prompt: str) -> TaskAgentDecision:
+    def decide(
+        self,
+        work_item: WorkItem,
+        candidate_prompt: str,
+        *,
+        memory_issue: str = "",
+    ) -> TaskAgentDecision:
         return self.codex.decide(
-            prompt=build_task_agent_prompt(work_item, candidate_prompt),
+            prompt=build_task_agent_prompt(
+                work_item,
+                candidate_prompt,
+                memory_issue=memory_issue,
+            ),
             session_id=None,
         )
 
@@ -133,12 +143,18 @@ class TaskAgentCodexRunner:
         return completed.stdout
 
 
-def build_task_agent_prompt(work_item: WorkItem, candidate_prompt: str) -> str:
+def build_task_agent_prompt(
+    work_item: WorkItem,
+    candidate_prompt: str,
+    *,
+    memory_issue: str = "",
+) -> str:
     work_item_json = json.dumps(
         work_item.model_dump(mode="json"),
         ensure_ascii=False,
         indent=2,
     )
+    memory_status = _memory_connector_prompt_status(memory_issue)
     return f"""你是 CEO Agent task agent。
 
 职责边界：
@@ -148,8 +164,10 @@ def build_task_agent_prompt(work_item: WorkItem, candidate_prompt: str) -> str:
 - 每次必须评估 failure_risk 和 failure_risk_score：failure_risk 说明如果不跟进会发生什么；failure_risk_score 是 0 到 1 的失败风险，0 表示几乎无业务影响，1 表示会直接影响关键交付、收入、合规或管理决策。
 - BM25 候选项目只是初始线索，不是权威匹配结果。
 - 如果候选项目为空或你判断不匹配，可以使用 dws 或 memory_connector 恢复更多上下文；这是提示，不是硬性要求。
-- create_project 或 update_project 前，必须使用 memory_recall 查历史背景；不要传入或编造 user_id。
-- project.memory_context 必须写入本次 memory_recall 的查询、摘要和关键记忆证据；如果没有命中，也要写明查询和无命中的结论。
+- memory_connector 是外部辅助服务，不能成为 task agent 的运行依赖。
+- 如果 memory_connector 状态为可用，create_project 或 update_project 前必须使用 memory_recall 查历史背景；不要传入或编造 user_id。
+- 如果 memory_connector 状态为不可用，不要因此停止任务、不要输出 critical_info_unavailable、不要把任务转人工；改用 Work Item、候选项目、DWS 或本地上下文判断。此时 memory_recall_used=false，project.memory_context 写明原本会查询什么、memory_connector 不可用的原因，以及你实际采用的替代证据。
+- project.memory_context 必须写入本次记忆查询或替代依据：memory_recall 有命中时写查询、摘要和关键记忆证据；没有命中时写查询和无命中结论；memory_connector 不可用时写查询意图、不可用原因和替代证据。
 - 如果上下文无法支撑稳定项目名称，不要创建模糊项目；生成 follow_up_draft 询问项目、目标、owner。
 - 只有消息、会议纪要或文档明确证明 TODO 完成时，才能自动清理 TODO，并写入 completion_evidence。
 - 生成 follow_up_draft 前必须确定 owner_user_id；只有 owner_name 不够。如果上下文缺少 userId，先用 dws 或已有联系人信息补齐；仍无法唯一确定时，不要生成 follow_up_draft。
@@ -163,7 +181,11 @@ def build_task_agent_prompt(work_item: WorkItem, candidate_prompt: str) -> str:
 - update_project 必须引用候选或已确认项目 id。
 - todo_changes 的 close/cancel/update 必须引用 todo_id。
 - follow_up_drafts 的 owner_user_id 不能为空，且必须有 todo_id 或 todo_ref。
-- 非 discard 决策的 memory_recall_used 必须为 true，且 project.memory_context 不能为空。
+- memory_connector 可用时，非 discard 决策的 memory_recall_used 必须为 true，且 project.memory_context 不能为空。
+- memory_connector 不可用时，非 discard 决策的 memory_recall_used 必须为 false，且 project.memory_context 仍不能为空。
+
+Memory connector 状态:
+{memory_status}
 
 Work Item JSON:
 {work_item_json}
@@ -173,19 +195,35 @@ Work Item JSON:
 """
 
 
+def _memory_connector_prompt_status(memory_issue: str) -> str:
+    issue = memory_issue.strip()
+    if issue:
+        return (
+            f"不可用：{issue}\n"
+            "- 继续处理 Work Item；不要因为 memory_recall 不可用而失败。\n"
+            "- 不能调用 memory_recall 时，在 project.memory_context 记录查询意图、不可用原因和替代证据。"
+        )
+    return "可用：需要用 memory_recall 补足非 discard 决策的历史背景。"
+
+
 def process_work_item(
     store: AutoReplyStore,
     runner: TaskAgentRunner,
     work_input: WorkSummaryInput,
 ) -> None:
     try:
+        memory_issue = memory_connector_config_issue()
         work_item = WorkItem.model_validate_json(work_input.payload_json)
         candidates = retrieve_project_candidates(
             store,
             summary=work_item.summary,
             project_name=work_item.project_name,
         )
-        decision = runner.decide(work_item, render_candidate_prompt(candidates))
+        decision = runner.decide(
+            work_item,
+            render_candidate_prompt(candidates),
+            memory_issue=memory_issue,
+        )
         codex_session_id = getattr(runner.codex, "last_session_id", None) or ""
         store.record_task_agent_run(
             summary_input_id=work_input.id,
@@ -197,6 +235,7 @@ def process_work_item(
         _validate_memory_recall_tool_event(
             decision,
             getattr(runner.codex, "last_audit_tool_events", None),
+            memory_issue=memory_issue,
         )
         apply_task_agent_decision(
             store,
@@ -204,6 +243,7 @@ def process_work_item(
             work_item=work_item,
             decision=decision,
             codex_session_id=codex_session_id,
+            memory_issue=memory_issue,
             record_run=False,
         )
         if decision.action == "discard":
@@ -225,6 +265,7 @@ def apply_task_agent_decision(
     work_item: WorkItem,
     decision: TaskAgentDecision,
     codex_session_id: str = "",
+    memory_issue: str = "",
     record_run: bool = True,
 ) -> int | None:
     if record_run:
@@ -235,7 +276,7 @@ def apply_task_agent_decision(
             audit_summary=decision.update_summary,
             memory_recall_used=decision.memory_recall_used,
         )
-    _validate_task_agent_decision(decision)
+    _validate_task_agent_decision(decision, memory_issue=memory_issue)
 
     if decision.action == "discard":
         return None
@@ -285,7 +326,11 @@ def apply_task_agent_decision(
     return project_id
 
 
-def _validate_task_agent_decision(decision: TaskAgentDecision) -> None:
+def _validate_task_agent_decision(
+    decision: TaskAgentDecision,
+    *,
+    memory_issue: str = "",
+) -> None:
     for todo_change in decision.todo_changes:
         if todo_change.action != "create" and todo_change.todo_id is None:
             raise ValueError(f"{todo_change.action} requires todo_id")
@@ -296,7 +341,7 @@ def _validate_task_agent_decision(decision: TaskAgentDecision) -> None:
             raise ValueError("follow_up_draft requires todo_id or todo_ref")
     if decision.action == "discard":
         return
-    if not decision.memory_recall_used:
+    if not memory_issue.strip() and not decision.memory_recall_used:
         raise ValueError("non-discard task decision requires memory_recall_used")
     if decision.project is None:
         raise ValueError(f"{decision.action} requires project")
@@ -312,6 +357,8 @@ def _validate_task_agent_decision(decision: TaskAgentDecision) -> None:
 def _validate_memory_recall_tool_event(
     decision: TaskAgentDecision,
     audit_tool_events: object,
+    *,
+    memory_issue: str = "",
 ) -> None:
     if decision.action == "discard" or audit_tool_events is None:
         return
@@ -323,9 +370,8 @@ def _validate_memory_recall_tool_event(
         tool = str(event.get("tool") or "")
         if "memory_recall" in tool:
             return
-    issue = memory_connector_config_issue()
-    if issue:
-        raise ValueError(f"critical_info_unavailable: memory_recall unavailable: {issue}")
+    if memory_issue.strip():
+        return
     raise ValueError("non-discard task decision requires memory_recall tool event")
 
 

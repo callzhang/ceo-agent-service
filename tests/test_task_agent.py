@@ -562,7 +562,7 @@ def test_process_work_item_requires_actual_memory_recall_tool_event(
     assert run_row == (input_id, "task-session-1", "创建项目。", 1)
 
 
-def test_process_work_item_reports_memory_connector_issue(
+def test_process_work_item_continues_when_memory_connector_unavailable(
     tmp_path,
     monkeypatch,
 ):
@@ -578,6 +578,14 @@ def test_process_work_item_reports_memory_connector_issue(
         item.model_dump_json(),
     )
     work_input = store.claim_work_summary_inputs(limit=1)[0]
+    memory_unavailable_context = {
+        "query": "售前知识库",
+        "summary": (
+            "memory_connector 不可用：memory connector token is expired；"
+            "改用 Work Item 和候选项目判断。"
+        ),
+        "memories": [],
+    }
     codex = FakeCodexWithAuditEvents(
         {
             "action": "create_project",
@@ -585,20 +593,19 @@ def test_process_work_item_reports_memory_connector_issue(
                 "title": "售前知识库建设",
                 "category": "sales",
                 "status": "active",
-                "memory_context": _memory_context(),
+                "memory_context": memory_unavailable_context,
             },
             "todo_changes": [],
             "follow_up_drafts": [],
             "update_summary": "创建项目。",
             "merge_reason": "事项需要持续跟进。",
-            "memory_recall_used": True,
+            "memory_recall_used": False,
             "confidence": 0.8,
         },
         audit_tool_events=[],
     )
 
-    with pytest.raises(ValueError, match="critical_info_unavailable"):
-        process_work_item(store, TaskAgentRunner(codex), work_input)
+    process_work_item(store, TaskAgentRunner(codex), work_input)
 
     with sqlite3.connect(tmp_path / "task.sqlite3") as db:
         input_row = db.execute(
@@ -606,12 +613,14 @@ def test_process_work_item_reports_memory_connector_issue(
             (input_id,),
         ).fetchone()
         run_count = db.execute("select count(*) from task_agent_runs").fetchone()[0]
-    assert input_row == (
-        "failed",
-        "critical_info_unavailable: memory_recall unavailable: "
-        "memory connector token is expired",
-    )
+        memory_context_json = db.execute(
+            "select memory_context_json from work_projects"
+        ).fetchone()[0]
+    assert input_row == ("done", "")
     assert run_count == 1
+    assert json.loads(memory_context_json) == memory_unavailable_context
+    assert "Memory connector 状态:\n不可用：memory connector token is expired" in codex.prompts[0]
+    assert "不要因为 memory_recall 不可用而失败" in codex.prompts[0]
 
 
 def test_task_agent_codex_runner_keeps_user_config_for_memory_recall(tmp_path):
