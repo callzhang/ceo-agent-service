@@ -2204,7 +2204,7 @@ def test_worker_does_not_send_markdown_doc_link_when_permission_fails(
     assert "doc permission add failed" in attempts[-1].send_error
 
 
-def test_worker_falls_back_to_group_send_when_native_reply_is_not_visible(
+def test_worker_does_not_fallback_group_send_when_native_reply_visibility_unconfirmed(
     tmp_path: Path,
     monkeypatch,
 ):
@@ -2226,16 +2226,15 @@ def test_worker_falls_back_to_group_send_when_native_reply_is_not_visible(
     assert len(dws.created_markdown_docs) == 1
     assert len(dws.reply_messages) == 1
     sent = final_sent(dws)
-    assert len(sent) == 2
+    assert len(sent) == 1
     assert sent[0][1].startswith("内容较长，我写成了文档：CEO回复-Friday-")
-    assert sent[1][1].startswith("内容较长，我写成了文档：CEO回复-Friday-")
-    assert final_sent_at_users(dws) == [["sender-user-1"], ["sender-user-1"]]
+    assert final_sent_at_users(dws) == [["sender-user-1"]]
     attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
     assert attempt is not None
     assert attempt.send_status == "sent"
     sent_reply = worker.store.get_sent_reply("cid-1", "msg-1")
     assert sent_reply is not None
-    assert "group_message_after_invisible_reply" in sent_reply.send_result_json
+    assert "native_reply_visibility_unconfirmed" in sent_reply.send_result_json
 
 
 def test_queued_task_falls_back_to_trigger_when_context_read_fails(
