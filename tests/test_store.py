@@ -22,6 +22,16 @@ def test_store_connections_enable_sqlite_concurrency_pragmas(tmp_path: Path):
     assert foreign_keys == 1
 
 
+def test_store_connections_close_after_context_exit(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+
+    with store._connect() as db:
+        db.execute("select 1").fetchone()
+
+    with pytest.raises(sqlite3.ProgrammingError):
+        db.execute("select 1").fetchone()
+
+
 def test_store_writer_can_commit_while_reader_transaction_is_open(tmp_path: Path):
     db_path = tmp_path / "worker.sqlite3"
     store = AutoReplyStore(db_path)

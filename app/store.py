@@ -1,6 +1,8 @@
 import sqlite3
 import json
+from contextlib import contextmanager
 from pathlib import Path
+from collections.abc import Iterator
 
 from pydantic import BaseModel, Field
 
@@ -219,7 +221,8 @@ class AutoReplyStore:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._initialize()
 
-    def _connect(self) -> sqlite3.Connection:
+    @contextmanager
+    def _connect(self) -> Iterator[sqlite3.Connection]:
         connection = sqlite3.connect(
             self.path,
             timeout=SQLITE_BUSY_TIMEOUT_SECONDS,
@@ -229,7 +232,11 @@ class AutoReplyStore:
         connection.execute(f"pragma busy_timeout = {SQLITE_BUSY_TIMEOUT_MILLISECONDS}")
         connection.execute("pragma foreign_keys = on")
         connection.row_factory = sqlite3.Row
-        return connection
+        try:
+            with connection:
+                yield connection
+        finally:
+            connection.close()
 
     def _initialize(self) -> None:
         with self._connect() as db:
