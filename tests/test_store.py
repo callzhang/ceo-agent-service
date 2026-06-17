@@ -7,6 +7,38 @@ import pytest
 from app.store import AutoReplyStore
 
 
+def test_store_connections_enable_sqlite_concurrency_pragmas(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+
+    with store._connect() as db:
+        journal_mode = db.execute("pragma journal_mode").fetchone()[0]
+        busy_timeout = db.execute("pragma busy_timeout").fetchone()[0]
+        synchronous = db.execute("pragma synchronous").fetchone()[0]
+        foreign_keys = db.execute("pragma foreign_keys").fetchone()[0]
+
+    assert journal_mode == "wal"
+    assert busy_timeout >= 30_000
+    assert synchronous == 1
+    assert foreign_keys == 1
+
+
+def test_store_writer_can_commit_while_reader_transaction_is_open(tmp_path: Path):
+    db_path = tmp_path / "worker.sqlite3"
+    store = AutoReplyStore(db_path)
+    reader = sqlite3.connect(db_path)
+
+    try:
+        reader.execute("begin")
+        reader.execute("select count(*) from errors").fetchone()
+
+        store.record_error("cid-1", "msg-1", "producer", "database is locked")
+    finally:
+        reader.rollback()
+        reader.close()
+
+    assert store.list_errors(limit=1)[0].kind == "producer"
+
+
 def test_conversation_session_persists(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.upsert_conversation(

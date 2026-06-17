@@ -14,6 +14,8 @@ from app.task_models import (
 )
 
 FAST_PATH_UNREAD_BACKOFF_TASK_ERROR = "waiting_fast_path_unread_backoff"
+SQLITE_BUSY_TIMEOUT_SECONDS = 30
+SQLITE_BUSY_TIMEOUT_MILLISECONDS = SQLITE_BUSY_TIMEOUT_SECONDS * 1000
 
 
 class OrgUserProfile(BaseModel):
@@ -218,7 +220,14 @@ class AutoReplyStore:
         self._initialize()
 
     def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.path)
+        connection = sqlite3.connect(
+            self.path,
+            timeout=SQLITE_BUSY_TIMEOUT_SECONDS,
+        )
+        connection.execute("pragma journal_mode = wal")
+        connection.execute("pragma synchronous = normal")
+        connection.execute(f"pragma busy_timeout = {SQLITE_BUSY_TIMEOUT_MILLISECONDS}")
+        connection.execute("pragma foreign_keys = on")
         connection.row_factory = sqlite3.Row
         return connection
 
