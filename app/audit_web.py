@@ -375,6 +375,7 @@ th{background:var(--surface-soft);color:var(--steel);font-size:12px;font-weight:
 .audit-tool-rendered-text h1{font-size:17px}
 .audit-tool-rendered-text h2{font-size:16px}
 .audit-tool-rendered-text h3{font-size:15px}
+.audit-tool-count{color:var(--steel);font-family:"Geist Mono","SF Mono",Menlo,Consolas,monospace;font-size:12px;font-weight:700;line-height:1.35}
 .attempt-info{position:relative;display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border:1px solid #d29a12;border-radius:50%;color:#8a5a08;background:#fff3c4;font-size:11px;font-weight:700;line-height:1;cursor:help;flex:0 0 auto}
 .attempt-info:hover,.attempt-info:focus{background:#ffe7a3;border-color:#b77908;outline:0}
 .attempt-info::after{content:attr(data-tooltip);display:none;position:absolute;left:0;bottom:calc(100% + 8px);z-index:30;width:max-content;max-width:min(320px,calc(100vw - 48px));padding:7px 9px;border-radius:6px;background:#1f2937;color:#fff;box-shadow:0 8px 24px rgba(15,23,42,.18);font-size:12px;font-weight:500;line-height:1.4;text-align:left;white-space:normal}
@@ -5877,9 +5878,14 @@ def _audit_tool_uses_card(attempt: ReplyAttempt) -> str:
     uses = _audit_tool_uses_for_attempt(attempt)
     if not uses:
         return _collapsible_json_card("Tool uses", "[]")
+    document_count = sum(1 for use in uses if str(use.get("tool") or "") == "document")
+    call_count = len(uses) - document_count
     return (
         "<details class=\"card collapsible-card\">"
-        "<summary><h2>Tool uses</h2></summary>"
+        "<summary><h2>Tool uses</h2>"
+        "<span class=\"audit-tool-count\">"
+        f"{len(uses)} total · {call_count} calls · {document_count} documents"
+        "</span></summary>"
         f"<div class=\"audit-tool-list\">{_audit_tool_uses_html(uses)}</div>"
         "</details>"
     )
@@ -5903,7 +5909,7 @@ def _audit_document_uses_for_attempt(attempt: ReplyAttempt) -> list[dict[str, ob
             ("title", "name", "path", "url", "mcp_name", "tool"),
         )
         source = _audit_source_text(document)
-        args = _audit_args_payload(document)
+        args = _audit_explicit_args_payload(document)
         uses.append(
             {
                 "title": title or "Audit document",
@@ -5913,6 +5919,7 @@ def _audit_document_uses_for_attempt(attempt: ReplyAttempt) -> list[dict[str, ob
                     ("relevance", "reason", "description"),
                 ),
                 "source": source,
+                "format": _audit_format_text(document, args),
                 "args": args,
                 "output": _first_nonempty_string(document, ("output", "content")),
                 "call_id": _first_nonempty_string(document, ("call_id",)),
@@ -5943,17 +5950,20 @@ def _audit_event_uses_for_attempt(attempt: ReplyAttempt) -> list[dict[str, objec
                     "relevance": _audit_relevance_text(event),
                     "source": _audit_source_text(event),
                     "args": _audit_args_payload(event),
+                    "format": _audit_format_text(event, _audit_args_payload(event)),
                     "output": str(event.get("output") or ""),
                 }
             )
             continue
+        args = _audit_args_payload(event)
         call = {
             "title": _audit_tool_title(event, tool),
             "tool": tool,
             "call_id": call_id,
             "relevance": _audit_relevance_text(event),
             "source": _audit_source_text(event),
-            "args": _audit_args_payload(event),
+            "args": args,
+            "format": _audit_format_text(event, args),
             "output": "",
         }
         calls.append(call)
@@ -6021,6 +6031,7 @@ def _audit_tool_metadata_html(use: dict[str, object]) -> str:
     for label, key in (
         ("relevance", "relevance"),
         ("source", "source"),
+        ("format", "format"),
     ):
         value = str(use.get(key) or "").strip()
         if value:
@@ -6081,18 +6092,49 @@ def _audit_source_text(payload: Mapping[str, object]) -> str:
 
 
 def _audit_args_payload(payload: Mapping[str, object]) -> object:
-    args = payload.get("args")
-    if args not in (None, "", {}, []):
-        return args
-    input_text = str(payload.get("input") or "").strip()
-    if input_text:
-        return _decode_json_text(input_text) or input_text
+    explicit = _audit_explicit_args_payload(payload)
+    if explicit not in (None, "", {}, []):
+        return explicit
     values = {
         key: payload[key]
         for key in ("command", "path", "url", "mcp_name")
         if isinstance(payload.get(key), str) and str(payload[key]).strip()
     }
     return values
+
+
+def _audit_explicit_args_payload(payload: Mapping[str, object]) -> object:
+    args = payload.get("args")
+    if args not in (None, "", {}, []):
+        return args
+    input_text = str(payload.get("input") or "").strip()
+    if input_text:
+        return _decode_json_text(input_text) or input_text
+    return {}
+
+
+def _audit_format_text(payload: Mapping[str, object], args: object) -> str:
+    explicit = _first_nonempty_string(payload, ("format", "output_format", "content_type"))
+    if explicit:
+        return explicit
+    command = _first_nonempty_string(payload, ("command",))
+    if command:
+        command_format = _command_format(command)
+        return f"terminal/{command_format}" if command_format else "terminal"
+    tool = _first_nonempty_string(payload, ("tool", "mcp_name"))
+    if tool.startswith("memory_"):
+        return "mcp/json"
+    if isinstance(args, (dict, list)):
+        return "json"
+    return ""
+
+
+def _command_format(command: str) -> str:
+    pieces = command.split()
+    for index, piece in enumerate(pieces[:-1]):
+        if piece == "--format" and pieces[index + 1]:
+            return pieces[index + 1].strip("'\"")
+    return ""
 
 
 def _first_nonempty_string(payload: Mapping[str, object], keys: tuple[str, ...]) -> str:
@@ -6119,6 +6161,13 @@ def _audit_render_payload_html(value: object) -> str:
             f"{_json_value_html(expanded, 0)}</pre>"
         )
     text = str(expanded)
+    terminal_payload = _decode_terminal_output_payload(text)
+    if terminal_payload is not None:
+        terminal_payload = _expand_nested_json_strings(terminal_payload)
+        return (
+            f"<pre class=\"json-pre\">"
+            f"{_json_value_html(terminal_payload, 0)}</pre>"
+        )
     parsed = _decode_json_text(text)
     if parsed is not None:
         parsed = _expand_nested_json_strings(parsed)
@@ -6151,8 +6200,34 @@ def _decode_json_text(text: str) -> object | None:
         return None
 
 
+def _decode_terminal_output_payload(text: str) -> object | None:
+    marker = "Output:\n"
+    if marker not in text:
+        return None
+    candidate = text.rsplit(marker, 1)[1].strip()
+    return _decode_complete_json_text(candidate)
+
+
+def _decode_complete_json_text(text: str) -> object | None:
+    stripped = text.strip()
+    if not stripped or stripped[0] not in "[{":
+        return None
+    decoder = json.JSONDecoder()
+    try:
+        value, end = decoder.raw_decode(stripped)
+    except json.JSONDecodeError:
+        return None
+    if stripped[end:].strip():
+        return None
+    return value
+
+
 def _audit_output_preview(text: str) -> str:
-    expanded = _expand_nested_json_strings(text)
+    expanded = _decode_terminal_output_payload(text)
+    if expanded is None:
+        expanded = _expand_nested_json_strings(text)
+    else:
+        expanded = _expand_nested_json_strings(expanded)
     if isinstance(expanded, (dict, list)):
         compact = json.dumps(expanded, ensure_ascii=False, separators=(",", ":"))
         return _excerpt(compact, 160)

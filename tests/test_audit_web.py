@@ -2910,12 +2910,15 @@ def test_render_attempt_detail_renders_audit_tool_inputs_and_outputs(tmp_path: P
 
     assert status == 200
     assert "Tool uses" in html
+    assert "2 total · 1 calls · 1 documents" in html
     assert "岗位画像" in html
     assert "判断岗位要求" in html
     assert "面试/岗位画像.md" in html
     assert "Search role profile" in html
     assert "确认岗位画像是否提到项目经理" in html
     assert "exec_command" in html
+    assert "format" in html
+    assert "terminal" in html
     assert "args" in html
     assert "rg -n 岗位 /Users/principal/Documents/memory/面试" in html
     assert "output" in html
@@ -2925,6 +2928,105 @@ def test_render_attempt_detail_renders_audit_tool_inputs_and_outputs(tmp_path: P
     assert "ok" in html
     assert "success" in html
     assert "岗位画像.md:1:项目经理" in html
+
+
+def test_render_attempt_detail_unwraps_terminal_wrapped_mcp_json_output(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    output = (
+        "Wall time: 0.8105 seconds\n"
+        "Output:\n"
+        + json.dumps(
+            {
+                "result": json.dumps(
+                    {
+                        "ok": True,
+                        "backend": "memory",
+                        "processing_status": "pending",
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            },
+            ensure_ascii=False,
+        )
+    )
+    attempt_id = store.record_reply_attempt(
+        conversation_id="cid-1",
+        conversation_title="MKT core",
+        trigger_message_id="msg-1",
+        trigger_sender="Phina",
+        trigger_text="@Alex Chen 这个怎么处理？",
+        action="send_reply",
+        sensitivity_kind="general",
+        audit_tool_events_json=json.dumps(
+            [
+                {
+                    "event_type": "response_item",
+                    "tool": "memory_write",
+                    "call_id": "call-memory",
+                    "input": json.dumps(
+                        {"data": "稳定业务口径", "type": "text"},
+                        ensure_ascii=False,
+                        indent=2,
+                    ),
+                },
+                {
+                    "event_type": "response_item",
+                    "tool": "tool_output",
+                    "call_id": "call-memory",
+                    "output": output,
+                },
+            ],
+            ensure_ascii=False,
+        ),
+        audit_summary="已写入 memory。",
+    )
+
+    status, html = render_attempt_detail(store, attempt_id)
+
+    assert status == 200
+    assert "1 total · 1 calls · 0 documents" in html
+    assert "mcp/json" in html
+    assert '"result": "{' not in html
+    assert "processing_status" in html
+    assert "pending" in html
+    assert "backend" in html
+    assert "memory" in html
+
+
+def test_render_attempt_detail_skips_empty_document_args(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    attempt_id = store.record_reply_attempt(
+        conversation_id="cid-1",
+        conversation_title="MKT core",
+        trigger_message_id="msg-1",
+        trigger_sender="Phina",
+        trigger_text="@Alex Chen 这个怎么处理？",
+        action="send_reply",
+        sensitivity_kind="general",
+        audit_documents_json=json.dumps(
+            [
+                {
+                    "title": "03.3_StarBench产品说明",
+                    "url": "https://alidocs.dingtalk.com/i/nodes/doc123",
+                    "relevance": "提供 StarBench 产品定位。",
+                }
+            ],
+            ensure_ascii=False,
+        ),
+        audit_tool_events_json="[]",
+        audit_summary="已查看文档。",
+    )
+
+    status, html = render_attempt_detail(store, attempt_id)
+
+    assert status == 200
+    assert "1 total · 0 calls · 1 documents" in html
+    assert "03.3_StarBench产品说明" in html
+    assert "提供 StarBench 产品定位。" in html
+    assert "https://alidocs.dingtalk.com/i/nodes/doc123" in html
+    tool_uses_html = html[html.index("Tool uses") :]
+    assert "audit-tool-args" not in tool_uses_html
 
 
 def test_render_attempt_detail_renders_dws_material_tool_events(tmp_path: Path):
