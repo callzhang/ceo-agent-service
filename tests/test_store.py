@@ -32,6 +32,23 @@ def test_store_connections_close_after_context_exit(tmp_path: Path):
         db.execute("select 1").fetchone()
 
 
+def test_store_initializes_same_path_once_per_process(tmp_path: Path, monkeypatch):
+    calls: list[Path] = []
+    original_initialize = AutoReplyStore._initialize
+
+    def counted_initialize(self: AutoReplyStore) -> None:
+        calls.append(self.path)
+        original_initialize(self)
+
+    monkeypatch.setattr(AutoReplyStore, "_initialize", counted_initialize)
+    db_path = tmp_path / "worker.sqlite3"
+
+    AutoReplyStore(db_path)
+    AutoReplyStore(db_path)
+
+    assert calls == [db_path]
+
+
 def test_store_writer_can_commit_while_reader_transaction_is_open(tmp_path: Path):
     db_path = tmp_path / "worker.sqlite3"
     store = AutoReplyStore(db_path)

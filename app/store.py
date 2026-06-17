@@ -1,5 +1,6 @@
 import sqlite3
 import json
+import threading
 from contextlib import contextmanager
 from pathlib import Path
 from collections.abc import Iterator
@@ -18,6 +19,8 @@ from app.task_models import (
 FAST_PATH_UNREAD_BACKOFF_TASK_ERROR = "waiting_fast_path_unread_backoff"
 SQLITE_BUSY_TIMEOUT_SECONDS = 30
 SQLITE_BUSY_TIMEOUT_MILLISECONDS = SQLITE_BUSY_TIMEOUT_SECONDS * 1000
+_INITIALIZED_STORE_PATHS: set[Path] = set()
+_INITIALIZE_LOCK = threading.Lock()
 
 
 class OrgUserProfile(BaseModel):
@@ -219,7 +222,17 @@ class AutoReplyStore:
     def __init__(self, path: Path):
         self.path = path
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._initialize()
+        self._ensure_initialized()
+
+    def _ensure_initialized(self) -> None:
+        path_key = self.path.resolve()
+        if path_key in _INITIALIZED_STORE_PATHS:
+            return
+        with _INITIALIZE_LOCK:
+            if path_key in _INITIALIZED_STORE_PATHS:
+                return
+            self._initialize()
+            _INITIALIZED_STORE_PATHS.add(path_key)
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
@@ -227,9 +240,8 @@ class AutoReplyStore:
             self.path,
             timeout=SQLITE_BUSY_TIMEOUT_SECONDS,
         )
-        connection.execute("pragma journal_mode = wal")
-        connection.execute("pragma synchronous = normal")
         connection.execute(f"pragma busy_timeout = {SQLITE_BUSY_TIMEOUT_MILLISECONDS}")
+        connection.execute("pragma synchronous = normal")
         connection.execute("pragma foreign_keys = on")
         connection.row_factory = sqlite3.Row
         try:
@@ -240,6 +252,7 @@ class AutoReplyStore:
 
     def _initialize(self) -> None:
         with self._connect() as db:
+            db.execute("pragma journal_mode = wal")
             db.executescript(
                 """
                 create table if not exists conversations (
