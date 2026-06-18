@@ -1,4 +1,5 @@
 import json
+from urllib.parse import parse_qs, urlparse
 
 import pytest
 
@@ -30,7 +31,7 @@ def test_build_callback_url_contains_token_and_rating():
     )
 
 
-def test_build_callback_url_omits_feedback_context_from_public_url():
+def test_build_callback_url_carries_short_feedback_context():
     url = build_callback_url(
         "https://feedback.example.com/",
         feedback_token="spike_1_abcd",
@@ -39,10 +40,16 @@ def test_build_callback_url_omits_feedback_context_from_public_url():
         reply_text="回复样例",
     )
 
-    assert url == (
-        "https://feedback.example.com/api/dingtalk-feedback-spike"
-        "?feedback_token=spike_1_abcd&rating=down"
-    )
+    parsed = urlparse(url)
+    query = parse_qs(parsed.query)
+
+    assert parsed.scheme == "https"
+    assert parsed.netloc == "feedback.example.com"
+    assert parsed.path == "/api/dingtalk-feedback-spike"
+    assert query["feedback_token"] == ["spike_1_abcd"]
+    assert query["rating"] == ["down"]
+    assert query["original_text"] == ["原话"]
+    assert query["reply_text"] == ["回复样例"]
 
 
 def test_build_events_url_contains_secret_and_limit():
@@ -152,7 +159,7 @@ def test_prepare_outgoing_reply_text_applies_signature_and_feedback_once():
     assert prepared.text.count("/api/dingtalk-feedback-spike") == 2
 
 
-def test_callback_url_does_not_embed_long_feedback_context():
+def test_callback_url_truncates_long_feedback_context():
     url = build_callback_url(
         "https://feedback.example.com/",
         feedback_token="spike_1_abcd",
@@ -160,11 +167,16 @@ def test_callback_url_does_not_embed_long_feedback_context():
         original_text="原话" * 500,
         reply_text="回复" * 500,
     )
+    query = parse_qs(urlparse(url).query)
 
-    assert url == (
-        "https://feedback.example.com/api/dingtalk-feedback-spike"
-        "?feedback_token=spike_1_abcd&rating=up"
-    )
+    assert query["feedback_token"] == ["spike_1_abcd"]
+    assert query["rating"] == ["up"]
+    assert query["original_text"][0].startswith("原话原话")
+    assert query["original_text"][0].endswith("...")
+    assert len(query["original_text"][0]) <= 103
+    assert query["reply_text"][0].startswith("回复回复")
+    assert query["reply_text"][0].endswith("...")
+    assert len(query["reply_text"][0]) <= 103
 
 
 def test_build_feedback_spike_link_message_accepts_fixed_token_for_verification():
@@ -180,8 +192,8 @@ def test_build_feedback_spike_link_message_accepts_fixed_token_for_verification(
     assert "rating=down" in message.callback_url_down
     assert message.callback_url_up in message.text
     assert message.callback_url_down in message.text
-    assert "original_text=" not in message.callback_url_up
-    assert "reply_text=" not in message.callback_url_up
+    assert "original_text=" in message.callback_url_up
+    assert "reply_text=" in message.callback_url_up
 
 
 def test_send_feedback_spike_links_uses_current_user_message_path():

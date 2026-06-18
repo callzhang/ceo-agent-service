@@ -65,6 +65,10 @@ def build_callback_url(
         "feedback_token": feedback_token,
         "rating": rating,
     }
+    if original_text.strip():
+        fields["original_text"] = _feedback_context_excerpt(original_text)
+    if reply_text.strip():
+        fields["reply_text"] = _feedback_context_excerpt(reply_text)
     query = urlencode(fields)
     return f"{normalize_vercel_base_url(vercel_base_url)}/api/dingtalk-feedback-spike?{query}"
 
