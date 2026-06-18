@@ -129,6 +129,16 @@ def test_is_okr_review_request_matches_review_intent():
         "【招聘】Vibecoding_0615 候选人画像与综合评价："
         "候选人具备全栈目标，面试官评价技术深度一般。"
     )
+    assert not is_okr_review_request(
+        "请审核这几篇技术交底书 https://alidocs.dingtalk.com/i/nodes/"
+        "AR4GpnMqJzEZb75aikRAEKxDVKe0xjE3"
+    )
+    assert not is_okr_review_request(
+        "@Derek Zen(磊哥) 请从专业知产局人员的角度审核这 4 篇技术交底书，"
+        "提出高质量建设性的修改建议。"
+        "https://alidocs.dingtalk.com/i/nodes/XPwkYGxZV3x3Q0mOs9MjamqjJAgozOKL"
+        " https://alidocs.dingtalk.com/i/nodes/AR4GpnMqJzEZb75aikRAEKxDVKe0xjE3"
+    )
 
 
 def test_current_quarter_period_uses_current_date():

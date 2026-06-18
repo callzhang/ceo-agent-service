@@ -453,12 +453,33 @@ class UnconfiguredOkrLiveSource:
 
 
 def is_okr_review_request(text: str) -> bool:
-    normalized = " ".join(text.strip().split()).casefold()
-    review_markers = ("审核", "review", "看看", "打分", "评价")
-    okr_markers = ("okr", "kr")
-    return any(marker in normalized for marker in review_markers) and any(
-        marker in normalized for marker in okr_markers
+    tokens = text.strip().split()
+    non_url_text = " ".join(
+        token
+        for token in tokens
+        if not token.casefold().startswith(("http://", "https://"))
     )
+    normalized = " ".join(non_url_text.split()).casefold()
+    review_markers = ("审核", "review", "看看", "打分", "评价")
+    okr_markers = {"okr", "kr"}
+    return any(marker in normalized for marker in review_markers) and any(
+        term in okr_markers for term in _ascii_terms(normalized)
+    )
+
+
+def _ascii_terms(text: str) -> list[str]:
+    terms: list[str] = []
+    current: list[str] = []
+    for char in text:
+        if char.isascii() and char.isalnum():
+            current.append(char)
+            continue
+        if current:
+            terms.append("".join(current))
+            current = []
+    if current:
+        terms.append("".join(current))
+    return terms
 
 
 def current_quarter_period(today: str | None = None) -> OkrPeriod:
