@@ -288,6 +288,7 @@ def test_render_okr_review_reply_includes_two_scores():
 
     reply = render_okr_review_reply(payload)
 
+    assert "KR 1: KR" in reply
     assert "员工主张分: 60" in reply
     assert "事实核实分: 0" in reply
     assert "缺少验收记录" in reply

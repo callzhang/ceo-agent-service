@@ -585,7 +585,7 @@ def render_okr_review_reply(payload: OkrReviewPayload) -> str:
         lines.extend(
             [
                 "",
-                f"{index}. {item.kr_title}",
+                f"KR {index}: {item.kr_title}",
                 f"- 员工主张分: {item.claim_score:g}（基础 {item.claim_base_score:g}，折扣 {item.claim_discount_factor:g}）",
                 f"- 事实核实分: {item.verified_score:g}（基础 {item.verified_base_score:g}，折扣 {item.verified_discount_factor:g}）",
                 f"- 依据: {'；'.join(e.summary for e in item.evidence_used) or '无独立证据'}",
