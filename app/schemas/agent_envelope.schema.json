@@ -235,6 +235,21 @@
       "title": "PersistOkrReviewAction",
       "type": "object"
     },
+    "QueueOkrReviewAction": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "queue_okr_review",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "title": "QueueOkrReviewAction",
+      "type": "object"
+    },
     "SendDingTalkReplyAction": {
       "additionalProperties": false,
       "properties": {
@@ -306,6 +321,7 @@
             "dws_oa_approval_action": "#/$defs/DwsOaApprovalAction",
             "dws_oa_approval_comment": "#/$defs/DwsOaApprovalCommentAction",
             "persist_okr_review": "#/$defs/PersistOkrReviewAction",
+            "queue_okr_review": "#/$defs/QueueOkrReviewAction",
             "send_dingtalk_reply": "#/$defs/SendDingTalkReplyAction"
           },
           "propertyName": "type"
@@ -325,6 +341,9 @@
           },
           {
             "$ref": "#/$defs/PersistOkrReviewAction"
+          },
+          {
+            "$ref": "#/$defs/QueueOkrReviewAction"
           },
           {
             "$ref": "#/$defs/DwsMessageReactionAction"

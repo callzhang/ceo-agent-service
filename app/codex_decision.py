@@ -24,10 +24,10 @@ CODEX_TIMEOUT_REASON_PREFIX = "codex exec timed out after"
 TIMEOUT_SESSION_DECISION_GRACE_SECONDS = 90
 SESSION_DECISION_GRACE_SECONDS = 15
 REPLY_AGENT_ENVELOPE_SCHEMA_HINT = (
-    'JSON schema: {"kind":"reply|no_action|error",'
+    'JSON schema: {"kind":"reply|okr_review|no_action|error",'
     '"user_response":{"mode":"send_reply|ask_clarifying_question|handoff_to_human|no_reply",'
     '"text":"","sensitivity_kind":"general|internal_personnel|external_candidate"},'
-    '"system_actions":[{"type":"send_dingtalk_reply|dws_markdown_document_reply|dws_message_reaction"}],'
+    '"system_actions":[{"type":"send_dingtalk_reply|dws_markdown_document_reply|dws_message_reaction|queue_okr_review"}],'
     '"domain_payload":{},'
     '"audit":{"summary":"","documents":[{"title":"","url":"","relevance":""}],"confidence":0.8}}'
 )

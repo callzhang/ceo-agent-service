@@ -8484,13 +8484,17 @@ def test_group_stale_direct_mention_found_in_recent_context_does_not_queue(
     assert final_sent(dws) == []
 
 
-def test_okr_review_request_is_enqueued_before_generic_codex(
+def test_okr_review_request_is_enqueued_after_agent_queue_action(
     tmp_path: Path, monkeypatch
 ):
     trigger = message("帮我审核 OKR", single_chat=True)
     dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
     codex = FakeCodex(
-        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该走普通回复")
+        CodexDecision(
+            action=CodexAction.NO_REPLY,
+            reason="用户明确请求审核 OKR，交给 OKR handler 处理。",
+            system_actions=[{"type": "queue_okr_review"}],
+        )
     )
     worker = make_worker(tmp_path, dws, codex, monkeypatch)
     worker.okr_live_source = type(
@@ -8501,7 +8505,7 @@ def test_okr_review_request_is_enqueued_before_generic_codex(
 
     worker.run_once()
 
-    assert codex.calls == []
+    assert len(codex.calls) == 1
     request = worker.store.claim_okr_review_requests(1)[0]
     assert request.trigger_text == "帮我审核 OKR"
     attempt = worker.store.get_reply_attempt(1)
@@ -8509,21 +8513,59 @@ def test_okr_review_request_is_enqueued_before_generic_codex(
     assert "已受理" in attempt.final_reply_text
 
 
-def test_okr_review_missing_live_source_fails_task_without_generic_codex_or_reply(
+def test_okr_mentions_without_agent_queue_action_do_not_fetch_okr_source(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message(
+        "@Alex Chen(明哥) Q3 OKR 季度会请大家准备，AI 打分只是材料同步。",
+        single_chat=False,
+    )
+    dws = FakeDws([conversation(single_chat=False)], {"cid-1": [trigger]})
+    codex = FakeCodex(CodexDecision(action=CodexAction.NO_REPLY, reason="通知同步"))
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+    worker.okr_live_source = type(
+        "LiveSource",
+        (),
+        {
+            "fetch_user_okr": lambda self, user_id, period_label: (_ for _ in ()).throw(
+                AssertionError("OKR source should not be called")
+            )
+        },
+    )()
+
+    worker.run_once()
+
+    assert len(codex.calls) == 1
+    assert worker.store.claim_okr_review_requests(1) == []
+    attempt = worker.store.get_reply_attempt(1)
+    assert attempt.action == CodexAction.NO_REPLY.value
+    assert attempt.send_status == "skipped"
+    assert final_sent(dws) == []
+
+
+def test_okr_review_missing_live_source_fails_after_agent_queue_action(
     tmp_path: Path, monkeypatch
 ):
     trigger = message("帮我审核 OKR", single_chat=True)
     dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
     codex = FakeCodex(
-        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该走普通回复")
+        CodexDecision(
+            action=CodexAction.NO_REPLY,
+            reason="用户明确请求审核 OKR，交给 OKR handler 处理。",
+            system_actions=[{"type": "queue_okr_review"}],
+        )
     )
     worker = make_worker(tmp_path, dws, codex, monkeypatch, max_task_attempts=1)
 
     worker.run_once()
 
-    assert codex.calls == []
+    assert len(codex.calls) == 1
     assert worker.store.claim_okr_review_requests(1) == []
-    assert worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1") is None
+    attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
+    assert attempt is not None
+    assert attempt.action == "okr_review"
+    assert attempt.send_status == "failed"
+    assert "OKR live source is not configured" in attempt.send_error
     assert worker.store.count_reply_tasks(status="failed") == 1
     errors = worker.store.list_errors(limit=10)
     assert [error.kind for error in errors] == ["reply_task", "okr_review_source"]
@@ -8532,13 +8574,17 @@ def test_okr_review_missing_live_source_fails_task_without_generic_codex_or_repl
     assert final_sent(dws) == []
 
 
-def test_okr_review_live_source_error_fails_task_without_generic_codex_or_reply(
+def test_okr_review_live_source_error_fails_after_agent_queue_action(
     tmp_path: Path, monkeypatch
 ):
     trigger = message("帮我审核 OKR", single_chat=True)
     dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
     codex = FakeCodex(
-        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该走普通回复")
+        CodexDecision(
+            action=CodexAction.NO_REPLY,
+            reason="用户明确请求审核 OKR，交给 OKR handler 处理。",
+            system_actions=[{"type": "queue_okr_review"}],
+        )
     )
     worker = make_worker(tmp_path, dws, codex, monkeypatch, max_task_attempts=1)
     worker.okr_live_source = type(
@@ -8553,9 +8599,13 @@ def test_okr_review_live_source_error_fails_task_without_generic_codex_or_reply(
 
     worker.run_once()
 
-    assert codex.calls == []
+    assert len(codex.calls) == 1
     assert worker.store.claim_okr_review_requests(1) == []
-    assert worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1") is None
+    attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
+    assert attempt is not None
+    assert attempt.action == "okr_review"
+    assert attempt.send_status == "failed"
+    assert "okr unavailable" in attempt.send_error
     assert worker.store.count_reply_tasks(status="failed") == 1
     errors = worker.store.list_errors(limit=10)
     assert [error.kind for error in errors] == ["reply_task", "okr_review_source"]
@@ -8564,7 +8614,7 @@ def test_okr_review_live_source_error_fails_task_without_generic_codex_or_reply(
     assert final_sent(dws) == []
 
 
-def test_queued_okr_review_ack_delivery_failure_requeues_without_generic_codex(
+def test_queued_okr_review_ack_delivery_failure_requeues_after_agent_queue_action(
     tmp_path: Path, monkeypatch
 ):
     trigger = message("帮我审核 OKR", single_chat=True)
@@ -8574,7 +8624,11 @@ def test_queued_okr_review_ack_delivery_failure_requeues_without_generic_codex(
         send_error=RuntimeError("send failed"),
     )
     codex = FakeCodex(
-        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该走普通回复")
+        CodexDecision(
+            action=CodexAction.NO_REPLY,
+            reason="用户明确请求审核 OKR，交给 OKR handler 处理。",
+            system_actions=[{"type": "queue_okr_review"}],
+        )
     )
     worker = make_worker(
         tmp_path,
@@ -8601,7 +8655,7 @@ def test_queued_okr_review_ack_delivery_failure_requeues_without_generic_codex(
 
     assert worker.consume_once(max_tasks=1) == 0
 
-    assert codex.calls == []
+    assert len(codex.calls) == 1
     assert worker.store.count_reply_tasks(status="done") == 0
     assert worker.store.count_reply_tasks(status="pending") == 1
     retried = worker.store.claim_reply_tasks(limit=1)

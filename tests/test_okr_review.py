@@ -621,9 +621,11 @@ class FakeDwsForOkr:
         self.payload = payload or {"objectives": []}
         self.error = error
         self.calls = []
+        self.timeouts = []
 
-    def run_json(self, command):
+    def run_json(self, command, *, timeout_seconds=None):
         self.calls.append(command)
+        self.timeouts.append(timeout_seconds)
         if self.error:
             raise self.error
         return self.payload
@@ -742,6 +744,19 @@ def test_dws_live_okr_source_uses_single_configured_command():
     assert payload["objectives"][0]["title"] == "O"
     assert "{user_id}" not in dws.calls[0]
     assert "user-1" in dws.calls[0]
+
+
+def test_dws_live_okr_source_uses_configured_timeout():
+    dws = FakeDwsForOkr(payload={"objectives": [{"title": "O"}]})
+    source = DwsLiveOkrSource(
+        dws=dws,
+        command_template=["dws", "api", "--user-id", "{user_id}"],
+        timeout_seconds=120,
+    )
+
+    source.fetch_user_okr(user_id="user-1", period_label="2026 Q2")
+
+    assert dws.timeouts == [120]
 
 
 def test_dws_live_okr_source_retries_then_reraises_source_error():

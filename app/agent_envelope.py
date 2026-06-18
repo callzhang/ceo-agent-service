@@ -114,6 +114,10 @@ class PersistOkrReviewAction(StrictBaseModel):
     request_id: int
 
 
+class QueueOkrReviewAction(StrictBaseModel):
+    type: Literal["queue_okr_review"]
+
+
 class DwsMessageReactionAction(StrictBaseModel):
     type: Literal["dws_message_reaction"]
     reaction_type: Literal["emoji", "text_emotion"] = "emoji"
@@ -144,6 +148,7 @@ SystemAction = Annotated[
         DwsOaApprovalAction,
         DwsOaApprovalCommentAction,
         PersistOkrReviewAction,
+        QueueOkrReviewAction,
         DwsMessageReactionAction,
     ],
     Field(discriminator="type"),

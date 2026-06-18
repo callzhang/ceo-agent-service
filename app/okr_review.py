@@ -30,12 +30,20 @@ class OkrPeriod:
 
 
 class DwsLiveOkrSource:
-    def __init__(self, *, dws, command_template: list[str], max_attempts: int = 3):
+    def __init__(
+        self,
+        *,
+        dws,
+        command_template: list[str],
+        max_attempts: int = 3,
+        timeout_seconds: int = 120,
+    ):
         if not command_template:
             raise ValueError("missing OKR live source command template")
         self.dws = dws
         self.command_template = command_template
         self.max_attempts = max_attempts
+        self.timeout_seconds = timeout_seconds
 
     def fetch_user_okr(self, *, user_id: str, period_label: str) -> dict:
         if not user_id.strip():
@@ -46,7 +54,10 @@ class DwsLiveOkrSource:
         ]
         payload = run_external(
             "dws okr live source",
-            lambda: self.dws.run_json(command),
+            lambda: self.dws.run_json(
+                command,
+                timeout_seconds=self.timeout_seconds,
+            ),
             max_attempts=self.max_attempts,
         )
         if not isinstance(payload, dict):

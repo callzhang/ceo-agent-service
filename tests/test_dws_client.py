@@ -3065,6 +3065,22 @@ def test_run_json_raises_dws_error_on_nonzero_exit(monkeypatch):
         DwsClient(timeout_seconds=7).run_json(["dws", "probe"])
 
 
+def test_run_json_uses_per_call_timeout_when_provided(monkeypatch):
+    seen_timeouts = []
+
+    def fake_run(command, text, capture_output, check, timeout, env=None):
+        seen_timeouts.append(timeout)
+        return SimpleNamespace(returncode=0, stdout='{"ok":true}', stderr="")
+
+    monkeypatch.setattr("app.dws_client.subprocess.run", fake_run)
+
+    assert DwsClient(timeout_seconds=7).run_json(
+        ["dws", "probe"],
+        timeout_seconds=120,
+    ) == {"ok": True}
+    assert seen_timeouts == [120]
+
+
 def test_run_json_extracts_error_code_from_stdout_and_retries_transient_timeout(
     monkeypatch,
 ):

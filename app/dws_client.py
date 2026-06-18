@@ -2233,7 +2233,13 @@ class DwsClient:
         payload = self.run_json(self.build_search_department_command(query))
         return self.parse_department_ids(payload)
 
-    def run_json(self, command: list[str]) -> Any:
+    def run_json(
+        self,
+        command: list[str],
+        *,
+        timeout_seconds: int | None = None,
+    ) -> Any:
+        command_timeout_seconds = timeout_seconds or self.timeout_seconds
         remaining_retries = self.transient_retry_attempts
         attempt_index = 0
         while True:
@@ -2243,7 +2249,7 @@ class DwsClient:
                     text=True,
                     capture_output=True,
                     check=False,
-                    timeout=self.timeout_seconds,
+                    timeout=command_timeout_seconds,
                     env=self._cli_environment(),
                 )
             except subprocess.TimeoutExpired as exc:
@@ -2253,7 +2259,7 @@ class DwsClient:
                     remaining_retries -= 1
                     continue
                 raise DwsError(
-                    f"dws command timed out after {self.timeout_seconds} seconds"
+                    f"dws command timed out after {command_timeout_seconds} seconds"
                 ) from exc
             if result.returncode == 0:
                 break

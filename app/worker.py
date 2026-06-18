@@ -69,7 +69,7 @@ from app.leak_check import (
 from app.message_split import split_dingtalk_text
 from app.notification import send_macos_notification
 from app.oa_approval import extract_oa_url
-from app.okr_review import current_quarter_period, is_okr_review_request
+from app.okr_review import current_quarter_period
 from app.org_cache import (
     ORG_CACHE_REFRESHED_DATE_STATE_KEY,
     refresh_org_cache,
@@ -1269,12 +1269,6 @@ class DingTalkAutoReplyWorker:
             complete_task_id=task.id,
         ):
             return True
-        if self._handle_okr_review_if_actionable(
-            conversation,
-            trigger,
-            raise_on_delivery_failure=True,
-        ):
-            return True
         if self._handle_oa_approval_if_actionable(
             conversation,
             trigger,
@@ -1654,12 +1648,6 @@ class DingTalkAutoReplyWorker:
             allow_duplicate_send=force_new_decision,
         ):
             return trigger.open_message_id
-        if self._handle_okr_review_if_actionable(
-            conversation,
-            trigger,
-            ignore_existing_attempt=force_new_decision,
-        ):
-            return trigger.open_message_id
         if self._handle_oa_approval_if_actionable(
             conversation,
             trigger,
@@ -1825,26 +1813,32 @@ class DingTalkAutoReplyWorker:
             return None
         return minutes_permission_request_from_message(message)
 
-    def _handle_okr_review_if_actionable(
+    @staticmethod
+    def _queue_okr_review_actions(decision: CodexDecision) -> list[dict]:
+        return [
+            action
+            for action in decision.system_actions
+            if isinstance(action, dict) and action.get("type") == "queue_okr_review"
+        ]
+
+    def _queue_okr_review_from_decision(
         self,
         conversation: DingTalkConversation,
         trigger: DingTalkMessage,
+        new_messages: list[DingTalkMessage],
+        attempt_id: int,
         *,
-        ignore_existing_attempt: bool = False,
         raise_on_delivery_failure: bool = False,
     ) -> bool:
-        if not is_okr_review_request(trigger.content):
-            return False
-        if not ignore_existing_attempt and self._handle_existing_attempt(
-            conversation,
-            trigger,
-            [trigger],
-            ignore_system_notification_skip=True,
-        ):
-            return True
         period = current_quarter_period()
         if not hasattr(self, "okr_live_source"):
             error = "OKR live source is not configured"
+            self.store.update_reply_attempt(
+                attempt_id,
+                action="okr_review",
+                send_status="failed",
+                send_error=error,
+            )
             self.store.record_error(
                 conversation.open_conversation_id,
                 trigger.open_message_id,
@@ -1859,6 +1853,12 @@ class DingTalkAutoReplyWorker:
                 period_label=period.period_label,
             )
         except Exception as exc:
+            self.store.update_reply_attempt(
+                attempt_id,
+                action="okr_review",
+                send_status="failed",
+                send_error=str(exc),
+            )
             self.store.record_error(
                 conversation.open_conversation_id,
                 trigger.open_message_id,
@@ -1882,25 +1882,17 @@ class DingTalkAutoReplyWorker:
             f"已受理 {period.period_label} OKR 审核请求，"
             "正在实时核实 KR 进度和证据。"
         )
-        attempt_id = self.store.record_reply_attempt_for_trigger(
-            conversation_id=conversation.open_conversation_id,
-            conversation_title=conversation.title,
-            trigger_message_id=trigger.open_message_id,
-            trigger_sender=trigger.sender_name,
-            trigger_text=trigger.content,
+        self.store.update_reply_attempt(
+            attempt_id,
             action="okr_review",
-            sensitivity_kind="internal_personnel",
-            codex_reason=f"okr_review_request:{request_id}",
-            draft_reply_text=reply_text,
-            audit_summary="OKR review request accepted and queued.",
             send_status="dry_run" if self.dry_run else "pending",
+            final_reply_text=reply_text,
         )
-        self.store.update_reply_attempt(attempt_id, final_reply_text=reply_text)
         if not self.dry_run:
             delivered = self._deliver_trigger_reply(
                 conversation=conversation,
                 trigger=trigger,
-                new_messages=[trigger],
+                new_messages=new_messages,
                 attempt_id=attempt_id,
                 reply_text=reply_text,
                 feedback_token="",
@@ -4047,6 +4039,16 @@ class DingTalkAutoReplyWorker:
             )
             if not calendar_response_succeeded:
                 return
+
+        if self._queue_okr_review_actions(decision):
+            self._queue_okr_review_from_decision(
+                conversation=conversation,
+                trigger=trigger,
+                new_messages=new_messages,
+                attempt_id=attempt_id,
+                raise_on_delivery_failure=raise_on_delivery_failure,
+            )
+            return
 
         if decision.action == CodexAction.NO_REPLY:
             if self._message_reaction_actions(decision):
