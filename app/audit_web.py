@@ -4306,7 +4306,7 @@ def handle_user_feedback_sync_post(
 ) -> tuple[int, dict[str, str], str]:
     _sync_feedback_events_for_sent_replies(
         store,
-        store.list_sent_replies_with_feedback_tokens(),
+        store.list_sent_replies_waiting_for_feedback_events(),
     )
     return 303, {"Location": "/user-feedback"}, ""
 

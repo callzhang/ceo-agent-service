@@ -777,6 +777,25 @@ def test_list_sent_replies_with_feedback_tokens_for_conversation(tmp_path: Path)
     assert [reply.trigger_message_id for reply in replies] == ["msg-4", "msg-2"]
 
 
+def test_list_sent_replies_waiting_for_feedback_events_filters_answered_tokens(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.record_sent_reply("cid-1", "msg-1", "无反馈")
+    store.record_sent_reply("cid-1", "msg-2", "已有本地反馈", feedback_token="token-1")
+    store.record_sent_reply("cid-1", "msg-3", "等待反馈同步", feedback_token="token-2")
+    store.upsert_feedback_event(
+        key="event-1",
+        feedback_token="token-1",
+        rating="useful",
+        received_at="2026-06-18T08:00:00.000Z",
+    )
+
+    replies = store.list_sent_replies_waiting_for_feedback_events(limit=10)
+
+    assert [reply.trigger_message_id for reply in replies] == ["msg-3"]
+
+
 def test_reply_attempt_tracing_and_feedback_round_trip(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
 

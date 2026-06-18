@@ -1688,6 +1688,27 @@ class AutoReplyStore:
             ).fetchall()
             return [SentReply.model_validate(dict(row)) for row in rows]
 
+    def list_sent_replies_waiting_for_feedback_events(
+        self, limit: int = 50
+    ) -> list[SentReply]:
+        with self._connect() as db:
+            rows = db.execute(
+                """
+                select sr.*
+                from sent_replies sr
+                where trim(sr.feedback_token) <> ''
+                  and not exists (
+                      select 1
+                      from feedback_events fe
+                      where fe.feedback_token = sr.feedback_token
+                  )
+                order by sr.sent_at desc, sr.id desc
+                limit ?
+                """,
+                (limit,),
+            ).fetchall()
+            return [SentReply.model_validate(dict(row)) for row in rows]
+
     def list_sent_replies_with_feedback_tokens_for_conversation(
         self,
         conversation_id: str,

@@ -546,6 +546,20 @@ def test_handle_user_feedback_sync_post_triggers_explicit_sync(
     seed_attempt(store)
     store.record_sent_reply(
         "cid-1",
+        "msg-older",
+        "已经有反馈的旧回复",
+        feedback_token="token-already-synced",
+    )
+    store.upsert_feedback_event(
+        key="event-already-synced",
+        feedback_token="token-already-synced",
+        rating="useful",
+        rating_label="很有用",
+        source="ceo-agent-spike",
+        received_at="2026-06-02T08:00:00.000Z",
+    )
+    store.record_sent_reply(
+        "cid-1",
         "msg-1",
         "先按A方案走",
         feedback_token="token-1",
@@ -567,6 +581,7 @@ def test_handle_user_feedback_sync_post_triggers_explicit_sync(
     assert headers["Location"] == "/user-feedback"
     assert html == ""
     assert len(calls) == 1
+    assert len(calls[0]) == 1
     assert calls[0][0].feedback_token == "token-1"
 
 
