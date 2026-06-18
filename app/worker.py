@@ -43,6 +43,12 @@ from app.dws_client import (
     native_reply_delivery_payload,
 )
 from app.feedback_spike import append_feedback_links, prepare_outgoing_reply_text
+from app.feedback_policy import (
+    FEEDBACK_BLOCK_REPLY_TEXT,
+    FEEDBACK_REQUIRED_LINK_PREFIX,
+    requires_feedback_block,
+    requires_feedback_reminder,
+)
 from app.corpus import (
     MEDIA_OR_LINK_PATTERN,
     CorpusRecord,
@@ -5960,21 +5966,38 @@ class DingTalkAutoReplyWorker:
     ) -> None:
         reply_text = self._native_reply_body(final_reply_text)
         feedback_base_url = feedback_spike_vercel_base_url()
-        outgoing_text = prepare_outgoing_reply_text(
-            reply_text=reply_text,
-            original_text=trigger.content,
-            feedback_base_url=feedback_base_url,
-            feedback_link_appender=append_feedback_links,
+        feedback_stats = self.store.feedback_pressure_stats(
+            conversation.open_conversation_id,
+            now_utc=self._sqlite_timestamp(self._now()),
         )
-        reply_text = outgoing_text.text
-        feedback_token = outgoing_text.feedback_token
+        feedback_block = bool(feedback_base_url) and requires_feedback_block(
+            feedback_stats
+        )
+        feedback_link_prefix = (
+            FEEDBACK_REQUIRED_LINK_PREFIX
+            if bool(feedback_base_url) and requires_feedback_reminder(feedback_stats)
+            else "反馈："
+        )
+        if feedback_block:
+            reply_text = FEEDBACK_BLOCK_REPLY_TEXT
+            feedback_token = ""
+        else:
+            outgoing_text = prepare_outgoing_reply_text(
+                reply_text=reply_text,
+                original_text=trigger.content,
+                feedback_base_url=feedback_base_url,
+                feedback_link_prefix=feedback_link_prefix,
+                feedback_link_appender=append_feedback_links,
+            )
+            reply_text = outgoing_text.text
+            feedback_token = outgoing_text.feedback_token
         self.store.update_reply_attempt(
             attempt_id,
             final_reply_text=reply_text,
             direct_user_id=direct_user_id or "",
             direct_open_dingtalk_id=direct_open_dingtalk_id or "",
         )
-        if contains_forbidden_leak(reply_text):
+        if not feedback_block and contains_forbidden_leak(reply_text):
             regenerated_reply_text = self._regenerate_reply_after_leak_check(
                 blocked_reply_text=reply_text,
             )
@@ -5985,6 +6008,7 @@ class DingTalkAutoReplyWorker:
                     reply_text=reply_text,
                     original_text=trigger.content,
                     feedback_base_url=feedback_base_url,
+                    feedback_link_prefix=feedback_link_prefix,
                     feedback_link_appender=append_feedback_links,
                 )
                 reply_text = outgoing_text.text

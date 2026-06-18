@@ -150,7 +150,7 @@ cp .env.example .env
 | `CEO_MENTION_ALIASES` | 群聊中触发本人的 @ 别名 |
 | `CEO_ASSISTANT_SIGNATURE` | 自动回复签名 |
 | `CEO_HANDOFF_ACK` | 交给真人时发送的确认文本 |
-| `CEO_FEEDBACK_SPIKE_VERCEL_BASE_URL` | 对话方反馈页根地址；配置后自动在发出的回复末尾追加 `👍 赞｜👎 踩` 反馈链接 |
+| `CEO_FEEDBACK_SPIKE_VERCEL_BASE_URL` | 对话方反馈页根地址；配置后自动在发出的回复末尾追加 `👍 赞｜👎 踩` 反馈链接；同一会话长期未评价时会升级为强提醒，超过硬阈值后只回复“请对我提供反馈后再提问” |
 
 不要把 `HOME` 指向项目目录。`dws` 和 Codex 需要使用真实用户环境里的认证状态。
 

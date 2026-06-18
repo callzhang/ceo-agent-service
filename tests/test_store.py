@@ -628,6 +628,68 @@ def test_records_sent_reply_recall_result(tmp_path: Path):
     assert updated.recalled_at is not None
 
 
+def test_feedback_pressure_counts_unanswered_replies_since_last_feedback(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.record_sent_reply(
+        "cid-1",
+        "old-before-feedback",
+        "旧回复",
+        feedback_token="token-old",
+    )
+    store.record_sent_reply(
+        "cid-1",
+        "old-unanswered",
+        "旧回复",
+        feedback_token="token-1",
+    )
+    store.record_sent_reply(
+        "cid-1",
+        "recent-unanswered",
+        "近回复",
+        feedback_token="token-2",
+    )
+    store.record_sent_reply(
+        "cid-2",
+        "other-conversation",
+        "其他会话",
+        feedback_token="token-3",
+    )
+    store.upsert_feedback_event(
+        key="event-old",
+        feedback_token="token-old",
+        rating="up",
+        received_at="2026-06-01 12:00:00",
+    )
+    with sqlite3.connect(store.path) as db:
+        db.execute(
+            "update sent_replies set sent_at=? where trigger_message_id=?",
+            ("2026-05-30 12:00:00", "old-before-feedback"),
+        )
+        db.execute(
+            "update sent_replies set sent_at=? where trigger_message_id=?",
+            ("2026-06-02 12:00:00", "old-unanswered"),
+        )
+        db.execute(
+            "update sent_replies set sent_at=? where trigger_message_id=?",
+            ("2026-06-09 12:00:00", "recent-unanswered"),
+        )
+        db.execute(
+            "update sent_replies set sent_at=? where trigger_message_id=?",
+            ("2026-06-02 12:00:00", "other-conversation"),
+        )
+
+    stats = store.feedback_pressure_stats(
+        "cid-1",
+        now_utc="2026-06-12 12:00:00",
+    )
+
+    assert stats.unanswered_since_last_feedback == 2
+    assert stats.unanswered_older_than_7_days == 1
+    assert stats.unanswered_older_than_10_days == 1
+
+
 def test_reply_attempt_tracing_and_feedback_round_trip(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
 

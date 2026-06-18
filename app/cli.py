@@ -41,6 +41,12 @@ from app.feedback_spike import (
     prepare_outgoing_reply_text,
     send_feedback_spike_links,
 )
+from app.feedback_policy import (
+    FEEDBACK_BLOCK_REPLY_TEXT,
+    FEEDBACK_REQUIRED_LINK_PREFIX,
+    requires_feedback_block,
+    requires_feedback_reminder,
+)
 from app.leak_check import contains_forbidden_leak
 from app.message_split import split_dingtalk_text
 from app.dingtalk_models import CodexAction, DingTalkConversation, DingTalkMessage
@@ -1215,11 +1221,27 @@ def send_attempt_command(settings: WorkerSettings, attempt_id: int) -> dict[str,
     )
     feedback_token = ""
     feedback_base_url = feedback_spike_vercel_base_url()
-    if feedback_base_url:
+    feedback_stats = store.feedback_pressure_stats(
+        attempt.conversation_id,
+        now_utc=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
+    )
+    feedback_block = bool(feedback_base_url) and requires_feedback_block(
+        feedback_stats
+    )
+    feedback_link_prefix = (
+        FEEDBACK_REQUIRED_LINK_PREFIX
+        if bool(feedback_base_url) and requires_feedback_reminder(feedback_stats)
+        else "反馈："
+    )
+    if feedback_block:
+        reply_text = FEEDBACK_BLOCK_REPLY_TEXT
+        store.update_reply_attempt(attempt.id, final_reply_text=reply_text)
+    elif feedback_base_url:
         outgoing_text = prepare_outgoing_reply_text(
             reply_text=reply_text,
             original_text=attempt.trigger_text,
             feedback_base_url=feedback_base_url,
+            feedback_link_prefix=feedback_link_prefix,
             feedback_link_appender=append_feedback_links,
         )
         reply_text = outgoing_text.text
@@ -1237,6 +1259,7 @@ def send_attempt_command(settings: WorkerSettings, attempt_id: int) -> dict[str,
                     reply_text=clean_reply_text,
                     original_text=attempt.trigger_text,
                     feedback_base_url=feedback_base_url,
+                    feedback_link_prefix=feedback_link_prefix,
                     feedback_link_appender=append_feedback_links,
                 )
                 reply_text = outgoing_text.text

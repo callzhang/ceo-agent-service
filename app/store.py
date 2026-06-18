@@ -15,6 +15,7 @@ from app.task_models import (
     WorkTodo,
     WorkUpdate,
 )
+from app.feedback_policy import FeedbackPressureStats
 
 FAST_PATH_UNREAD_BACKOFF_TASK_ERROR = "waiting_fast_path_unread_backoff"
 SQLITE_BUSY_TIMEOUT_SECONDS = 30
@@ -1685,6 +1686,83 @@ class AutoReplyStore:
                 (limit,),
             ).fetchall()
             return [SentReply.model_validate(dict(row)) for row in rows]
+
+    def feedback_pressure_stats(
+        self,
+        conversation_id: str,
+        *,
+        now_utc: str | None = None,
+    ) -> FeedbackPressureStats:
+        now_expression = "current_timestamp" if now_utc is None else "?"
+        args = [conversation_id]
+        if now_utc is not None:
+            args.extend([now_utc, now_utc])
+        with self._connect() as db:
+            row = db.execute(
+                f"""
+                with latest_feedback as (
+                    select max(datetime(coalesce(
+                        nullif(fe.received_at, ''),
+                        fe.updated_at,
+                        fe.created_at
+                    ))) as latest_feedback_at
+                    from sent_replies sr
+                    join feedback_events fe
+                        on fe.feedback_token = sr.feedback_token
+                    where sr.conversation_id=?
+                      and trim(sr.feedback_token) <> ''
+                ),
+                unanswered as (
+                    select sr.*
+                    from sent_replies sr
+                    left join latest_feedback lf
+                    where sr.conversation_id=?
+                      and trim(sr.feedback_token) <> ''
+                      and not exists (
+                          select 1
+                          from feedback_events fe
+                          where fe.feedback_token = sr.feedback_token
+                      )
+                      and (
+                          lf.latest_feedback_at is null
+                          or datetime(sr.sent_at) > lf.latest_feedback_at
+                      )
+                )
+                select
+                    count(*) as unanswered_since_last_feedback,
+                    sum(
+                        case
+                            when datetime(sent_at)
+                                <= datetime({now_expression}, '-7 days')
+                            then 1
+                            else 0
+                        end
+                    ) as unanswered_older_than_7_days,
+                    sum(
+                        case
+                            when datetime(sent_at)
+                                <= datetime({now_expression}, '-10 days')
+                            then 1
+                            else 0
+                        end
+                    ) as unanswered_older_than_10_days
+                from unanswered
+                """,
+                [conversation_id, *args],
+            ).fetchone()
+        if row is None:
+            return FeedbackPressureStats()
+        return FeedbackPressureStats(
+            unanswered_since_last_feedback=int(
+                row["unanswered_since_last_feedback"] or 0
+            ),
+            unanswered_older_than_7_days=int(
+                row["unanswered_older_than_7_days"] or 0
+            ),
+            unanswered_older_than_10_days=int(
+                row["unanswered_older_than_10_days"] or 0
+            ),
+        )
 
     def upsert_feedback_event(
         self,

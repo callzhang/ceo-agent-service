@@ -1,4 +1,5 @@
 import json
+import sqlite3
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -1651,6 +1652,72 @@ def test_send_attempt_command_appends_feedback_links_when_configured(
     assert sent_reply.feedback_token.startswith("spike_")
     assert sent_reply.feedback_token in sent_text
     assert '"kind": "native_reply"' in sent_reply.send_result_json
+
+
+def test_send_attempt_command_blocks_when_feedback_is_overdue(
+    monkeypatch, tmp_path
+):
+    sent = {}
+
+    class FakeDws:
+        def __init__(self, **kwargs):
+            pass
+
+        @staticmethod
+        def extract_recall_key(send_result):
+            return send_result["result"]["processQueryKey"]
+
+        def send_reply_to_trigger(self, conversation, trigger, text, at_users=None):
+            sent["reply"] = (
+                conversation.open_conversation_id,
+                trigger.open_message_id,
+                trigger.sender_open_dingtalk_id,
+                text,
+            )
+            return {"result": {"processQueryKey": "recall-1"}}
+
+    monkeypatch.setenv(
+        "CEO_FEEDBACK_SPIKE_VERCEL_BASE_URL",
+        "https://feedback.example.com",
+    )
+    monkeypatch.setattr(cli, "DwsClient", FakeDws)
+    settings = WorkerSettings(db_path=tmp_path / "worker.sqlite3", dry_run=False)
+    store = cli.AutoReplyStore(settings.db_path)
+    store.upsert_conversation("cid-1", "Friday", False, None)
+    enqueue_trigger_task(store)
+    store.record_sent_reply(
+        "cid-1",
+        "old-msg-1",
+        "旧回复",
+        feedback_token="token-old",
+    )
+    with sqlite3.connect(store.path) as db:
+        db.execute(
+            "update sent_replies set sent_at=? where trigger_message_id=?",
+            ("2026-05-01 12:00:00", "old-msg-1"),
+        )
+    attempt_id = store.record_reply_attempt(
+        conversation_id="cid-1",
+        conversation_title="Friday",
+        trigger_message_id="msg-1",
+        trigger_sender="Phina",
+        trigger_text="@Alex Chen 看一下",
+        action="send_reply",
+        sensitivity_kind="general",
+    )
+    store.update_reply_attempt(
+        attempt_id,
+        final_reply_text="可以先这样处理。（by明哥分身）",
+        send_status="dry_run",
+    )
+
+    send_attempt_command(settings, attempt_id)
+
+    sent_text = sent["reply"][3]
+    assert sent_text == "请对我提供反馈后再提问"
+    sent_reply = cli.AutoReplyStore(settings.db_path).get_sent_reply("cid-1", "msg-1")
+    assert sent_reply is not None
+    assert sent_reply.feedback_token == ""
 
 
 def test_send_attempt_command_sends_single_chat_as_native_reply(

@@ -3007,6 +3007,82 @@ def test_consume_once_appends_feedback_links_when_configured(
     assert attempt.final_reply_text == sent_text
 
 
+def test_consume_once_uses_required_feedback_prefix_after_unanswered_week(
+    tmp_path: Path, monkeypatch
+):
+    monkeypatch.setenv(
+        "CEO_FEEDBACK_SPIKE_VERCEL_BASE_URL",
+        "https://feedback.example.com",
+    )
+    trigger = message("@Alex Chen(明哥) 这个怎么处理？")
+    dws = FakeDws([conversation()], {"cid-1": [trigger]})
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="先按A方案走")
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+    worker.store.record_sent_reply(
+        "cid-1",
+        "old-msg-1",
+        "旧回复",
+        feedback_token="token-old",
+    )
+    with sqlite3.connect(worker.store.path) as db:
+        db.execute(
+            "update sent_replies set sent_at=? where trigger_message_id=?",
+            ("2026-05-05 18:00:00", "old-msg-1"),
+        )
+    worker.produce_once()
+
+    processed = worker.consume_once(max_tasks=1)
+
+    assert processed == 1
+    sent_text = final_sent(dws)[0][1]
+    assert "请对我的服务提供反馈，长期不评价将跳过：" in sent_text
+    assert "反馈：[👍]" not in sent_text
+    assert "先按A方案走" in sent_text
+    sent_reply = worker.store.get_sent_reply("cid-1", "msg-1")
+    assert sent_reply is not None
+    assert sent_reply.feedback_token in sent_text
+
+
+def test_consume_once_blocks_reply_after_unanswered_feedback_deadline(
+    tmp_path: Path, monkeypatch
+):
+    monkeypatch.setenv(
+        "CEO_FEEDBACK_SPIKE_VERCEL_BASE_URL",
+        "https://feedback.example.com",
+    )
+    trigger = message("@Alex Chen(明哥) 这个怎么处理？")
+    dws = FakeDws([conversation()], {"cid-1": [trigger]})
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="先按A方案走")
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+    worker.store.record_sent_reply(
+        "cid-1",
+        "old-msg-1",
+        "旧回复",
+        feedback_token="token-old",
+    )
+    with sqlite3.connect(worker.store.path) as db:
+        db.execute(
+            "update sent_replies set sent_at=? where trigger_message_id=?",
+            ("2026-05-02 18:00:00", "old-msg-1"),
+        )
+    worker.produce_once()
+
+    processed = worker.consume_once(max_tasks=1)
+
+    assert processed == 1
+    sent_text = final_sent(dws)[0][1]
+    assert "请对我提供反馈后再提问" in sent_text
+    assert "先按A方案走" not in sent_text
+    assert "/api/dingtalk-feedback-spike" not in sent_text
+    sent_reply = worker.store.get_sent_reply("cid-1", "msg-1")
+    assert sent_reply is not None
+    assert sent_reply.feedback_token == ""
+
+
 def test_consume_once_retries_task_failure_before_final_failure(
     tmp_path: Path, monkeypatch
 ):
