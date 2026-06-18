@@ -1687,6 +1687,26 @@ class AutoReplyStore:
             ).fetchall()
             return [SentReply.model_validate(dict(row)) for row in rows]
 
+    def list_sent_replies_with_feedback_tokens_for_conversation(
+        self,
+        conversation_id: str,
+        *,
+        limit: int = 20,
+    ) -> list[SentReply]:
+        with self._connect() as db:
+            rows = db.execute(
+                """
+                select *
+                from sent_replies
+                where conversation_id=?
+                  and trim(feedback_token) <> ''
+                order by sent_at desc, id desc
+                limit ?
+                """,
+                (conversation_id, limit),
+            ).fetchall()
+            return [SentReply.model_validate(dict(row)) for row in rows]
+
     def feedback_pressure_stats(
         self,
         conversation_id: str,

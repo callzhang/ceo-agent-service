@@ -690,6 +690,21 @@ def test_feedback_pressure_counts_unanswered_replies_since_last_feedback(
     assert stats.unanswered_older_than_10_days == 1
 
 
+def test_list_sent_replies_with_feedback_tokens_for_conversation(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.record_sent_reply("cid-1", "msg-1", "无反馈")
+    store.record_sent_reply("cid-1", "msg-2", "旧回复", feedback_token="token-1")
+    store.record_sent_reply("cid-2", "msg-3", "其他会话", feedback_token="token-2")
+    store.record_sent_reply("cid-1", "msg-4", "新回复", feedback_token="token-3")
+
+    replies = store.list_sent_replies_with_feedback_tokens_for_conversation(
+        "cid-1",
+        limit=10,
+    )
+
+    assert [reply.trigger_message_id for reply in replies] == ["msg-4", "msg-2"]
+
+
 def test_reply_attempt_tracing_and_feedback_round_trip(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
 

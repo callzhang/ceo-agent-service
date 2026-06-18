@@ -237,9 +237,39 @@ def message_lines(message: DingTalkMessage) -> list[str]:
         quoted_content = sanitize_dingtalk_prompt_text(message.quoted_content)
         if quoted_content and not _all_lines_present(quoted_content, content):
             lines.append(f"  引用: {quoted_content}")
+    coalesced_lines = _message_coalesced_lines(message.raw_payload, message.open_message_id)
+    if coalesced_lines:
+        lines.append("  合并前序消息:")
+        lines.extend(f"  {line}" for line in coalesced_lines)
     reaction_lines = _message_reaction_lines(message.raw_payload)
     if reaction_lines:
         lines.append(f"  已有 reaction: {'；'.join(reaction_lines)}")
+    return lines
+
+
+def _message_coalesced_lines(
+    raw_payload: dict,
+    current_message_id: str,
+) -> list[str]:
+    raw_messages = raw_payload.get("coalesced_messages")
+    if not isinstance(raw_messages, list):
+        return []
+    lines: list[str] = []
+    for raw_message in raw_messages:
+        if not isinstance(raw_message, dict):
+            continue
+        message_id = str(raw_message.get("open_message_id") or "")
+        if message_id == current_message_id:
+            continue
+        sender_name = str(raw_message.get("sender_name") or "").strip()
+        create_time = str(raw_message.get("create_time") or "").strip()
+        content = sanitize_dingtalk_prompt_text(str(raw_message.get("content") or ""))
+        if not content:
+            continue
+        prefix = " -"
+        if sender_name or create_time:
+            prefix = f"- {sender_name} {create_time}:".rstrip()
+        lines.append(f"{prefix} {content}")
     return lines
 
 

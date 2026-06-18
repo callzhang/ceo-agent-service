@@ -42,6 +42,23 @@ async function fetchEventBlob(blob) {
   return response.json();
 }
 
+function tokenPathSegment(value) {
+  return encodeURIComponent(String(value || "").trim()).replaceAll("%", "_");
+}
+
+async function listEventBlobs(prefix, limit, token) {
+  const blobList = await list({
+    limit,
+    mode: "expanded",
+    prefix,
+    token,
+  });
+  return [...blobList.blobs].sort(
+    (left, right) =>
+      new Date(right.uploadedAt).getTime() - new Date(left.uploadedAt).getTime()
+  );
+}
+
 export default async function handler(req, res) {
   if (req.method !== "GET") {
     res.setHeader("Allow", "GET");
@@ -62,16 +79,19 @@ export default async function handler(req, res) {
   if (!token) {
     return res.status(503).json({ ok: false, error: "blob_not_configured" });
   }
-  const blobList = await list({
-    limit,
-    mode: "expanded",
-    prefix: `${EVENT_LIST_KEY}/`,
-    token,
-  });
-  const sortedBlobs = [...blobList.blobs].sort(
-    (left, right) =>
-      new Date(right.uploadedAt).getTime() - new Date(left.uploadedAt).getTime()
-  );
+  let sortedBlobs = [];
+  if (feedbackToken) {
+    sortedBlobs = await listEventBlobs(
+      `${EVENT_LIST_KEY}/by-token/${tokenPathSegment(feedbackToken)}/`,
+      limit,
+      token,
+    );
+  }
+  if (!feedbackToken || sortedBlobs.length === 0) {
+    sortedBlobs = (
+      await listEventBlobs(`${EVENT_LIST_KEY}/`, limit, token)
+    ).filter((blob) => !blob.pathname.includes("/by-token/"));
+  }
   const events = await Promise.all(sortedBlobs.slice(0, limit).map(fetchEventBlob));
   const filteredEvents = feedbackToken
     ? events.filter((event) => event && event.feedback_token === feedbackToken)

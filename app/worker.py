@@ -43,6 +43,7 @@ from app.dws_client import (
     native_reply_delivery_payload,
 )
 from app.feedback_spike import append_feedback_links, prepare_outgoing_reply_text
+from app.feedback_events import sync_feedback_events_for_sent_replies
 from app.feedback_policy import (
     FEEDBACK_BLOCK_REPLY_TEXT,
     FEEDBACK_REQUIRED_LINK_PREFIX,
@@ -1511,13 +1512,23 @@ class DingTalkAutoReplyWorker:
         )
         if len(messages) == 1:
             return latest
+        ordered_messages = sorted(
+            messages,
+            key=DingTalkAutoReplyWorker._message_create_time_as_instant,
+        )
         raw_payload = dict(latest.raw_payload)
         raw_payload["coalesced_message_ids"] = [
             message.open_message_id
-            for message in sorted(
-                messages,
-                key=DingTalkAutoReplyWorker._message_create_time_as_instant,
-            )
+            for message in ordered_messages
+        ]
+        raw_payload["coalesced_messages"] = [
+            {
+                "open_message_id": message.open_message_id,
+                "create_time": message.create_time,
+                "sender_name": message.sender_name,
+                "content": message.content,
+            }
+            for message in ordered_messages
         ]
         return latest.model_copy(update={"raw_payload": raw_payload})
 
@@ -5968,6 +5979,10 @@ class DingTalkAutoReplyWorker:
     ) -> None:
         reply_text = self._native_reply_body(final_reply_text)
         feedback_base_url = feedback_spike_vercel_base_url()
+        if feedback_base_url:
+            self._sync_recent_feedback_events_for_conversation(
+                conversation.open_conversation_id
+            )
         feedback_stats = self.store.feedback_pressure_stats(
             conversation.open_conversation_id,
             now_utc=self._sqlite_timestamp(self._now()),
@@ -6087,6 +6102,28 @@ class DingTalkAutoReplyWorker:
             raise_on_delivery_failure=raise_on_delivery_failure,
             allow_duplicate_send=allow_duplicate_send,
         )
+
+    def _sync_recent_feedback_events_for_conversation(
+        self,
+        conversation_id: str,
+    ) -> None:
+        sent_replies = self.store.list_sent_replies_with_feedback_tokens_for_conversation(
+            conversation_id,
+            limit=10,
+        )
+        if not sent_replies:
+            return
+        synced = sync_feedback_events_for_sent_replies(
+            self.store,
+            sent_replies,
+            timeout_seconds=1,
+        )
+        if synced:
+            logger.info(
+                "synced feedback events before pressure check conversation_id=%s count=%s",
+                conversation_id,
+                synced,
+            )
 
     def _deliver_minutes_comment(
         self,

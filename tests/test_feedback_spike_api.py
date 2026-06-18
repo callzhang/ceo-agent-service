@@ -28,9 +28,12 @@ def test_callback_endpoint_writes_event_list_and_expiring_event_key():
 
     assert 'const EVENT_LIST_KEY = "feedback-spike-events"' in source
     assert 'const EVENT_KEY_PREFIX = "feedback-spike:"' in source
-    assert 'put(`${EVENT_LIST_KEY}/${event.key}.json`, JSON.stringify(event)' in source
+    assert 'put(`${EVENT_LIST_KEY}/${event.key}.json`, payload, options)' in source
+    assert '`${EVENT_LIST_KEY}/by-token/${tokenPathSegment(event.feedback_token)}/${event.key}.json`' in source
     assert 'access: "public"' in source
     assert "BLOB_READ_WRITE_TOKEN" in source
+    assert "反馈暂未记录" in source
+    assert "ok: persisted" in source
 
 
 def test_callback_endpoint_renders_feedback_page_with_five_rating_options():
@@ -61,8 +64,11 @@ def test_events_endpoint_requires_secret_and_reads_recent_events():
     assert "FEEDBACK_SPIKE_SECRET" in source
     assert "x-feedback-spike-secret" in source
     assert "requestFeedbackToken" in source
+    assert "tokenPathSegment" in source
+    assert "listEventBlobs" in source
     assert '"feedback_token"' in source
     assert "filteredEvents" in source
     assert 'res.status(401).json({ ok: false, error: "unauthorized" })' in source
     assert "BLOB_READ_WRITE_TOKEN" in source
-    assert 'prefix: `${EVENT_LIST_KEY}/`' in source
+    assert '`${EVENT_LIST_KEY}/by-token/${tokenPathSegment(feedbackToken)}/`' in source
+    assert "blob.pathname.includes(\"/by-token/\")" in source

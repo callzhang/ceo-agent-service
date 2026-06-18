@@ -329,12 +329,17 @@ function renderFeedbackPage(req, context) {
 }
 
 function renderSubmittedPage(context, persisted, persistError) {
+  const title = persisted ? "反馈已提交" : "反馈暂未记录";
+  const mark = persisted ? "✓" : "!";
+  const message = persisted
+    ? `感谢反馈。评分：${escapeHtml(ratingLabel(context.rating))}`
+    : "反馈没有写入成功，我这边不会要求你重复提交；请把这个页面截图发给我处理。";
   return `<!doctype html>
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>反馈已提交</title>
+  <title>${title}</title>
   <style>
     body {
       margin: 0;
@@ -383,13 +388,17 @@ function renderSubmittedPage(context, persisted, persistError) {
 </head>
 <body>
   <main>
-    <div class="mark">✓</div>
-    <h1>反馈已提交</h1>
-    <p>感谢反馈。评分：${escapeHtml(ratingLabel(context.rating))}</p>
+    <div class="mark">${mark}</div>
+    <h1>${title}</h1>
+    <p>${message}</p>
     <div class="meta">${persisted ? "已记录" : `暂未写入存储：${escapeHtml(persistError || "存储未配置")}`}</div>
   </main>
 </body>
 </html>`;
+}
+
+function tokenPathSegment(value) {
+  return encodeURIComponent(String(value || "").trim()).replaceAll("%", "_");
 }
 
 async function persistEvent(event) {
@@ -397,12 +406,21 @@ async function persistEvent(event) {
   if (!token) {
     return false;
   }
-  await put(`${EVENT_LIST_KEY}/${event.key}.json`, JSON.stringify(event), {
+  const payload = JSON.stringify(event);
+  const options = {
     access: "public",
     allowOverwrite: true,
     contentType: "application/json",
     token,
-  });
+  };
+  await put(`${EVENT_LIST_KEY}/${event.key}.json`, payload, options);
+  if (event.feedback_token) {
+    await put(
+      `${EVENT_LIST_KEY}/by-token/${tokenPathSegment(event.feedback_token)}/${event.key}.json`,
+      payload,
+      options,
+    );
+  }
   return true;
 }
 
@@ -453,7 +471,7 @@ export default async function handler(req, res) {
 
   if (wantsJson(req)) {
     return res.status(200).json({
-      ok: true,
+      ok: persisted,
       persisted,
       persist_error: persistError,
       feedback_token: event.feedback_token,

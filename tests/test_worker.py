@@ -3083,6 +3083,58 @@ def test_consume_once_blocks_reply_after_unanswered_feedback_deadline(
     assert sent_reply.feedback_token == ""
 
 
+def test_consume_once_syncs_feedback_before_block_check(
+    tmp_path: Path, monkeypatch
+):
+    monkeypatch.setenv(
+        "CEO_FEEDBACK_SPIKE_VERCEL_BASE_URL",
+        "https://feedback.example.com",
+    )
+    trigger = message("@Alex Chen(明哥) 这个怎么处理？")
+    dws = FakeDws([conversation()], {"cid-1": [trigger]})
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="先按A方案走")
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+    worker.store.record_sent_reply(
+        "cid-1",
+        "old-msg-1",
+        "旧回复",
+        feedback_token="token-old",
+    )
+    with sqlite3.connect(worker.store.path) as db:
+        db.execute(
+            "update sent_replies set sent_at=? where trigger_message_id=?",
+            ("2026-05-02 18:00:00", "old-msg-1"),
+        )
+
+    def fake_sync_feedback_events(store, sent_replies, **_kwargs):
+        assert [reply.feedback_token for reply in sent_replies] == ["token-old"]
+        store.upsert_feedback_event(
+            key="event-old",
+            feedback_token="token-old",
+            rating="useful",
+            received_at="2026-05-13 16:59:00",
+        )
+        return 1
+
+    monkeypatch.setattr(
+        "app.worker.sync_feedback_events_for_sent_replies",
+        fake_sync_feedback_events,
+    )
+    worker.produce_once()
+
+    processed = worker.consume_once(max_tasks=1)
+
+    assert processed == 1
+    sent_text = final_sent(dws)[0][1]
+    assert "先按A方案走" in sent_text
+    assert "请对我提供反馈后再提问" not in sent_text
+    sent_reply = worker.store.get_sent_reply("cid-1", "msg-1")
+    assert sent_reply is not None
+    assert sent_reply.feedback_token in sent_text
+
+
 def test_consume_once_retries_task_failure_before_final_failure(
     tmp_path: Path, monkeypatch
 ):
@@ -8846,6 +8898,45 @@ def test_single_chat_recovery_does_not_coalesce_across_current_user_context(
         "msg-first-missed",
         "msg-second-missed",
     ]
+
+
+def test_single_chat_coalesced_trigger_keeps_previous_message_in_prompt(
+    tmp_path: Path,
+    monkeypatch,
+):
+    first = message(
+        "刚才已经提交了两个了，credits还是没有拿到",
+        message_id="msg-feedback-text",
+        single_chat=True,
+    )
+    first.create_time = "2026-05-13 17:10:00"
+    second = message(
+        "[图片消息](mediaId=$media-1)",
+        message_id="msg-feedback-image",
+        single_chat=True,
+    )
+    second.create_time = "2026-05-13 17:11:00"
+    worker = make_worker(
+        tmp_path,
+        FakeDws([conversation(single_chat=True)], {"cid-1": [second, first]}),
+        FakeCodex(CodexDecision(action=CodexAction.NO_REPLY, reason="test")),
+        monkeypatch,
+    )
+
+    triggers = worker._reply_task_trigger_messages(
+        conversation(single_chat=True),
+        [first, second],
+    )
+    prompt = worker._build_prompt(
+        conversation(single_chat=True),
+        triggers,
+        [],
+        include_thread_prompt=False,
+    )
+
+    assert [trigger.open_message_id for trigger in triggers] == ["msg-feedback-image"]
+    assert "刚才已经提交了两个了，credits还是没有拿到" in prompt
+    assert "[图片消息](mediaId=$media-1)" in prompt
 
 
 def test_single_chat_empty_unread_without_seen_anchor_does_not_process_old_context(
