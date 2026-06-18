@@ -2999,6 +2999,7 @@ def test_consume_once_appends_feedback_links_when_configured(
     assert "反馈：[👍](https://feedback.example.com/api/dingtalk-feedback-spike" in sent_text
     assert "rating=up" in sent_text
     assert "rating=down" in sent_text
+    assert "attempt_id=1" in sent_text
     sent_reply = worker.store.get_sent_reply("cid-1", "msg-1")
     assert sent_reply is not None
     assert sent_reply.feedback_token.startswith("spike_")

@@ -6002,6 +6002,7 @@ class DingTalkAutoReplyWorker:
             outgoing_text = prepare_outgoing_reply_text(
                 reply_text=reply_text,
                 original_text=trigger.content,
+                attempt_id=attempt_id,
                 feedback_base_url=feedback_base_url,
                 feedback_link_prefix=feedback_link_prefix,
                 feedback_link_appender=append_feedback_links,
@@ -6024,6 +6025,7 @@ class DingTalkAutoReplyWorker:
                 outgoing_text = prepare_outgoing_reply_text(
                     reply_text=reply_text,
                     original_text=trigger.content,
+                    attempt_id=attempt_id,
                     feedback_base_url=feedback_base_url,
                     feedback_link_prefix=feedback_link_prefix,
                     feedback_link_appender=append_feedback_links,

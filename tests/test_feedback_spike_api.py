@@ -11,6 +11,8 @@ def test_callback_endpoint_accepts_get_and_post_and_redacts_headers():
     assert 'import { persistFeedbackEvent } from "./feedback-storage.js";' in source
     assert '"feedback_token"' in source
     assert '"feedbackToken"' in source
+    assert '"attempt_id"' in source
+    assert '"attemptId"' in source
     assert '"rating"' in source
     assert '"original_text"' in source
     assert '"reply_text"' in source
@@ -49,6 +51,8 @@ def test_callback_endpoint_renders_feedback_page_with_five_rating_options():
     assert "这条回复有帮助吗？" in source
     assert "原话" in source
     assert "回复样例" in source
+    assert "Attempt #" in source
+    assert 'name="attempt_id"' in source
     assert "评语（可选）" in source
     assert "特别没用" in source
     assert "不太有用" in source

@@ -351,6 +351,7 @@ def build_parser() -> argparse.ArgumentParser:
                 default="这是一条 CEO agent 反馈链接 spike 测试消息。",
             )
             subparser.add_argument("--original-text", default="")
+            subparser.add_argument("--attempt-id", default="")
             subparser.add_argument("--dws-bin", default=os.getenv("DWS_BIN", "dws"))
             subparser.add_argument(
                 "--preview",
@@ -1240,6 +1241,7 @@ def send_attempt_command(settings: WorkerSettings, attempt_id: int) -> dict[str,
         outgoing_text = prepare_outgoing_reply_text(
             reply_text=reply_text,
             original_text=attempt.trigger_text,
+            attempt_id=attempt.id,
             feedback_base_url=feedback_base_url,
             feedback_link_prefix=feedback_link_prefix,
             feedback_link_appender=append_feedback_links,
@@ -1258,6 +1260,7 @@ def send_attempt_command(settings: WorkerSettings, attempt_id: int) -> dict[str,
                 outgoing_text = prepare_outgoing_reply_text(
                     reply_text=clean_reply_text,
                     original_text=attempt.trigger_text,
+                    attempt_id=attempt.id,
                     feedback_base_url=feedback_base_url,
                     feedback_link_prefix=feedback_link_prefix,
                     feedback_link_appender=append_feedback_links,
@@ -1622,6 +1625,7 @@ def feedback_spike_command(args: argparse.Namespace) -> dict[str, object]:
         vercel_base_url=args.vercel_base_url,
         reply_text=args.reply_text,
         original_text=args.original_text,
+        attempt_id=args.attempt_id,
         conversation_id=args.conversation_id.strip() or None,
         user_id=args.user_id.strip() or None,
         open_dingtalk_id=args.open_dingtalk_id.strip() or None,

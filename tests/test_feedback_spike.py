@@ -31,6 +31,19 @@ def test_build_callback_url_contains_token_and_rating():
     )
 
 
+def test_build_callback_url_carries_attempt_id():
+    url = build_callback_url(
+        "https://feedback.example.com/",
+        feedback_token="spike_1_abcd",
+        rating="up",
+        attempt_id=42,
+    )
+
+    query = parse_qs(urlparse(url).query)
+
+    assert query["attempt_id"] == ["42"]
+
+
 def test_build_callback_url_carries_short_feedback_context():
     url = build_callback_url(
         "https://feedback.example.com/",
@@ -112,6 +125,7 @@ def test_extract_feedback_link_context_handles_emoji_feedback_labels():
     assert context is not None
     assert context.feedback_token == "spike_1_abcd"
     assert context.vercel_base_url == "https://feedback.example.com"
+    assert context.attempt_id == ""
 
 
 def test_extract_feedback_link_context_handles_markdown_links():
@@ -131,6 +145,7 @@ def test_append_feedback_links_does_not_duplicate_existing_links():
         vercel_base_url="https://feedback.example.com",
         reply_text="收到",
         original_text="帮我看一下",
+        attempt_id=42,
         feedback_token="spike_1_abcd",
     )
 
@@ -138,6 +153,7 @@ def test_append_feedback_links_does_not_duplicate_existing_links():
         vercel_base_url="https://feedback.example.com",
         reply_text=first.text,
         original_text="帮我看一下",
+        attempt_id=42,
     )
 
     assert second.feedback_token == "spike_1_abcd"
@@ -149,6 +165,7 @@ def test_prepare_outgoing_reply_text_applies_signature_and_feedback_once():
     prepared = prepare_outgoing_reply_text(
         reply_text="收到",
         original_text="帮我看一下",
+        attempt_id=42,
         feedback_base_url="https://feedback.example.com",
         feedback_token="spike_1_abcd",
     )
@@ -157,6 +174,7 @@ def test_prepare_outgoing_reply_text_applies_signature_and_feedback_once():
     assert prepared.text.startswith("收到（by明哥分身）")
     assert prepared.text.count("（by明哥分身）") == 1
     assert prepared.text.count("/api/dingtalk-feedback-spike") == 2
+    assert "attempt_id=42" in prepared.text
 
 
 def test_callback_url_truncates_long_feedback_context():
@@ -173,10 +191,10 @@ def test_callback_url_truncates_long_feedback_context():
     assert query["rating"] == ["up"]
     assert query["original_text"][0].startswith("原话原话")
     assert query["original_text"][0].endswith("...")
-    assert len(query["original_text"][0]) <= 103
+    assert len(query["original_text"][0]) <= 30
     assert query["reply_text"][0].startswith("回复回复")
     assert query["reply_text"][0].endswith("...")
-    assert len(query["reply_text"][0]) <= 103
+    assert len(query["reply_text"][0]) <= 30
 
 
 def test_build_feedback_spike_link_message_accepts_fixed_token_for_verification():
@@ -184,6 +202,7 @@ def test_build_feedback_spike_link_message_accepts_fixed_token_for_verification(
         vercel_base_url="https://feedback.example.com",
         reply_text="收到",
         original_text="能看一下这个方案吗？",
+        attempt_id=42,
         feedback_token="spike_1_abcd",
     )
 
@@ -194,6 +213,7 @@ def test_build_feedback_spike_link_message_accepts_fixed_token_for_verification(
     assert message.callback_url_down in message.text
     assert "original_text=" in message.callback_url_up
     assert "reply_text=" in message.callback_url_up
+    assert "attempt_id=42" in message.callback_url_up
 
 
 def test_send_feedback_spike_links_uses_current_user_message_path():
@@ -231,6 +251,7 @@ def test_send_feedback_spike_links_uses_current_user_message_path():
         vercel_base_url="https://feedback.example.com",
         reply_text="收到",
         original_text="帮我看看这个方案",
+        attempt_id=42,
         conversation_id="cid-1",
         dws_client=client,
     )
@@ -241,6 +262,7 @@ def test_send_feedback_spike_links_uses_current_user_message_path():
     assert client.sent[0]["title"] == "收到"
     assert "rating=up" in client.sent[0]["text"]
     assert "rating=down" in client.sent[0]["text"]
+    assert "attempt_id=42" in client.sent[0]["text"]
     assert result["command"][3] == "send"
     assert "--group" in result["command"]
     assert result["command"][result["command"].index("--title") + 1] == "收到"
@@ -262,6 +284,8 @@ def test_parser_supports_feedback_spike_send_links():
             "收到",
             "--original-text",
             "原话",
+            "--attempt-id",
+            "42",
             "--preview",
         ]
     )
@@ -272,6 +296,7 @@ def test_parser_supports_feedback_spike_send_links():
     assert args.conversation_id == "cid-1"
     assert args.reply_text == "收到"
     assert args.original_text == "原话"
+    assert args.attempt_id == "42"
     assert args.preview is True
 
 

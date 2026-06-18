@@ -106,6 +106,11 @@ function feedbackContext(req, body) {
   return {
     source: String(extractField(body, req.query, "source") || ""),
     feedback_token: String(extractFeedbackToken(body, req.query) || ""),
+    attempt_id: String(
+      extractField(body, req.query, "attempt_id") ||
+        extractField(body, req.query, "attemptId") ||
+        "",
+    ),
     rating,
     original_text: String(extractField(body, req.query, "original_text") || ""),
     reply_text: String(extractField(body, req.query, "reply_text") || ""),
@@ -304,12 +309,14 @@ function renderFeedbackPage(req, context) {
       <div>
         <h1>这条回复有帮助吗？</h1>
         <div class="sub">你的反馈会帮助改进自动回复质量。</div>
+        ${context.attempt_id ? `<div class="sub">Attempt #${escapeHtml(context.attempt_id)}</div>` : ""}
       </div>
       <div class="badge">${escapeHtml(ratingLabel(context.rating))}</div>
     </header>
     <form method="post" action="${escapeHtml(action)}">
       <input type="hidden" name="source" value="${escapeHtml(context.source)}" />
       <input type="hidden" name="feedback_token" value="${escapeHtml(context.feedback_token)}" />
+      <input type="hidden" name="attempt_id" value="${escapeHtml(context.attempt_id)}" />
       <input type="hidden" name="original_text" value="${escapeHtml(context.original_text)}" />
       <input type="hidden" name="reply_text" value="${escapeHtml(context.reply_text)}" />
       <div class="context-grid">
@@ -423,6 +430,7 @@ export default async function handler(req, res) {
     method: req.method,
     source: context.source,
     feedback_token: context.feedback_token,
+    attempt_id: context.attempt_id,
     rating: context.rating,
     rating_label: ratingLabel(context.rating),
     original_text: context.original_text,
@@ -449,6 +457,7 @@ export default async function handler(req, res) {
       persisted,
       persist_error: persistError,
       feedback_token: event.feedback_token,
+      attempt_id: event.attempt_id,
       rating: event.rating,
       rating_label: event.rating_label,
     });

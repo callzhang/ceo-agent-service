@@ -1648,6 +1648,7 @@ def test_send_attempt_command_appends_feedback_links_when_configured(
     sent_text = sent["reply"][3]
     assert "反馈：[👍](https://feedback.example.com/api/dingtalk-feedback-spike" in sent_text
     assert "source=" not in sent_text
+    assert f"attempt_id={attempt_id}" in sent_text
     sent_reply = cli.AutoReplyStore(settings.db_path).get_sent_reply("cid-1", "msg-1")
     assert sent_reply is not None
     assert sent_reply.feedback_token.startswith("spike_")

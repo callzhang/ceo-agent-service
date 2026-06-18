@@ -8,7 +8,7 @@ from urllib.parse import parse_qs, urlencode, urlparse
 from app.codex_decision import append_signature
 from app.dws_client import DwsClient
 
-MAX_FEEDBACK_CONTEXT_CHARS = 100
+MAX_FEEDBACK_CONTEXT_CHARS = 30
 
 
 @dataclass(frozen=True)
@@ -35,6 +35,7 @@ class PreparedOutgoingReplyText:
 class FeedbackLinkContext:
     feedback_token: str
     vercel_base_url: str
+    attempt_id: str = ""
 
 
 def generate_feedback_token(now_seconds: int | None = None) -> str:
@@ -58,6 +59,7 @@ def build_callback_url(
     rating: str,
     original_text: str = "",
     reply_text: str = "",
+    attempt_id: int | str | None = None,
 ) -> str:
     if rating not in {"up", "down"}:
         raise ValueError("rating must be up or down")
@@ -65,6 +67,8 @@ def build_callback_url(
         "feedback_token": feedback_token,
         "rating": rating,
     }
+    if attempt_id is not None and str(attempt_id).strip():
+        fields["attempt_id"] = str(attempt_id).strip()
     if original_text.strip():
         fields["original_text"] = _feedback_context_excerpt(original_text)
     if reply_text.strip():
@@ -100,7 +104,7 @@ def _feedback_context_excerpt(text: str) -> str:
     stripped = " ".join(text.strip().split())
     if len(stripped) <= MAX_FEEDBACK_CONTEXT_CHARS:
         return stripped
-    return stripped[:MAX_FEEDBACK_CONTEXT_CHARS].rstrip() + "..."
+    return stripped[: max(0, MAX_FEEDBACK_CONTEXT_CHARS - 3)].rstrip() + "..."
 
 
 def extract_feedback_link_context(text: str) -> FeedbackLinkContext | None:
@@ -118,9 +122,11 @@ def extract_feedback_link_context(text: str) -> FeedbackLinkContext | None:
         token = token.strip()
         if not token:
             continue
+        attempt_id = (query.get("attempt_id") or query.get("attemptId") or [""])[0]
         return FeedbackLinkContext(
             feedback_token=token,
             vercel_base_url=f"{parsed.scheme}://{parsed.netloc}",
+            attempt_id=attempt_id.strip(),
         )
     return None
 
@@ -130,6 +136,7 @@ def build_feedback_spike_link_message(
     vercel_base_url: str,
     reply_text: str,
     original_text: str = "",
+    attempt_id: int | str | None = None,
     feedback_token: str | None = None,
     link_prefix: str = "反馈：",
 ) -> FeedbackSpikeLinkMessage:
@@ -140,6 +147,7 @@ def build_feedback_spike_link_message(
         rating="up",
         original_text=original_text,
         reply_text=reply_text,
+        attempt_id=attempt_id,
     )
     down_url = build_callback_url(
         vercel_base_url,
@@ -147,6 +155,7 @@ def build_feedback_spike_link_message(
         rating="down",
         original_text=original_text,
         reply_text=reply_text,
+        attempt_id=attempt_id,
     )
     return FeedbackSpikeLinkMessage(
         feedback_token=token,
@@ -166,6 +175,7 @@ def append_feedback_links(
     vercel_base_url: str,
     reply_text: str,
     original_text: str = "",
+    attempt_id: int | str | None = None,
     feedback_token: str | None = None,
     link_prefix: str = "反馈：",
 ) -> FeedbackReplyText:
@@ -179,6 +189,7 @@ def append_feedback_links(
         vercel_base_url=vercel_base_url,
         reply_text=reply_text,
         original_text=original_text,
+        attempt_id=attempt_id,
         feedback_token=feedback_token,
         link_prefix=link_prefix,
     )
@@ -189,6 +200,7 @@ def prepare_outgoing_reply_text(
     *,
     reply_text: str,
     original_text: str = "",
+    attempt_id: int | str | None = None,
     feedback_base_url: str = "",
     feedback_token: str | None = None,
     feedback_link_prefix: str = "反馈：",
@@ -201,6 +213,7 @@ def prepare_outgoing_reply_text(
         vercel_base_url=feedback_base_url,
         reply_text=text,
         original_text=original_text,
+        attempt_id=attempt_id,
         feedback_token=feedback_token,
         link_prefix=feedback_link_prefix,
     )
@@ -215,6 +228,7 @@ def send_feedback_spike_links(
     vercel_base_url: str,
     reply_text: str,
     original_text: str = "",
+    attempt_id: int | str | None = None,
     conversation_id: str | None = None,
     user_id: str | None = None,
     open_dingtalk_id: str | None = None,
@@ -226,6 +240,7 @@ def send_feedback_spike_links(
         vercel_base_url=vercel_base_url,
         reply_text=reply_text,
         original_text=original_text,
+        attempt_id=attempt_id,
     )
     client = dws_client or DwsClient(dws_bin=dws_bin)
     command = client.build_send_message_command(
