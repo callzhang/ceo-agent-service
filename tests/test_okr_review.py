@@ -459,6 +459,81 @@ def test_normalize_okr_review_item_defaults_verified_base_to_final():
     assert payload.items[0].verified_discount_factor == 1.0
 
 
+def test_normalize_okr_review_domain_payload_accepts_camel_case_rows():
+    normalized = normalize_okr_review_domain_payload(
+        {
+            "person_name": "Ming Hu",
+            "period_label": "2026 Q2",
+            "summary": "已审核。",
+            "items": [
+                {
+                    "objectiveTitle": "SSC相关工作按时按量完成，没有错漏",
+                    "objectiveWeight": 35,
+                    "krTitle": "工资奖金发放、五险一金缴纳、生育津贴领取等事务无错漏",
+                    "krWeight": 25,
+                    "krProgress": 82,
+                    "krDetailsUpdatesAggregated": "2026-06-05 | 由57%更新为82% | 本季度发放工资每月都有2个更改小错误。",
+                    "claimScore": 82,
+                    "verifiedBaseScore": 75,
+                    "verifiedScore": 75,
+                    "verifiedDiscountReason": "按错误记录扣分。",
+                    "evidenceUsed": [
+                        {
+                            "title": "KR进度",
+                            "text": "本季度发放工资每月都有2个更改小错误。",
+                        }
+                    ],
+                    "evidenceGap": "缺少工资表复核记录。",
+                    "reviewComment": "自评进度有具体扣分说明。",
+                    "suggestedFollowUp": "补充每月工资复核记录。",
+                }
+            ],
+        }
+    )
+
+    payload = OkrReviewPayload.model_validate(normalized)
+
+    assert payload.items[0].objective_weight == pytest.approx(0.35)
+    assert payload.items[0].kr_weight == pytest.approx(0.25)
+    assert payload.items[0].self_progress == "82"
+    assert payload.items[0].kr_progress_update.startswith("2026-06-05")
+    assert payload.items[0].evidence_used[0].source == "KR进度"
+    assert payload.items[0].evidence_used[0].summary.startswith("本季度发放工资")
+
+
+def test_normalize_okr_review_domain_payload_flattens_grouped_items():
+    normalized = normalize_okr_review_domain_payload(
+        {
+            "person_name": "Ming Hu",
+            "period_label": "2026 Q2",
+            "summary": "已审核。",
+            "items": {
+                "O": {
+                    "objectiveTitle": "文化价值观考核",
+                    "krTitle": "I Can I Up",
+                    "krWeight": 33.33,
+                    "krProgress": 100,
+                    "krDetailsUpdatesAggregated": "Mike项目安全评估打分7分。",
+                    "claimScore": 80,
+                    "finalScore": 80,
+                    "evidenceUsed": ["Mike项目安全评估打分7分。"],
+                    "evidenceGaps": "缺少客户原始反馈。",
+                    "ceoComment": "有具体案例，但证据仍需补齐。",
+                    "suggestedFollowUp": "补客户反馈截图。",
+                }
+            },
+        }
+    )
+
+    payload = OkrReviewPayload.model_validate(normalized)
+
+    assert len(payload.items) == 1
+    assert payload.items[0].objective_title == "文化价值观考核"
+    assert payload.items[0].kr_title == "I Can I Up"
+    assert payload.items[0].kr_weight == pytest.approx(0.3333)
+    assert payload.items[0].verified_score == 80
+
+
 def test_normalize_okr_review_domain_payload_renders_assessment_and_gaps():
     # A summary dict with overall_assessment + key_gaps must render as readable
     # text, not a raw JSON blob.

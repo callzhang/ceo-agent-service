@@ -361,6 +361,78 @@ def test_recreating_okr_review_request_requeues_failed_request(tmp_path):
     assert json.loads(loaded.okr_source_json)["processed"]["okrRows"] == []
 
 
+def test_recreating_okr_review_request_does_not_requeue_done_request(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    request_id = store.create_okr_review_request(
+        conversation_id="cid-1",
+        conversation_title="韩露",
+        trigger_message_id="msg-1",
+        trigger_sender="韩露",
+        trigger_sender_user_id="user-1",
+        trigger_text="帮我审核 OKR",
+        period_label="2026 Q2",
+        period_start="2026-04-01",
+        period_end="2026-06-30",
+        okr_source_json='{"objectives":[]}',
+    )
+    store.mark_okr_review_request_done(request_id, codex_session_id="session-1")
+
+    recreated_id = store.create_okr_review_request(
+        conversation_id="cid-1",
+        conversation_title="韩露",
+        trigger_message_id="msg-1",
+        trigger_sender="韩露",
+        trigger_sender_user_id="user-1",
+        trigger_text="帮我审核 OKR",
+        period_label="2026 Q2",
+        period_start="2026-04-01",
+        period_end="2026-06-30",
+        okr_source_json='{"processed":{"okrRows":[]}}',
+    )
+
+    assert recreated_id == request_id
+    loaded = store.get_okr_review_request(request_id)
+    assert loaded.status == "done"
+    assert loaded.codex_session_id == "session-1"
+    assert json.loads(loaded.okr_source_json)["objectives"] == []
+
+
+def test_recreating_okr_review_request_does_not_reset_processing_request(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    request_id = store.create_okr_review_request(
+        conversation_id="cid-1",
+        conversation_title="韩露",
+        trigger_message_id="msg-1",
+        trigger_sender="韩露",
+        trigger_sender_user_id="user-1",
+        trigger_text="帮我审核 OKR",
+        period_label="2026 Q2",
+        period_start="2026-04-01",
+        period_end="2026-06-30",
+        okr_source_json='{"objectives":[]}',
+    )
+    claimed = store.claim_okr_review_requests(limit=1)
+
+    recreated_id = store.create_okr_review_request(
+        conversation_id="cid-1",
+        conversation_title="韩露",
+        trigger_message_id="msg-1",
+        trigger_sender="韩露",
+        trigger_sender_user_id="user-1",
+        trigger_text="帮我审核 OKR",
+        period_label="2026 Q2",
+        period_start="2026-04-01",
+        period_end="2026-06-30",
+        okr_source_json='{"processed":{"okrRows":[]}}',
+    )
+
+    assert [item.id for item in claimed] == [request_id]
+    assert recreated_id == request_id
+    loaded = store.get_okr_review_request(request_id)
+    assert loaded.status == "processing"
+    assert json.loads(loaded.okr_source_json)["objectives"] == []
+
+
 def test_record_okr_review_run_and_items(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     request_id = store.create_okr_review_request(

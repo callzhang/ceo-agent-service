@@ -544,6 +544,17 @@ trigger_text: {trigger_text}
 - `user_response` 使用 {{"mode":"send_reply","text":"OKR review completed.","sensitivity_kind":"internal_personnel"}}。
 - `system_actions` 必须包含 {{"type":"persist_okr_review","request_id":{request_id}}}。
 - `domain_payload` 必须符合 OkrReviewPayload：包含 `person_name`、`period_label`、`summary`、`items`。
+- `domain_payload.items` 必须是数组。每个 item 必须对应一个 KR，不要把 O 行当作单独评分项。
+- 每个 item 必须包含这些 snake_case 字段：
+  `objective_title`, `objective_weight`, `kr_title`, `kr_weight`,
+  `self_progress`, `kr_progress_update`, `claim_text`,
+  `claim_completion_time`, `deadline`, `claim_base_score`,
+  `claim_discount_factor`, `claim_discount_reason`, `claim_score`,
+  `verified_completion_time`, `verified_base_score`,
+  `verified_discount_factor`, `verified_discount_reason`, `verified_score`,
+  `evidence_used`, `evidence_gap`, `review_comment`, `suggested_follow_up`。
+- `objective_weight` 和 `kr_weight` 用 0-1 小数；如果实时 JSON 是 30，输出 0.3。
+- `evidence_used` 是数组，每项包含 `source` 和 `summary`。
 """
 
 
@@ -644,9 +655,43 @@ def normalize_okr_review_domain_payload(payload: dict) -> dict:
             ).strip()
         normalized["summary"] = text or json.dumps(summary, ensure_ascii=False)
     items = normalized.get("items")
+    if isinstance(items, dict):
+        items = _flatten_okr_review_items(items)
     if isinstance(items, list):
         normalized["items"] = [_normalize_okr_review_item(item) for item in items]
     return normalized
+
+
+def _flatten_okr_review_items(items: dict) -> list:
+    flattened = []
+    for value in items.values():
+        if isinstance(value, list):
+            flattened.extend(value)
+            continue
+        if isinstance(value, dict):
+            if _looks_like_okr_review_item(value):
+                flattened.append(value)
+            else:
+                flattened.extend(_flatten_okr_review_items(value))
+    return flattened
+
+
+def _looks_like_okr_review_item(value: dict) -> bool:
+    item_keys = {
+        "objective",
+        "objective_title",
+        "objectiveTitle",
+        "kr",
+        "kr_title",
+        "krTitle",
+        "claim_score",
+        "claimScore",
+        "verified_score",
+        "verifiedScore",
+        "final_score",
+        "finalScore",
+    }
+    return any(key in value for key in item_keys)
 
 
 def _normalize_okr_review_item(item: object) -> object:
@@ -657,7 +702,14 @@ def _normalize_okr_review_item(item: object) -> object:
     verified_base_score = _number(
         _first_present_value(
             item,
-            ("fact_checked_base_score", "verified_base_score", "base_score"),
+            (
+                "fact_checked_base_score",
+                "factCheckedBaseScore",
+                "verified_base_score",
+                "verifiedBaseScore",
+                "base_score",
+                "baseScore",
+            ),
         )
     )
     verified_score = _number(
@@ -665,9 +717,13 @@ def _normalize_okr_review_item(item: object) -> object:
             item,
             (
                 "fact_checked_final_score",
+                "factCheckedFinalScore",
                 "fact_checked_score",
+                "factCheckedScore",
                 "verified_score",
+                "verifiedScore",
                 "final_score",
+                "finalScore",
             ),
         )
     )
@@ -678,63 +734,167 @@ def _normalize_okr_review_item(item: object) -> object:
     verified_discount_factor = 1.0
     if verified_base_score > 0 and verified_score <= verified_base_score:
         verified_discount_factor = max(0.3, min(1.0, verified_score / verified_base_score))
-    evidence_used = item.get("evidence_used")
+    evidence_used = _first_present_value(
+        item,
+        ("evidence_used", "evidenceUsed", "verification_evidence", "verificationEvidence"),
+    )
     if isinstance(evidence_used, list):
         normalized_evidence = [
-            evidence
-            if isinstance(evidence, dict)
-            else {"source": "agent evidence", "summary": str(evidence)}
+            _normalize_okr_evidence(evidence)
             for evidence in evidence_used
         ]
     else:
         normalized_evidence = []
-    employee_claims = item.get("employee_claims")
+    employee_claims = _first_present_value(
+        item,
+        ("employee_claims", "employeeClaims", "claim_text", "claimText"),
+    )
     if isinstance(employee_claims, list):
         claim_text = "；".join(str(claim) for claim in employee_claims)
     else:
-        claim_text = str(employee_claims or item.get("claim_text") or "")
+        claim_text = str(employee_claims or "")
     claim_score = _number(
-        _first_present_value(item, ("employee_claim_score", "claim_score"))
+        _first_present_value(
+            item,
+            (
+                "employee_claim_score",
+                "employeeClaimScore",
+                "claim_base_score",
+                "claimBaseScore",
+                "claim_score",
+                "claimScore",
+            ),
+        )
     )
+    kr_progress_update = str(
+        _first_present_value(
+            item,
+            (
+                "kr_progress_update",
+                "krProgressUpdate",
+                "kr_progress_notes",
+                "krProgressNotes",
+                "krDetailsUpdatesAggregated",
+                "progressUpdatesAggregated",
+            ),
+        )
+        or ""
+    )
+    if not claim_text:
+        claim_text = kr_progress_update
     return {
         **item,
-        "objective_title": str(item.get("objective") or item.get("objective_title") or ""),
-        "objective_weight": _normalize_weight(item.get("objective_weight"), default=1.0),
-        "kr_title": str(item.get("kr") or item.get("kr_title") or ""),
-        "kr_weight": _normalize_weight(item.get("kr_weight"), default=1.0),
-        "self_progress": str(item.get("self_progress") or ""),
-        "kr_progress_update": str(
-            item.get("kr_progress_update") or item.get("kr_progress_notes") or ""
+        "objective_title": str(
+            _first_present_value(
+                item,
+                ("objective", "objective_title", "objectiveTitle", "objective_name", "objectiveName"),
+            )
+            or ""
         ),
+        "objective_weight": _normalize_weight(
+            _first_present_value(item, ("objective_weight", "objectiveWeight")),
+            default=1.0,
+        ),
+        "kr_title": str(
+            _first_present_value(item, ("kr", "kr_title", "krTitle", "key_result", "keyResult"))
+            or ""
+        ),
+        "kr_weight": _normalize_weight(
+            _first_present_value(item, ("kr_weight", "krWeight", "key_result_weight", "keyResultWeight")),
+            default=1.0,
+        ),
+        "self_progress": str(
+            _first_present_value(item, ("self_progress", "selfProgress", "krProgress", "progress"))
+            or ""
+        ),
+        "kr_progress_update": kr_progress_update,
         "claim_text": claim_text,
         "claim_completion_time": str(
-            item.get("claim_completion_time") or item.get("actual_completion_time") or ""
+            _first_present_value(
+                item,
+                (
+                    "claim_completion_time",
+                    "claimCompletionTime",
+                    "actual_completion_time",
+                    "actualCompletionTime",
+                    "completed_at",
+                    "completedAt",
+                ),
+            )
+            or ""
         ),
-        "deadline": str(item.get("deadline") or ""),
+        "deadline": str(
+            _first_present_value(item, ("deadline", "krDeadline", "due_date", "dueDate"))
+            or ""
+        ),
         "claim_base_score": claim_score,
-        "claim_discount_factor": 1.0,
+        "claim_discount_factor": _normalize_discount(
+            _first_present_value(item, ("claim_discount_factor", "claimDiscountFactor")),
+            default=1.0,
+        ),
         "claim_discount_reason": str(
-            item.get("claim_discount_reason") or "按员工自述原始评分。"
+            _first_present_value(item, ("claim_discount_reason", "claimDiscountReason"))
+            or "按员工自述原始评分。"
         ),
         "claim_score": claim_score,
         "verified_completion_time": str(
-            item.get("verified_completion_time")
-            or item.get("actual_completion_time")
+            _first_present_value(
+                item,
+                (
+                    "verified_completion_time",
+                    "verifiedCompletionTime",
+                    "actual_completion_time",
+                    "actualCompletionTime",
+                ),
+            )
             or ""
         ),
         "verified_base_score": verified_base_score,
-        "verified_discount_factor": verified_discount_factor,
+        "verified_discount_factor": _normalize_discount(
+            _first_present_value(
+                item,
+                ("verified_discount_factor", "verifiedDiscountFactor"),
+            ),
+            default=verified_discount_factor,
+        ),
         "verified_discount_reason": str(
-            item.get("verified_discount_reason")
-            or item.get("time_discount")
+            _first_present_value(
+                item,
+                ("verified_discount_reason", "verifiedDiscountReason", "time_discount", "timeDiscount"),
+            )
             or "按事实核实结果计分。"
         ),
         "verified_score": verified_score,
         "evidence_used": normalized_evidence,
-        "evidence_gap": str(item.get("evidence_gap") or item.get("evidence_gaps") or ""),
-        "review_comment": str(item.get("review_comment") or item.get("ceo_comment") or ""),
-        "suggested_follow_up": str(item.get("suggested_follow_up") or ""),
+        "evidence_gap": str(
+            _first_present_value(item, ("evidence_gap", "evidenceGap", "evidence_gaps", "evidenceGaps"))
+            or ""
+        ),
+        "review_comment": str(
+            _first_present_value(item, ("review_comment", "reviewComment", "ceo_comment", "ceoComment"))
+            or ""
+        ),
+        "suggested_follow_up": str(
+            _first_present_value(item, ("suggested_follow_up", "suggestedFollowUp"))
+            or ""
+        ),
     }
+
+
+def _normalize_okr_evidence(evidence: object) -> dict:
+    if not isinstance(evidence, dict):
+        return {"source": "agent evidence", "summary": str(evidence)}
+    source = _first_present_value(evidence, ("source", "title", "name", "url"))
+    summary = _first_present_value(evidence, ("summary", "text", "content", "description"))
+    return {
+        "source": str(source or "agent evidence"),
+        "summary": str(summary or source or "evidence provided"),
+    }
+
+
+def _normalize_discount(value: object, *, default: float) -> float:
+    number = _number(value, default=default)
+    return max(0.3, min(1.0, number))
 
 
 def _normalize_weight(value: object, *, default: float) -> float:

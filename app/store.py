@@ -1018,6 +1018,7 @@ class AutoReplyStore:
                     error='',
                     codex_session_id='',
                     updated_at=current_timestamp
+                where okr_review_requests.status='failed'
                 """,
                 (
                     conversation_id,
