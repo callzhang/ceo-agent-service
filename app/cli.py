@@ -1769,6 +1769,7 @@ def run_service(
     wait: Callable[[], None] | None = None,
     exit_process: Callable[[int], None] = os._exit,
 ) -> None:
+    _recover_processing_reply_tasks_on_service_start(settings)
     components = (
         (
             "producer",
@@ -1816,6 +1817,25 @@ def run_service(
         wait_event.wait()
         return
     wait()
+
+
+def _recover_processing_reply_tasks_on_service_start(settings: WorkerSettings) -> int:
+    store = AutoReplyStore(settings.db_path)
+    recovered_tasks = store.reset_processing_reply_tasks()
+    for task in recovered_tasks:
+        store.record_error(
+            task.conversation_id,
+            task.trigger_message_id,
+            "reply_task_service_startup_requeue",
+            (
+                "requeued processing task on service startup: "
+                f"task={task.id} "
+                f"conversation={task.conversation_title} "
+                f"message={task.trigger_message_id} "
+                f"locked_at={task.locked_at}"
+            ),
+        )
+    return len(recovered_tasks)
 
 
 def _service_component_target(

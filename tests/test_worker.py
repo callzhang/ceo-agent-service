@@ -3221,6 +3221,64 @@ def test_consume_once_records_stale_processing_tasks_before_requeue(
     assert notifications[0]["title"] == "CEO task retrying stale tasks"
 
 
+def test_consume_once_completes_older_single_chat_processing_task_after_newer_reply(
+    tmp_path: Path,
+    monkeypatch,
+):
+    old_message = message("我先补充第一点", message_id="msg-single-1", single_chat=True)
+    old_message.create_time = "2026-05-13 18:00:00"
+    new_message = message("我已经算出来了，按这个回复", message_id="msg-single-2", single_chat=True)
+    new_message.create_time = "2026-05-13 18:01:00"
+    dws = FakeDws(
+        [conversation(single_chat=True)],
+        {"cid-1": [new_message, old_message]},
+        unread_messages={"cid-1": [new_message, old_message]},
+    )
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="收到，按第二条处理。")
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+    worker.store.enqueue_reply_task(
+        conversation_id="cid-1",
+        conversation_title="Friday",
+        single_chat=True,
+        trigger_message_id=old_message.open_message_id,
+        trigger_create_time=old_message.create_time,
+        trigger_sender=old_message.sender_name,
+        trigger_text=old_message.content,
+        trigger_message_json=old_message.model_dump_json(),
+    )
+    old_task = worker.store.claim_reply_tasks(limit=1)[0]
+    worker.store.enqueue_reply_task(
+        conversation_id="cid-1",
+        conversation_title="Friday",
+        single_chat=True,
+        trigger_message_id=new_message.open_message_id,
+        trigger_create_time=new_message.create_time,
+        trigger_sender=new_message.sender_name,
+        trigger_text=new_message.content,
+        trigger_message_json=new_message.model_dump_json(),
+    )
+
+    assert worker.consume_once(max_tasks=1) == 1
+
+    tasks = {
+        task.trigger_message_id: task
+        for task in worker.store.list_reply_tasks(statuses=("done", "processing"))
+    }
+    assert tasks["msg-single-1"].id == old_task.id
+    assert tasks["msg-single-1"].status == "done"
+    assert tasks["msg-single-1"].locked_at is None
+    assert tasks["msg-single-2"].status == "done"
+    superseded_error = next(
+        error
+        for error in worker.store.list_errors()
+        if error.kind == "reply_task_superseded"
+    )
+    assert superseded_error.message_id == "msg-single-1"
+    assert f"new_message={new_message.open_message_id}" in superseded_error.detail
+
+
 def test_consume_once_authorization_failure_waits_without_final_failure(
     tmp_path: Path, monkeypatch
 ):

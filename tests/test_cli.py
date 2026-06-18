@@ -3477,6 +3477,52 @@ def test_run_service_starts_web_producer_and_consumer(monkeypatch, tmp_path):
     assert exits == [1, 1, 1, 1]
 
 
+def test_run_service_requeues_processing_reply_tasks_on_startup(tmp_path):
+    db_path = tmp_path / "worker.sqlite3"
+    store = AutoReplyStore(db_path)
+    store.enqueue_reply_task(
+        conversation_id="cid-1",
+        conversation_title="Friday",
+        single_chat=True,
+        trigger_message_id="msg-1",
+        trigger_create_time="2026-05-28 18:00:00",
+        trigger_sender="Mina",
+        trigger_text="第一条",
+    )
+    claimed = store.claim_reply_tasks(limit=1)[0]
+    calls = []
+
+    class FakeThread:
+        def __init__(self, target, name, daemon):
+            self.target = target
+            self.name = name
+            self.daemon = daemon
+
+        def start(self):
+            calls.append(("start", self.name, self.daemon))
+
+    run_service(
+        WorkerSettings(db_path=db_path),
+        host="127.0.0.1",
+        port=8765,
+        producer_interval_seconds=60,
+        consumer_poll_interval_seconds=10,
+        thread_factory=FakeThread,
+        wait=lambda: calls.append(("wait",)),
+        exit_process=lambda status: calls.append(("exit", status)),
+    )
+
+    task = store.get_reply_task_for_message("cid-1", "msg-1")
+    errors = store.list_errors(limit=10)
+    assert task is not None
+    assert task.id == claimed.id
+    assert task.status == "pending"
+    assert task.locked_at is None
+    assert errors[0].kind == "reply_task_service_startup_requeue"
+    assert "task=" in errors[0].detail
+    assert calls[-1] == ("wait",)
+
+
 def test_default_poll_interval_is_five_minutes():
     assert WorkerSettings().poll_interval_seconds == 300
 

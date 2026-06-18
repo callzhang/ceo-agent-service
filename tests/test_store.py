@@ -261,6 +261,68 @@ def test_reset_stale_processing_reply_tasks_requeues_orphans(tmp_path: Path):
     assert reclaimed[0].attempts == 2
 
 
+def test_reset_processing_reply_tasks_requeues_all_processing_on_startup(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="cid-1",
+        conversation_title="Friday",
+        single_chat=True,
+        trigger_message_id="msg-1",
+        trigger_create_time="2026-05-13 18:00:00",
+        trigger_sender="Mina",
+        trigger_text="第一条",
+    )
+    claimed = store.claim_reply_tasks(limit=1)
+
+    recovered = store.reset_processing_reply_tasks()
+    reclaimed = store.claim_reply_tasks(limit=1)
+
+    assert [task.id for task in recovered] == [claimed[0].id]
+    assert reclaimed[0].id == claimed[0].id
+    assert reclaimed[0].status == "processing"
+    assert reclaimed[0].attempts == 2
+
+
+def test_complete_unfinished_reply_tasks_before_trigger_marks_older_tasks_done(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="cid-1",
+        conversation_title="Friday",
+        single_chat=True,
+        trigger_message_id="msg-old",
+        trigger_create_time="2026-05-13 18:00:00",
+        trigger_sender="Mina",
+        trigger_text="第一条",
+    )
+    old_task = store.claim_reply_tasks(limit=1)[0]
+    store.enqueue_reply_task(
+        conversation_id="cid-1",
+        conversation_title="Friday",
+        single_chat=True,
+        trigger_message_id="msg-new",
+        trigger_create_time="2026-05-13 18:01:00",
+        trigger_sender="Mina",
+        trigger_text="第二条",
+    )
+    new_task = store.claim_reply_tasks(limit=1)[0]
+
+    completed = store.complete_unfinished_reply_tasks_before_trigger(
+        conversation_id="cid-1",
+        trigger_create_time=new_task.trigger_create_time,
+        exclude_task_id=new_task.id,
+    )
+
+    tasks = {task.trigger_message_id: task for task in store.list_reply_tasks()}
+    assert [task.id for task in completed] == [old_task.id]
+    assert tasks["msg-old"].status == "done"
+    assert tasks["msg-old"].locked_at is None
+    assert tasks["msg-new"].status == "processing"
+
+
 def test_requeue_reply_task_keeps_attempt_count_for_retry(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.enqueue_reply_task(

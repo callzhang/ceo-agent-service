@@ -831,6 +831,34 @@ class AutoReplyStore:
             )
             return cursor.rowcount
 
+    def reset_processing_reply_tasks(self) -> list[ReplyTask]:
+        with self._connect() as db:
+            db.execute("begin immediate")
+            rows = db.execute(
+                """
+                select *
+                from reply_tasks
+                where status='processing'
+                order by locked_at, id
+                """
+            ).fetchall()
+            task_ids = [row["id"] for row in rows]
+            if not task_ids:
+                return []
+            placeholders = ",".join("?" for _ in task_ids)
+            db.execute(
+                f"""
+                update reply_tasks
+                set status='pending',
+                    locked_at=null,
+                    error='',
+                    updated_at=current_timestamp
+                where id in ({placeholders})
+                """,
+                task_ids,
+            )
+            return [self._reply_task_from_row(row) for row in rows]
+
     def list_stale_processing_reply_tasks(
         self, max_age_seconds: int
     ) -> list[ReplyTask]:
@@ -848,6 +876,87 @@ class AutoReplyStore:
                 """,
                 (f"-{int(max_age_seconds)} seconds",),
             ).fetchall()
+            return [self._reply_task_from_row(row) for row in rows]
+
+    def complete_unfinished_reply_tasks_before_trigger(
+        self,
+        *,
+        conversation_id: str,
+        trigger_create_time: str,
+        exclude_task_id: int,
+    ) -> list[ReplyTask]:
+        with self._connect() as db:
+            db.execute("begin immediate")
+            rows = db.execute(
+                """
+                select *
+                from reply_tasks
+                where conversation_id=?
+                  and status in ('pending', 'processing')
+                  and trigger_create_time < ?
+                  and id != ?
+                order by trigger_create_time, id
+                """,
+                (conversation_id, trigger_create_time, exclude_task_id),
+            ).fetchall()
+            task_ids = [row["id"] for row in rows]
+            if not task_ids:
+                return []
+            placeholders = ",".join("?" for _ in task_ids)
+            db.execute(
+                f"""
+                update reply_tasks
+                set status='done',
+                    locked_at=null,
+                    error='',
+                    available_at='',
+                    updated_at=current_timestamp
+                where id in ({placeholders})
+                """,
+                task_ids,
+            )
+            return [self._reply_task_from_row(row) for row in rows]
+
+    def complete_unfinished_reply_tasks_for_messages(
+        self,
+        *,
+        conversation_id: str,
+        trigger_message_ids: list[str],
+        exclude_task_id: int,
+    ) -> list[ReplyTask]:
+        if not trigger_message_ids:
+            return []
+        with self._connect() as db:
+            db.execute("begin immediate")
+            placeholders = ",".join("?" for _ in trigger_message_ids)
+            rows = db.execute(
+                f"""
+                select *
+                from reply_tasks
+                where conversation_id=?
+                  and status in ('pending', 'processing')
+                  and trigger_message_id in ({placeholders})
+                  and id != ?
+                order by trigger_create_time, id
+                """,
+                [conversation_id, *trigger_message_ids, exclude_task_id],
+            ).fetchall()
+            task_ids = [row["id"] for row in rows]
+            if not task_ids:
+                return []
+            task_placeholders = ",".join("?" for _ in task_ids)
+            db.execute(
+                f"""
+                update reply_tasks
+                set status='done',
+                    locked_at=null,
+                    error='',
+                    available_at='',
+                    updated_at=current_timestamp
+                where id in ({task_placeholders})
+                """,
+                task_ids,
+            )
             return [self._reply_task_from_row(row) for row in rows]
 
     def complete_reply_task(self, task_id: int) -> None:

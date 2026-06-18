@@ -1219,10 +1219,57 @@ class DingTalkAutoReplyWorker:
             if should_complete_task:
                 if not self.store.reply_task_is_done(task.id):
                     self.store.complete_reply_task(task.id)
+                self._complete_superseded_reply_tasks(conversation, task)
                 processed_tasks += 1
             else:
                 self.store.defer_reply_task(task.id, "dry_run")
         return processed_tasks
+
+    def _complete_superseded_reply_tasks(
+        self,
+        conversation: DingTalkConversation,
+        task: ReplyTask,
+    ) -> None:
+        completed_by_id: dict[int, ReplyTask] = {}
+        if conversation.single_chat:
+            for completed_task in self.store.complete_unfinished_reply_tasks_before_trigger(
+                conversation_id=task.conversation_id,
+                trigger_create_time=task.trigger_create_time,
+                exclude_task_id=task.id,
+            ):
+                completed_by_id[completed_task.id] = completed_task
+        for completed_task in self.store.complete_unfinished_reply_tasks_for_messages(
+            conversation_id=task.conversation_id,
+            trigger_message_ids=self._coalesced_trigger_message_ids(task),
+            exclude_task_id=task.id,
+        ):
+            completed_by_id[completed_task.id] = completed_task
+        for completed_task in completed_by_id.values():
+            self.store.record_error(
+                completed_task.conversation_id,
+                completed_task.trigger_message_id,
+                "reply_task_superseded",
+                (
+                    "completed superseded reply task: "
+                    f"task={completed_task.id} "
+                    f"new_task={task.id} "
+                    f"new_message={task.trigger_message_id}"
+                ),
+            )
+
+    def _coalesced_trigger_message_ids(self, task: ReplyTask) -> list[str]:
+        payload = json.loads(task.trigger_message_json or "{}")
+        raw_payload = payload.get("raw_payload")
+        if not isinstance(raw_payload, dict):
+            return []
+        coalesced = raw_payload.get("coalesced_message_ids")
+        if not isinstance(coalesced, list):
+            return []
+        message_ids = []
+        for message_id in coalesced:
+            if isinstance(message_id, str) and message_id != task.trigger_message_id:
+                message_ids.append(message_id)
+        return message_ids
 
     @staticmethod
     def _is_authorization_error(exc: Exception) -> bool:
