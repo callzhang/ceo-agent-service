@@ -332,6 +332,38 @@ def test_normalize_okr_review_domain_payload_accepts_agent_aliases():
     assert payload.items[0].evidence_used[0].summary == "Subway POC 仍在 proposal 阶段"
 
 
+def test_normalize_okr_review_domain_payload_fills_missing_weights_on_titled_items():
+    normalized = normalize_okr_review_domain_payload(
+        {
+            "person_name": "Claire",
+            "period_label": "2026 Q2",
+            "summary": "已审核。",
+            "items": [
+                {
+                    "objective_title": "构建关键流程",
+                    "kr_title": "完成供应商确认",
+                    "self_progress": "已推进",
+                    "kr_progress_notes": "已和供应商确认。",
+                    "employee_claim_score": 80,
+                    "evidence_used": ["供应商已确认。"],
+                    "evidence_gaps": "缺少最终验收记录。",
+                    "deadline": "2026 Q2",
+                    "actual_completion_time": "2026 Q2",
+                    "fact_checked_base_score": 70,
+                    "fact_checked_score": 70,
+                    "ceo_comment": "按已有证据计分。",
+                    "suggested_follow_up": "补最终验收记录。",
+                }
+            ],
+        }
+    )
+
+    payload = OkrReviewPayload.model_validate(normalized)
+
+    assert payload.items[0].objective_weight == 1.0
+    assert payload.items[0].kr_weight == 1.0
+
+
 def test_normalize_okr_review_domain_payload_accepts_final_score_aliases():
     normalized = normalize_okr_review_domain_payload(
         {

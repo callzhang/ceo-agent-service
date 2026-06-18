@@ -2,13 +2,14 @@
   "name": "ceo-agent-service",
   "version": "0.1.0",
   "description": "Local-first DingTalk executive auto-reply service powered by dws, Codex, graphify, and SQLite.",
+  "type": "module",
   "license": "MIT",
   "repository": {
     "type": "git",
     "url": "https://github.com/callzhang/ceo-agent-service.git"
   },
   "dependencies": {
-    "@vercel/blob": "^2.0.0"
+    "@tigrisdata/storage": "^3.13.0"
   },
   "scripts": {
     "dev:local": "ceo-agent run",

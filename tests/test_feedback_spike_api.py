@@ -8,7 +8,7 @@ def test_callback_endpoint_accepts_get_and_post_and_redacts_headers():
     source = (API_DIR / "dingtalk-feedback-spike.js").read_text(encoding="utf-8")
 
     assert '["GET", "POST"].includes(req.method)' in source
-    assert 'import { put } from "@vercel/blob";' in source
+    assert 'import { persistFeedbackEvent } from "./feedback-storage.js";' in source
     assert '"feedback_token"' in source
     assert '"feedbackToken"' in source
     assert '"rating"' in source
@@ -25,13 +25,18 @@ def test_callback_endpoint_accepts_get_and_post_and_redacts_headers():
 
 def test_callback_endpoint_writes_event_list_and_expiring_event_key():
     source = (API_DIR / "dingtalk-feedback-spike.js").read_text(encoding="utf-8")
+    storage_source = (API_DIR / "feedback-storage.js").read_text(encoding="utf-8")
 
-    assert 'const EVENT_LIST_KEY = "feedback-spike-events"' in source
+    assert 'export const EVENT_LIST_KEY = "feedback-spike-events"' in storage_source
     assert 'const EVENT_KEY_PREFIX = "feedback-spike:"' in source
-    assert 'put(`${EVENT_LIST_KEY}/${event.key}.json`, payload, options)' in source
-    assert '`${EVENT_LIST_KEY}/by-token/${tokenPathSegment(event.feedback_token)}/${event.key}.json`' in source
-    assert 'access: "public"' in source
-    assert "BLOB_READ_WRITE_TOKEN" in source
+    assert 'import { get, list, put } from "@tigrisdata/storage";' in storage_source
+    assert 'put(`${EVENT_LIST_KEY}/${event.key}.json`, payload, options)' in storage_source
+    assert '`${EVENT_LIST_KEY}/by-token/${tokenPathSegment(event.feedback_token)}/${event.key}.json`' in storage_source
+    assert 'access: "public"' not in storage_source
+    assert "TIGRIS_STORAGE_ACCESS_KEY_ID" in storage_source
+    assert "TIGRIS_STORAGE_SECRET_ACCESS_KEY" in storage_source
+    assert "TIGRIS_STORAGE_BUCKET" in storage_source
+    assert "BLOB_READ_WRITE_TOKEN" not in source
     assert "反馈暂未记录" in source
     assert "ok: persisted" in source
 
@@ -59,16 +64,19 @@ def test_callback_endpoint_renders_feedback_page_with_five_rating_options():
 
 def test_events_endpoint_requires_secret_and_reads_recent_events():
     source = (API_DIR / "dingtalk-feedback-spike-events.js").read_text(encoding="utf-8")
+    storage_source = (API_DIR / "feedback-storage.js").read_text(encoding="utf-8")
 
-    assert 'import { list } from "@vercel/blob";' in source
+    assert 'import { get, list, put } from "@tigrisdata/storage";' in storage_source
+    assert "readFeedbackEvent" in source
     assert "FEEDBACK_SPIKE_SECRET" in source
     assert "x-feedback-spike-secret" in source
     assert "requestFeedbackToken" in source
     assert "tokenPathSegment" in source
-    assert "listEventBlobs" in source
+    assert "listFeedbackEventPaths" in source
     assert '"feedback_token"' in source
     assert "filteredEvents" in source
     assert 'res.status(401).json({ ok: false, error: "unauthorized" })' in source
-    assert "BLOB_READ_WRITE_TOKEN" in source
+    assert "BLOB_READ_WRITE_TOKEN" not in source
+    assert "storageConfigError" in source
     assert '`${EVENT_LIST_KEY}/by-token/${tokenPathSegment(feedbackToken)}/`' in source
-    assert "blob.pathname.includes(\"/by-token/\")" in source
+    assert "path.includes(\"/by-token/\")" in source

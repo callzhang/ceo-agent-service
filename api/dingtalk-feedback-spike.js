@@ -1,6 +1,5 @@
-import { put } from "@vercel/blob";
+import { persistFeedbackEvent } from "./feedback-storage.js";
 
-const EVENT_LIST_KEY = "feedback-spike-events";
 const EVENT_KEY_PREFIX = "feedback-spike:";
 const RATING_OPTIONS = [
   { value: "very_unhelpful", label: "特别没用" },
@@ -397,33 +396,6 @@ function renderSubmittedPage(context, persisted, persistError) {
 </html>`;
 }
 
-function tokenPathSegment(value) {
-  return encodeURIComponent(String(value || "").trim()).replaceAll("%", "_");
-}
-
-async function persistEvent(event) {
-  const token = process.env.BLOB_READ_WRITE_TOKEN;
-  if (!token) {
-    return false;
-  }
-  const payload = JSON.stringify(event);
-  const options = {
-    access: "public",
-    allowOverwrite: true,
-    contentType: "application/json",
-    token,
-  };
-  await put(`${EVENT_LIST_KEY}/${event.key}.json`, payload, options);
-  if (event.feedback_token) {
-    await put(
-      `${EVENT_LIST_KEY}/by-token/${tokenPathSegment(event.feedback_token)}/${event.key}.json`,
-      payload,
-      options,
-    );
-  }
-  return true;
-}
-
 function wantsJson(req) {
   const format = req.query && (Array.isArray(req.query.format) ? req.query.format[0] : req.query.format);
   return format === "json" || (req.headers && String(req.headers.accept || "").includes("application/json"));
@@ -464,7 +436,9 @@ export default async function handler(req, res) {
   let persisted = false;
   let persistError = "";
   try {
-    persisted = await persistEvent(event);
+    const result = await persistFeedbackEvent(event);
+    persisted = result.persisted;
+    persistError = result.error;
   } catch (error) {
     persistError = error instanceof Error ? error.message : String(error);
   }

@@ -1,6 +1,10 @@
-import { list } from "@vercel/blob";
-
-const EVENT_LIST_KEY = "feedback-spike-events";
+import {
+  EVENT_LIST_KEY,
+  listFeedbackEventPaths,
+  readFeedbackEvent,
+  storageConfigError,
+  tokenPathSegment,
+} from "./feedback-storage.js";
 
 function requestSecret(req) {
   if (req.headers && req.headers["x-feedback-spike-secret"]) {
@@ -34,29 +38,15 @@ function requestFeedbackToken(req) {
   ).trim();
 }
 
-async function fetchEventBlob(blob) {
-  const response = await fetch(blob.url);
-  if (!response.ok) {
-    return { key: blob.pathname, fetch_error: `status=${response.status}` };
+async function fetchEventPath(path) {
+  try {
+    return await readFeedbackEvent(path);
+  } catch (error) {
+    return {
+      key: path,
+      fetch_error: error instanceof Error ? error.message : String(error),
+    };
   }
-  return response.json();
-}
-
-function tokenPathSegment(value) {
-  return encodeURIComponent(String(value || "").trim()).replaceAll("%", "_");
-}
-
-async function listEventBlobs(prefix, limit, token) {
-  const blobList = await list({
-    limit,
-    mode: "expanded",
-    prefix,
-    token,
-  });
-  return [...blobList.blobs].sort(
-    (left, right) =>
-      new Date(right.uploadedAt).getTime() - new Date(left.uploadedAt).getTime()
-  );
 }
 
 export default async function handler(req, res) {
@@ -74,25 +64,24 @@ export default async function handler(req, res) {
     return res.status(401).json({ ok: false, error: "unauthorized" });
   }
 
-  const limit = parseLimit(req.query && req.query.limit);
-  const token = process.env.BLOB_READ_WRITE_TOKEN;
-  if (!token) {
-    return res.status(503).json({ ok: false, error: "blob_not_configured" });
+  const configError = storageConfigError();
+  if (configError) {
+    return res.status(503).json({ ok: false, error: configError });
   }
-  let sortedBlobs = [];
+  const limit = parseLimit(req.query && req.query.limit);
+  let eventPaths = [];
   if (feedbackToken) {
-    sortedBlobs = await listEventBlobs(
+    eventPaths = await listFeedbackEventPaths(
       `${EVENT_LIST_KEY}/by-token/${tokenPathSegment(feedbackToken)}/`,
       limit,
-      token,
     );
   }
-  if (!feedbackToken || sortedBlobs.length === 0) {
-    sortedBlobs = (
-      await listEventBlobs(`${EVENT_LIST_KEY}/`, limit, token)
-    ).filter((blob) => !blob.pathname.includes("/by-token/"));
+  if (!feedbackToken || eventPaths.length === 0) {
+    eventPaths = (
+      await listFeedbackEventPaths(`${EVENT_LIST_KEY}/`, limit)
+    ).filter((path) => !path.includes("/by-token/"));
   }
-  const events = await Promise.all(sortedBlobs.slice(0, limit).map(fetchEventBlob));
+  const events = await Promise.all(eventPaths.slice(0, limit).map(fetchEventPath));
   const filteredEvents = feedbackToken
     ? events.filter((event) => event && event.feedback_token === feedbackToken)
     : events;

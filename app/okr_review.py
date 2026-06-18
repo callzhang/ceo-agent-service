@@ -5,7 +5,7 @@ from html import unescape
 from html.parser import HTMLParser
 
 from app.external_retry import run_external
-from app.okr_models import OkrReviewPayload
+from app.okr_models import OkrReviewItem, OkrReviewPayload
 
 
 class _HtmlTextExtractor(HTMLParser):
@@ -652,7 +652,7 @@ def normalize_okr_review_domain_payload(payload: dict) -> dict:
 def _normalize_okr_review_item(item: object) -> object:
     if not isinstance(item, dict):
         return item
-    if "objective_title" in item and "kr_title" in item:
+    if set(OkrReviewItem.model_fields).issubset(item):
         return item
     verified_base_score = _number(
         _first_present_value(
@@ -725,7 +725,9 @@ def _normalize_okr_review_item(item: object) -> object:
         "verified_base_score": verified_base_score,
         "verified_discount_factor": verified_discount_factor,
         "verified_discount_reason": str(
-            item.get("verified_discount_reason") or item.get("time_discount") or ""
+            item.get("verified_discount_reason")
+            or item.get("time_discount")
+            or "按事实核实结果计分。"
         ),
         "verified_score": verified_score,
         "evidence_used": normalized_evidence,
