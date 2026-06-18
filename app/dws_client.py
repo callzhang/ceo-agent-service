@@ -25,6 +25,7 @@ TITLE_WORD_OR_CJK_PATTERN = re.compile(
 TITLE_AT_FILE_ESCAPE_PREFIX = "回复："
 TEXT_AT_FILE_ESCAPE_PREFIX = " "
 DINGTALK_MESSAGE_TIME_ZONE = ZoneInfo("Asia/Shanghai")
+MIN_UNREAD_MESSAGE_LIST_LIMIT = 5
 
 
 def _local_time_zone():
@@ -441,9 +442,10 @@ class DwsClient:
     def build_read_unread_messages_command(
         self, conversation: DingTalkConversation
     ) -> list[str]:
+        # DWS rejects tiny windows when multiple messages share the cursor timestamp.
         return self.build_message_list_command(
             conversation=conversation,
-            limit=max(conversation.unread_point, 1),
+            limit=max(conversation.unread_point, MIN_UNREAD_MESSAGE_LIST_LIMIT),
             forward=False,
         )
 
@@ -802,6 +804,33 @@ class DwsClient:
             content,
             "--content-format",
             "markdown",
+            "--format",
+            "json",
+            "--yes",
+        ]
+
+    def build_add_doc_editor_permission_command(
+        self,
+        node: str,
+        user_ids: list[str],
+    ) -> list[str]:
+        node = node.strip()
+        normalized_user_ids = self._unique_non_empty(user_ids)
+        if not node:
+            raise ValueError("missing doc node")
+        if not normalized_user_ids:
+            raise ValueError("missing doc editor user ids")
+        return [
+            self.dws_bin,
+            "doc",
+            "permission",
+            "add",
+            "--node",
+            node,
+            "--user",
+            ",".join(normalized_user_ids),
+            "--role",
+            "EDITOR",
             "--format",
             "json",
             "--yes",
@@ -1646,6 +1675,18 @@ class DwsClient:
             raise DwsError("invalid doc create response")
         return payload
 
+    def add_doc_editor_permission(
+        self,
+        node: str,
+        user_ids: list[str],
+    ) -> dict[str, Any]:
+        payload = self.run_json(
+            self.build_add_doc_editor_permission_command(node, user_ids)
+        )
+        if not isinstance(payload, dict):
+            raise DwsError("invalid doc permission response")
+        return payload
+
     def get_aitable_base(self, base_id: str) -> dict[str, Any]:
         payload = self.run_json(self.build_aitable_base_get_command(base_id))
         if not isinstance(payload, dict):
@@ -2192,7 +2233,13 @@ class DwsClient:
         payload = self.run_json(self.build_search_department_command(query))
         return self.parse_department_ids(payload)
 
-    def run_json(self, command: list[str]) -> Any:
+    def run_json(
+        self,
+        command: list[str],
+        *,
+        timeout_seconds: int | None = None,
+    ) -> Any:
+        command_timeout_seconds = timeout_seconds or self.timeout_seconds
         remaining_retries = self.transient_retry_attempts
         attempt_index = 0
         while True:
@@ -2202,7 +2249,7 @@ class DwsClient:
                     text=True,
                     capture_output=True,
                     check=False,
-                    timeout=self.timeout_seconds,
+                    timeout=command_timeout_seconds,
                     env=self._cli_environment(),
                 )
             except subprocess.TimeoutExpired as exc:
@@ -2212,7 +2259,7 @@ class DwsClient:
                     remaining_retries -= 1
                     continue
                 raise DwsError(
-                    f"dws command timed out after {self.timeout_seconds} seconds"
+                    f"dws command timed out after {command_timeout_seconds} seconds"
                 ) from exc
             if result.returncode == 0:
                 break
@@ -2274,6 +2321,18 @@ class DwsClient:
         if self.transient_retry_delay_seconds <= 0:
             return
         time.sleep(self.transient_retry_delay_seconds * (attempt_index + 1))
+
+    @staticmethod
+    def _unique_non_empty(values: list[str]) -> list[str]:
+        result: list[str] = []
+        seen: set[str] = set()
+        for value in values:
+            normalized = str(value).strip()
+            if not normalized or normalized in seen:
+                continue
+            seen.add(normalized)
+            result.append(normalized)
+        return result
 
     @classmethod
     def _is_retryable_error(cls, command: list[str], code: str | None) -> bool:

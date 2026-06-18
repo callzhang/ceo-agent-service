@@ -126,6 +126,22 @@ def _memory_connector_env_from_config(config_path: Path) -> dict[str, str]:
     return env
 
 
+def memory_connector_config_issue() -> str:
+    env = _memory_connector_env()
+    url = env.get(MEMORY_CONNECTOR_URL_ENV)
+    token = env.get(MEMORY_CONNECTOR_API_KEY_ENV)
+    if not url:
+        return "memory connector URL is missing"
+    if token:
+        return ""
+
+    config_env = _memory_connector_env_from_config(_codex_home() / "config.toml")
+    configured_token = config_env.get(MEMORY_CONNECTOR_API_KEY_ENV)
+    if configured_token and _jwt_token_is_expired(configured_token):
+        return "memory connector token is expired"
+    return "memory connector token is missing"
+
+
 def memory_connector_config_options() -> list[str]:
     env = _memory_connector_env()
     url = env.get(MEMORY_CONNECTOR_URL_ENV)
@@ -181,16 +197,24 @@ class CodexRunner:
         image_options: list[str] = []
         for image_path in image_paths or []:
             image_options.extend(["--image", str(image_path)])
+        config_isolation_options = (
+            ["--ignore-user-config", "--disable", "plugins"]
+            if ignore_user_config
+            else []
+        )
+        schema_options = (
+            ["--output-schema", str(output_schema_path)]
+            if output_schema_path is not None
+            else ["--output-schema", str(CODEX_DECISION_SCHEMA_PATH)]
+        )
         common_options = [
             "--json",
             "-m",
             "gpt-5.5",
-            "--ignore-user-config",
+            *config_isolation_options,
             "--ignore-rules",
             "--disable",
             "hooks",
-            "--disable",
-            "plugins",
             *memory_connector_config_options(),
             "-c",
             'approval_policy="untrusted"',
@@ -216,7 +240,7 @@ class CodexRunner:
                 CODEX_BYPASS_APPROVALS_AND_SANDBOX,
                 *(
                     ["--output-schema", str(output_schema_path)]
-                    if output_schema_path
+                    if output_schema_path is not None
                     else []
                 ),
                 *image_options,
@@ -228,11 +252,7 @@ class CodexRunner:
             "exec",
             *common_options,
             CODEX_BYPASS_APPROVALS_AND_SANDBOX,
-            *(
-                ["--output-schema", str(output_schema_path)]
-                if output_schema_path
-                else []
-            ),
+            *schema_options,
             *image_options,
             "--cd",
             str(self.workspace),

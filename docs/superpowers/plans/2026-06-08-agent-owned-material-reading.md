@@ -1222,7 +1222,8 @@ Expected: `main -> main` push succeeds.
 - Documents/minutes/files move to agent decision: Tasks 1, 2, 6.
 - Agent decides whether and what to read: Tasks 1, 4.
 - Audit tool events record DWS input/output: Task 5.
-- OA runner remains separate: File structure and Task 7 document the boundary.
+- OA business handling remains separate, but it uses the unified structured runner:
+  File structure and Task 7 document the boundary.
 - #1085 recovery is included: Task 8.
 
 **Placeholder scan:** This plan contains no `TBD`, `TODO`, "implement later", or unspecified "write tests" steps. Steps include exact file paths, exact commands, expected outcomes, and concrete code.

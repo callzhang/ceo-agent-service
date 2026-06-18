@@ -6,6 +6,7 @@ import pytest
 from app.process_runner import ProcessRunResult
 from app.store import AutoReplyStore
 from app.task_agent import TaskAgentRunner, apply_task_agent_decision, process_work_item
+from app.task_agent import TaskAgentCodexRunner
 from app.task_models import TaskAgentDecision, WorkItem
 
 
@@ -510,7 +511,11 @@ def test_non_discard_decision_requires_memory_context(tmp_path):
         )
 
 
-def test_process_work_item_requires_actual_memory_recall_tool_event(tmp_path):
+def test_process_work_item_requires_actual_memory_recall_tool_event(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setattr("app.task_agent.memory_connector_config_issue", lambda: "")
     store = AutoReplyStore(tmp_path / "task.sqlite3")
     item = _work_item()
     input_id = store.enqueue_work_summary_input(
@@ -546,8 +551,113 @@ def test_process_work_item_requires_actual_memory_recall_tool_event(tmp_path):
             "select status, error from work_summary_inputs where id=?",
             (input_id,),
         ).fetchone()
+        run_row = db.execute(
+            """
+            select summary_input_id, codex_session_id, audit_summary, memory_recall_used
+            from task_agent_runs
+            """
+        ).fetchone()
     assert input_row[0] == "failed"
     assert "memory_recall tool event" in input_row[1]
+    assert run_row == (input_id, "task-session-1", "创建项目。", 1)
+
+
+def test_process_work_item_continues_when_memory_connector_unavailable(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        "app.task_agent.memory_connector_config_issue",
+        lambda: "memory connector token is expired",
+    )
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    item = _work_item()
+    input_id = store.enqueue_work_summary_input(
+        item.source.type.value,
+        item.source.ref,
+        item.model_dump_json(),
+    )
+    work_input = store.claim_work_summary_inputs(limit=1)[0]
+    memory_unavailable_context = {
+        "query": "售前知识库",
+        "summary": (
+            "memory_connector 不可用：memory connector token is expired；"
+            "改用 Work Item 和候选项目判断。"
+        ),
+        "memories": [],
+    }
+    codex = FakeCodexWithAuditEvents(
+        {
+            "action": "create_project",
+            "project": {
+                "title": "售前知识库建设",
+                "category": "sales",
+                "status": "active",
+                "memory_context": memory_unavailable_context,
+            },
+            "todo_changes": [],
+            "follow_up_drafts": [],
+            "update_summary": "创建项目。",
+            "merge_reason": "事项需要持续跟进。",
+            "memory_recall_used": False,
+            "confidence": 0.8,
+        },
+        audit_tool_events=[],
+    )
+
+    process_work_item(store, TaskAgentRunner(codex), work_input)
+
+    with sqlite3.connect(tmp_path / "task.sqlite3") as db:
+        input_row = db.execute(
+            "select status, error from work_summary_inputs where id=?",
+            (input_id,),
+        ).fetchone()
+        run_count = db.execute("select count(*) from task_agent_runs").fetchone()[0]
+        memory_context_json = db.execute(
+            "select memory_context_json from work_projects"
+        ).fetchone()[0]
+    assert input_row == ("done", "")
+    assert run_count == 1
+    assert json.loads(memory_context_json) == memory_unavailable_context
+    assert "Memory connector 状态:\n不可用：memory connector token is expired" in codex.prompts[0]
+    assert "不要因为 memory_recall 不可用而失败" in codex.prompts[0]
+
+
+def test_task_agent_codex_runner_keeps_user_config_for_memory_recall(tmp_path):
+    captured = {}
+
+    def executor(command, prompt):
+        captured["command"] = command
+        return json.dumps(
+            {
+                "action": "discard",
+                "discard_reason": "输入不足以形成稳定项目。",
+                "todo_changes": [],
+                "follow_up_drafts": [],
+                "update_summary": "跳过。",
+                "failure_risk": "无持续跟进风险。",
+                "failure_risk_score": 0,
+                "memory_recall_used": False,
+                "confidence": 0.8,
+            }
+        )
+
+    runner = TaskAgentCodexRunner(workspace=tmp_path, executor=executor)
+
+    runner.decide(prompt="{}", session_id=None)
+
+    command = captured["command"]
+    assert "--ignore-user-config" not in command
+    assert "plugins" not in [
+        command[index + 1]
+        for index, value in enumerate(command[:-1])
+        if value == "--disable"
+    ]
+    assert "hooks" in [
+        command[index + 1]
+        for index, value in enumerate(command[:-1])
+        if value == "--disable"
+    ]
 
 
 def test_update_project_without_id_raises_value_error(tmp_path):
@@ -934,10 +1044,69 @@ def test_task_agent_codex_runner_uses_process_runner_signature(tmp_path):
     assert calls[0][1]["total_timeout_seconds"] == 7
     assert calls[0][1]["idle_timeout_seconds"] == 3
     assert "--output-schema" in command
-    assert "--ignore-user-config" in command
+    assert "--ignore-user-config" not in command
     assert command[command.index("--disable") + 1] == "hooks"
+    assert "plugins" not in [
+        command[index + 1]
+        for index, value in enumerate(command[:-1])
+        if value == "--disable"
+    ]
     assert str(TASK_AGENT_DECISION_SCHEMA_PATH) in command
     assert str(CODEX_DECISION_SCHEMA_PATH) not in command
+
+
+def test_task_agent_codex_runner_reads_audit_events_from_session(tmp_path):
+    from app.task_agent import TaskAgentCodexRunner
+
+    def fake_run(command, **kwargs):
+        return ProcessRunResult(
+            returncode=0,
+            stdout=json.dumps(
+                {
+                    "action": "create_project",
+                    "project": {
+                        "title": "候选人跟进",
+                        "category": "recruiting",
+                        "memory_context": _memory_context(),
+                    },
+                    "todo_changes": [],
+                    "follow_up_drafts": [],
+                    "update_summary": "记录候选人跟进。",
+                    "merge_reason": "",
+                    "memory_recall_used": True,
+                    "confidence": 0.7,
+                },
+                ensure_ascii=False,
+            ),
+            stderr="",
+        )
+
+    runner = TaskAgentCodexRunner(workspace=tmp_path)
+    runner._run_process_with_idle_timeout = fake_run
+    runner._extract_codex_session_id = (
+        lambda raw: "019f0000-0000-7000-8000-000000000000"
+    )
+    runner._extract_codex_audit_events = lambda raw: []
+    runner._session_line_count = lambda session_id: 8 if session_id else 0
+    observed_limits = []
+
+    def fake_session_events(session_id, start_line=0, end_line=None, limit=40):
+        observed_limits.append(limit)
+        if limit <= 40:
+            return [{"tool": "exec_command", "arguments": "{}"}]
+        return [{"tool": "mcp__memory_connector__memory_recall", "arguments": "{}"}]
+
+    runner._extract_codex_audit_events_from_session = fake_session_events
+
+    decision = runner.decide(prompt="decide")
+
+    assert decision.action == "create_project"
+    assert runner.last_transcript_start_line == 0
+    assert runner.last_transcript_end_line == 8
+    assert observed_limits == [200]
+    assert runner.last_audit_tool_events == [
+        {"tool": "mcp__memory_connector__memory_recall", "arguments": "{}"}
+    ]
 
 
 def test_task_agent_codex_runner_timeout_raises_reason(tmp_path):

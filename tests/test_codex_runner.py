@@ -62,10 +62,20 @@ def test_codex_command_exposes_memory_connector_mcp(tmp_path: Path, monkeypatch)
     monkeypatch.setenv("CONNECTOR_API_KEY", "secret-token")
     runner = CodexRunner(workspace=tmp_path, codex_bin="codex")
 
-    command = runner.build_command(prompt="hello", session_id=None)
+    command = runner.build_command(
+        prompt="hello",
+        session_id=None,
+        ignore_user_config=True,
+    )
 
     assert "--ignore-user-config" in command
-    assert command[command.index("--disable") + 1] == "hooks"
+    disabled_features = [
+        command[index + 1]
+        for index, value in enumerate(command[:-1])
+        if value == "--disable"
+    ]
+    assert "hooks" in disabled_features
+    assert "plugins" in disabled_features
     assert (
         'mcp_servers.memory_connector.url="https://memory.example/mcp/"'
         in command
@@ -89,9 +99,14 @@ def test_codex_developer_instructions_classify_dws_login_as_tool_issue():
 def test_codex_command_does_not_use_agent_envelope_schema_by_default(tmp_path: Path):
     runner = CodexRunner(workspace=tmp_path, codex_bin="codex")
 
-    command = runner.build_command(prompt="hello", session_id=None)
+    command = runner.build_command(
+        prompt="hello",
+        session_id=None,
+        ignore_user_config=True,
+    )
 
-    assert "--output-schema" not in command
+    assert "--output-schema" in command
+    assert str(CODEX_DECISION_SCHEMA_PATH) in command
     assert str(AGENT_ENVELOPE_SCHEMA_PATH) not in command
 
 
@@ -162,7 +177,11 @@ def test_codex_runner_env_loads_memory_connector_from_codex_config(
     runner = CodexRunner(workspace=tmp_path, codex_bin="codex")
 
     env = runner.build_env()
-    command = runner.build_command(prompt="hello", session_id=None)
+    command = runner.build_command(
+        prompt="hello",
+        session_id=None,
+        ignore_user_config=True,
+    )
 
     assert env["CONNECTOR_API_KEY"] == "secret-token"
     assert env["MEMORY_CONNECTOR_URL"] == "https://memory.example/mcp/"
@@ -298,12 +317,9 @@ def test_builds_new_thread_command(tmp_path: Path):
         "--json",
         "-m",
         "gpt-5.5",
-        "--ignore-user-config",
         "--ignore-rules",
         "--disable",
         "hooks",
-        "--disable",
-        "plugins",
         "-c",
         'approval_policy="untrusted"',
         "-c",
@@ -317,6 +333,8 @@ def test_builds_new_thread_command(tmp_path: Path):
         "-c",
         "include_environment_context=false",
         "--dangerously-bypass-approvals-and-sandbox",
+        "--output-schema",
+        str(CODEX_DECISION_SCHEMA_PATH),
         "--cd",
         str(tmp_path),
         "-",
@@ -341,12 +359,9 @@ def test_builds_resume_command(tmp_path: Path):
         "--json",
         "-m",
         "gpt-5.5",
-        "--ignore-user-config",
         "--ignore-rules",
         "--disable",
         "hooks",
-        "--disable",
-        "plugins",
         "-c",
         'approval_policy="untrusted"',
         "-c",

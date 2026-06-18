@@ -138,7 +138,9 @@ def test_developer_prompt_delegates_memory_to_agent_mcp_tools():
 def test_developer_prompt_documents_agent_envelope_output_protocol():
     template = read_developer_prompt_template()
 
-    assert "kind 必须是 reply、no_action 或 error" in template
+    assert "kind 必须是 reply、okr_review、no_action 或 error" in template
+    assert '{"type":"queue_okr_review"}' in template
+    assert "不要输出 queue_okr_review" in template
     assert "user_response.mode 必须是 send_reply、ask_clarifying_question、handoff_to_human 或 no_reply" in template
     assert "domain_payload 默认使用空对象" in template
     assert "domain_payload.calendar_response_status" in template
@@ -802,6 +804,16 @@ def test_thread_prompt_treats_existing_principal_reaction_as_handled():
     assert "或当前用户的 reaction" in prompt
     assert "通常说明真人已经用轻量方式处理过" in prompt
     assert "否则输出 no_reply，不要再补发文字" in prompt
+
+
+def test_thread_prompt_uses_reaction_for_handled_light_reminders():
+    prompt = ceo_agent_thread_prompt()
+
+    assert "如果上下文显示问题已经被其他人或 明哥 处理完，不要再补文字回复" in prompt
+    assert "提醒、催办、审批/日程/文档到达通知、呼叫本人或正向协作收口" in prompt
+    assert "轻量 reaction 不会造成承诺、误解或越权" in prompt
+    assert "应输出 no_reply 并使用 dws_message_reaction 表达收到/支持" in prompt
+    assert "已有 明哥 reaction 时，才空 no_reply" in prompt
 
 
 def test_build_turn_prompt_includes_prefetched_dingtalk_document():

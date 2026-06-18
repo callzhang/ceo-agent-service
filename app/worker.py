@@ -43,6 +43,12 @@ from app.dws_client import (
     native_reply_delivery_payload,
 )
 from app.feedback_spike import append_feedback_links, prepare_outgoing_reply_text
+from app.feedback_policy import (
+    FEEDBACK_BLOCK_REPLY_TEXT,
+    FEEDBACK_REQUIRED_LINK_PREFIX,
+    requires_feedback_block,
+    requires_feedback_reminder,
+)
 from app.corpus import (
     MEDIA_OR_LINK_PATTERN,
     CorpusRecord,
@@ -63,7 +69,7 @@ from app.leak_check import (
 from app.message_split import split_dingtalk_text
 from app.notification import send_macos_notification
 from app.oa_approval import extract_oa_url
-from app.okr_review import current_quarter_period, is_okr_review_request
+from app.okr_review import current_quarter_period
 from app.org_cache import (
     ORG_CACHE_REFRESHED_DATE_STATE_KEY,
     refresh_org_cache,
@@ -556,6 +562,7 @@ class DingTalkAutoReplyWorker:
                     ),
                     available_at=available_at,
                     error=error,
+                    replace_pending_single_chat=len(trigger_messages) == 1,
                 ):
                     queued_tasks += 1
                 if max_tasks is not None and queued_tasks >= max_tasks:
@@ -1262,12 +1269,6 @@ class DingTalkAutoReplyWorker:
             complete_task_id=task.id,
         ):
             return True
-        if self._handle_okr_review_if_actionable(
-            conversation,
-            trigger,
-            raise_on_delivery_failure=True,
-        ):
-            return True
         if self._handle_oa_approval_if_actionable(
             conversation,
             trigger,
@@ -1344,6 +1345,7 @@ class DingTalkAutoReplyWorker:
         context_messages: list[DingTalkMessage] | None = None,
         available_at: str = "",
         error: str = "",
+        replace_pending_single_chat: bool = True,
     ) -> bool:
         if self._is_calendar_message(trigger):
             full_context_messages = self._read_conversation_messages(
@@ -1360,6 +1362,19 @@ class DingTalkAutoReplyWorker:
             trigger,
             context_messages,
         )
+        if conversation.single_chat and replace_pending_single_chat:
+            updated = self.store.replace_pending_single_chat_reply_task_trigger(
+                conversation_id=conversation.open_conversation_id,
+                trigger_message_id=trigger.open_message_id,
+                trigger_create_time=trigger.create_time,
+                trigger_sender=trigger.sender_name,
+                trigger_text=trigger.content,
+                trigger_message_json=trigger.model_dump_json(),
+                available_at=available_at,
+                error=error,
+            )
+            if updated:
+                return True
         inserted = self.store.enqueue_reply_task(
             conversation_id=conversation.open_conversation_id,
             conversation_title=conversation.title,
@@ -1391,16 +1406,16 @@ class DingTalkAutoReplyWorker:
     ) -> list[DingTalkMessage]:
         if not messages:
             return []
-        if conversation.single_chat and source_messages is not None:
-            return self._coalesce_candidate_messages_preserving_context_boundaries(
-                messages,
-                source_messages,
-            )
-        return DingTalkAutoReplyWorker._coalesce_consecutive_messages_by_sender(
-            messages
-        )
+        if conversation.single_chat:
+            if source_messages is not None:
+                return self._latest_candidate_messages_preserving_context_boundaries(
+                    messages,
+                    source_messages,
+                )
+            return [self._latest_trigger_message(messages)]
+        return DingTalkAutoReplyWorker._group_chat_trigger_messages(messages)
 
-    def _coalesce_candidate_messages_preserving_context_boundaries(
+    def _latest_candidate_messages_preserving_context_boundaries(
         self,
         messages: list[DingTalkMessage],
         source_messages: list[DingTalkMessage],
@@ -1434,27 +1449,51 @@ class DingTalkAutoReplyWorker:
                 current_sender_key = sender_key
         flush_group()
         return [
-            DingTalkAutoReplyWorker._coalesced_message(group)
+            DingTalkAutoReplyWorker._latest_trigger_message(group)
             for group in groups
         ]
 
     @staticmethod
-    def _coalesce_consecutive_messages_by_sender(
+    def _group_chat_trigger_messages(
         messages: list[DingTalkMessage],
     ) -> list[DingTalkMessage]:
-        grouped: list[list[DingTalkMessage]] = []
-        for message in messages:
+        groups: list[list[DingTalkMessage]] = []
+        thread_group_by_key: dict[str, list[DingTalkMessage]] = {}
+        for message in sorted(
+            messages,
+            key=DingTalkAutoReplyWorker._message_create_time_as_instant,
+        ):
+            thread_key = DingTalkAutoReplyWorker._message_thread_key(message)
+            if thread_key:
+                group = thread_group_by_key.get(thread_key)
+                if group is None:
+                    group = []
+                    groups.append(group)
+                    thread_group_by_key[thread_key] = group
+                group.append(message)
+                continue
             sender_key = DingTalkAutoReplyWorker._message_sender_key(message)
-            if grouped and DingTalkAutoReplyWorker._message_sender_key(
-                grouped[-1][-1]
-            ) == sender_key:
-                grouped[-1].append(message)
+            if (
+                groups
+                and not DingTalkAutoReplyWorker._message_thread_key(groups[-1][-1])
+                and DingTalkAutoReplyWorker._message_sender_key(groups[-1][-1])
+                == sender_key
+            ):
+                groups[-1].append(message)
             else:
-                grouped.append([message])
-        return [
-            DingTalkAutoReplyWorker._coalesced_message(group)
-            for group in grouped
+                groups.append([message])
+        triggers = [
+            DingTalkAutoReplyWorker._latest_trigger_message(group)
+            for group in groups
         ]
+        return sorted(
+            triggers,
+            key=DingTalkAutoReplyWorker._message_create_time_as_instant,
+        )
+
+    @staticmethod
+    def _message_thread_key(message: DingTalkMessage) -> str:
+        return message.quoted_message_id or ""
 
     @staticmethod
     def _message_sender_key(message: DingTalkMessage) -> str:
@@ -1465,23 +1504,22 @@ class DingTalkAutoReplyWorker:
         )
 
     @staticmethod
-    def _coalesced_message(messages: list[DingTalkMessage]) -> DingTalkMessage:
-        if len(messages) == 1:
-            return messages[0]
-        latest = messages[-1]
-        content = "\n\n".join(
-            f"[{message.create_time}] {message.content}" for message in messages
+    def _latest_trigger_message(messages: list[DingTalkMessage]) -> DingTalkMessage:
+        latest = max(
+            messages,
+            key=DingTalkAutoReplyWorker._message_create_time_as_instant,
         )
+        if len(messages) == 1:
+            return latest
         raw_payload = dict(latest.raw_payload)
         raw_payload["coalesced_message_ids"] = [
-            message.open_message_id for message in messages
+            message.open_message_id
+            for message in sorted(
+                messages,
+                key=DingTalkAutoReplyWorker._message_create_time_as_instant,
+            )
         ]
-        return latest.model_copy(
-            update={
-                "content": content,
-                "raw_payload": raw_payload,
-            }
-        )
+        return latest.model_copy(update={"raw_payload": raw_payload})
 
     def _mentioned_messages_by_conversation(
         self, conversations: list[DingTalkConversation]
@@ -1608,12 +1646,6 @@ class DingTalkAutoReplyWorker:
             ignore_existing_attempt=force_new_decision,
             include_resolved_calendar_invites=force_new_decision,
             allow_duplicate_send=force_new_decision,
-        ):
-            return trigger.open_message_id
-        if self._handle_okr_review_if_actionable(
-            conversation,
-            trigger,
-            ignore_existing_attempt=force_new_decision,
         ):
             return trigger.open_message_id
         if self._handle_oa_approval_if_actionable(
@@ -1781,26 +1813,32 @@ class DingTalkAutoReplyWorker:
             return None
         return minutes_permission_request_from_message(message)
 
-    def _handle_okr_review_if_actionable(
+    @staticmethod
+    def _queue_okr_review_actions(decision: CodexDecision) -> list[dict]:
+        return [
+            action
+            for action in decision.system_actions
+            if isinstance(action, dict) and action.get("type") == "queue_okr_review"
+        ]
+
+    def _queue_okr_review_from_decision(
         self,
         conversation: DingTalkConversation,
         trigger: DingTalkMessage,
+        new_messages: list[DingTalkMessage],
+        attempt_id: int,
         *,
-        ignore_existing_attempt: bool = False,
         raise_on_delivery_failure: bool = False,
     ) -> bool:
-        if not is_okr_review_request(trigger.content):
-            return False
-        if not ignore_existing_attempt and self._handle_existing_attempt(
-            conversation,
-            trigger,
-            [trigger],
-            ignore_system_notification_skip=True,
-        ):
-            return True
         period = current_quarter_period()
         if not hasattr(self, "okr_live_source"):
             error = "OKR live source is not configured"
+            self.store.update_reply_attempt(
+                attempt_id,
+                action="okr_review",
+                send_status="failed",
+                send_error=error,
+            )
             self.store.record_error(
                 conversation.open_conversation_id,
                 trigger.open_message_id,
@@ -1815,6 +1853,12 @@ class DingTalkAutoReplyWorker:
                 period_label=period.period_label,
             )
         except Exception as exc:
+            self.store.update_reply_attempt(
+                attempt_id,
+                action="okr_review",
+                send_status="failed",
+                send_error=str(exc),
+            )
             self.store.record_error(
                 conversation.open_conversation_id,
                 trigger.open_message_id,
@@ -1838,25 +1882,17 @@ class DingTalkAutoReplyWorker:
             f"已受理 {period.period_label} OKR 审核请求，"
             "正在实时核实 KR 进度和证据。"
         )
-        attempt_id = self.store.record_reply_attempt_for_trigger(
-            conversation_id=conversation.open_conversation_id,
-            conversation_title=conversation.title,
-            trigger_message_id=trigger.open_message_id,
-            trigger_sender=trigger.sender_name,
-            trigger_text=trigger.content,
+        self.store.update_reply_attempt(
+            attempt_id,
             action="okr_review",
-            sensitivity_kind="internal_personnel",
-            codex_reason=f"okr_review_request:{request_id}",
-            draft_reply_text=reply_text,
-            audit_summary="OKR review request accepted and queued.",
             send_status="dry_run" if self.dry_run else "pending",
+            final_reply_text=reply_text,
         )
-        self.store.update_reply_attempt(attempt_id, final_reply_text=reply_text)
         if not self.dry_run:
             delivered = self._deliver_trigger_reply(
                 conversation=conversation,
                 trigger=trigger,
-                new_messages=[trigger],
+                new_messages=new_messages,
                 attempt_id=attempt_id,
                 reply_text=reply_text,
                 feedback_token="",
@@ -1895,13 +1931,22 @@ class DingTalkAutoReplyWorker:
             context_text=self._oa_approval_context_text(context_messages),
             oa_url=oa_url,
             approval_detail_text=approval_detail_text,
+            conversation_id=conversation.open_conversation_id,
+            conversation_title=conversation.title,
+            single_chat=conversation.single_chat,
             execute=False,
         )
+        url_process_instance_id = self._oa_process_instance_id_from_url(oa_url)
+        url_task_id = self._oa_task_id_from_url(oa_url)
+        effective_oa_process_instance_id = (
+            result.process_instance_id.strip() or url_process_instance_id
+        )
+        effective_oa_task_id = result.task_id.strip() or url_task_id
+        effective_oa_url = result.oa_url.strip() or oa_url
         target_status = self._oa_target_status_for_current_user(
             approval_detail_text,
-            result.task_id,
+            effective_oa_task_id,
         )
-        effective_oa_task_id = result.task_id
         target_error = ""
         if target_status is False:
             effective_oa_task_id = ""
@@ -1911,13 +1956,14 @@ class DingTalkAutoReplyWorker:
         send_error = ""
         if not self.dry_run:
             has_approval_target = bool(
-                result.process_instance_id.strip() and effective_oa_task_id.strip()
+                effective_oa_process_instance_id.strip()
+                and effective_oa_task_id.strip()
             )
             if has_approval_target:
                 if result.oa_action == "退回":
                     try:
                         action_result = self.dws.comment_oa_approval(
-                            result.process_instance_id,
+                            effective_oa_process_instance_id,
                             result.oa_remark,
                         )
                         send_status = "commented"
@@ -1927,7 +1973,7 @@ class DingTalkAutoReplyWorker:
                 else:
                     try:
                         action_result = self.dws.execute_oa_approval_action(
-                            result.process_instance_id,
+                            effective_oa_process_instance_id,
                             effective_oa_task_id,
                             result.oa_action,
                             result.oa_remark,
@@ -1966,9 +2012,9 @@ class DingTalkAutoReplyWorker:
                 ensure_ascii=False,
             ),
             audit_summary=result.audit_summary,
-            oa_process_instance_id=result.process_instance_id,
+            oa_process_instance_id=effective_oa_process_instance_id,
             oa_task_id=effective_oa_task_id,
-            oa_url=result.oa_url,
+            oa_url=effective_oa_url,
             oa_action=result.oa_action,
             oa_remark=result.oa_remark,
             oa_action_result_json=json.dumps(
@@ -2413,6 +2459,18 @@ class DingTalkAutoReplyWorker:
         parsed = urlparse(oa_url)
         query = parse_qs(parsed.query)
         for key in ("procInstId", "processInstanceId", "process_instance_id"):
+            values = query.get(key)
+            if values:
+                return values[0]
+        return ""
+
+    @staticmethod
+    def _oa_task_id_from_url(oa_url: str) -> str:
+        if not oa_url:
+            return ""
+        parsed = urlparse(oa_url)
+        query = parse_qs(parsed.query)
+        for key in ("taskId", "task_id"):
             values = query.get(key)
             if values:
                 return values[0]
@@ -3981,6 +4039,16 @@ class DingTalkAutoReplyWorker:
             )
             if not calendar_response_succeeded:
                 return
+
+        if self._queue_okr_review_actions(decision):
+            self._queue_okr_review_from_decision(
+                conversation=conversation,
+                trigger=trigger,
+                new_messages=new_messages,
+                attempt_id=attempt_id,
+                raise_on_delivery_failure=raise_on_delivery_failure,
+            )
+            return
 
         if decision.action == CodexAction.NO_REPLY:
             if self._message_reaction_actions(decision):
@@ -5900,21 +5968,38 @@ class DingTalkAutoReplyWorker:
     ) -> None:
         reply_text = self._native_reply_body(final_reply_text)
         feedback_base_url = feedback_spike_vercel_base_url()
-        outgoing_text = prepare_outgoing_reply_text(
-            reply_text=reply_text,
-            original_text=trigger.content,
-            feedback_base_url=feedback_base_url,
-            feedback_link_appender=append_feedback_links,
+        feedback_stats = self.store.feedback_pressure_stats(
+            conversation.open_conversation_id,
+            now_utc=self._sqlite_timestamp(self._now()),
         )
-        reply_text = outgoing_text.text
-        feedback_token = outgoing_text.feedback_token
+        feedback_block = bool(feedback_base_url) and requires_feedback_block(
+            feedback_stats
+        )
+        feedback_link_prefix = (
+            FEEDBACK_REQUIRED_LINK_PREFIX
+            if bool(feedback_base_url) and requires_feedback_reminder(feedback_stats)
+            else "反馈："
+        )
+        if feedback_block:
+            reply_text = FEEDBACK_BLOCK_REPLY_TEXT
+            feedback_token = ""
+        else:
+            outgoing_text = prepare_outgoing_reply_text(
+                reply_text=reply_text,
+                original_text=trigger.content,
+                feedback_base_url=feedback_base_url,
+                feedback_link_prefix=feedback_link_prefix,
+                feedback_link_appender=append_feedback_links,
+            )
+            reply_text = outgoing_text.text
+            feedback_token = outgoing_text.feedback_token
         self.store.update_reply_attempt(
             attempt_id,
             final_reply_text=reply_text,
             direct_user_id=direct_user_id or "",
             direct_open_dingtalk_id=direct_open_dingtalk_id or "",
         )
-        if contains_forbidden_leak(reply_text):
+        if not feedback_block and contains_forbidden_leak(reply_text):
             regenerated_reply_text = self._regenerate_reply_after_leak_check(
                 blocked_reply_text=reply_text,
             )
@@ -5925,6 +6010,7 @@ class DingTalkAutoReplyWorker:
                     reply_text=reply_text,
                     original_text=trigger.content,
                     feedback_base_url=feedback_base_url,
+                    feedback_link_prefix=feedback_link_prefix,
                     feedback_link_appender=append_feedback_links,
                 )
                 reply_text = outgoing_text.text
@@ -6200,6 +6286,7 @@ class DingTalkAutoReplyWorker:
                 conversation=conversation,
                 reply_text=reply_text,
                 system_actions=system_actions or [],
+                editor_user_ids=at_users or [trigger.sender_user_id or ""],
             )
         except Exception as exc:
             self.store.update_reply_attempt(
@@ -6291,8 +6378,8 @@ class DingTalkAutoReplyWorker:
             native_reply_extra["at_open_dingtalk_ids"] = at_open_dingtalk_ids
             native_reply_extra["at_open_dingtalk_names"] = at_open_dingtalk_names
         delivery_kind = (
-            "group_message_after_invisible_reply"
-            if self._send_result_used_invisible_reply_fallback(send_result)
+            "native_reply_visibility_unconfirmed"
+            if self._send_result_has_unconfirmed_visibility(send_result)
             else "native_reply"
         )
         self.store.update_reply_attempt(
@@ -6337,6 +6424,7 @@ class DingTalkAutoReplyWorker:
         conversation: DingTalkConversation,
         reply_text: str,
         system_actions: list[dict],
+        editor_user_ids: list[str],
     ) -> dict[str, Any] | None:
         action = self._markdown_document_reply_action(system_actions)
         chunks = split_dingtalk_text(reply_text)
@@ -6347,6 +6435,16 @@ class DingTalkAutoReplyWorker:
         doc_url = self._markdown_document_url(doc_result)
         if not doc_url:
             raise RuntimeError("dws doc create did not return a document URL")
+        doc_node_id = self._markdown_document_node_id(doc_result, doc_url)
+        if not doc_node_id:
+            raise RuntimeError("dws doc create did not return a document nodeId")
+        normalized_editor_user_ids = self._document_editor_user_ids(editor_user_ids)
+        if not normalized_editor_user_ids:
+            raise RuntimeError("dws doc reply has no recipient userId for permission")
+        permission_result = self.dws.add_doc_editor_permission(
+            doc_node_id,
+            normalized_editor_user_ids,
+        )
         intro = (
             "内容我写成了文档："
             if action is not None
@@ -6357,6 +6455,9 @@ class DingTalkAutoReplyWorker:
             "url": doc_url,
             "reason": "requested_document" if action is not None else "message_too_long",
             "doc_result": doc_result,
+            "node_id": doc_node_id,
+            "editor_user_ids": normalized_editor_user_ids,
+            "permission_result": permission_result,
             "reply_text": append_signature(f"{intro}{title}\n{doc_url}"),
         }
 
@@ -6408,6 +6509,43 @@ class DingTalkAutoReplyWorker:
             if isinstance(candidate, str) and candidate.strip():
                 return candidate.strip()
         return ""
+
+    @classmethod
+    def _markdown_document_node_id(cls, payload: object, doc_url: str = "") -> str:
+        if isinstance(payload, dict):
+            candidates: list[object] = [
+                payload.get("nodeId"),
+                payload.get("node_id"),
+                payload.get("dentryUuid"),
+            ]
+            result = payload.get("result")
+            if isinstance(result, dict):
+                candidates.extend(
+                    [
+                        result.get("nodeId"),
+                        result.get("node_id"),
+                        result.get("dentryUuid"),
+                    ]
+                )
+            for candidate in candidates:
+                if isinstance(candidate, str) and candidate.strip():
+                    return candidate.strip()
+        match = re.search(r"/nodes/([^/?#]+)", doc_url)
+        if match:
+            return match.group(1)
+        return ""
+
+    @staticmethod
+    def _document_editor_user_ids(user_ids: list[str]) -> list[str]:
+        result: list[str] = []
+        seen: set[str] = set()
+        for user_id in user_ids:
+            normalized = str(user_id).strip()
+            if not normalized or normalized in seen:
+                continue
+            seen.add(normalized)
+            result.append(normalized)
+        return result
 
     def _enqueue_conversation_work_item(
         self,
@@ -6497,75 +6635,8 @@ class DingTalkAutoReplyWorker:
             not conversation.single_chat
             and not self._sent_chunks_visible(conversation, chunks)
         ):
-            fallback_retry_count, fallback_results = (
-                self._send_group_message_chunks_with_retry(
-                    conversation,
-                    chunks,
-                    at_users=at_users,
-                    at_open_dingtalk_ids=at_open_dingtalk_ids,
-                    at_open_dingtalk_names=at_open_dingtalk_names,
-                )
-            )
-            max_retry_count = max(max_retry_count, fallback_retry_count)
-            result["fallback"] = "group_message_after_invisible_reply"
-            result["fallback_chunks"] = fallback_results
-            if not self._sent_chunks_visible(conversation, chunks):
-                raise RuntimeError(
-                    "DingTalk reply succeeded but was not visible after fallback send"
-                )
+            result["visibility"] = "native_reply_not_confirmed"
         return max_retry_count, result
-
-    def _send_group_message_chunks_with_retry(
-        self,
-        conversation: DingTalkConversation,
-        chunks: list[str],
-        *,
-        at_users: list[str] | None = None,
-        at_open_dingtalk_ids: list[str] | None = None,
-        at_open_dingtalk_names: list[str] | None = None,
-    ) -> tuple[int, list[dict[str, Any]]]:
-        max_retry_count = 0
-        results = []
-        for index, chunk in enumerate(chunks, start=1):
-            chunk_at_users = at_users if index == 1 else []
-            chunk_at_open_dingtalk_ids = at_open_dingtalk_ids if index == 1 else []
-            chunk_at_open_dingtalk_names = at_open_dingtalk_names if index == 1 else []
-            retry_count, send_result = self._send_single_group_message_with_retry(
-                conversation,
-                chunk,
-                at_users=chunk_at_users,
-                at_open_dingtalk_ids=chunk_at_open_dingtalk_ids,
-                at_open_dingtalk_names=chunk_at_open_dingtalk_names,
-            )
-            max_retry_count = max(max_retry_count, retry_count)
-            results.append({"index": index, "text": chunk, "send_result": send_result})
-        return max_retry_count, results
-
-    def _send_single_group_message_with_retry(
-        self,
-        conversation: DingTalkConversation,
-        text: str,
-        *,
-        at_users: list[str] | None = None,
-        at_open_dingtalk_ids: list[str] | None = None,
-        at_open_dingtalk_names: list[str] | None = None,
-    ) -> tuple[int, dict | None]:
-        errors: list[str] = []
-        for attempt_number in range(1, self.send_attempts + 1):
-            try:
-                send_result = self.dws.send_message(
-                    conversation.open_conversation_id,
-                    text,
-                    at_users=at_users,
-                    at_open_dingtalk_ids=at_open_dingtalk_ids,
-                    at_open_dingtalk_names=at_open_dingtalk_names,
-                )
-                return attempt_number - 1, send_result
-            except Exception as exc:
-                if getattr(exc, "needs_authorization", False):
-                    raise exc
-                errors.append(f"attempt {attempt_number}: {exc}")
-        raise RuntimeError(" | ".join(errors))
 
     def _sent_chunks_visible(
         self,
@@ -6603,9 +6674,10 @@ class DingTalkAutoReplyWorker:
         return "\n".join(line.strip() for line in text.splitlines() if line.strip())
 
     @staticmethod
-    def _send_result_used_invisible_reply_fallback(send_result: dict | None) -> bool:
-        return isinstance(send_result, dict) and send_result.get("fallback") == (
-            "group_message_after_invisible_reply"
+    def _send_result_has_unconfirmed_visibility(send_result: dict | None) -> bool:
+        return (
+            isinstance(send_result, dict)
+            and send_result.get("visibility") == "native_reply_not_confirmed"
         )
 
     def _send_single_reply_to_trigger_with_retry(

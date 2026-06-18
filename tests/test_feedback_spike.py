@@ -77,6 +77,22 @@ def test_build_feedback_link_text_contains_two_feedback_urls():
     )
 
 
+def test_build_feedback_link_text_accepts_required_feedback_prefix():
+    text = build_feedback_link_text(
+        "可以，先按这个方向试一下。",
+        up_url="https://feedback.example.com/up",
+        down_url="https://feedback.example.com/down",
+        link_prefix="请对我的服务提供反馈，长期不评价将跳过：",
+    )
+
+    assert text == (
+        "可以，先按这个方向试一下。\n\n"
+        "请对我的服务提供反馈，长期不评价将跳过："
+        "[👍](https://feedback.example.com/up)"
+        "｜[👎](https://feedback.example.com/down)"
+    )
+
+
 def test_extract_feedback_link_context_handles_emoji_feedback_labels():
     message = build_feedback_spike_link_message(
         vercel_base_url="https://feedback.example.com",

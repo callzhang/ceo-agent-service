@@ -307,17 +307,30 @@ th{background:var(--surface-soft);color:var(--steel);font-size:12px;font-weight:
 .attempt-reaction-copy{display:inline-flex;align-items:center;width:max-content;max-width:100%;padding:4px 9px;border-radius:999px;background:#fff4d6;border:1px solid #f4d06f;color:#5f4200;font-size:13px;line-height:1.2;-webkit-line-clamp:1;box-shadow:inset 0 -1px 0 rgba(95,66,0,.08)}
 .attempt-foot{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:6px;flex-wrap:wrap}
 .attempt-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.attempt-row-actions{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.attempt-row-actions form{display:inline-flex;margin:0}
+.attempt-row-actions .compact-button,.attempt-row-actions button{display:inline-flex;align-items:center;justify-content:center;width:96px;height:30px;padding:0 10px;border:1px solid var(--hairline);border-radius:999px;background:var(--canvas);color:var(--ink);font-size:12px;font-weight:700;line-height:1;white-space:nowrap}
+.attempt-row-actions .compact-button:hover,.attempt-row-actions button:hover{border-color:var(--ink);text-decoration:none}
+.attempt-row-actions button.rerun{border-color:rgba(55,114,207,.34);color:#245aa5;background:rgba(55,114,207,.10)}
+.attempt-row-actions button.rerun:hover{background:rgba(55,114,207,.16)}
+.attempt-row-actions button.danger{border-color:rgba(212,86,86,.32);color:#9a2f2f;background:rgba(212,86,86,.08)}
+.attempt-row-actions button.danger:hover{background:rgba(212,86,86,.14)}
+.attempt-row-actions .open-dingtalk-action{border-color:rgba(0,180,138,.38);color:#005b49;background:#ddfff6}
+.attempt-row-actions .open-dingtalk-action:hover{background:#cafff1}
+.attempt-row-actions .disabled-action{display:inline-flex;align-items:center;justify-content:center;width:96px;height:30px;padding:0 10px;border:1px solid var(--hairline);border-radius:999px;background:var(--surface-soft);color:var(--muted);font-size:12px;font-weight:700;line-height:1;white-space:nowrap}
 .attempt-warning{color:#8a2626;font-size:12px;line-height:1.4}
 .attempt-conversation-banner{display:flex;align-items:center;justify-content:space-between;gap:14px;border:1px solid rgba(0,180,138,.34);background:#f3fffb}
 .attempt-conversation-left{display:flex;align-items:center;gap:14px;min-width:0}
+.attempt-banner-actions{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex:0 0 auto;flex-wrap:wrap}
 .attempt-conversation-label{display:inline-flex;align-items:center;height:28px;padding:0 10px;border-radius:999px;background:#ddfff6;border:1px solid rgba(0,180,138,.42);color:#005b49;font-size:12px;font-weight:800;white-space:nowrap}
 .attempt-conversation-main{min-width:0}
 .attempt-conversation-title{color:var(--ink);font-size:20px;font-weight:750;line-height:1.3;word-break:break-word}
 .attempt-conversation-sub{margin-top:2px;color:var(--steel);font-size:12px;font-weight:600;line-height:1.4}
-.attempt-detail-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
-.attempt-detail-cell{min-width:0;padding:10px 12px;border:1px solid var(--hairline);border-radius:8px;background:var(--surface-soft)}
-.attempt-detail-label{margin-bottom:4px;color:var(--steel);font-size:12px;font-weight:700;line-height:1.35}
-.attempt-detail-value{color:var(--ink);font-size:13px;font-weight:600;line-height:1.45;word-break:break-word}
+.attempt-detail-grid{display:flex;align-items:stretch;gap:8px;overflow-x:auto;padding-bottom:2px}
+.attempt-detail-cell{flex:0 0 auto;min-width:118px;max-width:260px;padding:8px 10px;border:1px solid var(--hairline);border-radius:8px;background:var(--surface-soft)}
+.attempt-detail-cell:first-child{min-width:220px}
+.attempt-detail-label{margin-bottom:3px;color:var(--steel);font-size:11px;font-weight:800;line-height:1.3;text-transform:uppercase}
+.attempt-detail-value{color:var(--ink);font-size:12px;font-weight:650;line-height:1.35;word-break:break-word}
 .feedback-chip{display:inline-flex;align-items:center;max-width:100%;min-height:24px;padding:3px 9px;border-radius:999px;background:#ddfff6;border:1px solid rgba(0,180,138,.42);color:#005b49;font-size:12px;font-weight:700;line-height:1.35;white-space:nowrap}
 .feedback-card{border-color:rgba(0,180,138,.28);background:linear-gradient(180deg,#ffffff 0%,#f6fffc 100%)}
 .feedback-event{border:1px solid var(--hairline);border-radius:8px;background:var(--canvas);padding:12px;margin-top:10px}
@@ -335,7 +348,7 @@ th{background:var(--surface-soft);color:var(--steel);font-size:12px;font-weight:
 .user-feedback-actions form{display:inline-flex;margin:0}
 .user-feedback-actions button{display:inline-flex;align-items:center;height:30px;padding:0 12px;border:1px solid var(--hairline);border-radius:999px;background:var(--canvas);color:var(--ink);font-size:13px;font-weight:500;line-height:1;white-space:nowrap}
 .user-feedback-actions button:hover{border-color:var(--ink);background:var(--surface-soft)}
-.audit-tool-list{display:grid;gap:12px;margin-top:8px}
+.audit-tool-list{display:grid;gap:12px;margin:8px 24px 24px}
 .audit-tool-event{border:1px solid var(--hairline);border-radius:8px;background:var(--canvas);padding:12px}
 .audit-tool-head{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:10px}
 .audit-tool-title{display:flex;align-items:center;gap:8px;min-width:0;color:var(--ink);font-size:14px;font-weight:750}
@@ -345,6 +358,24 @@ th{background:var(--surface-soft);color:var(--steel);font-size:12px;font-weight:
 .audit-tool-section{display:grid;gap:4px}
 .audit-tool-label{color:var(--steel);font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.03em}
 .audit-tool-pre{margin:0;max-height:420px;overflow:auto;border:1px solid var(--hairline);border-radius:7px;background:var(--surface-soft);padding:9px 10px;color:var(--charcoal);font-size:12px;line-height:1.45;white-space:pre-wrap;word-break:break-word}
+.audit-tool-meta{display:grid;grid-template-columns:120px minmax(0,1fr);gap:6px 12px;margin:8px 0 10px;padding:10px;border:1px solid var(--hairline-soft);border-radius:7px;background:var(--surface-soft)}
+.audit-tool-meta-label{color:var(--steel);font-size:12px;font-weight:800;line-height:1.35;text-transform:uppercase}
+.audit-tool-meta-value{min-width:0;color:var(--charcoal);font-size:13px;line-height:1.4;overflow-wrap:anywhere;word-break:break-word}
+.audit-tool-output{border:1px solid var(--hairline);border-radius:7px;background:var(--surface-soft);overflow:hidden}
+.audit-tool-output summary{display:grid;grid-template-columns:auto minmax(0,1fr);gap:10px;align-items:center;padding:8px 10px;cursor:pointer}
+.audit-tool-output summary::after{display:none}
+.audit-tool-output-preview{min-width:0;color:var(--steel);font-size:12px;line-height:1.35;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.audit-tool-output-body{max-height:420px;overflow:auto;border-top:1px solid var(--hairline);padding:10px}
+.audit-tool-output-body pre{margin:0;border:0;border-radius:0;background:transparent;padding:0}
+.audit-tool-rendered-text{color:var(--charcoal);font-size:13px;line-height:1.5}
+.audit-tool-rendered-text p{margin:0 0 8px}
+.audit-tool-rendered-text ul{margin:0 0 8px 18px;padding:0}
+.audit-tool-rendered-text li{margin:2px 0}
+.audit-tool-rendered-text h1,.audit-tool-rendered-text h2,.audit-tool-rendered-text h3{margin:8px 0 6px;color:var(--ink);font-weight:700;line-height:1.3}
+.audit-tool-rendered-text h1{font-size:17px}
+.audit-tool-rendered-text h2{font-size:16px}
+.audit-tool-rendered-text h3{font-size:15px}
+.audit-tool-count{color:var(--steel);font-family:"Geist Mono","SF Mono",Menlo,Consolas,monospace;font-size:12px;font-weight:700;line-height:1.35}
 .attempt-info{position:relative;display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border:1px solid #d29a12;border-radius:50%;color:#8a5a08;background:#fff3c4;font-size:11px;font-weight:700;line-height:1;cursor:help;flex:0 0 auto}
 .attempt-info:hover,.attempt-info:focus{background:#ffe7a3;border-color:#b77908;outline:0}
 .attempt-info::after{content:attr(data-tooltip);display:none;position:absolute;left:0;bottom:calc(100% + 8px);z-index:30;width:max-content;max-width:min(320px,calc(100vw - 48px));padding:7px 9px;border-radius:6px;background:#1f2937;color:#fff;box-shadow:0 8px 24px rgba(15,23,42,.18);font-size:12px;font-weight:500;line-height:1.4;text-align:left;white-space:normal}
@@ -1289,6 +1320,54 @@ def render_dingtalk_open_chat_bridge(open_conversation_id: str) -> str:
       setTimeout(openChat, 350);
     }}
     window.addEventListener("load", openWhenReady);
+  </script>
+</body>
+</html>"""
+
+
+def render_dingtalk_open_popup(*, cid: str = "", conversation_id: str = "") -> str:
+    query: dict[str, str] = {}
+    if conversation_id.strip():
+        query["conversation_id"] = conversation_id.strip()
+    if cid.strip():
+        query["cid"] = cid.strip()
+    open_url = "/open-dingtalk"
+    if query:
+        open_url = f"{open_url}?{urlencode(query)}"
+    escaped_open_url = json.dumps(open_url)
+    return f"""<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>打开钉钉消息</title>
+  <style>
+    body{{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;margin:0;padding:22px;background:#fff;color:#111;line-height:1.45}}
+    .card{{border:1px solid #e5e5e5;border-radius:12px;padding:16px;background:#fafafa}}
+    h1{{margin:0 0 8px;font-size:16px}}
+    p{{margin:0;color:#555;font-size:13px}}
+  </style>
+</head>
+<body>
+  <section class="card">
+    <h1>正在打开钉钉消息</h1>
+    <p id="status">请稍候...</p>
+  </section>
+  <script>
+    const statusEl = document.getElementById("status");
+    function closeSoon() {{
+      setTimeout(() => window.close(), 900);
+    }}
+    fetch({escaped_open_url}, {{cache: "no-store"}})
+      .then((response) => response.json())
+      .then((payload) => {{
+        statusEl.textContent = payload && payload.ok ? "已发送打开请求，即将关闭。" : "打开请求失败，即将关闭。";
+        closeSoon();
+      }})
+      .catch(() => {{
+        statusEl.textContent = "打开请求失败，即将关闭。";
+        closeSoon();
+      }});
   </script>
 </body>
 </html>"""
@@ -3794,7 +3873,7 @@ def render_codex_session_detail(
                 "<p class=\"muted\">The local Codex transcript file for this session "
                 "is no longer available on this machine.</p>"
                 f"<p class=\"muted\">{escape(session_id)}</p></section>"
-                f"{_related_history_card(related_attempts)}"
+                f"{_related_history_card(related_attempts, session_id=session_id, store=store)}"
             )
             return 200, render_page(
                 "Codex session unavailable",
@@ -3814,7 +3893,9 @@ def render_codex_session_detail(
         )
     events = "".join(_codex_event_card(event) for event in rendered.events)
     related_history = _related_history_card(
-        store.list_reply_attempts_for_codex_session(session_id) if store else []
+        store.list_reply_attempts_for_codex_session(session_id) if store else [],
+        session_id=session_id,
+        store=store,
     )
     body = (
         "<section class=\"card\"><div class=\"grid\">"
@@ -4274,7 +4355,7 @@ def handle_user_prompt_post(body: bytes) -> tuple[int, dict[str, str], str]:
 
 
 def handle_recall_post(
-    store: AutoReplyStore, dws, attempt_id: int
+    store: AutoReplyStore, dws, attempt_id: int, *, return_to: str = ""
 ) -> tuple[int, dict[str, str], str]:
     attempt = store.get_reply_attempt(attempt_id)
     if attempt is None:
@@ -4342,7 +4423,7 @@ def handle_recall_post(
         recall_status="recalled",
         recall_error="",
     )
-    return 303, {"Location": f"/attempts/{attempt_id}"}, ""
+    return 303, {"Location": _safe_action_return_to(return_to, attempt_id)}, ""
 
 
 def _audit_worker_settings(db_path: Path):
@@ -4370,6 +4451,7 @@ def handle_rerun_attempt_post(
     store: AutoReplyStore,
     attempt_id: int,
     *,
+    return_to: str = "",
     worker_factory: Callable[[object], object] | None = None,
 ) -> tuple[int, dict[str, str], str]:
     attempt = store.get_reply_attempt(attempt_id)
@@ -4406,7 +4488,14 @@ def handle_rerun_attempt_post(
         attempt.conversation_id,
         processed_message_id,
     )
-    return 303, {"Location": f"/attempts/{attempt_id}"}, ""
+    return 303, {"Location": _safe_action_return_to(return_to, attempt_id)}, ""
+
+
+def _safe_action_return_to(return_to: str, attempt_id: int) -> str:
+    cleaned = return_to.strip()
+    if cleaned.startswith("/codex/") or cleaned == f"/attempts/{attempt_id}":
+        return cleaned
+    return f"/attempts/{attempt_id}"
 
 
 def handle_reviewed_message_reply(
@@ -4761,6 +4850,14 @@ def create_audit_app(
     def dingtalk_bridge_status_list() -> JSONResponse:
         return JSONResponse({"events": list(_DINGTALK_BRIDGE_STATUS)})
 
+    @app.get("/open-dingtalk-popup", response_class=HTMLResponse)
+    def open_dingtalk_popup(cid: str = "", conversation_id: str = "") -> HTMLResponse:
+        if not cid.strip() and not conversation_id.strip():
+            return HTMLResponse("missing cid or conversation_id", status_code=400)
+        return HTMLResponse(
+            render_dingtalk_open_popup(cid=cid, conversation_id=conversation_id)
+        )
+
     @app.get("/open-dingtalk")
     def open_dingtalk(request: Request, cid: str = "", conversation_id: str = "") -> JSONResponse:
         cleaned_conversation_id = conversation_id.strip()
@@ -4850,19 +4947,21 @@ def create_audit_app(
         return _fastapi_post_response(status, headers, html)
 
     @app.post("/attempts/{attempt_id}/recall")
-    def recall(attempt_id: int):
+    def recall(attempt_id: int, request: Request):
         status, headers, html = handle_recall_post(
             AutoReplyStore(db_path),
             DwsClient(ding_robot_code=ding_robot_code, ding_robot_name=ding_robot_name),
             attempt_id,
+            return_to=request.query_params.get("return_to", ""),
         )
         return _fastapi_post_response(status, headers, html)
 
     @app.post("/attempts/{attempt_id}/rerun")
-    def rerun_attempt(attempt_id: int):
+    def rerun_attempt(attempt_id: int, request: Request):
         status, headers, html = handle_rerun_attempt_post(
             AutoReplyStore(db_path),
             attempt_id,
+            return_to=request.query_params.get("return_to", ""),
         )
         return _fastapi_post_response(status, headers, html)
 
@@ -4971,7 +5070,7 @@ def _attempt_detail_body(
         ("reviewed", _format_local_time(attempt.reviewed_at or "")),
     ]
     return (
-        f"{_attempt_conversation_banner(attempt, codex_session_id)}"
+        f"{_attempt_conversation_banner(attempt, sent_reply, codex_session_id)}"
         f"{_attempt_detail_grid(fields)}"
         f"{_review_panel(attempt, sent_reply, feedback_events)}"
         f"{_quality_warning_card(attempt)}"
@@ -4979,8 +5078,7 @@ def _attempt_detail_body(
         f"{_oa_metadata_card(attempt)}"
         f"{_calendar_metadata_card(attempt)}"
         f"{_text_card('Audit summary', attempt.audit_summary)}"
-        f"{_collapsible_json_card('Audit documents', attempt.audit_documents_json)}"
-        f"{_audit_tool_events_card(attempt)}"
+        f"{_audit_tool_uses_card(attempt)}"
         f"{_text_card('Draft reply (raw Codex reply)', attempt.draft_reply_text)}"
     )
 
@@ -4994,7 +5092,9 @@ def _permission_display(attempt: ReplyAttempt) -> str:
 
 
 def _attempt_conversation_banner(
-    attempt: ReplyAttempt, codex_session_id: str | None
+    attempt: ReplyAttempt,
+    sent_reply: SentReply | None,
+    codex_session_id: str | None,
 ) -> str:
     subtitle = (
         f"<div class=\"attempt-conversation-sub\">触发人：{escape(attempt.trigger_sender)}</div>"
@@ -5016,7 +5116,10 @@ def _attempt_conversation_banner(
         f"{subtitle}"
         "</div>"
         "</div>"
+        "<div class=\"attempt-banner-actions\">"
         f"{agent_log}"
+        f"{_attempt_row_actions(attempt, sent_reply)}"
+        "</div>"
         "</section>"
     )
 
@@ -5345,8 +5448,6 @@ def _review_panel(
         f"<pre class=\"reply-pre\">{escape(reply_text)}</pre>"
         "</div>"
         "<div class=\"review-side\">"
-        f"{_rerun_card(attempt)}"
-        f"{_recall_card(attempt, sent_reply)}"
         f"{_feedback_form(attempt)}"
         f"{_counterparty_feedback_card(sent_reply, feedback_events)}"
         "</div>"
@@ -5591,7 +5692,12 @@ def _json_array_has_items(text: str) -> bool:
     return isinstance(payload, list) and len(payload) > 0
 
 
-def _related_history_card(attempts: list[ReplyAttempt]) -> str:
+def _related_history_card(
+    attempts: list[ReplyAttempt],
+    *,
+    session_id: str = "",
+    store: AutoReplyStore | None = None,
+) -> str:
     if not attempts:
         return (
             "<section class=\"card\"><h2>Related history</h2>"
@@ -5600,6 +5706,11 @@ def _related_history_card(attempts: list[ReplyAttempt]) -> str:
         )
     rows = []
     for attempt in attempts:
+        sent_reply = (
+            store.get_sent_reply(attempt.conversation_id, attempt.trigger_message_id)
+            if store is not None
+            else None
+        )
         rows.append(
             "<tr>"
             f"<td>{_attempt_link(attempt)}</td>"
@@ -5607,14 +5718,49 @@ def _related_history_card(attempts: list[ReplyAttempt]) -> str:
             f"<td>{escape(attempt.trigger_sender)}</td>"
             f"<td>{_attempt_action_pills(attempt)}</td>"
             f"<td>{escape(_excerpt(attempt.trigger_text, 120))}</td>"
+            f"<td>{_attempt_row_actions(attempt, sent_reply, session_id=session_id)}</td>"
             "</tr>"
         )
     return (
         "<section class=\"card\"><h2>Related history</h2>"
         "<table><thead><tr><th>Attempt</th><th>Time</th><th>Sender</th>"
-        "<th>Actions</th><th>Trigger</th></tr></thead><tbody>"
+        "<th>Result</th><th>Trigger</th><th>操作</th></tr></thead><tbody>"
         + "".join(rows)
         + "</tbody></table></section>"
+    )
+
+
+def _attempt_row_actions(
+    attempt: ReplyAttempt,
+    sent_reply: SentReply | None,
+    *,
+    session_id: str = "",
+) -> str:
+    return_to = f"/codex/{quote(session_id, safe='')}" if session_id else f"/attempts/{attempt.id}"
+    return_to_query = quote(return_to, safe="/")
+    dingtalk_href = (
+        "/open-dingtalk-popup?"
+        f"conversation_id={quote(attempt.conversation_id, safe='')}"
+    )
+    recall_html = (
+        f"<form method=\"post\" action=\"/attempts/{attempt.id}/recall?return_to={return_to_query}\" "
+        "onsubmit=\"return confirm('确认撤销这条已发送消息？')\">"
+        "<button class=\"danger\" type=\"submit\">撤销发送</button>"
+        "</form>"
+        if _sent_reply_has_recall_target(sent_reply)
+        else "<span class=\"disabled-action\" title=\"没有可撤销消息 ID 或 key\">撤销发送</span>"
+    )
+    return (
+        "<div class=\"attempt-row-actions\">"
+        f"<form method=\"post\" action=\"/attempts/{attempt.id}/rerun?return_to={return_to_query}\" "
+        "onsubmit=\"return confirm('确认重跑这条 attempt？可能会实际发送新回复或执行日历/OA动作。')\">"
+        "<button class=\"rerun\" type=\"submit\">重跑</button>"
+        "</form>"
+        f"{recall_html}"
+        f"<a class=\"compact-button open-dingtalk-action\" href=\"{dingtalk_href}\" "
+        "onclick=\"window.open(this.href,'ceo-open-dingtalk','popup,width=420,height=260'); return false;\" "
+        "target=\"ceo-open-dingtalk\" rel=\"noopener\">查看钉钉消息</a>"
+        "</div>"
     )
 
 
@@ -5728,16 +5874,102 @@ def _collapsible_json_card(title: str, text: str) -> str:
     )
 
 
-def _audit_tool_events_card(attempt: ReplyAttempt) -> str:
-    events = _audit_tool_events_for_attempt(attempt)
-    if not events:
-        return _collapsible_json_card("Audit tool events", attempt.audit_tool_events_json)
+def _audit_tool_uses_card(attempt: ReplyAttempt) -> str:
+    uses = _audit_tool_uses_for_attempt(attempt)
+    if not uses:
+        return _collapsible_json_card("Tool uses", "[]")
+    document_count = sum(1 for use in uses if str(use.get("tool") or "") == "document")
+    call_count = len(uses) - document_count
     return (
         "<details class=\"card collapsible-card\">"
-        "<summary><h2>Audit tool events</h2></summary>"
-        f"<div class=\"audit-tool-list\">{_audit_tool_events_html(events)}</div>"
+        "<summary><h2>Tool uses</h2>"
+        "<span class=\"audit-tool-count\">"
+        f"{len(uses)} total · {call_count} calls · {document_count} documents"
+        "</span></summary>"
+        f"<div class=\"audit-tool-list\">{_audit_tool_uses_html(uses)}</div>"
         "</details>"
     )
+
+
+def _audit_tool_uses_for_attempt(attempt: ReplyAttempt) -> list[dict[str, object]]:
+    return [
+        *_audit_document_uses_for_attempt(attempt),
+        *_audit_event_uses_for_attempt(attempt),
+    ]
+
+
+def _audit_document_uses_for_attempt(attempt: ReplyAttempt) -> list[dict[str, object]]:
+    documents = _json_list(attempt.audit_documents_json)
+    uses: list[dict[str, object]] = []
+    for document in documents:
+        if not isinstance(document, dict):
+            continue
+        title = _first_nonempty_string(
+            document,
+            ("title", "name", "path", "url", "mcp_name", "tool"),
+        )
+        source = _audit_source_text(document)
+        args = _audit_explicit_args_payload(document)
+        uses.append(
+            {
+                "title": title or "Audit document",
+                "tool": _first_nonempty_string(document, ("tool", "type")) or "document",
+                "relevance": _first_nonempty_string(
+                    document,
+                    ("relevance", "reason", "description"),
+                ),
+                "source": source,
+                "format": _audit_format_text(document, args),
+                "args": args,
+                "output": _first_nonempty_string(document, ("output", "content")),
+                "call_id": _first_nonempty_string(document, ("call_id",)),
+            }
+        )
+    return uses
+
+
+def _audit_event_uses_for_attempt(attempt: ReplyAttempt) -> list[dict[str, object]]:
+    events = _audit_tool_events_for_attempt(attempt)
+    calls: list[dict[str, object]] = []
+    by_call_id: dict[str, dict[str, object]] = {}
+    for event in events:
+        tool = str(event.get("tool") or "tool").strip() or "tool"
+        call_id = str(event.get("call_id") or "").strip()
+        if tool == "tool_output":
+            target = by_call_id.get(call_id) if call_id else None
+            if target is not None:
+                target["output"] = str(event.get("output") or "")
+                if not target.get("source"):
+                    target["source"] = _audit_source_text(event)
+                continue
+            calls.append(
+                {
+                    "title": _audit_tool_title(event, "Tool output"),
+                    "tool": "tool_output",
+                    "call_id": call_id,
+                    "relevance": _audit_relevance_text(event),
+                    "source": _audit_source_text(event),
+                    "args": _audit_args_payload(event),
+                    "format": _audit_format_text(event, _audit_args_payload(event)),
+                    "output": str(event.get("output") or ""),
+                }
+            )
+            continue
+        args = _audit_args_payload(event)
+        call = {
+            "title": _audit_tool_title(event, tool),
+            "tool": tool,
+            "call_id": call_id,
+            "relevance": _audit_relevance_text(event),
+            "source": _audit_source_text(event),
+            "args": args,
+            "format": _audit_format_text(event, args),
+            "output": "",
+        }
+        calls.append(call)
+        if call_id:
+            by_call_id[call_id] = call
+    return calls
 
 
 def _audit_tool_events_for_attempt(attempt: ReplyAttempt) -> list[dict[str, str]]:
@@ -5762,96 +5994,276 @@ def _audit_tool_events_for_attempt(attempt: ReplyAttempt) -> list[dict[str, str]
     return [event for event in payload if isinstance(event, dict)]
 
 
-def _audit_tool_events_html(events: list[dict[str, str]]) -> str:
-    calls: list[dict[str, object]] = []
-    by_call_id: dict[str, dict[str, object]] = {}
-    for event in events:
-        tool = str(event.get("tool") or "tool").strip() or "tool"
-        call_id = str(event.get("call_id") or "").strip()
-        if tool == "tool_output":
-            target = by_call_id.get(call_id) if call_id else None
-            if target is not None:
-                target["output"] = str(event.get("output") or "")
-                target["output_event"] = event
-                continue
-            calls.append(
-                {
-                    "tool": "tool_output",
-                    "call_id": call_id,
-                    "input": "",
-                    "output": str(event.get("output") or ""),
-                    "command": str(event.get("command") or ""),
-                    "event": event,
-                }
-            )
-            continue
-        call = {
-            "tool": tool,
-            "call_id": call_id,
-            "input": _audit_tool_input_text(event),
-            "output": "",
-            "command": str(event.get("command") or ""),
-            "event": event,
-        }
-        calls.append(call)
-        if call_id:
-            by_call_id[call_id] = call
-    return "".join(_audit_tool_call_html(index, call) for index, call in enumerate(calls, 1))
+def _audit_tool_uses_html(uses: list[dict[str, object]]) -> str:
+    return "".join(_audit_tool_use_html(index, use) for index, use in enumerate(uses, 1))
 
 
-def _audit_tool_input_text(event: dict[str, str]) -> str:
-    value = str(event.get("input") or "").strip()
-    if value:
-        return value
-    command = str(event.get("command") or "").strip()
-    path = str(event.get("path") or "").strip()
-    fallback = {key: val for key, val in {"command": command, "path": path}.items() if val}
-    if fallback:
-        return json.dumps(fallback, ensure_ascii=False, indent=2)
-    return json.dumps(event, ensure_ascii=False, indent=2)
-
-
-def _audit_tool_call_html(index: int, call: dict[str, object]) -> str:
-    tool = str(call.get("tool") or "tool")
-    command = str(call.get("command") or "").strip()
-    call_id = str(call.get("call_id") or "").strip()
-    input_text = str(call.get("input") or "").strip()
-    output_text = str(call.get("output") or "").strip()
-    command_line = (
-        f"<div class=\"audit-tool-command\">{escape(command)}</div>"
-        if command and command != call_id
-        else ""
-    )
+def _audit_tool_use_html(index: int, use: dict[str, object]) -> str:
+    title = str(use.get("title") or "Tool use").strip()
+    tool = str(use.get("tool") or "").strip()
+    call_id = str(use.get("call_id") or "").strip()
     call_id_line = (
         f"<span class=\"pill\">{escape(call_id)}</span>" if call_id else ""
     )
+    tool_line = f"<span class=\"pill\">{escape(tool)}</span>" if tool else ""
+    metadata = _audit_tool_metadata_html(use)
     return (
         "<div class=\"audit-tool-event\">"
         "<div class=\"audit-tool-head\">"
         "<div class=\"audit-tool-title\">"
         f"<span class=\"audit-tool-index\">#{index}</span>"
-        f"<span>to {escape(tool)}</span>"
+        f"<span>{escape(title)}</span>"
+        f"{tool_line}"
         f"{call_id_line}"
         "</div>"
-        f"{command_line}"
         "</div>"
+        f"{metadata}"
         "<div class=\"audit-tool-io\">"
-        f"{_audit_tool_section_html('input / command args', input_text)}"
-        f"{_audit_tool_section_html('output', output_text)}"
+        f"{_audit_tool_args_html(use.get('args'))}"
+        f"{_audit_tool_output_html(str(use.get('output') or ''))}"
         "</div>"
         "</div>"
     )
 
 
-def _audit_tool_section_html(label: str, text: str) -> str:
-    if not text.strip():
+def _audit_tool_metadata_html(use: dict[str, object]) -> str:
+    rows = []
+    for label, key in (
+        ("relevance", "relevance"),
+        ("source", "source"),
+        ("format", "format"),
+    ):
+        value = str(use.get(key) or "").strip()
+        if value:
+            rows.append(
+                f"<div class=\"audit-tool-meta-label\">{escape(label)}</div>"
+                f"<div class=\"audit-tool-meta-value\">{escape(value)}</div>"
+            )
+    if not rows:
         return ""
     return (
-        "<div class=\"audit-tool-section\">"
-        f"<div class=\"audit-tool-label\">{escape(label)}</div>"
-        f"<pre class=\"audit-tool-pre\">{escape(text)}</pre>"
+        "<div class=\"audit-tool-meta\">"
+        f"{''.join(rows)}"
         "</div>"
     )
+
+
+def _audit_tool_args_html(value: object) -> str:
+    if value in (None, "", {}, []):
+        return ""
+    return (
+        "<div class=\"audit-tool-section audit-tool-args\">"
+        "<div class=\"audit-tool-label\">args</div>"
+        f"<div class=\"audit-tool-pre\">{_audit_render_payload_html(value)}</div>"
+        "</div>"
+    )
+
+
+def _audit_tool_output_html(text: str) -> str:
+    if not text.strip():
+        return ""
+    preview = _audit_output_preview(text)
+    return (
+        "<details class=\"audit-tool-output\">"
+        "<summary>"
+        "<span class=\"audit-tool-label\">output</span>"
+        f"<span class=\"audit-tool-output-preview\">{escape(preview)}</span>"
+        "</summary>"
+        f"<div class=\"audit-tool-output-body\">{_audit_render_payload_html(text)}</div>"
+        "</details>"
+    )
+
+
+def _audit_tool_title(event: dict[str, str], default: str) -> str:
+    return _first_nonempty_string(event, ("title", "name", "command")) or default
+
+
+def _audit_relevance_text(event: dict[str, str]) -> str:
+    return _first_nonempty_string(event, ("relevance", "reason", "description"))
+
+
+def _audit_source_text(payload: Mapping[str, object]) -> str:
+    values = []
+    for key in ("path", "url", "mcp_name", "tool", "command"):
+        value = payload.get(key)
+        if isinstance(value, str) and value.strip():
+            values.append(value.strip())
+    return " · ".join(dict.fromkeys(values))
+
+
+def _audit_args_payload(payload: Mapping[str, object]) -> object:
+    explicit = _audit_explicit_args_payload(payload)
+    if explicit not in (None, "", {}, []):
+        return explicit
+    values = {
+        key: payload[key]
+        for key in ("command", "path", "url", "mcp_name")
+        if isinstance(payload.get(key), str) and str(payload[key]).strip()
+    }
+    return values
+
+
+def _audit_explicit_args_payload(payload: Mapping[str, object]) -> object:
+    args = payload.get("args")
+    if args not in (None, "", {}, []):
+        return args
+    input_text = str(payload.get("input") or "").strip()
+    if input_text:
+        return _decode_json_text(input_text) or input_text
+    return {}
+
+
+def _audit_format_text(payload: Mapping[str, object], args: object) -> str:
+    explicit = _first_nonempty_string(payload, ("format", "output_format", "content_type"))
+    if explicit:
+        return explicit
+    command = _first_nonempty_string(payload, ("command",))
+    if command:
+        command_format = _command_format(command)
+        return f"terminal/{command_format}" if command_format else "terminal"
+    tool = _first_nonempty_string(payload, ("tool", "mcp_name"))
+    if tool.startswith("memory_"):
+        return "mcp/json"
+    if isinstance(args, (dict, list)):
+        return "json"
+    return ""
+
+
+def _command_format(command: str) -> str:
+    pieces = command.split()
+    for index, piece in enumerate(pieces[:-1]):
+        if piece == "--format" and pieces[index + 1]:
+            return pieces[index + 1].strip("'\"")
+    return ""
+
+
+def _first_nonempty_string(payload: Mapping[str, object], keys: tuple[str, ...]) -> str:
+    for key in keys:
+        value = payload.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
+def _json_list(text: str) -> list[object]:
+    try:
+        payload = json.loads(text or "[]")
+    except json.JSONDecodeError:
+        return []
+    return payload if isinstance(payload, list) else []
+
+
+def _audit_render_payload_html(value: object) -> str:
+    expanded = _expand_nested_json_strings(value)
+    if isinstance(expanded, (dict, list)):
+        return (
+            f"<pre class=\"json-pre\">"
+            f"{_json_value_html(expanded, 0)}</pre>"
+        )
+    text = str(expanded)
+    terminal_payload = _decode_terminal_output_payload(text)
+    if terminal_payload is not None:
+        terminal_payload = _expand_nested_json_strings(terminal_payload)
+        return (
+            f"<pre class=\"json-pre\">"
+            f"{_json_value_html(terminal_payload, 0)}</pre>"
+        )
+    parsed = _decode_json_text(text)
+    if parsed is not None:
+        parsed = _expand_nested_json_strings(parsed)
+        return (
+            f"<pre class=\"json-pre\">"
+            f"{_json_value_html(parsed, 0)}</pre>"
+        )
+    return _audit_markdown_html(text)
+
+
+def _expand_nested_json_strings(value: object) -> object:
+    if isinstance(value, dict):
+        return {key: _expand_nested_json_strings(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_expand_nested_json_strings(item) for item in value]
+    if isinstance(value, str):
+        parsed = _decode_json_text(value)
+        if parsed is not None:
+            return _expand_nested_json_strings(parsed)
+    return value
+
+
+def _decode_json_text(text: str) -> object | None:
+    stripped = text.strip()
+    if not stripped or stripped[0] not in "[{":
+        return None
+    try:
+        return json.loads(stripped)
+    except json.JSONDecodeError:
+        return None
+
+
+def _decode_terminal_output_payload(text: str) -> object | None:
+    marker = "Output:\n"
+    if marker not in text:
+        return None
+    candidate = text.rsplit(marker, 1)[1].strip()
+    return _decode_complete_json_text(candidate)
+
+
+def _decode_complete_json_text(text: str) -> object | None:
+    stripped = text.strip()
+    if not stripped or stripped[0] not in "[{":
+        return None
+    decoder = json.JSONDecoder()
+    try:
+        value, end = decoder.raw_decode(stripped)
+    except json.JSONDecodeError:
+        return None
+    if stripped[end:].strip():
+        return None
+    return value
+
+
+def _audit_output_preview(text: str) -> str:
+    expanded = _decode_terminal_output_payload(text)
+    if expanded is None:
+        expanded = _expand_nested_json_strings(text)
+    else:
+        expanded = _expand_nested_json_strings(expanded)
+    if isinstance(expanded, (dict, list)):
+        compact = json.dumps(expanded, ensure_ascii=False, separators=(",", ":"))
+        return _excerpt(compact, 160)
+    return _excerpt(str(expanded).replace("\n", " "), 160)
+
+
+def _audit_markdown_html(text: str) -> str:
+    blocks: list[str] = []
+    list_items: list[str] = []
+
+    def flush_list() -> None:
+        if list_items:
+            blocks.append("<ul>" + "".join(list_items) + "</ul>")
+            list_items.clear()
+
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line:
+            flush_list()
+            continue
+        if line.startswith("- ") or line.startswith("* "):
+            list_items.append(f"<li>{escape(line[2:].strip())}</li>")
+            continue
+        flush_list()
+        if line.startswith("### "):
+            blocks.append(f"<h3>{escape(line[4:].strip())}</h3>")
+        elif line.startswith("## "):
+            blocks.append(f"<h2>{escape(line[3:].strip())}</h2>")
+        elif line.startswith("# "):
+            blocks.append(f"<h1>{escape(line[2:].strip())}</h1>")
+        else:
+            blocks.append(f"<p>{escape(line)}</p>")
+    flush_list()
+    if not blocks:
+        return "<div class=\"audit-tool-rendered-text\"></div>"
+    return f"<div class=\"audit-tool-rendered-text\">{''.join(blocks)}</div>"
 
 
 def _trigger_text(attempt: ReplyAttempt) -> str:

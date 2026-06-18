@@ -84,11 +84,12 @@ def build_feedback_link_text(
     *,
     up_url: str,
     down_url: str,
+    link_prefix: str = "反馈：",
 ) -> str:
     stripped_reply = reply_text.strip()
     if not stripped_reply:
         raise ValueError("reply text is required")
-    return f"{stripped_reply}\n\n反馈：[👍]({up_url})｜[👎]({down_url})"
+    return f"{stripped_reply}\n\n{link_prefix}[👍]({up_url})｜[👎]({down_url})"
 
 
 def _feedback_context_excerpt(text: str) -> str:
@@ -126,6 +127,7 @@ def build_feedback_spike_link_message(
     reply_text: str,
     original_text: str = "",
     feedback_token: str | None = None,
+    link_prefix: str = "反馈：",
 ) -> FeedbackSpikeLinkMessage:
     token = feedback_token or generate_feedback_token()
     up_url = build_callback_url(
@@ -146,7 +148,12 @@ def build_feedback_spike_link_message(
         feedback_token=token,
         callback_url_up=up_url,
         callback_url_down=down_url,
-        text=build_feedback_link_text(reply_text, up_url=up_url, down_url=down_url),
+        text=build_feedback_link_text(
+            reply_text,
+            up_url=up_url,
+            down_url=down_url,
+            link_prefix=link_prefix,
+        ),
     )
 
 
@@ -156,6 +163,7 @@ def append_feedback_links(
     reply_text: str,
     original_text: str = "",
     feedback_token: str | None = None,
+    link_prefix: str = "反馈：",
 ) -> FeedbackReplyText:
     existing_context = extract_feedback_link_context(reply_text)
     if existing_context is not None:
@@ -168,6 +176,7 @@ def append_feedback_links(
         reply_text=reply_text,
         original_text=original_text,
         feedback_token=feedback_token,
+        link_prefix=link_prefix,
     )
     return FeedbackReplyText(feedback_token=message.feedback_token, text=message.text)
 
@@ -178,6 +187,7 @@ def prepare_outgoing_reply_text(
     original_text: str = "",
     feedback_base_url: str = "",
     feedback_token: str | None = None,
+    feedback_link_prefix: str = "反馈：",
     feedback_link_appender: Callable[..., FeedbackReplyText] = append_feedback_links,
 ) -> PreparedOutgoingReplyText:
     text = append_signature(reply_text)
@@ -188,6 +198,7 @@ def prepare_outgoing_reply_text(
         reply_text=text,
         original_text=original_text,
         feedback_token=feedback_token,
+        link_prefix=feedback_link_prefix,
     )
     return PreparedOutgoingReplyText(
         feedback_token=feedback_reply.feedback_token,

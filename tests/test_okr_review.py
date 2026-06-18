@@ -125,6 +125,20 @@ def test_is_okr_review_request_matches_review_intent():
     assert is_okr_review_request("帮我审核 OKR")
     assert is_okr_review_request("看看我的 KR 进度")
     assert not is_okr_review_request("今天 OKR 系统打不开")
+    assert not is_okr_review_request(
+        "【招聘】Vibecoding_0615 候选人画像与综合评价："
+        "候选人具备全栈目标，面试官评价技术深度一般。"
+    )
+    assert not is_okr_review_request(
+        "请审核这几篇技术交底书 https://alidocs.dingtalk.com/i/nodes/"
+        "AR4GpnMqJzEZb75aikRAEKxDVKe0xjE3"
+    )
+    assert not is_okr_review_request(
+        "@Derek Zen(磊哥) 请从专业知产局人员的角度审核这 4 篇技术交底书，"
+        "提出高质量建设性的修改建议。"
+        "https://alidocs.dingtalk.com/i/nodes/XPwkYGxZV3x3Q0mOs9MjamqjJAgozOKL"
+        " https://alidocs.dingtalk.com/i/nodes/AR4GpnMqJzEZb75aikRAEKxDVKe0xjE3"
+    )
 
 
 def test_current_quarter_period_uses_current_date():
@@ -607,9 +621,11 @@ class FakeDwsForOkr:
         self.payload = payload or {"objectives": []}
         self.error = error
         self.calls = []
+        self.timeouts = []
 
-    def run_json(self, command):
+    def run_json(self, command, *, timeout_seconds=None):
         self.calls.append(command)
+        self.timeouts.append(timeout_seconds)
         if self.error:
             raise self.error
         return self.payload
@@ -728,6 +744,19 @@ def test_dws_live_okr_source_uses_single_configured_command():
     assert payload["objectives"][0]["title"] == "O"
     assert "{user_id}" not in dws.calls[0]
     assert "user-1" in dws.calls[0]
+
+
+def test_dws_live_okr_source_uses_configured_timeout():
+    dws = FakeDwsForOkr(payload={"objectives": [{"title": "O"}]})
+    source = DwsLiveOkrSource(
+        dws=dws,
+        command_template=["dws", "api", "--user-id", "{user_id}"],
+        timeout_seconds=120,
+    )
+
+    source.fetch_user_okr(user_id="user-1", period_label="2026 Q2")
+
+    assert dws.timeouts == [120]
 
 
 def test_dws_live_okr_source_retries_then_reraises_source_error():

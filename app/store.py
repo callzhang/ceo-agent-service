@@ -1,6 +1,9 @@
 import sqlite3
 import json
+import threading
+from contextlib import contextmanager
 from pathlib import Path
+from collections.abc import Iterator
 
 from pydantic import BaseModel, Field
 
@@ -12,8 +15,13 @@ from app.task_models import (
     WorkTodo,
     WorkUpdate,
 )
+from app.feedback_policy import FeedbackPressureStats
 
 FAST_PATH_UNREAD_BACKOFF_TASK_ERROR = "waiting_fast_path_unread_backoff"
+SQLITE_BUSY_TIMEOUT_SECONDS = 30
+SQLITE_BUSY_TIMEOUT_MILLISECONDS = SQLITE_BUSY_TIMEOUT_SECONDS * 1000
+_INITIALIZED_STORE_PATHS: set[Path] = set()
+_INITIALIZE_LOCK = threading.Lock()
 
 
 class OrgUserProfile(BaseModel):
@@ -215,15 +223,37 @@ class AutoReplyStore:
     def __init__(self, path: Path):
         self.path = path
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._initialize()
+        self._ensure_initialized()
 
-    def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.path)
+    def _ensure_initialized(self) -> None:
+        path_key = self.path.resolve()
+        if path_key in _INITIALIZED_STORE_PATHS:
+            return
+        with _INITIALIZE_LOCK:
+            if path_key in _INITIALIZED_STORE_PATHS:
+                return
+            self._initialize()
+            _INITIALIZED_STORE_PATHS.add(path_key)
+
+    @contextmanager
+    def _connect(self) -> Iterator[sqlite3.Connection]:
+        connection = sqlite3.connect(
+            self.path,
+            timeout=SQLITE_BUSY_TIMEOUT_SECONDS,
+        )
+        connection.execute(f"pragma busy_timeout = {SQLITE_BUSY_TIMEOUT_MILLISECONDS}")
+        connection.execute("pragma synchronous = normal")
+        connection.execute("pragma foreign_keys = on")
         connection.row_factory = sqlite3.Row
-        return connection
+        try:
+            with connection:
+                yield connection
+        finally:
+            connection.close()
 
     def _initialize(self) -> None:
         with self._connect() as db:
+            db.execute("pragma journal_mode = wal")
             db.executescript(
                 """
                 create table if not exists conversations (
@@ -1288,6 +1318,89 @@ class AutoReplyStore:
             )
             return cursor.rowcount
 
+    def replace_pending_single_chat_reply_task_trigger(
+        self,
+        *,
+        conversation_id: str,
+        trigger_message_id: str,
+        trigger_create_time: str,
+        trigger_sender: str,
+        trigger_text: str,
+        trigger_message_json: str,
+        available_at: str = "",
+        error: str = "",
+    ) -> int:
+        with self._connect() as db:
+            target = db.execute(
+                """
+                select id
+                from reply_tasks
+                where conversation_id=?
+                  and single_chat=1
+                  and status='pending'
+                  and attempts=0
+                  and trigger_create_time <= ?
+                order by trigger_create_time desc, id desc
+                limit 1
+                """,
+                (conversation_id, trigger_create_time),
+            ).fetchone()
+            if target is None:
+                return 0
+            task_id = int(target["id"])
+            cursor = db.execute(
+                """
+                update reply_tasks
+                set trigger_message_id=?,
+                    trigger_create_time=?,
+                    trigger_sender=?,
+                    trigger_text=?,
+                    trigger_message_json=?,
+                    available_at=?,
+                    error=?,
+                    updated_at=current_timestamp
+                where id=?
+                  and (
+                    trigger_message_id != ?
+                    or trigger_create_time != ?
+                    or trigger_sender != ?
+                    or trigger_text != ?
+                    or trigger_message_json != ?
+                    or available_at != ?
+                    or error != ?
+                  )
+                """,
+                (
+                    trigger_message_id,
+                    trigger_create_time,
+                    trigger_sender,
+                    trigger_text,
+                    trigger_message_json,
+                    available_at,
+                    error,
+                    task_id,
+                    trigger_message_id,
+                    trigger_create_time,
+                    trigger_sender,
+                    trigger_text,
+                    trigger_message_json,
+                    available_at,
+                    error,
+                ),
+            )
+            db.execute(
+                """
+                delete from reply_tasks
+                where conversation_id=?
+                  and single_chat=1
+                  and status='pending'
+                  and attempts=0
+                  and id != ?
+                """,
+                (conversation_id, task_id),
+            )
+            return cursor.rowcount
+
     def reset_codex_sessions(self) -> int:
         with self._connect() as db:
             cursor = db.execute(
@@ -1573,6 +1686,83 @@ class AutoReplyStore:
                 (limit,),
             ).fetchall()
             return [SentReply.model_validate(dict(row)) for row in rows]
+
+    def feedback_pressure_stats(
+        self,
+        conversation_id: str,
+        *,
+        now_utc: str | None = None,
+    ) -> FeedbackPressureStats:
+        now_expression = "current_timestamp" if now_utc is None else "?"
+        args = [conversation_id]
+        if now_utc is not None:
+            args.extend([now_utc, now_utc])
+        with self._connect() as db:
+            row = db.execute(
+                f"""
+                with latest_feedback as (
+                    select max(datetime(coalesce(
+                        nullif(fe.received_at, ''),
+                        fe.updated_at,
+                        fe.created_at
+                    ))) as latest_feedback_at
+                    from sent_replies sr
+                    join feedback_events fe
+                        on fe.feedback_token = sr.feedback_token
+                    where sr.conversation_id=?
+                      and trim(sr.feedback_token) <> ''
+                ),
+                unanswered as (
+                    select sr.*
+                    from sent_replies sr
+                    left join latest_feedback lf
+                    where sr.conversation_id=?
+                      and trim(sr.feedback_token) <> ''
+                      and not exists (
+                          select 1
+                          from feedback_events fe
+                          where fe.feedback_token = sr.feedback_token
+                      )
+                      and (
+                          lf.latest_feedback_at is null
+                          or datetime(sr.sent_at) > lf.latest_feedback_at
+                      )
+                )
+                select
+                    count(*) as unanswered_since_last_feedback,
+                    sum(
+                        case
+                            when datetime(sent_at)
+                                <= datetime({now_expression}, '-7 days')
+                            then 1
+                            else 0
+                        end
+                    ) as unanswered_older_than_7_days,
+                    sum(
+                        case
+                            when datetime(sent_at)
+                                <= datetime({now_expression}, '-10 days')
+                            then 1
+                            else 0
+                        end
+                    ) as unanswered_older_than_10_days
+                from unanswered
+                """,
+                [conversation_id, *args],
+            ).fetchone()
+        if row is None:
+            return FeedbackPressureStats()
+        return FeedbackPressureStats(
+            unanswered_since_last_feedback=int(
+                row["unanswered_since_last_feedback"] or 0
+            ),
+            unanswered_older_than_7_days=int(
+                row["unanswered_older_than_7_days"] or 0
+            ),
+            unanswered_older_than_10_days=int(
+                row["unanswered_older_than_10_days"] or 0
+            ),
+        )
 
     def upsert_feedback_event(
         self,
@@ -2436,6 +2626,23 @@ class AutoReplyStore:
                 ids,
             ).fetchall()
             return [WorkSummaryInput.model_validate(dict(row)) for row in claimed]
+
+    def reset_stale_processing_work_summary_inputs(self, max_age_seconds: int) -> int:
+        if max_age_seconds <= 0:
+            return 0
+        with self._connect() as db:
+            cursor = db.execute(
+                """
+                update work_summary_inputs
+                set status='pending',
+                    error='',
+                    updated_at=current_timestamp
+                where status='processing'
+                  and datetime(updated_at) <= datetime('now', ?)
+                """,
+                (f"-{int(max_age_seconds)} seconds",),
+            )
+            return cursor.rowcount
 
     def mark_work_summary_input_done(self, input_id: int) -> None:
         with self._connect() as db:

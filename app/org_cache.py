@@ -353,6 +353,9 @@ class CachedDwsClient:
     def create_markdown_doc(self, name: str, content: str):
         return self.dws.create_markdown_doc(name, content)
 
+    def add_doc_editor_permission(self, node: str, user_ids: list[str]):
+        return self.dws.add_doc_editor_permission(node, user_ids)
+
     def recall_bot_message(self, conversation_id: str | None, process_query_key: str):
         return self.dws.recall_bot_message(conversation_id, process_query_key)
 

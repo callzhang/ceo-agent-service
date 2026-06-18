@@ -61,6 +61,41 @@ def test_enqueue_and_claim_work_summary_input(tmp_path: Path):
     assert row == ("done",)
 
 
+def test_reset_stale_processing_work_summary_inputs_requeues_orphans(tmp_path: Path):
+    db_path = tmp_path / "task.sqlite3"
+    store = AutoReplyStore(db_path)
+    payload_json = _work_item().model_dump_json()
+    input_id = store.enqueue_work_summary_input("reply_attempt", "1", payload_json)
+
+    claimed = store.claim_work_summary_inputs(limit=1)
+    with sqlite3.connect(db_path) as db:
+        db.execute(
+            "update work_summary_inputs set updated_at=datetime('now', '-31 minutes') where id=?",
+            (claimed[0].id,),
+        )
+
+    reset_count = store.reset_stale_processing_work_summary_inputs(30 * 60)
+    reclaimed = store.claim_work_summary_inputs(limit=1)
+
+    assert reset_count == 1
+    assert reclaimed[0].id == input_id
+    assert reclaimed[0].attempts == 2
+
+
+def test_reset_stale_processing_work_summary_inputs_keeps_fresh_processing(
+    tmp_path: Path,
+):
+    store = _store(tmp_path)
+    payload_json = _work_item().model_dump_json()
+    store.enqueue_work_summary_input("reply_attempt", "1", payload_json)
+    store.claim_work_summary_inputs(limit=1)
+
+    reset_count = store.reset_stale_processing_work_summary_inputs(30 * 60)
+
+    assert reset_count == 0
+    assert store.claim_work_summary_inputs(limit=1) == []
+
+
 def test_create_project_todo_update_and_follow_up(tmp_path: Path):
     store = _store(tmp_path)
 

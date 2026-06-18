@@ -1873,6 +1873,26 @@ def test_open_dingtalk_bridge_opens_pc_jsapi_bridge_for_open_conversation_id(
     ]
 
 
+def test_open_dingtalk_popup_fetches_open_route_and_auto_closes(tmp_path: Path):
+    client = TestClient(create_audit_app(tmp_path / "worker.sqlite3"))
+
+    response = client.get("/open-dingtalk-popup?conversation_id=cid-1")
+
+    assert response.status_code == 200
+    assert "正在打开钉钉消息" in response.text
+    assert 'fetch("/open-dingtalk?conversation_id=cid-1", {cache: "no-store"})' in response.text
+    assert "window.close()" in response.text
+
+
+def test_open_dingtalk_popup_rejects_missing_target(tmp_path: Path):
+    client = TestClient(create_audit_app(tmp_path / "worker.sqlite3"))
+
+    response = client.get("/open-dingtalk-popup")
+
+    assert response.status_code == 400
+    assert response.text == "missing cid or conversation_id"
+
+
 def test_open_dingtalk_bridge_rejects_missing_cid(tmp_path: Path, monkeypatch):
     commands = []
     monkeypatch.setattr(
@@ -2759,12 +2779,20 @@ def test_fastapi_app_records_feedback_and_redirects(tmp_path: Path):
 def test_render_attempt_detail_shows_full_decision_and_feedback_form(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     attempt_id = seed_attempt(store)
-    store.record_sent_reply("cid-1", "msg-1", "先按A方案走（by明哥分身）")
+    store.record_sent_reply(
+        "cid-1",
+        "msg-1",
+        "先按A方案走（by明哥分身）",
+        send_result_json=json.dumps(
+            {"send_result": {"result": {"openMessageId": "sent-msg-1"}}}
+        ),
+    )
 
     status, html = render_attempt_detail(store, attempt_id)
 
     assert status == 200
     assert "attempt-conversation-banner" in html
+    assert "attempt-banner-actions" in html
     assert "群名" in html
     assert "技术部" in html
     assert "触发人：Xiaomin" in html
@@ -2779,10 +2807,17 @@ def test_render_attempt_detail_shows_full_decision_and_feedback_form(tmp_path: P
     assert "allow" in detail_grid
     assert "permission reason" not in html
     assert "agent 执行记录" in html
+    assert f'action="/attempts/{attempt_id}/rerun?return_to=/attempts/{attempt_id}"' in html
+    assert f'action="/attempts/{attempt_id}/recall?return_to=/attempts/{attempt_id}"' in html
+    assert "/open-dingtalk-popup?conversation_id=cid-1" in html
+    assert "window.open(this.href,'ceo-open-dingtalk','popup,width=420,height=260')" in html
+    assert 'class="compact-button open-dingtalk-action"' in html
+    assert '<button class="rerun" type="submit">重跑</button>' in html
     assert html.index("群名") < html.index("内部反馈/建议修改")
     assert html.index('class="agent-log-button" href="/codex/session-1"') < html.index(
         "内部反馈/建议修改"
     )
+    assert html.index("attempt-banner-actions") < html.index("trigger message id")
     assert html.index("Trigger") < html.index("生成回复")
     assert html.index("Trigger") < html.index("先按A方案走（by明哥分身）")
     assert html.index("Codex reason") < html.index("生成回复")
@@ -2792,16 +2827,15 @@ def test_render_attempt_detail_shows_full_decision_and_feedback_form(tmp_path: P
     assert "@Alex Chen 这个怎么处理？" in html
     assert "Audit summary" in html
     assert "查看岗位画像后建议先按A方案走" in html
-    assert "Audit documents" in html
+    assert "Tool uses" in html
     assert '<details class="card collapsible-card">' in html
-    assert html.index("Audit documents") < html.index("面试/岗位画像.md")
+    assert html.index("Tool uses") < html.index("面试/岗位画像.md")
     assert "面试/岗位画像.md" in html
-    assert "Audit tool events" in html
-    assert html.index("Audit tool events") < html.index("rg 岗位")
+    assert "Audit documents" not in html
+    assert "Audit tool events" not in html
+    assert html.index("Tool uses") < html.index("rg 岗位")
     assert "rg 岗位" in html
-    assert "json-pre" in html
-    assert "json-key" in html
-    assert "json-string" in html
+    assert "audit-tool-args" in html
     assert "\n  " in html
     assert "先按A方案走" in html
     assert "Draft reply (raw Codex reply)" in html
@@ -2814,7 +2848,6 @@ def test_render_attempt_detail_shows_full_decision_and_feedback_form(tmp_path: P
     assert "/codex/session-1" in html
     assert "Codex local history" not in html
     assert "Final reply (send-ready text)" not in html
-    assert "撤销发送" not in html
 
 
 def test_render_attempt_detail_renders_audit_tool_inputs_and_outputs(tmp_path: Path):
@@ -2828,12 +2861,25 @@ def test_render_attempt_detail_renders_audit_tool_inputs_and_outputs(tmp_path: P
         action="send_reply",
         sensitivity_kind="general",
         codex_session_id="session-1",
+        audit_documents_json=json.dumps(
+            [
+                {
+                    "title": "岗位画像",
+                    "relevance": "判断岗位要求",
+                    "path": "面试/岗位画像.md",
+                    "args": {"section": "requirements"},
+                }
+            ],
+            ensure_ascii=False,
+        ),
         audit_tool_events_json=json.dumps(
             [
                 {
                     "event_type": "response_item",
                     "tool": "exec_command",
                     "call_id": "call-1",
+                    "title": "Search role profile",
+                    "relevance": "确认岗位画像是否提到项目经理",
                     "input": '{\n  "cmd": "rg -n 岗位 /Users/principal/Documents/memory/面试"\n}',
                     "command": "rg -n 岗位 /Users/principal/Documents/memory/面试",
                 },
@@ -2841,7 +2887,18 @@ def test_render_attempt_detail_renders_audit_tool_inputs_and_outputs(tmp_path: P
                     "event_type": "response_item",
                     "tool": "tool_output",
                     "call_id": "call-1",
-                    "output": "Output:\n岗位画像.md:1:项目经理",
+                    "output": json.dumps(
+                        {
+                            "result": json.dumps(
+                                {
+                                    "ok": "success",
+                                    "matches": ["岗位画像.md:1:项目经理"],
+                                },
+                                ensure_ascii=False,
+                            )
+                        },
+                        ensure_ascii=False,
+                    ),
                 },
             ],
             ensure_ascii=False,
@@ -2852,11 +2909,124 @@ def test_render_attempt_detail_renders_audit_tool_inputs_and_outputs(tmp_path: P
     status, html = render_attempt_detail(store, attempt_id)
 
     assert status == 200
-    assert "to exec_command" in html
-    assert "input / command args" in html
+    assert "Tool uses" in html
+    assert "2 total · 1 calls · 1 documents" in html
+    assert "岗位画像" in html
+    assert "判断岗位要求" in html
+    assert "面试/岗位画像.md" in html
+    assert "Search role profile" in html
+    assert "确认岗位画像是否提到项目经理" in html
+    assert "exec_command" in html
+    assert "format" in html
+    assert "terminal" in html
+    assert "args" in html
     assert "rg -n 岗位 /Users/principal/Documents/memory/面试" in html
     assert "output" in html
+    assert "audit-tool-output-preview" in html
+    assert "audit-tool-output-body" in html
+    assert '"result": "{' not in html
+    assert "ok" in html
+    assert "success" in html
     assert "岗位画像.md:1:项目经理" in html
+
+
+def test_render_attempt_detail_unwraps_terminal_wrapped_mcp_json_output(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    output = (
+        "Wall time: 0.8105 seconds\n"
+        "Output:\n"
+        + json.dumps(
+            {
+                "result": json.dumps(
+                    {
+                        "ok": True,
+                        "backend": "memory",
+                        "processing_status": "pending",
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            },
+            ensure_ascii=False,
+        )
+    )
+    attempt_id = store.record_reply_attempt(
+        conversation_id="cid-1",
+        conversation_title="MKT core",
+        trigger_message_id="msg-1",
+        trigger_sender="Phina",
+        trigger_text="@Alex Chen 这个怎么处理？",
+        action="send_reply",
+        sensitivity_kind="general",
+        audit_tool_events_json=json.dumps(
+            [
+                {
+                    "event_type": "response_item",
+                    "tool": "memory_write",
+                    "call_id": "call-memory",
+                    "input": json.dumps(
+                        {"data": "稳定业务口径", "type": "text"},
+                        ensure_ascii=False,
+                        indent=2,
+                    ),
+                },
+                {
+                    "event_type": "response_item",
+                    "tool": "tool_output",
+                    "call_id": "call-memory",
+                    "output": output,
+                },
+            ],
+            ensure_ascii=False,
+        ),
+        audit_summary="已写入 memory。",
+    )
+
+    status, html = render_attempt_detail(store, attempt_id)
+
+    assert status == 200
+    assert "1 total · 1 calls · 0 documents" in html
+    assert "mcp/json" in html
+    assert '"result": "{' not in html
+    assert "processing_status" in html
+    assert "pending" in html
+    assert "backend" in html
+    assert "memory" in html
+
+
+def test_render_attempt_detail_skips_empty_document_args(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    attempt_id = store.record_reply_attempt(
+        conversation_id="cid-1",
+        conversation_title="MKT core",
+        trigger_message_id="msg-1",
+        trigger_sender="Phina",
+        trigger_text="@Alex Chen 这个怎么处理？",
+        action="send_reply",
+        sensitivity_kind="general",
+        audit_documents_json=json.dumps(
+            [
+                {
+                    "title": "03.3_StarBench产品说明",
+                    "url": "https://alidocs.dingtalk.com/i/nodes/doc123",
+                    "relevance": "提供 StarBench 产品定位。",
+                }
+            ],
+            ensure_ascii=False,
+        ),
+        audit_tool_events_json="[]",
+        audit_summary="已查看文档。",
+    )
+
+    status, html = render_attempt_detail(store, attempt_id)
+
+    assert status == 200
+    assert "1 total · 0 calls · 1 documents" in html
+    assert "03.3_StarBench产品说明" in html
+    assert "提供 StarBench 产品定位。" in html
+    assert "https://alidocs.dingtalk.com/i/nodes/doc123" in html
+    tool_uses_html = html[html.index("Tool uses") :]
+    assert "audit-tool-args" not in tool_uses_html
 
 
 def test_render_attempt_detail_renders_dws_material_tool_events(tmp_path: Path):
@@ -2897,9 +3067,9 @@ def test_render_attempt_detail_renders_dws_material_tool_events(tmp_path: Path):
     status, html = render_attempt_detail(store, attempt_id)
 
     assert status == 200
-    assert "Audit tool events" in html
-    assert "to exec_command" in html
-    assert "input / command args" in html
+    assert "Tool uses" in html
+    assert "exec_command" in html
+    assert "args" in html
     assert "dws doc read --node" in html
     assert command in html
     assert "output" in html
@@ -2987,9 +3157,9 @@ def test_render_attempt_detail_renders_dws_material_events_from_codex_session(
     status, html = render_attempt_detail(store, attempt_id)
 
     assert status == 200
-    assert "Audit tool events" in html
-    assert "to exec_command" in html
-    assert "input / command args" in html
+    assert "Tool uses" in html
+    assert "exec_command" in html
+    assert "args" in html
     assert "dws doc read --node" in html
     assert command in html
     assert "output" in html
@@ -3058,6 +3228,14 @@ def test_render_codex_session_detail_uses_local_rendered_history(
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     attempt_id = seed_attempt(store)
+    store.record_sent_reply(
+        "cid-1",
+        "msg-1",
+        "先按A方案走（by明哥分身）",
+        send_result_json=json.dumps(
+            {"send_result": {"result": {"openMessageId": "sent-msg-1"}}}
+        ),
+    )
     codex_home = tmp_path / ".codex"
     session_path = (
         codex_home
@@ -3090,6 +3268,10 @@ def test_render_codex_session_detail_uses_local_rendered_history(
     assert "已查看岗位画像" in html
     assert "Related history" in html
     assert f"/attempts/{attempt_id}" in html
+    assert f'action="/attempts/{attempt_id}/rerun?return_to=/codex/session-1"' in html
+    assert f'action="/attempts/{attempt_id}/recall?return_to=/codex/session-1"' in html
+    assert "/open-dingtalk-popup?conversation_id=cid-1" in html
+    assert "查看钉钉消息" in html
     assert "@Alex Chen 这个怎么处理？" in html
     assert '<details class="event event-assistant" open>' in html
     assert '<details class="event event-session">' in html
@@ -3135,7 +3317,7 @@ def test_render_codex_session_detail_shows_related_history_when_file_missing(
     assert "明哥，这个怎么处理？" in html
 
 
-def test_render_attempt_detail_shows_recall_button_when_sent_reply_is_recallable(
+def test_render_attempt_detail_does_not_show_recall_action_card(
     tmp_path: Path,
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
@@ -3152,21 +3334,22 @@ def test_render_attempt_detail_shows_recall_button_when_sent_reply_is_recallable
     status, html = render_attempt_detail(store, attempt_id)
 
     assert status == 200
-    assert "撤销发送" in html
-    assert f'action="/attempts/{attempt_id}/recall"' in html
-    assert "确认撤销这条已发送消息？" in html
+    assert "attempt-banner-actions" in html
+    assert f'action="/attempts/{attempt_id}/recall?return_to=/attempts/{attempt_id}"' in html
+    assert "recall-card" not in html
 
 
-def test_render_attempt_detail_shows_rerun_button(tmp_path: Path):
+def test_render_attempt_detail_shows_rerun_only_in_banner_actions(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     attempt_id = seed_attempt(store)
 
     status, html = render_attempt_detail(store, attempt_id)
 
     assert status == 200
-    assert "重跑 attempt" in html
-    assert f'action="/attempts/{attempt_id}/rerun"' in html
-    assert "确认重跑这条 attempt？" in html
+    assert "attempt-banner-actions" in html
+    assert f'action="/attempts/{attempt_id}/rerun?return_to=/attempts/{attempt_id}"' in html
+    assert "重跑 attempt" not in html
+    assert "rerun-card" not in html
 
 
 def test_render_attempt_detail_returns_404_when_missing(tmp_path: Path):

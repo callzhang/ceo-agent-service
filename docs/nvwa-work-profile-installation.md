@@ -1,7 +1,7 @@
 # Nvwa Work Profile Installation
 
 This guide describes the local dependency needed to generate a reviewed
-`profiles/work_profile.md`.
+`data/work-profile/work_profile.md`.
 
 For a full machine setup, including `dws`, Codex CLI, Memory Connector,
 interactive parameters, corpus preparation, audit web management, launchd, and
@@ -13,7 +13,7 @@ only covers the Nvwa/profile part of that flow.
 
 Nvwa is the persona-distillation skill used after evidence collection. The CEO
 service does not load Nvwa at runtime. Runtime reads only
-`profiles/work_profile.md` through `work_profile_instruction()`.
+`data/work-profile/work_profile.md` through `work_profile_instruction()`.
 
 Use Nvwa to read prepared evidence, extract stable work judgment patterns,
 rewrite the runtime Markdown profile, and keep sensitive evidence out of
@@ -43,36 +43,36 @@ repository.
 ```bash
 .venv/bin/ceo-agent build-corpus \
   --workspace /Users/principal/Documents/memory \
-  --corpus-dir /Users/principal/Documents/Projects/ceo-agent-service/corpus
+  --corpus-dir /Users/principal/Documents/Projects/ceo-agent-service/data/corpus
 
 .venv/bin/ceo-agent collect-corpus \
   --workspace /Users/principal/Documents/memory \
-  --corpus-dir /Users/principal/Documents/Projects/ceo-agent-service/corpus
+  --corpus-dir /Users/principal/Documents/Projects/ceo-agent-service/data/corpus
 
 .venv/bin/ceo-agent build-work-profile \
   --workspace /Users/principal/Documents/memory \
-  --corpus-dir /Users/principal/Documents/Projects/ceo-agent-service/corpus
+  --corpus-dir /Users/principal/Documents/Projects/ceo-agent-service/data/corpus
 ```
 
 Expected outputs:
 
 ```text
-profiles/work_profile.md
+data/work-profile/work_profile.md
 data/profile-evidence/evidence_index.jsonl
 ```
 
-The builder should not produce `profiles/work_profile.json`,
-`profiles/work-skill/SKILL.md`, or `data/profile-evidence/dingtalk_kb_cache/`.
+The builder should not produce `data/work-profile/work_profile.json`,
+`data/work-profile/work-skill/SKILL.md`, or `data/profile-evidence/dingtalk_kb_cache/`.
 
 ## Review With Nvwa
 
 Start a Codex session with the Nvwa skill available and ask it to rewrite only
-`profiles/work_profile.md` using:
+`data/work-profile/work_profile.md` using:
 
 ```text
-profiles/work_profile.md
+data/work-profile/work_profile.md
 data/profile-evidence/evidence_index.jsonl
-corpus/style_corpus.csv
+data/corpus/style_corpus.csv
 ```
 
 The Nvwa review prompt should require Markdown-only output, no extra files, no

@@ -215,6 +215,34 @@ def test_create_markdown_doc_command_shape_and_response():
     ]
 
 
+def test_add_doc_editor_permission_command_shape_and_response():
+    client = RecordingDwsClient({"success": True})
+
+    payload = client.add_doc_editor_permission(
+        "doc-1",
+        ["user-1", "user-1", " user-2 "],
+    )
+
+    assert payload == {"success": True}
+    assert client.commands == [
+        [
+            "dws",
+            "doc",
+            "permission",
+            "add",
+            "--node",
+            "doc-1",
+            "--user",
+            "user-1,user-2",
+            "--role",
+            "EDITOR",
+            "--format",
+            "json",
+            "--yes",
+        ]
+    ]
+
+
 def test_dws_upgrade_check_command_shape():
     client = DwsClient(dws_bin="dws")
 
@@ -2616,10 +2644,26 @@ def test_build_read_unread_messages_command_reads_latest_unread_window(
         expected_time,
         "--forward=false",
         "--limit",
-        "3",
+        "5",
         "--format",
         "json",
     ]
+
+
+def test_build_read_unread_messages_command_keeps_larger_unread_window(monkeypatch):
+    monkeypatch.setattr(dws_client, "_local_time_zone", lambda: TEST_LOCAL_TZ)
+    client = DwsClient(dws_bin="dws")
+    conversation = DingTalkConversation(
+        open_conversation_id="cid-1",
+        title="Friday",
+        single_chat=False,
+        unread_point=9,
+        last_message_create_at=1778666181403,
+    )
+
+    command = client.build_read_unread_messages_command(conversation)
+
+    assert command[command.index("--limit") + 1] == "9"
 
 
 def test_build_list_messages_by_sender_command_uses_sender_and_cursor():
@@ -2708,7 +2752,7 @@ def test_read_unread_messages_reads_latest_window_and_returns_chronological_orde
             expected_time,
             "--forward=false",
             "--limit",
-            "2",
+            "5",
             "--format",
             "json",
         ]
@@ -3019,6 +3063,22 @@ def test_run_json_raises_dws_error_on_nonzero_exit(monkeypatch):
 
     with pytest.raises(DwsError, match="exit code 1"):
         DwsClient(timeout_seconds=7).run_json(["dws", "probe"])
+
+
+def test_run_json_uses_per_call_timeout_when_provided(monkeypatch):
+    seen_timeouts = []
+
+    def fake_run(command, text, capture_output, check, timeout, env=None):
+        seen_timeouts.append(timeout)
+        return SimpleNamespace(returncode=0, stdout='{"ok":true}', stderr="")
+
+    monkeypatch.setattr("app.dws_client.subprocess.run", fake_run)
+
+    assert DwsClient(timeout_seconds=7).run_json(
+        ["dws", "probe"],
+        timeout_seconds=120,
+    ) == {"ok": True}
+    assert seen_timeouts == [120]
 
 
 def test_run_json_extracts_error_code_from_stdout_and_retries_transient_timeout(

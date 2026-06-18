@@ -25,7 +25,7 @@ This plan implements the approved design in vertical slices. It does not touch e
 - Modify `app/store.py`: session lock methods and OKR review tables/methods.
 - Modify `app/codex_runner.py`: reuse existing config helpers where useful; do not change legacy behavior until callers migrate.
 - Modify `app/codex_decision.py`: add reply envelope adapter path.
-- Modify `app/oa_approval.py`: migrate OA runner to shared `StructuredCodexRunner` and `AgentEnvelope`.
+- Modify `app/oa_approval.py`: migrate OA handler to shared `StructuredCodexRunner` and `AgentEnvelope`.
 - Modify `app/worker.py`: route OKR before generic reply, use session locks for reply/OA/OKR, call OKR background processing.
 - Modify `app/cli.py`: add `process-okr-reviews` command and run it from service maintenance loop.
 - Modify `app/dws_client.py`: add one configured live OKR command entrypoint only if the live source is DWS-backed.
@@ -2274,9 +2274,9 @@ Run: `pytest tests/test_worker.py::test_reply_agent_envelope_send_reply_is_deliv
 
 Expected: test passes.
 
-- [ ] **Step 4: Migrate OA runner tests to envelope**
+- [ ] **Step 4: Migrate OA handler tests to envelope**
 
-Update `tests/test_oa_approval.py` so fake OA runner raw output uses `AgentEnvelope` with:
+Update `tests/test_oa_approval.py` so fake OA handler raw output uses `AgentEnvelope` with:
 
 ```json
 {

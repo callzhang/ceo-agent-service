@@ -8,6 +8,7 @@ from app.agent_envelope import (
     AgentKind,
     DwsMarkdownDocumentReplyAction,
     DwsMessageReactionAction,
+    QueueOkrReviewAction,
     SendDingTalkReplyAction,
 )
 
@@ -91,6 +92,29 @@ def test_agent_envelope_accepts_markdown_document_reply_action():
 
     assert isinstance(envelope.system_actions[1], DwsMarkdownDocumentReplyAction)
     assert envelope.system_actions[1].title == "方案建议"
+
+
+def test_agent_envelope_accepts_queue_okr_review_action():
+    envelope = AgentEnvelope.model_validate(
+        {
+            "kind": "okr_review",
+            "user_response": {
+                "mode": "no_reply",
+                "text": "",
+                "sensitivity_kind": "internal_personnel",
+            },
+            "system_actions": [{"type": "queue_okr_review"}],
+            "domain_payload": {},
+            "audit": {
+                "summary": "用户明确要求审核自己的 OKR。",
+                "documents": [],
+                "confidence": 0.9,
+            },
+        }
+    )
+
+    assert envelope.kind == AgentKind.OKR_REVIEW
+    assert isinstance(envelope.system_actions[0], QueueOkrReviewAction)
 
 
 def test_agent_envelope_rejects_markdown_document_reply_without_reply_text():

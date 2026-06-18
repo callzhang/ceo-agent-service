@@ -7,6 +7,65 @@ import pytest
 from app.store import AutoReplyStore
 
 
+def test_store_connections_enable_sqlite_concurrency_pragmas(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+
+    with store._connect() as db:
+        journal_mode = db.execute("pragma journal_mode").fetchone()[0]
+        busy_timeout = db.execute("pragma busy_timeout").fetchone()[0]
+        synchronous = db.execute("pragma synchronous").fetchone()[0]
+        foreign_keys = db.execute("pragma foreign_keys").fetchone()[0]
+
+    assert journal_mode == "wal"
+    assert busy_timeout >= 30_000
+    assert synchronous == 1
+    assert foreign_keys == 1
+
+
+def test_store_connections_close_after_context_exit(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+
+    with store._connect() as db:
+        db.execute("select 1").fetchone()
+
+    with pytest.raises(sqlite3.ProgrammingError):
+        db.execute("select 1").fetchone()
+
+
+def test_store_initializes_same_path_once_per_process(tmp_path: Path, monkeypatch):
+    calls: list[Path] = []
+    original_initialize = AutoReplyStore._initialize
+
+    def counted_initialize(self: AutoReplyStore) -> None:
+        calls.append(self.path)
+        original_initialize(self)
+
+    monkeypatch.setattr(AutoReplyStore, "_initialize", counted_initialize)
+    db_path = tmp_path / "worker.sqlite3"
+
+    AutoReplyStore(db_path)
+    AutoReplyStore(db_path)
+
+    assert calls == [db_path]
+
+
+def test_store_writer_can_commit_while_reader_transaction_is_open(tmp_path: Path):
+    db_path = tmp_path / "worker.sqlite3"
+    store = AutoReplyStore(db_path)
+    reader = sqlite3.connect(db_path)
+
+    try:
+        reader.execute("begin")
+        reader.execute("select count(*) from errors").fetchone()
+
+        store.record_error("cid-1", "msg-1", "producer", "database is locked")
+    finally:
+        reader.rollback()
+        reader.close()
+
+    assert store.list_errors(limit=1)[0].kind == "producer"
+
+
 def test_conversation_session_persists(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.upsert_conversation(
@@ -567,6 +626,68 @@ def test_records_sent_reply_recall_result(tmp_path: Path):
     assert updated is not None
     assert updated.recall_status == "recalled"
     assert updated.recalled_at is not None
+
+
+def test_feedback_pressure_counts_unanswered_replies_since_last_feedback(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.record_sent_reply(
+        "cid-1",
+        "old-before-feedback",
+        "旧回复",
+        feedback_token="token-old",
+    )
+    store.record_sent_reply(
+        "cid-1",
+        "old-unanswered",
+        "旧回复",
+        feedback_token="token-1",
+    )
+    store.record_sent_reply(
+        "cid-1",
+        "recent-unanswered",
+        "近回复",
+        feedback_token="token-2",
+    )
+    store.record_sent_reply(
+        "cid-2",
+        "other-conversation",
+        "其他会话",
+        feedback_token="token-3",
+    )
+    store.upsert_feedback_event(
+        key="event-old",
+        feedback_token="token-old",
+        rating="up",
+        received_at="2026-06-01 12:00:00",
+    )
+    with sqlite3.connect(store.path) as db:
+        db.execute(
+            "update sent_replies set sent_at=? where trigger_message_id=?",
+            ("2026-05-30 12:00:00", "old-before-feedback"),
+        )
+        db.execute(
+            "update sent_replies set sent_at=? where trigger_message_id=?",
+            ("2026-06-02 12:00:00", "old-unanswered"),
+        )
+        db.execute(
+            "update sent_replies set sent_at=? where trigger_message_id=?",
+            ("2026-06-09 12:00:00", "recent-unanswered"),
+        )
+        db.execute(
+            "update sent_replies set sent_at=? where trigger_message_id=?",
+            ("2026-06-02 12:00:00", "other-conversation"),
+        )
+
+    stats = store.feedback_pressure_stats(
+        "cid-1",
+        now_utc="2026-06-12 12:00:00",
+    )
+
+    assert stats.unanswered_since_last_feedback == 2
+    assert stats.unanswered_older_than_7_days == 1
+    assert stats.unanswered_older_than_10_days == 1
 
 
 def test_reply_attempt_tracing_and_feedback_round_trip(tmp_path: Path):

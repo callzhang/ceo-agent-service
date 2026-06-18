@@ -133,6 +133,8 @@ class FakeDws:
         self.sent: list[tuple[str, str]] = []
         self.reply_messages: list[tuple[str, str, str, str]] = []
         self.created_markdown_docs: list[tuple[str, str]] = []
+        self.doc_editor_permissions: list[tuple[str, list[str]]] = []
+        self.doc_editor_permission_error: Exception | None = None
         self.send_visible = True
         self.reply_visible = True
         self.message_emojis: list[tuple[str, str, str]] = []
@@ -500,6 +502,12 @@ class FakeDws:
             }
         }
 
+    def add_doc_editor_permission(self, node: str, user_ids: list[str]) -> dict:
+        if self.doc_editor_permission_error:
+            raise self.doc_editor_permission_error
+        self.doc_editor_permissions.append((node, user_ids))
+        return {"success": True, "nodeId": node, "userIds": user_ids}
+
     def _append_visible_message(self, conversation_id: str, text: str) -> None:
         visible = DingTalkMessage(
             open_conversation_id=conversation_id,
@@ -832,8 +840,12 @@ class FakeOaApprovalHandler:
         context_text: str,
         oa_url: str,
         approval_detail_text: str = "",
+        conversation_id: str = "",
+        conversation_title: str = "",
+        single_chat: bool = True,
         execute: bool = True,
     ) -> OaApprovalResult:
+        del conversation_id, conversation_title, single_chat
         self.calls.append((trigger_text, context_text, oa_url, execute))
         self.approval_detail_texts.append(approval_detail_text)
         return OaApprovalResult(
@@ -856,8 +868,12 @@ class ReturnOaApprovalHandler(FakeOaApprovalHandler):
         context_text: str,
         oa_url: str,
         approval_detail_text: str = "",
+        conversation_id: str = "",
+        conversation_title: str = "",
+        single_chat: bool = True,
         execute: bool = True,
     ) -> OaApprovalResult:
+        del conversation_id, conversation_title, single_chat
         self.calls.append((trigger_text, context_text, oa_url, execute))
         self.approval_detail_texts.append(approval_detail_text)
         return OaApprovalResult(
@@ -880,8 +896,12 @@ class MissingTargetOaApprovalHandler(FakeOaApprovalHandler):
         context_text: str,
         oa_url: str,
         approval_detail_text: str = "",
+        conversation_id: str = "",
+        conversation_title: str = "",
+        single_chat: bool = True,
         execute: bool = True,
     ) -> OaApprovalResult:
+        del conversation_id, conversation_title, single_chat
         self.calls.append((trigger_text, context_text, oa_url, execute))
         self.approval_detail_texts.append(approval_detail_text)
         return OaApprovalResult(
@@ -2116,6 +2136,7 @@ def test_worker_creates_markdown_doc_for_long_reply_before_sending(
     assert len(dws.created_markdown_docs) == 1
     assert dws.created_markdown_docs[0][0].startswith("CEO回复-Friday-")
     assert dws.created_markdown_docs[0][1].startswith("@周俊杰 " + "A" * 50)
+    assert dws.doc_editor_permissions == [("doc-1", ["sender-user-1"])]
     assert len(sent) == 1
     assert "内容较长，我写成了文档：" in sent[0][1]
     assert "https://alidocs.dingtalk.com/i/nodes/doc-1" in sent[0][1]
@@ -2152,12 +2173,38 @@ def test_worker_creates_markdown_doc_when_decision_requests_document_reply(
     assert dws.created_markdown_docs == [
         ("方案建议", "@周俊杰 # 方案\n\n先按 A 路径推进。（by明哥分身）")
     ]
+    assert dws.doc_editor_permissions == [("doc-1", ["sender-user-1"])]
     assert len(sent) == 1
     assert "内容我写成了文档：方案建议" in sent[0][1]
     assert "https://alidocs.dingtalk.com/i/nodes/doc-1" in sent[0][1]
 
 
-def test_worker_falls_back_to_group_send_when_native_reply_is_not_visible(
+def test_worker_does_not_send_markdown_doc_link_when_permission_fails(
+    tmp_path: Path,
+    monkeypatch,
+):
+    trigger = message("@Alex Chen(明哥) 写一版方案")
+    dws = FakeDws([conversation()], {"cid-1": [trigger]})
+    dws.doc_editor_permission_error = DwsError("doc permission add failed")
+    codex = FakeCodex(
+        CodexDecision(
+            action=CodexAction.SEND_REPLY,
+            reply_text="A" * 6000,
+            sensitivity_kind=SensitivityKind.GENERAL,
+        )
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch, dry_run=False)
+
+    worker.run_once()
+
+    attempts = worker.store.list_reply_attempts(limit=10)
+    assert dws.created_markdown_docs
+    assert final_sent(dws) == []
+    assert attempts[-1].send_status == "failed"
+    assert "doc permission add failed" in attempts[-1].send_error
+
+
+def test_worker_does_not_fallback_group_send_when_native_reply_visibility_unconfirmed(
     tmp_path: Path,
     monkeypatch,
 ):
@@ -2179,16 +2226,15 @@ def test_worker_falls_back_to_group_send_when_native_reply_is_not_visible(
     assert len(dws.created_markdown_docs) == 1
     assert len(dws.reply_messages) == 1
     sent = final_sent(dws)
-    assert len(sent) == 2
+    assert len(sent) == 1
     assert sent[0][1].startswith("内容较长，我写成了文档：CEO回复-Friday-")
-    assert sent[1][1].startswith("内容较长，我写成了文档：CEO回复-Friday-")
-    assert final_sent_at_users(dws) == [["sender-user-1"], ["sender-user-1"]]
+    assert final_sent_at_users(dws) == [["sender-user-1"]]
     attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
     assert attempt is not None
     assert attempt.send_status == "sent"
     sent_reply = worker.store.get_sent_reply("cid-1", "msg-1")
     assert sent_reply is not None
-    assert "group_message_after_invisible_reply" in sent_reply.send_result_json
+    assert "native_reply_visibility_unconfirmed" in sent_reply.send_result_json
 
 
 def test_queued_task_falls_back_to_trigger_when_context_read_fails(
@@ -2959,6 +3005,82 @@ def test_consume_once_appends_feedback_links_when_configured(
     assert sent_reply.feedback_token in sent_text
     attempt = worker.store.list_reply_attempts(limit=1)[0]
     assert attempt.final_reply_text == sent_text
+
+
+def test_consume_once_uses_required_feedback_prefix_after_unanswered_week(
+    tmp_path: Path, monkeypatch
+):
+    monkeypatch.setenv(
+        "CEO_FEEDBACK_SPIKE_VERCEL_BASE_URL",
+        "https://feedback.example.com",
+    )
+    trigger = message("@Alex Chen(明哥) 这个怎么处理？")
+    dws = FakeDws([conversation()], {"cid-1": [trigger]})
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="先按A方案走")
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+    worker.store.record_sent_reply(
+        "cid-1",
+        "old-msg-1",
+        "旧回复",
+        feedback_token="token-old",
+    )
+    with sqlite3.connect(worker.store.path) as db:
+        db.execute(
+            "update sent_replies set sent_at=? where trigger_message_id=?",
+            ("2026-05-05 18:00:00", "old-msg-1"),
+        )
+    worker.produce_once()
+
+    processed = worker.consume_once(max_tasks=1)
+
+    assert processed == 1
+    sent_text = final_sent(dws)[0][1]
+    assert "请对我的服务提供反馈，长期不评价将跳过：" in sent_text
+    assert "反馈：[👍]" not in sent_text
+    assert "先按A方案走" in sent_text
+    sent_reply = worker.store.get_sent_reply("cid-1", "msg-1")
+    assert sent_reply is not None
+    assert sent_reply.feedback_token in sent_text
+
+
+def test_consume_once_blocks_reply_after_unanswered_feedback_deadline(
+    tmp_path: Path, monkeypatch
+):
+    monkeypatch.setenv(
+        "CEO_FEEDBACK_SPIKE_VERCEL_BASE_URL",
+        "https://feedback.example.com",
+    )
+    trigger = message("@Alex Chen(明哥) 这个怎么处理？")
+    dws = FakeDws([conversation()], {"cid-1": [trigger]})
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="先按A方案走")
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+    worker.store.record_sent_reply(
+        "cid-1",
+        "old-msg-1",
+        "旧回复",
+        feedback_token="token-old",
+    )
+    with sqlite3.connect(worker.store.path) as db:
+        db.execute(
+            "update sent_replies set sent_at=? where trigger_message_id=?",
+            ("2026-05-02 18:00:00", "old-msg-1"),
+        )
+    worker.produce_once()
+
+    processed = worker.consume_once(max_tasks=1)
+
+    assert processed == 1
+    sent_text = final_sent(dws)[0][1]
+    assert "请对我提供反馈后再提问" in sent_text
+    assert "先按A方案走" not in sent_text
+    assert "/api/dingtalk-feedback-spike" not in sent_text
+    sent_reply = worker.store.get_sent_reply("cid-1", "msg-1")
+    assert sent_reply is not None
+    assert sent_reply.feedback_token == ""
 
 
 def test_consume_once_retries_task_failure_before_final_failure(
@@ -5232,6 +5354,45 @@ def test_oa_approval_missing_target_records_review_without_executing_action(
     assert attempt.oa_task_id == ""
     assert attempt.final_reply_text == "材料不足，暂不执行审批动作。"
     assert attempt.send_error == "missing_oa_approval_target"
+
+
+def test_oa_approval_uses_worker_url_target_when_agent_omits_identifiers(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message(
+        "[Ding]刘瑞安提醒您审批他的录用申请 "
+        "https://aflow.dingtalk.com/detail?procInstId=proc-1&taskId=task-1",
+        single_chat=True,
+    )
+    dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该走聊天回复")
+    )
+    oa_handler = MissingTargetOaApprovalHandler()
+    worker = make_worker(
+        tmp_path,
+        dws,
+        codex,
+        monkeypatch,
+        dry_run=False,
+        oa_approval_handler=oa_handler,
+    )
+
+    worker.run_once()
+
+    attempt = worker.store.get_reply_attempt(1)
+    assert attempt is not None
+    assert attempt.action == "oa_approval"
+    assert attempt.send_status == "commented"
+    assert attempt.send_error == ""
+    assert attempt.oa_process_instance_id == "proc-1"
+    assert attempt.oa_task_id == "task-1"
+    assert attempt.oa_url == (
+        "https://aflow.dingtalk.com/detail?procInstId=proc-1&taskId=task-1"
+    )
+    assert dws.oa_approval_comments == [
+        ("proc-1", "材料不足，暂不执行审批动作。")
+    ]
 
 
 def test_oa_approval_does_not_execute_task_that_is_not_current_user(
@@ -8323,13 +8484,17 @@ def test_group_stale_direct_mention_found_in_recent_context_does_not_queue(
     assert final_sent(dws) == []
 
 
-def test_okr_review_request_is_enqueued_before_generic_codex(
+def test_okr_review_request_is_enqueued_after_agent_queue_action(
     tmp_path: Path, monkeypatch
 ):
     trigger = message("帮我审核 OKR", single_chat=True)
     dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
     codex = FakeCodex(
-        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该走普通回复")
+        CodexDecision(
+            action=CodexAction.NO_REPLY,
+            reason="用户明确请求审核 OKR，交给 OKR handler 处理。",
+            system_actions=[{"type": "queue_okr_review"}],
+        )
     )
     worker = make_worker(tmp_path, dws, codex, monkeypatch)
     worker.okr_live_source = type(
@@ -8340,7 +8505,7 @@ def test_okr_review_request_is_enqueued_before_generic_codex(
 
     worker.run_once()
 
-    assert codex.calls == []
+    assert len(codex.calls) == 1
     request = worker.store.claim_okr_review_requests(1)[0]
     assert request.trigger_text == "帮我审核 OKR"
     attempt = worker.store.get_reply_attempt(1)
@@ -8348,21 +8513,59 @@ def test_okr_review_request_is_enqueued_before_generic_codex(
     assert "已受理" in attempt.final_reply_text
 
 
-def test_okr_review_missing_live_source_fails_task_without_generic_codex_or_reply(
+def test_okr_mentions_without_agent_queue_action_do_not_fetch_okr_source(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message(
+        "@Alex Chen(明哥) Q3 OKR 季度会请大家准备，AI 打分只是材料同步。",
+        single_chat=False,
+    )
+    dws = FakeDws([conversation(single_chat=False)], {"cid-1": [trigger]})
+    codex = FakeCodex(CodexDecision(action=CodexAction.NO_REPLY, reason="通知同步"))
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+    worker.okr_live_source = type(
+        "LiveSource",
+        (),
+        {
+            "fetch_user_okr": lambda self, user_id, period_label: (_ for _ in ()).throw(
+                AssertionError("OKR source should not be called")
+            )
+        },
+    )()
+
+    worker.run_once()
+
+    assert len(codex.calls) == 1
+    assert worker.store.claim_okr_review_requests(1) == []
+    attempt = worker.store.get_reply_attempt(1)
+    assert attempt.action == CodexAction.NO_REPLY.value
+    assert attempt.send_status == "skipped"
+    assert final_sent(dws) == []
+
+
+def test_okr_review_missing_live_source_fails_after_agent_queue_action(
     tmp_path: Path, monkeypatch
 ):
     trigger = message("帮我审核 OKR", single_chat=True)
     dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
     codex = FakeCodex(
-        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该走普通回复")
+        CodexDecision(
+            action=CodexAction.NO_REPLY,
+            reason="用户明确请求审核 OKR，交给 OKR handler 处理。",
+            system_actions=[{"type": "queue_okr_review"}],
+        )
     )
     worker = make_worker(tmp_path, dws, codex, monkeypatch, max_task_attempts=1)
 
     worker.run_once()
 
-    assert codex.calls == []
+    assert len(codex.calls) == 1
     assert worker.store.claim_okr_review_requests(1) == []
-    assert worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1") is None
+    attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
+    assert attempt is not None
+    assert attempt.action == "okr_review"
+    assert attempt.send_status == "failed"
+    assert "OKR live source is not configured" in attempt.send_error
     assert worker.store.count_reply_tasks(status="failed") == 1
     errors = worker.store.list_errors(limit=10)
     assert [error.kind for error in errors] == ["reply_task", "okr_review_source"]
@@ -8371,13 +8574,17 @@ def test_okr_review_missing_live_source_fails_task_without_generic_codex_or_repl
     assert final_sent(dws) == []
 
 
-def test_okr_review_live_source_error_fails_task_without_generic_codex_or_reply(
+def test_okr_review_live_source_error_fails_after_agent_queue_action(
     tmp_path: Path, monkeypatch
 ):
     trigger = message("帮我审核 OKR", single_chat=True)
     dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
     codex = FakeCodex(
-        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该走普通回复")
+        CodexDecision(
+            action=CodexAction.NO_REPLY,
+            reason="用户明确请求审核 OKR，交给 OKR handler 处理。",
+            system_actions=[{"type": "queue_okr_review"}],
+        )
     )
     worker = make_worker(tmp_path, dws, codex, monkeypatch, max_task_attempts=1)
     worker.okr_live_source = type(
@@ -8392,9 +8599,13 @@ def test_okr_review_live_source_error_fails_task_without_generic_codex_or_reply(
 
     worker.run_once()
 
-    assert codex.calls == []
+    assert len(codex.calls) == 1
     assert worker.store.claim_okr_review_requests(1) == []
-    assert worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1") is None
+    attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
+    assert attempt is not None
+    assert attempt.action == "okr_review"
+    assert attempt.send_status == "failed"
+    assert "okr unavailable" in attempt.send_error
     assert worker.store.count_reply_tasks(status="failed") == 1
     errors = worker.store.list_errors(limit=10)
     assert [error.kind for error in errors] == ["reply_task", "okr_review_source"]
@@ -8403,7 +8614,7 @@ def test_okr_review_live_source_error_fails_task_without_generic_codex_or_reply(
     assert final_sent(dws) == []
 
 
-def test_queued_okr_review_ack_delivery_failure_requeues_without_generic_codex(
+def test_queued_okr_review_ack_delivery_failure_requeues_after_agent_queue_action(
     tmp_path: Path, monkeypatch
 ):
     trigger = message("帮我审核 OKR", single_chat=True)
@@ -8413,7 +8624,11 @@ def test_queued_okr_review_ack_delivery_failure_requeues_without_generic_codex(
         send_error=RuntimeError("send failed"),
     )
     codex = FakeCodex(
-        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该走普通回复")
+        CodexDecision(
+            action=CodexAction.NO_REPLY,
+            reason="用户明确请求审核 OKR，交给 OKR handler 处理。",
+            system_actions=[{"type": "queue_okr_review"}],
+        )
     )
     worker = make_worker(
         tmp_path,
@@ -8440,7 +8655,7 @@ def test_queued_okr_review_ack_delivery_failure_requeues_without_generic_codex(
 
     assert worker.consume_once(max_tasks=1) == 0
 
-    assert codex.calls == []
+    assert len(codex.calls) == 1
     assert worker.store.count_reply_tasks(status="done") == 0
     assert worker.store.count_reply_tasks(status="pending") == 1
     retried = worker.store.claim_reply_tasks(limit=1)
@@ -9270,7 +9485,7 @@ def test_group_mention_from_unread_payload_is_processed_when_mention_lookup_miss
     assert attempts[0].send_status == "dry_run"
 
 
-def test_produce_once_coalesces_consecutive_group_mentions_from_same_sender(
+def test_produce_once_triggers_only_latest_consecutive_group_mention_from_same_sender(
     tmp_path: Path, monkeypatch
 ):
     first = message(
@@ -9304,13 +9519,110 @@ def test_produce_once_coalesces_consecutive_group_mentions_from_same_sender(
     assert queued == 1
     assert len(tasks) == 1
     assert tasks[0].trigger_message_id == "msg-mentioned-3"
-    assert "@Alex Chen(明哥) 先看第一点" in tasks[0].trigger_text
-    assert "@曹宇航(Yuhang Cao) @Alex Chen(明哥) 再看第二点" in tasks[0].trigger_text
-    assert "@Alex Chen(明哥) @曹宇航(Yuhang Cao) 最后总结一下" in tasks[0].trigger_text
+    assert tasks[0].trigger_text == "@Alex Chen(明哥) @曹宇航(Yuhang Cao) 最后总结一下"
     assert codex.calls == []
 
 
-def test_single_chat_coalesces_oa_card_with_followup_instruction(
+def test_produce_once_triggers_only_latest_single_chat_message(
+    tmp_path: Path, monkeypatch
+):
+    first = message("先看第一点", message_id="msg-single-1", single_chat=True)
+    first.create_time = "2026-05-28 13:21:54"
+    second = message("再看第二点", message_id="msg-single-2", single_chat=True)
+    second.create_time = "2026-05-28 13:24:02"
+    dws = FakeDws(
+        [conversation(single_chat=True)],
+        {"cid-1": [first, second]},
+        unread_messages={"cid-1": [first, second]},
+    )
+    worker = make_worker(tmp_path, dws, FakeCodex([]), monkeypatch)
+
+    queued = worker.produce_once()
+
+    tasks = worker.store.claim_reply_tasks(limit=10)
+    assert queued == 1
+    assert len(tasks) == 1
+    assert tasks[0].trigger_message_id == "msg-single-2"
+    assert tasks[0].trigger_text == "再看第二点"
+
+
+def test_produce_once_replaces_pending_single_chat_task_with_latest_message(
+    tmp_path: Path, monkeypatch
+):
+    first = message("先看第一点", message_id="msg-single-1", single_chat=True)
+    first.create_time = "2026-05-28 13:21:54"
+    second = message("再看第二点", message_id="msg-single-2", single_chat=True)
+    second.create_time = "2026-05-28 13:24:02"
+    dws = FakeDws(
+        [conversation(single_chat=True)],
+        {"cid-1": [first]},
+        unread_messages={"cid-1": [first]},
+    )
+    worker = make_worker(
+        tmp_path,
+        dws,
+        FakeCodex([]),
+        monkeypatch,
+        fast_path_unread_backoff=timedelta(minutes=5),
+    )
+
+    assert worker.produce_once() == 1
+
+    dws.messages = {"cid-1": [first, second]}
+    dws.unread_messages = {"cid-1": [first, second]}
+    assert worker.produce_once() == 1
+
+    tasks = worker.store.list_reply_tasks(statuses=("pending",), limit=10)
+    assert len(tasks) == 1
+    assert tasks[0].trigger_message_id == "msg-single-2"
+    assert tasks[0].trigger_text == "再看第二点"
+
+
+def test_produce_once_triggers_only_latest_group_thread_reply(
+    tmp_path: Path, monkeypatch
+):
+    first_thread_reply = message(
+        "@Alex Chen(明哥) 这个 thread 先看第一点",
+        message_id="msg-thread-1",
+        quoted_content="同一个 thread",
+        sender_user_id="sender-user-1",
+    )
+    first_thread_reply.create_time = "2026-05-28 13:21:54"
+    other_topic = message(
+        "@Alex Chen(明哥) 另一个话题",
+        message_id="msg-other-topic",
+        sender_user_id="sender-user-2",
+    )
+    other_topic.create_time = "2026-05-28 13:22:54"
+    latest_thread_reply = message(
+        "@Alex Chen(明哥) 这个 thread 最后看这里",
+        message_id="msg-thread-2",
+        quoted_content="同一个 thread",
+        sender_user_id="sender-user-3",
+    )
+    latest_thread_reply.create_time = "2026-05-28 13:24:02"
+    dws = FakeDws(
+        [conversation()],
+        {"cid-1": [first_thread_reply, other_topic, latest_thread_reply]},
+        unread_messages={"cid-1": [first_thread_reply, other_topic, latest_thread_reply]},
+    )
+    worker = make_worker(tmp_path, dws, FakeCodex([]), monkeypatch)
+
+    queued = worker.produce_once()
+
+    tasks = sorted(
+        worker.store.claim_reply_tasks(limit=10),
+        key=lambda task: task.trigger_create_time,
+    )
+    assert queued == 2
+    assert [task.trigger_message_id for task in tasks] == [
+        "msg-other-topic",
+        "msg-thread-2",
+    ]
+    assert tasks[1].trigger_text == "@Alex Chen(明哥) 这个 thread 最后看这里"
+
+
+def test_single_chat_oa_card_followup_triggers_followup_only(
     tmp_path: Path, monkeypatch
 ):
     oa_card = message(
@@ -9344,17 +9656,12 @@ def test_single_chat_coalesces_oa_card_with_followup_instruction(
     assert queued == 1
     assert len(tasks) == 1
     assert tasks[0].trigger_message_id == "msg-followup"
-    assert "Roy Han's 招聘需求申请" in tasks[0].trigger_text
-    assert "dinghash%3Dapproval" in tasks[0].trigger_text
-    assert "磊哥请你的分身审核一遍" in tasks[0].trigger_text
+    assert tasks[0].trigger_text == "磊哥请你的分身审核一遍，并判断这个需求是否必要，以及是否有其他建议"
     merged = DingTalkMessage.model_validate_json(tasks[0].trigger_message_json)
-    assert merged.raw_payload["coalesced_message_ids"] == [
-        "msg-oa-card",
-        "msg-followup",
-    ]
+    assert merged.open_message_id == "msg-followup"
 
 
-def test_mark_seen_tracks_all_coalesced_message_ids(tmp_path: Path, monkeypatch):
+def test_mark_seen_tracks_all_latest_trigger_message_ids(tmp_path: Path, monkeypatch):
     first = message("@Alex Chen(明哥) 先看第一点", message_id="msg-mentioned-1")
     second = message("@Alex Chen(明哥) 再看第二点", message_id="msg-mentioned-2")
     third = message("@Alex Chen(明哥) 最后总结一下", message_id="msg-mentioned-3")
@@ -9363,9 +9670,9 @@ def test_mark_seen_tracks_all_coalesced_message_ids(tmp_path: Path, monkeypatch)
         CodexDecision(action=CodexAction.NO_REPLY, reason="no action needed")
     )
     worker = make_worker(tmp_path, dws, codex, monkeypatch)
-    coalesced = DingTalkAutoReplyWorker._coalesced_message([first, second, third])
+    trigger = DingTalkAutoReplyWorker._latest_trigger_message([first, second, third])
 
-    worker._mark_seen([coalesced])
+    worker._mark_seen([trigger])
 
     assert worker.store.has_seen("msg-mentioned-1") is True
     assert worker.store.has_seen("msg-mentioned-2") is True
@@ -9721,8 +10028,7 @@ def test_group_mentions_are_processed_by_message_time_not_fetch_order(
     assert len(codex.calls) == 1
     assert len(attempts) == 1
     assert attempts[0].trigger_message_id == "msg-newer-mention"
-    assert "怎么规避客户拿给别的 vendor 比价" in attempts[0].trigger_text
-    assert "请审一下这个文档" in attempts[0].trigger_text
+    assert attempts[0].trigger_text == "@Alex Chen(明哥) 明哥请审一下这个文档，给一下意见"
 
 
 def test_current_user_file_does_not_hide_unanswered_group_mention(

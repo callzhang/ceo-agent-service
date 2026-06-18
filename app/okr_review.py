@@ -30,12 +30,20 @@ class OkrPeriod:
 
 
 class DwsLiveOkrSource:
-    def __init__(self, *, dws, command_template: list[str], max_attempts: int = 3):
+    def __init__(
+        self,
+        *,
+        dws,
+        command_template: list[str],
+        max_attempts: int = 3,
+        timeout_seconds: int = 120,
+    ):
         if not command_template:
             raise ValueError("missing OKR live source command template")
         self.dws = dws
         self.command_template = command_template
         self.max_attempts = max_attempts
+        self.timeout_seconds = timeout_seconds
 
     def fetch_user_okr(self, *, user_id: str, period_label: str) -> dict:
         if not user_id.strip():
@@ -46,7 +54,10 @@ class DwsLiveOkrSource:
         ]
         payload = run_external(
             "dws okr live source",
-            lambda: self.dws.run_json(command),
+            lambda: self.dws.run_json(
+                command,
+                timeout_seconds=self.timeout_seconds,
+            ),
             max_attempts=self.max_attempts,
         )
         if not isinstance(payload, dict):
@@ -453,12 +464,33 @@ class UnconfiguredOkrLiveSource:
 
 
 def is_okr_review_request(text: str) -> bool:
-    normalized = " ".join(text.strip().split()).casefold()
-    review_markers = ("审核", "review", "看看", "打分", "评价")
-    okr_markers = ("okr", "kr", "目标")
-    return any(marker in normalized for marker in review_markers) and any(
-        marker in normalized for marker in okr_markers
+    tokens = text.strip().split()
+    non_url_text = " ".join(
+        token
+        for token in tokens
+        if not token.casefold().startswith(("http://", "https://"))
     )
+    normalized = " ".join(non_url_text.split()).casefold()
+    review_markers = ("审核", "review", "看看", "打分", "评价")
+    okr_markers = {"okr", "kr"}
+    return any(marker in normalized for marker in review_markers) and any(
+        term in okr_markers for term in _ascii_terms(normalized)
+    )
+
+
+def _ascii_terms(text: str) -> list[str]:
+    terms: list[str] = []
+    current: list[str] = []
+    for char in text:
+        if char.isascii() and char.isalnum():
+            current.append(char)
+            continue
+        if current:
+            terms.append("".join(current))
+            current = []
+    if current:
+        terms.append("".join(current))
+    return terms
 
 
 def current_quarter_period(today: str | None = None) -> OkrPeriod:

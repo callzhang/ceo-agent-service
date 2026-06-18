@@ -16,7 +16,7 @@
 - Add OA metadata columns to `reply_attempts`; do not create `oa_review_attempts` or `oa_action_attempts`.
 - The final OA action recorded by the system is exactly one of `通过`, `拒绝`, or `退回`.
 - Do not add an OA-specific audit page. Show OA fields on the existing attempt detail page.
-- Do not add OA wrappers to `DwsClient`. The OA agent calls `dws` and authorized DingTalk OA API directly because current OA detail requires API fallback.
+- Do not add OA wrappers to `DwsClient`. The OA handler calls `dws` and authorized DingTalk OA API directly because current OA detail requires API fallback.
 - Update the global `dingtalk-oa-approval` skill to allow authorized OA API detail reads when DWS cannot return complete detail.
 
 ## File Structure
@@ -38,7 +38,7 @@
 
 - Modify `apps/local-service/ceo_agent_service/worker.py`
   - Detect OA approval messages before the generic Codex reply path.
-  - Invoke the OA runner.
+  - Invoke the OA handler.
   - Record one audit row with `action="oa_approval"` and the OA metadata fields.
   - Mark the trigger message seen after the OA task is recorded.
 
@@ -47,7 +47,7 @@
   - Keep the existing Codex session and tool event cards.
 
 - Modify `apps/local-service/ceo_agent_service/cli.py`
-  - Wire the OA runner into `create_worker()` with the skill path default.
+  - Wire the OA handler into `create_worker()` with the skill path default.
 
 - Modify `/Users/principal/.agents/skills/dingtalk-oa-approval/SKILL.md`
   - Replace the DWS-only constraint with DWS-first plus authorized OA API fallback.
@@ -55,16 +55,16 @@
   - State that service logs must not contain tokens, AppKey, AppSecret, cookies, OAuth code, or signed URLs.
 
 - Modify `docs/product-logic.md` and `docs/message-routing-rules.md`
-  - Document that OA approval cards use the OA agent route and are recorded in existing audit history.
+  - Document that OA approval cards use the OA handler route and are recorded in existing audit history.
 
 - Test `apps/local-service/tests/test_store.py`
   - OA columns migrate and persist.
 
 - Test `apps/local-service/tests/test_oa_approval.py`
-  - OA runner injects the skill, parses output, extracts URLs, and does not require `DwsClient`.
+  - OA handler injects the skill, parses output, extracts URLs, and does not require `DwsClient`.
 
 - Test `apps/local-service/tests/test_worker.py`
-  - OA approval cards call the OA runner instead of generic reply Codex and record OA fields.
+  - OA approval cards call the OA handler instead of generic reply Codex and record OA fields.
 
 - Test `apps/local-service/tests/test_audit_web.py`
   - Existing attempt detail page shows OA action, remark, URL, and result.
@@ -257,7 +257,7 @@ git commit -m "feat: record OA approval metadata on reply attempts"
 
 ---
 
-### Task 2: Add OA Agent Runner Without DwsClient OA Wrapper
+### Task 2: Add OA Handler Without DwsClient OA Wrapper
 
 **Files:**
 - Create: `apps/local-service/ceo_agent_service/oa_approval.py`
@@ -273,7 +273,7 @@ import json
 from pathlib import Path
 
 from ceo_agent_service.oa_approval import (
-    OaApprovalCodexRunner,
+    OaApprovalSpecHandler,
     OaApprovalResult,
     extract_oa_url,
 )
@@ -316,7 +316,7 @@ def test_extract_oa_url_prefers_aflow_url_inside_dingtalk_card():
     )
 
 
-def test_oa_runner_injects_skill_and_schema(tmp_path: Path):
+def test_oa_handler_injects_skill_and_schema(tmp_path: Path):
     skill_path = tmp_path / "dingtalk-oa-approval" / "SKILL.md"
     skill_path.parent.mkdir()
     skill_path.write_text(
@@ -347,7 +347,7 @@ def test_oa_runner_injects_skill_and_schema(tmp_path: Path):
         calls.append((command, prompt))
         return output
 
-    runner = OaApprovalCodexRunner(
+    runner = OaApprovalSpecHandler(
         workspace=tmp_path,
         skill_path=skill_path,
         executor=fake_executor,
@@ -581,7 +581,7 @@ def parse_oa_approval_json(raw: str) -> OaApprovalResult:
     raise json.JSONDecodeError("No OA approval JSON found", raw, 0)
 
 
-class OaApprovalCodexRunner:
+class OaApprovalSpecHandler:
     def __init__(
         self,
         workspace: Path,
@@ -708,7 +708,7 @@ class OaApprovalCodexRunner:
         return count_codex_session_lines(session_id, codex_home=self.codex_home)
 ```
 
-- [ ] **Step 5: Run OA runner tests**
+- [ ] **Step 5: Run OA handler tests**
 
 Run:
 
@@ -724,12 +724,12 @@ Expected: PASS.
 ```bash
 cd /Users/principal/Documents/Projects/ceo-agent-service
 git add apps/local-service/ceo_agent_service/oa_approval.py apps/local-service/ceo_agent_service/schemas/oa_approval.schema.json apps/local-service/tests/test_oa_approval.py
-git commit -m "feat: add OA approval agent runner"
+git commit -m "feat: add OA approval handler runner"
 ```
 
 ---
 
-### Task 3: Route OA Approval Messages To The OA Agent
+### Task 3: Route OA Approval Messages To The OA Handler
 
 **Files:**
 - Modify: `apps/local-service/ceo_agent_service/cli.py`
@@ -741,7 +741,7 @@ git commit -m "feat: add OA approval agent runner"
 Append this fake runner class near the other fake helpers in `apps/local-service/tests/test_worker.py`:
 
 ```python
-class FakeOaApprovalRunner:
+class FakeOaApprovalHandler:
     def __init__(self):
         self.calls: list[dict[str, str]] = []
         self.last_session_id = "oa-session-1"
@@ -786,7 +786,7 @@ class FakeOaApprovalRunner:
 Add this test next to `test_structured_approval_card_is_processed_by_codex`:
 
 ```python
-def test_structured_approval_card_is_processed_by_oa_runner(tmp_path: Path, monkeypatch):
+def test_structured_approval_card_is_processed_by_oa_handler(tmp_path: Path, monkeypatch):
     trigger = message(
         "\n".join(
             [
@@ -807,14 +807,14 @@ def test_structured_approval_card_is_processed_by_oa_runner(tmp_path: Path, monk
     codex = FakeCodex(
         CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该走聊天回复")
     )
-    oa_runner = FakeOaApprovalRunner()
+    oa_handler = FakeOaApprovalHandler()
     worker = make_worker(tmp_path, dws, codex, monkeypatch)
-    worker.oa_approval_runner = oa_runner
+    worker.oa_approval_handler = oa_handler
 
     worker.run_once()
 
     assert codex.calls == []
-    assert len(oa_runner.calls) == 1
+    assert len(oa_handler.calls) == 1
     attempt = worker.store.get_reply_attempt(1)
     assert attempt is not None
     assert attempt.action == "oa_approval"
@@ -835,29 +835,29 @@ Run:
 
 ```bash
 cd /Users/principal/Documents/Projects/ceo-agent-service/apps/local-service
-.venv/bin/python -m pytest tests/test_worker.py::test_structured_approval_card_is_processed_by_oa_runner -v
+.venv/bin/python -m pytest tests/test_worker.py::test_structured_approval_card_is_processed_by_oa_handler -v
 ```
 
-Expected: FAIL because `DingTalkAutoReplyWorker` does not call `oa_approval_runner`.
+Expected: FAIL because `DingTalkAutoReplyWorker` does not call `oa_approval_handler`.
 
-- [ ] **Step 3: Add OA runner dependency to the worker**
+- [ ] **Step 3: Add OA handler dependency to the worker**
 
 In `apps/local-service/ceo_agent_service/worker.py`, import the OA helpers:
 
 ```python
-from ceo_agent_service.oa_approval import OaApprovalCodexRunner, extract_oa_url
+from ceo_agent_service.oa_approval import OaApprovalSpecHandler, extract_oa_url
 ```
 
 Add an optional constructor parameter after `codex`:
 
 ```python
-        oa_approval_runner: OaApprovalCodexRunner | None = None,
+        oa_approval_handler: OaApprovalSpecHandler | None = None,
 ```
 
 Assign it in `__init__` after `self.codex = codex`:
 
 ```python
-        self.oa_approval_runner = oa_approval_runner
+        self.oa_approval_handler = oa_approval_handler
 ```
 
 - [ ] **Step 4: Route OA messages before generic Codex reply handling**
@@ -895,8 +895,8 @@ Add this method to `DingTalkAutoReplyWorker` near the other `_handle_*_if_action
     ) -> bool:
         if not DINGTALK_APPROVAL_LINK_PATTERN.search(trigger.content):
             return False
-        oa_runner = self.oa_approval_runner
-        if oa_runner is None:
+        oa_handler = self.oa_approval_handler
+        if oa_handler is None:
             return False
         if self._handle_existing_attempt(conversation, trigger, [trigger]):
             return True
@@ -904,7 +904,7 @@ Add this method to `DingTalkAutoReplyWorker` near the other `_handle_*_if_action
         context_text = "\n".join(
             "\n".join(message_lines(message)) for message in context_messages
         )
-        result = oa_runner.handle(
+        result = oa_handler.handle(
             trigger_text=trigger.content,
             context_text=context_text,
             oa_url=oa_url,
@@ -919,19 +919,19 @@ Add this method to `DingTalkAutoReplyWorker` near the other `_handle_*_if_action
             sensitivity_kind="internal_personnel",
             codex_reason="oa approval handled by dingtalk-oa-approval skill",
             draft_reply_text=result.oa_remark,
-            codex_session_id=getattr(oa_runner, "last_session_id", "") or "",
+            codex_session_id=getattr(oa_handler, "last_session_id", "") or "",
             codex_transcript_start_line=getattr(
-                oa_runner, "last_transcript_start_line", 0
+                oa_handler, "last_transcript_start_line", 0
             ),
             codex_transcript_end_line=getattr(
-                oa_runner, "last_transcript_end_line", 0
+                oa_handler, "last_transcript_end_line", 0
             ),
             audit_documents_json=json.dumps(
                 result.audit_documents,
                 ensure_ascii=False,
             ),
             audit_tool_events_json=json.dumps(
-                getattr(oa_runner, "last_audit_tool_events", []),
+                getattr(oa_handler, "last_audit_tool_events", []),
                 ensure_ascii=False,
             ),
             audit_summary=result.audit_summary,
@@ -960,18 +960,18 @@ Also import `message_lines` from `ceo_agent_service.prompt` in the existing prom
 from ceo_agent_service.prompt import LinkedDocumentContext, build_turn_prompt, message_lines
 ```
 
-- [ ] **Step 5: Wire the OA runner in `create_worker()`**
+- [ ] **Step 5: Wire the OA handler in `create_worker()`**
 
 In `apps/local-service/ceo_agent_service/cli.py`, import:
 
 ```python
-from ceo_agent_service.oa_approval import OaApprovalCodexRunner
+from ceo_agent_service.oa_approval import OaApprovalSpecHandler
 ```
 
 In `create_worker()`, instantiate the runner after `codex = CodexDecisionRunner(...)`:
 
 ```python
-    oa_approval_runner = OaApprovalCodexRunner(
+    oa_approval_handler = OaApprovalSpecHandler(
         workspace=settings.workspace,
         timeout_seconds=settings.codex_timeout_seconds,
     )
@@ -980,7 +980,7 @@ In `create_worker()`, instantiate the runner after `codex = CodexDecisionRunner(
 Pass it to the worker constructor:
 
 ```python
-        oa_approval_runner=oa_approval_runner,
+        oa_approval_handler=oa_approval_handler,
 ```
 
 - [ ] **Step 6: Run the OA worker test**
@@ -989,7 +989,7 @@ Run:
 
 ```bash
 cd /Users/principal/Documents/Projects/ceo-agent-service/apps/local-service
-.venv/bin/python -m pytest tests/test_worker.py::test_structured_approval_card_is_processed_by_oa_runner -v
+.venv/bin/python -m pytest tests/test_worker.py::test_structured_approval_card_is_processed_by_oa_handler -v
 ```
 
 Expected: PASS.
@@ -1001,13 +1001,13 @@ Run:
 ```bash
 cd /Users/principal/Documents/Projects/ceo-agent-service/apps/local-service
 .venv/bin/python -m pytest \
-  tests/test_worker.py::test_structured_approval_card_is_processed_by_oa_runner \
+  tests/test_worker.py::test_structured_approval_card_is_processed_by_oa_handler \
   tests/test_worker.py::test_structured_link_card_is_skipped_before_codex \
   tests/test_worker.py::test_ding_approval_reminder_is_processed_by_codex \
   -v
 ```
 
-Expected: PASS. If `test_ding_approval_reminder_is_processed_by_codex` now routes to the OA runner by design, update that test to install `FakeOaApprovalRunner` and assert `action == "oa_approval"` because approval reminders should use the OA route once the OA runner is available.
+Expected: PASS. If `test_ding_approval_reminder_is_processed_by_codex` now routes to the OA handler by design, update that test to install `FakeOaApprovalHandler` and assert `action == "oa_approval"` because approval reminders should use the OA route once the OA handler is available.
 
 - [ ] **Step 8: Commit**
 
@@ -1210,12 +1210,13 @@ In `docs/product-logic.md`, replace the OA paragraph under `Safety Defaults` wit
 ```markdown
 - DingTalk media/calendar placeholders and DingTalk internal link-only cards are
   skipped before Codex, except approval/OA links.
-- OA approval cards and reminders are routed to a dedicated OA approval agent.
-  The service injects the `dingtalk-oa-approval` skill into that agent, records
+- OA approval cards and reminders are routed through the OA handler on the
+  unified `StructuredCodexRunner`. The service injects the
+  `dingtalk-oa-approval` skill into that structured task, records
   the Codex session, tool events, approval URL, approval action, approval remark,
   and action result on the existing reply attempt audit row, and does not create
   a separate OA audit page.
-- The OA agent may use authorized DingTalk OA API detail reads when DWS does not
+- The OA handler may use authorized DingTalk OA API detail reads when DWS does not
   return complete approval detail. Secrets and signed URLs must not be written
   to logs, SQLite, audit summaries, reports, or DingTalk replies.
 ```
@@ -1225,18 +1226,18 @@ In `docs/product-logic.md`, replace the OA paragraph under `Safety Defaults` wit
 In `docs/message-routing-rules.md`, in the `审批/OA 链接例外` section, replace `当前行为：agent_review` with:
 
 ```markdown
-当前行为：`oa_agent_review` when the OA runner is configured; otherwise `agent_review`.
+当前行为：`oa_handler_review` when the OA handler is configured; otherwise `agent_review`.
 ```
 
 Replace the route requirements list with:
 
 ```markdown
 - 不在 agent 前跳过。
-- 配置了 OA runner 时，交给专用 OA agent；该 agent 注入 `dingtalk-oa-approval` skill。
-- OA agent 最终记录的审批动作只能是 `通过`、`拒绝`、`退回`。
+- 配置了 OA handler 时，使用统一 `StructuredCodexRunner` 执行 OA handler 审阅任务，并注入 `dingtalk-oa-approval` skill。
+- OA handler 最终记录的审批动作只能是 `通过`、`拒绝`、`退回`。
 - 服务在既有 `reply_attempts` 审计记录中保存审批 URL、审批动作、审批留言、执行结果、Codex session 和工具事件。
 - 不新增 OA 页面；从既有 attempt detail 查看处理过程。
-- DWS 详情不完整时，OA agent 可使用已授权的钉钉 OA API 补读详情，但不得记录 token、AppKey、AppSecret、cookie、OAuth code 或签名 URL。
+- DWS 详情不完整时，OA handler 可使用已授权的钉钉 OA API 补读详情，但不得记录 token、AppKey、AppSecret、cookie、OAuth code 或签名 URL。
 ```
 
 - [ ] **Step 3: Run focused tests**
@@ -1248,7 +1249,7 @@ cd /Users/principal/Documents/Projects/ceo-agent-service/apps/local-service
 .venv/bin/python -m pytest \
   tests/test_store.py \
   tests/test_oa_approval.py \
-  tests/test_worker.py::test_structured_approval_card_is_processed_by_oa_runner \
+  tests/test_worker.py::test_structured_approval_card_is_processed_by_oa_handler \
   tests/test_audit_web.py::test_attempt_detail_renders_oa_metadata \
   -v
 ```
@@ -1271,7 +1272,7 @@ Expected: PASS. If the full suite is too slow for the current run, finish with t
 ```bash
 cd /Users/principal/Documents/Projects/ceo-agent-service
 git add docs/product-logic.md docs/message-routing-rules.md
-git commit -m "docs: document OA approval agent route"
+git commit -m "docs: document OA approval handler route"
 ```
 
 ---

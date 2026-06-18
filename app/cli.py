@@ -41,11 +41,17 @@ from app.feedback_spike import (
     prepare_outgoing_reply_text,
     send_feedback_spike_links,
 )
+from app.feedback_policy import (
+    FEEDBACK_BLOCK_REPLY_TEXT,
+    FEEDBACK_REQUIRED_LINK_PREFIX,
+    requires_feedback_block,
+    requires_feedback_reminder,
+)
 from app.leak_check import contains_forbidden_leak
 from app.message_split import split_dingtalk_text
 from app.dingtalk_models import CodexAction, DingTalkConversation, DingTalkMessage
 from app.notification import send_macos_notification
-from app.oa_approval import OaApprovalReviewClient
+from app.oa_approval import OaApprovalSpecHandler
 from app.org_cache import (
     CachedDwsClient,
     CachedOrgDirectory,
@@ -81,6 +87,7 @@ OKR_SOURCE_KIND_ENV = "CEO_OKR_SOURCE_KIND"
 OKR_OBJECTIVE_RULE_ID_ENV = "CEO_OKR_OBJECTIVE_RULE_ID"
 OKR_REVIEW_CODEX_TIMEOUT_SECONDS = 900
 OKR_REVIEW_CODEX_IDLE_TIMEOUT_SECONDS = 600
+WORK_SUMMARY_INPUT_STALE_SECONDS = 30 * 60
 SEND_ATTEMPT_TARGET_LOOKBACK_LIMIT = 500
 run_audit_web = None
 
@@ -111,6 +118,8 @@ class WorkerSettings(BaseModel):
     dws_transient_retry_delay_seconds: float = 1.0
     codex_timeout_seconds: PositiveInt = 420
     codex_idle_timeout_seconds: PositiveInt = 180
+    task_codex_timeout_seconds: PositiveInt = 900
+    task_codex_idle_timeout_seconds: PositiveInt = 600
     task_work_item_interval_seconds: PositiveInt = 60
     task_daily_interval_seconds: PositiveInt = 86_400
     max_batches: NonNegativeInt | None = None
@@ -270,6 +279,28 @@ def build_parser() -> argparse.ArgumentParser:
                 )
             ),
             help="maximum seconds to wait without Codex stdout/stderr output",
+        )
+        subparser.add_argument(
+            "--task-codex-timeout-seconds",
+            type=_positive_int,
+            default=_positive_int(
+                os.getenv(
+                    "CEO_TASK_CODEX_TIMEOUT_SECONDS",
+                    str(defaults.task_codex_timeout_seconds),
+                )
+            ),
+            help="maximum seconds to wait for one task-agent Codex decision",
+        )
+        subparser.add_argument(
+            "--task-codex-idle-timeout-seconds",
+            type=_positive_int,
+            default=_positive_int(
+                os.getenv(
+                    "CEO_TASK_CODEX_IDLE_TIMEOUT_SECONDS",
+                    str(defaults.task_codex_idle_timeout_seconds),
+                )
+            ),
+            help="maximum seconds to wait without task-agent Codex stdout/stderr output",
         )
         if command == "refresh-org-cache":
             subparser.add_argument("--user-id", action="append", default=[])
@@ -497,6 +528,8 @@ def settings_from_args(args: argparse.Namespace) -> WorkerSettings:
         dws_transient_retry_delay_seconds=args.dws_transient_retry_delay_seconds,
         codex_timeout_seconds=args.codex_timeout_seconds,
         codex_idle_timeout_seconds=args.codex_idle_timeout_seconds,
+        task_codex_timeout_seconds=args.task_codex_timeout_seconds,
+        task_codex_idle_timeout_seconds=args.task_codex_idle_timeout_seconds,
         task_work_item_interval_seconds=getattr(
             args,
             "task_work_item_interval_seconds",
@@ -536,7 +569,7 @@ def create_worker(settings: WorkerSettings) -> DingTalkAutoReplyWorker:
         timeout_seconds=settings.codex_timeout_seconds,
         idle_timeout_seconds=settings.codex_idle_timeout_seconds,
     )
-    oa_approval_reviewer = OaApprovalReviewClient(
+    oa_approval_handler = OaApprovalSpecHandler(
         workspace=settings.workspace,
         timeout_seconds=settings.codex_timeout_seconds,
         idle_timeout_seconds=settings.codex_idle_timeout_seconds,
@@ -552,7 +585,7 @@ def create_worker(settings: WorkerSettings) -> DingTalkAutoReplyWorker:
         style_profile=style_profile,
         style_records=style_records,
     )
-    worker.oa_approval_handler = oa_approval_reviewer
+    worker.oa_approval_handler = oa_approval_handler
     okr_source_kind = _okr_source_kind()
     if okr_source_kind == "agoal":
         worker.okr_live_source = DwsAgoalApiOkrSource(
@@ -702,15 +735,23 @@ def consume_once(settings: WorkerSettings) -> int:
 def process_work_items_command(settings: WorkerSettings) -> int:
     store = AutoReplyStore(settings.db_path)
     limit = 20 if settings.max_batches is None else settings.max_batches
+    if limit <= 0:
+        print("process-work-items processed=0", flush=True)
+        return 0
+    store.reset_stale_processing_work_summary_inputs(WORK_SUMMARY_INPUT_STALE_SECONDS)
     runner = TaskAgentRunner(
         TaskAgentCodexRunner(
             workspace=settings.workspace,
-            timeout_seconds=settings.codex_timeout_seconds,
-            idle_timeout_seconds=settings.codex_idle_timeout_seconds,
+            timeout_seconds=settings.task_codex_timeout_seconds,
+            idle_timeout_seconds=settings.task_codex_idle_timeout_seconds,
         )
     )
     processed = 0
-    for work_input in store.claim_work_summary_inputs(limit=limit):
+    for _ in range(limit):
+        claimed = store.claim_work_summary_inputs(limit=1)
+        if not claimed:
+            break
+        work_input = claimed[0]
         try:
             process_work_item(store, runner, work_input)
             processed += 1
@@ -1180,11 +1221,27 @@ def send_attempt_command(settings: WorkerSettings, attempt_id: int) -> dict[str,
     )
     feedback_token = ""
     feedback_base_url = feedback_spike_vercel_base_url()
-    if feedback_base_url:
+    feedback_stats = store.feedback_pressure_stats(
+        attempt.conversation_id,
+        now_utc=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
+    )
+    feedback_block = bool(feedback_base_url) and requires_feedback_block(
+        feedback_stats
+    )
+    feedback_link_prefix = (
+        FEEDBACK_REQUIRED_LINK_PREFIX
+        if bool(feedback_base_url) and requires_feedback_reminder(feedback_stats)
+        else "反馈："
+    )
+    if feedback_block:
+        reply_text = FEEDBACK_BLOCK_REPLY_TEXT
+        store.update_reply_attempt(attempt.id, final_reply_text=reply_text)
+    elif feedback_base_url:
         outgoing_text = prepare_outgoing_reply_text(
             reply_text=reply_text,
             original_text=attempt.trigger_text,
             feedback_base_url=feedback_base_url,
+            feedback_link_prefix=feedback_link_prefix,
             feedback_link_appender=append_feedback_links,
         )
         reply_text = outgoing_text.text
@@ -1202,6 +1259,7 @@ def send_attempt_command(settings: WorkerSettings, attempt_id: int) -> dict[str,
                     reply_text=clean_reply_text,
                     original_text=attempt.trigger_text,
                     feedback_base_url=feedback_base_url,
+                    feedback_link_prefix=feedback_link_prefix,
                     feedback_link_appender=append_feedback_links,
                 )
                 reply_text = outgoing_text.text
