@@ -1,8 +1,9 @@
 from dataclasses import dataclass
 
 
-FEEDBACK_REQUIRED_LINK_PREFIX = "请对我的服务提供反馈，长期不评价将跳过："
-FEEDBACK_BLOCK_REPLY_TEXT = "请对我提供反馈后再提问"
+FEEDBACK_REQUIRED_LINK_PREFIX = (
+    "【需要反馈】请点下面的 👍 / 👎 评价本次回复；长期不评价会跳过后续自动回复："
+)
 
 
 @dataclass(frozen=True)

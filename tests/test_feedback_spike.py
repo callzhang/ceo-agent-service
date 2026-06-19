@@ -5,6 +5,7 @@ import pytest
 
 from app.cli import build_parser, feedback_spike_command
 from app.dws_client import DwsClient
+from app.feedback_policy import FEEDBACK_REQUIRED_LINK_PREFIX
 from app.feedback_spike import (
     append_feedback_links,
     build_callback_url,
@@ -102,13 +103,13 @@ def test_build_feedback_link_text_accepts_required_feedback_prefix():
         "可以，先按这个方向试一下。",
         up_url="https://feedback.example.com/up",
         down_url="https://feedback.example.com/down",
-        link_prefix="请对我的服务提供反馈，长期不评价将跳过：",
+        link_prefix=FEEDBACK_REQUIRED_LINK_PREFIX,
     )
 
     assert text == (
         "可以，先按这个方向试一下。\n\n"
-        "请对我的服务提供反馈，长期不评价将跳过："
-        "[👍](https://feedback.example.com/up)"
+        + FEEDBACK_REQUIRED_LINK_PREFIX
+        + "[👍](https://feedback.example.com/up)"
         "｜[👎](https://feedback.example.com/down)"
     )
 

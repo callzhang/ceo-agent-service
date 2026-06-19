@@ -3038,7 +3038,8 @@ def test_consume_once_uses_required_feedback_prefix_after_unanswered_week(
 
     assert processed == 1
     sent_text = final_sent(dws)[0][1]
-    assert "请对我的服务提供反馈，长期不评价将跳过：" in sent_text
+    assert "【需要反馈】" in sent_text
+    assert "长期不评价会跳过后续自动回复" in sent_text
     assert "反馈：[👍]" not in sent_text
     assert "先按A方案走" in sent_text
     sent_reply = worker.store.get_sent_reply("cid-1", "msg-1")
@@ -3076,7 +3077,8 @@ def test_consume_once_keeps_reply_after_unanswered_feedback_deadline(
 
     assert processed == 1
     sent_text = final_sent(dws)[0][1]
-    assert "请对我的服务提供反馈，长期不评价将跳过：" in sent_text
+    assert "【需要反馈】" in sent_text
+    assert "长期不评价会跳过后续自动回复" in sent_text
     assert "请对我提供反馈后再提问" not in sent_text
     assert "先按A方案走" in sent_text
     assert "/api/dingtalk-feedback-spike" in sent_text
