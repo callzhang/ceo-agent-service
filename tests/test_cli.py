@@ -1656,7 +1656,7 @@ def test_send_attempt_command_appends_feedback_links_when_configured(
     assert '"kind": "native_reply"' in sent_reply.send_result_json
 
 
-def test_send_attempt_command_blocks_when_feedback_is_overdue(
+def test_send_attempt_command_keeps_reply_when_feedback_is_overdue(
     monkeypatch, tmp_path
 ):
     sent = {}
@@ -1716,10 +1716,13 @@ def test_send_attempt_command_blocks_when_feedback_is_overdue(
     send_attempt_command(settings, attempt_id)
 
     sent_text = sent["reply"][3]
-    assert sent_text == "请对我提供反馈后再提问"
+    assert "可以先这样处理。（by明哥分身）" in sent_text
+    assert "请对我的服务提供反馈，长期不评价将跳过：" in sent_text
+    assert "/api/dingtalk-feedback-spike" in sent_text
+    assert "请对我提供反馈后再提问" not in sent_text
     sent_reply = cli.AutoReplyStore(settings.db_path).get_sent_reply("cid-1", "msg-1")
     assert sent_reply is not None
-    assert sent_reply.feedback_token == ""
+    assert sent_reply.feedback_token in sent_text
 
 
 def test_send_attempt_command_sends_single_chat_as_native_reply(

@@ -45,7 +45,6 @@ from app.dws_client import (
 from app.feedback_spike import append_feedback_links, prepare_outgoing_reply_text
 from app.feedback_events import sync_feedback_events_for_sent_replies
 from app.feedback_policy import (
-    FEEDBACK_BLOCK_REPLY_TEXT,
     FEEDBACK_REQUIRED_LINK_PREFIX,
     requires_feedback_block,
     requires_feedback_reminder,
@@ -6039,13 +6038,14 @@ class DingTalkAutoReplyWorker:
         )
         feedback_link_prefix = (
             FEEDBACK_REQUIRED_LINK_PREFIX
-            if bool(feedback_base_url) and requires_feedback_reminder(feedback_stats)
+            if bool(feedback_base_url)
+            and (
+                feedback_block
+                or requires_feedback_reminder(feedback_stats)
+            )
             else "反馈："
         )
-        if feedback_block:
-            reply_text = FEEDBACK_BLOCK_REPLY_TEXT
-            feedback_token = ""
-        else:
+        if feedback_base_url:
             outgoing_text = prepare_outgoing_reply_text(
                 reply_text=reply_text,
                 original_text=trigger.content,
@@ -6056,13 +6056,15 @@ class DingTalkAutoReplyWorker:
             )
             reply_text = outgoing_text.text
             feedback_token = outgoing_text.feedback_token
+        else:
+            feedback_token = ""
         self.store.update_reply_attempt(
             attempt_id,
             final_reply_text=reply_text,
             direct_user_id=direct_user_id or "",
             direct_open_dingtalk_id=direct_open_dingtalk_id or "",
         )
-        if not feedback_block and contains_forbidden_leak(reply_text):
+        if contains_forbidden_leak(reply_text):
             regenerated_reply_text = self._regenerate_reply_after_leak_check(
                 blocked_reply_text=reply_text,
             )

@@ -42,7 +42,6 @@ from app.feedback_spike import (
     send_feedback_spike_links,
 )
 from app.feedback_policy import (
-    FEEDBACK_BLOCK_REPLY_TEXT,
     FEEDBACK_REQUIRED_LINK_PREFIX,
     requires_feedback_block,
     requires_feedback_reminder,
@@ -1231,13 +1230,14 @@ def send_attempt_command(settings: WorkerSettings, attempt_id: int) -> dict[str,
     )
     feedback_link_prefix = (
         FEEDBACK_REQUIRED_LINK_PREFIX
-        if bool(feedback_base_url) and requires_feedback_reminder(feedback_stats)
+        if bool(feedback_base_url)
+        and (
+            feedback_block
+            or requires_feedback_reminder(feedback_stats)
+        )
         else "反馈："
     )
-    if feedback_block:
-        reply_text = FEEDBACK_BLOCK_REPLY_TEXT
-        store.update_reply_attempt(attempt.id, final_reply_text=reply_text)
-    elif feedback_base_url:
+    if feedback_base_url:
         outgoing_text = prepare_outgoing_reply_text(
             reply_text=reply_text,
             original_text=attempt.trigger_text,

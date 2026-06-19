@@ -3046,7 +3046,7 @@ def test_consume_once_uses_required_feedback_prefix_after_unanswered_week(
     assert sent_reply.feedback_token in sent_text
 
 
-def test_consume_once_blocks_reply_after_unanswered_feedback_deadline(
+def test_consume_once_keeps_reply_after_unanswered_feedback_deadline(
     tmp_path: Path, monkeypatch
 ):
     monkeypatch.setenv(
@@ -3076,12 +3076,13 @@ def test_consume_once_blocks_reply_after_unanswered_feedback_deadline(
 
     assert processed == 1
     sent_text = final_sent(dws)[0][1]
-    assert "请对我提供反馈后再提问" in sent_text
-    assert "先按A方案走" not in sent_text
-    assert "/api/dingtalk-feedback-spike" not in sent_text
+    assert "请对我的服务提供反馈，长期不评价将跳过：" in sent_text
+    assert "请对我提供反馈后再提问" not in sent_text
+    assert "先按A方案走" in sent_text
+    assert "/api/dingtalk-feedback-spike" in sent_text
     sent_reply = worker.store.get_sent_reply("cid-1", "msg-1")
     assert sent_reply is not None
-    assert sent_reply.feedback_token == ""
+    assert sent_reply.feedback_token in sent_text
 
 
 def test_consume_once_syncs_feedback_before_block_check(
