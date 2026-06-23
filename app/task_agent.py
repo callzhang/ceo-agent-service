@@ -165,7 +165,8 @@ def build_task_agent_prompt(
 - BM25 候选项目只是初始线索，不是权威匹配结果。
 - 如果候选项目为空或你判断不匹配，可以使用 dws 或 memory_connector 恢复更多上下文；这是提示，不是硬性要求。
 - memory_connector 是外部辅助服务，不能成为 task agent 的运行依赖。
-- 如果 memory_connector 状态为可用，create_project 或 update_project 前必须使用 memory_recall 查历史背景；不要传入或编造 user_id。
+- 如果 memory_connector 状态为可用，create_project 或 update_project 前必须直接调用 memory_recall MCP 工具查历史背景；不要传入或编造 user_id。
+- list_mcp_resources、list_mcp_resource_templates、memory_get、timeline_get 或本地搜索都不能替代 memory_recall；只有实际调用 memory_recall 后，memory_recall_used 才能为 true。
 - 如果 memory_connector 状态为不可用，不要因此停止任务、不要输出 critical_info_unavailable、不要把任务转人工；改用 Work Item、候选项目、DWS 或本地上下文判断。此时 memory_recall_used=false，project.memory_context 写明原本会查询什么、memory_connector 不可用的原因，以及你实际采用的替代证据。
 - project.memory_context 必须写入本次记忆查询或替代依据：memory_recall 有命中时写查询、摘要和关键记忆证据；没有命中时写查询和无命中结论；memory_connector 不可用时写查询意图、不可用原因和替代证据。
 - 如果上下文无法支撑稳定项目名称，不要创建模糊项目；生成 follow_up_draft 询问项目、目标、owner。

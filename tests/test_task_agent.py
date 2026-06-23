@@ -5,7 +5,12 @@ import pytest
 
 from app.process_runner import ProcessRunResult
 from app.store import AutoReplyStore
-from app.task_agent import TaskAgentRunner, apply_task_agent_decision, process_work_item
+from app.task_agent import (
+    TaskAgentRunner,
+    apply_task_agent_decision,
+    build_task_agent_prompt,
+    process_work_item,
+)
 from app.task_agent import TaskAgentCodexRunner
 from app.task_models import TaskAgentDecision, WorkItem
 
@@ -658,6 +663,19 @@ def test_task_agent_codex_runner_keeps_user_config_for_memory_recall(tmp_path):
         for index, value in enumerate(command[:-1])
         if value == "--disable"
     ]
+
+
+def test_task_agent_prompt_names_required_memory_recall_tool():
+    prompt = build_task_agent_prompt(
+        _work_item(),
+        "无候选项目",
+        memory_issue="",
+    )
+
+    assert "直接调用 memory_recall MCP 工具" in prompt
+    assert "list_mcp_resources" in prompt
+    assert "不能替代 memory_recall" in prompt
+    assert "只有实际调用 memory_recall 后" in prompt
 
 
 def test_update_project_without_id_raises_value_error(tmp_path):
