@@ -166,7 +166,9 @@ def build_task_agent_prompt(
 - 如果候选项目为空或你判断不匹配，可以使用 dws 或 memory_connector 恢复更多上下文；这是提示，不是硬性要求。
 - memory_connector 是外部辅助服务，不能成为 task agent 的运行依赖。
 - 如果 memory_connector 状态为可用，create_project 或 update_project 前必须直接调用 memory_recall MCP 工具查历史背景；不要传入或编造 user_id。
-- list_mcp_resources、list_mcp_resource_templates、memory_get、timeline_get 或本地搜索都不能替代 memory_recall；只有实际调用 memory_recall 后，memory_recall_used 才能为 true。
+- list_mcp_resources、list_mcp_resource_templates、memory_get、timeline_get 或本地搜索都不能替代 memory_recall；只有实际调用 memory_recall 并获得可用记忆结果后，memory_recall_used 才能为 true。
+- 如果当前运行时确实没有暴露可直接调用的 memory_recall 工具，先用工具发现结果证明不可用，再继续处理；此时 memory_recall_used=false，并在 project.memory_context.memories 写入一条 source="memory_connector_runtime_unavailable" 的证据说明。
+- 如果实际调用了 memory_recall 但该工具超时或传输失败，继续处理；此时 memory_recall_used=false，并在 project.memory_context.memories 写入一条 source="memory_recall_runtime_failure" 的证据说明。
 - 如果 memory_connector 状态为不可用，不要因此停止任务、不要输出 critical_info_unavailable、不要把任务转人工；改用 Work Item、候选项目、DWS 或本地上下文判断。此时 memory_recall_used=false，project.memory_context 写明原本会查询什么、memory_connector 不可用的原因，以及你实际采用的替代证据。
 - project.memory_context 必须写入本次记忆查询或替代依据：memory_recall 有命中时写查询、摘要和关键记忆证据；没有命中时写查询和无命中结论；memory_connector 不可用时写查询意图、不可用原因和替代证据。
 - 如果上下文无法支撑稳定项目名称，不要创建模糊项目；生成 follow_up_draft 询问项目、目标、owner。
@@ -233,13 +235,19 @@ def process_work_item(
             audit_summary=decision.update_summary,
             memory_recall_used=decision.memory_recall_used,
         )
+        audit_tool_events = getattr(runner.codex, "last_audit_tool_events", None)
         memory_recall_attempted = _audit_events_include_memory_recall(
-            getattr(runner.codex, "last_audit_tool_events", None)
+            audit_tool_events
+        )
+        memory_runtime_unavailable = (
+            _audit_events_include_memory_tool_discovery(audit_tool_events)
+            and _decision_reports_memory_runtime_unavailable(decision)
         )
         _validate_memory_recall_tool_event(
             decision,
-            getattr(runner.codex, "last_audit_tool_events", None),
+            audit_tool_events,
             memory_issue=memory_issue,
+            memory_runtime_unavailable=memory_runtime_unavailable,
         )
         apply_task_agent_decision(
             store,
@@ -249,6 +257,7 @@ def process_work_item(
             codex_session_id=codex_session_id,
             memory_issue=memory_issue,
             memory_recall_attempted=memory_recall_attempted,
+            memory_runtime_unavailable=memory_runtime_unavailable,
             record_run=False,
         )
         if decision.action == "discard":
@@ -272,6 +281,7 @@ def apply_task_agent_decision(
     codex_session_id: str = "",
     memory_issue: str = "",
     memory_recall_attempted: bool = False,
+    memory_runtime_unavailable: bool = False,
     record_run: bool = True,
 ) -> int | None:
     if record_run:
@@ -286,6 +296,7 @@ def apply_task_agent_decision(
         decision,
         memory_issue=memory_issue,
         memory_recall_attempted=memory_recall_attempted,
+        memory_runtime_unavailable=memory_runtime_unavailable,
     )
 
     if decision.action == "discard":
@@ -341,6 +352,7 @@ def _validate_task_agent_decision(
     *,
     memory_issue: str = "",
     memory_recall_attempted: bool = False,
+    memory_runtime_unavailable: bool = False,
 ) -> None:
     for todo_change in decision.todo_changes:
         if todo_change.action != "create" and todo_change.todo_id is None:
@@ -355,6 +367,7 @@ def _validate_task_agent_decision(
     if (
         not memory_issue.strip()
         and not memory_recall_attempted
+        and not memory_runtime_unavailable
         and not decision.memory_recall_used
     ):
         raise ValueError("non-discard task decision requires memory_recall_used")
@@ -374,12 +387,15 @@ def _validate_memory_recall_tool_event(
     audit_tool_events: object,
     *,
     memory_issue: str = "",
+    memory_runtime_unavailable: bool = False,
 ) -> None:
     if decision.action == "discard" or audit_tool_events is None:
         return
     if not isinstance(audit_tool_events, list):
         return
     if _audit_events_include_memory_recall(audit_tool_events):
+        return
+    if memory_runtime_unavailable:
         return
     if memory_issue.strip():
         return
@@ -396,6 +412,34 @@ def _audit_events_include_memory_recall(audit_tool_events: object) -> bool:
         if "memory_recall" in tool:
             return True
     return False
+
+
+def _audit_events_include_memory_tool_discovery(audit_tool_events: object) -> bool:
+    if not isinstance(audit_tool_events, list):
+        return False
+    discovery_tools = {
+        "tool_search_call",
+        "list_mcp_resources",
+        "list_mcp_resource_templates",
+    }
+    for event in audit_tool_events:
+        if not isinstance(event, dict):
+            continue
+        tool = str(event.get("tool") or "")
+        if tool in discovery_tools:
+            return True
+    return False
+
+
+def _decision_reports_memory_runtime_unavailable(
+    decision: TaskAgentDecision,
+) -> bool:
+    if decision.project is None:
+        return False
+    return any(
+        item.source == "memory_connector_runtime_unavailable"
+        for item in decision.project.memory_context.memories
+    )
 
 
 def _apply_project(store: AutoReplyStore, decision: TaskAgentDecision) -> int:

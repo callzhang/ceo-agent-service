@@ -641,6 +641,62 @@ def test_process_work_item_allows_memory_recall_runtime_failure_with_tool_event(
     )
 
 
+def test_process_work_item_allows_memory_tool_discovery_unavailable_evidence(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setattr("app.task_agent.memory_connector_config_issue", lambda: "")
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    item = _work_item()
+    input_id = store.enqueue_work_summary_input(
+        source_type=item.source.type.value,
+        source_ref=item.source.ref,
+        payload_json=item.model_dump_json(),
+    )
+    work_input = store.claim_work_summary_inputs(limit=1)[0]
+    codex = FakeCodexWithAuditEvents(
+        {
+            "action": "create_project",
+            "project": {
+                "title": "售前知识库建设",
+                "category": "sales",
+                "status": "active",
+                "memory_context": {
+                    "query": "售前知识库",
+                    "summary": "memory_recall 工具在当前运行时未暴露，改用 Work Item 和候选项目。",
+                    "memories": [
+                        {
+                            "source": "memory_connector_runtime_unavailable",
+                            "text": "已检查工具面，未发现可直接调用的 memory_recall。",
+                            "summary": "工具不可见，使用替代证据。",
+                        }
+                    ],
+                },
+            },
+            "todo_changes": [],
+            "follow_up_drafts": [],
+            "update_summary": "创建项目。",
+            "merge_reason": "事项需要持续跟进。",
+            "memory_recall_used": False,
+            "confidence": 0.8,
+        },
+        audit_tool_events=[{"tool": "list_mcp_resources", "output": "[]"}],
+    )
+
+    process_work_item(store, TaskAgentRunner(codex), work_input)
+
+    with sqlite3.connect(tmp_path / "task.sqlite3") as db:
+        input_row = db.execute(
+            "select status, error from work_summary_inputs where id=?",
+            (input_id,),
+        ).fetchone()
+        run_row = db.execute(
+            "select summary_input_id, memory_recall_used from task_agent_runs",
+        ).fetchone()
+    assert input_row == ("done", "")
+    assert run_row == (input_id, 0)
+
+
 def test_process_work_item_continues_when_memory_connector_unavailable(
     tmp_path,
     monkeypatch,
@@ -749,7 +805,9 @@ def test_task_agent_prompt_names_required_memory_recall_tool():
     assert "直接调用 memory_recall MCP 工具" in prompt
     assert "list_mcp_resources" in prompt
     assert "不能替代 memory_recall" in prompt
-    assert "只有实际调用 memory_recall 后" in prompt
+    assert "只有实际调用 memory_recall 并获得可用记忆结果后" in prompt
+    assert 'source="memory_connector_runtime_unavailable"' in prompt
+    assert 'source="memory_recall_runtime_failure"' in prompt
 
 
 def test_update_project_without_id_raises_value_error(tmp_path):
