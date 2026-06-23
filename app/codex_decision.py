@@ -374,7 +374,9 @@ def _audit_event_from_payload(payload: Any) -> dict[str, str] | None:
     path = _first_pathish_string(output) if output else ""
     if not path:
         path = _first_pathish_string(source)
-    if not any([command, path, input_text, output]):
+    if not any([command, path, input_text, output]) and not _is_tool_call_event(
+        source_type
+    ):
         return None
     event: dict[str, str] = {}
     if event_type:
@@ -392,6 +394,15 @@ def _audit_event_from_payload(payload: Any) -> dict[str, str] | None:
     if path:
         event["path"] = _short_text(path, 500)
     return event
+
+
+def _is_tool_call_event(source_type: str) -> bool:
+    return source_type in {
+        "function_call",
+        "mcp_tool_call",
+        "tool_call",
+        "tool_search_call",
+    }
 
 
 def _string_value(payload: dict[str, Any], key: str) -> str:

@@ -333,6 +333,37 @@ def test_extract_codex_audit_events_preserves_mcp_tool_name():
     assert "候选人筛选项目" in events[0]["input"]
 
 
+def test_extract_codex_audit_events_preserves_tool_name_without_payload():
+    raw = "\n".join(
+        [
+            json.dumps(
+                {
+                    "type": "response_item",
+                    "item": {
+                        "type": "function_call",
+                        "name": "list_mcp_resources",
+                    },
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "response_item",
+                    "item": {
+                        "type": "tool_search_call",
+                    },
+                }
+            ),
+        ]
+    )
+
+    events = extract_codex_audit_events(raw)
+
+    assert events == [
+        {"event_type": "response_item", "tool": "list_mcp_resources"},
+        {"event_type": "response_item", "tool": "tool_search_call"},
+    ]
+
+
 def test_memory_connector_config_issue_reports_expired_token(tmp_path, monkeypatch):
     config = tmp_path / "config.toml"
     config.write_text(
