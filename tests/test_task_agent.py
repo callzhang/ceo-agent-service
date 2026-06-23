@@ -567,6 +567,80 @@ def test_process_work_item_requires_actual_memory_recall_tool_event(
     assert run_row == (input_id, "task-session-1", "创建项目。", 1)
 
 
+def test_process_work_item_allows_memory_recall_runtime_failure_with_tool_event(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setattr("app.task_agent.memory_connector_config_issue", lambda: "")
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    item = _work_item()
+    input_id = store.enqueue_work_summary_input(
+        source_type=item.source.type.value,
+        source_ref=item.source.ref,
+        payload_json=item.model_dump_json(),
+    )
+    work_input = store.claim_work_summary_inputs(limit=1)[0]
+    memory_fallback_context = {
+        "query": "售前知识库",
+        "summary": "已尝试调用 memory_recall，但工具运行时失败；改用 Work Item 和候选项目作为替代证据。",
+        "memories": [
+            {
+                "source": "memory_recall_runtime_failure",
+                "text": "memory_recall 调用失败，未获得可用记忆证据。",
+                "summary": "使用替代证据。",
+            }
+        ],
+    }
+    codex = FakeCodexWithAuditEvents(
+        {
+            "action": "create_project",
+            "project": {
+                "title": "售前知识库建设",
+                "category": "sales",
+                "status": "active",
+                "memory_context": memory_fallback_context,
+            },
+            "todo_changes": [],
+            "follow_up_drafts": [],
+            "update_summary": "创建项目。",
+            "merge_reason": "事项需要持续跟进。",
+            "memory_recall_used": False,
+            "confidence": 0.8,
+        },
+        audit_tool_events=[
+            {
+                "tool": "mcp__memory_connector__memory_recall",
+                "output": "transport error",
+            }
+        ],
+    )
+
+    process_work_item(store, TaskAgentRunner(codex), work_input)
+
+    with sqlite3.connect(tmp_path / "task.sqlite3") as db:
+        input_row = db.execute(
+            "select status, error from work_summary_inputs where id=?",
+            (input_id,),
+        ).fetchone()
+        run_row = db.execute(
+            """
+            select summary_input_id, codex_session_id, audit_summary, memory_recall_used
+            from task_agent_runs
+            """
+        ).fetchone()
+        project_memory_context = db.execute(
+            "select memory_context_json from work_projects",
+        ).fetchone()[0]
+    assert input_row == ("done", "")
+    assert run_row == (input_id, "task-session-1", "创建项目。", 0)
+    stored_memory_context = json.loads(project_memory_context)
+    assert stored_memory_context["query"] == memory_fallback_context["query"]
+    assert stored_memory_context["summary"] == memory_fallback_context["summary"]
+    assert stored_memory_context["memories"][0]["source"] == (
+        "memory_recall_runtime_failure"
+    )
+
+
 def test_process_work_item_continues_when_memory_connector_unavailable(
     tmp_path,
     monkeypatch,

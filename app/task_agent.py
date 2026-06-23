@@ -233,6 +233,9 @@ def process_work_item(
             audit_summary=decision.update_summary,
             memory_recall_used=decision.memory_recall_used,
         )
+        memory_recall_attempted = _audit_events_include_memory_recall(
+            getattr(runner.codex, "last_audit_tool_events", None)
+        )
         _validate_memory_recall_tool_event(
             decision,
             getattr(runner.codex, "last_audit_tool_events", None),
@@ -245,6 +248,7 @@ def process_work_item(
             decision=decision,
             codex_session_id=codex_session_id,
             memory_issue=memory_issue,
+            memory_recall_attempted=memory_recall_attempted,
             record_run=False,
         )
         if decision.action == "discard":
@@ -267,6 +271,7 @@ def apply_task_agent_decision(
     decision: TaskAgentDecision,
     codex_session_id: str = "",
     memory_issue: str = "",
+    memory_recall_attempted: bool = False,
     record_run: bool = True,
 ) -> int | None:
     if record_run:
@@ -277,7 +282,11 @@ def apply_task_agent_decision(
             audit_summary=decision.update_summary,
             memory_recall_used=decision.memory_recall_used,
         )
-    _validate_task_agent_decision(decision, memory_issue=memory_issue)
+    _validate_task_agent_decision(
+        decision,
+        memory_issue=memory_issue,
+        memory_recall_attempted=memory_recall_attempted,
+    )
 
     if decision.action == "discard":
         return None
@@ -331,6 +340,7 @@ def _validate_task_agent_decision(
     decision: TaskAgentDecision,
     *,
     memory_issue: str = "",
+    memory_recall_attempted: bool = False,
 ) -> None:
     for todo_change in decision.todo_changes:
         if todo_change.action != "create" and todo_change.todo_id is None:
@@ -342,7 +352,11 @@ def _validate_task_agent_decision(
             raise ValueError("follow_up_draft requires todo_id or todo_ref")
     if decision.action == "discard":
         return
-    if not memory_issue.strip() and not decision.memory_recall_used:
+    if (
+        not memory_issue.strip()
+        and not memory_recall_attempted
+        and not decision.memory_recall_used
+    ):
         raise ValueError("non-discard task decision requires memory_recall_used")
     if decision.project is None:
         raise ValueError(f"{decision.action} requires project")
@@ -365,15 +379,23 @@ def _validate_memory_recall_tool_event(
         return
     if not isinstance(audit_tool_events, list):
         return
+    if _audit_events_include_memory_recall(audit_tool_events):
+        return
+    if memory_issue.strip():
+        return
+    raise ValueError("non-discard task decision requires memory_recall tool event")
+
+
+def _audit_events_include_memory_recall(audit_tool_events: object) -> bool:
+    if not isinstance(audit_tool_events, list):
+        return False
     for event in audit_tool_events:
         if not isinstance(event, dict):
             continue
         tool = str(event.get("tool") or "")
         if "memory_recall" in tool:
-            return
-    if memory_issue.strip():
-        return
-    raise ValueError("non-discard task decision requires memory_recall tool event")
+            return True
+    return False
 
 
 def _apply_project(store: AutoReplyStore, decision: TaskAgentDecision) -> int:
