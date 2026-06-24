@@ -73,6 +73,22 @@ from app.work_profile import (
 )
 from app.worker import CALENDAR_ACTION_SEND_STATUS, DingTalkAutoReplyWorker
 
+WORK_SUMMARY_TRANSIENT_RETRY_ATTEMPTS = 3
+WORK_SUMMARY_RETRY_BASE_DELAY_SECONDS = 60
+WORK_SUMMARY_RETRY_MAX_DELAY_SECONDS = 15 * 60
+WORK_SUMMARY_TRANSIENT_ERROR_MARKERS = (
+    "stream disconnected before completion",
+    "timeout awaiting response headers",
+    "http2: timeout",
+    "i/o timeout",
+    "temporary failure",
+    "failed to resolve",
+    "connection reset",
+    "connection refused",
+    "codex exec timed out",
+    "task agent codex timed out",
+)
+
 LIVE_SEND_BLOCKERS = (
     "deterministic personnel/candidate permission gates",
     "handoff-clear detection",
@@ -756,10 +772,37 @@ def process_work_items_command(settings: WorkerSettings) -> int:
             process_work_item(store, runner, work_input)
             processed += 1
         except Exception as exc:
-            store.mark_work_summary_input_failed(work_input.id, str(exc))
+            error = str(exc)
+            if _should_retry_work_summary_input(error, work_input.attempts):
+                store.schedule_work_summary_input_retry(
+                    work_input.id,
+                    error,
+                    available_at=_work_summary_retry_available_at(
+                        work_input.attempts
+                    ),
+                )
+            else:
+                store.mark_work_summary_input_failed(work_input.id, error)
             store.record_error(None, None, "task_agent", str(exc))
     print(f"process-work-items processed={processed}", flush=True)
     return processed
+
+
+def _should_retry_work_summary_input(error: str, attempts: int) -> bool:
+    if attempts >= WORK_SUMMARY_TRANSIENT_RETRY_ATTEMPTS:
+        return False
+    normalized = error.lower()
+    return any(marker in normalized for marker in WORK_SUMMARY_TRANSIENT_ERROR_MARKERS)
+
+
+def _work_summary_retry_available_at(attempts: int) -> str:
+    delay_seconds = min(
+        WORK_SUMMARY_RETRY_BASE_DELAY_SECONDS * (2 ** max(attempts - 1, 0)),
+        WORK_SUMMARY_RETRY_MAX_DELAY_SECONDS,
+    )
+    return (datetime.now(timezone.utc) + timedelta(seconds=delay_seconds)).strftime(
+        "%Y-%m-%d %H:%M:%S"
+    )
 
 
 def backfill_task_memory_context_command(settings: WorkerSettings) -> int:

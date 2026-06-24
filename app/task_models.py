@@ -263,6 +263,7 @@ class WorkSummaryInput(BaseModel):
     status: WorkSummaryStatus
     attempts: int = 0
     error: str = ""
+    available_at: str = ""
     created_at: str
     updated_at: str
 

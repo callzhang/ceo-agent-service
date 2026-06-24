@@ -3,6 +3,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
+from pydantic import ValidationError
+
 from app.agent_envelope import AgentEnvelope
 from app.codex_decision import (
     _subprocess_failure_reason,
@@ -127,7 +129,20 @@ class StructuredCodexRunner:
                 )
                 raw = self._execute(command, prompt)
             parsed_session_id = extract_codex_session_id(raw) or session_id or ""
-            envelope = parse_agent_envelope(raw)
+            try:
+                envelope = parse_agent_envelope(raw)
+            except (json.JSONDecodeError, ValueError, ValidationError):
+                if not parsed_session_id:
+                    raise
+                repair_prompt = _agent_envelope_repair_prompt(raw)
+                repair_command = self._build_command(
+                    repair_prompt,
+                    parsed_session_id,
+                    allow_side_effects=False,
+                )
+                raw = self._execute(repair_command, repair_prompt)
+                parsed_session_id = extract_codex_session_id(raw) or parsed_session_id
+                envelope = parse_agent_envelope(raw)
             transcript_end_line = self._session_line_count(parsed_session_id)
             audit_tool_events = self._audit_tool_events(
                 raw=raw,
@@ -364,4 +379,16 @@ def _is_codex_session_refresh_error(message: str) -> bool:
     return (
         "failed to refresh token" in normalized
         or "your session has ended" in normalized
+    )
+
+
+def _agent_envelope_repair_prompt(raw: str) -> str:
+    excerpt = raw.strip()
+    if len(excerpt) > 4000:
+        excerpt = excerpt[:4000] + "\n...[truncated]"
+    return (
+        "上一次输出不是合法 AgentEnvelope JSON。请基于同一个上下文重新输出合法 "
+        "AgentEnvelope JSON，只输出 JSON，不要调用工具，不要发送消息，不要执行任何外部动作。\n\n"
+        "上一次输出摘录：\n"
+        f"{excerpt}"
     )

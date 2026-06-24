@@ -541,6 +541,7 @@ class AutoReplyStore:
                     status text not null default 'pending',
                     attempts integer not null default 0,
                     error text not null default '',
+                    available_at text not null default '',
                     created_at text not null default current_timestamp,
                     updated_at text not null default current_timestamp,
                     unique(source_type, source_ref)
@@ -676,6 +677,17 @@ class AutoReplyStore:
                 if column not in reply_task_columns:
                     db.execute(
                         f"alter table reply_tasks add column {column} {definition}"
+                    )
+            work_summary_input_columns = {
+                row["name"]
+                for row in db.execute("pragma table_info(work_summary_inputs)").fetchall()
+            }
+            for column, definition in (
+                ("available_at", "text not null default ''"),
+            ):
+                if column not in work_summary_input_columns:
+                    db.execute(
+                        f"alter table work_summary_inputs add column {column} {definition}"
                     )
             org_user_profile_columns = {
                 row["name"]
@@ -2724,6 +2736,11 @@ class AutoReplyStore:
                             then ''
                         else work_summary_inputs.error
                     end,
+                    available_at=case
+                        when work_summary_inputs.status in ('failed', 'discarded')
+                            then ''
+                        else work_summary_inputs.available_at
+                    end,
                     updated_at=current_timestamp
                 """,
                 (source_type, source_ref, payload_json),
@@ -2747,6 +2764,7 @@ class AutoReplyStore:
                 select *
                 from work_summary_inputs
                 where status='pending'
+                  and (available_at='' or available_at <= current_timestamp)
                 order by id
                 limit ?
                 """,
@@ -2762,6 +2780,7 @@ class AutoReplyStore:
                 set status='processing',
                     attempts=attempts + 1,
                     error='',
+                    available_at='',
                     updated_at=current_timestamp
                 where id in ({placeholders})
                 """,
@@ -2826,6 +2845,22 @@ class AutoReplyStore:
                 where id=?
                 """,
                 (error, input_id),
+            )
+
+    def schedule_work_summary_input_retry(
+        self, input_id: int, error: str, *, available_at: str
+    ) -> None:
+        with self._connect() as db:
+            db.execute(
+                """
+                update work_summary_inputs
+                set status='pending',
+                    error=?,
+                    available_at=?,
+                    updated_at=current_timestamp
+                where id=?
+                """,
+                (error, available_at, input_id),
             )
 
     @staticmethod

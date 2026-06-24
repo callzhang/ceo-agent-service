@@ -96,6 +96,32 @@ def test_reset_stale_processing_work_summary_inputs_keeps_fresh_processing(
     assert store.claim_work_summary_inputs(limit=1) == []
 
 
+def test_work_summary_retry_backoff_delays_claim_until_available(tmp_path: Path):
+    store = _store(tmp_path)
+    payload_json = _work_item().model_dump_json()
+    input_id = store.enqueue_work_summary_input("reply_attempt", "1", payload_json)
+    store.claim_work_summary_inputs(limit=1)
+
+    store.schedule_work_summary_input_retry(
+        input_id,
+        "stream disconnected before completion",
+        available_at="2099-01-01 00:00:00",
+    )
+
+    assert store.claim_work_summary_inputs(limit=1) == []
+
+    with sqlite3.connect(tmp_path / "task.sqlite3") as db:
+        db.execute(
+            "update work_summary_inputs set available_at=datetime('now', '-1 second') where id=?",
+            (input_id,),
+        )
+
+    claimed = store.claim_work_summary_inputs(limit=1)
+
+    assert claimed[0].id == input_id
+    assert claimed[0].attempts == 2
+
+
 def test_create_project_todo_update_and_follow_up(tmp_path: Path):
     store = _store(tmp_path)
 
