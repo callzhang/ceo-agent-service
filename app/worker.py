@@ -105,6 +105,7 @@ CALENDAR_PENDING_INVITE_NO_CHANGE_TIME_START_LOOKAHEAD = timedelta(hours=24)
 CALENDAR_CONTEXT_MATCH_MIN_SCORE = 0.05
 CALENDAR_CONTEXT_MATCH_LOOKBACK = timedelta(minutes=10)
 CALENDAR_ORGANIZER_RESPONSE_ERROR = "Cannot change response status of event organizer"
+CALENDAR_BURST_REPLY_SUPPRESSION_WINDOW = timedelta(minutes=30)
 DWS_TRANSIENT_ERROR_STATE_PREFIX = "dws_transient_error_count:"
 DWS_TRANSIENT_NOTIFY_THRESHOLD = 3
 T = TypeVar("T")
@@ -1409,6 +1410,32 @@ class DingTalkAutoReplyWorker:
             trigger,
             context_messages,
         )
+        if self._should_suppress_burst_calendar_reply(conversation, trigger):
+            self.store.record_reply_attempt(
+                conversation_id=conversation.open_conversation_id,
+                conversation_title=conversation.title,
+                trigger_message_id=trigger.open_message_id,
+                trigger_sender=trigger.sender_name,
+                trigger_text=trigger.content,
+                action=CodexAction.NO_REPLY.value,
+                sensitivity_kind="calendar",
+                codex_reason=(
+                    "Suppressed a same-topic calendar card because a recent "
+                    "calendar reply was already sent in this single chat."
+                ),
+                send_status="skipped",
+            )
+            self.store.record_error(
+                conversation.open_conversation_id,
+                trigger.open_message_id,
+                "calendar_burst_reply_suppressed",
+                (
+                    "suppressed same-topic calendar reply after recent sent "
+                    f"calendar reply: message={trigger.open_message_id}"
+                ),
+            )
+            self._mark_seen([trigger])
+            return False
         if conversation.single_chat and replace_pending_single_chat:
             updated = self.store.replace_pending_single_chat_reply_task_trigger(
                 conversation_id=conversation.open_conversation_id,
@@ -1443,6 +1470,65 @@ class DingTalkAutoReplyWorker:
             trigger_message_json=trigger.model_dump_json(),
         )
         return updated > 0
+
+    def _should_suppress_burst_calendar_reply(
+        self,
+        conversation: DingTalkConversation,
+        trigger: DingTalkMessage,
+    ) -> bool:
+        if not conversation.single_chat or not self._is_calendar_message(trigger):
+            return False
+        trigger_topic = self._calendar_reply_topic(trigger)
+        if not trigger_topic:
+            return False
+        trigger_time = self._message_create_time_as_instant(trigger)
+        trigger_sender = trigger.sender_name.strip()
+        for attempt in self.store.list_reply_attempts_for_conversation(
+            conversation.open_conversation_id,
+            limit=20,
+        ):
+            if attempt.trigger_message_id == trigger.open_message_id:
+                continue
+            if attempt.action != CodexAction.SEND_REPLY.value:
+                continue
+            if attempt.send_status != "sent":
+                continue
+            if not self._is_calendar_text(attempt.trigger_text):
+                continue
+            if self._calendar_reply_topic_text(attempt.trigger_text) != trigger_topic:
+                continue
+            if trigger_sender and attempt.trigger_sender.strip() != trigger_sender:
+                continue
+            attempt_time = self._parse_service_state_datetime(
+                attempt.updated_at or attempt.created_at
+            )
+            if attempt_time is None:
+                continue
+            delta = abs(trigger_time - attempt_time.astimezone(trigger_time.tzinfo))
+            if delta <= CALENDAR_BURST_REPLY_SUPPRESSION_WINDOW:
+                return True
+        return False
+
+    @staticmethod
+    def _calendar_reply_topic(message: DingTalkMessage) -> str:
+        return DingTalkAutoReplyWorker._calendar_reply_topic_text(message.content)
+
+    @staticmethod
+    def _calendar_reply_topic_text(text: str) -> str:
+        topic = DingTalkAutoReplyWorker._strip_calendar_prefix(text).strip()
+        topic = re.sub(r"^[【\[].*?[】\]]\s*", "", topic)
+        topic = re.split(r"\s[-—–:：]\s|[-—–]", topic, maxsplit=1)[0]
+        return re.sub(r"\s+", "", topic).strip().lower()
+
+    @staticmethod
+    def _strip_calendar_prefix(text: str) -> str:
+        return re.sub(r"^\s*[\[［【]\s*日程\s*[\]］】]\s*", "", text, count=1)
+
+    @staticmethod
+    def _is_calendar_text(text: str) -> bool:
+        return bool(
+            re.match(r"^\s*[\[［【]\s*日程\s*[\]］】]", text.strip())
+        )
 
     def _reply_task_trigger_messages(
         self,

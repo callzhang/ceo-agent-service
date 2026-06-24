@@ -1762,6 +1762,52 @@ def test_producer_enriches_bare_calendar_card_task_with_invite_details(
     ]
 
 
+def test_single_chat_suppresses_same_topic_calendar_reply_burst(
+    tmp_path: Path,
+    monkeypatch,
+):
+    second = message(
+        "[日程] 【线上】CTO面试 - 邢继风",
+        message_id="msg-calendar-second",
+        single_chat=True,
+        message_type="calendar",
+    )
+    worker = make_worker(
+        tmp_path,
+        FakeDws([conversation(single_chat=True)], {"cid-1": [second]}),
+        FakeCodex([]),
+        monkeypatch,
+    )
+    attempt_id = worker.store.record_reply_attempt(
+        conversation_id="cid-1",
+        conversation_title="Friday",
+        trigger_message_id="msg-calendar-first",
+        trigger_sender="周俊杰",
+        trigger_text="[日程] 【线下】CTO面试 - 张振庭",
+        action="send_reply",
+        sensitivity_kind="calendar",
+        send_status="sent",
+    )
+    with sqlite3.connect(worker.store.path) as db:
+        db.execute(
+            "update reply_attempts set created_at=?, updated_at=? where id=?",
+            ("2026-05-13 09:59:00", "2026-05-13 09:59:00", attempt_id),
+        )
+
+    queued = worker._enqueue_reply_task(
+        conversation(single_chat=True),
+        second,
+    )
+
+    attempts = worker.store.list_reply_attempts(limit=10)
+    assert queued is False
+    assert worker.store.count_reply_tasks(status="pending") == 0
+    assert attempts[0].trigger_message_id == "msg-calendar-second"
+    assert attempts[0].action == "no_reply"
+    assert attempts[0].send_status == "skipped"
+    assert worker.store.has_seen("msg-calendar-second") is True
+
+
 def test_group_calendar_card_without_explicit_mention_is_ignored(
     tmp_path: Path, monkeypatch
 ):
