@@ -756,6 +756,14 @@ def test_thread_prompt_prevents_interjecting_on_group_broadcasts():
     assert "优先用 dws_message_reaction 表达支持" in prompt
 
 
+def test_thread_prompt_requires_positive_reply_for_high_value_customer_leads():
+    prompt = ceo_agent_thread_prompt()
+
+    assert "高价值客户线索、客户现场 demo、关键客户多角色参与" in prompt
+    assert "不能只用 reaction" in prompt
+    assert "用 send_reply 正面回应" in prompt
+
+
 def test_thread_prompt_prefers_reaction_for_low_information_group_mentions():
     prompt = ceo_agent_thread_prompt()
 
