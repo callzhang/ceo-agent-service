@@ -1348,9 +1348,34 @@ class DingTalkAutoReplyWorker:
             conversation,
             [trigger],
             prompt_context_messages,
+            ignore_existing_attempt=self._should_regenerate_after_processing_failure(
+                conversation,
+                trigger,
+                task,
+            ),
             raise_on_delivery_failure=True,
         )
         return True
+
+    def _should_regenerate_after_processing_failure(
+        self,
+        conversation: DingTalkConversation,
+        trigger: DingTalkMessage,
+        task: ReplyTask,
+    ) -> bool:
+        if task.attempts <= 1:
+            return False
+        attempt = self.store.get_latest_reply_attempt_for_trigger(
+            conversation.open_conversation_id,
+            trigger.open_message_id,
+        )
+        if attempt is None:
+            return False
+        return (
+            attempt.send_status == "failed"
+            and attempt.action == CodexAction.STOP_WITH_ERROR.value
+            and not attempt.final_reply_text.strip()
+        )
 
     def _queued_trigger_is_still_actionable(
         self,

@@ -7321,6 +7321,55 @@ def test_codex_stop_with_error_keeps_queued_task_retryable(
 ):
     trigger = message("@Alex Chen(明哥) 这个怎么处理？")
     dws = FakeDws([conversation()], {"cid-1": [trigger]})
+    codex = SequencedFakeCodex(
+        [
+            CodexDecision(
+                action=CodexAction.STOP_WITH_ERROR,
+                reason="codex exec timed out after 300 seconds",
+            ),
+            CodexDecision(
+                action=CodexAction.SEND_REPLY,
+                reply_text="先按A方案走",
+            ),
+        ]
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+    monkeypatch.setattr(
+        "app.worker.send_macos_notification",
+        lambda **_: None,
+    )
+
+    worker.run_once()
+
+    assert worker.store.count_reply_tasks(status="pending") == 1
+    assert worker.store.count_reply_tasks(status="done") == 0
+    assert worker.store.count_reply_attempts() == 1
+    failed_attempt = worker.store.get_reply_attempt(1)
+    assert failed_attempt is not None
+    assert failed_attempt.send_status == "failed"
+
+    pending = worker.store.list_reply_tasks(statuses=("pending",), limit=1)[0]
+    with worker.store._connect() as db:
+        db.execute(
+            "update reply_tasks set available_at='2026-05-13 17:00:00' where id=?",
+            (pending.id,),
+        )
+
+    assert worker.consume_once(max_tasks=1) == 1
+    assert worker.store.count_reply_tasks(status="done") == 1
+    assert worker.store.count_reply_attempts() == 1
+    assert len(codex.calls) == 2
+    sent_attempt = worker.store.get_reply_attempt(1)
+    assert sent_attempt is not None
+    assert sent_attempt.action == "send_reply"
+    assert sent_attempt.send_status == "sent"
+
+
+def test_codex_stop_with_error_retry_waits_for_backoff(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message("@Alex Chen(明哥) 这个怎么处理？")
+    dws = FakeDws([conversation()], {"cid-1": [trigger]})
     codex = FakeCodex(
         CodexDecision(
             action=CodexAction.STOP_WITH_ERROR,
@@ -7337,9 +7386,14 @@ def test_codex_stop_with_error_keeps_queued_task_retryable(
 
     assert worker.store.count_reply_tasks(status="pending") == 1
     assert worker.store.count_reply_tasks(status="done") == 0
-    retried = worker.store.claim_reply_tasks(limit=1)
-    assert retried[0].attempts == 2
-    assert "codex exec timed out" in retried[0].error
+    retried = worker.store.claim_reply_tasks(
+        limit=1,
+        now="2026-05-13 17:00:59",
+    )
+    assert retried == []
+    pending = worker.store.list_reply_tasks(statuses=("pending",), limit=1)[0]
+    assert pending.available_at == "2026-05-13 17:01:00"
+    assert "codex exec timed out" in pending.error
     attempt = worker.store.get_reply_attempt(1)
     assert attempt is not None
     assert attempt.send_status == "failed"
@@ -7488,7 +7542,7 @@ def test_queued_stop_with_error_retry_does_not_create_duplicate_attempt(
     assert worker.consume_once(max_tasks=1) == 0
     assert worker.store.count_reply_tasks(status="failed") == 1
     assert worker.store.count_reply_attempts() == 1
-    assert len(codex.calls) == 1
+    assert len(codex.calls) == 2
 
 
 def test_queued_failed_non_send_attempt_does_not_create_duplicate_attempt(
