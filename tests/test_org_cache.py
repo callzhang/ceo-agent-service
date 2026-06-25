@@ -255,6 +255,30 @@ def test_cached_dws_client_delegates_message_io_and_uses_cached_org(tmp_path):
     assert cached.is_current_user_message(message(sender_user_id="principal-user")) is True
 
 
+def test_cached_dws_client_delegates_auth_archives(tmp_path):
+    class FakeDws:
+        def __init__(self):
+            self.export_paths = []
+            self.import_paths = []
+
+        def export_auth_archive(self, output_path):
+            self.export_paths.append(output_path)
+
+        def import_auth_archive(self, input_path):
+            self.import_paths.append(input_path)
+
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    fake = FakeDws()
+    cached = CachedDwsClient(fake, CachedOrgDirectory(store))
+    archive_path = tmp_path / "dws-auth.tar.gz"
+
+    cached.export_auth_archive(archive_path)
+    cached.import_auth_archive(archive_path)
+
+    assert fake.export_paths == [archive_path]
+    assert fake.import_paths == [archive_path]
+
+
 def test_cached_dws_client_delegates_linked_material_reads(tmp_path):
     class FakeDws:
         def __init__(self):
