@@ -25,6 +25,7 @@ from app.codex_decision import (
 from app.config import (
     assistant_signature,
     broadcast_mention_aliases,
+    env_duration,
     fast_path_unread_backoff_duration,
     feedback_spike_vercel_base_url,
     handoff_ack,
@@ -233,6 +234,11 @@ DWS_UPGRADE_CHECKED_DATE_STATE_KEY = "dws_upgrade_checked_date"
 MESSAGE_RECOVERY_CHECKED_AT_STATE_KEY = "message_recovery_checked_at"
 MESSAGE_FAST_PATH_CHECKED_AT_STATE_KEY = "message_fast_path_checked_at"
 DWS_AUTH_LOGIN_STATE_KEY = "dws_auth_login"
+DWS_AUTH_BACKUP_STATE_KEY = "dws_auth_backup"
+DWS_AUTH_BACKUP_INTERVAL = env_duration(
+    "CEO_DWS_AUTH_BACKUP_INTERVAL",
+    timedelta(minutes=30),
+)
 DWS_AUTH_LOGIN_REQUEST_SUPPRESSION_WINDOW = timedelta(hours=1)
 DWS_FORBIDDEN_CONVERSATIONS_STATE_KEY = "dws_forbidden_conversations"
 DWS_FORBIDDEN_CONVERSATION_COOLDOWN = timedelta(minutes=5)
@@ -328,11 +334,19 @@ class DingTalkAutoReplyWorker:
             self._clear_dws_transient_error(kind)
             if conversation_id:
                 self._clear_dws_read_forbidden(conversation_id)
+            self._maybe_backup_dws_auth()
             return result
         except Exception as exc:
             if raise_authorization and self._is_authorization_error(exc):
                 raise
             if self._is_dws_login_error(exc):
+                restored_result = self._restore_dws_auth_backup_and_retry(
+                    kind,
+                    call,
+                    conversation_id=conversation_id,
+                )
+                if restored_result is not None:
+                    return restored_result
                 if self._ensure_dws_auth_login(exc):
                     return default
             is_forbidden_read = bool(
@@ -978,6 +992,121 @@ class DingTalkAutoReplyWorker:
             DWS_AUTH_LOGIN_STATE_KEY,
             json.dumps(state, ensure_ascii=False, sort_keys=True),
         )
+
+    def _dws_auth_backup_path(self) -> Path:
+        return self.store.path.parent / "dws-auth-backup" / "dws-auth.tar.gz"
+
+    def _dws_auth_backup_state(self) -> dict[str, Any]:
+        raw = self.store.get_service_state(DWS_AUTH_BACKUP_STATE_KEY)
+        if not raw:
+            return {}
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError:
+            return {}
+        return payload if isinstance(payload, dict) else {}
+
+    def _set_dws_auth_backup_state(self, state: dict[str, Any]) -> None:
+        self.store.set_service_state(
+            DWS_AUTH_BACKUP_STATE_KEY,
+            json.dumps(state, ensure_ascii=False, sort_keys=True),
+        )
+
+    def _dws_auth_backup_due(self, state: dict[str, Any], archive_path: Path) -> bool:
+        last_attempt_at = state.get("backed_up_at") or state.get("updated_at")
+        if not isinstance(last_attempt_at, str):
+            return True
+        last_attempt = self._parse_service_state_datetime(last_attempt_at)
+        if last_attempt is None:
+            return True
+        age = self._now().astimezone(timezone.utc) - last_attempt.astimezone(
+            timezone.utc
+        )
+        if age < DWS_AUTH_BACKUP_INTERVAL:
+            return False
+        if not archive_path.exists():
+            return True
+        return True
+
+    def _maybe_backup_dws_auth(self) -> None:
+        archive_path = self._dws_auth_backup_path()
+        state = self._dws_auth_backup_state()
+        if not self._dws_auth_backup_due(state, archive_path):
+            return
+        now = self._now().astimezone(timezone.utc).isoformat()
+        try:
+            self.dws.export_auth_archive(archive_path)
+            os.chmod(archive_path, 0o600)
+        except Exception as exc:
+            self.store.record_error(None, None, "dws_auth_backup", str(exc))
+            self._set_dws_auth_backup_state(
+                {
+                    **state,
+                    "status": "failed",
+                    "error": str(exc)[:240],
+                    "updated_at": now,
+                    "archive_path": str(archive_path),
+                }
+            )
+            return
+        next_state = {
+            "status": "backed_up",
+            "backed_up_at": now,
+            "archive_path": str(archive_path),
+        }
+        if isinstance(state.get("restored_at"), str):
+            next_state["restored_at"] = state["restored_at"]
+        self._set_dws_auth_backup_state(next_state)
+
+    def _restore_dws_auth_backup_and_retry(
+        self,
+        kind: str,
+        call: Callable[[], T],
+        *,
+        conversation_id: str | None = None,
+    ) -> T | None:
+        archive_path = self._dws_auth_backup_path()
+        state = self._dws_auth_backup_state()
+        now = self._now().astimezone(timezone.utc).isoformat()
+        if not archive_path.exists():
+            self._set_dws_auth_backup_state(
+                {
+                    **state,
+                    "status": "missing",
+                    "updated_at": now,
+                    "archive_path": str(archive_path),
+                }
+            )
+            return None
+        try:
+            self.dws.import_auth_archive(archive_path)
+            result = call()
+        except Exception as exc:
+            self.store.record_error(None, None, "dws_auth_restore", str(exc))
+            self._set_dws_auth_backup_state(
+                {
+                    **state,
+                    "status": "restore_failed",
+                    "error": str(exc)[:240],
+                    "updated_at": now,
+                    "archive_path": str(archive_path),
+                }
+            )
+            return None
+        self._clear_dws_transient_error(kind)
+        if conversation_id:
+            self._clear_dws_read_forbidden(conversation_id)
+        self._set_dws_auth_backup_state(
+            {
+                **state,
+                "status": "restored",
+                "restored_at": now,
+                "archive_path": str(archive_path),
+            }
+        )
+        self._mark_dws_auth_healthy()
+        self._maybe_backup_dws_auth()
+        return result
 
     def _monitor_dws_auth_login(self, state: dict[str, Any]) -> dict[str, Any]:
         process = self._dws_auth_login_process

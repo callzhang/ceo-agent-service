@@ -90,6 +90,26 @@ file-backed keychain can report `not_authenticated` even when normal `dws` reads
 work. The diagnostic script `scripts/check-dws-auth-env.sh` verifies the default
 user auth path first and then compares optional file-keychain probes.
 
+After successful DWS calls, the worker periodically writes a local auth archive
+to `data/dws-auth-backup/dws-auth.tar.gz` by calling `dws auth export`. The DWS
+export format contains the refresh token and keychain material needed for
+recovery, but not token plaintext. The archive is a runtime secret and remains
+under ignored `data/`; the worker sets file mode `0600` after export.
+
+On macOS, DWS may store its encryption key in the system Keychain. In that mode,
+`dws auth export` can refuse to create a portable auth archive. The worker does
+not read or decrypt Keychain items itself; it records `dws_auth_backup=failed`
+and keeps using the existing login state. To make backup/restore fully active,
+run the service with a DWS file-backed keychain and complete one DWS login in
+that environment.
+
+When a DWS call reports a login/session-loss error, the worker first imports
+that local archive with `dws auth import --force`, then retries the failed DWS
+call once. It starts the interactive `dws auth login` flow only if no archive is
+available or the archive restore does not recover a usable login state. Backup
+cadence defaults to 30 minutes and can be adjusted with
+`CEO_DWS_AUTH_BACKUP_INTERVAL`.
+
 ## Processing acknowledgement
 
 The worker no longer sends `收到，我正在处理（by 分身）` before a final reply. Final

@@ -297,6 +297,41 @@ def test_auth_login_command_shape():
     assert command == ["dws", "auth", "login"]
 
 
+def test_auth_export_command_shape(tmp_path):
+    client = DwsClient(dws_bin="dws")
+    archive_path = tmp_path / "dws-auth.tar.gz"
+
+    command = client.build_auth_export_command(archive_path)
+
+    assert command == [
+        "dws",
+        "auth",
+        "export",
+        "-o",
+        str(archive_path),
+        "--format",
+        "json",
+    ]
+
+
+def test_auth_import_command_shape(tmp_path):
+    client = DwsClient(dws_bin="dws")
+    archive_path = tmp_path / "dws-auth.tar.gz"
+
+    command = client.build_auth_import_command(archive_path)
+
+    assert command == [
+        "dws",
+        "auth",
+        "import",
+        "-i",
+        str(archive_path),
+        "--force",
+        "--format",
+        "json",
+    ]
+
+
 def test_run_json_maps_plain_exit_code_2_to_login_required(monkeypatch):
     def fake_run(command, text, capture_output, check, timeout, env=None):
         return SimpleNamespace(

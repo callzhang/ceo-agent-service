@@ -212,6 +212,11 @@ class FakeDws:
         self.upgrade_error: Exception | None = None
         self.upgrade_check_calls = 0
         self.upgrade_calls = 0
+        self.list_unread_calls = 0
+        self.exported_auth_archives: list[Path] = []
+        self.imported_auth_archives: list[Path] = []
+        self.auth_import_error: Exception | None = None
+        self.auth_export_error: Exception | None = None
         self.auth_login_processes: list[FakeAuthLoginProcess] = [
             FakeAuthLoginProcess()
         ]
@@ -234,10 +239,24 @@ class FakeDws:
         }
 
     def list_unread_conversations(self, count: int) -> list[DingTalkConversation]:
+        self.list_unread_calls += 1
         assert count == 50
         if self.list_error:
             raise self.list_error
         return self.conversations
+
+    def export_auth_archive(self, output_path: Path) -> None:
+        self.exported_auth_archives.append(output_path)
+        if self.auth_export_error:
+            raise self.auth_export_error
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_bytes(b"fake-dws-auth-archive")
+
+    def import_auth_archive(self, input_path: Path) -> None:
+        self.imported_auth_archives.append(input_path)
+        if self.auth_import_error:
+            raise self.auth_import_error
+        self.list_error = None
 
     def check_upgrade(self) -> dict:
         self.upgrade_check_calls += 1
@@ -1459,6 +1478,68 @@ def test_produce_once_marks_dws_auth_healthy_after_success(
 
     state = json.loads(worker.store.get_service_state(DWS_AUTH_LOGIN_STATE_KEY))
     assert state["status"] == "authenticated"
+
+
+def test_produce_once_backs_up_dws_auth_after_success(tmp_path: Path, monkeypatch):
+    dws = FakeDws([], {})
+    worker = make_worker(tmp_path, dws, FakeCodex([]), monkeypatch)
+
+    assert worker.produce_once() == 0
+
+    assert dws.exported_auth_archives == [
+        tmp_path / "dws-auth-backup" / "dws-auth.tar.gz"
+    ]
+    backup_state = json.loads(worker.store.get_service_state("dws_auth_backup"))
+    assert backup_state["status"] == "backed_up"
+    assert "backed_up_at" in backup_state
+    assert backup_state["archive_path"].endswith("dws-auth-backup/dws-auth.tar.gz")
+
+
+def test_produce_once_throttles_failed_dws_auth_backup(tmp_path: Path, monkeypatch):
+    dws = FakeDws([], {})
+    dws.auth_export_error = DwsError("macOS keychain export unsupported", code="3")
+    worker = make_worker(tmp_path, dws, FakeCodex([]), monkeypatch)
+
+    assert worker.produce_once() == 0
+    assert worker.produce_once() == 0
+
+    assert dws.exported_auth_archives == [
+        tmp_path / "dws-auth-backup" / "dws-auth.tar.gz"
+    ]
+    backup_state = json.loads(worker.store.get_service_state("dws_auth_backup"))
+    assert backup_state["status"] == "failed"
+    assert backup_state["error"] == "macOS keychain export unsupported"
+
+
+def test_produce_once_restores_dws_auth_backup_before_login(
+    tmp_path: Path, monkeypatch
+):
+    notifications = []
+    backup_path = tmp_path / "dws-auth-backup" / "dws-auth.tar.gz"
+    backup_path.parent.mkdir(parents=True)
+    backup_path.write_bytes(b"fake-dws-auth-archive")
+    dws = FakeDws([], {}, list_error=DwsError("not authenticated", code="2"))
+    worker = make_worker(tmp_path, dws, FakeCodex([]), monkeypatch)
+    monkeypatch.setattr(
+        "app.worker.send_macos_notification",
+        lambda **kwargs: notifications.append(kwargs),
+    )
+
+    assert worker.produce_once() == 0
+
+    assert dws.list_unread_calls == 2
+    assert dws.imported_auth_archives == [backup_path]
+    assert dws.auth_login_starts == 0
+    assert not any(
+        notification["title"] == "CEO DWS auth login required"
+        for notification in notifications
+    )
+    login_state = json.loads(worker.store.get_service_state(DWS_AUTH_LOGIN_STATE_KEY))
+    assert login_state["status"] == "authenticated"
+    backup_state = json.loads(worker.store.get_service_state("dws_auth_backup"))
+    assert backup_state["status"] == "backed_up"
+    assert "restored_at" in backup_state
+    assert "backed_up_at" in backup_state
 
 
 def test_produce_once_continues_when_mention_recovery_fails(
