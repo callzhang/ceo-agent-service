@@ -3214,6 +3214,18 @@ def test_consume_once_retries_task_failure_before_final_failure(
     assert worker.consume_once(max_tasks=1) == 0
     assert worker.store.count_reply_tasks(status="pending") == 1
     assert worker.store.count_reply_tasks(status="failed") == 0
+    pending = worker.store.list_reply_tasks(limit=1, statuses=["pending"])[0]
+    assert pending.available_at == "2026-05-13 17:01:00"
+
+    assert worker.consume_once(max_tasks=1) == 0
+    assert worker.store.count_reply_tasks(status="pending") == 1
+    assert worker.store.count_reply_tasks(status="failed") == 0
+
+    with worker.store._connect() as db:
+        db.execute(
+            "update reply_tasks set available_at='2026-05-13 17:00:00' where id=?",
+            (pending.id,),
+        )
 
     assert worker.consume_once(max_tasks=1) == 0
     assert worker.store.count_reply_tasks(status="pending") == 0
@@ -7459,6 +7471,19 @@ def test_queued_stop_with_error_retry_does_not_create_duplicate_attempt(
     assert worker.consume_once(max_tasks=1) == 0
     assert worker.store.count_reply_tasks(status="pending") == 1
     assert worker.store.count_reply_attempts() == 1
+    pending = worker.store.list_reply_tasks(limit=1, statuses=["pending"])[0]
+    assert pending.available_at == "2026-05-13 17:01:00"
+
+    assert worker.consume_once(max_tasks=1) == 0
+    assert worker.store.count_reply_tasks(status="pending") == 1
+    assert worker.store.count_reply_attempts() == 1
+    assert len(codex.calls) == 1
+
+    with worker.store._connect() as db:
+        db.execute(
+            "update reply_tasks set available_at='2026-05-13 17:00:00' where id=?",
+            (pending.id,),
+        )
 
     assert worker.consume_once(max_tasks=1) == 0
     assert worker.store.count_reply_tasks(status="failed") == 1

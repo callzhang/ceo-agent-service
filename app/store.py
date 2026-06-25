@@ -1018,19 +1018,21 @@ class AutoReplyStore:
                 (error, task_id),
             )
 
-    def requeue_reply_task(self, task_id: int, error: str) -> None:
+    def requeue_reply_task(
+        self, task_id: int, error: str, *, available_at: str = ""
+    ) -> None:
         with self._connect() as db:
             db.execute(
                 """
                 update reply_tasks
                 set status='pending',
                     locked_at=null,
-                    available_at='',
+                    available_at=?,
                     error=?,
                     updated_at=current_timestamp
                 where id=?
                 """,
-                (error, task_id),
+                (available_at, error, task_id),
             )
 
     def defer_reply_task(self, task_id: int, error: str) -> None:

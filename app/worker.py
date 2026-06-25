@@ -98,6 +98,8 @@ LEAK_CHECK_REGENERATION_SCHEMA = REPLY_AGENT_ENVELOPE_SCHEMA_HINT
 SPLIT_PERSON_SIGNATURE = assistant_signature()
 STALE_PROCESSING_TASK_SECONDS = 30 * 60
 MAX_REPLY_TASK_ATTEMPTS = 3
+REPLY_TASK_RETRY_BASE_DELAY_SECONDS = 60
+REPLY_TASK_RETRY_MAX_DELAY_SECONDS = 15 * 60
 STALE_CODEX_RESUME_ATTEMPTS = 2
 CALENDAR_PENDING_INVITE_LOOKAHEAD_DAYS = 14
 CALENDAR_PENDING_INVITE_EVENT_MATCH_SECONDS = 5 * 60
@@ -1195,7 +1197,13 @@ class DingTalkAutoReplyWorker:
                     )
                     continue
                 if task.attempts < self.max_task_attempts:
-                    self.store.requeue_reply_task(task.id, error)
+                    self.store.requeue_reply_task(
+                        task.id,
+                        error,
+                        available_at=self._reply_task_retry_available_at(
+                            task.attempts
+                        ),
+                    )
                     self.store.record_error(
                         task.conversation_id,
                         task.trigger_message_id,
@@ -1224,6 +1232,15 @@ class DingTalkAutoReplyWorker:
             else:
                 self.store.defer_reply_task(task.id, "dry_run")
         return processed_tasks
+
+    def _reply_task_retry_available_at(self, attempts: int) -> str:
+        delay_seconds = min(
+            REPLY_TASK_RETRY_BASE_DELAY_SECONDS * (2 ** max(attempts - 1, 0)),
+            REPLY_TASK_RETRY_MAX_DELAY_SECONDS,
+        )
+        return self._sqlite_timestamp(
+            self._now().astimezone(timezone.utc) + timedelta(seconds=delay_seconds)
+        )
 
     def _complete_superseded_reply_tasks(
         self,

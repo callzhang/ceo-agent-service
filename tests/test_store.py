@@ -184,6 +184,35 @@ def test_claim_reply_tasks_waits_until_available_at(tmp_path: Path):
     assert after[0].error == "waiting_fast_path_unread_backoff"
 
 
+def test_requeue_reply_task_can_delay_next_claim(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="cid-1",
+        conversation_title="Friday",
+        single_chat=False,
+        trigger_message_id="msg-1",
+        trigger_create_time="2026-05-13 18:00:00",
+        trigger_sender="Mina",
+        trigger_text="@Alex Chen 看一下",
+    )
+    claimed = store.claim_reply_tasks(limit=1, now="2026-05-13 17:00:00")
+
+    store.requeue_reply_task(
+        claimed[0].id,
+        "temporary failure",
+        available_at="2026-05-13 17:01:00",
+    )
+
+    before = store.claim_reply_tasks(limit=1, now="2026-05-13 17:00:59")
+    after = store.claim_reply_tasks(limit=1, now="2026-05-13 17:01:00")
+
+    assert before == []
+    assert len(after) == 1
+    assert after[0].attempts == 2
+    assert after[0].available_at == ""
+    assert after[0].error == "temporary failure"
+
+
 def test_complete_reply_task_for_message_marks_matching_task_done(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.enqueue_reply_task(
