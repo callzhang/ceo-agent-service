@@ -371,7 +371,9 @@
         "target_conversation_id",
         "target_kind",
         "question_text",
-        "scheduled_at"
+        "scheduled_at",
+        "risk_check",
+        "status"
       ],
       "properties": {
         "todo_id": {
@@ -403,6 +405,7 @@
         "risk_check": {
           "type": "object",
           "additionalProperties": false,
+          "required": ["sensitive", "owner_in_group", "reason"],
           "properties": {
             "sensitive": {
               "type": "boolean"

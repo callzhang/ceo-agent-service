@@ -1150,6 +1150,28 @@ def test_task_agent_schema_requires_project_memory_context():
     assert memory_context_schema["properties"]["query"]["minLength"] == 1
 
 
+def test_task_agent_schema_uses_strict_object_shapes_required_by_codex():
+    from app.task_agent import TASK_AGENT_DECISION_SCHEMA_PATH
+
+    schema = json.loads(TASK_AGENT_DECISION_SCHEMA_PATH.read_text(encoding="utf-8"))
+
+    def assert_strict_objects(node):
+        if not isinstance(node, dict):
+            return
+        if node.get("type") == "object":
+            assert node.get("additionalProperties") is False
+            if "properties" in node:
+                assert set(node.get("required", [])) == set(node["properties"])
+        for value in node.values():
+            if isinstance(value, dict):
+                assert_strict_objects(value)
+            elif isinstance(value, list):
+                for item in value:
+                    assert_strict_objects(item)
+
+    assert_strict_objects(schema)
+
+
 def test_task_agent_codex_runner_uses_process_runner_signature(tmp_path):
     from app.task_agent import TaskAgentCodexRunner
     from app.task_agent import TASK_AGENT_DECISION_SCHEMA_PATH
