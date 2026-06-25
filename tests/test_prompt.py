@@ -135,6 +135,14 @@ def test_developer_prompt_delegates_memory_to_agent_mcp_tools():
     assert "memory_write 失败不应改变最终 JSON" in template
 
 
+def test_developer_prompt_keeps_business_metrics_out_of_personnel_sensitivity():
+    template = read_developer_prompt_template()
+
+    assert "ROI、新订单、合同额、项目交付、客户进展、审批流状态、OKR 证据、财务核算或业务风险复盘" in template
+    assert "默认是业务事项，仍用 general" in template
+    assert "只有问题要求评价这个人的绩效、晋升、薪酬、去留、转正、请假、岗位匹配、个人工作状态" in template
+
+
 def test_developer_prompt_documents_agent_envelope_output_protocol():
     template = read_developer_prompt_template()
 
