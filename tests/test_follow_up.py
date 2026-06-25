@@ -282,6 +282,41 @@ def test_due_follow_up_skips_when_todo_is_done(tmp_path):
     assert "todo status is done" in skipped.send_result_json
 
 
+def test_due_follow_up_skips_when_scheduled_more_than_seven_days_ago(tmp_path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    project_id = store.create_work_project(
+        title="客户交付",
+        category="projects",
+        status="active",
+        priority="P1",
+        risk_level="medium",
+    )
+    draft_id = store.create_follow_up_draft(
+        project_id=project_id,
+        owner_user_id="owner-1",
+        owner_name="Alex",
+        target_kind="direct",
+        question_text="请同步这个事项的最新进展。",
+        scheduled_at="2026-06-01 09:00:00",
+    )
+    dws = FakeDws()
+
+    sent = process_due_follow_ups(
+        store,
+        dws,
+        now="2026-06-09 09:00:01",
+        auto_send=True,
+    )
+
+    assert sent == 0
+    assert dws.sent == []
+    skipped = store.list_follow_up_drafts(statuses=("skipped",))[0]
+    assert skipped.id == draft_id
+    result = json.loads(skipped.send_result_json)
+    assert result["reason"] == "stale_due_follow_up"
+    assert result["scheduled_at"] == "2026-06-01 09:00:00"
+
+
 def test_draft_follow_up_sends_direct_message_when_live_send_enabled(tmp_path):
     store = AutoReplyStore(tmp_path / "task.sqlite3")
     project_id = store.create_work_project(

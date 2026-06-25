@@ -454,6 +454,7 @@ Sending policy:
 - Default is to create `follow_up_draft` with `status=draft`.
 - A due draft is sendable when live sending is enabled, the TODO is still open,
   and the send target is available.
+- Drafts more than seven days past due are skipped instead of sent.
 - `risk_check_json` is retained only as audit context. It does not create an
   approval gate and must not block project follow-up delivery.
 - Group sends require a known group conversation. If no group conversation is

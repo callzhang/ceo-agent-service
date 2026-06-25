@@ -1,8 +1,33 @@
 import json
+from datetime import datetime, timezone
 
 from app.feedback_spike import prepare_outgoing_reply_text
 from app.store import AutoReplyStore
 from app.task_models import ProjectStatus, TodoStatus
+
+
+MAX_FOLLOW_UP_AGE_SECONDS = 7 * 24 * 60 * 60
+
+
+def _parse_follow_up_datetime(value: str) -> datetime | None:
+    text = value.strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is not None:
+        return parsed.astimezone(timezone.utc).replace(tzinfo=None)
+    return parsed
+
+
+def _is_stale_follow_up(scheduled_at: str, now: str) -> bool:
+    scheduled = _parse_follow_up_datetime(scheduled_at)
+    current = _parse_follow_up_datetime(now)
+    if scheduled is None or current is None:
+        return False
+    return (current - scheduled).total_seconds() > MAX_FOLLOW_UP_AGE_SECONDS
 
 
 def _has_completion_evidence(completion_evidence_json: str) -> bool:
@@ -41,6 +66,23 @@ def _skip_completed_follow_up(store: AutoReplyStore, draft, *, now: str, reason:
                 "skipped": True,
                 "reason": reason,
                 "evidence_check": "completion_supported",
+            },
+            ensure_ascii=False,
+        ),
+    )
+
+
+def _skip_stale_follow_up(store: AutoReplyStore, draft, *, now: str) -> None:
+    store.update_follow_up_draft(
+        draft.id,
+        status="skipped",
+        sent_at=now,
+        send_result_json=json.dumps(
+            {
+                "skipped": True,
+                "reason": "stale_due_follow_up",
+                "scheduled_at": draft.scheduled_at,
+                "max_age_days": 7,
             },
             ensure_ascii=False,
         ),
@@ -90,6 +132,9 @@ def process_due_follow_ups(
     )
     for draft in drafts:
         if not auto_send:
+            continue
+        if _is_stale_follow_up(draft.scheduled_at, now):
+            _skip_stale_follow_up(store, draft, now=now)
             continue
         completed, reason = _completion_supported_by_current_evidence(store, draft)
         if completed:
