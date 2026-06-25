@@ -126,6 +126,10 @@ def test_is_okr_review_request_matches_review_intent():
     assert is_okr_review_request("看看我的 KR 进度")
     assert not is_okr_review_request("今天 OKR 系统打不开")
     assert not is_okr_review_request(
+        "OKR系统里面有几个人的OKR中有显示需要你确认的修改项目，"
+        "从主页进去选“目标确认”应该能看到，不处理打分会出错。"
+    )
+    assert not is_okr_review_request(
         "【招聘】Vibecoding_0615 候选人画像与综合评价："
         "候选人具备全栈目标，面试官评价技术深度一般。"
     )

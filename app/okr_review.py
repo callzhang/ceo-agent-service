@@ -471,6 +471,9 @@ def is_okr_review_request(text: str) -> bool:
         if not token.casefold().startswith(("http://", "https://"))
     )
     normalized = " ".join(non_url_text.split()).casefold()
+    confirmation_markers = ("目标确认", "修改项目", "需要你确认")
+    if any(marker in normalized for marker in confirmation_markers):
+        return False
     review_markers = ("审核", "review", "看看", "打分", "评价")
     okr_markers = {"okr", "kr"}
     return any(marker in normalized for marker in review_markers) and any(

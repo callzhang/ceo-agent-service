@@ -140,6 +140,7 @@ def test_developer_prompt_documents_agent_envelope_output_protocol():
 
     assert "kind 必须是 reply、okr_review、no_action 或 error" in template
     assert '{"type":"queue_okr_review"}' in template
+    assert "目标确认" in template
     assert "不要输出 queue_okr_review" in template
     assert "user_response.mode 必须是 send_reply、ask_clarifying_question、handoff_to_human 或 no_reply" in template
     assert "domain_payload 默认使用空对象" in template
