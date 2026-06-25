@@ -125,6 +125,7 @@ def _defer_recoverable_follow_up(
 
 
 def _owner_dingtalk_target(
+    store: AutoReplyStore,
     dws,
     *,
     owner_user_id: str,
@@ -135,6 +136,14 @@ def _owner_dingtalk_target(
     if not owner_user_id:
         if not fallback_name:
             return "", "", ""
+        cached_profiles = store.find_org_users_by_name(fallback_name)
+        if len(cached_profiles) == 1:
+            cached = cached_profiles[0]
+            return (
+                cached.user_id,
+                cached.open_dingtalk_id or "",
+                (cached.name or fallback_name).strip(),
+            )
         profiles = dws.search_user_profiles(fallback_name)
         if len(profiles) != 1:
             return "", "", fallback_name
@@ -144,6 +153,11 @@ def _owner_dingtalk_target(
             profile.open_dingtalk_id or "",
             (profile.name or fallback_name).strip(),
         )
+    cached = store.get_org_user_profile(owner_user_id)
+    if cached is not None and (cached.open_dingtalk_id or cached.name):
+        return owner_user_id, cached.open_dingtalk_id or "", (
+            cached.name or fallback_name
+        ).strip()
     profile = dws.get_user_profile(owner_user_id)
     return owner_user_id, profile.open_dingtalk_id or "", (
         profile.name or fallback_name
@@ -177,6 +191,7 @@ def process_due_follow_ups(
             continue
         try:
             owner_user_id, open_dingtalk_id, at_name = _owner_dingtalk_target(
+                store,
                 dws,
                 owner_user_id=draft.owner_user_id,
                 fallback_name=draft.owner_name,
@@ -199,7 +214,7 @@ def process_due_follow_ups(
             )
             question_text = outgoing_text.text
             feedback_token = outgoing_text.feedback_token
-            if draft.target_conversation_id:
+            if draft.target_kind == "group" and draft.target_conversation_id:
                 result = dws.send_message(
                     draft.target_conversation_id,
                     question_text,
