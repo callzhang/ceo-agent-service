@@ -48,11 +48,7 @@ class PermissionGate:
         self, decision: CodexDecision, trigger: DingTalkMessage
     ) -> PermissionResult:
         if not trigger.single_chat:
-            return PermissionResult(
-                action=PermissionAction.REPLY,
-                reply_text=INTERNAL_PERSONNEL_GROUP_REFUSAL,
-                reason="internal personnel detail in group chat",
-            )
+            return PermissionResult(action=PermissionAction.ALLOW)
         try:
             requester_user_id = self.dws.resolve_message_sender(trigger)
         except Exception as exc:
@@ -88,6 +84,8 @@ class PermissionGate:
     def _evaluate_external_candidate(
         self, decision: CodexDecision, trigger: DingTalkMessage
     ) -> PermissionResult:
+        if not trigger.single_chat:
+            return PermissionResult(action=PermissionAction.ALLOW)
         candidate_department_ids = set(decision.candidate_department_ids)
         try:
             requester_user_id = self.dws.resolve_message_sender(trigger)

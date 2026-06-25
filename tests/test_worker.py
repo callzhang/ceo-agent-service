@@ -10495,7 +10495,7 @@ def test_internal_personnel_question_refuses_unrelated_requester(
     ]
 
 
-def test_internal_personnel_question_never_replies_sensitive_detail_in_group(
+def test_internal_personnel_question_allows_agent_reply_in_group(
     tmp_path: Path, monkeypatch
 ):
     dws = FakeDws(
@@ -10515,7 +10515,7 @@ def test_internal_personnel_question_never_replies_sensitive_detail_in_group(
     worker.run_once()
 
     assert final_sent(dws) == [
-        ("cid-1", "@周俊杰 这个涉及个人敏感信息，不适合在群里展开，单独同步我。（by明哥分身）")
+        ("cid-1", "@周俊杰 你这次可以按高绩效处理（by明哥分身）")
     ]
 
 
@@ -10591,6 +10591,30 @@ def test_candidate_question_refuses_unrelated_department_requester(
     assert final_sent(dws) == [
         ("cid-1", "这个候选人信息只回答相关部门的人。（by明哥分身）")
     ]
+
+
+def test_candidate_question_allows_group_reply_without_sender_department_gate(
+    tmp_path: Path, monkeypatch
+):
+    dws = FakeDws(
+        [conversation(single_chat=False)],
+        {"cid-1": [message("@Alex Chen(明哥) 这个候选人怎么样？", single_chat=False)]},
+    )
+    dws.user_departments["sender-user-1"] = {"dept-product"}
+    codex = FakeCodex(
+        CodexDecision(
+            action=CodexAction.SEND_REPLY,
+            reply_text="可以推进",
+            sensitivity_kind=SensitivityKind.EXTERNAL_CANDIDATE,
+            candidate_context_known=True,
+            candidate_department_ids=["dept-sales"],
+        )
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+
+    worker.run_once()
+
+    assert final_sent(dws) == [("cid-1", "@周俊杰 可以推进（by明哥分身）")]
 
 
 def test_permission_lookup_failure_records_error_and_does_not_send(
