@@ -54,7 +54,7 @@ class FakeDws:
         return []
 
 
-def test_due_low_risk_follow_up_sends_group_message(tmp_path):
+def test_due_follow_up_sends_group_message(tmp_path):
     store = AutoReplyStore(tmp_path / "task.sqlite3")
     project_id = store.create_work_project(
         title="客户交付",
@@ -282,7 +282,7 @@ def test_due_follow_up_skips_when_todo_is_done(tmp_path):
     assert "todo status is done" in skipped.send_result_json
 
 
-def test_approved_follow_up_sends_direct_message_when_live_send_enabled(tmp_path):
+def test_draft_follow_up_sends_direct_message_when_live_send_enabled(tmp_path):
     store = AutoReplyStore(tmp_path / "task.sqlite3")
     project_id = store.create_work_project(
         title="客户交付",
@@ -297,8 +297,7 @@ def test_approved_follow_up_sends_direct_message_when_live_send_enabled(tmp_path
         owner_name="Alex",
         target_kind="direct",
         question_text="请同步这个事项的最新进展。",
-        risk_check_json=json.dumps({"owner_in_group": False, "sensitive": False}),
-        status="approved",
+        risk_check_json=json.dumps({"owner_in_group": False, "sensitive": True}),
         scheduled_at="2026-06-07 09:00:00",
     )
     dws = FakeDws()
@@ -350,7 +349,7 @@ def test_direct_follow_up_with_conversation_id_uses_conversation_target(tmp_path
     assert dws.sent[0]["open_dingtalk_id"] is None
 
 
-def test_dry_run_does_not_send_approved_follow_up(tmp_path):
+def test_dry_run_does_not_send_due_follow_up(tmp_path):
     store = AutoReplyStore(tmp_path / "task.sqlite3")
     project_id = store.create_work_project(
         title="客户交付",
@@ -365,7 +364,6 @@ def test_dry_run_does_not_send_approved_follow_up(tmp_path):
         target_kind="direct",
         question_text="请同步这个事项的最新进展。",
         risk_check_json=json.dumps({"owner_in_group": False, "sensitive": False}),
-        status="approved",
         scheduled_at="2026-06-07 09:00:00",
     )
     dws = FakeDws()
@@ -379,10 +377,10 @@ def test_dry_run_does_not_send_approved_follow_up(tmp_path):
 
     assert sent == 0
     assert dws.sent == []
-    assert store.list_follow_up_drafts(statuses=("approved",))[0].id == draft_id
+    assert store.list_follow_up_drafts(statuses=("draft",))[0].id == draft_id
 
 
-def test_non_low_risk_follow_up_stays_draft(tmp_path):
+def test_group_follow_up_sends_without_risk_gate_when_target_exists(tmp_path):
     store = AutoReplyStore(tmp_path / "task.sqlite3")
     project_id = store.create_work_project(
         title="人事敏感事项",
@@ -409,11 +407,11 @@ def test_non_low_risk_follow_up_stays_draft(tmp_path):
         auto_send=True,
     )
 
-    assert sent == 0
-    assert store.list_follow_up_drafts(statuses=("draft",))[0].id == draft_id
+    assert sent == 1
+    assert store.list_follow_up_drafts(statuses=("sent",))[0].id == draft_id
 
 
-def test_missing_risk_check_is_not_low_risk(tmp_path):
+def test_missing_risk_check_does_not_block_sendable_follow_up(tmp_path):
     store = AutoReplyStore(tmp_path / "task.sqlite3")
     project_id = store.create_work_project(
         title="客户交付",
@@ -440,9 +438,9 @@ def test_missing_risk_check_is_not_low_risk(tmp_path):
         auto_send=True,
     )
 
-    assert sent == 0
-    assert dws.sent == []
-    assert store.list_follow_up_drafts(statuses=("draft",))[0].id == draft_id
+    assert sent == 1
+    assert dws.sent[0]["conversation_id"] == "cid-1"
+    assert store.list_follow_up_drafts(statuses=("sent",))[0].id == draft_id
 
 
 def test_group_follow_up_without_group_falls_back_to_direct_message(tmp_path):
@@ -461,7 +459,6 @@ def test_group_follow_up_without_group_falls_back_to_direct_message(tmp_path):
         target_kind="group",
         question_text="请同步进展",
         risk_check_json=json.dumps({"owner_in_group": False, "sensitive": False}),
-        status="approved",
         scheduled_at="2026-06-07 09:00:00",
     )
     dws = FakeDws()

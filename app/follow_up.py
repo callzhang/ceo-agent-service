@@ -5,20 +5,6 @@ from app.store import AutoReplyStore
 from app.task_models import ProjectStatus, TodoStatus
 
 
-def _is_low_risk(risk_check_json: str) -> bool:
-    try:
-        risk = json.loads(risk_check_json or "{}")
-    except json.JSONDecodeError:
-        return False
-    if risk.get("sensitive") is True:
-        return False
-    if risk.get("sensitive") is not False:
-        return False
-    if risk.get("owner_in_group") is not True:
-        return False
-    return True
-
-
 def _has_completion_evidence(completion_evidence_json: str) -> bool:
     try:
         evidence = json.loads(completion_evidence_json or "{}")
@@ -103,11 +89,7 @@ def process_due_follow_ups(
         limit=limit,
     )
     for draft in drafts:
-        should_send = auto_send and (
-            draft.status == "approved"
-            or _is_low_risk(draft.risk_check_json)
-        )
-        if not should_send:
+        if not auto_send:
             continue
         completed, reason = _completion_supported_by_current_evidence(store, draft)
         if completed:

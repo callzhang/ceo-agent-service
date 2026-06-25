@@ -451,18 +451,20 @@ priority expectations, set `needs_derek_attention=true` or route to confirmation
 
 Sending policy:
 
-- Default is to create `follow_up_draft`.
-- Auto-send only when low risk: owner is clear, follow-up time is clear, question
-  text is clear, related conversation is clear, owner is in the selected group
-  if group-send is used, and the matter is suitable for that audience.
-- Otherwise keep the draft for review on `/tasks`.
+- Default is to create `follow_up_draft` with `status=draft`.
+- A due draft is sendable when live sending is enabled, the TODO is still open,
+  and the send target is available.
+- `risk_check_json` is retained only as audit context. It does not create an
+  approval gate and must not block project follow-up delivery.
+- Group sends require a known group conversation. If no group conversation is
+  known but the owner is resolved, send directly to the owner.
 
 Conversation selection:
 
 - Track multiple source conversations per project.
 - Prefer source groups where the matter has been discussed.
 - Let the task agent choose based on group name, recent relevant updates, whether
-  owner is in the group, whether the question is suitable for the group, and
+  the question is suitable for the group, and
   whether the matter historically progressed there.
 - If owner is not in any suitable source group, or public follow-up is not
   appropriate, send direct message.

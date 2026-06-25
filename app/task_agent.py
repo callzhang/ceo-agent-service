@@ -175,6 +175,9 @@ def build_task_agent_prompt(
 - 只有消息、会议纪要或文档明确证明 TODO 完成时，才能自动清理 TODO，并写入 completion_evidence。
 - 生成 follow_up_draft 前必须确定 owner_user_id；只有 owner_name 不够。如果上下文缺少 userId，先用 dws 或已有联系人信息补齐；仍无法唯一确定时，不要生成 follow_up_draft。
 - 每个 follow_up_draft 必须绑定一个 TODO：跟进已有 TODO 时填写 todo_id；跟进本次新建 TODO 时，todo_changes.create 和 follow_up_drafts 使用相同的 todo_ref，系统会把 todo_ref 转成真实 todo_id。不能生成没有 TODO 绑定的 follow_up_draft。
+- follow_up_draft 默认 status=draft；不要用 approved 表达“需审批”。项目跟进发送不依赖 risk_check、sensitive 或 owner_in_group。
+- follow_up_draft.target_kind 只表示实际发送位置：能回到来源群聊就用 group 并填写 target_conversation_id；不能确定来源群聊但已确定 owner_user_id 时用 direct。不要把“没有群上下文”写成 owner_in_group=false 来阻断发送。
+- risk_check 只是审计说明，可省略；如果填写，只说明为什么这个跟进问题适合发给该 owner，不要发明敏感/需审批门禁。
 - 跟进时间指导：P0 今天跟进；P1 在 3 天内跟进；P2 在上下文或 OKR 暗示需要时本周内跟进。
 
 输出要求：
@@ -184,6 +187,7 @@ def build_task_agent_prompt(
 - update_project 必须引用候选或已确认项目 id。
 - todo_changes 的 close/cancel/update 必须引用 todo_id。
 - follow_up_drafts 的 owner_user_id 不能为空，且必须有 todo_id 或 todo_ref。
+- follow_up_drafts 不需要人工审批字段；可发送性由 scheduled_at、target_kind、target_conversation_id 和 owner_user_id 决定。
 - memory_connector 可用时，非 discard 决策的 memory_recall_used 必须为 true，且 project.memory_context 不能为空。
 - memory_connector 不可用时，非 discard 决策的 memory_recall_used 必须为 false，且 project.memory_context 仍不能为空。
 

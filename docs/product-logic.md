@@ -134,10 +134,12 @@ owner, project updates, and follow-up records.
 
 Completion can be inferred automatically from later messages, meetings, or
 documents when the evidence is explicit. If an item is due and still open, the
-task follow-up path drafts a message for the owner. It prefers the originating
-group when the owner is in that group; otherwise it falls back to a direct
-message. Owner replies then enter the existing CEO reply path, so follow-up does
-not need a separate reply engine.
+task follow-up path sends the drafted question when live sending is enabled. It
+uses the originating group only when that group conversation is known; otherwise
+it sends a direct message to the resolved owner. Risk annotations on the draft
+are audit context only and do not create a separate approval gate. Owner replies
+then enter the existing CEO reply path, so follow-up does not need a separate
+reply engine.
 
 ## Safety Defaults
 
