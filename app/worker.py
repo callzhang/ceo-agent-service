@@ -1013,6 +1013,8 @@ class DingTalkAutoReplyWorker:
         )
 
     def _dws_auth_backup_due(self, state: dict[str, Any], archive_path: Path) -> bool:
+        if state.get("status") == "unsupported":
+            return False
         last_attempt_at = state.get("backed_up_at") or state.get("updated_at")
         if not isinstance(last_attempt_at, str):
             return True
@@ -1038,6 +1040,18 @@ class DingTalkAutoReplyWorker:
             self.dws.export_auth_archive(archive_path)
             os.chmod(archive_path, 0o600)
         except Exception as exc:
+            if self._is_dws_auth_export_unsupported(exc):
+                self._set_dws_auth_backup_state(
+                    {
+                        **state,
+                        "status": "unsupported",
+                        "reason": "dws_keychain_export_unsupported",
+                        "error": str(exc)[:240],
+                        "updated_at": now,
+                        "archive_path": str(archive_path),
+                    }
+                )
+                return
             self.store.record_error(None, None, "dws_auth_backup", str(exc))
             self._set_dws_auth_backup_state(
                 {
@@ -1057,6 +1071,13 @@ class DingTalkAutoReplyWorker:
         if isinstance(state.get("restored_at"), str):
             next_state["restored_at"] = state["restored_at"]
         self._set_dws_auth_backup_state(next_state)
+
+    def _is_dws_auth_export_unsupported(self, exc: Exception) -> bool:
+        if not isinstance(exc, DwsError):
+            return False
+        if exc.code != "3":
+            return False
+        return "DWS_DISABLE_KEYCHAIN=1" in str(exc)
 
     def _restore_dws_auth_backup_and_retry(
         self,

@@ -1495,9 +1495,34 @@ def test_produce_once_backs_up_dws_auth_after_success(tmp_path: Path, monkeypatc
     assert backup_state["archive_path"].endswith("dws-auth-backup/dws-auth.tar.gz")
 
 
+def test_produce_once_marks_keychain_dws_auth_backup_unsupported(
+    tmp_path: Path, monkeypatch
+):
+    dws = FakeDws([], {})
+    dws.auth_export_error = DwsError(
+        "macOS keychain export unsupported; set DWS_DISABLE_KEYCHAIN=1",
+        code="3",
+    )
+    worker = make_worker(tmp_path, dws, FakeCodex([]), monkeypatch)
+
+    assert worker.produce_once() == 0
+    assert worker.produce_once() == 0
+
+    assert dws.exported_auth_archives == [
+        tmp_path / "dws-auth-backup" / "dws-auth.tar.gz"
+    ]
+    backup_state = json.loads(worker.store.get_service_state("dws_auth_backup"))
+    assert backup_state["status"] == "unsupported"
+    assert backup_state["reason"] == "dws_keychain_export_unsupported"
+    assert backup_state["error"] == (
+        "macOS keychain export unsupported; set DWS_DISABLE_KEYCHAIN=1"
+    )
+    assert worker.store.count_errors() == 0
+
+
 def test_produce_once_throttles_failed_dws_auth_backup(tmp_path: Path, monkeypatch):
     dws = FakeDws([], {})
-    dws.auth_export_error = DwsError("macOS keychain export unsupported", code="3")
+    dws.auth_export_error = DwsError("disk full")
     worker = make_worker(tmp_path, dws, FakeCodex([]), monkeypatch)
 
     assert worker.produce_once() == 0
@@ -1508,7 +1533,8 @@ def test_produce_once_throttles_failed_dws_auth_backup(tmp_path: Path, monkeypat
     ]
     backup_state = json.loads(worker.store.get_service_state("dws_auth_backup"))
     assert backup_state["status"] == "failed"
-    assert backup_state["error"] == "macOS keychain export unsupported"
+    assert backup_state["error"] == "disk full"
+    assert worker.store.count_errors() == 1
 
 
 def test_produce_once_restores_dws_auth_backup_before_login(

@@ -98,10 +98,10 @@ under ignored `data/`; the worker sets file mode `0600` after export.
 
 On macOS, DWS may store its encryption key in the system Keychain. In that mode,
 `dws auth export` can refuse to create a portable auth archive. The worker does
-not read or decrypt Keychain items itself; it records `dws_auth_backup=failed`
-and keeps using the existing login state. To make backup/restore fully active,
-run the service with a DWS file-backed keychain and complete one DWS login in
-that environment.
+not read or decrypt Keychain items itself; it records
+`dws_auth_backup=unsupported` and keeps using the existing login state without
+blocking replies. To make backup/restore fully active, run the service with a
+DWS file-backed keychain and complete one DWS login in that environment.
 
 When a DWS call reports a login/session-loss error, the worker first imports
 that local archive with `dws auth import --force`, then retries the failed DWS
