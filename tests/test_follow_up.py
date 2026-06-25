@@ -553,3 +553,45 @@ def test_follow_up_failure_marks_failed_and_records_error(tmp_path):
     failed = store.list_follow_up_drafts(statuses=("failed",))[0]
     assert failed.id == draft_id
     assert "send failed" in failed.send_result_json
+
+
+def test_dws_login_required_defers_follow_up_without_marking_failed(tmp_path):
+    from app.dws_client import DwsError
+
+    class AuthMissingDws:
+        def get_user_profile(self, user_id):
+            raise DwsError("not_authenticated", code="not_authenticated")
+
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    project_id = store.create_work_project(
+        title="客户交付",
+        category="projects",
+        status="active",
+        priority="P0",
+        risk_level="high",
+    )
+    draft_id = store.create_follow_up_draft(
+        project_id=project_id,
+        owner_user_id="owner-1",
+        target_conversation_id="cid-1",
+        target_kind="group",
+        question_text="请同步进展",
+        risk_check_json=json.dumps({"owner_in_group": True, "sensitive": False}),
+        scheduled_at="2026-06-07 09:00:00",
+    )
+
+    sent = process_due_follow_ups(
+        store,
+        AuthMissingDws(),
+        now="2026-06-07 10:00:00",
+        auto_send=True,
+    )
+
+    assert sent == 0
+    assert store.list_follow_up_drafts(statuses=("failed",)) == []
+    draft = store.list_follow_up_drafts(statuses=("draft",))[0]
+    assert draft.id == draft_id
+    assert draft.scheduled_at == "2026-06-07 10:15:00"
+    result = json.loads(draft.send_result_json)
+    assert result["recoverable"] is True
+    assert result["reason"] == "dws_login_required"

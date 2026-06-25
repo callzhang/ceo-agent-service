@@ -1,12 +1,14 @@
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
+from app.dws_client import DwsError
 from app.feedback_spike import prepare_outgoing_reply_text
 from app.store import AutoReplyStore
 from app.task_models import ProjectStatus, TodoStatus
 
 
 MAX_FOLLOW_UP_AGE_SECONDS = 7 * 24 * 60 * 60
+RECOVERABLE_AUTH_RETRY_DELAY = timedelta(minutes=15)
 
 
 def _parse_follow_up_datetime(value: str) -> datetime | None:
@@ -83,6 +85,39 @@ def _skip_stale_follow_up(store: AutoReplyStore, draft, *, now: str) -> None:
                 "reason": "stale_due_follow_up",
                 "scheduled_at": draft.scheduled_at,
                 "max_age_days": 7,
+            },
+            ensure_ascii=False,
+        ),
+    )
+
+
+def _recoverable_retry_at(now: str) -> str:
+    current = _parse_follow_up_datetime(now) or datetime.now(timezone.utc).replace(
+        tzinfo=None
+    )
+    return (current + RECOVERABLE_AUTH_RETRY_DELAY).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _defer_recoverable_follow_up(
+    store: AutoReplyStore,
+    draft,
+    *,
+    now: str,
+    reason: str,
+    error: str,
+) -> None:
+    store.update_follow_up_draft(
+        draft.id,
+        status="draft",
+        scheduled_at=_recoverable_retry_at(now),
+        send_result_json=json.dumps(
+            {
+                "recoverable": True,
+                "reason": reason,
+                "error": error,
+                "retry_delay_minutes": int(
+                    RECOVERABLE_AUTH_RETRY_DELAY.total_seconds() // 60
+                ),
             },
             ensure_ascii=False,
         ),
@@ -180,6 +215,21 @@ def process_due_follow_ups(
                     user_id=owner_user_id or None,
                 )
         except Exception as exc:
+            if isinstance(exc, DwsError) and exc.needs_login:
+                _defer_recoverable_follow_up(
+                    store,
+                    draft,
+                    now=now,
+                    reason="dws_login_required",
+                    error=str(exc),
+                )
+                store.record_error(
+                    draft.target_conversation_id,
+                    None,
+                    "follow_up",
+                    str(exc),
+                )
+                continue
             store.update_follow_up_draft(
                 draft.id,
                 status="failed",
