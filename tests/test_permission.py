@@ -174,7 +174,7 @@ def test_candidate_empty_requester_departments_is_error():
     assert "department" in result.reason
 
 
-def test_candidate_unknown_context_asks_for_department():
+def test_candidate_unknown_context_is_left_to_agent():
     result = PermissionGate(object()).evaluate(
         CodexDecision(
             action=CodexAction.SEND_REPLY,
@@ -183,8 +183,8 @@ def test_candidate_unknown_context_asks_for_department():
         trigger(),
     )
 
-    assert result.action == PermissionAction.REPLY
-    assert "岗位/部门" in result.reply_text
+    assert result.action == PermissionAction.ALLOW
+    assert result.reply_text == ""
 
 
 def test_candidate_known_context_without_department_ids_allows():

@@ -10519,7 +10519,7 @@ def test_internal_personnel_question_never_replies_sensitive_detail_in_group(
     ]
 
 
-def test_candidate_question_missing_department_asks_clarifying_question(
+def test_candidate_question_missing_context_uses_agent_clarifying_question(
     tmp_path: Path, monkeypatch
 ):
     dws = FakeDws(
@@ -10528,8 +10528,8 @@ def test_candidate_question_missing_department_asks_clarifying_question(
     )
     codex = FakeCodex(
         CodexDecision(
-            action=CodexAction.SEND_REPLY,
-            reply_text="可以推进",
+            action=CodexAction.ASK_CLARIFYING_QUESTION,
+            reply_text="我这边没找到这个候选人的面试记录和岗位信息，你把简历或面试听记发我一下。",
             sensitivity_kind=SensitivityKind.EXTERNAL_CANDIDATE,
             candidate_context_known=False,
         )
@@ -10539,7 +10539,7 @@ def test_candidate_question_missing_department_asks_clarifying_question(
     worker.run_once()
 
     assert final_sent(dws) == [
-        ("cid-1", "这个候选人是哪个岗位/部门的？（by明哥分身）")
+        ("cid-1", "我这边没找到这个候选人的面试记录和岗位信息，你把简历或面试听记发我一下。（by明哥分身）")
     ]
 
 

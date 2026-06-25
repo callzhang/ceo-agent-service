@@ -733,6 +733,15 @@ def test_thread_prompt_requires_minutes_material_action_item_handling():
     assert "不能只总结会议" in prompt
 
 
+def test_thread_prompt_requires_candidate_context_lookup_before_clarifying():
+    prompt = ceo_agent_thread_prompt()
+
+    assert "候选人上下文不能只看当前一句话" in prompt
+    assert "先查会话名、消息、引用、AI 听记、面试记录、简历和岗位材料" in prompt
+    assert "查不到候选人对象、岗位或部门时" in prompt
+    assert "自己组织追问" in prompt
+
+
 def test_thread_prompt_requires_witty_reply_for_direct_jokes():
     prompt = ceo_agent_thread_prompt()
 

@@ -11,7 +11,6 @@ from app.dingtalk_models import (
 
 INTERNAL_PERSONNEL_PRIVATE_REFUSAL = "这个涉及其他人的人事信息，我不能直接回答。"
 INTERNAL_PERSONNEL_GROUP_REFUSAL = "这个涉及个人敏感信息，不适合在群里展开，单独同步我。"
-CANDIDATE_DEPARTMENT_CLARIFICATION = "这个候选人是哪个岗位/部门的？"
 CANDIDATE_DEPARTMENT_REFUSAL = "这个候选人信息只回答相关部门的人。"
 
 
@@ -90,12 +89,6 @@ class PermissionGate:
         self, decision: CodexDecision, trigger: DingTalkMessage
     ) -> PermissionResult:
         candidate_department_ids = set(decision.candidate_department_ids)
-        if not decision.candidate_context_known:
-            return PermissionResult(
-                action=PermissionAction.REPLY,
-                reply_text=CANDIDATE_DEPARTMENT_CLARIFICATION,
-                reason="missing candidate context",
-            )
         try:
             requester_user_id = self.dws.resolve_message_sender(trigger)
             if self.dws.is_hr_user(requester_user_id):
