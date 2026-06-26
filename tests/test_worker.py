@@ -7144,6 +7144,43 @@ def test_minutes_comment_failure_falls_back_to_original_message_reply(
     assert "AI Minutes comments unsupported" in errors[0].detail
 
 
+def test_plain_shanji_transcribe_link_replies_without_doc_comment(
+    tmp_path: Path, monkeypatch
+):
+    minutes_id = "76327569643334323330373439365f3337343933323031365f39"
+    transcribe_url = f"https://shanji.dingtalk.com/app/transcribes/{minutes_id}"
+    trigger = message(
+        f"@Alex Chen(明哥) [{transcribe_url}]({transcribe_url}) 看下这个听记",
+        single_chat=True,
+    )
+    dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
+    dws.minutes_infos[minutes_id] = {
+        "result": {
+            "taskUuid": minutes_id,
+            "title": "招聘站会",
+            "url": transcribe_url,
+        }
+    }
+    dws.minutes_summaries[minutes_id] = {"result": {"fullSummary": "候选人优先级。"}}
+    codex = FakeCodex(
+        CodexDecision(
+            action=CodexAction.SEND_REPLY,
+            reply_text="先推进刁必颂、代东，其他人放第二梯队。",
+        )
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+
+    worker.run_once()
+
+    signed_reply = "先推进刁必颂、代东，其他人放第二梯队。（by明哥分身）"
+    assert dws.doc_comments == []
+    assert dws.reply_messages == [("cid-1", "msg-1", "sender-1", signed_reply)]
+    attempt = worker.store.get_reply_attempt(1)
+    assert attempt is not None
+    assert attempt.send_status == "sent"
+    assert worker.store.list_errors() == []
+
+
 def test_media_id_image_is_downloaded_and_passed_to_codex(
     tmp_path: Path, monkeypatch
 ):

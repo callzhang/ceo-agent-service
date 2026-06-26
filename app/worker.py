@@ -5777,21 +5777,13 @@ class DingTalkAutoReplyWorker:
     @classmethod
     def _minutes_comment_target(cls, messages: list[DingTalkMessage]) -> str:
         shanji_urls: list[str] = []
-        transcription_urls: list[str] = []
         for message in messages:
             for text in (message.content, message.quoted_content or ""):
                 for match in DINGTALK_SHANJI_DOC_SELECTOR_PATTERN.finditer(text):
                     url = cls._clean_link_url(match.group(0))
                     if url and url not in shanji_urls:
                         shanji_urls.append(url)
-                for match in DINGTALK_MINUTES_LINK_PATTERN.finditer(text):
-                    url = cls._clean_link_url(match.group(0))
-                    if (
-                        url.startswith("https://shanji.dingtalk.com/")
-                        and url not in transcription_urls
-                    ):
-                        transcription_urls.append(url)
-        return (shanji_urls or transcription_urls or [""])[0]
+        return (shanji_urls or [""])[0]
 
     @staticmethod
     def _clean_link_url(url: str) -> str:
