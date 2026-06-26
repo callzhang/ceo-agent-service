@@ -207,6 +207,60 @@ def _source_context_prefix(project, todo) -> str:
     return f"基于{' / '.join(parts)}的未完成事项：\n"
 
 
+def _is_open_conversation_id(value: str) -> bool:
+    return value.strip().startswith("cid")
+
+
+def _source_conversation_titles(project, target_conversation_id: str) -> list[str]:
+    if project is None:
+        return []
+    try:
+        sources = json.loads(project.source_conversations_json or "[]")
+    except json.JSONDecodeError:
+        return []
+    titles: list[str] = []
+    for source in sources if isinstance(sources, list) else []:
+        if not isinstance(source, dict):
+            continue
+        title = str(source.get("title") or "").strip()
+        conversation_id = str(source.get("conversation_id") or "").strip()
+        if title and conversation_id == target_conversation_id:
+            titles.append(title)
+    return titles
+
+
+def _resolve_group_conversation_id(store: AutoReplyStore, dws, project, draft) -> str:
+    target = draft.target_conversation_id.strip()
+    if not target:
+        return ""
+    if _is_open_conversation_id(target):
+        return target
+
+    for title in _source_conversation_titles(project, target):
+        cached = store.find_conversation_by_title(title)
+        if cached is not None and not cached.single_chat:
+            store.update_follow_up_draft(
+                draft.id,
+                target_conversation_id=cached.conversation_id,
+            )
+            return cached.conversation_id
+        if not hasattr(dws, "search_conversations"):
+            continue
+        matches = [
+            item
+            for item in dws.search_conversations(title)
+            if item.title == title and not item.single_chat
+        ]
+        if len(matches) == 1:
+            conversation_id = matches[0].open_conversation_id
+            store.update_follow_up_draft(
+                draft.id,
+                target_conversation_id=conversation_id,
+            )
+            return conversation_id
+    return ""
+
+
 def _follow_up_message_text(store: AutoReplyStore, draft) -> str:
     project = store.get_work_project(draft.project_id)
     todo = store.get_work_todo(draft.todo_id) if draft.todo_id > 0 else None
@@ -512,14 +566,19 @@ def process_due_follow_ups(
                 continue
             project = store.get_work_project(draft.project_id)
             sensitive = _is_sensitive_follow_up(project, draft)
+            group_conversation_id = (
+                _resolve_group_conversation_id(store, dws, project, draft)
+                if draft.target_kind == "group"
+                else ""
+            )
             send_to_group = (
                 draft.target_kind == "group"
-                and bool(draft.target_conversation_id)
+                and bool(group_conversation_id)
                 and not sensitive
             )
             if send_to_group:
                 group_sent_today = store.count_sent_follow_ups_for_conversation_since(
-                    draft.target_conversation_id,
+                    group_conversation_id,
                     day_start,
                 )
                 if group_sent_today >= MAX_FOLLOW_UPS_PER_GROUP_PER_DAY:
@@ -529,7 +588,7 @@ def process_due_follow_ups(
                         now=now,
                         reason="group_daily_cap",
                         detail={
-                            "target_conversation_id": draft.target_conversation_id,
+                            "target_conversation_id": group_conversation_id,
                             "sent_today": group_sent_today,
                             "cap": MAX_FOLLOW_UPS_PER_GROUP_PER_DAY,
                         },
@@ -552,7 +611,7 @@ def process_due_follow_ups(
             feedback_token = outgoing_text.feedback_token
             if send_to_group:
                 result = dws.send_message(
-                    draft.target_conversation_id,
+                    group_conversation_id,
                     question_text,
                     at_users=at_users,
                     at_open_dingtalk_ids=at_open_dingtalk_ids,

@@ -107,6 +107,66 @@ def test_due_follow_up_sends_group_message(tmp_path):
     assert send_result["at_open_dingtalk_names"] == ["Alex"]
 
 
+def test_due_follow_up_resolves_non_open_group_id_from_cached_source(tmp_path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    store.upsert_conversation(
+        "cid-open-1",
+        "客户项目群",
+        single_chat=False,
+        codex_session_id=None,
+    )
+    project_id = store.create_work_project(
+        title="客户交付",
+        category="projects",
+        status="active",
+        priority="P0",
+        risk_level="high",
+        source_conversations_json=json.dumps(
+            [
+                {
+                    "conversation_id": "123456",
+                    "title": "客户项目群",
+                    "kind": "project_chat",
+                }
+            ],
+            ensure_ascii=False,
+        ),
+    )
+    todo_id = store.create_work_todo(
+        project_id=project_id,
+        title="确认交付风险",
+        owner_user_id="owner-1",
+        owner_name="Alex",
+        status="open",
+        priority="P0",
+        next_follow_up_at="2026-06-07 09:00:00",
+    )
+    store.create_follow_up_draft(
+        project_id=project_id,
+        todo_id=todo_id,
+        owner_user_id="owner-1",
+        owner_name="Alex",
+        target_conversation_id="123456",
+        target_kind="group",
+        question_text="基于客户项目群提到的事项，今天能确认交付风险吗？",
+        risk_check_json=json.dumps({"owner_in_group": True, "sensitive": False}),
+        scheduled_at="2026-06-07 09:00:00",
+    )
+    dws = FakeDws()
+
+    sent = process_due_follow_ups(
+        store,
+        dws,
+        now="2026-06-07 10:00:00",
+        auto_send=True,
+    )
+
+    assert sent == 1
+    assert dws.sent[0]["conversation_id"] == "cid-open-1"
+    sent_draft = store.list_follow_up_drafts(statuses=("sent",))[0]
+    assert sent_draft.target_conversation_id == "cid-open-1"
+
+
 def test_due_follow_up_uses_reply_postfix_and_feedback_links(tmp_path):
     store = AutoReplyStore(tmp_path / "task.sqlite3")
     project_id = store.create_work_project(

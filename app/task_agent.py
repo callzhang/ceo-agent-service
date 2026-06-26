@@ -176,7 +176,7 @@ def build_task_agent_prompt(
 - 生成 follow_up_draft 前必须确定 owner_user_id；只有 owner_name 不够。如果上下文缺少 userId，先用 dws 或已有联系人信息补齐；仍无法唯一确定时，不要生成 follow_up_draft。
 - 每个 follow_up_draft 必须绑定一个 TODO：跟进已有 TODO 时填写 todo_id；跟进本次新建 TODO 时，todo_changes.create 和 follow_up_drafts 使用相同的 todo_ref，系统会把 todo_ref 转成真实 todo_id。不能生成没有 TODO 绑定的 follow_up_draft。
 - follow_up_draft.status 固定填 draft；不要用 approved 表达“需审批”。项目跟进发送必须依赖 risk_check 审计：sensitive=true 表示不能在群里公开追问，发送端会优先转私聊或延后。
-- follow_up_draft.target_kind 只表示实际发送位置：能回到来源群聊就用 group 并填写 target_conversation_id；不能确定来源群聊但已确定 owner_user_id 时用 direct。不要把“没有群上下文”写成 owner_in_group=false 来阻断发送。
+- follow_up_draft.target_kind 只表示实际发送位置：能回到来源群聊就用 group，并且 target_conversation_id 必须填写 DWS 可直接发送的 openConversationId（通常以 cid 开头）；不要填 AI 搜问或业务搜索结果里的普通群号/数字群号。不能确定 openConversationId 但已确定 owner_user_id 时用 direct。不要把“没有群上下文”写成 owner_in_group=false 来阻断发送。
 - risk_check 是结构化输出必填的审计说明。涉及人事、试用期、转正、绩效、薪酬、offer、候选人隐私、客户敏感承诺或财务敏感信息时，必须设置 sensitive=true，并优先使用 direct target。
 - risk_check.owner_in_group 只记录 group target 是否包含 owner；direct target 可填 false 表示不适用，但不能用它阻断发送。
 - follow_up_draft.question_text 必须包含一句简短来源或依据，例如“基于某群/某会议/某文档提到的事项”，避免让 owner 不知道 AI 为什么突然追问；措辞必须是确认进展，不要像分配新任务。
