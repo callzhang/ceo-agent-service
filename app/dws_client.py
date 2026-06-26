@@ -290,6 +290,9 @@ class DwsClient:
             "json",
         ]
 
+    def build_auth_status_command(self) -> list[str]:
+        return [self.dws_bin, "auth", "status", "--format", "json"]
+
     def build_list_messages_by_sender_command(
         self,
         sender_user_id: str,
@@ -1283,6 +1286,12 @@ class DwsClient:
 
     def import_auth_archive(self, input_path: Path) -> None:
         self.run_text(self.build_auth_import_command(input_path))
+
+    def auth_status(self) -> dict[str, Any]:
+        payload = self.run_json(self.build_auth_status_command())
+        if not isinstance(payload, dict):
+            raise DwsError("invalid dws auth status response")
+        return payload
 
     def list_messages_by_sender(
         self,

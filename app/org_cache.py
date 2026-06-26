@@ -104,6 +104,9 @@ class CachedDwsClient:
     def import_auth_archive(self, input_path):
         return self.dws.import_auth_archive(input_path)
 
+    def auth_status(self):
+        return self.dws.auth_status()
+
     def get_current_user_id(self) -> str:
         return self.dws.get_current_user_id()
 

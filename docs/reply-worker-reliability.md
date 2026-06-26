@@ -110,7 +110,10 @@ that local archive with `dws auth import --force`, then retries the failed DWS
 call once. It starts the interactive `dws auth login` flow only if no archive is
 available or the archive restore does not recover a usable login state. Backup
 cadence defaults to 30 minutes and can be adjusted with
-`CEO_DWS_AUTH_BACKUP_INTERVAL`.
+`CEO_DWS_AUTH_BACKUP_INTERVAL`. The worker also checks `dws auth status` after
+successful DWS calls and immediately writes a fresh archive when
+`refresh_expires_at` changes, so refresh-token rotation is captured before the
+next periodic backup window.
 
 ## Processing acknowledgement
 

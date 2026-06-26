@@ -332,6 +332,14 @@ def test_auth_import_command_shape(tmp_path):
     ]
 
 
+def test_auth_status_command_shape():
+    client = DwsClient(dws_bin="dws")
+
+    command = client.build_auth_status_command()
+
+    assert command == ["dws", "auth", "status", "--format", "json"]
+
+
 def test_run_json_maps_plain_exit_code_2_to_login_required(monkeypatch):
     def fake_run(command, text, capture_output, check, timeout, env=None):
         return SimpleNamespace(

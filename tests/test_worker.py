@@ -217,6 +217,13 @@ class FakeDws:
         self.imported_auth_archives: list[Path] = []
         self.auth_import_error: Exception | None = None
         self.auth_export_error: Exception | None = None
+        self.auth_status_response: dict = {
+            "authenticated": True,
+            "token_valid": True,
+            "refresh_token_valid": True,
+        }
+        self.auth_status_error: Exception | None = None
+        self.auth_status_calls = 0
         self.auth_login_processes: list[FakeAuthLoginProcess] = [
             FakeAuthLoginProcess()
         ]
@@ -257,6 +264,12 @@ class FakeDws:
         if self.auth_import_error:
             raise self.auth_import_error
         self.list_error = None
+
+    def auth_status(self) -> dict:
+        self.auth_status_calls += 1
+        if self.auth_status_error:
+            raise self.auth_status_error
+        return self.auth_status_response
 
     def check_upgrade(self) -> dict:
         self.upgrade_check_calls += 1
@@ -1493,6 +1506,44 @@ def test_produce_once_backs_up_dws_auth_after_success(tmp_path: Path, monkeypatc
     assert backup_state["status"] == "backed_up"
     assert "backed_up_at" in backup_state
     assert backup_state["archive_path"].endswith("dws-auth-backup/dws-auth.tar.gz")
+
+
+def test_produce_once_backs_up_dws_auth_when_refresh_expiry_changes(
+    tmp_path: Path, monkeypatch
+):
+    archive_path = tmp_path / "dws-auth-backup" / "dws-auth.tar.gz"
+    archive_path.parent.mkdir(parents=True)
+    archive_path.write_bytes(b"old-dws-auth-archive")
+    dws = FakeDws([], {})
+    dws.auth_status_response = {
+        "authenticated": True,
+        "token_valid": True,
+        "refresh_token_valid": True,
+        "expires_at": "2026-05-13T18:05:00Z",
+        "refresh_expires_at": "2026-06-12T18:00:00Z",
+    }
+    worker = make_worker(tmp_path, dws, FakeCodex([]), monkeypatch)
+    worker.store.set_service_state(
+        "dws_auth_backup",
+        json.dumps(
+            {
+                "status": "backed_up",
+                "backed_up_at": (
+                    fixed_worker_now() - timedelta(minutes=1)
+                ).astimezone(ZoneInfo("UTC")).isoformat(),
+                "archive_path": str(archive_path),
+                "refresh_expires_at": "2026-06-01T18:00:00Z",
+            }
+        ),
+    )
+
+    assert worker.produce_once() == 0
+
+    assert dws.exported_auth_archives == [archive_path]
+    backup_state = json.loads(worker.store.get_service_state("dws_auth_backup"))
+    assert backup_state["status"] == "backed_up"
+    assert backup_state["refresh_expires_at"] == "2026-06-12T18:00:00Z"
+    assert backup_state["expires_at"] == "2026-05-13T18:05:00Z"
 
 
 def test_produce_once_marks_keychain_dws_auth_backup_unsupported(

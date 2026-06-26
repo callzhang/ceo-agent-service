@@ -239,6 +239,13 @@ DWS_AUTH_BACKUP_INTERVAL = env_duration(
     "CEO_DWS_AUTH_BACKUP_INTERVAL",
     timedelta(minutes=30),
 )
+DWS_AUTH_BACKUP_STATUS_FIELDS = (
+    "authenticated",
+    "token_valid",
+    "refresh_token_valid",
+    "expires_at",
+    "refresh_expires_at",
+)
 DWS_AUTH_LOGIN_REQUEST_SUPPRESSION_WINDOW = timedelta(hours=1)
 DWS_FORBIDDEN_CONVERSATIONS_STATE_KEY = "dws_forbidden_conversations"
 DWS_FORBIDDEN_CONVERSATION_COOLDOWN = timedelta(minutes=5)
@@ -1012,7 +1019,42 @@ class DingTalkAutoReplyWorker:
             json.dumps(state, ensure_ascii=False, sort_keys=True),
         )
 
-    def _dws_auth_backup_due(self, state: dict[str, Any], archive_path: Path) -> bool:
+    def _dws_auth_status_for_backup(self) -> dict[str, Any] | None:
+        auth_status = getattr(self.dws, "auth_status", None)
+        if not callable(auth_status):
+            return None
+        try:
+            payload = auth_status()
+        except Exception:
+            return None
+        return payload if isinstance(payload, dict) else None
+
+    @staticmethod
+    def _dws_auth_backup_status_fields(
+        auth_status: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        if not auth_status:
+            return {}
+        return {
+            key: value
+            for key in DWS_AUTH_BACKUP_STATUS_FIELDS
+            if isinstance((value := auth_status.get(key)), str | bool)
+        }
+
+    def _dws_auth_backup_due(
+        self,
+        state: dict[str, Any],
+        archive_path: Path,
+        auth_status: dict[str, Any] | None = None,
+    ) -> bool:
+        refresh_expires_at = self._dws_auth_backup_status_fields(auth_status).get(
+            "refresh_expires_at"
+        )
+        if (
+            isinstance(refresh_expires_at, str)
+            and state.get("refresh_expires_at") != refresh_expires_at
+        ):
+            return True
         last_attempt_at = state.get("backed_up_at") or state.get("updated_at")
         if not isinstance(last_attempt_at, str):
             return True
@@ -1031,7 +1073,9 @@ class DingTalkAutoReplyWorker:
     def _maybe_backup_dws_auth(self) -> None:
         archive_path = self._dws_auth_backup_path()
         state = self._dws_auth_backup_state()
-        if not self._dws_auth_backup_due(state, archive_path):
+        auth_status = self._dws_auth_status_for_backup()
+        auth_status_fields = self._dws_auth_backup_status_fields(auth_status)
+        if not self._dws_auth_backup_due(state, archive_path, auth_status):
             return
         now = self._now().astimezone(timezone.utc).isoformat()
         try:
@@ -1065,6 +1109,7 @@ class DingTalkAutoReplyWorker:
             "status": "backed_up",
             "backed_up_at": now,
             "archive_path": str(archive_path),
+            **auth_status_fields,
         }
         if isinstance(state.get("restored_at"), str):
             next_state["restored_at"] = state["restored_at"]
