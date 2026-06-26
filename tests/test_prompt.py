@@ -758,6 +758,10 @@ def test_thread_prompt_requires_witty_reply_for_direct_jokes():
     assert "简短、机智、克制的玩笑" in prompt
     assert "体现判断力和幽默感" in prompt
     assert "不要写成流程说明或机制解释" in prompt
+    assert "二选一" in prompt
+    assert "裁掉一个" in prompt
+    assert "不要真的选择某个人" in prompt
+    assert "不要空 no_reply" in prompt
     assert "如果玩笑要求分身做无法真实执行的动作" not in prompt
 
 
