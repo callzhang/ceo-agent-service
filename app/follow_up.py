@@ -227,7 +227,8 @@ def process_due_follow_ups(
                     None,
                     question_text,
                     at_open_dingtalk_ids=at_open_dingtalk_ids,
-                    user_id=owner_user_id or None,
+                    user_id=None if open_dingtalk_id else owner_user_id or None,
+                    open_dingtalk_id=open_dingtalk_id or None,
                 )
         except Exception as exc:
             if isinstance(exc, DwsError) and exc.needs_login:

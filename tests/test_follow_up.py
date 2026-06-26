@@ -156,6 +156,51 @@ def test_due_follow_up_uses_reply_postfix_and_feedback_links(tmp_path):
     assert send_result["feedback_token"].startswith("spike_")
 
 
+def test_direct_follow_up_prefers_open_dingtalk_id_for_send_target(tmp_path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    project_id = store.create_work_project(
+        title="客户交付",
+        category="projects",
+        status="active",
+        priority="P0",
+        risk_level="high",
+    )
+    store.create_work_todo(
+        project_id=project_id,
+        title="给客户交付 ETA",
+        owner_user_id="owner-1",
+        owner_name="Alex",
+        status="open",
+        priority="P0",
+        next_follow_up_at="2026-06-07 09:00:00",
+    )
+    store.create_follow_up_draft(
+        project_id=project_id,
+        owner_user_id="owner-1",
+        owner_name="Alex",
+        target_kind="direct",
+        question_text="请同步这个事项的最新进展。",
+        scheduled_at="2026-06-07 09:00:00",
+    )
+    dws = FakeDws()
+
+    sent = process_due_follow_ups(
+        store,
+        dws,
+        now="2026-06-07 10:00:00",
+        auto_send=True,
+    )
+
+    assert sent == 1
+    assert dws.sent[0]["open_dingtalk_id"] == "open-owner-1"
+    assert dws.sent[0]["user_id"] is None
+    send_result = json.loads(
+        store.list_follow_up_drafts(statuses=("sent",))[0].send_result_json
+    )
+    assert send_result["owner_user_id"] == "owner-1"
+    assert send_result["at_open_dingtalk_ids"] == ["open-owner-1"]
+
+
 def test_group_follow_up_resolves_owner_name_before_sending_at_user(tmp_path):
     store = AutoReplyStore(tmp_path / "task.sqlite3")
     project_id = store.create_work_project(
@@ -346,7 +391,8 @@ def test_draft_follow_up_sends_direct_message_when_live_send_enabled(tmp_path):
 
     assert sent == 1
     assert dws.sent[0]["conversation_id"] is None
-    assert dws.sent[0]["user_id"] == "owner-1"
+    assert dws.sent[0]["user_id"] is None
+    assert dws.sent[0]["open_dingtalk_id"] == "open-owner-1"
     assert dws.sent[0]["at_open_dingtalk_ids"] == ["open-owner-1"]
     assert not dws.sent[0]["text"].startswith("<@")
 
@@ -381,7 +427,8 @@ def test_direct_follow_up_with_conversation_id_uses_direct_owner_target(tmp_path
 
     assert sent == 1
     assert dws.sent[0]["conversation_id"] is None
-    assert dws.sent[0]["user_id"] == "owner-1"
+    assert dws.sent[0]["user_id"] is None
+    assert dws.sent[0]["open_dingtalk_id"] == "open-owner-1"
     assert dws.sent[0]["at_open_dingtalk_ids"] == ["open-owner-1"]
 
 
@@ -553,7 +600,8 @@ def test_group_follow_up_without_group_falls_back_to_direct_message(tmp_path):
 
     assert sent == 1
     assert dws.sent[0]["conversation_id"] is None
-    assert dws.sent[0]["user_id"] == "owner-1"
+    assert dws.sent[0]["user_id"] is None
+    assert dws.sent[0]["open_dingtalk_id"] == "open-owner-1"
     assert dws.sent[0]["at_open_dingtalk_ids"] == ["open-owner-1"]
     assert not dws.sent[0]["text"].startswith("<@")
 
