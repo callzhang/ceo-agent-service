@@ -84,11 +84,12 @@ the draft state without sending. Live CLI sends require the same
 
 The LaunchAgents keep work data under the configured `CEO_WORKSPACE` and use the
 current user `HOME` unless `CEO_SERVICE_HOME` is explicitly set. The service
-does not force `DWS_DISABLE_KEYCHAIN` or `DWS_KEYCHAIN_DIR`; it uses the same
-default DWS login state that works from an interactive shell. Forcing a separate
-file-backed keychain can report `not_authenticated` even when normal `dws` reads
-work. The diagnostic script `scripts/check-dws-auth-env.sh` verifies the default
-user auth path first and then compares optional file-keychain probes.
+forces DWS file-backed auth with `DWS_DISABLE_KEYCHAIN=1` and defaults
+`DWS_KEYCHAIN_DIR` to
+`${CEO_WORKSPACE}/Library/Application Support/dws-cli`. This keeps the service's
+refresh token exportable and restorable instead of depending on macOS Keychain
+state. The diagnostic script `scripts/check-dws-auth-env.sh` verifies the
+default user auth path first and then compares the file-keychain probe.
 
 After successful DWS calls, the worker periodically writes a local auth archive
 to `data/dws-auth-backup/dws-auth.tar.gz` by calling `dws auth export`. The DWS
@@ -96,12 +97,13 @@ export format contains the refresh token and keychain material needed for
 recovery, but not token plaintext. The archive is a runtime secret and remains
 under ignored `data/`; the worker sets file mode `0600` after export.
 
-On macOS, DWS may store its encryption key in the system Keychain. In that mode,
-`dws auth export` can refuse to create a portable auth archive. The worker does
-not read or decrypt Keychain items itself; it records
-`dws_auth_backup=unsupported` and keeps using the existing login state without
-blocking replies. To make backup/restore fully active, run the service with a
-DWS file-backed keychain and complete one DWS login in that environment.
+On macOS, DWS may store its encryption key in the system Keychain if launched
+without the file-backed environment. In that mode, `dws auth export` can refuse
+to create a portable auth archive. The worker does not read or decrypt Keychain
+items itself; it records `dws_auth_backup=unsupported` and keeps using the
+existing login state without blocking replies. Completing one DWS login in the
+service's file-backed environment gives the worker an exportable auth state and
+lets backup/restore become fully active.
 
 When a DWS call reports a login/session-loss error, the worker first imports
 that local archive with `dws auth import --force`, then retries the failed DWS

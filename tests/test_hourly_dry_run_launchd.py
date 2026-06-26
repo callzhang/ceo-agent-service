@@ -15,10 +15,13 @@ def test_local_service_script_runs_single_main_service():
     assert 'export HOME="${CEO_SERVICE_HOME:-${HOME}}"' in content
     assert 'export PYTHONPATH="${PYTHONPATH:-.}"' in content
     assert 'export CEO_WORKSPACE="${CEO_WORKSPACE:-${HOME}/Documents/memory}"' in content
+    assert 'export DWS_DISABLE_KEYCHAIN="${DWS_DISABLE_KEYCHAIN:-1}"' in content
+    assert (
+        'export DWS_KEYCHAIN_DIR="${DWS_KEYCHAIN_DIR:-${CEO_WORKSPACE}/Library/Application Support/dws-cli}"'
+        in content
+    )
     assert 'export CEO_PRODUCER_INTERVAL_SECONDS="${CEO_PRODUCER_INTERVAL_SECONDS:-60}"' in content
     assert 'export CEO_CONSUMER_POLL_INTERVAL_SECONDS="${CEO_CONSUMER_POLL_INTERVAL_SECONDS:-10}"' in content
-    assert "DWS_DISABLE_KEYCHAIN" not in content
-    assert "DWS_KEYCHAIN_DIR" not in content
     assert "CEO_PRINCIPAL_NAME" not in content
     assert "CEO_MENTION_ALIASES" not in content
     assert "CEO_ASSISTANT_SIGNATURE" not in content
@@ -47,12 +50,17 @@ def test_main_launch_agent_runs_single_keepalive_service():
     assert "--host" in command[2]
     assert "--port" in command[2]
     assert "CEO_SERVICE_ROOT" in command[2]
+    assert 'DWS_DISABLE_KEYCHAIN="${DWS_DISABLE_KEYCHAIN:-1}"' in command[2]
+    assert (
+        'DWS_KEYCHAIN_DIR="${DWS_KEYCHAIN_DIR:-${CEO_WORKSPACE}/Library/Application Support/dws-cli}"'
+        in command[2]
+    )
     assert "CEO_NOT_SEND_MESSAGE=0" in command[2]
     assert "CEO_LIVE_SEND_BLOCKERS_ACCEPTED=1" in command[2]
     env = plist["EnvironmentVariables"]
-    assert "DWS_DISABLE_KEYCHAIN" not in env
     assert "HOME" not in env
     assert "CODEX_HOME" not in env
+    assert "DWS_DISABLE_KEYCHAIN" not in env
     assert "DWS_KEYCHAIN_DIR" not in env
     assert "CEO_WORKER_DB" not in env
     assert "CEO_WORKSPACE" not in env

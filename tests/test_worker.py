@@ -1520,6 +1520,32 @@ def test_produce_once_marks_keychain_dws_auth_backup_unsupported(
     assert worker.store.count_errors() == 0
 
 
+def test_produce_once_retries_stale_unsupported_dws_auth_backup(
+    tmp_path: Path, monkeypatch
+):
+    dws = FakeDws([], {})
+    worker = make_worker(tmp_path, dws, FakeCodex([]), monkeypatch)
+    worker.store.set_service_state(
+        "dws_auth_backup",
+        json.dumps(
+            {
+                "status": "unsupported",
+                "reason": "dws_keychain_export_unsupported",
+                "updated_at": "2026-01-01T00:00:00+00:00",
+                "archive_path": str(tmp_path / "dws-auth-backup" / "dws-auth.tar.gz"),
+            }
+        ),
+    )
+
+    assert worker.produce_once() == 0
+
+    assert dws.exported_auth_archives == [
+        tmp_path / "dws-auth-backup" / "dws-auth.tar.gz"
+    ]
+    backup_state = json.loads(worker.store.get_service_state("dws_auth_backup"))
+    assert backup_state["status"] == "backed_up"
+
+
 def test_produce_once_throttles_failed_dws_auth_backup(tmp_path: Path, monkeypatch):
     dws = FakeDws([], {})
     dws.auth_export_error = DwsError("disk full")

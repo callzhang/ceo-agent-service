@@ -1013,8 +1013,6 @@ class DingTalkAutoReplyWorker:
         )
 
     def _dws_auth_backup_due(self, state: dict[str, Any], archive_path: Path) -> bool:
-        if state.get("status") == "unsupported":
-            return False
         last_attempt_at = state.get("backed_up_at") or state.get("updated_at")
         if not isinstance(last_attempt_at, str):
             return True
