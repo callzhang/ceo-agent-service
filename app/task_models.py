@@ -290,6 +290,12 @@ class FollowUpDraft(BaseModel):
     risk_check_json: str = "{}"
     status: FollowUpDraftStatus
     send_result_json: str = "{}"
+    evidence_check_json: str = "{}"
+    reaction_status: str = ""
+    reaction_summary: str = ""
+    suppressed_reason: str = ""
+    dedupe_key: str = ""
     scheduled_at: str = ""
     sent_at: str = ""
     created_at: str
+    updated_at: str = ""

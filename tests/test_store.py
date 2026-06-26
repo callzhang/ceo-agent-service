@@ -49,6 +49,62 @@ def test_store_initializes_same_path_once_per_process(tmp_path: Path, monkeypatc
     assert calls == [db_path]
 
 
+def test_store_migrates_existing_follow_up_drafts_without_nonconstant_defaults(
+    tmp_path: Path,
+):
+    db_path = tmp_path / "worker.sqlite3"
+    db = sqlite3.connect(db_path)
+    try:
+        db.execute(
+            """
+            create table follow_up_drafts (
+                id integer primary key autoincrement,
+                project_id integer not null,
+                todo_id integer not null default 0,
+                owner_user_id text not null default '',
+                owner_name text not null default '',
+                target_conversation_id text not null default '',
+                target_kind text not null default '',
+                question_text text not null default '',
+                risk_check_json text not null default '{}',
+                status text not null default 'draft',
+                send_result_json text not null default '{}',
+                scheduled_at text not null default '',
+                sent_at text not null default '',
+                created_at text not null default current_timestamp
+            )
+            """
+        )
+        db.execute(
+            """
+            insert into follow_up_drafts (
+                project_id, todo_id, owner_user_id, owner_name,
+                target_conversation_id, target_kind, question_text,
+                risk_check_json, status, send_result_json, scheduled_at, sent_at
+            ) values (
+                1, 1, 'owner-1', 'Alex',
+                'cid-1', 'group', '请同步进展。',
+                '{}', 'draft', '{}', '2026-06-26 09:00:00', ''
+            )
+            """
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    store = AutoReplyStore(db_path)
+
+    with store._connect() as migrated:
+        columns = {
+            row["name"]
+            for row in migrated.execute(
+                "pragma table_info(follow_up_drafts)"
+            ).fetchall()
+        }
+    assert "updated_at" in columns
+    assert "evidence_check_json" in columns
+
+
 def test_store_writer_can_commit_while_reader_transaction_is_open(tmp_path: Path):
     db_path = tmp_path / "worker.sqlite3"
     store = AutoReplyStore(db_path)

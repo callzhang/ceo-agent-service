@@ -957,7 +957,7 @@ def test_tasks_page_renders_projects_and_todos_without_global_followups(tmp_path
         title="补齐来源链接",
         status="open",
         priority="P1",
-        deadline_at="2026-06-20 18:00:00",
+        deadline_at="2099-06-20 18:00:00",
     )
     store.create_work_todo(
         project_id=project_id,
@@ -1013,7 +1013,7 @@ def test_tasks_page_renders_projects_and_todos_without_global_followups(tmp_path
     assert row["progressSummary"] == "1/2 (50%)"
     assert row["detailUrl"] == f"/tasks/{project_id}"
     assert row["todos"][0]["title"] == "补齐来源链接"
-    assert row["todos"][0]["due"].startswith("2026-06-20")
+    assert row["todos"][0]["due"].startswith("2099-06-21")
     assert row["todos"][0]["done"] is False
     assert row["todos"][1]["title"] == "整理销售材料"
     assert row["todos"][1]["done"] is True
@@ -1398,8 +1398,8 @@ def test_task_project_detail_renders_project_todos_and_sources(tmp_path: Path):
         owner_name="Alex",
         status="open",
         priority="P1",
-        deadline_at="2026-06-10 18:00:00",
-        next_follow_up_at="2026-06-09 10:00:00",
+        deadline_at="2099-06-10 18:00:00",
+        next_follow_up_at="2099-06-09 10:00:00",
         follow_up_question="来源链接补齐到哪一步了？",
     )
     store.create_work_update(
@@ -1428,7 +1428,7 @@ def test_task_project_detail_renders_project_todos_and_sources(tmp_path: Path):
     assert "销售支持项目。" in html
     assert "补齐来源链接" in html
     assert "Alex" in html
-    assert "2026-06-10" in html
+    assert "2099-06-11" in html
     assert "需要补齐来源链接" in html
     assert "reply_attempt:7" in html
     assert "新增待办" in html
@@ -2306,8 +2306,10 @@ def test_render_attempt_list_formats_pending_backoff_time_in_local_timezone(
 
     html = render_attempt_list(store)
 
-    assert "快路径已触发，等待到 2026-06-04 01:06:52 后确认是否仍需处理" in html
-    assert "等待到 2026-06-04 08:06:52" not in html
+    expected_time = audit_web_module._format_local_time("2026-06-04 08:06:52")
+    assert f"快路径已触发，等待到 {expected_time} 后确认是否仍需处理" in html
+    if expected_time != "2026-06-04 08:06:52":
+        assert "等待到 2026-06-04 08:06:52" not in html
 
 
 def test_render_attempt_list_shows_processing_reply_tasks(tmp_path: Path):

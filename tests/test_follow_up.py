@@ -147,7 +147,8 @@ def test_due_follow_up_uses_reply_postfix_and_feedback_links(tmp_path):
 
     assert sent == 1
     sent_text = dws.sent[0]["text"]
-    assert sent_text.startswith("请同步这个事项的最新进展。")
+    assert "基于项目「客户交付」的未完成事项：" in sent_text
+    assert "请同步这个事项的最新进展。" in sent_text
     assert "（by明哥分身）" in sent_text
     assert "/api/dingtalk-feedback-spike?feedback_token=" in sent_text
     send_result = json.loads(
@@ -508,7 +509,7 @@ def test_dry_run_does_not_send_due_follow_up(tmp_path):
     assert store.list_follow_up_drafts(statuses=("draft",))[0].id == draft_id
 
 
-def test_group_follow_up_sends_without_risk_gate_when_target_exists(tmp_path):
+def test_sensitive_group_follow_up_reroutes_to_direct_message(tmp_path):
     store = AutoReplyStore(tmp_path / "task.sqlite3")
     project_id = store.create_work_project(
         title="人事敏感事项",
@@ -528,15 +529,23 @@ def test_group_follow_up_sends_without_risk_gate_when_target_exists(tmp_path):
         scheduled_at="2026-06-07 09:00:00",
     )
 
+    dws = FakeDws()
+
     sent = process_due_follow_ups(
         store,
-        FakeDws(),
+        dws,
         now="2026-06-07 10:00:00",
         auto_send=True,
     )
 
     assert sent == 1
+    assert dws.sent[0]["conversation_id"] is None
+    assert dws.sent[0]["open_dingtalk_id"] == "open-owner-1"
     assert store.list_follow_up_drafts(statuses=("sent",))[0].id == draft_id
+    sent_result = json.loads(
+        store.list_follow_up_drafts(statuses=("sent",))[0].send_result_json
+    )
+    assert sent_result["target_kind_used"] == "direct"
 
 
 def test_missing_risk_check_does_not_block_sendable_follow_up(tmp_path):
@@ -689,3 +698,184 @@ def test_dws_login_required_defers_follow_up_without_marking_failed(tmp_path):
     result = json.loads(draft.send_result_json)
     assert result["recoverable"] is True
     assert result["reason"] == "dws_login_required"
+
+
+def test_due_follow_up_skips_when_recent_reply_says_completed(tmp_path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    project_id = store.create_work_project(
+        title="客户交付",
+        category="projects",
+        status="active",
+        priority="P0",
+        risk_level="high",
+    )
+    todo_id = store.create_work_todo(
+        project_id=project_id,
+        title="给客户交付 ETA",
+        owner_user_id="owner-1",
+        owner_name="Alex",
+        status="open",
+        priority="P0",
+    )
+    store.create_follow_up_draft(
+        project_id=project_id,
+        todo_id=todo_id,
+        owner_user_id="owner-1",
+        owner_name="Alex",
+        target_conversation_id="cid-1",
+        target_kind="group",
+        question_text="这个 P0 事项现在结果、阻塞和 ETA 分别是什么？",
+        risk_check_json=json.dumps({"owner_in_group": True, "sensitive": False}),
+        scheduled_at="2026-06-07 09:00:00",
+    )
+    attempt_id = store.record_reply_attempt(
+        conversation_id="cid-1",
+        conversation_title="客户交付群",
+        trigger_message_id="msg-complete",
+        trigger_sender="Alex",
+        trigger_text="完成了，这块已经结束了。",
+        action="no_reply",
+        sensitivity_kind="general",
+    )
+    with store._connect() as db:
+        db.execute(
+            """
+            update reply_attempts
+            set created_at='2026-06-07 09:30:00',
+                updated_at='2026-06-07 09:30:00'
+            where id=?
+            """,
+            (attempt_id,),
+        )
+
+    dws = FakeDws()
+
+    sent = process_due_follow_ups(
+        store,
+        dws,
+        now="2026-06-07 10:00:00",
+        auto_send=True,
+    )
+
+    assert sent == 0
+    assert dws.sent == []
+    skipped = store.list_follow_up_drafts(statuses=("skipped",))[0]
+    assert "completion reaction" in skipped.send_result_json
+    todo = store.get_work_todo(todo_id)
+    assert todo is not None
+    assert todo.status == "done"
+    assert "reply_attempt" in todo.completion_evidence_json
+
+
+def test_due_follow_up_skips_when_recent_reply_asks_for_source(tmp_path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    project_id = store.create_work_project(
+        title="Friday 产品落地",
+        category="product",
+        status="active",
+        priority="P1",
+        risk_level="medium",
+    )
+    todo_id = store.create_work_todo(
+        project_id=project_id,
+        title="确认 Q3 客户侧前端落地计划",
+        owner_user_id="owner-1",
+        owner_name="Alex",
+        status="open",
+        priority="P1",
+    )
+    draft_id = store.create_follow_up_draft(
+        project_id=project_id,
+        todo_id=todo_id,
+        owner_user_id="owner-1",
+        owner_name="Alex",
+        target_conversation_id="cid-1",
+        target_kind="group",
+        question_text="Q3 客户侧前端产品落地进展如何？",
+        risk_check_json=json.dumps({"owner_in_group": True, "sensitive": False}),
+        scheduled_at="2026-06-07 09:00:00",
+    )
+    attempt_id = store.record_reply_attempt(
+        conversation_id="cid-1",
+        conversation_title="Friday",
+        trigger_message_id="msg-source",
+        trigger_sender="Alex",
+        trigger_text="你是看了什么材料提出的这个需求？",
+        action="no_reply",
+        sensitivity_kind="general",
+    )
+    with store._connect() as db:
+        db.execute(
+            """
+            update reply_attempts
+            set created_at='2026-06-07 09:30:00',
+                updated_at='2026-06-07 09:30:00'
+            where id=?
+            """,
+            (attempt_id,),
+        )
+
+    dws = FakeDws()
+
+    sent = process_due_follow_ups(
+        store,
+        dws,
+        now="2026-06-07 10:00:00",
+        auto_send=True,
+    )
+
+    assert sent == 0
+    assert dws.sent == []
+    skipped = store.list_follow_up_drafts(statuses=("skipped",))[0]
+    assert skipped.id == draft_id
+    assert skipped.suppressed_reason == "reaction_asks_source"
+
+
+def test_due_follow_up_defers_when_owner_daily_cap_reached(tmp_path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    project_id = store.create_work_project(
+        title="客户交付",
+        category="projects",
+        status="active",
+        priority="P1",
+        risk_level="medium",
+    )
+    for index in range(3):
+        sent_id = store.create_follow_up_draft(
+            project_id=project_id,
+            owner_user_id="owner-1",
+            owner_name="Alex",
+            target_kind="direct",
+            question_text=f"已发送 {index}",
+            scheduled_at="2026-06-07 08:00:00",
+            status="sent",
+            sent_at=f"2026-06-07 08:0{index}:00",
+        )
+        assert sent_id > 0
+    draft_id = store.create_follow_up_draft(
+        project_id=project_id,
+        owner_user_id="owner-1",
+        owner_name="Alex",
+        target_kind="direct",
+        question_text="请同步这个事项的最新进展。",
+        scheduled_at="2026-06-07 09:00:00",
+    )
+
+    dws = FakeDws()
+
+    sent = process_due_follow_ups(
+        store,
+        dws,
+        now="2026-06-07 10:00:00",
+        auto_send=True,
+    )
+
+    assert sent == 0
+    assert dws.sent == []
+    draft = [
+        item
+        for item in store.list_follow_up_drafts(statuses=("draft",))
+        if item.id == draft_id
+    ][0]
+    assert draft.scheduled_at == "2026-06-08 09:00:00"
+    assert draft.suppressed_reason == "owner_daily_cap"

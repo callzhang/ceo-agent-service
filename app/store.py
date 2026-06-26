@@ -1,5 +1,6 @@
-import sqlite3
 import json
+import hashlib
+import sqlite3
 import threading
 from contextlib import contextmanager
 from pathlib import Path
@@ -571,12 +572,22 @@ class AutoReplyStore:
                     risk_check_json text not null default '{}',
                     status text not null default 'draft',
                     send_result_json text not null default '{}',
+                    evidence_check_json text not null default '{}',
+                    reaction_status text not null default '',
+                    reaction_summary text not null default '',
+                    suppressed_reason text not null default '',
+                    dedupe_key text not null default '',
                     scheduled_at text not null default '',
                     sent_at text not null default '',
-                    created_at text not null default current_timestamp
+                    created_at text not null default current_timestamp,
+                    updated_at text not null default current_timestamp
                 );
                 create index if not exists idx_follow_up_drafts_status
                     on follow_up_drafts(status, scheduled_at, id);
+                create index if not exists idx_follow_up_drafts_owner_sent
+                    on follow_up_drafts(owner_user_id, sent_at, id);
+                create index if not exists idx_follow_up_drafts_conversation_sent
+                    on follow_up_drafts(target_conversation_id, sent_at, id);
                 create table if not exists daily_scan_state (
                     scanner_name text primary key,
                     last_success_at text not null default '',
@@ -689,6 +700,34 @@ class AutoReplyStore:
                     db.execute(
                         f"alter table work_summary_inputs add column {column} {definition}"
                     )
+            follow_up_draft_columns = {
+                row["name"]
+                for row in db.execute("pragma table_info(follow_up_drafts)").fetchall()
+            }
+            for column, definition in (
+                ("evidence_check_json", "text not null default '{}'"),
+                ("reaction_status", "text not null default ''"),
+                ("reaction_summary", "text not null default ''"),
+                ("suppressed_reason", "text not null default ''"),
+                ("dedupe_key", "text not null default ''"),
+                ("updated_at", "text not null default ''"),
+            ):
+                if column not in follow_up_draft_columns:
+                    db.execute(
+                        f"alter table follow_up_drafts add column {column} {definition}"
+                    )
+            db.execute(
+                """
+                create index if not exists idx_follow_up_drafts_owner_sent
+                    on follow_up_drafts(owner_user_id, sent_at, id)
+                """
+            )
+            db.execute(
+                """
+                create index if not exists idx_follow_up_drafts_conversation_sent
+                    on follow_up_drafts(target_conversation_id, sent_at, id)
+                """
+            )
             org_user_profile_columns = {
                 row["name"]
                 for row in db.execute("pragma table_info(org_user_profiles)").fetchall()
@@ -3204,14 +3243,35 @@ class AutoReplyStore:
             "risk_check_json",
             "status",
             "send_result_json",
+            "evidence_check_json",
+            "reaction_status",
+            "reaction_summary",
+            "suppressed_reason",
+            "dedupe_key",
             "scheduled_at",
             "sent_at",
         }
         filtered = self._filter_allowed_values(values, allowed_columns)
+        filtered.setdefault("dedupe_key", self._follow_up_dedupe_key(filtered))
         keys = list(filtered.keys())
         columns = ", ".join(keys)
         placeholders = ", ".join("?" for _ in keys)
         with self._connect() as db:
+            dedupe_key = str(filtered.get("dedupe_key") or "").strip()
+            if dedupe_key:
+                existing = db.execute(
+                    """
+                    select id
+                    from follow_up_drafts
+                    where dedupe_key=?
+                      and status in ('draft', 'approved', 'sent')
+                    order by id desc
+                    limit 1
+                    """,
+                    (dedupe_key,),
+                ).fetchone()
+                if existing is not None:
+                    return int(existing["id"])
             cursor = db.execute(
                 f"insert into follow_up_drafts ({columns}) values ({placeholders})",
                 [filtered[key] for key in keys],
@@ -3232,6 +3292,11 @@ class AutoReplyStore:
             "risk_check_json",
             "status",
             "send_result_json",
+            "evidence_check_json",
+            "reaction_status",
+            "reaction_summary",
+            "suppressed_reason",
+            "dedupe_key",
             "scheduled_at",
             "sent_at",
         }
@@ -3248,7 +3313,12 @@ class AutoReplyStore:
             parameters.append(value)
         with self._connect() as db:
             db.execute(
-                f"update follow_up_drafts set {', '.join(assignments)} where id=?",
+                f"""
+                update follow_up_drafts
+                set {', '.join(assignments)},
+                    updated_at=current_timestamp
+                where id=?
+                """,
                 [*parameters, draft_id],
             )
 
@@ -3281,6 +3351,139 @@ class AutoReplyStore:
                 FollowUpDraft.model_validate(dict(row))
                 for row in db.execute(query, args)
             ]
+
+    @staticmethod
+    def _follow_up_dedupe_key(values: dict[str, object]) -> str:
+        parts = [
+            str(values.get("project_id") or ""),
+            str(values.get("todo_id") or ""),
+            str(values.get("owner_user_id") or "").strip(),
+            str(values.get("target_conversation_id") or "").strip(),
+            str(values.get("target_kind") or "").strip(),
+            " ".join(str(values.get("question_text") or "").split()),
+        ]
+        raw_key = "\n".join(parts)
+        if not raw_key.strip():
+            return ""
+        return hashlib.sha256(raw_key.encode("utf-8")).hexdigest()
+
+    def count_sent_follow_ups_for_owner_since(
+        self,
+        owner_user_id: str,
+        since: str,
+    ) -> int:
+        if not owner_user_id.strip():
+            return 0
+        with self._connect() as db:
+            row = db.execute(
+                """
+                select count(*) as count
+                from follow_up_drafts
+                where status='sent'
+                  and owner_user_id=?
+                  and sent_at != ''
+                  and datetime(sent_at) >= datetime(?)
+                """,
+                (owner_user_id.strip(), since),
+            ).fetchone()
+            return int(row["count"] or 0)
+
+    def count_sent_follow_ups_for_conversation_since(
+        self,
+        conversation_id: str,
+        since: str,
+    ) -> int:
+        if not conversation_id.strip():
+            return 0
+        with self._connect() as db:
+            row = db.execute(
+                """
+                select count(*) as count
+                from follow_up_drafts
+                where status='sent'
+                  and target_conversation_id=?
+                  and sent_at != ''
+                  and datetime(sent_at) >= datetime(?)
+                """,
+                (conversation_id.strip(), since),
+            ).fetchone()
+            return int(row["count"] or 0)
+
+    def list_recent_reply_attempts_for_follow_up(
+        self,
+        *,
+        conversation_id: str,
+        since: str,
+        limit: int = 20,
+    ) -> list[ReplyAttempt]:
+        if not conversation_id.strip() or not since.strip():
+            return []
+        with self._connect() as db:
+            rows = db.execute(
+                """
+                select *
+                from reply_attempts
+                where conversation_id=?
+                  and datetime(created_at) >= datetime(?)
+                order by created_at asc, id asc
+                limit ?
+                """,
+                (conversation_id.strip(), since.strip(), limit),
+            ).fetchall()
+            return [ReplyAttempt.model_validate(dict(row)) for row in rows]
+
+    def list_recent_follow_up_reactions(
+        self,
+        *,
+        project_id: int,
+        owner_user_id: str,
+        since: str,
+        limit: int = 10,
+    ) -> list[FollowUpDraft]:
+        clauses = [
+            "project_id=?",
+            "reaction_status != ''",
+            "sent_at != ''",
+            "datetime(sent_at) >= datetime(?)",
+        ]
+        args: list[object] = [project_id, since]
+        if owner_user_id.strip():
+            clauses.append("owner_user_id=?")
+            args.append(owner_user_id.strip())
+        args.append(limit)
+        with self._connect() as db:
+            rows = db.execute(
+                f"""
+                select *
+                from follow_up_drafts
+                where {' and '.join(clauses)}
+                order by sent_at desc, id desc
+                limit ?
+                """,
+                args,
+            ).fetchall()
+            return [FollowUpDraft.model_validate(dict(row)) for row in rows]
+
+    def list_sent_follow_ups_since(
+        self,
+        since: str,
+        *,
+        limit: int = 100,
+    ) -> list[FollowUpDraft]:
+        with self._connect() as db:
+            rows = db.execute(
+                """
+                select *
+                from follow_up_drafts
+                where status='sent'
+                  and sent_at != ''
+                  and datetime(sent_at) >= datetime(?)
+                order by sent_at desc, id desc
+                limit ?
+                """,
+                (since, limit),
+            ).fetchall()
+            return [FollowUpDraft.model_validate(dict(row)) for row in rows]
 
     def set_daily_scan_state(
         self,
