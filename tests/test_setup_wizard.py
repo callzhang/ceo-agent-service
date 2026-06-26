@@ -1,3 +1,4 @@
+import subprocess
 from pathlib import Path
 from typing import get_args
 
@@ -41,6 +42,7 @@ def test_setup_wizard_steps_are_ordered_and_gated():
     assert get_step_definition("mcp").depends_on == ("cli_components",)
     assert get_step_definition("launchd").depends_on == ("dry_run",)
     assert get_step_definition("live_send").depends_on == ("dry_run",)
+    assert get_action_definition("setup_cli_components").step_id == "cli_components"
     assert get_action_definition("setup_mcp").step_id == "mcp"
 
 
@@ -64,6 +66,14 @@ def test_setup_wizard_action_metadata_is_gated():
         ],
         "cli_components": [
             ("check_cli_components", "Check", "cli_components", "check", False, False),
+            (
+                "setup_cli_components",
+                "Fix automatically",
+                "cli_components",
+                "run",
+                False,
+                False,
+            ),
         ],
         "mcp": [
             ("check_mcp", "Check", "mcp", "check", False, False),
@@ -223,7 +233,8 @@ def test_build_wizard_status_allows_next_step_after_dependency_done(tmp_path: Pa
 
     assert steps["cli_components"].status == "not_started"
     assert [action.id for action in steps["cli_components"].available_actions] == [
-        "check_cli_components"
+        "check_cli_components",
+        "setup_cli_components",
     ]
 
 
@@ -512,6 +523,69 @@ def test_run_setup_mcp_writes_codex_config(tmp_path: Path):
     assert event.status == "done"
     assert "memory_connector" in codex_config.read_text(encoding="utf-8")
     assert event.evidence["codex_config"] == "[REDACTED_PATH]"
+
+
+def test_run_setup_cli_components_runs_bootstrap_script(monkeypatch, tmp_path: Path):
+    script = tmp_path / "scripts" / "bootstrap-local-components.sh"
+    script.parent.mkdir()
+    script.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+
+    def fake_run(args, **kwargs):
+        assert args == [str(script), "--format", "json"]
+        assert kwargs["cwd"] == tmp_path
+        assert kwargs["env"]["DWS_INSTALL_COMMAND"] == "install dws"
+        return subprocess.CompletedProcess(
+            args,
+            0,
+            stdout=(
+                '{"summary":"installed token=secret",'
+                '"components":[{"name":"dws","status":"done","detail":"ok"}]}'
+            ),
+            stderr="",
+        )
+
+    monkeypatch.setattr("app.setup_wizard.subprocess.run", fake_run)
+
+    event = run_setup_action(
+        "setup_cli_components",
+        repo_root=tmp_path,
+        env={"DWS_INSTALL_COMMAND": "install dws"},
+    )
+
+    assert event.status == "done"
+    assert event.summary == "installed token=[REDACTED_TOKEN]"
+    assert event.evidence["returncode"] == 0
+    assert event.evidence["components_json"] == (
+        '[{"detail": "ok", "name": "dws", "status": "done"}]'
+    )
+    assert "secret" not in event.stdout_excerpt
+
+
+def test_run_setup_cli_components_records_bootstrap_failure(
+    monkeypatch,
+    tmp_path: Path,
+):
+    script = tmp_path / "scripts" / "bootstrap-local-components.sh"
+    script.parent.mkdir()
+    script.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+
+    def fake_run(args, **kwargs):
+        del kwargs
+        return subprocess.CompletedProcess(
+            args,
+            1,
+            stdout='{"summary":"missing dws","components":[]}',
+            stderr="cannot install /tmp/dws.pkg",
+        )
+
+    monkeypatch.setattr("app.setup_wizard.subprocess.run", fake_run)
+
+    event = run_setup_action("setup_cli_components", repo_root=tmp_path, env={})
+
+    assert event.status == "failed"
+    assert event.summary == "missing dws"
+    assert event.evidence["returncode"] == 1
+    assert event.stderr_excerpt == "cannot install [REDACTED_PATH]"
 
 
 def test_run_setup_mcp_uses_os_config_path_and_redacts_output(

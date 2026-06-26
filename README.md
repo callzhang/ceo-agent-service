@@ -107,6 +107,16 @@ OKR 审核 runner 默认使用叮当 OKR Web live source，不再依赖本地 xl
 （`dws`、Codex CLI、Memory Connector、Nvwa skill）、交互式参数收集、`.env` 配置、数据 corpus 准备、
 工作画像生成、审计 Web UI、launchd 常驻服务和权限检查。
 
+组件准备优先由 agent 自动执行：
+
+```bash
+scripts/bootstrap-local-components.sh --format json
+```
+
+该脚本会自动安装 `terminal-notifier`、检查并升级已安装的 `dws`，并检查 Codex CLI 与 Nvwa skill。
+如果新机器缺少内部组件来源，先通过 `DWS_INSTALLER_PATH` / `DWS_INSTALL_COMMAND`、
+`CODEX_INSTALL_COMMAND`、`NVWA_SKILL_SOURCE` 提供组织批准的安装入口，再由 agent 继续执行，不要求用户逐条复制命令。
+
 不要让使用者逐条复制终端命令完成安装。agent 应该自己执行命令、检查输出、编辑本机配置，只在需要用户完成
 登录授权、扫码确认、macOS 权限点击、安装来源确认或 live-send 决策时打断用户。
 

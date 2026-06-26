@@ -90,6 +90,29 @@ credentials, report the exact failed command and error.
 
 ## Phase 2: Download And Verify Components
 
+Start with the local component bootstrapper. It installs the components whose
+source is known on the machine and verifies the rest:
+
+```sh
+scripts/bootstrap-local-components.sh --format json
+```
+
+The bootstrapper automatically installs `terminal-notifier` through Homebrew
+when available, checks and upgrades an existing `dws`, and verifies Codex CLI
+and the Nvwa skill. If an internal component is missing, provide the approved
+source through one of these environment variables and run the same bootstrapper
+again:
+
+- `DWS_INSTALLER_PATH`: executable installer for `dws`
+- `DWS_INSTALL_COMMAND`: approved shell command for installing `dws`
+- `CODEX_INSTALL_COMMAND`: approved shell command for installing Codex CLI
+- `NVWA_SKILL_SOURCE`: approved local directory containing the Nvwa skill
+
+Do not ask the user to copy individual terminal commands when the bootstrapper
+can perform the step. Only interrupt the user for the approved source, login
+approval, QR/browser authorization, macOS permission clicks, or live-send
+decisions.
+
 ### dws
 
 1. Check whether `dws` exists:
@@ -111,9 +134,12 @@ credentials, report the exact failed command and error.
    dws upgrade -y --format json
    ```
 
-4. If `dws` is missing, install it from the organization's approved source or
-   package artifact. Do not invent a download URL. If the source is unknown, ask
-   the user for the approved installer or internal distribution path.
+4. If `dws` is missing, install it through
+   `scripts/bootstrap-local-components.sh --format json` after setting
+   `DWS_INSTALLER_PATH` or `DWS_INSTALL_COMMAND` to the organization's approved
+   installer or package command. Do not invent a download URL. If the source is
+   unknown, ask the user for the approved installer or internal distribution
+   path, then let the agent run the install.
 
 5. Authenticate `dws`:
 
@@ -136,11 +162,23 @@ confirmation instead of asking the user to run commands.
    codex --version
    ```
 
-2. If Codex is not installed or not authenticated, use the user's approved
-   Codex installation path. Do not store API keys in this repository.
+2. If Codex is not installed, set `CODEX_INSTALL_COMMAND` to the user's approved
+   Codex installation command and run the bootstrapper. If Codex is not
+   authenticated, initiate the auth flow yourself. Do not store API keys in this
+   repository.
 
 3. Confirm continuity support later through a dry-run worker pass; the service
    uses Codex sessions through the local runtime, not a cloud-only worker.
+
+### macOS Notifications
+
+The service prefers `terminal-notifier` for native macOS notifications and falls
+back to browser notifications or `osascript` when unavailable. The bootstrapper
+installs `terminal-notifier` automatically with Homebrew when possible:
+
+```sh
+scripts/bootstrap-local-components.sh --format json
+```
 
 ### Memory Connector
 

@@ -2,6 +2,7 @@ import json
 import os
 import re
 import shutil
+import subprocess
 from contextlib import redirect_stderr, redirect_stdout
 from io import StringIO
 from pathlib import Path
@@ -53,7 +54,7 @@ SETUP_WIZARD_STEPS: tuple[SetupStepDefinition, ...] = (
         id="cli_components",
         title="CLI Components",
         phase="Phase 2",
-        description="Verify dws, Codex CLI, and Nvwa skill availability.",
+        description="Verify and install dws, Codex CLI, Nvwa skill, and notifications.",
         depends_on=["preflight"],
         actions=[
             SetupAction(
@@ -61,6 +62,12 @@ SETUP_WIZARD_STEPS: tuple[SetupStepDefinition, ...] = (
                 label="Check",
                 step_id="cli_components",
                 kind="check",
+            ),
+            SetupAction(
+                id="setup_cli_components",
+                label="Fix automatically",
+                step_id="cli_components",
+                kind="run",
             ),
         ],
     ),
@@ -491,6 +498,7 @@ def _check_cli_components(*, repo_root: Path) -> SetupStepStatus:
     del repo_root
     dws_ready = shutil.which("dws") is not None
     codex_ready = shutil.which("codex") is not None
+    terminal_notifier_ready = shutil.which("terminal-notifier") is not None
     nvwa_ready = any(
         path.exists()
         for path in (
@@ -504,6 +512,7 @@ def _check_cli_components(*, repo_root: Path) -> SetupStepStatus:
             ("dws", dws_ready),
             ("codex", codex_ready),
             ("Nvwa skill", nvwa_ready),
+            ("terminal-notifier", terminal_notifier_ready),
         )
         if not ready
     ]
@@ -517,14 +526,20 @@ def _check_cli_components(*, repo_root: Path) -> SetupStepStatus:
                 "dws": dws_ready,
                 "codex": codex_ready,
                 "nvwa_skill": nvwa_ready,
+                "terminal_notifier": terminal_notifier_ready,
             },
         )
     return _status(
         "cli_components",
         title="CLI Components",
         status="done",
-        summary="dws, Codex CLI, and Nvwa skill are available.",
-        evidence={"dws": True, "codex": True, "nvwa_skill": True},
+        summary="dws, Codex CLI, Nvwa skill, and terminal-notifier are available.",
+        evidence={
+            "dws": True,
+            "codex": True,
+            "nvwa_skill": True,
+            "terminal_notifier": True,
+        },
     )
 
 
@@ -534,6 +549,8 @@ def run_setup_action(
     repo_root: Path,
     env: dict[str, str] | None = None,
 ) -> SetupWizardEvent:
+    if action_id == "setup_cli_components":
+        return _setup_cli_components(repo_root, env or {})
     if action_id == "setup_service_config":
         return _setup_service_config(repo_root, env or {})
     if action_id == "setup_mcp":
@@ -552,6 +569,71 @@ def run_setup_action(
         action_id=action_id,
         status="failed",
         summary=f"{action.label} is not automated yet.",
+    )
+
+
+def _setup_cli_components(
+    repo_root: Path,
+    env: dict[str, str],
+) -> SetupWizardEvent:
+    script = repo_root / "scripts" / "bootstrap-local-components.sh"
+    if not script.exists():
+        return SetupWizardEvent(
+            step_id="cli_components",
+            action_id="setup_cli_components",
+            status="failed",
+            summary="scripts/bootstrap-local-components.sh is missing.",
+        )
+
+    merged_env = os.environ.copy()
+    merged_env.update(env)
+    completed = subprocess.run(
+        [str(script), "--format", "json"],
+        cwd=repo_root,
+        env=merged_env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    stdout = redact_setup_output(completed.stdout)
+    stderr = redact_setup_output(completed.stderr)
+    evidence: dict[str, object] = {
+        "returncode": completed.returncode,
+    }
+    summary = "Local CLI components were checked and repaired."
+    try:
+        payload = json.loads(completed.stdout or "{}")
+    except json.JSONDecodeError:
+        payload = {}
+    if isinstance(payload, dict):
+        if payload.get("components"):
+            evidence["components_json"] = redact_setup_output(
+                json.dumps(payload["components"], ensure_ascii=False, sort_keys=True)
+            )
+        if isinstance(payload.get("summary"), str) and payload["summary"].strip():
+            summary = redact_setup_output(payload["summary"])
+
+    if completed.returncode != 0:
+        if not summary or summary == "Local CLI components were checked and repaired.":
+            summary = (stderr or stdout or "Component bootstrap failed.").strip()
+        return SetupWizardEvent(
+            step_id="cli_components",
+            action_id="setup_cli_components",
+            status="failed",
+            summary=summary,
+            evidence=evidence,
+            stdout_excerpt=stdout,
+            stderr_excerpt=stderr,
+        )
+
+    return SetupWizardEvent(
+        step_id="cli_components",
+        action_id="setup_cli_components",
+        status="done",
+        summary=summary,
+        evidence=evidence,
+        stdout_excerpt=stdout,
+        stderr_excerpt=stderr,
     )
 
 
