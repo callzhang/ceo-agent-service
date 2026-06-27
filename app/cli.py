@@ -763,6 +763,15 @@ def process_work_items_command(settings: WorkerSettings) -> int:
             idle_timeout_seconds=settings.task_codex_idle_timeout_seconds,
         )
     )
+    dws = None
+    if not settings.dry_run:
+        dws = DwsClient(
+            ding_robot_code=settings.ding_robot_code,
+            ding_robot_name=settings.ding_robot_name,
+            ding_receiver_user_id=settings.ding_receiver_user_id,
+            transient_retry_attempts=settings.dws_transient_retry_attempts,
+            transient_retry_delay_seconds=settings.dws_transient_retry_delay_seconds,
+        )
     processed = 0
     for _ in range(limit):
         claimed = store.claim_work_summary_inputs(limit=1)
@@ -770,7 +779,7 @@ def process_work_items_command(settings: WorkerSettings) -> int:
             break
         work_input = claimed[0]
         try:
-            process_work_item(store, runner, work_input)
+            process_work_item(store, runner, work_input, dws=dws)
             processed += 1
         except Exception as exc:
             error = str(exc)

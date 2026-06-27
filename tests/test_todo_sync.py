@@ -16,6 +16,7 @@ from app.todo_sync import (
 class FakeTodoDws:
     def __init__(self):
         self.created = []
+        self.create_payload = {"todoTaskId": "dt-task-1"}
         self.get_calls = []
         self.get_payloads = {}
         self.get_errors = {}
@@ -31,7 +32,7 @@ class FakeTodoDws:
                 "priority": priority,
             }
         )
-        return {"id": "dt-task-1", "taskId": "dt-task-1"}
+        return self.create_payload
 
     def get_todo_task(self, task_id):
         self.get_calls.append(task_id)
@@ -96,6 +97,25 @@ def test_maybe_create_dingtalk_todo_creates_high_confidence_link(tmp_path):
     stored = store.get_work_todo_dingtalk_link(link.id)
     assert stored.dingtalk_task_id == "dt-task-1"
     assert stored.status == "active"
+
+
+def test_maybe_create_dingtalk_todo_accepts_create_todo_task_id(tmp_path):
+    store = _store(tmp_path)
+    _, todo_id = _project_and_todo(store)
+    dws = FakeTodoDws()
+    dws.create_payload = {"todoTaskId": "dt-task-from-create"}
+
+    link = maybe_create_dingtalk_todo(
+        store,
+        dws,
+        work_todo_id=todo_id,
+        now="2026-06-27 10:00:00",
+    )
+
+    assert link is not None
+    assert link.dingtalk_task_id == "dt-task-from-create"
+    assert link.status == "active"
+    assert dws.get_calls == ["dt-task-from-create"]
 
 
 def test_maybe_create_dingtalk_todo_skips_missing_deadline(tmp_path):
@@ -350,6 +370,34 @@ def test_pull_done_dingtalk_todo_closes_internal_todo(tmp_path):
     assert store.get_work_todo_dingtalk_link(link_id).status == "done"
 
 
+def test_pull_done_dingtalk_todo_closes_from_detail_model_done(tmp_path):
+    store = _store(tmp_path)
+    _, todo_id = _project_and_todo(store)
+    link_id = store.create_work_todo_dingtalk_link(
+        work_todo_id=todo_id,
+        dingtalk_task_id="dt-task-1",
+        executor_user_id="owner-1",
+        title_snapshot="给客户同步验收 ETA",
+        deadline_at_snapshot="2026-07-01 18:00:00",
+        priority_snapshot="P1",
+        status="active",
+    )
+    dws = FakeTodoDws()
+    dws.get_payloads["dt-task-1"] = {
+        "result": {"todoDetailModel": {"taskId": "dt-task-1", "done": True}}
+    }
+
+    updated = pull_dingtalk_todo_statuses(
+        store,
+        dws,
+        now="2026-06-27 11:00:00",
+    )
+
+    assert updated == 1
+    assert store.get_work_todo(todo_id).status == "done"
+    assert store.get_work_todo_dingtalk_link(link_id).status == "done"
+
+
 def test_refresh_link_before_follow_up_closes_when_dingtalk_done(tmp_path):
     store = _store(tmp_path)
     _, todo_id = _project_and_todo(store)
@@ -364,6 +412,37 @@ def test_refresh_link_before_follow_up_closes_when_dingtalk_done(tmp_path):
     )
     dws = FakeTodoDws()
     dws.get_payloads["dt-task-1"] = {"id": "dt-task-1", "done": True}
+
+    completed, reason = refresh_dingtalk_todo_before_follow_up(
+        store,
+        dws,
+        work_todo_id=todo_id,
+        now="2026-06-27 10:00:00",
+    )
+
+    assert completed is True
+    assert reason == "dingtalk_todo_done"
+    assert store.get_work_todo(todo_id).status == "done"
+    assert store.get_work_todo_dingtalk_link(link_id).status == "done"
+    assert store.get_active_work_todo_dingtalk_link(todo_id) is None
+
+
+def test_refresh_link_before_follow_up_closes_from_detail_model_done(tmp_path):
+    store = _store(tmp_path)
+    _, todo_id = _project_and_todo(store)
+    link_id = store.create_work_todo_dingtalk_link(
+        work_todo_id=todo_id,
+        dingtalk_task_id="dt-task-1",
+        executor_user_id="owner-1",
+        title_snapshot="给客户同步验收 ETA",
+        deadline_at_snapshot="2026-07-01 18:00:00",
+        priority_snapshot="P1",
+        status="active",
+    )
+    dws = FakeTodoDws()
+    dws.get_payloads["dt-task-1"] = {
+        "result": {"todoDetailModel": {"taskId": "dt-task-1", "done": True}}
+    }
 
     completed, reason = refresh_dingtalk_todo_before_follow_up(
         store,

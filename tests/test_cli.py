@@ -1095,6 +1095,80 @@ def test_process_work_items_command_uses_task_agent_timeouts(
     assert constructed["idle_timeout_seconds"] == 600
 
 
+def test_process_work_items_command_passes_dws_client_to_task_agent(
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    class FakeTaskAgentCodexRunner:
+        last_session_id = "task-session-1"
+        last_transcript_start_line = 0
+        last_transcript_end_line = 0
+
+        def __init__(self, **kwargs):
+            pass
+
+    class FakeDwsClient:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    captured = {}
+
+    def fake_process_work_item(store, runner, work_input, *, dws, now=""):
+        captured["dws"] = dws
+        captured["work_input_id"] = work_input.id
+        store.mark_work_summary_input_done(work_input.id)
+
+    monkeypatch.setattr(cli, "TaskAgentCodexRunner", FakeTaskAgentCodexRunner)
+    monkeypatch.setattr(cli, "DwsClient", FakeDwsClient)
+    monkeypatch.setattr(cli, "process_work_item", fake_process_work_item)
+    db_path = tmp_path / "task.sqlite3"
+    store = AutoReplyStore(db_path)
+    item = WorkItem.model_validate(
+        {
+            "source": {"type": "reply_attempt", "ref": "1"},
+            "summary": "给客户同步验收 ETA。",
+            "project_name": "客户交付",
+            "context": {
+                "sender": "Mina",
+                "participants": ["Alex"],
+                "source_conversation_kind": "group",
+                "source_conversation_title": "客户群",
+            },
+        }
+    )
+    input_id = store.enqueue_work_summary_input(
+        item.source.type.value,
+        item.source.ref,
+        item.model_dump_json(),
+    )
+
+    processed = process_work_items_command(
+        WorkerSettings(
+            db_path=db_path,
+            workspace=tmp_path,
+            max_batches=1,
+            ding_robot_code="robot-code",
+            ding_robot_name="Friday",
+            ding_receiver_user_id="derek-id",
+            dws_transient_retry_attempts=4,
+            dws_transient_retry_delay_seconds=0.25,
+        )
+    )
+
+    assert processed == 1
+    assert capsys.readouterr().out == "process-work-items processed=1\n"
+    assert captured["work_input_id"] == input_id
+    assert isinstance(captured["dws"], FakeDwsClient)
+    assert captured["dws"].kwargs == {
+        "ding_robot_code": "robot-code",
+        "ding_robot_name": "Friday",
+        "ding_receiver_user_id": "derek-id",
+        "transient_retry_attempts": 4,
+        "transient_retry_delay_seconds": 0.25,
+    }
+
+
 def test_process_work_items_command_respects_zero_max_batches(
     tmp_path,
     monkeypatch,

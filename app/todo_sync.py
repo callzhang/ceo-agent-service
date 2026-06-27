@@ -47,29 +47,46 @@ def _priority_to_dingtalk(priority: str) -> int:
     return priorities.get((priority or "").strip(), 20)
 
 
-def _payload_task_id(payload: dict[str, Any]) -> str:
+def _payload_candidate_dicts(payload: dict[str, Any]) -> list[dict[str, Any]]:
     values = [payload]
     result = payload.get("result")
     if isinstance(result, dict):
         values.append(result)
+        detail = result.get("todoDetailModel")
+        if isinstance(detail, dict):
+            values.append(detail)
+    return values
+
+
+def _payload_task_id(payload: dict[str, Any]) -> str:
+    values = _payload_candidate_dicts(payload)
     for item in values:
-        for key in ("taskId", "task_id", "id"):
+        for key in ("todoTaskId", "taskId", "task_id", "id"):
             value = item.get(key)
             if value is not None and str(value).strip():
                 return str(value).strip()
     return ""
 
 
+def _payload_done_value(value: Any) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"true", "done", "completed"}:
+            return True
+        if normalized in {"false", "open", "pending", "active"}:
+            return False
+    return None
+
+
 def _payload_done(payload: dict[str, Any]) -> bool:
-    values = [payload]
-    result = payload.get("result")
-    if isinstance(result, dict):
-        values.append(result)
+    values = _payload_candidate_dicts(payload)
     for item in values:
-        for key in ("done", "isDone", "completed", "isCompleted"):
-            value = item.get(key)
-            if isinstance(value, bool):
-                return value
+        for key in ("done", "isDone", "completed", "isCompleted", "status"):
+            parsed = _payload_done_value(item.get(key))
+            if parsed is not None:
+                return parsed
     return False
 
 
