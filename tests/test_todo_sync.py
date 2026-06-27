@@ -353,7 +353,7 @@ def test_pull_done_dingtalk_todo_closes_internal_todo(tmp_path):
 def test_refresh_link_before_follow_up_closes_when_dingtalk_done(tmp_path):
     store = _store(tmp_path)
     _, todo_id = _project_and_todo(store)
-    store.create_work_todo_dingtalk_link(
+    link_id = store.create_work_todo_dingtalk_link(
         work_todo_id=todo_id,
         dingtalk_task_id="dt-task-1",
         executor_user_id="owner-1",
@@ -375,6 +375,8 @@ def test_refresh_link_before_follow_up_closes_when_dingtalk_done(tmp_path):
     assert completed is True
     assert reason == "dingtalk_todo_done"
     assert store.get_work_todo(todo_id).status == "done"
+    assert store.get_work_todo_dingtalk_link(link_id).status == "done"
+    assert store.get_active_work_todo_dingtalk_link(todo_id) is None
 
 
 def test_refresh_link_before_follow_up_without_active_link_does_not_call_dws(

@@ -307,6 +307,7 @@ def refresh_dingtalk_todo_before_follow_up(
         )
         if done:
             _close_internal_todo_from_dingtalk(store, link, task_id, now)
+            store.update_work_todo_dingtalk_link(link.id, status="done")
             return True, "dingtalk_todo_done"
     except (DwsError, RuntimeError) as exc:
         store.update_work_todo_dingtalk_link(link.id, last_error=str(exc))
