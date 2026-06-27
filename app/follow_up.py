@@ -5,6 +5,7 @@ from app.dws_client import DwsError
 from app.feedback_spike import prepare_outgoing_reply_text
 from app.store import AutoReplyStore
 from app.task_models import ProjectStatus, TodoStatus
+from app.todo_sync import sync_completed_todo_to_dingtalk
 
 
 MAX_FOLLOW_UP_AGE_SECONDS = 7 * 24 * 60 * 60
@@ -140,7 +141,7 @@ def _reaction_evidence_for_draft(store: AutoReplyStore, draft) -> tuple[str, str
     return "", "", ""
 
 
-def _refresh_recent_sent_reactions(store: AutoReplyStore, *, now: str) -> None:
+def _refresh_recent_sent_reactions(store: AutoReplyStore, dws, *, now: str) -> None:
     current = _parse_follow_up_datetime(now) or datetime.now(timezone.utc).replace(
         tzinfo=None
     )
@@ -170,19 +171,25 @@ def _refresh_recent_sent_reactions(store: AutoReplyStore, *, now: str) -> None:
         if status == "completed" and draft.todo_id > 0:
             todo = store.get_work_todo(draft.todo_id)
             if todo is not None and str(todo.status) != TodoStatus.DONE.value:
+                evidence = {
+                    "source": source,
+                    "summary": summary,
+                    "follow_up_id": draft.id,
+                    "checked_at": now,
+                }
                 store.update_work_todo(
                     draft.todo_id,
                     status=TodoStatus.DONE.value,
-                    completion_evidence_json=json.dumps(
-                        {
-                            "source": source,
-                            "summary": summary,
-                            "follow_up_id": draft.id,
-                            "checked_at": now,
-                        },
-                        ensure_ascii=False,
-                    ),
+                    completion_evidence_json=json.dumps(evidence, ensure_ascii=False),
                 )
+                if dws is not None:
+                    sync_completed_todo_to_dingtalk(
+                        store,
+                        dws,
+                        work_todo_id=draft.todo_id,
+                        evidence=evidence,
+                        now=now,
+                    )
 
 
 def _risk_check(draft) -> dict:
@@ -270,7 +277,13 @@ def _follow_up_message_text(store: AutoReplyStore, draft) -> str:
     return f"{_source_context_prefix(project, todo)}{text}".strip()
 
 
-def _completion_supported_by_current_evidence(store: AutoReplyStore, draft) -> tuple[bool, str]:
+def _completion_supported_by_current_evidence(
+    store: AutoReplyStore,
+    dws,
+    draft,
+    *,
+    now: str,
+) -> tuple[bool, str]:
     project = store.get_work_project(draft.project_id)
     if project is not None and str(project.status) == ProjectStatus.DONE.value:
         return True, "project status is done"
@@ -287,18 +300,24 @@ def _completion_supported_by_current_evidence(store: AutoReplyStore, draft) -> t
         return True, "todo has completion evidence"
     status, summary, source = _reaction_evidence_for_draft(store, draft)
     if status == "completed":
+        evidence = {
+            "source": source,
+            "summary": summary,
+            "follow_up_id": draft.id,
+        }
         store.update_work_todo(
             draft.todo_id,
             status=TodoStatus.DONE.value,
-            completion_evidence_json=json.dumps(
-                {
-                    "source": source,
-                    "summary": summary,
-                    "follow_up_id": draft.id,
-                },
-                ensure_ascii=False,
-            ),
+            completion_evidence_json=json.dumps(evidence, ensure_ascii=False),
         )
+        if dws is not None:
+            sync_completed_todo_to_dingtalk(
+                store,
+                dws,
+                work_todo_id=draft.todo_id,
+                evidence=evidence,
+                now=now,
+            )
         return True, f"completion reaction: {summary}"
     return False, ""
 
@@ -495,7 +514,7 @@ def process_due_follow_ups(
     limit: int = 50,
 ) -> int:
     sent = 0
-    _refresh_recent_sent_reactions(store, now=now)
+    _refresh_recent_sent_reactions(store, dws, now=now)
     drafts = store.list_follow_up_drafts(
         statuses=("draft", "approved"),
         due_before=now,
@@ -507,7 +526,12 @@ def process_due_follow_ups(
         if _is_stale_follow_up(draft.scheduled_at, now):
             _skip_stale_follow_up(store, draft, now=now)
             continue
-        completed, reason = _completion_supported_by_current_evidence(store, draft)
+        completed, reason = _completion_supported_by_current_evidence(
+            store,
+            dws,
+            draft,
+            now=now,
+        )
         if completed:
             _skip_completed_follow_up(store, draft, now=now, reason=reason)
             continue

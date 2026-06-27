@@ -15,7 +15,7 @@ from app.task_models import (
     WorkSummaryInput,
 )
 from app.task_retrieval import render_candidate_prompt, retrieve_project_candidates
-from app.todo_sync import maybe_create_dingtalk_todo
+from app.todo_sync import maybe_create_dingtalk_todo, sync_completed_todo_to_dingtalk
 
 
 TASK_AGENT_DECISION_SCHEMA_PATH = (
@@ -344,6 +344,7 @@ def apply_task_agent_decision(
     )
     todo_refs: dict[str, int] = {}
     create_sync_todo_ids: list[int] = []
+    sync_now = ""
     for todo_change in decision.todo_changes:
         todo_id = _apply_todo_change(
             store,
@@ -351,6 +352,19 @@ def apply_task_agent_decision(
             update_id=update_id,
             change=todo_change,
         )
+        if (
+            dws is not None
+            and todo_change.action == "close"
+            and todo_change.completion_evidence is not None
+        ):
+            sync_now = sync_now or now or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            sync_completed_todo_to_dingtalk(
+                store,
+                dws,
+                work_todo_id=todo_id,
+                evidence=todo_change.completion_evidence,
+                now=sync_now,
+            )
         if todo_change.action in {"create", "update"}:
             create_sync_todo_ids.append(todo_id)
         if todo_change.action == "create" and todo_change.todo_ref.strip():
@@ -363,7 +377,7 @@ def apply_task_agent_decision(
             todo_refs=todo_refs,
         )
     if dws is not None:
-        sync_now = now or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        sync_now = sync_now or now or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         for todo_id in create_sync_todo_ids:
             maybe_create_dingtalk_todo(
                 store,

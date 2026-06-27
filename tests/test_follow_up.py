@@ -827,6 +827,92 @@ def test_due_follow_up_skips_when_recent_reply_says_completed(tmp_path):
     assert "reply_attempt" in todo.completion_evidence_json
 
 
+def test_completion_reaction_pushes_dingtalk_todo_done(tmp_path, monkeypatch):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    project_id = store.create_work_project(
+        title="客户交付",
+        category="projects",
+        status="active",
+        priority="P1",
+        risk_level="medium",
+    )
+    todo_id = store.create_work_todo(
+        project_id=project_id,
+        title="给客户同步验收 ETA",
+        owner_user_id="owner-1",
+        owner_name="Alex",
+        status="open",
+        priority="P1",
+        deadline_at="2026-07-01 18:00:00",
+    )
+    store.create_work_todo_dingtalk_link(
+        work_todo_id=todo_id,
+        dingtalk_task_id="dt-task-1",
+        executor_user_id="owner-1",
+        title_snapshot="给客户同步验收 ETA",
+        deadline_at_snapshot="2026-07-01 18:00:00",
+        priority_snapshot="P1",
+        status="active",
+    )
+    store.create_follow_up_draft(
+        project_id=project_id,
+        todo_id=todo_id,
+        owner_user_id="owner-1",
+        owner_name="Alex",
+        target_conversation_id="cid-1",
+        target_kind="group",
+        question_text="请同步验收 ETA。",
+        scheduled_at="2026-06-27 09:00:00",
+    )
+    attempt_id = store.record_reply_attempt(
+        conversation_id="cid-1",
+        conversation_title="客户交付群",
+        trigger_message_id="msg-complete",
+        trigger_sender="Alex",
+        trigger_text="完成了，这块已经结束了。",
+        action="no_reply",
+        sensitivity_kind="general",
+    )
+    with store._connect() as db:
+        db.execute(
+            """
+            update reply_attempts
+            set created_at='2026-06-27 09:30:00',
+                updated_at='2026-06-27 09:30:00'
+            where id=?
+            """,
+            (attempt_id,),
+        )
+    pushed = []
+
+    def fake_push(store_arg, dws_arg, *, work_todo_id, evidence, now):
+        pushed.append({"work_todo_id": work_todo_id, "evidence": evidence, "now": now})
+        return True
+
+    monkeypatch.setattr("app.follow_up.sync_completed_todo_to_dingtalk", fake_push)
+    dws = FakeDws()
+
+    sent = process_due_follow_ups(
+        store,
+        dws,
+        now="2026-06-27 10:00:00",
+        auto_send=True,
+    )
+
+    assert sent == 0
+    assert pushed == [
+        {
+            "work_todo_id": todo_id,
+            "evidence": {
+                "source": "reply_attempt:%d" % attempt_id,
+                "summary": "完成了，这块已经结束了。",
+                "follow_up_id": 1,
+            },
+            "now": "2026-06-27 10:00:00",
+        }
+    ]
+
+
 def test_due_follow_up_skips_when_recent_reply_asks_for_source(tmp_path):
     store = AutoReplyStore(tmp_path / "task.sqlite3")
     project_id = store.create_work_project(

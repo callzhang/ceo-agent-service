@@ -422,6 +422,167 @@ def test_apply_decision_does_not_create_dingtalk_todo_for_closed_todo(
     assert calls == []
 
 
+def test_apply_decision_pushes_completed_todo_to_dingtalk(tmp_path, monkeypatch):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    project_id = store.create_work_project(
+        title="客户交付",
+        category="projects",
+        status="active",
+    )
+    todo_id = store.create_work_todo(
+        project_id=project_id,
+        title="给客户同步验收 ETA",
+        owner_user_id="owner-1",
+        status="open",
+        deadline_at="2026-07-01 18:00:00",
+    )
+    calls = []
+
+    def fake_push(store_arg, dws_arg, *, work_todo_id, evidence, now):
+        calls.append((store_arg, dws_arg, work_todo_id, evidence, now))
+        return True
+
+    monkeypatch.setattr("app.task_agent.sync_completed_todo_to_dingtalk", fake_push)
+
+    dws = object()
+    decision = TaskAgentDecision.model_validate(
+        {
+            "action": "update_project",
+            "project": {
+                "id": project_id,
+                "title": "客户交付",
+                "category": "projects",
+                "status": "active",
+                "memory_context": _memory_context(),
+            },
+            "todo_changes": [
+                {
+                    "action": "close",
+                    "todo_id": todo_id,
+                    "completion_evidence": {
+                        "source": "reply_attempt:1",
+                        "summary": "已发客户",
+                    },
+                }
+            ],
+            "follow_up_drafts": [],
+            "update_summary": "关闭 task item。",
+            "merge_reason": "明确完成。",
+            "memory_recall_used": True,
+            "confidence": 1.0,
+        }
+    )
+
+    apply_task_agent_decision(
+        store,
+        summary_input_id=0,
+        work_item=_work_item("客户交付"),
+        decision=decision,
+        dws=dws,
+        now="2026-06-27 12:00:00",
+    )
+
+    assert calls == [
+        (
+            store,
+            dws,
+            todo_id,
+            {"source": "reply_attempt:1", "summary": "已发客户"},
+            "2026-06-27 12:00:00",
+        )
+    ]
+
+
+def test_apply_decision_does_not_push_completed_todo_without_evidence_or_dws(
+    tmp_path,
+    monkeypatch,
+):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    project_id = store.create_work_project(
+        title="客户交付",
+        category="projects",
+        status="active",
+    )
+    todo_without_evidence_id = store.create_work_todo(
+        project_id=project_id,
+        title="给客户同步验收 ETA",
+        owner_user_id="owner-1",
+        status="open",
+    )
+    todo_without_dws_id = store.create_work_todo(
+        project_id=project_id,
+        title="确认客户验收结论",
+        owner_user_id="owner-1",
+        status="open",
+    )
+    calls = []
+
+    def fake_push(store_arg, dws_arg, *, work_todo_id, evidence, now):
+        calls.append((store_arg, dws_arg, work_todo_id, evidence, now))
+        return True
+
+    monkeypatch.setattr("app.task_agent.sync_completed_todo_to_dingtalk", fake_push)
+
+    base_project = {
+        "id": project_id,
+        "title": "客户交付",
+        "category": "projects",
+        "status": "active",
+        "memory_context": _memory_context(),
+    }
+    apply_task_agent_decision(
+        store,
+        summary_input_id=0,
+        work_item=_work_item("客户交付"),
+        decision=TaskAgentDecision.model_validate(
+            {
+                "action": "update_project",
+                "project": base_project,
+                "todo_changes": [
+                    {"action": "close", "todo_id": todo_without_evidence_id}
+                ],
+                "follow_up_drafts": [],
+                "update_summary": "关闭无 evidence 的 task item。",
+                "merge_reason": "明确完成。",
+                "memory_recall_used": True,
+                "confidence": 1.0,
+            }
+        ),
+        dws=object(),
+        now="2026-06-27 12:00:00",
+    )
+    apply_task_agent_decision(
+        store,
+        summary_input_id=0,
+        work_item=_work_item("客户交付"),
+        decision=TaskAgentDecision.model_validate(
+            {
+                "action": "update_project",
+                "project": base_project,
+                "todo_changes": [
+                    {
+                        "action": "close",
+                        "todo_id": todo_without_dws_id,
+                        "completion_evidence": {
+                            "source": "reply_attempt:2",
+                            "summary": "客户已确认",
+                        },
+                    }
+                ],
+                "follow_up_drafts": [],
+                "update_summary": "关闭无 dws 的 task item。",
+                "merge_reason": "明确完成。",
+                "memory_recall_used": True,
+                "confidence": 1.0,
+            }
+        ),
+        dws=None,
+        now="2026-06-27 12:00:00",
+    )
+
+    assert calls == []
+
+
 def test_discard_decision_records_run_and_marks_input_discarded(tmp_path):
     store = AutoReplyStore(tmp_path / "task.sqlite3")
     item = _work_item()
