@@ -225,6 +225,9 @@ def test_process_follow_ups_command_processes_due_drafts(tmp_path, monkeypatch, 
 def test_daily_task_maintenance_runs_task_pipeline(tmp_path, monkeypatch, capsys):
     calls = []
 
+    class FakeDwsClient:
+        pass
+
     monkeypatch.setattr(
         cli,
         "scan_task_sources_command",
@@ -248,6 +251,16 @@ def test_daily_task_maintenance_runs_task_pipeline(tmp_path, monkeypatch, capsys
         )
         or 1,
     )
+    monkeypatch.setattr(cli, "DwsClient", lambda **_: FakeDwsClient())
+    monkeypatch.setattr(
+        cli,
+        "pull_dingtalk_todo_statuses",
+        lambda store, dws, now: calls.append(
+            ("dingtalk_todo_pull", dws.__class__.__name__)
+        )
+        or 4,
+        raising=False,
+    )
 
     result = cli.daily_task_maintenance_command(
         WorkerSettings(db_path=tmp_path / "worker.sqlite3", max_batches=4)
@@ -257,18 +270,75 @@ def test_daily_task_maintenance_runs_task_pipeline(tmp_path, monkeypatch, capsys
         "sources": 3,
         "work_items": 2,
         "okr_reviews": 5,
+        "dingtalk_todos_closed": 4,
         "follow_ups": 1,
     }
     assert calls == [
         ("scan", tmp_path / "worker.sqlite3"),
         ("work", tmp_path / "worker.sqlite3"),
         ("okr", tmp_path / "worker.sqlite3"),
+        ("dingtalk_todo_pull", "FakeDwsClient"),
         ("follow", tmp_path / "worker.sqlite3", False),
     ]
     assert capsys.readouterr().out == (
         "daily-task-maintenance sources=3 work_items=2 "
-        "okr_reviews=5 follow_ups=1\n"
+        "okr_reviews=5 dingtalk_todos_closed=4 follow_ups=1\n"
     )
+
+
+def test_daily_task_maintenance_pulls_dingtalk_todos(tmp_path, monkeypatch, capsys):
+    calls = []
+    db_path = tmp_path / "worker.sqlite3"
+
+    class FakeDwsClient:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    monkeypatch.setattr(
+        cli,
+        "scan_task_sources_command",
+        lambda settings: calls.append(("scan", settings.db_path)) or 3,
+    )
+    monkeypatch.setattr(
+        cli,
+        "process_work_items_command",
+        lambda settings: calls.append(("work", settings.db_path)) or 2,
+    )
+    monkeypatch.setattr(
+        cli,
+        "process_okr_reviews_command",
+        lambda settings: calls.append(("okr", settings.db_path)) or 5,
+    )
+    monkeypatch.setattr(
+        cli,
+        "process_follow_ups_command",
+        lambda settings, refresh_evidence=True: calls.append(
+            ("follow", settings.db_path, refresh_evidence)
+        )
+        or 1,
+    )
+    monkeypatch.setattr(cli, "DwsClient", FakeDwsClient)
+    monkeypatch.setattr(
+        cli,
+        "pull_dingtalk_todo_statuses",
+        lambda store, dws, now: calls.append(
+            ("dingtalk_todo_pull", dws.__class__.__name__)
+        )
+        or 4,
+        raising=False,
+    )
+
+    result = cli.daily_task_maintenance_command(WorkerSettings(db_path=db_path))
+
+    assert calls == [
+        ("scan", db_path),
+        ("work", db_path),
+        ("okr", db_path),
+        ("dingtalk_todo_pull", "FakeDwsClient"),
+        ("follow", db_path, False),
+    ]
+    assert result["dingtalk_todos_closed"] == 4
+    assert "dingtalk_todos_closed=4" in capsys.readouterr().out
 
 
 def test_process_okr_reviews_command_processes_and_sends_reply(

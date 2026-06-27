@@ -3229,11 +3229,19 @@ def render_task_project_detail(store: AutoReplyStore, project_id: int) -> tuple[
     todos = store.list_work_todos(project_id=project.id)
     updates = store.list_work_updates(project.id, limit=50)
     drafts = store.list_follow_up_drafts(project_id=project.id, limit=100)
+    dingtalk_links_by_todo = store.list_work_todo_dingtalk_links_for_todos(
+        [todo.id for todo in todos]
+    )
 
     detail_rows = _task_project_detail_rows(project)
     facts = _task_facts_rows(project.facts_json)
     conversation_titles = _task_conversation_title_map(project.source_conversations_json)
-    todo_panel = _task_todos_panel(todos, drafts, conversation_titles)
+    todo_panel = _task_todos_panel(
+        todos,
+        drafts,
+        conversation_titles,
+        dingtalk_links_by_todo,
+    )
     update_rows = _task_update_rows(updates)
     draft_rows = _task_follow_up_rows(
         _unlinked_follow_up_drafts(todos, drafts),
@@ -3410,13 +3418,19 @@ def _task_facts_rows(facts_json: str) -> list[tuple[str, str, str, str]]:
     return rows
 
 
-def _task_todos_panel(todos, drafts, conversation_titles: Mapping[str, str]) -> str:
+def _task_todos_panel(
+    todos,
+    drafts,
+    conversation_titles: Mapping[str, str],
+    dingtalk_links_by_todo: Mapping[int, list],
+) -> str:
     follow_ups_by_todo = _follow_up_drafts_by_todo(todos, drafts)
     items = "".join(
         _task_todo_detail_item(
             todo,
             follow_ups_by_todo.get(todo.id, []),
             conversation_titles,
+            dingtalk_links_by_todo.get(todo.id, []),
         )
         for todo in todos
     )
@@ -3437,7 +3451,12 @@ def _unlinked_follow_up_drafts(todos, drafts) -> list:
     return [draft for draft in drafts if draft.todo_id not in todo_ids]
 
 
-def _task_todo_detail_item(todo, follow_ups, conversation_titles: Mapping[str, str]) -> str:
+def _task_todo_detail_item(
+    todo,
+    follow_ups,
+    conversation_titles: Mapping[str, str],
+    dingtalk_links,
+) -> str:
     owner = todo.owner_name or todo.owner_user_id or "-"
     status = str(todo.status)
     priority = str(todo.priority)
@@ -3453,6 +3472,7 @@ def _task_todo_detail_item(todo, follow_ups, conversation_titles: Mapping[str, s
         if follow_ups
         else ""
     )
+    dingtalk_panel = _task_todo_dingtalk_links_panel(dingtalk_links)
     return (
         f'<article class="todo-detail-item" id="todo-{todo.id}">'
         '<div class="todo-detail-main">'
@@ -3476,8 +3496,36 @@ def _task_todo_detail_item(todo, follow_ups, conversation_titles: Mapping[str, s
         "</div>"
         "</div>"
         "</div>"
+        f"{dingtalk_panel}"
         f"{follow_up_panel}"
         "</article>"
+    )
+
+
+def _task_todo_dingtalk_links_panel(links) -> str:
+    if not links:
+        return ""
+    items = "".join(_task_todo_dingtalk_link_item(link) for link in links)
+    return f'<div class="todo-dingtalk-links">{items}</div>'
+
+
+def _task_todo_dingtalk_link_item(link) -> str:
+    status = str(link.status)
+    status_class = _task_status_class(status)
+    task_id = link.dingtalk_task_id or "-"
+    pull_at = _format_local_time(link.last_pull_at) or link.last_pull_at or "-"
+    push_at = _format_local_time(link.last_push_at) or link.last_push_at or "-"
+    error = str(link.last_error or "").strip()
+    error_html = f"<span>Error: {escape(error)}</span>" if error else ""
+    return (
+        '<div class="todo-dingtalk-link">'
+        '<span class="detail-pill">DingTalk Todo</span>'
+        f"<span>{escape(task_id)}</span>"
+        f'<span class="task-state {escape(status_class)}">{escape(status)}</span>'
+        f"<span>Last pull: {escape(pull_at)}</span>"
+        f"<span>Last push: {escape(push_at)}</span>"
+        f"{error_html}"
+        "</div>"
     )
 
 

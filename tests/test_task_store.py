@@ -329,6 +329,40 @@ def test_dingtalk_todo_link_prevents_duplicate_active_links(tmp_path: Path):
     assert len(store.list_work_todo_dingtalk_links(statuses=("creating",))) == 1
 
 
+def test_operation_logs_include_dingtalk_todo_links(tmp_path: Path):
+    store = _store(tmp_path)
+    project_id = store.create_work_project(
+        title="客户交付",
+        category="projects",
+        status="active",
+        priority="P1",
+        risk_level="medium",
+    )
+    todo_id = store.create_work_todo(
+        project_id=project_id,
+        title="给客户同步验收 ETA",
+        status="open",
+    )
+    store.create_work_todo_dingtalk_link(
+        work_todo_id=todo_id,
+        dingtalk_task_id="dt-task-1",
+        executor_user_id="owner-1",
+        title_snapshot="给客户同步验收 ETA",
+        deadline_at_snapshot="2026-07-01 18:00:00",
+        priority_snapshot="P1",
+        status="failed",
+        last_error="todo get failed",
+    )
+
+    logs = store.list_operation_logs(query="dt-task-1")
+
+    assert len(logs) == 1
+    assert logs[0].category == "DingTalk Todo"
+    assert logs[0].status == "failed"
+    assert "dt-task-1" in logs[0].context
+    assert "todo get failed" in logs[0].detail
+
+
 def test_list_and_update_project_memory_context_backfill_targets(tmp_path: Path):
     store = _store(tmp_path)
     missing_id = store.create_work_project(

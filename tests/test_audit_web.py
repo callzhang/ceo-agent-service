@@ -1495,6 +1495,45 @@ def test_task_project_detail_keeps_unlinked_followups_separate(tmp_path: Path):
     assert '<div class="todo-detail-followups"' not in html
 
 
+def test_task_project_detail_renders_dingtalk_todo_link(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    project_id = store.create_work_project(
+        title="客户交付",
+        category="projects",
+        status="active",
+        priority="P1",
+        risk_level="medium",
+    )
+    todo_id = store.create_work_todo(
+        project_id=project_id,
+        title="给客户同步验收 ETA",
+        owner_name="Alex",
+        status="open",
+        priority="P1",
+    )
+    store.create_work_todo_dingtalk_link(
+        work_todo_id=todo_id,
+        dingtalk_task_id="dt-task-1",
+        executor_user_id="owner-1",
+        executor_name="Alex",
+        title_snapshot="给客户同步验收 ETA",
+        deadline_at_snapshot="2026-07-01 18:00:00",
+        priority_snapshot="P1",
+        status="active",
+        last_pull_at="2026-06-27 10:00:00",
+        last_push_at="2026-06-27 09:00:00",
+    )
+
+    status, html = render_task_project_detail(store, project_id)
+
+    assert status == 200
+    assert "DingTalk Todo" in html
+    assert "dt-task-1" in html
+    assert "active" in html
+    assert "Last pull" in html
+    assert "2026-06-27" in html
+
+
 def test_tasks_route_renders_page(tmp_path: Path):
     db_path = tmp_path / "worker.sqlite3"
     store = AutoReplyStore(db_path)

@@ -63,6 +63,7 @@ from app.task_memory_backfill import (
     validate_project_memory_context,
 )
 from app.task_models import ProjectMemoryContext
+from app.todo_sync import pull_dingtalk_todo_statuses
 from app.work_profile import (
     build_initial_profile,
     collect_dingtalk_kb_evidence,
@@ -1054,17 +1055,30 @@ def daily_task_maintenance_command(settings: WorkerSettings) -> dict[str, int]:
     sources = scan_task_sources_command(settings)
     work_items = process_work_items_command(settings)
     okr_reviews = process_okr_reviews_command(settings)
+    dws = DwsClient(
+        ding_robot_code=settings.ding_robot_code,
+        ding_robot_name=settings.ding_robot_name,
+        ding_receiver_user_id=settings.ding_receiver_user_id,
+    )
+    dingtalk_todos_closed = pull_dingtalk_todo_statuses(
+        AutoReplyStore(settings.db_path),
+        dws,
+        now=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
+    )
     follow_ups = process_follow_ups_command(settings, refresh_evidence=False)
     result = {
         "sources": sources,
         "work_items": work_items,
         "okr_reviews": okr_reviews,
+        "dingtalk_todos_closed": dingtalk_todos_closed,
         "follow_ups": follow_ups,
     }
     print(
         "daily-task-maintenance "
         f"sources={sources} work_items={work_items} "
-        f"okr_reviews={okr_reviews} follow_ups={follow_ups}",
+        f"okr_reviews={okr_reviews} "
+        f"dingtalk_todos_closed={dingtalk_todos_closed} "
+        f"follow_ups={follow_ups}",
         flush=True,
     )
     return result

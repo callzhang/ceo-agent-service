@@ -3368,6 +3368,29 @@ class AutoReplyStore:
                 for row in db.execute(query, args)
             ]
 
+    def list_work_todo_dingtalk_links_for_todos(
+        self,
+        todo_ids: list[int],
+    ) -> dict[int, list[WorkTodoDingTalkLink]]:
+        if not todo_ids:
+            return {}
+        placeholders = ",".join("?" for _ in todo_ids)
+        with self._connect() as db:
+            rows = db.execute(
+                f"""
+                select *
+                from work_todo_dingtalk_links
+                where work_todo_id in ({placeholders})
+                order by id desc
+                """,
+                todo_ids,
+            ).fetchall()
+        result: dict[int, list[WorkTodoDingTalkLink]] = {}
+        for row in rows:
+            link = self._normalize_dingtalk_todo_link_row(row)
+            result.setdefault(link.work_todo_id, []).append(link)
+        return result
+
     def create_work_update(self, **values) -> int:
         allowed_columns = {
             "project_id",
@@ -3953,6 +3976,21 @@ class AutoReplyStore:
                     target_conversation_id as conversation_id,
                     '' as message_id
                 from follow_up_drafts
+                union all
+                select
+                    'dingtalk-todo:' || id as id,
+                    'work_todo_dingtalk_links' as source_table,
+                    id as source_id,
+                    updated_at as occurred_at,
+                    'DingTalk Todo' as category,
+                    dingtalk_task_id as action,
+                    status as status,
+                    'work_todo #' || work_todo_id || ' dingtalk #' || dingtalk_task_id as context,
+                    title_snapshot as summary,
+                    last_error as detail,
+                    '' as conversation_id,
+                    '' as message_id
+                from work_todo_dingtalk_links
             )
         """
 
