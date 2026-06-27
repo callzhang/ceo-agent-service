@@ -286,6 +286,7 @@ Task 总结以项目为主线记录管理事项、产研事项、业务项目和
 - `work_todos`：归属项目、owner、优先级、due time、状态和来源。
 - `work_updates`：每次 task agent 对项目/TODO 的更新说明、来源和后续动作。
 - `follow_up_drafts`：到期后需要在群里或私信询问 owner 的消息草稿和发送状态。
+- `work_todo_dingtalk_links`：内部 TODO 和钉钉 Todo 的同步状态、外部 task id、最近 pull/push 时间和错误信息。
 
 Task 分类包括：
 
@@ -297,7 +298,15 @@ recruiting, sales, finance, admin, HR, other
 主服务会自动运行 task maintenance：
 
 - 每 `CEO_TASK_WORK_ITEM_INTERVAL_SECONDS` 秒消费一次 reply worker 写入的 Work Item，默认 60 秒。
-- 每 `CEO_TASK_DAILY_INTERVAL_SECONDS` 秒扫描 AI 听记、本地新增文件并处理到期 follow-up，默认 86400 秒。
+- 每 `CEO_TASK_DAILY_INTERVAL_SECONDS` 秒扫描 AI 听记、本地新增文件、拉取钉钉 Todo 完成状态并处理到期 follow-up，默认 86400 秒。
+
+钉钉 Todo 是 owner 执行层，不替代 `/tasks` 里的内部项目管理视图。只有明确 owner、due time、非敏感且未完成的高置信 TODO 会创建钉钉 Todo；Derek 默认不作为执行人加入。内部 `work_todos` 仍是主数据，钉钉 Todo 只同步创建、完成状态拉取和有强证据时的完成推送。发送 follow-up 前会先检查已关联的钉钉 Todo 状态：如果钉钉侧已经完成，系统会关闭内部 TODO 并跳过提醒，避免重复催办。
+
+可见性：
+
+- `/tasks/{project_id}` 的每个 TODO 下会显示钉钉 Todo 的 task id、状态、最近 pull/push 时间和错误。
+- `/logs` 会显示 `DingTalk Todo` 类别的创建、拉取和完成同步记录。
+- `daily-task-maintenance` 输出包含 `dingtalk_todos_closed`，表示本次从钉钉 Todo 拉取后关闭的内部 TODO 数量。
 
 手动补跑命令：
 
