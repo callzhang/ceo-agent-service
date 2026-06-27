@@ -113,10 +113,14 @@ def _todo_is_eligible(store: AutoReplyStore, todo: Any) -> bool:
 
 
 def _find_existing_link_with_task_id(store: AutoReplyStore, work_todo_id: int) -> Any:
-    links = store.list_work_todo_dingtalk_links(statuses=("failed",), limit=500)
+    links = store.list_work_todo_dingtalk_links(
+        statuses=("failed",),
+        limit=1,
+        work_todo_id=work_todo_id,
+        with_dingtalk_task_id=True,
+    )
     for link in links:
-        if link.work_todo_id == work_todo_id and link.dingtalk_task_id.strip():
-            return link
+        return link
     return None
 
 
@@ -163,6 +167,10 @@ def maybe_create_dingtalk_todo(
     todo = store.get_work_todo(work_todo_id)
     if todo is None:
         return None
+
+    active_link = store.get_active_work_todo_dingtalk_link(work_todo_id)
+    if active_link is not None:
+        return active_link
 
     existing_link = _find_existing_link_with_task_id(store, work_todo_id)
     if existing_link is not None:

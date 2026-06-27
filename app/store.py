@@ -3338,18 +3338,28 @@ class AutoReplyStore:
         self,
         statuses: tuple[str, ...] | None = None,
         limit: int = 100,
+        work_todo_id: int | None = None,
+        with_dingtalk_task_id: bool = False,
     ) -> list[WorkTodoDingTalkLink]:
         if limit <= 0:
             return []
         query = "select * from work_todo_dingtalk_links"
+        clauses: list[str] = []
         args: list[str | int] = []
+        if work_todo_id is not None:
+            clauses.append("work_todo_id=?")
+            args.append(work_todo_id)
+        if with_dingtalk_task_id:
+            clauses.append("trim(coalesce(dingtalk_task_id, '')) != ''")
         if statuses:
             normalized_statuses = tuple(
                 self._normalize_dingtalk_todo_link_status(status)
                 for status in statuses
             )
-            query = f"{query} where status in ({','.join('?' for _ in statuses)})"
+            clauses.append(f"status in ({','.join('?' for _ in statuses)})")
             args.extend(normalized_statuses)
+        if clauses:
+            query = f"{query} where {' and '.join(clauses)}"
         query = f"{query} order by id limit ?"
         args.append(limit)
         with self._connect() as db:

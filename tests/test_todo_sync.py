@@ -173,7 +173,7 @@ def test_maybe_create_dingtalk_todo_skips_hr_project(tmp_path):
 def test_maybe_create_dingtalk_todo_skips_existing_active_link(tmp_path):
     store = _store(tmp_path)
     _, todo_id = _project_and_todo(store)
-    store.create_work_todo_dingtalk_link(
+    link_id = store.create_work_todo_dingtalk_link(
         work_todo_id=todo_id,
         dingtalk_task_id="dt-task-existing",
         executor_user_id="owner-1",
@@ -191,7 +191,8 @@ def test_maybe_create_dingtalk_todo_skips_existing_active_link(tmp_path):
         now="2026-06-27 10:00:00",
     )
 
-    assert link is None
+    assert link.id == link_id
+    assert link.dingtalk_task_id == "dt-task-existing"
     assert dws.created == []
 
 
@@ -276,6 +277,46 @@ def test_maybe_create_dingtalk_todo_keeps_failed_link_when_recovery_get_fails(
     assert second_link.status == "failed"
     assert second_link.dingtalk_task_id == "dt-task-1"
     assert "second get failed" in second_link.last_error
+
+
+def test_maybe_create_dingtalk_todo_prefers_active_link_over_failed_recovery(
+    tmp_path,
+):
+    store = _store(tmp_path)
+    _, todo_id = _project_and_todo(store)
+    failed_link_id = store.create_work_todo_dingtalk_link(
+        work_todo_id=todo_id,
+        dingtalk_task_id="dt-task-failed",
+        executor_user_id="owner-1",
+        title_snapshot="给客户同步验收 ETA",
+        deadline_at_snapshot="2026-07-01 18:00:00",
+        priority_snapshot="P1",
+        status="failed",
+    )
+    active_link_id = store.create_work_todo_dingtalk_link(
+        work_todo_id=todo_id,
+        dingtalk_task_id="dt-task-active",
+        executor_user_id="owner-1",
+        title_snapshot="给客户同步验收 ETA",
+        deadline_at_snapshot="2026-07-01 18:00:00",
+        priority_snapshot="P1",
+        status="active",
+    )
+    dws = FakeTodoDws()
+    dws.get_payloads["dt-task-failed"] = {"id": "dt-task-failed", "done": False}
+
+    link = maybe_create_dingtalk_todo(
+        store,
+        dws,
+        work_todo_id=todo_id,
+        now="2026-06-27 10:10:00",
+    )
+
+    assert dws.created == []
+    assert link.id == active_link_id
+    assert link.dingtalk_task_id == "dt-task-active"
+    assert store.get_work_todo_dingtalk_link(failed_link_id).status == "failed"
+    assert store.get_work_todo_dingtalk_link(active_link_id).status == "active"
 
 
 def test_pull_done_dingtalk_todo_closes_internal_todo(tmp_path):
