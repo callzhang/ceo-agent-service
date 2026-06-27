@@ -226,6 +226,132 @@ def test_apply_decision_closes_todo_with_completion_evidence(tmp_path):
     assert "ETA 已发送客户" in todo.completion_evidence_json
 
 
+def test_apply_decision_creates_dingtalk_todo_for_high_confidence_todo(
+    tmp_path,
+    monkeypatch,
+):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    calls = []
+
+    def fake_create(store_arg, dws_arg, *, work_todo_id, now):
+        calls.append((store_arg, dws_arg, work_todo_id, now))
+        return None
+
+    monkeypatch.setattr("app.task_agent.maybe_create_dingtalk_todo", fake_create)
+
+    dws = object()
+    decision = TaskAgentDecision.model_validate(
+        {
+            "action": "create_project",
+            "project": {
+                "title": "客户交付",
+                "category": "projects",
+                "status": "active",
+                "priority": "P1",
+                "risk_level": "medium",
+                "memory_context": _memory_context(),
+            },
+            "todo_changes": [
+                {
+                    "action": "create",
+                    "todo_ref": "eta",
+                    "title": "给客户同步验收 ETA",
+                    "owner_user_id": "owner-1",
+                    "owner_name": "Alex",
+                    "status": "open",
+                    "priority": "P1",
+                    "deadline_at": "2026-07-01 18:00:00",
+                }
+            ],
+            "follow_up_drafts": [],
+            "update_summary": "新增交付 ETA task item。",
+            "merge_reason": "新项目。",
+            "memory_recall_used": True,
+            "confidence": 0.9,
+        }
+    )
+
+    apply_task_agent_decision(
+        store,
+        summary_input_id=0,
+        work_item=_work_item("客户交付"),
+        decision=decision,
+        dws=dws,
+        now="2026-06-27 10:00:00",
+    )
+
+    todo_id = store.list_work_todos()[0].id
+    assert calls == [(store, dws, todo_id, "2026-06-27 10:00:00")]
+
+
+def test_apply_decision_creates_dingtalk_todo_for_updated_todo(
+    tmp_path,
+    monkeypatch,
+):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    project_id = store.create_work_project(
+        title="客户交付",
+        category="projects",
+        status="active",
+        priority="P1",
+        risk_level="medium",
+    )
+    todo_id = store.create_work_todo(
+        project_id=project_id,
+        title="给客户同步验收 ETA",
+        owner_user_id="owner-1",
+        owner_name="Alex",
+        status="open",
+        priority="P1",
+    )
+    calls = []
+
+    def fake_create(store_arg, dws_arg, *, work_todo_id, now):
+        calls.append((store_arg, dws_arg, work_todo_id, now))
+        return None
+
+    monkeypatch.setattr("app.task_agent.maybe_create_dingtalk_todo", fake_create)
+
+    dws = object()
+    decision = TaskAgentDecision.model_validate(
+        {
+            "action": "update_project",
+            "project": {
+                "id": project_id,
+                "title": "客户交付",
+                "category": "projects",
+                "memory_context": _memory_context(),
+            },
+            "todo_changes": [
+                {
+                    "action": "update",
+                    "todo_id": todo_id,
+                    "title": "给客户同步最新验收 ETA",
+                    "owner_user_id": "owner-2",
+                    "owner_name": "Mina",
+                    "deadline_at": "2026-07-02 18:00:00",
+                }
+            ],
+            "follow_up_drafts": [],
+            "update_summary": "更新交付 ETA task item。",
+            "merge_reason": "同一客户交付项目。",
+            "memory_recall_used": True,
+            "confidence": 0.88,
+        }
+    )
+
+    apply_task_agent_decision(
+        store,
+        summary_input_id=0,
+        work_item=_work_item("客户交付"),
+        decision=decision,
+        dws=dws,
+        now="2026-06-27 11:00:00",
+    )
+
+    assert calls == [(store, dws, todo_id, "2026-06-27 11:00:00")]
+
+
 def test_discard_decision_records_run_and_marks_input_discarded(tmp_path):
     store = AutoReplyStore(tmp_path / "task.sqlite3")
     item = _work_item()
