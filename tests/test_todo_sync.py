@@ -8,6 +8,7 @@ from app.store import AutoReplyStore
 from app.todo_sync import (
     maybe_create_dingtalk_todo,
     pull_dingtalk_todo_statuses,
+    refresh_dingtalk_todo_before_follow_up,
     sync_completed_todo_to_dingtalk,
 )
 
@@ -15,6 +16,7 @@ from app.todo_sync import (
 class FakeTodoDws:
     def __init__(self):
         self.created = []
+        self.get_calls = []
         self.get_payloads = {}
         self.get_errors = {}
         self.done_calls = []
@@ -32,6 +34,7 @@ class FakeTodoDws:
         return {"id": "dt-task-1", "taskId": "dt-task-1"}
 
     def get_todo_task(self, task_id):
+        self.get_calls.append(task_id)
         error = self.get_errors.get(task_id)
         if error is not None:
             raise error
@@ -345,6 +348,114 @@ def test_pull_done_dingtalk_todo_closes_internal_todo(tmp_path):
     assert todo.status == "done"
     assert "dingtalk_todo:dt-task-1" in todo.completion_evidence_json
     assert store.get_work_todo_dingtalk_link(link_id).status == "done"
+
+
+def test_refresh_link_before_follow_up_closes_when_dingtalk_done(tmp_path):
+    store = _store(tmp_path)
+    _, todo_id = _project_and_todo(store)
+    store.create_work_todo_dingtalk_link(
+        work_todo_id=todo_id,
+        dingtalk_task_id="dt-task-1",
+        executor_user_id="owner-1",
+        title_snapshot="给客户同步验收 ETA",
+        deadline_at_snapshot="2026-07-01 18:00:00",
+        priority_snapshot="P1",
+        status="active",
+    )
+    dws = FakeTodoDws()
+    dws.get_payloads["dt-task-1"] = {"id": "dt-task-1", "done": True}
+
+    completed, reason = refresh_dingtalk_todo_before_follow_up(
+        store,
+        dws,
+        work_todo_id=todo_id,
+        now="2026-06-27 10:00:00",
+    )
+
+    assert completed is True
+    assert reason == "dingtalk_todo_done"
+    assert store.get_work_todo(todo_id).status == "done"
+
+
+def test_refresh_link_before_follow_up_without_active_link_does_not_call_dws(
+    tmp_path,
+):
+    store = _store(tmp_path)
+    _, todo_id = _project_and_todo(store)
+    dws = FakeTodoDws()
+
+    completed, reason = refresh_dingtalk_todo_before_follow_up(
+        store,
+        dws,
+        work_todo_id=todo_id,
+        now="2026-06-27 10:00:00",
+    )
+
+    assert completed is False
+    assert reason == ""
+    assert dws.get_calls == []
+    assert store.get_work_todo(todo_id).status == "open"
+
+
+def test_refresh_link_before_follow_up_keeps_open_when_dingtalk_not_done(
+    tmp_path,
+):
+    store = _store(tmp_path)
+    _, todo_id = _project_and_todo(store)
+    link_id = store.create_work_todo_dingtalk_link(
+        work_todo_id=todo_id,
+        dingtalk_task_id="dt-task-1",
+        executor_user_id="owner-1",
+        title_snapshot="给客户同步验收 ETA",
+        deadline_at_snapshot="2026-07-01 18:00:00",
+        priority_snapshot="P1",
+        status="active",
+    )
+    dws = FakeTodoDws()
+    dws.get_payloads["dt-task-1"] = {"id": "dt-task-1", "done": False}
+
+    completed, reason = refresh_dingtalk_todo_before_follow_up(
+        store,
+        dws,
+        work_todo_id=todo_id,
+        now="2026-06-27 10:00:00",
+    )
+
+    assert completed is False
+    assert reason == ""
+    assert store.get_work_todo(todo_id).status == "open"
+    link = store.get_work_todo_dingtalk_link(link_id)
+    assert link.last_pull_at == "2026-06-27 10:00:00"
+    assert link.last_dingtalk_done is False
+    assert link.last_error == ""
+
+
+def test_refresh_link_before_follow_up_dws_failure_records_last_error(tmp_path):
+    store = _store(tmp_path)
+    _, todo_id = _project_and_todo(store)
+    link_id = store.create_work_todo_dingtalk_link(
+        work_todo_id=todo_id,
+        dingtalk_task_id="dt-task-1",
+        executor_user_id="owner-1",
+        title_snapshot="给客户同步验收 ETA",
+        deadline_at_snapshot="2026-07-01 18:00:00",
+        priority_snapshot="P1",
+        status="active",
+    )
+    dws = FakeTodoDws()
+    dws.get_errors["dt-task-1"] = DwsError("todo get failed")
+
+    completed, reason = refresh_dingtalk_todo_before_follow_up(
+        store,
+        dws,
+        work_todo_id=todo_id,
+        now="2026-06-27 10:00:00",
+    )
+
+    assert completed is False
+    assert reason == ""
+    assert store.get_work_todo(todo_id).status == "open"
+    assert "todo get failed" in store.get_work_todo_dingtalk_link(link_id).last_error
 
 
 def test_internal_completion_marks_dingtalk_done(tmp_path):

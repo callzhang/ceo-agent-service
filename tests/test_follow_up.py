@@ -8,6 +8,7 @@ from app.store import AutoReplyStore
 class FakeDws:
     def __init__(self):
         self.sent = []
+        self.todo_payloads = {}
 
     def send_message(
         self,
@@ -52,6 +53,9 @@ class FakeDws:
                 )
             ]
         return []
+
+    def get_todo_task(self, task_id):
+        return self.todo_payloads.get(task_id, {"id": task_id, "done": False})
 
 
 def test_due_follow_up_sends_group_message(tmp_path):
@@ -386,6 +390,109 @@ def test_due_follow_up_skips_when_todo_is_done(tmp_path):
     assert dws.sent == []
     skipped = store.list_follow_up_drafts(statuses=("skipped",))[0]
     assert "todo status is done" in skipped.send_result_json
+
+
+def test_due_follow_up_skips_when_linked_dingtalk_todo_is_done(tmp_path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    project_id = store.create_work_project(
+        title="客户交付",
+        category="projects",
+        status="active",
+        priority="P1",
+        risk_level="medium",
+    )
+    todo_id = store.create_work_todo(
+        project_id=project_id,
+        title="给客户同步验收 ETA",
+        owner_user_id="owner-1",
+        owner_name="Alex",
+        status="open",
+        priority="P1",
+        deadline_at="2026-07-01 18:00:00",
+    )
+    store.create_work_todo_dingtalk_link(
+        work_todo_id=todo_id,
+        dingtalk_task_id="dt-task-1",
+        executor_user_id="owner-1",
+        title_snapshot="给客户同步验收 ETA",
+        deadline_at_snapshot="2026-07-01 18:00:00",
+        priority_snapshot="P1",
+        status="active",
+    )
+    store.create_follow_up_draft(
+        project_id=project_id,
+        todo_id=todo_id,
+        owner_user_id="owner-1",
+        owner_name="Alex",
+        target_kind="direct",
+        question_text="请同步验收 ETA。",
+        scheduled_at="2026-06-27 09:00:00",
+    )
+    dws = FakeDws()
+    dws.get_todo_task = lambda task_id: {"id": task_id, "done": True}
+
+    sent = process_due_follow_ups(
+        store,
+        dws,
+        now="2026-06-27 10:00:00",
+        auto_send=True,
+    )
+
+    assert sent == 0
+    assert dws.sent == []
+    skipped = store.list_follow_up_drafts(statuses=("skipped",))[0]
+    assert "dingtalk_todo_done" in skipped.send_result_json
+
+
+def test_due_follow_up_sends_when_linked_dingtalk_todo_is_not_done(tmp_path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    project_id = store.create_work_project(
+        title="客户交付",
+        category="projects",
+        status="active",
+        priority="P1",
+        risk_level="medium",
+    )
+    todo_id = store.create_work_todo(
+        project_id=project_id,
+        title="给客户同步验收 ETA",
+        owner_user_id="owner-1",
+        owner_name="Alex",
+        status="open",
+        priority="P1",
+        deadline_at="2026-07-01 18:00:00",
+    )
+    store.create_work_todo_dingtalk_link(
+        work_todo_id=todo_id,
+        dingtalk_task_id="dt-task-1",
+        executor_user_id="owner-1",
+        title_snapshot="给客户同步验收 ETA",
+        deadline_at_snapshot="2026-07-01 18:00:00",
+        priority_snapshot="P1",
+        status="active",
+    )
+    store.create_follow_up_draft(
+        project_id=project_id,
+        todo_id=todo_id,
+        owner_user_id="owner-1",
+        owner_name="Alex",
+        target_kind="direct",
+        question_text="请同步验收 ETA。",
+        scheduled_at="2026-06-27 09:00:00",
+    )
+    dws = FakeDws()
+    dws.todo_payloads["dt-task-1"] = {"id": "dt-task-1", "done": False}
+
+    sent = process_due_follow_ups(
+        store,
+        dws,
+        now="2026-06-27 10:00:00",
+        auto_send=True,
+    )
+
+    assert sent == 1
+    assert len(dws.sent) == 1
+    assert store.get_work_todo(todo_id).status == "open"
 
 
 def test_due_follow_up_skips_when_scheduled_more_than_seven_days_ago(tmp_path):

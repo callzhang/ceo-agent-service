@@ -5,7 +5,10 @@ from app.dws_client import DwsError
 from app.feedback_spike import prepare_outgoing_reply_text
 from app.store import AutoReplyStore
 from app.task_models import ProjectStatus, TodoStatus
-from app.todo_sync import sync_completed_todo_to_dingtalk
+from app.todo_sync import (
+    refresh_dingtalk_todo_before_follow_up,
+    sync_completed_todo_to_dingtalk,
+)
 
 
 MAX_FOLLOW_UP_AGE_SECONDS = 7 * 24 * 60 * 60
@@ -527,6 +530,21 @@ def process_due_follow_ups(
         if _is_stale_follow_up(draft.scheduled_at, now):
             _skip_stale_follow_up(store, draft, now=now)
             continue
+        if draft.todo_id > 0:
+            dingtalk_done, dingtalk_reason = refresh_dingtalk_todo_before_follow_up(
+                store,
+                dws,
+                work_todo_id=draft.todo_id,
+                now=now,
+            )
+            if dingtalk_done:
+                _skip_completed_follow_up(
+                    store,
+                    draft,
+                    now=now,
+                    reason=dingtalk_reason,
+                )
+                continue
         completed, reason = _completion_supported_by_current_evidence(
             store,
             dws,
