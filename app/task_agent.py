@@ -355,7 +355,7 @@ def apply_task_agent_decision(
         if (
             dws is not None
             and todo_change.action == "close"
-            and todo_change.completion_evidence is not None
+            and bool(todo_change.completion_evidence)
         ):
             sync_now = sync_now or now or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             sync_completed_todo_to_dingtalk(

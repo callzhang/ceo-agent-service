@@ -907,10 +907,16 @@ def test_completion_reaction_pushes_dingtalk_todo_done(tmp_path, monkeypatch):
                 "source": "reply_attempt:%d" % attempt_id,
                 "summary": "完成了，这块已经结束了。",
                 "follow_up_id": 1,
+                "checked_at": "2026-06-27 10:00:00",
             },
             "now": "2026-06-27 10:00:00",
         }
     ]
+    todo = store.get_work_todo(todo_id)
+    assert todo is not None
+    assert json.loads(todo.completion_evidence_json)["checked_at"] == (
+        "2026-06-27 10:00:00"
+    )
 
 
 def test_due_follow_up_skips_when_recent_reply_asks_for_source(tmp_path):

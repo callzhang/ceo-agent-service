@@ -304,6 +304,7 @@ def _completion_supported_by_current_evidence(
             "source": source,
             "summary": summary,
             "follow_up_id": draft.id,
+            "checked_at": now,
         }
         store.update_work_todo(
             draft.todo_id,

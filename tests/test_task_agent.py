@@ -509,9 +509,15 @@ def test_apply_decision_does_not_push_completed_todo_without_evidence_or_dws(
         owner_user_id="owner-1",
         status="open",
     )
-    todo_without_dws_id = store.create_work_todo(
+    todo_with_empty_evidence_id = store.create_work_todo(
         project_id=project_id,
         title="确认客户验收结论",
+        owner_user_id="owner-1",
+        status="open",
+    )
+    todo_without_dws_id = store.create_work_todo(
+        project_id=project_id,
+        title="归档客户验收材料",
         owner_user_id="owner-1",
         status="open",
     )
@@ -543,6 +549,31 @@ def test_apply_decision_does_not_push_completed_todo_without_evidence_or_dws(
                 ],
                 "follow_up_drafts": [],
                 "update_summary": "关闭无 evidence 的 task item。",
+                "merge_reason": "明确完成。",
+                "memory_recall_used": True,
+                "confidence": 1.0,
+            }
+        ),
+        dws=object(),
+        now="2026-06-27 12:00:00",
+    )
+    apply_task_agent_decision(
+        store,
+        summary_input_id=0,
+        work_item=_work_item("客户交付"),
+        decision=TaskAgentDecision.model_validate(
+            {
+                "action": "update_project",
+                "project": base_project,
+                "todo_changes": [
+                    {
+                        "action": "close",
+                        "todo_id": todo_with_empty_evidence_id,
+                        "completion_evidence": {},
+                    }
+                ],
+                "follow_up_drafts": [],
+                "update_summary": "关闭空 evidence 的 task item。",
                 "merge_reason": "明确完成。",
                 "memory_recall_used": True,
                 "confidence": 1.0,
