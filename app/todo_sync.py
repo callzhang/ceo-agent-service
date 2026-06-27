@@ -132,6 +132,12 @@ def maybe_create_dingtalk_todo(
         priority_snapshot=todo.priority.value,
         status="creating",
     )
+    link = store.get_work_todo_dingtalk_link(link_id)
+    if link is None:
+        raise RuntimeError(f"created DingTalk todo link {link_id} was not found")
+    if link.status != "creating" or link.dingtalk_task_id.strip():
+        return link
+
     try:
         create_payload = dws.create_todo_task(
             title=todo.title,
@@ -139,27 +145,48 @@ def maybe_create_dingtalk_todo(
             due=_deadline_to_iso(todo.deadline_at),
             priority=_priority_to_dingtalk(str(todo.priority)),
         )
-        task_id = _payload_task_id(create_payload)
-        if not task_id:
-            raise DwsError("DingTalk todo create response did not include task id")
-        get_payload = dws.get_todo_task(task_id)
-        done = _payload_done(get_payload)
-        store.update_work_todo_dingtalk_link(
-            link_id,
-            dingtalk_task_id=task_id,
-            status="active",
-            last_dingtalk_done=done,
-            last_dingtalk_payload_json=json.dumps(get_payload, ensure_ascii=False),
-            last_push_at=now,
-            last_pull_at=now,
-            last_error="",
-        )
-    except Exception as exc:
+    except (DwsError, RuntimeError) as exc:
         store.update_work_todo_dingtalk_link(
             link_id,
             status="failed",
             last_error=str(exc),
         )
+        return store.get_work_todo_dingtalk_link(link_id)
+
+    task_id = _payload_task_id(create_payload)
+    if not task_id:
+        store.update_work_todo_dingtalk_link(
+            link_id,
+            status="failed",
+            last_error="DingTalk todo create response did not include task id",
+        )
+        return store.get_work_todo_dingtalk_link(link_id)
+
+    store.update_work_todo_dingtalk_link(
+        link_id,
+        dingtalk_task_id=task_id,
+        last_push_at=now,
+        last_error="",
+    )
+    try:
+        get_payload = dws.get_todo_task(task_id)
+    except (DwsError, RuntimeError) as exc:
+        store.update_work_todo_dingtalk_link(
+            link_id,
+            status="failed",
+            last_error=str(exc),
+        )
+        return store.get_work_todo_dingtalk_link(link_id)
+
+    done = _payload_done(get_payload)
+    store.update_work_todo_dingtalk_link(
+        link_id,
+        status="active",
+        last_dingtalk_done=done,
+        last_dingtalk_payload_json=json.dumps(get_payload, ensure_ascii=False),
+        last_pull_at=now,
+        last_error="",
+    )
     return store.get_work_todo_dingtalk_link(link_id)
 
 
@@ -195,7 +222,7 @@ def pull_dingtalk_todo_statuses(
                 if _close_internal_todo_from_dingtalk(store, link, task_id, now):
                     closed_count += 1
                 store.update_work_todo_dingtalk_link(link.id, status="done")
-        except Exception as exc:
+        except (DwsError, RuntimeError) as exc:
             store.update_work_todo_dingtalk_link(link.id, last_error=str(exc))
     return closed_count
 
@@ -210,7 +237,13 @@ def sync_completed_todo_to_dingtalk(
 ) -> bool:
     del evidence
     link = store.get_active_work_todo_dingtalk_link(work_todo_id)
-    if link is None or not link.dingtalk_task_id.strip():
+    if link is None:
+        return False
+    if not link.dingtalk_task_id.strip():
+        store.update_work_todo_dingtalk_link(
+            link.id,
+            last_error="active DingTalk todo link has no task id",
+        )
         return False
     try:
         payload = dws.mark_todo_task_done(link.dingtalk_task_id, done=True)
@@ -223,7 +256,7 @@ def sync_completed_todo_to_dingtalk(
             last_error="",
         )
         return True
-    except Exception as exc:
+    except (DwsError, RuntimeError) as exc:
         store.update_work_todo_dingtalk_link(link.id, last_error=str(exc))
         return False
 
