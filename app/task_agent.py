@@ -343,7 +343,7 @@ def apply_task_agent_decision(
         confidence=decision.confidence,
     )
     todo_refs: dict[str, int] = {}
-    changed_todo_ids: list[int] = []
+    create_sync_todo_ids: list[int] = []
     for todo_change in decision.todo_changes:
         todo_id = _apply_todo_change(
             store,
@@ -351,7 +351,8 @@ def apply_task_agent_decision(
             update_id=update_id,
             change=todo_change,
         )
-        changed_todo_ids.append(todo_id)
+        if todo_change.action in {"create", "update"}:
+            create_sync_todo_ids.append(todo_id)
         if todo_change.action == "create" and todo_change.todo_ref.strip():
             todo_refs[todo_change.todo_ref.strip()] = todo_id
     for draft in decision.follow_up_drafts:
@@ -363,7 +364,7 @@ def apply_task_agent_decision(
         )
     if dws is not None:
         sync_now = now or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        for todo_id in changed_todo_ids:
+        for todo_id in create_sync_todo_ids:
             maybe_create_dingtalk_todo(
                 store,
                 dws,

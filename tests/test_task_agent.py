@@ -352,6 +352,76 @@ def test_apply_decision_creates_dingtalk_todo_for_updated_todo(
     assert calls == [(store, dws, todo_id, "2026-06-27 11:00:00")]
 
 
+def test_apply_decision_does_not_create_dingtalk_todo_for_closed_todo(
+    tmp_path,
+    monkeypatch,
+):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    project_id = store.create_work_project(
+        title="客户交付",
+        category="projects",
+        status="active",
+        priority="P0",
+        risk_level="high",
+    )
+    todo_id = store.create_work_todo(
+        project_id=project_id,
+        title="给出交付 ETA",
+        owner_user_id="owner-1",
+        owner_name="Alex",
+        status="open",
+        priority="P0",
+    )
+    calls = []
+
+    def fake_create(store_arg, dws_arg, *, work_todo_id, now):
+        calls.append((store_arg, dws_arg, work_todo_id, now))
+        return None
+
+    monkeypatch.setattr("app.task_agent.maybe_create_dingtalk_todo", fake_create)
+
+    decision = TaskAgentDecision.model_validate(
+        {
+            "action": "update_project",
+            "project": {
+                "id": project_id,
+                "title": "客户交付",
+                "category": "projects",
+                "memory_context": _memory_context(),
+            },
+            "todo_changes": [
+                {
+                    "action": "close",
+                    "todo_id": todo_id,
+                    "title": "给出交付 ETA",
+                    "status": "done",
+                    "completion_evidence": {
+                        "source": "ai_minutes:minutes-1",
+                        "summary": "会议纪要明确 ETA 已发送客户。",
+                        "confidence": 0.93,
+                    },
+                }
+            ],
+            "follow_up_drafts": [],
+            "update_summary": "关闭 ETA 待办。",
+            "merge_reason": "同一客户交付项目。",
+            "memory_recall_used": True,
+            "confidence": 0.93,
+        }
+    )
+
+    apply_task_agent_decision(
+        store,
+        summary_input_id=0,
+        work_item=_work_item("客户交付"),
+        decision=decision,
+        dws=object(),
+        now="2026-06-27 12:00:00",
+    )
+
+    assert calls == []
+
+
 def test_discard_decision_records_run_and_marks_input_discarded(tmp_path):
     store = AutoReplyStore(tmp_path / "task.sqlite3")
     item = _work_item()
