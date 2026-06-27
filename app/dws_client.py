@@ -1015,6 +1015,69 @@ class DwsClient:
             "json",
         ]
 
+    def build_todo_create_command(
+        self,
+        *,
+        title: str,
+        executor_user_id: str,
+        due: str,
+        priority: int,
+    ) -> list[str]:
+        if not title.strip():
+            raise ValueError("DingTalk todo title is required")
+        if not executor_user_id.strip():
+            raise ValueError("DingTalk todo executor_user_id is required")
+        if not due.strip():
+            raise ValueError("DingTalk todo due is required")
+        if priority not in {10, 20, 30, 40}:
+            raise ValueError("DingTalk todo priority must be one of 10, 20, 30, 40")
+        return [
+            self.dws_bin,
+            "todo",
+            "task",
+            "create",
+            "--title",
+            title,
+            "--executors",
+            executor_user_id,
+            "--due",
+            due,
+            "--priority",
+            str(priority),
+            "--format",
+            "json",
+        ]
+
+    def build_todo_get_command(self, task_id: str) -> list[str]:
+        if not task_id.strip():
+            raise ValueError("DingTalk todo task_id is required")
+        return [
+            self.dws_bin,
+            "todo",
+            "task",
+            "get",
+            "--task-id",
+            task_id,
+            "--format",
+            "json",
+        ]
+
+    def build_todo_done_command(self, task_id: str, *, done: bool) -> list[str]:
+        if not task_id.strip():
+            raise ValueError("DingTalk todo task_id is required")
+        return [
+            self.dws_bin,
+            "todo",
+            "task",
+            "done",
+            "--task-id",
+            task_id,
+            "--status",
+            "true" if done else "false",
+            "--format",
+            "json",
+        ]
+
     def build_minutes_transcription_command(
         self,
         task_uuid: str,
@@ -1818,6 +1881,38 @@ class DwsClient:
         payload = self.run_json(self.build_minutes_todos_command(task_uuid))
         if not isinstance(payload, dict):
             raise DwsError("invalid minutes todos response")
+        return payload
+
+    def create_todo_task(
+        self,
+        *,
+        title: str,
+        executor_user_id: str,
+        due: str,
+        priority: int,
+    ) -> dict[str, Any]:
+        payload = self.run_json(
+            self.build_todo_create_command(
+                title=title,
+                executor_user_id=executor_user_id,
+                due=due,
+                priority=priority,
+            )
+        )
+        if not isinstance(payload, dict):
+            raise DwsError("invalid todo create response")
+        return payload
+
+    def get_todo_task(self, task_id: str) -> dict[str, Any]:
+        payload = self.run_json(self.build_todo_get_command(task_id))
+        if not isinstance(payload, dict):
+            raise DwsError("invalid todo get response")
+        return payload
+
+    def mark_todo_task_done(self, task_id: str, *, done: bool = True) -> dict[str, Any]:
+        payload = self.run_json(self.build_todo_done_command(task_id, done=done))
+        if not isinstance(payload, dict):
+            raise DwsError("invalid todo done response")
         return payload
 
     def get_minutes_transcription(

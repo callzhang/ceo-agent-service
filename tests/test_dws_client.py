@@ -340,6 +340,150 @@ def test_auth_status_command_shape():
     assert command == ["dws", "auth", "status", "--format", "json"]
 
 
+def test_build_todo_create_command():
+    client = DwsClient(dws_bin="dws")
+
+    assert client.build_todo_create_command(
+        title="给客户同步验收 ETA",
+        executor_user_id="owner-1",
+        due="2026-07-01T18:00:00+08:00",
+        priority=30,
+    ) == [
+        "dws",
+        "todo",
+        "task",
+        "create",
+        "--title",
+        "给客户同步验收 ETA",
+        "--executors",
+        "owner-1",
+        "--due",
+        "2026-07-01T18:00:00+08:00",
+        "--priority",
+        "30",
+        "--format",
+        "json",
+    ]
+
+
+def test_build_todo_get_and_done_commands():
+    client = DwsClient(dws_bin="dws")
+
+    assert client.build_todo_get_command("dt-task-1") == [
+        "dws",
+        "todo",
+        "task",
+        "get",
+        "--task-id",
+        "dt-task-1",
+        "--format",
+        "json",
+    ]
+    assert client.build_todo_done_command("dt-task-1", done=True) == [
+        "dws",
+        "todo",
+        "task",
+        "done",
+        "--task-id",
+        "dt-task-1",
+        "--status",
+        "true",
+        "--format",
+        "json",
+    ]
+
+
+def test_todo_task_wrappers_return_dict_payloads():
+    client = RecordingDwsClient({"result": {"taskId": "dt-task-1"}})
+
+    assert client.create_todo_task(
+        title="给客户同步验收 ETA",
+        executor_user_id="owner-1",
+        due="2026-07-01T18:00:00+08:00",
+        priority=30,
+    ) == {"result": {"taskId": "dt-task-1"}}
+    assert client.commands == [
+        [
+            "dws",
+            "todo",
+            "task",
+            "create",
+            "--title",
+            "给客户同步验收 ETA",
+            "--executors",
+            "owner-1",
+            "--due",
+            "2026-07-01T18:00:00+08:00",
+            "--priority",
+            "30",
+            "--format",
+            "json",
+        ]
+    ]
+
+    client = RecordingDwsClient({"result": {"taskId": "dt-task-1"}})
+
+    assert client.get_todo_task("dt-task-1") == {"result": {"taskId": "dt-task-1"}}
+    assert client.commands == [
+        [
+            "dws",
+            "todo",
+            "task",
+            "get",
+            "--task-id",
+            "dt-task-1",
+            "--format",
+            "json",
+        ]
+    ]
+
+    client = RecordingDwsClient({"success": True})
+
+    assert client.mark_todo_task_done("dt-task-1", done=True) == {"success": True}
+    assert client.commands == [
+        [
+            "dws",
+            "todo",
+            "task",
+            "done",
+            "--task-id",
+            "dt-task-1",
+            "--status",
+            "true",
+            "--format",
+            "json",
+        ]
+    ]
+
+
+@pytest.mark.parametrize(
+    ("method_name", "kwargs", "message"),
+    [
+        (
+            "create_todo_task",
+            {
+                "title": "给客户同步验收 ETA",
+                "executor_user_id": "owner-1",
+                "due": "2026-07-01T18:00:00+08:00",
+                "priority": 30,
+            },
+            "invalid todo create response",
+        ),
+        ("get_todo_task", {"task_id": "dt-task-1"}, "invalid todo get response"),
+        (
+            "mark_todo_task_done",
+            {"task_id": "dt-task-1", "done": True},
+            "invalid todo done response",
+        ),
+    ],
+)
+def test_todo_task_wrappers_reject_non_dict_payloads(method_name, kwargs, message):
+    client = RecordingDwsClient([])
+
+    with pytest.raises(DwsError, match=message):
+        getattr(client, method_name)(**kwargs)
+
+
 def test_run_json_maps_plain_exit_code_2_to_login_required(monkeypatch):
     def fake_run(command, text, capture_output, check, timeout, env=None):
         return SimpleNamespace(
