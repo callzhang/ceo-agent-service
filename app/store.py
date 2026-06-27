@@ -2883,6 +2883,33 @@ class AutoReplyStore:
             )
             return cursor.rowcount
 
+    def reset_processing_work_summary_inputs(self) -> list[WorkSummaryInput]:
+        with self._connect() as db:
+            db.execute("begin immediate")
+            rows = db.execute(
+                """
+                select *
+                from work_summary_inputs
+                where status='processing'
+                order by updated_at, id
+                """
+            ).fetchall()
+            input_ids = [row["id"] for row in rows]
+            if not input_ids:
+                return []
+            placeholders = ",".join("?" for _ in input_ids)
+            db.execute(
+                f"""
+                update work_summary_inputs
+                set status='pending',
+                    error='',
+                    updated_at=current_timestamp
+                where id in ({placeholders})
+                """,
+                input_ids,
+            )
+            return [WorkSummaryInput.model_validate(dict(row)) for row in rows]
+
     def mark_work_summary_input_done(self, input_id: int) -> None:
         with self._connect() as db:
             db.execute(

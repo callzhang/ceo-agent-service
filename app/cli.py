@@ -103,7 +103,7 @@ OKR_SOURCE_KIND_ENV = "CEO_OKR_SOURCE_KIND"
 OKR_OBJECTIVE_RULE_ID_ENV = "CEO_OKR_OBJECTIVE_RULE_ID"
 OKR_REVIEW_CODEX_TIMEOUT_SECONDS = 900
 OKR_REVIEW_CODEX_IDLE_TIMEOUT_SECONDS = 600
-WORK_SUMMARY_INPUT_STALE_SECONDS = 30 * 60
+WORK_SUMMARY_INPUT_STALE_GRACE_SECONDS = 60
 SEND_ATTEMPT_TARGET_LOOKBACK_LIMIT = 500
 run_audit_web = None
 
@@ -755,7 +755,9 @@ def process_work_items_command(settings: WorkerSettings) -> int:
     if limit <= 0:
         print("process-work-items processed=0", flush=True)
         return 0
-    store.reset_stale_processing_work_summary_inputs(WORK_SUMMARY_INPUT_STALE_SECONDS)
+    store.reset_stale_processing_work_summary_inputs(
+        _work_summary_processing_stale_seconds(settings)
+    )
     runner = TaskAgentRunner(
         TaskAgentCodexRunner(
             workspace=settings.workspace,
@@ -1836,6 +1838,7 @@ def run_service(
     exit_process: Callable[[int], None] = os._exit,
 ) -> None:
     _recover_processing_reply_tasks_on_service_start(settings)
+    _recover_processing_work_summary_inputs_on_service_start(settings)
     components = (
         (
             "producer",
@@ -1902,6 +1905,38 @@ def _recover_processing_reply_tasks_on_service_start(settings: WorkerSettings) -
             ),
         )
     return len(recovered_tasks)
+
+
+def _recover_processing_work_summary_inputs_on_service_start(
+    settings: WorkerSettings,
+) -> int:
+    store = AutoReplyStore(settings.db_path)
+    recovered_inputs = store.reset_processing_work_summary_inputs()
+    for work_input in recovered_inputs:
+        store.record_error(
+            None,
+            None,
+            "work_summary_input_service_startup_requeue",
+            (
+                "requeued processing work summary input on service startup: "
+                f"input={work_input.id} "
+                f"source_type={work_input.source_type} "
+                f"source_ref={work_input.source_ref} "
+                f"attempts={work_input.attempts} "
+                f"updated_at={work_input.updated_at}"
+            ),
+        )
+    return len(recovered_inputs)
+
+
+def _work_summary_processing_stale_seconds(settings: WorkerSettings) -> int:
+    return (
+        max(
+            int(settings.task_codex_timeout_seconds),
+            int(settings.task_codex_idle_timeout_seconds),
+        )
+        + WORK_SUMMARY_INPUT_STALE_GRACE_SECONDS
+    )
 
 
 def _service_component_target(

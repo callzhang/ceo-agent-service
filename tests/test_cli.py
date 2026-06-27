@@ -868,7 +868,7 @@ def test_process_work_items_command_reclaims_stale_processing_input(
     claimed = store.claim_work_summary_inputs(limit=1)
     with store._connect() as db:
         db.execute(
-            "update work_summary_inputs set updated_at=datetime('now', '-31 minutes') where id=?",
+            "update work_summary_inputs set updated_at=datetime('now', '-17 minutes') where id=?",
             (claimed[0].id,),
         )
 
@@ -3730,6 +3730,63 @@ def test_run_service_requeues_processing_reply_tasks_on_startup(tmp_path):
     assert task.locked_at is None
     assert errors[0].kind == "reply_task_service_startup_requeue"
     assert "task=" in errors[0].detail
+    assert calls[-1] == ("wait",)
+
+
+def test_run_service_requeues_processing_work_summary_inputs_on_startup(tmp_path):
+    db_path = tmp_path / "worker.sqlite3"
+    store = AutoReplyStore(db_path)
+    item = WorkItem.model_validate(
+        {
+            "source": {"type": "local_file", "ref": "AI听记/demo.md"},
+            "summary": "StarBench 演示需要补齐专家审核流程。",
+            "project_name": "StarBench 演示",
+            "context": {
+                "sender": "Mina",
+                "participants": ["Alex"],
+                "source_conversation_kind": "file",
+                "source_conversation_title": "AI听记/demo.md",
+            },
+        }
+    )
+    input_id = store.enqueue_work_summary_input(
+        item.source.type.value,
+        item.source.ref,
+        item.model_dump_json(),
+    )
+    claimed = store.claim_work_summary_inputs(limit=1)[0]
+    calls = []
+
+    class FakeThread:
+        def __init__(self, target, name, daemon):
+            self.target = target
+            self.name = name
+            self.daemon = daemon
+
+        def start(self):
+            calls.append(("start", self.name, self.daemon))
+
+    run_service(
+        WorkerSettings(db_path=db_path),
+        host="127.0.0.1",
+        port=8765,
+        producer_interval_seconds=60,
+        consumer_poll_interval_seconds=10,
+        thread_factory=FakeThread,
+        wait=lambda: calls.append(("wait",)),
+        exit_process=lambda status: calls.append(("exit", status)),
+    )
+
+    with store._connect() as db:
+        row = db.execute(
+            "select status, attempts, error from work_summary_inputs where id=?",
+            (input_id,),
+        ).fetchone()
+    errors = store.list_errors(limit=10)
+    assert claimed.id == input_id
+    assert dict(row) == {"status": "pending", "attempts": 1, "error": ""}
+    assert errors[0].kind == "work_summary_input_service_startup_requeue"
+    assert f"input={input_id}" in errors[0].detail
     assert calls[-1] == ("wait",)
 
 
