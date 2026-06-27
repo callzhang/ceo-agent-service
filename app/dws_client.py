@@ -1046,6 +1046,7 @@ class DwsClient:
             str(priority),
             "--format",
             "json",
+            "--yes",
         ]
 
     def build_todo_get_command(self, task_id: str) -> list[str]:
@@ -1065,6 +1066,8 @@ class DwsClient:
     def build_todo_done_command(self, task_id: str, *, done: bool) -> list[str]:
         if not task_id.strip():
             raise ValueError("DingTalk todo task_id is required")
+        if not isinstance(done, bool):
+            raise ValueError("DingTalk todo done must be a bool")
         return [
             self.dws_bin,
             "todo",
@@ -1076,6 +1079,7 @@ class DwsClient:
             "true" if done else "false",
             "--format",
             "json",
+            "--yes",
         ]
 
     def build_minutes_transcription_command(

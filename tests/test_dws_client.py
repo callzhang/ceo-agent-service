@@ -363,6 +363,7 @@ def test_build_todo_create_command():
         "30",
         "--format",
         "json",
+        "--yes",
     ]
 
 
@@ -390,7 +391,28 @@ def test_build_todo_get_and_done_commands():
         "true",
         "--format",
         "json",
+        "--yes",
     ]
+    assert client.build_todo_done_command("dt-task-1", done=False) == [
+        "dws",
+        "todo",
+        "task",
+        "done",
+        "--task-id",
+        "dt-task-1",
+        "--status",
+        "false",
+        "--format",
+        "json",
+        "--yes",
+    ]
+
+
+def test_build_todo_done_command_requires_bool_done():
+    client = DwsClient(dws_bin="dws")
+
+    with pytest.raises(ValueError, match="DingTalk todo done must be a bool"):
+        client.build_todo_done_command("dt-task-1", done="false")
 
 
 def test_todo_task_wrappers_return_dict_payloads():
@@ -418,6 +440,7 @@ def test_todo_task_wrappers_return_dict_payloads():
             "30",
             "--format",
             "json",
+            "--yes",
         ]
     ]
 
@@ -452,6 +475,7 @@ def test_todo_task_wrappers_return_dict_payloads():
             "true",
             "--format",
             "json",
+            "--yes",
         ]
     ]
 
