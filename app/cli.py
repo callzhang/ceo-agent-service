@@ -63,6 +63,7 @@ from app.task_memory_backfill import (
     validate_project_memory_context,
 )
 from app.task_models import ProjectMemoryContext
+from app.todo_sync import pull_dingtalk_todo_statuses
 from app.work_profile import (
     build_initial_profile,
     collect_dingtalk_kb_evidence,
@@ -102,7 +103,7 @@ OKR_SOURCE_KIND_ENV = "CEO_OKR_SOURCE_KIND"
 OKR_OBJECTIVE_RULE_ID_ENV = "CEO_OKR_OBJECTIVE_RULE_ID"
 OKR_REVIEW_CODEX_TIMEOUT_SECONDS = 900
 OKR_REVIEW_CODEX_IDLE_TIMEOUT_SECONDS = 600
-WORK_SUMMARY_INPUT_STALE_SECONDS = 30 * 60
+WORK_SUMMARY_INPUT_STALE_GRACE_SECONDS = 60
 SEND_ATTEMPT_TARGET_LOOKBACK_LIMIT = 500
 run_audit_web = None
 
@@ -754,7 +755,9 @@ def process_work_items_command(settings: WorkerSettings) -> int:
     if limit <= 0:
         print("process-work-items processed=0", flush=True)
         return 0
-    store.reset_stale_processing_work_summary_inputs(WORK_SUMMARY_INPUT_STALE_SECONDS)
+    store.reset_stale_processing_work_summary_inputs(
+        _work_summary_processing_stale_seconds(settings)
+    )
     runner = TaskAgentRunner(
         TaskAgentCodexRunner(
             workspace=settings.workspace,
@@ -762,6 +765,15 @@ def process_work_items_command(settings: WorkerSettings) -> int:
             idle_timeout_seconds=settings.task_codex_idle_timeout_seconds,
         )
     )
+    dws = None
+    if not settings.dry_run:
+        dws = DwsClient(
+            ding_robot_code=settings.ding_robot_code,
+            ding_robot_name=settings.ding_robot_name,
+            ding_receiver_user_id=settings.ding_receiver_user_id,
+            transient_retry_attempts=settings.dws_transient_retry_attempts,
+            transient_retry_delay_seconds=settings.dws_transient_retry_delay_seconds,
+        )
     processed = 0
     for _ in range(limit):
         claimed = store.claim_work_summary_inputs(limit=1)
@@ -769,7 +781,7 @@ def process_work_items_command(settings: WorkerSettings) -> int:
             break
         work_input = claimed[0]
         try:
-            process_work_item(store, runner, work_input)
+            process_work_item(store, runner, work_input, dws=dws)
             processed += 1
         except Exception as exc:
             error = str(exc)
@@ -1054,17 +1066,30 @@ def daily_task_maintenance_command(settings: WorkerSettings) -> dict[str, int]:
     sources = scan_task_sources_command(settings)
     work_items = process_work_items_command(settings)
     okr_reviews = process_okr_reviews_command(settings)
+    dws = DwsClient(
+        ding_robot_code=settings.ding_robot_code,
+        ding_robot_name=settings.ding_robot_name,
+        ding_receiver_user_id=settings.ding_receiver_user_id,
+    )
+    dingtalk_todos_closed = pull_dingtalk_todo_statuses(
+        AutoReplyStore(settings.db_path),
+        dws,
+        now=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
+    )
     follow_ups = process_follow_ups_command(settings, refresh_evidence=False)
     result = {
         "sources": sources,
         "work_items": work_items,
         "okr_reviews": okr_reviews,
+        "dingtalk_todos_closed": dingtalk_todos_closed,
         "follow_ups": follow_ups,
     }
     print(
         "daily-task-maintenance "
         f"sources={sources} work_items={work_items} "
-        f"okr_reviews={okr_reviews} follow_ups={follow_ups}",
+        f"okr_reviews={okr_reviews} "
+        f"dingtalk_todos_closed={dingtalk_todos_closed} "
+        f"follow_ups={follow_ups}",
         flush=True,
     )
     return result
@@ -1813,6 +1838,7 @@ def run_service(
     exit_process: Callable[[int], None] = os._exit,
 ) -> None:
     _recover_processing_reply_tasks_on_service_start(settings)
+    _recover_processing_work_summary_inputs_on_service_start(settings)
     components = (
         (
             "producer",
@@ -1879,6 +1905,38 @@ def _recover_processing_reply_tasks_on_service_start(settings: WorkerSettings) -
             ),
         )
     return len(recovered_tasks)
+
+
+def _recover_processing_work_summary_inputs_on_service_start(
+    settings: WorkerSettings,
+) -> int:
+    store = AutoReplyStore(settings.db_path)
+    recovered_inputs = store.reset_processing_work_summary_inputs()
+    for work_input in recovered_inputs:
+        store.record_error(
+            None,
+            None,
+            "work_summary_input_service_startup_requeue",
+            (
+                "requeued processing work summary input on service startup: "
+                f"input={work_input.id} "
+                f"source_type={work_input.source_type} "
+                f"source_ref={work_input.source_ref} "
+                f"attempts={work_input.attempts} "
+                f"updated_at={work_input.updated_at}"
+            ),
+        )
+    return len(recovered_inputs)
+
+
+def _work_summary_processing_stale_seconds(settings: WorkerSettings) -> int:
+    return (
+        max(
+            int(settings.task_codex_timeout_seconds),
+            int(settings.task_codex_idle_timeout_seconds),
+        )
+        + WORK_SUMMARY_INPUT_STALE_GRACE_SECONDS
+    )
 
 
 def _service_component_target(

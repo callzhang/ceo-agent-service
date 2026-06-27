@@ -1,4 +1,5 @@
 import json
+from datetime import datetime
 from pathlib import Path
 from typing import Protocol
 
@@ -14,6 +15,7 @@ from app.task_models import (
     WorkSummaryInput,
 )
 from app.task_retrieval import render_candidate_prompt, retrieve_project_candidates
+from app.todo_sync import maybe_create_dingtalk_todo, sync_completed_todo_to_dingtalk
 
 
 TASK_AGENT_DECISION_SCHEMA_PATH = (
@@ -219,6 +221,9 @@ def process_work_item(
     store: AutoReplyStore,
     runner: TaskAgentRunner,
     work_input: WorkSummaryInput,
+    *,
+    dws=None,
+    now: str = "",
 ) -> None:
     try:
         memory_issue = memory_connector_config_issue()
@@ -265,6 +270,8 @@ def process_work_item(
             memory_recall_attempted=memory_recall_attempted,
             memory_runtime_unavailable=memory_runtime_unavailable,
             record_run=False,
+            dws=dws,
+            now=now,
         )
         if decision.action == "discard":
             store.mark_work_summary_input_discarded(
@@ -289,6 +296,8 @@ def apply_task_agent_decision(
     memory_recall_attempted: bool = False,
     memory_runtime_unavailable: bool = False,
     record_run: bool = True,
+    dws=None,
+    now: str = "",
 ) -> int | None:
     if record_run:
         store.record_task_agent_run(
@@ -334,6 +343,8 @@ def apply_task_agent_decision(
         confidence=decision.confidence,
     )
     todo_refs: dict[str, int] = {}
+    create_sync_todo_ids: list[int] = []
+    sync_now = ""
     for todo_change in decision.todo_changes:
         todo_id = _apply_todo_change(
             store,
@@ -341,6 +352,21 @@ def apply_task_agent_decision(
             update_id=update_id,
             change=todo_change,
         )
+        if (
+            dws is not None
+            and todo_change.action == "close"
+            and bool(todo_change.completion_evidence)
+        ):
+            sync_now = sync_now or now or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            sync_completed_todo_to_dingtalk(
+                store,
+                dws,
+                work_todo_id=todo_id,
+                evidence=todo_change.completion_evidence,
+                now=sync_now,
+            )
+        if todo_change.action in {"create", "update"}:
+            create_sync_todo_ids.append(todo_id)
         if todo_change.action == "create" and todo_change.todo_ref.strip():
             todo_refs[todo_change.todo_ref.strip()] = todo_id
     for draft in decision.follow_up_drafts:
@@ -350,6 +376,15 @@ def apply_task_agent_decision(
             draft=draft,
             todo_refs=todo_refs,
         )
+    if dws is not None:
+        sync_now = sync_now or now or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        for todo_id in create_sync_todo_ids:
+            maybe_create_dingtalk_todo(
+                store,
+                dws,
+                work_todo_id=todo_id,
+                now=sync_now,
+            )
     return project_id
 
 

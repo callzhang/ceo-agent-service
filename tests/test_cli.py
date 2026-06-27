@@ -225,6 +225,9 @@ def test_process_follow_ups_command_processes_due_drafts(tmp_path, monkeypatch, 
 def test_daily_task_maintenance_runs_task_pipeline(tmp_path, monkeypatch, capsys):
     calls = []
 
+    class FakeDwsClient:
+        pass
+
     monkeypatch.setattr(
         cli,
         "scan_task_sources_command",
@@ -248,6 +251,16 @@ def test_daily_task_maintenance_runs_task_pipeline(tmp_path, monkeypatch, capsys
         )
         or 1,
     )
+    monkeypatch.setattr(cli, "DwsClient", lambda **_: FakeDwsClient())
+    monkeypatch.setattr(
+        cli,
+        "pull_dingtalk_todo_statuses",
+        lambda store, dws, now: calls.append(
+            ("dingtalk_todo_pull", dws.__class__.__name__)
+        )
+        or 4,
+        raising=False,
+    )
 
     result = cli.daily_task_maintenance_command(
         WorkerSettings(db_path=tmp_path / "worker.sqlite3", max_batches=4)
@@ -257,18 +270,75 @@ def test_daily_task_maintenance_runs_task_pipeline(tmp_path, monkeypatch, capsys
         "sources": 3,
         "work_items": 2,
         "okr_reviews": 5,
+        "dingtalk_todos_closed": 4,
         "follow_ups": 1,
     }
     assert calls == [
         ("scan", tmp_path / "worker.sqlite3"),
         ("work", tmp_path / "worker.sqlite3"),
         ("okr", tmp_path / "worker.sqlite3"),
+        ("dingtalk_todo_pull", "FakeDwsClient"),
         ("follow", tmp_path / "worker.sqlite3", False),
     ]
     assert capsys.readouterr().out == (
         "daily-task-maintenance sources=3 work_items=2 "
-        "okr_reviews=5 follow_ups=1\n"
+        "okr_reviews=5 dingtalk_todos_closed=4 follow_ups=1\n"
     )
+
+
+def test_daily_task_maintenance_pulls_dingtalk_todos(tmp_path, monkeypatch, capsys):
+    calls = []
+    db_path = tmp_path / "worker.sqlite3"
+
+    class FakeDwsClient:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    monkeypatch.setattr(
+        cli,
+        "scan_task_sources_command",
+        lambda settings: calls.append(("scan", settings.db_path)) or 3,
+    )
+    monkeypatch.setattr(
+        cli,
+        "process_work_items_command",
+        lambda settings: calls.append(("work", settings.db_path)) or 2,
+    )
+    monkeypatch.setattr(
+        cli,
+        "process_okr_reviews_command",
+        lambda settings: calls.append(("okr", settings.db_path)) or 5,
+    )
+    monkeypatch.setattr(
+        cli,
+        "process_follow_ups_command",
+        lambda settings, refresh_evidence=True: calls.append(
+            ("follow", settings.db_path, refresh_evidence)
+        )
+        or 1,
+    )
+    monkeypatch.setattr(cli, "DwsClient", FakeDwsClient)
+    monkeypatch.setattr(
+        cli,
+        "pull_dingtalk_todo_statuses",
+        lambda store, dws, now: calls.append(
+            ("dingtalk_todo_pull", dws.__class__.__name__)
+        )
+        or 4,
+        raising=False,
+    )
+
+    result = cli.daily_task_maintenance_command(WorkerSettings(db_path=db_path))
+
+    assert calls == [
+        ("scan", db_path),
+        ("work", db_path),
+        ("okr", db_path),
+        ("dingtalk_todo_pull", "FakeDwsClient"),
+        ("follow", db_path, False),
+    ]
+    assert result["dingtalk_todos_closed"] == 4
+    assert "dingtalk_todos_closed=4" in capsys.readouterr().out
 
 
 def test_process_okr_reviews_command_processes_and_sends_reply(
@@ -798,7 +868,7 @@ def test_process_work_items_command_reclaims_stale_processing_input(
     claimed = store.claim_work_summary_inputs(limit=1)
     with store._connect() as db:
         db.execute(
-            "update work_summary_inputs set updated_at=datetime('now', '-31 minutes') where id=?",
+            "update work_summary_inputs set updated_at=datetime('now', '-17 minutes') where id=?",
             (claimed[0].id,),
         )
 
@@ -1023,6 +1093,80 @@ def test_process_work_items_command_uses_task_agent_timeouts(
     assert capsys.readouterr().out == "process-work-items processed=1\n"
     assert constructed["timeout_seconds"] == 900
     assert constructed["idle_timeout_seconds"] == 600
+
+
+def test_process_work_items_command_passes_dws_client_to_task_agent(
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    class FakeTaskAgentCodexRunner:
+        last_session_id = "task-session-1"
+        last_transcript_start_line = 0
+        last_transcript_end_line = 0
+
+        def __init__(self, **kwargs):
+            pass
+
+    class FakeDwsClient:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    captured = {}
+
+    def fake_process_work_item(store, runner, work_input, *, dws, now=""):
+        captured["dws"] = dws
+        captured["work_input_id"] = work_input.id
+        store.mark_work_summary_input_done(work_input.id)
+
+    monkeypatch.setattr(cli, "TaskAgentCodexRunner", FakeTaskAgentCodexRunner)
+    monkeypatch.setattr(cli, "DwsClient", FakeDwsClient)
+    monkeypatch.setattr(cli, "process_work_item", fake_process_work_item)
+    db_path = tmp_path / "task.sqlite3"
+    store = AutoReplyStore(db_path)
+    item = WorkItem.model_validate(
+        {
+            "source": {"type": "reply_attempt", "ref": "1"},
+            "summary": "给客户同步验收 ETA。",
+            "project_name": "客户交付",
+            "context": {
+                "sender": "Mina",
+                "participants": ["Alex"],
+                "source_conversation_kind": "group",
+                "source_conversation_title": "客户群",
+            },
+        }
+    )
+    input_id = store.enqueue_work_summary_input(
+        item.source.type.value,
+        item.source.ref,
+        item.model_dump_json(),
+    )
+
+    processed = process_work_items_command(
+        WorkerSettings(
+            db_path=db_path,
+            workspace=tmp_path,
+            max_batches=1,
+            ding_robot_code="robot-code",
+            ding_robot_name="Friday",
+            ding_receiver_user_id="derek-id",
+            dws_transient_retry_attempts=4,
+            dws_transient_retry_delay_seconds=0.25,
+        )
+    )
+
+    assert processed == 1
+    assert capsys.readouterr().out == "process-work-items processed=1\n"
+    assert captured["work_input_id"] == input_id
+    assert isinstance(captured["dws"], FakeDwsClient)
+    assert captured["dws"].kwargs == {
+        "ding_robot_code": "robot-code",
+        "ding_robot_name": "Friday",
+        "ding_receiver_user_id": "derek-id",
+        "transient_retry_attempts": 4,
+        "transient_retry_delay_seconds": 0.25,
+    }
 
 
 def test_process_work_items_command_respects_zero_max_batches(
@@ -3586,6 +3730,63 @@ def test_run_service_requeues_processing_reply_tasks_on_startup(tmp_path):
     assert task.locked_at is None
     assert errors[0].kind == "reply_task_service_startup_requeue"
     assert "task=" in errors[0].detail
+    assert calls[-1] == ("wait",)
+
+
+def test_run_service_requeues_processing_work_summary_inputs_on_startup(tmp_path):
+    db_path = tmp_path / "worker.sqlite3"
+    store = AutoReplyStore(db_path)
+    item = WorkItem.model_validate(
+        {
+            "source": {"type": "local_file", "ref": "AI听记/demo.md"},
+            "summary": "StarBench 演示需要补齐专家审核流程。",
+            "project_name": "StarBench 演示",
+            "context": {
+                "sender": "Mina",
+                "participants": ["Alex"],
+                "source_conversation_kind": "file",
+                "source_conversation_title": "AI听记/demo.md",
+            },
+        }
+    )
+    input_id = store.enqueue_work_summary_input(
+        item.source.type.value,
+        item.source.ref,
+        item.model_dump_json(),
+    )
+    claimed = store.claim_work_summary_inputs(limit=1)[0]
+    calls = []
+
+    class FakeThread:
+        def __init__(self, target, name, daemon):
+            self.target = target
+            self.name = name
+            self.daemon = daemon
+
+        def start(self):
+            calls.append(("start", self.name, self.daemon))
+
+    run_service(
+        WorkerSettings(db_path=db_path),
+        host="127.0.0.1",
+        port=8765,
+        producer_interval_seconds=60,
+        consumer_poll_interval_seconds=10,
+        thread_factory=FakeThread,
+        wait=lambda: calls.append(("wait",)),
+        exit_process=lambda status: calls.append(("exit", status)),
+    )
+
+    with store._connect() as db:
+        row = db.execute(
+            "select status, attempts, error from work_summary_inputs where id=?",
+            (input_id,),
+        ).fetchone()
+    errors = store.list_errors(limit=10)
+    assert claimed.id == input_id
+    assert dict(row) == {"status": "pending", "attempts": 1, "error": ""}
+    assert errors[0].kind == "work_summary_input_service_startup_requeue"
+    assert f"input={input_id}" in errors[0].detail
     assert calls[-1] == ("wait",)
 
 

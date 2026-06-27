@@ -239,6 +239,130 @@ def test_create_project_todo_update_and_follow_up(tmp_path: Path):
     assert row == (1,)
 
 
+def test_dingtalk_todo_link_create_get_update_and_active_lookup(tmp_path: Path):
+    store = _store(tmp_path)
+    project_id = store.create_work_project(
+        title="客户交付",
+        category="projects",
+        status="active",
+        priority="P1",
+        risk_level="medium",
+    )
+    todo_id = store.create_work_todo(
+        project_id=project_id,
+        title="给客户同步验收 ETA",
+        owner_user_id="owner-1",
+        owner_name="Alex",
+        status="open",
+        priority="P1",
+        deadline_at="2026-07-01 18:00:00",
+    )
+
+    link_id = store.create_work_todo_dingtalk_link(
+        work_todo_id=todo_id,
+        dingtalk_task_id="",
+        executor_user_id="owner-1",
+        executor_name="Alex",
+        title_snapshot="给客户同步验收 ETA",
+        deadline_at_snapshot="2026-07-01 18:00:00",
+        priority_snapshot="P1",
+        status="creating",
+    )
+
+    link = store.get_work_todo_dingtalk_link(link_id)
+    assert link is not None
+    assert link.work_todo_id == todo_id
+    assert link.status == "creating"
+    assert store.get_active_work_todo_dingtalk_link(todo_id).id == link_id
+
+    store.update_work_todo_dingtalk_link(
+        link_id,
+        dingtalk_task_id="dt-task-1",
+        status="active",
+        last_dingtalk_done=False,
+        last_dingtalk_payload_json='{"id":"dt-task-1","done":false}',
+        last_push_at="2026-06-27 10:00:00",
+    )
+
+    updated = store.get_work_todo_dingtalk_link(link_id)
+    assert updated.dingtalk_task_id == "dt-task-1"
+    assert updated.status == "active"
+    assert updated.last_dingtalk_done is False
+    assert updated.last_error == ""
+
+
+def test_dingtalk_todo_link_prevents_duplicate_active_links(tmp_path: Path):
+    store = _store(tmp_path)
+    project_id = store.create_work_project(
+        title="客户交付",
+        category="projects",
+        status="active",
+        priority="P1",
+        risk_level="medium",
+    )
+    todo_id = store.create_work_todo(
+        project_id=project_id,
+        title="给客户同步验收 ETA",
+        owner_user_id="owner-1",
+        status="open",
+        deadline_at="2026-07-01 18:00:00",
+    )
+    first_id = store.create_work_todo_dingtalk_link(
+        work_todo_id=todo_id,
+        executor_user_id="owner-1",
+        title_snapshot="给客户同步验收 ETA",
+        deadline_at_snapshot="2026-07-01 18:00:00",
+        priority_snapshot="P1",
+        status="creating",
+    )
+
+    second_id = store.create_work_todo_dingtalk_link(
+        work_todo_id=todo_id,
+        executor_user_id="owner-1",
+        title_snapshot="给客户同步验收 ETA",
+        deadline_at_snapshot="2026-07-01 18:00:00",
+        priority_snapshot="P1",
+        status="creating",
+    )
+
+    assert second_id == first_id
+    assert len(store.list_work_todo_dingtalk_links(statuses=("creating",))) == 1
+
+
+def test_operation_logs_include_dingtalk_todo_links(tmp_path: Path):
+    store = _store(tmp_path)
+    project_id = store.create_work_project(
+        title="客户交付",
+        category="projects",
+        status="active",
+        priority="P1",
+        risk_level="medium",
+    )
+    todo_id = store.create_work_todo(
+        project_id=project_id,
+        title="给客户同步验收 ETA",
+        status="open",
+    )
+    store.create_work_todo_dingtalk_link(
+        work_todo_id=todo_id,
+        dingtalk_task_id="dt-task-1",
+        executor_user_id="owner-1",
+        title_snapshot="给客户同步验收 ETA",
+        deadline_at_snapshot="2026-07-01 18:00:00",
+        priority_snapshot="P1",
+        status="failed",
+        last_error="todo get failed",
+    )
+
+    logs = store.list_operation_logs(query="dt-task-1")
+
+    assert len(logs) == 1
+    assert logs[0].category == "DingTalk Todo"
+    assert logs[0].status == "failed"
+    assert "dt-task-1" in logs[0].context
+    assert "todo get failed" in logs[0].detail
+
+
 def test_list_and_update_project_memory_context_backfill_targets(tmp_path: Path):
     store = _store(tmp_path)
     missing_id = store.create_work_project(
@@ -319,6 +443,80 @@ def test_scan_state_round_trip(tmp_path: Path):
     assert updated_state["last_success_at"] == "2026-06-08 10:00:00"
     assert updated_state["cursor_json"] == '{"last_id":"m2"}'
     assert updated_state["last_error"] == "boom"
+
+
+def test_list_work_todo_dingtalk_links_filters_by_work_todo_before_limit(
+    tmp_path: Path,
+):
+    store = _store(tmp_path)
+    project_id = store.create_work_project(
+        title="客户交付",
+        category="projects",
+        status="active",
+        priority="P1",
+        risk_level="medium",
+    )
+    other_todo_id = store.create_work_todo(
+        project_id=project_id,
+        title="同步其他事项",
+        owner_user_id="owner-1",
+        status="open",
+        priority="P1",
+        deadline_at="2026-07-01 18:00:00",
+    )
+    target_todo_id = store.create_work_todo(
+        project_id=project_id,
+        title="给客户同步验收 ETA",
+        owner_user_id="owner-2",
+        status="open",
+        priority="P1",
+        deadline_at="2026-07-01 18:00:00",
+    )
+    store.create_work_todo_dingtalk_link(
+        work_todo_id=other_todo_id,
+        dingtalk_task_id="dt-other",
+        status="failed",
+    )
+    target_link_id = store.create_work_todo_dingtalk_link(
+        work_todo_id=target_todo_id,
+        dingtalk_task_id="dt-target",
+        status="failed",
+    )
+
+    links = store.list_work_todo_dingtalk_links(
+        statuses=("failed",),
+        work_todo_id=target_todo_id,
+        limit=1,
+    )
+
+    assert [link.id for link in links] == [target_link_id]
+
+    second_target_todo_id = store.create_work_todo(
+        project_id=project_id,
+        title="确认第二个验收 ETA",
+        owner_user_id="owner-3",
+        status="open",
+        priority="P1",
+        deadline_at="2026-07-01 18:00:00",
+    )
+    store.create_work_todo_dingtalk_link(
+        work_todo_id=second_target_todo_id,
+        dingtalk_task_id="",
+        status="failed",
+    )
+    second_target_link_id = store.create_work_todo_dingtalk_link(
+        work_todo_id=second_target_todo_id,
+        dingtalk_task_id="dt-second-target",
+        status="failed",
+    )
+    recoverable_links = store.list_work_todo_dingtalk_links(
+        statuses=("failed",),
+        work_todo_id=second_target_todo_id,
+        with_dingtalk_task_id=True,
+        limit=1,
+    )
+
+    assert [link.id for link in recoverable_links] == [second_target_link_id]
 
 
 def test_operation_logs_sort_follow_up_by_operation_time_not_schedule(tmp_path: Path):

@@ -69,6 +69,14 @@ class TodoStatus(StrEnum):
     CANCELLED = "cancelled"
 
 
+class DingTalkTodoLinkStatus(StrEnum):
+    CREATING = "creating"
+    ACTIVE = "active"
+    DONE = "done"
+    CANCELLED = "cancelled"
+    FAILED = "failed"
+
+
 class FollowUpDraftStatus(StrEnum):
     DRAFT = "draft"
     APPROVED = "approved"
@@ -241,6 +249,25 @@ class WorkTodo(BaseModel):
     created_at: str
     updated_at: str
     completed_at: str = ""
+
+
+class WorkTodoDingTalkLink(BaseModel):
+    id: int
+    work_todo_id: int
+    dingtalk_task_id: str = ""
+    executor_user_id: str = ""
+    executor_name: str = ""
+    title_snapshot: str = ""
+    deadline_at_snapshot: str = ""
+    priority_snapshot: str = ""
+    status: DingTalkTodoLinkStatus
+    last_dingtalk_done: bool | None = None
+    last_dingtalk_payload_json: str = "{}"
+    last_pull_at: str = ""
+    last_push_at: str = ""
+    last_error: str = ""
+    created_at: str
+    updated_at: str
 
 
 class WorkUpdate(BaseModel):
