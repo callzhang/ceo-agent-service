@@ -239,6 +239,96 @@ def test_create_project_todo_update_and_follow_up(tmp_path: Path):
     assert row == (1,)
 
 
+def test_dingtalk_todo_link_create_get_update_and_active_lookup(tmp_path: Path):
+    store = _store(tmp_path)
+    project_id = store.create_work_project(
+        title="客户交付",
+        category="projects",
+        status="active",
+        priority="P1",
+        risk_level="medium",
+    )
+    todo_id = store.create_work_todo(
+        project_id=project_id,
+        title="给客户同步验收 ETA",
+        owner_user_id="owner-1",
+        owner_name="Alex",
+        status="open",
+        priority="P1",
+        deadline_at="2026-07-01 18:00:00",
+    )
+
+    link_id = store.create_work_todo_dingtalk_link(
+        work_todo_id=todo_id,
+        dingtalk_task_id="",
+        executor_user_id="owner-1",
+        executor_name="Alex",
+        title_snapshot="给客户同步验收 ETA",
+        deadline_at_snapshot="2026-07-01 18:00:00",
+        priority_snapshot="P1",
+        status="creating",
+    )
+
+    link = store.get_work_todo_dingtalk_link(link_id)
+    assert link is not None
+    assert link.work_todo_id == todo_id
+    assert link.status == "creating"
+    assert store.get_active_work_todo_dingtalk_link(todo_id).id == link_id
+
+    store.update_work_todo_dingtalk_link(
+        link_id,
+        dingtalk_task_id="dt-task-1",
+        status="active",
+        last_dingtalk_done=False,
+        last_dingtalk_payload_json='{"id":"dt-task-1","done":false}',
+        last_push_at="2026-06-27 10:00:00",
+    )
+
+    updated = store.get_work_todo_dingtalk_link(link_id)
+    assert updated.dingtalk_task_id == "dt-task-1"
+    assert updated.status == "active"
+    assert updated.last_dingtalk_done is False
+    assert updated.last_error == ""
+
+
+def test_dingtalk_todo_link_prevents_duplicate_active_links(tmp_path: Path):
+    store = _store(tmp_path)
+    project_id = store.create_work_project(
+        title="客户交付",
+        category="projects",
+        status="active",
+        priority="P1",
+        risk_level="medium",
+    )
+    todo_id = store.create_work_todo(
+        project_id=project_id,
+        title="给客户同步验收 ETA",
+        owner_user_id="owner-1",
+        status="open",
+        deadline_at="2026-07-01 18:00:00",
+    )
+    first_id = store.create_work_todo_dingtalk_link(
+        work_todo_id=todo_id,
+        executor_user_id="owner-1",
+        title_snapshot="给客户同步验收 ETA",
+        deadline_at_snapshot="2026-07-01 18:00:00",
+        priority_snapshot="P1",
+        status="creating",
+    )
+
+    second_id = store.create_work_todo_dingtalk_link(
+        work_todo_id=todo_id,
+        executor_user_id="owner-1",
+        title_snapshot="给客户同步验收 ETA",
+        deadline_at_snapshot="2026-07-01 18:00:00",
+        priority_snapshot="P1",
+        status="creating",
+    )
+
+    assert second_id == first_id
+    assert len(store.list_work_todo_dingtalk_links(statuses=("creating",))) == 1
+
+
 def test_list_and_update_project_memory_context_backfill_targets(tmp_path: Path):
     store = _store(tmp_path)
     missing_id = store.create_work_project(

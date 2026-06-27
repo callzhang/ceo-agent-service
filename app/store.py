@@ -9,11 +9,13 @@ from collections.abc import Iterator
 from pydantic import BaseModel, Field
 
 from app.task_models import (
+    DingTalkTodoLinkStatus,
     FollowUpDraft,
     TaskAgentRun,
     WorkProject,
     WorkSummaryInput,
     WorkTodo,
+    WorkTodoDingTalkLink,
     WorkUpdate,
 )
 from app.feedback_policy import FeedbackPressureStats
@@ -521,6 +523,32 @@ class AutoReplyStore:
                     on work_todos(project_id, status);
                 create index if not exists idx_work_todos_follow_up
                     on work_todos(status, next_follow_up_at);
+                create table if not exists work_todo_dingtalk_links (
+                    id integer primary key autoincrement,
+                    work_todo_id integer not null,
+                    dingtalk_task_id text not null default '',
+                    executor_user_id text not null default '',
+                    executor_name text not null default '',
+                    title_snapshot text not null default '',
+                    deadline_at_snapshot text not null default '',
+                    priority_snapshot text not null default '',
+                    status text not null default 'creating',
+                    last_dingtalk_done integer,
+                    last_dingtalk_payload_json text not null default '{}',
+                    last_pull_at text not null default '',
+                    last_push_at text not null default '',
+                    last_error text not null default '',
+                    created_at text not null default current_timestamp,
+                    updated_at text not null default current_timestamp
+                );
+                create index if not exists idx_work_todo_dingtalk_links_todo
+                    on work_todo_dingtalk_links(work_todo_id, status, id);
+                create unique index if not exists idx_work_todo_dingtalk_links_task_id
+                    on work_todo_dingtalk_links(dingtalk_task_id)
+                    where dingtalk_task_id != '';
+                create unique index if not exists idx_work_todo_dingtalk_links_active_todo
+                    on work_todo_dingtalk_links(work_todo_id)
+                    where status in ('creating', 'active');
                 create table if not exists work_updates (
                     id integer primary key autoincrement,
                     project_id integer not null,
@@ -3156,6 +3184,179 @@ class AutoReplyStore:
         query = f"{query} order by id"
         with self._connect() as db:
             return [WorkTodo.model_validate(dict(row)) for row in db.execute(query, args)]
+
+    @staticmethod
+    def _normalize_dingtalk_todo_link_status(status: object) -> str:
+        return DingTalkTodoLinkStatus(str(status)).value
+
+    @staticmethod
+    def _normalize_dingtalk_todo_link_row(
+        row: sqlite3.Row,
+    ) -> WorkTodoDingTalkLink:
+        return WorkTodoDingTalkLink.model_validate(dict(row))
+
+    def create_work_todo_dingtalk_link(self, **values) -> int:
+        allowed_columns = {
+            "work_todo_id",
+            "dingtalk_task_id",
+            "executor_user_id",
+            "executor_name",
+            "title_snapshot",
+            "deadline_at_snapshot",
+            "priority_snapshot",
+            "status",
+            "last_dingtalk_done",
+            "last_dingtalk_payload_json",
+            "last_pull_at",
+            "last_push_at",
+            "last_error",
+        }
+        filtered = self._filter_allowed_values(values, allowed_columns)
+        if "work_todo_id" not in filtered:
+            raise ValueError("missing work_todo_id")
+        if "status" in filtered:
+            filtered["status"] = self._normalize_dingtalk_todo_link_status(
+                filtered["status"]
+            )
+        if (
+            "last_dingtalk_done" in filtered
+            and filtered["last_dingtalk_done"] is not None
+        ):
+            filtered["last_dingtalk_done"] = int(bool(filtered["last_dingtalk_done"]))
+        keys = list(filtered.keys())
+        columns = ", ".join(keys)
+        placeholders = ", ".join("?" for _ in keys)
+        with self._connect() as db:
+            db.execute("begin immediate")
+            existing = db.execute(
+                """
+                select id
+                from work_todo_dingtalk_links
+                where work_todo_id=?
+                  and status in ('creating', 'active')
+                order by id
+                limit 1
+                """,
+                (filtered["work_todo_id"],),
+            ).fetchone()
+            if existing is not None:
+                return int(existing["id"])
+            try:
+                cursor = db.execute(
+                    f"""
+                    insert into work_todo_dingtalk_links ({columns})
+                    values ({placeholders})
+                    """,
+                    [filtered[key] for key in keys],
+                )
+            except sqlite3.IntegrityError:
+                existing = db.execute(
+                    """
+                    select id
+                    from work_todo_dingtalk_links
+                    where work_todo_id=?
+                      and status in ('creating', 'active')
+                    order by id
+                    limit 1
+                    """,
+                    (filtered["work_todo_id"],),
+                ).fetchone()
+                if existing is not None:
+                    return int(existing["id"])
+                raise
+            return int(cursor.lastrowid)
+
+    def update_work_todo_dingtalk_link(self, link_id: int, **values) -> None:
+        if not values:
+            return
+        allowed_columns = {
+            "dingtalk_task_id",
+            "executor_user_id",
+            "executor_name",
+            "title_snapshot",
+            "deadline_at_snapshot",
+            "priority_snapshot",
+            "status",
+            "last_dingtalk_done",
+            "last_dingtalk_payload_json",
+            "last_pull_at",
+            "last_push_at",
+            "last_error",
+        }
+        filtered = self._filter_allowed_values(values, allowed_columns)
+        if "status" in filtered:
+            filtered["status"] = self._normalize_dingtalk_todo_link_status(
+                filtered["status"]
+            )
+        if (
+            "last_dingtalk_done" in filtered
+            and filtered["last_dingtalk_done"] is not None
+        ):
+            filtered["last_dingtalk_done"] = int(bool(filtered["last_dingtalk_done"]))
+        assignments = ", ".join(f"{key}=?" for key in filtered)
+        with self._connect() as db:
+            db.execute(
+                f"""
+                update work_todo_dingtalk_links
+                set {assignments},
+                    updated_at=current_timestamp
+                where id=?
+                """,
+                [*filtered.values(), link_id],
+            )
+
+    def get_work_todo_dingtalk_link(
+        self,
+        link_id: int,
+    ) -> WorkTodoDingTalkLink | None:
+        with self._connect() as db:
+            row = db.execute(
+                "select * from work_todo_dingtalk_links where id=?",
+                (link_id,),
+            ).fetchone()
+            return None if row is None else self._normalize_dingtalk_todo_link_row(row)
+
+    def get_active_work_todo_dingtalk_link(
+        self,
+        work_todo_id: int,
+    ) -> WorkTodoDingTalkLink | None:
+        with self._connect() as db:
+            row = db.execute(
+                """
+                select *
+                from work_todo_dingtalk_links
+                where work_todo_id=?
+                  and status in ('creating', 'active')
+                order by id
+                limit 1
+                """,
+                (work_todo_id,),
+            ).fetchone()
+            return None if row is None else self._normalize_dingtalk_todo_link_row(row)
+
+    def list_work_todo_dingtalk_links(
+        self,
+        statuses: tuple[str, ...] | None = None,
+        limit: int = 100,
+    ) -> list[WorkTodoDingTalkLink]:
+        if limit <= 0:
+            return []
+        query = "select * from work_todo_dingtalk_links"
+        args: list[str | int] = []
+        if statuses:
+            normalized_statuses = tuple(
+                self._normalize_dingtalk_todo_link_status(status)
+                for status in statuses
+            )
+            query = f"{query} where status in ({','.join('?' for _ in statuses)})"
+            args.extend(normalized_statuses)
+        query = f"{query} order by id limit ?"
+        args.append(limit)
+        with self._connect() as db:
+            return [
+                self._normalize_dingtalk_todo_link_row(row)
+                for row in db.execute(query, args)
+            ]
 
     def create_work_update(self, **values) -> int:
         allowed_columns = {
