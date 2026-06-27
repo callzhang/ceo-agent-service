@@ -214,6 +214,70 @@ def test_maybe_create_dingtalk_todo_keeps_task_id_when_get_fails(tmp_path):
     assert "todo get failed" in link.last_error
 
 
+def test_maybe_create_dingtalk_todo_recovers_failed_link_without_duplicate_create(
+    tmp_path,
+):
+    store = _store(tmp_path)
+    _, todo_id = _project_and_todo(store)
+    dws = FakeTodoDws()
+    dws.get_errors["dt-task-1"] = DwsError("first get failed")
+
+    first_link = maybe_create_dingtalk_todo(
+        store,
+        dws,
+        work_todo_id=todo_id,
+        now="2026-06-27 10:00:00",
+    )
+    dws.get_errors = {}
+    dws.get_payloads["dt-task-1"] = {"id": "dt-task-1", "done": False}
+
+    second_link = maybe_create_dingtalk_todo(
+        store,
+        dws,
+        work_todo_id=todo_id,
+        now="2026-06-27 10:05:00",
+    )
+
+    assert len(dws.created) == 1
+    assert second_link.id == first_link.id
+    assert second_link.dingtalk_task_id == "dt-task-1"
+    assert second_link.status == "active"
+    stored = store.get_work_todo_dingtalk_link(first_link.id)
+    assert stored.dingtalk_task_id == "dt-task-1"
+    assert stored.status == "active"
+    assert stored.last_error == ""
+
+
+def test_maybe_create_dingtalk_todo_keeps_failed_link_when_recovery_get_fails(
+    tmp_path,
+):
+    store = _store(tmp_path)
+    _, todo_id = _project_and_todo(store)
+    dws = FakeTodoDws()
+    dws.get_errors["dt-task-1"] = DwsError("first get failed")
+
+    first_link = maybe_create_dingtalk_todo(
+        store,
+        dws,
+        work_todo_id=todo_id,
+        now="2026-06-27 10:00:00",
+    )
+    dws.get_errors["dt-task-1"] = DwsError("second get failed")
+
+    second_link = maybe_create_dingtalk_todo(
+        store,
+        dws,
+        work_todo_id=todo_id,
+        now="2026-06-27 10:05:00",
+    )
+
+    assert len(dws.created) == 1
+    assert second_link.id == first_link.id
+    assert second_link.status == "failed"
+    assert second_link.dingtalk_task_id == "dt-task-1"
+    assert "second get failed" in second_link.last_error
+
+
 def test_pull_done_dingtalk_todo_closes_internal_todo(tmp_path):
     store = _store(tmp_path)
     _, todo_id = _project_and_todo(store)

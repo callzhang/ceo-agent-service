@@ -112,6 +112,47 @@ def _todo_is_eligible(store: AutoReplyStore, todo: Any) -> bool:
     return store.get_active_work_todo_dingtalk_link(todo.id) is None
 
 
+def _find_existing_link_with_task_id(store: AutoReplyStore, work_todo_id: int) -> Any:
+    links = store.list_work_todo_dingtalk_links(statuses=("failed",), limit=500)
+    for link in links:
+        if link.work_todo_id == work_todo_id and link.dingtalk_task_id.strip():
+            return link
+    return None
+
+
+def _refresh_existing_dingtalk_link(
+    store: AutoReplyStore,
+    dws: Any,
+    link: Any,
+    *,
+    now: str,
+):
+    task_id = link.dingtalk_task_id.strip()
+    try:
+        payload = dws.get_todo_task(task_id)
+    except (DwsError, RuntimeError) as exc:
+        store.update_work_todo_dingtalk_link(
+            link.id,
+            status="failed",
+            last_pull_at=now,
+            last_error=str(exc),
+        )
+        return store.get_work_todo_dingtalk_link(link.id)
+
+    done = _payload_done(payload)
+    store.update_work_todo_dingtalk_link(
+        link.id,
+        status="done" if done else "active",
+        last_dingtalk_done=done,
+        last_dingtalk_payload_json=json.dumps(payload, ensure_ascii=False),
+        last_pull_at=now,
+        last_error="",
+    )
+    if done:
+        _close_internal_todo_from_dingtalk(store, link, task_id, now)
+    return store.get_work_todo_dingtalk_link(link.id)
+
+
 def maybe_create_dingtalk_todo(
     store: AutoReplyStore,
     dws: Any,
@@ -120,7 +161,14 @@ def maybe_create_dingtalk_todo(
     now: str,
 ):
     todo = store.get_work_todo(work_todo_id)
-    if todo is None or not _todo_is_eligible(store, todo):
+    if todo is None:
+        return None
+
+    existing_link = _find_existing_link_with_task_id(store, work_todo_id)
+    if existing_link is not None:
+        return _refresh_existing_dingtalk_link(store, dws, existing_link, now=now)
+
+    if not _todo_is_eligible(store, todo):
         return None
 
     link_id = store.create_work_todo_dingtalk_link(
