@@ -761,7 +761,8 @@ def _apply_follow_up_change(
     store: AutoReplyStore,
     change: FollowUpDraftChange,
 ) -> None:
-    if not _follow_up_draft_exists(store, change.follow_up_id):
+    current = store.get_follow_up_draft(change.follow_up_id)
+    if current is None:
         raise ValueError(
             f"follow_up_change.follow_up_id not found: {change.follow_up_id}"
         )
@@ -781,6 +782,9 @@ def _apply_follow_up_change(
         values["status"] = "skipped"
         values["suppressed_reason"] = change.reason or "task_agent_suppressed"
     elif change.action == "close":
+        if _enum_value(current.status) in {"draft", "approved"}:
+            values["status"] = "skipped"
+            values["suppressed_reason"] = change.reason or "task_agent_closed"
         values["reaction_status"] = "completed"
         values["reaction_summary"] = change.reason
     elif change.action == "reschedule":
@@ -805,21 +809,10 @@ def _validate_follow_up_change_targets(
     changes: list[FollowUpDraftChange],
 ) -> None:
     for change in changes:
-        if not _follow_up_draft_exists(store, change.follow_up_id):
+        if store.get_follow_up_draft(change.follow_up_id) is None:
             raise ValueError(
                 f"follow_up_change.follow_up_id not found: {change.follow_up_id}"
             )
-
-
-def _follow_up_draft_exists(store: AutoReplyStore, follow_up_id: int) -> bool:
-    if follow_up_id <= 0:
-        return False
-    with store._connect() as db:
-        row = db.execute(
-            "select id from follow_up_drafts where id=?",
-            (follow_up_id,),
-        ).fetchone()
-    return row is not None
 
 
 def _resolve_follow_up_todo_id(

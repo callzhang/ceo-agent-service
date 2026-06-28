@@ -3615,6 +3615,16 @@ class AutoReplyStore:
                 [*parameters, draft_id],
             )
 
+    def get_follow_up_draft(self, draft_id: int) -> FollowUpDraft | None:
+        if draft_id <= 0:
+            return None
+        with self._connect() as db:
+            row = db.execute(
+                "select * from follow_up_drafts where id=?",
+                (draft_id,),
+            ).fetchone()
+            return None if row is None else FollowUpDraft.model_validate(dict(row))
+
     def list_follow_up_drafts(
         self,
         *,

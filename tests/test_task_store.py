@@ -223,6 +223,10 @@ def test_create_project_todo_update_and_follow_up(tmp_path: Path):
     drafts = store.list_follow_up_drafts(statuses=("draft",))
     assert [draft.id for draft in drafts] == [draft_id]
     assert drafts[0].question_text == "售前材料来源链接现在补齐到哪一步了？"
+    fetched_draft = store.get_follow_up_draft(draft_id)
+    assert fetched_draft is not None
+    assert fetched_draft.id == draft_id
+    assert store.get_follow_up_draft(999) is None
 
     run_id = store.record_task_agent_run(
         summary_input_id=123,

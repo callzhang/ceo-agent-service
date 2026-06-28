@@ -522,6 +522,67 @@ def test_apply_decision_suppresses_existing_follow_up_without_closing_todo(tmp_p
     assert "follow_up_changes" in update.changes_json
 
 
+@pytest.mark.parametrize("initial_status", ["draft", "approved"])
+def test_follow_up_close_skips_pending_follow_up_without_closing_todo(
+    tmp_path,
+    initial_status,
+):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    project_id = store.create_work_project(
+        title="售前知识库",
+        category="sales",
+        status="active",
+    )
+    todo_id = store.create_work_todo(
+        project_id=project_id,
+        title="确认方案交付时间",
+        owner_user_id="owner-1",
+        owner_name="Alex",
+        status="open",
+        priority="P1",
+    )
+    follow_up_id = store.create_follow_up_draft(
+        project_id=project_id,
+        todo_id=todo_id,
+        owner_user_id="owner-1",
+        owner_name="Alex",
+        target_conversation_id="cid-1",
+        target_kind="group",
+        question_text="方案交付时间确认了吗？",
+        status=initial_status,
+        scheduled_at="2026-06-29 09:00:00",
+    )
+    decision = _decision_with_follow_up_change(
+        project_id=project_id,
+        follow_up_id=follow_up_id,
+        todo_id=todo_id,
+        action="close",
+    )
+
+    apply_task_agent_decision(
+        store,
+        summary_input_id=1,
+        work_item=_work_item(),
+        decision=decision,
+        memory_recall_attempted=True,
+    )
+
+    due_drafts = store.list_follow_up_drafts(
+        statuses=("draft", "approved"),
+        due_before="2026-06-29 10:00:00",
+    )
+    assert [draft.id for draft in due_drafts] == []
+    follow_up = store.get_follow_up_draft(follow_up_id)
+    assert follow_up is not None
+    assert follow_up.status == "skipped"
+    assert follow_up.reaction_status == "completed"
+    assert "reply context updated follow-up state" in follow_up.reaction_summary
+    todo = store.get_work_todo(todo_id)
+    assert todo is not None
+    assert todo.status == "open"
+    assert todo.completion_evidence_json == "{}"
+
+
 def test_follow_up_change_rejects_missing_positive_follow_up_id(tmp_path):
     store = AutoReplyStore(tmp_path / "task.sqlite3")
     project_id = store.create_work_project(
