@@ -239,6 +239,153 @@ def test_create_project_todo_update_and_follow_up(tmp_path: Path):
     assert row == (1,)
 
 
+def test_list_recent_follow_up_candidates_returns_linked_context(tmp_path: Path):
+    store = _store(tmp_path)
+    project_id = store.create_work_project(
+        title="海外数据合规与中美开发隔离闭环",
+        category="strategy",
+        status="active",
+        priority="P0",
+        risk_level="high",
+        owner_user_id="owner-project",
+        owner_name="Ming Hu",
+    )
+    todo_id = store.create_work_todo(
+        project_id=project_id,
+        title="确认中美开发隔离方案执行状态",
+        owner_user_id="owner-1",
+        owner_name="Ming Hu",
+        status="open",
+        priority="P0",
+        deadline_at="2026-06-29 18:00:00",
+        next_follow_up_at="2026-06-29 09:00:00",
+        follow_up_question="隔离方案今天能闭环吗？",
+    )
+    draft_id = store.create_follow_up_draft(
+        project_id=project_id,
+        todo_id=todo_id,
+        owner_user_id="owner-1",
+        owner_name="Ming Hu",
+        target_conversation_id="cid-data",
+        target_kind="group",
+        question_text="隔离方案今天能闭环吗？",
+        status="sent",
+        sent_at="2026-06-29 09:30:00",
+        scheduled_at="2026-06-29 09:00:00",
+        reaction_status="",
+        reaction_summary="",
+    )
+    store.create_follow_up_draft(
+        project_id=project_id,
+        todo_id=todo_id,
+        owner_user_id="owner-1",
+        owner_name="Ming Hu",
+        target_conversation_id="cid-data",
+        target_kind="group",
+        question_text="旧跟进不应该作为候选",
+        status="sent",
+        sent_at="2026-06-20 09:30:00",
+        scheduled_at="2026-06-20 09:00:00",
+    )
+    store.create_follow_up_draft(
+        project_id=project_id,
+        todo_id=todo_id,
+        owner_user_id="owner-2",
+        owner_name="Lily",
+        target_conversation_id="cid-other",
+        target_kind="direct",
+        question_text="无关会话不应该作为候选",
+        status="sent",
+        sent_at="2026-06-29 10:00:00",
+        scheduled_at="2026-06-29 09:50:00",
+    )
+
+    candidates = store.list_recent_follow_up_candidates(
+        conversation_id="cid-data",
+        owner_user_id="owner-1",
+        since="2026-06-28 00:00:00",
+        limit=10,
+    )
+
+    assert [candidate.follow_up_id for candidate in candidates] == [draft_id]
+    candidate = candidates[0]
+    assert candidate.project_id == project_id
+    assert candidate.project_title == "海外数据合规与中美开发隔离闭环"
+    assert candidate.project_status == "active"
+    assert candidate.project_priority == "P0"
+    assert candidate.todo_id == todo_id
+    assert candidate.todo_title == "确认中美开发隔离方案执行状态"
+    assert candidate.todo_status == "open"
+    assert candidate.todo_priority == "P0"
+    assert candidate.owner_user_id == "owner-1"
+    assert candidate.owner_name == "Ming Hu"
+    assert candidate.target_conversation_id == "cid-data"
+    assert candidate.target_kind == "group"
+    assert candidate.question_text == "隔离方案今天能闭环吗？"
+    assert candidate.scheduled_at == "2026-06-29 09:00:00"
+    assert candidate.sent_at == "2026-06-29 09:30:00"
+    assert candidate.status == "sent"
+    assert candidate.reaction_status == ""
+    assert candidate.reaction_summary == ""
+
+
+def test_list_recent_follow_up_candidates_prefers_conversation_then_owner(
+    tmp_path: Path,
+):
+    store = _store(tmp_path)
+    project_id = store.create_work_project(
+        title="客户验收",
+        category="projects",
+        status="active",
+        priority="P1",
+        risk_level="medium",
+    )
+    todo_id = store.create_work_todo(
+        project_id=project_id,
+        title="确认客户验收 ETA",
+        owner_user_id="owner-1",
+        owner_name="Alex",
+        status="open",
+        priority="P1",
+    )
+    owner_match_id = store.create_follow_up_draft(
+        project_id=project_id,
+        todo_id=todo_id,
+        owner_user_id="owner-1",
+        owner_name="Alex",
+        target_conversation_id="cid-other",
+        target_kind="direct",
+        question_text="owner 近期跟进",
+        status="sent",
+        sent_at="2026-06-29 10:00:00",
+        scheduled_at="2026-06-29 09:50:00",
+    )
+    conversation_match_id = store.create_follow_up_draft(
+        project_id=project_id,
+        todo_id=todo_id,
+        owner_user_id="owner-2",
+        owner_name="Mina",
+        target_conversation_id="cid-target",
+        target_kind="group",
+        question_text="同群较早跟进",
+        status="sent",
+        sent_at="2026-06-29 09:00:00",
+        scheduled_at="2026-06-29 08:50:00",
+    )
+
+    candidates = store.list_recent_follow_up_candidates(
+        conversation_id="cid-target",
+        owner_user_id="owner-1",
+        since="2026-06-28 00:00:00",
+        limit=10,
+    )
+
+    assert [candidate.follow_up_id for candidate in candidates] == [
+        conversation_match_id,
+        owner_match_id,
+    ]
+
+
 def test_dingtalk_todo_link_create_get_update_and_active_lookup(tmp_path: Path):
     store = _store(tmp_path)
     project_id = store.create_work_project(
