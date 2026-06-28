@@ -203,12 +203,13 @@ class FollowUpDraftDecision(BaseModel):
 
 class FollowUpDraftChange(BaseModel):
     follow_up_id: int
-    status: FollowUpDraftStatus = FollowUpDraftStatus.SKIPPED
-    suppressed_reason: str = ""
-    reaction_status: str = ""
-    reaction_summary: str = ""
+    todo_id: int | None = None
+    action: Literal["suppress", "close", "reschedule", "reassign", "keep_open"]
+    reason: str = ""
     evidence_check: dict[str, Any] = Field(default_factory=dict)
-    scheduled_at: str = ""
+    next_due_at: str | None = None
+    owner_user_id: str | None = None
+    owner_name: str | None = None
 
 
 class TaskAgentDecision(BaseModel):

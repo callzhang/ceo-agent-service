@@ -1583,15 +1583,16 @@ def test_task_agent_decision_supports_follow_up_changes():
             "follow_up_changes": [
                 {
                     "follow_up_id": 1566,
-                    "status": "skipped",
-                    "suppressed_reason": "owner_corrected_by_reply",
-                    "reaction_status": "",
-                    "reaction_summary": "",
+                    "todo_id": 3720,
+                    "action": "reassign",
+                    "reason": "Lily clarified the P0 follow-up belongs to Ming Hu and ops.",
                     "evidence_check": {
                         "source": "reply_attempt:1992",
                         "summary": "Lily说明该事项由胡明和运维负责。",
                     },
-                    "scheduled_at": "",
+                    "next_due_at": None,
+                    "owner_user_id": "02412744671048909",
+                    "owner_name": "Ming Hu(胡明)/运维",
                 }
             ],
             "update_summary": "停止追Lily并修正owner口径。",
@@ -1604,8 +1605,11 @@ def test_task_agent_decision_supports_follow_up_changes():
     )
 
     assert decision.follow_up_changes[0].follow_up_id == 1566
-    assert decision.follow_up_changes[0].status == "skipped"
-    assert decision.follow_up_changes[0].suppressed_reason == "owner_corrected_by_reply"
+    assert decision.follow_up_changes[0].todo_id == 3720
+    assert decision.follow_up_changes[0].action == "reassign"
+    assert decision.follow_up_changes[0].reason.startswith("Lily clarified")
+    assert decision.follow_up_changes[0].next_due_at is None
+    assert decision.follow_up_changes[0].owner_user_id == "02412744671048909"
 
 
 def test_task_agent_schema_includes_follow_up_changes():
@@ -1621,19 +1625,23 @@ def test_task_agent_schema_includes_follow_up_changes():
     change_schema = schema["$defs"]["follow_up_change"]
     assert set(change_schema["required"]) == set(change_schema["properties"])
     assert change_schema["properties"]["follow_up_id"]["type"] == "integer"
-    assert change_schema["properties"]["status"]["enum"] == [
-        "draft",
-        "approved",
-        "sent",
-        "skipped",
-        "failed",
-        "cancelled",
+    assert change_schema["properties"]["todo_id"]["type"] == ["integer", "null"]
+    assert change_schema["properties"]["action"]["enum"] == [
+        "suppress",
+        "close",
+        "reschedule",
+        "reassign",
+        "keep_open",
     ]
+    assert change_schema["properties"]["reason"]["type"] == "string"
     assert change_schema["properties"]["evidence_check"] == {
         "type": "object",
         "additionalProperties": True,
     }
     assert "required" not in change_schema["properties"]["evidence_check"]
+    assert change_schema["properties"]["next_due_at"]["type"] == ["string", "null"]
+    assert change_schema["properties"]["owner_user_id"]["type"] == ["string", "null"]
+    assert change_schema["properties"]["owner_name"]["type"] == ["string", "null"]
 
 
 def test_task_agent_decision_exposes_task_worthiness_risk_fields():

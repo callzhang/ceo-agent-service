@@ -436,36 +436,40 @@
       "additionalProperties": false,
       "required": [
         "follow_up_id",
-        "status",
-        "suppressed_reason",
-        "reaction_status",
-        "reaction_summary",
+        "todo_id",
+        "action",
+        "reason",
         "evidence_check",
-        "scheduled_at"
+        "next_due_at",
+        "owner_user_id",
+        "owner_name"
       ],
       "properties": {
         "follow_up_id": {
           "type": "integer"
         },
-        "status": {
+        "todo_id": {
+          "type": ["integer", "null"]
+        },
+        "action": {
           "type": "string",
-          "enum": ["draft", "approved", "sent", "skipped", "failed", "cancelled"]
+          "enum": ["suppress", "close", "reschedule", "reassign", "keep_open"]
         },
-        "suppressed_reason": {
-          "type": "string"
-        },
-        "reaction_status": {
-          "type": "string"
-        },
-        "reaction_summary": {
+        "reason": {
           "type": "string"
         },
         "evidence_check": {
           "type": "object",
           "additionalProperties": true
         },
-        "scheduled_at": {
-          "type": "string"
+        "next_due_at": {
+          "type": ["string", "null"]
+        },
+        "owner_user_id": {
+          "type": ["string", "null"]
+        },
+        "owner_name": {
+          "type": ["string", "null"]
         }
       }
     }
