@@ -460,7 +460,16 @@
         },
         "evidence_check": {
           "type": "object",
-          "additionalProperties": true
+          "additionalProperties": false,
+          "required": ["source", "summary"],
+          "properties": {
+            "source": {
+              "type": "string"
+            },
+            "summary": {
+              "type": "string"
+            }
+          }
         },
         "next_due_at": {
           "type": ["string", "null"]

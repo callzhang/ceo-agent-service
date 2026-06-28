@@ -2325,13 +2325,9 @@ def test_task_agent_schema_uses_strict_object_shapes():
 
     schema = json.loads(TASK_AGENT_DECISION_SCHEMA_PATH.read_text(encoding="utf-8"))
 
-    extensible_object_paths = {
-        ("$defs", "follow_up_change", "properties", "evidence_check")
-    }
-
     def visit(node, path=()):
         if isinstance(node, dict):
-            if node.get("type") == "object" and path not in extensible_object_paths:
+            if node.get("type") == "object":
                 assert node.get("additionalProperties") is False
             for key, value in node.items():
                 visit(value, (*path, key))
@@ -2428,9 +2424,13 @@ def test_task_agent_schema_includes_follow_up_changes():
     assert change_schema["properties"]["reason"]["type"] == "string"
     assert change_schema["properties"]["evidence_check"] == {
         "type": "object",
-        "additionalProperties": True,
+        "additionalProperties": False,
+        "required": ["source", "summary"],
+        "properties": {
+            "source": {"type": "string"},
+            "summary": {"type": "string"},
+        },
     }
-    assert "required" not in change_schema["properties"]["evidence_check"]
     assert change_schema["properties"]["next_due_at"]["type"] == ["string", "null"]
     assert change_schema["properties"]["owner_user_id"]["type"] == ["string", "null"]
     assert change_schema["properties"]["owner_name"]["type"] == ["string", "null"]
@@ -2498,14 +2498,10 @@ def test_task_agent_schema_uses_strict_object_shapes_required_by_codex():
 
     schema = json.loads(TASK_AGENT_DECISION_SCHEMA_PATH.read_text(encoding="utf-8"))
 
-    extensible_object_paths = {
-        ("$defs", "follow_up_change", "properties", "evidence_check")
-    }
-
     def assert_strict_objects(node, path=()):
         if not isinstance(node, dict):
             return
-        if node.get("type") == "object" and path not in extensible_object_paths:
+        if node.get("type") == "object":
             assert node.get("additionalProperties") is False
             if "properties" in node:
                 assert set(node.get("required", [])) == set(node["properties"])
