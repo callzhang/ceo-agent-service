@@ -9085,7 +9085,7 @@ def test_okr_review_missing_live_source_fails_after_agent_queue_action(
     assert final_sent(dws) == []
 
 
-def test_okr_review_live_source_error_fails_after_agent_queue_action(
+def test_okr_review_live_source_error_blocks_after_agent_queue_action(
     tmp_path: Path, monkeypatch
 ):
     trigger = message("帮我审核 OKR", single_chat=True)
@@ -9115,13 +9115,13 @@ def test_okr_review_live_source_error_fails_after_agent_queue_action(
     attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
     assert attempt is not None
     assert attempt.action == "okr_review"
-    assert attempt.send_status == "failed"
+    assert attempt.send_status == "blocked"
     assert "okr unavailable" in attempt.send_error
-    assert worker.store.count_reply_tasks(status="failed") == 1
+    assert worker.store.count_reply_tasks(status="failed") == 0
+    assert worker.store.count_reply_tasks(status="done") == 1
     errors = worker.store.list_errors(limit=10)
-    assert [error.kind for error in errors] == ["reply_task", "okr_review_source"]
+    assert [error.kind for error in errors] == ["okr_review_source"]
     assert "okr unavailable" in errors[0].detail
-    assert "okr unavailable" in errors[1].detail
     assert final_sent(dws) == []
 
 

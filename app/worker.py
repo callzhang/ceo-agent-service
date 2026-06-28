@@ -2221,6 +2221,7 @@ class DingTalkAutoReplyWorker:
         new_messages: list[DingTalkMessage],
         attempt_id: int,
         *,
+        complete_task_id: int | None = None,
         raise_on_delivery_failure: bool = False,
     ) -> bool:
         period = current_quarter_period()
@@ -2246,19 +2247,26 @@ class DingTalkAutoReplyWorker:
                 period_label=period.period_label,
             )
         except Exception as exc:
-            self.store.update_reply_attempt(
-                attempt_id,
-                action="okr_review",
-                send_status="failed",
-                send_error=str(exc),
-            )
+            updates = {
+                "action": "okr_review",
+                "send_status": "blocked",
+                "send_error": str(exc),
+            }
+            if complete_task_id is not None:
+                self.store.update_reply_attempt_and_complete_task(
+                    attempt_id,
+                    complete_task_id,
+                    **updates,
+                )
+            else:
+                self.store.update_reply_attempt(attempt_id, **updates)
             self.store.record_error(
                 conversation.open_conversation_id,
                 trigger.open_message_id,
                 "okr_review_source",
                 str(exc),
             )
-            raise
+            return True
         self.store.create_okr_review_request(
             conversation_id=conversation.open_conversation_id,
             conversation_title=conversation.title,
@@ -4439,6 +4447,7 @@ class DingTalkAutoReplyWorker:
                 trigger=trigger,
                 new_messages=new_messages,
                 attempt_id=attempt_id,
+                complete_task_id=complete_task_id,
                 raise_on_delivery_failure=raise_on_delivery_failure,
             )
             return

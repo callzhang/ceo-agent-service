@@ -46,3 +46,12 @@ def test_injected_script_does_not_inline_page_source():
     assert "sourceBase64" in injected
     assert "TextDecoder" in injected
     assert "叮当OKR" not in injected
+
+
+def test_chrome_tab_matching_requires_real_dingteam_page():
+    module = load_module()
+
+    assert 'starts with "https://dingokr.dingteam.com/"' in module.APPLESCRIPT
+    assert 'starts with "https://dingokr.dingteam.com/"' in module.OPEN_TAB_APPLESCRIPT
+    assert 'contains "dingokr.dingteam.com"' not in module.APPLESCRIPT
+    assert 'contains "dingokr.dingteam.com"' not in module.OPEN_TAB_APPLESCRIPT

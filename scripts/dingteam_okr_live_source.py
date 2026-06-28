@@ -18,13 +18,16 @@ import time
 import uuid
 
 
-APPLESCRIPT = """
+DINGTEAM_TAB_URL_PREFIX = "https://dingokr.dingteam.com/"
+
+
+APPLESCRIPT = f"""
 on run argv
   set targetScript to item 1 of argv
   tell application "Google Chrome"
     repeat with w in windows
       repeat with t in tabs of w
-        if (URL of t) contains "dingokr.dingteam.com" then
+        if (URL of t) starts with "{DINGTEAM_TAB_URL_PREFIX}" then
           tell t to return execute javascript targetScript
         end if
       end repeat
@@ -52,7 +55,7 @@ on run argv
   tell application "Google Chrome"
     repeat with w in windows
       repeat with t in tabs of w
-        if (URL of t) contains "dingokr.dingteam.com" then
+        if (URL of t) starts with "https://dingokr.dingteam.com/" then
           return "exists"
         end if
       end repeat
