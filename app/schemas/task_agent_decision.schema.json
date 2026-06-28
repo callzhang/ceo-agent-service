@@ -462,16 +462,7 @@
         },
         "evidence_check": {
           "type": "object",
-          "additionalProperties": false,
-          "required": ["source", "summary"],
-          "properties": {
-            "source": {
-              "type": "string"
-            },
-            "summary": {
-              "type": "string"
-            }
-          }
+          "additionalProperties": true
         },
         "scheduled_at": {
           "type": "string"

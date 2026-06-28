@@ -1533,15 +1533,19 @@ def test_task_agent_schema_uses_strict_object_shapes():
 
     schema = json.loads(TASK_AGENT_DECISION_SCHEMA_PATH.read_text(encoding="utf-8"))
 
-    def visit(node):
+    extensible_object_paths = {
+        ("$defs", "follow_up_change", "properties", "evidence_check")
+    }
+
+    def visit(node, path=()):
         if isinstance(node, dict):
-            if node.get("type") == "object":
+            if node.get("type") == "object" and path not in extensible_object_paths:
                 assert node.get("additionalProperties") is False
-            for value in node.values():
-                visit(value)
+            for key, value in node.items():
+                visit(value, (*path, key))
         elif isinstance(node, list):
-            for item in node:
-                visit(item)
+            for index, item in enumerate(node):
+                visit(item, (*path, str(index)))
 
     visit(schema)
 
@@ -1625,6 +1629,11 @@ def test_task_agent_schema_includes_follow_up_changes():
         "failed",
         "cancelled",
     ]
+    assert change_schema["properties"]["evidence_check"] == {
+        "type": "object",
+        "additionalProperties": True,
+    }
+    assert "required" not in change_schema["properties"]["evidence_check"]
 
 
 def test_task_agent_decision_exposes_task_worthiness_risk_fields():
@@ -1689,19 +1698,23 @@ def test_task_agent_schema_uses_strict_object_shapes_required_by_codex():
 
     schema = json.loads(TASK_AGENT_DECISION_SCHEMA_PATH.read_text(encoding="utf-8"))
 
-    def assert_strict_objects(node):
+    extensible_object_paths = {
+        ("$defs", "follow_up_change", "properties", "evidence_check")
+    }
+
+    def assert_strict_objects(node, path=()):
         if not isinstance(node, dict):
             return
-        if node.get("type") == "object":
+        if node.get("type") == "object" and path not in extensible_object_paths:
             assert node.get("additionalProperties") is False
             if "properties" in node:
                 assert set(node.get("required", [])) == set(node["properties"])
-        for value in node.values():
+        for key, value in node.items():
             if isinstance(value, dict):
-                assert_strict_objects(value)
+                assert_strict_objects(value, (*path, key))
             elif isinstance(value, list):
-                for item in value:
-                    assert_strict_objects(item)
+                for index, item in enumerate(value):
+                    assert_strict_objects(item, (*path, str(index)))
 
     assert_strict_objects(schema)
 
