@@ -353,6 +353,132 @@ def test_apply_decision_closes_todo_with_completion_evidence(tmp_path):
     assert "ETA 已发送客户" in todo.completion_evidence_json
 
 
+def test_apply_decision_suppresses_existing_follow_up_without_closing_todo(tmp_path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    project_id = store.create_work_project(
+        title="海外数据合规与中美开发隔离闭环",
+        category="strategy",
+        status="active",
+        priority="P0",
+        risk_level="high",
+        owner_name="张丽丽(Lily)",
+    )
+    todo_id = store.create_work_todo(
+        project_id=project_id,
+        title="张丽丽恢复海外数据合规项目当前状态与未完成清单",
+        owner_user_id="144339455824043200",
+        owner_name="张丽丽(Lily)",
+        status="open",
+        priority="P0",
+    )
+    follow_up_id = store.create_follow_up_draft(
+        project_id=project_id,
+        todo_id=todo_id,
+        owner_user_id="144339455824043200",
+        owner_name="张丽丽(Lily)",
+        target_conversation_id="cid-lily",
+        target_kind="direct",
+        question_text="海外数据合规 P0 当前状态是什么？",
+        status="sent",
+        sent_at="2026-06-27 02:45:30",
+    )
+    decision = TaskAgentDecision.model_validate(
+        {
+            "action": "update_project",
+            "discard_reason": "",
+            "project": {
+                "id": project_id,
+                "title": "海外数据合规与中美开发隔离闭环",
+                "category": "strategy",
+                "tags": [],
+                "status": "active",
+                "priority": "P0",
+                "risk_level": "high",
+                "needs_derek_attention": False,
+                "owner_user_id": "02412744671048909",
+                "owner_name": "Ming Hu(胡明)/运维",
+                "related_people": [],
+                "goal": "",
+                "background": "Lily反馈该P0事项由胡明和运维负责，不能继续追Lily。",
+                "memory_context": _memory_context(),
+                "facts": [
+                    {
+                        "description": "Lily反馈海外数据合规P0 owner应为胡明和运维。",
+                        "source": "reply_attempt:1992",
+                        "created": "2026-06-28 09:44:05",
+                        "updated": "2026-06-28 09:44:05",
+                    }
+                ],
+                "current_state": "",
+                "blocker": "",
+                "next_step": "后续如需确认进展，应问胡明或运维。",
+                "next_follow_up_at": "",
+                "follow_up_mode": "none",
+                "source_conversations": [],
+            },
+            "todo_changes": [
+                {
+                    "action": "update",
+                    "todo_id": todo_id,
+                    "todo_ref": "",
+                    "title": "确认海外数据合规 P0 当前状态与真实 owner 分工",
+                    "owner_user_id": "02412744671048909",
+                    "owner_name": "Ming Hu(胡明)",
+                    "status": "open",
+                    "priority": "P0",
+                    "deadline_at": "2026-06-28T23:00:00+08:00",
+                    "next_follow_up_at": "",
+                    "follow_up_question": "",
+                    "completion_evidence": None,
+                    "blocker": "",
+                }
+            ],
+            "follow_up_drafts": [],
+            "follow_up_changes": [
+                {
+                    "follow_up_id": follow_up_id,
+                    "todo_id": todo_id,
+                    "action": "suppress",
+                    "reason": "owner_corrected_by_reply",
+                    "evidence_check": {
+                        "source": "reply_attempt:1992",
+                        "summary": "Lily说明该事项由胡明和运维负责。",
+                    },
+                    "next_due_at": None,
+                    "owner_user_id": None,
+                    "owner_name": None,
+                }
+            ],
+            "update_summary": "停止追Lily并修正海外数据合规owner。",
+            "merge_reason": "follow-up reply corrected owner",
+            "memory_recall_used": True,
+            "confidence": 0.86,
+            "failure_risk": "继续追错owner会影响执行效率和用户体验。",
+            "failure_risk_score": 0.8,
+        }
+    )
+
+    apply_task_agent_decision(
+        store,
+        summary_input_id=1,
+        work_item=_work_item(project_name=""),
+        decision=decision,
+        memory_recall_attempted=True,
+    )
+
+    todo = store.get_work_todo(todo_id)
+    assert todo is not None
+    assert todo.status == "open"
+    assert todo.owner_name == "Ming Hu(胡明)"
+    assert todo.completion_evidence_json == "{}"
+    skipped = store.list_follow_up_drafts(statuses=("skipped",))[0]
+    assert skipped.id == follow_up_id
+    assert skipped.suppressed_reason == "owner_corrected_by_reply"
+    assert "reply_attempt:1992" in skipped.evidence_check_json
+    update = store.list_work_updates(project_id=project_id)[0]
+    assert "follow_up_changes" in update.changes_json
+
+
 def test_apply_decision_creates_dingtalk_todo_for_high_confidence_todo(
     tmp_path,
     monkeypatch,

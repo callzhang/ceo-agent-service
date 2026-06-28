@@ -8,6 +8,7 @@ from pydantic import ValidationError
 from app.store import AutoReplyStore, RecentFollowUpCandidate
 from app.codex_runner import memory_connector_config_issue
 from app.task_models import (
+    FollowUpDraftChange,
     FollowUpDraftDecision,
     TaskAgentDecision,
     TodoChange,
@@ -424,6 +425,10 @@ def apply_task_agent_decision(
                     draft.model_dump(mode="json")
                     for draft in decision.follow_up_drafts
                 ],
+                "follow_up_changes": [
+                    change.model_dump(mode="json")
+                    for change in decision.follow_up_changes
+                ],
             }
         ),
         merge_reason=decision.merge_reason,
@@ -463,6 +468,8 @@ def apply_task_agent_decision(
             draft=draft,
             todo_refs=todo_refs,
         )
+    for change in decision.follow_up_changes:
+        _apply_follow_up_change(store, change)
     if dws is not None:
         sync_now = sync_now or now or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         for todo_id in create_sync_todo_ids:
@@ -490,6 +497,9 @@ def _validate_task_agent_decision(
             raise ValueError("follow_up_draft.owner_user_id is required")
         if draft.todo_id is None and not draft.todo_ref.strip():
             raise ValueError("follow_up_draft requires todo_id or todo_ref")
+    for change in decision.follow_up_changes:
+        if change.follow_up_id <= 0:
+            raise ValueError("follow_up_change.follow_up_id is required")
     if decision.action == "discard":
         return
     if (
@@ -730,6 +740,45 @@ def _create_follow_up_draft(
         status=_enum_value(draft.status),
         scheduled_at=draft.scheduled_at,
     )
+
+
+def _apply_follow_up_change(
+    store: AutoReplyStore,
+    change: FollowUpDraftChange,
+) -> None:
+    evidence = {
+        "source": "task_agent",
+        "action": change.action,
+        "reason": change.reason,
+        "evidence": change.evidence_check,
+    }
+    values: dict[str, object] = {
+        "evidence_check_json": _json_dumps(evidence),
+    }
+    if change.todo_id is not None:
+        values["todo_id"] = change.todo_id
+
+    if change.action == "suppress":
+        values["status"] = "skipped"
+        values["suppressed_reason"] = change.reason or "task_agent_suppressed"
+    elif change.action == "close":
+        values["reaction_status"] = "completed"
+        values["reaction_summary"] = change.reason
+    elif change.action == "reschedule":
+        values["status"] = "draft"
+        if change.next_due_at and change.next_due_at.strip():
+            values["scheduled_at"] = change.next_due_at.strip()
+    elif change.action == "reassign":
+        if change.owner_user_id is not None:
+            values["owner_user_id"] = change.owner_user_id.strip()
+        if change.owner_name is not None:
+            values["owner_name"] = change.owner_name.strip()
+        values["reaction_status"] = "redirect_owner"
+        values["reaction_summary"] = change.reason
+    elif change.action == "keep_open":
+        values["reaction_summary"] = change.reason
+
+    store.update_follow_up_draft(change.follow_up_id, **values)
 
 
 def _resolve_follow_up_todo_id(
