@@ -62,6 +62,61 @@ def _work_item(project_name="售前知识库"):
     )
 
 
+def _follow_up_reply_work_item(
+    *,
+    source_ref: str,
+    summary: str,
+    conversation_id: str,
+    conversation_title: str,
+    sender: str,
+    sender_user_id: str,
+    created_at: str,
+    project_name: str = "",
+) -> WorkItem:
+    return WorkItem.model_validate(
+        {
+            "source": {
+                "type": "reply_attempt",
+                "ref": source_ref,
+                "title": sender,
+                "conversation_id": conversation_id,
+                "conversation_title": conversation_title,
+                "created_at": created_at,
+            },
+            "summary": summary,
+            "project_name": project_name,
+            "context": {
+                "sender": sender,
+                "sender_user_id": sender_user_id,
+                "participants": [sender],
+                "source_conversation_kind": "direct",
+                "source_conversation_title": conversation_title,
+            },
+            "task_signals": {
+                "possible_task_update": True,
+                "mentions_follow_up": True,
+                "signal_reason": "reply_attempt is near a recent follow-up candidate",
+            },
+        }
+    )
+
+
+def _enqueue_and_process_work_item(
+    store: AutoReplyStore,
+    *,
+    item: WorkItem,
+    codex: FakeCodex,
+) -> int:
+    input_id = store.enqueue_work_summary_input(
+        item.source.type.value,
+        item.source.ref,
+        item.model_dump_json(),
+    )
+    work_input = store.claim_work_summary_inputs(limit=1)[0]
+    process_work_item(store, TaskAgentRunner(codex), work_input)
+    return input_id
+
+
 def _memory_context():
     return {
         "query": "售前知识库",
@@ -244,6 +299,313 @@ def test_process_work_item_includes_recent_follow_up_candidates_in_prompt(tmp_pa
     assert f'"follow_up_id": {follow_up_id}' in prompt
     assert "海外数据合规 P0 当前状态是什么？" in prompt
     assert "张丽丽恢复海外数据合规项目当前状态与未完成清单" in prompt
+
+
+def test_process_work_item_accepts_lily_owner_correction_reply(tmp_path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    project_id = store.create_work_project(
+        title="海外数据合规与中美开发隔离闭环",
+        category="strategy",
+        status="active",
+        priority="P0",
+        risk_level="high",
+        owner_user_id="144339455824043200",
+        owner_name="张丽丽(Lily)",
+    )
+    todo_id = store.create_work_todo(
+        project_id=project_id,
+        title="张丽丽恢复海外数据合规项目当前状态与未完成清单",
+        owner_user_id="144339455824043200",
+        owner_name="张丽丽(Lily)",
+        status="open",
+        priority="P0",
+    )
+    follow_up_id = store.create_follow_up_draft(
+        project_id=project_id,
+        todo_id=todo_id,
+        owner_user_id="144339455824043200",
+        owner_name="张丽丽(Lily)",
+        target_conversation_id="cid-lily",
+        target_kind="direct",
+        question_text="海外数据合规 P0 当前状态是什么？",
+        status="sent",
+        sent_at="2026-06-28 09:00:00",
+    )
+    item = _follow_up_reply_work_item(
+        source_ref="1992",
+        summary="Lily反馈海外数据合规P0追错owner，应由胡明和运维负责。",
+        conversation_id="cid-lily",
+        conversation_title="Lily",
+        sender="Lily",
+        sender_user_id="144339455824043200",
+        created_at="2026-06-28 09:44:05",
+    )
+    codex = FakeCodex(
+        {
+            "action": "update_project",
+            "discard_reason": "",
+            "project": {
+                "id": project_id,
+                "title": "海外数据合规与中美开发隔离闭环",
+                "category": "strategy",
+                "tags": [],
+                "status": "active",
+                "priority": "P0",
+                "risk_level": "high",
+                "needs_derek_attention": False,
+                "owner_user_id": "02412744671048909",
+                "owner_name": "Ming Hu(胡明)/运维",
+                "related_people": [],
+                "goal": "完成海外数据合规和中美开发隔离闭环。",
+                "background": "Lily反馈该P0事项应由胡明和运维负责，不能继续追Lily。",
+                "memory_context": _memory_context(),
+                "facts": [
+                    {
+                        "description": "Lily反馈海外数据合规P0 owner应为胡明和运维。",
+                        "source": "reply_attempt:1992",
+                        "created": "2026-06-28 09:44:05",
+                        "updated": "2026-06-28 09:44:05",
+                    }
+                ],
+                "current_state": "已纠正owner归属，原Lily follow-up应停止。",
+                "blocker": "",
+                "next_step": "后续如需确认进展，应问胡明或运维。",
+                "next_follow_up_at": "",
+                "follow_up_mode": "none",
+                "source_conversations": [
+                    {"conversation_id": "cid-lily", "title": "Lily"}
+                ],
+            },
+            "todo_changes": [
+                {
+                    "action": "update",
+                    "todo_id": todo_id,
+                    "title": "确认海外数据合规 P0 当前状态与真实 owner 分工",
+                    "owner_user_id": "02412744671048909",
+                    "owner_name": "Ming Hu(胡明)",
+                    "status": "open",
+                    "priority": "P0",
+                    "completion_evidence": None,
+                }
+            ],
+            "follow_up_drafts": [],
+            "follow_up_changes": [
+                {
+                    "follow_up_id": follow_up_id,
+                    "todo_id": todo_id,
+                    "action": "suppress",
+                    "reason": "owner_corrected_by_reply",
+                    "evidence_check": {
+                        "source": "reply_attempt:1992",
+                        "summary": "Lily说明该事项由胡明和运维负责。",
+                    },
+                    "next_due_at": None,
+                    "owner_user_id": None,
+                    "owner_name": None,
+                }
+            ],
+            "update_summary": "停止追Lily并修正海外数据合规owner。",
+            "merge_reason": "follow-up reply corrected owner",
+            "memory_recall_used": True,
+            "confidence": 0.86,
+            "failure_risk": "继续追错owner会影响执行效率和用户体验。",
+            "failure_risk_score": 0.8,
+        }
+    )
+
+    input_id = _enqueue_and_process_work_item(store, item=item, codex=codex)
+
+    prompt = codex.prompts[0]
+    assert "近期 follow-up 候选" in prompt
+    assert f'"follow_up_id": {follow_up_id}' in prompt
+    project = store.get_work_project(project_id)
+    assert project is not None
+    assert project.owner_name == "Ming Hu(胡明)/运维"
+    todo = store.get_work_todo(todo_id)
+    assert todo is not None
+    assert todo.status == "open"
+    assert todo.owner_name == "Ming Hu(胡明)"
+    assert todo.completion_evidence_json == "{}"
+    skipped = store.get_follow_up_draft(follow_up_id)
+    assert skipped is not None
+    assert skipped.status == "skipped"
+    assert skipped.suppressed_reason == "owner_corrected_by_reply"
+    with sqlite3.connect(tmp_path / "task.sqlite3") as db:
+        input_row = db.execute(
+            "select status, error from work_summary_inputs where id=?",
+            (input_id,),
+        ).fetchone()
+    assert input_row == ("done", "")
+
+
+def test_process_work_item_accepts_clear_follow_up_completion_reply(tmp_path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    project_id = store.create_work_project(
+        title="客户验收交付",
+        category="projects",
+        status="active",
+        priority="P1",
+        risk_level="medium",
+    )
+    todo_id = store.create_work_todo(
+        project_id=project_id,
+        title="给客户同步验收 ETA",
+        owner_user_id="owner-1",
+        owner_name="Alex",
+        status="open",
+        priority="P1",
+    )
+    follow_up_id = store.create_follow_up_draft(
+        project_id=project_id,
+        todo_id=todo_id,
+        owner_user_id="owner-1",
+        owner_name="Alex",
+        target_conversation_id="cid-delivery",
+        target_kind="direct",
+        question_text="客户验收 ETA 同步了吗？",
+        status="sent",
+        sent_at="2026-06-28 09:30:00",
+    )
+    item = _follow_up_reply_work_item(
+        source_ref="2001",
+        summary="Alex回复客户验收 ETA 已经同步完成，并发到了客户群。",
+        conversation_id="cid-delivery",
+        conversation_title="Alex",
+        sender="Alex",
+        sender_user_id="owner-1",
+        created_at="2026-06-28 10:00:00",
+        project_name="客户验收交付",
+    )
+    codex = FakeCodex(
+        {
+            "action": "update_project",
+            "discard_reason": "",
+            "project": {
+                "id": project_id,
+                "title": "客户验收交付",
+                "category": "projects",
+                "status": "active",
+                "memory_context": _memory_context(),
+            },
+            "todo_changes": [
+                {
+                    "action": "close",
+                    "todo_id": todo_id,
+                    "title": "给客户同步验收 ETA",
+                    "status": "done",
+                    "completion_evidence": {
+                        "source": "reply_attempt:2001",
+                        "summary": "Alex明确回复客户验收 ETA 已同步完成。",
+                        "confidence": 0.95,
+                    },
+                }
+            ],
+            "follow_up_drafts": [],
+            "follow_up_changes": [],
+            "update_summary": "根据回复关闭客户验收 ETA TODO。",
+            "merge_reason": "reply explicitly completed the follow-up TODO",
+            "memory_recall_used": True,
+            "confidence": 0.95,
+            "failure_risk": "已完成事项不关闭会造成重复追问。",
+            "failure_risk_score": 0.4,
+        }
+    )
+
+    input_id = _enqueue_and_process_work_item(store, item=item, codex=codex)
+
+    assert f'"follow_up_id": {follow_up_id}' in codex.prompts[0]
+    todo = store.get_work_todo(todo_id)
+    assert todo is not None
+    assert todo.status == "done"
+    completion_evidence = json.loads(todo.completion_evidence_json)
+    assert completion_evidence["source"] == "reply_attempt:2001"
+    assert "已同步完成" in completion_evidence["summary"]
+    with sqlite3.connect(tmp_path / "task.sqlite3") as db:
+        input_row = db.execute(
+            "select status, error from work_summary_inputs where id=?",
+            (input_id,),
+        ).fetchone()
+    assert input_row == ("done", "")
+
+
+def test_process_work_item_discards_ambiguous_follow_up_reply_without_changes(
+    tmp_path,
+):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    project_id = store.create_work_project(
+        title="售前方案推进",
+        category="sales",
+        status="active",
+        priority="P2",
+        risk_level="low",
+    )
+    todo_id = store.create_work_todo(
+        project_id=project_id,
+        title="补齐售前方案材料",
+        owner_user_id="owner-2",
+        owner_name="Mina",
+        status="open",
+        priority="P2",
+    )
+    follow_up_id = store.create_follow_up_draft(
+        project_id=project_id,
+        todo_id=todo_id,
+        owner_user_id="owner-2",
+        owner_name="Mina",
+        target_conversation_id="cid-presales",
+        target_kind="direct",
+        question_text="售前方案材料补齐了吗？",
+        status="sent",
+        sent_at="2026-06-28 11:00:00",
+    )
+    item = _follow_up_reply_work_item(
+        source_ref="2002",
+        summary="Mina只回复已处理，但没有说明处理了什么，也没有完成证据。",
+        conversation_id="cid-presales",
+        conversation_title="Mina",
+        sender="Mina",
+        sender_user_id="owner-2",
+        created_at="2026-06-28 12:00:00",
+        project_name="售前方案推进",
+    )
+    codex = FakeCodex(
+        {
+            "action": "discard",
+            "discard_reason": "回复过于模糊，不能证明TODO完成或需要更新follow-up。",
+            "project": None,
+            "todo_changes": [],
+            "follow_up_drafts": [],
+            "follow_up_changes": [],
+            "update_summary": "模糊回复不更新任务。",
+            "merge_reason": "",
+            "memory_recall_used": False,
+            "confidence": 0.72,
+            "failure_risk": "如果误判为完成，会漏掉售前材料缺口。",
+            "failure_risk_score": 0.55,
+        }
+    )
+
+    input_id = _enqueue_and_process_work_item(store, item=item, codex=codex)
+
+    assert f'"follow_up_id": {follow_up_id}' in codex.prompts[0]
+    todo = store.get_work_todo(todo_id)
+    assert todo is not None
+    assert todo.status == "open"
+    assert todo.completion_evidence_json == "{}"
+    follow_up = store.get_follow_up_draft(follow_up_id)
+    assert follow_up is not None
+    assert follow_up.status == "sent"
+    assert follow_up.suppressed_reason == ""
+    assert store.list_work_updates(project_id=project_id) == []
+    with sqlite3.connect(tmp_path / "task.sqlite3") as db:
+        input_row = db.execute(
+            "select status, error from work_summary_inputs where id=?",
+            (input_id,),
+        ).fetchone()
+    assert input_row == (
+        "discarded",
+        "回复过于模糊，不能证明TODO完成或需要更新follow-up。",
+    )
 
 
 def test_process_work_item_creates_project_todo_update_and_run(tmp_path):
