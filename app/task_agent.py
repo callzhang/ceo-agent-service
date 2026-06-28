@@ -1,11 +1,11 @@
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Protocol
 
 from pydantic import ValidationError
 
-from app.store import AutoReplyStore
+from app.store import AutoReplyStore, RecentFollowUpCandidate
 from app.codex_runner import memory_connector_config_issue
 from app.task_models import (
     FollowUpDraftDecision,
@@ -22,6 +22,7 @@ TASK_AGENT_DECISION_SCHEMA_PATH = (
     Path(__file__).resolve().parent / "schemas" / "task_agent_decision.schema.json"
 )
 TASK_AGENT_AUDIT_EVENT_LIMIT = 200
+RECENT_FOLLOW_UP_CONTEXT_WINDOW = timedelta(days=7)
 
 
 class TaskCodex(Protocol):
@@ -166,6 +167,9 @@ def build_task_agent_prompt(
 - 每次必须评估 failure_risk 和 failure_risk_score：failure_risk 说明如果不跟进会发生什么；failure_risk_score 是 0 到 1 的失败风险，0 表示几乎无业务影响，1 表示会直接影响关键交付、收入、合规或管理决策。
 - BM25 候选项目只是初始线索，不是权威匹配结果。
 - 如果候选项目为空或你判断不匹配，可以使用 dws 或 memory_connector 恢复更多上下文；这是提示，不是硬性要求。
+- 近期 follow-up 候选只是上下文线索。你必须自己判断当前 Work Item 是否真的回应了某条 follow-up；不能因为候选存在就关闭 TODO 或 suppress follow-up。
+- 如果 Work Item 明确说明追错 owner、重复追问或不应继续跟进，可以通过 follow_up_changes 更新已有 follow_up_draft；不要生成新的 follow_up_draft 来继续追同一个错误 owner。
+- 只有当前消息和候选上下文共同明确证明 TODO 完成时，才把 todo_changes 写成 close 并提供 completion_evidence。
 - memory_connector 是外部辅助服务，不能成为 task agent 的运行依赖。
 - 如果 memory_connector 状态为可用，create_project 或 update_project 前必须直接调用 memory_recall MCP 工具查历史背景；不要传入或编造 user_id。
 - list_mcp_resources、list_mcp_resource_templates、memory_get、timeline_get 或本地搜索都不能替代 memory_recall；只有实际调用 memory_recall 并获得可用记忆结果后，memory_recall_used 才能为 true。
@@ -192,6 +196,7 @@ def build_task_agent_prompt(
 - todo_changes 的 close/cancel/update 必须引用 todo_id。
 - follow_up_drafts 的 owner_user_id 不能为空，且必须有 todo_id 或 todo_ref。
 - follow_up_drafts 不需要人工审批字段；可发送性由 scheduled_at、target_kind、target_conversation_id 和 owner_user_id 决定。
+- follow_up_changes 用于更新已有 follow_up_drafts；必须引用 follow_up_id，且只能在当前 Work Item 明确支持时使用。
 - memory_connector 可用时，非 discard 决策的 memory_recall_used 必须为 true，且 project.memory_context 不能为空。
 - memory_connector 不可用时，非 discard 决策的 memory_recall_used 必须为 false，且 project.memory_context 仍不能为空。
 
@@ -201,9 +206,79 @@ Memory connector 状态:
 Work Item JSON:
 {work_item_json}
 
-候选项目:
+候选上下文:
 {candidate_prompt}
 """
+
+
+def build_candidate_context_prompt(
+    *,
+    project_candidates: str,
+    follow_up_candidates: str,
+) -> str:
+    return (
+        "候选项目:\n"
+        f"{project_candidates}\n\n"
+        "近期 follow-up 候选:\n"
+        f"{follow_up_candidates}"
+    )
+
+
+def render_follow_up_candidate_prompt(
+    candidates: list[RecentFollowUpCandidate],
+) -> str:
+    payload = []
+    for candidate in candidates:
+        payload.append(
+            {
+                "id": candidate.follow_up_id,
+                "follow_up_id": candidate.follow_up_id,
+                "project_id": candidate.project_id,
+                "project_title": candidate.project_title,
+                "project_status": candidate.project_status,
+                "project_priority": candidate.project_priority,
+                "project_risk_level": candidate.project_risk_level,
+                "todo_id": candidate.todo_id,
+                "todo_title": candidate.todo_title,
+                "todo_status": candidate.todo_status,
+                "todo_priority": candidate.todo_priority,
+                "todo_deadline_at": candidate.todo_deadline_at,
+                "todo_next_follow_up_at": candidate.todo_next_follow_up_at,
+                "owner_user_id": candidate.owner_user_id,
+                "owner_name": candidate.owner_name,
+                "target_conversation_id": candidate.target_conversation_id,
+                "target_kind": candidate.target_kind,
+                "question_text": candidate.question_text,
+                "scheduled_at": candidate.scheduled_at,
+                "sent_at": candidate.sent_at,
+                "status": candidate.status,
+                "reaction_status": candidate.reaction_status,
+                "reaction_summary": candidate.reaction_summary,
+                "suppressed_reason": candidate.suppressed_reason,
+                "evidence_check_json": candidate.evidence_check_json,
+                "risk_check_json": candidate.risk_check_json,
+                "send_result_json": candidate.send_result_json,
+            }
+        )
+    return json.dumps(payload, ensure_ascii=False, indent=2)
+
+
+def _recent_follow_up_context_since(created_at: str) -> str:
+    created_at = created_at.strip()
+    if not created_at:
+        return ""
+    for parser in (
+        lambda text: datetime.fromisoformat(text.replace("Z", "+00:00")),
+        lambda text: datetime.strptime(text, "%Y-%m-%d %H:%M:%S"),
+    ):
+        try:
+            parsed = parser(created_at)
+            return (parsed - RECENT_FOLLOW_UP_CONTEXT_WINDOW).strftime(
+                "%Y-%m-%d %H:%M:%S"
+            )
+        except ValueError:
+            continue
+    return ""
 
 
 def _memory_connector_prompt_status(memory_issue: str) -> str:
@@ -233,9 +308,21 @@ def process_work_item(
             summary=work_item.summary,
             project_name=work_item.project_name,
         )
+        follow_up_candidates = store.list_recent_follow_up_candidates(
+            conversation_id=work_item.source.conversation_id,
+            owner_user_id=work_item.context.sender_user_id,
+            since=_recent_follow_up_context_since(work_item.source.created_at),
+            limit=10,
+        )
+        candidate_prompt = build_candidate_context_prompt(
+            project_candidates=render_candidate_prompt(candidates),
+            follow_up_candidates=render_follow_up_candidate_prompt(
+                follow_up_candidates
+            ),
+        )
         decision = runner.decide(
             work_item,
-            render_candidate_prompt(candidates),
+            candidate_prompt,
             memory_issue=memory_issue,
         )
         codex_session_id = getattr(runner.codex, "last_session_id", None) or ""

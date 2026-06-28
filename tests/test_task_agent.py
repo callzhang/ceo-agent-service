@@ -116,6 +116,93 @@ def test_work_item_accepts_task_routing_signals():
     assert "追错owner" in item.task_signals.signal_reason
 
 
+def test_process_work_item_includes_recent_follow_up_candidates_in_prompt(tmp_path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    project_id = store.create_work_project(
+        title="海外数据合规与中美开发隔离闭环",
+        category="strategy",
+        status="active",
+        priority="P0",
+        risk_level="high",
+    )
+    todo_id = store.create_work_todo(
+        project_id=project_id,
+        title="张丽丽恢复海外数据合规项目当前状态与未完成清单",
+        owner_user_id="144339455824043200",
+        owner_name="张丽丽(Lily)",
+        status="open",
+        priority="P0",
+    )
+    follow_up_id = store.create_follow_up_draft(
+        project_id=project_id,
+        todo_id=todo_id,
+        owner_user_id="144339455824043200",
+        owner_name="张丽丽(Lily)",
+        target_conversation_id="cid-lily",
+        target_kind="direct",
+        question_text="海外数据合规 P0 当前状态是什么？",
+        status="sent",
+        sent_at="2026-06-28 09:00:00",
+    )
+    item = WorkItem.model_validate(
+        {
+            "source": {
+                "type": "reply_attempt",
+                "ref": "1992",
+                "title": "Lily",
+                "conversation_id": "cid-lily",
+                "conversation_title": "Lily",
+                "created_at": "2026-06-28 09:44:05",
+            },
+            "summary": "Lily反馈海外数据合规P0追错owner，这个是胡明和运维负责。",
+            "project_name": "",
+            "context": {
+                "sender": "Lily",
+                "sender_user_id": "144339455824043200",
+                "participants": ["Lily"],
+                "source_conversation_kind": "direct",
+                "source_conversation_title": "Lily",
+            },
+            "task_signals": {
+                "possible_task_update": True,
+                "mentions_follow_up": True,
+                "signal_reason": "recent follow-up candidate exists",
+            },
+        }
+    )
+    store.enqueue_work_summary_input(
+        item.source.type.value,
+        item.source.ref,
+        item.model_dump_json(),
+    )
+    work_input = store.claim_work_summary_inputs(limit=1)[0]
+    codex = FakeCodex(
+        {
+            "action": "discard",
+            "discard_reason": "prompt inspection only",
+            "project": None,
+            "todo_changes": [],
+            "follow_up_drafts": [],
+            "follow_up_changes": [],
+            "update_summary": "不更新。",
+            "merge_reason": "",
+            "memory_recall_used": False,
+            "confidence": 0.5,
+            "failure_risk": "测试prompt。",
+            "failure_risk_score": 0.1,
+        }
+    )
+
+    process_work_item(store, TaskAgentRunner(codex), work_input)
+
+    prompt = codex.prompts[0]
+    assert "近期 follow-up 候选" in prompt
+    assert f'"id": {follow_up_id}' in prompt
+    assert f'"follow_up_id": {follow_up_id}' in prompt
+    assert "海外数据合规 P0 当前状态是什么？" in prompt
+    assert "张丽丽恢复海外数据合规项目当前状态与未完成清单" in prompt
+
+
 def test_process_work_item_creates_project_todo_update_and_run(tmp_path):
     store = AutoReplyStore(tmp_path / "task.sqlite3")
     item = _work_item()
