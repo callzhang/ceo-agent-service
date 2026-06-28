@@ -110,11 +110,21 @@ class WorkItemContext(BaseModel):
     source_conversation_title: str = ""
 
 
+class WorkItemTaskSignals(BaseModel):
+    possible_task_update: bool = False
+    mentions_follow_up: bool = False
+    progress_claim: bool = False
+    owner_correction: bool = False
+    complaint_about_followup: bool = False
+    signal_reason: str = ""
+
+
 class WorkItem(BaseModel):
     source: WorkItemSource
     summary: str
     project_name: str = ""
     context: WorkItemContext
+    task_signals: WorkItemTaskSignals = Field(default_factory=WorkItemTaskSignals)
 
 
 class ProjectFact(BaseModel):
@@ -191,12 +201,23 @@ class FollowUpDraftDecision(BaseModel):
     status: FollowUpDraftStatus = FollowUpDraftStatus.DRAFT
 
 
+class FollowUpDraftChange(BaseModel):
+    follow_up_id: int
+    status: FollowUpDraftStatus = FollowUpDraftStatus.SKIPPED
+    suppressed_reason: str = ""
+    reaction_status: str = ""
+    reaction_summary: str = ""
+    evidence_check: dict[str, Any] = Field(default_factory=dict)
+    scheduled_at: str = ""
+
+
 class TaskAgentDecision(BaseModel):
     action: Literal["discard", "create_project", "update_project"]
     discard_reason: str = ""
     project: TaskProjectPatch | None = None
     todo_changes: list[TodoChange] = Field(default_factory=list)
     follow_up_drafts: list[FollowUpDraftDecision] = Field(default_factory=list)
+    follow_up_changes: list[FollowUpDraftChange] = Field(default_factory=list)
     update_summary: str = ""
     merge_reason: str = ""
     memory_recall_used: bool = False

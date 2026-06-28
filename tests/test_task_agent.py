@@ -78,6 +78,42 @@ def _memory_context():
     }
 
 
+def test_work_item_accepts_task_routing_signals():
+    item = WorkItem.model_validate(
+        {
+            "source": {
+                "type": "reply_attempt",
+                "ref": "1992",
+                "title": "Lily",
+                "conversation_id": "cid-lily",
+                "conversation_title": "Lily",
+                "created_at": "2026-06-28 09:44:05",
+            },
+            "summary": "Lily反馈海外数据合规P0追错owner。",
+            "project_name": "",
+            "context": {
+                "sender": "Lily",
+                "participants": ["Lily"],
+                "source_conversation_kind": "direct",
+                "source_conversation_title": "Lily",
+            },
+            "task_signals": {
+                "possible_task_update": True,
+                "mentions_follow_up": True,
+                "progress_claim": False,
+                "owner_correction": True,
+                "complaint_about_followup": True,
+                "signal_reason": "同一会话里有近期已发送follow-up，且用户反馈追错owner。",
+            },
+        }
+    )
+
+    assert item.task_signals.possible_task_update is True
+    assert item.task_signals.owner_correction is True
+    assert item.task_signals.complaint_about_followup is True
+    assert "追错owner" in item.task_signals.signal_reason
+
+
 def test_process_work_item_creates_project_todo_update_and_run(tmp_path):
     store = AutoReplyStore(tmp_path / "task.sqlite3")
     item = _work_item()
@@ -135,6 +171,7 @@ def test_process_work_item_creates_project_todo_update_and_run(tmp_path):
                 }
             ],
             "follow_up_drafts": [],
+            "follow_up_changes": [],
             "update_summary": "创建售前知识库项目。",
             "merge_reason": "无现有项目匹配，且事项名称稳定。",
             "memory_recall_used": True,
@@ -206,6 +243,7 @@ def test_apply_decision_closes_todo_with_completion_evidence(tmp_path):
                 }
             ],
             "follow_up_drafts": [],
+            "follow_up_changes": [],
             "update_summary": "关闭 ETA 待办。",
             "merge_reason": "同一客户交付项目。",
             "memory_recall_used": True,
@@ -264,6 +302,7 @@ def test_apply_decision_creates_dingtalk_todo_for_high_confidence_todo(
                 }
             ],
             "follow_up_drafts": [],
+            "follow_up_changes": [],
             "update_summary": "新增交付 ETA task item。",
             "merge_reason": "新项目。",
             "memory_recall_used": True,
@@ -333,6 +372,7 @@ def test_apply_decision_creates_dingtalk_todo_for_updated_todo(
                 }
             ],
             "follow_up_drafts": [],
+            "follow_up_changes": [],
             "update_summary": "更新交付 ETA task item。",
             "merge_reason": "同一客户交付项目。",
             "memory_recall_used": True,
@@ -403,6 +443,7 @@ def test_apply_decision_does_not_create_dingtalk_todo_for_closed_todo(
                 }
             ],
             "follow_up_drafts": [],
+            "follow_up_changes": [],
             "update_summary": "关闭 ETA 待办。",
             "merge_reason": "同一客户交付项目。",
             "memory_recall_used": True,
@@ -466,6 +507,7 @@ def test_apply_decision_pushes_completed_todo_to_dingtalk(tmp_path, monkeypatch)
                 }
             ],
             "follow_up_drafts": [],
+            "follow_up_changes": [],
             "update_summary": "关闭 task item。",
             "merge_reason": "明确完成。",
             "memory_recall_used": True,
@@ -548,6 +590,7 @@ def test_apply_decision_does_not_push_completed_todo_without_evidence_or_dws(
                     {"action": "close", "todo_id": todo_without_evidence_id}
                 ],
                 "follow_up_drafts": [],
+                "follow_up_changes": [],
                 "update_summary": "关闭无 evidence 的 task item。",
                 "merge_reason": "明确完成。",
                 "memory_recall_used": True,
@@ -573,6 +616,7 @@ def test_apply_decision_does_not_push_completed_todo_without_evidence_or_dws(
                     }
                 ],
                 "follow_up_drafts": [],
+                "follow_up_changes": [],
                 "update_summary": "关闭空 evidence 的 task item。",
                 "merge_reason": "明确完成。",
                 "memory_recall_used": True,
@@ -601,6 +645,7 @@ def test_apply_decision_does_not_push_completed_todo_without_evidence_or_dws(
                     }
                 ],
                 "follow_up_drafts": [],
+                "follow_up_changes": [],
                 "update_summary": "关闭无 dws 的 task item。",
                 "merge_reason": "明确完成。",
                 "memory_recall_used": True,
@@ -629,6 +674,7 @@ def test_discard_decision_records_run_and_marks_input_discarded(tmp_path):
             "discard_reason": "不是稳定任务。",
             "todo_changes": [],
             "follow_up_drafts": [],
+            "follow_up_changes": [],
             "update_summary": "丢弃输入。",
             "merge_reason": "",
             "memory_recall_used": False,
@@ -688,6 +734,7 @@ def test_follow_up_drafts_are_created_with_risk_check(tmp_path):
                     "status": "draft",
                 }
             ],
+            "follow_up_changes": [],
             "update_summary": "需要追问项目边界。",
             "merge_reason": "",
             "memory_recall_used": True,
@@ -738,6 +785,7 @@ def test_follow_up_draft_requires_todo_binding(tmp_path):
                     "status": "draft",
                 }
             ],
+            "follow_up_changes": [],
             "update_summary": "需要追问项目边界。",
             "merge_reason": "",
             "memory_recall_used": True,
@@ -789,6 +837,7 @@ def test_follow_up_draft_rejects_todo_from_another_project(tmp_path):
                     "status": "draft",
                 }
             ],
+            "follow_up_changes": [],
             "update_summary": "需要追问项目边界。",
             "merge_reason": "",
             "memory_recall_used": True,
@@ -829,6 +878,7 @@ def test_follow_up_draft_requires_owner_user_id_at_generation(tmp_path):
                     "status": "draft",
                 }
             ],
+            "follow_up_changes": [],
             "update_summary": "生成跟进草稿。",
             "merge_reason": "",
             "memory_recall_used": True,
@@ -860,6 +910,7 @@ def test_non_discard_decision_requires_memory_recall_used(tmp_path):
             },
             "todo_changes": [],
             "follow_up_drafts": [],
+            "follow_up_changes": [],
             "update_summary": "创建项目。",
             "merge_reason": "事项需要持续跟进。",
             "memory_recall_used": False,
@@ -888,6 +939,7 @@ def test_non_discard_decision_requires_memory_context(tmp_path):
             },
             "todo_changes": [],
             "follow_up_drafts": [],
+            "follow_up_changes": [],
             "update_summary": "创建项目。",
             "merge_reason": "事项需要持续跟进。",
             "memory_recall_used": True,
@@ -928,6 +980,7 @@ def test_process_work_item_requires_actual_memory_recall_tool_event(
             },
             "todo_changes": [],
             "follow_up_drafts": [],
+            "follow_up_changes": [],
             "update_summary": "创建项目。",
             "merge_reason": "事项需要持续跟进。",
             "memory_recall_used": True,
@@ -990,6 +1043,7 @@ def test_process_work_item_allows_memory_recall_runtime_failure_with_tool_event(
             },
             "todo_changes": [],
             "follow_up_drafts": [],
+            "follow_up_changes": [],
             "update_summary": "创建项目。",
             "merge_reason": "事项需要持续跟进。",
             "memory_recall_used": False,
@@ -1063,6 +1117,7 @@ def test_process_work_item_allows_memory_tool_discovery_unavailable_evidence(
             },
             "todo_changes": [],
             "follow_up_drafts": [],
+            "follow_up_changes": [],
             "update_summary": "创建项目。",
             "merge_reason": "事项需要持续跟进。",
             "memory_recall_used": False,
@@ -1120,6 +1175,7 @@ def test_process_work_item_continues_when_memory_connector_unavailable(
             },
             "todo_changes": [],
             "follow_up_drafts": [],
+            "follow_up_changes": [],
             "update_summary": "创建项目。",
             "merge_reason": "事项需要持续跟进。",
             "memory_recall_used": False,
@@ -1157,6 +1213,7 @@ def test_task_agent_codex_runner_keeps_user_config_for_memory_recall(tmp_path):
                 "discard_reason": "输入不足以形成稳定项目。",
                 "todo_changes": [],
                 "follow_up_drafts": [],
+                "follow_up_changes": [],
                 "update_summary": "跳过。",
                 "failure_risk": "无持续跟进风险。",
                 "failure_risk_score": 0,
@@ -1210,6 +1267,7 @@ def test_update_project_without_id_raises_value_error(tmp_path):
             },
             "todo_changes": [],
             "follow_up_drafts": [],
+            "follow_up_changes": [],
             "update_summary": "更新客户交付。",
             "merge_reason": "",
             "memory_recall_used": True,
@@ -1245,6 +1303,7 @@ def test_process_work_item_failure_does_not_create_partial_project(tmp_path):
             },
             "todo_changes": [{"action": "close", "title": "补齐来源链接"}],
             "follow_up_drafts": [],
+            "follow_up_changes": [],
             "update_summary": "坏的待办更新。",
             "merge_reason": "",
             "memory_recall_used": True,
@@ -1301,6 +1360,7 @@ def test_sparse_todo_update_preserves_existing_status_and_priority(tmp_path):
                 }
             ],
             "follow_up_drafts": [],
+            "follow_up_changes": [],
             "update_summary": "补充阻塞原因。",
             "merge_reason": "同一客户交付项目。",
             "memory_recall_used": True,
@@ -1343,6 +1403,7 @@ def test_discard_with_malformed_todo_change_marks_failed(tmp_path):
             "discard_reason": "不是稳定任务。",
             "todo_changes": [{"action": "close", "title": "补齐来源链接"}],
             "follow_up_drafts": [],
+            "follow_up_changes": [],
             "update_summary": "丢弃输入。",
             "merge_reason": "",
             "memory_recall_used": False,
@@ -1376,6 +1437,7 @@ def test_process_work_item_accepts_none_session_id(tmp_path):
             "discard_reason": "一次性对话。",
             "todo_changes": [],
             "follow_up_drafts": [],
+            "follow_up_changes": [],
             "update_summary": "丢弃。",
             "merge_reason": "",
             "memory_recall_used": False,
@@ -1403,6 +1465,7 @@ def test_task_agent_codex_runner_parses_jsonl_payload(tmp_path):
             '\\"discard_reason\\":\\"没有状态变化\\",'
             '\\"todo_changes\\":[],'
             '\\"follow_up_drafts\\":[],'
+            '\\"follow_up_changes\\":[],'
             '\\"update_summary\\":\\"无变化\\",'
             '\\"merge_reason\\":\\"\\",'
             '\\"memory_recall_used\\":false,'
@@ -1440,6 +1503,7 @@ def test_task_agent_codex_runner_parses_response_item_output_text(tmp_path):
                                             "project": None,
                                             "todo_changes": [],
                                             "follow_up_drafts": [],
+                                            "follow_up_changes": [],
                                             "update_summary": "无新增事项",
                                             "merge_reason": "",
                                             "memory_recall_used": False,
@@ -1482,6 +1546,87 @@ def test_task_agent_schema_uses_strict_object_shapes():
     visit(schema)
 
 
+def test_task_agent_decision_supports_follow_up_changes():
+    decision = TaskAgentDecision.model_validate(
+        {
+            "action": "update_project",
+            "discard_reason": "",
+            "project": {
+                "id": 372,
+                "title": "海外数据合规与中美开发隔离闭环",
+                "category": "strategy",
+                "tags": [],
+                "status": "active",
+                "priority": "P0",
+                "risk_level": "high",
+                "needs_derek_attention": False,
+                "owner_user_id": "02412744671048909",
+                "owner_name": "Ming Hu(胡明)/运维",
+                "related_people": [],
+                "goal": "",
+                "background": "Lily反馈该P0事项应由胡明和运维负责。",
+                "memory_context": _memory_context(),
+                "facts": [],
+                "current_state": "",
+                "blocker": "",
+                "next_step": "",
+                "next_follow_up_at": "",
+                "follow_up_mode": "none",
+                "source_conversations": [],
+            },
+            "todo_changes": [],
+            "follow_up_drafts": [],
+            "follow_up_changes": [
+                {
+                    "follow_up_id": 1566,
+                    "status": "skipped",
+                    "suppressed_reason": "owner_corrected_by_reply",
+                    "reaction_status": "",
+                    "reaction_summary": "",
+                    "evidence_check": {
+                        "source": "reply_attempt:1992",
+                        "summary": "Lily说明该事项由胡明和运维负责。",
+                    },
+                    "scheduled_at": "",
+                }
+            ],
+            "update_summary": "停止追Lily并修正owner口径。",
+            "merge_reason": "follow-up reply corrected owner",
+            "memory_recall_used": True,
+            "confidence": 0.86,
+            "failure_risk": "继续追错owner会降低执行效率并造成被追问人的焦虑。",
+            "failure_risk_score": 0.8,
+        }
+    )
+
+    assert decision.follow_up_changes[0].follow_up_id == 1566
+    assert decision.follow_up_changes[0].status == "skipped"
+    assert decision.follow_up_changes[0].suppressed_reason == "owner_corrected_by_reply"
+
+
+def test_task_agent_schema_includes_follow_up_changes():
+    from app.task_agent import TASK_AGENT_DECISION_SCHEMA_PATH
+
+    schema = json.loads(TASK_AGENT_DECISION_SCHEMA_PATH.read_text(encoding="utf-8"))
+
+    assert "follow_up_changes" in schema["required"]
+    assert schema["properties"]["follow_up_changes"] == {
+        "type": "array",
+        "items": {"$ref": "#/$defs/follow_up_change"},
+    }
+    change_schema = schema["$defs"]["follow_up_change"]
+    assert set(change_schema["required"]) == set(change_schema["properties"])
+    assert change_schema["properties"]["follow_up_id"]["type"] == "integer"
+    assert change_schema["properties"]["status"]["enum"] == [
+        "draft",
+        "approved",
+        "sent",
+        "skipped",
+        "failed",
+        "cancelled",
+    ]
+
+
 def test_task_agent_decision_exposes_task_worthiness_risk_fields():
     from app.task_agent import TASK_AGENT_DECISION_SCHEMA_PATH
 
@@ -1492,6 +1637,7 @@ def test_task_agent_decision_exposes_task_worthiness_risk_fields():
             "project": None,
             "todo_changes": [],
             "follow_up_drafts": [],
+            "follow_up_changes": [],
             "update_summary": "不创建 task。",
             "merge_reason": "",
             "memory_recall_used": False,
@@ -1577,6 +1723,7 @@ def test_task_agent_codex_runner_uses_process_runner_signature(tmp_path):
                     "discard_reason": "没有状态变化",
                     "todo_changes": [],
                     "follow_up_drafts": [],
+                    "follow_up_changes": [],
                     "update_summary": "无变化",
                     "merge_reason": "",
                     "memory_recall_used": False,
@@ -1631,6 +1778,7 @@ def test_task_agent_codex_runner_reads_audit_events_from_session(tmp_path):
                     },
                     "todo_changes": [],
                     "follow_up_drafts": [],
+                    "follow_up_changes": [],
                     "update_summary": "记录候选人跟进。",
                     "merge_reason": "",
                     "memory_recall_used": True,

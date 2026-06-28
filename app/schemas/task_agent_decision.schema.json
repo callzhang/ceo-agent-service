@@ -9,6 +9,7 @@
     "project",
     "todo_changes",
     "follow_up_drafts",
+    "follow_up_changes",
     "update_summary",
     "merge_reason",
     "memory_recall_used",
@@ -44,6 +45,12 @@
       "type": "array",
       "items": {
         "$ref": "#/$defs/follow_up_draft"
+      }
+    },
+    "follow_up_changes": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/follow_up_change"
       }
     },
     "update_summary": {
@@ -421,6 +428,53 @@
         "status": {
           "type": "string",
           "enum": ["draft", "approved", "sent", "skipped", "failed", "cancelled"]
+        }
+      }
+    },
+    "follow_up_change": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "follow_up_id",
+        "status",
+        "suppressed_reason",
+        "reaction_status",
+        "reaction_summary",
+        "evidence_check",
+        "scheduled_at"
+      ],
+      "properties": {
+        "follow_up_id": {
+          "type": "integer"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["draft", "approved", "sent", "skipped", "failed", "cancelled"]
+        },
+        "suppressed_reason": {
+          "type": "string"
+        },
+        "reaction_status": {
+          "type": "string"
+        },
+        "reaction_summary": {
+          "type": "string"
+        },
+        "evidence_check": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["source", "summary"],
+          "properties": {
+            "source": {
+              "type": "string"
+            },
+            "summary": {
+              "type": "string"
+            }
+          }
+        },
+        "scheduled_at": {
+          "type": "string"
         }
       }
     }
