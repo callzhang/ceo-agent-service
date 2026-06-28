@@ -11,7 +11,6 @@ from pydantic import BaseModel, Field
 from app.task_models import (
     DingTalkTodoLinkStatus,
     FollowUpDraft,
-    TaskAgentRun,
     WorkProject,
     WorkSummaryInput,
     WorkTodo,
@@ -1102,7 +1101,9 @@ class AutoReplyStore:
                 (available_at, error, task_id),
             )
 
-    def defer_reply_task(self, task_id: int, error: str) -> None:
+    def defer_reply_task(
+        self, task_id: int, error: str, *, available_at: str = ""
+    ) -> None:
         with self._connect() as db:
             db.execute(
                 """
@@ -1110,16 +1111,18 @@ class AutoReplyStore:
                 set status='pending',
                     attempts=max(attempts - 1, 0),
                     locked_at=null,
-                    available_at='',
+                    available_at=?,
                     error=?,
                     updated_at=current_timestamp
                 where id=?
                 """,
-                (error, task_id),
+                (available_at, error, task_id),
             )
 
-    def defer_reply_task_for_authorization(self, task_id: int, error: str) -> None:
-        self.defer_reply_task(task_id, error)
+    def defer_reply_task_for_authorization(
+        self, task_id: int, error: str, *, available_at: str = ""
+    ) -> None:
+        self.defer_reply_task(task_id, error, available_at=available_at)
 
     def count_reply_tasks(self, status: str | None = None) -> int:
         with self._connect() as db:

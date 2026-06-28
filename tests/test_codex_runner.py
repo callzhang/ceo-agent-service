@@ -23,10 +23,6 @@ def _isolate_memory_connector_env(tmp_path: Path, monkeypatch):
     monkeypatch.delenv("CEO_CODEX_MODEL", raising=False)
     monkeypatch.delenv("CEO_CODEX_MODEL_PROVIDER", raising=False)
     monkeypatch.delenv("CEO_CODEX_PROFILE", raising=False)
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    monkeypatch.delenv("OPENAI_OFFICIAL_API_KEY", raising=False)
-    monkeypatch.delenv("MINIMAX_API_KEY", raising=False)
-    monkeypatch.delenv("API_TIMEOUT_MS", raising=False)
 
 
 def _developer_instructions_arg(command: list[str]) -> str:
@@ -195,31 +191,7 @@ def test_codex_runner_env_loads_memory_connector_from_codex_config(
     assert "secret-token" not in command
 
 
-def test_codex_runner_env_loads_shell_environment_policy_set(
-    tmp_path: Path, monkeypatch
-):
-    codex_home = tmp_path / ".codex"
-    codex_home.mkdir()
-    (codex_home / "config.toml").write_text(
-        "\n".join(
-            [
-                "[shell_environment_policy.set]",
-                'MINIMAX_API_KEY = "minimax-secret"',
-                "API_TIMEOUT_MS = 300000",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    monkeypatch.setenv("CODEX_HOME", str(codex_home))
-    runner = CodexRunner(workspace=tmp_path, codex_bin="codex")
-
-    env = runner.build_env()
-
-    assert env["MINIMAX_API_KEY"] == "minimax-secret"
-    assert env["API_TIMEOUT_MS"] == "300000"
-
-
-def test_codex_command_uses_configured_fallback_profile_without_openai_auth(
+def test_codex_command_does_not_auto_fallback_to_configured_profile(
     tmp_path: Path, monkeypatch
 ):
     codex_home = tmp_path / ".codex"
@@ -237,51 +209,45 @@ def test_codex_command_uses_configured_fallback_profile_without_openai_auth(
                 'env_key = "MINIMAX_API_KEY"',
                 'wire_api = "responses"',
                 "requires_openai_auth = false",
-                "",
-                "[shell_environment_policy.set]",
-                'MINIMAX_API_KEY = "minimax-secret"',
             ]
         ),
         encoding="utf-8",
     )
     monkeypatch.setenv("CODEX_HOME", str(codex_home))
-    runner = CodexRunner(workspace=tmp_path, codex_bin="codex")
-
-    env = runner.build_env()
-    command = runner.build_command(prompt="hello", session_id=None)
-
-    assert env["MINIMAX_API_KEY"] == "minimax-secret"
-    assert command[command.index("-m") + 1] == "codex-MiniMax-M2.7"
-    assert 'model_provider="minimax"' in command
-    assert "gpt-5.5" not in command
-    assert "minimax-secret" not in command
-
-
-def test_codex_command_keeps_default_model_when_openai_auth_exists(
-    tmp_path: Path, monkeypatch
-):
-    codex_home = tmp_path / ".codex"
-    codex_home.mkdir()
-    (codex_home / "config.toml").write_text(
-        "\n".join(
-            [
-                "[profiles.m27]",
-                'model = "codex-MiniMax-M2.7"',
-                'model_provider = "minimax"',
-            ]
-        ),
-        encoding="utf-8",
-    )
-    monkeypatch.setenv("CODEX_HOME", str(codex_home))
-    monkeypatch.setenv("OPENAI_API_KEY", "openai-secret")
     runner = CodexRunner(workspace=tmp_path, codex_bin="codex")
 
     command = runner.build_command(prompt="hello", session_id=None)
 
     assert command[command.index("-m") + 1] == "gpt-5.5"
+    assert 'model_provider="minimax"' not in command
 
 
-def test_codex_command_ignore_user_config_includes_provider_config(
+def test_codex_command_uses_profile_only_when_explicitly_requested(
+    tmp_path: Path, monkeypatch
+):
+    codex_home = tmp_path / ".codex"
+    codex_home.mkdir()
+    (codex_home / "config.toml").write_text(
+        "\n".join(
+            [
+                "[profiles.m27]",
+                'model = "codex-MiniMax-M2.7"',
+                'model_provider = "minimax"',
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+    monkeypatch.setenv("CEO_CODEX_PROFILE", "m27")
+    runner = CodexRunner(workspace=tmp_path, codex_bin="codex")
+
+    command = runner.build_command(prompt="hello", session_id=None)
+
+    assert command[command.index("-m") + 1] == "codex-MiniMax-M2.7"
+    assert 'model_provider="minimax"' in command
+
+
+def test_codex_command_explicit_profile_with_ignore_user_config_includes_provider_config(
     tmp_path: Path, monkeypatch
 ):
     codex_home = tmp_path / ".codex"
@@ -304,6 +270,7 @@ def test_codex_command_ignore_user_config_includes_provider_config(
         encoding="utf-8",
     )
     monkeypatch.setenv("CODEX_HOME", str(codex_home))
+    monkeypatch.setenv("CEO_CODEX_PROFILE", "m27")
     runner = CodexRunner(workspace=tmp_path, codex_bin="codex")
 
     command = runner.build_command(

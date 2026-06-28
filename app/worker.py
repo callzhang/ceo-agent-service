@@ -1376,7 +1376,11 @@ class DingTalkAutoReplyWorker:
             except Exception as exc:
                 error = str(exc)
                 if self._is_authorization_error(exc):
-                    self.store.defer_reply_task_for_authorization(task.id, error)
+                    self.store.defer_reply_task_for_authorization(
+                        task.id,
+                        error,
+                        available_at=self._reply_task_authorization_available_at(),
+                    )
                     self.store.record_error(
                         task.conversation_id,
                         task.trigger_message_id,
@@ -1433,6 +1437,12 @@ class DingTalkAutoReplyWorker:
         )
         return self._sqlite_timestamp(
             self._now().astimezone(timezone.utc) + timedelta(seconds=delay_seconds)
+        )
+
+    def _reply_task_authorization_available_at(self) -> str:
+        return self._sqlite_timestamp(
+            self._now().astimezone(timezone.utc)
+            + timedelta(seconds=REPLY_TASK_RETRY_MAX_DELAY_SECONDS)
         )
 
     def _complete_superseded_reply_tasks(

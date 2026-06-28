@@ -54,11 +54,6 @@ CODEX_DEFAULT_MODEL = "gpt-5.5"
 CODEX_MODEL_ENV = "CEO_CODEX_MODEL"
 CODEX_MODEL_PROVIDER_ENV = "CEO_CODEX_MODEL_PROVIDER"
 CODEX_PROFILE_ENV = "CEO_CODEX_PROFILE"
-CODEX_FALLBACK_PROFILE = "m27"
-OPENAI_AUTH_ENV_KEYS = {
-    "OPENAI_API_KEY",
-    "OPENAI_OFFICIAL_API_KEY",
-}
 
 
 def codex_developer_instructions() -> str:
@@ -86,24 +81,6 @@ def _codex_config() -> dict:
     except tomllib.TOMLDecodeError:
         return {}
     return payload if isinstance(payload, dict) else {}
-
-
-def _codex_shell_environment_set_env() -> dict[str, str]:
-    shell_policy = _codex_config().get("shell_environment_policy") or {}
-    if not isinstance(shell_policy, dict):
-        return {}
-    configured = shell_policy.get("set") or {}
-    if not isinstance(configured, dict):
-        return {}
-    env: dict[str, str] = {}
-    for key, value in configured.items():
-        if not isinstance(key, str) or not key:
-            continue
-        if isinstance(value, str):
-            env[key] = value
-        elif isinstance(value, int | float | bool):
-            env[key] = str(value).lower() if isinstance(value, bool) else str(value)
-    return env
 
 
 def _parse_export_env_file(path: Path) -> dict[str, str]:
@@ -137,11 +114,6 @@ def _memory_connector_env() -> dict[str, str]:
     if token and _jwt_token_is_expired(token):
         env.pop(MEMORY_CONNECTOR_API_KEY_ENV, None)
     return env
-
-
-def _has_openai_auth() -> bool:
-    env = {**_codex_shell_environment_set_env(), **os.environ}
-    return any(env.get(key) for key in OPENAI_AUTH_ENV_KEYS)
 
 
 def _model_provider_config_options(config: dict, provider_name: str) -> list[str]:
@@ -205,14 +177,6 @@ def codex_model_config_options(*, ignore_user_config: bool = False) -> list[str]
             if ignore_user_config:
                 options.extend(_model_provider_config_options(_codex_config(), provider))
         return options
-
-    if not _has_openai_auth():
-        profile_options = _profile_model_options(
-            CODEX_FALLBACK_PROFILE,
-            include_provider_config=ignore_user_config,
-        )
-        if profile_options:
-            return profile_options
 
     return ["-m", CODEX_DEFAULT_MODEL]
 
@@ -297,7 +261,7 @@ class CodexRunner:
         self.codex_bin = codex_bin
 
     def build_env(self) -> dict[str, str]:
-        env = {**_codex_shell_environment_set_env(), **_memory_connector_env()}
+        env = _memory_connector_env()
         for key in DWS_CLI_AUTH_ENV_KEYS:
             env.pop(key, None)
         return env.copy()

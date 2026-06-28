@@ -3565,8 +3565,11 @@ def test_consume_once_authorization_failure_waits_without_final_failure(
         for notification in notifications
     )
     with sqlite3.connect(tmp_path / "worker.sqlite3") as db:
-        attempts = db.execute("select attempts from reply_tasks").fetchone()[0]
+        attempts, available_at = db.execute(
+            "select attempts, available_at from reply_tasks"
+        ).fetchone()
     assert attempts == 0
+    assert available_at == "2026-05-13 17:15:00"
 
 
 def test_consume_once_codex_provider_auth_failure_waits_without_retry(
@@ -3603,11 +3606,12 @@ def test_consume_once_codex_provider_auth_failure_waits_without_retry(
     assert worker.store.count_reply_tasks(status="pending") == 1
     assert worker.store.count_reply_tasks(status="failed") == 0
     with sqlite3.connect(tmp_path / "worker.sqlite3") as db:
-        attempts, error = db.execute(
-            "select attempts, error from reply_tasks"
+        attempts, error, available_at = db.execute(
+            "select attempts, error, available_at from reply_tasks"
         ).fetchone()
     assert attempts == 0
     assert "invalid api key" in error
+    assert available_at == "2026-05-13 17:15:00"
     error_kinds = [error.kind for error in worker.store.list_errors(limit=10)]
     assert "reply_task_authorization" in error_kinds
     assert "reply_task_retry" not in error_kinds
