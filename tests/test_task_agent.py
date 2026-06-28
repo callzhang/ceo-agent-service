@@ -78,6 +78,49 @@ def _memory_context():
     }
 
 
+def _decision_with_follow_up_change(
+    *,
+    project_id: int,
+    follow_up_id: int,
+    todo_id: int | None = None,
+    action: str = "suppress",
+    next_due_at: str | None = None,
+    owner_user_id: str | None = None,
+    owner_name: str | None = None,
+) -> TaskAgentDecision:
+    return TaskAgentDecision.model_validate(
+        {
+            "action": "update_project",
+            "discard_reason": "",
+            "project": {
+                "id": project_id,
+                "title": "售前知识库",
+                "category": "sales",
+                "status": "active",
+                "memory_context": _memory_context(),
+            },
+            "todo_changes": [],
+            "follow_up_drafts": [],
+            "follow_up_changes": [
+                {
+                    "follow_up_id": follow_up_id,
+                    "todo_id": todo_id,
+                    "action": action,
+                    "reason": "reply context updated follow-up state",
+                    "evidence_check": {"source": "reply_attempt:1"},
+                    "next_due_at": next_due_at,
+                    "owner_user_id": owner_user_id,
+                    "owner_name": owner_name,
+                }
+            ],
+            "update_summary": "更新跟进状态。",
+            "merge_reason": "follow-up reply context",
+            "memory_recall_used": True,
+            "confidence": 0.8,
+        }
+    )
+
+
 def test_work_item_accepts_task_routing_signals():
     item = WorkItem.model_validate(
         {
@@ -477,6 +520,117 @@ def test_apply_decision_suppresses_existing_follow_up_without_closing_todo(tmp_p
     assert "reply_attempt:1992" in skipped.evidence_check_json
     update = store.list_work_updates(project_id=project_id)[0]
     assert "follow_up_changes" in update.changes_json
+
+
+def test_follow_up_change_rejects_missing_positive_follow_up_id(tmp_path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    project_id = store.create_work_project(
+        title="售前知识库",
+        category="sales",
+        status="active",
+    )
+    decision = _decision_with_follow_up_change(
+        project_id=project_id,
+        follow_up_id=999,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="follow_up_change.follow_up_id not found: 999",
+    ):
+        apply_task_agent_decision(
+            store,
+            summary_input_id=1,
+            work_item=_work_item(),
+            decision=decision,
+            memory_recall_attempted=True,
+        )
+
+    assert store.list_work_updates(project_id=project_id) == []
+
+
+def test_follow_up_change_reschedule_requires_next_due_at(tmp_path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    project_id = store.create_work_project(
+        title="售前知识库",
+        category="sales",
+        status="active",
+    )
+    follow_up_id = store.create_follow_up_draft(
+        project_id=project_id,
+        todo_id=1,
+        owner_user_id="owner-1",
+        owner_name="Alex",
+        target_conversation_id="cid-1",
+        target_kind="group",
+        question_text="项目目标和 owner 是否确认？",
+        status="sent",
+    )
+    decision = _decision_with_follow_up_change(
+        project_id=project_id,
+        follow_up_id=follow_up_id,
+        action="reschedule",
+        next_due_at=" ",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="follow_up_change.next_due_at is required for reschedule",
+    ):
+        apply_task_agent_decision(
+            store,
+            summary_input_id=1,
+            work_item=_work_item(),
+            decision=decision,
+            memory_recall_attempted=True,
+        )
+
+    drafts = store.list_follow_up_drafts(statuses=("sent",))
+    assert drafts[0].id == follow_up_id
+    assert drafts[0].scheduled_at == ""
+
+
+def test_follow_up_change_reassign_requires_owner_identity(tmp_path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    project_id = store.create_work_project(
+        title="售前知识库",
+        category="sales",
+        status="active",
+    )
+    follow_up_id = store.create_follow_up_draft(
+        project_id=project_id,
+        todo_id=1,
+        owner_user_id="owner-1",
+        owner_name="Alex",
+        target_conversation_id="cid-1",
+        target_kind="group",
+        question_text="项目目标和 owner 是否确认？",
+        status="sent",
+    )
+    decision = _decision_with_follow_up_change(
+        project_id=project_id,
+        follow_up_id=follow_up_id,
+        action="reassign",
+        owner_user_id=" ",
+        owner_name=None,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="follow_up_change.owner_user_id or owner_name is required for reassign",
+    ):
+        apply_task_agent_decision(
+            store,
+            summary_input_id=1,
+            work_item=_work_item(),
+            decision=decision,
+            memory_recall_attempted=True,
+        )
+
+    drafts = store.list_follow_up_drafts(statuses=("sent",))
+    assert drafts[0].id == follow_up_id
+    assert drafts[0].owner_user_id == "owner-1"
+    assert drafts[0].owner_name == "Alex"
 
 
 def test_apply_decision_creates_dingtalk_todo_for_high_confidence_todo(

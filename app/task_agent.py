@@ -405,6 +405,8 @@ def apply_task_agent_decision(
     if decision.action == "discard":
         return None
 
+    _validate_follow_up_change_targets(store, decision.follow_up_changes)
+
     if decision.project is None:
         raise ValueError(f"{decision.action} requires project")
 
@@ -500,6 +502,19 @@ def _validate_task_agent_decision(
     for change in decision.follow_up_changes:
         if change.follow_up_id <= 0:
             raise ValueError("follow_up_change.follow_up_id is required")
+        if change.action == "reschedule" and not (
+            change.next_due_at and change.next_due_at.strip()
+        ):
+            raise ValueError(
+                "follow_up_change.next_due_at is required for reschedule"
+            )
+        if change.action == "reassign" and not (
+            (change.owner_user_id and change.owner_user_id.strip())
+            or (change.owner_name and change.owner_name.strip())
+        ):
+            raise ValueError(
+                "follow_up_change.owner_user_id or owner_name is required for reassign"
+            )
     if decision.action == "discard":
         return
     if (
@@ -746,6 +761,10 @@ def _apply_follow_up_change(
     store: AutoReplyStore,
     change: FollowUpDraftChange,
 ) -> None:
+    if not _follow_up_draft_exists(store, change.follow_up_id):
+        raise ValueError(
+            f"follow_up_change.follow_up_id not found: {change.follow_up_id}"
+        )
     evidence = {
         "source": "task_agent",
         "action": change.action,
@@ -779,6 +798,28 @@ def _apply_follow_up_change(
         values["reaction_summary"] = change.reason
 
     store.update_follow_up_draft(change.follow_up_id, **values)
+
+
+def _validate_follow_up_change_targets(
+    store: AutoReplyStore,
+    changes: list[FollowUpDraftChange],
+) -> None:
+    for change in changes:
+        if not _follow_up_draft_exists(store, change.follow_up_id):
+            raise ValueError(
+                f"follow_up_change.follow_up_id not found: {change.follow_up_id}"
+            )
+
+
+def _follow_up_draft_exists(store: AutoReplyStore, follow_up_id: int) -> bool:
+    if follow_up_id <= 0:
+        return False
+    with store._connect() as db:
+        row = db.execute(
+            "select id from follow_up_drafts where id=?",
+            (follow_up_id,),
+        ).fetchone()
+    return row is not None
 
 
 def _resolve_follow_up_todo_id(
