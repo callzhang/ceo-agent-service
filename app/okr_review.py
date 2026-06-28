@@ -5,7 +5,7 @@ from html import unescape
 from html.parser import HTMLParser
 
 from app.external_retry import run_external
-from app.okr_models import OkrReviewItem, OkrReviewPayload
+from app.okr_models import OkrReviewPayload
 
 
 class _HtmlTextExtractor(HTMLParser):
@@ -700,8 +700,6 @@ def _looks_like_okr_review_item(value: dict) -> bool:
 def _normalize_okr_review_item(item: object) -> object:
     if not isinstance(item, dict):
         return item
-    if set(OkrReviewItem.model_fields).issubset(item):
-        return item
     verified_base_score = _number(
         _first_present_value(
             item,
@@ -806,9 +804,8 @@ def _normalize_okr_review_item(item: object) -> object:
             _first_present_value(item, ("kr_weight", "krWeight", "key_result_weight", "keyResultWeight")),
             default=1.0,
         ),
-        "self_progress": str(
+        "self_progress": _text(
             _first_present_value(item, ("self_progress", "selfProgress", "krProgress", "progress"))
-            or ""
         ),
         "kr_progress_update": kr_progress_update,
         "claim_text": claim_text,
@@ -913,6 +910,12 @@ def _first_present_value(payload: dict, keys: tuple[str, ...]) -> object:
         if value is not None:
             return value
     return None
+
+
+def _text(value: object) -> str:
+    if value is None:
+        return ""
+    return str(value)
 
 
 def _number(value: object, *, default: float = 0.0) -> float:

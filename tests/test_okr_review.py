@@ -403,6 +403,46 @@ def test_normalize_okr_review_domain_payload_accepts_final_score_aliases():
     assert payload.items[0].verified_score == 20
 
 
+def test_normalize_okr_review_domain_payload_normalizes_complete_snake_case_items():
+    normalized = normalize_okr_review_domain_payload(
+        {
+            "person_name": "韩露",
+            "period_label": "2026 Q2",
+            "summary": "已审核。",
+            "items": [
+                {
+                    "objective_title": "O1 标准Offer与高质量解决方案",
+                    "objective_weight": 0.5,
+                    "kr_title": "LLM数据领先性",
+                    "kr_weight": 0.3,
+                    "self_progress": 65,
+                    "kr_progress_update": "进度试填 65%。",
+                    "claim_text": "已推进 benchmark。",
+                    "claim_completion_time": "",
+                    "deadline": "",
+                    "claim_base_score": 65,
+                    "claim_discount_factor": 1.0,
+                    "claim_discount_reason": "按员工自述原始评分。",
+                    "claim_score": 65,
+                    "verified_completion_time": "",
+                    "verified_base_score": 55,
+                    "verified_discount_factor": 1.0,
+                    "verified_discount_reason": "按事实核实结果计分。",
+                    "verified_score": 55,
+                    "evidence_used": [{"source": "KR进度", "summary": "有进度更新。"}],
+                    "evidence_gap": "缺少发布证明。",
+                    "review_comment": "可认定部分推进。",
+                    "suggested_follow_up": "补充版本发布链接。",
+                }
+            ],
+        }
+    )
+
+    payload = OkrReviewPayload.model_validate(normalized)
+
+    assert payload.items[0].self_progress == "65"
+
+
 def test_normalize_okr_review_domain_payload_accepts_claim_score_alias():
     # The agent emits `claim_score` (not `employee_claim_score`); both must work.
     normalized = normalize_okr_review_domain_payload(
