@@ -93,6 +93,7 @@ def test_work_item_accepts_task_routing_signals():
             "project_name": "",
             "context": {
                 "sender": "Lily",
+                "sender_user_id": "lily-user-1",
                 "participants": ["Lily"],
                 "source_conversation_kind": "direct",
                 "source_conversation_title": "Lily",
@@ -109,6 +110,7 @@ def test_work_item_accepts_task_routing_signals():
     )
 
     assert item.task_signals.possible_task_update is True
+    assert item.context.sender_user_id == "lily-user-1"
     assert item.task_signals.owner_correction is True
     assert item.task_signals.complaint_about_followup is True
     assert "追错owner" in item.task_signals.signal_reason

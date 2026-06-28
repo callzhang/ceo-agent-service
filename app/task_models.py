@@ -105,6 +105,7 @@ class WorkItemSource(BaseModel):
 
 class WorkItemContext(BaseModel):
     sender: str = ""
+    sender_user_id: str = ""
     participants: list[str] = Field(default_factory=list)
     source_conversation_kind: WorkItemSourceKind
     source_conversation_title: str = ""
