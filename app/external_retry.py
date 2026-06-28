@@ -21,11 +21,14 @@ def run_external(
     *,
     max_attempts: int = 3,
     delay_seconds: float = 1.0,
+    backoff_multiplier: float = 2.0,
     sleep: Callable[[float], None] = time.sleep,
     on_failure: Callable[[ExternalAttempt], None] | None = None,
 ) -> T:
     if max_attempts < 1:
         raise ValueError("max_attempts must be at least 1")
+    if backoff_multiplier < 1:
+        raise ValueError("backoff_multiplier must be at least 1")
     for attempt in range(1, max_attempts + 1):
         try:
             return call()
@@ -40,5 +43,5 @@ def run_external(
                 on_failure(failure)
             if attempt == max_attempts:
                 raise
-            sleep(delay_seconds)
+            sleep(delay_seconds * (backoff_multiplier ** (attempt - 1)))
     raise AssertionError("unreachable retry loop exit")

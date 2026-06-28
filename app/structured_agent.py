@@ -18,6 +18,7 @@ from app.codex_runner import (
     CodexRunner,
     _codex_home,
     _config_string,
+    codex_model_config_options,
     memory_connector_config_options,
 )
 from app.external_retry import run_external
@@ -254,8 +255,7 @@ class StructuredCodexRunner:
         )
         common = [
             "--json",
-            "-m",
-            "gpt-5.5",
+            *codex_model_config_options(ignore_user_config=True),
             "--ignore-user-config",
             "--ignore-rules",
             "--disable",

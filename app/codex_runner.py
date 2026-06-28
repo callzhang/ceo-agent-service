@@ -50,6 +50,15 @@ DWS_CLI_AUTH_ENV_KEYS = {
     "DINGTALK_APP_KEY",
     "DINGTALK_APP_SECRET",
 }
+CODEX_DEFAULT_MODEL = "gpt-5.5"
+CODEX_MODEL_ENV = "CEO_CODEX_MODEL"
+CODEX_MODEL_PROVIDER_ENV = "CEO_CODEX_MODEL_PROVIDER"
+CODEX_PROFILE_ENV = "CEO_CODEX_PROFILE"
+CODEX_FALLBACK_PROFILE = "m27"
+OPENAI_AUTH_ENV_KEYS = {
+    "OPENAI_API_KEY",
+    "OPENAI_OFFICIAL_API_KEY",
+}
 
 
 def codex_developer_instructions() -> str:
@@ -60,12 +69,41 @@ def codex_developer_instructions() -> str:
     )
 
 
-def _config_string(key: str, value: str) -> str:
+def _config_string(key: str, value: object) -> str:
     return f"{key}={json.dumps(value, ensure_ascii=False)}"
 
 
 def _codex_home() -> Path:
     return Path(os.environ.get("CODEX_HOME", "~/.codex")).expanduser()
+
+
+def _codex_config() -> dict:
+    path = _codex_home() / "config.toml"
+    if not path.exists():
+        return {}
+    try:
+        payload = tomllib.loads(path.read_text(encoding="utf-8"))
+    except tomllib.TOMLDecodeError:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _codex_shell_environment_set_env() -> dict[str, str]:
+    shell_policy = _codex_config().get("shell_environment_policy") or {}
+    if not isinstance(shell_policy, dict):
+        return {}
+    configured = shell_policy.get("set") or {}
+    if not isinstance(configured, dict):
+        return {}
+    env: dict[str, str] = {}
+    for key, value in configured.items():
+        if not isinstance(key, str) or not key:
+            continue
+        if isinstance(value, str):
+            env[key] = value
+        elif isinstance(value, int | float | bool):
+            env[key] = str(value).lower() if isinstance(value, bool) else str(value)
+    return env
 
 
 def _parse_export_env_file(path: Path) -> dict[str, str]:
@@ -99,6 +137,84 @@ def _memory_connector_env() -> dict[str, str]:
     if token and _jwt_token_is_expired(token):
         env.pop(MEMORY_CONNECTOR_API_KEY_ENV, None)
     return env
+
+
+def _has_openai_auth() -> bool:
+    env = {**_codex_shell_environment_set_env(), **os.environ}
+    return any(env.get(key) for key in OPENAI_AUTH_ENV_KEYS)
+
+
+def _model_provider_config_options(config: dict, provider_name: str) -> list[str]:
+    providers = config.get("model_providers") or {}
+    if not isinstance(providers, dict):
+        return []
+    provider = providers.get(provider_name) or {}
+    if not isinstance(provider, dict):
+        return []
+    options: list[str] = []
+    for key, value in provider.items():
+        if not isinstance(key, str) or not key:
+            continue
+        if isinstance(value, str | int | float | bool):
+            options.extend(
+                [
+                    "-c",
+                    _config_string(f"model_providers.{provider_name}.{key}", value),
+                ]
+            )
+    return options
+
+
+def _profile_model_options(profile_name: str, *, include_provider_config: bool) -> list[str]:
+    config = _codex_config()
+    profiles = config.get("profiles") or {}
+    if not isinstance(profiles, dict):
+        return []
+    profile = profiles.get(profile_name) or {}
+    if not isinstance(profile, dict):
+        return []
+    model = profile.get("model")
+    provider = profile.get("model_provider")
+    options: list[str] = []
+    if isinstance(model, str) and model.strip():
+        options.extend(["-m", model.strip()])
+    if isinstance(provider, str) and provider.strip():
+        provider_name = provider.strip()
+        options.extend(["-c", _config_string("model_provider", provider_name)])
+        if include_provider_config:
+            options.extend(_model_provider_config_options(config, provider_name))
+    return options
+
+
+def codex_model_config_options(*, ignore_user_config: bool = False) -> list[str]:
+    profile_name = os.environ.get(CODEX_PROFILE_ENV, "").strip()
+    if profile_name:
+        profile_options = _profile_model_options(
+            profile_name,
+            include_provider_config=True,
+        )
+        if profile_options:
+            return profile_options
+
+    model = os.environ.get(CODEX_MODEL_ENV, "").strip()
+    provider = os.environ.get(CODEX_MODEL_PROVIDER_ENV, "").strip()
+    if model:
+        options = ["-m", model]
+        if provider:
+            options.extend(["-c", _config_string("model_provider", provider)])
+            if ignore_user_config:
+                options.extend(_model_provider_config_options(_codex_config(), provider))
+        return options
+
+    if not _has_openai_auth():
+        profile_options = _profile_model_options(
+            CODEX_FALLBACK_PROFILE,
+            include_provider_config=ignore_user_config,
+        )
+        if profile_options:
+            return profile_options
+
+    return ["-m", CODEX_DEFAULT_MODEL]
 
 
 def _memory_connector_env_from_config(config_path: Path) -> dict[str, str]:
@@ -181,7 +297,7 @@ class CodexRunner:
         self.codex_bin = codex_bin
 
     def build_env(self) -> dict[str, str]:
-        env = _memory_connector_env()
+        env = {**_codex_shell_environment_set_env(), **_memory_connector_env()}
         for key in DWS_CLI_AUTH_ENV_KEYS:
             env.pop(key, None)
         return env.copy()
@@ -209,8 +325,7 @@ class CodexRunner:
         )
         common_options = [
             "--json",
-            "-m",
-            "gpt-5.5",
+            *codex_model_config_options(ignore_user_config=ignore_user_config),
             *config_isolation_options,
             "--ignore-rules",
             "--disable",
