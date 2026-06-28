@@ -1490,7 +1490,12 @@ class DingTalkAutoReplyWorker:
             if getattr(cause, "needs_authorization", False):
                 return True
             cause = cause.__cause__
-        return False
+        message = str(exc).lower()
+        return (
+            "unexpected status 401 unauthorized" in message
+            or "invalid api key" in message
+            or "missing bearer or basic authentication" in message
+        )
 
     def _process_queued_task(
         self, conversation: DingTalkConversation, task: ReplyTask
@@ -2244,7 +2249,7 @@ class DingTalkAutoReplyWorker:
                 str(exc),
             )
             raise
-        request_id = self.store.create_okr_review_request(
+        self.store.create_okr_review_request(
             conversation_id=conversation.open_conversation_id,
             conversation_title=conversation.title,
             trigger_message_id=trigger.open_message_id,
