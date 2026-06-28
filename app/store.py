@@ -3653,10 +3653,12 @@ class AutoReplyStore:
         since: str,
         limit: int = 20,
     ) -> list[RecentFollowUpCandidate]:
-        if not since.strip():
-            return []
         conversation_id = conversation_id.strip()
         owner_user_id = owner_user_id.strip()
+        if not since.strip() or (not conversation_id and not owner_user_id):
+            return []
+        if limit <= 0:
+            return []
         owner_expr = """
             coalesce(
                 nullif(f.owner_user_id, ''),
@@ -3673,10 +3675,16 @@ class AutoReplyStore:
                 ''
             )
         """
+        recency_expr = """
+            coalesce(
+                nullif(f.sent_at, ''),
+                nullif(f.scheduled_at, ''),
+                f.created_at
+            )
+        """
         clauses = [
-            "f.status='sent'",
-            "f.sent_at != ''",
-            "datetime(f.sent_at) >= datetime(?)",
+            "f.status in ('sent', 'draft', 'approved')",
+            f"{recency_expr} >= ?",
         ]
         args: list[object] = [since.strip()]
         match_clauses: list[str] = []
@@ -3694,7 +3702,7 @@ class AutoReplyStore:
                 conversation_id,
                 owner_user_id,
                 owner_user_id,
-                max(1, limit),
+                limit,
             ]
         )
         with self._connect() as db:
@@ -3740,7 +3748,7 @@ class AutoReplyStore:
                         when ? != '' and {owner_expr}=? then 0
                         else 1
                     end,
-                    datetime(f.sent_at) desc,
+                    {recency_expr} desc,
                     f.id desc
                 limit ?
                 """,
