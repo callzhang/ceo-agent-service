@@ -7,46 +7,13 @@ from app.store import AutoReplyStore
 from app.task_models import ProjectStatus, TodoStatus
 from app.todo_sync import (
     refresh_dingtalk_todo_before_follow_up,
-    sync_completed_todo_to_dingtalk,
 )
 
 
 MAX_FOLLOW_UP_AGE_SECONDS = 7 * 24 * 60 * 60
 RECOVERABLE_AUTH_RETRY_DELAY = timedelta(minutes=15)
-FOLLOW_UP_REACTION_LOOKBACK_SECONDS = 2 * 24 * 60 * 60
 MAX_FOLLOW_UPS_PER_OWNER_PER_DAY = 3
 MAX_FOLLOW_UPS_PER_GROUP_PER_DAY = 8
-
-COMPLETION_REACTION_PHRASES = (
-    "完成了",
-    "已完成",
-    "已经完成",
-    "已发",
-    "已结束",
-    "已经结束",
-)
-REDIRECT_REACTION_PHRASES = (
-    "请联系",
-    "负责整理",
-    "不是我负责",
-    "没法获取",
-    "权限范围",
-)
-SOURCE_REQUEST_REACTION_PHRASES = (
-    "看了什么材料",
-    "什么材料",
-    "当前背景",
-    "这个是什么",
-    "什么需求",
-)
-NEGATIVE_REACTION_PHRASES = (
-    "乱发消息",
-    "乱发",
-    "很懵",
-    "懵逼",
-    "分发新任务",
-    "谁接茬谁接活",
-)
 
 
 def _parse_follow_up_datetime(value: str) -> datetime | None:
@@ -103,96 +70,6 @@ def _tomorrow_morning(now: str) -> str:
     return tomorrow.replace(hour=9, minute=0, second=0, microsecond=0).strftime(
         "%Y-%m-%d %H:%M:%S"
     )
-
-
-def _reaction_status_for_text(text: str) -> tuple[str, str]:
-    compact = " ".join(text.strip().split())
-    if not compact:
-        return "", ""
-    for phrase in NEGATIVE_REACTION_PHRASES:
-        if phrase in compact:
-            return "negative", compact
-    for phrase in SOURCE_REQUEST_REACTION_PHRASES:
-        if phrase in compact:
-            return "asks_source", compact
-    for phrase in REDIRECT_REACTION_PHRASES:
-        if phrase in compact:
-            return "redirect_owner", compact
-    for phrase in COMPLETION_REACTION_PHRASES:
-        if phrase in compact:
-            return "completed", compact
-    return "", ""
-
-
-def _reaction_evidence_for_draft(store: AutoReplyStore, draft) -> tuple[str, str, str]:
-    if draft.sent_at.strip():
-        since = draft.sent_at
-    elif draft.scheduled_at.strip():
-        since = draft.scheduled_at
-    else:
-        since = draft.created_at
-    if not draft.target_conversation_id.strip() or not since.strip():
-        return "", "", ""
-    for attempt in store.list_recent_reply_attempts_for_follow_up(
-        conversation_id=draft.target_conversation_id,
-        since=since,
-        limit=30,
-    ):
-        status, summary = _reaction_status_for_text(attempt.trigger_text)
-        if status:
-            return status, summary, f"reply_attempt:{attempt.id}"
-    return "", "", ""
-
-
-def _refresh_recent_sent_reactions(store: AutoReplyStore, dws, *, now: str) -> None:
-    current = _parse_follow_up_datetime(now) or datetime.now(timezone.utc).replace(
-        tzinfo=None
-    )
-    since = (current - timedelta(seconds=FOLLOW_UP_REACTION_LOOKBACK_SECONDS)).strftime(
-        "%Y-%m-%d %H:%M:%S"
-    )
-    for draft in store.list_sent_follow_ups_since(since, limit=100):
-        if draft.reaction_status:
-            continue
-        status, summary, source = _reaction_evidence_for_draft(store, draft)
-        if not status:
-            continue
-        store.update_follow_up_draft(
-            draft.id,
-            reaction_status=status,
-            reaction_summary=summary,
-            evidence_check_json=json.dumps(
-                {
-                    "reaction_source": source,
-                    "reaction_status": status,
-                    "reaction_summary": summary,
-                    "checked_at": now,
-                },
-                ensure_ascii=False,
-            ),
-        )
-        if status == "completed" and draft.todo_id > 0:
-            todo = store.get_work_todo(draft.todo_id)
-            if todo is not None and str(todo.status) != TodoStatus.DONE.value:
-                evidence = {
-                    "source": source,
-                    "summary": summary,
-                    "follow_up_id": draft.id,
-                    "checked_at": now,
-                }
-                store.update_work_todo(
-                    draft.todo_id,
-                    status=TodoStatus.DONE.value,
-                    completion_evidence_json=json.dumps(evidence, ensure_ascii=False),
-                )
-                if dws is not None:
-                    sync_completed_todo_to_dingtalk(
-                        store,
-                        dws,
-                        work_todo_id=draft.todo_id,
-                        evidence=evidence,
-                        now=now,
-                    )
 
 
 def _risk_check(draft) -> dict:
@@ -282,10 +159,7 @@ def _follow_up_message_text(store: AutoReplyStore, draft) -> str:
 
 def _completion_supported_by_current_evidence(
     store: AutoReplyStore,
-    dws,
     draft,
-    *,
-    now: str,
 ) -> tuple[bool, str]:
     project = store.get_work_project(draft.project_id)
     if project is not None and str(project.status) == ProjectStatus.DONE.value:
@@ -301,28 +175,6 @@ def _completion_supported_by_current_evidence(
         return True, "todo status is done"
     if _has_completion_evidence(todo.completion_evidence_json):
         return True, "todo has completion evidence"
-    status, summary, source = _reaction_evidence_for_draft(store, draft)
-    if status == "completed":
-        evidence = {
-            "source": source,
-            "summary": summary,
-            "follow_up_id": draft.id,
-            "checked_at": now,
-        }
-        store.update_work_todo(
-            draft.todo_id,
-            status=TodoStatus.DONE.value,
-            completion_evidence_json=json.dumps(evidence, ensure_ascii=False),
-        )
-        if dws is not None:
-            sync_completed_todo_to_dingtalk(
-                store,
-                dws,
-                work_todo_id=draft.todo_id,
-                evidence=evidence,
-                now=now,
-            )
-        return True, f"completion reaction: {summary}"
     return False, ""
 
 
@@ -442,32 +294,6 @@ def _skip_policy_follow_up(
     )
 
 
-def _recent_reaction_should_suppress(
-    store: AutoReplyStore,
-    draft,
-    *,
-    now: str,
-) -> tuple[bool, str, dict]:
-    since = _start_of_day(now)
-    for previous in store.list_recent_follow_up_reactions(
-        project_id=draft.project_id,
-        owner_user_id=draft.owner_user_id,
-        since=since,
-        limit=5,
-    ):
-        if previous.reaction_status in {
-            "negative",
-            "asks_source",
-            "redirect_owner",
-            "confused",
-        }:
-            return True, f"recent_reaction_{previous.reaction_status}", {
-                "previous_follow_up_id": previous.id,
-                "reaction_summary": previous.reaction_summary,
-            }
-    return False, "", {}
-
-
 def _owner_dingtalk_target(
     store: AutoReplyStore,
     dws,
@@ -518,7 +344,6 @@ def process_due_follow_ups(
     limit: int = 50,
 ) -> int:
     sent = 0
-    _refresh_recent_sent_reactions(store, dws, now=now)
     drafts = store.list_follow_up_drafts(
         statuses=("draft", "approved"),
         due_before=now,
@@ -547,36 +372,10 @@ def process_due_follow_ups(
                 continue
         completed, reason = _completion_supported_by_current_evidence(
             store,
-            dws,
             draft,
-            now=now,
         )
         if completed:
             _skip_completed_follow_up(store, draft, now=now, reason=reason)
-            continue
-        status, summary, source = _reaction_evidence_for_draft(store, draft)
-        if status in {"negative", "asks_source", "redirect_owner"}:
-            _skip_policy_follow_up(
-                store,
-                draft,
-                now=now,
-                reason=f"reaction_{status}",
-                detail={"reaction_summary": summary, "reaction_source": source},
-            )
-            continue
-        suppress, suppress_reason, suppress_detail = _recent_reaction_should_suppress(
-            store,
-            draft,
-            now=now,
-        )
-        if suppress:
-            _skip_policy_follow_up(
-                store,
-                draft,
-                now=now,
-                reason=suppress_reason,
-                detail=suppress_detail,
-            )
             continue
         try:
             owner_user_id, open_dingtalk_id, at_name = _owner_dingtalk_target(
@@ -716,8 +515,6 @@ def process_due_follow_ups(
                 {
                     "checked_at": now,
                     "completion_supported": False,
-                    "reaction_status": status,
-                    "reaction_summary": summary,
                     "sensitive": sensitive,
                 },
                 ensure_ascii=False,
