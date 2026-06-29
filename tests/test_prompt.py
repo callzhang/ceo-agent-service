@@ -644,6 +644,17 @@ def test_thread_prompt_requires_dws_doc_read_for_alidocs_links():
     assert "不要说成对方没有提供材料" in prompt
 
 
+def test_thread_prompt_preserves_context_anchor_for_followup_documents():
+    prompt = ceo_agent_thread_prompt()
+
+    assert "文档、复盘或补充材料" in prompt
+    assert "先用当前消息、引用、合并前序消息和上下文判断它的角色" in prompt
+    assert "不要仅因为文档正文包含 OKR、分数或证据链" in prompt
+    assert "把它当作 OKR 打分依据" in prompt
+    assert "叮当 OKR 或系统数据" in prompt
+    assert "不能替代 OKR 审核流程" in prompt
+
+
 def test_thread_prompt_defaults_to_business_context_retrieval():
     prompt = ceo_agent_thread_prompt()
 
