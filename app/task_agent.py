@@ -1,4 +1,5 @@
 import json
+import re
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Protocol
@@ -13,6 +14,7 @@ from app.task_models import (
     TaskAgentDecision,
     TodoChange,
     WorkItem,
+    WorkItemSourceType,
     WorkSummaryInput,
 )
 from app.task_retrieval import render_candidate_prompt, retrieve_project_candidates
@@ -179,6 +181,8 @@ def build_task_agent_prompt(
 - 如果 memory_connector 状态为不可用，不要因此停止任务、不要输出 critical_info_unavailable、不要把任务转人工；改用 Work Item、候选项目、DWS 或本地上下文判断。此时 memory_recall_used=false，project.memory_context 写明原本会查询什么、memory_connector 不可用的原因，以及你实际采用的替代证据。
 - project.memory_context 必须写入本次记忆查询或替代依据：memory_recall 有命中时写查询、摘要和关键记忆证据；没有命中时写查询和无命中结论；memory_connector 不可用时写查询意图、不可用原因和替代证据。
 - 如果上下文无法支撑稳定项目名称，不要创建模糊项目；生成 follow_up_draft 询问项目、目标、owner。
+- AI听记或本地听记的说话人标签只能作为弱证据；如果多人会议的 transcript 大段只有同一个 speaker，说明说话人标注不可信，不能据此认定 owner，也不能直接私聊该 speaker。
+- 行政、工商、法务、财务、人事合规类事项必须区分汇报人、推动人和实际执行 owner；只有材料明确写出“某人负责/待办/owner/由某人完成”且不是低可信说话人标签推导时，才能给该人生成 follow_up_draft。否则只更新项目背景或生成需要确认真实 owner 的 TODO，不要直接私聊。
 - 只有消息、会议纪要或文档明确证明 TODO 完成时，才能自动清理 TODO，并写入 completion_evidence。
 - 生成 follow_up_draft 前必须确定 owner_user_id；只有 owner_name 不够。如果上下文缺少 userId，先用 dws 或已有联系人信息补齐；仍无法唯一确定时，不要生成 follow_up_draft。
 - 每个 follow_up_draft 必须绑定一个 TODO：跟进已有 TODO 时填写 todo_id；跟进本次新建 TODO 时，todo_changes.create 和 follow_up_drafts 使用相同的 todo_ref，系统会把 todo_ref 转成真实 todo_id。不能生成没有 TODO 绑定的 follow_up_draft。
@@ -464,6 +468,8 @@ def apply_task_agent_decision(
         if todo_change.action == "create" and todo_change.todo_ref.strip():
             todo_refs[todo_change.todo_ref.strip()] = todo_id
     for draft in decision.follow_up_drafts:
+        if _suppress_unreliable_minutes_direct_follow_up(work_item, draft):
+            continue
         _create_follow_up_draft(
             store,
             project_id=project_id,
@@ -482,6 +488,64 @@ def apply_task_agent_decision(
                 now=sync_now,
             )
     return project_id
+
+
+def _suppress_unreliable_minutes_direct_follow_up(
+    work_item: WorkItem,
+    draft: FollowUpDraftDecision,
+) -> bool:
+    if draft.target_kind != "direct":
+        return False
+    if work_item.source.type not in {
+        WorkItemSourceType.AI_MINUTES,
+        WorkItemSourceType.LOCAL_FILE,
+    }:
+        return False
+    if work_item.source.conversation_id.strip():
+        return False
+    return _has_unreliable_minutes_speaker_labels(work_item)
+
+
+def _has_unreliable_minutes_speaker_labels(work_item: WorkItem) -> bool:
+    summary = work_item.summary
+    participants = _minutes_participants(work_item)
+    if len(participants) < 2:
+        return False
+    speakers = _minutes_transcript_speakers(summary)
+    return len(speakers) >= 5 and len(set(speakers)) == 1
+
+
+def _minutes_participants(work_item: WorkItem) -> list[str]:
+    participants = [
+        str(participant).strip()
+        for participant in work_item.context.participants
+        if str(participant).strip()
+    ]
+    if participants:
+        return participants
+    match = re.search(r"参与人[\s*_]*[:：]\s*([^\n\r]+)", work_item.summary)
+    if not match:
+        return []
+    raw = match.group(1)
+    return [
+        value.strip()
+        for value in re.split(r"[,，、]", raw)
+        if value.strip()
+    ]
+
+
+def _minutes_transcript_speakers(summary: str) -> list[str]:
+    speakers: list[str] = []
+    patterns = (
+        re.compile(r"^\[[^\]]+\]\s*([^:：\n]+)\s*[:：]", re.MULTILINE),
+        re.compile(r"^-\s*([^:：\n]+)\s*[:：]", re.MULTILINE),
+    )
+    for pattern in patterns:
+        for match in pattern.finditer(summary):
+            speaker = match.group(1).strip()
+            if speaker:
+                speakers.append(speaker)
+    return speakers
 
 
 def _validate_task_agent_decision(

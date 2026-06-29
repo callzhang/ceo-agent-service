@@ -62,6 +62,39 @@ def _work_item(project_name="售前知识库"):
     )
 
 
+def _low_confidence_minutes_work_item() -> WorkItem:
+    return WorkItem.model_validate(
+        {
+            "source": {
+                "type": "local_file",
+                "ref": "/tmp/HR周例会.md#sha256=abc",
+                "title": "HR周例会.md",
+                "conversation_id": "",
+                "conversation_title": "",
+                "created_at": "2026-06-22 13:33:31",
+            },
+            "summary": "\n".join(
+                [
+                    "> **参与人**: 磊哥, susu, 刘瑞安Alan, 胡明, 张静, Mina 邹",
+                    "# Transcript",
+                    "[00:01] 刘瑞安Alan: 第一段",
+                    "[00:02] 刘瑞安Alan: 第二段",
+                    "[00:03] 刘瑞安Alan: 第三段",
+                    "[00:04] 刘瑞安Alan: 第四段",
+                    "[00:05] 刘瑞安Alan: 第五段",
+                ]
+            ),
+            "project_name": "HR周例会.md",
+            "context": {
+                "sender": "",
+                "participants": [],
+                "source_conversation_kind": "file",
+                "source_conversation_title": "HR周例会.md",
+            },
+        }
+    )
+
+
 def _follow_up_reply_work_item(
     *,
     source_ref: str,
@@ -1551,6 +1584,64 @@ def test_follow_up_drafts_are_created_with_risk_check(tmp_path):
         "owner_in_group": True,
         "sensitive": False,
     }
+
+
+def test_low_confidence_minutes_speaker_labels_suppress_direct_follow_up(tmp_path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    decision = TaskAgentDecision.model_validate(
+        {
+            "action": "create_project",
+            "project": {
+                "title": "HR工商变更",
+                "category": "HR",
+                "status": "active",
+                "memory_context": _memory_context(),
+            },
+            "todo_changes": [
+                {
+                    "action": "create",
+                    "todo_ref": "wangdongcui-business-change",
+                    "title": "确认王东翠工商变更真实 owner",
+                    "owner_user_id": "owner-1",
+                    "owner_name": "刘瑞安",
+                    "status": "open",
+                    "priority": "P1",
+                    "follow_up_question": "王东翠工商变更真实 owner 是谁？",
+                    "completion_evidence": None,
+                    "blocker": "听记说话人标签低可信，不能直接把 speaker 当 owner。",
+                }
+            ],
+            "follow_up_drafts": [
+                {
+                    "todo_ref": "wangdongcui-business-change",
+                    "owner_user_id": "owner-1",
+                    "owner_name": "刘瑞安",
+                    "target_conversation_id": "",
+                    "target_kind": "direct",
+                    "question_text": "王东翠工商变更目前到哪一步了？",
+                    "scheduled_at": "2026-06-26T10:00:00+08:00",
+                    "risk_check": {"owner_in_group": False, "sensitive": False},
+                    "status": "draft",
+                }
+            ],
+            "follow_up_changes": [],
+            "update_summary": "低可信听记只建 TODO，不私聊。",
+            "merge_reason": "",
+            "memory_recall_used": True,
+            "confidence": 0.7,
+        }
+    )
+
+    project_id = apply_task_agent_decision(
+        store,
+        summary_input_id=0,
+        work_item=_low_confidence_minutes_work_item(),
+        decision=decision,
+    )
+
+    assert project_id is not None
+    assert len(store.list_work_todos(project_id=project_id)) == 1
+    assert store.list_follow_up_drafts(statuses=("draft",)) == []
 
 
 def test_follow_up_draft_requires_todo_binding(tmp_path):
