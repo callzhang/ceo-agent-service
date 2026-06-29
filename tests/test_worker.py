@@ -7738,6 +7738,37 @@ def test_codex_stop_with_error_keeps_queued_task_retryable(
     assert sent_attempt.send_status == "sent"
 
 
+def test_retryable_codex_timeout_does_not_notify_before_final_failure(
+    tmp_path: Path, monkeypatch
+):
+    notifications = []
+    trigger = message("@Alex Chen(明哥) 这个怎么处理？")
+    dws = FakeDws([conversation()], {"cid-1": [trigger]})
+    codex = FakeCodex(
+        CodexDecision(
+            action=CodexAction.STOP_WITH_ERROR,
+            reason="process produced no output for 180 seconds",
+        )
+    )
+    worker = make_worker(
+        tmp_path,
+        dws,
+        codex,
+        monkeypatch,
+        max_task_attempts=2,
+    )
+    monkeypatch.setattr(
+        "app.worker.send_macos_notification",
+        lambda **kwargs: notifications.append(kwargs),
+    )
+
+    worker.run_once()
+
+    assert worker.store.count_reply_tasks(status="pending") == 1
+    assert worker.store.count_reply_tasks(status="failed") == 0
+    assert notifications == []
+
+
 def test_codex_stop_with_error_retry_waits_for_backoff(
     tmp_path: Path, monkeypatch
 ):

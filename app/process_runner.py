@@ -5,6 +5,10 @@ import subprocess
 import time
 from dataclasses import dataclass
 
+PROCESS_TOTAL_TIMEOUT_REASON_PREFIX = "process timed out after "
+PROCESS_IDLE_TIMEOUT_REASON_PREFIX = "process produced no output for "
+PROCESS_TIMEOUT_REASON_SUFFIX = " seconds"
+
 
 @dataclass(frozen=True)
 class ProcessRunResult:
@@ -54,15 +58,18 @@ def run_process_with_idle_timeout(
             if now - started_at >= total_timeout_seconds:
                 timeout_kind = "total"
                 timeout_reason = (
-                    f"process timed out after {int(total_timeout_seconds)} seconds"
+                    f"{PROCESS_TOTAL_TIMEOUT_REASON_PREFIX}"
+                    f"{int(total_timeout_seconds)}"
+                    f"{PROCESS_TIMEOUT_REASON_SUFFIX}"
                 )
                 _terminate_process_group(process)
                 break
             if now - last_output_at >= idle_timeout_seconds:
                 timeout_kind = "idle"
                 timeout_reason = (
-                    "process produced no output for "
-                    f"{int(idle_timeout_seconds)} seconds"
+                    f"{PROCESS_IDLE_TIMEOUT_REASON_PREFIX}"
+                    f"{int(idle_timeout_seconds)}"
+                    f"{PROCESS_TIMEOUT_REASON_SUFFIX}"
                 )
                 _terminate_process_group(process)
                 break

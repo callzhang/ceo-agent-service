@@ -18,6 +18,7 @@ from xml.etree import ElementTree as ET
 from pypdf import PdfReader
 
 from app.codex_decision import (
+    CODEX_TIMEOUT_REASON_PREFIX,
     REPLY_AGENT_ENVELOPE_SCHEMA_HINT,
     append_signature,
     codex_decision_from_envelope,
@@ -77,6 +78,11 @@ from app.org_cache import (
 )
 from app.permission import PermissionAction, PermissionGate
 from app.prompt import LinkedDocumentContext, MaterialReferenceContext, build_turn_prompt
+from app.process_runner import (
+    PROCESS_IDLE_TIMEOUT_REASON_PREFIX,
+    PROCESS_TIMEOUT_REASON_SUFFIX,
+    PROCESS_TOTAL_TIMEOUT_REASON_PREFIX,
+)
 from app.store import (
     FAST_PATH_UNREAD_BACKOFF_TASK_ERROR,
     AutoReplyStore,
@@ -180,6 +186,15 @@ def _is_codex_login_required_error(reason: str) -> bool:
         "failed to refresh token" in normalized
         and "session has ended" in normalized
     ) or "token_invalidated" in normalized
+
+
+def _is_retryable_codex_timeout_reason(reason: str) -> bool:
+    return reason.startswith(CODEX_TIMEOUT_REASON_PREFIX) or (
+        reason.startswith(
+            (PROCESS_IDLE_TIMEOUT_REASON_PREFIX, PROCESS_TOTAL_TIMEOUT_REASON_PREFIX)
+        )
+        and reason.endswith(PROCESS_TIMEOUT_REASON_SUFFIX)
+    )
 
 
 def _extract_text_emotion_id(payload: object) -> str:
@@ -4505,15 +4520,20 @@ class DingTalkAutoReplyWorker:
             )
             if critical_info_unavailable and raise_on_delivery_failure:
                 raise CriticalInformationUnavailableError(send_error)
-            self._notify(
-                title=(
-                    f"CEO agent blocked: {conversation.title}"
-                    if login_required
-                    else f"CEO agent error: {conversation.title}"
-                ),
-                message=send_error[:120],
-                conversation=conversation,
+            retryable_timeout = (
+                raise_on_delivery_failure
+                and _is_retryable_codex_timeout_reason(send_error)
             )
+            if not retryable_timeout:
+                self._notify(
+                    title=(
+                        f"CEO agent blocked: {conversation.title}"
+                        if login_required
+                        else f"CEO agent error: {conversation.title}"
+                    ),
+                    message=send_error[:120],
+                    conversation=conversation,
+                )
             if raise_on_delivery_failure:
                 raise ReplyTaskProcessingError(send_error)
             return
