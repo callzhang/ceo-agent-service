@@ -261,9 +261,10 @@ class CodexRunner:
         self.codex_bin = codex_bin
 
     def build_env(self) -> dict[str, str]:
-        env = _memory_connector_env()
+        env = {**os.environ, **_memory_connector_env()}
         for key in DWS_CLI_AUTH_ENV_KEYS:
             env.pop(key, None)
+        env.pop("MEMORY_CONNECTOR_USER_ID", None)
         return env.copy()
 
     def build_command(
