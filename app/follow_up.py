@@ -173,6 +173,8 @@ def _completion_supported_by_current_evidence(
         return False, ""
     if str(todo.status) == TodoStatus.DONE.value:
         return True, "todo status is done"
+    if str(todo.status) == TodoStatus.CANCELLED.value:
+        return True, "todo status is cancelled"
     if _has_completion_evidence(todo.completion_evidence_json):
         return True, "todo has completion evidence"
     return False, ""

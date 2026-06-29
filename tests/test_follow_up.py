@@ -392,6 +392,47 @@ def test_due_follow_up_skips_when_todo_is_done(tmp_path):
     assert "todo status is done" in skipped.send_result_json
 
 
+def test_due_follow_up_skips_when_todo_is_cancelled(tmp_path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    project_id = store.create_work_project(
+        title="客户交付",
+        category="projects",
+        status="active",
+        priority="P0",
+        risk_level="high",
+    )
+    todo_id = store.create_work_todo(
+        project_id=project_id,
+        title="给客户交付 ETA",
+        owner_user_id="owner-1",
+        status="cancelled",
+        priority="P0",
+    )
+    store.create_follow_up_draft(
+        project_id=project_id,
+        todo_id=todo_id,
+        owner_user_id="owner-1",
+        target_conversation_id="cid-1",
+        target_kind="group",
+        question_text="这个 P0 事项现在结果、阻塞和 ETA 分别是什么？",
+        risk_check_json=json.dumps({"owner_in_group": True, "sensitive": False}),
+        scheduled_at="2026-06-07 09:00:00",
+    )
+    dws = FakeDws()
+
+    sent = process_due_follow_ups(
+        store,
+        dws,
+        now="2026-06-07 10:00:00",
+        auto_send=True,
+    )
+
+    assert sent == 0
+    assert dws.sent == []
+    skipped = store.list_follow_up_drafts(statuses=("skipped",))[0]
+    assert "todo status is cancelled" in skipped.send_result_json
+
+
 def test_due_follow_up_skips_when_linked_dingtalk_todo_is_done(tmp_path):
     store = AutoReplyStore(tmp_path / "task.sqlite3")
     project_id = store.create_work_project(

@@ -13,6 +13,7 @@ from app.task_models import (
     FollowUpDraftDecision,
     TaskAgentDecision,
     TodoChange,
+    TodoStatus,
     WorkItem,
     WorkItemSourceType,
     WorkSummaryInput,
@@ -26,6 +27,8 @@ TASK_AGENT_DECISION_SCHEMA_PATH = (
 )
 TASK_AGENT_AUDIT_EVENT_LIMIT = 200
 RECENT_FOLLOW_UP_CONTEXT_WINDOW = timedelta(days=7)
+FOLLOW_UP_WORK_START_HOUR = 9
+FOLLOW_UP_WORK_END_HOUR = 18
 
 
 class TaskCodex(Protocol):
@@ -173,6 +176,8 @@ def build_task_agent_prompt(
 - 近期 follow-up 候选只是上下文线索。你必须自己判断当前 Work Item 是否真的回应了某条 follow-up；不能因为候选存在就关闭 TODO 或 suppress follow-up。
 - 如果 Work Item 明确说明追错 owner、重复追问或不应继续跟进，可以通过 follow_up_changes 更新已有 follow_up_draft；不要生成新的 follow_up_draft 来继续追同一个错误 owner。
 - 只有当前消息和候选上下文共同明确证明 TODO 完成时，才把 todo_changes 写成 close 并提供 completion_evidence。
+- 已完成、已取消、已删除或用户明确表示不应继续跟进的 TODO 是负向证据；不要为了同一事项新建 TODO 或 follow_up_draft，优先关闭/取消/抑制已有项或仅更新项目背景。
+- 同一事项从不同会议听记、文档或消息重复出现时，只能合并到既有 TODO；不要换标题重新创建。
 - memory_connector 是外部辅助服务，不能成为 task agent 的运行依赖。
 - 如果 memory_connector 状态为可用，create_project 或 update_project 前必须直接调用 memory_recall MCP 工具查历史背景；不要传入或编造 user_id。
 - list_mcp_resources、list_mcp_resource_templates、memory_get、timeline_get 或本地搜索都不能替代 memory_recall；只有实际调用 memory_recall 并获得可用记忆结果后，memory_recall_used 才能为 true。
@@ -191,7 +196,7 @@ def build_task_agent_prompt(
 - risk_check 是结构化输出必填的审计说明。涉及人事、试用期、转正、绩效、薪酬、offer、候选人隐私、客户敏感承诺或财务敏感信息时，必须设置 sensitive=true，并优先使用 direct target。
 - risk_check.owner_in_group 只记录 group target 是否包含 owner；direct target 可填 false 表示不适用，但不能用它阻断发送。
 - follow_up_draft.question_text 必须包含一句简短来源或依据，例如“基于某群/某会议/某文档提到的事项”，避免让 owner 不知道 AI 为什么突然追问；措辞必须是确认进展，不要像分配新任务。
-- 跟进时间指导：P0 今天跟进；P1 在 3 天内跟进；P2 在上下文或 OKR 暗示需要时本周内跟进。
+- 跟进时间指导：P0 今天跟进；P1 在 3 天内跟进；P2 在上下文或 OKR 暗示需要时本周内跟进。scheduled_at 和 next_follow_up_at 必须落在工作日 09:00-18:00；夜间或周末不要安排发送。
 
 输出要求：
 - 只输出 TaskAgentDecision JSON。
@@ -764,6 +769,8 @@ def _todo_values(
             continue
         value = getattr(change, field)
         if value not in ("", None):
+            if field == "next_follow_up_at":
+                value = _normalize_follow_up_time(str(value))
             values[field] = _enum_value(value)
     if (
         only_fields is None or "completion_evidence" in only_fields
@@ -807,6 +814,12 @@ def _create_follow_up_draft(
         draft=draft,
         todo_refs=todo_refs,
     )
+    todo = store.get_work_todo(todo_id)
+    if todo is not None and (
+        todo.status in {TodoStatus.DONE, TodoStatus.CANCELLED}
+        or _has_json_content(todo.completion_evidence_json)
+    ):
+        return 0
     return store.create_follow_up_draft(
         project_id=project_id,
         todo_id=todo_id,
@@ -817,7 +830,7 @@ def _create_follow_up_draft(
         question_text=draft.question_text,
         risk_check_json=_json_dumps(draft.risk_check),
         status=_enum_value(draft.status),
-        scheduled_at=draft.scheduled_at,
+        scheduled_at=_normalize_follow_up_time(draft.scheduled_at),
     )
 
 
@@ -901,6 +914,59 @@ def _resolve_follow_up_todo_id(
             f"follow_up_draft.todo_id {todo_id} does not belong to project {project_id}"
         )
     return todo_id
+
+
+def _has_json_content(value: str) -> bool:
+    text = (value or "").strip()
+    if not text:
+        return False
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        return True
+    return bool(parsed)
+
+
+def _normalize_follow_up_time(value: str) -> str:
+    text = (value or "").strip()
+    if not text:
+        return ""
+    try:
+        scheduled = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return value
+
+    adjusted = scheduled
+    if adjusted.weekday() >= 5:
+        days_until_monday = 7 - adjusted.weekday()
+        adjusted = adjusted + timedelta(days=days_until_monday)
+        adjusted = adjusted.replace(
+            hour=FOLLOW_UP_WORK_START_HOUR,
+            minute=0,
+            second=0,
+            microsecond=0,
+        )
+    elif adjusted.hour < FOLLOW_UP_WORK_START_HOUR:
+        adjusted = adjusted.replace(
+            hour=FOLLOW_UP_WORK_START_HOUR,
+            minute=0,
+            second=0,
+            microsecond=0,
+        )
+    elif adjusted.hour >= FOLLOW_UP_WORK_END_HOUR:
+        adjusted = adjusted + timedelta(days=1)
+        while adjusted.weekday() >= 5:
+            adjusted = adjusted + timedelta(days=1)
+        adjusted = adjusted.replace(
+            hour=FOLLOW_UP_WORK_START_HOUR,
+            minute=0,
+            second=0,
+            microsecond=0,
+        )
+
+    if adjusted == scheduled:
+        return value
+    return adjusted.isoformat(timespec="seconds")
 
 
 def _json_dumps(value: object) -> str:

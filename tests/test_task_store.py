@@ -243,6 +243,50 @@ def test_create_project_todo_update_and_follow_up(tmp_path: Path):
     assert row == (1,)
 
 
+def test_create_follow_up_draft_dedupes_skipped_terminal_draft(tmp_path: Path):
+    store = _store(tmp_path)
+
+    project_id = store.create_work_project(
+        title="售前知识库建设",
+        category="sales",
+        status="active",
+        memory_context_json='{"query":"existing"}',
+    )
+    todo_id = store.create_work_todo(
+        project_id=project_id,
+        title="补齐售前材料来源链接",
+        owner_user_id="owner-1",
+        owner_name="Alex",
+        priority="P1",
+    )
+    skipped_id = store.create_follow_up_draft(
+        project_id=project_id,
+        todo_id=todo_id,
+        owner_user_id="owner-1",
+        owner_name="Alex",
+        target_conversation_id="cid-1",
+        target_kind="group",
+        question_text="售前材料来源链接现在补齐到哪一步了？",
+        status="skipped",
+        scheduled_at="2026-06-10 09:00:00",
+    )
+
+    duplicate_id = store.create_follow_up_draft(
+        project_id=project_id,
+        todo_id=todo_id,
+        owner_user_id="owner-1",
+        owner_name="Alex",
+        target_conversation_id="cid-1",
+        target_kind="group",
+        question_text="售前材料来源链接现在补齐到哪一步了？",
+        status="draft",
+        scheduled_at="2026-06-11 09:00:00",
+    )
+
+    assert duplicate_id == skipped_id
+    assert store.list_follow_up_drafts(statuses=("draft",)) == []
+
+
 def test_list_recent_follow_up_candidates_returns_linked_context(tmp_path: Path):
     store = _store(tmp_path)
     project_id = store.create_work_project(

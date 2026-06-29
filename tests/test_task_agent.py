@@ -1586,6 +1586,123 @@ def test_follow_up_drafts_are_created_with_risk_check(tmp_path):
     }
 
 
+def test_follow_up_draft_scheduled_after_hours_moves_to_next_workday(tmp_path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    decision = TaskAgentDecision.model_validate(
+        {
+            "action": "create_project",
+            "project": {
+                "title": "售前知识库建设",
+                "category": "sales",
+                "status": "active",
+                "memory_context": _memory_context(),
+            },
+            "todo_changes": [
+                {
+                    "action": "create",
+                    "todo_ref": "confirm-project-boundary",
+                    "title": "确认项目边界",
+                    "owner_user_id": "owner-1",
+                    "owner_name": "Alex",
+                    "status": "open",
+                    "priority": "P1",
+                    "next_follow_up_at": "2026-07-04T21:30:00+08:00",
+                    "follow_up_question": "项目目标和 owner 是否确认？",
+                }
+            ],
+            "follow_up_drafts": [
+                {
+                    "todo_ref": "confirm-project-boundary",
+                    "owner_user_id": "owner-1",
+                    "owner_name": "Alex",
+                    "target_conversation_id": "cid-1",
+                    "target_kind": "group",
+                    "question_text": "项目目标和 owner 是否确认？",
+                    "scheduled_at": "2026-07-04T21:30:00+08:00",
+                    "risk_check": {"owner_in_group": True, "sensitive": False},
+                    "status": "draft",
+                }
+            ],
+            "follow_up_changes": [],
+            "update_summary": "需要追问项目边界。",
+            "merge_reason": "",
+            "memory_recall_used": True,
+            "confidence": 0.7,
+        }
+    )
+
+    project_id = apply_task_agent_decision(
+        store,
+        summary_input_id=0,
+        work_item=_work_item(),
+        decision=decision,
+    )
+
+    assert project_id is not None
+    todos = store.list_work_todos(project_id=project_id)
+    drafts = store.list_follow_up_drafts(statuses=("draft",))
+    assert todos[0].next_follow_up_at == "2026-07-06T09:00:00+08:00"
+    assert drafts[0].scheduled_at == "2026-07-06T09:00:00+08:00"
+
+
+def test_terminal_todo_does_not_create_follow_up_draft(tmp_path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    project_id = store.create_work_project(
+        title="售前知识库建设",
+        category="sales",
+        status="active",
+        memory_context_json='{"query":"existing"}',
+    )
+    todo_id = store.create_work_todo(
+        project_id=project_id,
+        title="确认项目边界",
+        owner_user_id="owner-1",
+        owner_name="Alex",
+        status="cancelled",
+        priority="P1",
+    )
+    decision = TaskAgentDecision.model_validate(
+        {
+            "action": "update_project",
+            "project": {
+                "id": project_id,
+                "title": "售前知识库建设",
+                "category": "sales",
+                "status": "active",
+                "memory_context": _memory_context(),
+            },
+            "todo_changes": [],
+            "follow_up_drafts": [
+                {
+                    "todo_id": todo_id,
+                    "owner_user_id": "owner-1",
+                    "owner_name": "Alex",
+                    "target_conversation_id": "cid-1",
+                    "target_kind": "group",
+                    "question_text": "项目目标和 owner 是否确认？",
+                    "scheduled_at": "2026-06-08 09:00:00",
+                    "risk_check": {"owner_in_group": True, "sensitive": False},
+                    "status": "draft",
+                }
+            ],
+            "follow_up_changes": [],
+            "update_summary": "尝试重复跟进已取消 TODO。",
+            "merge_reason": "",
+            "memory_recall_used": True,
+            "confidence": 0.7,
+        }
+    )
+
+    apply_task_agent_decision(
+        store,
+        summary_input_id=0,
+        work_item=_work_item(),
+        decision=decision,
+    )
+
+    assert store.list_follow_up_drafts(statuses=("draft",)) == []
+
+
 def test_low_confidence_minutes_speaker_labels_suppress_direct_follow_up(tmp_path):
     store = AutoReplyStore(tmp_path / "task.sqlite3")
     decision = TaskAgentDecision.model_validate(

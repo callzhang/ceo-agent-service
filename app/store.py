@@ -3557,7 +3557,7 @@ class AutoReplyStore:
                     select id
                     from follow_up_drafts
                     where dedupe_key=?
-                      and status in ('draft', 'approved', 'sent')
+                      and status in ('draft', 'approved', 'sent', 'skipped', 'cancelled')
                     order by id desc
                     limit 1
                     """,
