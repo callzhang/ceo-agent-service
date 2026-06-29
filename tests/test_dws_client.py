@@ -3786,6 +3786,39 @@ def test_run_text_returns_stdout_on_success(monkeypatch):
     )
 
 
+def test_run_text_uses_per_call_timeout_when_provided(monkeypatch):
+    seen_timeouts = []
+
+    def fake_run(command, text, capture_output, check, timeout, env=None):
+        seen_timeouts.append(timeout)
+        return SimpleNamespace(returncode=0, stdout="ok", stderr="")
+
+    monkeypatch.setattr("app.dws_client.subprocess.run", fake_run)
+
+    assert (
+        DwsClient(timeout_seconds=11).run_text(
+            ["dws", "upgrade", "-y", "--format", "json"],
+            timeout_seconds=180,
+        )
+        == "ok"
+    )
+    assert seen_timeouts == [180]
+
+
+def test_upgrade_uses_longer_process_timeout(monkeypatch):
+    seen_timeouts = []
+
+    def fake_run(command, text, capture_output, check, timeout, env=None):
+        assert command == ["dws", "upgrade", "-y", "--format", "json"]
+        seen_timeouts.append(timeout)
+        return SimpleNamespace(returncode=0, stdout="upgraded", stderr="")
+
+    monkeypatch.setattr("app.dws_client.subprocess.run", fake_run)
+
+    assert DwsClient(timeout_seconds=30).upgrade() == "upgraded"
+    assert seen_timeouts == [180]
+
+
 def test_run_text_raises_dws_error_on_nonzero_exit(monkeypatch):
     def fake_run(command, text, capture_output, check, timeout, env=None):
         return SimpleNamespace(returncode=1, stdout="", stderr="permission denied")

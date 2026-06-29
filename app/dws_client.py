@@ -1332,7 +1332,10 @@ class DwsClient:
         return payload
 
     def upgrade(self) -> str:
-        return self.run_text(self.build_upgrade_command())
+        return self.run_text(
+            self.build_upgrade_command(),
+            timeout_seconds=max(self.timeout_seconds, 180),
+        )
 
     def start_auth_login(self) -> subprocess.Popen[str]:
         return subprocess.Popen(
@@ -2427,19 +2430,25 @@ class DwsClient:
         except json.JSONDecodeError as exc:
             raise DwsError("dws command returned invalid JSON") from exc
 
-    def run_text(self, command: list[str]) -> str:
+    def run_text(
+        self,
+        command: list[str],
+        *,
+        timeout_seconds: int | None = None,
+    ) -> str:
+        command_timeout_seconds = timeout_seconds or self.timeout_seconds
         try:
             result = subprocess.run(
                 command,
                 text=True,
                 capture_output=True,
                 check=False,
-                timeout=self.timeout_seconds,
+                timeout=command_timeout_seconds,
                 env=self._cli_environment(),
             )
         except subprocess.TimeoutExpired as exc:
             raise DwsError(
-                f"dws command timed out after {self.timeout_seconds} seconds"
+                f"dws command timed out after {command_timeout_seconds} seconds"
             ) from exc
         if result.returncode != 0:
             code = (
