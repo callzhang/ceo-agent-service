@@ -92,7 +92,7 @@ def test_due_follow_up_sends_group_message(tmp_path):
     sent = process_due_follow_ups(
         store,
         dws,
-        now="2026-06-07 10:00:00",
+        now="2026-06-08 02:00:00",
         auto_send=True,
     )
 
@@ -109,6 +109,41 @@ def test_due_follow_up_sends_group_message(tmp_path):
     assert send_result["at_users"] == ["owner-1"]
     assert send_result["at_open_dingtalk_ids"] == ["open-owner-1"]
     assert send_result["at_open_dingtalk_names"] == ["Alex"]
+
+
+def test_due_follow_up_defers_outside_local_working_hours(tmp_path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    project_id = store.create_work_project(
+        title="客户交付",
+        category="projects",
+        status="active",
+        priority="P0",
+        risk_level="high",
+    )
+    draft_id = store.create_follow_up_draft(
+        project_id=project_id,
+        owner_user_id="owner-1",
+        owner_name="Alex",
+        target_kind="direct",
+        question_text="请同步这个事项的最新进展。",
+        scheduled_at="2026-06-29 09:00:00",
+    )
+    dws = FakeDws()
+
+    sent = process_due_follow_ups(
+        store,
+        dws,
+        now="2026-06-29 12:00:00",
+        auto_send=True,
+    )
+
+    assert sent == 0
+    assert dws.sent == []
+    draft = store.get_follow_up_draft(draft_id)
+    assert draft is not None
+    assert draft.status == "draft"
+    assert draft.scheduled_at == "2026-06-30 01:00:00"
+    assert draft.suppressed_reason == "outside_local_working_hours"
 
 
 def test_due_follow_up_resolves_non_open_group_id_from_cached_source(tmp_path):
@@ -161,7 +196,7 @@ def test_due_follow_up_resolves_non_open_group_id_from_cached_source(tmp_path):
     sent = process_due_follow_ups(
         store,
         dws,
-        now="2026-06-07 10:00:00",
+        now="2026-06-08 02:00:00",
         auto_send=True,
     )
 
@@ -204,7 +239,7 @@ def test_due_follow_up_uses_reply_postfix_and_feedback_links(tmp_path):
     sent = process_due_follow_ups(
         store,
         dws,
-        now="2026-06-07 10:00:00",
+        now="2026-06-08 02:00:00",
         auto_send=True,
         feedback_base_url="https://feedback.example.com",
     )
@@ -252,7 +287,7 @@ def test_direct_follow_up_prefers_open_dingtalk_id_for_send_target(tmp_path):
     sent = process_due_follow_ups(
         store,
         dws,
-        now="2026-06-07 10:00:00",
+        now="2026-06-08 02:00:00",
         auto_send=True,
     )
 
@@ -290,7 +325,7 @@ def test_group_follow_up_resolves_owner_name_before_sending_at_user(tmp_path):
     sent = process_due_follow_ups(
         store,
         dws,
-        now="2026-06-11 10:00:00",
+        now="2026-06-12 02:00:00",
         auto_send=True,
     )
 
@@ -340,7 +375,7 @@ def test_due_follow_up_skips_when_todo_completion_evidence_exists(tmp_path):
     sent = process_due_follow_ups(
         store,
         dws,
-        now="2026-06-07 10:00:00",
+        now="2026-06-08 02:00:00",
         auto_send=True,
     )
 
@@ -382,7 +417,7 @@ def test_due_follow_up_skips_when_todo_is_done(tmp_path):
     sent = process_due_follow_ups(
         store,
         dws,
-        now="2026-06-07 10:00:00",
+        now="2026-06-08 02:00:00",
         auto_send=True,
     )
 
@@ -423,7 +458,7 @@ def test_due_follow_up_skips_when_todo_is_cancelled(tmp_path):
     sent = process_due_follow_ups(
         store,
         dws,
-        now="2026-06-07 10:00:00",
+        now="2026-06-08 02:00:00",
         auto_send=True,
     )
 
@@ -467,7 +502,7 @@ def test_due_follow_up_skips_when_linked_dingtalk_todo_is_done(tmp_path):
         owner_name="Alex",
         target_kind="direct",
         question_text="请同步验收 ETA。",
-        scheduled_at="2026-06-27 09:00:00",
+        scheduled_at="2026-06-27 01:00:00",
     )
     dws = FakeDws()
     dws.get_todo_task = lambda task_id: {"id": task_id, "done": True}
@@ -475,7 +510,7 @@ def test_due_follow_up_skips_when_linked_dingtalk_todo_is_done(tmp_path):
     sent = process_due_follow_ups(
         store,
         dws,
-        now="2026-06-27 10:00:00",
+        now="2026-06-29 02:00:00",
         auto_send=True,
     )
 
@@ -519,7 +554,7 @@ def test_due_follow_up_sends_when_linked_dingtalk_todo_is_not_done(tmp_path):
         owner_name="Alex",
         target_kind="direct",
         question_text="请同步验收 ETA。",
-        scheduled_at="2026-06-27 09:00:00",
+        scheduled_at="2026-06-27 01:00:00",
     )
     dws = FakeDws()
     dws.todo_payloads["dt-task-1"] = {"id": "dt-task-1", "done": False}
@@ -527,7 +562,7 @@ def test_due_follow_up_sends_when_linked_dingtalk_todo_is_not_done(tmp_path):
     sent = process_due_follow_ups(
         store,
         dws,
-        now="2026-06-27 10:00:00",
+        now="2026-06-29 02:00:00",
         auto_send=True,
     )
 
@@ -594,7 +629,7 @@ def test_draft_follow_up_sends_direct_message_when_live_send_enabled(tmp_path):
     sent = process_due_follow_ups(
         store,
         dws,
-        now="2026-06-07 10:00:00",
+        now="2026-06-08 02:00:00",
         auto_send=True,
     )
 
@@ -630,7 +665,7 @@ def test_direct_follow_up_with_conversation_id_uses_direct_owner_target(tmp_path
     sent = process_due_follow_ups(
         store,
         dws,
-        now="2026-06-07 10:00:00",
+        now="2026-06-08 02:00:00",
         auto_send=True,
     )
 
@@ -676,7 +711,7 @@ def test_follow_up_uses_cached_org_profile_before_live_dws_lookup(tmp_path):
     sent = process_due_follow_ups(
         store,
         dws,
-        now="2026-06-07 10:00:00",
+        now="2026-06-08 02:00:00",
         auto_send=True,
     )
 
@@ -708,7 +743,7 @@ def test_dry_run_does_not_send_due_follow_up(tmp_path):
     sent = process_due_follow_ups(
         store,
         dws,
-        now="2026-06-07 10:00:00",
+        now="2026-06-08 02:00:00",
         auto_send=False,
     )
 
@@ -742,7 +777,7 @@ def test_sensitive_group_follow_up_reroutes_to_direct_message(tmp_path):
     sent = process_due_follow_ups(
         store,
         dws,
-        now="2026-06-07 10:00:00",
+        now="2026-06-08 02:00:00",
         auto_send=True,
     )
 
@@ -779,7 +814,7 @@ def test_missing_risk_check_does_not_block_sendable_follow_up(tmp_path):
     sent = process_due_follow_ups(
         store,
         dws,
-        now="2026-06-07 10:00:00",
+        now="2026-06-08 02:00:00",
         auto_send=True,
     )
 
@@ -811,7 +846,7 @@ def test_group_follow_up_without_group_falls_back_to_direct_message(tmp_path):
     sent = process_due_follow_ups(
         store,
         dws,
-        now="2026-06-07 10:00:00",
+        now="2026-06-08 02:00:00",
         auto_send=True,
     )
 
@@ -856,7 +891,7 @@ def test_follow_up_failure_marks_failed_and_records_error(tmp_path):
     sent = process_due_follow_ups(
         store,
         BrokenDws(),
-        now="2026-06-07 10:00:00",
+        now="2026-06-08 02:00:00",
         auto_send=True,
     )
 
@@ -894,7 +929,7 @@ def test_dws_login_required_defers_follow_up_without_marking_failed(tmp_path):
     sent = process_due_follow_ups(
         store,
         AuthMissingDws(),
-        now="2026-06-07 10:00:00",
+        now="2026-06-08 02:00:00",
         auto_send=True,
     )
 
@@ -902,7 +937,7 @@ def test_dws_login_required_defers_follow_up_without_marking_failed(tmp_path):
     assert store.list_follow_up_drafts(statuses=("failed",)) == []
     draft = store.list_follow_up_drafts(statuses=("draft",))[0]
     assert draft.id == draft_id
-    assert draft.scheduled_at == "2026-06-07 10:15:00"
+    assert draft.scheduled_at == "2026-06-08 02:15:00"
     result = json.loads(draft.send_result_json)
     assert result["recoverable"] is True
     assert result["reason"] == "dws_login_required"
@@ -961,7 +996,7 @@ def test_due_follow_up_does_not_close_todo_from_reply_keywords(tmp_path):
     sent = process_due_follow_ups(
         store,
         dws,
-        now="2026-06-07 10:00:00",
+        now="2026-06-08 02:00:00",
         auto_send=True,
     )
 
@@ -1009,7 +1044,7 @@ def test_completion_reply_keyword_does_not_push_dingtalk_todo_done(tmp_path):
         target_conversation_id="cid-1",
         target_kind="group",
         question_text="请同步验收 ETA。",
-        scheduled_at="2026-06-27 09:00:00",
+        scheduled_at="2026-06-27 01:00:00",
     )
     attempt_id = store.record_reply_attempt(
         conversation_id="cid-1",
@@ -1035,7 +1070,7 @@ def test_completion_reply_keyword_does_not_push_dingtalk_todo_done(tmp_path):
     sent = process_due_follow_ups(
         store,
         dws,
-        now="2026-06-27 10:00:00",
+        now="2026-06-29 02:00:00",
         auto_send=True,
     )
 
@@ -1100,7 +1135,7 @@ def test_due_follow_up_does_not_skip_when_recent_reply_asks_for_source(tmp_path)
     sent = process_due_follow_ups(
         store,
         dws,
-        now="2026-06-07 10:00:00",
+        now="2026-06-08 02:00:00",
         auto_send=True,
     )
 
@@ -1128,9 +1163,9 @@ def test_due_follow_up_defers_when_owner_daily_cap_reached(tmp_path):
             owner_name="Alex",
             target_kind="direct",
             question_text=f"已发送 {index}",
-            scheduled_at="2026-06-07 08:00:00",
+            scheduled_at="2026-06-08 01:00:00",
             status="sent",
-            sent_at=f"2026-06-07 08:0{index}:00",
+            sent_at=f"2026-06-08 01:0{index}:00",
         )
         assert sent_id > 0
     draft_id = store.create_follow_up_draft(
@@ -1147,7 +1182,7 @@ def test_due_follow_up_defers_when_owner_daily_cap_reached(tmp_path):
     sent = process_due_follow_ups(
         store,
         dws,
-        now="2026-06-07 10:00:00",
+        now="2026-06-08 02:00:00",
         auto_send=True,
     )
 
@@ -1158,5 +1193,5 @@ def test_due_follow_up_defers_when_owner_daily_cap_reached(tmp_path):
         for item in store.list_follow_up_drafts(statuses=("draft",))
         if item.id == draft_id
     ][0]
-    assert draft.scheduled_at == "2026-06-08 09:00:00"
+    assert draft.scheduled_at == "2026-06-09 01:00:00"
     assert draft.suppressed_reason == "owner_daily_cap"

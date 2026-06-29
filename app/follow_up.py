@@ -1,5 +1,6 @@
 import json
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 from app.dws_client import DwsError
 from app.feedback_spike import prepare_outgoing_reply_text
@@ -14,6 +15,9 @@ MAX_FOLLOW_UP_AGE_SECONDS = 7 * 24 * 60 * 60
 RECOVERABLE_AUTH_RETRY_DELAY = timedelta(minutes=15)
 MAX_FOLLOW_UPS_PER_OWNER_PER_DAY = 3
 MAX_FOLLOW_UPS_PER_GROUP_PER_DAY = 8
+LOCAL_WORK_TZ = ZoneInfo("Asia/Shanghai")
+LOCAL_WORK_START_HOUR = 9
+LOCAL_WORK_END_HOUR = 18
 
 
 def _parse_follow_up_datetime(value: str) -> datetime | None:
@@ -63,13 +67,60 @@ def _start_of_day(now: str) -> str:
 
 
 def _tomorrow_morning(now: str) -> str:
-    current = _parse_follow_up_datetime(now) or datetime.now(timezone.utc).replace(
+    current = _now_as_utc(now).astimezone(LOCAL_WORK_TZ)
+    tomorrow = current + timedelta(days=1)
+    while tomorrow.weekday() >= 5:
+        tomorrow = tomorrow + timedelta(days=1)
+    local_morning = tomorrow.replace(
+        hour=LOCAL_WORK_START_HOUR,
+        minute=0,
+        second=0,
+        microsecond=0,
+    )
+    return local_morning.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _now_as_utc(value: str) -> datetime:
+    parsed = _parse_follow_up_datetime(value) or datetime.now(timezone.utc).replace(
         tzinfo=None
     )
-    tomorrow = current + timedelta(days=1)
-    return tomorrow.replace(hour=9, minute=0, second=0, microsecond=0).strftime(
-        "%Y-%m-%d %H:%M:%S"
+    return parsed.replace(tzinfo=timezone.utc)
+
+
+def _local_work_time(value: str) -> datetime:
+    return _now_as_utc(value).astimezone(LOCAL_WORK_TZ)
+
+
+def _is_local_working_time(value: str) -> bool:
+    local_now = _local_work_time(value)
+    return (
+        local_now.weekday() < 5
+        and LOCAL_WORK_START_HOUR <= local_now.hour < LOCAL_WORK_END_HOUR
     )
+
+
+def _next_local_work_start_utc(value: str) -> str:
+    local_next = _local_work_time(value)
+    if local_next.weekday() >= 5 or local_next.hour >= LOCAL_WORK_END_HOUR:
+        local_next = local_next + timedelta(days=1)
+        while local_next.weekday() >= 5:
+            local_next = local_next + timedelta(days=1)
+        local_next = local_next.replace(
+            hour=LOCAL_WORK_START_HOUR,
+            minute=0,
+            second=0,
+            microsecond=0,
+        )
+    elif local_next.hour < LOCAL_WORK_START_HOUR:
+        local_next = local_next.replace(
+            hour=LOCAL_WORK_START_HOUR,
+            minute=0,
+            second=0,
+            microsecond=0,
+        )
+    else:
+        local_next = local_next.replace(microsecond=0)
+    return local_next.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
 
 def _risk_check(draft) -> dict:
@@ -254,10 +305,11 @@ def _defer_policy_follow_up(
     reason: str,
     detail: dict,
 ) -> None:
+    next_scheduled_at = str(detail.get("next_scheduled_at") or "").strip()
     store.update_follow_up_draft(
         draft.id,
         status="draft",
-        scheduled_at=_tomorrow_morning(now),
+        scheduled_at=next_scheduled_at or _tomorrow_morning(now),
         suppressed_reason=reason,
         evidence_check_json=json.dumps(
             {
@@ -356,6 +408,18 @@ def process_due_follow_ups(
             continue
         if _is_stale_follow_up(draft.scheduled_at, now):
             _skip_stale_follow_up(store, draft, now=now)
+            continue
+        if not _is_local_working_time(now):
+            _defer_policy_follow_up(
+                store,
+                draft,
+                now=now,
+                reason="outside_local_working_hours",
+                detail={
+                    "local_timezone": str(LOCAL_WORK_TZ),
+                    "next_scheduled_at": _next_local_work_start_utc(now),
+                },
+            )
             continue
         if draft.todo_id > 0:
             dingtalk_done, dingtalk_reason = refresh_dingtalk_todo_before_follow_up(
