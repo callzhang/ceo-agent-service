@@ -3205,6 +3205,107 @@ def test_sent_reply_enqueues_conversation_work_item(tmp_path: Path, monkeypatch)
     assert append_signature("请 Alex 三天内给进展。") in attempts[0].final_reply_text
 
 
+def test_no_reply_near_recent_follow_up_enqueues_task_work_item(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message("收到，我晚点同步", sender_user_id="owner-1")
+    dws = FakeDws([conversation()], {"cid-1": [trigger]})
+    codex = FakeCodex(
+        CodexDecision(
+            action=CodexAction.NO_REPLY,
+            reason="只是同步进展，不需要直接回复。",
+            audit_summary="对方在近期任务提醒后同步状态，交由 task agent 判断任务更新。",
+        )
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+    project_id = worker.store.create_work_project(
+        title="海外数据合规与中美开发隔离闭环",
+        category="strategy",
+        status="active",
+        priority="P0",
+        risk_level="high",
+        owner_user_id="owner-1",
+        owner_name="Ming Hu",
+    )
+    todo_id = worker.store.create_work_todo(
+        project_id=project_id,
+        title="确认中美开发隔离方案执行状态",
+        owner_user_id="owner-1",
+        owner_name="Ming Hu",
+        status="open",
+        priority="P0",
+        deadline_at="2026-05-13 18:00:00",
+        next_follow_up_at="2026-05-13 09:00:00",
+        follow_up_question="隔离方案今天能闭环吗？",
+    )
+    worker.store.create_follow_up_draft(
+        project_id=project_id,
+        todo_id=todo_id,
+        owner_user_id="owner-1",
+        owner_name="Ming Hu",
+        target_conversation_id="cid-1",
+        target_kind="group",
+        question_text="隔离方案今天能闭环吗？",
+        status="sent",
+        sent_at="2026-05-13 09:30:00",
+        scheduled_at="2026-05-13 09:00:00",
+    )
+
+    worker._process_batch(
+        conversation(),
+        [trigger],
+        [],
+        ignore_existing_attempt=True,
+    )
+
+    claimed = worker.store.claim_work_summary_inputs(limit=10)
+    assert len(claimed) == 1
+    payload = json.loads(claimed[0].payload_json)
+    assert payload["source"]["type"] == "reply_attempt"
+    assert payload["context"]["sender"] == "周俊杰"
+    assert payload["context"]["sender_user_id"] == "owner-1"
+    assert payload["task_signals"] == {
+        "possible_task_update": True,
+        "mentions_follow_up": True,
+        "progress_claim": False,
+        "owner_correction": False,
+        "complaint_about_followup": False,
+        "signal_reason": (
+            "当前对话命中近期 follow-up 候选，交由 task agent "
+            "结合上下文判断是否更新任务或 follow-up。"
+        ),
+    }
+    assert "近期 follow-up 候选" in payload["summary"]
+    assert "海外数据合规与中美开发隔离闭环" in payload["summary"]
+    assert "确认中美开发隔离方案执行状态" in payload["summary"]
+    assert "隔离方案今天能闭环吗？" in payload["summary"]
+    assert "对方在近期任务提醒后同步状态" in payload["summary"]
+
+
+def test_no_reply_without_recent_follow_up_does_not_enqueue_task_work_item(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message("收到，我晚点同步", sender_user_id="owner-1")
+    dws = FakeDws([conversation()], {"cid-1": [trigger]})
+    codex = FakeCodex(
+        CodexDecision(
+            action=CodexAction.NO_REPLY,
+            reason="只是同步，不需要直接回复。",
+            audit_summary="没有可关联的近期任务提醒。",
+        )
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+
+    worker._process_batch(
+        conversation(),
+        [trigger],
+        [],
+        ignore_existing_attempt=True,
+    )
+
+    assert worker.store.claim_work_summary_inputs(limit=10) == []
+
+
 def test_consume_once_appends_feedback_links_when_configured(
     tmp_path: Path, monkeypatch
 ):

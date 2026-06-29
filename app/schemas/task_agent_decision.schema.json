@@ -9,6 +9,7 @@
     "project",
     "todo_changes",
     "follow_up_drafts",
+    "follow_up_changes",
     "update_summary",
     "merge_reason",
     "memory_recall_used",
@@ -44,6 +45,12 @@
       "type": "array",
       "items": {
         "$ref": "#/$defs/follow_up_draft"
+      }
+    },
+    "follow_up_changes": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/follow_up_change"
       }
     },
     "update_summary": {
@@ -421,6 +428,57 @@
         "status": {
           "type": "string",
           "enum": ["draft", "approved", "sent", "skipped", "failed", "cancelled"]
+        }
+      }
+    },
+    "follow_up_change": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "follow_up_id",
+        "todo_id",
+        "action",
+        "reason",
+        "evidence_check",
+        "next_due_at",
+        "owner_user_id",
+        "owner_name"
+      ],
+      "properties": {
+        "follow_up_id": {
+          "type": "integer"
+        },
+        "todo_id": {
+          "type": ["integer", "null"]
+        },
+        "action": {
+          "type": "string",
+          "enum": ["suppress", "close", "reschedule", "reassign", "keep_open"]
+        },
+        "reason": {
+          "type": "string"
+        },
+        "evidence_check": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["source", "summary"],
+          "properties": {
+            "source": {
+              "type": "string"
+            },
+            "summary": {
+              "type": "string"
+            }
+          }
+        },
+        "next_due_at": {
+          "type": ["string", "null"]
+        },
+        "owner_user_id": {
+          "type": ["string", "null"]
+        },
+        "owner_name": {
+          "type": ["string", "null"]
         }
       }
     }

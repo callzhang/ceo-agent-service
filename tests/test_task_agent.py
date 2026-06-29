@@ -62,6 +62,61 @@ def _work_item(project_name="售前知识库"):
     )
 
 
+def _follow_up_reply_work_item(
+    *,
+    source_ref: str,
+    summary: str,
+    conversation_id: str,
+    conversation_title: str,
+    sender: str,
+    sender_user_id: str,
+    created_at: str,
+    project_name: str = "",
+) -> WorkItem:
+    return WorkItem.model_validate(
+        {
+            "source": {
+                "type": "reply_attempt",
+                "ref": source_ref,
+                "title": sender,
+                "conversation_id": conversation_id,
+                "conversation_title": conversation_title,
+                "created_at": created_at,
+            },
+            "summary": summary,
+            "project_name": project_name,
+            "context": {
+                "sender": sender,
+                "sender_user_id": sender_user_id,
+                "participants": [sender],
+                "source_conversation_kind": "direct",
+                "source_conversation_title": conversation_title,
+            },
+            "task_signals": {
+                "possible_task_update": True,
+                "mentions_follow_up": True,
+                "signal_reason": "reply_attempt is near a recent follow-up candidate",
+            },
+        }
+    )
+
+
+def _enqueue_and_process_work_item(
+    store: AutoReplyStore,
+    *,
+    item: WorkItem,
+    codex: FakeCodex,
+) -> int:
+    input_id = store.enqueue_work_summary_input(
+        item.source.type.value,
+        item.source.ref,
+        item.model_dump_json(),
+    )
+    work_input = store.claim_work_summary_inputs(limit=1)[0]
+    process_work_item(store, TaskAgentRunner(codex), work_input)
+    return input_id
+
+
 def _memory_context():
     return {
         "query": "售前知识库",
@@ -76,6 +131,481 @@ def _memory_context():
             }
         ],
     }
+
+
+def _decision_with_follow_up_change(
+    *,
+    project_id: int,
+    follow_up_id: int,
+    todo_id: int | None = None,
+    action: str = "suppress",
+    next_due_at: str | None = None,
+    owner_user_id: str | None = None,
+    owner_name: str | None = None,
+) -> TaskAgentDecision:
+    return TaskAgentDecision.model_validate(
+        {
+            "action": "update_project",
+            "discard_reason": "",
+            "project": {
+                "id": project_id,
+                "title": "售前知识库",
+                "category": "sales",
+                "status": "active",
+                "memory_context": _memory_context(),
+            },
+            "todo_changes": [],
+            "follow_up_drafts": [],
+            "follow_up_changes": [
+                {
+                    "follow_up_id": follow_up_id,
+                    "todo_id": todo_id,
+                    "action": action,
+                    "reason": "reply context updated follow-up state",
+                    "evidence_check": {"source": "reply_attempt:1"},
+                    "next_due_at": next_due_at,
+                    "owner_user_id": owner_user_id,
+                    "owner_name": owner_name,
+                }
+            ],
+            "update_summary": "更新跟进状态。",
+            "merge_reason": "follow-up reply context",
+            "memory_recall_used": True,
+            "confidence": 0.8,
+        }
+    )
+
+
+def test_work_item_accepts_task_routing_signals():
+    item = WorkItem.model_validate(
+        {
+            "source": {
+                "type": "reply_attempt",
+                "ref": "1992",
+                "title": "Lily",
+                "conversation_id": "cid-lily",
+                "conversation_title": "Lily",
+                "created_at": "2026-06-28 09:44:05",
+            },
+            "summary": "Lily反馈海外数据合规P0追错owner。",
+            "project_name": "",
+            "context": {
+                "sender": "Lily",
+                "sender_user_id": "lily-user-1",
+                "participants": ["Lily"],
+                "source_conversation_kind": "direct",
+                "source_conversation_title": "Lily",
+            },
+            "task_signals": {
+                "possible_task_update": True,
+                "mentions_follow_up": True,
+                "progress_claim": False,
+                "owner_correction": True,
+                "complaint_about_followup": True,
+                "signal_reason": "同一会话里有近期已发送follow-up，且用户反馈追错owner。",
+            },
+        }
+    )
+
+    assert item.task_signals.possible_task_update is True
+    assert item.context.sender_user_id == "lily-user-1"
+    assert item.task_signals.owner_correction is True
+    assert item.task_signals.complaint_about_followup is True
+    assert "追错owner" in item.task_signals.signal_reason
+
+
+def test_process_work_item_includes_recent_follow_up_candidates_in_prompt(tmp_path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    project_id = store.create_work_project(
+        title="海外数据合规与中美开发隔离闭环",
+        category="strategy",
+        status="active",
+        priority="P0",
+        risk_level="high",
+    )
+    todo_id = store.create_work_todo(
+        project_id=project_id,
+        title="张丽丽恢复海外数据合规项目当前状态与未完成清单",
+        owner_user_id="144339455824043200",
+        owner_name="张丽丽(Lily)",
+        status="open",
+        priority="P0",
+    )
+    follow_up_id = store.create_follow_up_draft(
+        project_id=project_id,
+        todo_id=todo_id,
+        owner_user_id="144339455824043200",
+        owner_name="张丽丽(Lily)",
+        target_conversation_id="cid-lily",
+        target_kind="direct",
+        question_text="海外数据合规 P0 当前状态是什么？",
+        status="sent",
+        sent_at="2026-06-28 09:00:00",
+    )
+    item = WorkItem.model_validate(
+        {
+            "source": {
+                "type": "reply_attempt",
+                "ref": "1992",
+                "title": "Lily",
+                "conversation_id": "cid-lily",
+                "conversation_title": "Lily",
+                "created_at": "2026-06-28 09:44:05",
+            },
+            "summary": "Lily反馈海外数据合规P0追错owner，这个是胡明和运维负责。",
+            "project_name": "",
+            "context": {
+                "sender": "Lily",
+                "sender_user_id": "144339455824043200",
+                "participants": ["Lily"],
+                "source_conversation_kind": "direct",
+                "source_conversation_title": "Lily",
+            },
+            "task_signals": {
+                "possible_task_update": True,
+                "mentions_follow_up": True,
+                "signal_reason": "recent follow-up candidate exists",
+            },
+        }
+    )
+    store.enqueue_work_summary_input(
+        item.source.type.value,
+        item.source.ref,
+        item.model_dump_json(),
+    )
+    work_input = store.claim_work_summary_inputs(limit=1)[0]
+    codex = FakeCodex(
+        {
+            "action": "discard",
+            "discard_reason": "prompt inspection only",
+            "project": None,
+            "todo_changes": [],
+            "follow_up_drafts": [],
+            "follow_up_changes": [],
+            "update_summary": "不更新。",
+            "merge_reason": "",
+            "memory_recall_used": False,
+            "confidence": 0.5,
+            "failure_risk": "测试prompt。",
+            "failure_risk_score": 0.1,
+        }
+    )
+
+    process_work_item(store, TaskAgentRunner(codex), work_input)
+
+    prompt = codex.prompts[0]
+    assert "近期 follow-up 候选" in prompt
+    assert f'"id": {follow_up_id}' in prompt
+    assert f'"follow_up_id": {follow_up_id}' in prompt
+    assert "海外数据合规 P0 当前状态是什么？" in prompt
+    assert "张丽丽恢复海外数据合规项目当前状态与未完成清单" in prompt
+
+
+def test_process_work_item_accepts_lily_owner_correction_reply(tmp_path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    project_id = store.create_work_project(
+        title="海外数据合规与中美开发隔离闭环",
+        category="strategy",
+        status="active",
+        priority="P0",
+        risk_level="high",
+        owner_user_id="144339455824043200",
+        owner_name="张丽丽(Lily)",
+    )
+    todo_id = store.create_work_todo(
+        project_id=project_id,
+        title="张丽丽恢复海外数据合规项目当前状态与未完成清单",
+        owner_user_id="144339455824043200",
+        owner_name="张丽丽(Lily)",
+        status="open",
+        priority="P0",
+    )
+    follow_up_id = store.create_follow_up_draft(
+        project_id=project_id,
+        todo_id=todo_id,
+        owner_user_id="144339455824043200",
+        owner_name="张丽丽(Lily)",
+        target_conversation_id="cid-lily",
+        target_kind="direct",
+        question_text="海外数据合规 P0 当前状态是什么？",
+        status="sent",
+        sent_at="2026-06-28 09:00:00",
+    )
+    item = _follow_up_reply_work_item(
+        source_ref="1992",
+        summary="Lily反馈海外数据合规P0追错owner，应由胡明和运维负责。",
+        conversation_id="cid-lily",
+        conversation_title="Lily",
+        sender="Lily",
+        sender_user_id="144339455824043200",
+        created_at="2026-06-28 09:44:05",
+    )
+    codex = FakeCodex(
+        {
+            "action": "update_project",
+            "discard_reason": "",
+            "project": {
+                "id": project_id,
+                "title": "海外数据合规与中美开发隔离闭环",
+                "category": "strategy",
+                "tags": [],
+                "status": "active",
+                "priority": "P0",
+                "risk_level": "high",
+                "needs_derek_attention": False,
+                "owner_user_id": "02412744671048909",
+                "owner_name": "Ming Hu(胡明)/运维",
+                "related_people": [],
+                "goal": "完成海外数据合规和中美开发隔离闭环。",
+                "background": "Lily反馈该P0事项应由胡明和运维负责，不能继续追Lily。",
+                "memory_context": _memory_context(),
+                "facts": [
+                    {
+                        "description": "Lily反馈海外数据合规P0 owner应为胡明和运维。",
+                        "source": "reply_attempt:1992",
+                        "created": "2026-06-28 09:44:05",
+                        "updated": "2026-06-28 09:44:05",
+                    }
+                ],
+                "current_state": "已纠正owner归属，原Lily follow-up应停止。",
+                "blocker": "",
+                "next_step": "后续如需确认进展，应问胡明或运维。",
+                "next_follow_up_at": "",
+                "follow_up_mode": "none",
+                "source_conversations": [
+                    {"conversation_id": "cid-lily", "title": "Lily"}
+                ],
+            },
+            "todo_changes": [
+                {
+                    "action": "update",
+                    "todo_id": todo_id,
+                    "title": "确认海外数据合规 P0 当前状态与真实 owner 分工",
+                    "owner_user_id": "02412744671048909",
+                    "owner_name": "Ming Hu(胡明)",
+                    "status": "open",
+                    "priority": "P0",
+                    "completion_evidence": None,
+                }
+            ],
+            "follow_up_drafts": [],
+            "follow_up_changes": [
+                {
+                    "follow_up_id": follow_up_id,
+                    "todo_id": todo_id,
+                    "action": "suppress",
+                    "reason": "owner_corrected_by_reply",
+                    "evidence_check": {
+                        "source": "reply_attempt:1992",
+                        "summary": "Lily说明该事项由胡明和运维负责。",
+                    },
+                    "next_due_at": None,
+                    "owner_user_id": None,
+                    "owner_name": None,
+                }
+            ],
+            "update_summary": "停止追Lily并修正海外数据合规owner。",
+            "merge_reason": "follow-up reply corrected owner",
+            "memory_recall_used": True,
+            "confidence": 0.86,
+            "failure_risk": "继续追错owner会影响执行效率和用户体验。",
+            "failure_risk_score": 0.8,
+        }
+    )
+
+    input_id = _enqueue_and_process_work_item(store, item=item, codex=codex)
+
+    prompt = codex.prompts[0]
+    assert "近期 follow-up 候选" in prompt
+    assert f'"follow_up_id": {follow_up_id}' in prompt
+    project = store.get_work_project(project_id)
+    assert project is not None
+    assert project.owner_name == "Ming Hu(胡明)/运维"
+    todo = store.get_work_todo(todo_id)
+    assert todo is not None
+    assert todo.status == "open"
+    assert todo.owner_name == "Ming Hu(胡明)"
+    assert todo.completion_evidence_json == "{}"
+    skipped = store.get_follow_up_draft(follow_up_id)
+    assert skipped is not None
+    assert skipped.status == "skipped"
+    assert skipped.suppressed_reason == "owner_corrected_by_reply"
+    with sqlite3.connect(tmp_path / "task.sqlite3") as db:
+        input_row = db.execute(
+            "select status, error from work_summary_inputs where id=?",
+            (input_id,),
+        ).fetchone()
+    assert input_row == ("done", "")
+
+
+def test_process_work_item_accepts_clear_follow_up_completion_reply(tmp_path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    project_id = store.create_work_project(
+        title="客户验收交付",
+        category="projects",
+        status="active",
+        priority="P1",
+        risk_level="medium",
+    )
+    todo_id = store.create_work_todo(
+        project_id=project_id,
+        title="给客户同步验收 ETA",
+        owner_user_id="owner-1",
+        owner_name="Alex",
+        status="open",
+        priority="P1",
+    )
+    follow_up_id = store.create_follow_up_draft(
+        project_id=project_id,
+        todo_id=todo_id,
+        owner_user_id="owner-1",
+        owner_name="Alex",
+        target_conversation_id="cid-delivery",
+        target_kind="direct",
+        question_text="客户验收 ETA 同步了吗？",
+        status="sent",
+        sent_at="2026-06-28 09:30:00",
+    )
+    item = _follow_up_reply_work_item(
+        source_ref="2001",
+        summary="Alex回复客户验收 ETA 已经同步完成，并发到了客户群。",
+        conversation_id="cid-delivery",
+        conversation_title="Alex",
+        sender="Alex",
+        sender_user_id="owner-1",
+        created_at="2026-06-28 10:00:00",
+        project_name="客户验收交付",
+    )
+    codex = FakeCodex(
+        {
+            "action": "update_project",
+            "discard_reason": "",
+            "project": {
+                "id": project_id,
+                "title": "客户验收交付",
+                "category": "projects",
+                "status": "active",
+                "memory_context": _memory_context(),
+            },
+            "todo_changes": [
+                {
+                    "action": "close",
+                    "todo_id": todo_id,
+                    "title": "给客户同步验收 ETA",
+                    "status": "done",
+                    "completion_evidence": {
+                        "source": "reply_attempt:2001",
+                        "summary": "Alex明确回复客户验收 ETA 已同步完成。",
+                        "confidence": 0.95,
+                    },
+                }
+            ],
+            "follow_up_drafts": [],
+            "follow_up_changes": [],
+            "update_summary": "根据回复关闭客户验收 ETA TODO。",
+            "merge_reason": "reply explicitly completed the follow-up TODO",
+            "memory_recall_used": True,
+            "confidence": 0.95,
+            "failure_risk": "已完成事项不关闭会造成重复追问。",
+            "failure_risk_score": 0.4,
+        }
+    )
+
+    input_id = _enqueue_and_process_work_item(store, item=item, codex=codex)
+
+    assert f'"follow_up_id": {follow_up_id}' in codex.prompts[0]
+    todo = store.get_work_todo(todo_id)
+    assert todo is not None
+    assert todo.status == "done"
+    completion_evidence = json.loads(todo.completion_evidence_json)
+    assert completion_evidence["source"] == "reply_attempt:2001"
+    assert "已同步完成" in completion_evidence["summary"]
+    with sqlite3.connect(tmp_path / "task.sqlite3") as db:
+        input_row = db.execute(
+            "select status, error from work_summary_inputs where id=?",
+            (input_id,),
+        ).fetchone()
+    assert input_row == ("done", "")
+
+
+def test_process_work_item_discards_ambiguous_follow_up_reply_without_changes(
+    tmp_path,
+):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    project_id = store.create_work_project(
+        title="售前方案推进",
+        category="sales",
+        status="active",
+        priority="P2",
+        risk_level="low",
+    )
+    todo_id = store.create_work_todo(
+        project_id=project_id,
+        title="补齐售前方案材料",
+        owner_user_id="owner-2",
+        owner_name="Mina",
+        status="open",
+        priority="P2",
+    )
+    follow_up_id = store.create_follow_up_draft(
+        project_id=project_id,
+        todo_id=todo_id,
+        owner_user_id="owner-2",
+        owner_name="Mina",
+        target_conversation_id="cid-presales",
+        target_kind="direct",
+        question_text="售前方案材料补齐了吗？",
+        status="sent",
+        sent_at="2026-06-28 11:00:00",
+    )
+    item = _follow_up_reply_work_item(
+        source_ref="2002",
+        summary="Mina只回复已处理，但没有说明处理了什么，也没有完成证据。",
+        conversation_id="cid-presales",
+        conversation_title="Mina",
+        sender="Mina",
+        sender_user_id="owner-2",
+        created_at="2026-06-28 12:00:00",
+        project_name="售前方案推进",
+    )
+    codex = FakeCodex(
+        {
+            "action": "discard",
+            "discard_reason": "回复过于模糊，不能证明TODO完成或需要更新follow-up。",
+            "project": None,
+            "todo_changes": [],
+            "follow_up_drafts": [],
+            "follow_up_changes": [],
+            "update_summary": "模糊回复不更新任务。",
+            "merge_reason": "",
+            "memory_recall_used": False,
+            "confidence": 0.72,
+            "failure_risk": "如果误判为完成，会漏掉售前材料缺口。",
+            "failure_risk_score": 0.55,
+        }
+    )
+
+    input_id = _enqueue_and_process_work_item(store, item=item, codex=codex)
+
+    assert f'"follow_up_id": {follow_up_id}' in codex.prompts[0]
+    todo = store.get_work_todo(todo_id)
+    assert todo is not None
+    assert todo.status == "open"
+    assert todo.completion_evidence_json == "{}"
+    follow_up = store.get_follow_up_draft(follow_up_id)
+    assert follow_up is not None
+    assert follow_up.status == "sent"
+    assert follow_up.suppressed_reason == ""
+    assert store.list_work_updates(project_id=project_id) == []
+    with sqlite3.connect(tmp_path / "task.sqlite3") as db:
+        input_row = db.execute(
+            "select status, error from work_summary_inputs where id=?",
+            (input_id,),
+        ).fetchone()
+    assert input_row == (
+        "discarded",
+        "回复过于模糊，不能证明TODO完成或需要更新follow-up。",
+    )
 
 
 def test_process_work_item_creates_project_todo_update_and_run(tmp_path):
@@ -135,6 +665,7 @@ def test_process_work_item_creates_project_todo_update_and_run(tmp_path):
                 }
             ],
             "follow_up_drafts": [],
+            "follow_up_changes": [],
             "update_summary": "创建售前知识库项目。",
             "merge_reason": "无现有项目匹配，且事项名称稳定。",
             "memory_recall_used": True,
@@ -206,6 +737,7 @@ def test_apply_decision_closes_todo_with_completion_evidence(tmp_path):
                 }
             ],
             "follow_up_drafts": [],
+            "follow_up_changes": [],
             "update_summary": "关闭 ETA 待办。",
             "merge_reason": "同一客户交付项目。",
             "memory_recall_used": True,
@@ -224,6 +756,304 @@ def test_apply_decision_closes_todo_with_completion_evidence(tmp_path):
     todo = store.list_work_todos(project_id=project_id)[0]
     assert todo.status == "done"
     assert "ETA 已发送客户" in todo.completion_evidence_json
+
+
+def test_apply_decision_suppresses_existing_follow_up_without_closing_todo(tmp_path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    project_id = store.create_work_project(
+        title="海外数据合规与中美开发隔离闭环",
+        category="strategy",
+        status="active",
+        priority="P0",
+        risk_level="high",
+        owner_name="张丽丽(Lily)",
+    )
+    todo_id = store.create_work_todo(
+        project_id=project_id,
+        title="张丽丽恢复海外数据合规项目当前状态与未完成清单",
+        owner_user_id="144339455824043200",
+        owner_name="张丽丽(Lily)",
+        status="open",
+        priority="P0",
+    )
+    follow_up_id = store.create_follow_up_draft(
+        project_id=project_id,
+        todo_id=todo_id,
+        owner_user_id="144339455824043200",
+        owner_name="张丽丽(Lily)",
+        target_conversation_id="cid-lily",
+        target_kind="direct",
+        question_text="海外数据合规 P0 当前状态是什么？",
+        status="sent",
+        sent_at="2026-06-27 02:45:30",
+    )
+    decision = TaskAgentDecision.model_validate(
+        {
+            "action": "update_project",
+            "discard_reason": "",
+            "project": {
+                "id": project_id,
+                "title": "海外数据合规与中美开发隔离闭环",
+                "category": "strategy",
+                "tags": [],
+                "status": "active",
+                "priority": "P0",
+                "risk_level": "high",
+                "needs_derek_attention": False,
+                "owner_user_id": "02412744671048909",
+                "owner_name": "Ming Hu(胡明)/运维",
+                "related_people": [],
+                "goal": "",
+                "background": "Lily反馈该P0事项由胡明和运维负责，不能继续追Lily。",
+                "memory_context": _memory_context(),
+                "facts": [
+                    {
+                        "description": "Lily反馈海外数据合规P0 owner应为胡明和运维。",
+                        "source": "reply_attempt:1992",
+                        "created": "2026-06-28 09:44:05",
+                        "updated": "2026-06-28 09:44:05",
+                    }
+                ],
+                "current_state": "",
+                "blocker": "",
+                "next_step": "后续如需确认进展，应问胡明或运维。",
+                "next_follow_up_at": "",
+                "follow_up_mode": "none",
+                "source_conversations": [],
+            },
+            "todo_changes": [
+                {
+                    "action": "update",
+                    "todo_id": todo_id,
+                    "todo_ref": "",
+                    "title": "确认海外数据合规 P0 当前状态与真实 owner 分工",
+                    "owner_user_id": "02412744671048909",
+                    "owner_name": "Ming Hu(胡明)",
+                    "status": "open",
+                    "priority": "P0",
+                    "deadline_at": "2026-06-28T23:00:00+08:00",
+                    "next_follow_up_at": "",
+                    "follow_up_question": "",
+                    "completion_evidence": None,
+                    "blocker": "",
+                }
+            ],
+            "follow_up_drafts": [],
+            "follow_up_changes": [
+                {
+                    "follow_up_id": follow_up_id,
+                    "todo_id": todo_id,
+                    "action": "suppress",
+                    "reason": "owner_corrected_by_reply",
+                    "evidence_check": {
+                        "source": "reply_attempt:1992",
+                        "summary": "Lily说明该事项由胡明和运维负责。",
+                    },
+                    "next_due_at": None,
+                    "owner_user_id": None,
+                    "owner_name": None,
+                }
+            ],
+            "update_summary": "停止追Lily并修正海外数据合规owner。",
+            "merge_reason": "follow-up reply corrected owner",
+            "memory_recall_used": True,
+            "confidence": 0.86,
+            "failure_risk": "继续追错owner会影响执行效率和用户体验。",
+            "failure_risk_score": 0.8,
+        }
+    )
+
+    apply_task_agent_decision(
+        store,
+        summary_input_id=1,
+        work_item=_work_item(project_name=""),
+        decision=decision,
+        memory_recall_attempted=True,
+    )
+
+    todo = store.get_work_todo(todo_id)
+    assert todo is not None
+    assert todo.status == "open"
+    assert todo.owner_name == "Ming Hu(胡明)"
+    assert todo.completion_evidence_json == "{}"
+    skipped = store.list_follow_up_drafts(statuses=("skipped",))[0]
+    assert skipped.id == follow_up_id
+    assert skipped.suppressed_reason == "owner_corrected_by_reply"
+    assert "reply_attempt:1992" in skipped.evidence_check_json
+    update = store.list_work_updates(project_id=project_id)[0]
+    assert "follow_up_changes" in update.changes_json
+
+
+@pytest.mark.parametrize("initial_status", ["draft", "approved"])
+def test_follow_up_close_skips_pending_follow_up_without_closing_todo(
+    tmp_path,
+    initial_status,
+):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    project_id = store.create_work_project(
+        title="售前知识库",
+        category="sales",
+        status="active",
+    )
+    todo_id = store.create_work_todo(
+        project_id=project_id,
+        title="确认方案交付时间",
+        owner_user_id="owner-1",
+        owner_name="Alex",
+        status="open",
+        priority="P1",
+    )
+    follow_up_id = store.create_follow_up_draft(
+        project_id=project_id,
+        todo_id=todo_id,
+        owner_user_id="owner-1",
+        owner_name="Alex",
+        target_conversation_id="cid-1",
+        target_kind="group",
+        question_text="方案交付时间确认了吗？",
+        status=initial_status,
+        scheduled_at="2026-06-29 09:00:00",
+    )
+    decision = _decision_with_follow_up_change(
+        project_id=project_id,
+        follow_up_id=follow_up_id,
+        todo_id=todo_id,
+        action="close",
+    )
+
+    apply_task_agent_decision(
+        store,
+        summary_input_id=1,
+        work_item=_work_item(),
+        decision=decision,
+        memory_recall_attempted=True,
+    )
+
+    due_drafts = store.list_follow_up_drafts(
+        statuses=("draft", "approved"),
+        due_before="2026-06-29 10:00:00",
+    )
+    assert [draft.id for draft in due_drafts] == []
+    follow_up = store.get_follow_up_draft(follow_up_id)
+    assert follow_up is not None
+    assert follow_up.status == "skipped"
+    assert follow_up.reaction_status == "completed"
+    assert "reply context updated follow-up state" in follow_up.reaction_summary
+    todo = store.get_work_todo(todo_id)
+    assert todo is not None
+    assert todo.status == "open"
+    assert todo.completion_evidence_json == "{}"
+
+
+def test_follow_up_change_rejects_missing_positive_follow_up_id(tmp_path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    project_id = store.create_work_project(
+        title="售前知识库",
+        category="sales",
+        status="active",
+    )
+    decision = _decision_with_follow_up_change(
+        project_id=project_id,
+        follow_up_id=999,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="follow_up_change.follow_up_id not found: 999",
+    ):
+        apply_task_agent_decision(
+            store,
+            summary_input_id=1,
+            work_item=_work_item(),
+            decision=decision,
+            memory_recall_attempted=True,
+        )
+
+    assert store.list_work_updates(project_id=project_id) == []
+
+
+def test_follow_up_change_reschedule_requires_next_due_at(tmp_path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    project_id = store.create_work_project(
+        title="售前知识库",
+        category="sales",
+        status="active",
+    )
+    follow_up_id = store.create_follow_up_draft(
+        project_id=project_id,
+        todo_id=1,
+        owner_user_id="owner-1",
+        owner_name="Alex",
+        target_conversation_id="cid-1",
+        target_kind="group",
+        question_text="项目目标和 owner 是否确认？",
+        status="sent",
+    )
+    decision = _decision_with_follow_up_change(
+        project_id=project_id,
+        follow_up_id=follow_up_id,
+        action="reschedule",
+        next_due_at=" ",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="follow_up_change.next_due_at is required for reschedule",
+    ):
+        apply_task_agent_decision(
+            store,
+            summary_input_id=1,
+            work_item=_work_item(),
+            decision=decision,
+            memory_recall_attempted=True,
+        )
+
+    drafts = store.list_follow_up_drafts(statuses=("sent",))
+    assert drafts[0].id == follow_up_id
+    assert drafts[0].scheduled_at == ""
+
+
+def test_follow_up_change_reassign_requires_owner_identity(tmp_path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    project_id = store.create_work_project(
+        title="售前知识库",
+        category="sales",
+        status="active",
+    )
+    follow_up_id = store.create_follow_up_draft(
+        project_id=project_id,
+        todo_id=1,
+        owner_user_id="owner-1",
+        owner_name="Alex",
+        target_conversation_id="cid-1",
+        target_kind="group",
+        question_text="项目目标和 owner 是否确认？",
+        status="sent",
+    )
+    decision = _decision_with_follow_up_change(
+        project_id=project_id,
+        follow_up_id=follow_up_id,
+        action="reassign",
+        owner_user_id=" ",
+        owner_name=None,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="follow_up_change.owner_user_id or owner_name is required for reassign",
+    ):
+        apply_task_agent_decision(
+            store,
+            summary_input_id=1,
+            work_item=_work_item(),
+            decision=decision,
+            memory_recall_attempted=True,
+        )
+
+    drafts = store.list_follow_up_drafts(statuses=("sent",))
+    assert drafts[0].id == follow_up_id
+    assert drafts[0].owner_user_id == "owner-1"
+    assert drafts[0].owner_name == "Alex"
 
 
 def test_apply_decision_creates_dingtalk_todo_for_high_confidence_todo(
@@ -264,6 +1094,7 @@ def test_apply_decision_creates_dingtalk_todo_for_high_confidence_todo(
                 }
             ],
             "follow_up_drafts": [],
+            "follow_up_changes": [],
             "update_summary": "新增交付 ETA task item。",
             "merge_reason": "新项目。",
             "memory_recall_used": True,
@@ -333,6 +1164,7 @@ def test_apply_decision_creates_dingtalk_todo_for_updated_todo(
                 }
             ],
             "follow_up_drafts": [],
+            "follow_up_changes": [],
             "update_summary": "更新交付 ETA task item。",
             "merge_reason": "同一客户交付项目。",
             "memory_recall_used": True,
@@ -403,6 +1235,7 @@ def test_apply_decision_does_not_create_dingtalk_todo_for_closed_todo(
                 }
             ],
             "follow_up_drafts": [],
+            "follow_up_changes": [],
             "update_summary": "关闭 ETA 待办。",
             "merge_reason": "同一客户交付项目。",
             "memory_recall_used": True,
@@ -466,6 +1299,7 @@ def test_apply_decision_pushes_completed_todo_to_dingtalk(tmp_path, monkeypatch)
                 }
             ],
             "follow_up_drafts": [],
+            "follow_up_changes": [],
             "update_summary": "关闭 task item。",
             "merge_reason": "明确完成。",
             "memory_recall_used": True,
@@ -548,6 +1382,7 @@ def test_apply_decision_does_not_push_completed_todo_without_evidence_or_dws(
                     {"action": "close", "todo_id": todo_without_evidence_id}
                 ],
                 "follow_up_drafts": [],
+                "follow_up_changes": [],
                 "update_summary": "关闭无 evidence 的 task item。",
                 "merge_reason": "明确完成。",
                 "memory_recall_used": True,
@@ -573,6 +1408,7 @@ def test_apply_decision_does_not_push_completed_todo_without_evidence_or_dws(
                     }
                 ],
                 "follow_up_drafts": [],
+                "follow_up_changes": [],
                 "update_summary": "关闭空 evidence 的 task item。",
                 "merge_reason": "明确完成。",
                 "memory_recall_used": True,
@@ -601,6 +1437,7 @@ def test_apply_decision_does_not_push_completed_todo_without_evidence_or_dws(
                     }
                 ],
                 "follow_up_drafts": [],
+                "follow_up_changes": [],
                 "update_summary": "关闭无 dws 的 task item。",
                 "merge_reason": "明确完成。",
                 "memory_recall_used": True,
@@ -629,6 +1466,7 @@ def test_discard_decision_records_run_and_marks_input_discarded(tmp_path):
             "discard_reason": "不是稳定任务。",
             "todo_changes": [],
             "follow_up_drafts": [],
+            "follow_up_changes": [],
             "update_summary": "丢弃输入。",
             "merge_reason": "",
             "memory_recall_used": False,
@@ -688,6 +1526,7 @@ def test_follow_up_drafts_are_created_with_risk_check(tmp_path):
                     "status": "draft",
                 }
             ],
+            "follow_up_changes": [],
             "update_summary": "需要追问项目边界。",
             "merge_reason": "",
             "memory_recall_used": True,
@@ -738,6 +1577,7 @@ def test_follow_up_draft_requires_todo_binding(tmp_path):
                     "status": "draft",
                 }
             ],
+            "follow_up_changes": [],
             "update_summary": "需要追问项目边界。",
             "merge_reason": "",
             "memory_recall_used": True,
@@ -789,6 +1629,7 @@ def test_follow_up_draft_rejects_todo_from_another_project(tmp_path):
                     "status": "draft",
                 }
             ],
+            "follow_up_changes": [],
             "update_summary": "需要追问项目边界。",
             "merge_reason": "",
             "memory_recall_used": True,
@@ -829,6 +1670,7 @@ def test_follow_up_draft_requires_owner_user_id_at_generation(tmp_path):
                     "status": "draft",
                 }
             ],
+            "follow_up_changes": [],
             "update_summary": "生成跟进草稿。",
             "merge_reason": "",
             "memory_recall_used": True,
@@ -860,6 +1702,7 @@ def test_non_discard_decision_requires_memory_recall_used(tmp_path):
             },
             "todo_changes": [],
             "follow_up_drafts": [],
+            "follow_up_changes": [],
             "update_summary": "创建项目。",
             "merge_reason": "事项需要持续跟进。",
             "memory_recall_used": False,
@@ -888,6 +1731,7 @@ def test_non_discard_decision_requires_memory_context(tmp_path):
             },
             "todo_changes": [],
             "follow_up_drafts": [],
+            "follow_up_changes": [],
             "update_summary": "创建项目。",
             "merge_reason": "事项需要持续跟进。",
             "memory_recall_used": True,
@@ -928,6 +1772,7 @@ def test_process_work_item_requires_actual_memory_recall_tool_event(
             },
             "todo_changes": [],
             "follow_up_drafts": [],
+            "follow_up_changes": [],
             "update_summary": "创建项目。",
             "merge_reason": "事项需要持续跟进。",
             "memory_recall_used": True,
@@ -990,6 +1835,7 @@ def test_process_work_item_allows_memory_recall_runtime_failure_with_tool_event(
             },
             "todo_changes": [],
             "follow_up_drafts": [],
+            "follow_up_changes": [],
             "update_summary": "创建项目。",
             "merge_reason": "事项需要持续跟进。",
             "memory_recall_used": False,
@@ -1063,6 +1909,7 @@ def test_process_work_item_allows_memory_tool_discovery_unavailable_evidence(
             },
             "todo_changes": [],
             "follow_up_drafts": [],
+            "follow_up_changes": [],
             "update_summary": "创建项目。",
             "merge_reason": "事项需要持续跟进。",
             "memory_recall_used": False,
@@ -1120,6 +1967,7 @@ def test_process_work_item_continues_when_memory_connector_unavailable(
             },
             "todo_changes": [],
             "follow_up_drafts": [],
+            "follow_up_changes": [],
             "update_summary": "创建项目。",
             "merge_reason": "事项需要持续跟进。",
             "memory_recall_used": False,
@@ -1157,6 +2005,7 @@ def test_task_agent_codex_runner_keeps_user_config_for_memory_recall(tmp_path):
                 "discard_reason": "输入不足以形成稳定项目。",
                 "todo_changes": [],
                 "follow_up_drafts": [],
+                "follow_up_changes": [],
                 "update_summary": "跳过。",
                 "failure_risk": "无持续跟进风险。",
                 "failure_risk_score": 0,
@@ -1210,6 +2059,7 @@ def test_update_project_without_id_raises_value_error(tmp_path):
             },
             "todo_changes": [],
             "follow_up_drafts": [],
+            "follow_up_changes": [],
             "update_summary": "更新客户交付。",
             "merge_reason": "",
             "memory_recall_used": True,
@@ -1245,6 +2095,7 @@ def test_process_work_item_failure_does_not_create_partial_project(tmp_path):
             },
             "todo_changes": [{"action": "close", "title": "补齐来源链接"}],
             "follow_up_drafts": [],
+            "follow_up_changes": [],
             "update_summary": "坏的待办更新。",
             "merge_reason": "",
             "memory_recall_used": True,
@@ -1301,6 +2152,7 @@ def test_sparse_todo_update_preserves_existing_status_and_priority(tmp_path):
                 }
             ],
             "follow_up_drafts": [],
+            "follow_up_changes": [],
             "update_summary": "补充阻塞原因。",
             "merge_reason": "同一客户交付项目。",
             "memory_recall_used": True,
@@ -1343,6 +2195,7 @@ def test_discard_with_malformed_todo_change_marks_failed(tmp_path):
             "discard_reason": "不是稳定任务。",
             "todo_changes": [{"action": "close", "title": "补齐来源链接"}],
             "follow_up_drafts": [],
+            "follow_up_changes": [],
             "update_summary": "丢弃输入。",
             "merge_reason": "",
             "memory_recall_used": False,
@@ -1376,6 +2229,7 @@ def test_process_work_item_accepts_none_session_id(tmp_path):
             "discard_reason": "一次性对话。",
             "todo_changes": [],
             "follow_up_drafts": [],
+            "follow_up_changes": [],
             "update_summary": "丢弃。",
             "merge_reason": "",
             "memory_recall_used": False,
@@ -1403,6 +2257,7 @@ def test_task_agent_codex_runner_parses_jsonl_payload(tmp_path):
             '\\"discard_reason\\":\\"没有状态变化\\",'
             '\\"todo_changes\\":[],'
             '\\"follow_up_drafts\\":[],'
+            '\\"follow_up_changes\\":[],'
             '\\"update_summary\\":\\"无变化\\",'
             '\\"merge_reason\\":\\"\\",'
             '\\"memory_recall_used\\":false,'
@@ -1440,6 +2295,7 @@ def test_task_agent_codex_runner_parses_response_item_output_text(tmp_path):
                                             "project": None,
                                             "todo_changes": [],
                                             "follow_up_drafts": [],
+                                            "follow_up_changes": [],
                                             "update_summary": "无新增事项",
                                             "merge_reason": "",
                                             "memory_recall_used": False,
@@ -1469,17 +2325,115 @@ def test_task_agent_schema_uses_strict_object_shapes():
 
     schema = json.loads(TASK_AGENT_DECISION_SCHEMA_PATH.read_text(encoding="utf-8"))
 
-    def visit(node):
+    def visit(node, path=()):
         if isinstance(node, dict):
             if node.get("type") == "object":
                 assert node.get("additionalProperties") is False
-            for value in node.values():
-                visit(value)
+            for key, value in node.items():
+                visit(value, (*path, key))
         elif isinstance(node, list):
-            for item in node:
-                visit(item)
+            for index, item in enumerate(node):
+                visit(item, (*path, str(index)))
 
     visit(schema)
+
+
+def test_task_agent_decision_supports_follow_up_changes():
+    decision = TaskAgentDecision.model_validate(
+        {
+            "action": "update_project",
+            "discard_reason": "",
+            "project": {
+                "id": 372,
+                "title": "海外数据合规与中美开发隔离闭环",
+                "category": "strategy",
+                "tags": [],
+                "status": "active",
+                "priority": "P0",
+                "risk_level": "high",
+                "needs_derek_attention": False,
+                "owner_user_id": "02412744671048909",
+                "owner_name": "Ming Hu(胡明)/运维",
+                "related_people": [],
+                "goal": "",
+                "background": "Lily反馈该P0事项应由胡明和运维负责。",
+                "memory_context": _memory_context(),
+                "facts": [],
+                "current_state": "",
+                "blocker": "",
+                "next_step": "",
+                "next_follow_up_at": "",
+                "follow_up_mode": "none",
+                "source_conversations": [],
+            },
+            "todo_changes": [],
+            "follow_up_drafts": [],
+            "follow_up_changes": [
+                {
+                    "follow_up_id": 1566,
+                    "todo_id": 3720,
+                    "action": "reassign",
+                    "reason": "Lily clarified the P0 follow-up belongs to Ming Hu and ops.",
+                    "evidence_check": {
+                        "source": "reply_attempt:1992",
+                        "summary": "Lily说明该事项由胡明和运维负责。",
+                    },
+                    "next_due_at": None,
+                    "owner_user_id": "02412744671048909",
+                    "owner_name": "Ming Hu(胡明)/运维",
+                }
+            ],
+            "update_summary": "停止追Lily并修正owner口径。",
+            "merge_reason": "follow-up reply corrected owner",
+            "memory_recall_used": True,
+            "confidence": 0.86,
+            "failure_risk": "继续追错owner会降低执行效率并造成被追问人的焦虑。",
+            "failure_risk_score": 0.8,
+        }
+    )
+
+    assert decision.follow_up_changes[0].follow_up_id == 1566
+    assert decision.follow_up_changes[0].todo_id == 3720
+    assert decision.follow_up_changes[0].action == "reassign"
+    assert decision.follow_up_changes[0].reason.startswith("Lily clarified")
+    assert decision.follow_up_changes[0].next_due_at is None
+    assert decision.follow_up_changes[0].owner_user_id == "02412744671048909"
+
+
+def test_task_agent_schema_includes_follow_up_changes():
+    from app.task_agent import TASK_AGENT_DECISION_SCHEMA_PATH
+
+    schema = json.loads(TASK_AGENT_DECISION_SCHEMA_PATH.read_text(encoding="utf-8"))
+
+    assert "follow_up_changes" in schema["required"]
+    assert schema["properties"]["follow_up_changes"] == {
+        "type": "array",
+        "items": {"$ref": "#/$defs/follow_up_change"},
+    }
+    change_schema = schema["$defs"]["follow_up_change"]
+    assert set(change_schema["required"]) == set(change_schema["properties"])
+    assert change_schema["properties"]["follow_up_id"]["type"] == "integer"
+    assert change_schema["properties"]["todo_id"]["type"] == ["integer", "null"]
+    assert change_schema["properties"]["action"]["enum"] == [
+        "suppress",
+        "close",
+        "reschedule",
+        "reassign",
+        "keep_open",
+    ]
+    assert change_schema["properties"]["reason"]["type"] == "string"
+    assert change_schema["properties"]["evidence_check"] == {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["source", "summary"],
+        "properties": {
+            "source": {"type": "string"},
+            "summary": {"type": "string"},
+        },
+    }
+    assert change_schema["properties"]["next_due_at"]["type"] == ["string", "null"]
+    assert change_schema["properties"]["owner_user_id"]["type"] == ["string", "null"]
+    assert change_schema["properties"]["owner_name"]["type"] == ["string", "null"]
 
 
 def test_task_agent_decision_exposes_task_worthiness_risk_fields():
@@ -1492,6 +2446,7 @@ def test_task_agent_decision_exposes_task_worthiness_risk_fields():
             "project": None,
             "todo_changes": [],
             "follow_up_drafts": [],
+            "follow_up_changes": [],
             "update_summary": "不创建 task。",
             "merge_reason": "",
             "memory_recall_used": False,
@@ -1543,19 +2498,19 @@ def test_task_agent_schema_uses_strict_object_shapes_required_by_codex():
 
     schema = json.loads(TASK_AGENT_DECISION_SCHEMA_PATH.read_text(encoding="utf-8"))
 
-    def assert_strict_objects(node):
+    def assert_strict_objects(node, path=()):
         if not isinstance(node, dict):
             return
         if node.get("type") == "object":
             assert node.get("additionalProperties") is False
             if "properties" in node:
                 assert set(node.get("required", [])) == set(node["properties"])
-        for value in node.values():
+        for key, value in node.items():
             if isinstance(value, dict):
-                assert_strict_objects(value)
+                assert_strict_objects(value, (*path, key))
             elif isinstance(value, list):
-                for item in value:
-                    assert_strict_objects(item)
+                for index, item in enumerate(value):
+                    assert_strict_objects(item, (*path, str(index)))
 
     assert_strict_objects(schema)
 
@@ -1577,6 +2532,7 @@ def test_task_agent_codex_runner_uses_process_runner_signature(tmp_path):
                     "discard_reason": "没有状态变化",
                     "todo_changes": [],
                     "follow_up_drafts": [],
+                    "follow_up_changes": [],
                     "update_summary": "无变化",
                     "merge_reason": "",
                     "memory_recall_used": False,
@@ -1631,6 +2587,7 @@ def test_task_agent_codex_runner_reads_audit_events_from_session(tmp_path):
                     },
                     "todo_changes": [],
                     "follow_up_drafts": [],
+                    "follow_up_changes": [],
                     "update_summary": "记录候选人跟进。",
                     "merge_reason": "",
                     "memory_recall_used": True,

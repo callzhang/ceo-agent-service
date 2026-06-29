@@ -867,7 +867,7 @@ def test_dws_login_required_defers_follow_up_without_marking_failed(tmp_path):
     assert result["reason"] == "dws_login_required"
 
 
-def test_due_follow_up_skips_when_recent_reply_says_completed(tmp_path):
+def test_due_follow_up_does_not_close_todo_from_reply_keywords(tmp_path):
     store = AutoReplyStore(tmp_path / "task.sqlite3")
     project_id = store.create_work_project(
         title="客户交付",
@@ -924,17 +924,16 @@ def test_due_follow_up_skips_when_recent_reply_says_completed(tmp_path):
         auto_send=True,
     )
 
-    assert sent == 0
-    assert dws.sent == []
-    skipped = store.list_follow_up_drafts(statuses=("skipped",))[0]
-    assert "completion reaction" in skipped.send_result_json
+    assert sent == 1
+    assert len(dws.sent) == 1
     todo = store.get_work_todo(todo_id)
     assert todo is not None
-    assert todo.status == "done"
-    assert "reply_attempt" in todo.completion_evidence_json
+    assert todo.status == "open"
+    assert todo.completion_evidence_json == "{}"
+    assert store.list_follow_up_drafts(statuses=("skipped",)) == []
 
 
-def test_completion_reaction_pushes_dingtalk_todo_done(tmp_path, monkeypatch):
+def test_completion_reply_keyword_does_not_push_dingtalk_todo_done(tmp_path):
     store = AutoReplyStore(tmp_path / "task.sqlite3")
     project_id = store.create_work_project(
         title="客户交付",
@@ -990,13 +989,6 @@ def test_completion_reaction_pushes_dingtalk_todo_done(tmp_path, monkeypatch):
             """,
             (attempt_id,),
         )
-    pushed = []
-
-    def fake_push(store_arg, dws_arg, *, work_todo_id, evidence, now):
-        pushed.append({"work_todo_id": work_todo_id, "evidence": evidence, "now": now})
-        return True
-
-    monkeypatch.setattr("app.follow_up.sync_completed_todo_to_dingtalk", fake_push)
     dws = FakeDws()
 
     sent = process_due_follow_ups(
@@ -1006,27 +998,15 @@ def test_completion_reaction_pushes_dingtalk_todo_done(tmp_path, monkeypatch):
         auto_send=True,
     )
 
-    assert sent == 0
-    assert pushed == [
-        {
-            "work_todo_id": todo_id,
-            "evidence": {
-                "source": "reply_attempt:%d" % attempt_id,
-                "summary": "完成了，这块已经结束了。",
-                "follow_up_id": 1,
-                "checked_at": "2026-06-27 10:00:00",
-            },
-            "now": "2026-06-27 10:00:00",
-        }
-    ]
+    assert sent == 1
+    assert len(dws.sent) == 1
     todo = store.get_work_todo(todo_id)
     assert todo is not None
-    assert json.loads(todo.completion_evidence_json)["checked_at"] == (
-        "2026-06-27 10:00:00"
-    )
+    assert todo.status == "open"
+    assert todo.completion_evidence_json == "{}"
 
 
-def test_due_follow_up_skips_when_recent_reply_asks_for_source(tmp_path):
+def test_due_follow_up_does_not_skip_when_recent_reply_asks_for_source(tmp_path):
     store = AutoReplyStore(tmp_path / "task.sqlite3")
     project_id = store.create_work_project(
         title="Friday 产品落地",
@@ -1083,11 +1063,12 @@ def test_due_follow_up_skips_when_recent_reply_asks_for_source(tmp_path):
         auto_send=True,
     )
 
-    assert sent == 0
-    assert dws.sent == []
-    skipped = store.list_follow_up_drafts(statuses=("skipped",))[0]
-    assert skipped.id == draft_id
-    assert skipped.suppressed_reason == "reaction_asks_source"
+    assert sent == 1
+    assert len(dws.sent) == 1
+    assert store.list_follow_up_drafts(statuses=("skipped",)) == []
+    sent_draft = store.list_follow_up_drafts(statuses=("sent",))[0]
+    assert sent_draft.id == draft_id
+    assert sent_draft.suppressed_reason == ""
 
 
 def test_due_follow_up_defers_when_owner_daily_cap_reached(tmp_path):

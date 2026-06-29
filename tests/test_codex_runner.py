@@ -156,6 +156,23 @@ def test_codex_runner_env_loads_memory_connector_env_file(
     assert "UNRELATED_SECRET" not in env
 
 
+def test_codex_runner_env_preserves_process_auth_env_while_stripping_tool_secrets(
+    tmp_path: Path, monkeypatch
+):
+    monkeypatch.setenv("CODEX_LOGIN_MARKER", "desktop-session")
+    monkeypatch.setenv("DWS_CLIENT_SECRET", "dws-secret")
+    monkeypatch.setenv("DINGTALK_APP_SECRET", "ding-secret")
+    monkeypatch.setenv("MEMORY_CONNECTOR_USER_ID", "legacy-user")
+    runner = CodexRunner(workspace=tmp_path, codex_bin="codex")
+
+    env = runner.build_env()
+
+    assert env["CODEX_LOGIN_MARKER"] == "desktop-session"
+    assert "DWS_CLIENT_SECRET" not in env
+    assert "DINGTALK_APP_SECRET" not in env
+    assert "MEMORY_CONNECTOR_USER_ID" not in env
+
+
 def test_codex_runner_env_loads_memory_connector_from_codex_config(
     tmp_path: Path, monkeypatch
 ):

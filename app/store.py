@@ -80,6 +80,35 @@ class ReplyAttempt(BaseModel):
     updated_at: str
 
 
+class RecentFollowUpCandidate(BaseModel):
+    follow_up_id: int
+    project_id: int
+    project_title: str = ""
+    project_status: str = ""
+    project_priority: str = ""
+    project_risk_level: str = ""
+    todo_id: int = 0
+    todo_title: str = ""
+    todo_status: str = ""
+    todo_priority: str = ""
+    todo_deadline_at: str = ""
+    todo_next_follow_up_at: str = ""
+    owner_user_id: str = ""
+    owner_name: str = ""
+    target_conversation_id: str = ""
+    target_kind: str = ""
+    question_text: str = ""
+    scheduled_at: str = ""
+    sent_at: str = ""
+    status: str = ""
+    reaction_status: str = ""
+    reaction_summary: str = ""
+    suppressed_reason: str = ""
+    evidence_check_json: str = "{}"
+    risk_check_json: str = "{}"
+    send_result_json: str = "{}"
+
+
 class ReplyError(BaseModel):
     id: int
     conversation_id: str | None = None
@@ -3586,6 +3615,16 @@ class AutoReplyStore:
                 [*parameters, draft_id],
             )
 
+    def get_follow_up_draft(self, draft_id: int) -> FollowUpDraft | None:
+        if draft_id <= 0:
+            return None
+        with self._connect() as db:
+            row = db.execute(
+                "select * from follow_up_drafts where id=?",
+                (draft_id,),
+            ).fetchone()
+            return None if row is None else FollowUpDraft.model_validate(dict(row))
+
     def list_follow_up_drafts(
         self,
         *,
@@ -3615,6 +3654,117 @@ class AutoReplyStore:
                 FollowUpDraft.model_validate(dict(row))
                 for row in db.execute(query, args)
             ]
+
+    def list_recent_follow_up_candidates(
+        self,
+        *,
+        conversation_id: str = "",
+        owner_user_id: str = "",
+        since: str,
+        limit: int = 20,
+    ) -> list[RecentFollowUpCandidate]:
+        conversation_id = conversation_id.strip()
+        owner_user_id = owner_user_id.strip()
+        if not since.strip() or (not conversation_id and not owner_user_id):
+            return []
+        if limit <= 0:
+            return []
+        owner_expr = """
+            coalesce(
+                nullif(f.owner_user_id, ''),
+                nullif(t.owner_user_id, ''),
+                nullif(p.owner_user_id, ''),
+                ''
+            )
+        """
+        owner_name_expr = """
+            coalesce(
+                nullif(f.owner_name, ''),
+                nullif(t.owner_name, ''),
+                nullif(p.owner_name, ''),
+                ''
+            )
+        """
+        recency_expr = """
+            coalesce(
+                nullif(f.sent_at, ''),
+                nullif(f.scheduled_at, ''),
+                f.created_at
+            )
+        """
+        clauses = [
+            "f.status in ('sent', 'draft', 'approved')",
+            f"{recency_expr} >= ?",
+        ]
+        args: list[object] = [since.strip()]
+        match_clauses: list[str] = []
+        if conversation_id:
+            match_clauses.append("f.target_conversation_id=?")
+            args.append(conversation_id)
+        if owner_user_id:
+            match_clauses.append(f"{owner_expr}=?")
+            args.append(owner_user_id)
+        if match_clauses:
+            clauses.append(f"({' or '.join(match_clauses)})")
+        args.extend(
+            [
+                conversation_id,
+                conversation_id,
+                owner_user_id,
+                owner_user_id,
+                limit,
+            ]
+        )
+        with self._connect() as db:
+            rows = db.execute(
+                f"""
+                select
+                    f.id as follow_up_id,
+                    f.project_id,
+                    coalesce(p.title, '') as project_title,
+                    coalesce(p.status, '') as project_status,
+                    coalesce(p.priority, '') as project_priority,
+                    coalesce(p.risk_level, '') as project_risk_level,
+                    f.todo_id,
+                    coalesce(t.title, '') as todo_title,
+                    coalesce(t.status, '') as todo_status,
+                    coalesce(t.priority, '') as todo_priority,
+                    coalesce(t.deadline_at, '') as todo_deadline_at,
+                    coalesce(t.next_follow_up_at, '') as todo_next_follow_up_at,
+                    {owner_expr} as owner_user_id,
+                    {owner_name_expr} as owner_name,
+                    f.target_conversation_id,
+                    f.target_kind,
+                    f.question_text,
+                    f.scheduled_at,
+                    f.sent_at,
+                    f.status,
+                    f.reaction_status,
+                    f.reaction_summary,
+                    f.suppressed_reason,
+                    f.evidence_check_json,
+                    f.risk_check_json,
+                    f.send_result_json
+                from follow_up_drafts f
+                left join work_projects p on p.id=f.project_id
+                left join work_todos t on t.id=f.todo_id
+                where {' and '.join(clauses)}
+                order by
+                    case
+                        when ? != '' and f.target_conversation_id=? then 0
+                        else 1
+                    end,
+                    case
+                        when ? != '' and {owner_expr}=? then 0
+                        else 1
+                    end,
+                    {recency_expr} desc,
+                    f.id desc
+                limit ?
+                """,
+                args,
+            ).fetchall()
+            return [RecentFollowUpCandidate.model_validate(dict(row)) for row in rows]
 
     @staticmethod
     def _follow_up_dedupe_key(values: dict[str, object]) -> str:

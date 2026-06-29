@@ -80,6 +80,7 @@ from app.prompt import LinkedDocumentContext, MaterialReferenceContext, build_tu
 from app.store import (
     FAST_PATH_UNREAD_BACKOFF_TASK_ERROR,
     AutoReplyStore,
+    RecentFollowUpCandidate,
     ReplyAttempt,
     ReplyTask,
 )
@@ -225,6 +226,7 @@ MARKDOWN_IMAGE_URL_PATTERN = re.compile(r"!\[[^\]]*]\((?P<url>https?://[^)]+)\)"
 DINGTALK_TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
 GROUP_CONTEXT_RECOVERY_WINDOW = timedelta(hours=24)
 RECENT_REPLY_WINDOW = timedelta(hours=24)
+RECENT_FOLLOW_UP_CONTEXT_WINDOW = timedelta(days=7)
 REFERENCED_FILE_CONTEXT_WINDOW = timedelta(minutes=10)
 DOWNLOADED_FILE_MAX_BYTES = 50 * 1024 * 1024
 DOWNLOADED_IMAGE_MAX_BYTES = 20 * 1024 * 1024
@@ -4453,6 +4455,16 @@ class DingTalkAutoReplyWorker:
             return
 
         if decision.action == CodexAction.NO_REPLY:
+            attempt = self.store.get_reply_attempt(attempt_id)
+            if attempt is not None:
+                self._enqueue_conversation_work_item(
+                    attempt_id=attempt_id,
+                    conversation=conversation,
+                    trigger=trigger,
+                    action=attempt.action,
+                    audit_summary=attempt.audit_summary or attempt.codex_reason,
+                    final_reply_text=attempt.final_reply_text,
+                )
             if self._message_reaction_actions(decision):
                 self._execute_message_reactions(
                     conversation=conversation,
@@ -6982,7 +6994,15 @@ class DingTalkAutoReplyWorker:
         audit_summary: str,
         final_reply_text: str,
     ) -> None:
-        if action not in {
+        follow_up_candidates: list[RecentFollowUpCandidate] = []
+        if action == CodexAction.NO_REPLY.value:
+            follow_up_candidates = self._recent_follow_up_candidates_for_trigger(
+                conversation,
+                trigger,
+            )
+            if not follow_up_candidates:
+                return
+        elif action not in {
             CodexAction.SEND_REPLY.value,
             CodexAction.ASK_CLARIFYING_QUESTION.value,
         }:
@@ -6991,11 +7011,25 @@ class DingTalkAutoReplyWorker:
             trigger.content.strip(),
             audit_summary.strip(),
             final_reply_text.strip(),
+            self._follow_up_candidate_context_summary(follow_up_candidates),
         ]
         summary = "\n".join(part for part in summary_parts if part)
         if not summary.strip():
             return
         project_name = conversation.title.strip() if not conversation.single_chat else ""
+        task_signals = {}
+        if follow_up_candidates:
+            task_signals = {
+                "possible_task_update": True,
+                "mentions_follow_up": True,
+                "progress_claim": False,
+                "owner_correction": False,
+                "complaint_about_followup": False,
+                "signal_reason": (
+                    "当前对话命中近期 follow-up 候选，交由 task agent "
+                    "结合上下文判断是否更新任务或 follow-up。"
+                ),
+            }
         item = WorkItem.model_validate(
             {
                 "source": {
@@ -7010,12 +7044,14 @@ class DingTalkAutoReplyWorker:
                 "project_name": project_name,
                 "context": {
                     "sender": trigger.sender_name,
+                    "sender_user_id": trigger.sender_user_id or "",
                     "participants": [trigger.sender_name],
                     "source_conversation_kind": "direct"
                     if conversation.single_chat
                     else "group",
                     "source_conversation_title": conversation.title,
                 },
+                "task_signals": task_signals,
             }
         )
         self.store.enqueue_work_summary_input(
@@ -7023,6 +7059,49 @@ class DingTalkAutoReplyWorker:
             source_ref=item.source.ref,
             payload_json=item.model_dump_json(),
         )
+
+    def _recent_follow_up_candidates_for_trigger(
+        self,
+        conversation: DingTalkConversation,
+        trigger: DingTalkMessage,
+    ) -> list[RecentFollowUpCandidate]:
+        try:
+            trigger_time = self._message_create_time_as_instant(trigger)
+        except ValueError:
+            trigger_time = self._now()
+        since = self._sqlite_timestamp(
+            trigger_time - RECENT_FOLLOW_UP_CONTEXT_WINDOW
+        )
+        return self.store.list_recent_follow_up_candidates(
+            conversation_id=conversation.open_conversation_id,
+            owner_user_id=trigger.sender_user_id or "",
+            since=since,
+            limit=10,
+        )
+
+    @staticmethod
+    def _follow_up_candidate_context_summary(
+        candidates: list[RecentFollowUpCandidate],
+    ) -> str:
+        if not candidates:
+            return ""
+        lines = ["近期 follow-up 候选："]
+        for candidate in candidates[:5]:
+            parts = [
+                f"follow_up_id={candidate.follow_up_id}",
+                f"project={candidate.project_title or candidate.project_id}",
+            ]
+            if candidate.todo_id or candidate.todo_title:
+                parts.append(f"todo={candidate.todo_title or candidate.todo_id}")
+            if candidate.owner_user_id or candidate.owner_name:
+                owner = candidate.owner_name or candidate.owner_user_id
+                parts.append(f"owner={owner}")
+            if candidate.status:
+                parts.append(f"status={candidate.status}")
+            if candidate.question_text:
+                parts.append(f"question={candidate.question_text}")
+            lines.append("- " + "; ".join(str(part) for part in parts if part))
+        return "\n".join(lines)
 
     def _send_reply_to_trigger_with_retry(
         self,
