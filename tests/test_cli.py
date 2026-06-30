@@ -1033,6 +1033,70 @@ def test_process_work_items_command_backoffs_transient_codex_failure(
     assert row["available_at"] > ""
 
 
+def test_process_work_items_command_backoffs_codex_auth_failure(
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    class FakeTaskAgentCodexRunner:
+        last_session_id = "task-session-1"
+        last_audit_tool_events = []
+        last_transcript_start_line = 0
+        last_transcript_end_line = 0
+
+        def __init__(self, **kwargs):
+            pass
+
+        def decide(self, *, prompt, session_id=None):
+            raise RuntimeError(
+                "unexpected status 401 Unauthorized: Missing bearer or basic "
+                "authentication in header, url: "
+                "https://api.openai.com/v1/responses"
+            )
+
+    monkeypatch.setattr(cli, "TaskAgentCodexRunner", FakeTaskAgentCodexRunner)
+    db_path = tmp_path / "task.sqlite3"
+    store = AutoReplyStore(db_path)
+    item = WorkItem.model_validate(
+        {
+            "source": {"type": "reply_attempt", "ref": "1"},
+            "summary": "第一条认证临时失败。",
+            "project_name": "认证临时失败项目",
+            "context": {
+                "sender": "Mina",
+                "participants": [],
+                "source_conversation_kind": "group",
+                "source_conversation_title": "测试群",
+            },
+        }
+    )
+    input_id = store.enqueue_work_summary_input(
+        item.source.type.value,
+        item.source.ref,
+        item.model_dump_json(),
+    )
+
+    processed = process_work_items_command(
+        WorkerSettings(db_path=db_path, workspace=tmp_path, max_batches=1)
+    )
+
+    assert processed == 0
+    assert capsys.readouterr().out == "process-work-items processed=0\n"
+    with AutoReplyStore(db_path)._connect() as db:
+        row = db.execute(
+            """
+            select status, attempts, error, available_at
+            from work_summary_inputs
+            where id=?
+            """,
+            (input_id,),
+        ).fetchone()
+    assert row["status"] == "pending"
+    assert row["attempts"] == 1
+    assert "Missing bearer or basic authentication" in row["error"]
+    assert row["available_at"] > ""
+
+
 def test_process_work_items_command_uses_task_agent_timeouts(
     tmp_path,
     monkeypatch,

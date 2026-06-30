@@ -88,6 +88,8 @@ WORK_SUMMARY_TRANSIENT_ERROR_MARKERS = (
     "connection refused",
     "codex exec timed out",
     "task agent codex timed out",
+    "unexpected status 401 unauthorized",
+    "missing bearer or basic authentication",
 )
 
 LIVE_SEND_BLOCKERS = (
