@@ -357,6 +357,23 @@ AI 自动同步成功：xxx
 
 下面这些类型故意不由代码硬跳过。
 
+### 配置机器人私聊
+
+当前行为：`agent_review`。
+
+worker 会读取最近 `CEO_CHAT_BOT_NAMES` 配置的机器人单聊；未配置时复用
+`CEO_DING_ROBOT_NAME`。如果单聊标题命中机器人名称，且消息发送人的
+`senderOpenDingTalkId` 不是该机器人的 `botOpenDingTalkId`，则认为是真人发给
+机器人的消息，写入 `reply_tasks`。
+
+处理规则：
+
+- 机器人自己发出的消息不进入 agent，避免回复循环。
+- 这类 trigger 的回复通过 `dws chat message send-by-bot --users` 发回发信人，
+  不使用普通原消息 reply。
+- 单聊候选源会合并这类 addressed 消息，即使它不在当前用户的 unread
+  conversations 里也能入队。
+
 ### 群聊 @Alex 候选顺序
 
 当前行为：`agent_review`。

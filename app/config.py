@@ -142,6 +142,14 @@ def broadcast_mention_aliases() -> tuple[str, ...]:
     return env_csv("CEO_BROADCAST_MENTION_ALIASES", ("@所有人", "@all"))
 
 
+def chat_bot_names() -> tuple[str, ...]:
+    configured = env_csv("CEO_CHAT_BOT_NAMES", ())
+    if configured:
+        return configured
+    robot_name = os.getenv("CEO_DING_ROBOT_NAME", "").strip()
+    return (robot_name,) if robot_name else ()
+
+
 def assistant_signature() -> str:
     return os.getenv("CEO_ASSISTANT_SIGNATURE", "(via agent)")
 

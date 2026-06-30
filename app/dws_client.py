@@ -14,7 +14,7 @@ from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, Field
 
-from app.config import read_env_file
+from app.config import chat_bot_names, read_env_file
 from app.dingtalk_models import DingTalkConversation, DingTalkMessage
 from app.message_split import split_dingtalk_text
 
@@ -227,6 +227,7 @@ class DwsClient:
         self.ding_receiver_user_id = ding_receiver_user_id
         self.transient_retry_attempts = transient_retry_attempts
         self.transient_retry_delay_seconds = transient_retry_delay_seconds
+        self._bot_open_dingtalk_ids_by_name: dict[str, set[str]] = {}
 
     def build_list_unread_conversations_command(self, count: int) -> list[str]:
         return [
@@ -335,6 +336,30 @@ class DwsClient:
             "search",
             "--keyword",
             keyword,
+            "--start",
+            start,
+            "--end",
+            end,
+            "--limit",
+            str(limit),
+            "--cursor",
+            cursor,
+            "--format",
+            "json",
+        ]
+
+    def build_list_all_messages_command(
+        self,
+        start: str,
+        end: str,
+        limit: int,
+        cursor: str = "0",
+    ) -> list[str]:
+        return [
+            self.dws_bin,
+            "chat",
+            "message",
+            "list-all",
             "--start",
             start,
             "--end",
@@ -1175,6 +1200,49 @@ class DwsClient:
         command.extend(["--format", "json"])
         return command
 
+    def build_send_message_by_bot_command(
+        self,
+        *,
+        text: str,
+        user_ids: list[str] | None = None,
+        conversation_id: str | None = None,
+        title: str | None = None,
+    ) -> list[str]:
+        robot_code = self._ding_robot_code()
+        if not robot_code:
+            raise DwsError(
+                "DING robot code is not configured; set DINGTALK_DING_ROBOT_CODE, CEO_DING_ROBOT_CODE, or CEO_DING_ROBOT_NAME"
+            )
+        if bool(user_ids) == bool(conversation_id):
+            raise ValueError("exactly one DingTalk bot send target is required")
+        command = [
+            self.dws_bin,
+            "chat",
+            "message",
+            "send-by-bot",
+            "--robot-code",
+            robot_code,
+        ]
+        if conversation_id:
+            command.extend(["--group", conversation_id])
+        else:
+            command.extend(["--users", ",".join(user_ids or [])])
+        command.extend(
+            [
+                "--title",
+                self._literal_cli_value(
+                    self._message_title(title if title is not None else text),
+                    is_title=True,
+                ),
+                "--text",
+                self._literal_cli_value(text),
+                "--format",
+                "json",
+                "--yes",
+            ]
+        )
+        return command
+
     def build_recall_bot_message_command(
         self, conversation_id: str | None, process_query_key: str
     ) -> list[str]:
@@ -1381,6 +1449,23 @@ class DwsClient:
             )
         )
 
+    def list_all_messages(
+        self,
+        *,
+        start: str,
+        end: str,
+        limit: int,
+        cursor: str = "0",
+    ) -> dict[str, Any]:
+        return self.run_json(
+            self.build_list_all_messages_command(
+                start=start,
+                end=end,
+                limit=limit,
+                cursor=cursor,
+            )
+        )
+
     def search_messages(
         self,
         keyword: str,
@@ -1491,6 +1576,61 @@ class DwsClient:
                     continue
                 seen_message_ids.add(message.open_message_id)
                 result.append(message)
+        return sorted(result, key=lambda message: message.create_time)
+
+    def read_robot_direct_messages(
+        self,
+        *,
+        lookback_minutes: int = 30,
+        limit: int = 100,
+        max_pages: int = 3,
+    ) -> list[DingTalkMessage]:
+        names = chat_bot_names()
+        if not names:
+            return []
+        bot_open_ids_by_name = {
+            name: self._bot_open_dingtalk_ids(name) for name in names
+        }
+        local_time_zone = _local_time_zone()
+        end_time = datetime.now(tz=local_time_zone)
+        start_time = end_time - timedelta(minutes=lookback_minutes)
+        cursor = "0"
+        result: list[DingTalkMessage] = []
+        seen_message_ids: set[str] = set()
+        for _ in range(max_pages):
+            payload = self.list_all_messages(
+                start=start_time.strftime("%Y-%m-%d %H:%M:%S"),
+                end=end_time.strftime("%Y-%m-%d %H:%M:%S"),
+                limit=limit,
+                cursor=cursor,
+            )
+            for message in self.parse_messages(
+                payload,
+                conversation_title="",
+                single_chat=False,
+            ):
+                if message.open_message_id in seen_message_ids:
+                    continue
+                bot_open_ids = bot_open_ids_by_name.get(message.conversation_title)
+                if not bot_open_ids:
+                    continue
+                if not message.single_chat:
+                    continue
+                if message.sender_open_dingtalk_id in bot_open_ids:
+                    continue
+                seen_message_ids.add(message.open_message_id)
+                raw_payload = dict(message.raw_payload)
+                raw_payload["ceo_agent_source"] = "robot_direct"
+                raw_payload["robot_name"] = message.conversation_title
+                raw_payload["robot_open_dingtalk_ids"] = sorted(bot_open_ids)
+                result.append(message.model_copy(update={"raw_payload": raw_payload}))
+            payload_result = payload.get("result", {})
+            if not isinstance(payload_result, dict) or not payload_result.get("hasMore"):
+                break
+            next_cursor = payload_result.get("nextCursor")
+            if not isinstance(next_cursor, str) or not next_cursor:
+                break
+            cursor = next_cursor
         return sorted(result, key=lambda message: message.create_time)
 
     def calendar_invite_from_message(
@@ -2219,6 +2359,26 @@ class DwsClient:
         receiver_user_id = self.ding_receiver_user_id or self.get_current_user_id()
         self.ding_user(receiver_user_id, text)
 
+    def send_direct_message_by_bot(self, user_id: str, text: str) -> dict[str, Any]:
+        return self.run_json(
+            self.build_send_message_by_bot_command(
+                text=text,
+                user_ids=[user_id],
+            )
+        )
+
+    def send_group_message_by_bot(
+        self,
+        conversation_id: str,
+        text: str,
+    ) -> dict[str, Any]:
+        return self.run_json(
+            self.build_send_message_by_bot_command(
+                text=text,
+                conversation_id=conversation_id,
+            )
+        )
+
     def build_search_bots_command(self, name: str) -> list[str]:
         return [
             self.dws_bin,
@@ -2230,6 +2390,49 @@ class DwsClient:
             "--format",
             "json",
         ]
+
+    def build_find_bots_command(
+        self,
+        query: str,
+        *,
+        limit: int = 20,
+        cursor: str = "",
+    ) -> list[str]:
+        command = [
+            self.dws_bin,
+            "chat",
+            "bot",
+            "find",
+            "--query",
+            query,
+            "--limit",
+            str(limit),
+        ]
+        if cursor:
+            command.extend(["--cursor", cursor])
+        command.extend(["--format", "json"])
+        return command
+
+    def _bot_open_dingtalk_ids(self, name: str) -> set[str]:
+        cached = self._bot_open_dingtalk_ids_by_name.get(name)
+        if cached is not None:
+            return cached
+        payload = self.run_json(self.build_find_bots_command(name))
+        bot_list = payload.get("result", {}).get("bots", [])
+        if not isinstance(bot_list, list):
+            raise DwsError("invalid bot find response: missing bots")
+        matches = {
+            item["botOpenDingTalkId"]
+            for item in bot_list
+            if isinstance(item, dict)
+            and item.get("name") == name
+            and isinstance(item.get("botOpenDingTalkId"), str)
+            and item.get("botOpenDingTalkId")
+        }
+        if not matches:
+            raise DwsError(f"DingTalk robot named {name!r} has no botOpenDingTalkId")
+        self._bot_open_dingtalk_ids_by_name[name] = matches
+        return matches
 
     def _ding_robot_code(self) -> str | None:
         if self.ding_robot_code:

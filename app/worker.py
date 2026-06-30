@@ -250,6 +250,10 @@ PDF_TEXT_PAGE_LIMIT = 30
 DWS_UPGRADE_CHECKED_DATE_STATE_KEY = "dws_upgrade_checked_date"
 MESSAGE_RECOVERY_CHECKED_AT_STATE_KEY = "message_recovery_checked_at"
 MESSAGE_FAST_PATH_CHECKED_AT_STATE_KEY = "message_fast_path_checked_at"
+ROBOT_DIRECT_MESSAGE_LOOKBACK = env_duration(
+    "CEO_ROBOT_DIRECT_MESSAGE_LOOKBACK",
+    timedelta(minutes=30),
+)
 DWS_AUTH_LOGIN_STATE_KEY = "dws_auth_login"
 DWS_AUTH_BACKUP_STATE_KEY = "dws_auth_backup"
 DWS_AUTH_BACKUP_INTERVAL = env_duration(
@@ -484,9 +488,11 @@ class DingTalkAutoReplyWorker:
         }
         mentioned_messages = self._mentioned_messages_by_conversation(conversations)
         broadcast_messages = self._broadcast_messages_by_conversation()
+        robot_direct_messages = self._robot_direct_messages_by_conversation()
         addressed_messages = self._merge_message_groups(
             mentioned_messages,
             broadcast_messages,
+            robot_direct_messages,
         )
         conversations = self._conversations_with_mentions(
             conversations,
@@ -1961,6 +1967,31 @@ class DingTalkAutoReplyWorker:
         for message in messages:
             if self._is_current_user_message_for_candidate_filter(message):
                 continue
+            grouped.setdefault(message.open_conversation_id, []).append(message)
+        return grouped
+
+    def _robot_direct_messages_by_conversation(self) -> dict[str, list[DingTalkMessage]]:
+        read_robot_direct_messages = getattr(
+            self.dws,
+            "read_robot_direct_messages",
+            None,
+        )
+        if read_robot_direct_messages is None:
+            return {}
+        messages = self._call_dws(
+            "read_robot_direct_messages",
+            lambda: read_robot_direct_messages(
+                lookback_minutes=max(
+                    1,
+                    int(ROBOT_DIRECT_MESSAGE_LOOKBACK.total_seconds() // 60),
+                ),
+                limit=100,
+            ),
+            notify_title="CEO read robot direct messages failed",
+            default=[],
+        )
+        grouped: dict[str, list[DingTalkMessage]] = {}
+        for message in messages:
             grouped.setdefault(message.open_conversation_id, []).append(message)
         return grouped
 
@@ -4111,7 +4142,7 @@ class DingTalkAutoReplyWorker:
         if conversation.single_chat:
             return self._single_chat_candidate_source_messages(
                 context_messages,
-                unread_messages,
+                [*unread_messages, *(mentioned_messages or [])],
             )
         if not unread_messages and not mentioned_messages:
             return self._group_recovered_candidate_source_messages(context_messages)
@@ -6743,7 +6774,8 @@ class DingTalkAutoReplyWorker:
                 conversation=conversation,
                 reply_text=reply_text,
                 system_actions=system_actions or [],
-                editor_user_ids=at_users or [trigger.sender_user_id or ""],
+                editor_user_ids=at_users
+                or [self._reply_document_editor_user_id(trigger)],
             )
         except Exception as exc:
             self.store.update_reply_attempt(
@@ -6834,11 +6866,14 @@ class DingTalkAutoReplyWorker:
             native_reply_extra["at_user_ids"] = at_users
             native_reply_extra["at_open_dingtalk_ids"] = at_open_dingtalk_ids
             native_reply_extra["at_open_dingtalk_names"] = at_open_dingtalk_names
-        delivery_kind = (
-            "native_reply_visibility_unconfirmed"
-            if self._send_result_has_unconfirmed_visibility(send_result)
-            else "native_reply"
-        )
+        if self._is_robot_direct_trigger(trigger):
+            delivery_kind = "bot_direct_message"
+        else:
+            delivery_kind = (
+                "native_reply_visibility_unconfirmed"
+                if self._send_result_has_unconfirmed_visibility(send_result)
+                else "native_reply"
+            )
         self.store.update_reply_attempt(
             attempt_id,
             send_status="sent",
@@ -7217,20 +7252,51 @@ class DingTalkAutoReplyWorker:
         errors: list[str] = []
         for attempt_number in range(1, self.send_attempts + 1):
             try:
-                send_result = self.dws.send_reply_to_trigger(
-                    conversation,
-                    trigger,
-                    text,
-                    at_users=at_users,
-                    at_open_dingtalk_ids=at_open_dingtalk_ids,
-                    at_open_dingtalk_names=at_open_dingtalk_names,
-                )
+                if self._is_robot_direct_trigger(trigger):
+                    send_result = self._send_robot_direct_reply(trigger, text)
+                else:
+                    send_result = self.dws.send_reply_to_trigger(
+                        conversation,
+                        trigger,
+                        text,
+                        at_users=at_users,
+                        at_open_dingtalk_ids=at_open_dingtalk_ids,
+                        at_open_dingtalk_names=at_open_dingtalk_names,
+                    )
                 return attempt_number - 1, send_result
             except Exception as exc:
                 if getattr(exc, "needs_authorization", False):
                     raise exc
                 errors.append(f"attempt {attempt_number}: {exc}")
         raise RuntimeError(" | ".join(errors))
+
+    @staticmethod
+    def _is_robot_direct_trigger(trigger: DingTalkMessage) -> bool:
+        return trigger.raw_payload.get("ceo_agent_source") == "robot_direct"
+
+    def _send_robot_direct_reply(
+        self,
+        trigger: DingTalkMessage,
+        text: str,
+    ) -> dict[str, Any]:
+        sender_user_id = self._reply_document_editor_user_id(trigger)
+        if not sender_user_id:
+            raise RuntimeError("missing robot direct sender userId")
+        send_direct_message_by_bot = getattr(
+            self.dws,
+            "send_direct_message_by_bot",
+            None,
+        )
+        if send_direct_message_by_bot is None:
+            raise RuntimeError("DWS client does not support robot direct replies")
+        return send_direct_message_by_bot(sender_user_id, text)
+
+    def _reply_document_editor_user_id(self, trigger: DingTalkMessage) -> str:
+        if trigger.sender_user_id:
+            return trigger.sender_user_id
+        if self._is_robot_direct_trigger(trigger):
+            return self.dws.resolve_message_sender(trigger)
+        return ""
 
     def _ding_self(self, text: str) -> None:
         if self.dry_run:

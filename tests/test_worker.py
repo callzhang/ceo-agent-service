@@ -162,6 +162,9 @@ class FakeDws:
             ]
             for conversation_id, messages in self.unread_messages.items()
         }
+        self.robot_direct_messages: dict[str, list[DingTalkMessage]] = {}
+        self.robot_direct_message_reads = 0
+        self.bot_direct_messages: list[tuple[str, str]] = []
         self.user_departments: dict[str, set[str]] = {}
         self.user_profiles: dict[str, DwsUserProfile] = {}
         self.user_profile_calls: list[str] = []
@@ -346,6 +349,7 @@ class FakeDws:
             self.unread_messages,
             self.mentioned_messages,
             self.broadcast_messages,
+            self.robot_direct_messages,
         )
         for source in sources:
             for messages in source.values():
@@ -390,6 +394,20 @@ class FakeDws:
         return [
             message
             for messages in self.broadcast_messages.values()
+            for message in messages
+        ]
+
+    def read_robot_direct_messages(
+        self,
+        *,
+        lookback_minutes: int = 30,
+        limit: int = 100,
+    ) -> list[DingTalkMessage]:
+        del lookback_minutes, limit
+        self.robot_direct_message_reads += 1
+        return [
+            message
+            for messages in self.robot_direct_messages.values()
             for message in messages
         ]
 
@@ -570,6 +588,17 @@ class FakeDws:
             at_open_dingtalk_ids=at_open_dingtalk_ids,
             at_open_dingtalk_names=at_open_dingtalk_names,
         )
+
+    def send_direct_message_by_bot(self, user_id: str, text: str) -> dict:
+        self.send_attempt_count += 1
+        if self.send_error:
+            raise self.send_error
+        self.bot_direct_messages.append((user_id, text))
+        self.sent.append(("", text))
+        self.sent_at_users.append([])
+        self.direct_user_ids.append(user_id)
+        self.direct_open_dingtalk_ids.append(None)
+        return self.send_result or {"success": True}
 
     def add_message_emoji(
         self,
@@ -2251,6 +2280,43 @@ def test_reply_agent_envelope_send_reply_is_delivered(tmp_path: Path, monkeypatc
     worker.run_once()
 
     assert final_sent(dws)[0] == ("cid-1", "可以，我看一下。（by明哥分身）")
+
+
+def test_robot_direct_message_triggers_bot_reply(tmp_path: Path, monkeypatch):
+    trigger = message(
+        "hi",
+        message_id="msg-robot-direct",
+        single_chat=True,
+        sender_user_id=None,
+    ).model_copy(
+        update={
+            "open_conversation_id": "cid-bot",
+            "conversation_title": "磊哥",
+            "sender_name": "磊哥",
+            "sender_open_dingtalk_id": "user-open-1",
+            "raw_payload": {"ceo_agent_source": "robot_direct"},
+        }
+    )
+    dws = FakeDws([], {"cid-bot": [trigger]})
+    dws.robot_direct_messages = {"cid-bot": [trigger]}
+    dws.resolved_senders["user-open-1"] = "principal-user-1"
+    codex = FakeCodex(
+        CodexDecision(
+            action=CodexAction.SEND_REPLY,
+            reply_text="你好，我在。",
+        )
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch, dry_run=False)
+
+    worker.run_once()
+
+    assert dws.robot_direct_message_reads == 1
+    assert dws.bot_direct_messages == [
+        ("principal-user-1", "你好，我在。（by明哥分身）")
+    ]
+    assert final_sent(dws) == [("", "你好，我在。（by明哥分身）")]
+    task_rows = worker.store.list_reply_tasks(statuses=("done",), limit=10)
+    assert task_rows[0].conversation_title == "磊哥"
 
 
 def test_no_reply_agent_envelope_reaction_adds_emoji_without_text_reply(

@@ -1710,6 +1710,140 @@ def test_send_message_escapes_at_prefixed_text_for_dws_cli():
     assert command[command.index("--text") + 1].startswith(" @")
 
 
+def test_build_list_all_messages_command_shape():
+    client = DwsClient(dws_bin="dws")
+
+    command = client.build_list_all_messages_command(
+        start="2026-06-30 15:00:00",
+        end="2026-06-30 15:30:00",
+        limit=100,
+        cursor="cursor-1",
+    )
+
+    assert command == [
+        "dws",
+        "chat",
+        "message",
+        "list-all",
+        "--start",
+        "2026-06-30 15:00:00",
+        "--end",
+        "2026-06-30 15:30:00",
+        "--limit",
+        "100",
+        "--cursor",
+        "cursor-1",
+        "--format",
+        "json",
+    ]
+
+
+def test_build_send_message_by_bot_command_shape():
+    client = DwsClient(dws_bin="dws", ding_robot_code="robot-code")
+
+    command = client.build_send_message_by_bot_command(
+        text="你好",
+        user_ids=["user-1"],
+    )
+
+    assert command == [
+        "dws",
+        "chat",
+        "message",
+        "send-by-bot",
+        "--robot-code",
+        "robot-code",
+        "--users",
+        "user-1",
+        "--title",
+        "你好",
+        "--text",
+        "你好",
+        "--format",
+        "json",
+        "--yes",
+    ]
+
+
+def test_read_robot_direct_messages_filters_configured_bot_chat(monkeypatch):
+    monkeypatch.setenv("CEO_CHAT_BOT_NAMES", "磊哥")
+    monkeypatch.setattr(dws_client, "_local_time_zone", lambda: TEST_LOCAL_TZ)
+
+    class FixedDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2026, 6, 30, 15, 30, 0, tzinfo=tz)
+
+    monkeypatch.setattr(dws_client, "datetime", FixedDatetime)
+    client = SequenceRecordingDwsClient(
+        [
+            {
+                "result": {
+                    "bots": [
+                        {
+                            "name": "磊哥",
+                            "botOpenDingTalkId": "bot-open-1",
+                        }
+                    ]
+                }
+            },
+            {
+                "result": {
+                    "conversationMessagesList": [
+                        {
+                            "openConversationId": "cid-bot",
+                            "singleChat": True,
+                            "title": "磊哥",
+                            "messages": [
+                                {
+                                    "openConversationId": "cid-bot",
+                                    "openMessageId": "msg-user",
+                                    "sender": "磊哥",
+                                    "senderOpenDingTalkId": "user-open-1",
+                                    "createTime": "2026-06-30 15:29:17",
+                                    "content": "hi",
+                                },
+                                {
+                                    "openConversationId": "cid-bot",
+                                    "openMessageId": "msg-bot",
+                                    "sender": "磊哥",
+                                    "senderOpenDingTalkId": "bot-open-1",
+                                    "createTime": "2026-06-30 15:29:20",
+                                    "content": "bot reply",
+                                },
+                            ],
+                        },
+                        {
+                            "openConversationId": "cid-other",
+                            "singleChat": True,
+                            "title": "张静",
+                            "messages": [
+                                {
+                                    "openConversationId": "cid-other",
+                                    "openMessageId": "msg-other",
+                                    "sender": "磊哥",
+                                    "senderOpenDingTalkId": "user-open-1",
+                                    "createTime": "2026-06-30 15:29:30",
+                                    "content": "普通私聊",
+                                }
+                            ],
+                        },
+                    ],
+                    "hasMore": False,
+                }
+            },
+        ]
+    )
+
+    messages = client.read_robot_direct_messages(lookback_minutes=30)
+
+    assert [message.open_message_id for message in messages] == ["msg-user"]
+    assert messages[0].raw_payload["ceo_agent_source"] == "robot_direct"
+    assert messages[0].raw_payload["robot_open_dingtalk_ids"] == ["bot-open-1"]
+    assert client.commands[0][:5] == ["dws", "chat", "bot", "find", "--query"]
+    assert client.commands[1][:4] == ["dws", "chat", "message", "list-all"]
+
+
 def test_recall_bot_message_command_shape():
     client = DwsClient(dws_bin="dws", ding_robot_code="robot-code")
 
