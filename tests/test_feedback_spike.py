@@ -198,6 +198,24 @@ def test_callback_url_truncates_long_feedback_context():
     assert len(query["reply_text"][0]) <= 30
 
 
+def test_callback_url_omits_context_that_would_trip_leak_check():
+    url = build_callback_url(
+        "https://feedback.example.com/",
+        feedback_token="spike_1_abcd",
+        rating="up",
+        original_text="OpenAI Codex 团队案例",
+        reply_text="source=memory 不应该藏进反馈链接",
+        attempt_id=42,
+    )
+    query = parse_qs(urlparse(url).query)
+
+    assert query["feedback_token"] == ["spike_1_abcd"]
+    assert query["rating"] == ["up"]
+    assert query["attempt_id"] == ["42"]
+    assert "original_text" not in query
+    assert "reply_text" not in query
+
+
 def test_build_feedback_spike_link_message_accepts_fixed_token_for_verification():
     message = build_feedback_spike_link_message(
         vercel_base_url="https://feedback.example.com",

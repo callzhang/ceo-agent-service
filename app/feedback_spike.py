@@ -7,6 +7,7 @@ from urllib.parse import parse_qs, urlencode, urlparse
 
 from app.codex_decision import append_signature
 from app.dws_client import DwsClient
+from app.leak_check import contains_forbidden_leak
 
 MAX_FEEDBACK_CONTEXT_CHARS = 30
 
@@ -69,10 +70,12 @@ def build_callback_url(
     }
     if attempt_id is not None and str(attempt_id).strip():
         fields["attempt_id"] = str(attempt_id).strip()
-    if original_text.strip():
-        fields["original_text"] = _feedback_context_excerpt(original_text)
-    if reply_text.strip():
-        fields["reply_text"] = _feedback_context_excerpt(reply_text)
+    original_excerpt = _safe_feedback_context_excerpt(original_text)
+    if original_excerpt:
+        fields["original_text"] = original_excerpt
+    reply_excerpt = _safe_feedback_context_excerpt(reply_text)
+    if reply_excerpt:
+        fields["reply_text"] = reply_excerpt
     query = urlencode(fields)
     return f"{normalize_vercel_base_url(vercel_base_url)}/api/dingtalk-feedback-spike?{query}"
 
@@ -105,6 +108,13 @@ def _feedback_context_excerpt(text: str) -> str:
     if len(stripped) <= MAX_FEEDBACK_CONTEXT_CHARS:
         return stripped
     return stripped[: max(0, MAX_FEEDBACK_CONTEXT_CHARS - 3)].rstrip() + "..."
+
+
+def _safe_feedback_context_excerpt(text: str) -> str:
+    excerpt = _feedback_context_excerpt(text)
+    if contains_forbidden_leak(excerpt):
+        return ""
+    return excerpt
 
 
 def extract_feedback_link_context(text: str) -> FeedbackLinkContext | None:
