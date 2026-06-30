@@ -2364,6 +2364,7 @@ class DwsClient:
             self.build_send_message_by_bot_command(
                 text=text,
                 user_ids=[user_id],
+                title="回复",
             )
         )
 
@@ -2376,6 +2377,7 @@ class DwsClient:
             self.build_send_message_by_bot_command(
                 text=text,
                 conversation_id=conversation_id,
+                title="回复",
             )
         )
 

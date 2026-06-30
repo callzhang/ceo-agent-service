@@ -1765,6 +1765,29 @@ def test_build_send_message_by_bot_command_shape():
     ]
 
 
+def test_send_direct_message_by_bot_uses_short_title():
+    class CapturingDwsClient(DwsClient):
+        def __init__(self):
+            super().__init__(dws_bin="dws", ding_robot_code="robot-code")
+            self.commands = []
+
+        def run_json(self, command):
+            self.commands.append(command)
+            return {"success": True}
+
+    client = CapturingDwsClient()
+
+    result = client.send_direct_message_by_bot(
+        "user-1",
+        "你好，有事你说。\n\n反馈：[👍](https://feedback.example.com/up)",
+    )
+
+    command = client.commands[0]
+    assert result == {"success": True}
+    assert command[command.index("--title") + 1] == "回复"
+    assert command[command.index("--text") + 1].startswith("你好，有事你说。")
+
+
 def test_read_robot_direct_messages_filters_configured_bot_chat(monkeypatch):
     monkeypatch.setenv("CEO_CHAT_BOT_NAMES", "磊哥")
     monkeypatch.setattr(dws_client, "_local_time_zone", lambda: TEST_LOCAL_TZ)
