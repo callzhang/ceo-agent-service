@@ -2266,7 +2266,7 @@ class DingTalkAutoReplyWorker:
         except Exception as exc:
             updates = {
                 "action": "okr_review",
-                "send_status": "blocked",
+                "send_status": "failed",
                 "send_error": str(exc),
             }
             if complete_task_id is not None:
