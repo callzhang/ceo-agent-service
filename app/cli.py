@@ -92,6 +92,13 @@ WORK_SUMMARY_TRANSIENT_ERROR_MARKERS = (
     "missing bearer or basic authentication",
 )
 
+WORK_SUMMARY_DISCARDABLE_ERROR_MARKERS = (
+    (
+        "follow_up_draft.todo_id",
+        "does not belong to project",
+    ),
+)
+
 LIVE_SEND_BLOCKERS = (
     "deterministic personnel/candidate permission gates",
     "handoff-clear detection",
@@ -795,6 +802,8 @@ def process_work_items_command(settings: WorkerSettings) -> int:
                         work_input.attempts
                     ),
                 )
+            elif _should_discard_work_summary_input(error):
+                store.mark_work_summary_input_discarded(work_input.id, error)
             else:
                 store.mark_work_summary_input_failed(work_input.id, error)
             store.record_error(None, None, "task_agent", str(exc))
@@ -807,6 +816,14 @@ def _should_retry_work_summary_input(error: str, attempts: int) -> bool:
         return False
     normalized = error.lower()
     return any(marker in normalized for marker in WORK_SUMMARY_TRANSIENT_ERROR_MARKERS)
+
+
+def _should_discard_work_summary_input(error: str) -> bool:
+    normalized = error.lower()
+    return any(
+        all(marker in normalized for marker in markers)
+        for markers in WORK_SUMMARY_DISCARDABLE_ERROR_MARKERS
+    )
 
 
 def _work_summary_retry_available_at(attempts: int) -> str:
