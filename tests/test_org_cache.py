@@ -124,6 +124,9 @@ def test_cached_dws_client_delegates_message_io_and_uses_cached_org(tmp_path):
             self.doc_comments = []
             self.markdown_docs = []
             self.doc_editor_permissions = []
+            self.robot_direct_reads = []
+            self.bot_direct_messages = []
+            self.bot_group_messages = []
 
         def send_message(
             self,
@@ -214,6 +217,18 @@ def test_cached_dws_client_delegates_message_io_and_uses_cached_org(tmp_path):
             self.doc_editor_permissions.append((node, user_ids))
             return {"success": True}
 
+        def read_robot_direct_messages(self, *, lookback_minutes=30, limit=100):
+            self.robot_direct_reads.append((lookback_minutes, limit))
+            return ["robot-message"]
+
+        def send_direct_message_by_bot(self, user_id, text):
+            self.bot_direct_messages.append((user_id, text))
+            return {"success": True}
+
+        def send_group_message_by_bot(self, conversation_id, text):
+            self.bot_group_messages.append((conversation_id, text))
+            return {"success": True}
+
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.set_current_user_id("principal-user")
     cached = CachedDwsClient(FakeDws(), CachedOrgDirectory(store))
@@ -237,6 +252,12 @@ def test_cached_dws_client_delegates_message_io_and_uses_cached_org(tmp_path):
     cached.create_doc_comment("https://alidocs.example/doc", "处理好了")
     cached.create_markdown_doc("CEO回复", "# 正文")
     cached.add_doc_editor_permission("doc-1", ["user-1"])
+    robot_messages = cached.read_robot_direct_messages(
+        lookback_minutes=240,
+        limit=50,
+    )
+    cached.send_direct_message_by_bot("user-1", "你好")
+    cached.send_group_message_by_bot("cid-1", "群消息")
     cached.ding_self("handoff")
 
     assert cached.dws.sent == [("cid-1", "ok", ["user-1"], [], [])]
@@ -251,6 +272,10 @@ def test_cached_dws_client_delegates_message_io_and_uses_cached_org(tmp_path):
     ]
     assert cached.dws.markdown_docs == [("CEO回复", "# 正文")]
     assert cached.dws.doc_editor_permissions == [("doc-1", ["user-1"])]
+    assert robot_messages == ["robot-message"]
+    assert cached.dws.robot_direct_reads == [(240, 50)]
+    assert cached.dws.bot_direct_messages == [("user-1", "你好")]
+    assert cached.dws.bot_group_messages == [("cid-1", "群消息")]
     assert cached.dws.dings == [("principal-user", "handoff")]
     assert cached.is_current_user_message(message(sender_user_id="principal-user")) is True
 

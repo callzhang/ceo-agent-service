@@ -156,6 +156,17 @@ class CachedDwsClient:
             lookback_hours=lookback_hours,
         )
 
+    def read_robot_direct_messages(
+        self,
+        *,
+        lookback_minutes: int = 30,
+        limit: int = 100,
+    ):
+        return self.dws.read_robot_direct_messages(
+            lookback_minutes=lookback_minutes,
+            limit=limit,
+        )
+
     def read_doc(self, node: str):
         return self.dws.read_doc(node)
 
@@ -281,6 +292,12 @@ class CachedDwsClient:
             user_id=user_id,
             open_dingtalk_id=open_dingtalk_id,
         )
+
+    def send_direct_message_by_bot(self, user_id: str, text: str):
+        return self.dws.send_direct_message_by_bot(user_id, text)
+
+    def send_group_message_by_bot(self, conversation_id: str, text: str):
+        return self.dws.send_group_message_by_bot(conversation_id, text)
 
     def reply_message(
         self,
