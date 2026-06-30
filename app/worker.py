@@ -252,7 +252,7 @@ MESSAGE_RECOVERY_CHECKED_AT_STATE_KEY = "message_recovery_checked_at"
 MESSAGE_FAST_PATH_CHECKED_AT_STATE_KEY = "message_fast_path_checked_at"
 ROBOT_DIRECT_MESSAGE_LOOKBACK = env_duration(
     "CEO_ROBOT_DIRECT_MESSAGE_LOOKBACK",
-    timedelta(minutes=30),
+    timedelta(hours=4),
 )
 DWS_AUTH_LOGIN_STATE_KEY = "dws_auth_login"
 DWS_AUTH_BACKUP_STATE_KEY = "dws_auth_backup"
@@ -479,20 +479,21 @@ class DingTalkAutoReplyWorker:
             default=None,
         )
         if conversations is None:
-            return 0
-        self._mark_dws_auth_healthy()
-        if not recovery_due:
+            conversations = []
+        else:
+            self._mark_dws_auth_healthy()
+        if conversations and not recovery_due:
             conversations = self._conversations_due_for_fast_path(conversations)
         unread_conversation_ids = {
             conversation.open_conversation_id for conversation in conversations
         }
+        robot_direct_messages = self._robot_direct_messages_by_conversation()
         mentioned_messages = self._mentioned_messages_by_conversation(conversations)
         broadcast_messages = self._broadcast_messages_by_conversation()
-        robot_direct_messages = self._robot_direct_messages_by_conversation()
         addressed_messages = self._merge_message_groups(
+            robot_direct_messages,
             mentioned_messages,
             broadcast_messages,
-            robot_direct_messages,
         )
         conversations = self._conversations_with_mentions(
             conversations,
@@ -503,6 +504,10 @@ class DingTalkAutoReplyWorker:
                 conversations,
                 recovery_due=recovery_due,
             )
+        )
+        conversations = self._prioritize_conversations_with_messages(
+            conversations,
+            robot_direct_messages,
         )
         for conversation in conversations:
             self.store.upsert_conversation(
@@ -2033,6 +2038,30 @@ class DingTalkAutoReplyWorker:
                 )
             )
         return result
+
+    @staticmethod
+    def _prioritize_conversations_with_messages(
+        conversations: list[DingTalkConversation],
+        priority_messages: dict[str, list[DingTalkMessage]],
+    ) -> list[DingTalkConversation]:
+        priority_conversation_ids = {
+            conversation_id
+            for conversation_id, messages in priority_messages.items()
+            if messages
+        }
+        if not priority_conversation_ids:
+            return conversations
+        prioritized = [
+            conversation
+            for conversation in conversations
+            if conversation.open_conversation_id in priority_conversation_ids
+        ]
+        remaining = [
+            conversation
+            for conversation in conversations
+            if conversation.open_conversation_id not in priority_conversation_ids
+        ]
+        return [*prioritized, *remaining]
 
     def rerun_message(
         self,
@@ -4248,6 +4277,8 @@ class DingTalkAutoReplyWorker:
     def _is_current_user_message_for_candidate_filter(
         self, message: DingTalkMessage
     ) -> bool:
+        if self._is_robot_direct_trigger(message):
+            return False
         current_user_id = self.store.get_current_user_id()
         if current_user_id and message.sender_user_id:
             return message.sender_user_id == current_user_id

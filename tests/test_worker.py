@@ -2319,6 +2319,100 @@ def test_robot_direct_message_triggers_bot_reply(tmp_path: Path, monkeypatch):
     assert task_rows[0].conversation_title == "磊哥"
 
 
+def test_robot_direct_message_is_prioritized_when_task_limit_is_small(
+    tmp_path: Path, monkeypatch
+):
+    group_trigger = message("@Alex Chen(明哥) 帮看一下", message_id="msg-group")
+    robot_trigger = message(
+        "hi",
+        message_id="msg-robot-direct",
+        single_chat=True,
+    ).model_copy(
+        update={
+            "open_conversation_id": "cid-bot",
+            "conversation_title": "磊哥",
+            "raw_payload": {"ceo_agent_source": "robot_direct"},
+        }
+    )
+    dws = FakeDws([conversation()], {"cid-1": [group_trigger]})
+    dws.robot_direct_messages = {"cid-bot": [robot_trigger]}
+    codex = FakeCodex(CodexDecision(action=CodexAction.SEND_REPLY, reply_text="收到"))
+    worker = make_worker(tmp_path, dws, codex, monkeypatch, dry_run=True)
+
+    assert worker.produce_once(max_tasks=1) == 1
+
+    pending_tasks = worker.store.list_reply_tasks(statuses=("pending",), limit=10)
+    assert len(pending_tasks) == 1
+    assert pending_tasks[0].trigger_message_id == "msg-robot-direct"
+
+
+def test_robot_direct_message_still_queues_when_unread_listing_fails(
+    tmp_path: Path, monkeypatch
+):
+    robot_trigger = message(
+        "hi",
+        message_id="msg-robot-direct",
+        single_chat=True,
+    ).model_copy(
+        update={
+            "open_conversation_id": "cid-bot",
+            "conversation_title": "磊哥",
+            "raw_payload": {"ceo_agent_source": "robot_direct"},
+        }
+    )
+    dws = FakeDws(
+        [],
+        {},
+        list_error=DwsError("transient discovery timeout", code="6"),
+    )
+    dws.robot_direct_messages = {"cid-bot": [robot_trigger]}
+    codex = FakeCodex(CodexDecision(action=CodexAction.SEND_REPLY, reply_text="收到"))
+    worker = make_worker(tmp_path, dws, codex, monkeypatch, dry_run=True)
+
+    assert worker.produce_once(max_tasks=1) == 1
+
+    pending_tasks = worker.store.list_reply_tasks(statuses=("pending",), limit=10)
+    assert len(pending_tasks) == 1
+    assert pending_tasks[0].trigger_message_id == "msg-robot-direct"
+    assert dws.robot_direct_message_reads == 1
+
+
+def test_robot_direct_current_user_message_still_triggers_reply(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message(
+        "hi",
+        message_id="msg-robot-direct",
+        single_chat=True,
+        sender_user_id=None,
+    ).model_copy(
+        update={
+            "open_conversation_id": "cid-bot",
+            "conversation_title": "磊哥",
+            "sender_open_dingtalk_id": "current-open-id",
+            "raw_payload": {"ceo_agent_source": "robot_direct"},
+        }
+    )
+    dws = FakeDws([], {"cid-bot": [trigger]})
+    dws.robot_direct_messages = {"cid-bot": [trigger]}
+    codex = FakeCodex(CodexDecision(action=CodexAction.SEND_REPLY, reply_text="收到"))
+    worker = make_worker(tmp_path, dws, codex, monkeypatch, dry_run=True)
+    worker.store.set_current_user_id("principal-user-1")
+    worker.store.upsert_org_user_profile(
+        user_id="principal-user-1",
+        name="Derek",
+        open_dingtalk_id="current-open-id",
+        manager_user_id=None,
+        department_ids=set(),
+    )
+
+    assert worker.produce_once(max_tasks=1) == 1
+
+    pending_tasks = worker.store.list_reply_tasks(statuses=("pending",), limit=10)
+    assert len(pending_tasks) == 1
+    assert pending_tasks[0].trigger_message_id == "msg-robot-direct"
+
+
 def test_no_reply_agent_envelope_reaction_adds_emoji_without_text_reply(
     tmp_path: Path,
     monkeypatch,

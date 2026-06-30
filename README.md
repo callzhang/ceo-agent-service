@@ -160,7 +160,7 @@ cp .env.example .env
 | `CEO_CORPUS_DIR` | 本地风格语料目录 |
 | `CEO_MENTION_ALIASES` | 群聊中触发本人的 @ 别名 |
 | `CEO_CHAT_BOT_NAMES` | 允许触发自动回复的机器人名称列表，默认复用 `CEO_DING_ROBOT_NAME` |
-| `CEO_ROBOT_DIRECT_MESSAGE_LOOKBACK` | 机器人私聊轮询窗口，默认 `30m` |
+| `CEO_ROBOT_DIRECT_MESSAGE_LOOKBACK` | 机器人私聊轮询窗口，默认 `4h` |
 | `CEO_ASSISTANT_SIGNATURE` | 自动回复签名 |
 | `CEO_HANDOFF_ACK` | 交给真人时发送的确认文本 |
 | `CEO_FEEDBACK_SPIKE_VERCEL_BASE_URL` | 对话方反馈页根地址；配置后自动在发出的回复末尾追加 `👍 赞｜👎 踩` 反馈链接；同一会话长期未评价时会升级为强提醒，超过硬阈值后只回复“请对我提供反馈后再提问” |
