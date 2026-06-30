@@ -97,12 +97,33 @@ def main() -> int:
         if raw:
             result = json.loads(raw)
             if not result.get("ok"):
-                raise RuntimeError(result)
+                raise RuntimeError(_format_page_error(result))
             print(json.dumps(result["data"], ensure_ascii=False))
             return 0
         time.sleep(0.4)
 
     raise TimeoutError("Timed out waiting for Dingteam OKR live source result")
+
+
+def _format_page_error(result: dict) -> str:
+    error = str(result.get("error") or "").strip()
+    stack = str(result.get("stack") or "").strip()
+    first_stack_line = next((line.strip() for line in stack.splitlines() if line.strip()), "")
+    detail = error or first_stack_line or json.dumps(result, ensure_ascii=False)
+    return f"Dingteam OKR page script failed: {detail}"
+
+
+def _print_cli_error(exc: BaseException) -> None:
+    print(
+        json.dumps(
+            {
+                "message": "Dingteam OKR live source failed",
+                "reason": str(exc),
+            },
+            ensure_ascii=False,
+        ),
+        file=sys.stderr,
+    )
 
 
 def _execute_in_dingteam_tab(script: str) -> str:
@@ -470,4 +491,8 @@ def _build_page_script(*, user_id: str, period_label: str, result_attribute: str
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except Exception as exc:
+        _print_cli_error(exc)
+        sys.exit(1)

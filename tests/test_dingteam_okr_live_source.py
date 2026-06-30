@@ -1,4 +1,5 @@
 import importlib.util
+import json
 from pathlib import Path
 
 
@@ -55,3 +56,32 @@ def test_chrome_tab_matching_requires_real_dingteam_page():
     assert 'starts with "https://dingokr.dingteam.com/"' in module.OPEN_TAB_APPLESCRIPT
     assert 'contains "dingokr.dingteam.com"' not in module.APPLESCRIPT
     assert 'contains "dingokr.dingteam.com"' not in module.OPEN_TAB_APPLESCRIPT
+
+
+def test_format_page_error_uses_page_error_message():
+    module = load_module()
+
+    detail = module._format_page_error(
+        {
+            "ok": False,
+            "error": "Cannot read properties of undefined (reading 'Z')",
+            "stack": "TypeError: Cannot read properties of undefined",
+        }
+    )
+
+    assert detail == (
+        "Dingteam OKR page script failed: "
+        "Cannot read properties of undefined (reading 'Z')"
+    )
+
+
+def test_print_cli_error_writes_safe_json(capsys):
+    module = load_module()
+
+    module._print_cli_error(RuntimeError("Dingteam OKR page script failed: api missing"))
+
+    payload = json.loads(capsys.readouterr().err)
+    assert payload == {
+        "message": "Dingteam OKR live source failed",
+        "reason": "Dingteam OKR page script failed: api missing",
+    }

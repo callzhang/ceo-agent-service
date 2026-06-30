@@ -9235,7 +9235,9 @@ def test_okr_review_live_source_error_fails_after_agent_queue_action(
         (),
         {
             "fetch_user_okr": lambda self, user_id, period_label: (_ for _ in ()).throw(
-                RuntimeError("okr unavailable")
+                RuntimeError(
+                    "Dingteam OKR live source failed: page API module missing"
+                )
             )
         },
     )()
@@ -9248,12 +9250,12 @@ def test_okr_review_live_source_error_fails_after_agent_queue_action(
     assert attempt is not None
     assert attempt.action == "okr_review"
     assert attempt.send_status == "failed"
-    assert "okr unavailable" in attempt.send_error
+    assert "page API module missing" in attempt.send_error
     assert worker.store.count_reply_tasks(status="failed") == 0
     assert worker.store.count_reply_tasks(status="done") == 1
     errors = worker.store.list_errors(limit=10)
     assert [error.kind for error in errors] == ["okr_review_source"]
-    assert "okr unavailable" in errors[0].detail
+    assert "page API module missing" in errors[0].detail
     assert final_sent(dws) == []
 
 
