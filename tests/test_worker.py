@@ -10113,6 +10113,35 @@ def test_single_chat_current_user_message_does_not_call_codex(
     assert final_sent(dws) == []
 
 
+def test_single_chat_peer_message_before_current_user_unread_is_processed(
+    tmp_path: Path, monkeypatch
+):
+    peer = message(
+        "这个会议链接需要你看一下",
+        message_id="msg-peer-before-self",
+        single_chat=True,
+    )
+    peer.create_time = "2026-05-13 18:00:00"
+    own_followup = principal_message(
+        "基于项目的未完成事项：请确认流程状态",
+        message_id="msg-self-after-peer",
+        create_time="2026-05-13 18:03:00",
+    )
+    dws = FakeDws(
+        [conversation(single_chat=True)],
+        {"cid-1": [peer, own_followup]},
+        unread_messages={"cid-1": [peer, own_followup]},
+    )
+    worker = make_worker(tmp_path, dws, FakeCodex([]), monkeypatch)
+
+    assert worker.produce_once() == 1
+
+    tasks = worker.store.claim_reply_tasks(limit=10)
+    assert len(tasks) == 1
+    assert tasks[0].trigger_message_id == "msg-peer-before-self"
+    assert tasks[0].trigger_text == "这个会议链接需要你看一下"
+
+
 def test_run_once_max_batches_stops_after_limit(tmp_path: Path, monkeypatch):
     conv_1 = DingTalkConversation(
         open_conversation_id="cid-1",

@@ -4107,6 +4107,7 @@ class DingTalkAutoReplyWorker:
         if conversation.single_chat:
             eligible_messages = messages
             latest_current_user_message_time = None
+            ignore_current_user_cutoff = True
         else:
             current_user_message_times = [
                 message.create_time
@@ -4124,12 +4125,14 @@ class DingTalkAutoReplyWorker:
                 for message in messages
                 if message.addresses_principal()
             ]
+            ignore_current_user_cutoff = False
         candidates = [
             message
             for message in eligible_messages
             if not self._is_current_user_message_for_candidate_filter(message)
             and (
-                latest_current_user_message_time is None
+                ignore_current_user_cutoff
+                or latest_current_user_message_time is None
                 or message.create_time > latest_current_user_message_time
             )
         ]
