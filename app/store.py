@@ -22,6 +22,7 @@ from app.feedback_policy import FeedbackPressureStats
 FAST_PATH_UNREAD_BACKOFF_TASK_ERROR = "waiting_fast_path_unread_backoff"
 SQLITE_BUSY_TIMEOUT_SECONDS = 30
 SQLITE_BUSY_TIMEOUT_MILLISECONDS = SQLITE_BUSY_TIMEOUT_SECONDS * 1000
+CODEX_SESSION_LOCK_STALE_SECONDS = 20 * 60
 _INITIALIZED_STORE_PATHS: set[Path] = set()
 _INITIALIZE_LOCK = threading.Lock()
 
@@ -1457,6 +1458,17 @@ class AutoReplyStore:
         if not owner.strip():
             raise ValueError("missing lock owner")
         with self._connect() as db:
+            db.execute(
+                """
+                delete from codex_session_locks
+                where conversation_id=?
+                  and datetime(locked_at) <= datetime('now', ?)
+                """,
+                (
+                    conversation_id,
+                    f"-{CODEX_SESSION_LOCK_STALE_SECONDS} seconds",
+                ),
+            )
             cursor = db.execute(
                 """
                 insert or ignore into codex_session_locks (conversation_id, owner)

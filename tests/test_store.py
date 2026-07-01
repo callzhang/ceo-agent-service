@@ -146,6 +146,27 @@ def test_codex_session_lock_is_exclusive(tmp_path):
     assert store.acquire_codex_session_lock("cid-1", "reply:msg-1") is True
 
 
+def test_codex_session_lock_replaces_stale_lock(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+
+    assert store.acquire_codex_session_lock("cid-1", "okr:1") is True
+    with store._connect() as db:
+        db.execute(
+            """
+            update codex_session_locks
+            set locked_at=datetime('now', '-21 minutes')
+            where conversation_id='cid-1'
+            """
+        )
+
+    assert store.acquire_codex_session_lock("cid-1", "reply:msg-1") is True
+    with store._connect() as db:
+        rows = db.execute(
+            "select owner from codex_session_locks where conversation_id='cid-1'"
+        ).fetchall()
+    assert [row["owner"] for row in rows] == ["reply:msg-1"]
+
+
 def test_codex_session_lock_release_requires_owner(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
 
