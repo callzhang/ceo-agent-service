@@ -494,9 +494,13 @@ class DwsClient:
         self, conversation: DingTalkConversation
     ) -> list[str]:
         # DWS rejects tiny windows when multiple messages share the cursor timestamp.
+        if conversation.unread_point == 1:
+            limit = 1
+        else:
+            limit = max(conversation.unread_point, MIN_UNREAD_MESSAGE_LIST_LIMIT)
         return self.build_message_list_command(
             conversation=conversation,
-            limit=max(conversation.unread_point, MIN_UNREAD_MESSAGE_LIST_LIMIT),
+            limit=limit,
             forward=False,
         )
 
