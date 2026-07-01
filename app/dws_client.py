@@ -174,7 +174,7 @@ class DwsOaApprovalCandidate(BaseModel):
 class DwsClient:
     # DWS returns generic code 6 for transient discovery/network failures such as
     # TLS handshake timeouts before the request reaches a business API.
-    RETRYABLE_ERROR_CODES = {"TIMEOUT_ERROR", "6"}
+    RETRYABLE_ERROR_CODES = {"TIMEOUT_ERROR", "NETWORK_ERROR", "6"}
     DISCOVERY_CACHE_REFRESH_CODES = {"6"}
     DOC_READ_RETRYABLE_ERROR_CODES = {"internalError"}
     MESSAGE_LIST_RETRYABLE_ERROR_CODES = {"SYSTEM_ERROR"}

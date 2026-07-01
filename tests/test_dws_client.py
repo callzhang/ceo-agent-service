@@ -3476,6 +3476,31 @@ def test_run_json_extracts_error_code_from_stdout_and_retries_transient_timeout(
     assert sleeps == [1.0]
 
 
+def test_run_json_retries_transient_network_error(monkeypatch):
+    calls = []
+    sleeps = []
+    network_payload = (
+        '{"error":{"code":1,"server_error_code":"NETWORK_ERROR",'
+        '"message":"business error: success=false","reason":"business_error"}}'
+    )
+
+    def fake_run(command, text, capture_output, check, timeout, env=None):
+        calls.append(command)
+        if len(calls) == 1:
+            return SimpleNamespace(returncode=1, stdout="", stderr=network_payload)
+        return SimpleNamespace(returncode=0, stdout='{"ok":true}', stderr="")
+
+    monkeypatch.setattr("app.dws_client.subprocess.run", fake_run)
+    monkeypatch.setattr("app.dws_client.time.sleep", sleeps.append)
+
+    assert DwsClient().run_json(["dws", "chat", "message", "list"]) == {"ok": True}
+    assert calls == [
+        ["dws", "chat", "message", "list"],
+        ["dws", "chat", "message", "list"],
+    ]
+    assert sleeps == [1.0]
+
+
 def test_run_json_prefers_specific_server_error_code_over_generic_nested_code(
     monkeypatch,
 ):
