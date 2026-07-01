@@ -1528,12 +1528,7 @@ class DingTalkAutoReplyWorker:
             if getattr(cause, "needs_authorization", False):
                 return True
             cause = cause.__cause__
-        message = str(exc).lower()
-        return (
-            "unexpected status 401 unauthorized" in message
-            or "invalid api key" in message
-            or "missing bearer or basic authentication" in message
-        )
+        return False
 
     def _process_queued_task(
         self, conversation: DingTalkConversation, task: ReplyTask
@@ -4571,7 +4566,7 @@ class DingTalkAutoReplyWorker:
             )
             self.store.update_reply_attempt(
                 attempt_id,
-                send_status="blocked" if login_required else "failed",
+                send_status="failed",
                 send_error=send_error,
             )
             self.store.record_error(
@@ -4588,11 +4583,7 @@ class DingTalkAutoReplyWorker:
             )
             if not retryable_timeout:
                 self._notify(
-                    title=(
-                        f"CEO agent blocked: {conversation.title}"
-                        if login_required
-                        else f"CEO agent error: {conversation.title}"
-                    ),
+                    title=f"CEO agent error: {conversation.title}",
                     message=send_error[:120],
                     conversation=conversation,
                 )

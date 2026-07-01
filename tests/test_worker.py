@@ -3833,7 +3833,7 @@ def test_consume_once_authorization_failure_waits_without_final_failure(
     assert available_at == "2026-05-13 17:15:00"
 
 
-def test_consume_once_codex_provider_auth_failure_waits_without_retry(
+def test_consume_once_codex_provider_auth_failure_retries_as_system_error(
     tmp_path: Path, monkeypatch
 ):
     notifications = []
@@ -3870,16 +3870,13 @@ def test_consume_once_codex_provider_auth_failure_waits_without_retry(
         attempts, error, available_at = db.execute(
             "select attempts, error, available_at from reply_tasks"
         ).fetchone()
-    assert attempts == 0
+    assert attempts == 1
     assert "invalid api key" in error
-    assert available_at == "2026-05-13 17:15:00"
+    assert available_at == "2026-05-13 17:01:00"
     error_kinds = [error.kind for error in worker.store.list_errors(limit=10)]
-    assert "reply_task_authorization" in error_kinds
-    assert "reply_task_retry" not in error_kinds
-    assert any(
-        notification["title"] == "CEO task waiting for authorization: Friday"
-        for notification in notifications
-    )
+    assert "reply_task_retry" in error_kinds
+    assert "reply_task_authorization" not in error_kinds
+    assert notifications == []
 
 
 def test_unresolvable_non_candidate_sender_does_not_block_conversation(
@@ -7812,7 +7809,7 @@ def test_codex_stop_with_error_sends_macos_notification(tmp_path: Path, monkeypa
     }
 
 
-def test_codex_login_required_stop_with_error_is_blocked(
+def test_codex_login_required_stop_with_error_is_failed(
     tmp_path: Path, monkeypatch
 ):
     trigger = message("@Alex Chen(明哥) 这个怎么处理？")
@@ -7840,10 +7837,10 @@ def test_codex_login_required_stop_with_error_is_blocked(
     attempt = worker.store.get_reply_attempt(1)
     assert attempt is not None
     assert attempt.action == "stop_with_error"
-    assert attempt.send_status == "blocked"
+    assert attempt.send_status == "failed"
     assert attempt.send_error.startswith("codex_login_required:")
     assert notifications[0] == {
-        "title": "CEO agent blocked: Friday",
+        "title": "CEO agent error: Friday",
         "message": f"codex_login_required: {reason}"[:120],
         "url": "http://127.0.0.1:8765/open-dingtalk?conversation_id=cid-1",
     }
