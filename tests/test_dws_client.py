@@ -3215,6 +3215,50 @@ def test_read_unread_messages_reads_latest_window_and_returns_chronological_orde
     ]
 
 
+def test_read_recent_messages_prefers_exact_single_chat_nick_match(monkeypatch):
+    monkeypatch.setattr(dws_client, "_local_time_zone", lambda: TEST_LOCAL_TZ)
+    payload = {"result": {"messages": []}}
+    client = SequenceRecordingDwsClient(
+        [
+            {
+                "result": [
+                    {
+                        "userId": "principal-user",
+                        "name": "Derek Zen",
+                        "nick": "磊哥",
+                        "openDingTalkId": "open-principal",
+                    },
+                    {
+                        "userId": "assistant-user",
+                        "name": "磊哥助理",
+                        "nick": "磊哥助理",
+                        "openDingTalkId": "open-assistant",
+                    },
+                ]
+            },
+            payload,
+        ]
+    )
+    conversation = DingTalkConversation(
+        open_conversation_id="cid-direct",
+        title="磊哥",
+        single_chat=True,
+        unread_point=0,
+        last_message_create_at=1778666181403,
+    )
+
+    assert client.read_recent_messages(conversation, limit=5) == []
+
+    assert client.commands[1][0:6] == [
+        "dws",
+        "chat",
+        "message",
+        "list-direct",
+        "--user",
+        "principal-user",
+    ]
+
+
 def test_message_list_time_uses_dingtalk_message_timezone(monkeypatch):
     monkeypatch.setattr(
         dws_client,

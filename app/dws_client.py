@@ -118,6 +118,7 @@ def native_reply_delivery_payload(
 class DwsUserProfile(BaseModel):
     user_id: str
     name: str = ""
+    nick: str = ""
     title: str = ""
     open_dingtalk_id: str | None = None
     manager_user_id: str | None = None
@@ -2533,6 +2534,13 @@ class DwsClient:
         if conversation.direct_user_id or conversation.direct_open_dingtalk_id:
             return conversation
         matches = self.search_user_profiles(conversation.title)
+        exact_matches = [
+            match
+            for match in matches
+            if self._matches_direct_chat_title(match, conversation.title)
+        ]
+        if len(exact_matches) == 1:
+            matches = exact_matches
         if len(matches) != 1:
             raise DwsError(
                 f"expected one direct chat user for {conversation.title!r}, got {len(matches)}"
@@ -2543,6 +2551,17 @@ class DwsClient:
                 "direct_user_id": match.user_id,
                 "direct_open_dingtalk_id": match.open_dingtalk_id or "",
             }
+        )
+
+    @staticmethod
+    def _matches_direct_chat_title(profile: DwsUserProfile, title: str) -> bool:
+        normalized_title = title.strip().casefold()
+        if not normalized_title:
+            return False
+        return any(
+            candidate.strip().casefold() == normalized_title
+            for candidate in (profile.name, profile.nick)
+            if candidate.strip()
         )
 
     def _enrich_user_profile_from_search(
@@ -3702,6 +3721,7 @@ class DwsClient:
                         or user_payload.get("nick")
                         or ""
                     ),
+                    nick=str(user_payload.get("nick") or ""),
                     title=str(
                         user_payload.get("title")
                         or user_payload.get("position")
