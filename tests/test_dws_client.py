@@ -2037,6 +2037,8 @@ def test_parse_unread_conversations_response():
                     "unreadPoint": 3,
                     "notificationOff": 0,
                     "lastMsgCreateAt": 1778666181403,
+                    "userId": "user-1",
+                    "openDingTalkId": "open-1",
                 }
             ]
         },
@@ -2052,6 +2054,8 @@ def test_parse_unread_conversations_response():
             unread_point=3,
             notification_off=False,
             last_message_create_at=1778666181403,
+            direct_user_id="user-1",
+            direct_open_dingtalk_id="open-1",
         )
     ]
 
@@ -3034,6 +3038,45 @@ def test_build_read_unread_messages_command_keeps_larger_unread_window(monkeypat
     assert command[command.index("--limit") + 1] == "9"
 
 
+def test_build_read_recent_messages_command_uses_direct_list_for_single_chat(
+    monkeypatch,
+):
+    monkeypatch.setattr(dws_client, "_local_time_zone", lambda: TEST_LOCAL_TZ)
+    last_message_create_at = 1778666181403
+    expected_time = datetime.fromtimestamp(
+        last_message_create_at / 1000,
+        tz=TEST_LOCAL_TZ,
+    ) + timedelta(seconds=1)
+    expected_time = expected_time.strftime("%Y-%m-%d %H:%M:%S")
+    client = DwsClient(dws_bin="dws")
+    conversation = DingTalkConversation(
+        open_conversation_id="cid-1",
+        title="Mina 邹",
+        single_chat=True,
+        unread_point=1,
+        last_message_create_at=last_message_create_at,
+        direct_user_id="user-1",
+    )
+
+    command = client.build_read_recent_messages_command(conversation, limit=20)
+
+    assert command == [
+        "dws",
+        "chat",
+        "message",
+        "list-direct",
+        "--user",
+        "user-1",
+        "--time",
+        expected_time,
+        "--forward=false",
+        "--limit",
+        "20",
+        "--format",
+        "json",
+    ]
+
+
 def test_build_list_messages_by_sender_command_uses_sender_and_cursor():
     client = DwsClient(dws_bin="dws")
 
@@ -3097,7 +3140,20 @@ def test_read_unread_messages_reads_latest_window_and_returns_chronological_orde
             ]
         }
     }
-    client = RecordingDwsClient(payload)
+    client = SequenceRecordingDwsClient(
+        [
+            {
+                "result": [
+                    {
+                        "userId": "user-1",
+                        "name": "Mina 邹",
+                        "openDingTalkId": "open-1",
+                    }
+                ]
+            },
+            payload,
+        ]
+    )
     conversation = DingTalkConversation(
         open_conversation_id="cid-1",
         title="Mina 邹",
@@ -3111,11 +3167,21 @@ def test_read_unread_messages_reads_latest_window_and_returns_chronological_orde
     assert client.commands == [
         [
             "dws",
+            "contact",
+            "user",
+            "search",
+            "--query",
+            "Mina 邹",
+            "--format",
+            "json",
+        ],
+        [
+            "dws",
             "chat",
             "message",
-            "list",
-            "--group",
-            "cid-1",
+            "list-direct",
+            "--user",
+            "user-1",
             "--time",
             expected_time,
             "--forward=false",

@@ -12,6 +12,8 @@ class DingTalkConversation(BaseModel):
     unread_point: int
     notification_off: bool = False
     last_message_create_at: int | None = None
+    direct_user_id: str = ""
+    direct_open_dingtalk_id: str = ""
 
 
 class DingTalkMessage(BaseModel):

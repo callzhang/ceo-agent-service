@@ -728,6 +728,33 @@ class DwsClient:
         forward: bool,
     ) -> list[str]:
         message_time = self._message_list_time(conversation.last_message_create_at)
+        if conversation.single_chat:
+            command = [
+                self.dws_bin,
+                "chat",
+                "message",
+                "list-direct",
+            ]
+            if conversation.direct_user_id:
+                command.extend(["--user", conversation.direct_user_id])
+            elif conversation.direct_open_dingtalk_id:
+                command.extend(
+                    ["--open-dingtalk-id", conversation.direct_open_dingtalk_id]
+                )
+            else:
+                raise DwsError("single chat direct target is required")
+            command.extend(
+                [
+                    "--time",
+                    message_time,
+                    f"--forward={'true' if forward else 'false'}",
+                    "--limit",
+                    str(limit),
+                    "--format",
+                    "json",
+                ]
+            )
+            return command
         return [
             self.dws_bin,
             "chat",
@@ -1496,6 +1523,7 @@ class DwsClient:
     def read_recent_messages(
         self, conversation: DingTalkConversation, limit: int = 50
     ) -> list[DingTalkMessage]:
+        conversation = self._with_single_chat_direct_target(conversation)
         payload = self.run_json(
             self.build_read_recent_messages_command(conversation, limit)
         )
@@ -1510,6 +1538,7 @@ class DwsClient:
     ) -> list[DingTalkMessage]:
         if conversation.unread_point <= 0:
             return []
+        conversation = self._with_single_chat_direct_target(conversation)
         payload = self.run_json(self.build_read_unread_messages_command(conversation))
         return list(
             reversed(
@@ -2492,6 +2521,26 @@ class DwsClient:
         payload = self.run_json(self.build_search_user_command(query))
         return self.parse_user_profiles(payload)
 
+    def _with_single_chat_direct_target(
+        self, conversation: DingTalkConversation
+    ) -> DingTalkConversation:
+        if not conversation.single_chat:
+            return conversation
+        if conversation.direct_user_id or conversation.direct_open_dingtalk_id:
+            return conversation
+        matches = self.search_user_profiles(conversation.title)
+        if len(matches) != 1:
+            raise DwsError(
+                f"expected one direct chat user for {conversation.title!r}, got {len(matches)}"
+            )
+        match = matches[0]
+        return conversation.model_copy(
+            update={
+                "direct_user_id": match.user_id,
+                "direct_open_dingtalk_id": match.open_dingtalk_id or "",
+            }
+        )
+
     def _enrich_user_profile_from_search(
         self, profile: DwsUserProfile
     ) -> DwsUserProfile:
@@ -2907,6 +2956,17 @@ class DwsClient:
                 unread_point=conversation["unreadPoint"],
                 notification_off=bool(conversation.get("notificationOff", False)),
                 last_message_create_at=conversation.get("lastMsgCreateAt"),
+                direct_user_id=str(
+                    conversation.get("userId")
+                    or conversation.get("userid")
+                    or conversation.get("directUserId")
+                    or ""
+                ),
+                direct_open_dingtalk_id=str(
+                    conversation.get("openDingTalkId")
+                    or conversation.get("directOpenDingTalkId")
+                    or ""
+                ),
             )
             for conversation in conversations
         ]
