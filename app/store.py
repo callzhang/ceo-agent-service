@@ -3514,6 +3514,27 @@ class AutoReplyStore:
             )
             return int(cursor.lastrowid)
 
+    def has_work_update(
+        self,
+        *,
+        project_id: int,
+        source_type: str,
+        source_ref: str,
+    ) -> bool:
+        with self._connect() as db:
+            row = db.execute(
+                """
+                select 1
+                from work_updates
+                where project_id=?
+                  and source_type=?
+                  and source_ref=?
+                limit 1
+                """,
+                (project_id, source_type, source_ref),
+            ).fetchone()
+            return row is not None
+
     def list_work_updates(self, project_id: int, limit: int = 50) -> list[WorkUpdate]:
         with self._connect() as db:
             rows = db.execute(

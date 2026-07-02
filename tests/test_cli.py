@@ -1743,6 +1743,45 @@ def test_backfill_routine_process_todos_rerun_repairs_partial_cancellation(
     assert updates[-1].source_type == "routine_process_backfill"
 
 
+def test_backfill_routine_process_todos_rerun_repairs_missing_audit(tmp_path):
+    from app.cli import backfill_routine_process_todos_command
+
+    db_path = tmp_path / "task.sqlite3"
+    store = AutoReplyStore(db_path)
+    project_id = store.create_work_project(
+        title="【招聘】Marketing L4-L5",
+        category="recruiting",
+        status="active",
+    )
+    todo_id = store.create_work_todo(
+        project_id=project_id,
+        title="将唐华 offer 和试用目标压实成一页纸",
+        owner_user_id="mina-user-1",
+        owner_name="Mina",
+        status="cancelled",
+        priority="P1",
+        blocker="routine HR offer-flow step",
+    )
+
+    result = backfill_routine_process_todos_command(
+        WorkerSettings(db_path=db_path),
+        todo_ids=[todo_id],
+        reason="routine HR offer-flow step",
+        apply=True,
+        now="2026-07-02 12:00:00",
+    )
+
+    updates = store.list_work_updates(project_id=project_id)
+
+    assert result.changed == 1
+    assert result.planned == 1
+    assert result.items[0].before_status == "cancelled"
+    assert result.items[0].suppressed_follow_up_ids == []
+    assert result.items[0].dingtalk_link_ids == []
+    assert updates[-1].source_type == "routine_process_backfill"
+    assert updates[-1].source_ref == str(todo_id)
+
+
 def test_backfill_routine_process_todos_rerun_complete_is_noop(tmp_path):
     from app.cli import backfill_routine_process_todos_command
 
@@ -1761,6 +1800,12 @@ def test_backfill_routine_process_todos_rerun_complete_is_noop(tmp_path):
         status="cancelled",
         priority="P1",
         blocker="routine HR offer-flow step",
+    )
+    store.create_work_update(
+        project_id=project_id,
+        source_type="routine_process_backfill",
+        source_ref=str(todo_id),
+        summary="Cancelled routine-process TODO.",
     )
 
     first = backfill_routine_process_todos_command(
@@ -1785,7 +1830,7 @@ def test_backfill_routine_process_todos_rerun_complete_is_noop(tmp_path):
     assert first.items[0].skipped_reason == "todo already cancelled and cleanup complete"
     assert second.changed == 0
     assert second.planned == 0
-    assert updates == []
+    assert len(updates) == 1
 
 
 def test_backfill_routine_process_todos_targets_followups_beyond_global_page(

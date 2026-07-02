@@ -9,6 +9,7 @@ _DINGTALK_LINK_AUDIT_NOTE = (
     "Internal TODO cancelled as routine process; external "
     "cancellation is not part of this change."
 )
+_ROUTINE_PROCESS_BACKFILL_SOURCE_TYPE = "routine_process_backfill"
 
 
 @dataclass(frozen=True)
@@ -97,8 +98,17 @@ def backfill_routine_process_todos(
             link for link in links if link.last_error != _DINGTALK_LINK_AUDIT_NOTE
         ]
         should_cancel_todo = before_status != "cancelled"
+        audit_exists = store.has_work_update(
+            project_id=todo.project_id,
+            source_type=_ROUTINE_PROCESS_BACKFILL_SOURCE_TYPE,
+            source_ref=str(todo.id),
+        )
+        should_record_audit = not audit_exists
         has_remaining_effects = bool(
-            should_cancel_todo or follow_ups or links_to_update
+            should_cancel_todo
+            or follow_ups
+            or links_to_update
+            or should_record_audit
         )
         item = RoutineProcessBackfillItem(
             todo_id=todo.id,
@@ -145,29 +155,30 @@ def backfill_routine_process_todos(
                 link.id,
                 last_error=_DINGTALK_LINK_AUDIT_NOTE,
             )
-        store.create_work_update(
-            project_id=todo.project_id,
-            source_type="routine_process_backfill",
-            source_ref=str(todo.id),
-            summary=(
-                f"Cancelled routine-process TODO #{todo.id}: {todo.title}. "
-                f"Reason: {clean_reason}"
-            ),
-            changes_json=(
-                json.dumps(
-                    {
-                        "action": "cancel_routine_process_todo",
-                        "todo_id": todo.id,
-                        "suppressed_follow_up_ids": item.suppressed_follow_up_ids,
-                        "dingtalk_link_ids": item.dingtalk_link_ids,
-                        "at": timestamp,
-                    },
-                    ensure_ascii=False,
-                )
-            ),
-            merge_reason="routine_process_backfill",
-            confidence=1.0,
-        )
+        if should_record_audit:
+            store.create_work_update(
+                project_id=todo.project_id,
+                source_type=_ROUTINE_PROCESS_BACKFILL_SOURCE_TYPE,
+                source_ref=str(todo.id),
+                summary=(
+                    f"Cancelled routine-process TODO #{todo.id}: {todo.title}. "
+                    f"Reason: {clean_reason}"
+                ),
+                changes_json=(
+                    json.dumps(
+                        {
+                            "action": "cancel_routine_process_todo",
+                            "todo_id": todo.id,
+                            "suppressed_follow_up_ids": item.suppressed_follow_up_ids,
+                            "dingtalk_link_ids": item.dingtalk_link_ids,
+                            "at": timestamp,
+                        },
+                        ensure_ascii=False,
+                    )
+                ),
+                merge_reason=_ROUTINE_PROCESS_BACKFILL_SOURCE_TYPE,
+                confidence=1.0,
+            )
         changed += 1
 
     return RoutineProcessBackfillResult(
