@@ -4656,12 +4656,6 @@ class DingTalkAutoReplyWorker:
                 trigger=trigger,
                 context_messages=context_messages,
             )
-            self.store.record_error(
-                conversation.open_conversation_id,
-                trigger.open_message_id,
-                "handoff",
-                decision.reason,
-            )
             if not handoff_notified_locally:
                 self._notify(
                     title=f"CEO handoff: {conversation.title}",
@@ -6292,7 +6286,13 @@ class DingTalkAutoReplyWorker:
         )
         try:
             self._ding_self(handoff_text)
-        except Exception:
+        except Exception as exc:
+            self.store.record_error(
+                conversation.open_conversation_id,
+                trigger.open_message_id,
+                "handoff",
+                f"DING handoff delivery failed: {exc}",
+            )
             self._notify(
                 title=f"CEO handoff: {conversation.title}",
                 message=(

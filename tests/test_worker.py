@@ -9900,6 +9900,7 @@ def test_handoff_adds_text_emotion_dings_self_and_records_reaction(
     assert attempt.send_error == "text_emotion: 我去叫"
     sent_reply = store.get_sent_reply("cid-1", "msg-1")
     assert sent_reply is None
+    assert store.count_errors() == 0
 
 
 def test_new_principal_mention_is_processed(
