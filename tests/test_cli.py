@@ -1748,6 +1748,59 @@ def test_backfill_routine_process_todos_targets_followups_beyond_global_page(
     assert follow_up.status == "skipped"
 
 
+def test_backfill_routine_process_todos_suppresses_all_followups_for_todo(
+    tmp_path,
+):
+    from app.cli import backfill_routine_process_todos_command
+
+    db_path = tmp_path / "task.sqlite3"
+    store = AutoReplyStore(db_path)
+    project_id = store.create_work_project(
+        title="【招聘】Marketing L4-L5",
+        category="recruiting",
+        status="active",
+    )
+    todo_id = store.create_work_todo(
+        project_id=project_id,
+        title="将唐华 offer 和试用目标压实成一页纸",
+        owner_user_id="mina-user-1",
+        owner_name="Mina",
+        status="open",
+        priority="P1",
+    )
+    follow_up_ids = [
+        store.create_follow_up_draft(
+            project_id=project_id,
+            todo_id=todo_id,
+            owner_user_id="mina-user-1",
+            owner_name="Mina",
+            target_conversation_id="cid-mina",
+            target_kind="direct",
+            question_text=f"这个一页纸完成了吗？#{index}",
+            status="draft",
+        )
+        for index in range(1001)
+    ]
+
+    result = backfill_routine_process_todos_command(
+        WorkerSettings(db_path=db_path),
+        todo_ids=[todo_id],
+        reason="routine HR offer-flow step",
+        apply=True,
+        now="2026-07-02 12:00:00",
+    )
+
+    remaining = store.list_follow_up_drafts(
+        todo_id=todo_id,
+        statuses=("draft", "approved"),
+        limit=2000,
+    )
+
+    assert result.changed == 1
+    assert result.items[0].suppressed_follow_up_ids == follow_up_ids
+    assert remaining == []
+
+
 def test_scan_task_sources_command_scans_local_and_minutes(
     tmp_path,
     monkeypatch,

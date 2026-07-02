@@ -3671,6 +3671,24 @@ class AutoReplyStore:
                 for row in db.execute(query, args)
             ]
 
+    def list_follow_up_drafts_for_todo(
+        self,
+        todo_id: int,
+        *,
+        statuses: tuple[str, ...] = ("draft", "approved"),
+    ) -> list[FollowUpDraft]:
+        query = "select * from follow_up_drafts where todo_id=?"
+        args: list[str | int] = [todo_id]
+        if statuses:
+            query = f"{query} and status in ({','.join('?' for _ in statuses)})"
+            args.extend(statuses)
+        query = f"{query} order by scheduled_at, id"
+        with self._connect() as db:
+            return [
+                FollowUpDraft.model_validate(dict(row))
+                for row in db.execute(query, args)
+            ]
+
     def list_recent_follow_up_candidates(
         self,
         *,
