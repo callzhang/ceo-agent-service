@@ -63,6 +63,10 @@ from app.task_memory_backfill import (
     validate_project_memory_context,
 )
 from app.task_models import ProjectMemoryContext
+from app.task_noise_backfill import (
+    RoutineProcessBackfillResult,
+    backfill_routine_process_todos,
+)
 from app.todo_sync import pull_dingtalk_todo_statuses
 from app.work_profile import (
     build_initial_profile,
@@ -220,6 +224,7 @@ def build_parser() -> argparse.ArgumentParser:
         "consume",
         "process-work-items",
         "backfill-task-memory-context",
+        "backfill-routine-process-todos",
         "process-okr-reviews",
         "scan-task-sources",
         "process-follow-ups",
@@ -334,6 +339,24 @@ def build_parser() -> argparse.ArgumentParser:
         )
         if command == "refresh-org-cache":
             subparser.add_argument("--user-id", action="append", default=[])
+        if command == "backfill-routine-process-todos":
+            subparser.add_argument(
+                "--todo-id",
+                action="append",
+                type=int,
+                required=True,
+                help="Work TODO id to cancel. Repeat for multiple reviewed IDs.",
+            )
+            subparser.add_argument(
+                "--reason",
+                required=True,
+                help="Audit reason explaining why these TODOs are routine process noise.",
+            )
+            subparser.add_argument(
+                "--apply",
+                action="store_true",
+                help="Apply changes. Omit for dry-run.",
+            )
         if command == "setup-memory-connector":
             subparser.add_argument(
                 "--memory-url",
@@ -887,6 +910,44 @@ def backfill_task_memory_context_command(settings: WorkerSettings) -> int:
         flush=True,
     )
     return updated
+
+
+def _print_routine_process_backfill_result(
+    result: RoutineProcessBackfillResult,
+) -> None:
+    print(
+        "backfill-routine-process-todos "
+        f"dry_run={result.dry_run} planned={result.planned} changed={result.changed}"
+    )
+    for item in result.items:
+        status = "skip" if item.skipped_reason else "plan"
+        print(
+            f"- {status} todo_id={item.todo_id} project_id={item.project_id} "
+            f"before={item.before_status} after={item.after_status} "
+            f"follow_ups={item.suppressed_follow_up_ids} "
+            f"dingtalk_links={item.dingtalk_link_ids} "
+            f"reason={item.reason or item.skipped_reason} title={item.title}"
+        )
+
+
+def backfill_routine_process_todos_command(
+    settings: WorkerSettings,
+    *,
+    todo_ids: list[int],
+    reason: str,
+    apply: bool = False,
+    now: str = "",
+) -> RoutineProcessBackfillResult:
+    store = AutoReplyStore(settings.db_path)
+    result = backfill_routine_process_todos(
+        store,
+        todo_ids=todo_ids,
+        reason=reason,
+        dry_run=not apply,
+        now=now,
+    )
+    _print_routine_process_backfill_result(result)
+    return result
 
 
 def process_okr_reviews_command(settings: WorkerSettings) -> int:
@@ -2178,6 +2239,13 @@ def main() -> None:
         process_work_items_command(settings)
     elif args.command == "backfill-task-memory-context":
         backfill_task_memory_context_command(settings)
+    elif args.command == "backfill-routine-process-todos":
+        backfill_routine_process_todos_command(
+            settings,
+            todo_ids=args.todo_id,
+            reason=args.reason,
+            apply=args.apply,
+        )
     elif args.command == "process-okr-reviews":
         ensure_live_send_allowed(settings)
         process_okr_reviews_command(settings)

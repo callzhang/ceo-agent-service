@@ -102,6 +102,26 @@ def test_parser_supports_backfill_task_memory_context():
     assert args.max_batches == 2
 
 
+def test_parser_supports_backfill_routine_process_todos():
+    args = build_parser().parse_args(
+        [
+            "backfill-routine-process-todos",
+            "--todo-id",
+            "2622",
+            "--todo-id",
+            "2623",
+            "--reason",
+            "routine HR offer-flow step",
+            "--apply",
+        ]
+    )
+
+    assert args.command == "backfill-routine-process-todos"
+    assert args.todo_id == [2622, 2623]
+    assert args.reason == "routine HR offer-flow step"
+    assert args.apply is True
+
+
 def test_parser_supports_process_okr_reviews():
     args = build_parser().parse_args(["process-okr-reviews", "--max-batches", "1"])
 
@@ -1533,6 +1553,129 @@ def test_backfill_task_memory_context_command_records_missing_memory_recall(
     errors = AutoReplyStore(db_path).list_errors(limit=1)
     assert errors[0].kind == "task_memory_backfill"
     assert "memory_recall tool event" in errors[0].detail
+
+
+def test_backfill_routine_process_todos_dry_run_reports_without_writing(
+    tmp_path, capsys
+):
+    from app.cli import backfill_routine_process_todos_command
+
+    db_path = tmp_path / "task.sqlite3"
+    store = AutoReplyStore(db_path)
+    project_id = store.create_work_project(
+        title="【招聘】Marketing L4-L5",
+        category="recruiting",
+        status="active",
+    )
+    todo_id = store.create_work_todo(
+        project_id=project_id,
+        title="将唐华 offer 和试用目标压实成一页纸",
+        owner_user_id="mina-user-1",
+        owner_name="Mina",
+        status="open",
+        priority="P1",
+    )
+    follow_up_id = store.create_follow_up_draft(
+        project_id=project_id,
+        todo_id=todo_id,
+        owner_user_id="mina-user-1",
+        owner_name="Mina",
+        target_conversation_id="cid-mina",
+        target_kind="direct",
+        question_text="这个一页纸完成了吗？",
+        status="draft",
+    )
+
+    result = backfill_routine_process_todos_command(
+        WorkerSettings(db_path=db_path),
+        todo_ids=[todo_id],
+        reason="routine HR offer-flow step",
+        apply=False,
+        now="2026-07-02 12:00:00",
+    )
+
+    captured = capsys.readouterr()
+    todo = store.get_work_todo(todo_id)
+    follow_up = store.get_follow_up_draft(follow_up_id)
+
+    assert result.changed == 0
+    assert result.planned == 1
+    assert todo is not None
+    assert todo.status == "open"
+    assert follow_up is not None
+    assert follow_up.status == "draft"
+    assert "dry_run=True planned=1 changed=0" in captured.out
+    assert str(todo_id) in captured.out
+
+
+def test_backfill_routine_process_todos_apply_cancels_todo_and_suppresses_followup(
+    tmp_path, capsys
+):
+    from app.cli import backfill_routine_process_todos_command
+
+    db_path = tmp_path / "task.sqlite3"
+    store = AutoReplyStore(db_path)
+    project_id = store.create_work_project(
+        title="【招聘】Marketing L4-L5",
+        category="recruiting",
+        status="active",
+    )
+    todo_id = store.create_work_todo(
+        project_id=project_id,
+        title="将唐华 offer 和试用目标压实成一页纸",
+        owner_user_id="mina-user-1",
+        owner_name="Mina",
+        status="open",
+        priority="P1",
+    )
+    follow_up_id = store.create_follow_up_draft(
+        project_id=project_id,
+        todo_id=todo_id,
+        owner_user_id="mina-user-1",
+        owner_name="Mina",
+        target_conversation_id="cid-mina",
+        target_kind="direct",
+        question_text="这个一页纸完成了吗？",
+        status="draft",
+    )
+    link_id = store.create_work_todo_dingtalk_link(
+        work_todo_id=todo_id,
+        executor_user_id="mina-user-1",
+        executor_name="Mina",
+        title_snapshot="将唐华 offer 和试用目标压实成一页纸",
+        deadline_at_snapshot="2026-07-03 18:00:00",
+        priority_snapshot="P1",
+        status="active",
+        dingtalk_task_id="dt-task-1",
+    )
+
+    result = backfill_routine_process_todos_command(
+        WorkerSettings(db_path=db_path),
+        todo_ids=[todo_id],
+        reason="routine HR offer-flow step",
+        apply=True,
+        now="2026-07-02 12:00:00",
+    )
+
+    captured = capsys.readouterr()
+    todo = store.get_work_todo(todo_id)
+    follow_up = store.get_follow_up_draft(follow_up_id)
+    link = store.get_work_todo_dingtalk_link(link_id)
+    updates = store.list_work_updates(project_id=project_id)
+
+    assert result.changed == 1
+    assert result.planned == 1
+    assert todo is not None
+    assert todo.status == "cancelled"
+    assert todo.blocker == "routine HR offer-flow step"
+    assert follow_up is not None
+    assert follow_up.status == "skipped"
+    assert follow_up.suppressed_reason == "routine HR offer-flow step"
+    assert link is not None
+    assert "external cancellation is not part of this change" in link.last_error
+    assert updates[-1].source_type == "routine_process_backfill"
+    assert "routine HR offer-flow step" in updates[-1].summary
+    assert "dry_run=False planned=1 changed=1" in captured.out
 
 
 def test_scan_task_sources_command_scans_local_and_minutes(
