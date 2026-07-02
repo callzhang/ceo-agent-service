@@ -398,6 +398,46 @@ def test_pull_done_dingtalk_todo_closes_from_detail_model_done(tmp_path):
     assert store.get_work_todo_dingtalk_link(link_id).status == "done"
 
 
+def test_pull_dingtalk_todo_skips_cancelled_backfill_link(tmp_path):
+    store = _store(tmp_path)
+    _, todo_id = _project_and_todo(
+        store,
+        status="cancelled",
+        blocker="routine HR offer-flow step",
+    )
+    link_id = store.create_work_todo_dingtalk_link(
+        work_todo_id=todo_id,
+        dingtalk_task_id="dt-task-1",
+        executor_user_id="owner-1",
+        title_snapshot="给客户同步验收 ETA",
+        deadline_at_snapshot="2026-07-01 18:00:00",
+        priority_snapshot="P1",
+        status="cancelled",
+        last_error=(
+            "Internal TODO cancelled as routine process; external "
+            "cancellation is not part of this change."
+        ),
+    )
+    dws = FakeTodoDws()
+    dws.get_payloads["dt-task-1"] = {"id": "dt-task-1", "done": True}
+
+    updated = pull_dingtalk_todo_statuses(
+        store,
+        dws,
+        now="2026-06-27 11:00:00",
+    )
+
+    todo = store.get_work_todo(todo_id)
+    link = store.get_work_todo_dingtalk_link(link_id)
+
+    assert updated == 0
+    assert dws.get_calls == []
+    assert todo.status == "cancelled"
+    assert todo.blocker == "routine HR offer-flow step"
+    assert link.status == "cancelled"
+    assert "external cancellation is not part of this change" in link.last_error
+
+
 def test_refresh_link_before_follow_up_closes_when_dingtalk_done(tmp_path):
     store = _store(tmp_path)
     _, todo_id = _project_and_todo(store)

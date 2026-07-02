@@ -867,6 +867,55 @@ def test_list_work_todo_dingtalk_links_filters_by_work_todo_before_limit(
     assert [link.id for link in recoverable_links] == [second_target_link_id]
 
 
+def test_list_work_todo_dingtalk_links_for_todo_returns_all_matches(
+    tmp_path: Path,
+):
+    store = _store(tmp_path)
+    project_id = store.create_work_project(
+        title="客户交付",
+        category="projects",
+        status="active",
+        priority="P1",
+        risk_level="medium",
+    )
+    todo_id = store.create_work_todo(
+        project_id=project_id,
+        title="给客户同步验收 ETA",
+        owner_user_id="owner-1",
+        status="open",
+        priority="P1",
+        deadline_at="2026-07-01 18:00:00",
+    )
+    other_todo_id = store.create_work_todo(
+        project_id=project_id,
+        title="同步其他事项",
+        owner_user_id="owner-2",
+        status="open",
+        priority="P1",
+        deadline_at="2026-07-01 18:00:00",
+    )
+    link_ids = [
+        store.create_work_todo_dingtalk_link(
+            work_todo_id=todo_id,
+            dingtalk_task_id=f"dt-target-{index}",
+            status="failed",
+        )
+        for index in range(101)
+    ]
+    store.create_work_todo_dingtalk_link(
+        work_todo_id=other_todo_id,
+        dingtalk_task_id="dt-other",
+        status="failed",
+    )
+
+    links = store.list_work_todo_dingtalk_links_for_todo(
+        todo_id,
+        statuses=("failed",),
+    )
+
+    assert [link.id for link in links] == link_ids
+
+
 def test_operation_logs_sort_follow_up_by_operation_time_not_schedule(tmp_path: Path):
     store = _store(tmp_path)
     project_id = store.create_work_project(

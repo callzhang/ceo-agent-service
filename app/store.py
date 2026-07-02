@@ -3439,6 +3439,28 @@ class AutoReplyStore:
                 for row in db.execute(query, args)
             ]
 
+    def list_work_todo_dingtalk_links_for_todo(
+        self,
+        work_todo_id: int,
+        *,
+        statuses: tuple[str, ...] | None = None,
+    ) -> list[WorkTodoDingTalkLink]:
+        query = "select * from work_todo_dingtalk_links where work_todo_id=?"
+        args: list[str | int] = [work_todo_id]
+        if statuses:
+            normalized_statuses = tuple(
+                self._normalize_dingtalk_todo_link_status(status)
+                for status in statuses
+            )
+            query = f"{query} and status in ({','.join('?' for _ in statuses)})"
+            args.extend(normalized_statuses)
+        query = f"{query} order by id"
+        with self._connect() as db:
+            return [
+                self._normalize_dingtalk_todo_link_row(row)
+                for row in db.execute(query, args)
+            ]
+
     def list_work_todo_dingtalk_links_for_todos(
         self,
         todo_ids: list[int],
@@ -3491,6 +3513,27 @@ class AutoReplyStore:
                 (filtered["project_id"],),
             )
             return int(cursor.lastrowid)
+
+    def has_work_update(
+        self,
+        *,
+        project_id: int,
+        source_type: str,
+        source_ref: str,
+    ) -> bool:
+        with self._connect() as db:
+            row = db.execute(
+                """
+                select 1
+                from work_updates
+                where project_id=?
+                  and source_type=?
+                  and source_ref=?
+                limit 1
+                """,
+                (project_id, source_type, source_ref),
+            ).fetchone()
+            return row is not None
 
     def list_work_updates(self, project_id: int, limit: int = 50) -> list[WorkUpdate]:
         with self._connect() as db:
@@ -3641,6 +3684,7 @@ class AutoReplyStore:
         self,
         *,
         project_id: int | None = None,
+        todo_id: int | None = None,
         statuses: tuple[str, ...] | None = None,
         due_before: str | None = None,
         limit: int = 200,
@@ -3651,6 +3695,9 @@ class AutoReplyStore:
         if project_id is not None:
             clauses.append("project_id=?")
             args.append(project_id)
+        if todo_id is not None:
+            clauses.append("todo_id=?")
+            args.append(todo_id)
         if statuses:
             clauses.append(f"status in ({','.join('?' for _ in statuses)})")
             args.extend(statuses)
@@ -3661,6 +3708,24 @@ class AutoReplyStore:
             query = f"{query} where {' and '.join(clauses)}"
         query = f"{query} order by scheduled_at, id limit ?"
         args.append(limit)
+        with self._connect() as db:
+            return [
+                FollowUpDraft.model_validate(dict(row))
+                for row in db.execute(query, args)
+            ]
+
+    def list_follow_up_drafts_for_todo(
+        self,
+        todo_id: int,
+        *,
+        statuses: tuple[str, ...] = ("draft", "approved"),
+    ) -> list[FollowUpDraft]:
+        query = "select * from follow_up_drafts where todo_id=?"
+        args: list[str | int] = [todo_id]
+        if statuses:
+            query = f"{query} and status in ({','.join('?' for _ in statuses)})"
+            args.extend(statuses)
+        query = f"{query} order by scheduled_at, id"
         with self._connect() as db:
             return [
                 FollowUpDraft.model_validate(dict(row))
