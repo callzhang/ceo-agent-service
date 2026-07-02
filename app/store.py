@@ -3641,6 +3641,7 @@ class AutoReplyStore:
         self,
         *,
         project_id: int | None = None,
+        todo_id: int | None = None,
         statuses: tuple[str, ...] | None = None,
         due_before: str | None = None,
         limit: int = 200,
@@ -3651,6 +3652,9 @@ class AutoReplyStore:
         if project_id is not None:
             clauses.append("project_id=?")
             args.append(project_id)
+        if todo_id is not None:
+            clauses.append("todo_id=?")
+            args.append(todo_id)
         if statuses:
             clauses.append(f"status in ({','.join('?' for _ in statuses)})")
             args.extend(statuses)

@@ -78,14 +78,11 @@ def backfill_routine_process_todos(
             )
             continue
 
-        follow_ups = [
-            draft
-            for draft in store.list_follow_up_drafts(
-                statuses=("draft", "approved"),
-                limit=500,
-            )
-            if draft.todo_id == todo.id
-        ]
+        follow_ups = store.list_follow_up_drafts(
+            todo_id=todo.id,
+            statuses=("draft", "approved"),
+            limit=1000,
+        )
         links = store.list_work_todo_dingtalk_links(
             work_todo_id=todo.id,
             statuses=("active", "creating", "failed"),

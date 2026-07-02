@@ -1678,6 +1678,76 @@ def test_backfill_routine_process_todos_apply_cancels_todo_and_suppresses_follow
     assert "dry_run=False planned=1 changed=1" in captured.out
 
 
+def test_backfill_routine_process_todos_targets_followups_beyond_global_page(
+    tmp_path,
+):
+    from app.cli import backfill_routine_process_todos_command
+
+    db_path = tmp_path / "task.sqlite3"
+    store = AutoReplyStore(db_path)
+    unrelated_project_id = store.create_work_project(
+        title="Unrelated project",
+        category="ops",
+        status="active",
+    )
+    unrelated_todo_id = store.create_work_todo(
+        project_id=unrelated_project_id,
+        title="Unrelated TODO",
+        owner_user_id="ops-user-1",
+        owner_name="Ops",
+        status="open",
+    )
+    for index in range(501):
+        store.create_follow_up_draft(
+            project_id=unrelated_project_id,
+            todo_id=unrelated_todo_id,
+            owner_user_id="ops-user-1",
+            owner_name="Ops",
+            target_conversation_id="cid-ops",
+            target_kind="direct",
+            question_text=f"Unrelated follow-up {index}",
+            status="draft",
+        )
+    project_id = store.create_work_project(
+        title="【招聘】Marketing L4-L5",
+        category="recruiting",
+        status="active",
+    )
+    todo_id = store.create_work_todo(
+        project_id=project_id,
+        title="将唐华 offer 和试用目标压实成一页纸",
+        owner_user_id="mina-user-1",
+        owner_name="Mina",
+        status="open",
+        priority="P1",
+    )
+    follow_up_id = store.create_follow_up_draft(
+        project_id=project_id,
+        todo_id=todo_id,
+        owner_user_id="mina-user-1",
+        owner_name="Mina",
+        target_conversation_id="cid-mina",
+        target_kind="direct",
+        question_text="这个一页纸完成了吗？",
+        status="draft",
+    )
+
+    result = backfill_routine_process_todos_command(
+        WorkerSettings(db_path=db_path),
+        todo_ids=[todo_id],
+        reason="routine HR offer-flow step",
+        apply=True,
+        now="2026-07-02 12:00:00",
+    )
+
+    follow_up = store.get_follow_up_draft(follow_up_id)
+
+    assert result.changed == 1
+    assert result.items[0].suppressed_follow_up_ids == [follow_up_id]
+    assert follow_up is not None
+    assert follow_up.status == "skipped"
+
+
 def test_scan_task_sources_command_scans_local_and_minutes(
     tmp_path,
     monkeypatch,
