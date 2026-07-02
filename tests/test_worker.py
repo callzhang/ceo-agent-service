@@ -7846,6 +7846,57 @@ def test_codex_login_required_stop_with_error_is_failed(
     }
 
 
+@pytest.mark.parametrize(
+    ("reason", "expected_detail"),
+    [
+        (
+            "unexpected status 401 Unauthorized: Missing bearer or basic "
+            "authentication in header, url: https://api.openai.com/v1/responses, "
+            "cf-ray: abc, request id: req-1",
+            "OpenAI Responses API was called without a bearer/basic auth header",
+        ),
+        (
+            "unexpected status 401 Unauthorized: invalid api key (2049), "
+            "url: https://api.minimaxi.com/v1/responses",
+            "configured Codex model provider rejected its API key",
+        ),
+    ],
+)
+def test_codex_provider_auth_stop_with_error_records_clear_sanitized_failure(
+    tmp_path: Path, monkeypatch, reason: str, expected_detail: str
+):
+    trigger = message("@Alex Chen(明哥) 这个怎么处理？")
+    dws = FakeDws([conversation()], {"cid-1": [trigger]})
+    codex = FakeCodex(
+        CodexDecision(
+            action=CodexAction.STOP_WITH_ERROR,
+            reason=reason,
+            macos_notify=False,
+        )
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch, dry_run=True)
+    notifications: list[dict[str, str | None]] = []
+    monkeypatch.setattr(
+        "app.worker.send_macos_notification",
+        lambda **kwargs: notifications.append(kwargs),
+    )
+
+    worker.run_once()
+
+    attempt = worker.store.get_reply_attempt(1)
+    assert attempt is not None
+    assert attempt.action == "stop_with_error"
+    assert attempt.send_status == "failed"
+    assert attempt.send_error.startswith("codex_provider_auth_failed:")
+    assert expected_detail in attempt.send_error
+    assert "restore Codex CLI login" in attempt.send_error
+    assert "cf-ray" not in attempt.send_error
+    assert "request id" not in attempt.send_error
+    assert attempt.codex_reason == attempt.send_error
+    assert notifications[0]["title"] == "CEO agent error: Friday"
+    assert expected_detail[:40] in notifications[0]["message"]
+
+
 def test_codex_stop_with_error_keeps_queued_task_retryable(
     tmp_path: Path, monkeypatch
 ):
