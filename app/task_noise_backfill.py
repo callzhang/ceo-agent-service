@@ -5,6 +5,12 @@ from datetime import datetime
 from app.store import AutoReplyStore
 
 
+_DINGTALK_LINK_AUDIT_NOTE = (
+    "Internal TODO cancelled as routine process; external "
+    "cancellation is not part of this change."
+)
+
+
 @dataclass(frozen=True)
 class RoutineProcessBackfillItem:
     todo_id: int
@@ -64,16 +70,17 @@ def backfill_routine_process_todos(
                 )
             )
             continue
-        if str(todo.status) in {"done", "cancelled"}:
+        before_status = str(todo.status)
+        if before_status == "done":
             items.append(
                 RoutineProcessBackfillItem(
                     todo_id=todo.id,
                     project_id=todo.project_id,
                     title=todo.title,
-                    before_status=str(todo.status),
-                    after_status=str(todo.status),
+                    before_status=before_status,
+                    after_status=before_status,
                     reason=clean_reason,
-                    skipped_reason=f"todo already {todo.status}",
+                    skipped_reason="todo already done",
                 )
             )
             continue
@@ -82,31 +89,43 @@ def backfill_routine_process_todos(
             todo.id,
             statuses=("draft", "approved"),
         )
-        links = store.list_work_todo_dingtalk_links(
-            work_todo_id=todo.id,
+        links = store.list_work_todo_dingtalk_links_for_todo(
+            todo.id,
             statuses=("active", "creating", "failed"),
-            limit=100,
+        )
+        links_to_update = [
+            link for link in links if link.last_error != _DINGTALK_LINK_AUDIT_NOTE
+        ]
+        should_cancel_todo = before_status != "cancelled"
+        has_remaining_effects = bool(
+            should_cancel_todo or follow_ups or links_to_update
         )
         item = RoutineProcessBackfillItem(
             todo_id=todo.id,
             project_id=todo.project_id,
             title=todo.title,
-            before_status=str(todo.status),
+            before_status=before_status,
             after_status="cancelled",
             suppressed_follow_up_ids=[draft.id for draft in follow_ups],
-            dingtalk_link_ids=[link.id for link in links],
+            dingtalk_link_ids=[link.id for link in links_to_update],
             reason=clean_reason,
+            skipped_reason=(
+                ""
+                if has_remaining_effects
+                else "todo already cancelled and cleanup complete"
+            ),
         )
         items.append(item)
 
-        if dry_run:
+        if dry_run or not has_remaining_effects:
             continue
 
-        store.update_work_todo(
-            todo.id,
-            status="cancelled",
-            blocker=clean_reason,
-        )
+        if should_cancel_todo:
+            store.update_work_todo(
+                todo.id,
+                status="cancelled",
+                blocker=clean_reason,
+            )
         for draft in follow_ups:
             store.update_follow_up_draft(
                 draft.id,
@@ -121,13 +140,10 @@ def backfill_routine_process_todos(
                     ensure_ascii=False,
                 ),
             )
-        for link in links:
+        for link in links_to_update:
             store.update_work_todo_dingtalk_link(
                 link.id,
-                last_error=(
-                    "Internal TODO cancelled as routine process; external "
-                    "cancellation is not part of this change."
-                ),
+                last_error=_DINGTALK_LINK_AUDIT_NOTE,
             )
         store.create_work_update(
             project_id=todo.project_id,

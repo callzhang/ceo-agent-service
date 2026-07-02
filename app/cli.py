@@ -926,7 +926,7 @@ def _print_routine_process_backfill_result(
             f"before={item.before_status} after={item.after_status} "
             f"follow_ups={item.suppressed_follow_up_ids} "
             f"dingtalk_links={item.dingtalk_link_ids} "
-            f"reason={item.reason or item.skipped_reason} title={item.title}"
+            f"reason={item.skipped_reason or item.reason} title={item.title}"
         )
 
 

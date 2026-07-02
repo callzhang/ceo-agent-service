@@ -3439,6 +3439,28 @@ class AutoReplyStore:
                 for row in db.execute(query, args)
             ]
 
+    def list_work_todo_dingtalk_links_for_todo(
+        self,
+        work_todo_id: int,
+        *,
+        statuses: tuple[str, ...] | None = None,
+    ) -> list[WorkTodoDingTalkLink]:
+        query = "select * from work_todo_dingtalk_links where work_todo_id=?"
+        args: list[str | int] = [work_todo_id]
+        if statuses:
+            normalized_statuses = tuple(
+                self._normalize_dingtalk_todo_link_status(status)
+                for status in statuses
+            )
+            query = f"{query} and status in ({','.join('?' for _ in statuses)})"
+            args.extend(normalized_statuses)
+        query = f"{query} order by id"
+        with self._connect() as db:
+            return [
+                self._normalize_dingtalk_todo_link_row(row)
+                for row in db.execute(query, args)
+            ]
+
     def list_work_todo_dingtalk_links_for_todos(
         self,
         todo_ids: list[int],
