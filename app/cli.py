@@ -72,7 +72,11 @@ from app.work_profile import (
     render_markdown_profile,
     write_jsonl,
 )
-from app.worker import CALENDAR_ACTION_SEND_STATUS, DingTalkAutoReplyWorker
+from app.worker import (
+    CALENDAR_ACTION_SEND_STATUS,
+    DingTalkAutoReplyWorker,
+    _normalize_codex_stop_error_reason,
+)
 
 WORK_SUMMARY_TRANSIENT_RETRY_ATTEMPTS = 3
 WORK_SUMMARY_RETRY_BASE_DELAY_SECONDS = 60
@@ -794,8 +798,9 @@ def process_work_items_command(settings: WorkerSettings) -> int:
             process_work_item(store, runner, work_input, dws=dws)
             processed += 1
         except Exception as exc:
-            error = str(exc)
-            if _should_retry_work_summary_input(error, work_input.attempts):
+            raw_error = str(exc)
+            error = _normalize_codex_stop_error_reason(raw_error)
+            if _should_retry_work_summary_input(raw_error, work_input.attempts):
                 store.schedule_work_summary_input_retry(
                     work_input.id,
                     error,
@@ -807,7 +812,7 @@ def process_work_items_command(settings: WorkerSettings) -> int:
                 store.mark_work_summary_input_discarded(work_input.id, error)
             else:
                 store.mark_work_summary_input_failed(work_input.id, error)
-            store.record_error(None, None, "task_agent", str(exc))
+            store.record_error(None, None, "task_agent", error)
     print(f"process-work-items processed={processed}", flush=True)
     return processed
 

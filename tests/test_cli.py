@@ -1093,8 +1093,15 @@ def test_process_work_items_command_backoffs_codex_auth_failure(
         ).fetchone()
     assert row["status"] == "pending"
     assert row["attempts"] == 1
-    assert "Missing bearer or basic authentication" in row["error"]
+    assert row["error"].startswith("codex_provider_auth_failed:")
+    assert "OpenAI Responses API was called without a bearer/basic auth header" in row[
+        "error"
+    ]
+    assert "request id" not in row["error"]
     assert row["available_at"] > ""
+    recorded = AutoReplyStore(db_path).list_errors(limit=1)[0]
+    assert recorded.kind == "task_agent"
+    assert recorded.detail == row["error"]
 
 
 def test_process_work_items_command_backoffs_missing_memory_recall_tool_event(
