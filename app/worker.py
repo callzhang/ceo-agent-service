@@ -780,6 +780,7 @@ class DingTalkAutoReplyWorker:
             "description": event.description,
             "comments": event.comments,
             "organizer": {"displayName": event.organizer},
+            "selfResponseStatus": event.self_response_status,
             "start": {"dateTime": event.start_time},
             "end": {"dateTime": event.end_time},
             "attendees": [
@@ -3716,6 +3717,8 @@ class DingTalkAutoReplyWorker:
             f"新会议：{context.invite.title or '未命名日程'}",
             f"时间：{context.invite.start_time} - {context.invite.end_time}",
             f"组织者：{context.invite.organizer or trigger.sender_name}",
+            f"当前本人日历响应状态：{context.invite.self_response_status or 'unknown'}",
+            "当前状态已经是 accepted 时，不要再说“我接受”；只同步会前准备、冲突处理或需要对方补充的内容。",
             f"会议描述：{context.invite.description.strip() or '无'}",
             f"会议评论：{DingTalkAutoReplyWorker._calendar_comments_text(context.invite)}",
             "重叠会议：",
@@ -3759,6 +3762,8 @@ class DingTalkAutoReplyWorker:
             f"新会议：{context.invite.title or '未命名日程'}",
             f"时间：{context.invite.start_time} - {context.invite.end_time}",
             f"组织者：{context.invite.organizer or trigger.sender_name}",
+            f"当前本人日历响应状态：{context.invite.self_response_status or 'unknown'}",
+            "当前状态已经是 accepted 时，不要再说“我接受”；只同步会前准备、冲突处理或需要对方补充的内容。",
             f"会议描述：{context.invite.description.strip() or '无'}",
             f"会议评论：{DingTalkAutoReplyWorker._calendar_comments_text(context.invite)}",
         ]
@@ -3852,6 +3857,65 @@ class DingTalkAutoReplyWorker:
         else:
             self.store.update_reply_attempt(attempt_id, **updates)
 
+    @staticmethod
+    def _calendar_response_status_matches(
+        current_status: str,
+        requested_status: str,
+    ) -> bool:
+        def normalize(value: str) -> str:
+            return value.strip().replace("_", "").replace("-", "").casefold()
+
+        normalized_current = normalize(current_status)
+        return bool(
+            normalized_current
+            and normalized_current == normalize(requested_status)
+        )
+
+    def _mark_calendar_response_already_set(
+        self,
+        *,
+        attempt_id: int,
+        event_id: str,
+        response_status: str,
+        current_response_status: str,
+        send_status: str | None,
+        complete_task_id: int | None = None,
+    ) -> None:
+        result = {
+            "success": True,
+            "noop_reason": "calendar_response_already_set",
+            "current_response_status": current_response_status,
+        }
+        updates: dict[str, Any] = {
+            "calendar_event_id": event_id,
+            "calendar_response_status": response_status,
+            "calendar_response_result_json": json.dumps(
+                result,
+                ensure_ascii=False,
+                sort_keys=True,
+            ),
+            "send_error": "",
+        }
+        if send_status is not None:
+            updates["send_status"] = send_status
+        if complete_task_id is not None and send_status == CALENDAR_ACTION_SEND_STATUS:
+            self.store.update_reply_attempt_and_complete_task(
+                attempt_id,
+                complete_task_id,
+                **updates,
+            )
+        else:
+            self.store.update_reply_attempt(attempt_id, **updates)
+
+    def _verified_calendar_event_after_response(
+        self,
+        event_id: str,
+    ) -> DwsCalendarEvent | None:
+        get_calendar_event = getattr(self.dws, "get_calendar_event", None)
+        if get_calendar_event is None:
+            return None
+        return get_calendar_event(event_id)
+
     def _execute_calendar_response(
         self,
         *,
@@ -3888,6 +3952,21 @@ class DingTalkAutoReplyWorker:
             if raise_on_delivery_failure:
                 raise ReplyDeliveryError(error)
             return False
+        if self._calendar_response_status_matches(
+            event.self_response_status,
+            response_status,
+        ):
+            self._mark_calendar_response_already_set(
+                attempt_id=attempt_id,
+                event_id=event.event_id,
+                response_status=response_status,
+                current_response_status=event.self_response_status,
+                send_status=CALENDAR_ACTION_SEND_STATUS
+                if mark_attempt_terminal
+                else None,
+                complete_task_id=complete_task_id,
+            )
+            return True
         if self.dry_run:
             updates = {
                 "calendar_event_id": event.event_id,
@@ -3935,6 +4014,43 @@ class DingTalkAutoReplyWorker:
             )
             if raise_on_delivery_failure:
                 raise ReplyDeliveryError(str(exc)) from exc
+            return False
+        verified_event = self._verified_calendar_event_after_response(event.event_id)
+        if verified_event is not None and not self._calendar_response_status_matches(
+            verified_event.self_response_status,
+            response_status,
+        ):
+            error = (
+                "calendar_response_not_applied: "
+                f"requested={response_status} "
+                f"actual={verified_event.self_response_status or 'unknown'}"
+            )
+            updates = {
+                "calendar_event_id": event.event_id,
+                "calendar_response_status": response_status,
+                "calendar_response_result_json": json.dumps(
+                    action_result,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                ),
+                "send_error": error,
+            }
+            if mark_attempt_terminal:
+                updates["send_status"] = "failed"
+            self.store.update_reply_attempt(attempt_id, **updates)
+            self.store.record_error(
+                conversation.open_conversation_id,
+                trigger.open_message_id,
+                "calendar_response",
+                error,
+            )
+            self._notify(
+                title=f"CEO calendar response failed: {conversation.title}",
+                message=error[:120],
+                conversation=conversation,
+            )
+            if raise_on_delivery_failure:
+                raise ReplyDeliveryError(error)
             return False
         updates = {
             "calendar_event_id": event.event_id,
@@ -4502,6 +4618,23 @@ class DingTalkAutoReplyWorker:
         calendar_response_status = decision.calendar_response_status.value
         if calendar_response_event is not None and calendar_response_status:
             if decision.action == CodexAction.NO_REPLY:
+                if self._calendar_response_status_matches(
+                    calendar_response_event.self_response_status,
+                    calendar_response_status,
+                ):
+                    self._respond_calendar_invite(
+                        conversation=conversation,
+                        trigger=trigger,
+                        new_messages=new_messages,
+                        event=calendar_response_event,
+                        response_status=calendar_response_status,
+                        attempt_id=attempt_id,
+                        reason="",
+                        raise_on_delivery_failure=raise_on_delivery_failure,
+                        allow_duplicate_send=allow_duplicate_send,
+                        complete_task_id=complete_task_id,
+                    )
+                    return
                 if calendar_response_status == "accepted":
                     accepted = self._execute_calendar_response(
                         conversation=conversation,

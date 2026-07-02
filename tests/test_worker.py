@@ -182,6 +182,7 @@ class FakeDws:
         self.calendar_event_detail_calls: list[str] = []
         self.calendar_responses: list[tuple[str, str]] = []
         self.calendar_response_error: Exception | None = None
+        self.calendar_response_updates_details = True
         self.minutes_permission_requests: dict[
             str, DwsMinutesPermissionRequest | None
         ] = {}
@@ -692,6 +693,12 @@ class FakeDws:
         self.calendar_responses.append((event_id, response_status))
         if self.calendar_response_error:
             raise self.calendar_response_error
+        if self.calendar_response_updates_details:
+            existing = self.calendar_event_details.get(event_id)
+            if existing is not None:
+                self.calendar_event_details[event_id] = existing.model_copy(
+                    update={"self_response_status": response_status}
+                )
         return {"success": True}
 
     def minutes_permission_request_from_message(
@@ -4266,7 +4273,7 @@ def test_bare_calendar_card_enriches_sender_pending_invites_to_match_recent_crea
 
     worker.run_once()
 
-    assert dws.calendar_event_detail_calls == ["invite-1", "invite-2"]
+    assert dws.calendar_event_detail_calls == ["invite-1", "invite-2", "invite-1"]
     assert len(codex.calls) == 1
     assert "吴柯欣 - 招聘专员 - 三面" in codex.calls[0][0]
     assert "候选人：吴柯欣" in codex.calls[0][0]
@@ -4406,6 +4413,134 @@ def test_bare_calendar_card_uses_already_accepted_invite_as_context(
     assert attempt.action == "send_reply"
     assert attempt.codex_reason == "日程已经接受，标题和描述足够判断。"
     assert attempt.calendar_event_id == "invite-1"
+
+
+def test_already_accepted_calendar_response_is_noop_without_forced_reply(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message("[日程]", single_chat=True, message_type="calendar")
+    invite = DwsCalendarEvent(
+        event_id="invite-1",
+        title="商机周会",
+        start_time="2026-05-16T09:00:00+08:00",
+        end_time="2026-05-16T10:00:00+08:00",
+        organizer=trigger.sender_name,
+        self_response_status="accepted",
+        status="confirmed",
+    )
+    dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
+    dws.calendar_events[
+        "2026-05-13T17:00:00+08:00|2026-05-27T17:00:00+08:00"
+    ] = [invite]
+    dws.calendar_events[f"{invite.start_time}|{invite.end_time}"] = [invite]
+    codex = FakeCodex(
+        CodexDecision(
+            action=CodexAction.NO_REPLY,
+            reason="这个会我接受。",
+            calendar_response_status="accepted",
+        )
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+
+    worker.run_once()
+
+    assert dws.calendar_responses == []
+    assert final_sent(dws) == []
+    attempt = worker.store.get_reply_attempt(1)
+    assert attempt is not None
+    assert attempt.action == "no_reply"
+    assert attempt.send_status == "calendar"
+    assert json.loads(attempt.calendar_response_result_json) == {
+        "current_response_status": "accepted",
+        "noop_reason": "calendar_response_already_set",
+        "success": True,
+    }
+
+
+def test_send_reply_with_already_accepted_calendar_status_does_not_call_response_api(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message("[日程]", single_chat=True, message_type="calendar")
+    invite = DwsCalendarEvent(
+        event_id="invite-1",
+        title="商机周会",
+        start_time="2026-05-16T09:00:00+08:00",
+        end_time="2026-05-16T10:00:00+08:00",
+        organizer=trigger.sender_name,
+        self_response_status="accepted",
+        status="confirmed",
+    )
+    dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
+    dws.calendar_events[
+        "2026-05-13T17:00:00+08:00|2026-05-27T17:00:00+08:00"
+    ] = [invite]
+    dws.calendar_events[f"{invite.start_time}|{invite.end_time}"] = [invite]
+    codex = FakeCodex(
+        CodexDecision(
+            action=CodexAction.SEND_REPLY,
+            reply_text="已看到，按商机清单和客户优先级准备。",
+            reason="日程已接受，只同步会前准备重点。",
+            calendar_response_status="accepted",
+        )
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+
+    worker.run_once()
+
+    assert dws.calendar_responses == []
+    assert final_sent(dws) == [
+        ("cid-1", "已看到，按商机清单和客户优先级准备。（by明哥分身）")
+    ]
+    attempt = worker.store.get_reply_attempt(1)
+    assert attempt is not None
+    assert attempt.send_status == "sent"
+    assert json.loads(attempt.calendar_response_result_json) == {
+        "current_response_status": "accepted",
+        "noop_reason": "calendar_response_already_set",
+        "success": True,
+    }
+
+
+def test_calendar_response_verifies_result_before_sending_reply(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message("[日程]", single_chat=True, message_type="calendar")
+    invite = DwsCalendarEvent(
+        event_id="invite-1",
+        title="客户复盘",
+        start_time="2026-05-16T09:00:00+08:00",
+        end_time="2026-05-16T10:00:00+08:00",
+        organizer=trigger.sender_name,
+        self_response_status="needsAction",
+        status="confirmed",
+    )
+    still_pending = invite.model_copy()
+    dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
+    dws.calendar_events[
+        "2026-05-13T17:00:00+08:00|2026-05-27T17:00:00+08:00"
+    ] = [invite]
+    dws.calendar_events[f"{invite.start_time}|{invite.end_time}"] = [invite]
+    dws.calendar_event_details["invite-1"] = still_pending
+    dws.calendar_response_updates_details = False
+    codex = FakeCodex(
+        CodexDecision(
+            action=CodexAction.SEND_REPLY,
+            reply_text="这个会我接受。",
+            reason="需要参加客户复盘。",
+            calendar_response_status="accepted",
+        )
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+
+    worker.run_once()
+
+    assert dws.calendar_responses == [("invite-1", "accepted")]
+    assert final_sent(dws) == []
+    attempt = worker.store.get_reply_attempt(1)
+    assert attempt is not None
+    assert attempt.send_status == "failed"
+    assert "calendar_response_not_applied" in attempt.send_error
+    assert worker.store.has_seen("msg-1") is False
 
 
 def test_bare_calendar_card_uses_unique_future_accepted_invite_without_change_time(
@@ -5025,6 +5160,38 @@ def test_calendar_invite_with_description_asks_codex_to_evaluate_conflict(
     assert attempt.codex_reason == "calendar_conflict_evaluated"
 
 
+def test_calendar_prompt_includes_current_response_status(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message("[日程]", single_chat=True, message_type="calendar")
+    invite = DwsCalendarEvent(
+        event_id="invite-1",
+        title="商机周会",
+        start_time="2026-05-14T10:00:00+08:00",
+        end_time="2026-05-14T11:00:00+08:00",
+        description="过商机清单。",
+        organizer="韩露",
+        self_response_status="accepted",
+    )
+    dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
+    dws.calendar_invites["msg-1"] = invite
+    codex = FakeCodex(
+        CodexDecision(
+            action=CodexAction.SEND_REPLY,
+            reply_text="已看到，按商机清单准备。",
+            reason="日程已接受。",
+        )
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+
+    worker.run_once()
+
+    assert len(codex.calls) == 1
+    prompt = codex.calls[0][0]
+    assert "当前本人日历响应状态：accepted" in prompt
+    assert "当前状态已经是 accepted 时，不要再说“我接受”" in prompt
+
+
 def test_calendar_invite_for_document_review_replies_to_use_document_comment(
     tmp_path: Path, monkeypatch
 ):
@@ -5350,7 +5517,7 @@ def test_rerun_calendar_card_recovers_event_from_existing_attempt(
     )
 
     assert processed_message_id == trigger.open_message_id
-    assert dws.calendar_event_detail_calls == ["invite-1"]
+    assert dws.calendar_event_detail_calls == ["invite-1", "invite-1"]
     assert len(codex.calls) == 1
     assert "Mike项目同步" in codex.calls[0][0]
     assert "客户拜访前同步当前项目情况和后续计划" in codex.calls[0][0]
@@ -5414,15 +5581,18 @@ def test_rerun_calendar_card_matches_already_accepted_invite_from_sender(
     assert processed_message_id == trigger.open_message_id
     assert len(codex.calls) == 1
     assert "Mike项目同步" in codex.calls[0][0]
-    assert dws.calendar_responses == [("invite-1", "accepted")]
-    assert final_sent(dws) == [
-        ("cid-1", "客户拜访前需要同步项目情况和后续计划，有必要参加。（by明哥分身）")
-    ]
+    assert dws.calendar_responses == []
+    assert final_sent(dws) == []
     attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
     assert attempt is not None
-    assert attempt.send_status == "sent"
+    assert attempt.send_status == "calendar"
     assert attempt.calendar_event_id == "invite-1"
     assert attempt.calendar_response_status == "accepted"
+    assert json.loads(attempt.calendar_response_result_json) == {
+        "current_response_status": "accepted",
+        "noop_reason": "calendar_response_already_set",
+        "success": True,
+    }
 
 
 def test_calendar_invite_no_reply_without_auto_accept_reason_does_not_accept(

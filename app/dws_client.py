@@ -3410,8 +3410,14 @@ class DwsClient:
                 "responseStatus",
                 "status",
             ),
-            self_response_status=DwsClient._calendar_self_response_status(
-                record.get("attendees")
+            self_response_status=(
+                DwsClient._first_string(
+                    record,
+                    "selfResponseStatus",
+                    "self_response_status",
+                    "selfStatus",
+                )
+                or DwsClient._calendar_self_response_status(record.get("attendees"))
             ),
             attendees=DwsClient._calendar_attendees(record.get("attendees")),
             comments=DwsClient._calendar_comments(record),
