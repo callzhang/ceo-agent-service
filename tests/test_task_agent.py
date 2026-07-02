@@ -917,6 +917,117 @@ def test_apply_decision_suppresses_existing_follow_up_without_closing_todo(tmp_p
     assert "follow_up_changes" in update.changes_json
 
 
+def test_mina_style_feedback_cancels_noisy_todo_and_suppresses_follow_up(tmp_path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    project_id = store.create_work_project(
+        title="【招聘】Marketing L4-L5",
+        category="recruiting",
+        status="active",
+        memory_context_json=json.dumps(
+            _memory_context(),
+            ensure_ascii=False,
+        ),
+    )
+    todo_id = store.create_work_todo(
+        project_id=project_id,
+        title="将唐华 L5/对外总监 title 的 offer 和试用目标压实成一页纸",
+        owner_user_id="mina-user-1",
+        owner_name="邹婧玮(Mina 邹)",
+        status="open",
+        priority="P1",
+        deadline_at="2026-07-03 18:00:00",
+        next_follow_up_at="2026-07-02 10:00:00",
+        follow_up_question="唐华 offer 和试用目标一页纸完成了吗？",
+    )
+    follow_up_id = store.create_follow_up_draft(
+        project_id=project_id,
+        todo_id=todo_id,
+        owner_user_id="mina-user-1",
+        owner_name="邹婧玮(Mina 邹)",
+        target_conversation_id="cid-mina",
+        target_kind="direct",
+        question_text="基于唐华 offer 推进事项，这个一页纸完成了吗？",
+        status="draft",
+        scheduled_at="2026-07-02 10:00:00",
+    )
+    decision = TaskAgentDecision.model_validate(
+        {
+            "action": "update_project",
+            "project": {
+                "id": project_id,
+                "title": "【招聘】Marketing L4-L5",
+                "category": "recruiting",
+                "status": "active",
+                "memory_context": _memory_context(),
+                "facts": [
+                    {
+                        "description": "Mina clarified that routine HR offer-flow steps should not become separate reminders.",
+                        "source": "reply_attempt:2163",
+                        "created": "2026-07-01 10:50:17",
+                        "updated": "2026-07-01 10:50:17",
+                    }
+                ],
+            },
+            "todo_changes": [
+                {
+                    "action": "cancel",
+                    "todo_id": todo_id,
+                    "title": "将唐华 L5/对外总监 title 的 offer 和试用目标压实成一页纸",
+                    "status": "cancelled",
+                    "blocker": "Routine HR offer-flow step; not an important task to track.",
+                }
+            ],
+            "follow_up_drafts": [],
+            "follow_up_changes": [
+                {
+                    "follow_up_id": follow_up_id,
+                    "todo_id": todo_id,
+                    "action": "suppress",
+                    "reason": "Routine HR offer-flow step should not be followed up separately.",
+                    "evidence_check": {
+                        "source": "reply_attempt:2163",
+                        "supports_suppression": True,
+                    },
+                }
+            ],
+            "update_summary": "Canceled noisy routine-process TODO after Mina feedback.",
+            "merge_reason": "matched existing Marketing recruiting project and TODO",
+            "memory_recall_used": True,
+            "confidence": 0.86,
+            "failure_risk": "If left open, the agent will keep interrupting HR about a routine process step.",
+            "failure_risk_score": 0.2,
+        }
+    )
+
+    work_item = _work_item()
+    work_item.summary = (
+        "磊哥分身，就类似这种事情，没必要创建待办，"
+        "我这些事儿不办，这人也没法发offer啊。"
+    )
+    apply_task_agent_decision(
+        store,
+        summary_input_id=1,
+        work_item=work_item,
+        decision=decision,
+        memory_recall_attempted=True,
+    )
+
+    todo = store.get_work_todo(todo_id)
+    follow_up = store.get_follow_up_draft(follow_up_id)
+    updates = store.list_work_updates(project_id=project_id)
+
+    assert todo is not None
+    assert todo.status == "cancelled"
+    assert todo.blocker == "Routine HR offer-flow step; not an important task to track."
+    assert follow_up is not None
+    assert follow_up.status == "skipped"
+    assert (
+        follow_up.suppressed_reason
+        == "Routine HR offer-flow step should not be followed up separately."
+    )
+    assert "Canceled noisy routine-process TODO" in updates[-1].summary
+
+
 @pytest.mark.parametrize("initial_status", ["draft", "approved"])
 def test_follow_up_close_skips_pending_follow_up_without_closing_todo(
     tmp_path,
