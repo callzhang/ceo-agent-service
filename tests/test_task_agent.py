@@ -2255,6 +2255,23 @@ def test_task_agent_prompt_names_required_memory_recall_tool():
     assert 'source="memory_recall_runtime_failure"' in prompt
 
 
+def test_task_agent_prompt_defines_important_vs_routine_process_boundary():
+    work_item = _work_item()
+    work_item.summary = "Mina: 这种事情没必要创建待办，我不办这人也没法发 offer。"
+    prompt = build_task_agent_prompt(
+        work_item,
+        candidate_prompt="候选上下文为空。",
+    )
+
+    assert "只跟踪重要事项" in prompt
+    assert "流程性内容默认忽略" in prompt
+    assert "不要创建 project、TODO、follow_up_draft 或 DingTalk Todo" in prompt
+    assert "如果 Work Item 是对误建 TODO 或过细 follow-up 的反馈" in prompt
+    assert "cancel" in prompt
+    assert "suppress" in prompt
+    assert "不要用关键词或固定业务词表做决定" in prompt
+
+
 def test_update_project_without_id_raises_value_error(tmp_path):
     store = AutoReplyStore(tmp_path / "task.sqlite3")
     decision = TaskAgentDecision.model_validate(
