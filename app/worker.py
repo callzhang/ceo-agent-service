@@ -3214,6 +3214,33 @@ class DingTalkAutoReplyWorker:
             events,
             include_resolved=include_resolved,
         )
+        pending_candidates = [
+            event
+            for event in candidates
+            if self._calendar_event_is_self_pending(event)
+        ]
+        if include_resolved:
+            matched = self._calendar_pending_invite_from_sender_candidates(
+                message,
+                pending_candidates,
+                context_messages=context_messages,
+            )
+            if matched is not None:
+                return matched
+        return self._calendar_pending_invite_from_sender_candidates(
+            message,
+            candidates,
+            context_messages=context_messages,
+        )
+
+    def _calendar_pending_invite_from_sender_candidates(
+        self,
+        message: DingTalkMessage,
+        candidates: list[DwsCalendarEvent],
+        *,
+        context_messages: list[DingTalkMessage] | None = None,
+    ) -> DwsCalendarEvent | None:
+        sender_name = message.sender_name.strip()
         if not message.single_chat:
             matched = self._calendar_pending_invite_from_context(
                 candidates,

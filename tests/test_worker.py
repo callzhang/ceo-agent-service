@@ -4415,6 +4415,73 @@ def test_bare_calendar_card_uses_already_accepted_invite_as_context(
     assert attempt.calendar_event_id == "invite-1"
 
 
+def test_bare_calendar_card_prefers_pending_attendee_invite_over_resolved_sender_event(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message("[日程]", single_chat=True, message_type="calendar")
+    resolved_sender_event = DwsCalendarEvent(
+        event_id="resolved-1",
+        title="售前材料和商机周会",
+        start_time="2026-05-16T10:00:00+08:00",
+        end_time="2026-05-16T11:00:00+08:00",
+        organizer=trigger.sender_name,
+        self_response_status="accepted",
+        status="confirmed",
+        created_ms=int(
+            datetime(2026, 5, 13, 18, 0, 0, tzinfo=ZoneInfo("Asia/Shanghai")).timestamp()
+            * 1000
+        ),
+    )
+    pending_attendee_event = DwsCalendarEvent(
+        event_id="pending-1",
+        title="融资开发关键demo review和风险卡点讨论",
+        start_time="2026-05-16T18:30:00+08:00",
+        end_time="2026-05-16T20:30:00+08:00",
+        organizer="张毅倜(ET)",
+        attendees=[trigger.sender_name],
+        self_response_status="needsAction",
+        status="confirmed",
+    )
+    accepted_conflict = DwsCalendarEvent(
+        event_id="conflict-1",
+        title="融资对齐交流",
+        start_time="2026-05-16T18:30:00+08:00",
+        end_time="2026-05-16T19:00:00+08:00",
+        organizer="Lily",
+        self_response_status="accepted",
+        status="confirmed",
+    )
+    dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
+    dws.calendar_events[
+        "2026-05-13T17:00:00+08:00|2026-05-27T17:00:00+08:00"
+    ] = [resolved_sender_event, pending_attendee_event]
+    dws.calendar_events[
+        f"{pending_attendee_event.start_time}|{pending_attendee_event.end_time}"
+    ] = [pending_attendee_event, accepted_conflict]
+    codex = FakeCodex(
+        CodexDecision(
+            action=CodexAction.NO_REPLY,
+            reason="融资对齐交流已经占用同一时间，先不接受。",
+            calendar_response_status="declined",
+            audit_summary="应优先处理待本人响应的 18:30 日程。",
+        )
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+
+    worker.run_once()
+
+    assert len(codex.calls) == 1
+    prompt = codex.calls[0][0]
+    assert "融资开发关键demo review和风险卡点讨论" in prompt
+    assert "售前材料和商机周会" not in prompt
+    assert "融资对齐交流" in prompt
+    assert dws.calendar_responses == [("pending-1", "declined")]
+    attempt = worker.store.get_reply_attempt(1)
+    assert attempt is not None
+    assert attempt.calendar_event_id == "pending-1"
+    assert attempt.calendar_response_status == "declined"
+
+
 def test_already_accepted_calendar_response_is_noop_without_forced_reply(
     tmp_path: Path, monkeypatch
 ):
