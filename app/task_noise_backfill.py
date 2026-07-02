@@ -95,7 +95,10 @@ def backfill_routine_process_todos(
             statuses=("active", "creating", "failed"),
         )
         links_to_update = [
-            link for link in links if link.last_error != _DINGTALK_LINK_AUDIT_NOTE
+            link
+            for link in links
+            if link.status != "cancelled"
+            or link.last_error != _DINGTALK_LINK_AUDIT_NOTE
         ]
         should_cancel_todo = before_status != "cancelled"
         audit_exists = store.has_work_update(
@@ -153,6 +156,7 @@ def backfill_routine_process_todos(
         for link in links_to_update:
             store.update_work_todo_dingtalk_link(
                 link.id,
+                status="cancelled",
                 last_error=_DINGTALK_LINK_AUDIT_NOTE,
             )
         if should_record_audit:

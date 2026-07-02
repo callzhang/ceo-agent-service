@@ -1672,6 +1672,7 @@ def test_backfill_routine_process_todos_apply_cancels_todo_and_suppresses_follow
     assert follow_up.status == "skipped"
     assert follow_up.suppressed_reason == "routine HR offer-flow step"
     assert link is not None
+    assert link.status == "cancelled"
     assert "external cancellation is not part of this change" in link.last_error
     assert updates[-1].source_type == "routine_process_backfill"
     assert "routine HR offer-flow step" in updates[-1].summary
