@@ -71,7 +71,7 @@ from app.leak_check import (
 from app.message_split import split_dingtalk_text
 from app.notification import send_macos_notification
 from app.oa_approval import extract_oa_url
-from app.okr_review import current_quarter_period
+from app.okr_review import requested_okr_period
 from app.org_cache import (
     ORG_CACHE_REFRESHED_DATE_STATE_KEY,
     refresh_org_cache,
@@ -2333,7 +2333,10 @@ class DingTalkAutoReplyWorker:
         complete_task_id: int | None = None,
         raise_on_delivery_failure: bool = False,
     ) -> bool:
-        period = current_quarter_period()
+        period = requested_okr_period(
+            trigger.content,
+            today=self._now().date().isoformat(),
+        )
         if not hasattr(self, "okr_live_source"):
             error = "OKR live source is not configured"
             self.store.update_reply_attempt(

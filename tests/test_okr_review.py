@@ -14,6 +14,7 @@ from app.okr_review import (
     normalize_okr_review_domain_payload,
     process_okr_review_request,
     render_okr_review_reply,
+    requested_okr_period,
 )
 from app.okr_models import OkrReviewItem, OkrReviewPayload
 from app.store import AutoReplyStore
@@ -150,6 +151,22 @@ def test_current_quarter_period_uses_current_date():
     assert period.period_label == "2026 Q2"
     assert period.period_start == "2026-04-01"
     assert period.period_end == "2026-06-30"
+
+
+def test_requested_okr_period_prefers_explicit_quarter():
+    period = requested_okr_period("请帮我 review Q2 OKR", today="2026-07-03")
+    assert period.period_label == "2026 Q2"
+    assert period.period_start == "2026-04-01"
+    assert period.period_end == "2026-06-30"
+
+    assert (
+        requested_okr_period("请帮我审核二季度 OKR", today="2026-07-03").period_label
+        == "2026 Q2"
+    )
+    assert (
+        requested_okr_period("请帮我审核 2025 年第 4 季 OKR", today="2026-07-03").period_label
+        == "2025 Q4"
+    )
 
 
 def test_build_okr_review_prompt_includes_live_source_and_claim_scoring():

@@ -9601,6 +9601,41 @@ def test_okr_review_request_is_enqueued_after_agent_queue_action(
     assert "已受理" in attempt.final_reply_text
 
 
+def test_okr_review_request_uses_explicit_quarter_from_trigger(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message("请帮我 review Q2 OKR", single_chat=True)
+    trigger.create_time = "2026-07-03 10:00:00"
+    dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
+    codex = FakeCodex(
+        CodexDecision(
+            action=CodexAction.NO_REPLY,
+            reason="用户明确请求审核 Q2 OKR，交给 OKR handler 处理。",
+            system_actions=[{"type": "queue_okr_review"}],
+        )
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+    worker.now_provider = lambda: datetime(
+        2026, 7, 3, 10, 0, 0, tzinfo=ZoneInfo("Asia/Shanghai")
+    )
+    periods: list[str] = []
+
+    class LiveSource:
+        def fetch_user_okr(self, *, user_id, period_label):
+            periods.append(period_label)
+            return {"objectives": []}
+
+    worker.okr_live_source = LiveSource()
+
+    worker.run_once()
+
+    assert periods == ["2026 Q2"]
+    request = worker.store.claim_okr_review_requests(1)[0]
+    assert request.period_label == "2026 Q2"
+    attempt = worker.store.get_reply_attempt(1)
+    assert "已受理 2026 Q2 OKR 审核请求" in attempt.final_reply_text
+
+
 def test_okr_mentions_without_agent_queue_action_do_not_fetch_okr_source(
     tmp_path: Path, monkeypatch
 ):

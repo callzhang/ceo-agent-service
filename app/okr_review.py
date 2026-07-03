@@ -499,20 +499,77 @@ def _ascii_terms(text: str) -> list[str]:
 def current_quarter_period(today: str | None = None) -> OkrPeriod:
     current = date.fromisoformat(today) if today else date.today()
     quarter = (current.month - 1) // 3 + 1
+    return _quarter_period(current.year, quarter)
+
+
+def requested_okr_period(text: str, today: str | None = None) -> OkrPeriod:
+    current = date.fromisoformat(today) if today else date.today()
+    explicit = _explicit_okr_quarter(text)
+    if explicit is None:
+        return _quarter_period(current.year, (current.month - 1) // 3 + 1)
+    year, quarter = explicit
+    return _quarter_period(year or current.year, quarter)
+
+
+def _quarter_period(year: int, quarter: int) -> OkrPeriod:
     start_month = (quarter - 1) * 3 + 1
     end_month = start_month + 2
-    start = date(current.year, start_month, 1)
+    start = date(year, start_month, 1)
     if end_month == 12:
-        end = date(current.year, 12, 31)
+        end = date(year, 12, 31)
     else:
-        end = date(current.year, end_month + 1, 1).replace(day=1)
+        end = date(year, end_month + 1, 1).replace(day=1)
         end = date.fromordinal(end.toordinal() - 1)
     return OkrPeriod(
-        period_label=f"{current.year} Q{quarter}",
+        period_label=f"{year} Q{quarter}",
         period_start=start.isoformat(),
         period_end=end.isoformat(),
     )
 
+
+def _explicit_okr_quarter(text: str) -> tuple[int | None, int] | None:
+    normalized = "".join(text.split()).casefold()
+    q_result = _q_quarter(normalized)
+    if q_result is not None:
+        return q_result
+    chinese_digits = {"一": 1, "二": 2, "三": 3, "四": 4}
+    for index, char in enumerate(normalized):
+        if char not in chinese_digits and char not in {"1", "2", "3", "4"}:
+            continue
+        tail = normalized[index + 1 :]
+        if not tail.startswith("季"):
+            continue
+        if index > 0 and normalized[index - 1] == "第":
+            year = _year_before(normalized[: index - 1])
+        else:
+            year = _year_before(normalized[:index])
+        quarter = chinese_digits[char] if char in chinese_digits else int(char)
+        return year, quarter
+    return None
+
+
+def _q_quarter(normalized: str) -> tuple[int | None, int] | None:
+    for index, char in enumerate(normalized):
+        if char != "q":
+            continue
+        if index + 1 >= len(normalized):
+            continue
+        if normalized[index + 1] not in {"1", "2", "3", "4"}:
+            continue
+        return _year_before(normalized[:index]), int(normalized[index + 1])
+    return None
+
+
+def _year_before(prefix: str) -> int | None:
+    if prefix.endswith("年"):
+        prefix = prefix[:-1]
+    digits = "".join(char for char in prefix[-4:] if char.isdigit())
+    if len(digits) != 4:
+        return None
+    year = int(digits)
+    if 2000 <= year <= 2099:
+        return year
+    return None
 
 def build_okr_review_prompt(
     *,

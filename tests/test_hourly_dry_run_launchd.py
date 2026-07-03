@@ -22,6 +22,8 @@ def test_local_service_script_runs_single_main_service():
     )
     assert 'export CEO_PRODUCER_INTERVAL_SECONDS="${CEO_PRODUCER_INTERVAL_SECONDS:-60}"' in content
     assert 'export CEO_CONSUMER_POLL_INTERVAL_SECONDS="${CEO_CONSUMER_POLL_INTERVAL_SECONDS:-10}"' in content
+    assert "CEO_OKR_LIVE_SOURCE_COMMAND" in content
+    assert "scripts/dingteam_okr_live_source.py --user-id {user_id} --period-label {period_label}" in content
     assert "CEO_PRINCIPAL_NAME" not in content
     assert "CEO_MENTION_ALIASES" not in content
     assert "CEO_ASSISTANT_SIGNATURE" not in content
@@ -57,6 +59,8 @@ def test_main_launch_agent_runs_single_keepalive_service():
     )
     assert "CEO_NOT_SEND_MESSAGE=0" in command[2]
     assert "CEO_LIVE_SEND_BLOCKERS_ACCEPTED=1" in command[2]
+    assert "CEO_OKR_LIVE_SOURCE_COMMAND" in command[2]
+    assert "scripts/dingteam_okr_live_source.py --user-id {user_id} --period-label {period_label}" in command[2]
     env = plist["EnvironmentVariables"]
     assert "HOME" not in env
     assert "CODEX_HOME" not in env

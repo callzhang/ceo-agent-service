@@ -18,6 +18,7 @@ export CEO_PRODUCER_INTERVAL_SECONDS="${CEO_PRODUCER_INTERVAL_SECONDS:-60}"
 export CEO_CONSUMER_POLL_INTERVAL_SECONDS="${CEO_CONSUMER_POLL_INTERVAL_SECONDS:-10}"
 export CEO_BATCH_SECONDS="${CEO_BATCH_SECONDS:-120}"
 export CEO_CORPUS_DIR="${CEO_CORPUS_DIR:-${repo_root}/data/corpus}"
+export CEO_OKR_LIVE_SOURCE_COMMAND="${CEO_OKR_LIVE_SOURCE_COMMAND:-${repo_root}/scripts/dingteam_okr_live_source.py --user-id {user_id} --period-label {period_label}}"
 
 ceo_agent_cmd=(.venv/bin/python -c 'from app.cli import main; main()')
 if [[ -x .venv/bin/ceo-agent ]]; then
