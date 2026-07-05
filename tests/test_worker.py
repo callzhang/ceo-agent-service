@@ -3229,6 +3229,35 @@ def test_produce_once_suppresses_repeated_forbidden_unread_reads(
     assert worker.store.count_reply_tasks(status="pending") == 0
 
 
+def test_produce_once_suppresses_repeated_agent_code_missing_unread_reads(
+    tmp_path: Path, monkeypatch
+):
+    dws = FakeDws(
+        [conversation()],
+        {"cid-1": []},
+        unread_errors={
+            "cid-1": DwsError(
+                "dws command failed with exit code 4; code=AGENT_CODE_NOT_EXISTS",
+                code="AGENT_CODE_NOT_EXISTS",
+            )
+        },
+    )
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该调用")
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+
+    assert worker.produce_once() == 0
+    assert dws.unread_message_reads == ["cid-1"]
+    assert worker.store.count_errors() == 0
+    assert worker.store.get_service_state("dws_forbidden_conversations")
+
+    assert worker.produce_once() == 0
+    assert dws.unread_message_reads == ["cid-1"]
+    assert worker.store.count_errors() == 0
+    assert worker.store.count_reply_tasks(status="pending") == 0
+
+
 def test_forbidden_read_cache_only_suppresses_during_short_cooldown(
     tmp_path: Path, monkeypatch
 ):

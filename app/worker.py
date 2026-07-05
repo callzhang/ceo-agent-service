@@ -894,6 +894,8 @@ class DingTalkAutoReplyWorker:
 
     @staticmethod
     def _is_dws_forbidden_read_error(exc: Exception) -> bool:
+        if isinstance(exc, DwsError) and exc.code == "AGENT_CODE_NOT_EXISTS":
+            return True
         detail = str(exc).lower()
         if "forbidden request" not in detail:
             return False
