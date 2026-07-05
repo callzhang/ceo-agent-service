@@ -420,9 +420,13 @@ class DingTalkAutoReplyWorker:
                 self._mark_dws_read_forbidden(conversation_id)
             should_notify = bool(notify_title)
             should_record_error = record_forbidden_error or not is_forbidden_read
-            if notify_title and self._is_dws_transient_error(exc):
-                should_notify = self._record_dws_transient_error(kind, str(exc))
-                should_record_error = should_notify
+            if self._is_dws_transient_error(exc):
+                transient_threshold_reached = self._record_dws_transient_error(
+                    kind,
+                    str(exc),
+                )
+                should_record_error = transient_threshold_reached
+                should_notify = bool(notify_title and transient_threshold_reached)
             if should_record_error:
                 self.store.record_error(conversation_id, message_id, kind, str(exc))
             if should_notify and notify_title:
