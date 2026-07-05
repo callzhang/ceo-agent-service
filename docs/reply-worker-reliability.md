@@ -40,9 +40,11 @@ source of truth; the local notification only replaces the operator alert.
 The producer checks for `dws` updates inside the normal CEO system pass, once per
 local day. It uses the existing producer loop cadence instead of adding a
 separate system-level timer. If an update is available, the producer runs the
-upgrade before reading DingTalk messages. Upgrade check or install failures are
-recorded locally and notified, but they do not block message discovery for that
-producer pass.
+upgrade before reading DingTalk messages. Upgrade check failures are stored in
+`service_state.dws_upgrade_check_result` so GitHub rate limits or short network
+outages do not create CEO business errors. If an update is available but the
+upgrade command fails, the failure is still recorded locally and notified. Either
+case does not block message discovery for that producer pass.
 
 ## Org cache refresh
 

@@ -213,6 +213,8 @@ class FakeDws:
         self.download_oa_attachment_calls: list[tuple[str, str]] = []
         self.upgrade_check_response: dict = {"needs_upgrade": False}
         self.upgrade_error: Exception | None = None
+        self.upgrade_check_error: Exception | None = None
+        self.upgrade_install_error: Exception | None = None
         self.upgrade_check_calls = 0
         self.upgrade_calls = 0
         self.list_unread_calls = 0
@@ -276,14 +278,16 @@ class FakeDws:
 
     def check_upgrade(self) -> dict:
         self.upgrade_check_calls += 1
-        if self.upgrade_error:
-            raise self.upgrade_error
+        error = self.upgrade_check_error or self.upgrade_error
+        if error:
+            raise error
         return self.upgrade_check_response
 
     def upgrade(self) -> str:
         self.upgrade_calls += 1
-        if self.upgrade_error:
-            raise self.upgrade_error
+        error = self.upgrade_install_error or self.upgrade_error
+        if error:
+            raise error
         return "upgraded"
 
     def start_auth_login(self) -> FakeAuthLoginProcess:
@@ -3004,12 +3008,12 @@ def test_produce_once_checks_dws_upgrade_once_per_local_day(
     assert worker.store.get_service_state("dws_upgrade_checked_date") == "2026-05-13"
 
 
-def test_produce_once_records_dws_upgrade_failure_without_blocking_messages(
+def test_produce_once_records_dws_upgrade_check_failure_in_service_state(
     tmp_path: Path, monkeypatch
 ):
     trigger = message("@Alex Chen(明哥) 这个怎么处理？")
     dws = FakeDws([conversation()], {"cid-1": [trigger]})
-    dws.upgrade_error = RuntimeError("upgrade service unavailable")
+    dws.upgrade_check_error = RuntimeError("upgrade service unavailable")
     codex = FakeCodex(
         CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该调用")
     )
@@ -3021,9 +3025,39 @@ def test_produce_once_records_dws_upgrade_failure_without_blocking_messages(
     assert dws.upgrade_check_calls == 1
     assert worker.store.count_reply_tasks(status="pending") == 1
     errors = worker.store.list_errors()
+    assert errors == []
+    state = json.loads(worker.store.get_service_state("dws_upgrade_check_result"))
+    assert state["status"] == "check_failed"
+    assert "upgrade service unavailable" in state["detail"]
+    assert worker.store.get_service_state("dws_upgrade_checked_date") == "2026-05-13"
+
+
+def test_produce_once_records_dws_upgrade_install_failure_without_blocking_messages(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message("@Alex Chen(明哥) 这个怎么处理？")
+    dws = FakeDws([conversation()], {"cid-1": [trigger]})
+    dws.upgrade_check_response = {
+        "current_version": "v1.0.26",
+        "latest_version": "v1.0.32",
+        "needs_upgrade": True,
+    }
+    dws.upgrade_install_error = RuntimeError("upgrade install unavailable")
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该调用")
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+
+    assert worker.produce_once() == 1
+    assert worker.produce_once() == 0
+
+    assert dws.upgrade_check_calls == 1
+    assert dws.upgrade_calls == 1
+    assert worker.store.count_reply_tasks(status="pending") == 1
+    errors = worker.store.list_errors()
     assert len(errors) == 1
     assert errors[0].kind == "dws_upgrade"
-    assert "upgrade service unavailable" in errors[0].detail
+    assert "upgrade install unavailable" in errors[0].detail
     assert worker.store.get_service_state("dws_upgrade_checked_date") == "2026-05-13"
 
 

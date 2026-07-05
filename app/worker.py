@@ -284,6 +284,7 @@ DOWNLOADED_IMAGE_MAX_BYTES = 20 * 1024 * 1024
 DOWNLOAD_TIMEOUT_SECONDS = 30
 PDF_TEXT_PAGE_LIMIT = 30
 DWS_UPGRADE_CHECKED_DATE_STATE_KEY = "dws_upgrade_checked_date"
+DWS_UPGRADE_CHECK_RESULT_STATE_KEY = "dws_upgrade_check_result"
 MESSAGE_RECOVERY_CHECKED_AT_STATE_KEY = "message_recovery_checked_at"
 MESSAGE_FAST_PATH_CHECKED_AT_STATE_KEY = "message_fast_path_checked_at"
 ROBOT_DIRECT_MESSAGE_LOOKBACK = env_duration(
@@ -1006,6 +1007,34 @@ class DingTalkAutoReplyWorker:
             return
         try:
             upgrade_check = self.dws.check_upgrade()
+        except Exception as exc:
+            self.store.set_service_state(
+                DWS_UPGRADE_CHECK_RESULT_STATE_KEY,
+                json.dumps(
+                    {
+                        "status": "check_failed",
+                        "checked_at": self._now().astimezone(timezone.utc).isoformat(),
+                        "detail": str(exc),
+                    },
+                    ensure_ascii=False,
+                ),
+            )
+            self.store.set_service_state(DWS_UPGRADE_CHECKED_DATE_STATE_KEY, today)
+            return
+        self.store.set_service_state(
+            DWS_UPGRADE_CHECK_RESULT_STATE_KEY,
+            json.dumps(
+                {
+                    "status": "ok",
+                    "checked_at": self._now().astimezone(timezone.utc).isoformat(),
+                    "needs_upgrade": upgrade_check.get("needs_upgrade") is True,
+                    "current_version": str(upgrade_check.get("current_version") or ""),
+                    "latest_version": str(upgrade_check.get("latest_version") or ""),
+                },
+                ensure_ascii=False,
+            ),
+        )
+        try:
             if upgrade_check.get("needs_upgrade") is True:
                 current_version = str(upgrade_check.get("current_version") or "")
                 latest_version = str(upgrade_check.get("latest_version") or "")
