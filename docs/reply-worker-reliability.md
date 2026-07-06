@@ -235,6 +235,9 @@ failures. The worker records a sanitized error, sends the
 can be restored without burning the business attempt budget. Work-summary inputs
 use the same classification and remain pending after the normal transient retry
 limit when the blocker is Codex authorization or provider availability.
+If Codex returns a structured `stop_with_error` for one of these wait states,
+the reply attempt is recorded as `blocked` with the same sanitized reason rather
+than as a failed send.
 
 If the agent can prove that required material or a required tool result is
 unavailable and continuing would guess at the answer, it must return

@@ -4878,9 +4878,10 @@ class DingTalkAutoReplyWorker:
                 decision.reason
             )
             send_error = decision.reason
+            authorization_wait = _is_codex_authorization_wait_reason(send_error)
             self.store.update_reply_attempt(
                 attempt_id,
-                send_status="failed",
+                send_status="blocked" if authorization_wait else "failed",
                 send_error=send_error,
             )
             self.store.record_error(
@@ -4889,10 +4890,7 @@ class DingTalkAutoReplyWorker:
                 "codex",
                 send_error,
             )
-            if (
-                raise_on_delivery_failure
-                and _is_codex_authorization_wait_reason(send_error)
-            ):
+            if raise_on_delivery_failure and authorization_wait:
                 raise CodexAuthorizationRequiredError(send_error)
             if critical_info_unavailable and raise_on_delivery_failure:
                 raise CriticalInformationUnavailableError(send_error)

@@ -8318,7 +8318,7 @@ def test_codex_login_required_stop_with_error_is_failed(
     attempt = worker.store.get_reply_attempt(1)
     assert attempt is not None
     assert attempt.action == "stop_with_error"
-    assert attempt.send_status == "failed"
+    assert attempt.send_status == "blocked"
     assert attempt.send_error.startswith("codex_login_required:")
     assert worker.store.count_reply_tasks(status="pending") == 1
     assert worker.store.count_reply_tasks(status="failed") == 0
@@ -8369,7 +8369,7 @@ def test_codex_provider_auth_stop_with_error_records_clear_sanitized_failure(
     attempt = worker.store.get_reply_attempt(1)
     assert attempt is not None
     assert attempt.action == "stop_with_error"
-    assert attempt.send_status == "failed"
+    assert attempt.send_status == "blocked"
     assert attempt.send_error.startswith("codex_provider_auth_failed:")
     assert expected_detail in attempt.send_error
     assert "restore Codex CLI login" in attempt.send_error
