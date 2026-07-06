@@ -634,7 +634,7 @@ def test_invalid_json_retries_once(tmp_path: Path):
     ]
     assert executor.commands[1][-2] == "session-1"
     assert "只输出合法 JSON" in executor.prompts[1]
-    assert '"kind":"reply|no_action|error"' in executor.prompts[1]
+    assert '"kind":"reply|okr_review|no_action|error"' in executor.prompts[1]
     assert '"mode":"send_reply|ask_clarifying_question|handoff_to_human|no_reply"' in executor.prompts[1]
 
 
