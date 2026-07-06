@@ -394,7 +394,10 @@ def build_parser() -> argparse.ArgumentParser:
             subparser.add_argument(
                 "--vercel-base-url",
                 default=os.getenv("CEO_FEEDBACK_SPIKE_VERCEL_BASE_URL", ""),
-                help="Vercel deployment root URL, for example https://example.vercel.app",
+                help=(
+                    "Root URL of your own feedback Vercel deployment; leave empty "
+                    "to disable feedback links"
+                ),
             )
             subparser.add_argument("--conversation-id", default="")
             subparser.add_argument("--user-id", default="")

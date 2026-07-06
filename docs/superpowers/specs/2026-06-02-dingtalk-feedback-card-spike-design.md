@@ -4,7 +4,9 @@
 
 Collect lightweight feedback from the counterparty without requiring a DingTalk
 robot in every group. The reply is still sent by the current user through the
-existing text-message path. The feedback links open a simple Vercel-hosted page.
+existing text-message path. The feedback links open a simple Vercel-hosted page
+deployed by the installer; this repo must not provide or depend on a shared
+hard-coded feedback service URL.
 
 ## Scope
 
@@ -32,7 +34,10 @@ Out of scope:
 ## Architecture
 
 The local service generates two feedback URLs and appends them to a normal
-DingTalk message sent through `dws chat message send`.
+DingTalk message sent through `dws chat message send`. The URL base comes from
+`CEO_FEEDBACK_SPIKE_VERCEL_BASE_URL`; leaving it empty disables feedback links.
+Each installation should deploy its own Vercel project and set its own
+`FEEDBACK_SPIKE_SECRET`.
 
 - `GET /api/dingtalk-feedback-spike`
   - Renders an HTML feedback page.

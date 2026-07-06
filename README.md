@@ -163,9 +163,20 @@ cp .env.example .env
 | `CEO_ROBOT_DIRECT_MESSAGE_LOOKBACK` | 机器人私聊轮询窗口，默认 `4h` |
 | `CEO_ASSISTANT_SIGNATURE` | 自动回复签名 |
 | `CEO_HANDOFF_ACK` | 交给真人时发送的确认文本 |
-| `CEO_FEEDBACK_SPIKE_VERCEL_BASE_URL` | 对话方反馈页根地址；配置后自动在发出的回复末尾追加 `👍 赞｜👎 踩` 反馈链接；同一会话长期未评价时会升级为强提醒，超过硬阈值后只回复“请对我提供反馈后再提问” |
+| `CEO_FEEDBACK_SPIKE_VERCEL_BASE_URL` | 可选的对话方反馈页根地址；留空则不追加反馈链接。启用前必须把本仓库的 Vercel API 路由部署到安装者自己的 Vercel 项目，并填写自己的部署根地址；不要复用其他人的反馈服务 URL。配置后会在发出的回复末尾追加 `👍 赞｜👎 踩` 反馈链接；同一会话长期未评价时会升级为强提醒，超过硬阈值后只回复“请对我提供反馈后再提问” |
 
 不要把 `HOME` 指向项目目录。`dws` 和 Codex 需要使用真实用户环境里的认证状态。
+
+#### 可选：部署反馈链接服务
+
+反馈链接不是公共服务，也没有仓库内置的默认域名。每个安装者如果要启用反馈链接，需要自己部署一套：
+
+1. 在 Vercel 新建项目，源码指向本仓库或只部署 `api/dingtalk-feedback-spike*.js` 和 `api/feedback-storage.js` 相关路由。
+2. 在 Vercel 项目里配置 `FEEDBACK_SPIKE_SECRET`，用于保护反馈事件查询接口。
+3. 如果使用 Vercel Blob 存反馈事件，按 Vercel 的要求给该项目配置 Blob 存储环境变量。
+4. 部署成功后，把该项目的根地址写入本机 `.env` 的 `CEO_FEEDBACK_SPIKE_VERCEL_BASE_URL`，例如 `https://your-feedback-service.vercel.app`。
+
+不要把个人 `.vercel/` 项目绑定、部署 secret、Blob token 或某个安装者的真实 Vercel 域名提交到仓库。`.vercel/` 已在 `.gitignore` 中；`.env.example` 也默认留空，因此未配置时服务不会追加反馈链接。
 
 ### 4. 准备知识库
 
