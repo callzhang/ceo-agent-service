@@ -4030,7 +4030,7 @@ def test_consume_once_authorization_failure_waits_without_final_failure(
     assert available_at == "2026-05-13 17:15:00"
 
 
-def test_consume_once_codex_provider_auth_failure_retries_as_system_error(
+def test_consume_once_codex_provider_auth_failure_waits_for_authorization(
     tmp_path: Path, monkeypatch
 ):
     notifications = []
@@ -4067,13 +4067,17 @@ def test_consume_once_codex_provider_auth_failure_retries_as_system_error(
         attempts, error, available_at = db.execute(
             "select attempts, error, available_at from reply_tasks"
         ).fetchone()
-    assert attempts == 1
-    assert "invalid api key" in error
-    assert available_at == "2026-05-13 17:01:00"
+    assert attempts == 0
+    assert error.startswith("codex_provider_auth_failed:")
+    assert "configured Codex model provider rejected its API key" in error
+    assert available_at == "2026-05-13 17:15:00"
     error_kinds = [error.kind for error in worker.store.list_errors(limit=10)]
-    assert "reply_task_retry" in error_kinds
-    assert "reply_task_authorization" not in error_kinds
-    assert notifications == []
+    assert "reply_task_authorization" in error_kinds
+    assert "reply_task_retry" not in error_kinds
+    assert any(
+        notification["title"] == "CEO task waiting for authorization: Friday"
+        for notification in notifications
+    )
 
 
 def test_unresolvable_non_candidate_sender_does_not_block_conversation(
@@ -8266,8 +8270,10 @@ def test_codex_login_required_stop_with_error_is_failed(
     assert attempt.action == "stop_with_error"
     assert attempt.send_status == "failed"
     assert attempt.send_error.startswith("codex_login_required:")
+    assert worker.store.count_reply_tasks(status="pending") == 1
+    assert worker.store.count_reply_tasks(status="failed") == 0
     assert notifications[0] == {
-        "title": "CEO agent error: Friday",
+        "title": "CEO task waiting for authorization: Friday",
         "message": f"codex_login_required: {reason}"[:120],
         "url": "http://127.0.0.1:8765/open-dingtalk?conversation_id=cid-1",
     }
@@ -8320,7 +8326,9 @@ def test_codex_provider_auth_stop_with_error_records_clear_sanitized_failure(
     assert "cf-ray" not in attempt.send_error
     assert "request id" not in attempt.send_error
     assert attempt.codex_reason == attempt.send_error
-    assert notifications[0]["title"] == "CEO agent error: Friday"
+    assert worker.store.count_reply_tasks(status="pending") == 1
+    assert worker.store.count_reply_tasks(status="failed") == 0
+    assert notifications[0]["title"] == "CEO task waiting for authorization: Friday"
     assert expected_detail[:40] in notifications[0]["message"]
 
 

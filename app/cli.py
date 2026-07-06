@@ -79,6 +79,7 @@ from app.work_profile import (
 from app.worker import (
     CALENDAR_ACTION_SEND_STATUS,
     DingTalkAutoReplyWorker,
+    _is_codex_authorization_wait_reason,
     _normalize_codex_stop_error_reason,
 )
 
@@ -844,6 +845,9 @@ def process_work_items_command(settings: WorkerSettings) -> int:
 
 
 def _should_retry_work_summary_input(error: str, attempts: int) -> bool:
+    normalized_error = _normalize_codex_stop_error_reason(error)
+    if _is_codex_authorization_wait_reason(normalized_error):
+        return True
     if attempts >= WORK_SUMMARY_TRANSIENT_RETRY_ATTEMPTS:
         return False
     normalized = error.lower()

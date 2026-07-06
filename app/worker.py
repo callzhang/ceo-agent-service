@@ -217,11 +217,19 @@ def _codex_provider_auth_error(reason: str) -> str:
 
 
 def _normalize_codex_stop_error_reason(reason: str) -> str:
+    if _is_codex_authorization_wait_reason(reason):
+        return reason
     if _is_codex_provider_auth_error(reason):
         return _codex_provider_auth_error(reason)
     if _is_codex_login_required_error(reason):
         return f"{CODEX_LOGIN_REQUIRED_PREFIX}: {reason}"
     return reason
+
+
+def _is_codex_authorization_wait_reason(reason: str) -> bool:
+    return reason.startswith(
+        (CODEX_PROVIDER_AUTH_FAILED_PREFIX, CODEX_LOGIN_REQUIRED_PREFIX)
+    )
 
 
 def _is_retryable_codex_timeout_reason(reason: str) -> bool:
@@ -335,6 +343,12 @@ class ReplyDeliveryError(RuntimeError):
 
 class ReplyTaskProcessingError(RuntimeError):
     """Raised after recording a processing failure so queued tasks can retry."""
+
+
+class CodexAuthorizationRequiredError(ReplyTaskProcessingError):
+    """Raised when Codex provider credentials or login must be restored."""
+
+    needs_authorization = True
 
 
 class CriticalInformationUnavailableError(ReplyTaskProcessingError):
@@ -1505,21 +1519,24 @@ class DingTalkAutoReplyWorker:
                 continue
             except Exception as exc:
                 error = str(exc)
-                if self._is_authorization_error(exc):
+                authorization_wait_error = _normalize_codex_stop_error_reason(error)
+                if self._is_authorization_error(
+                    exc
+                ) or _is_codex_authorization_wait_reason(authorization_wait_error):
                     self.store.defer_reply_task_for_authorization(
                         task.id,
-                        error,
+                        authorization_wait_error,
                         available_at=self._reply_task_authorization_available_at(),
                     )
                     self.store.record_error(
                         task.conversation_id,
                         task.trigger_message_id,
                         "reply_task_authorization",
-                        error,
+                        authorization_wait_error,
                     )
                     self._notify(
                         title=f"CEO task waiting for authorization: {task.conversation_title}",
-                        message=error[:120],
+                        message=authorization_wait_error[:120],
                         conversation=conversation,
                     )
                     continue
@@ -4841,6 +4858,11 @@ class DingTalkAutoReplyWorker:
                 "codex",
                 send_error,
             )
+            if (
+                raise_on_delivery_failure
+                and _is_codex_authorization_wait_reason(send_error)
+            ):
+                raise CodexAuthorizationRequiredError(send_error)
             if critical_info_unavailable and raise_on_delivery_failure:
                 raise CriticalInformationUnavailableError(send_error)
             retryable_timeout = (
