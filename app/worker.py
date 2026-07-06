@@ -430,6 +430,10 @@ class DingTalkAutoReplyWorker:
                 )
                 should_record_error = transient_threshold_reached
                 should_notify = bool(notify_title and transient_threshold_reached)
+            elif self._is_missing_direct_chat_recent_context(kind, exc):
+                self._clear_dws_transient_error(kind)
+                should_record_error = False
+                should_notify = False
             if should_record_error:
                 self.store.record_error(conversation_id, message_id, kind, str(exc))
             if should_notify and notify_title:
@@ -457,6 +461,14 @@ class DingTalkAutoReplyWorker:
             }
             and isinstance(exc, DwsError)
             and exc.code in DwsClient.TOKEN_VERIFIED_RETRYABLE_ERROR_CODES
+        )
+
+    @staticmethod
+    def _is_missing_direct_chat_recent_context(kind: str, exc: Exception) -> bool:
+        return (
+            kind == "read_recent_messages"
+            and isinstance(exc, DwsError)
+            and exc.code == DwsError.DIRECT_CHAT_TARGET_NOT_FOUND_CODE
         )
 
     def _record_dws_transient_error(self, kind: str, detail: str) -> bool:

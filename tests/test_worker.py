@@ -1470,6 +1470,45 @@ def test_read_conversation_messages_suppresses_token_verified_errors_until_thres
     assert state["count"] == 3
 
 
+def test_read_recent_messages_missing_direct_chat_target_is_empty_context(
+    tmp_path: Path, monkeypatch
+):
+    missing_target_error = DwsError(
+        "expected one direct chat user for '张静', got 0",
+        code=DwsError.DIRECT_CHAT_TARGET_NOT_FOUND_CODE,
+    )
+    dws = FakeDws(
+        [conversation(single_chat=True)],
+        {"cid-1": []},
+        read_errors={"cid-1": missing_target_error},
+    )
+    codex = FakeCodex(CodexDecision(action=CodexAction.SEND_REPLY, reply_text="收到"))
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+    worker.store.set_service_state(
+        "dws_transient_error_count:read_recent_messages",
+        json.dumps({"count": 2, "last_error": "previous", "updated_at": "old"}),
+    )
+    conv = conversation(single_chat=True)
+
+    assert (
+        worker._read_conversation_messages(
+            "read_recent_messages",
+            conv,
+            lambda: dws.read_recent_messages(conv),
+            default=[],
+        )
+        == []
+    )
+
+    assert worker.store.count_errors() == 0
+    state = json.loads(
+        worker.store.get_service_state("dws_transient_error_count:read_recent_messages")
+        or "{}"
+    )
+    assert state["count"] == 0
+    assert state["last_error"] == ""
+
+
 def test_produce_once_starts_dws_auth_login_once_for_login_error(
     tmp_path: Path, monkeypatch
 ):

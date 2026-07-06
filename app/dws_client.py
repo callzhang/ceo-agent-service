@@ -67,6 +67,7 @@ def extract_recall_key_from_send_result(send_result: dict[str, Any] | None) -> s
 
 
 class DwsError(RuntimeError):
+    DIRECT_CHAT_TARGET_NOT_FOUND_CODE = "DIRECT_CHAT_TARGET_NOT_FOUND"
     LOGIN_ERROR_CODES = {"2", "not_authenticated"}
     LOGIN_ERROR_MARKERS = (
         "not_authenticated",
@@ -2546,7 +2547,8 @@ class DwsClient:
             matches = exact_matches
         if len(matches) != 1:
             raise DwsError(
-                f"expected one direct chat user for {conversation.title!r}, got {len(matches)}"
+                f"expected one direct chat user for {conversation.title!r}, got {len(matches)}",
+                code=DwsError.DIRECT_CHAT_TARGET_NOT_FOUND_CODE,
             )
         match = matches[0]
         return conversation.model_copy(

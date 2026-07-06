@@ -19,6 +19,11 @@ and only writes an `errors` row when the threshold is reached. Message sends,
 calendar responses, approvals, and other write actions are not retried through
 this path.
 
+For single-chat recent-context reads, a missing direct-user mapping is treated as
+unavailable context rather than a business failure. The worker returns an empty
+recent-context list for that read and does not write an `errors` row; unread
+message reads still surface failures because they can affect trigger discovery.
+
 Local notifications first try the browser bridge exposed by the audit web
 service. Keep any `http://127.0.0.1:8765/` audit page open in Chrome after
 granting notification permission; the page keeps an SSE connection to 8765 and

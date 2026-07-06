@@ -3259,6 +3259,25 @@ def test_read_recent_messages_prefers_exact_single_chat_nick_match(monkeypatch):
     ]
 
 
+def test_read_recent_messages_reports_missing_single_chat_direct_target():
+    client = SequenceRecordingDwsClient([{"result": []}])
+    conversation = DingTalkConversation(
+        open_conversation_id="cid-direct",
+        title="张静",
+        single_chat=True,
+        unread_point=0,
+        last_message_create_at=1778666181403,
+    )
+
+    with pytest.raises(DwsError) as exc_info:
+        client.read_recent_messages(conversation, limit=5)
+
+    assert exc_info.value.code == DwsError.DIRECT_CHAT_TARGET_NOT_FOUND_CODE
+    assert client.commands == [
+        ["dws", "contact", "user", "search", "--query", "张静", "--format", "json"]
+    ]
+
+
 def test_message_list_time_uses_dingtalk_message_timezone(monkeypatch):
     monkeypatch.setattr(
         dws_client,
