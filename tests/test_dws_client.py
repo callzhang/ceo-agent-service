@@ -3877,6 +3877,60 @@ def test_run_json_retries_chat_message_list_token_verified_failed(monkeypatch):
     assert sleeps == [1.0]
 
 
+@pytest.mark.parametrize(
+    "command",
+    [
+        [
+            "dws",
+            "chat",
+            "message",
+            "list-direct",
+            "--user",
+            "user-1",
+            "--time",
+            "2026-07-05 09:49:38",
+            "--forward=false",
+            "--limit",
+            "1",
+            "--format",
+            "json",
+        ],
+        [
+            "dws",
+            "contact",
+            "user",
+            "search",
+            "--query",
+            "Lily",
+            "--format",
+            "json",
+        ],
+    ],
+)
+def test_run_json_retries_read_only_token_verified_failed_commands(
+    monkeypatch, command
+):
+    calls = []
+    sleeps = []
+    token_error_payload = (
+        '{"error":{"code":1,"server_error_code":"TOKEN_VERIFIED_FAILED",'
+        '"message":"business error: success=false","reason":"business_error"}}'
+    )
+
+    def fake_run(command_arg, text, capture_output, check, timeout, env=None):
+        calls.append(command_arg)
+        if len(calls) == 1:
+            return SimpleNamespace(returncode=1, stdout="", stderr=token_error_payload)
+        return SimpleNamespace(returncode=0, stdout='{"ok":true}', stderr="")
+
+    monkeypatch.setattr("app.dws_client.subprocess.run", fake_run)
+    monkeypatch.setattr("app.dws_client.time.sleep", sleeps.append)
+
+    assert DwsClient().run_json(command) == {"ok": True}
+    assert calls == [command, command]
+    assert sleeps == [1.0]
+
+
 def test_run_json_retries_calendar_event_get_token_verified_failed(monkeypatch):
     calls = []
     sleeps = []

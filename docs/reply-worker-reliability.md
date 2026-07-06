@@ -11,6 +11,14 @@ can restart the whole service.
 Per-conversation read failures are recorded and notified without blocking other
 conversations in the same producer pass.
 
+Short DWS read-path token verification failures are treated like transient read
+failures. The DWS client retries read-only commands such as message reads and
+contact lookups once; if a read still fails with `TOKEN_VERIFIED_FAILED`, the
+worker stores the rolling count under `service_state.dws_transient_error_count:*`
+and only writes an `errors` row when the threshold is reached. Message sends,
+calendar responses, approvals, and other write actions are not retried through
+this path.
+
 Local notifications first try the browser bridge exposed by the audit web
 service. Keep any `http://127.0.0.1:8765/` audit page open in Chrome after
 granting notification permission; the page keeps an SSE connection to 8765 and

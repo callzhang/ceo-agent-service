@@ -1426,6 +1426,50 @@ def test_read_conversation_messages_suppresses_transient_errors_until_threshold(
     assert state["count"] == 3
 
 
+def test_read_conversation_messages_suppresses_token_verified_errors_until_threshold(
+    tmp_path: Path, monkeypatch
+):
+    token_error = DwsError("token verified failed", code="TOKEN_VERIFIED_FAILED")
+    dws = FakeDws(
+        [conversation(single_chat=True)],
+        {"cid-1": []},
+        read_errors={"cid-1": token_error},
+    )
+    codex = FakeCodex(CodexDecision(action=CodexAction.SEND_REPLY, reply_text="收到"))
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+    conv = conversation(single_chat=True)
+
+    for _ in range(2):
+        assert (
+            worker._read_conversation_messages(
+                "read_recent_messages",
+                conv,
+                lambda: dws.read_recent_messages(conv),
+                default=[],
+            )
+            == []
+        )
+
+    assert worker.store.count_errors() == 0
+
+    assert (
+        worker._read_conversation_messages(
+            "read_recent_messages",
+            conv,
+            lambda: dws.read_recent_messages(conv),
+            default=[],
+        )
+        == []
+    )
+
+    assert worker.store.count_errors() == 1
+    state = json.loads(
+        worker.store.get_service_state("dws_transient_error_count:read_recent_messages")
+        or "{}"
+    )
+    assert state["count"] == 3
+
+
 def test_produce_once_starts_dws_auth_login_once_for_login_error(
     tmp_path: Path, monkeypatch
 ):

@@ -421,7 +421,9 @@ class DingTalkAutoReplyWorker:
                 self._mark_dws_read_forbidden(conversation_id)
             should_notify = bool(notify_title)
             should_record_error = record_forbidden_error or not is_forbidden_read
-            if self._is_dws_transient_error(exc):
+            if self._is_dws_transient_error(
+                exc
+            ) or self._is_dws_token_verified_read_error(kind, exc):
                 transient_threshold_reached = self._record_dws_transient_error(
                     kind,
                     str(exc),
@@ -440,6 +442,22 @@ class DingTalkAutoReplyWorker:
     @staticmethod
     def _is_dws_transient_error(exc: Exception) -> bool:
         return isinstance(exc, DwsError) and exc.code in DwsClient.RETRYABLE_ERROR_CODES
+
+    @staticmethod
+    def _is_dws_token_verified_read_error(kind: str, exc: Exception) -> bool:
+        return (
+            kind
+            in {
+                "list_unread_conversations",
+                "read_unread_messages",
+                "read_recent_messages",
+                "read_mentioned_messages",
+                "read_broadcast_messages",
+                "read_robot_direct_messages",
+            }
+            and isinstance(exc, DwsError)
+            and exc.code in DwsClient.TOKEN_VERIFIED_RETRYABLE_ERROR_CODES
+        )
 
     def _record_dws_transient_error(self, kind: str, detail: str) -> bool:
         key = f"{DWS_TRANSIENT_ERROR_STATE_PREFIX}{kind}"

@@ -185,12 +185,15 @@ class DwsClient:
         ("calendar", "event", "list"),
         ("chat", "conversation-info"),
         ("chat", "message", "list"),
+        ("chat", "message", "list-direct"),
         ("chat", "message", "list-by-ids"),
         ("chat", "message", "list-by-sender"),
         ("chat", "message", "list-mentions"),
         ("chat", "message", "search"),
         ("chat", "message", "list-unread-conversations"),
         ("chat", "search"),
+        ("contact", "user", "get"),
+        ("contact", "user", "search"),
     }
     SENSITIVE_COMMAND_FLAGS = {
         "--robot-code",
