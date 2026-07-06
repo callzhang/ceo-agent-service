@@ -1193,6 +1193,74 @@ def test_process_work_items_command_keeps_codex_auth_failure_pending_after_limit
     assert row["available_at"] > ""
 
 
+def test_process_work_items_command_keeps_codex_transport_failure_pending_after_limit(
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    class FakeTaskAgentCodexRunner:
+        last_session_id = "task-session-1"
+        last_audit_tool_events = []
+        last_transcript_start_line = 0
+        last_transcript_end_line = 0
+
+        def __init__(self, **kwargs):
+            pass
+
+        def decide(self, *, prompt, session_id=None):
+            raise RuntimeError(
+                "stream disconnected before completion: error sending request "
+                "for url (https://api.openai.com/v1/responses)"
+            )
+
+    monkeypatch.setattr(cli, "TaskAgentCodexRunner", FakeTaskAgentCodexRunner)
+    db_path = tmp_path / "task.sqlite3"
+    store = AutoReplyStore(db_path)
+    item = WorkItem.model_validate(
+        {
+            "source": {"type": "reply_attempt", "ref": "1"},
+            "summary": "provider 暂时不可用。",
+            "project_name": "provider 等待项目",
+            "context": {
+                "sender": "Mina",
+                "participants": [],
+                "source_conversation_kind": "group",
+                "source_conversation_title": "测试群",
+            },
+        }
+    )
+    input_id = store.enqueue_work_summary_input(
+        item.source.type.value,
+        item.source.ref,
+        item.model_dump_json(),
+    )
+    with store._connect() as db:
+        db.execute(
+            "update work_summary_inputs set attempts=3 where id=?",
+            (input_id,),
+        )
+
+    processed = process_work_items_command(
+        WorkerSettings(db_path=db_path, workspace=tmp_path, max_batches=1)
+    )
+
+    assert processed == 0
+    assert capsys.readouterr().out == "process-work-items processed=0\n"
+    with AutoReplyStore(db_path)._connect() as db:
+        row = db.execute(
+            """
+            select status, attempts, error, available_at
+            from work_summary_inputs
+            where id=?
+            """,
+            (input_id,),
+        ).fetchone()
+    assert row["status"] == "pending"
+    assert row["attempts"] == 4
+    assert row["error"].startswith("codex_provider_unavailable:")
+    assert row["available_at"] > ""
+
+
 def test_process_work_items_command_backoffs_missing_memory_recall_tool_event(
     tmp_path,
     monkeypatch,

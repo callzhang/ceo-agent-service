@@ -222,14 +222,14 @@ original message retryable instead of completing the task with a failed attempt.
 When the maximum is reached, the task is marked `failed`, the final error is
 recorded, and a local notification is sent.
 
-Codex login and model-provider authentication failures are classified as
-authorization wait states rather than ordinary processing failures. The worker
-records a sanitized error, sends the `CEO task waiting for authorization`
-notification, and moves the task back to `pending` with a delayed
-`available_at` so credentials can be restored without burning the business
-attempt budget. Work-summary inputs use the same classification and remain
-pending after the normal transient retry limit when the blocker is Codex
-authorization.
+Codex login, model-provider authentication failures, and Codex Responses API
+transport failures are classified as wait states rather than ordinary processing
+failures. The worker records a sanitized error, sends the
+`CEO task waiting for authorization` notification, and moves the task back to
+`pending` with a delayed `available_at` so credentials or provider connectivity
+can be restored without burning the business attempt budget. Work-summary inputs
+use the same classification and remain pending after the normal transient retry
+limit when the blocker is Codex authorization or provider availability.
 
 If the agent can prove that required material or a required tool result is
 unavailable and continuing would guess at the answer, it must return

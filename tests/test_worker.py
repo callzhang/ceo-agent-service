@@ -4080,6 +4080,56 @@ def test_consume_once_codex_provider_auth_failure_waits_for_authorization(
     )
 
 
+def test_consume_once_codex_provider_transport_failure_waits_for_recovery(
+    tmp_path: Path, monkeypatch
+):
+    notifications = []
+    trigger = message("@Alex Chen(明哥) 这个怎么处理？")
+    dws = FakeDws([conversation()], {"cid-1": [trigger]})
+
+    def fail_codex(_prompt, _session_id):
+        raise RuntimeError(
+            "stream disconnected before completion: error sending request "
+            "for url (https://api.openai.com/v1/responses)"
+        )
+
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="先按A方案走"),
+        before_decide=fail_codex,
+    )
+    worker = make_worker(
+        tmp_path,
+        dws,
+        codex,
+        monkeypatch,
+        max_task_attempts=3,
+    )
+    monkeypatch.setattr(
+        "app.worker.send_macos_notification",
+        lambda **kwargs: notifications.append(kwargs),
+    )
+    worker.produce_once()
+
+    assert worker.consume_once(max_tasks=1) == 0
+    assert worker.store.count_reply_tasks(status="pending") == 1
+    assert worker.store.count_reply_tasks(status="failed") == 0
+    with sqlite3.connect(tmp_path / "worker.sqlite3") as db:
+        attempts, error, available_at = db.execute(
+            "select attempts, error, available_at from reply_tasks"
+        ).fetchone()
+    assert attempts == 0
+    assert error.startswith("codex_provider_unavailable:")
+    assert "disconnected before completion" in error
+    assert available_at == "2026-05-13 17:15:00"
+    error_kinds = [error.kind for error in worker.store.list_errors(limit=10)]
+    assert "reply_task_authorization" in error_kinds
+    assert "reply_task_retry" not in error_kinds
+    assert any(
+        notification["title"] == "CEO task waiting for authorization: Friday"
+        for notification in notifications
+    )
+
+
 def test_unresolvable_non_candidate_sender_does_not_block_conversation(
     tmp_path: Path, monkeypatch
 ):

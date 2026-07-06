@@ -101,6 +101,7 @@ HANDOFF_TEXT_EMOTION = "我去叫"
 PROCESSING_ACK = "收到，我正在处理（by 分身）"
 CODEX_LOGIN_REQUIRED_PREFIX = "codex_login_required"
 CODEX_PROVIDER_AUTH_FAILED_PREFIX = "codex_provider_auth_failed"
+CODEX_PROVIDER_UNAVAILABLE_PREFIX = "codex_provider_unavailable"
 CRITICAL_INFO_UNAVAILABLE_PREFIX = "critical_info_unavailable:"
 DEFAULT_TEXT_EMOTION_BACKGROUND_ID = "im_bg_5"
 LEAK_CHECK_REGENERATION_SCHEMA = REPLY_AGENT_ENVELOPE_SCHEMA_HINT
@@ -216,11 +217,37 @@ def _codex_provider_auth_error(reason: str) -> str:
     )
 
 
+def _is_codex_provider_transport_error(reason: str) -> bool:
+    normalized = reason.lower()
+    if "/v1/responses" not in normalized:
+        return False
+    return (
+        "stream disconnected before completion" in normalized
+        or "error sending request" in normalized
+        or "process produced no output" in normalized
+    )
+
+
+def _codex_provider_transport_error(reason: str) -> str:
+    normalized = reason.lower()
+    if "process produced no output" in normalized:
+        detail = "Codex provider request produced no output before the idle timeout"
+    else:
+        detail = "Codex provider request disconnected before completion"
+    return (
+        f"{CODEX_PROVIDER_UNAVAILABLE_PREFIX}: {detail}; "
+        "wait for network/provider recovery or configure a working "
+        "CEO_CODEX_PROFILE/CEO_CODEX_MODEL_PROVIDER before rerunning"
+    )
+
+
 def _normalize_codex_stop_error_reason(reason: str) -> str:
     if _is_codex_authorization_wait_reason(reason):
         return reason
     if _is_codex_provider_auth_error(reason):
         return _codex_provider_auth_error(reason)
+    if _is_codex_provider_transport_error(reason):
+        return _codex_provider_transport_error(reason)
     if _is_codex_login_required_error(reason):
         return f"{CODEX_LOGIN_REQUIRED_PREFIX}: {reason}"
     return reason
@@ -228,7 +255,11 @@ def _normalize_codex_stop_error_reason(reason: str) -> str:
 
 def _is_codex_authorization_wait_reason(reason: str) -> bool:
     return reason.startswith(
-        (CODEX_PROVIDER_AUTH_FAILED_PREFIX, CODEX_LOGIN_REQUIRED_PREFIX)
+        (
+            CODEX_PROVIDER_AUTH_FAILED_PREFIX,
+            CODEX_PROVIDER_UNAVAILABLE_PREFIX,
+            CODEX_LOGIN_REQUIRED_PREFIX,
+        )
     )
 
 
