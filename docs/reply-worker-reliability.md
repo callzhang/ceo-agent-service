@@ -175,6 +175,11 @@ The worker still preprocesses:
   structured Codex runner with the OA skill injected, then performs the
   service-owned approval action or comment.
 
+If a historical calendar event id can no longer be read from DWS, the DWS client
+returns no event detail instead of failing the whole producer pass. The worker
+can then use an existing terminal attempt or the normal calendar-detail
+unreadable branch without turning a stale event into recurring producer errors.
+
 For DingTalk documents, AI minutes, and ordinary files, agent-side DWS calls must
 be visible in `audit_tool_events_json`. Permission failures are missing material
 context for the agent to reason about, not ordinary worker failures, unless the

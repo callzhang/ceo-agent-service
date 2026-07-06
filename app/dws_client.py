@@ -1688,7 +1688,12 @@ class DwsClient:
         return self.parse_calendar_events(payload)
 
     def get_calendar_event(self, event_id: str) -> DwsCalendarEvent | None:
-        payload = self.run_json(self.build_get_calendar_event_command(event_id))
+        try:
+            payload = self.run_json(self.build_get_calendar_event_command(event_id))
+        except DwsError as exc:
+            if self._calendar_event_detail_unavailable(exc):
+                return None
+            raise
         result = payload.get("result", payload)
         if not isinstance(result, dict):
             return None
@@ -1702,6 +1707,13 @@ class DwsClient:
         return self.run_json(
             self.build_respond_calendar_event_command(event_id, response_status)
         )
+
+    @staticmethod
+    def _calendar_event_detail_unavailable(exc: DwsError) -> bool:
+        if exc.code not in {"1", "business_error"}:
+            return False
+        message = str(exc)
+        return "calendar event get" in message and "success=false" in message
 
     def minutes_permission_request_from_message(
         self, message: DingTalkMessage

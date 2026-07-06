@@ -2300,6 +2300,69 @@ def test_calendar_invite_from_message_fetches_detail_from_calendar_link():
     ]
 
 
+def test_get_calendar_event_returns_none_when_detail_is_unavailable():
+    class CalendarDetailUnavailableClient(DwsClient):
+        def __init__(self):
+            super().__init__(dws_bin="dws")
+            self.commands: list[list[str]] = []
+
+        def run_json(self, command: list[str]):
+            self.commands.append(command)
+            raise DwsError(
+                "dws command failed with exit code 1; "
+                "command=dws calendar event get --id event-1 --format json; "
+                'stderr={"error.code": 1, "error.message": '
+                '"business error: success=false"}',
+                code="1",
+            )
+
+    client = CalendarDetailUnavailableClient()
+
+    assert client.get_calendar_event("event-1") is None
+    assert client.commands == [
+        [
+            "dws",
+            "calendar",
+            "event",
+            "get",
+            "--id",
+            "event-1",
+            "--format",
+            "json",
+        ]
+    ]
+
+
+def test_calendar_invite_from_message_returns_none_for_unavailable_event_detail():
+    class CalendarDetailUnavailableClient(DwsClient):
+        def run_json(self, command: list[str]):
+            raise DwsError(
+                "dws command failed with exit code 1; "
+                "command=dws calendar event get --id event-1 --format json; "
+                'stderr={"error.code": 1, "error.message": '
+                '"business error: success=false"}',
+                code="1",
+            )
+
+    message = DingTalkMessage(
+        open_conversation_id="cid-1",
+        open_message_id="msg-1",
+        conversation_title="韩露",
+        single_chat=True,
+        sender_name="韩露",
+        create_time="2026-05-29 17:26:25",
+        content=(
+            "好的明哥\n"
+            "dingtalk://dingtalkclient/action/open_mini_app?"
+            "page=pages%2Fdetail%2Findex%3FuniqueId%3Devent-1%26recurrenceId%3D"
+        ),
+    )
+
+    assert CalendarDetailUnavailableClient(dws_bin="dws").calendar_invite_from_message(
+        message
+    ) is None
+
+
 def test_list_calendar_events_uses_dws_calendar_event_list():
     client = RecordingDwsClient(
         {
