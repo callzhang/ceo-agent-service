@@ -246,11 +246,6 @@ class CodexRunner:
         image_options: list[str] = []
         for image_path in image_paths or []:
             image_options.extend(["--image", str(image_path)])
-        config_isolation_options = (
-            ["--ignore-user-config", "--disable", "plugins"]
-            if ignore_user_config
-            else []
-        )
         schema_options = (
             ["--output-schema", str(output_schema_path)]
             if output_schema_path is not None
@@ -258,8 +253,8 @@ class CodexRunner:
         )
         common_options = [
             "--json",
-            *codex_model_config_options(ignore_user_config=ignore_user_config),
-            *config_isolation_options,
+            *codex_model_config_options(ignore_user_config=True),
+            "--ignore-user-config",
             "--ignore-rules",
             "--disable",
             "hooks",

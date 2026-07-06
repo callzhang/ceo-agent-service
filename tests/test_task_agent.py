@@ -2313,7 +2313,7 @@ def test_process_work_item_continues_when_memory_connector_unavailable(
     assert "不要因为 memory_recall 不可用而失败" in codex.prompts[0]
 
 
-def test_task_agent_codex_runner_keeps_user_config_for_memory_recall(tmp_path):
+def test_task_agent_codex_runner_isolates_user_config_for_memory_recall(tmp_path):
     captured = {}
 
     def executor(command, prompt):
@@ -2338,8 +2338,8 @@ def test_task_agent_codex_runner_keeps_user_config_for_memory_recall(tmp_path):
     runner.decide(prompt="{}", session_id=None)
 
     command = captured["command"]
-    assert "--ignore-user-config" not in command
-    assert "plugins" not in [
+    assert "--ignore-user-config" in command
+    assert "plugins" in [
         command[index + 1]
         for index, value in enumerate(command[:-1])
         if value == "--disable"
@@ -2896,9 +2896,9 @@ def test_task_agent_codex_runner_uses_process_runner_signature(tmp_path):
     assert calls[0][1]["total_timeout_seconds"] == 7
     assert calls[0][1]["idle_timeout_seconds"] == 3
     assert "--output-schema" in command
-    assert "--ignore-user-config" not in command
+    assert "--ignore-user-config" in command
     assert command[command.index("--disable") + 1] == "hooks"
-    assert "plugins" not in [
+    assert "plugins" in [
         command[index + 1]
         for index, value in enumerate(command[:-1])
         if value == "--disable"
