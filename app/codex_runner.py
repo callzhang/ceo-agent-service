@@ -263,6 +263,8 @@ class CodexRunner:
             "--ignore-rules",
             "--disable",
             "hooks",
+            "--disable",
+            "plugins",
             *memory_connector_config_options(),
             "-c",
             'approval_policy="untrusted"',
