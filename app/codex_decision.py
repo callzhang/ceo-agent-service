@@ -504,12 +504,23 @@ def _short_text(text: str, limit: int = 240) -> str:
 
 
 def _codex_stdout_error_reason(stdout: str) -> str:
-    for payload in reversed(_iter_json_payloads(stdout)):
+    error_messages: list[str] = []
+    for payload in _iter_json_payloads(stdout):
         if not isinstance(payload, dict) or payload.get("type") != "error":
             continue
         message = payload.get("message")
         if not isinstance(message, str) or not message.strip():
             continue
+        error_messages.append(message)
+    if not error_messages:
+        return ""
+    if _has_responses_transport_then_auth_fallback(error_messages):
+        return _short_text(
+            "stream disconnected before completion: native codex exec "
+            f"transport fallback ended with {error_messages[-1]}",
+            1200,
+        )
+    for message in reversed(error_messages):
         detail = message
         code = ""
         try:
@@ -523,6 +534,23 @@ def _codex_stdout_error_reason(stdout: str) -> str:
                 detail = str(error.get("message") or detail)
         return _short_text(f"{code}: {detail}" if code else detail, 1200)
     return ""
+
+
+def _has_responses_transport_then_auth_fallback(messages: list[str]) -> bool:
+    if len(messages) < 2:
+        return False
+    earlier = "\n".join(messages[:-1]).lower()
+    latest = messages[-1].lower()
+    return (
+        (
+            "stream disconnected before completion" in earlier
+            or "tls handshake eof" in earlier
+            or "falling back from websockets to https transport" in earlier
+        )
+        and "unexpected status 401 unauthorized" in latest
+        and "missing bearer or basic authentication" in latest
+        and "/v1/responses" in latest
+    )
 
 
 def _subprocess_failure_reason(stderr: str, stdout: str) -> str:

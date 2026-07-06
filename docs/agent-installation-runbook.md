@@ -221,7 +221,6 @@ not in `~/.agents/skills`.
    CEO_WORKSPACE=$HOME/Documents/memory
    CEO_WORKER_DB=./data/auto-reply.sqlite3
    CEO_CORPUS_DIR=./data/corpus
-   CEO_CODEX_PROFILE=<optional local Codex profile>
    CEO_CODEX_MODEL=
    CEO_CODEX_MODEL_PROVIDER=
    CEO_DRY_RUN=1

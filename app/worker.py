@@ -212,9 +212,9 @@ def _codex_provider_auth_error(reason: str) -> str:
         detail = "Codex model provider authentication failed"
     return (
         f"{CODEX_PROVIDER_AUTH_FAILED_PREFIX}: {detail}; "
-        "codex exec selected a Responses API model provider without usable "
-        "provider credentials; configure a working CEO_CODEX_PROFILE/"
-        "CEO_CODEX_MODEL_PROVIDER before rerunning"
+        "native codex exec selected a Responses API model provider without "
+        "usable provider credentials; verify codex exec works in the service "
+        "environment before rerunning"
     )
 
 
@@ -237,18 +237,18 @@ def _codex_provider_transport_error(reason: str) -> str:
         detail = "Codex provider request disconnected before completion"
     return (
         f"{CODEX_PROVIDER_UNAVAILABLE_PREFIX}: {detail}; "
-        "wait for network/provider recovery or configure a working "
-        "CEO_CODEX_PROFILE/CEO_CODEX_MODEL_PROVIDER before rerunning"
+        "wait for network/provider recovery or verify native codex exec works "
+        "in the service environment before rerunning"
     )
 
 
 def _normalize_codex_stop_error_reason(reason: str) -> str:
     if _is_codex_authorization_wait_reason(reason):
         return reason
-    if _is_codex_provider_auth_error(reason):
-        return _codex_provider_auth_error(reason)
     if _is_codex_provider_transport_error(reason):
         return _codex_provider_transport_error(reason)
+    if _is_codex_provider_auth_error(reason):
+        return _codex_provider_auth_error(reason)
     if _is_codex_login_required_error(reason):
         return f"{CODEX_LOGIN_REQUIRED_PREFIX}: {reason}"
     return reason

@@ -4130,6 +4130,41 @@ def test_consume_once_codex_provider_transport_failure_waits_for_recovery(
     )
 
 
+def test_consume_once_native_codex_transport_fallback_auth_failure_waits_for_recovery(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message("@Alex Chen(明哥) 这个怎么处理？")
+    dws = FakeDws([conversation()], {"cid-1": [trigger]})
+
+    def fail_codex(_prompt, _session_id):
+        raise RuntimeError(
+            "stream disconnected before completion: native codex exec transport "
+            "fallback ended with unexpected status 401 Unauthorized: Missing "
+            "bearer or basic authentication in header, url: "
+            "https://api.openai.com/v1/responses"
+        )
+
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="先按A方案走"),
+        before_decide=fail_codex,
+    )
+    worker = make_worker(
+        tmp_path,
+        dws,
+        codex,
+        monkeypatch,
+        max_task_attempts=3,
+    )
+    monkeypatch.setattr("app.worker.send_macos_notification", lambda **_: None)
+    worker.produce_once()
+
+    assert worker.consume_once(max_tasks=1) == 0
+    with sqlite3.connect(tmp_path / "worker.sqlite3") as db:
+        error = db.execute("select error from reply_tasks").fetchone()[0]
+    assert error.startswith("codex_provider_unavailable:")
+    assert "disconnected before completion" in error
+
+
 def test_unresolvable_non_candidate_sender_does_not_block_conversation(
     tmp_path: Path, monkeypatch
 ):
@@ -8372,9 +8407,9 @@ def test_codex_provider_auth_stop_with_error_records_clear_sanitized_failure(
     assert attempt.send_status == "blocked"
     assert attempt.send_error.startswith("codex_provider_auth_failed:")
     assert expected_detail in attempt.send_error
-    assert "codex exec selected a Responses API model provider" in attempt.send_error
-    assert "CEO_CODEX_PROFILE" in attempt.send_error
-    assert "CEO_CODEX_MODEL_PROVIDER" in attempt.send_error
+    assert "native codex exec selected a Responses API model provider" in attempt.send_error
+    assert "verify codex exec works in the service environment" in attempt.send_error
+    assert "CEO_CODEX_PROFILE" not in attempt.send_error
     assert "restore Codex CLI login" not in attempt.send_error
     assert "cf-ray" not in attempt.send_error
     assert "request id" not in attempt.send_error

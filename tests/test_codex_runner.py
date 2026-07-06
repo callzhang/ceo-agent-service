@@ -235,11 +235,11 @@ def test_codex_command_does_not_auto_fallback_to_configured_profile(
 
     command = runner.build_command(prompt="hello", session_id=None)
 
-    assert command[command.index("-m") + 1] == "gpt-5.5"
+    assert "-m" not in command
     assert 'model_provider="minimax"' not in command
 
 
-def test_codex_command_uses_profile_only_when_explicitly_requested(
+def test_codex_command_ignores_legacy_profile_env_for_native_exec(
     tmp_path: Path, monkeypatch
 ):
     codex_home = tmp_path / ".codex"
@@ -260,11 +260,11 @@ def test_codex_command_uses_profile_only_when_explicitly_requested(
 
     command = runner.build_command(prompt="hello", session_id=None)
 
-    assert command[command.index("-m") + 1] == "codex-MiniMax-M2.7"
-    assert 'model_provider="minimax"' in command
+    assert "-m" not in command
+    assert 'model_provider="minimax"' not in command
 
 
-def test_codex_command_explicit_profile_with_ignore_user_config_includes_provider_config(
+def test_codex_command_explicit_model_provider_with_ignore_user_config_includes_provider_config(
     tmp_path: Path, monkeypatch
 ):
     codex_home = tmp_path / ".codex"
@@ -287,7 +287,8 @@ def test_codex_command_explicit_profile_with_ignore_user_config_includes_provide
         encoding="utf-8",
     )
     monkeypatch.setenv("CODEX_HOME", str(codex_home))
-    monkeypatch.setenv("CEO_CODEX_PROFILE", "m27")
+    monkeypatch.setenv("CEO_CODEX_MODEL", "codex-MiniMax-M2.7")
+    monkeypatch.setenv("CEO_CODEX_MODEL_PROVIDER", "minimax")
     runner = CodexRunner(workspace=tmp_path, codex_bin="codex")
 
     command = runner.build_command(
@@ -429,8 +430,6 @@ def test_builds_new_thread_command(tmp_path: Path):
         "codex",
         "exec",
         "--json",
-        "-m",
-        "gpt-5.5",
         "--ignore-rules",
         "--disable",
         "hooks",
@@ -471,8 +470,6 @@ def test_builds_resume_command(tmp_path: Path):
         "exec",
         "resume",
         "--json",
-        "-m",
-        "gpt-5.5",
         "--ignore-rules",
         "--disable",
         "hooks",

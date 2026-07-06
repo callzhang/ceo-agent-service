@@ -50,10 +50,8 @@ DWS_CLI_AUTH_ENV_KEYS = {
     "DINGTALK_APP_KEY",
     "DINGTALK_APP_SECRET",
 }
-CODEX_DEFAULT_MODEL = "gpt-5.5"
 CODEX_MODEL_ENV = "CEO_CODEX_MODEL"
 CODEX_MODEL_PROVIDER_ENV = "CEO_CODEX_MODEL_PROVIDER"
-CODEX_PROFILE_ENV = "CEO_CODEX_PROFILE"
 
 
 def codex_developer_instructions() -> str:
@@ -137,37 +135,7 @@ def _model_provider_config_options(config: dict, provider_name: str) -> list[str
     return options
 
 
-def _profile_model_options(profile_name: str, *, include_provider_config: bool) -> list[str]:
-    config = _codex_config()
-    profiles = config.get("profiles") or {}
-    if not isinstance(profiles, dict):
-        return []
-    profile = profiles.get(profile_name) or {}
-    if not isinstance(profile, dict):
-        return []
-    model = profile.get("model")
-    provider = profile.get("model_provider")
-    options: list[str] = []
-    if isinstance(model, str) and model.strip():
-        options.extend(["-m", model.strip()])
-    if isinstance(provider, str) and provider.strip():
-        provider_name = provider.strip()
-        options.extend(["-c", _config_string("model_provider", provider_name)])
-        if include_provider_config:
-            options.extend(_model_provider_config_options(config, provider_name))
-    return options
-
-
 def codex_model_config_options(*, ignore_user_config: bool = False) -> list[str]:
-    profile_name = os.environ.get(CODEX_PROFILE_ENV, "").strip()
-    if profile_name:
-        profile_options = _profile_model_options(
-            profile_name,
-            include_provider_config=True,
-        )
-        if profile_options:
-            return profile_options
-
     model = os.environ.get(CODEX_MODEL_ENV, "").strip()
     provider = os.environ.get(CODEX_MODEL_PROVIDER_ENV, "").strip()
     if model:
@@ -178,7 +146,7 @@ def codex_model_config_options(*, ignore_user_config: bool = False) -> list[str]
                 options.extend(_model_provider_config_options(_codex_config(), provider))
         return options
 
-    return ["-m", CODEX_DEFAULT_MODEL]
+    return []
 
 
 def _memory_connector_env_from_config(config_path: Path) -> dict[str, str]:

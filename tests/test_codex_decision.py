@@ -1356,6 +1356,54 @@ def test_subprocess_nonzero_reports_stdout_error_before_warning_only_stderr(
     assert "failed to unwatch" not in decision.reason
 
 
+def test_subprocess_nonzero_keeps_native_codex_transport_fallback_context(
+    tmp_path: Path, monkeypatch
+):
+    stdout = "\n".join(
+        [
+            json.dumps({"type": "thread.started", "thread_id": "thread-1"}),
+            json.dumps({"type": "turn.started"}),
+            json.dumps(
+                {
+                    "type": "error",
+                    "message": (
+                        "Falling back from WebSockets to HTTPS transport. "
+                        "stream disconnected before completion: tls handshake eof"
+                    ),
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "error",
+                    "message": (
+                        "unexpected status 401 Unauthorized: Missing bearer or "
+                        "basic authentication in header, url: "
+                        "https://api.openai.com/v1/responses"
+                    ),
+                }
+            ),
+            json.dumps({"type": "turn.failed"}),
+        ]
+    )
+
+    def fake_run(command, **kwargs):
+        return ProcessRunResult(
+            returncode=1,
+            stdout=stdout,
+            stderr="",
+        )
+
+    monkeypatch.setattr(codex_decision, "run_process_with_idle_timeout", fake_run)
+    runner = make_runner(tmp_path)
+
+    decision = runner.decide(prompt="decide", session_id=None)
+
+    assert decision.action == CodexAction.STOP_WITH_ERROR
+    assert "stream disconnected before completion" in decision.reason
+    assert "transport fallback" in decision.reason
+    assert "Missing bearer" in decision.reason
+
+
 def test_subprocess_nonzero_warning_only_stderr_uses_generic_failure_reason(
     tmp_path: Path, monkeypatch
 ):
