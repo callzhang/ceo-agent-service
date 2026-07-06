@@ -212,7 +212,8 @@ def _codex_provider_auth_error(reason: str) -> str:
         detail = "Codex model provider authentication failed"
     return (
         f"{CODEX_PROVIDER_AUTH_FAILED_PREFIX}: {detail}; "
-        "restore Codex CLI login or configure a working CEO_CODEX_PROFILE/"
+        "codex exec selected a Responses API model provider without usable "
+        "provider credentials; configure a working CEO_CODEX_PROFILE/"
         "CEO_CODEX_MODEL_PROVIDER before rerunning"
     )
 
@@ -377,7 +378,7 @@ class ReplyTaskProcessingError(RuntimeError):
 
 
 class CodexAuthorizationRequiredError(ReplyTaskProcessingError):
-    """Raised when Codex provider credentials or login must be restored."""
+    """Raised when Codex login or selected provider credentials must be restored."""
 
     needs_authorization = True
 

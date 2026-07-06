@@ -8372,7 +8372,10 @@ def test_codex_provider_auth_stop_with_error_records_clear_sanitized_failure(
     assert attempt.send_status == "blocked"
     assert attempt.send_error.startswith("codex_provider_auth_failed:")
     assert expected_detail in attempt.send_error
-    assert "restore Codex CLI login" in attempt.send_error
+    assert "codex exec selected a Responses API model provider" in attempt.send_error
+    assert "CEO_CODEX_PROFILE" in attempt.send_error
+    assert "CEO_CODEX_MODEL_PROVIDER" in attempt.send_error
+    assert "restore Codex CLI login" not in attempt.send_error
     assert "cf-ray" not in attempt.send_error
     assert "request id" not in attempt.send_error
     assert attempt.codex_reason == attempt.send_error

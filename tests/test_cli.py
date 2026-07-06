@@ -1117,6 +1117,8 @@ def test_process_work_items_command_backoffs_codex_auth_failure(
     assert "OpenAI Responses API was called without a bearer/basic auth header" in row[
         "error"
     ]
+    assert "codex exec selected a Responses API model provider" in row["error"]
+    assert "restore Codex CLI login" not in row["error"]
     assert "request id" not in row["error"]
     assert row["available_at"] > ""
     recorded = AutoReplyStore(db_path).list_errors(limit=1)[0]
