@@ -245,6 +245,65 @@ def test_extract_codex_audit_events_from_session_respects_line_range(tmp_path: P
     ]
 
 
+def test_extract_codex_audit_events_from_session_preserves_tool_search_call(
+    tmp_path: Path,
+):
+    session_id = "019e2c00-tool-search"
+    session_path = (
+        tmp_path
+        / "sessions"
+        / "2026"
+        / "07"
+        / "06"
+        / f"rollout-2026-07-06T14-00-00-{session_id}.jsonl"
+    )
+    session_path.parent.mkdir(parents=True)
+    lines = [
+        {
+            "timestamp": "2026-07-06T14:00:00Z",
+            "type": "session_meta",
+            "payload": {"id": session_id},
+        },
+        {
+            "timestamp": "2026-07-06T14:00:01Z",
+            "type": "response_item",
+            "payload": {
+                "type": "tool_search_call",
+                "call_id": "call-memory-discovery",
+                "arguments": {
+                    "query": "memory_connector memory_recall MCP semantic retrieval",
+                    "limit": 5,
+                },
+            },
+        },
+    ]
+    session_path.write_text(
+        "\n".join(json.dumps(line, ensure_ascii=False) for line in lines),
+        encoding="utf-8",
+    )
+
+    events = extract_codex_audit_events_from_session(
+        session_id,
+        codex_home=tmp_path,
+    )
+
+    assert events == [
+        {
+            "event_type": "response_item",
+            "tool": "tool_search_call",
+            "call_id": "call-memory-discovery",
+            "input": json.dumps(
+                {
+                    "query": "memory_connector memory_recall MCP semantic retrieval",
+                    "limit": 5,
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+        }
+    ]
+
+
 def test_extract_codex_audit_events_from_session_preserves_dws_material_read(
     tmp_path: Path,
 ):

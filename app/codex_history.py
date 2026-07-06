@@ -378,6 +378,18 @@ def _audit_event_from_jsonl(payload: dict[str, Any]) -> dict[str, str] | None:
         if path:
             event["path"] = path
         return event
+    if item_type == "tool_search_call":
+        event = {
+            "event_type": "response_item",
+            "tool": "tool_search_call",
+        }
+        call_id = _string(item.get("call_id"))
+        if call_id:
+            event["call_id"] = call_id
+        arguments = _json_argument_text(item.get("arguments"))
+        if arguments:
+            event["input"] = arguments
+        return event
     if item_type == "function_call_output":
         output = _string(item.get("output"))
         event = {
