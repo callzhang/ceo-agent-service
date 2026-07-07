@@ -4265,7 +4265,7 @@ def test_run_json_sanitizes_pat_authorization_error(monkeypatch):
     assert "open-dev.dingtalk.com" not in str(error)
 
 
-def test_start_pat_authorization_uses_interactive_environment(monkeypatch):
+def test_start_pat_authorization_grants_service_agent_code(monkeypatch):
     calls = []
     monkeypatch.setenv("DINGTALK_DWS_AGENTCODE", "ceo-agent-service")
     monkeypatch.setenv("CEO_DWS_AGENT_CODE", "ceo-agent-service")
@@ -4299,8 +4299,10 @@ def test_start_pat_authorization_uses_interactive_environment(monkeypatch):
         "pat",
         "chmod",
         "chat.message:list",
+        "--agentCode",
+        "ceo-agent-service",
         "--grant-type",
-        "once",
+        "permanent",
         "--yes",
         "--format",
         "json",

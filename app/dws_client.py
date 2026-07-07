@@ -300,13 +300,18 @@ class DwsClient:
         return [self.dws_bin, "auth", "login"]
 
     def build_pat_authorization_command(self, scopes: list[str]) -> list[str]:
+        agent_code = dws_noninteractive_environment().get(
+            DWS_AGENT_CODE_ENV, DWS_DEFAULT_AGENT_CODE
+        )
         return [
             self.dws_bin,
             "pat",
             "chmod",
             *scopes,
+            "--agentCode",
+            agent_code,
             "--grant-type",
-            "once",
+            "permanent",
             "--yes",
             "--format",
             "json",
