@@ -143,6 +143,24 @@ def test_developer_prompt_keeps_business_metrics_out_of_personnel_sensitivity():
     assert "只有问题要求评价这个人的绩效、晋升、薪酬、去留、转正、请假、岗位匹配、个人工作状态" in template
 
 
+def test_developer_prompt_requires_latest_material_after_update_feedback():
+    template = read_developer_prompt_template()
+
+    assert "前一次依据的材料已经被修改、补充、评论确认或按要求更新" in template
+    assert "不能沿用前一次读取材料时形成的旧结论" in template
+    assert "必须重新读取当前可访问的最新材料" in template
+    assert "体现本轮实际依据" in template
+
+
+def test_developer_prompt_defines_non_executable_action_boundary():
+    template = read_developer_prompt_template()
+
+    assert "只有特定真人、群主、管理员、审批人、系统 owner 或外部系统权限才能完成的现实动作" in template
+    assert "不能只回复“可以、方向对、应该做”" in template
+    assert "必须明确说明当前不能代为执行该动作" in template
+    assert "handoff_to_human" in template
+
+
 def test_developer_prompt_documents_agent_envelope_output_protocol():
     template = read_developer_prompt_template()
 
