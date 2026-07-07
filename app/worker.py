@@ -458,6 +458,7 @@ class DingTalkAutoReplyWorker:
         except Exception as exc:
             if raise_authorization and self._is_authorization_error(exc):
                 raise
+            pat_authorization_requested = False
             if self._is_dws_login_error(exc):
                 restored_result = self._restore_dws_auth_backup_and_retry(
                     kind,
@@ -468,8 +469,12 @@ class DingTalkAutoReplyWorker:
                     return restored_result
                 if self._ensure_dws_auth_login(exc):
                     return default
-            elif self._dws_authorization_required_scopes(exc):
-                self._ensure_dws_pat_authorization(exc)
+            else:
+                required_scopes = self._dws_authorization_required_scopes(exc)
+                if required_scopes:
+                    pat_authorization_requested = self._ensure_dws_pat_authorization(
+                        exc
+                    )
             is_forbidden_read = bool(
                 conversation_id and self._is_dws_forbidden_read_error(exc)
             )
@@ -477,6 +482,9 @@ class DingTalkAutoReplyWorker:
                 self._mark_dws_read_forbidden(conversation_id)
             should_notify = bool(notify_title)
             should_record_error = record_forbidden_error or not is_forbidden_read
+            if pat_authorization_requested:
+                should_record_error = False
+                should_notify = False
             if self._is_dws_transient_error(
                 exc
             ) or self._is_dws_token_verified_read_error(kind, exc):
@@ -986,7 +994,7 @@ class DingTalkAutoReplyWorker:
     @staticmethod
     def _is_dws_forbidden_read_error(exc: Exception) -> bool:
         if isinstance(exc, DwsError) and exc.needs_authorization:
-            return True
+            return False
         detail = str(exc).lower()
         if "forbidden request" not in detail:
             return False

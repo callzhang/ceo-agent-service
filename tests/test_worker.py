@@ -3540,7 +3540,7 @@ def test_produce_once_suppresses_repeated_forbidden_unread_reads(
     assert worker.store.count_reply_tasks(status="pending") == 0
 
 
-def test_produce_once_suppresses_repeated_agent_code_missing_unread_reads(
+def test_produce_once_does_not_cache_authorization_errors_as_forbidden_reads(
     tmp_path: Path, monkeypatch
 ):
     dws = FakeDws(
@@ -3560,11 +3560,51 @@ def test_produce_once_suppresses_repeated_agent_code_missing_unread_reads(
 
     assert worker.produce_once() == 0
     assert dws.unread_message_reads == ["cid-1"]
-    assert worker.store.count_errors() == 0
-    assert worker.store.get_service_state("dws_forbidden_conversations")
+    assert worker.store.count_errors() == 1
+    assert not worker.store.get_service_state("dws_forbidden_conversations")
+
+    assert worker.produce_once() == 0
+    assert dws.unread_message_reads == ["cid-1", "cid-1"]
+    assert worker.store.count_errors() == 2
+    assert worker.store.count_reply_tasks(status="pending") == 0
+
+
+def test_produce_once_starts_pat_authorization_without_forbidden_read_cache(
+    tmp_path: Path, monkeypatch
+):
+    notifications = []
+    pat_error = DwsError(
+        "dws command failed with exit code 4; code=PAT_MEDIUM_RISK_NO_PERMISSION",
+        code="PAT_MEDIUM_RISK_NO_PERMISSION",
+        required_scopes=["chat.message:list"],
+    )
+    dws = FakeDws(
+        [conversation()],
+        {"cid-1": []},
+        unread_errors={"cid-1": pat_error},
+    )
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该调用")
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+    monkeypatch.setattr(
+        "app.worker.send_macos_notification",
+        lambda **kwargs: notifications.append(kwargs),
+    )
 
     assert worker.produce_once() == 0
     assert dws.unread_message_reads == ["cid-1"]
+    assert dws.pat_authorization_scopes == [["chat.message:list"]]
+    assert worker.store.count_errors() == 0
+    assert not worker.store.get_service_state("dws_forbidden_conversations")
+    assert any(
+        notification["title"] == "CEO DWS PAT authorization required"
+        for notification in notifications
+    )
+
+    assert worker.produce_once() == 0
+    assert dws.unread_message_reads == ["cid-1", "cid-1"]
+    assert dws.pat_authorization_scopes == [["chat.message:list"]]
     assert worker.store.count_errors() == 0
     assert worker.store.count_reply_tasks(status="pending") == 0
 
