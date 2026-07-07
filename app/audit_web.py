@@ -110,6 +110,9 @@ from app.task_models import ProjectPriority, ProjectStatus, RiskLevel, TodoStatu
 from app.user_prompt_blocks import USER_PROMPT_BLOCKS, UserPromptBlock
 
 DISPLAY_TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
+USER_FEEDBACK_SYNC_BATCH_LIMIT = 5
+USER_FEEDBACK_SYNC_TIMEOUT_SECONDS = 0.5
+USER_FEEDBACK_SYNC_LIMIT_PER_TOKEN = 5
 from app.worker import DingTalkAutoReplyWorker
 
 
@@ -4364,7 +4367,11 @@ def handle_user_feedback_sync_post(
 ) -> tuple[int, dict[str, str], str]:
     _sync_feedback_events_for_sent_replies(
         store,
-        store.list_sent_replies_waiting_for_feedback_events(),
+        store.list_sent_replies_waiting_for_feedback_events(
+            limit=USER_FEEDBACK_SYNC_BATCH_LIMIT
+        ),
+        timeout_seconds=USER_FEEDBACK_SYNC_TIMEOUT_SECONDS,
+        limit_per_token=USER_FEEDBACK_SYNC_LIMIT_PER_TOKEN,
     )
     return 303, {"Location": "/user-feedback"}, ""
 
@@ -5205,8 +5212,16 @@ def _attempt_detail_grid(fields: list[tuple[str, str]]) -> str:
 def _sync_feedback_events_for_sent_replies(
     store: AutoReplyStore,
     sent_replies: Iterable[SentReply],
+    *,
+    timeout_seconds: float = 2,
+    limit_per_token: int = 20,
 ) -> None:
-    sync_feedback_events_for_sent_replies_impl(store, sent_replies)
+    sync_feedback_events_for_sent_replies_impl(
+        store,
+        sent_replies,
+        timeout_seconds=timeout_seconds,
+        limit_per_token=limit_per_token,
+    )
 
 
 def _sync_feedback_events_for_context(

@@ -600,8 +600,8 @@ def test_handle_user_feedback_sync_post_triggers_explicit_sync(
     )
     calls = []
 
-    def fake_sync(_store, sent_replies):
-        calls.append(list(sent_replies))
+    def fake_sync(_store, sent_replies, **kwargs):
+        calls.append((list(sent_replies), kwargs))
 
     monkeypatch.setattr(
         audit_web_module,
@@ -615,8 +615,46 @@ def test_handle_user_feedback_sync_post_triggers_explicit_sync(
     assert headers["Location"] == "/user-feedback"
     assert html == ""
     assert len(calls) == 1
-    assert len(calls[0]) == 1
-    assert calls[0][0].feedback_token == "token-1"
+    sent_replies, kwargs = calls[0]
+    assert len(sent_replies) == 1
+    assert sent_replies[0].feedback_token == "token-1"
+    assert kwargs == {
+        "timeout_seconds": audit_web_module.USER_FEEDBACK_SYNC_TIMEOUT_SECONDS,
+        "limit_per_token": audit_web_module.USER_FEEDBACK_SYNC_LIMIT_PER_TOKEN,
+    }
+
+
+def test_handle_user_feedback_sync_post_uses_small_batch(tmp_path: Path, monkeypatch):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    seed_attempt(store)
+    for index in range(audit_web_module.USER_FEEDBACK_SYNC_BATCH_LIMIT + 2):
+        store.record_sent_reply(
+            "cid-1",
+            f"msg-{index}",
+            "先按A方案走",
+            feedback_token=f"token-{index}",
+        )
+    calls = []
+
+    def fake_sync(_store, sent_replies, **kwargs):
+        calls.append((list(sent_replies), kwargs))
+
+    monkeypatch.setattr(
+        audit_web_module,
+        "_sync_feedback_events_for_sent_replies",
+        fake_sync,
+    )
+
+    status, headers, html = handle_user_feedback_sync_post(store)
+
+    assert status == 303
+    assert headers["Location"] == "/user-feedback"
+    assert html == ""
+    assert len(calls) == 1
+    sent_replies, kwargs = calls[0]
+    assert len(sent_replies) == audit_web_module.USER_FEEDBACK_SYNC_BATCH_LIMIT
+    assert kwargs["timeout_seconds"] == audit_web_module.USER_FEEDBACK_SYNC_TIMEOUT_SECONDS
+    assert kwargs["limit_per_token"] == audit_web_module.USER_FEEDBACK_SYNC_LIMIT_PER_TOKEN
 
 
 def test_handle_user_feedback_resolve_post_marks_feedback_resolved(tmp_path: Path):
@@ -727,8 +765,8 @@ def test_user_feedback_sync_route_redirects_to_feedback_page(
     client = TestClient(app)
     calls = []
 
-    def fake_sync(_store, sent_replies):
-        calls.append(list(sent_replies))
+    def fake_sync(_store, sent_replies, **kwargs):
+        calls.append((list(sent_replies), kwargs))
 
     monkeypatch.setattr(
         audit_web_module,
@@ -741,6 +779,12 @@ def test_user_feedback_sync_route_redirects_to_feedback_page(
     assert response.status_code == 303
     assert response.headers["location"] == "/user-feedback"
     assert len(calls) == 1
+    assert calls[0][1]["timeout_seconds"] == (
+        audit_web_module.USER_FEEDBACK_SYNC_TIMEOUT_SECONDS
+    )
+    assert calls[0][1]["limit_per_token"] == (
+        audit_web_module.USER_FEEDBACK_SYNC_LIMIT_PER_TOKEN
+    )
 
 
 def test_render_history_page_includes_favicon_and_refresh(tmp_path: Path):
