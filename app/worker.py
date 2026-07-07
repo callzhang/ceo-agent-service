@@ -423,7 +423,6 @@ class DingTalkAutoReplyWorker:
         self.permission_gate = PermissionGate(dws)
         self.oa_approval_handler = oa_approval_handler
         self._dws_auth_login_process = None
-        self._dws_pat_authorization_process = None
 
     def run_once(self, max_batches: int | None = None) -> None:
         try:
@@ -1460,19 +1459,6 @@ class DingTalkAutoReplyWorker:
             return True
         return True
 
-    @staticmethod
-    def _process_pid_alive(state: dict[str, Any]) -> bool:
-        pid = state.get("pid")
-        if not isinstance(pid, int) or pid <= 0:
-            return False
-        try:
-            os.kill(pid, 0)
-        except ProcessLookupError:
-            return False
-        except PermissionError:
-            return True
-        return True
-
     def _dws_auth_login_request_is_recent(self, state: dict[str, Any]) -> bool:
         if state.get("status") not in {"running", "stale", "failed"}:
             return False
@@ -1487,60 +1473,21 @@ class DingTalkAutoReplyWorker:
         age = self._now().astimezone(timezone.utc) - started.astimezone(timezone.utc)
         return timedelta(0) <= age < DWS_AUTH_LOGIN_REQUEST_SUPPRESSION_WINDOW
 
-    def _monitor_dws_pat_authorization(self, state: dict[str, Any]) -> dict[str, Any]:
-        process = self._dws_pat_authorization_process
-        if process is None:
-            if state.get("status") == "running":
-                if self._process_pid_alive(state):
-                    return state
-                state = {
-                    **state,
-                    "status": "stale",
-                    "error": "dws pat authorization process is no longer running",
-                    "updated_at": self._now().astimezone(timezone.utc).isoformat(),
-                }
-                self._set_dws_pat_authorization_state(state)
-            return state
-        exit_code = process.poll()
-        if exit_code is None:
-            if state.get("status") != "running":
-                state = {
-                    **state,
-                    "status": "running",
-                    "updated_at": self._now().astimezone(timezone.utc).isoformat(),
-                }
-                self._set_dws_pat_authorization_state(state)
-            return state
-        self._dws_pat_authorization_process = None
-        status = "completed" if exit_code == 0 else "failed"
-        state = {
-            **state,
-            "status": status,
-            "exit_code": exit_code,
-            "updated_at": self._now().astimezone(timezone.utc).isoformat(),
-        }
-        self._set_dws_pat_authorization_state(state)
-        self._notify(
-            title=f"CEO DWS PAT authorization {status}",
-            message=f"dws pat authorization exited with code {exit_code}",
-        )
-        return state
-
     def _dws_pat_authorization_request_is_recent(
         self, state: dict[str, Any], scopes: tuple[str, ...]
     ) -> bool:
-        if state.get("status") not in {"running", "stale", "failed", "completed"}:
+        if state.get("status") != "requested":
             return False
         state_scopes = state.get("scopes")
         if not isinstance(state_scopes, list) or tuple(state_scopes) != scopes:
             return False
-        started_at = state.get("started_at")
-        if not isinstance(started_at, str):
+        requested_at = state.get("requested_at")
+        if not isinstance(requested_at, str):
             return False
-        started = self._parse_service_state_datetime(started_at)
-        if started is None:
+        requested = self._parse_service_state_datetime(requested_at)
+        if requested is None:
             return False
-        age = self._now().astimezone(timezone.utc) - started.astimezone(timezone.utc)
+        age = self._now().astimezone(timezone.utc) - requested.astimezone(timezone.utc)
         return timedelta(0) <= age < DWS_PAT_AUTHORIZATION_REQUEST_SUPPRESSION_WINDOW
 
     @classmethod
@@ -1560,16 +1507,15 @@ class DingTalkAutoReplyWorker:
 
     def _ensure_dws_pat_authorization(self, exc: Exception) -> bool:
         scopes = self._dws_authorization_required_scopes(exc)
-        state = self._monitor_dws_pat_authorization(
-            self._dws_pat_authorization_state()
-        )
+        state = self._dws_pat_authorization_state()
+        now = self._now().astimezone(timezone.utc).isoformat()
         if not scopes:
             self._set_dws_pat_authorization_state(
                 {
                     "status": "blocked",
                     "reason": str(exc),
                     "error": "missing PAT required scopes",
-                    "updated_at": self._now().astimezone(timezone.utc).isoformat(),
+                    "updated_at": now,
                 }
             )
             self._notify(
@@ -1577,10 +1523,7 @@ class DingTalkAutoReplyWorker:
                 message="DWS requested authorization but did not return required scopes.",
             )
             return False
-        if (
-            state.get("status") == "running"
-            or self._dws_pat_authorization_request_is_recent(state, scopes)
-        ):
+        if self._dws_pat_authorization_request_is_recent(state, scopes):
             return True
         start_pat_authorization = getattr(self.dws, "start_pat_authorization", None)
         if not callable(start_pat_authorization):
@@ -1590,7 +1533,7 @@ class DingTalkAutoReplyWorker:
                     "reason": str(exc),
                     "scopes": list(scopes),
                     "error": "DWS client does not support PAT authorization",
-                    "updated_at": self._now().astimezone(timezone.utc).isoformat(),
+                    "updated_at": now,
                 }
             )
             return False
@@ -1604,7 +1547,8 @@ class DingTalkAutoReplyWorker:
                     "reason": str(exc),
                     "scopes": list(scopes),
                     "error": str(start_exc),
-                    "started_at": self._now().astimezone(timezone.utc).isoformat(),
+                    "requested_at": now,
+                    "updated_at": now,
                 }
             )
             self._notify(
@@ -1612,16 +1556,17 @@ class DingTalkAutoReplyWorker:
                 message=str(start_exc)[:120],
             )
             return False
-        self._dws_pat_authorization_process = process
-        self._set_dws_pat_authorization_state(
-            {
-                "status": "running",
-                "pid": process.pid,
-                "reason": str(exc),
-                "scopes": list(scopes),
-                "started_at": self._now().astimezone(timezone.utc).isoformat(),
-            }
-        )
+        request_state: dict[str, Any] = {
+            "status": "requested",
+            "reason": str(exc),
+            "scopes": list(scopes),
+            "requested_at": now,
+            "updated_at": now,
+        }
+        pid = getattr(process, "pid", None)
+        if isinstance(pid, int):
+            request_state["pid"] = pid
+        self._set_dws_pat_authorization_state(request_state)
         self._notify(
             title="CEO DWS PAT authorization required",
             message=(

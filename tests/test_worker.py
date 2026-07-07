@@ -1555,7 +1555,7 @@ def test_queued_task_starts_pat_authorization_when_context_read_needs_authorizat
     pat_state = json.loads(
         worker.store.get_service_state("dws_pat_authorization") or "{}"
     )
-    assert pat_state["status"] == "running"
+    assert pat_state["status"] == "requested"
     assert pat_state["pid"] == 2234
     assert pat_state["scopes"] == ["chat.message:list"]
     assert any(
