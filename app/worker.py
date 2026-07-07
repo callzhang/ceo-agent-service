@@ -180,6 +180,10 @@ DINGTALK_SHANJI_DOC_SELECTOR_PATTERN = re.compile(
     r"resourceType=SHANJI[^\s)\]]*",
     re.IGNORECASE,
 )
+LARK_DOC_URL_PATTERN = re.compile(
+    r"https://[^\s)\]]+/(?:docx|wiki)/[^\s)\]]+",
+    re.IGNORECASE,
+)
 
 
 def _is_codex_login_required_error(reason: str) -> bool:
@@ -5612,6 +5616,12 @@ class DingTalkAutoReplyWorker:
                     add(
                         "dingtalk_minutes",
                         self._minutes_task_uuid_from_url(match.group(0)),
+                        message,
+                    )
+                for match in LARK_DOC_URL_PATTERN.finditer(text):
+                    add(
+                        "lark_doc",
+                        self._canonical_doc_url(match.group(0)),
                         message,
                     )
 

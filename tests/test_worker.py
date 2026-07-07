@@ -7622,6 +7622,32 @@ def test_dingtalk_material_links_are_passed_to_codex_without_worker_reading(
     assert "dws minutes get info --id" in prompt
 
 
+def test_lark_doc_link_is_passed_to_codex_as_material_reference(
+    tmp_path: Path, monkeypatch
+):
+    doc_url = "https://zhipu-ai.feishu.cn/wiki/MvIOwPyfCiJHo2ku5rZcx3vpnVh?from=from_copylink"
+    canonical_doc_url = "https://zhipu-ai.feishu.cn/wiki/MvIOwPyfCiJHo2ku5rZcx3vpnVh"
+    trigger = message(f"{doc_url}\n@Alex Chen(明哥) 看下真实需求")
+    dws = FakeDws([conversation()], {"cid-1": [trigger]})
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="已按文档判断")
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch, dry_run=True)
+
+    worker.run_once()
+
+    assert len(codex.calls) == 1
+    prompt = codex.calls[0][0]
+    assert "待读取材料（由 agent 判断是否读取）:" in prompt
+    assert "类型: lark_doc" in prompt
+    assert canonical_doc_url in prompt
+    assert "lark-cli docs +fetch --doc <URL>" in prompt
+    assert "--doc-format markdown --format json --as bot" in prompt
+    attempt = worker.store.get_reply_attempt(1)
+    assert attempt is not None
+    assert attempt.send_status == "dry_run"
+
+
 def test_dingtalk_doc_link_is_passed_to_codex_without_worker_read(
     tmp_path: Path, monkeypatch
 ):

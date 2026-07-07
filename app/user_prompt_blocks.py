@@ -102,6 +102,8 @@ USER_PROMPT_BLOCKS = [
             "- 钉钉文档: dws doc info --node <URL> --format json；"
             "需要正文时 dws doc read --node <URL> --format json\n"
             "- AI 听记: dws minutes get info --id <MINUTES_ID> --format json\n"
+            "- 飞书文档: lark-cli docs +fetch --doc <URL> "
+            "--doc-format markdown --format json --as bot\n"
             "- 普通文件: 先用消息中的文件名和上下文判断是否需要读取；"
             "需要时使用 DWS 文件/云盘能力查询或下载。\n"
             "- 材料1:\n"
