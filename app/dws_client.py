@@ -26,6 +26,8 @@ TITLE_AT_FILE_ESCAPE_PREFIX = "回复："
 TEXT_AT_FILE_ESCAPE_PREFIX = " "
 DINGTALK_MESSAGE_TIME_ZONE = ZoneInfo("Asia/Shanghai")
 MIN_UNREAD_MESSAGE_LIST_LIMIT = 5
+DWS_AGENT_CODE_ENV = "DINGTALK_DWS_AGENTCODE"
+DWS_DEFAULT_AGENT_CODE = "ceo-agent-service"
 
 
 def _local_time_zone():
@@ -68,6 +70,7 @@ def extract_recall_key_from_send_result(send_result: dict[str, Any] | None) -> s
 
 class DwsError(RuntimeError):
     DIRECT_CHAT_TARGET_NOT_FOUND_CODE = "DIRECT_CHAT_TARGET_NOT_FOUND"
+    AGENT_CODE_NOT_EXISTS_CODE = "AGENT_CODE_NOT_EXISTS"
     LOGIN_ERROR_CODES = {"2", "not_authenticated"}
     LOGIN_ERROR_MARKERS = (
         "not_authenticated",
@@ -87,6 +90,7 @@ class DwsError(RuntimeError):
         return self.code in {
             "PAT_HIGH_RISK_NO_PERMISSION",
             "PAT_MEDIUM_RISK_NO_PERMISSION",
+            self.AGENT_CODE_NOT_EXISTS_CODE,
         }
 
     @property
@@ -95,6 +99,17 @@ class DwsError(RuntimeError):
             return True
         message = str(self).casefold()
         return any(marker in message for marker in self.LOGIN_ERROR_MARKERS)
+
+
+def dws_noninteractive_environment(env: dict[str, str] | None = None) -> dict[str, str]:
+    next_env = dict(os.environ if env is None else env)
+    agent_code = (
+        next_env.get(DWS_AGENT_CODE_ENV)
+        or next_env.get("CEO_DWS_AGENT_CODE")
+        or DWS_DEFAULT_AGENT_CODE
+    )
+    next_env[DWS_AGENT_CODE_ENV] = agent_code
+    return next_env
 
 
 def native_reply_delivery_payload(
@@ -2533,10 +2548,7 @@ class DwsClient:
         matches = [profile for profile in profiles if profile.user_id == user_id]
         if len(matches) != 1:
             raise DwsError(f"expected one user profile for {user_id}, got {len(matches)}")
-        profile = matches[0]
-        if not profile.title and profile.name:
-            profile = self._enrich_user_profile_from_search(profile)
-        return profile
+        return matches[0]
 
     def search_user_profiles(self, query: str) -> list[DwsUserProfile]:
         payload = self.run_json(self.build_search_user_command(query))
@@ -2586,9 +2598,15 @@ class DwsClient:
     ) -> DwsUserProfile:
         if profile.title or not profile.name:
             return profile
+        try:
+            matches = self.search_user_profiles(profile.name)
+        except DwsError as exc:
+            if exc.needs_authorization:
+                return profile
+            raise
         search_matches = [
             item
-            for item in self.search_user_profiles(profile.name)
+            for item in matches
             if item.user_id == profile.user_id
         ]
         if len(search_matches) != 1:
@@ -2758,7 +2776,7 @@ class DwsClient:
 
     @classmethod
     def _cli_environment(cls) -> dict[str, str]:
-        env = os.environ.copy()
+        env = dws_noninteractive_environment()
         for key in cls.CLI_AUTH_ENV_KEYS:
             env.pop(key, None)
         return env

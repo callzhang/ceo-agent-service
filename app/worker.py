@@ -383,6 +383,12 @@ class CodexAuthorizationRequiredError(ReplyTaskProcessingError):
     needs_authorization = True
 
 
+class DwsAuthorizationRequiredError(ReplyTaskProcessingError):
+    """Raised when DWS auth is not ready before starting a Codex agent."""
+
+    needs_authorization = True
+
+
 class CriticalInformationUnavailableError(ReplyTaskProcessingError):
     """Raised when required material/tool output is unavailable and retrying is unsafe."""
 
@@ -1217,6 +1223,39 @@ class DingTalkAutoReplyWorker:
             if isinstance((value := auth_status.get(key)), str | bool)
         }
 
+    @staticmethod
+    def _dws_auth_status_is_ready(auth_status: dict[str, Any] | None) -> bool:
+        if not auth_status:
+            return False
+        return (
+            auth_status.get("authenticated") is True
+            and auth_status.get("token_valid") is True
+            and auth_status.get("refresh_token_valid") is True
+        )
+
+    def _ensure_dws_ready_for_codex(self) -> None:
+        auth_status = self._dws_auth_status_for_backup()
+        if self._dws_auth_status_is_ready(auth_status):
+            self._set_dws_auth_login_state(
+                {
+                    "status": "authenticated",
+                    "checked_at": self._now().astimezone(timezone.utc).isoformat(),
+                    **self._dws_auth_backup_status_fields(auth_status),
+                }
+            )
+            return
+        status_fields = self._dws_auth_backup_status_fields(auth_status)
+        reason = "DWS auth status is not ready for noninteractive Codex execution"
+        self._set_dws_auth_login_state(
+            {
+                "status": "blocked",
+                "reason": reason,
+                "checked_at": self._now().astimezone(timezone.utc).isoformat(),
+                **status_fields,
+            }
+        )
+        raise DwsAuthorizationRequiredError(reason)
+
     def _dws_auth_backup_due(
         self,
         state: dict[str, Any],
@@ -1419,6 +1458,17 @@ class DingTalkAutoReplyWorker:
         if state.get("status") == "running" or self._dws_auth_login_request_is_recent(
             state
         ):
+            return True
+        auth_status = self._dws_auth_status_for_backup()
+        if self._dws_auth_status_is_ready(auth_status):
+            self._set_dws_auth_login_state(
+                {
+                    "status": "authenticated",
+                    "reason": str(exc),
+                    "checked_at": self._now().astimezone(timezone.utc).isoformat(),
+                    **self._dws_auth_backup_status_fields(auth_status),
+                }
+            )
             return True
         try:
             process = self.dws.start_auth_login()
@@ -4667,6 +4717,7 @@ class DingTalkAutoReplyWorker:
             material_references=material_references,
             image_download_errors=image_download_errors,
         )
+        self._ensure_dws_ready_for_codex()
         before_session_id = getattr(self.codex, "last_session_id", None)
         decision = self.codex.decide(
             prompt=prompt,

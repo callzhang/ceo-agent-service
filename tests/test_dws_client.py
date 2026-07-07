@@ -16,6 +16,7 @@ from app.dingtalk_models import (
 )
 from app import dws_client
 from app.dws_client import (
+    DWS_AGENT_CODE_ENV,
     DwsClient,
     DwsError,
     DwsMinutesPermissionRequest,
@@ -37,14 +38,17 @@ class RecordingDwsClient(DwsClient):
 
 
 class SequenceRecordingDwsClient(DwsClient):
-    def __init__(self, payloads: list[dict]):
+    def __init__(self, payloads: list[dict | Exception]):
         super().__init__(dws_bin="dws")
         self.payloads = list(payloads)
         self.commands: list[list[str]] = []
 
     def run_json(self, command: list[str]):
         self.commands.append(command)
-        return self.payloads.pop(0)
+        payload = self.payloads.pop(0)
+        if isinstance(payload, Exception):
+            raise payload
+        return payload
 
 
 def make_message(content: str) -> DingTalkMessage:
@@ -2621,6 +2625,64 @@ def test_get_user_profile_enriches_missing_title_from_contact_search():
         client.build_get_user_profiles_command(["user-1"]),
         client.build_search_user_command("邹婧玮"),
     ]
+
+
+def test_dws_error_treats_missing_agent_code_as_authorization_not_login():
+    error = DwsError(
+        "dws command failed with exit code 4; code=AGENT_CODE_NOT_EXISTS",
+        code=DwsError.AGENT_CODE_NOT_EXISTS_CODE,
+    )
+
+    assert error.needs_authorization is True
+    assert error.needs_login is False
+
+
+def test_get_user_profile_keeps_base_profile_when_title_enrichment_needs_agent_code():
+    client = SequenceRecordingDwsClient(
+        [
+            {
+                "result": [
+                    {
+                        "orgEmployeeModel": {
+                            "orgUserId": "user-1",
+                            "orgUserName": "蔡琳",
+                        }
+                    }
+                ]
+            },
+            DwsError(
+                "dws command failed with exit code 4; code=AGENT_CODE_NOT_EXISTS",
+                code=DwsError.AGENT_CODE_NOT_EXISTS_CODE,
+            ),
+        ]
+    )
+
+    profile = client.get_user_profile("user-1")
+
+    assert profile.user_id == "user-1"
+    assert profile.name == "蔡琳"
+    assert profile.title == ""
+    assert client.commands == [
+        client.build_get_user_profiles_command(["user-1"]),
+        client.build_search_user_command("蔡琳"),
+    ]
+
+
+def test_dws_cli_environment_forces_host_owned_pat_without_browser(monkeypatch):
+    monkeypatch.delenv(DWS_AGENT_CODE_ENV, raising=False)
+    monkeypatch.delenv("CEO_DWS_AGENT_CODE", raising=False)
+
+    env = DwsClient._cli_environment()
+
+    assert env[DWS_AGENT_CODE_ENV] == "ceo-agent-service"
+
+
+def test_dws_cli_environment_preserves_configured_agent_code(monkeypatch):
+    monkeypatch.setenv(DWS_AGENT_CODE_ENV, "configured-agent")
+
+    env = DwsClient._cli_environment()
+
+    assert env[DWS_AGENT_CODE_ENV] == "configured-agent"
 
 
 def test_get_user_profiles_enriches_missing_titles_from_contact_search():

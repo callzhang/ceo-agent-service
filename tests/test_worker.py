@@ -1308,13 +1308,7 @@ def test_produce_once_records_list_unread_failure_without_crashing(
 
     assert queued == 0
     assert worker.store.count_errors() == 0
-    assert notifications == [
-        {
-            "title": "CEO DWS auth login required",
-            "message": "Started dws auth login. Please complete DingTalk login.",
-            "url": None,
-        }
-    ]
+    assert notifications == []
     assert codex.calls == []
 
 
@@ -1514,6 +1508,11 @@ def test_produce_once_starts_dws_auth_login_once_for_login_error(
 ):
     notifications = []
     dws = FakeDws([], {}, list_error=DwsError("not authenticated", code="2"))
+    dws.auth_status_response = {
+        "authenticated": False,
+        "token_valid": False,
+        "refresh_token_valid": False,
+    }
     codex = FakeCodex(CodexDecision(action=CodexAction.SEND_REPLY, reply_text="收到"))
     worker = make_worker(tmp_path, dws, codex, monkeypatch)
     monkeypatch.setattr(
@@ -1543,11 +1542,91 @@ def test_produce_once_starts_dws_auth_login_once_for_login_error(
     assert codex.calls == []
 
 
+def test_produce_once_does_not_start_dws_auth_login_when_auth_status_is_valid(
+    tmp_path: Path, monkeypatch
+):
+    notifications = []
+    dws = FakeDws([], {}, list_error=DwsError("not authenticated", code="2"))
+    dws.auth_status_response = {
+        "authenticated": True,
+        "token_valid": True,
+        "refresh_token_valid": True,
+    }
+    worker = make_worker(
+        tmp_path,
+        dws,
+        FakeCodex(CodexDecision(action=CodexAction.SEND_REPLY, reply_text="收到")),
+        monkeypatch,
+    )
+    monkeypatch.setattr(
+        "app.worker.send_macos_notification",
+        lambda **kwargs: notifications.append(kwargs),
+    )
+
+    assert worker.produce_once() == 0
+
+    assert dws.auth_status_calls >= 1
+    assert dws.auth_login_starts == 0
+    state = json.loads(worker.store.get_service_state(DWS_AUTH_LOGIN_STATE_KEY))
+    assert state["status"] == "authenticated"
+    assert state["token_valid"] is True
+    assert state["refresh_token_valid"] is True
+    assert notifications == []
+
+
+def test_consume_once_checks_dws_auth_before_starting_codex(
+    tmp_path: Path, monkeypatch
+):
+    notifications = []
+    trigger = message("@Alex Chen 看下这个材料")
+    dws = FakeDws([conversation()], {"cid-1": [trigger]})
+    dws.auth_status_response = {
+        "authenticated": False,
+        "token_valid": False,
+        "refresh_token_valid": False,
+    }
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该调用")
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+    worker.store.enqueue_reply_task(
+        conversation_id="cid-1",
+        conversation_title="Friday",
+        single_chat=False,
+        trigger_message_id=trigger.open_message_id,
+        trigger_create_time=trigger.create_time,
+        trigger_sender=trigger.sender_name,
+        trigger_text=trigger.content,
+        trigger_message_json=trigger.model_dump_json(),
+    )
+    monkeypatch.setattr(
+        "app.worker.send_macos_notification",
+        lambda **kwargs: notifications.append(kwargs),
+    )
+
+    assert worker.consume_once() == 0
+
+    assert codex.calls == []
+    assert dws.auth_status_calls >= 1
+    assert worker.store.count_reply_tasks(status="pending") == 1
+    state = json.loads(worker.store.get_service_state(DWS_AUTH_LOGIN_STATE_KEY))
+    assert state["status"] == "blocked"
+    errors = worker.store.list_errors(limit=10)
+    assert [error.kind for error in errors] == ["reply_task_authorization"]
+    assert "DWS auth status is not ready" in errors[0].detail
+    assert notifications[0]["title"] == "CEO task waiting for authorization: Friday"
+
+
 def test_produce_once_restarts_stale_persisted_dws_auth_login(
     tmp_path: Path, monkeypatch
 ):
     notifications = []
     dws = FakeDws([], {}, list_error=DwsError("not authenticated", code="2"))
+    dws.auth_status_response = {
+        "authenticated": False,
+        "token_valid": False,
+        "refresh_token_valid": False,
+    }
     worker = make_worker(
         tmp_path,
         dws,
@@ -1580,6 +1659,11 @@ def test_produce_once_does_not_start_second_dws_auth_login_for_recent_request(
 ):
     notifications = []
     dws = FakeDws([], {}, list_error=DwsError("not authenticated", code="2"))
+    dws.auth_status_response = {
+        "authenticated": False,
+        "token_valid": False,
+        "refresh_token_valid": False,
+    }
     worker = make_worker(
         tmp_path,
         dws,
@@ -1616,6 +1700,11 @@ def test_produce_once_restarts_dws_auth_login_after_previous_terminal_state(
 ):
     notifications = []
     dws = FakeDws([], {}, list_error=DwsError("not authenticated", code="2"))
+    dws.auth_status_response = {
+        "authenticated": False,
+        "token_valid": False,
+        "refresh_token_valid": False,
+    }
     worker = make_worker(
         tmp_path,
         dws,
@@ -6920,6 +7009,11 @@ def test_oa_approval_detail_login_error_is_reported_as_tool_issue(
     dws.oa_approval_records["proc-1"] = DwsError("not authenticated", code="2")
     dws.oa_approval_tasks["proc-1"] = DwsError("not authenticated", code="2")
     dws.openapi_oa_details["proc-1"] = DwsError("not authenticated", code="2")
+    dws.auth_status_response = {
+        "authenticated": False,
+        "token_valid": False,
+        "refresh_token_valid": False,
+    }
     codex = FakeCodex(CodexDecision(action=CodexAction.NO_REPLY))
     oa_handler = FakeOaApprovalHandler()
     worker = make_worker(

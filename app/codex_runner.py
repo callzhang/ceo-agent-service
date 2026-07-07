@@ -6,6 +6,7 @@ import time
 import tomllib
 from pathlib import Path
 
+from app.dws_client import dws_noninteractive_environment
 from app.prompt import ceo_agent_thread_prompt
 
 
@@ -27,15 +28,17 @@ DingTalk material reading
 - Docs: `dws doc info --node <URL> --format json`; if online doc and content needed, `dws doc read --node <URL> --format json`.
 - Minutes: `dws minutes get info --id <MINUTES_ID> --format json`.
 - Ordinary files: use relevant DWS file/drive read/download capability only when text context is insufficient.
+- Never run `dws auth login`, `dws auth reset`, `dws auth logout`, or any command that asks for interactive/browser authorization.
 - If DWS reports not_authenticated, not authenticated, exit code 2, or a login/session problem, classify it as a DWS login/tool issue, not as missing material from the sender.
+- If DWS reports AGENT_CODE_NOT_EXISTS, openBrowser, personalAuthorization, PAT permission failure, or a CLI authorization page, stop that tool path and classify it as DWS authorization/configuration unavailable; do not retry the command and do not start a login flow.
 - If permission fails, state the missing permission/material and do not invent contents.
 - If some materials fail but others are readable, use readable materials and mention limitation.
 - record why each material command was used.
 - Do not expose tokens, cookies, OAuth codes, signed URLs, local credential paths, or raw secret-bearing commands.
 """.strip()
-# The CEO worker must call DWS and open local authorization flows. Codex exec
-# resume does not support `-s`, so use the explicit bypass flag for both new and
-# resumed decision threads.
+# The CEO worker owns DWS readiness and authorization gating. Codex exec resume
+# does not support `-s`, so use the explicit bypass flag for both new and resumed
+# decision threads.
 CODEX_BYPASS_APPROVALS_AND_SANDBOX = "--dangerously-bypass-approvals-and-sandbox"
 MEMORY_CONNECTOR_ENV_FILE = "memory_connector.env"
 MEMORY_CONNECTOR_URL_ENV = "MEMORY_CONNECTOR_URL"
@@ -229,7 +232,7 @@ class CodexRunner:
         self.codex_bin = codex_bin
 
     def build_env(self) -> dict[str, str]:
-        env = {**os.environ, **_memory_connector_env()}
+        env = dws_noninteractive_environment({**os.environ, **_memory_connector_env()})
         for key in DWS_CLI_AUTH_ENV_KEYS:
             env.pop(key, None)
         env.pop("MEMORY_CONNECTOR_USER_ID", None)

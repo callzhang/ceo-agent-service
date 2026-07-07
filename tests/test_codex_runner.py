@@ -10,6 +10,7 @@ from app.codex_runner import (
     CodexRunner,
     codex_developer_instructions,
 )
+from app.dws_client import DWS_AGENT_CODE_ENV
 
 
 @pytest.fixture(autouse=True)
@@ -96,6 +97,9 @@ def test_codex_developer_instructions_classify_dws_login_as_tool_issue():
     assert "exit code 2" in instructions
     assert "DWS login/tool issue" in instructions
     assert "not as missing material" in instructions
+    assert "Never run `dws auth login`" in instructions
+    assert "AGENT_CODE_NOT_EXISTS" in instructions
+    assert "do not start a login flow" in instructions
 
 
 def test_codex_command_does_not_use_agent_envelope_schema_by_default(tmp_path: Path):
@@ -171,6 +175,18 @@ def test_codex_runner_env_preserves_process_auth_env_while_stripping_tool_secret
     assert "DWS_CLIENT_SECRET" not in env
     assert "DINGTALK_APP_SECRET" not in env
     assert "MEMORY_CONNECTOR_USER_ID" not in env
+
+
+def test_codex_runner_env_forces_dws_host_owned_pat_without_browser(
+    tmp_path: Path, monkeypatch
+):
+    monkeypatch.delenv(DWS_AGENT_CODE_ENV, raising=False)
+    monkeypatch.delenv("CEO_DWS_AGENT_CODE", raising=False)
+    runner = CodexRunner(workspace=tmp_path, codex_bin="codex")
+
+    env = runner.build_env()
+
+    assert env[DWS_AGENT_CODE_ENV] == "ceo-agent-service"
 
 
 def test_codex_runner_env_loads_memory_connector_from_codex_config(
