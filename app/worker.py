@@ -345,6 +345,8 @@ DWS_AUTH_BACKUP_STATUS_FIELDS = (
     "refresh_expires_at",
 )
 DWS_AUTH_LOGIN_REQUEST_SUPPRESSION_WINDOW = timedelta(hours=1)
+DWS_PAT_AUTHORIZATION_STATE_KEY = "dws_pat_authorization"
+DWS_PAT_AUTHORIZATION_REQUEST_SUPPRESSION_WINDOW = timedelta(hours=1)
 DWS_FORBIDDEN_CONVERSATIONS_STATE_KEY = "dws_forbidden_conversations"
 DWS_FORBIDDEN_CONVERSATION_COOLDOWN = timedelta(minutes=5)
 ORG_CACHE_REFRESH_INTERVAL = timedelta(days=7)
@@ -421,6 +423,7 @@ class DingTalkAutoReplyWorker:
         self.permission_gate = PermissionGate(dws)
         self.oa_approval_handler = oa_approval_handler
         self._dws_auth_login_process = None
+        self._dws_pat_authorization_process = None
 
     def run_once(self, max_batches: int | None = None) -> None:
         try:
@@ -466,6 +469,8 @@ class DingTalkAutoReplyWorker:
                     return restored_result
                 if self._ensure_dws_auth_login(exc):
                     return default
+            elif self._dws_authorization_required_scopes(exc):
+                self._ensure_dws_pat_authorization(exc)
             is_forbidden_read = bool(
                 conversation_id and self._is_dws_forbidden_read_error(exc)
             )
@@ -1182,6 +1187,22 @@ class DingTalkAutoReplyWorker:
             json.dumps(state, ensure_ascii=False, sort_keys=True),
         )
 
+    def _dws_pat_authorization_state(self) -> dict[str, Any]:
+        raw = self.store.get_service_state(DWS_PAT_AUTHORIZATION_STATE_KEY)
+        if not raw:
+            return {}
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError:
+            return {}
+        return payload if isinstance(payload, dict) else {}
+
+    def _set_dws_pat_authorization_state(self, state: dict[str, Any]) -> None:
+        self.store.set_service_state(
+            DWS_PAT_AUTHORIZATION_STATE_KEY,
+            json.dumps(state, ensure_ascii=False, sort_keys=True),
+        )
+
     def _dws_auth_backup_path(self) -> Path:
         return self.store.path.parent / "dws-auth-backup" / "dws-auth.tar.gz"
 
@@ -1439,6 +1460,19 @@ class DingTalkAutoReplyWorker:
             return True
         return True
 
+    @staticmethod
+    def _process_pid_alive(state: dict[str, Any]) -> bool:
+        pid = state.get("pid")
+        if not isinstance(pid, int) or pid <= 0:
+            return False
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True
+        return True
+
     def _dws_auth_login_request_is_recent(self, state: dict[str, Any]) -> bool:
         if state.get("status") not in {"running", "stale", "failed"}:
             return False
@@ -1452,6 +1486,150 @@ class DingTalkAutoReplyWorker:
             return False
         age = self._now().astimezone(timezone.utc) - started.astimezone(timezone.utc)
         return timedelta(0) <= age < DWS_AUTH_LOGIN_REQUEST_SUPPRESSION_WINDOW
+
+    def _monitor_dws_pat_authorization(self, state: dict[str, Any]) -> dict[str, Any]:
+        process = self._dws_pat_authorization_process
+        if process is None:
+            if state.get("status") == "running":
+                if self._process_pid_alive(state):
+                    return state
+                state = {
+                    **state,
+                    "status": "stale",
+                    "error": "dws pat authorization process is no longer running",
+                    "updated_at": self._now().astimezone(timezone.utc).isoformat(),
+                }
+                self._set_dws_pat_authorization_state(state)
+            return state
+        exit_code = process.poll()
+        if exit_code is None:
+            if state.get("status") != "running":
+                state = {
+                    **state,
+                    "status": "running",
+                    "updated_at": self._now().astimezone(timezone.utc).isoformat(),
+                }
+                self._set_dws_pat_authorization_state(state)
+            return state
+        self._dws_pat_authorization_process = None
+        status = "completed" if exit_code == 0 else "failed"
+        state = {
+            **state,
+            "status": status,
+            "exit_code": exit_code,
+            "updated_at": self._now().astimezone(timezone.utc).isoformat(),
+        }
+        self._set_dws_pat_authorization_state(state)
+        self._notify(
+            title=f"CEO DWS PAT authorization {status}",
+            message=f"dws pat authorization exited with code {exit_code}",
+        )
+        return state
+
+    def _dws_pat_authorization_request_is_recent(
+        self, state: dict[str, Any], scopes: tuple[str, ...]
+    ) -> bool:
+        if state.get("status") not in {"running", "stale", "failed", "completed"}:
+            return False
+        state_scopes = state.get("scopes")
+        if not isinstance(state_scopes, list) or tuple(state_scopes) != scopes:
+            return False
+        started_at = state.get("started_at")
+        if not isinstance(started_at, str):
+            return False
+        started = self._parse_service_state_datetime(started_at)
+        if started is None:
+            return False
+        age = self._now().astimezone(timezone.utc) - started.astimezone(timezone.utc)
+        return timedelta(0) <= age < DWS_PAT_AUTHORIZATION_REQUEST_SUPPRESSION_WINDOW
+
+    @classmethod
+    def _dws_authorization_required_scopes(cls, exc: Exception) -> tuple[str, ...]:
+        scopes: list[str] = []
+        current: BaseException | None = exc
+        while current is not None:
+            required_scopes = getattr(current, "required_scopes", ())
+            if isinstance(required_scopes, (list, tuple)):
+                scopes.extend(
+                    scope
+                    for scope in required_scopes
+                    if isinstance(scope, str) and scope.strip()
+                )
+            current = current.__cause__
+        return tuple(dict.fromkeys(scope.strip() for scope in scopes if scope.strip()))
+
+    def _ensure_dws_pat_authorization(self, exc: Exception) -> bool:
+        scopes = self._dws_authorization_required_scopes(exc)
+        state = self._monitor_dws_pat_authorization(
+            self._dws_pat_authorization_state()
+        )
+        if not scopes:
+            self._set_dws_pat_authorization_state(
+                {
+                    "status": "blocked",
+                    "reason": str(exc),
+                    "error": "missing PAT required scopes",
+                    "updated_at": self._now().astimezone(timezone.utc).isoformat(),
+                }
+            )
+            self._notify(
+                title="CEO DWS PAT authorization blocked",
+                message="DWS requested authorization but did not return required scopes.",
+            )
+            return False
+        if (
+            state.get("status") == "running"
+            or self._dws_pat_authorization_request_is_recent(state, scopes)
+        ):
+            return True
+        start_pat_authorization = getattr(self.dws, "start_pat_authorization", None)
+        if not callable(start_pat_authorization):
+            self._set_dws_pat_authorization_state(
+                {
+                    "status": "failed",
+                    "reason": str(exc),
+                    "scopes": list(scopes),
+                    "error": "DWS client does not support PAT authorization",
+                    "updated_at": self._now().astimezone(timezone.utc).isoformat(),
+                }
+            )
+            return False
+        try:
+            process = start_pat_authorization(list(scopes))
+        except Exception as start_exc:
+            self.store.record_error(None, None, "dws_pat_authorization", str(start_exc))
+            self._set_dws_pat_authorization_state(
+                {
+                    "status": "failed",
+                    "reason": str(exc),
+                    "scopes": list(scopes),
+                    "error": str(start_exc),
+                    "started_at": self._now().astimezone(timezone.utc).isoformat(),
+                }
+            )
+            self._notify(
+                title="CEO DWS PAT authorization failed",
+                message=str(start_exc)[:120],
+            )
+            return False
+        self._dws_pat_authorization_process = process
+        self._set_dws_pat_authorization_state(
+            {
+                "status": "running",
+                "pid": process.pid,
+                "reason": str(exc),
+                "scopes": list(scopes),
+                "started_at": self._now().astimezone(timezone.utc).isoformat(),
+            }
+        )
+        self._notify(
+            title="CEO DWS PAT authorization required",
+            message=(
+                f"Started DWS PAT authorization for {len(scopes)} scope(s). "
+                "Please complete DingTalk authorization."
+            ),
+        )
+        return True
 
     def _ensure_dws_auth_login(self, exc: Exception) -> bool:
         state = self._monitor_dws_auth_login(self._dws_auth_login_state())
@@ -1605,6 +1783,8 @@ class DingTalkAutoReplyWorker:
                 if self._is_authorization_error(
                     exc
                 ) or _is_codex_authorization_wait_reason(authorization_wait_error):
+                    if self._dws_authorization_required_scopes(exc):
+                        self._ensure_dws_pat_authorization(exc)
                     self.store.defer_reply_task_for_authorization(
                         task.id,
                         authorization_wait_error,
@@ -1822,6 +2002,7 @@ class DingTalkAutoReplyWorker:
             lambda: list_messages_by_ids([trigger.open_message_id]),
             conversation_id=conversation.open_conversation_id,
             message_id=trigger.open_message_id,
+            raise_authorization=True,
             default=None,
         )
         if current_messages is None:
@@ -1842,6 +2023,7 @@ class DingTalkAutoReplyWorker:
             conversation,
             lambda: self.dws.read_recent_messages(conversation),
             message_id=trigger.open_message_id,
+            raise_authorization=True,
             default=[],
         )
         unread_messages = self._read_conversation_messages(
@@ -1849,6 +2031,7 @@ class DingTalkAutoReplyWorker:
             conversation,
             lambda: self.dws.read_unread_messages(conversation),
             message_id=trigger.open_message_id,
+            raise_authorization=True,
             default=[],
         )
         return context_messages, self._prompt_context_messages(

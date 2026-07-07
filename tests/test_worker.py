@@ -233,6 +233,10 @@ class FakeDws:
             FakeAuthLoginProcess()
         ]
         self.auth_login_starts = 0
+        self.pat_authorization_processes: list[FakeAuthLoginProcess] = [
+            FakeAuthLoginProcess(pid=2234)
+        ]
+        self.pat_authorization_scopes: list[list[str]] = []
         self.client_cids = client_cids or {}
         self.client_cid_calls: list[str] = []
 
@@ -293,6 +297,10 @@ class FakeDws:
     def start_auth_login(self) -> FakeAuthLoginProcess:
         self.auth_login_starts += 1
         return self.auth_login_processes.pop(0)
+
+    def start_pat_authorization(self, scopes: list[str]) -> FakeAuthLoginProcess:
+        self.pat_authorization_scopes.append(list(scopes))
+        return self.pat_authorization_processes.pop(0)
 
     def get_current_user_id(self) -> str:
         return self.current_user_id
@@ -1503,13 +1511,15 @@ def test_read_recent_messages_missing_direct_chat_target_is_empty_context(
     assert state["last_error"] == ""
 
 
-def test_queued_task_degrades_to_trigger_when_context_read_needs_authorization(
+def test_queued_task_starts_pat_authorization_when_context_read_needs_authorization(
     tmp_path: Path, monkeypatch
 ):
+    notifications = []
     trigger = message("@Alex Chen(明哥) 这个怎么处理？")
     auth_error = DwsError(
         "dws command failed with exit code 4; code=PAT_MEDIUM_RISK_NO_PERMISSION",
         code="PAT_MEDIUM_RISK_NO_PERMISSION",
+        required_scopes=["chat.message:list"],
     )
     dws = FakeDws(
         [conversation()],
@@ -1521,6 +1531,10 @@ def test_queued_task_degrades_to_trigger_when_context_read_needs_authorization(
         CodexDecision(action=CodexAction.NO_REPLY, reason="broadcast only")
     )
     worker = make_worker(tmp_path, dws, codex, monkeypatch)
+    monkeypatch.setattr(
+        "app.worker.send_macos_notification",
+        lambda **kwargs: notifications.append(kwargs),
+    )
     worker.store.enqueue_reply_task(
         conversation_id="cid-1",
         conversation_title="Friday",
@@ -1532,17 +1546,22 @@ def test_queued_task_degrades_to_trigger_when_context_read_needs_authorization(
         trigger_message_json=trigger.model_dump_json(),
     )
 
-    assert worker.consume_once(max_tasks=1) == 1
+    assert worker.consume_once(max_tasks=1) == 0
 
-    assert len(codex.calls) == 1
-    prompt = codex.calls[0][0]
-    assert trigger.content in prompt
-    assert worker.store.count_reply_tasks(status="done") == 1
-    assert worker.store.count_reply_tasks(status="pending") == 0
-    forbidden_state = json.loads(
-        worker.store.get_service_state("dws_forbidden_conversations") or "{}"
+    assert codex.calls == []
+    assert dws.pat_authorization_scopes == [["chat.message:list"]]
+    assert worker.store.count_reply_tasks(status="done") == 0
+    assert worker.store.count_reply_tasks(status="pending") == 1
+    pat_state = json.loads(
+        worker.store.get_service_state("dws_pat_authorization") or "{}"
     )
-    assert "cid-1" in forbidden_state
+    assert pat_state["status"] == "running"
+    assert pat_state["pid"] == 2234
+    assert pat_state["scopes"] == ["chat.message:list"]
+    assert any(
+        notification["title"] == "CEO DWS PAT authorization required"
+        for notification in notifications
+    )
 
 
 def test_produce_once_starts_dws_auth_login_once_for_login_error(

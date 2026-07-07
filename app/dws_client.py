@@ -81,9 +81,20 @@ class DwsError(RuntimeError):
         "登录态失效",
     )
 
-    def __init__(self, message: str, code: str | None = None):
+    def __init__(
+        self,
+        message: str,
+        code: str | None = None,
+        *,
+        required_scopes: list[str] | tuple[str, ...] = (),
+    ):
         super().__init__(message)
         self.code = code
+        self.required_scopes = tuple(
+            scope.strip()
+            for scope in required_scopes
+            if isinstance(scope, str) and scope.strip()
+        )
 
     @property
     def needs_authorization(self) -> bool:
@@ -287,6 +298,19 @@ class DwsClient:
 
     def build_auth_login_command(self) -> list[str]:
         return [self.dws_bin, "auth", "login"]
+
+    def build_pat_authorization_command(self, scopes: list[str]) -> list[str]:
+        return [
+            self.dws_bin,
+            "pat",
+            "chmod",
+            *scopes,
+            "--grant-type",
+            "once",
+            "--yes",
+            "--format",
+            "json",
+        ]
 
     def build_auth_export_command(self, output_path: Path) -> list[str]:
         return [
@@ -1464,6 +1488,19 @@ class DwsClient:
             env=self._cli_environment(),
         )
 
+    def start_pat_authorization(
+        self, scopes: list[str] | tuple[str, ...]
+    ) -> subprocess.Popen[str]:
+        normalized_scopes = self._unique_non_empty(list(scopes))
+        if not normalized_scopes:
+            raise DwsError("missing DWS PAT authorization scopes")
+        return subprocess.Popen(
+            self.build_pat_authorization_command(normalized_scopes),
+            text=True,
+            start_new_session=True,
+            env=self._pat_authorization_environment(),
+        )
+
     def export_auth_archive(self, output_path: Path) -> None:
         output_path.parent.mkdir(parents=True, exist_ok=True)
         temp_path = output_path.with_name(f".{output_path.name}.tmp")
@@ -2189,6 +2226,9 @@ class DwsClient:
             raise DwsError(
                 self._format_command_error(command, result, code),
                 code=code,
+                required_scopes=self._pat_required_scopes(
+                    result.stderr, result.stdout
+                ),
             )
         payload = self._json_from_mixed_stdout(result.stdout)
         if not isinstance(payload, dict):
@@ -2736,6 +2776,9 @@ class DwsClient:
             raise DwsError(
                 self._format_command_error(command, result, code),
                 code=code,
+                required_scopes=self._pat_required_scopes(
+                    result.stderr, result.stdout
+                ),
             )
         try:
             return json.loads(result.stdout)
@@ -2771,12 +2814,24 @@ class DwsClient:
             raise DwsError(
                 self._format_command_error(command, result, code),
                 code=code,
+                required_scopes=self._pat_required_scopes(
+                    result.stderr, result.stdout
+                ),
             )
         return result.stdout.strip()
 
     @classmethod
     def _cli_environment(cls) -> dict[str, str]:
         env = dws_noninteractive_environment()
+        for key in cls.CLI_AUTH_ENV_KEYS:
+            env.pop(key, None)
+        return env
+
+    @classmethod
+    def _pat_authorization_environment(cls) -> dict[str, str]:
+        env = dict(os.environ)
+        env.pop(DWS_AGENT_CODE_ENV, None)
+        env.pop("CEO_DWS_AGENT_CODE", None)
         for key in cls.CLI_AUTH_ENV_KEYS:
             env.pop(key, None)
         return env
@@ -2981,6 +3036,41 @@ class DwsClient:
             if isinstance(nested_code, int):
                 return str(nested_code)
         return None
+
+    @classmethod
+    def _pat_required_scopes(cls, *outputs: str) -> list[str]:
+        scopes: list[str] = []
+        for output in outputs:
+            if not output.strip():
+                continue
+            try:
+                payload = json.loads(output)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(payload, dict):
+                continue
+            cls._collect_pat_required_scopes(payload, scopes)
+        return cls._unique_non_empty(scopes)
+
+    @classmethod
+    def _collect_pat_required_scopes(cls, value: object, scopes: list[str]) -> None:
+        if isinstance(value, list):
+            for item in value:
+                cls._collect_pat_required_scopes(item, scopes)
+            return
+        if not isinstance(value, dict):
+            return
+        scope = value.get("scope")
+        if isinstance(scope, str) and scope.strip():
+            scopes.append(scope)
+        for key in ("requiredScopes", "required_scopes"):
+            required = value.get(key)
+            if isinstance(required, list):
+                cls._collect_pat_required_scopes(required, scopes)
+        for key in ("data", "error", "result"):
+            nested = value.get(key)
+            if isinstance(nested, (dict, list)):
+                cls._collect_pat_required_scopes(nested, scopes)
 
     @classmethod
     def _process_error_code(cls, returncode: int) -> str | None:

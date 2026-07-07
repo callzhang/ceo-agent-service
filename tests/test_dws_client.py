@@ -4259,9 +4259,54 @@ def test_run_json_sanitizes_pat_authorization_error(monkeypatch):
     error = exc_info.value
     assert error.code == "PAT_HIGH_RISK_NO_PERMISSION"
     assert error.needs_authorization is True
+    assert error.required_scopes == ("chat.message:send",)
     assert "PAT_HIGH_RISK_NO_PERMISSION" in str(error)
     assert "authorizationUrl" not in str(error)
     assert "open-dev.dingtalk.com" not in str(error)
+
+
+def test_start_pat_authorization_uses_interactive_environment(monkeypatch):
+    calls = []
+    monkeypatch.setenv("DINGTALK_DWS_AGENTCODE", "ceo-agent-service")
+    monkeypatch.setenv("CEO_DWS_AGENT_CODE", "ceo-agent-service")
+
+    class FakeProcess:
+        pid = 1234
+
+        def poll(self):
+            return None
+
+    def fake_popen(command, text, start_new_session, env):
+        calls.append(
+            {
+                "command": command,
+                "text": text,
+                "start_new_session": start_new_session,
+                "env": env,
+            }
+        )
+        return FakeProcess()
+
+    monkeypatch.setattr(dws_client.subprocess, "Popen", fake_popen)
+
+    process = DwsClient(dws_bin="dws-test").start_pat_authorization(
+        ["chat.message:list"]
+    )
+
+    assert process.pid == 1234
+    assert calls[0]["command"] == [
+        "dws-test",
+        "pat",
+        "chmod",
+        "chat.message:list",
+        "--grant-type",
+        "once",
+        "--yes",
+        "--format",
+        "json",
+    ]
+    assert "DINGTALK_DWS_AGENTCODE" not in calls[0]["env"]
+    assert "CEO_DWS_AGENT_CODE" not in calls[0]["env"]
 
 
 def test_run_json_raises_dws_error_on_invalid_json(monkeypatch):
