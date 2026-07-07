@@ -981,7 +981,7 @@ class DingTalkAutoReplyWorker:
 
     @staticmethod
     def _is_dws_forbidden_read_error(exc: Exception) -> bool:
-        if isinstance(exc, DwsError) and exc.code == "AGENT_CODE_NOT_EXISTS":
+        if isinstance(exc, DwsError) and exc.needs_authorization:
             return True
         detail = str(exc).lower()
         if "forbidden request" not in detail:
@@ -1822,7 +1822,6 @@ class DingTalkAutoReplyWorker:
             lambda: list_messages_by_ids([trigger.open_message_id]),
             conversation_id=conversation.open_conversation_id,
             message_id=trigger.open_message_id,
-            raise_authorization=True,
             default=None,
         )
         if current_messages is None:
@@ -1843,7 +1842,6 @@ class DingTalkAutoReplyWorker:
             conversation,
             lambda: self.dws.read_recent_messages(conversation),
             message_id=trigger.open_message_id,
-            raise_authorization=True,
             default=[],
         )
         unread_messages = self._read_conversation_messages(
@@ -1851,7 +1849,6 @@ class DingTalkAutoReplyWorker:
             conversation,
             lambda: self.dws.read_unread_messages(conversation),
             message_id=trigger.open_message_id,
-            raise_authorization=True,
             default=[],
         )
         return context_messages, self._prompt_context_messages(

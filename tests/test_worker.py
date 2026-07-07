@@ -1503,6 +1503,48 @@ def test_read_recent_messages_missing_direct_chat_target_is_empty_context(
     assert state["last_error"] == ""
 
 
+def test_queued_task_degrades_to_trigger_when_context_read_needs_authorization(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message("@Alex Chen(明哥) 这个怎么处理？")
+    auth_error = DwsError(
+        "dws command failed with exit code 4; code=PAT_MEDIUM_RISK_NO_PERMISSION",
+        code="PAT_MEDIUM_RISK_NO_PERMISSION",
+    )
+    dws = FakeDws(
+        [conversation()],
+        {"cid-1": [trigger]},
+        read_errors={"cid-1": auth_error},
+        unread_errors={"cid-1": auth_error},
+    )
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.NO_REPLY, reason="broadcast only")
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+    worker.store.enqueue_reply_task(
+        conversation_id="cid-1",
+        conversation_title="Friday",
+        single_chat=False,
+        trigger_message_id=trigger.open_message_id,
+        trigger_create_time=trigger.create_time,
+        trigger_sender=trigger.sender_name,
+        trigger_text=trigger.content,
+        trigger_message_json=trigger.model_dump_json(),
+    )
+
+    assert worker.consume_once(max_tasks=1) == 1
+
+    assert len(codex.calls) == 1
+    prompt = codex.calls[0][0]
+    assert trigger.content in prompt
+    assert worker.store.count_reply_tasks(status="done") == 1
+    assert worker.store.count_reply_tasks(status="pending") == 0
+    forbidden_state = json.loads(
+        worker.store.get_service_state("dws_forbidden_conversations") or "{}"
+    )
+    assert "cid-1" in forbidden_state
+
+
 def test_produce_once_starts_dws_auth_login_once_for_login_error(
     tmp_path: Path, monkeypatch
 ):
