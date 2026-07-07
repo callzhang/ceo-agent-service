@@ -888,7 +888,7 @@ def test_process_work_items_command_reclaims_stale_processing_input(
     claimed = store.claim_work_summary_inputs(limit=1)
     with store._connect() as db:
         db.execute(
-            "update work_summary_inputs set updated_at=datetime('now', '-17 minutes') where id=?",
+            "update work_summary_inputs set updated_at=datetime('now', '-25 minutes') where id=?",
             (claimed[0].id,),
         )
 
@@ -1444,8 +1444,8 @@ def test_process_work_items_command_uses_task_agent_timeouts(
 
     assert processed == 1
     assert capsys.readouterr().out == "process-work-items processed=1\n"
-    assert constructed["timeout_seconds"] == 900
-    assert constructed["idle_timeout_seconds"] == 600
+    assert constructed["timeout_seconds"] == 1200
+    assert constructed["idle_timeout_seconds"] == 900
 
 
 def test_process_work_items_command_passes_dws_client_to_task_agent(
@@ -2406,10 +2406,10 @@ def test_settings_defaults_point_to_memory_home():
     assert settings.corpus_dir == repo_root / "data" / "corpus"
     assert settings.batch_seconds == 120
     assert settings.poll_interval_seconds == 300
-    assert settings.codex_timeout_seconds == 420
-    assert settings.codex_idle_timeout_seconds == 180
-    assert settings.task_codex_timeout_seconds == 900
-    assert settings.task_codex_idle_timeout_seconds == 600
+    assert settings.codex_timeout_seconds == 1200
+    assert settings.codex_idle_timeout_seconds == 900
+    assert settings.task_codex_timeout_seconds == 1200
+    assert settings.task_codex_idle_timeout_seconds == 900
     assert settings.task_work_item_interval_seconds == 60
     assert settings.task_daily_interval_seconds == 86_400
     assert settings.max_batches is None

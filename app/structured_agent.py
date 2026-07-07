@@ -81,8 +81,8 @@ class StructuredCodexRunner:
         codex_bin: str = "codex",
         executor: Callable[[list[str], str, dict[str, str]], str] | None = None,
         session_exists: Callable[[str], bool] | None = None,
-        timeout_seconds: int = 420,
-        idle_timeout_seconds: int = 180,
+        timeout_seconds: int = 1200,
+        idle_timeout_seconds: int = 900,
         persist_conversation_session: bool = True,
     ):
         self.store = store

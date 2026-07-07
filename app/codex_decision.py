@@ -601,8 +601,8 @@ class CodexDecisionRunner:
         workspace: Path,
         codex_bin: str = "codex",
         executor: Callable[[list[str], str], str] | None = None,
-        timeout_seconds: int = 120,
-        idle_timeout_seconds: int = 180,
+        timeout_seconds: int = 1200,
+        idle_timeout_seconds: int = 900,
         codex_home: Path | None = None,
     ):
         self.runner = CodexRunner(workspace=workspace, codex_bin=codex_bin)

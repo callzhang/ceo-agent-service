@@ -71,8 +71,8 @@ class TaskAgentCodexRunner:
         workspace: Path,
         codex_bin: str = "codex",
         executor=None,
-        timeout_seconds: int = 420,
-        idle_timeout_seconds: int = 180,
+        timeout_seconds: int = 1200,
+        idle_timeout_seconds: int = 900,
     ):
         from app.codex_decision import (
             _subprocess_failure_reason,
