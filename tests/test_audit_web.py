@@ -138,6 +138,40 @@ def test_render_attempt_list_shows_history_rows(tmp_path: Path):
     assert "/codex/session-1" not in html
 
 
+def test_history_chart_labels_terminal_reactions_and_oa_actions(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.record_reply_attempt(
+        conversation_id="cid-reacted",
+        conversation_title="Friday",
+        trigger_message_id="msg-reacted",
+        trigger_sender="Xiaomin",
+        trigger_text="[群公告]@所有人 今天 bug 日清。",
+        action="no_reply",
+        sensitivity_kind="general",
+        codex_reason="用轻量 reaction 表达支持。",
+        send_status="reacted",
+    )
+    store.record_reply_attempt(
+        conversation_id="cid-oa",
+        conversation_title="审批通知",
+        trigger_message_id="msg-oa",
+        trigger_sender="工作通知",
+        trigger_text="[Ding]审批提醒",
+        action="oa_approval",
+        sensitivity_kind="internal_finance",
+        codex_reason="退回",
+        oa_action="退回",
+        send_status="commented",
+    )
+
+    payload = audit_web_module._history_chart_payload(store)
+    series_names = {series["name"] for series in payload["series"]}
+
+    assert "🙂 Reacted" in series_names
+    assert "🧾 Returned" in series_names
+    assert "💬 Processing" not in series_names
+
+
 def test_table_toolbar_uses_fixed_alignment_metrics(tmp_path: Path):
     html = render_attempt_list(AutoReplyStore(tmp_path / "worker.sqlite3"))
 

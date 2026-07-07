@@ -509,8 +509,11 @@ HISTORY_CHART_COLORS = {
     "💬 Sent": "#00b48a",
     "💬 Skipped": "#a8a8aa",
     "💬 Processing": "#3772cf",
+    "💬 Commented": "#3772cf",
+    "🙂 Reacted": "#6f8fdd",
     "💬 Failed": "#d45656",
     "💬 Dry run": "#c37d0d",
+    "📆 Calendar": "#6f8fdd",
     "📆 Accepted": "#00b48a",
     "📆 Tentative": "#c37d0d",
     "📆 Declined": "#d45656",
@@ -2038,14 +2041,15 @@ def _history_event_label(attempt: ReplyAttempt) -> str:
     if calendar_status == "declined":
         return "📆 Declined"
 
-    oa_action = attempt.oa_action.strip().lower()
-    if oa_action in {"agree", "approve", "approved"}:
+    oa_action = attempt.oa_action.strip()
+    oa_action_state = _action_state_class(oa_action)
+    if oa_action_state == "action-state-approved":
         return "🧾 Approved"
-    if oa_action in {"comment", "commented"}:
+    if oa_action_state == "action-state-commented":
         return "🧾 Commented"
-    if oa_action in {"return", "returned"}:
+    if oa_action_state == "action-state-returned":
         return "🧾 Returned"
-    if oa_action in {"refuse", "reject", "rejected"}:
+    if oa_action_state == "action-state-rejected":
         return "🧾 Rejected"
 
     status = attempt.send_status.strip().lower()
@@ -2057,6 +2061,12 @@ def _history_event_label(attempt: ReplyAttempt) -> str:
         return "💬 Failed"
     if status == "dry_run":
         return "💬 Dry run"
+    if status == "reacted":
+        return "🙂 Reacted"
+    if status == "commented":
+        return "💬 Commented"
+    if status == "calendar":
+        return "📆 Calendar"
     return "💬 Processing"
 
 
