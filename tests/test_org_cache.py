@@ -286,6 +286,7 @@ def test_cached_dws_client_delegates_auth_archives(tmp_path):
             self.export_paths = []
             self.import_paths = []
             self.auth_status_calls = 0
+            self.pat_scopes = []
 
         def export_auth_archive(self, output_path):
             self.export_paths.append(output_path)
@@ -297,6 +298,10 @@ def test_cached_dws_client_delegates_auth_archives(tmp_path):
             self.auth_status_calls += 1
             return {"authenticated": True}
 
+        def start_pat_authorization(self, scopes):
+            self.pat_scopes.append(scopes)
+            return "process"
+
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     fake = FakeDws()
     cached = CachedDwsClient(fake, CachedOrgDirectory(store))
@@ -305,11 +310,14 @@ def test_cached_dws_client_delegates_auth_archives(tmp_path):
     cached.export_auth_archive(archive_path)
     cached.import_auth_archive(archive_path)
     auth_status = cached.auth_status()
+    process = cached.start_pat_authorization(["chat.message:list"])
 
     assert fake.export_paths == [archive_path]
     assert fake.import_paths == [archive_path]
     assert fake.auth_status_calls == 1
     assert auth_status == {"authenticated": True}
+    assert fake.pat_scopes == [["chat.message:list"]]
+    assert process == "process"
 
 
 def test_cached_dws_client_delegates_linked_material_reads(tmp_path):

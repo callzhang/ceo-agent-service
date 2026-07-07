@@ -98,6 +98,9 @@ class CachedDwsClient:
     def start_auth_login(self):
         return self.dws.start_auth_login()
 
+    def start_pat_authorization(self, scopes: list[str]):
+        return self.dws.start_pat_authorization(scopes)
+
     def export_auth_archive(self, output_path):
         return self.dws.export_auth_archive(output_path)
 
