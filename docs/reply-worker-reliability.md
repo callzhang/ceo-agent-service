@@ -101,10 +101,11 @@ The LaunchAgents keep work data under the configured `CEO_WORKSPACE` and use the
 current user `HOME` unless `CEO_SERVICE_HOME` is explicitly set. The service
 forces DWS file-backed auth with `DWS_DISABLE_KEYCHAIN=1` and defaults
 `DWS_KEYCHAIN_DIR` to
-`${CEO_WORKSPACE}/Library/Application Support/dws-cli`. This keeps the service's
-refresh token exportable and restorable instead of depending on macOS Keychain
-state. The diagnostic script `scripts/check-dws-auth-env.sh` verifies the
-default user auth path first and then compares the file-keychain probe.
+`${service_root}/data/dws-keychain`. This keeps the service's DWS login state
+inside the service runtime data boundary, exportable and restorable instead of
+depending on macOS Keychain state. The diagnostic script
+`scripts/check-dws-auth-env.sh` verifies the default user auth path first and
+then compares the file-keychain probe.
 
 After successful DWS calls, the worker periodically writes a local auth archive
 to `data/dws-auth-backup/dws-auth.tar.gz` by calling `dws auth export`. The DWS

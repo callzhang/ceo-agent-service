@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-workspace="${CEO_WORKSPACE:-${HOME}/Documents/memory}"
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 service_home="${CEO_SERVICE_HOME:-${HOME}}"
-keychain_dir="${DWS_KEYCHAIN_DIR:-${workspace}/Library/Application Support/dws-cli}"
+keychain_dir="${DWS_KEYCHAIN_DIR:-${repo_root}/data/dws-keychain}"
 dws_bin="${DWS_BIN:-dws}"
 path_value="${HOME}/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 service_user="${CEO_SERVICE_USER:-${USER:-$(id -un)}}"

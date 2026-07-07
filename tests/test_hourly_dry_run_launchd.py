@@ -17,7 +17,7 @@ def test_local_service_script_runs_single_main_service():
     assert 'export CEO_WORKSPACE="${CEO_WORKSPACE:-${HOME}/Documents/memory}"' in content
     assert 'export DWS_DISABLE_KEYCHAIN="${DWS_DISABLE_KEYCHAIN:-1}"' in content
     assert (
-        'export DWS_KEYCHAIN_DIR="${DWS_KEYCHAIN_DIR:-${CEO_WORKSPACE}/Library/Application Support/dws-cli}"'
+        'export DWS_KEYCHAIN_DIR="${DWS_KEYCHAIN_DIR:-${repo_root}/data/dws-keychain}"'
         in content
     )
     assert 'export CEO_PRODUCER_INTERVAL_SECONDS="${CEO_PRODUCER_INTERVAL_SECONDS:-60}"' in content
@@ -54,7 +54,7 @@ def test_main_launch_agent_runs_single_keepalive_service():
     assert "CEO_SERVICE_ROOT" in command[2]
     assert 'DWS_DISABLE_KEYCHAIN="${DWS_DISABLE_KEYCHAIN:-1}"' in command[2]
     assert (
-        'DWS_KEYCHAIN_DIR="${DWS_KEYCHAIN_DIR:-${CEO_WORKSPACE}/Library/Application Support/dws-cli}"'
+        'DWS_KEYCHAIN_DIR="${DWS_KEYCHAIN_DIR:-${service_root}/data/dws-keychain}"'
         in command[2]
     )
     assert "CEO_NOT_SEND_MESSAGE=0" in command[2]
@@ -112,6 +112,8 @@ def test_dws_auth_env_probe_reproduces_file_keychain_boundary_without_native_key
     assert "default-user-auth" in content
     assert "forced-file-keychain" in content
     assert "wrong-file-keychain" not in content
+    assert 'repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"' in content
+    assert 'keychain_dir="${DWS_KEYCHAIN_DIR:-${repo_root}/data/dws-keychain}"' in content
     assert "DWS_DISABLE_KEYCHAIN=1" in content
     assert "DWS_KEYCHAIN_DIR=\"${keychain_dir}\"" in content
     assert "CEO_SERVICE_HOME" in content
