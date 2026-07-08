@@ -1010,7 +1010,12 @@ class DingTalkAutoReplyWorker:
         if isinstance(exc, DwsError) and exc.needs_authorization:
             return False
         detail = str(exc).lower()
-        if "forbidden request" not in detail:
+        permission_denied = (
+            "forbidden request" in detail
+            or "auth_permission_denied" in detail
+            or "permission denied" in detail
+        )
+        if not permission_denied:
             return False
         if isinstance(exc, DwsError):
             return exc.code in {None, "1001"}
