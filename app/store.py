@@ -201,6 +201,9 @@ class ReplyTask(BaseModel):
     trigger_text: str
     trigger_message_json: str = "{}"
     available_at: str = ""
+    force_new_decision: bool = False
+    oa_url: str = ""
+    manual_rerun_attempt_id: int = 0
     status: str
     attempts: int
     locked_at: str | None = None
@@ -392,6 +395,9 @@ class AutoReplyStore:
                     trigger_text text not null,
                     trigger_message_json text not null default '{}',
                     available_at text not null default '',
+                    force_new_decision integer not null default 0,
+                    oa_url text not null default '',
+                    manual_rerun_attempt_id integer not null default 0,
                     status text not null default 'pending',
                     attempts integer not null default 0,
                     locked_at text,
@@ -741,6 +747,9 @@ class AutoReplyStore:
             for column, definition in (
                 ("trigger_message_json", "text not null default '{}'"),
                 ("available_at", "text not null default ''"),
+                ("force_new_decision", "integer not null default 0"),
+                ("oa_url", "text not null default ''"),
+                ("manual_rerun_attempt_id", "integer not null default 0"),
             ):
                 if column not in reply_task_columns:
                     db.execute(
@@ -814,6 +823,9 @@ class AutoReplyStore:
             trigger_text=row["trigger_text"],
             trigger_message_json=row["trigger_message_json"],
             available_at=row["available_at"],
+            force_new_decision=bool(row["force_new_decision"]),
+            oa_url=row["oa_url"],
+            manual_rerun_attempt_id=row["manual_rerun_attempt_id"],
             status=row["status"],
             attempts=row["attempts"],
             locked_at=row["locked_at"],
@@ -838,6 +850,9 @@ class AutoReplyStore:
         trigger_text: str,
         trigger_message_json: str = "{}",
         available_at: str = "",
+        force_new_decision: bool = False,
+        oa_url: str = "",
+        manual_rerun_attempt_id: int = 0,
         error: str = "",
     ) -> bool:
         with self._connect() as db:
@@ -853,9 +868,12 @@ class AutoReplyStore:
                     trigger_text,
                     trigger_message_json,
                     available_at,
+                    force_new_decision,
+                    oa_url,
+                    manual_rerun_attempt_id,
                     error
                 )
-                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     conversation_id,
@@ -867,10 +885,90 @@ class AutoReplyStore:
                     trigger_text,
                     trigger_message_json,
                     available_at,
+                    int(force_new_decision),
+                    oa_url,
+                    manual_rerun_attempt_id,
                     error,
                 ),
             )
             return cursor.rowcount == 1
+
+    def enqueue_manual_rerun_reply_task(
+        self,
+        *,
+        conversation_id: str,
+        conversation_title: str,
+        single_chat: bool,
+        trigger_message_id: str,
+        trigger_create_time: str,
+        trigger_sender: str,
+        trigger_text: str,
+        trigger_message_json: str,
+        oa_url: str = "",
+        attempt_id: int = 0,
+    ) -> ReplyTask:
+        with self._connect() as db:
+            db.execute(
+                """
+                insert into reply_tasks (
+                    conversation_id,
+                    conversation_title,
+                    single_chat,
+                    trigger_message_id,
+                    trigger_create_time,
+                    trigger_sender,
+                    trigger_text,
+                    trigger_message_json,
+                    available_at,
+                    force_new_decision,
+                    oa_url,
+                    manual_rerun_attempt_id,
+                    status,
+                    locked_at,
+                    error
+                )
+                values (?, ?, ?, ?, ?, ?, ?, ?, '', 1, ?, ?, 'pending', null, ?)
+                on conflict(conversation_id, trigger_message_id) do update set
+                    conversation_title=excluded.conversation_title,
+                    single_chat=excluded.single_chat,
+                    trigger_create_time=excluded.trigger_create_time,
+                    trigger_sender=excluded.trigger_sender,
+                    trigger_text=excluded.trigger_text,
+                    trigger_message_json=excluded.trigger_message_json,
+                    available_at='',
+                    force_new_decision=1,
+                    oa_url=excluded.oa_url,
+                    manual_rerun_attempt_id=excluded.manual_rerun_attempt_id,
+                    status='pending',
+                    locked_at=null,
+                    error=excluded.error,
+                    updated_at=current_timestamp
+                """,
+                (
+                    conversation_id,
+                    conversation_title,
+                    int(single_chat),
+                    trigger_message_id,
+                    trigger_create_time,
+                    trigger_sender,
+                    trigger_text,
+                    trigger_message_json,
+                    oa_url,
+                    attempt_id,
+                    f"manual_rerun_from_attempt:{attempt_id}",
+                ),
+            )
+            row = db.execute(
+                """
+                select *
+                from reply_tasks
+                where conversation_id=? and trigger_message_id=?
+                """,
+                (conversation_id, trigger_message_id),
+            ).fetchone()
+            if row is None:
+                raise RuntimeError("manual rerun reply task was not persisted")
+            return self._reply_task_from_row(row)
 
     def claim_reply_tasks(self, limit: int, now: str | None = None) -> list[ReplyTask]:
         if limit <= 0:

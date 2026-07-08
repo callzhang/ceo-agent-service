@@ -212,6 +212,46 @@ def test_reply_task_queue_dedupes_by_conversation_and_message(tmp_path: Path):
     assert store.count_reply_tasks(status="pending") == 1
 
 
+def test_enqueue_manual_rerun_reply_task_requeues_existing_task(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="cid-1",
+        conversation_title="Friday",
+        single_chat=False,
+        trigger_message_id="msg-1",
+        trigger_create_time="2026-05-13 18:00:00",
+        trigger_sender="Mina",
+        trigger_text="@Alex Chen 看一下",
+        trigger_message_json='{"open_message_id":"msg-1","content":"old"}',
+    )
+    task = store.claim_reply_tasks(limit=1)[0]
+    store.fail_reply_task(task.id, "old failure")
+
+    rerun = store.enqueue_manual_rerun_reply_task(
+        conversation_id="cid-1",
+        conversation_title="Friday",
+        single_chat=False,
+        trigger_message_id="msg-1",
+        trigger_create_time="2026-05-13 18:01:00",
+        trigger_sender="Mina",
+        trigger_text="@Alex Chen 重新看",
+        trigger_message_json='{"open_message_id":"msg-1","content":"new"}',
+        oa_url="https://oa.example/process",
+        attempt_id=42,
+    )
+
+    assert rerun.id == task.id
+    assert rerun.status == "pending"
+    assert rerun.locked_at is None
+    assert rerun.force_new_decision is True
+    assert rerun.oa_url == "https://oa.example/process"
+    assert rerun.manual_rerun_attempt_id == 42
+    assert rerun.error == "manual_rerun_from_attempt:42"
+    assert rerun.trigger_text == "@Alex Chen 重新看"
+    claimed = store.claim_reply_tasks(limit=1)
+    assert [claimed_task.id for claimed_task in claimed] == [task.id]
+
+
 def test_claim_reply_tasks_marks_tasks_processing_atomically(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.enqueue_reply_task(

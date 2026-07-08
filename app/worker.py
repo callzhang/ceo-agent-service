@@ -196,7 +196,7 @@ def _is_codex_login_required_error(reason: str) -> bool:
 
 def _is_codex_provider_auth_error(reason: str) -> bool:
     normalized = reason.lower()
-    return (
+    responses_api_auth_failed = (
         "unexpected status 401 unauthorized" in normalized
         and (
             "missing bearer or basic authentication" in normalized
@@ -204,6 +204,11 @@ def _is_codex_provider_auth_error(reason: str) -> bool:
         )
         and "/v1/responses" in normalized
     )
+    chatgpt_codex_forbidden = (
+        "unexpected status 403 forbidden" in normalized
+        and "chatgpt.com/backend-api/codex/responses" in normalized
+    )
+    return responses_api_auth_failed or chatgpt_codex_forbidden
 
 
 def _codex_provider_auth_error(reason: str) -> str:
@@ -212,6 +217,11 @@ def _codex_provider_auth_error(reason: str) -> str:
         detail = "OpenAI Responses API was called without a bearer/basic auth header"
     elif "invalid api key" in normalized:
         detail = "configured Codex model provider rejected its API key"
+    elif (
+        "unexpected status 403 forbidden" in normalized
+        and "chatgpt.com/backend-api/codex/responses" in normalized
+    ):
+        detail = "ChatGPT Codex backend rejected the service session with 403 Forbidden"
     else:
         detail = "Codex model provider authentication failed"
     return (
@@ -1892,6 +1902,7 @@ class DingTalkAutoReplyWorker:
         if self._handle_minutes_permission_request_if_actionable(
             conversation,
             trigger,
+            ignore_existing_attempt=task.force_new_decision,
             raise_on_delivery_failure=True,
         ):
             return True
@@ -1899,6 +1910,9 @@ class DingTalkAutoReplyWorker:
             conversation,
             trigger,
             prompt_context_messages,
+            ignore_existing_attempt=task.force_new_decision,
+            include_resolved_calendar_invites=task.force_new_decision,
+            allow_duplicate_send=task.force_new_decision,
             raise_on_delivery_failure=True,
             complete_task_id=task.id,
         ):
@@ -1907,6 +1921,8 @@ class DingTalkAutoReplyWorker:
             conversation,
             trigger,
             prompt_context_messages,
+            ignore_existing_attempt=task.force_new_decision,
+            oa_url_override=task.oa_url,
         ):
             return not self.dry_run
         if self._is_system_or_notification_message(trigger):
@@ -1917,11 +1933,15 @@ class DingTalkAutoReplyWorker:
             conversation,
             [trigger],
             prompt_context_messages,
-            ignore_existing_attempt=self._should_regenerate_after_processing_failure(
-                conversation,
-                trigger,
-                task,
+            ignore_existing_attempt=(
+                task.force_new_decision
+                or self._should_regenerate_after_processing_failure(
+                    conversation,
+                    trigger,
+                    task,
+                )
             ),
+            allow_duplicate_send=task.force_new_decision,
             raise_on_delivery_failure=True,
         )
         return True

@@ -3514,50 +3514,57 @@ def test_handle_feedback_post_updates_attempt_and_redirects(tmp_path: Path):
     assert attempt.corrected_reply_text == "先看材料"
 
 
-def test_handle_rerun_attempt_post_calls_worker_and_redirects(tmp_path: Path):
-    class FakeWorker:
-        def __init__(self):
-            self.calls = []
-
-        def rerun_message(
-            self,
-            conversation,
-            message_id,
-            *,
-            force_new_decision=False,
-            oa_url="",
-        ):
-            self.calls.append(
-                {
-                    "conversation": conversation,
-                    "message_id": message_id,
-                    "force_new_decision": force_new_decision,
-                    "oa_url": oa_url,
-                }
-            )
-            return message_id
-
+def test_handle_rerun_attempt_post_requeues_task_and_redirects(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     attempt_id = seed_attempt(store)
-    worker = FakeWorker()
 
     status, headers, html = handle_rerun_attempt_post(
         store,
         attempt_id,
-        worker_factory=lambda settings: worker,
+        worker_factory=lambda settings: (_ for _ in ()).throw(
+            AssertionError("rerun POST must not run the worker synchronously")
+        ),
     )
 
     assert status == 303
     assert headers["Location"] == f"/attempts/{attempt_id}"
     assert html == ""
-    assert len(worker.calls) == 1
-    call = worker.calls[0]
-    assert call["conversation"].open_conversation_id == "cid-1"
-    assert call["conversation"].title == "技术部"
-    assert call["conversation"].single_chat is False
-    assert call["message_id"] == "msg-1"
-    assert call["force_new_decision"] is True
-    assert call["oa_url"] == ""
+    task = store.get_reply_task_for_message("cid-1", "msg-1")
+    assert task is not None
+    assert task.status == "pending"
+    assert task.force_new_decision is True
+    assert task.manual_rerun_attempt_id == attempt_id
+    trigger = DingTalkMessage.model_validate_json(task.trigger_message_json)
+    assert trigger.open_message_id == "msg-1"
+    assert trigger.content == "@Alex Chen 这个怎么处理？"
+
+
+def test_handle_rerun_attempt_post_replaces_invalid_legacy_task_json(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    attempt_id = seed_attempt(store)
+    store.enqueue_reply_task(
+        conversation_id="cid-1",
+        conversation_title="技术部",
+        single_chat=False,
+        trigger_message_id="msg-1",
+        trigger_create_time="2026-05-13 18:00:00",
+        trigger_sender="Xiaomin",
+        trigger_text="old",
+        trigger_message_json="{}",
+    )
+
+    status, headers, html = handle_rerun_attempt_post(store, attempt_id)
+
+    assert status == 303
+    assert headers["Location"] == f"/attempts/{attempt_id}"
+    assert html == ""
+    task = store.get_reply_task_for_message("cid-1", "msg-1")
+    assert task is not None
+    trigger = DingTalkMessage.model_validate_json(task.trigger_message_json)
+    assert trigger.open_message_id == "msg-1"
+    assert trigger.content == "@Alex Chen 这个怎么处理？"
 
 
 def test_handle_recall_post_calls_dws_message_recall_and_records_success(

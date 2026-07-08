@@ -4524,6 +4524,7 @@ def handle_rerun_attempt_post(
     return_to: str = "",
     worker_factory: Callable[[object], object] | None = None,
 ) -> tuple[int, dict[str, str], str]:
+    del worker_factory
     attempt = store.get_reply_attempt(attempt_id)
     if attempt is None:
         return 404, {}, render_page("Attempt not found", "Attempt not found")
@@ -4537,28 +4538,48 @@ def handle_rerun_attempt_post(
                 f"<p>Conversation not found: {escape(attempt.conversation_id)}</p>",
             ),
         )
-    settings = _audit_worker_settings(store.path)
-    worker = (worker_factory or _create_audit_worker)(settings)
-    conversation = DingTalkConversation(
-        open_conversation_id=conversation_record.conversation_id,
-        title=conversation_record.title,
-        single_chat=conversation_record.single_chat,
-        unread_point=1,
-    )
-    try:
-        processed_message_id = worker.rerun_message(
-            conversation,
-            attempt.trigger_message_id,
-            force_new_decision=True,
-            oa_url=attempt.oa_url,
-        )
-    except (SystemExit, ValueError) as exc:
-        return 400, {}, render_page("重跑失败", f"<p>{escape(str(exc))}</p>")
-    store.complete_reply_task_for_message(
+    existing_task = store.get_reply_task_for_message(
         attempt.conversation_id,
-        processed_message_id,
+        attempt.trigger_message_id,
+    )
+    if existing_task is not None and _is_valid_rerun_trigger_json(
+        existing_task.trigger_message_json
+    ):
+        trigger_message_json = existing_task.trigger_message_json
+        trigger_create_time = existing_task.trigger_create_time
+    else:
+        trigger_message = DingTalkMessage(
+            open_conversation_id=attempt.conversation_id,
+            open_message_id=attempt.trigger_message_id,
+            conversation_title=conversation_record.title,
+            single_chat=conversation_record.single_chat,
+            sender_name=attempt.trigger_sender,
+            create_time=attempt.created_at,
+            content=attempt.trigger_text,
+        )
+        trigger_message_json = trigger_message.model_dump_json()
+        trigger_create_time = trigger_message.create_time
+    store.enqueue_manual_rerun_reply_task(
+        conversation_id=attempt.conversation_id,
+        conversation_title=conversation_record.title,
+        single_chat=conversation_record.single_chat,
+        trigger_message_id=attempt.trigger_message_id,
+        trigger_create_time=trigger_create_time,
+        trigger_sender=attempt.trigger_sender,
+        trigger_text=attempt.trigger_text,
+        trigger_message_json=trigger_message_json,
+        oa_url=attempt.oa_url,
+        attempt_id=attempt.id,
     )
     return 303, {"Location": _safe_action_return_to(return_to, attempt_id)}, ""
+
+
+def _is_valid_rerun_trigger_json(trigger_message_json: str) -> bool:
+    try:
+        DingTalkMessage.model_validate_json(trigger_message_json)
+    except ValueError:
+        return False
+    return True
 
 
 def _safe_action_return_to(return_to: str, attempt_id: int) -> str:

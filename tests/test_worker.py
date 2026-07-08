@@ -1564,6 +1564,55 @@ def test_queued_task_starts_pat_authorization_when_context_read_needs_authorizat
     )
 
 
+def test_consume_manual_rerun_task_forces_new_decision(tmp_path: Path, monkeypatch):
+    trigger = message("@Alex Chen 重新判断一下")
+    dws = FakeDws([conversation()], {"cid-1": [trigger]})
+    worker = make_worker(
+        tmp_path,
+        dws,
+        FakeCodex(CodexDecision(action=CodexAction.NO_REPLY, reason="unused")),
+        monkeypatch,
+    )
+    worker.store.enqueue_manual_rerun_reply_task(
+        conversation_id="cid-1",
+        conversation_title="Friday",
+        single_chat=False,
+        trigger_message_id=trigger.open_message_id,
+        trigger_create_time=trigger.create_time,
+        trigger_sender=trigger.sender_name,
+        trigger_text=trigger.content,
+        trigger_message_json=trigger.model_dump_json(),
+        attempt_id=7,
+    )
+    monkeypatch.setattr(
+        worker,
+        "_handle_minutes_permission_request_if_actionable",
+        lambda *args, **kwargs: False,
+    )
+    monkeypatch.setattr(
+        worker,
+        "_handle_calendar_invite_if_actionable",
+        lambda *args, **kwargs: False,
+    )
+    monkeypatch.setattr(
+        worker,
+        "_handle_oa_approval_if_actionable",
+        lambda *args, **kwargs: False,
+    )
+    calls = {}
+
+    def capture_process_batch(conversation, triggers, prompt_context_messages, **kwargs):
+        del conversation, triggers, prompt_context_messages
+        calls.update(kwargs)
+
+    monkeypatch.setattr(worker, "_process_batch", capture_process_batch)
+
+    assert worker.consume_once(max_tasks=1) == 1
+
+    assert calls["ignore_existing_attempt"] is True
+    assert calls["allow_duplicate_send"] is True
+
+
 def test_produce_once_starts_dws_auth_login_once_for_login_error(
     tmp_path: Path, monkeypatch
 ):
@@ -4268,6 +4317,49 @@ def test_consume_once_codex_provider_auth_failure_waits_for_authorization(
         notification["title"] == "CEO task waiting for authorization: Friday"
         for notification in notifications
     )
+
+
+def test_consume_once_chatgpt_codex_forbidden_waits_for_authorization(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message("@Alex Chen(明哥) 这个怎么处理？")
+    dws = FakeDws([conversation()], {"cid-1": [trigger]})
+
+    def fail_codex(_prompt, _session_id):
+        raise RuntimeError(
+            "unexpected status 403 Forbidden: <html>blocked</html>, "
+            "url: https://chatgpt.com/backend-api/codex/responses, "
+            "cf-ray: a17c9a26aeb585e3-HKG"
+        )
+
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="先按A方案走"),
+        before_decide=fail_codex,
+    )
+    worker = make_worker(
+        tmp_path,
+        dws,
+        codex,
+        monkeypatch,
+        max_task_attempts=3,
+    )
+    monkeypatch.setattr("app.worker.send_macos_notification", lambda **_: None)
+    worker.produce_once()
+
+    assert worker.consume_once(max_tasks=1) == 0
+    assert worker.store.count_reply_tasks(status="pending") == 1
+    assert worker.store.count_reply_tasks(status="failed") == 0
+    with sqlite3.connect(tmp_path / "worker.sqlite3") as db:
+        attempts, error, available_at = db.execute(
+            "select attempts, error, available_at from reply_tasks"
+        ).fetchone()
+    assert attempts == 0
+    assert error.startswith("codex_provider_auth_failed:")
+    assert "ChatGPT Codex backend rejected the service session" in error
+    assert available_at == "2026-05-13 17:15:00"
+    error_kinds = [error.kind for error in worker.store.list_errors(limit=10)]
+    assert "reply_task_authorization" in error_kinds
+    assert "reply_task_retry" not in error_kinds
 
 
 def test_consume_once_codex_provider_transport_failure_waits_for_recovery(
