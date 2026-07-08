@@ -9552,8 +9552,12 @@ def test_force_new_rerun_can_resend_when_trigger_already_has_sent_reply(
 
     assert len(codex.calls) == 1
     assert final_sent(dws) == [("cid-1", "@周俊杰 改走B方案（by明哥分身）")]
-    attempt = worker.store.get_reply_attempt(attempt_id)
+    old_attempt = worker.store.get_reply_attempt(attempt_id)
+    assert old_attempt is not None
+    assert old_attempt.send_status == "sent"
+    attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
     assert attempt is not None
+    assert attempt.id != attempt_id
     assert attempt.draft_reply_text == "改走B方案"
     assert attempt.final_reply_text == "@周俊杰 改走B方案（by明哥分身）"
     assert attempt.send_status == "sent"
