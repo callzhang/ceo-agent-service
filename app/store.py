@@ -2483,7 +2483,9 @@ class AutoReplyStore:
         existing_attempt = self.get_latest_reply_attempt_for_trigger(
             conversation_id, trigger_message_id
         )
-        if existing_attempt is None:
+        if existing_attempt is None or self.has_sent_reply_for_trigger(
+            conversation_id, trigger_message_id
+        ):
             return self.record_reply_attempt(
                 conversation_id=conversation_id,
                 conversation_title=conversation_title,

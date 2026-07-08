@@ -1177,6 +1177,62 @@ def test_record_reply_attempt_for_trigger_reuses_existing_attempt_id(
     assert attempt.retry_count == 0
 
 
+def test_record_reply_attempt_for_trigger_does_not_overwrite_sent_reply_attempt(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+
+    first_id = store.record_reply_attempt_for_trigger(
+        conversation_id="cid-1",
+        conversation_title="技术部",
+        trigger_message_id="msg-1",
+        trigger_sender="Xiaomin",
+        trigger_text="@Alex Chen 这个怎么处理？",
+        action="send_reply",
+        sensitivity_kind="general",
+        codex_reason="direct ask",
+        draft_reply_text="先按A方案走",
+        send_status="pending",
+    )
+    store.update_reply_attempt(
+        first_id,
+        final_reply_text="先按A方案走",
+        send_status="sent",
+    )
+    store.record_sent_reply(
+        "cid-1",
+        "msg-1",
+        "先按A方案走",
+        send_result_json='{"success":true}',
+        feedback_token="token-1",
+    )
+
+    second_id = store.record_reply_attempt_for_trigger(
+        conversation_id="cid-1",
+        conversation_title="技术部",
+        trigger_message_id="msg-1",
+        trigger_sender="Xiaomin",
+        trigger_text="@Alex Chen 这个怎么处理？",
+        action="stop_with_error",
+        sensitivity_kind="general",
+        codex_reason="provider failed",
+        send_status="pending",
+    )
+
+    first_attempt = store.get_reply_attempt(first_id)
+    second_attempt = store.get_reply_attempt(second_id)
+
+    assert second_id != first_id
+    assert store.count_reply_attempts() == 2
+    assert first_attempt is not None
+    assert first_attempt.action == "send_reply"
+    assert first_attempt.send_status == "sent"
+    assert first_attempt.final_reply_text == "先按A方案走"
+    assert second_attempt is not None
+    assert second_attempt.action == "stop_with_error"
+    assert second_attempt.send_status == "pending"
+
+
 def test_get_latest_reply_attempt_for_trigger(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     first_id = store.record_reply_attempt(
