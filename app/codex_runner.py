@@ -36,6 +36,15 @@ DingTalk material reading
 - record why each material command was used.
 - Do not expose tokens, cookies, OAuth codes, signed URLs, local credential paths, or raw secret-bearing commands.
 """.strip()
+XIAOQING_INTERVIEW_READING_INSTRUCTIONS = """
+Xiaoqing interview material reading
+
+- Candidate links under `https://interview.hr.startask.net/candidates/` are Xiaoqing interview-system records, not ordinary DingTalk docs or webpages.
+- When a candidate or hiring judgment depends on a Xiaoqing link, use the `xiaoqing_interview` MCP tools to read the structured candidate context and review-package HTML before deciding.
+- Do not use curl, browser scraping, DWS doc commands, or local search as substitutes for the Xiaoqing candidate record.
+- If `xiaoqing_interview` is unavailable, unauthorized, or cannot return the review package, classify it as a blocking tool/auth issue with `critical_info_unavailable:xiaoqing_interview ...`; do not tell HR the sender failed to provide the interview text when the link itself was provided.
+- Only ask HR to paste interview text after the Xiaoqing tool confirms the record lacks that content or the current user truly lacks access.
+""".strip()
 # The CEO worker owns DWS readiness and authorization gating. Codex exec resume
 # does not support `-s`, so use the explicit bypass flag for both new and resumed
 # decision threads.
@@ -47,6 +56,8 @@ MEMORY_CONNECTOR_ENV_KEYS = {
     MEMORY_CONNECTOR_API_KEY_ENV,
     MEMORY_CONNECTOR_URL_ENV,
 }
+CODEX_PASSTHROUGH_MCP_SERVERS_ENV = "CEO_CODEX_PASSTHROUGH_MCP_SERVERS"
+DEFAULT_CODEX_PASSTHROUGH_MCP_SERVERS = ("xiaoqing_interview",)
 DWS_CLI_AUTH_ENV_KEYS = {
     "DWS_CLIENT_ID",
     "DWS_CLIENT_SECRET",
@@ -61,6 +72,7 @@ def codex_developer_instructions() -> str:
     return (
         f"{CODEX_DEVELOPER_INSTRUCTIONS_PREFIX}\n\n"
         f"{DWS_MATERIAL_READING_INSTRUCTIONS}\n\n"
+        f"{XIAOQING_INTERVIEW_READING_INSTRUCTIONS}\n\n"
         f"{ceo_agent_thread_prompt()}"
     )
 
@@ -210,6 +222,40 @@ def memory_connector_config_options() -> list[str]:
     ]
 
 
+def passthrough_mcp_server_config_options() -> list[str]:
+    config = _codex_config()
+    servers = config.get("mcp_servers") or {}
+    if not isinstance(servers, dict):
+        return []
+
+    options: list[str] = []
+    for name in _passthrough_mcp_server_names():
+        server = servers.get(name)
+        if not isinstance(server, dict):
+            continue
+        url = server.get("url")
+        if isinstance(url, str) and url.strip():
+            options.extend(
+                [
+                    "-c",
+                    _config_string(f"mcp_servers.{name}.url", url.strip()),
+                ]
+            )
+    return options
+
+
+def _passthrough_mcp_server_names() -> tuple[str, ...]:
+    raw = os.environ.get(CODEX_PASSTHROUGH_MCP_SERVERS_ENV, "").strip()
+    if not raw:
+        return DEFAULT_CODEX_PASSTHROUGH_MCP_SERVERS
+    names = tuple(
+        name.strip()
+        for name in raw.replace(";", ",").split(",")
+        if name.strip()
+    )
+    return names or DEFAULT_CODEX_PASSTHROUGH_MCP_SERVERS
+
+
 def _jwt_token_is_expired(token: str, *, now: float | None = None) -> bool:
     parts = token.split(".")
     if len(parts) < 2:
@@ -264,6 +310,7 @@ class CodexRunner:
             "--disable",
             "plugins",
             *memory_connector_config_options(),
+            *passthrough_mcp_server_config_options(),
             "-c",
             'approval_policy="untrusted"',
             "-c",

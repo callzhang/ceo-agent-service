@@ -24,6 +24,7 @@ def _isolate_memory_connector_env(tmp_path: Path, monkeypatch):
     monkeypatch.delenv("CEO_CODEX_MODEL", raising=False)
     monkeypatch.delenv("CEO_CODEX_MODEL_PROVIDER", raising=False)
     monkeypatch.delenv("CEO_CODEX_PROFILE", raising=False)
+    monkeypatch.delenv("CEO_CODEX_PASSTHROUGH_MCP_SERVERS", raising=False)
 
 
 def _developer_instructions_arg(command: list[str]) -> str:
@@ -90,6 +91,63 @@ def test_codex_command_exposes_memory_connector_mcp(tmp_path: Path, monkeypatch)
     assert "x-memory-user-id" not in " ".join(command)
 
 
+def test_codex_command_exposes_xiaoqing_interview_mcp_from_codex_config(
+    tmp_path: Path, monkeypatch
+):
+    codex_home = tmp_path / ".codex"
+    codex_home.mkdir()
+    (codex_home / "config.toml").write_text(
+        "\n".join(
+            [
+                "[mcp_servers.xiaoqing_interview]",
+                'url = "https://interview.hr.startask.net/mcp/"',
+                "",
+                "[mcp_servers.unrelated_business_tool]",
+                'url = "https://unrelated.example/mcp/"',
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+    runner = CodexRunner(workspace=tmp_path, codex_bin="codex")
+
+    command = runner.build_command(prompt="hello", session_id=None)
+
+    assert "--ignore-user-config" in command
+    assert (
+        'mcp_servers.xiaoqing_interview.url="https://interview.hr.startask.net/mcp/"'
+        in command
+    )
+    assert not any("unrelated_business_tool" in item for item in command)
+
+
+def test_codex_command_can_override_passthrough_mcp_allowlist(
+    tmp_path: Path, monkeypatch
+):
+    codex_home = tmp_path / ".codex"
+    codex_home.mkdir()
+    (codex_home / "config.toml").write_text(
+        "\n".join(
+            [
+                "[mcp_servers.xiaoqing_interview]",
+                'url = "https://interview.hr.startask.net/mcp/"',
+                "",
+                "[mcp_servers.other_safe_tool]",
+                'url = "https://other.example/mcp/"',
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+    monkeypatch.setenv("CEO_CODEX_PASSTHROUGH_MCP_SERVERS", "other_safe_tool")
+    runner = CodexRunner(workspace=tmp_path, codex_bin="codex")
+
+    command = runner.build_command(prompt="hello", session_id=None)
+
+    assert 'mcp_servers.other_safe_tool.url="https://other.example/mcp/"' in command
+    assert not any("xiaoqing_interview.url" in item for item in command)
+
+
 def test_codex_developer_instructions_classify_dws_login_as_tool_issue():
     instructions = codex_developer_instructions()
 
@@ -100,6 +158,16 @@ def test_codex_developer_instructions_classify_dws_login_as_tool_issue():
     assert "Never run `dws auth login`" in instructions
     assert "AGENT_CODE_NOT_EXISTS" in instructions
     assert "do not start a login flow" in instructions
+
+
+def test_codex_developer_instructions_require_xiaoqing_for_interview_links():
+    instructions = codex_developer_instructions()
+
+    assert "Xiaoqing interview material reading" in instructions
+    assert "https://interview.hr.startask.net/candidates/" in instructions
+    assert "xiaoqing_interview" in instructions
+    assert "critical_info_unavailable:xiaoqing_interview" in instructions
+    assert "do not tell HR the sender failed to provide the interview text" in instructions
 
 
 def test_codex_command_does_not_use_agent_envelope_schema_by_default(tmp_path: Path):
