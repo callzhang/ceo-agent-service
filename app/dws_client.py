@@ -1043,7 +1043,7 @@ class DwsClient:
 
     def build_create_doc_comment_command(self, node_id: str, content: str) -> list[str]:
         if not node_id.strip():
-            raise ValueError("missing doc comment nodeId")
+            raise ValueError("missing doc comment node")
         if not content.strip():
             raise ValueError("missing doc comment content")
         return [
@@ -1051,7 +1051,7 @@ class DwsClient:
             "doc",
             "comment",
             "create",
-            "--nodeId",
+            "--node",
             node_id,
             "--content",
             content,

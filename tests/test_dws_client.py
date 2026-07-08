@@ -1675,7 +1675,7 @@ def test_create_doc_comment_command_uses_doc_comment_create():
         "doc",
         "comment",
         "create",
-        "--nodeId",
+        "--node",
         "https://example.com/doc",
         "--content",
         "处理结果",

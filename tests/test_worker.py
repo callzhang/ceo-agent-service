@@ -6000,8 +6000,9 @@ def test_calendar_static_review_reads_minutes_accepts_and_comments_material(
     assert "Alex 给出是否推进录用的处理结论" in prompt
     signed_reply = "不建议直接推进，建议补充作业后再判断。（by明哥分身）"
     assert dws.calendar_responses == [("invite-1", "accepted")]
-    assert dws.doc_comments == [(target_url, signed_reply)]
-    assert final_sent(dws) == []
+    assert dws.doc_comments == []
+    assert dws.reply_messages == [("cid-1", "msg-1", "sender-1", signed_reply)]
+    assert final_sent_at_users(dws) == [["sender-user-1"]]
     attempt = worker.store.get_reply_attempt(1)
     assert attempt is not None
     assert attempt.action == "send_reply"
@@ -8178,14 +8179,9 @@ def test_minutes_link_is_passed_to_codex_without_worker_read(
     assert attempt is not None
     assert attempt.action == "send_reply"
     assert attempt.send_status == "sent"
-    assert dws.reply_messages == []
-    assert dws.doc_comments == [
-        (
-            "https://alidocs.dingtalk.com/i/u/dingdocSelectorV4/save?"
-            f"resourceId={minutes_id}&resourceType=SHANJI&createLink=true",
-            "这几个事项我看到了，先按材料方向推进。（by明哥分身）",
-        )
-    ]
+    signed_reply = "这几个事项我看到了，先按材料方向推进。（by明哥分身）"
+    assert dws.reply_messages == [("cid-1", "msg-1", "sender-1", signed_reply)]
+    assert dws.doc_comments == []
 
 
 def test_single_chat_minutes_no_reply_does_not_trigger_material_retry(
@@ -8245,7 +8241,6 @@ def test_minutes_comment_failure_falls_back_to_original_message_reply(
         single_chat=True,
     )
     dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
-    dws.doc_comment_error = RuntimeError("AI Minutes comments unsupported")
     dws.minutes_infos[minutes_id] = {
         "result": {
             "taskUuid": minutes_id,
@@ -8265,7 +8260,7 @@ def test_minutes_comment_failure_falls_back_to_original_message_reply(
     worker.run_once()
 
     signed_reply = "不建议直接推进，建议补充作业后再判断。（by明哥分身）"
-    assert dws.doc_comments == [(target_url, signed_reply)]
+    assert dws.doc_comments == []
     assert dws.reply_messages == [("cid-1", "msg-1", "sender-1", signed_reply)]
     assert final_sent_at_users(dws) == [["sender-user-1"]]
     attempt = worker.store.get_reply_attempt(1)
@@ -8275,11 +8270,8 @@ def test_minutes_comment_failure_falls_back_to_original_message_reply(
     sent_reply = worker.store.get_sent_reply("cid-1", "msg-1")
     assert sent_reply is not None
     assert '"fallback": "chat_reply"' in sent_reply.send_result_json
-    assert "AI Minutes comments unsupported" in sent_reply.send_result_json
-    errors = worker.store.list_errors()
-    assert len(errors) == 1
-    assert errors[0].kind == "minutes_comment"
-    assert "AI Minutes comments unsupported" in errors[0].detail
+    assert "ai_minutes_comment_not_supported_by_dws" in sent_reply.send_result_json
+    assert worker.store.list_errors() == []
 
 
 def test_plain_shanji_transcribe_link_replies_without_doc_comment(

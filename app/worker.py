@@ -6421,6 +6421,23 @@ class DingTalkAutoReplyWorker:
         return (shanji_urls or [""])[0]
 
     @staticmethod
+    def _is_ai_minutes_comment_target(url: str) -> bool:
+        cleaned = DingTalkAutoReplyWorker._clean_link_url(url)
+        parsed = urlsplit(cleaned)
+        if (
+            parsed.netloc.lower() == "shanji.dingtalk.com"
+            and "/app/transcribes/" in parsed.path
+        ):
+            return True
+        if (
+            parsed.netloc.lower() == "alidocs.dingtalk.com"
+            and parsed.path == "/i/u/dingdocSelectorV4/save"
+        ):
+            resource_type = parse_qs(parsed.query).get("resourceType", [""])[0]
+            return resource_type.upper() == "SHANJI"
+        return False
+
+    @staticmethod
     def _clean_link_url(url: str) -> str:
         return url.rstrip(".,;，。；")
 
@@ -7150,6 +7167,18 @@ class DingTalkAutoReplyWorker:
         )
         if self.dry_run:
             self.store.update_reply_attempt(attempt_id, send_status="dry_run")
+            return
+        if self._is_ai_minutes_comment_target(target_url):
+            self._deliver_minutes_comment_fallback_reply(
+                conversation=conversation,
+                trigger=trigger,
+                new_messages=new_messages,
+                attempt_id=attempt_id,
+                reply_text=reply_text,
+                feedback_token=feedback_token,
+                comment_error="ai_minutes_comment_not_supported_by_dws",
+                raise_on_delivery_failure=raise_on_delivery_failure,
+            )
             return
         try:
             send_result = self.dws.create_doc_comment(target_url, reply_text)
