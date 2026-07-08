@@ -91,7 +91,7 @@ def test_codex_command_exposes_memory_connector_mcp(tmp_path: Path, monkeypatch)
     assert "x-memory-user-id" not in " ".join(command)
 
 
-def test_codex_command_exposes_xiaoqing_interview_mcp_from_codex_config(
+def test_codex_command_exposes_default_passthrough_mcps_from_codex_config(
     tmp_path: Path, monkeypatch
 ):
     codex_home = tmp_path / ".codex"
@@ -101,6 +101,14 @@ def test_codex_command_exposes_xiaoqing_interview_mcp_from_codex_config(
             [
                 "[mcp_servers.xiaoqing_interview]",
                 'url = "https://interview.hr.startask.net/mcp/"',
+                "",
+                "[mcp_servers.exa]",
+                'command = "npx"',
+                'args = ["-y", "exa-mcp-server"]',
+                'startup_timeout_sec = 30',
+                "",
+                "[mcp_servers.exa.env]",
+                'EXA_API_KEY = "secret-key"',
                 "",
                 "[mcp_servers.unrelated_business_tool]",
                 'url = "https://unrelated.example/mcp/"',
@@ -118,6 +126,11 @@ def test_codex_command_exposes_xiaoqing_interview_mcp_from_codex_config(
         'mcp_servers.xiaoqing_interview.url="https://interview.hr.startask.net/mcp/"'
         in command
     )
+    assert 'mcp_servers.exa.command="npx"' in command
+    assert 'mcp_servers.exa.args=["-y", "exa-mcp-server"]' in command
+    assert "mcp_servers.exa.startup_timeout_sec=30" in command
+    assert not any("EXA_API_KEY" in item for item in command)
+    assert not any("secret-key" in item for item in command)
     assert not any("unrelated_business_tool" in item for item in command)
 
 
@@ -146,6 +159,32 @@ def test_codex_command_can_override_passthrough_mcp_allowlist(
 
     assert 'mcp_servers.other_safe_tool.url="https://other.example/mcp/"' in command
     assert not any("xiaoqing_interview.url" in item for item in command)
+
+
+def test_codex_command_does_not_default_lark_to_mcp_passthrough(
+    tmp_path: Path, monkeypatch
+):
+    codex_home = tmp_path / ".codex"
+    codex_home.mkdir()
+    (codex_home / "config.toml").write_text(
+        "\n".join(
+            [
+                "[mcp_servers.lark]",
+                'url = "https://lark.example/mcp/"',
+                "",
+                "[mcp_servers.exa]",
+                'url = "https://exa.example/mcp/"',
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+    runner = CodexRunner(workspace=tmp_path, codex_bin="codex")
+
+    command = runner.build_command(prompt="hello", session_id=None)
+
+    assert 'mcp_servers.exa.url="https://exa.example/mcp/"' in command
+    assert not any("mcp_servers.lark" in item for item in command)
 
 
 def test_codex_developer_instructions_classify_dws_login_as_tool_issue():

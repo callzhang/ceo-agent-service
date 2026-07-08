@@ -132,6 +132,8 @@ scripts/bootstrap-local-components.sh --format json
 - Python 3.11+
 - 已认证的 `dws` CLI
 - 可运行 `codex exec` 的 Codex CLI
+- 可选：已认证的 `lark-cli`，用于读取飞书文档材料
+- 可选：Codex `exa` MCP 配置，用于需要外部检索的回复判断
 - 可选：本地知识 workspace 和 graphify 输出
 
 ### 2. 安装本地服务
@@ -159,6 +161,7 @@ cp .env.example .env
 | `CEO_LIVE_SEND_BLOCKERS_ACCEPTED` | live send 的显式确认开关 |
 | `CEO_CORPUS_DIR` | 本地风格语料目录 |
 | `CEO_CODEX_MODEL` / `CEO_CODEX_MODEL_PROVIDER` | 可选的显式模型和 provider；默认留空，使用原生 `codex exec` 登录态和默认配置 |
+| `CEO_CODEX_PASSTHROUGH_MCP_SERVERS` | `--ignore-user-config` 下仍允许透传的 MCP 白名单；默认保留 `xiaoqing_interview,exa`。`memory_connector` 单独注入；飞书走 `lark-cli`，不是默认 MCP |
 | `CEO_MENTION_ALIASES` | 群聊中触发本人的 @ 别名 |
 | `CEO_CHAT_BOT_NAMES` | 允许触发自动回复的机器人名称列表，默认复用 `CEO_DING_ROBOT_NAME` |
 | `CEO_ROBOT_DIRECT_MESSAGE_LOOKBACK` | 机器人私聊轮询窗口，默认 `4h` |
@@ -348,6 +351,13 @@ CEO_NOT_SEND_MESSAGE=1 .venv/bin/ceo-agent daily-task-maintenance --not-send-mes
 ```
 
 Codex 配置会写入 `[mcp_servers.memory_connector]`，并使用现有 OAuth Authorization 作为身份。Claude Desktop 的 remote MCP 需要在 Settings > Connectors 手动添加；命令只报告状态，不直接改写 remote connector。
+
+CEO reply agent 默认继续使用 `--ignore-user-config` 隔离个人 hooks、plugins 和 profiles。需要保留给 agent 的外部能力分两类：
+
+- CLI 能力：`dws` 和 `lark-cli` 由服务环境直接提供。DWS 负责钉钉消息、文档、审批、日历、通讯录和 AI 听记；`lark-cli` 负责飞书文档读取。两者都不通过 MCP 透传。
+- MCP 能力：`memory_connector` 由服务专门注入；`xiaoqing_interview` 和 `exa` 从 `~/.codex/config.toml` 的同名 `[mcp_servers.*]` 读取安全连接字段后透传。若安装者没有配置 `[mcp_servers.exa]`，Exa 能力不会生效，但也不会阻止服务启动。
+
+为了避免把个人密钥写进进程命令行，MCP 透传只复制 URL、OAuth resource、command、args、startup timeout 和 bearer token 环境变量名，不复制 `[mcp_servers.*.env]` 里的密钥值。需要 API key 的 stdio MCP 应把密钥放在 launchd 或 shell 环境中。
 
 Follow-up 发送仍遵守 live-send 安全边界：默认 dry-run 时只生成/记录草稿；真实发送需要 `CEO_NOT_SEND_MESSAGE=0` 且显式设置 `CEO_LIVE_SEND_BLOCKERS_ACCEPTED=1`。
 

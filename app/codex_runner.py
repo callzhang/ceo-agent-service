@@ -57,7 +57,14 @@ MEMORY_CONNECTOR_ENV_KEYS = {
     MEMORY_CONNECTOR_URL_ENV,
 }
 CODEX_PASSTHROUGH_MCP_SERVERS_ENV = "CEO_CODEX_PASSTHROUGH_MCP_SERVERS"
-DEFAULT_CODEX_PASSTHROUGH_MCP_SERVERS = ("xiaoqing_interview",)
+DEFAULT_CODEX_PASSTHROUGH_MCP_SERVERS = ("xiaoqing_interview", "exa")
+PASSTHROUGH_MCP_SCALAR_KEYS = (
+    "url",
+    "oauth_resource",
+    "command",
+    "startup_timeout_sec",
+    "bearer_token_env_var",
+)
 DWS_CLI_AUTH_ENV_KEYS = {
     "DWS_CLIENT_ID",
     "DWS_CLIENT_SECRET",
@@ -233,12 +240,30 @@ def passthrough_mcp_server_config_options() -> list[str]:
         server = servers.get(name)
         if not isinstance(server, dict):
             continue
-        url = server.get("url")
-        if isinstance(url, str) and url.strip():
+        for key in PASSTHROUGH_MCP_SCALAR_KEYS:
+            value = server.get(key)
+            if isinstance(value, str) and value.strip():
+                options.extend(
+                    [
+                        "-c",
+                        _config_string(f"mcp_servers.{name}.{key}", value.strip()),
+                    ]
+                )
+            elif isinstance(value, int | float | bool):
+                options.extend(
+                    [
+                        "-c",
+                        _config_string(f"mcp_servers.{name}.{key}", value),
+                    ]
+                )
+        args = server.get("args")
+        if isinstance(args, list) and all(
+            isinstance(item, str | int | float | bool) for item in args
+        ):
             options.extend(
                 [
                     "-c",
-                    _config_string(f"mcp_servers.{name}.url", url.strip()),
+                    _config_string(f"mcp_servers.{name}.args", args),
                 ]
             )
     return options
