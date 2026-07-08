@@ -9,6 +9,18 @@ from app.task_models import WorkItem
 
 LOCAL_FILE_SCANNER = "local_files"
 AI_MINUTES_SCANNER = "ai_minutes"
+DEFAULT_LOCAL_FILE_EXCLUDE_PARTS = {
+    "__pycache__",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".venv",
+    "build",
+    "dist",
+    "node_modules",
+    "site-packages",
+    "venv",
+}
 
 
 def _utc_now() -> str:
@@ -43,6 +55,10 @@ def _is_under_workspace(path: Path, workspace: Path) -> bool:
 
 def _has_hidden_path_part(path: Path) -> bool:
     return any(part.startswith(".") for part in path.parts)
+
+
+def _has_default_excluded_path_part(path: Path) -> bool:
+    return any(part in DEFAULT_LOCAL_FILE_EXCLUDE_PARTS for part in path.parts)
 
 
 def _local_file_source_ref(path: Path, *, digest: str, size: int) -> str:
@@ -85,6 +101,8 @@ def scan_local_workspace_files(
             continue
         relative = resolved.relative_to(workspace)
         if _has_hidden_path_part(relative):
+            continue
+        if _has_default_excluded_path_part(relative):
             continue
         if exclude_globs and _matches_any(resolved, exclude_globs):
             continue

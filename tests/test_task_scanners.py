@@ -91,6 +91,35 @@ def test_scan_local_files_skips_hidden_paths(tmp_path):
     assert str(hidden_file) not in claimed[0].payload_json
 
 
+def test_scan_local_files_skips_virtualenv_and_package_cache_paths(tmp_path):
+    workspace = tmp_path / "workspace"
+    package_dir = (
+        workspace / "tmp" / "pdfvenv" / "lib" / "python3.14" / "site-packages"
+    )
+    package_dir.mkdir(parents=True)
+    package_file = package_dir / "LICENSE.txt"
+    package_file.write_text(
+        "Apache License should not become a work item",
+        encoding="utf-8",
+    )
+    visible = workspace / "visible.txt"
+    visible.write_text("业务任务需要跟进", encoding="utf-8")
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+
+    assert (
+        scan_local_workspace_files(
+            store,
+            workspace=workspace,
+            enqueue_existing_on_first_scan=True,
+        )
+        == 1
+    )
+    claimed = store.claim_work_summary_inputs(limit=10)
+    assert len(claimed) == 1
+    assert str(visible) in claimed[0].source_ref
+    assert str(package_file) not in claimed[0].payload_json
+
+
 def test_scan_local_files_uses_incremental_mtime_cursor(tmp_path):
     workspace = tmp_path / "workspace"
     workspace.mkdir()
