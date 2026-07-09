@@ -106,6 +106,7 @@ class FakeDws:
         self.mentioned_error = mentioned_error
         self.send_error = send_error
         self.ding_error = ding_error
+        self.text_emotion_error: Exception | None = None
         self.current_user_error = current_user_error
         self.send_result = send_result
         self.docs: dict[str, dict] = {}
@@ -632,6 +633,8 @@ class FakeDws:
         emotion_name: str,
         background_id: str,
     ) -> dict:
+        if self.text_emotion_error:
+            raise self.text_emotion_error
         self.message_text_emotions.append(
             (conversation_id, message_id, text, emotion_id, emotion_name, background_id)
         )
@@ -644,6 +647,8 @@ class FakeDws:
         emotion_name: str,
         background_id: str = "",
     ) -> dict:
+        if self.text_emotion_error:
+            raise self.text_emotion_error
         self.created_text_emotions.append((text, emotion_name, background_id))
         return {
             "emotionId": f"created-{len(self.created_text_emotions)}",
@@ -12384,6 +12389,44 @@ def test_handoff_ding_failure_does_not_block_ack(
         "DING unavailable; delivered by local notification. Friday\n"
     )
     assert "不要分身" in notifications[0]["message"]
+
+
+def test_handoff_text_emotion_failure_still_notifies_and_marks_seen(
+    tmp_path: Path, monkeypatch
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    dws = FakeDws(
+        [conversation()],
+        {"cid-1": [message("@Alex Chen(明哥) 不要分身，真人看一下")]},
+    )
+    dws.text_emotion_error = DwsError(
+        "token verified failed",
+        code="TOKEN_VERIFIED_FAILED",
+    )
+    codex = FakeCodex(CodexDecision(action=CodexAction.HANDOFF_TO_HUMAN))
+    worker = make_worker(
+        tmp_path,
+        dws,
+        codex,
+        monkeypatch,
+        max_task_attempts=1,
+    )
+    worker.produce_once()
+
+    assert worker.consume_once(max_tasks=1) == 1
+
+    assert final_sent(dws) == []
+    assert dws.message_text_emotions == []
+    assert len(dws.dings) == 1
+    assert store.has_seen("msg-1") is True
+    assert store.count_reply_tasks(status="done") == 1
+    attempt = store.get_reply_attempt(1)
+    assert attempt is not None
+    assert attempt.action == "handoff_to_human"
+    assert attempt.send_status == "skipped"
+    assert "handoff_notification_only" in attempt.send_error
+    assert "token verified failed" in attempt.send_error
+    assert "不要分身" in dws.dings[0]
 
 
 def test_persists_codex_last_session_id_after_decision(tmp_path: Path, monkeypatch):

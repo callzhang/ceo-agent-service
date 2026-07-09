@@ -5140,9 +5140,36 @@ class DingTalkAutoReplyWorker:
                 new_messages=new_messages,
                 attempt_id=attempt_id,
                 decision=self._handoff_reaction_decision(decision),
-                raise_on_delivery_failure=raise_on_delivery_failure,
+                raise_on_delivery_failure=False,
             )
             if not reacted:
+                handoff_notified_locally = self._notify_handoff(
+                    conversation=conversation,
+                    trigger=trigger,
+                    context_messages=context_messages,
+                )
+                if not handoff_notified_locally:
+                    self._notify(
+                        title=f"CEO handoff: {conversation.title}",
+                        message=trigger.content[:120],
+                        conversation=conversation,
+                    )
+                failed_attempt = self.store.get_reply_attempt(attempt_id)
+                reaction_error = (
+                    failed_attempt.send_error
+                    if failed_attempt is not None and failed_attempt.send_error
+                    else "message_reaction_failed"
+                )
+                self.store.update_reply_attempt(
+                    attempt_id,
+                    send_status="skipped",
+                    send_error=(
+                        "handoff_notification_only; "
+                        f"message_reaction_failed: {reaction_error}"
+                    ),
+                    retry_count=0,
+                )
+                self._mark_seen(new_messages)
                 return
             handoff_notified_locally = self._notify_handoff(
                 conversation=conversation,
