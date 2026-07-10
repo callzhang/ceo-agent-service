@@ -64,6 +64,7 @@ def _run_handler(
     *,
     session_id: str | None = None,
     allow_side_effects: bool = True,
+    require_xiaoqing_interview: bool = False,
 ) -> OaApprovalResult:
     return runner.run(
         prompt,
@@ -72,6 +73,7 @@ def _run_handler(
         single_chat=True,
         session_id=session_id,
         allow_side_effects=allow_side_effects,
+        require_xiaoqing_interview=require_xiaoqing_interview,
     )
 
 
@@ -753,6 +755,42 @@ def test_xiaoqing_tool_search_event_does_not_satisfy_oa_retry_guard():
             }
         ],
     )
+
+
+def test_required_xiaoqing_call_fails_when_oa_retry_still_omits_tool(
+    tmp_path: Path,
+):
+    skill_path = tmp_path / "skill.md"
+    skill_path.write_text("# OA Skill", encoding="utf-8")
+    prompts: list[str] = []
+
+    def fake_executor(command: list[str], prompt: str) -> str:
+        del command
+        prompts.append(prompt)
+        return _oa_envelope_json(
+            remark="当前没有完整面试记录和候选人评审包，建议退回补充。",
+            summary="录用审批缺完整面试记录和候选人评审包。",
+        )
+
+    runner = OaApprovalSpecHandler(
+        workspace=tmp_path,
+        executor=fake_executor,
+        skill_path=skill_path,
+    )
+
+    with pytest.raises(
+        RuntimeError, match="xiaoqing_interview_required_but_not_called"
+    ):
+        _run_handler(
+            runner,
+            "请审批冯学震的录用申请，需要核对面试记录和评审包",
+            allow_side_effects=False,
+            require_xiaoqing_interview=True,
+        )
+
+    assert len(prompts) == 2
+    assert "search_candidates" in prompts[1]
+    assert "get_interview_context" in prompts[1]
 
 
 def test_output_schema_uses_strict_object_shapes_required_by_codex():

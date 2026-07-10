@@ -207,6 +207,7 @@ class OaApprovalSpecHandler:
         single_chat: bool,
         session_id: str | None = None,
         allow_side_effects: bool = True,
+        require_xiaoqing_interview: bool = False,
     ) -> OaApprovalResult:
         if session_id:
             self._store.upsert_conversation(
@@ -242,6 +243,9 @@ class OaApprovalSpecHandler:
             _validate_read_only_result(result, self.last_audit_tool_events)
         if _xiaoqing_unavailable_without_mcp_call(
             result, self.last_audit_tool_events
+        ) or (
+            require_xiaoqing_interview
+            and not _has_xiaoqing_interview_tool_call(self.last_audit_tool_events)
         ):
             result = self._run_once(
                 _xiaoqing_interview_retry_prompt(),
@@ -252,6 +256,11 @@ class OaApprovalSpecHandler:
             )
             if not allow_side_effects:
                 _validate_read_only_result(result, self.last_audit_tool_events)
+        if (
+            require_xiaoqing_interview
+            and not _has_xiaoqing_interview_tool_call(self.last_audit_tool_events)
+        ):
+            raise RuntimeError("xiaoqing_interview_required_but_not_called")
         return result
 
     def handle(
@@ -295,6 +304,9 @@ class OaApprovalSpecHandler:
             single_chat=single_chat,
             session_id=None,
             allow_side_effects=execute,
+            require_xiaoqing_interview=_oa_context_requires_xiaoqing_interview(
+                trigger_text, context_text, approval_detail_text
+            ),
         )
 
     def _run_once(
@@ -414,13 +426,38 @@ def _xiaoqing_unavailable_without_mcp_call(
     result_text = "\n".join([result.oa_remark, result.audit_summary])
     if XIAOQING_CRITICAL_INFO_UNAVAILABLE_MARKER not in result_text:
         return False
-    return not any(
+    return not _has_xiaoqing_interview_tool_call(audit_tool_events)
+
+
+def _has_xiaoqing_interview_tool_call(
+    audit_tool_events: list[dict[str, str]],
+) -> bool:
+    return any(
         _is_xiaoqing_interview_tool_event(event) for event in audit_tool_events
     )
 
 
 def _is_xiaoqing_interview_tool_event(event: dict[str, str]) -> bool:
     return "xiaoqing_interview" in str(event.get("tool") or "")
+
+
+def _oa_context_requires_xiaoqing_interview(*texts: str) -> bool:
+    text = "\n".join(texts)
+    hiring_context = (
+        "候选人" in text
+        or "面试" in text
+        or "录用" in text
+        or "招聘" in text
+        or "offer" in text.lower()
+    )
+    review_material_context = (
+        "面试记录" in text
+        or "评审包" in text
+        or "简历" in text
+        or "面评" in text
+        or "小青" in text
+    )
+    return hiring_context and review_material_context
 
 
 def _xiaoqing_interview_retry_prompt() -> str:
