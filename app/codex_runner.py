@@ -53,8 +53,12 @@ CODEX_BYPASS_APPROVALS_AND_SANDBOX = "--dangerously-bypass-approvals-and-sandbox
 MEMORY_CONNECTOR_ENV_FILE = "memory_connector.env"
 MEMORY_CONNECTOR_URL_ENV = "MEMORY_CONNECTOR_URL"
 MEMORY_CONNECTOR_API_KEY_ENV = "CONNECTOR_API_KEY"
+MEMORY_CONNECTOR_AUTH_TYPE_ENV = "MEMORY_CONNECTOR_AUTH_TYPE"
+MEMORY_CONNECTOR_CONTENT_TYPE_ENV = "MEMORY_CONNECTOR_CONTENT_TYPE"
 MEMORY_CONNECTOR_ENV_KEYS = {
     MEMORY_CONNECTOR_API_KEY_ENV,
+    MEMORY_CONNECTOR_AUTH_TYPE_ENV,
+    MEMORY_CONNECTOR_CONTENT_TYPE_ENV,
     MEMORY_CONNECTOR_URL_ENV,
 }
 CODEX_PASSTHROUGH_MCP_SERVERS_ENV = "CEO_CODEX_PASSTHROUGH_MCP_SERVERS"
@@ -86,7 +90,21 @@ def codex_developer_instructions() -> str:
 
 
 def _config_string(key: str, value: object) -> str:
-    return f"{key}={json.dumps(value, ensure_ascii=False)}"
+    return f"{key}={_config_value(value)}"
+
+
+def _config_value(value: object) -> str:
+    if isinstance(value, dict):
+        items: list[str] = []
+        for item_key, item_value in value.items():
+            if not isinstance(item_key, str) or not isinstance(item_value, str):
+                raise TypeError("config inline table values must be string keyed strings")
+            items.append(
+                f"{json.dumps(item_key, ensure_ascii=False)} = "
+                f"{json.dumps(item_value, ensure_ascii=False)}"
+            )
+        return "{" + ", ".join(items) + "}"
+    return json.dumps(value, ensure_ascii=False)
 
 
 def _codex_home() -> Path:
@@ -194,6 +212,16 @@ def _memory_connector_env_from_config(config_path: Path) -> dict[str, str]:
             token = token[7:].strip()
         if token:
             env[MEMORY_CONNECTOR_API_KEY_ENV] = token
+    auth_type = (
+        headers.get("X-Friday-Memory-Auth-Type")
+        if isinstance(headers, dict)
+        else None
+    )
+    if isinstance(auth_type, str) and auth_type.strip():
+        env[MEMORY_CONNECTOR_AUTH_TYPE_ENV] = auth_type.strip()
+    content_type = headers.get("Content-Type") if isinstance(headers, dict) else None
+    if isinstance(content_type, str) and content_type.strip():
+        env[MEMORY_CONNECTOR_CONTENT_TYPE_ENV] = content_type.strip()
     return env
 
 
@@ -219,7 +247,12 @@ def memory_connector_config_options() -> list[str]:
     token = env.get(MEMORY_CONNECTOR_API_KEY_ENV)
     if not url or not token:
         return []
-    return [
+    env_http_headers: dict[str, str] = {}
+    if env.get(MEMORY_CONNECTOR_AUTH_TYPE_ENV):
+        env_http_headers["X-Friday-Memory-Auth-Type"] = MEMORY_CONNECTOR_AUTH_TYPE_ENV
+    if env.get(MEMORY_CONNECTOR_CONTENT_TYPE_ENV):
+        env_http_headers["Content-Type"] = MEMORY_CONNECTOR_CONTENT_TYPE_ENV
+    options = [
         "-c",
         _config_string("mcp_servers.memory_connector.url", url),
         "-c",
@@ -228,6 +261,17 @@ def memory_connector_config_options() -> list[str]:
             MEMORY_CONNECTOR_API_KEY_ENV,
         ),
     ]
+    if env_http_headers:
+        options.extend(
+            [
+                "-c",
+                _config_string(
+                    "mcp_servers.memory_connector.env_http_headers",
+                    env_http_headers,
+                ),
+            ]
+        )
+    return options
 
 
 def passthrough_mcp_server_config_options() -> list[str]:

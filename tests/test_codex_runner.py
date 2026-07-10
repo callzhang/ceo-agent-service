@@ -19,6 +19,8 @@ def _isolate_memory_connector_env(tmp_path: Path, monkeypatch):
     codex_home.mkdir()
     monkeypatch.setenv("CODEX_HOME", str(codex_home))
     monkeypatch.delenv("CONNECTOR_API_KEY", raising=False)
+    monkeypatch.delenv("MEMORY_CONNECTOR_AUTH_TYPE", raising=False)
+    monkeypatch.delenv("MEMORY_CONNECTOR_CONTENT_TYPE", raising=False)
     monkeypatch.delenv("MEMORY_CONNECTOR_URL", raising=False)
     monkeypatch.delenv("MEMORY_CONNECTOR_USER_ID", raising=False)
     monkeypatch.delenv("CEO_CODEX_MODEL", raising=False)
@@ -64,6 +66,8 @@ def _unsigned_jwt(payload: dict) -> str:
 def test_codex_command_exposes_memory_connector_mcp(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("MEMORY_CONNECTOR_URL", "https://memory.example/mcp/")
     monkeypatch.setenv("CONNECTOR_API_KEY", "secret-token")
+    monkeypatch.setenv("MEMORY_CONNECTOR_AUTH_TYPE", "api_key")
+    monkeypatch.setenv("MEMORY_CONNECTOR_CONTENT_TYPE", "application/json")
     runner = CodexRunner(workspace=tmp_path, codex_bin="codex")
 
     command = runner.build_command(
@@ -88,6 +92,13 @@ def test_codex_command_exposes_memory_connector_mcp(tmp_path: Path, monkeypatch)
         'mcp_servers.memory_connector.bearer_token_env_var="CONNECTOR_API_KEY"'
         in command
     )
+    assert (
+        'mcp_servers.memory_connector.env_http_headers={'
+        '"X-Friday-Memory-Auth-Type" = "MEMORY_CONNECTOR_AUTH_TYPE", '
+        '"Content-Type" = "MEMORY_CONNECTOR_CONTENT_TYPE"}'
+        in command
+    )
+    assert "secret-token" not in command
     assert "x-memory-user-id" not in " ".join(command)
 
 
@@ -312,6 +323,8 @@ def test_codex_runner_env_loads_memory_connector_from_codex_config(
                 "",
                 "[mcp_servers.memory_connector.http_headers]",
                 'Authorization = "Bearer secret-token"',
+                'X-Friday-Memory-Auth-Type = "api_key"',
+                'Content-Type = "application/json"',
             ]
         ),
         encoding="utf-8",
@@ -329,9 +342,17 @@ def test_codex_runner_env_loads_memory_connector_from_codex_config(
     )
 
     assert env["CONNECTOR_API_KEY"] == "secret-token"
+    assert env["MEMORY_CONNECTOR_AUTH_TYPE"] == "api_key"
+    assert env["MEMORY_CONNECTOR_CONTENT_TYPE"] == "application/json"
     assert env["MEMORY_CONNECTOR_URL"] == "https://memory.example/mcp/"
     assert "--ignore-user-config" in command
     assert "secret-token" not in command
+    assert (
+        'mcp_servers.memory_connector.env_http_headers={'
+        '"X-Friday-Memory-Auth-Type" = "MEMORY_CONNECTOR_AUTH_TYPE", '
+        '"Content-Type" = "MEMORY_CONNECTOR_CONTENT_TYPE"}'
+        in command
+    )
 
 
 def test_codex_command_does_not_auto_fallback_to_configured_profile(
