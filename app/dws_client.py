@@ -2235,13 +2235,20 @@ class DwsClient:
                     result.stderr, result.stdout
                 ),
             )
+        if output_path.exists() and output_path.stat().st_size > 0:
+            try:
+                payload = self._json_from_mixed_stdout(result.stdout)
+            except DwsError:
+                return {"localPath": str(output_path)}
+            if not isinstance(payload, dict):
+                output_path.unlink(missing_ok=True)
+                raise DwsError("invalid resource download response")
+            payload["localPath"] = str(output_path)
+            return payload
+        output_path.unlink(missing_ok=True)
         payload = self._json_from_mixed_stdout(result.stdout)
         if not isinstance(payload, dict):
             raise DwsError("invalid resource download response")
-        if output_path.exists() and output_path.stat().st_size > 0:
-            payload["localPath"] = str(output_path)
-        else:
-            output_path.unlink(missing_ok=True)
         return payload
 
     @staticmethod

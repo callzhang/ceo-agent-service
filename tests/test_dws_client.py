@@ -912,6 +912,59 @@ def test_get_resource_download_url_keeps_url_when_dws_download_stage_fails(
     }
 
 
+def test_get_resource_download_url_uses_local_file_when_success_stdout_is_not_json(
+    tmp_path, monkeypatch
+):
+    output_paths = []
+
+    def fake_named_temporary_file(prefix, delete):
+        del prefix, delete
+        output_path = tmp_path / "message-image"
+        output_paths.append(output_path)
+
+        class TemporaryFile:
+            name = str(output_path)
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+        return TemporaryFile()
+
+    def fake_run(*args, **kwargs):
+        del args, kwargs
+        output_paths[0].write_bytes(b"\x89PNG\r\n\x1a\nimage")
+        return subprocess.CompletedProcess(
+            args=["dws"],
+            returncode=0,
+            stdout=(
+                "[INFO] [1/2] 获取资源下载链接...\n"
+                "[INFO] [2/2] 下载资源到 /tmp/message-image ...\n"
+                "[INFO] 下载完成: /tmp/message-image\n"
+            ),
+            stderr="",
+        )
+
+    monkeypatch.setattr(
+        dws_client.tempfile,
+        "NamedTemporaryFile",
+        fake_named_temporary_file,
+    )
+    monkeypatch.setattr(dws_client.subprocess, "run", fake_run)
+    client = DwsClient(dws_bin="dws")
+
+    payload = client.get_resource_download_url(
+        "cid-1",
+        "msg-1",
+        "@img-token-1",
+        "mediaId",
+    )
+
+    assert payload == {"localPath": str(tmp_path / "message-image")}
+
+
 def test_download_robot_message_file_command_uses_official_download_api(monkeypatch):
     monkeypatch.setenv("CEO_DING_ROBOT_CODE", "ding-robot-1")
     client = DwsClient(dws_bin="dws")
