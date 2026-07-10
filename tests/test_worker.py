@@ -9013,6 +9013,44 @@ def test_critical_info_unavailable_stop_with_error_fails_queued_task(
     ] == ["CEO task failed: Friday"]
 
 
+def test_xiaoqing_unavailable_without_mcp_call_forces_retry(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message("@Alex Chen(明哥) 请看一下候选人冯学震的录用申请")
+    dws = FakeDws([conversation()], {"cid-1": [trigger]})
+    first_decision = CodexDecision(
+        action=CodexAction.NO_REPLY,
+        reason=(
+            "小青面试系统结构化读取能力不可用，"
+            "critical_info_unavailable:xiaoqing_interview"
+        ),
+        audit_summary=(
+            "未读取小青，错误地认为 "
+            "critical_info_unavailable:xiaoqing_interview"
+        ),
+    )
+    second_decision = CodexDecision(
+        action=CodexAction.NO_REPLY,
+        reason="已重新检查小青材料，无需正式回复。",
+        audit_summary="已重新检查小青材料，无需正式回复。",
+    )
+    codex = SequencedFakeCodex([first_decision, second_decision])
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+    worker.produce_once()
+
+    worker.consume_once(max_tasks=1)
+
+    assert len(codex.calls) == 2
+    retry_prompt = codex.calls[1][0]
+    assert "没有任何 xiaoqing_interview MCP 调用记录" in retry_prompt
+    assert "search_candidates" in retry_prompt
+    assert "get_interview_context" in retry_prompt
+    attempt = worker.store.get_reply_attempt(1)
+    assert attempt is not None
+    assert attempt.codex_reason == second_decision.reason
+    assert attempt.send_status == "skipped"
+
+
 def test_queued_stop_with_error_retry_does_not_create_duplicate_attempt(
     tmp_path: Path, monkeypatch
 ):

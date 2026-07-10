@@ -40,7 +40,8 @@ XIAOQING_INTERVIEW_READING_INSTRUCTIONS = """
 Xiaoqing interview material reading
 
 - Candidate links under `https://interview.hr.startask.net/candidates/` are Xiaoqing interview-system records, not ordinary DingTalk docs or webpages.
-- When a candidate or hiring judgment depends on a Xiaoqing link, use the `xiaoqing_interview` MCP tools to read the structured candidate context and review-package HTML before deciding.
+- When a candidate or hiring judgment depends on a Xiaoqing link, candidate name, interview record, resume, offer, hiring approval, or candidate comparison, use the `xiaoqing_interview` MCP tools before deciding.
+- If a Xiaoqing candidate URL is absent but a candidate name is present, call `search_candidates` with that name, pick the matching candidate, then call `get_interview_context` before making the hiring judgment.
 - Do not use curl, browser scraping, DWS doc commands, or local search as substitutes for the Xiaoqing candidate record.
 - If `xiaoqing_interview` is unavailable, unauthorized, or cannot return the review package, classify it as a blocking tool/auth issue with `critical_info_unavailable:xiaoqing_interview ...`; do not tell HR the sender failed to provide the interview text when the link itself was provided.
 - Only ask HR to paste interview text after the Xiaoqing tool confirms the record lacks that content or the current user truly lacks access.

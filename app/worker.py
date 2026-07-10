@@ -104,6 +104,9 @@ CODEX_LOGIN_REQUIRED_PREFIX = "codex_login_required"
 CODEX_PROVIDER_AUTH_FAILED_PREFIX = "codex_provider_auth_failed"
 CODEX_PROVIDER_UNAVAILABLE_PREFIX = "codex_provider_unavailable"
 CRITICAL_INFO_UNAVAILABLE_PREFIX = "critical_info_unavailable:"
+XIAOQING_CRITICAL_INFO_UNAVAILABLE_MARKER = (
+    f"{CRITICAL_INFO_UNAVAILABLE_PREFIX}xiaoqing_interview"
+)
 DEFAULT_TEXT_EMOTION_BACKGROUND_ID = "im_bg_5"
 LEAK_CHECK_REGENERATION_SCHEMA = REPLY_AGENT_ENVELOPE_SCHEMA_HINT
 SPLIT_PERSON_SIGNATURE = assistant_signature()
@@ -4931,6 +4934,16 @@ class DingTalkAutoReplyWorker:
                 image_paths=image_paths,
             )
             decision = self._normalize_codex_decision(decision)
+        if self._xiaoqing_unavailable_without_mcp_call(
+            decision,
+            getattr(self.codex, "last_audit_tool_events", []),
+        ):
+            decision = self.codex.decide(
+                prompt=self._xiaoqing_interview_retry_prompt(),
+                session_id=getattr(self.codex, "last_session_id", None) or session_id,
+                image_paths=image_paths,
+            )
+            decision = self._normalize_codex_decision(decision)
         after_session_id = getattr(self.codex, "last_session_id", None)
         self._persist_codex_session_id(
             conversation,
@@ -8182,6 +8195,41 @@ class DingTalkAutoReplyWorker:
     @staticmethod
     def _is_critical_info_unavailable_reason(reason: str) -> bool:
         return reason.strip().startswith(CRITICAL_INFO_UNAVAILABLE_PREFIX)
+
+    @staticmethod
+    def _xiaoqing_unavailable_without_mcp_call(
+        decision: CodexDecision,
+        audit_tool_events: list[dict[str, str]],
+    ) -> bool:
+        decision_text = "\n".join(
+            [
+                decision.reason or "",
+                decision.reply_text or "",
+                decision.audit_summary or "",
+            ]
+        )
+        if XIAOQING_CRITICAL_INFO_UNAVAILABLE_MARKER not in decision_text:
+            return False
+        return not any(
+            "xiaoqing_interview" in json.dumps(event, ensure_ascii=False)
+            for event in audit_tool_events
+        )
+
+    @staticmethod
+    def _xiaoqing_interview_retry_prompt() -> str:
+        return (
+            "上一次输出声称 critical_info_unavailable:xiaoqing_interview，"
+            "但本轮审计没有任何 xiaoqing_interview MCP 调用记录。"
+            "如果当前判断涉及候选人、面试、录用、offer 或招聘审批，"
+            "并且上下文里有候选人姓名或小青候选人链接，必须先调用 "
+            "xiaoqing_interview：没有链接时用 search_candidates 按候选人姓名搜索，"
+            "找到匹配候选人后调用 get_interview_context 读取结构化上下文和评审包，"
+            "再输出合法 AgentEnvelope JSON。"
+            "只有 MCP 工具实际报错、未授权、无法返回评审包，才可以继续输出 "
+            "critical_info_unavailable:xiaoqing_interview；如果上下文没有候选人姓名或链接，"
+            "说明缺少候选人定位信息，不要把它写成小青不可用。"
+            "只输出合法 JSON。"
+        )
 
     @staticmethod
     def _single_chat_material_retry_prompt() -> str:
