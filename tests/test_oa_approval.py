@@ -803,6 +803,30 @@ def test_oa_hiring_trigger_requires_xiaoqing_even_without_detail_text():
     )
 
 
+def test_required_xiaoqing_call_accepts_same_session_history(
+    tmp_path: Path, monkeypatch
+):
+    skill_path = tmp_path / "skill.md"
+    skill_path.write_text("# OA Skill", encoding="utf-8")
+    runner = OaApprovalSpecHandler(workspace=tmp_path, skill_path=skill_path)
+    runner.last_session_id = "session-1"
+    runner.last_transcript_end_line = 20
+    runner.last_audit_tool_events = []
+
+    monkeypatch.setattr(
+        oa_approval,
+        "extract_codex_audit_events_from_session",
+        lambda *_, **__: [
+            {"tool": "mcp__xiaoqing_interview.search_candidates"}
+        ],
+    )
+
+    assert runner._has_required_xiaoqing_interview_tool_call()
+    assert runner.last_audit_tool_events == [
+        {"tool": "mcp__xiaoqing_interview.search_candidates"}
+    ]
+
+
 def test_output_schema_uses_strict_object_shapes_required_by_codex():
     schema = json.loads(OA_APPROVAL_SCHEMA_PATH.read_text(encoding="utf-8"))
 

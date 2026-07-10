@@ -9,6 +9,8 @@ from urllib.parse import parse_qs, unquote, urlparse
 from pydantic import BaseModel, Field, ValidationError, model_validator
 
 from app.agent_envelope import AgentEnvelope, AgentKind
+from app.codex_decision import extract_codex_audit_events_from_session
+from app.codex_runner import _codex_home
 from app.structured_agent import (
     AgentSpec,
     StructuredCodexRunner,
@@ -258,7 +260,7 @@ class OaApprovalSpecHandler:
                 _validate_read_only_result(result, self.last_audit_tool_events)
         if (
             require_xiaoqing_interview
-            and not _has_xiaoqing_interview_tool_call(self.last_audit_tool_events)
+            and not self._has_required_xiaoqing_interview_tool_call()
         ):
             raise RuntimeError("xiaoqing_interview_required_but_not_called")
         return result
@@ -366,6 +368,28 @@ class OaApprovalSpecHandler:
             "domain_payload.oa_remark、domain_payload.audit_summary 必须非空。"
             "如果无法取得 process_instance_id、task_id 或 oa_url，对应字段填空字符串。"
         )
+
+    def _has_required_xiaoqing_interview_tool_call(self) -> bool:
+        if _has_xiaoqing_interview_tool_call(self.last_audit_tool_events):
+            return True
+        if not self.last_session_id:
+            return False
+        events = extract_codex_audit_events_from_session(
+            self.last_session_id,
+            codex_home=_codex_home(),
+            start_line=0,
+            end_line=self.last_transcript_end_line,
+        )
+        xiaoqing_events = [
+            event for event in events if _is_xiaoqing_interview_tool_event(event)
+        ]
+        if not xiaoqing_events:
+            return False
+        self.last_audit_tool_events = [
+            *self.last_audit_tool_events,
+            *xiaoqing_events,
+        ]
+        return True
 
 
 class _EphemeralStructuredStore:
