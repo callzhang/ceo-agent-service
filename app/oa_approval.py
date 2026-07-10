@@ -462,7 +462,11 @@ def _has_xiaoqing_interview_tool_call(
 
 
 def _is_xiaoqing_interview_tool_event(event: dict[str, str]) -> bool:
-    return "xiaoqing_interview" in str(event.get("tool") or "")
+    tool = str(event.get("tool") or "")
+    return (
+        "xiaoqing_interview" in tool
+        or tool in {"search_candidates", "get_interview_context"}
+    )
 
 
 def _oa_context_requires_xiaoqing_interview(*texts: str) -> bool:

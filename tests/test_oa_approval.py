@@ -817,13 +817,13 @@ def test_required_xiaoqing_call_accepts_same_session_history(
         oa_approval,
         "extract_codex_audit_events_from_session",
         lambda *_, **__: [
-            {"tool": "mcp__xiaoqing_interview.search_candidates"}
+            {"tool": "search_candidates"}
         ],
     )
 
     assert runner._has_required_xiaoqing_interview_tool_call()
     assert runner.last_audit_tool_events == [
-        {"tool": "mcp__xiaoqing_interview.search_candidates"}
+        {"tool": "search_candidates"}
     ]
 
 
