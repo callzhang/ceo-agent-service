@@ -793,6 +793,14 @@ def test_required_xiaoqing_call_fails_when_oa_retry_still_omits_tool(
     assert "get_interview_context" in prompts[1]
 
 
+def test_oa_hiring_trigger_requires_xiaoqing_even_without_detail_text():
+    assert oa_approval._oa_context_requires_xiaoqing_interview(
+        "[Ding]吴柯欣提醒您审批他的录用申请",
+        "",
+        "未能从消息或待办列表定位审批实例。",
+    )
+
+
 def test_output_schema_uses_strict_object_shapes_required_by_codex():
     schema = json.loads(OA_APPROVAL_SCHEMA_PATH.read_text(encoding="utf-8"))
 

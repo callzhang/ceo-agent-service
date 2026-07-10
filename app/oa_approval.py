@@ -443,21 +443,13 @@ def _is_xiaoqing_interview_tool_event(event: dict[str, str]) -> bool:
 
 def _oa_context_requires_xiaoqing_interview(*texts: str) -> bool:
     text = "\n".join(texts)
-    hiring_context = (
+    return (
         "候选人" in text
         or "面试" in text
         or "录用" in text
         or "招聘" in text
         or "offer" in text.lower()
     )
-    review_material_context = (
-        "面试记录" in text
-        or "评审包" in text
-        or "简历" in text
-        or "面评" in text
-        or "小青" in text
-    )
-    return hiring_context and review_material_context
 
 
 def _xiaoqing_interview_retry_prompt() -> str:
