@@ -374,10 +374,11 @@ class OaApprovalSpecHandler:
             return True
         if not self.last_session_id:
             return False
+        start_line = max(0, self.last_transcript_end_line - 200)
         events = extract_codex_audit_events_from_session(
             self.last_session_id,
             codex_home=_codex_home(),
-            start_line=0,
+            start_line=start_line,
             end_line=self.last_transcript_end_line,
         )
         xiaoqing_events = [
