@@ -202,10 +202,22 @@ def test_extract_oa_url_strips_sentence_period_from_direct_url():
 def test_runner_injects_skill_uses_schema_parses_result_and_records_session(
     tmp_path: Path, monkeypatch
 ):
+    codex_home = tmp_path / ".codex"
+    codex_home.mkdir()
+    (codex_home / "config.toml").write_text(
+        "\n".join(
+            [
+                "[mcp_servers.xiaoqing_interview]",
+                'url = "https://interview.hr.startask.net/mcp/"',
+            ]
+        ),
+        encoding="utf-8",
+    )
     skill_path = tmp_path / "skills" / "dingtalk-oa-approval" / "SKILL.md"
     skill_path.parent.mkdir(parents=True)
     skill_path.write_text("# OA Skill\n\n审批前先审阅。", encoding="utf-8")
     monkeypatch.setenv("HOME", "/Users/principal")
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
 
     calls: list[tuple[list[str], str]] = []
 
@@ -283,9 +295,16 @@ def test_runner_injects_skill_uses_schema_parses_result_and_records_session(
     developer_arg = _developer_instructions_arg(command)
     assert "# OA Skill" in developer_arg
     assert "审批前先审阅。" in developer_arg
+    assert "xiaoqing_interview MCP tools" in developer_arg
+    assert "search_candidates" in developer_arg
+    assert "get_interview_context" in developer_arg
     assert CODEX_BYPASS_APPROVALS_AND_SANDBOX in command
     assert command[command.index("--disable") + 1] == "hooks"
     assert "--output-schema" not in command
+    assert (
+        'mcp_servers.xiaoqing_interview.url="https://interview.hr.startask.net/mcp/"'
+        in command
+    )
     assert isinstance(runner.structured_runner, StructuredCodexRunner)
     assert prompt == "请审批"
     assert result.process_instance_id == "proc-1"

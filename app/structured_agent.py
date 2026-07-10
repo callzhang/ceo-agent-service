@@ -20,6 +20,7 @@ from app.codex_runner import (
     _config_string,
     codex_model_config_options,
     memory_connector_config_options,
+    passthrough_mcp_server_config_options,
 )
 from app.external_retry import run_external
 from app.process_runner import run_process_with_idle_timeout
@@ -263,6 +264,7 @@ class StructuredCodexRunner:
             "--disable",
             "plugins",
             *memory_connector_config_options(),
+            *passthrough_mcp_server_config_options(),
             *safety_options,
             "-c",
             _config_string("developer_instructions", self.spec.developer_instructions()),
