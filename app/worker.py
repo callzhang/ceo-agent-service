@@ -8211,7 +8211,7 @@ class DingTalkAutoReplyWorker:
         if XIAOQING_CRITICAL_INFO_UNAVAILABLE_MARKER not in decision_text:
             return False
         return not any(
-            "xiaoqing_interview" in json.dumps(event, ensure_ascii=False)
+            "xiaoqing_interview" in str(event.get("tool") or "")
             for event in audit_tool_events
         )
 

@@ -710,6 +710,32 @@ def test_xiaoqing_unavailable_without_mcp_call_forces_oa_retry(tmp_path: Path):
     assert runner.last_audit_tool_events == [{"tool": "xiaoqing_interview"}]
 
 
+def test_xiaoqing_tool_search_event_does_not_satisfy_oa_retry_guard():
+    result = OaApprovalResult(
+        process_instance_id="proc-1",
+        task_id="task-1",
+        oa_url="https://aflow.dingtalk.com/detail?procInstId=proc-1&taskId=task-1",
+        oa_action="退回",
+        oa_remark=(
+            "小青面试系统不可用，"
+            "critical_info_unavailable:xiaoqing_interview"
+        ),
+        action_result={},
+        audit_summary="只做了工具发现，critical_info_unavailable:xiaoqing_interview",
+        audit_documents=[],
+    )
+
+    assert oa_approval._xiaoqing_unavailable_without_mcp_call(
+        result,
+        [
+            {
+                "tool": "tool_search_call",
+                "input": "xiaoqing_interview search_candidates",
+            }
+        ],
+    )
+
+
 def test_output_schema_uses_strict_object_shapes_required_by_codex():
     schema = json.loads(OA_APPROVAL_SCHEMA_PATH.read_text(encoding="utf-8"))
 

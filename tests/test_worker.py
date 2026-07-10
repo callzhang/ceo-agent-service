@@ -9051,6 +9051,24 @@ def test_xiaoqing_unavailable_without_mcp_call_forces_retry(
     assert attempt.send_status == "skipped"
 
 
+def test_xiaoqing_tool_search_event_does_not_satisfy_retry_guard():
+    decision = CodexDecision(
+        action=CodexAction.NO_REPLY,
+        reason="critical_info_unavailable:xiaoqing_interview",
+        audit_summary="只做了工具发现，critical_info_unavailable:xiaoqing_interview",
+    )
+
+    assert DingTalkAutoReplyWorker._xiaoqing_unavailable_without_mcp_call(
+        decision,
+        [
+            {
+                "tool": "tool_search_call",
+                "input": "xiaoqing_interview search_candidates",
+            }
+        ],
+    )
+
+
 def test_queued_stop_with_error_retry_does_not_create_duplicate_attempt(
     tmp_path: Path, monkeypatch
 ):

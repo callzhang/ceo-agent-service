@@ -407,9 +407,12 @@ def _xiaoqing_unavailable_without_mcp_call(
     if XIAOQING_CRITICAL_INFO_UNAVAILABLE_MARKER not in result_text:
         return False
     return not any(
-        "xiaoqing_interview" in json.dumps(event, ensure_ascii=False)
-        for event in audit_tool_events
+        _is_xiaoqing_interview_tool_event(event) for event in audit_tool_events
     )
+
+
+def _is_xiaoqing_interview_tool_event(event: dict[str, str]) -> bool:
+    return "xiaoqing_interview" in str(event.get("tool") or "")
 
 
 def _xiaoqing_interview_retry_prompt() -> str:
