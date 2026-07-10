@@ -727,6 +727,7 @@ def test_xiaoqing_unavailable_without_mcp_call_forces_oa_retry(tmp_path: Path):
     assert "没有任何 xiaoqing_interview MCP 调用记录" in prompts[1]
     assert "search_candidates" in prompts[1]
     assert "get_interview_context" in prompts[1]
+    assert "请审批冯学震的录用申请" in prompts[1]
     assert result.audit_summary == "已通过小青面试上下文核验候选人材料。"
     assert runner.last_audit_tool_events == [{"tool": "xiaoqing_interview"}]
 
@@ -791,6 +792,7 @@ def test_required_xiaoqing_call_fails_when_oa_retry_still_omits_tool(
     assert len(prompts) == 2
     assert "search_candidates" in prompts[1]
     assert "get_interview_context" in prompts[1]
+    assert "请审批冯学震的录用申请" in prompts[1]
 
 
 def test_oa_hiring_trigger_requires_xiaoqing_even_without_detail_text():

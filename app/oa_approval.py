@@ -248,7 +248,7 @@ class OaApprovalSpecHandler:
             and not _has_xiaoqing_interview_tool_call(self.last_audit_tool_events)
         ):
             result = self._run_once(
-                _xiaoqing_interview_retry_prompt(),
+                _xiaoqing_interview_retry_prompt(prompt),
                 conversation_id=conversation_id,
                 conversation_title=conversation_title,
                 single_chat=single_chat,
@@ -452,7 +452,7 @@ def _oa_context_requires_xiaoqing_interview(*texts: str) -> bool:
     )
 
 
-def _xiaoqing_interview_retry_prompt() -> str:
+def _xiaoqing_interview_retry_prompt(original_prompt: str) -> str:
     return (
         "上一次 OA 审批输出声称 critical_info_unavailable:xiaoqing_interview，"
         "但本轮审计没有任何 xiaoqing_interview MCP 调用记录。"
@@ -465,6 +465,8 @@ def _xiaoqing_interview_retry_prompt() -> str:
         "critical_info_unavailable:xiaoqing_interview；如果上下文没有候选人姓名或链接，"
         "说明缺少候选人定位信息，不要把它写成小青不可用。"
         "只输出合法 OA 审批 AgentEnvelope JSON，不要解释。"
+        "\n\n原始 OA 审批上下文如下：\n"
+        f"{original_prompt}"
     )
 
 
