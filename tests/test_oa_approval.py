@@ -599,7 +599,8 @@ def test_invalid_oa_json_retries_once_with_repair_prompt(tmp_path: Path):
 
     assert result.oa_action == "退回"
     assert len(prompts) == 2
-    assert "上一次输出不是合法 OA 审批 AgentEnvelope JSON" in prompts[1]
+    assert "上一次输出不是合法 AgentEnvelope JSON" in prompts[1]
+    assert "不要执行任何外部动作" in prompts[1]
 
 
 def test_invalid_oa_json_repair_prompt_requests_agent_envelope(tmp_path: Path):
@@ -650,6 +651,63 @@ def test_invalid_oa_json_repair_prompt_requests_agent_envelope(tmp_path: Path):
     assert '"kind":"oa_approval"' in prompts[1]
     assert '"domain_payload"' in prompts[1]
     assert "旧 OA approval JSON" not in prompts[1]
+
+
+def test_xiaoqing_unavailable_without_mcp_call_forces_oa_retry(tmp_path: Path):
+    skill_path = tmp_path / "skill.md"
+    skill_path.write_text("# OA Skill", encoding="utf-8")
+    prompts: list[str] = []
+
+    def fake_executor(command: list[str], prompt: str) -> str:
+        prompts.append(prompt)
+        if len(prompts) == 1:
+            return _oa_envelope_json(
+                remark=(
+                    "小青面试系统结构化读取能力不可用，"
+                    "critical_info_unavailable:xiaoqing_interview"
+                ),
+                summary=(
+                    "未读取小青，错误地认为 "
+                    "critical_info_unavailable:xiaoqing_interview"
+                ),
+            )
+        return "\n".join(
+            [
+                json.dumps({"type": "session", "id": "session-2"}),
+                json.dumps(
+                    {
+                        "item": {
+                            "type": "tool_call",
+                            "tool_name": "xiaoqing_interview",
+                            "args": {
+                                "name": "search_candidates",
+                                "query": "冯学震",
+                            },
+                        }
+                    },
+                    ensure_ascii=False,
+                ),
+                _oa_envelope_json(
+                    remark="已读取小青面试上下文，建议退回补充定薪依据。",
+                    summary="已通过小青面试上下文核验候选人材料。",
+                ),
+            ]
+        )
+
+    runner = OaApprovalSpecHandler(
+        workspace=tmp_path,
+        executor=fake_executor,
+        skill_path=skill_path,
+    )
+
+    result = _run_handler(runner, "请审批冯学震的录用申请", allow_side_effects=False)
+
+    assert len(prompts) == 2
+    assert "没有任何 xiaoqing_interview MCP 调用记录" in prompts[1]
+    assert "search_candidates" in prompts[1]
+    assert "get_interview_context" in prompts[1]
+    assert result.audit_summary == "已通过小青面试上下文核验候选人材料。"
+    assert runner.last_audit_tool_events == [{"tool": "xiaoqing_interview"}]
 
 
 def test_output_schema_uses_strict_object_shapes_required_by_codex():

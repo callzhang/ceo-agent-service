@@ -27,6 +27,9 @@ OA_MUTATING_COMMAND_PATTERN = re.compile(
     r"\bdws\s+oa\s+approval\s+(?:approve|reject|return)\b",
     re.IGNORECASE,
 )
+XIAOQING_CRITICAL_INFO_UNAVAILABLE_MARKER = (
+    "critical_info_unavailable:xiaoqing_interview"
+)
 
 
 class OaApprovalResult(BaseModel):
@@ -229,6 +232,18 @@ class OaApprovalSpecHandler:
                 ) from second_exc
         if not allow_side_effects:
             _validate_read_only_result(result, self.last_audit_tool_events)
+        if _xiaoqing_unavailable_without_mcp_call(
+            result, self.last_audit_tool_events
+        ):
+            result = self._run_once(
+                _xiaoqing_interview_retry_prompt(),
+                conversation_id=conversation_id,
+                conversation_title=conversation_title,
+                single_chat=single_chat,
+                allow_side_effects=allow_side_effects,
+            )
+            if not allow_side_effects:
+                _validate_read_only_result(result, self.last_audit_tool_events)
         return result
 
     def handle(
@@ -382,6 +397,35 @@ def _validate_read_only_result(
         command = str(event.get("command") or event.get("cmd") or "")
         if OA_MUTATING_COMMAND_PATTERN.search(command):
             raise RuntimeError("read-only OA approval review attempted a mutating action")
+
+
+def _xiaoqing_unavailable_without_mcp_call(
+    result: OaApprovalResult,
+    audit_tool_events: list[dict[str, str]],
+) -> bool:
+    result_text = "\n".join([result.oa_remark, result.audit_summary])
+    if XIAOQING_CRITICAL_INFO_UNAVAILABLE_MARKER not in result_text:
+        return False
+    return not any(
+        "xiaoqing_interview" in json.dumps(event, ensure_ascii=False)
+        for event in audit_tool_events
+    )
+
+
+def _xiaoqing_interview_retry_prompt() -> str:
+    return (
+        "上一次 OA 审批输出声称 critical_info_unavailable:xiaoqing_interview，"
+        "但本轮审计没有任何 xiaoqing_interview MCP 调用记录。"
+        "如果当前审批涉及候选人、面试、录用、offer 或招聘，并且审批详情、"
+        "触发消息或会话上下文里有候选人姓名或小青候选人链接，必须先调用 "
+        "xiaoqing_interview：没有链接时用 search_candidates 按候选人姓名搜索，"
+        "找到匹配候选人后调用 get_interview_context 读取结构化上下文和评审包，"
+        "再输出合法 OA 审批 AgentEnvelope JSON。"
+        "只有 MCP 工具实际报错、未授权、无法返回评审包，才可以继续输出 "
+        "critical_info_unavailable:xiaoqing_interview；如果上下文没有候选人姓名或链接，"
+        "说明缺少候选人定位信息，不要把它写成小青不可用。"
+        "只输出合法 OA 审批 AgentEnvelope JSON，不要解释。"
+    )
 
 
 def parse_oa_approval_json(raw: str, *, allow_legacy: bool = True) -> OaApprovalResult:
