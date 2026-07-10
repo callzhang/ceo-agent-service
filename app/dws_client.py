@@ -28,6 +28,7 @@ DINGTALK_MESSAGE_TIME_ZONE = ZoneInfo("Asia/Shanghai")
 MIN_UNREAD_MESSAGE_LIST_LIMIT = 5
 DWS_AGENT_CODE_ENV = "DINGTALK_DWS_AGENTCODE"
 DWS_DEFAULT_AGENT_CODE = "ceo-agent-service"
+BRACKETED_EMOJI_PATTERN = re.compile(r"^\[([^\[\]]+)\]$")
 
 
 def _local_time_zone():
@@ -40,6 +41,14 @@ def local_time_zone_name() -> str:
         if marker in path:
             return path.split(marker, 1)[1]
     return str(_local_time_zone())
+
+
+def normalize_message_emoji(emoji: str) -> str:
+    normalized = emoji.strip()
+    match = BRACKETED_EMOJI_PATTERN.match(normalized)
+    if match:
+        normalized = match.group(1).strip()
+    return normalized
 
 
 def extract_recall_key_from_send_result(send_result: dict[str, Any] | None) -> str:
@@ -1381,7 +1390,8 @@ class DwsClient:
         message_id: str,
         emoji: str,
     ) -> list[str]:
-        if not conversation_id or not message_id or not emoji.strip():
+        normalized_emoji = normalize_message_emoji(emoji)
+        if not conversation_id or not message_id or not normalized_emoji:
             raise ValueError("conversation id, message id, and emoji are required")
         return [
             self.dws_bin,
@@ -1393,7 +1403,7 @@ class DwsClient:
             "--msg-id",
             message_id,
             "--emoji",
-            emoji.strip(),
+            normalized_emoji,
             "--format",
             "json",
             "--yes",

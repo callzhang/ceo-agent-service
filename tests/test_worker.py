@@ -2799,6 +2799,46 @@ def test_no_reply_agent_envelope_reaction_adds_emoji_without_text_reply(
     assert final_sent(dws) == []
 
 
+def test_no_reply_agent_envelope_reaction_strips_square_brackets(
+    tmp_path: Path,
+    monkeypatch,
+):
+    trigger = message(
+        "[群公告]群公告@所有人 咱们大问题都改的差不多了，日清并重新打包。",
+    )
+    dws = FakeDws([conversation()], {"cid-1": [trigger]})
+    envelope = AgentEnvelope.model_validate(
+        {
+            "kind": "no_action",
+            "user_response": {
+                "mode": "no_reply",
+                "text": "",
+                "sensitivity_kind": "general",
+            },
+            "system_actions": [
+                {
+                    "type": "dws_message_reaction",
+                    "reaction_type": "emoji",
+                    "emoji": "[👍]",
+                }
+            ],
+            "domain_payload": {},
+            "audit": {
+                "summary": "群公告无需正式回复，但适合用表情表示支持。",
+                "documents": [],
+                "confidence": 0.9,
+            },
+        }
+    )
+    codex = FakeEnvelopeCodex(envelope)
+    worker = make_worker(tmp_path, dws, codex, monkeypatch, dry_run=False)
+
+    worker.run_once()
+
+    assert dws.message_emojis == [("cid-1", "msg-1", "👍")]
+    assert final_sent(dws) == []
+
+
 def test_no_reply_agent_envelope_text_emotion_creates_and_adds_reaction(
     tmp_path: Path,
     monkeypatch,
@@ -3957,7 +3997,7 @@ def test_consume_once_appends_feedback_links_when_configured(
     assert processed == 1
     sent_text = final_sent(dws)[0][1]
     assert sent_text.startswith("@周俊杰 先按A方案走（by明哥分身）")
-    assert "反馈：[👍](https://feedback.example.com/api/dingtalk-feedback-spike" in sent_text
+    assert "反馈：[👍 赞](https://feedback.example.com/api/dingtalk-feedback-spike" in sent_text
     assert "rating=up" in sent_text
     assert "rating=down" in sent_text
     assert "attempt_id=1" in sent_text

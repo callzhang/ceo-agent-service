@@ -43,6 +43,7 @@ from app.dws_client import (
     DwsDocumentSearchResult,
     DwsError,
     native_reply_delivery_payload,
+    normalize_message_emoji,
 )
 from app.feedback_spike import append_feedback_links, prepare_outgoing_reply_text
 from app.feedback_events import sync_feedback_events_for_sent_replies
@@ -5345,7 +5346,7 @@ class DingTalkAutoReplyWorker:
     ) -> dict:
         reaction_type = str(action.get("reaction_type") or "emoji").strip()
         if reaction_type == "emoji":
-            emoji = str(action.get("emoji") or "").strip()
+            emoji = normalize_message_emoji(str(action.get("emoji") or ""))
             command = [
                 "dws",
                 "chat",

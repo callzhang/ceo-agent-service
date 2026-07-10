@@ -93,8 +93,8 @@ def test_build_feedback_link_text_contains_two_feedback_urls():
 
     assert text == (
         "可以，先按这个方向试一下。\n\n"
-        "反馈：[👍](https://feedback.example.com/up)"
-        "｜[👎](https://feedback.example.com/down)"
+        "反馈：[👍 赞](https://feedback.example.com/up)"
+        "｜[👎 踩](https://feedback.example.com/down)"
     )
 
 
@@ -109,8 +109,8 @@ def test_build_feedback_link_text_accepts_required_feedback_prefix():
     assert text == (
         "可以，先按这个方向试一下。\n\n"
         + FEEDBACK_REQUIRED_LINK_PREFIX
-        + "[👍](https://feedback.example.com/up)"
-        "｜[👎](https://feedback.example.com/down)"
+        + "[👍 赞](https://feedback.example.com/up)"
+        "｜[👎 踩](https://feedback.example.com/down)"
     )
 
 

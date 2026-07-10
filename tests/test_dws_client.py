@@ -1402,8 +1402,8 @@ def test_send_message_command_supports_title_override():
         conversation_id="cid-1",
         text=(
             "收到\n\n"
-            "反馈：[👍](https://feedback.example.com/up)"
-            "｜[👎](https://feedback.example.com/down)"
+            "反馈：[👍 赞](https://feedback.example.com/up)"
+            "｜[👎 踩](https://feedback.example.com/down)"
         ),
         title="收到",
     )
@@ -1836,7 +1836,7 @@ def test_send_direct_message_by_bot_uses_short_title():
 
     result = client.send_direct_message_by_bot(
         "user-1",
-        "你好，有事你说。\n\n反馈：[👍](https://feedback.example.com/up)",
+        "你好，有事你说。\n\n反馈：[👍 赞](https://feedback.example.com/up)",
     )
 
     command = client.commands[0]
@@ -1996,6 +1996,18 @@ def test_add_message_emoji_command_shape():
         "json",
         "--yes",
     ]
+
+
+def test_add_message_emoji_command_strips_square_brackets():
+    client = DwsClient(dws_bin="dws")
+
+    command = client.build_add_message_emoji_command(
+        conversation_id="cid-1",
+        message_id="msg-1",
+        emoji="[👍]",
+    )
+
+    assert command[command.index("--emoji") + 1] == "👍"
 
 
 def test_add_message_text_emotion_command_shape():

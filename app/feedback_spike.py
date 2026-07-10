@@ -10,6 +10,8 @@ from app.dws_client import DwsClient
 from app.leak_check import contains_forbidden_leak
 
 MAX_FEEDBACK_CONTEXT_CHARS = 30
+FEEDBACK_UP_LINK_LABEL = "👍 赞"
+FEEDBACK_DOWN_LINK_LABEL = "👎 踩"
 
 
 @dataclass(frozen=True)
@@ -100,7 +102,11 @@ def build_feedback_link_text(
     stripped_reply = reply_text.strip()
     if not stripped_reply:
         raise ValueError("reply text is required")
-    return f"{stripped_reply}\n\n{link_prefix}[👍]({up_url})｜[👎]({down_url})"
+    return (
+        f"{stripped_reply}\n\n"
+        f"{link_prefix}[{FEEDBACK_UP_LINK_LABEL}]({up_url})"
+        f"｜[{FEEDBACK_DOWN_LINK_LABEL}]({down_url})"
+    )
 
 
 def _feedback_context_excerpt(text: str) -> str:
