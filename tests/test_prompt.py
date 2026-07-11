@@ -161,6 +161,16 @@ def test_developer_prompt_defines_non_executable_action_boundary():
     assert "handoff_to_human" in template
 
 
+def test_developer_prompt_requires_executable_advice_for_solution_requests():
+    template = read_developer_prompt_template()
+
+    assert "不要只讲方向、原则或抽象道理" in template
+    assert "回复必须给可执行建议" in template
+    assert "下一步动作、执行 owner 或需要谁配合" in template
+    assert "关键约束/平台边界、验收口径" in template
+    assert "给出可落地的替代路径或需要补齐的材料" in template
+
+
 def test_developer_prompt_documents_agent_envelope_output_protocol():
     template = read_developer_prompt_template()
 
