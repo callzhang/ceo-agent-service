@@ -122,6 +122,7 @@ CALENDAR_CONTEXT_MATCH_MIN_SCORE = 0.05
 CALENDAR_CONTEXT_MATCH_LOOKBACK = timedelta(minutes=10)
 CALENDAR_ORGANIZER_RESPONSE_ERROR = "Cannot change response status of event organizer"
 CALENDAR_BURST_REPLY_SUPPRESSION_WINDOW = timedelta(minutes=30)
+OA_FOLLOW_UP_CONTEXT_WINDOW = timedelta(days=14)
 DWS_TRANSIENT_ERROR_STATE_PREFIX = "dws_transient_error_count:"
 DWS_TRANSIENT_NOTIFY_THRESHOLD = 3
 T = TypeVar("T")
@@ -2758,7 +2759,14 @@ class DingTalkAutoReplyWorker:
     ) -> bool:
         if self.oa_approval_handler is None:
             return False
-        if not self._is_oa_approval_message(trigger):
+        oa_url = oa_url_override.strip()
+        is_oa_message = self._is_oa_approval_message(trigger)
+        if not is_oa_message:
+            oa_url = oa_url or self._oa_follow_up_url_override(
+                conversation,
+                trigger,
+            )
+        if not is_oa_message and not oa_url:
             return False
         if not ignore_existing_attempt and self._handle_existing_attempt(
             conversation,
@@ -2767,7 +2775,7 @@ class DingTalkAutoReplyWorker:
             ignore_system_notification_skip=True,
         ):
             return True
-        oa_url = oa_url_override.strip() or extract_oa_url(trigger.content)
+        oa_url = oa_url or extract_oa_url(trigger.content)
         approval_detail_text = self._oa_approval_detail_text(trigger, oa_url)
         result = self.oa_approval_handler.handle(
             trigger_text=trigger.content,
@@ -2889,6 +2897,51 @@ class DingTalkAutoReplyWorker:
             raise ReplyDeliveryError(send_error)
         self._mark_seen([trigger])
         return True
+
+    def _oa_follow_up_url_override(
+        self,
+        conversation: DingTalkConversation,
+        trigger: DingTalkMessage,
+    ) -> str:
+        if not conversation.single_chat:
+            return ""
+        trigger_time = self._message_create_time_as_instant(trigger)
+        for attempt in self.store.list_reply_attempts_for_conversation(
+            conversation.open_conversation_id,
+            limit=20,
+        ):
+            if attempt.trigger_message_id == trigger.open_message_id:
+                continue
+            if attempt.action != "oa_approval":
+                continue
+            if attempt.send_status not in {
+                "commented",
+                "blocked",
+                "failed",
+                "dry_run",
+            }:
+                continue
+            if not attempt.oa_process_instance_id.strip():
+                continue
+            attempt_time = self._parse_service_state_datetime(
+                attempt.updated_at or attempt.created_at
+            )
+            if attempt_time is None:
+                continue
+            if attempt_time > trigger_time:
+                continue
+            age = trigger_time - attempt_time.astimezone(trigger_time.tzinfo)
+            if age > OA_FOLLOW_UP_CONTEXT_WINDOW:
+                continue
+            if attempt.oa_url.strip():
+                return attempt.oa_url.strip()
+            if attempt.oa_task_id.strip():
+                return (
+                    "https://aflow.dingtalk.com/detail?"
+                    f"procInstId={quote(attempt.oa_process_instance_id.strip())}"
+                    f"&taskId={quote(attempt.oa_task_id.strip())}"
+                )
+        return ""
 
     @staticmethod
     def _oa_target_status_for_current_user(

@@ -6659,6 +6659,76 @@ def test_existing_commented_oa_attempt_is_terminal(tmp_path: Path, monkeypatch):
     assert worker.store.has_seen("msg-1") is True
 
 
+def test_single_chat_oa_follow_up_reuses_recent_review_target(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message(
+        "已经补充了二面结论、录用理由、薪资依据、实习目标",
+        single_chat=True,
+    )
+    dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该走聊天回复")
+    )
+    oa_handler = FakeOaApprovalHandler()
+    worker = make_worker(
+        tmp_path,
+        dws,
+        codex,
+        monkeypatch,
+        dry_run=False,
+        oa_approval_handler=oa_handler,
+    )
+    previous_attempt_id = worker.store.record_reply_attempt(
+        conversation_id="cid-1",
+        conversation_title="Friday",
+        trigger_message_id="msg-old-oa",
+        trigger_sender="周俊杰",
+        trigger_text="[Ding]周俊杰提醒您审批他的录用申请",
+        action="oa_approval",
+        sensitivity_kind="internal_personnel",
+        codex_reason="退回",
+        oa_process_instance_id="proc-1",
+        oa_task_id="task-1",
+        oa_url=(
+            "https://aflow.dingtalk.com/detail?"
+            "procInstId=proc-1&taskId=task-1"
+        ),
+        oa_action="退回",
+        oa_remark="请补充二面结论、录用理由、薪资依据、实习目标。",
+        oa_action_result_json='{"errcode":0,"errmsg":"ok"}',
+        send_status="commented",
+    )
+    with worker.store._connect() as db:
+        db.execute(
+            "update reply_attempts set created_at=?, updated_at=? where id=?",
+            ("2026-05-13 09:30:00", "2026-05-13 09:30:00", previous_attempt_id),
+        )
+
+    worker.run_once()
+
+    assert codex.calls == []
+    assert len(oa_handler.calls) == 1
+    assert oa_handler.calls[0][0] == trigger.content
+    assert oa_handler.calls[0][2] == (
+        "https://aflow.dingtalk.com/detail?"
+        "procInstId=proc-1&taskId=task-1"
+    )
+    assert dws.oa_approval_actions == [
+        (
+            "proc-1",
+            "task-1",
+            "拒绝",
+            "请补充预算来源和项目归属后重新提交。",
+        )
+    ]
+    attempts = worker.store.list_reply_attempts(limit=2)
+    assert attempts[0].trigger_message_id == "msg-1"
+    assert attempts[0].action == "oa_approval"
+    assert attempts[0].send_status == "skipped"
+    assert worker.store.has_seen("msg-1") is True
+
+
 def test_automatic_sync_notification_is_skipped_before_codex(
     tmp_path: Path, monkeypatch
 ):
