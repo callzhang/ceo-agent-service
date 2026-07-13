@@ -3786,6 +3786,22 @@ def test_run_json_uses_per_call_timeout_when_provided(monkeypatch):
     assert seen_timeouts == [120]
 
 
+def test_run_json_accepts_trailing_json_after_progress_output(monkeypatch):
+    def fake_run(command, text, capture_output, check, timeout, env=None):
+        return SimpleNamespace(
+            returncode=0,
+            stdout='sent via dws\n{"ok":true,"result":{"messageId":"msg-1"}}',
+            stderr="",
+        )
+
+    monkeypatch.setattr("app.dws_client.subprocess.run", fake_run)
+
+    assert DwsClient().run_json(["dws", "chat", "message", "send"]) == {
+        "ok": True,
+        "result": {"messageId": "msg-1"},
+    }
+
+
 def test_run_json_extracts_error_code_from_stdout_and_retries_transient_timeout(
     monkeypatch,
 ):

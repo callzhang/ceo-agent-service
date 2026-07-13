@@ -2802,10 +2802,7 @@ class DwsClient:
                     result.stderr, result.stdout
                 ),
             )
-        try:
-            return json.loads(result.stdout)
-        except json.JSONDecodeError as exc:
-            raise DwsError("dws command returned invalid JSON") from exc
+        return self._json_from_mixed_stdout(result.stdout)
 
     def run_text(
         self,
