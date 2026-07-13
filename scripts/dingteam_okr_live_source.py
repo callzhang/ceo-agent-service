@@ -156,13 +156,15 @@ def _ensure_dingteam_tab(wait_seconds: float = 25.0) -> None:
         raise RuntimeError(completed.stderr.strip() or completed.stdout.strip())
     if completed.stdout.strip() == "exists":
         return
-    # A new tab was opened; wait for the SPA bundle to be ready before injecting.
+    # A new tab was opened; wait for the SPA page to finish loading before
+    # injecting the same-origin API collector.
     deadline = time.monotonic() + wait_seconds
     while time.monotonic() < deadline:
         try:
             ready = _execute_in_dingteam_tab(
-                "(function(){try{return window.webpackChunkallinone?'ready':'loading';}"
-                "catch(e){return 'loading';}})()"
+                "(function(){"
+                "return document.readyState==='complete'?'ready':'loading';"
+                "})()"
             )
             if ready == "ready":
                 return
@@ -208,6 +210,8 @@ def _build_page_script(*, user_id: str, period_label: str, result_attribute: str
   window.addEventListener('unhandledrejection', function(event) {{
     exposeError(event.reason || 'Unhandled promise rejection');
   }}, {{ once: true }});
+
+  try {{
 
   function textFromRichText(raw) {{
     if (!raw || typeof raw !== 'string') return '';
@@ -295,11 +299,12 @@ def _build_page_script(*, user_id: str, period_label: str, result_attribute: str
   }}
 
   async function fetchObjectiveComments(objectiveId) {{
-    const payload = await api.objective.findCommentListV2({{
+    const payload = await postJson('/data/okr/objective/findCommentList/v2', {{
       objectiveId: objectiveId, pageNo: 1, pageSize: 100,
       sort: false, logTypeCells: [], krId: '', commentId: ''
     }});
-    const list = Array.isArray(payload.list) ? payload.list : [];
+    const normalized = normalizeListPayload(payload);
+    const list = Array.isArray(normalized.list) ? normalized.list : [];
     const out = [];
     list.forEach(function(item) {{
       if (!item || item.type !== 5) return;
@@ -318,11 +323,41 @@ def _build_page_script(*, user_id: str, period_label: str, result_attribute: str
     return out;
   }}
 
-  window.webpackChunkallinone.push([[Date.now()], {{}}, function(require) {{
-    window.__codexDingteamOkrRequire = require;
-  }}]);
-  const api = window.__codexDingteamOkrRequire(37615).Z;
-  const periodsPayload = await api.person.period.list({{ userId: requestedUserId }});
+  async function postJson(path, body) {{
+    const response = await fetch(path, {{
+      method: 'POST',
+      headers: {{ 'content-type': 'application/json' }},
+      credentials: 'include',
+      body: JSON.stringify(body)
+    }});
+    const text = await response.text();
+    const payload = JSON.parse(text);
+    if (!response.ok) {{
+      throw new Error('Dingteam OKR API HTTP ' + response.status + ': ' + text.slice(0, 300));
+    }}
+    if (payload && typeof payload === 'object') {{
+      const code = payload.code;
+      if (code !== undefined && code !== 0 && code !== '0' && code !== 200 && code !== '200') {{
+        throw new Error('Dingteam OKR API error ' + code + ': ' + (payload.msg || payload.message || 'unknown'));
+      }}
+      if (payload.success === false) {{
+        throw new Error('Dingteam OKR API failed: ' + (payload.msg || payload.message || 'unknown'));
+      }}
+      if (Object.prototype.hasOwnProperty.call(payload, 'data')) return payload.data;
+      if (Object.prototype.hasOwnProperty.call(payload, 'result')) return payload.result;
+    }}
+    return payload;
+  }}
+
+  function normalizeListPayload(payload) {{
+    if (Array.isArray(payload)) return {{ list: payload }};
+    if (payload && typeof payload === 'object') return payload;
+    return {{ list: [] }};
+  }}
+
+  const periodsPayload = normalizeListPayload(
+    await postJson('/data/okr/person/period/list', {{ userId: requestedUserId }})
+  );
   const periods = Array.isArray(periodsPayload.list) ? periodsPayload.list : [];
   const periodKey = normalizedPeriod(requestedPeriodLabel);
   const period = periods.find(function(item) {{
@@ -332,7 +367,7 @@ def _build_page_script(*, user_id: str, period_label: str, result_attribute: str
     throw new Error('Dingteam OKR period not found: ' + requestedPeriodLabel);
   }}
 
-  const listPayload = await api.objective.showListView.v2({{
+  const listPayload = normalizeListPayload(await postJson('/data/okr/objective/showListView/v2', {{
     mainId: period.okrId,
     type: 0,
     search: {{
@@ -340,7 +375,7 @@ def _build_page_script(*, user_id: str, period_label: str, result_attribute: str
       pageNo: 1,
       pageSize: 9999
     }}
-  }});
+  }}));
   const objectiveList = Array.isArray(listPayload.list) ? listPayload.list : [];
   const objectiveProgressHistories = [];
   const objectiveDetails = [];
@@ -395,8 +430,11 @@ def _build_page_script(*, user_id: str, period_label: str, result_attribute: str
 
     const detailRows = await Promise.all(krCells.map(async function(kr) {{
       const krId = kr.id;
-      const detail = await api.objective.findKrDetail({{ objId: objectiveId, krId: krId }});
-      const progressHistory = await api.objective.log.progressHistory({{
+      const detail = await postJson('/data/okr/objective/findKrDetail', {{
+        objId: objectiveId,
+        krId: krId
+      }});
+      const progressHistory = await postJson('/data/okr/objective/log/progressHistory', {{
         objectiveId: objectiveId,
         krId: krId
       }});
@@ -487,6 +525,9 @@ def _build_page_script(*, user_id: str, period_label: str, result_attribute: str
       }}
     }}
   }}));
+  }} catch (error) {{
+    exposeError(error);
+  }}
 }})();
 """
 

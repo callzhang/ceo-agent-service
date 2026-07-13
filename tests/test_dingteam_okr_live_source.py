@@ -26,17 +26,22 @@ def test_page_script_uses_page_api_without_browser_storage_access():
     assert "user-1" in script
     assert "2026 Q2" in script
     assert "data-result" in script
-    assert "webpackChunkallinone" in script
-    assert "api.objective.log.progressHistory" in script
-    assert "api.objective.findCommentListV2" in script
+    assert "postJson('/data/okr/person/period/list'" in script
+    assert "postJson('/data/okr/objective/showListView/v2'" in script
+    assert "postJson('/data/okr/objective/findKrDetail'" in script
+    assert "postJson('/data/okr/objective/log/progressHistory'" in script
+    assert "postJson('/data/okr/objective/findCommentList/v2'" in script
+    assert "credentials: 'include'" in script
+    assert "Dingteam OKR API error" in script
     assert "mergeUpdates(aggregateHistory(histories), aggregateComments(krComments))" in script
     assert "progressUpdatesAggregated: aggregated" in script
     assert "krDetailsUpdatesAggregated: aggregated" in script
     assert "cookie" not in script.casefold()
     assert "localstorage" not in script.casefold()
     assert "sessionstorage" not in script.casefold()
+    assert "webpackChunkallinone" not in script
     assert ".catch(" not in script
-    assert "try {" not in script
+    assert "} catch (error) {" in script
 
 
 def test_injected_script_does_not_inline_page_source():
@@ -91,3 +96,10 @@ def test_default_timeout_allows_slow_dingteam_page():
     module = load_module()
 
     assert module.DEFAULT_TIMEOUT_SECONDS == 90.0
+
+
+def test_ready_probe_accepts_chunk_on_global_root():
+    source = SCRIPT_PATH.read_text()
+
+    assert "document.readyState==='complete'?'ready':'loading'" in source
+    assert "webpackChunkallinone?'ready':'loading'" not in source
