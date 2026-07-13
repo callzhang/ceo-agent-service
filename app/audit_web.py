@@ -511,6 +511,7 @@ HISTORY_CHART_HOURS = 24
 HISTORY_CHART_COLORS = {
     "💬 Sent": "#00b48a",
     "💬 Skipped": "#a8a8aa",
+    "💬 Blocked": "#c37d0d",
     "💬 Processing": "#3772cf",
     "💬 Commented": "#3772cf",
     "🙂 Reacted": "#6f8fdd",
@@ -2060,7 +2061,9 @@ def _history_event_label(attempt: ReplyAttempt) -> str:
         return "💬 Sent"
     if status == "skipped":
         return "💬 Skipped"
-    if status in {"failed", "blocked"}:
+    if status == "blocked":
+        return "💬 Blocked"
+    if status == "failed":
         return "💬 Failed"
     if status == "dry_run":
         return "💬 Dry run"
@@ -4174,7 +4177,7 @@ def _operation_status_class(status: str) -> str:
     normalized = status.strip().lower()
     if normalized.startswith("resolved") or normalized in {"sent", "done", "completed"}:
         return "status-resolved"
-    if normalized in {"failed", "blocked"}:
+    if normalized == "failed":
         return "status-failed"
     return "status-active"
 

@@ -163,12 +163,25 @@ def test_history_chart_labels_terminal_reactions_and_oa_actions(tmp_path: Path):
         oa_action="退回",
         send_status="commented",
     )
+    store.record_reply_attempt(
+        conversation_id="cid-blocked",
+        conversation_title="Friday",
+        trigger_message_id="msg-blocked",
+        trigger_sender="Xiaomin",
+        trigger_text="@Alex Chen 需要外部授权。",
+        action="send_reply",
+        sensitivity_kind="general",
+        codex_reason="external authorization required",
+        send_status="blocked",
+    )
 
     payload = audit_web_module._history_chart_payload(store)
     series_names = {series["name"] for series in payload["series"]}
 
     assert "🙂 Reacted" in series_names
     assert "🧾 Returned" in series_names
+    assert "💬 Blocked" in series_names
+    assert "💬 Failed" not in series_names
     assert "💬 Processing" not in series_names
 
 
