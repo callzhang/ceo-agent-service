@@ -883,6 +883,26 @@ def test_json_from_mixed_stdout_reads_trailing_json():
     }
 
 
+def test_json_from_mixed_stdout_reads_trailing_json_array():
+    payload = DwsClient._json_from_mixed_stdout(
+        'processed 2 records\n[{"id":1},{"id":2}]'
+    )
+
+    assert payload == [{"id": 1}, {"id": 2}]
+
+
+def test_json_from_mixed_stdout_rejects_partial_json():
+    with pytest.raises(DwsError, match="invalid JSON"):
+        DwsClient._json_from_mixed_stdout('creating document\n{"success":true')
+
+
+def test_json_from_mixed_stdout_rejects_text_after_json():
+    with pytest.raises(DwsError, match="invalid JSON"):
+        DwsClient._json_from_mixed_stdout(
+            'creating document\n{"success":true}\nunexpected trailer'
+        )
+
+
 def test_get_resource_download_url_keeps_url_when_dws_download_stage_fails(
     monkeypatch,
 ):

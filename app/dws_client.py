@@ -13,6 +13,7 @@ from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, Field
+from robust_json import extract_all
 
 from app.config import chat_bot_names, read_env_file
 from app.dingtalk_models import DingTalkConversation, DingTalkMessage
@@ -2268,17 +2269,14 @@ class DwsClient:
             return json.loads(text)
         except json.JSONDecodeError:
             pass
-        decoder = json.JSONDecoder()
-        for index, char in enumerate(text):
-            if char != "{":
+        candidates = extract_all(text, allow_partial=False)
+        for candidate in reversed(candidates):
+            if text[candidate.end :].strip():
                 continue
             try:
-                payload, end = decoder.raw_decode(text[index:])
+                return json.loads(candidate.text)
             except json.JSONDecodeError:
-                continue
-            if text[index + end :].strip():
-                continue
-            return payload
+                break
         raise DwsError("dws command returned invalid JSON")
 
     @staticmethod

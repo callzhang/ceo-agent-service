@@ -9,6 +9,7 @@ dependencies = [
   "jieba>=0.42",
   "pypdf>=5.0",
   "pydantic>=2.10",
+  "robust-json-parser>=0.1.6,<0.2",
   "uvicorn>=0.34"
 ]
 

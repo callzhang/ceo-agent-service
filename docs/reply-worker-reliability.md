@@ -19,6 +19,13 @@ and only writes an `errors` row when the threshold is reached. Message sends,
 calendar responses, approvals, and other write actions are not retried through
 this path.
 
+DWS JSON commands may print progress text before their final structured result.
+The client uses `robust-json-parser` only to locate complete JSON objects or
+arrays in that mixed stdout. It disables partial extraction, requires the chosen
+JSON value to end at the end of stdout, and parses the extracted text again with
+the standard JSON parser. It never repairs truncated or malformed DWS action
+results.
+
 For single-chat recent-context reads, a missing direct-user mapping is treated as
 unavailable context rather than a business failure. The worker returns an empty
 recent-context list for that read and does not write an `errors` row; unread
