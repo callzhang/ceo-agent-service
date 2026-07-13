@@ -307,7 +307,7 @@ class OaApprovalSpecHandler:
             session_id=None,
             allow_side_effects=execute,
             require_xiaoqing_interview=_oa_context_requires_xiaoqing_interview(
-                trigger_text, context_text, approval_detail_text
+                trigger_text, approval_detail_text
             ),
         )
 

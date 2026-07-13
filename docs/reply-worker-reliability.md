@@ -259,6 +259,12 @@ attempt, marks the queued `reply_tasks` row `failed`, and sends the normal
 discouraged, such as retrying a DWS detail command after an OpenAPI recovery,
 stay as prompt guidance and audit evidence; they are not blocked by the runner.
 
+The Xiaoqing interview-call guard is classified from the current OA trigger and
+the current approval detail only. Conversation history remains available to the
+approval agent as supporting context, but unrelated historical hiring messages
+must not turn a contract or other non-hiring approval into a Xiaoqing-dependent
+task.
+
 Processing tasks older than the stale-task threshold are also moved back to
 `pending`; this recovery path sends a local notification so the operator can see
 that an interrupted task was retried.

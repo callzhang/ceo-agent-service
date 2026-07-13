@@ -803,6 +803,41 @@ def test_oa_hiring_trigger_requires_xiaoqing_even_without_detail_text():
     )
 
 
+def test_oa_contract_does_not_require_xiaoqing_from_unrelated_chat_history(
+    tmp_path: Path, monkeypatch
+):
+    skill_path = tmp_path / "skill.md"
+    skill_path.write_text("# OA Skill", encoding="utf-8")
+    runner = OaApprovalSpecHandler(workspace=tmp_path, skill_path=skill_path)
+    captured: dict[str, bool] = {}
+
+    def fake_run(*_, require_xiaoqing_interview: bool, **__):
+        captured["require_xiaoqing_interview"] = require_xiaoqing_interview
+        return OaApprovalResult(
+            process_instance_id="proc-contract",
+            task_id="",
+            oa_url="https://aflow.dingtalk.com/detail?procInstId=proc-contract",
+            oa_action="退回",
+            oa_remark="当前消息是合同审批评论提醒。",
+            action_result={},
+            audit_summary="已按当前合同审批判断。",
+            audit_documents=[],
+        )
+
+    monkeypatch.setattr(runner, "run", fake_run)
+
+    _handle_approval(
+        runner,
+        "庞文凤在庞文凤提交的其他合同审批里提到了你",
+        "较早的无关消息：请审批候选人的录用申请并检查面试记录。",
+        "https://aflow.dingtalk.com/detail?procInstId=proc-contract",
+        approval_detail_text='{"title":"庞文凤提交的其他合同审批"}',
+        execute=False,
+    )
+
+    assert captured == {"require_xiaoqing_interview": False}
+
+
 def test_required_xiaoqing_call_accepts_same_session_history(
     tmp_path: Path, monkeypatch
 ):
