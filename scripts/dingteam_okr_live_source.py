@@ -19,6 +19,7 @@ import uuid
 
 
 DINGTEAM_TAB_URL_PREFIX = "https://dingokr.dingteam.com/"
+DEFAULT_TIMEOUT_SECONDS = 90.0
 
 
 APPLESCRIPT = f"""
@@ -74,7 +75,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--user-id", required=True)
     parser.add_argument("--period-label", required=True)
-    parser.add_argument("--timeout-seconds", type=float, default=24.0)
+    parser.add_argument("--timeout-seconds", type=float, default=DEFAULT_TIMEOUT_SECONDS)
     args = parser.parse_args()
 
     _ensure_dingteam_tab()

@@ -85,3 +85,9 @@ def test_print_cli_error_writes_safe_json(capsys):
         "message": "Dingteam OKR live source failed",
         "reason": "Dingteam OKR page script failed: api missing",
     }
+
+
+def test_default_timeout_allows_slow_dingteam_page():
+    module = load_module()
+
+    assert module.DEFAULT_TIMEOUT_SECONDS == 90.0
