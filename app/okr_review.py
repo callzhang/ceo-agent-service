@@ -578,6 +578,7 @@ def build_okr_review_prompt(
     period_label: str,
     okr_source_json: str,
     trigger_text: str,
+    trigger_sender: str = "",
 ) -> str:
     compact_okr_source_json = compact_okr_source_for_review_prompt(okr_source_json)
     return f"""你是 CEO Agent OKR review task。
@@ -585,12 +586,14 @@ def build_okr_review_prompt(
 request_id: {request_id}
 person_name: {person_name}
 period_label: {period_label}
+trigger_sender: {trigger_sender}
 trigger_text: {trigger_text}
 
 实时叮当 OKR JSON:
 {compact_okr_source_json}
 
 任务:
+- `person_name` 是被审核人，必须以实时 JSON 中的 `processed.objectives[].ownerName` 为准；`trigger_sender` 只是请求来源，不得作为被审核人。
 - 优先使用实时 JSON 中的 `processed.okrRows` 和 `processed.objectives`；这是 worker 在触发 runner 前整理好的 O/KR 层级结构。
 - 逐 KR 阅读 `krDetailsUpdatesAggregated` 和 KR progress updates。
 - 从 KR进度更新中抽取员工主张、完成时间、产出和指标。
@@ -639,6 +642,20 @@ def compact_okr_source_for_review_prompt(okr_source_json: str) -> str:
     return json.dumps(compact, ensure_ascii=False)
 
 
+def okr_review_person_name(okr_source_json: str, *, default: str) -> str:
+    payload = json.loads(okr_source_json)
+    processed = payload.get("processed") if isinstance(payload, dict) else None
+    objectives = processed.get("objectives") if isinstance(processed, dict) else None
+    if isinstance(objectives, list):
+        for objective in objectives:
+            if not isinstance(objective, dict):
+                continue
+            owner_name = str(objective.get("ownerName") or "").strip()
+            if owner_name:
+                return owner_name
+    return default
+
+
 def render_okr_review_reply(payload: OkrReviewPayload) -> str:
     lines = [f"{payload.person_name} {payload.period_label} OKR 审核", payload.summary]
     for index, item in enumerate(payload.items, start=1):
@@ -657,12 +674,17 @@ def render_okr_review_reply(payload: OkrReviewPayload) -> str:
 
 
 def process_okr_review_request(*, store, runner, request, single_chat: bool) -> str:
+    person_name = okr_review_person_name(
+        request.okr_source_json,
+        default=request.trigger_sender,
+    )
     prompt = build_okr_review_prompt(
         request_id=request.id,
-        person_name=request.trigger_sender,
+        person_name=person_name,
         period_label=request.period_label,
         okr_source_json=request.okr_source_json,
         trigger_text=request.trigger_text,
+        trigger_sender=request.trigger_sender,
     )
     run = runner.run(
         request.conversation_id,
@@ -671,8 +693,11 @@ def process_okr_review_request(*, store, runner, request, single_chat: bool) -> 
         prompt,
         owner=f"okr_review:{request.id}",
     )
+    domain_payload = normalize_okr_review_domain_payload(run.envelope.domain_payload)
+    if isinstance(domain_payload, dict):
+        domain_payload["person_name"] = person_name
     payload = OkrReviewPayload.model_validate(
-        normalize_okr_review_domain_payload(run.envelope.domain_payload)
+        domain_payload
     )
     store.record_okr_review_run(
         request_id=request.id,

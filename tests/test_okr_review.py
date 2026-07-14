@@ -715,6 +715,89 @@ def test_process_okr_review_request_persists_items_and_marks_done(tmp_path):
     assert json.loads(runner.envelope.model_dump_json())["kind"] == "okr_review"
 
 
+def test_process_okr_review_request_uses_live_source_owner_as_person_name(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    request_id = store.create_okr_review_request(
+        conversation_id="cid-group",
+        conversation_title="OKR 群",
+        trigger_message_id="msg-1",
+        trigger_sender="韩露",
+        trigger_sender_user_id="requester-user",
+        trigger_text="帮我审核 Roy 的 OKR",
+        period_label="2026 Q2",
+        period_start="2026-04-01",
+        period_end="2026-06-30",
+        okr_source_json=json.dumps(
+            {
+                "userId": "roy-user",
+                "processed": {
+                    "objectives": [{"owner": "roy-user", "ownerName": "Roy Han"}],
+                    "okrRows": [],
+                },
+            },
+            ensure_ascii=False,
+        ),
+    )
+    request = store.claim_okr_review_requests(1)[0]
+    envelope = AgentEnvelope.model_validate(
+        {
+            "kind": "okr_review",
+            "user_response": {
+                "mode": "send_reply",
+                "text": "OKR review done",
+                "sensitivity_kind": "internal_personnel",
+            },
+            "system_actions": [{"type": "persist_okr_review", "request_id": request_id}],
+            "domain_payload": {
+                "person_name": "韩露",
+                "period_label": "2026 Q2",
+                "summary": "已审核。",
+                "items": [
+                    {
+                        "objective_title": "O",
+                        "objective_weight": 1.0,
+                        "kr_title": "KR",
+                        "kr_weight": 1.0,
+                        "self_progress": "0%",
+                        "kr_progress_update": "无更新。",
+                        "claim_text": "无更新。",
+                        "claim_completion_time": "",
+                        "deadline": "",
+                        "claim_base_score": 0,
+                        "claim_discount_factor": 1.0,
+                        "claim_discount_reason": "无进度主张。",
+                        "claim_score": 0,
+                        "verified_completion_time": "",
+                        "verified_base_score": 0,
+                        "verified_discount_factor": 1.0,
+                        "verified_discount_reason": "无可核验证据。",
+                        "verified_score": 0,
+                        "evidence_used": [],
+                        "evidence_gap": "缺少证据。",
+                        "review_comment": "证据不足。",
+                        "suggested_follow_up": "补充材料。",
+                    }
+                ],
+            },
+            "audit": {"summary": "审核完成。", "documents": [], "confidence": 0.8},
+        }
+    )
+    runner = FakeStructuredRunnerForOkr(envelope)
+
+    reply = process_okr_review_request(
+        store=store,
+        runner=runner,
+        request=request,
+        single_chat=False,
+    )
+
+    prompt = runner.calls[0][3]
+    assert "person_name: Roy Han" in prompt
+    assert "trigger_sender: 韩露" in prompt
+    assert "person_name: 韩露" not in prompt
+    assert reply.startswith("Roy Han 2026 Q2 OKR 审核")
+
+
 def test_process_okr_review_request_preserves_group_conversation_kind(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     request_id = store.create_okr_review_request(
