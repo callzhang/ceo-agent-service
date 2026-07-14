@@ -4495,6 +4495,19 @@ def test_task_maintenance_loop_processes_work_and_daily_steps(monkeypatch, tmp_p
     ]
 
 
+def test_meeting_discovery_activation_watermark_is_set_once(tmp_path):
+    settings = WorkerSettings(db_path=tmp_path / "worker.sqlite3")
+    first = datetime.fromisoformat("2026-07-15T02:00:00+08:00")
+    later = datetime.fromisoformat("2026-07-15T03:00:00+08:00")
+
+    assert cli._initialize_meeting_discovery_on_service_start(
+        settings, now=first
+    ) == first.isoformat()
+    assert cli._initialize_meeting_discovery_on_service_start(
+        settings, now=later
+    ) == first.isoformat()
+
+
 def test_run_service_starts_web_producer_and_consumer(monkeypatch, tmp_path):
     calls = []
     failures = []

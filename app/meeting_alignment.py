@@ -35,6 +35,9 @@ DEFAULT_MEETING_DISCOVERY_LOOKBACK = timedelta(days=7)
 TERMINAL_STATUSES = frozenset({"no_action", "sent", "failed"})
 DEFAULT_MEETING_RETRY_DELAY = timedelta(minutes=1)
 DEFAULT_MEETING_MAX_ATTEMPTS = 3
+MEETING_DISCOVERY_ACTIVATED_AT_STATE_KEY = (
+    "meeting_alignment_discovery_activated_at"
+)
 
 
 class MeetingProducerDws(Protocol):
@@ -65,6 +68,18 @@ def produce_meeting_alignment_jobs(
         raise ValueError("settle_seconds must not be negative")
     if discovery_lookback.total_seconds() <= 0:
         raise ValueError("meeting discovery lookback must be positive")
+
+    activated_at: datetime | None = None
+    activated_at_text = store.get_service_state(
+        MEETING_DISCOVERY_ACTIVATED_AT_STATE_KEY
+    )
+    if activated_at_text:
+        try:
+            activated_at = datetime.fromisoformat(activated_at_text)
+        except ValueError as exc:
+            raise DwsError("meeting discovery activation watermark is invalid") from exc
+        if activated_at.tzinfo is None or activated_at.utcoffset() is None:
+            raise DwsError("meeting discovery activation watermark must include timezone")
 
     current_user_id = dws.get_current_user_id().strip()
     if not current_user_id:
@@ -98,6 +113,8 @@ def produce_meeting_alignment_jobs(
         started_at = datetime.fromisoformat(metadata.started_at)
         ended_at = datetime.fromisoformat(metadata.ended_at)
         if started_at >= ended_at:
+            continue
+        if activated_at is not None and ended_at < activated_at:
             continue
 
         events = _list_all_calendar_events(

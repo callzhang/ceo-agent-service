@@ -54,6 +54,7 @@ from app.message_split import split_dingtalk_text
 from app.dingtalk_models import CodexAction, DingTalkConversation, DingTalkMessage
 from app.notification import send_macos_notification
 from app.meeting_alignment import (
+    MEETING_DISCOVERY_ACTIVATED_AT_STATE_KEY,
     consume_meeting_alignment_jobs,
     produce_meeting_alignment_jobs,
     recover_meeting_alignment_jobs,
@@ -2014,6 +2015,7 @@ def run_service(
     wait: Callable[[], None] | None = None,
     exit_process: Callable[[int], None] = os._exit,
 ) -> None:
+    _initialize_meeting_discovery_on_service_start(settings)
     _recover_processing_reply_tasks_on_service_start(settings)
     _recover_processing_work_summary_inputs_on_service_start(settings)
     _recover_meeting_alignment_jobs_on_service_start(settings)
@@ -2080,6 +2082,23 @@ def run_service(
         wait_event.wait()
         return
     wait()
+
+
+def _initialize_meeting_discovery_on_service_start(
+    settings: WorkerSettings,
+    *,
+    now: datetime | None = None,
+) -> str:
+    store = AutoReplyStore(settings.db_path)
+    existing = store.get_service_state(MEETING_DISCOVERY_ACTIVATED_AT_STATE_KEY)
+    if existing:
+        return existing
+    activated_at = (now or datetime.now().astimezone()).isoformat()
+    store.set_service_state(
+        MEETING_DISCOVERY_ACTIVATED_AT_STATE_KEY,
+        activated_at,
+    )
+    return activated_at
 
 
 def _recover_meeting_alignment_jobs_on_service_start(

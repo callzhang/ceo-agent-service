@@ -412,6 +412,19 @@ def test_producer_defaults_to_seven_day_discovery_window(tmp_path):
     assert dws.minutes_calls[0]["end"] == "2026-07-14T10:10:00+08:00"
 
 
+def test_producer_skips_meetings_before_persisted_live_activation(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.set_service_state(
+        "meeting_alignment_discovery_activated_at",
+        "2026-07-14T10:01:00+08:00",
+    )
+    dws = FakeDws()
+
+    assert produce_meeting_alignment_jobs(store, dws, now=NOW) == 0
+    assert store.get_meeting_alignment_job_by_meeting_id("minutes-1") is None
+    assert dws.calendar_calls == []
+
+
 def test_consumer_records_no_action_run_and_terminal_job(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     dws = ConsumerDws()
