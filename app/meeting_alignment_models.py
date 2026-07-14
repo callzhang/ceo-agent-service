@@ -96,25 +96,66 @@ class MeetingAlignmentDecision(StrictModel):
 
     @model_validator(mode="after")
     def validate_action_payload(self) -> Self:
+        trigger_reasons = set(self.trigger_reasons)
+        topic_states = {topic.state for topic in self.topics}
+        if (
+            "aligned_disagreement" in trigger_reasons
+            and "aligned" not in topic_states
+        ):
+            raise ValueError("aligned_disagreement requires an aligned topic")
+        if "unresolved_disagreement" in trigger_reasons:
+            if "unresolved" not in topic_states:
+                raise ValueError(
+                    "unresolved_disagreement requires an unresolved topic"
+                )
+            if not self.key_questions:
+                raise ValueError(
+                    "unresolved_disagreement requires key_questions"
+                )
+        has_derek_viewpoint_trigger = "derek_viewpoint" in trigger_reasons
+        has_derek_viewpoint = self.derek_viewpoint is not None
+        if has_derek_viewpoint_trigger != has_derek_viewpoint:
+            raise ValueError(
+                "derek_viewpoint trigger and payload must appear together"
+            )
+
         if self.action == "no_action":
-            if self.target is not None or self.final_message.strip():
-                raise ValueError("no_action cannot contain delivery output")
+            if (
+                self.trigger_reasons
+                or self.target is not None
+                or self.final_message.strip()
+            ):
+                raise ValueError(
+                    "no_action requires empty trigger_reasons and no delivery output"
+                )
             return self
         if self.target is None or not self.final_message.strip():
             raise ValueError("send requires target and final_message")
         if not self.trigger_reasons:
             raise ValueError("send requires trigger_reasons")
         if self.target.kind == "group":
-            if not self.target.conversation_id or not self.target.candidates:
+            if (
+                not self.target.conversation_id.strip()
+                or not self.target.candidates
+            ):
                 raise ValueError(
                     "group target requires candidates and conversation_id"
                 )
+            if self.target.direct_user_id.strip():
+                raise ValueError("group target cannot contain direct_user_id")
             if (
                 self.target.candidates[0].conversation_id
                 != self.target.conversation_id
             ):
                 raise ValueError(
                     "group target must select the first ranked candidate"
+                )
+        else:
+            if not self.target.direct_user_id.strip():
+                raise ValueError("direct target requires direct_user_id")
+            if self.target.conversation_id.strip() or self.target.candidates:
+                raise ValueError(
+                    "direct target cannot contain group delivery fields"
                 )
         return self
 
