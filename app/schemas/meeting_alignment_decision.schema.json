@@ -1,0 +1,303 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "AlignmentTopic": {
+      "additionalProperties": false,
+      "properties": {
+        "title": {
+          "title": "Title",
+          "type": "string"
+        },
+        "state": {
+          "enum": [
+            "aligned",
+            "unresolved"
+          ],
+          "title": "State",
+          "type": "string"
+        },
+        "views": {
+          "items": {
+            "$ref": "#/$defs/AlignmentView"
+          },
+          "title": "Views",
+          "type": "array"
+        },
+        "conclusion": {
+          "title": "Conclusion",
+          "type": "string"
+        },
+        "alignment_reason": {
+          "title": "Alignment Reason",
+          "type": "string"
+        }
+      },
+      "required": [
+        "title",
+        "state",
+        "views",
+        "conclusion",
+        "alignment_reason"
+      ],
+      "title": "AlignmentTopic",
+      "type": "object"
+    },
+    "AlignmentView": {
+      "additionalProperties": false,
+      "properties": {
+        "speaker": {
+          "title": "Speaker",
+          "type": "string"
+        },
+        "view": {
+          "title": "View",
+          "type": "string"
+        },
+        "reason": {
+          "title": "Reason",
+          "type": "string"
+        }
+      },
+      "required": [
+        "speaker",
+        "view",
+        "reason"
+      ],
+      "title": "AlignmentView",
+      "type": "object"
+    },
+    "DeliveryTarget": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "enum": [
+            "group",
+            "direct"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "conversation_id": {
+          "title": "Conversation Id",
+          "type": "string"
+        },
+        "direct_user_id": {
+          "title": "Direct User Id",
+          "type": "string"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        },
+        "candidates": {
+          "items": {
+            "$ref": "#/$defs/TargetCandidate"
+          },
+          "title": "Candidates",
+          "type": "array"
+        }
+      },
+      "required": [
+        "kind",
+        "conversation_id",
+        "direct_user_id",
+        "title",
+        "candidates"
+      ],
+      "title": "DeliveryTarget",
+      "type": "object"
+    },
+    "DerekViewpoint": {
+      "additionalProperties": false,
+      "properties": {
+        "expressed_view": {
+          "title": "Expressed View",
+          "type": "string"
+        },
+        "meeting_evidence": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Meeting Evidence",
+          "type": "array"
+        },
+        "omitted_layer": {
+          "title": "Omitted Layer",
+          "type": "string"
+        },
+        "plain_explanation": {
+          "title": "Plain Explanation",
+          "type": "string"
+        },
+        "analogy": {
+          "title": "Analogy",
+          "type": "string"
+        },
+        "example": {
+          "title": "Example",
+          "type": "string"
+        },
+        "historical_sources": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Historical Sources",
+          "type": "array"
+        }
+      },
+      "required": [
+        "expressed_view",
+        "meeting_evidence",
+        "omitted_layer",
+        "plain_explanation",
+        "analogy",
+        "example",
+        "historical_sources"
+      ],
+      "title": "DerekViewpoint",
+      "type": "object"
+    },
+    "KeyQuestion": {
+      "additionalProperties": false,
+      "properties": {
+        "question": {
+          "title": "Question",
+          "type": "string"
+        },
+        "answer_owner_names": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Answer Owner Names",
+          "type": "array"
+        }
+      },
+      "required": [
+        "question",
+        "answer_owner_names"
+      ],
+      "title": "KeyQuestion",
+      "type": "object"
+    },
+    "TargetCandidate": {
+      "additionalProperties": false,
+      "properties": {
+        "conversation_id": {
+          "title": "Conversation Id",
+          "type": "string"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        },
+        "evidence": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Evidence",
+          "type": "array"
+        }
+      },
+      "required": [
+        "conversation_id",
+        "title",
+        "evidence"
+      ],
+      "title": "TargetCandidate",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "action": {
+      "enum": [
+        "no_action",
+        "send"
+      ],
+      "title": "Action",
+      "type": "string"
+    },
+    "trigger_reasons": {
+      "items": {
+        "enum": [
+          "aligned_disagreement",
+          "unresolved_disagreement",
+          "derek_viewpoint"
+        ],
+        "type": "string"
+      },
+      "title": "Trigger Reasons",
+      "type": "array"
+    },
+    "topics": {
+      "items": {
+        "$ref": "#/$defs/AlignmentTopic"
+      },
+      "title": "Topics",
+      "type": "array"
+    },
+    "derek_viewpoint": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/DerekViewpoint"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "key_questions": {
+      "items": {
+        "$ref": "#/$defs/KeyQuestion"
+      },
+      "title": "Key Questions",
+      "type": "array"
+    },
+    "mention_names": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Mention Names",
+      "type": "array"
+    },
+    "target": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/DeliveryTarget"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "final_message": {
+      "title": "Final Message",
+      "type": "string"
+    },
+    "audit_summary": {
+      "minLength": 1,
+      "title": "Audit Summary",
+      "type": "string"
+    },
+    "confidence": {
+      "maximum": 1,
+      "minimum": 0,
+      "title": "Confidence",
+      "type": "number"
+    }
+  },
+  "required": [
+    "action",
+    "trigger_reasons",
+    "topics",
+    "derek_viewpoint",
+    "key_questions",
+    "mention_names",
+    "target",
+    "final_message",
+    "audit_summary",
+    "confidence"
+  ],
+  "title": "MeetingAlignmentDecision",
+  "type": "object"
+}

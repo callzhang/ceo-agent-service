@@ -175,6 +175,14 @@ class DwsDocumentSearchResult(BaseModel):
     doc_url: str = ""
 
 
+class DwsCalendarAttendee(BaseModel):
+    display_name: str = ""
+    is_self: bool = False
+    response_status: str = ""
+    user_id: str = ""
+    open_dingtalk_id: str = ""
+
+
 class DwsCalendarEvent(BaseModel):
     event_id: str = ""
     title: str = ""
@@ -185,6 +193,7 @@ class DwsCalendarEvent(BaseModel):
     response_status: str = ""
     self_response_status: str = ""
     attendees: list[str] = Field(default_factory=list)
+    attendee_details: list[DwsCalendarAttendee] = Field(default_factory=list)
     comments: list[str] = Field(default_factory=list)
     status: str = ""
     created_ms: int = 0
@@ -627,8 +636,15 @@ class DwsClient:
         )
         return command
 
-    def build_list_calendar_events_command(self, start: str, end: str) -> list[str]:
-        return [
+    def build_list_calendar_events_command(
+        self,
+        start: str,
+        end: str,
+        *,
+        limit: int | None = None,
+        cursor: str | None = None,
+    ) -> list[str]:
+        command = [
             self.dws_bin,
             "calendar",
             "event",
@@ -637,9 +653,13 @@ class DwsClient:
             start,
             "--end",
             end,
-            "--format",
-            "json",
         ]
+        if limit is not None:
+            command.extend(["--limit", str(limit)])
+        if cursor is not None:
+            command.extend(["--cursor", cursor])
+        command.extend(["--format", "json"])
+        return command
 
     def build_get_calendar_event_command(self, event_id: str) -> list[str]:
         return [
@@ -1104,23 +1124,29 @@ class DwsClient:
         self,
         *,
         scope: str = "all",
-        max_results: int = 20,
-        next_token: str = "",
+        limit: int = 20,
+        cursor: str = "",
+        start: str = "",
+        end: str = "",
     ) -> list[str]:
         if scope not in {"all", "mine", "shared"}:
             raise ValueError("minutes scope must be one of: all, mine, shared")
-        if max_results < 1:
-            raise ValueError("max_results must be positive")
+        if limit < 1:
+            raise ValueError("limit must be positive")
         command = [
             self.dws_bin,
             "minutes",
             "list",
             scope,
-            "--max",
-            str(max_results),
+            "--limit",
+            str(limit),
         ]
-        if next_token:
-            command.extend(["--next-token", next_token])
+        if cursor:
+            command.extend(["--cursor", cursor])
+        if start:
+            command.extend(["--start", start])
+        if end:
+            command.extend(["--end", end])
         command.extend(["--format", "json"])
         return command
 
@@ -1627,6 +1653,18 @@ class DwsClient:
         payload = self.run_json(self.build_conversation_info_command(open_conversation_id))
         return self.parse_client_conversation_id(payload, open_conversation_id)
 
+    def get_conversation_info(
+        self, open_conversation_id: str
+    ) -> dict[str, Any]:
+        payload = self.run_json(
+            self.build_conversation_info_command(open_conversation_id)
+        )
+        result = payload.get("result")
+        info = result.get("conversationInfo") if isinstance(result, dict) else None
+        if not isinstance(info, dict):
+            raise DwsError("conversation-info response is missing conversationInfo")
+        return info
+
     def read_recent_messages(
         self, conversation: DingTalkConversation, limit: int = 50
     ) -> list[DingTalkMessage]:
@@ -1784,6 +1822,31 @@ class DwsClient:
     def list_calendar_events(self, start: str, end: str) -> list[DwsCalendarEvent]:
         payload = self.run_json(self.build_list_calendar_events_command(start, end))
         return self.parse_calendar_events(payload)
+
+    def list_calendar_events_page(
+        self,
+        *,
+        start: str,
+        end: str,
+        limit: int = 50,
+        cursor: str = "",
+    ) -> dict[str, Any]:
+        payload = self.run_json(
+            self.build_list_calendar_events_command(
+                start,
+                end,
+                limit=limit,
+                cursor=cursor,
+            )
+        )
+        result = payload.get("result")
+        if not isinstance(result, dict):
+            result = {}
+        return {
+            "events": self.parse_calendar_events(payload),
+            "has_more": result.get("hasMore"),
+            "next_cursor": result.get("nextCursor"),
+        }
 
     def get_calendar_event(self, event_id: str) -> DwsCalendarEvent | None:
         try:
@@ -2131,33 +2194,43 @@ class DwsClient:
         self,
         *,
         scope: str = "all",
-        max_results: int = 20,
-        next_token: str = "",
+        limit: int = 20,
+        cursor: str = "",
+        start: str = "",
+        end: str = "",
     ) -> list[dict[str, Any]]:
         return self.list_minutes_page(
             scope=scope,
-            max_results=max_results,
-            next_token=next_token,
+            limit=limit,
+            cursor=cursor,
+            start=start,
+            end=end,
         )["items"]
 
     def list_minutes_page(
         self,
         *,
         scope: str = "all",
-        max_results: int = 20,
-        next_token: str = "",
+        limit: int = 20,
+        cursor: str = "",
+        start: str = "",
+        end: str = "",
     ) -> dict[str, Any]:
         payload = self.run_json(
             self.build_list_minutes_command(
                 scope=scope,
-                max_results=max_results,
-                next_token=next_token,
+                limit=limit,
+                cursor=cursor,
+                start=start,
+                end=end,
             )
         )
+        result = payload.get("result")
+        pagination = result if isinstance(result, dict) else {}
         return {
             "items": self.parse_minutes_list(payload),
-            "has_more": self.parse_minutes_has_more(payload),
-            "next_token": self.parse_minutes_next_token(payload),
+            "has_more": pagination.get("hasMore"),
+            "next_token": pagination.get("nextToken"),
         }
 
     def get_minutes_info(self, task_uuid: str) -> dict[str, Any]:
@@ -2225,6 +2298,33 @@ class DwsClient:
         if not isinstance(payload, dict):
             raise DwsError("invalid minutes transcription response")
         return payload
+
+    def get_all_minutes_transcription(self, task_uuid: str) -> dict[str, Any]:
+        paragraphs: list[dict[str, Any]] = []
+        next_token = ""
+        seen_tokens: set[str] = set()
+        for _ in range(100):
+            page = self.get_minutes_transcription(
+                task_uuid,
+                next_token=next_token,
+            )
+            next_token = self.parse_minutes_next_token(page)
+            has_next = self.parse_minutes_transcription_has_next(page)
+            if (has_next is True and not next_token) or (
+                has_next is False and bool(next_token)
+            ):
+                raise DwsError(
+                    "minutes transcription pagination response is contradictory"
+                )
+            paragraphs.extend(self.parse_minutes_transcription_paragraphs(page))
+            if has_next is False or (has_next is None and not next_token):
+                return {"paragraphs": paragraphs}
+            if next_token in seen_tokens:
+                raise DwsError(
+                    "minutes transcription pagination repeated next token"
+                )
+            seen_tokens.add(next_token)
+        raise DwsError("minutes transcription pagination exceeded 100 pages")
 
     def create_doc_comment(self, node_id: str, content: str) -> dict[str, Any]:
         payload = self.run_json(self.build_create_doc_comment_command(node_id, content))
@@ -2472,6 +2572,64 @@ class DwsClient:
         return self.run_json(
             self.build_query_message_send_status_command(open_task_id)
         )
+
+    def verify_message_send_result(
+        self, send_result: dict[str, Any]
+    ) -> dict[str, Any]:
+        if send_result.get("success") is False:
+            return {
+                "state": "failed",
+                "open_task_id": "",
+                "status_result": {},
+            }
+        message_id = self._find_nested_string(
+            send_result,
+            {"openMessageId", "messageId", "msgId"},
+        )
+        if message_id:
+            return {
+                "state": "sent",
+                "open_task_id": "",
+                "status_result": {},
+            }
+        open_task_id = self._find_nested_string(
+            send_result,
+            {"openTaskId"},
+        )
+        if not open_task_id:
+            return {
+                "state": "ambiguous",
+                "open_task_id": "",
+                "status_result": {},
+            }
+        try:
+            status_result = self.query_message_send_status(open_task_id)
+        except (DwsError, subprocess.TimeoutExpired, TimeoutError) as exc:
+            return {
+                "state": "ambiguous",
+                "open_task_id": open_task_id,
+                "status_result": {},
+                "status_error": str(exc),
+            }
+        status = self._find_nested_string(
+            status_result,
+            {"status", "sendStatus", "taskStatus"},
+        ).casefold()
+        if status_result.get("success") is False or status in {
+            "failed",
+            "fail",
+            "error",
+        }:
+            state = "failed"
+        elif status in {"success", "succeeded", "sent", "finished"}:
+            state = "sent"
+        else:
+            state = "ambiguous"
+        return {
+            "state": state,
+            "open_task_id": open_task_id,
+            "status_result": status_result,
+        }
 
     def add_message_emoji(
         self,
@@ -2806,6 +2964,7 @@ class DwsClient:
         command_timeout_seconds = timeout_seconds or self.timeout_seconds
         remaining_retries = self.transient_retry_attempts
         attempt_index = 0
+        automatic_retry_allowed = self._automatic_retry_allowed(command)
         while True:
             try:
                 result = subprocess.run(
@@ -2817,7 +2976,7 @@ class DwsClient:
                     env=self._cli_environment(),
                 )
             except subprocess.TimeoutExpired as exc:
-                if remaining_retries > 0:
+                if automatic_retry_allowed and remaining_retries > 0:
                     self._sleep_before_retry(attempt_index)
                     attempt_index += 1
                     remaining_retries -= 1
@@ -2832,7 +2991,11 @@ class DwsClient:
                 or self._error_code(result.stdout)
                 or self._process_error_code(result.returncode)
             )
-            if self._is_retryable_error(command, code) and remaining_retries > 0:
+            if (
+                automatic_retry_allowed
+                and self._is_retryable_error(command, code)
+                and remaining_retries > 0
+            ):
                 if code in self.DISCOVERY_CACHE_REFRESH_CODES:
                     self._refresh_cache()
                 self._sleep_before_retry(attempt_index)
@@ -2936,6 +3099,16 @@ class DwsClient:
             code in cls.DOC_READ_RETRYABLE_ERROR_CODES
             and len(command) >= 3
             and command[1:3] == ["doc", "read"]
+        )
+
+    @staticmethod
+    def _automatic_retry_allowed(command: list[str]) -> bool:
+        if len(command) < 4 or command[1:4] != ["chat", "message", "send"]:
+            return True
+        return any(
+            argument == "--idempotency-key"
+            or argument.startswith("--idempotency-key=")
+            for argument in command[4:]
         )
 
     def _refresh_cache(self) -> None:
@@ -3296,7 +3469,9 @@ class DwsClient:
     @staticmethod
     def parse_minutes_next_token(payload: Any) -> str:
         result = payload.get("result") if isinstance(payload, dict) else None
-        candidates = [payload, result]
+        data = payload.get("data") if isinstance(payload, dict) else None
+        result_data = result.get("data") if isinstance(result, dict) else None
+        candidates = [payload, result, data, result_data]
         for candidate in candidates:
             if not isinstance(candidate, dict):
                 continue
@@ -3304,6 +3479,53 @@ class DwsClient:
             if value:
                 return str(value)
         return ""
+
+    @staticmethod
+    def parse_minutes_transcription_has_next(payload: Any) -> bool | None:
+        if not isinstance(payload, dict):
+            return None
+        result = payload.get("result")
+        data = payload.get("data")
+        result_data = result.get("data") if isinstance(result, dict) else None
+        values: list[bool] = []
+        for candidate in (payload, result, data, result_data):
+            if not isinstance(candidate, dict) or "hasNext" not in candidate:
+                continue
+            value = candidate["hasNext"]
+            if isinstance(value, bool):
+                values.append(value)
+            elif isinstance(value, str) and value.casefold() in {"true", "false"}:
+                values.append(value.casefold() == "true")
+            else:
+                raise DwsError(
+                    "invalid minutes transcription pagination hasNext value"
+                )
+        if not values:
+            return None
+        if any(value != values[0] for value in values[1:]):
+            raise DwsError(
+                "minutes transcription pagination response is contradictory"
+            )
+        return values[0]
+
+    @staticmethod
+    def parse_minutes_transcription_paragraphs(
+        payload: Any,
+    ) -> list[dict[str, Any]]:
+        if not isinstance(payload, dict):
+            return []
+        result = payload.get("result")
+        data = payload.get("data")
+        result_data = result.get("data") if isinstance(result, dict) else None
+        for candidate in (payload, result, data, result_data):
+            if not isinstance(candidate, dict):
+                continue
+            paragraphs = candidate.get("paragraphList")
+            if not isinstance(paragraphs, list):
+                paragraphs = candidate.get("paragraphs")
+            if isinstance(paragraphs, list):
+                return [item for item in paragraphs if isinstance(item, dict)]
+        return []
 
     @staticmethod
     def _unwrap_minutes_list_rows(payload: Any) -> list[Any]:
@@ -3608,6 +3830,9 @@ class DwsClient:
                 or DwsClient._calendar_self_response_status(record.get("attendees"))
             ),
             attendees=DwsClient._calendar_attendees(record.get("attendees")),
+            attendee_details=DwsClient._calendar_attendee_details(
+                record.get("attendees")
+            ),
             comments=DwsClient._calendar_comments(record),
             status=DwsClient._first_string(record, "status"),
             created_ms=DwsClient._first_int(record, "created", "createTime"),
@@ -3664,6 +3889,42 @@ class DwsClient:
         return result
 
     @staticmethod
+    def _calendar_attendee_details(value: Any) -> list[DwsCalendarAttendee]:
+        if not isinstance(value, list):
+            return []
+        result: list[DwsCalendarAttendee] = []
+        for item in value:
+            if isinstance(item, str):
+                if item.strip():
+                    result.append(DwsCalendarAttendee(display_name=item.strip()))
+                continue
+            if not isinstance(item, dict):
+                continue
+            is_self = item.get("self", item.get("isSelf", False))
+            if isinstance(is_self, str):
+                is_self = is_self.casefold() == "true"
+            result.append(
+                DwsCalendarAttendee(
+                    display_name=DwsClient._calendar_person(item),
+                    is_self=bool(is_self),
+                    response_status=DwsClient._first_string(
+                        item, "responseStatus", "response_status", "status"
+                    ),
+                    user_id=DwsClient._first_string(
+                        item, "userId", "user_id", "staffId"
+                    ),
+                    open_dingtalk_id=DwsClient._first_string(
+                        item,
+                        "openDingTalkId",
+                        "openDingtalkId",
+                        "openId",
+                        "open_id",
+                    ),
+                )
+            )
+        return result
+
+    @staticmethod
     def _calendar_comments(record: dict[str, Any]) -> list[str]:
         result: list[str] = []
         for key in (
@@ -3713,6 +3974,23 @@ class DwsClient:
             value = record.get(key)
             if isinstance(value, str) and value.strip():
                 return value.strip()
+        return ""
+
+    @staticmethod
+    def _find_nested_string(payload: Any, keys: set[str]) -> str:
+        if isinstance(payload, dict):
+            for key, value in payload.items():
+                if key in keys and isinstance(value, str) and value.strip():
+                    return value.strip()
+            for value in payload.values():
+                found = DwsClient._find_nested_string(value, keys)
+                if found:
+                    return found
+        elif isinstance(payload, list):
+            for value in payload:
+                found = DwsClient._find_nested_string(value, keys)
+                if found:
+                    return found
         return ""
 
     @staticmethod

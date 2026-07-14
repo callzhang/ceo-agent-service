@@ -267,15 +267,15 @@ def scan_ai_minutes(
 
 def _list_all_ai_minutes(list_minutes_page) -> list[dict]:
     items: list[dict] = []
-    next_token = ""
+    cursor = ""
     seen_tokens: set[str] = set()
     for _ in range(100):
-        page = list_minutes_page(max_results=50, next_token=next_token)
+        page = list_minutes_page(limit=50, cursor=cursor)
         page_items = page.get("items") or []
         items.extend(item for item in page_items if isinstance(item, dict))
-        next_token = str(page.get("next_token") or "")
+        cursor = str(page.get("next_token") or "")
         has_more = bool(page.get("has_more"))
-        if not has_more or not next_token or next_token in seen_tokens:
+        if not has_more or not cursor or cursor in seen_tokens:
             break
-        seen_tokens.add(next_token)
+        seen_tokens.add(cursor)
     return items

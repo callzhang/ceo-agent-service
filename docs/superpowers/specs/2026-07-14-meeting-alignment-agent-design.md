@@ -78,26 +78,32 @@ latency, queue ownership, and failure handling.
 
 ### Meeting producer loop
 
-The producer periodically lists DingTalk AI Minutes records. It performs only
-deterministic eligibility and queueing work:
+The producer periodically lists DingTalk AI Minutes records and calendar
+events. The live Minutes contract supplies the stable meeting ID, title, start
+time, and end time, but does not supply a reliable participant list or meeting
+status. The producer therefore performs only deterministic evidence matching
+and queueing work:
 
-1. Read the stable meeting ID, participant list, meeting status, and recorded
-   end time.
-2. Revisit the Minutes record on a later poll when participant data is not yet
-   available; do not guess participation.
-3. Match Derek through the authenticated current-user identity and configured
-   principal aliases, not through a hardcoded display name. Ignore the meeting
-   unless that identity appears in its participant list.
-4. Upsert one `waiting` job keyed by the stable meeting ID after Derek's
-   participation is confirmed.
-5. Promote the job to `pending` only when the meeting is explicitly ended and
-   ten minutes have passed since its recorded end time.
+1. Read the stable meeting ID, normalized title, recorded start time, and
+   recorded end time from Minutes list/info metadata. A parseable end time plus
+   a complete Minutes record is the explicit ended evidence unless the source
+   explicitly reports a contradictory running or cancelled state.
+2. Find exactly one confirmed calendar event with the same normalized title,
+   overlapping time interval, and start/end drift no greater than four hours.
+   Zero or multiple matches are not guessed.
+3. Bind the calendar attendee marked `self=true` to the authenticated current
+   user ID. Ignore the meeting unless exactly one self attendee proves Derek's
+   participation. Other attendee IDs may be resolved later for delivery.
+4. Upsert one `waiting` job keyed by the stable meeting ID only after this
+   unique calendar evidence confirms participation, preserving that evidence
+   for the consumer to revalidate.
+5. Promote the job to `pending` only when ten minutes have passed since the
+   recorded Minutes end time.
 
 The producer does not detect disagreement, generate content, select a group, or
-send a message. Missing end status or end time leaves a confirmed-participation
-job in `waiting`. Missing participant data leaves the Minutes record eligible
-for discovery on a later poll without creating a job. The producer does not
-infer any of these values.
+send a message. Missing end time or missing/ambiguous calendar evidence leaves
+the Minutes record eligible for discovery on a later poll without creating a
+job. The producer does not infer any of these values.
 
 ### Meeting Alignment Agent consumer
 
@@ -140,10 +146,11 @@ a job to `sent`.
 A meeting is eligible only when all of the following are true:
 
 - the Minutes record has a stable meeting ID;
-- the Minutes record explicitly says the meeting ended;
+- the Minutes record has a parseable end time and no contradictory live state;
 - a recorded end time is available;
 - at least ten minutes have passed since that end time;
-- Derek is in the participant list;
+- exactly one matching calendar event proves Derek attended through its
+  authenticated `self` attendee;
 - no successful send or terminal `no_action` result already exists for the
   meeting.
 
@@ -453,8 +460,8 @@ After implementation commits that change runtime behavior:
 
 ## Acceptance Criteria
 
-- Only meetings with Derek in the participant list and ended for at least ten
-  minutes enter analysis.
+- Only meetings with unique calendar evidence that Derek attended and that
+  ended at least ten minutes ago enter analysis.
 - A meeting with no core disagreement and no need for a Derek viewpoint
   explanation ends in visible `no_action` history and sends nothing.
 - Alignment requires explicit agreement, commitment, or consistent restatement

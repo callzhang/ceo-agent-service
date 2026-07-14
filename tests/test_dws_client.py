@@ -646,12 +646,12 @@ def test_download_doc_supplies_required_output_path():
 def test_minutes_read_commands_shape():
     client = DwsClient(dws_bin="dws")
 
-    assert client.build_list_minutes_command(max_results=20) == [
+    assert client.build_list_minutes_command(limit=20) == [
         "dws",
         "minutes",
         "list",
         "all",
-        "--max",
+        "--limit",
         "20",
         "--format",
         "json",
@@ -713,7 +713,7 @@ def test_list_minutes_returns_parsed_items():
         }
     )
 
-    rows = client.list_minutes(scope="mine", max_results=3)
+    rows = client.list_minutes(scope="mine", limit=3)
 
     assert rows == [
         {
@@ -731,7 +731,7 @@ def test_list_minutes_returns_parsed_items():
             "minutes",
             "list",
             "mine",
-            "--max",
+            "--limit",
             "3",
             "--format",
             "json",
@@ -752,8 +752,10 @@ def test_list_minutes_page_returns_pagination_metadata():
 
     page = client.list_minutes_page(
         scope="all",
-        max_results=1,
-        next_token="token-1",
+        limit=1,
+        cursor="token-1",
+        start="2026-07-07T10:10:00+08:00",
+        end="2026-07-14T10:10:00+08:00",
     )
 
     assert page == {
@@ -767,14 +769,43 @@ def test_list_minutes_page_returns_pagination_metadata():
             "minutes",
             "list",
             "all",
-            "--max",
+            "--limit",
             "1",
-            "--next-token",
+            "--cursor",
             "token-1",
+            "--start",
+            "2026-07-07T10:10:00+08:00",
+            "--end",
+            "2026-07-14T10:10:00+08:00",
             "--format",
             "json",
         ]
     ]
+
+
+@pytest.mark.parametrize(
+    ("pagination_fields", "expected_has_more"),
+    [
+        ({}, None),
+        ({"hasMore": "false", "nextToken": "token-2"}, "false"),
+        ({"hasMore": 0, "nextToken": "token-2"}, 0),
+    ],
+)
+def test_list_minutes_page_preserves_invalid_has_more_for_validation(
+    pagination_fields, expected_has_more
+):
+    client = RecordingDwsClient(
+        {
+            "result": {
+                "itemList": [],
+                **pagination_fields,
+            }
+        }
+    )
+
+    page = client.list_minutes_page()
+
+    assert page["has_more"] == expected_has_more
 
 
 def test_parse_minutes_list_accepts_common_wrappers():
@@ -831,6 +862,144 @@ def test_minutes_transcription_command_shape_with_next_token():
         "--format",
         "json",
     ]
+
+
+def test_parse_minutes_transcription_accepts_live_result_nesting():
+    payload = {
+        "dingOpenErrcode": 0,
+        "result": {
+            "hasNext": True,
+            "nextToken": "page-2",
+            "paragraphList": [
+                {
+                    "nickName": "A",
+                    "paragraph": "先全量",
+                    "startTime": 1200,
+                    "unionId": "union-a",
+                }
+            ],
+        },
+        "success": True,
+    }
+
+    assert DwsClient.parse_minutes_transcription_paragraphs(payload) == [
+        {
+            "nickName": "A",
+            "paragraph": "先全量",
+            "startTime": 1200,
+            "unionId": "union-a",
+        }
+    ]
+    assert DwsClient.parse_minutes_next_token(payload) == "page-2"
+    assert DwsClient.parse_minutes_transcription_has_next(payload) is True
+
+
+def test_get_all_minutes_transcription_walks_every_page():
+    client = SequenceRecordingDwsClient(
+        [
+            {
+                "result": {
+                    "paragraphList": [{"nickName": "A", "paragraph": "先全量"}],
+                    "nextToken": "page-2",
+                }
+            },
+            {
+                "result": {
+                    "paragraphList": [{"nickName": "B", "paragraph": "先灰度"}],
+                }
+            },
+        ]
+    )
+
+    result = client.get_all_minutes_transcription("minutes-1")
+
+    assert [item["paragraph"] for item in result["paragraphs"]] == [
+        "先全量",
+        "先灰度",
+    ]
+    assert client.commands == [
+        client.build_minutes_transcription_command("minutes-1"),
+        client.build_minutes_transcription_command("minutes-1", next_token="page-2"),
+    ]
+
+
+def test_get_all_minutes_transcription_rejects_repeated_token_without_partial_result():
+    client = SequenceRecordingDwsClient(
+        [
+            {
+                "result": {
+                    "paragraphList": [{"paragraph": "第一页"}],
+                    "nextToken": "same-token",
+                }
+            },
+            {
+                "result": {
+                    "paragraphList": [{"paragraph": "第二页"}],
+                    "nextToken": "same-token",
+                }
+            },
+        ]
+    )
+
+    with pytest.raises(DwsError, match="repeated next token"):
+        client.get_all_minutes_transcription("minutes-1")
+
+
+def test_get_all_minutes_transcription_rejects_more_than_100_pages():
+    client = SequenceRecordingDwsClient(
+        [
+            {
+                "result": {
+                    "paragraphList": [{"paragraph": f"page-{page}"}],
+                    "nextToken": f"token-{page + 1}",
+                }
+            }
+            for page in range(100)
+        ]
+    )
+
+    with pytest.raises(DwsError, match="exceeded 100 pages"):
+        client.get_all_minutes_transcription("minutes-1")
+
+    assert len(client.commands) == 100
+
+
+@pytest.mark.parametrize(
+    "result",
+    [
+        {
+            "hasNext": True,
+            "paragraphList": [{"paragraph": "不能当作完整结果"}],
+        },
+        {
+            "hasNext": False,
+            "nextToken": "unexpected-token",
+            "paragraphList": [{"paragraph": "不能当作完整结果"}],
+        },
+    ],
+)
+def test_get_all_minutes_transcription_rejects_contradictory_pagination(result):
+    client = SequenceRecordingDwsClient([{"result": result}])
+
+    with pytest.raises(DwsError, match="pagination.*contradictory"):
+        client.get_all_minutes_transcription("minutes-1")
+
+
+def test_get_all_minutes_transcription_accepts_explicit_last_page():
+    client = SequenceRecordingDwsClient(
+        [
+            {
+                "result": {
+                    "hasNext": False,
+                    "paragraphList": [{"paragraph": "完整末页"}],
+                }
+            }
+        ]
+    )
+
+    assert client.get_all_minutes_transcription("minutes-1") == {
+        "paragraphs": [{"paragraph": "完整末页"}]
+    }
 
 
 def test_get_resource_download_url_command_uses_chat_download_media():
@@ -2522,6 +2691,152 @@ def test_list_calendar_events_uses_dws_calendar_event_list():
     assert events[0].description == "固定例会"
 
 
+def test_list_calendar_events_page_preserves_pagination_metadata():
+    client = RecordingDwsClient(
+        {
+            "success": True,
+            "result": {
+                "events": [
+                    {
+                        "id": "event-1",
+                        "title": "产品周会",
+                        "startTime": "2026-05-14T10:30:00+08:00",
+                        "endTime": "2026-05-14T11:30:00+08:00",
+                    }
+                ],
+                "hasMore": True,
+                "nextCursor": "cursor-2",
+            },
+        }
+    )
+
+    page = client.list_calendar_events_page(
+        start="2026-05-14T10:00:00+08:00",
+        end="2026-05-14T12:00:00+08:00",
+        limit=50,
+        cursor="cursor-1",
+    )
+
+    assert page["has_more"] is True
+    assert page["next_cursor"] == "cursor-2"
+    assert [event.event_id for event in page["events"]] == ["event-1"]
+    assert client.commands == [
+        [
+            "dws",
+            "calendar",
+            "event",
+            "list",
+            "--start",
+            "2026-05-14T10:00:00+08:00",
+            "--end",
+            "2026-05-14T12:00:00+08:00",
+            "--limit",
+            "50",
+            "--cursor",
+            "cursor-1",
+            "--format",
+            "json",
+        ]
+    ]
+
+
+@pytest.mark.parametrize(
+    ("pagination_fields", "expected_has_more"),
+    [
+        ({}, None),
+        ({"hasMore": "false", "nextCursor": "cursor-2"}, "false"),
+        ({"hasMore": 0, "nextCursor": "cursor-2"}, 0),
+    ],
+)
+def test_list_calendar_events_page_preserves_invalid_has_more_for_validation(
+    pagination_fields, expected_has_more
+):
+    client = RecordingDwsClient(
+        {
+            "success": True,
+            "result": {
+                "events": [],
+                **pagination_fields,
+            },
+        }
+    )
+
+    page = client.list_calendar_events_page(
+        start="2026-05-14T10:00:00+08:00",
+        end="2026-05-14T12:00:00+08:00",
+    )
+
+    assert page["has_more"] == expected_has_more
+
+
+def test_list_calendar_events_page_does_not_fallback_to_top_level_pagination():
+    client = RecordingDwsClient(
+        {
+            "events": [],
+            "hasMore": False,
+            "nextCursor": "top-level-cursor",
+        }
+    )
+
+    page = client.list_calendar_events_page(
+        start="2026-05-14T10:00:00+08:00",
+        end="2026-05-14T12:00:00+08:00",
+    )
+
+    assert page["has_more"] is None
+    assert page["next_cursor"] is None
+
+
+def test_parse_calendar_events_preserves_live_attendee_details():
+    events = DwsClient.parse_calendar_events(
+        {
+            "result": {
+                "events": [
+                    {
+                        "id": "event-1",
+                        "title": "上线评审",
+                        "status": "confirmed",
+                        "start": {"dateTime": "2026-07-14T19:45:00+08:00"},
+                        "end": {"dateTime": "2026-07-14T21:30:00+08:00"},
+                        "attendees": [
+                            {
+                                "displayName": "Derek",
+                                "self": True,
+                                "responseStatus": "accepted",
+                                "userId": "u-derek",
+                                "openDingTalkId": "open-derek",
+                            },
+                            {
+                                "displayName": "A",
+                                "self": False,
+                                "responseStatus": "accepted",
+                            },
+                        ],
+                    }
+                ]
+            }
+        }
+    )
+
+    assert events[0].attendees == ["Derek", "A"]
+    assert [detail.model_dump() for detail in events[0].attendee_details] == [
+        {
+            "display_name": "Derek",
+            "is_self": True,
+            "response_status": "accepted",
+            "user_id": "u-derek",
+            "open_dingtalk_id": "open-derek",
+        },
+        {
+            "display_name": "A",
+            "is_self": False,
+            "response_status": "accepted",
+            "user_id": "",
+            "open_dingtalk_id": "",
+        },
+    ]
+
+
 def test_respond_calendar_event_uses_mcp_calendar_respond():
     client = RecordingDwsClient({"success": True})
 
@@ -3119,6 +3434,123 @@ def test_client_conversation_id_uses_conversation_info():
         ]
     ]
     assert client_cid == "75217569357"
+
+
+def test_get_conversation_info_returns_live_group_evidence():
+    payload = {
+        "result": {
+            "conversationInfo": {
+                "openConversationId": "cid-open",
+                "title": "项目群",
+                "singleChat": False,
+                "memberCount": 3,
+            }
+        }
+    }
+    client = RecordingDwsClient(payload)
+
+    info = client.get_conversation_info("cid-open")
+
+    assert info["openConversationId"] == "cid-open"
+    assert client.commands == [
+        [
+            "dws",
+            "chat",
+            "conversation-info",
+            "--group",
+            "cid-open",
+            "--format",
+            "json",
+        ]
+    ]
+
+
+def test_verify_message_send_result_extracts_task_and_queries_status():
+    client = SequenceRecordingDwsClient(
+        [{"success": True, "result": {"status": "SUCCESS"}}]
+    )
+
+    verified = client.verify_message_send_result(
+        {"success": True, "result": {"openTaskId": "task-1"}}
+    )
+
+    assert verified == {
+        "state": "sent",
+        "open_task_id": "task-1",
+        "status_result": {"success": True, "result": {"status": "SUCCESS"}},
+    }
+    assert client.commands == [
+        [
+            "dws",
+            "chat",
+            "message",
+            "query-send-status",
+            "--open-task-id",
+            "task-1",
+            "--format",
+            "json",
+        ]
+    ]
+
+
+def test_verify_message_send_result_preserves_task_when_status_query_errors():
+    client = SequenceRecordingDwsClient([DwsError("status query timed out")])
+
+    verified = client.verify_message_send_result(
+        {"success": True, "result": {"openTaskId": "task-1"}}
+    )
+
+    assert verified == {
+        "state": "ambiguous",
+        "open_task_id": "task-1",
+        "status_result": {},
+        "status_error": "status query timed out",
+    }
+    assert len(client.commands) == 1
+
+
+def test_verify_message_send_result_without_identifier_is_ambiguous():
+    client = SequenceRecordingDwsClient([])
+
+    verified = client.verify_message_send_result({"success": True, "result": {}})
+
+    assert verified == {
+        "state": "ambiguous",
+        "open_task_id": "",
+        "status_result": {},
+    }
+    assert client.commands == []
+
+
+def test_verify_message_send_result_explicit_failure_needs_no_task_id():
+    client = SequenceRecordingDwsClient([])
+
+    verified = client.verify_message_send_result(
+        {"success": False, "errorMsg": "permission denied"}
+    )
+
+    assert verified == {
+        "state": "failed",
+        "open_task_id": "",
+        "status_result": {},
+    }
+    assert client.commands == []
+
+
+@pytest.mark.parametrize(
+    "send_result",
+    [
+        {"success": False, "result": {"openMessageId": "msg-1"}},
+        {"success": False, "result": {"openTaskId": "task-1"}},
+    ],
+)
+def test_verify_message_send_result_failure_overrides_identifiers(send_result):
+    client = SequenceRecordingDwsClient([])
+
+    verified = client.verify_message_send_result(send_result)
+
+    assert verified["state"] == "failed"
+    assert client.commands == []
 
 
 def test_read_mentioned_messages_parses_conversation_messages_list(monkeypatch):
@@ -4027,6 +4459,58 @@ def test_run_json_does_not_retry_send_internal_error(monkeypatch):
     with pytest.raises(DwsError, match="internalError"):
         DwsClient().run_json(command)
     assert calls == [command]
+
+
+def test_run_json_does_not_retry_chat_message_send_timeout(monkeypatch):
+    calls = []
+    command = ["dws", "chat", "message", "send", "--group", "cid-1"]
+
+    def fake_run(command_arg, text, capture_output, check, timeout, env=None):
+        calls.append(command_arg)
+        raise subprocess.TimeoutExpired(command_arg, timeout)
+
+    monkeypatch.setattr("app.dws_client.subprocess.run", fake_run)
+    monkeypatch.setattr("app.dws_client.time.sleep", lambda seconds: None)
+
+    with pytest.raises(DwsError, match="timed out"):
+        DwsClient(transient_retry_attempts=2).run_json(command)
+    assert calls == [command]
+
+
+def test_run_json_does_not_retry_chat_message_send_retryable_network_error(
+    monkeypatch,
+):
+    calls = []
+    command = ["dws", "chat", "message", "send", "--group", "cid-1"]
+    payload = '{"error":{"code":"NETWORK_ERROR","message":"connection reset"}}'
+
+    def fake_run(command_arg, text, capture_output, check, timeout, env=None):
+        calls.append(command_arg)
+        return SimpleNamespace(returncode=1, stdout="", stderr=payload)
+
+    monkeypatch.setattr("app.dws_client.subprocess.run", fake_run)
+    monkeypatch.setattr("app.dws_client.time.sleep", lambda seconds: None)
+
+    with pytest.raises(DwsError):
+        DwsClient(transient_retry_attempts=2).run_json(command)
+    assert calls == [command]
+
+
+def test_run_json_still_retries_read_timeout(monkeypatch):
+    calls = []
+    command = ["dws", "chat", "message", "list", "--group", "cid-1"]
+
+    def fake_run(command_arg, text, capture_output, check, timeout, env=None):
+        calls.append(command_arg)
+        if len(calls) == 1:
+            raise subprocess.TimeoutExpired(command_arg, timeout)
+        return SimpleNamespace(returncode=0, stdout='{"ok":true}', stderr="")
+
+    monkeypatch.setattr("app.dws_client.subprocess.run", fake_run)
+    monkeypatch.setattr("app.dws_client.time.sleep", lambda seconds: None)
+
+    assert DwsClient(transient_retry_attempts=1).run_json(command) == {"ok": True}
+    assert calls == [command, command]
 
 
 def test_run_json_retries_chat_message_list_system_error(monkeypatch):

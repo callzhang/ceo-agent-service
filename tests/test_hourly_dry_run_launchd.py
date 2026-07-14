@@ -23,6 +23,9 @@ def test_local_service_script_runs_single_main_service():
     assert 'export CEO_DING_ROBOT_NAME="${CEO_DING_ROBOT_NAME:-磊哥}"' in content
     assert 'export CEO_PRODUCER_INTERVAL_SECONDS="${CEO_PRODUCER_INTERVAL_SECONDS:-60}"' in content
     assert 'export CEO_CONSUMER_POLL_INTERVAL_SECONDS="${CEO_CONSUMER_POLL_INTERVAL_SECONDS:-10}"' in content
+    assert 'export CEO_MEETING_PRODUCER_INTERVAL_SECONDS="${CEO_MEETING_PRODUCER_INTERVAL_SECONDS:-60}"' in content
+    assert 'export CEO_MEETING_CONSUMER_POLL_INTERVAL_SECONDS="${CEO_MEETING_CONSUMER_POLL_INTERVAL_SECONDS:-10}"' in content
+    assert 'export CEO_MEETING_SETTLE_SECONDS="${CEO_MEETING_SETTLE_SECONDS:-600}"' in content
     assert "CEO_OKR_LIVE_SOURCE_COMMAND" in content
     assert "scripts/dingteam_okr_live_source.py --user-id {user_id} --period-label {period_label}" in content
     assert "CEO_PRINCIPAL_NAME" not in content
@@ -50,6 +53,9 @@ def test_main_launch_agent_runs_single_keepalive_service():
     assert " service " in command[2]
     assert "--producer-interval-seconds" in command[2]
     assert "--consumer-poll-interval-seconds" in command[2]
+    assert 'CEO_MEETING_PRODUCER_INTERVAL_SECONDS="${CEO_MEETING_PRODUCER_INTERVAL_SECONDS:-60}"' in command[2]
+    assert 'CEO_MEETING_CONSUMER_POLL_INTERVAL_SECONDS="${CEO_MEETING_CONSUMER_POLL_INTERVAL_SECONDS:-10}"' in command[2]
+    assert 'CEO_MEETING_SETTLE_SECONDS="${CEO_MEETING_SETTLE_SECONDS:-600}"' in command[2]
     assert "--host" in command[2]
     assert "--port" in command[2]
     assert "CEO_SERVICE_ROOT" in command[2]

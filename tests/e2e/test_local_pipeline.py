@@ -16,6 +16,13 @@ from app.org_cache import (
 from app.store import AutoReplyStore
 from app.worker import DingTalkAutoReplyWorker, PROCESSING_ACK
 from app.dws_client import DwsUserProfile
+from app.dws_client import DwsCalendarAttendee, DwsCalendarEvent
+from app.audit_web import render_attempt_list
+from app.meeting_alignment import (
+    consume_meeting_alignment_jobs,
+    produce_meeting_alignment_jobs,
+)
+from app.meeting_alignment_models import MeetingAlignmentDecision
 
 
 def fixed_worker_now():
@@ -27,6 +34,8 @@ class FakeDws:
         self.sent = []
         self.sent_at_users = []
         self.dings = []
+        self.created_text_emotions = []
+        self.message_text_emotions = []
         self.org_calls = []
         self.chat_calls = []
         self.conversation = DingTalkConversation(
@@ -50,6 +59,13 @@ class FakeDws:
     def get_current_user_id(self):
         self.org_calls.append("get_current_user_id")
         return "principal-user"
+
+    def auth_status(self):
+        return {
+            "authenticated": True,
+            "token_valid": True,
+            "refresh_token_valid": True,
+        }
 
     def search_department_ids(self, query):
         self.org_calls.append(("search_department_ids", query))
@@ -190,6 +206,41 @@ class FakeDws:
         self.chat_calls.append(("ding_user", user_id))
         self.dings.append((user_id, text))
 
+    def create_message_text_emotion(
+        self,
+        *,
+        text,
+        emotion_name,
+        background_id="",
+    ):
+        self.created_text_emotions.append((text, emotion_name, background_id))
+        return {
+            "emotionId": f"created-{len(self.created_text_emotions)}",
+            "backgroundId": "created-bg",
+        }
+
+    def add_message_text_emotion(
+        self,
+        conversation_id,
+        message_id,
+        *,
+        text,
+        emotion_id,
+        emotion_name,
+        background_id,
+    ):
+        self.message_text_emotions.append(
+            (
+                conversation_id,
+                message_id,
+                text,
+                emotion_id,
+                emotion_name,
+                background_id,
+            )
+        )
+        return {"success": True}
+
 
 class FakeCodex:
     def __init__(self, decision):
@@ -213,6 +264,173 @@ def final_sent_at_users(dws: FakeDws):
         for sent, at_users in zip(dws.sent, dws.sent_at_users)
         if sent[1] != PROCESSING_ACK
     ]
+
+
+class FakeMeetingDws:
+    def __init__(self):
+        self.sent = []
+        self.meeting = {
+            "taskUuid": "minutes-e2e-1",
+            "title": "上线评审",
+            "startTimeISO": "2026-07-14T09:00:00+08:00",
+            "endTimeISO": "2026-07-14T10:00:00+08:00",
+            "status": "ended",
+        }
+        self.calendar_event = DwsCalendarEvent(
+            event_id="event-e2e-1",
+            title="上线评审",
+            start_time="2026-07-14T09:00:00+08:00",
+            end_time="2026-07-14T10:00:00+08:00",
+            status="confirmed",
+            attendee_details=[
+                DwsCalendarAttendee(
+                    display_name="Derek",
+                    is_self=True,
+                    user_id="u-derek",
+                    open_dingtalk_id="open-derek",
+                ),
+                DwsCalendarAttendee(
+                    display_name="A",
+                    user_id="u-a",
+                    open_dingtalk_id="open-a",
+                ),
+                DwsCalendarAttendee(
+                    display_name="B",
+                    user_id="u-b",
+                    open_dingtalk_id="open-b",
+                ),
+            ],
+        )
+
+    def list_minutes_page(self, *, limit, cursor, start, end):
+        return {"items": [self.meeting], "has_more": False, "next_token": ""}
+
+    def get_minutes_info(self, meeting_id):
+        assert meeting_id == "minutes-e2e-1"
+        return self.meeting
+
+    def get_current_user_id(self):
+        return "u-derek"
+
+    def list_calendar_events_page(self, *, start, end, limit, cursor):
+        return {
+            "events": [self.calendar_event],
+            "has_more": False,
+            "next_cursor": "",
+        }
+
+    def get_minutes_summary(self, meeting_id):
+        return {"result": {"fullSummary": "A 主张全量，B 主张灰度，尚未一致。"}}
+
+    def get_all_minutes_transcription(self, meeting_id):
+        return {
+            "paragraphs": [
+                {"nickName": "A", "paragraph": "全量上线效率最高。"},
+                {"nickName": "B", "paragraph": "灰度上线风险更低。"},
+                {"nickName": "Derek", "paragraph": "先明确风险预算。"},
+            ]
+        }
+
+    def get_conversation_info(self, conversation_id):
+        assert conversation_id == "cid-first"
+        return {
+            "openConversationId": "cid-first",
+            "title": "项目群",
+            "singleChat": False,
+            "memberCount": 3,
+        }
+
+    def search_user_profiles(self, query):
+        return []
+
+    def read_recent_messages(self, conversation, limit=50):
+        return []
+
+    def send_message(self, conversation_id, text, **kwargs):
+        self.sent.append({"conversation_id": conversation_id, "text": text, **kwargs})
+        return {"success": True, "result": {"openMessageId": "msg-meeting-e2e"}}
+
+    def verify_message_send_result(self, send_result):
+        return {"state": "sent", "open_task_id": "", "status_result": {}}
+
+
+class FakeMeetingRunner:
+    last_session_id = "meeting-e2e-session"
+    last_transcript_start_line = 0
+    last_transcript_end_line = 10
+    last_audit_tool_events = []
+
+    def decide(self, *, prompt):
+        return MeetingAlignmentDecision.model_validate(
+            {
+                "action": "send",
+                "trigger_reasons": ["unresolved_disagreement"],
+                "topics": [
+                    {
+                        "title": "上线范围",
+                        "state": "unresolved",
+                        "views": [
+                            {"speaker": "A", "view": "全量", "reason": "效率"},
+                            {"speaker": "B", "view": "灰度", "reason": "风险"},
+                        ],
+                        "conclusion": "",
+                        "alignment_reason": "",
+                    }
+                ],
+                "derek_viewpoint": None,
+                "key_questions": [
+                    {
+                        "question": "可接受的最大故障半径是多少？",
+                        "answer_owner_names": ["A", "B"],
+                    }
+                ],
+                "mention_names": ["A", "B"],
+                "target": {
+                    "kind": "group",
+                    "conversation_id": "cid-first",
+                    "direct_user_id": "",
+                    "title": "项目群",
+                    "candidates": [
+                        {
+                            "conversation_id": "cid-first",
+                            "title": "项目群",
+                            "evidence": ["参会人和主题最匹配"],
+                        },
+                        {
+                            "conversation_id": "cid-second",
+                            "title": "备用群",
+                            "evidence": ["参会人部分重合"],
+                        },
+                    ],
+                },
+                "final_message": "会后对齐：@A @B 可接受的最大故障半径是多少？",
+                "audit_summary": "发现上线范围分歧，尚未明确对齐。",
+                "confidence": 0.9,
+            }
+        )
+
+
+def test_meeting_alignment_pipeline_sends_once_and_appears_in_history(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    dws = FakeMeetingDws()
+    runner = FakeMeetingRunner()
+    now = datetime.fromisoformat("2026-07-14T10:11:00+08:00")
+
+    assert produce_meeting_alignment_jobs(store, dws, now=now) == 1
+    assert consume_meeting_alignment_jobs(store, dws, runner, now=now, limit=1) == 1
+
+    job = store.get_meeting_alignment_job_by_meeting_id("minutes-e2e-1")
+    assert job is not None
+    assert job.status == "sent"
+    assert len(store.list_meeting_alignment_runs(job.id)) == 1
+    assert len(dws.sent) == 1
+    assert dws.sent[0]["conversation_id"] == "cid-first"
+    assert dws.sent[0]["at_open_dingtalk_ids"] == ["open-a", "open-b"]
+    assert "会后对齐" in render_attempt_list(store)
+
+    assert produce_meeting_alignment_jobs(store, dws, now=now) == 0
+    assert consume_meeting_alignment_jobs(store, dws, runner, now=now, limit=1) == 0
+    assert len(dws.sent) == 1
 
 
 def test_local_pipeline_refreshes_org_cache_then_replies_without_runtime_org_calls(
@@ -246,14 +464,14 @@ def test_local_pipeline_refreshes_org_cache_then_replies_without_runtime_org_cal
 
     assert raw_dws.org_calls == []
     assert final_sent(raw_dws) == [
-        ("cid-1", "这个涉及其他人的人事信息，我不能直接回答。（by明哥分身）")
+        ("cid-1", "建议先观察一个月（by明哥分身）")
     ]
     assert final_sent_at_users(raw_dws) == [["hr-user"]]
     assert store.has_seen("msg-1") is True
     assert store.get_codex_session_id("cid-1") == "session-1"
 
 
-def test_local_pipeline_handoff_ding_uses_cached_current_user_without_runtime_org_calls(
+def test_local_pipeline_handoff_reacts_and_dings_without_runtime_org_calls(
     tmp_path, monkeypatch
 ):
     monkeypatch.setattr(
@@ -276,8 +494,10 @@ def test_local_pipeline_handoff_ding_uses_cached_current_user_without_runtime_or
     worker.run_once()
 
     assert raw_dws.org_calls == []
-    assert final_sent(raw_dws) == [
-        ("cid-1", "我让明哥本人看一下。（by明哥分身）")
+    assert final_sent(raw_dws) == []
+    assert raw_dws.created_text_emotions == [("我去叫", "我去叫", "im_bg_5")]
+    assert raw_dws.message_text_emotions == [
+        ("cid-1", "msg-1", "我去叫", "created-1", "我去叫", "created-bg")
     ]
     assert raw_dws.dings == [
         (

@@ -14,6 +14,9 @@ from app.codex_decision import CodexDecisionRunner, append_signature
 from app.config import (
     consumer_poll_interval_seconds,
     feedback_spike_vercel_base_url,
+    meeting_consumer_poll_interval_seconds,
+    meeting_producer_interval_seconds,
+    meeting_settle_seconds,
     principal_display_name,
     producer_interval_seconds,
     profile_evidence_dir,
@@ -50,6 +53,12 @@ from app.leak_check import contains_forbidden_leak
 from app.message_split import split_dingtalk_text
 from app.dingtalk_models import CodexAction, DingTalkConversation, DingTalkMessage
 from app.notification import send_macos_notification
+from app.meeting_alignment import (
+    consume_meeting_alignment_jobs,
+    produce_meeting_alignment_jobs,
+    recover_meeting_alignment_jobs,
+)
+from app.meeting_alignment_agent import MeetingAlignmentCodexRunner
 from app.oa_approval import OaApprovalSpecHandler
 from app.org_cache import (
     CachedDwsClient,
@@ -157,6 +166,9 @@ class WorkerSettings(BaseModel):
     task_codex_idle_timeout_seconds: PositiveInt = 900
     task_work_item_interval_seconds: PositiveInt = 60
     task_daily_interval_seconds: PositiveInt = 86_400
+    meeting_producer_interval_seconds: PositiveInt = 60
+    meeting_consumer_poll_interval_seconds: PositiveInt = 10
+    meeting_settle_seconds: PositiveInt = 600
     max_batches: NonNegativeInt | None = None
 
 
@@ -598,6 +610,9 @@ def settings_from_args(args: argparse.Namespace) -> WorkerSettings:
             "task_daily_interval_seconds",
             WorkerSettings().task_daily_interval_seconds,
         ),
+        meeting_producer_interval_seconds=meeting_producer_interval_seconds(),
+        meeting_consumer_poll_interval_seconds=meeting_consumer_poll_interval_seconds(),
+        meeting_settle_seconds=meeting_settle_seconds(),
         max_batches=args.max_batches,
     )
 
@@ -1897,6 +1912,75 @@ def run_consumer_loop(
         sleep(poll_interval_seconds)
 
 
+def _create_meeting_dws(settings: WorkerSettings) -> DwsClient:
+    return DwsClient(
+        ding_robot_code=settings.ding_robot_code,
+        ding_robot_name=settings.ding_robot_name,
+        ding_receiver_user_id=settings.ding_receiver_user_id,
+        transient_retry_attempts=settings.dws_transient_retry_attempts,
+        transient_retry_delay_seconds=settings.dws_transient_retry_delay_seconds,
+    )
+
+
+def run_meeting_producer_loop(
+    settings: WorkerSettings,
+    poll_interval_seconds: int,
+    settle_seconds: int,
+    sleep: Callable[[int], None] = time.sleep,
+) -> None:
+    store = AutoReplyStore(settings.db_path)
+    dws = _create_meeting_dws(settings)
+    while True:
+        try:
+            produce_meeting_alignment_jobs(
+                store,
+                dws,
+                now=datetime.now().astimezone(),
+                settle_seconds=settle_seconds,
+            )
+        except Exception as exc:
+            store.record_error(
+                "",
+                "",
+                "meeting_alignment_producer",
+                str(exc),
+            )
+        sleep(poll_interval_seconds)
+
+
+def run_meeting_consumer_loop(
+    settings: WorkerSettings,
+    poll_interval_seconds: int,
+    max_tasks: int | None = None,
+    sleep: Callable[[int], None] = time.sleep,
+) -> None:
+    store = AutoReplyStore(settings.db_path)
+    dws = _create_meeting_dws(settings)
+    runner = MeetingAlignmentCodexRunner(
+        workspace=settings.workspace,
+        timeout_seconds=settings.codex_timeout_seconds,
+        idle_timeout_seconds=settings.codex_idle_timeout_seconds,
+    )
+    while True:
+        try:
+            consume_meeting_alignment_jobs(
+                store,
+                dws,
+                runner,
+                now=datetime.now().astimezone(),
+                limit=1 if max_tasks is None else max_tasks,
+                deliver=not settings.dry_run,
+            )
+        except Exception as exc:
+            store.record_error(
+                "",
+                "",
+                "meeting_alignment_consumer",
+                str(exc),
+            )
+        sleep(poll_interval_seconds)
+
+
 def run_task_maintenance_loop(
     settings: WorkerSettings,
     *,
@@ -1932,6 +2016,7 @@ def run_service(
 ) -> None:
     _recover_processing_reply_tasks_on_service_start(settings)
     _recover_processing_work_summary_inputs_on_service_start(settings)
+    _recover_meeting_alignment_jobs_on_service_start(settings)
     components = (
         (
             "producer",
@@ -1946,6 +2031,22 @@ def run_service(
             lambda: run_consumer_loop(
                 create_worker(settings),
                 consumer_poll_interval_seconds,
+                max_tasks=settings.max_batches,
+            ),
+        ),
+        (
+            "meeting-producer",
+            lambda: run_meeting_producer_loop(
+                settings,
+                settings.meeting_producer_interval_seconds,
+                settings.meeting_settle_seconds,
+            ),
+        ),
+        (
+            "meeting-consumer",
+            lambda: run_meeting_consumer_loop(
+                settings,
+                settings.meeting_consumer_poll_interval_seconds,
                 max_tasks=settings.max_batches,
             ),
         ),
@@ -1979,6 +2080,12 @@ def run_service(
         wait_event.wait()
         return
     wait()
+
+
+def _recover_meeting_alignment_jobs_on_service_start(
+    settings: WorkerSettings,
+) -> int:
+    return recover_meeting_alignment_jobs(AutoReplyStore(settings.db_path))
 
 
 def _recover_processing_reply_tasks_on_service_start(settings: WorkerSettings) -> int:

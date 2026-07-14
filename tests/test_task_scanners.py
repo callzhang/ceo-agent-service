@@ -305,9 +305,9 @@ def test_scan_ai_minutes_walks_paginated_adapter(tmp_path):
         def __init__(self):
             self.tokens = []
 
-        def list_minutes_page(self, *, max_results, next_token):
-            self.tokens.append((max_results, next_token))
-            if not next_token:
+        def list_minutes_page(self, *, limit, cursor):
+            self.tokens.append((limit, cursor))
+            if not cursor:
                 return {
                     "items": [{"taskUuid": "minutes-1", "title": "第一页"}],
                     "has_more": True,

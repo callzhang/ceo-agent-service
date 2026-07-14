@@ -436,6 +436,10 @@ def test_cached_dws_client_delegates_external_action_helpers(tmp_path):
             self.calls.append(("get_minutes_transcription", task_uuid, next_token))
             return {"result": {"paragraphList": []}}
 
+        def get_all_minutes_transcription(self, task_uuid):
+            self.calls.append(("get_all_minutes_transcription", task_uuid))
+            return {"paragraphs": [{"paragraph": "完整转写"}]}
+
         def calendar_invite_from_message(self, msg):
             self.calls.append(("calendar_invite_from_message", msg))
             return event
@@ -472,6 +476,9 @@ def test_cached_dws_client_delegates_external_action_helpers(tmp_path):
     assert cached.get_minutes_transcription("minutes-1", next_token="n1") == {
         "result": {"paragraphList": []}
     }
+    assert cached.get_all_minutes_transcription("minutes-1") == {
+        "paragraphs": [{"paragraph": "完整转写"}]
+    }
     assert cached.calendar_invite_from_message(msg) is event
     assert cached.list_calendar_events("start", "end") == [event]
     assert cached.get_calendar_event("event-1") is event
@@ -484,6 +491,7 @@ def test_cached_dws_client_delegates_external_action_helpers(tmp_path):
         ("get_minutes_summary", "minutes-1"),
         ("get_minutes_todos", "minutes-1"),
         ("get_minutes_transcription", "minutes-1", "n1"),
+        ("get_all_minutes_transcription", "minutes-1"),
         ("calendar_invite_from_message", msg),
         ("list_calendar_events", "start", "end"),
         ("get_calendar_event", "event-1"),

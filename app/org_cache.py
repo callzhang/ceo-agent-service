@@ -232,6 +232,9 @@ class CachedDwsClient:
             next_token=next_token,
         )
 
+    def get_all_minutes_transcription(self, task_uuid: str):
+        return self.dws.get_all_minutes_transcription(task_uuid)
+
     def calendar_invite_from_message(self, message: DingTalkMessage):
         return self.dws.calendar_invite_from_message(message)
 
