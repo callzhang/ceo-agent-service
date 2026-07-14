@@ -9,29 +9,46 @@ from app.meeting_alignment_source import (
 )
 
 
-def complete_info() -> dict:
-    return {
-        "result": {
-            "taskUuid": "minutes-1",
-            "title": "上线评审",
-            "meetingStatus": "ENDED",
-            "startTimeISO": "2026-07-14T01:00:00+08:00",
-            "endTimeISO": "2026-07-14T02:00:00+08:00",
-            "participantList": [
-                {
-                    "displayName": "Derek",
-                    "userId": "u-derek",
-                    "openDingTalkId": "open-derek",
-                },
-                {
-                    "displayName": "A",
-                    "userId": "u-a",
-                    "openDingTalkId": "open-a",
-                },
-            ],
-            "url": "https://shanji.dingtalk.com/app/transcribes/minutes-1",
-        }
+def live_minutes_info(*, status: str | None = None) -> dict:
+    result = {
+        "taskUuid": "minutes-1",
+        "title": "上线评审",
+        "startTime": 1784029760000,
+        "endTime": 1784035644000,
+        "url": "https://shanji.dingtalk.com/app/transcribes/minutes-1",
     }
+    if status is not None:
+        result["status"] = status
+    return {"result": result}
+
+
+def calendar_participant_metadata(*, source: str | None = "calendar_event") -> dict:
+    metadata = {
+        "participants": [
+            {
+                "name": "Derek",
+                "user_id": "u-derek",
+                "open_dingtalk_id": "open-derek",
+            },
+            {"name": "A", "user_id": "u-a", "open_dingtalk_id": "open-a"},
+        ],
+    }
+    if source is not None:
+        metadata["participants_source"] = source
+    return metadata
+
+
+def normalized_info(*, status: str | None = None) -> dict:
+    info = live_minutes_info(status=status)
+    info["result"]["participantList"] = [
+        {
+            "displayName": "Derek",
+            "userId": "u-derek",
+            "openDingTalkId": "open-derek",
+        },
+        {"displayName": "A", "userId": "u-a", "openDingTalkId": "open-a"},
+    ]
+    return info
 
 
 class FakeDws:
@@ -41,7 +58,7 @@ class FakeDws:
 
     def get_minutes_info(self, meeting_id: str) -> dict:
         self.calls.append(("info", meeting_id))
-        return complete_info()
+        return live_minutes_info()
 
     def get_minutes_summary(self, meeting_id: str) -> dict:
         self.calls.append(("summary", meeting_id))
@@ -76,15 +93,19 @@ class FakeDws:
 def test_read_meeting_source_combines_metadata_summary_transcript_and_current_user():
     dws = FakeDws()
 
-    source = read_meeting_source(dws, "minutes-1")
+    source = read_meeting_source(
+        dws,
+        "minutes-1",
+        discovery_metadata=calendar_participant_metadata(),
+    )
 
     assert isinstance(source, MeetingSource)
     assert source.model_dump() == {
         "meeting_id": "minutes-1",
         "title": "上线评审",
         "status": "ended",
-        "started_at": "2026-07-14T01:00:00+08:00",
-        "ended_at": "2026-07-14T02:00:00+08:00",
+        "started_at": "2026-07-14T11:49:20+00:00",
+        "ended_at": "2026-07-14T13:27:24+00:00",
         "participants": [
             {
                 "name": "Derek",
@@ -120,38 +141,17 @@ def test_read_meeting_source_combines_metadata_summary_transcript_and_current_us
 
 
 def test_read_meeting_source_merges_producer_discovery_metadata():
-    class SparseInfoDws(FakeDws):
-        def get_minutes_info(self, meeting_id: str) -> dict:
-            self.calls.append(("info", meeting_id))
-            return {
-                "result": {
-                    "taskUuid": meeting_id,
-                    "title": "DWS 最新标题",
-                    "startTime": 1783990800000,
-                    "endTime": 1783994400000,
-                    "url": "https://shanji.dingtalk.com/app/transcribes/minutes-1",
-                }
-            }
-
-    dws = SparseInfoDws()
+    dws = FakeDws()
 
     source = read_meeting_source(
         dws,
         "minutes-1",
-        discovery_metadata={
-            "meeting_id": "minutes-1",
-            "status": "ended",
-            "ended_at": "2026-07-14T02:00:00+08:00",
-            "participants": [
-                {"name": "Derek", "user_id": "u-derek"},
-                {"name": "A", "user_id": "u-a"},
-            ],
-        },
+        discovery_metadata=calendar_participant_metadata(),
     )
 
-    assert source.title == "DWS 最新标题"
+    assert source.title == "上线评审"
     assert source.status == "ended"
-    assert source.ended_at == "2026-07-14T02:00:00+00:00"
+    assert source.ended_at == "2026-07-14T13:27:24+00:00"
     assert [participant.user_id for participant in source.participants] == [
         "u-derek",
         "u-a",
@@ -161,30 +161,40 @@ def test_read_meeting_source_merges_producer_discovery_metadata():
 def test_discovery_metadata_does_not_override_conflicting_live_status():
     class RunningMeetingDws(FakeDws):
         def get_minutes_info(self, meeting_id: str) -> dict:
-            info = complete_info()
-            info["result"]["meetingStatus"] = "running"
-            return info
+            return live_minutes_info(status="running")
 
     with pytest.raises(MeetingSourceIncomplete, match="explicitly ended"):
         read_meeting_source(
             RunningMeetingDws(),
             "minutes-1",
-            discovery_metadata={"status": "ended"},
+            discovery_metadata={
+                **calendar_participant_metadata(),
+                "status": "ended",
+            },
         )
 
 
-def test_discovery_metadata_does_not_guess_missing_status():
-    class SparseInfoDws(FakeDws):
+@pytest.mark.parametrize("status", ["running", "cancelled"])
+def test_explicit_non_ended_live_status_is_rejected(status):
+    class NonEndedDws(FakeDws):
         def get_minutes_info(self, meeting_id: str) -> dict:
-            info = complete_info()
-            del info["result"]["meetingStatus"]
-            return info
+            return live_minutes_info(status=status)
 
     with pytest.raises(MeetingSourceIncomplete, match="explicitly ended"):
         read_meeting_source(
-            SparseInfoDws(),
+            NonEndedDws(),
             "minutes-1",
-            discovery_metadata={"title": "只有标题"},
+            discovery_metadata=calendar_participant_metadata(),
+        )
+
+
+@pytest.mark.parametrize("source", [None, "minutes_info", "ambiguous_calendar"])
+def test_discovery_participants_require_unique_calendar_event_source(source):
+    with pytest.raises(MeetingSourceIncomplete, match="calendar event"):
+        read_meeting_source(
+            FakeDws(),
+            "minutes-1",
+            discovery_metadata=calendar_participant_metadata(source=source),
         )
 
 
@@ -193,12 +203,16 @@ def test_discovery_metadata_rejects_conflicting_status_aliases():
         read_meeting_source(
             FakeDws(),
             "minutes-1",
-            discovery_metadata={"status": "ended", "meetingStatus": "running"},
+            discovery_metadata={
+                **calendar_participant_metadata(),
+                "status": "ended",
+                "meetingStatus": "running",
+            },
         )
 
 
 def test_live_info_rejects_conflicting_participant_aliases():
-    info = complete_info()
+    info = normalized_info()
     info["result"]["participants"] = [
         {"name": "Derek", "user_id": "u-derek"},
         {"name": "B", "user_id": "u-b"},
@@ -221,7 +235,7 @@ def test_live_info_rejects_conflicting_critical_aliases(
     conflicting_value,
     message,
 ):
-    info = complete_info()
+    info = normalized_info()
     info["result"][alias] = conflicting_value
 
     with pytest.raises(MeetingSourceIncomplete, match=message):
@@ -229,7 +243,7 @@ def test_live_info_rejects_conflicting_critical_aliases(
 
 
 def test_same_normalized_alias_values_are_allowed():
-    info = complete_info()
+    info = normalized_info()
     info["result"].update(
         status="ended",
         participants=[
@@ -244,7 +258,7 @@ def test_same_normalized_alias_values_are_allowed():
                 "open_dingtalk_id": "open-a",
             },
         ],
-        ended_at=1783965600000,
+        ended_at=1784035644000,
     )
 
     source = normalize_meeting_source(info, [], current_user_id="u-derek")
@@ -257,27 +271,81 @@ def test_same_normalized_alias_values_are_allowed():
 
 
 def test_normalization_requires_explicit_end_time():
-    info = complete_info()
-    del info["result"]["endTimeISO"]
+    info = normalized_info()
+    del info["result"]["endTime"]
 
     with pytest.raises(MeetingSourceIncomplete, match="end time"):
         normalize_meeting_source(info, [], current_user_id="u-derek")
 
 
-@pytest.mark.parametrize("status", [None, "running"])
-def test_normalization_requires_explicit_ended_status(status):
-    info = complete_info()
-    if status is None:
-        del info["result"]["meetingStatus"]
-    else:
-        info["result"]["meetingStatus"] = status
+def test_normalization_requires_explicit_start_time():
+    info = normalized_info()
+    del info["result"]["startTime"]
 
+    with pytest.raises(MeetingSourceIncomplete, match="start time"):
+        normalize_meeting_source(info, [], current_user_id="u-derek")
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("startTime", "not-a-time"),
+        ("endTime", "not-a-time"),
+        ("startTime", "2026-07-14T01:00:00"),
+        ("endTime", "2026-07-14T02:00:00"),
+    ],
+)
+def test_normalization_rejects_invalid_or_naive_times(field, value):
+    info = normalized_info()
+    info["result"][field] = value
+
+    with pytest.raises(MeetingSourceIncomplete, match="time"):
+        normalize_meeting_source(info, [], current_user_id="u-derek")
+
+
+def test_normalization_accepts_missing_status_with_complete_transcript():
+    source = normalize_meeting_source(
+        normalized_info(),
+        [{"speakerName": "A", "text": "完成"}],
+        current_user_id="u-derek",
+    )
+
+    assert source.status == "ended"
+
+
+def test_normalization_rejects_transcript_page_with_more_results():
+    with pytest.raises(MeetingSourceIncomplete, match="complete transcript"):
+        normalize_meeting_source(
+            normalized_info(),
+            {
+                "result": {
+                    "hasNext": True,
+                    "nextToken": "page-2",
+                    "paragraphList": [{"speakerName": "A", "text": "未完成"}],
+                }
+            },
+            current_user_id="u-derek",
+        )
+
+
+def test_normalization_accepts_explicit_ended_status():
+    source = normalize_meeting_source(
+        normalized_info(status="ENDED"),
+        [],
+        current_user_id="u-derek",
+    )
+
+    assert source.status == "ended"
+
+
+def test_normalization_rejects_explicit_running_status():
+    info = normalized_info(status="running")
     with pytest.raises(MeetingSourceIncomplete, match="explicitly ended"):
         normalize_meeting_source(info, [], current_user_id="u-derek")
 
 
 def test_normalization_requires_participant_data():
-    info = complete_info()
+    info = normalized_info()
     info["result"]["participantList"] = []
 
     with pytest.raises(MeetingSourceIncomplete, match="participant data"):
@@ -285,14 +353,14 @@ def test_normalization_requires_participant_data():
 
 
 def test_normalization_requires_current_user_to_be_a_participant():
-    info = complete_info()
+    info = normalized_info()
 
     with pytest.raises(MeetingSourceIncomplete, match="current user.*participant"):
         normalize_meeting_source(info, [], current_user_id="u-someone-else")
 
 
 def test_normalization_rejects_participant_without_stable_user_id():
-    info = complete_info()
+    info = normalized_info()
     del info["result"]["participantList"][1]["userId"]
 
     with pytest.raises(MeetingSourceIncomplete, match="participant data"):
@@ -307,4 +375,8 @@ def test_read_meeting_source_converts_pagination_integrity_error_to_typed_error(
     )
 
     with pytest.raises(MeetingSourceIncomplete, match="complete transcript"):
-        read_meeting_source(dws, "minutes-1")
+        read_meeting_source(
+            dws,
+            "minutes-1",
+            discovery_metadata=calendar_participant_metadata(),
+        )

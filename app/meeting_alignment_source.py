@@ -86,8 +86,20 @@ def normalize_meeting_source(
         "taskStatus",
         normalizer=lambda value: str(value).strip().casefold(),
     )
-    if status.casefold() != "ended":
+    if status and status.casefold() != "ended":
         raise MeetingSourceIncomplete("meeting is not explicitly ended")
+
+    started_at = _metadata_time(
+        data,
+        "meeting start time",
+        "startTimeISO",
+        "started_at",
+        "startedAt",
+        "startTime",
+        "start_time",
+    )
+    if not started_at:
+        raise MeetingSourceIncomplete("meeting start time is missing")
 
     ended_at = _metadata_time(
         data,
@@ -119,15 +131,7 @@ def normalize_meeting_source(
         meeting_id=normalized_meeting_id,
         title=_metadata_text(data, "meeting title", "title", "name"),
         status="ended",
-        started_at=_metadata_time(
-            data,
-            "meeting start time",
-            "startTimeISO",
-            "started_at",
-            "startedAt",
-            "startTime",
-            "start_time",
-        ),
+        started_at=started_at,
         ended_at=ended_at,
         participants=participants,
         current_user_id=normalized_current_user_id,
@@ -165,47 +169,28 @@ def _merge_discovery_metadata(
     _validate_metadata_aliases(discovered)
     if not discovered:
         return {"result": live}
-    field_aliases = {
-        "meeting_id": (
-            "taskUuid",
-            "meetingId",
-            "minutesId",
-            "meeting_id",
-            "uuid",
-            "id",
-        ),
-        "title": ("title", "name"),
-        "status": ("status", "meetingStatus", "state", "taskStatus"),
-        "started_at": (
-            "startTimeISO",
-            "started_at",
-            "startedAt",
-            "startTime",
-            "start_time",
-        ),
-        "ended_at": (
-            "endTimeISO",
-            "ended_at",
-            "endedAt",
-            "endTime",
-            "end_time",
-        ),
-        "participants": (
-            "participants",
-            "participantList",
-            "attendees",
-            "attendeeList",
-            "members",
-            "memberList",
-        ),
-        "source_url": ("url", "shareUrl", "sourceUrl", "source_url"),
-    }
-    for canonical_name, aliases in field_aliases.items():
-        if _explicit_value(live, *aliases) is not None:
-            continue
-        discovered_value = _explicit_value(discovered, *aliases)
-        if discovered_value is not None:
-            live[canonical_name] = discovered_value
+    participant_aliases = (
+        "participants",
+        "participantList",
+        "attendees",
+        "attendeeList",
+        "members",
+        "memberList",
+    )
+    discovered_participants = _explicit_value(discovered, *participant_aliases)
+    if discovered_participants is not None:
+        participant_source = _metadata_text(
+            discovered,
+            "participant metadata source",
+            "participants_source",
+            "participantsSource",
+        )
+        if participant_source != "calendar_event":
+            raise MeetingSourceIncomplete(
+                "participant metadata must come from one unique calendar event"
+            )
+        if _explicit_value(live, *participant_aliases) is None:
+            live["participants"] = discovered_participants
     return {"result": live}
 
 
@@ -315,6 +300,12 @@ def _validate_metadata_aliases(data: dict[str, Any]) -> None:
         "sourceUrl",
         "source_url",
     )
+    _metadata_text(
+        data,
+        "participant metadata source",
+        "participants_source",
+        "participantsSource",
+    )
     _participants(data)
 
 
@@ -325,19 +316,30 @@ def _text(payload: dict[str, Any], *aliases: str) -> str:
 
 def _normalized_time(value: Any) -> str:
     if value is None or isinstance(value, bool):
-        return ""
+        raise MeetingSourceIncomplete("invalid meeting time")
     if isinstance(value, (int, float)):
         seconds = float(value)
         if abs(seconds) >= 100_000_000_000:
             seconds /= 1000
-        return datetime.fromtimestamp(seconds, tz=timezone.utc).isoformat()
-    text = str(value).strip()
+        try:
+            return datetime.fromtimestamp(seconds, tz=timezone.utc).isoformat()
+        except (OverflowError, OSError, ValueError) as exc:
+            raise MeetingSourceIncomplete("invalid meeting time") from exc
+    if not isinstance(value, str):
+        raise MeetingSourceIncomplete("invalid meeting time")
+    text = value.strip()
     if not text:
-        return ""
+        raise MeetingSourceIncomplete("invalid meeting time")
     try:
         numeric = float(text)
     except ValueError:
-        return text
+        try:
+            parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise MeetingSourceIncomplete("invalid meeting time") from exc
+        if parsed.tzinfo is None or parsed.utcoffset() is None:
+            raise MeetingSourceIncomplete("invalid meeting time")
+        return parsed.isoformat()
     return _normalized_time(numeric)
 
 
@@ -438,6 +440,15 @@ def _transcript_lines(
     if isinstance(transcription, list):
         paragraphs = transcription
     elif isinstance(transcription, dict):
+        try:
+            has_next = DwsClient.parse_minutes_transcription_has_next(transcription)
+            next_token = DwsClient.parse_minutes_next_token(transcription)
+        except DwsError as exc:
+            raise MeetingSourceIncomplete(
+                f"complete transcript is unavailable: {exc}"
+            ) from exc
+        if has_next is True or next_token:
+            raise MeetingSourceIncomplete("complete transcript is unavailable")
         paragraphs = DwsClient.parse_minutes_transcription_paragraphs(transcription)
         if not any(
             isinstance(candidate, list)
