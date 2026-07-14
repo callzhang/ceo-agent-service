@@ -54,22 +54,29 @@ message directly to the other participant.
 
 ## Architecture
 
-Use the existing producer-consumer operating model, with a new recurring
-producer, a new agent type, an independent job queue, and the existing main
-launchd service.
+Use the existing producer-consumer operating model, with a new meeting producer
+loop, a new meeting consumer loop and agent type, an independent job queue, and
+the existing main launchd service.
 
 ```text
-Meeting cron producer
-  -> meeting_alignment_jobs
-  -> Meeting Alignment Agent consumer
-  -> deterministic delivery validation and execution
-  -> History and audit records
+com.ceo-agent-service.main
+  |- reply-producer
+  |- reply-consumer
+  |- task-maintenance
+  |- meeting-producer -> meeting_alignment_jobs
+  `- meeting-consumer -> Meeting Alignment Agent
+                       -> deterministic delivery validation and execution
+                       -> History and audit records
 ```
 
 The capability runs inside `com.ceo-agent-service.main`. It does not add a
-second launchd service or a system crontab entry.
+second launchd service or a system crontab entry. The meeting loops are separate
+internal service components: meeting discovery is not added to the reply
+worker's `produce_once`, and meeting jobs are not consumed by the reply
+consumer. This preserves one deployable service while isolating cadence,
+latency, queue ownership, and failure handling.
 
-### Meeting cron producer
+### Meeting producer loop
 
 The producer periodically lists DingTalk AI Minutes records. It performs only
 deterministic eligibility and queueing work:
@@ -94,7 +101,9 @@ infer any of these values.
 
 ### Meeting Alignment Agent consumer
 
-The consumer claims an eligible job and invokes a new Meeting Alignment Agent.
+The independent meeting consumer claims an eligible job and invokes a new
+Meeting Alignment Agent. It does not share the reply consumer's task claim loop,
+so slow Minutes reads or meeting-agent failures cannot delay ordinary replies.
 The agent reads the complete transcript, summary, participant information, and
 necessary historical context. It returns a schema-validated decision containing:
 
@@ -390,6 +399,8 @@ session file does not hide the structured run record.
   the ambiguity for audit and avoid blindly sending a duplicate.
 - Meeting pipeline failures do not block the reply agent, task agent, or their
   queues.
+- Meeting discovery latency does not extend the reply producer's polling cycle,
+  because the two producers run in separate internal loops.
 
 ## Testing
 
@@ -419,6 +430,8 @@ session file does not hide the structured run record.
 ### Integration tests
 
 - AI Minutes discovery through queue creation and consumer claim.
+- Independent reply and meeting producer/consumer scheduling inside the same
+  main service.
 - Full material retrieval, structured decision, group ranking, identity
   resolution, and message delivery using mocked DWS boundaries.
 - One-to-one direct delivery and multi-person group delivery.
