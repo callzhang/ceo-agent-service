@@ -2227,10 +2227,13 @@ class DwsClient:
         )
         result = payload.get("result")
         pagination = result if isinstance(result, dict) else {}
+        has_more = pagination.get("hasMore")
         return {
             "items": self.parse_minutes_list(payload),
-            "has_more": pagination.get("hasMore"),
-            "next_token": pagination.get("nextToken"),
+            "has_more": has_more,
+            "next_token": (
+                "" if has_more is False else pagination.get("nextToken")
+            ),
         }
 
     def get_minutes_info(self, task_uuid: str) -> dict[str, Any]:

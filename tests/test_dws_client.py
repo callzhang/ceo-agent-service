@@ -783,6 +783,23 @@ def test_list_minutes_page_returns_pagination_metadata():
     ]
 
 
+def test_list_minutes_page_discards_live_terminal_residual_token():
+    client = RecordingDwsClient(
+        {
+            "result": {
+                "itemList": [{"uuid": "minutes-1", "title": "周会"}],
+                "hasMore": False,
+                "nextToken": "terminal-residual-token",
+            }
+        }
+    )
+
+    page = client.list_minutes_page()
+
+    assert page["has_more"] is False
+    assert page["next_token"] == ""
+
+
 @pytest.mark.parametrize(
     ("pagination_fields", "expected_has_more"),
     [
