@@ -6,8 +6,13 @@ from contextlib import contextmanager
 from pathlib import Path
 from collections.abc import Iterator
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, TypeAdapter
 
+from app.meeting_alignment_models import (
+    MeetingAlignmentJob,
+    MeetingAlignmentQueueStatus,
+    MeetingAlignmentRun,
+)
 from app.task_models import (
     DingTalkTodoLinkStatus,
     FollowUpDraft,
@@ -418,6 +423,47 @@ class AutoReplyStore:
                 );
                 create index if not exists idx_reply_tasks_status
                     on reply_tasks(status, id);
+                create table if not exists meeting_alignment_jobs (
+                    id integer primary key autoincrement,
+                    meeting_id text not null unique,
+                    title text not null default '',
+                    source_json text not null default '{}',
+                    participants_json text not null default '[]',
+                    ended_at text not null default '',
+                    eligible_at text not null default '',
+                    status text not null default 'waiting',
+                    attempts integer not null default 0,
+                    locked_at text,
+                    available_at text not null default '',
+                    error text not null default '',
+                    decision_json text not null default '{}',
+                    target_kind text not null default '',
+                    target_id text not null default '',
+                    target_title text not null default '',
+                    mentions_json text not null default '[]',
+                    final_message text not null default '',
+                    send_result_json text not null default '{}',
+                    created_at text not null default current_timestamp,
+                    updated_at text not null default current_timestamp
+                );
+                create index if not exists idx_meeting_alignment_jobs_claim
+                    on meeting_alignment_jobs(status, available_at, eligible_at, id);
+                create table if not exists meeting_alignment_runs (
+                    id integer primary key autoincrement,
+                    job_id integer not null,
+                    codex_session_id text not null default '',
+                    codex_transcript_start_line integer not null default 0,
+                    codex_transcript_end_line integer not null default 0,
+                    decision_json text not null default '{}',
+                    audit_tool_events_json text not null default '[]',
+                    audit_summary text not null default '',
+                    status text not null,
+                    error text not null default '',
+                    created_at text not null default current_timestamp,
+                    foreign key(job_id) references meeting_alignment_jobs(id)
+                );
+                create index if not exists idx_meeting_alignment_runs_job
+                    on meeting_alignment_runs(job_id, id);
                 create table if not exists corpus_sources (
                     source_key text primary key,
                     last_collected_at text
@@ -1329,6 +1375,282 @@ class AutoReplyStore:
             if row is None:
                 return None
             return self._reply_task_from_row(row)
+
+    @staticmethod
+    def _meeting_alignment_job_from_row(
+        row: sqlite3.Row,
+    ) -> MeetingAlignmentJob:
+        return MeetingAlignmentJob.model_validate(dict(row))
+
+    @staticmethod
+    def _meeting_alignment_run_from_row(
+        row: sqlite3.Row,
+    ) -> MeetingAlignmentRun:
+        return MeetingAlignmentRun.model_validate(dict(row))
+
+    @staticmethod
+    def _validate_meeting_alignment_status(status: object) -> str:
+        return TypeAdapter(MeetingAlignmentQueueStatus).validate_python(status)
+
+    def upsert_meeting_alignment_job(
+        self,
+        *,
+        meeting_id: str,
+        title: str,
+        source_json: str,
+        participants_json: str,
+        ended_at: str,
+        eligible_at: str,
+        status: MeetingAlignmentQueueStatus,
+    ) -> int:
+        validated_status = self._validate_meeting_alignment_status(status)
+        with self._connect() as db:
+            db.execute(
+                """
+                insert into meeting_alignment_jobs (
+                    meeting_id,
+                    title,
+                    source_json,
+                    participants_json,
+                    ended_at,
+                    eligible_at,
+                    status
+                )
+                values (?, ?, ?, ?, ?, ?, ?)
+                on conflict(meeting_id) do update set
+                    title=excluded.title,
+                    source_json=excluded.source_json,
+                    participants_json=excluded.participants_json,
+                    ended_at=excluded.ended_at,
+                    eligible_at=excluded.eligible_at,
+                    status=case
+                        when meeting_alignment_jobs.status='waiting'
+                            then excluded.status
+                        else meeting_alignment_jobs.status
+                    end,
+                    updated_at=current_timestamp
+                """,
+                (
+                    meeting_id,
+                    title,
+                    source_json,
+                    participants_json,
+                    ended_at,
+                    eligible_at,
+                    validated_status,
+                ),
+            )
+            row = db.execute(
+                """
+                select id
+                from meeting_alignment_jobs
+                where meeting_id=?
+                """,
+                (meeting_id,),
+            ).fetchone()
+            if row is None:
+                raise RuntimeError("meeting alignment job was not persisted")
+            return int(row["id"])
+
+    def get_meeting_alignment_job(self, job_id: int) -> MeetingAlignmentJob:
+        with self._connect() as db:
+            row = db.execute(
+                "select * from meeting_alignment_jobs where id=?",
+                (job_id,),
+            ).fetchone()
+            if row is None:
+                raise ValueError(f"meeting alignment job not found: {job_id}")
+            return self._meeting_alignment_job_from_row(row)
+
+    def get_meeting_alignment_job_by_meeting_id(
+        self,
+        meeting_id: str,
+    ) -> MeetingAlignmentJob | None:
+        with self._connect() as db:
+            row = db.execute(
+                "select * from meeting_alignment_jobs where meeting_id=?",
+                (meeting_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            return self._meeting_alignment_job_from_row(row)
+
+    def claim_meeting_alignment_jobs(
+        self,
+        limit: int,
+        now: str,
+    ) -> list[MeetingAlignmentJob]:
+        if limit <= 0:
+            return []
+        with self._connect() as db:
+            rows = db.execute(
+                """
+                with candidates as (
+                    select id
+                    from meeting_alignment_jobs
+                    where status in ('pending', 'retry')
+                      and datetime(eligible_at) <= datetime(?)
+                      and (
+                          available_at=''
+                          or datetime(available_at) <= datetime(?)
+                      )
+                    order by datetime(eligible_at), id
+                    limit ?
+                )
+                update meeting_alignment_jobs
+                set status='processing',
+                    attempts=attempts + 1,
+                    locked_at=current_timestamp,
+                    updated_at=current_timestamp
+                where id in (select id from candidates)
+                  and status in ('pending', 'retry')
+                returning *
+                """,
+                (now, now, limit),
+            ).fetchall()
+            jobs = [self._meeting_alignment_job_from_row(row) for row in rows]
+            return sorted(jobs, key=lambda job: (job.eligible_at, job.id))
+
+    def update_meeting_alignment_job(self, job_id: int, **values: object) -> None:
+        if not values:
+            return
+        allowed_columns = {
+            "title",
+            "source_json",
+            "participants_json",
+            "ended_at",
+            "eligible_at",
+            "status",
+            "locked_at",
+            "available_at",
+            "error",
+            "decision_json",
+            "target_kind",
+            "target_id",
+            "target_title",
+            "mentions_json",
+            "final_message",
+            "send_result_json",
+        }
+        filtered = self._filter_allowed_values(values, allowed_columns)
+        if "status" in filtered:
+            filtered["status"] = self._validate_meeting_alignment_status(
+                filtered["status"]
+            )
+            if filtered["status"] in {
+                "waiting",
+                "pending",
+                "no_action",
+                "sent",
+                "retry",
+                "failed",
+            }:
+                filtered.setdefault("locked_at", None)
+        assignments = ", ".join(f"{column}=?" for column in filtered)
+        args = [*filtered.values(), job_id]
+        with self._connect() as db:
+            db.execute(
+                f"""
+                update meeting_alignment_jobs
+                set {assignments}, updated_at=current_timestamp
+                where id=?
+                """,
+                args,
+            )
+
+    def schedule_meeting_alignment_job_retry(
+        self,
+        job_id: int,
+        error: str,
+        *,
+        available_at: str,
+    ) -> None:
+        self.update_meeting_alignment_job(
+            job_id,
+            status="retry",
+            locked_at=None,
+            available_at=available_at,
+            error=error,
+        )
+
+    def reset_processing_meeting_alignment_jobs(
+        self,
+    ) -> list[MeetingAlignmentJob]:
+        with self._connect() as db:
+            rows = db.execute(
+                """
+                update meeting_alignment_jobs
+                set status='retry',
+                    locked_at=null,
+                    updated_at=current_timestamp
+                where status='processing'
+                returning *
+                """
+            ).fetchall()
+            jobs = [self._meeting_alignment_job_from_row(row) for row in rows]
+            return sorted(jobs, key=lambda job: job.id)
+
+    def record_meeting_alignment_run(
+        self,
+        *,
+        job_id: int,
+        codex_session_id: str,
+        decision_json: str,
+        audit_summary: str,
+        status: str,
+        error: str,
+        codex_transcript_start_line: int = 0,
+        codex_transcript_end_line: int = 0,
+        audit_tool_events_json: str = "[]",
+    ) -> int:
+        with self._connect() as db:
+            cursor = db.execute(
+                """
+                insert into meeting_alignment_runs (
+                    job_id,
+                    codex_session_id,
+                    codex_transcript_start_line,
+                    codex_transcript_end_line,
+                    decision_json,
+                    audit_tool_events_json,
+                    audit_summary,
+                    status,
+                    error
+                )
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    job_id,
+                    codex_session_id,
+                    codex_transcript_start_line,
+                    codex_transcript_end_line,
+                    decision_json,
+                    audit_tool_events_json,
+                    audit_summary,
+                    status,
+                    error,
+                ),
+            )
+            return int(cursor.lastrowid)
+
+    def list_meeting_alignment_runs(
+        self,
+        job_id: int,
+    ) -> list[MeetingAlignmentRun]:
+        with self._connect() as db:
+            rows = db.execute(
+                """
+                select *
+                from meeting_alignment_runs
+                where job_id=?
+                order by id desc
+                """,
+                (job_id,),
+            ).fetchall()
+            return [
+                self._meeting_alignment_run_from_row(row)
+                for row in rows
+            ]
 
     def create_okr_review_request(
         self,
