@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Any, Protocol
 
 from pydantic import BaseModel, ConfigDict
@@ -246,8 +246,12 @@ def _calendar_event_matches(data: dict[str, Any], event: DwsCalendarEvent) -> bo
         event_end = _parsed_time(_normalized_time(event.end_time))
     except MeetingSourceIncomplete:
         return False
-    drift = timedelta(seconds=CALENDAR_BOUNDARY_DRIFT_SECONDS)
-    return meeting_start >= event_start - drift and meeting_end <= event_end + drift
+    return (
+        abs(meeting_start.timestamp() - event_start.timestamp())
+        <= CALENDAR_BOUNDARY_DRIFT_SECONDS
+        and abs(meeting_end.timestamp() - event_end.timestamp())
+        <= CALENDAR_BOUNDARY_DRIFT_SECONDS
+    )
 
 
 def _verify_calendar_evidence(

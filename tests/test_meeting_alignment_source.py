@@ -28,8 +28,8 @@ def calendar_evidence(**overrides) -> CalendarMeetingEvidence:
     payload = {
         "event_id": "event-1",
         "title": "上线评审",
-        "started_at": "2026-07-14T11:45:00+00:00",
-        "ended_at": "2026-07-14T13:30:00+00:00",
+        "started_at": "2026-07-14T11:48:00+00:00",
+        "ended_at": "2026-07-14T13:28:00+00:00",
         "participants": [
             {
                 "name": "Derek",
@@ -47,8 +47,8 @@ def calendar_event(**overrides) -> DwsCalendarEvent:
     payload = {
         "event_id": "event-1",
         "title": "上线评审",
-        "start_time": "2026-07-14T19:45:00+08:00",
-        "end_time": "2026-07-14T21:30:00+08:00",
+        "start_time": "2026-07-14T19:48:00+08:00",
+        "end_time": "2026-07-14T21:28:00+08:00",
         "status": "confirmed",
         "attendee_details": [
             DwsCalendarAttendee(
@@ -250,6 +250,20 @@ def test_build_calendar_evidence_requires_exactly_one_match():
         )
 
 
+def test_build_calendar_evidence_rejects_same_title_all_day_event():
+    with pytest.raises(MeetingSourceIncomplete, match="exactly one"):
+        build_calendar_meeting_evidence(
+            live_minutes_info(),
+            [
+                calendar_event(
+                    start_time="2026-07-14T00:00:00+08:00",
+                    end_time="2026-07-14T23:59:59+08:00",
+                )
+            ],
+            "u-derek",
+        )
+
+
 def test_build_calendar_evidence_requires_self_attendee():
     event = calendar_event(
         attendee_details=[
@@ -269,8 +283,8 @@ def test_raw_calendar_parse_to_unique_match_to_source():
                         "id": "event-1",
                         "title": "  上线评审  ",
                         "status": "confirmed",
-                        "startTime": "2026-07-14T19:45:00+08:00",
-                        "endTime": "2026-07-14T21:30:00+08:00",
+                        "startTime": "2026-07-14T19:48:00+08:00",
+                        "endTime": "2026-07-14T21:28:00+08:00",
                         "attendees": [
                             {"displayName": "Derek", "self": True},
                             {"displayName": "A", "responseStatus": "accepted"},
