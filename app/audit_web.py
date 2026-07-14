@@ -2113,6 +2113,26 @@ def _history_chart_payload(
             continue
         event_label = _history_event_label(attempt)
         bucket_values.setdefault(event_label, [0] * bucket_count)[bucket_index] += 1
+    for item in store.list_history_items(limit=None):
+        if item.kind != "meeting":
+            continue
+        created_at = _parse_utc_timestamp(item.created_at)
+        if created_at is None:
+            continue
+        local_bucket = created_at.astimezone(local_tz).replace(
+            minute=0,
+            second=0,
+            microsecond=0,
+        )
+        bucket_index = label_indexes.get(local_bucket.strftime("%m-%d %H:%M"))
+        if bucket_index is None:
+            continue
+        event_label = {
+            "sent": "💬 Sent",
+            "skipped": "💬 Skipped",
+            "failed": "💬 Failed",
+        }.get(item.status, "💬 Processing")
+        bucket_values.setdefault(event_label, [0] * bucket_count)[bucket_index] += 1
     series = [
         {
             "name": name,
@@ -2641,7 +2661,7 @@ def render_attempt_list(
     query = query.strip()
     type_filters = _history_type_filters(type_filter)
     send_status_filters = type_filters or None
-    total_count = store.count_reply_attempts(
+    total_count = store.count_history_items(
         send_statuses=send_status_filters,
         query_text=query,
     )
@@ -2654,18 +2674,32 @@ def render_attempt_list(
             limit=limit,
         ):
             items.append(_reply_task_item(task))
-    attempts = store.list_reply_attempts(
+    history_items = store.list_history_items(
         limit=limit,
         offset=offset,
         send_statuses=send_status_filters,
         query_text=query,
     )
+    attempts = [
+        attempt
+        for item in history_items
+        if item.kind == "reply"
+        for attempt in [store.get_reply_attempt(item.source_id)]
+        if attempt is not None
+    ]
+    attempts_by_id = {attempt.id: attempt for attempt in attempts}
     sent_replies_by_attempt = store.list_sent_replies_for_attempts(attempts)
     feedback_events_by_token = _feedback_events_by_sent_reply(
         store,
         sent_replies_by_attempt.values(),
     )
-    for attempt in attempts:
+    for history_item in history_items:
+        if history_item.kind == "meeting":
+            items.append(_meeting_history_card(history_item))
+            continue
+        attempt = attempts_by_id.get(history_item.source_id)
+        if attempt is None:
+            continue
         sent_reply = sent_replies_by_attempt.get(
             (attempt.conversation_id, attempt.trigger_message_id)
         )
@@ -2740,6 +2774,31 @@ def render_attempt_list(
         auto_refresh=True,
         active_nav="history",
         user_feedback_pending_count=store.count_pending_user_feedback_items(),
+    )
+
+
+def _meeting_history_card(item) -> str:
+    status = item.status.strip().lower() or "processing"
+    return (
+        '<article class="attempt-item">'
+        '<div class="attempt-head">'
+        '<div class="attempt-title">'
+        f'<a class="attempt-id" href="/meeting-attempts/{item.source_id}">'
+        f'#meeting-{item.source_id}</a>'
+        f'<span class="pill status-action {_action_state_class(status)}">'
+        f'🧭 {_display_action_state(status)}</span>'
+        '<div class="attempt-main">会后对齐 · '
+        f'{escape(item.source_title)}</div>'
+        f'<div class="attempt-meta">{escape(item.target_title or item.source_actor)}</div>'
+        '</div><div class="attempt-side">'
+        f'<time class="attempt-time">{escape(_format_local_time(item.created_at))}</time>'
+        '<div class="attempt-actions">'
+        f'<a class="review-link" href="/meeting-attempts/{item.source_id}">查看</a>'
+        '</div></div></div>'
+        '<div class="attempt-lines">'
+        f'{_attempt_text_line(item.input_label, item.input_text, 260)}'
+        f'{_attempt_text_line(item.output_label, item.output_text, 320)}'
+        '</div></article>'
     )
 
 
@@ -3898,6 +3957,53 @@ def render_attempt_detail(store: AutoReplyStore, attempt_id: int) -> tuple[int, 
     )
 
 
+def render_meeting_attempt_detail(
+    store: AutoReplyStore,
+    run_id: int,
+) -> tuple[int, str]:
+    run = store.get_meeting_alignment_run(run_id)
+    if run is None:
+        return 404, render_page(
+            "Meeting attempt not found",
+            f"<p>Meeting attempt #{run_id} does not exist.</p>",
+            active_nav="history",
+        )
+    job = store.get_meeting_alignment_job(run.job_id)
+    codex_link = (
+        f'<a href="/codex/{escape(run.codex_session_id)}">'
+        f'{escape(run.codex_session_id)}</a>'
+        if run.codex_session_id
+        else '<span class="muted">unavailable</span>'
+    )
+    body = (
+        '<section class="card"><h2>Meeting source</h2>'
+        '<div class="grid">'
+        f'<div class="muted">title</div><div>{escape(job.title)}</div>'
+        f'<div class="muted">meeting id</div><div>{escape(job.meeting_id)}</div>'
+        f'<div class="muted">ended at</div><div>{escape(job.ended_at)}</div>'
+        f'<div class="muted">Codex session</div><div>{codex_link}</div>'
+        '</div><h3>source_json</h3>'
+        f'<pre>{escape(job.source_json)}</pre></section>'
+        '<section class="card"><h2>Decision and delivery</h2>'
+        '<div class="grid">'
+        f'<div class="muted">status</div><div>{escape(job.status)}</div>'
+        f'<div class="muted">target</div><div>{escape(job.target_title or job.target_id)}</div>'
+        f'<div class="muted">mention resolution</div><div>{escape(job.mentions_json)}</div>'
+        f'<div class="muted">send result</div><div>{escape(job.send_result_json)}</div>'
+        '</div><h3>decision_json</h3>'
+        f'<pre>{escape(run.decision_json)}</pre>'
+        f'<h3>final message</h3><pre>{escape(job.final_message)}</pre>'
+        f'<h3>audit summary</h3><p>{escape(run.audit_summary)}</p>'
+        '</section>'
+    )
+    return 200, render_page(
+        f"Meeting attempt #{run.id}",
+        body,
+        active_nav="history",
+        user_feedback_pending_count=store.count_pending_user_feedback_items(),
+    )
+
+
 def render_codex_session_list(store: AutoReplyStore) -> str:
     rows = []
     for conversation in store.list_codex_conversations():
@@ -3936,17 +4042,23 @@ def render_codex_session_detail(
     store: AutoReplyStore | None = None,
 ) -> tuple[int, str]:
     rendered = render_local_codex_session(session_id, codex_home=codex_home)
+    related_reply_attempts = (
+        store.list_reply_attempts_for_codex_session(session_id) if store else []
+    )
+    related_meeting_runs = (
+        store.list_meeting_alignment_runs_for_codex_session(session_id)
+        if store
+        else []
+    )
     if rendered.missing:
-        related_attempts = (
-            store.list_reply_attempts_for_codex_session(session_id) if store else []
-        )
-        if related_attempts:
+        if related_reply_attempts or related_meeting_runs:
             body = (
                 "<section class=\"card\"><h2>Codex session unavailable</h2>"
                 "<p class=\"muted\">The local Codex transcript file for this session "
                 "is no longer available on this machine.</p>"
                 f"<p class=\"muted\">{escape(session_id)}</p></section>"
-                f"{_related_history_card(related_attempts, session_id=session_id, store=store)}"
+                f"{_related_history_card(related_reply_attempts, session_id=session_id, store=store) if related_reply_attempts else ''}"
+                f"{_meeting_related_history_card(related_meeting_runs, store) if store else ''}"
             )
             return 200, render_page(
                 "Codex session unavailable",
@@ -3966,9 +4078,14 @@ def render_codex_session_detail(
         )
     events = "".join(_codex_event_card(event) for event in rendered.events)
     related_history = _related_history_card(
-        store.list_reply_attempts_for_codex_session(session_id) if store else [],
+        related_reply_attempts,
         session_id=session_id,
         store=store,
+    )
+    related_meeting_history = (
+        _meeting_related_history_card(related_meeting_runs, store)
+        if store and related_meeting_runs
+        else ""
     )
     body = (
         "<section class=\"card\"><div class=\"grid\">"
@@ -3977,6 +4094,7 @@ def render_codex_session_detail(
         f"<div class=\"muted\">rendered events</div><div>{len(rendered.events)}</div>"
         "</div></section>"
         f"{related_history}"
+        f"{related_meeting_history}"
         f"{events}"
     )
     return 200, render_page(
@@ -4996,6 +5114,11 @@ def create_audit_app(
         status, html = render_attempt_detail(AutoReplyStore(db_path), attempt_id)
         return HTMLResponse(html, status_code=status)
 
+    @app.get("/meeting-attempts/{run_id}", response_class=HTMLResponse)
+    def meeting_attempt_detail(run_id: int) -> HTMLResponse:
+        status, html = render_meeting_attempt_detail(AutoReplyStore(db_path), run_id)
+        return HTMLResponse(html, status_code=status)
+
     @app.post("/attempts/{attempt_id}/feedback")
     async def feedback(attempt_id: int, request: Request):
         status, headers, html = handle_feedback_post(
@@ -5783,6 +5906,30 @@ def _related_history_card(
         "<section class=\"card\"><h2>Related history</h2>"
         "<table><thead><tr><th>Attempt</th><th>Time</th><th>Sender</th>"
         "<th>Result</th><th>Trigger</th><th>操作</th></tr></thead><tbody>"
+        + "".join(rows)
+        + "</tbody></table></section>"
+    )
+
+
+def _meeting_related_history_card(runs, store: AutoReplyStore) -> str:
+    if not runs:
+        return ""
+    rows = []
+    for run in runs:
+        job = store.get_meeting_alignment_job(run.job_id)
+        rows.append(
+            "<tr>"
+            f'<td><a href="/meeting-attempts/{run.id}">#meeting-{run.id}</a></td>'
+            f"<td>{escape(_format_local_time(run.created_at))}</td>"
+            f"<td>{escape(job.title)}</td>"
+            f"<td>{escape(job.status)}</td>"
+            f"<td>{escape(_excerpt(run.audit_summary, 120))}</td>"
+            "</tr>"
+        )
+    return (
+        '<section class="card"><h2>Related meeting history</h2>'
+        '<table><thead><tr><th>Attempt</th><th>Time</th><th>Meeting</th>'
+        '<th>Result</th><th>Summary</th></tr></thead><tbody>'
         + "".join(rows)
         + "</tbody></table></section>"
     )

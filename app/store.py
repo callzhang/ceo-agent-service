@@ -23,6 +23,7 @@ from app.task_models import (
     WorkUpdate,
 )
 from app.feedback_policy import FeedbackPressureStats
+from app.history import HistoryItem
 
 FAST_PATH_UNREAD_BACKOFF_TASK_ERROR = "waiting_fast_path_unread_backoff"
 SQLITE_BUSY_TIMEOUT_SECONDS = 30
@@ -1746,6 +1747,32 @@ class AutoReplyStore:
                 for row in rows
             ]
 
+    def get_meeting_alignment_run(
+        self,
+        run_id: int,
+    ) -> MeetingAlignmentRun | None:
+        with self._connect() as db:
+            row = db.execute(
+                "select * from meeting_alignment_runs where id=?",
+                (run_id,),
+            ).fetchone()
+        return self._meeting_alignment_run_from_row(row) if row is not None else None
+
+    def list_meeting_alignment_runs_for_codex_session(
+        self,
+        codex_session_id: str,
+    ) -> list[MeetingAlignmentRun]:
+        with self._connect() as db:
+            rows = db.execute(
+                """
+                select * from meeting_alignment_runs
+                where codex_session_id=?
+                order by id desc
+                """,
+                (codex_session_id,),
+            ).fetchall()
+        return [self._meeting_alignment_run_from_row(row) for row in rows]
+
     def create_okr_review_request(
         self,
         *,
@@ -3287,6 +3314,116 @@ class AutoReplyStore:
                 args.extend([limit, max(0, offset)])
             rows = db.execute(query, args).fetchall()
             return [ReplyAttempt.model_validate(dict(row)) for row in rows]
+
+    def list_history_items(
+        self,
+        limit: int | None = None,
+        offset: int = 0,
+        *,
+        send_statuses: tuple[str, ...] | None = None,
+        query_text: str = "",
+    ) -> list[HistoryItem]:
+        query, args = self._history_items_query(
+            send_statuses=send_statuses,
+            query_text=query_text,
+        )
+        query = f"{query} order by datetime(created_at) desc, source_id desc"
+        if limit is not None:
+            query = f"{query} limit ? offset ?"
+            args.extend([limit, max(0, offset)])
+        with self._connect() as db:
+            rows = db.execute(query, args).fetchall()
+        return [HistoryItem.model_validate(dict(row)) for row in rows]
+
+    def count_history_items(
+        self,
+        *,
+        send_statuses: tuple[str, ...] | None = None,
+        query_text: str = "",
+    ) -> int:
+        query, args = self._history_items_query(
+            send_statuses=send_statuses,
+            query_text=query_text,
+        )
+        with self._connect() as db:
+            row = db.execute(f"select count(*) as count from ({query})", args).fetchone()
+        return int(row["count"])
+
+    @staticmethod
+    def _history_items_query(
+        *,
+        send_statuses: tuple[str, ...] | None,
+        query_text: str,
+    ) -> tuple[str, list[object]]:
+        query = """
+            with history_items as (
+                select
+                    'reply' as kind,
+                    id as source_id,
+                    conversation_title as source_title,
+                    trigger_sender as source_actor,
+                    '问' as input_label,
+                    trigger_text as input_text,
+                    '答' as output_label,
+                    case
+                        when final_reply_text != '' then final_reply_text
+                        else draft_reply_text
+                    end as output_text,
+                    action,
+                    send_status as status,
+                    conversation_title as target_title,
+                    codex_session_id,
+                    created_at
+                from reply_attempts
+                union all
+                select
+                    'meeting' as kind,
+                    runs.id as source_id,
+                    jobs.title as source_title,
+                    'Meeting Alignment Agent' as source_actor,
+                    '会议' as input_label,
+                    jobs.title as input_text,
+                    '对齐' as output_label,
+                    case
+                        when jobs.final_message != '' then jobs.final_message
+                        else runs.audit_summary
+                    end as output_text,
+                    case
+                        when jobs.status='no_action' then 'no_action'
+                        else 'meeting_alignment'
+                    end as action,
+                    case
+                        when jobs.status='no_action' then 'skipped'
+                        when jobs.status='sent' then 'sent'
+                        when jobs.status in ('retry', 'failed') then 'failed'
+                        else jobs.status
+                    end as status,
+                    jobs.target_title,
+                    runs.codex_session_id,
+                    runs.created_at
+                from meeting_alignment_runs as runs
+                join meeting_alignment_jobs as jobs on jobs.id=runs.job_id
+            )
+            select * from history_items
+        """
+        filters: list[str] = []
+        args: list[object] = []
+        if send_statuses:
+            placeholders = ",".join("?" for _ in send_statuses)
+            filters.append(f"status in ({placeholders})")
+            args.extend(send_statuses)
+        if query_text.strip():
+            needle = f"%{query_text.strip().lower()}%"
+            filters.append(
+                """lower(
+                    source_title || ' ' || source_actor || ' ' || input_text || ' ' ||
+                    output_text || ' ' || target_title || ' ' || codex_session_id
+                ) like ?"""
+            )
+            args.append(needle)
+        if filters:
+            query = f"{query} where {' and '.join(filters)}"
+        return query, args
 
     def list_reply_attempts_after(self, attempt_id: int) -> list[ReplyAttempt]:
         with self._connect() as db:

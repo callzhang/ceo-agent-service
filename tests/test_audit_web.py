@@ -79,6 +79,36 @@ def seed_attempt(store: AutoReplyStore) -> int:
     return attempt_id
 
 
+def seed_meeting_attempt(store: AutoReplyStore) -> int:
+    job_id = store.upsert_meeting_alignment_job(
+        meeting_id="minutes-history-1",
+        title="项目评审会",
+        source_json='{"summary":"讨论上线范围","source_url":"https://minutes.example/1"}',
+        participants_json='[{"name":"Derek"},{"name":"Mina"}]',
+        ended_at="2026-07-14T09:50:00+08:00",
+        eligible_at="2026-07-14T10:00:00+08:00",
+        status="pending",
+    )
+    store.update_meeting_alignment_job(
+        job_id,
+        status="sent",
+        target_kind="group",
+        target_id="cid-project",
+        target_title="项目群",
+        mentions_json='[{"name":"Mina","user_id":"user-mina"}]',
+        final_message="会后对齐：@Mina 请确认风险预算。",
+        send_result_json='{"status":"sent"}',
+    )
+    return store.record_meeting_alignment_run(
+        job_id=job_id,
+        codex_session_id="meeting-session-history-1",
+        decision_json='{"action":"send","target":{"title":"项目群"}}',
+        audit_summary="会后对齐：上线范围仍未一致。",
+        status="sent",
+        error="",
+    )
+
+
 def test_format_local_time_converts_utc_sqlite_timestamp():
     assert audit_web_module._format_local_time(
         "2026-06-03 09:55:59",
@@ -136,6 +166,39 @@ def test_render_attempt_list_shows_history_rows(tmp_path: Path):
     assert "查看/反馈" in html
     assert ">Codex</a>" not in html
     assert "/codex/session-1" not in html
+
+
+def test_meeting_history_uses_reply_card_and_detail_contract(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    run_id = seed_meeting_attempt(store)
+
+    html = render_attempt_list(store)
+
+    assert f'/meeting-attempts/{run_id}' in html
+    assert 'class="attempt-item"' in html
+    assert "会后对齐" in html
+    assert "项目群" in html
+
+    client = TestClient(create_audit_app(store.path))
+    detail = client.get(f"/meeting-attempts/{run_id}")
+    assert detail.status_code == 200
+    assert "项目评审会" in detail.text
+    assert "source_json" in detail.text
+    assert "decision_json" in detail.text
+    assert "mention resolution" in detail.text
+    assert "/codex/meeting-session-history-1" in detail.text
+
+    chart = audit_web_module._history_chart_payload(store)
+    assert chart["total"] == 1
+    assert {series["name"] for series in chart["series"]} == {"💬 Sent"}
+
+    missing_session_status, missing_session_html = render_codex_session_detail(
+        "meeting-session-history-1",
+        codex_home=tmp_path / "missing-codex-home",
+        store=store,
+    )
+    assert missing_session_status == 200
+    assert f"/meeting-attempts/{run_id}" in missing_session_html
 
 
 def test_history_chart_labels_terminal_reactions_and_oa_actions(tmp_path: Path):
