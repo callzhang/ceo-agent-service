@@ -188,6 +188,74 @@ def test_discovery_metadata_does_not_guess_missing_status():
         )
 
 
+def test_discovery_metadata_rejects_conflicting_status_aliases():
+    with pytest.raises(MeetingSourceIncomplete, match="conflicting meeting status"):
+        read_meeting_source(
+            FakeDws(),
+            "minutes-1",
+            discovery_metadata={"status": "ended", "meetingStatus": "running"},
+        )
+
+
+def test_live_info_rejects_conflicting_participant_aliases():
+    info = complete_info()
+    info["result"]["participants"] = [
+        {"name": "Derek", "user_id": "u-derek"},
+        {"name": "B", "user_id": "u-b"},
+    ]
+
+    with pytest.raises(MeetingSourceIncomplete, match="conflicting participants"):
+        normalize_meeting_source(info, [], current_user_id="u-derek")
+
+
+@pytest.mark.parametrize(
+    ("alias", "conflicting_value", "message"),
+    [
+        ("name", "另一个标题", "conflicting meeting title"),
+        ("meeting_id", "minutes-2", "conflicting meeting id"),
+        ("ended_at", "2026-07-14T03:00:00+08:00", "conflicting meeting end time"),
+    ],
+)
+def test_live_info_rejects_conflicting_critical_aliases(
+    alias,
+    conflicting_value,
+    message,
+):
+    info = complete_info()
+    info["result"][alias] = conflicting_value
+
+    with pytest.raises(MeetingSourceIncomplete, match=message):
+        normalize_meeting_source(info, [], current_user_id="u-derek")
+
+
+def test_same_normalized_alias_values_are_allowed():
+    info = complete_info()
+    info["result"].update(
+        status="ended",
+        participants=[
+            {
+                "name": "Derek",
+                "user_id": "u-derek",
+                "open_dingtalk_id": "open-derek",
+            },
+            {
+                "name": "A",
+                "user_id": "u-a",
+                "open_dingtalk_id": "open-a",
+            },
+        ],
+        ended_at=1783965600000,
+    )
+
+    source = normalize_meeting_source(info, [], current_user_id="u-derek")
+
+    assert source.status == "ended"
+    assert [participant.user_id for participant in source.participants] == [
+        "u-derek",
+        "u-a",
+    ]
+
+
 def test_normalization_requires_explicit_end_time():
     info = complete_info()
     del info["result"]["endTimeISO"]

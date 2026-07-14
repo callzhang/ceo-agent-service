@@ -860,6 +860,7 @@ def test_parse_minutes_transcription_accepts_live_result_nesting():
         }
     ]
     assert DwsClient.parse_minutes_next_token(payload) == "page-2"
+    assert DwsClient.parse_minutes_transcription_has_next(payload) is True
 
 
 def test_get_all_minutes_transcription_walks_every_page():
@@ -930,6 +931,44 @@ def test_get_all_minutes_transcription_rejects_more_than_100_pages():
         client.get_all_minutes_transcription("minutes-1")
 
     assert len(client.commands) == 100
+
+
+@pytest.mark.parametrize(
+    "result",
+    [
+        {
+            "hasNext": True,
+            "paragraphList": [{"paragraph": "不能当作完整结果"}],
+        },
+        {
+            "hasNext": False,
+            "nextToken": "unexpected-token",
+            "paragraphList": [{"paragraph": "不能当作完整结果"}],
+        },
+    ],
+)
+def test_get_all_minutes_transcription_rejects_contradictory_pagination(result):
+    client = SequenceRecordingDwsClient([{"result": result}])
+
+    with pytest.raises(DwsError, match="pagination.*contradictory"):
+        client.get_all_minutes_transcription("minutes-1")
+
+
+def test_get_all_minutes_transcription_accepts_explicit_last_page():
+    client = SequenceRecordingDwsClient(
+        [
+            {
+                "result": {
+                    "hasNext": False,
+                    "paragraphList": [{"paragraph": "完整末页"}],
+                }
+            }
+        ]
+    )
+
+    assert client.get_all_minutes_transcription("minutes-1") == {
+        "paragraphs": [{"paragraph": "完整末页"}]
+    }
 
 
 def test_get_resource_download_url_command_uses_chat_download_media():

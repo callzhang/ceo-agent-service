@@ -2235,9 +2235,16 @@ class DwsClient:
                 task_uuid,
                 next_token=next_token,
             )
-            paragraphs.extend(self.parse_minutes_transcription_paragraphs(page))
             next_token = self.parse_minutes_next_token(page)
-            if not next_token:
+            has_next = self.parse_minutes_transcription_has_next(page)
+            if (has_next is True and not next_token) or (
+                has_next is False and bool(next_token)
+            ):
+                raise DwsError(
+                    "minutes transcription pagination response is contradictory"
+                )
+            paragraphs.extend(self.parse_minutes_transcription_paragraphs(page))
+            if has_next is False or (has_next is None and not next_token):
                 return {"paragraphs": paragraphs}
             if next_token in seen_tokens:
                 raise DwsError(
@@ -3326,6 +3333,34 @@ class DwsClient:
             if value:
                 return str(value)
         return ""
+
+    @staticmethod
+    def parse_minutes_transcription_has_next(payload: Any) -> bool | None:
+        if not isinstance(payload, dict):
+            return None
+        result = payload.get("result")
+        data = payload.get("data")
+        result_data = result.get("data") if isinstance(result, dict) else None
+        values: list[bool] = []
+        for candidate in (payload, result, data, result_data):
+            if not isinstance(candidate, dict) or "hasNext" not in candidate:
+                continue
+            value = candidate["hasNext"]
+            if isinstance(value, bool):
+                values.append(value)
+            elif isinstance(value, str) and value.casefold() in {"true", "false"}:
+                values.append(value.casefold() == "true")
+            else:
+                raise DwsError(
+                    "invalid minutes transcription pagination hasNext value"
+                )
+        if not values:
+            return None
+        if any(value != values[0] for value in values[1:]):
+            raise DwsError(
+                "minutes transcription pagination response is contradictory"
+            )
+        return values[0]
 
     @staticmethod
     def parse_minutes_transcription_paragraphs(

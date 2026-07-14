@@ -56,8 +56,10 @@ def normalize_meeting_source(
     meeting_id: str = "",
 ) -> MeetingSource:
     data = _payload_data(info)
-    normalized_meeting_id = meeting_id.strip() or _text(
+    _validate_metadata_aliases(data)
+    payload_meeting_id = _metadata_text(
         data,
+        "meeting id",
         "taskUuid",
         "meetingId",
         "minutesId",
@@ -65,15 +67,36 @@ def normalize_meeting_source(
         "uuid",
         "id",
     )
+    normalized_meeting_id = meeting_id.strip() or payload_meeting_id
+    if (
+        meeting_id.strip()
+        and payload_meeting_id
+        and payload_meeting_id != meeting_id.strip()
+    ):
+        raise MeetingSourceIncomplete("conflicting meeting id")
     if not normalized_meeting_id:
         raise MeetingSourceIncomplete("meeting id is missing")
 
-    status = _text(data, "status", "meetingStatus", "state", "taskStatus")
+    status = _metadata_text(
+        data,
+        "meeting status",
+        "status",
+        "meetingStatus",
+        "state",
+        "taskStatus",
+        normalizer=lambda value: str(value).strip().casefold(),
+    )
     if status.casefold() != "ended":
         raise MeetingSourceIncomplete("meeting is not explicitly ended")
 
-    ended_at = _normalized_time(
-        _value(data, "endTimeISO", "ended_at", "endedAt", "endTime", "end_time")
+    ended_at = _metadata_time(
+        data,
+        "meeting end time",
+        "endTimeISO",
+        "ended_at",
+        "endedAt",
+        "endTime",
+        "end_time",
     )
     if not ended_at:
         raise MeetingSourceIncomplete("meeting end time is missing")
@@ -94,24 +117,30 @@ def normalize_meeting_source(
     transcript = _transcript_lines(transcription)
     return MeetingSource(
         meeting_id=normalized_meeting_id,
-        title=_text(data, "title", "name"),
+        title=_metadata_text(data, "meeting title", "title", "name"),
         status="ended",
-        started_at=_normalized_time(
-            _value(
-                data,
-                "startTimeISO",
-                "started_at",
-                "startedAt",
-                "startTime",
-                "start_time",
-            )
+        started_at=_metadata_time(
+            data,
+            "meeting start time",
+            "startTimeISO",
+            "started_at",
+            "startedAt",
+            "startTime",
+            "start_time",
         ),
         ended_at=ended_at,
         participants=participants,
         current_user_id=normalized_current_user_id,
         summary=_summary_text(summary),
         transcript=transcript,
-        source_url=_text(data, "url", "shareUrl", "sourceUrl", "source_url"),
+        source_url=_metadata_text(
+            data,
+            "meeting source url",
+            "url",
+            "shareUrl",
+            "sourceUrl",
+            "source_url",
+        ),
     )
 
 
@@ -132,6 +161,8 @@ def _merge_discovery_metadata(
 ) -> dict[str, Any]:
     live = dict(_payload_data(info))
     discovered = _payload_data(discovery_metadata)
+    _validate_metadata_aliases(live)
+    _validate_metadata_aliases(discovered)
     if not discovered:
         return {"result": live}
     field_aliases = {
@@ -195,6 +226,98 @@ def _explicit_value(payload: dict[str, Any], *aliases: str) -> Any:
     return None
 
 
+def _metadata_text(
+    payload: dict[str, Any],
+    label: str,
+    *aliases: str,
+    normalizer=lambda value: str(value).strip(),
+) -> str:
+    values = [
+        normalizer(payload[alias])
+        for alias in aliases
+        if _is_explicit(payload.get(alias))
+    ]
+    if not values:
+        return ""
+    if any(value != values[0] for value in values[1:]):
+        raise MeetingSourceIncomplete(f"conflicting {label}")
+    return values[0]
+
+
+def _metadata_time(
+    payload: dict[str, Any],
+    label: str,
+    *aliases: str,
+) -> str:
+    values = [
+        _normalized_time(payload[alias])
+        for alias in aliases
+        if _is_explicit(payload.get(alias))
+    ]
+    if not values:
+        return ""
+    signatures = [_time_signature(value) for value in values]
+    if any(signature != signatures[0] for signature in signatures[1:]):
+        raise MeetingSourceIncomplete(f"conflicting {label}")
+    return values[0]
+
+
+def _is_explicit(value: Any) -> bool:
+    return value is not None and value != "" and value != []
+
+
+def _validate_metadata_aliases(data: dict[str, Any]) -> None:
+    if not data:
+        return
+    _metadata_text(
+        data,
+        "meeting id",
+        "taskUuid",
+        "meetingId",
+        "minutesId",
+        "meeting_id",
+        "uuid",
+        "id",
+    )
+    _metadata_text(data, "meeting title", "title", "name")
+    _metadata_text(
+        data,
+        "meeting status",
+        "status",
+        "meetingStatus",
+        "state",
+        "taskStatus",
+        normalizer=lambda value: str(value).strip().casefold(),
+    )
+    _metadata_time(
+        data,
+        "meeting start time",
+        "startTimeISO",
+        "started_at",
+        "startedAt",
+        "startTime",
+        "start_time",
+    )
+    _metadata_time(
+        data,
+        "meeting end time",
+        "endTimeISO",
+        "ended_at",
+        "endedAt",
+        "endTime",
+        "end_time",
+    )
+    _metadata_text(
+        data,
+        "meeting source url",
+        "url",
+        "shareUrl",
+        "sourceUrl",
+        "source_url",
+    )
+    _participants(data)
+
+
 def _text(payload: dict[str, Any], *aliases: str) -> str:
     value = _value(payload, *aliases)
     return str(value).strip() if value is not None else ""
@@ -218,9 +341,18 @@ def _normalized_time(value: Any) -> str:
     return _normalized_time(numeric)
 
 
+def _time_signature(value: str) -> str | float:
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return value
+    if parsed.tzinfo is None:
+        return value
+    return parsed.timestamp()
+
+
 def _participants(data: dict[str, Any]) -> list[MeetingParticipant]:
-    raw_participants = _value(
-        data,
+    aliases = (
         "participants",
         "participantList",
         "attendees",
@@ -228,22 +360,62 @@ def _participants(data: dict[str, Any]) -> list[MeetingParticipant]:
         "members",
         "memberList",
     )
+    normalized_lists = [
+        _parse_participants(data[alias])
+        for alias in aliases
+        if _is_explicit(data.get(alias))
+    ]
+    if not normalized_lists:
+        return []
+    signatures = [
+        sorted(
+            (
+                participant.name,
+                participant.user_id,
+                participant.open_dingtalk_id,
+            )
+            for participant in participants
+        )
+        for participants in normalized_lists
+    ]
+    if any(signature != signatures[0] for signature in signatures[1:]):
+        raise MeetingSourceIncomplete("conflicting participants")
+    return normalized_lists[0]
+
+
+def _parse_participants(raw_participants: Any) -> list[MeetingParticipant]:
     if not isinstance(raw_participants, list) or not raw_participants:
         return []
     participants: list[MeetingParticipant] = []
     for raw in raw_participants:
         if not isinstance(raw, dict):
             raise MeetingSourceIncomplete("meeting participant data is incomplete")
-        name = _text(raw, "name", "displayName", "nickName", "userName")
-        user_id = _text(raw, "userId", "user_id", "staffId", "employeeId", "uid")
+        name = _metadata_text(
+            raw,
+            "participant name",
+            "name",
+            "displayName",
+            "nickName",
+            "userName",
+        )
+        user_id = _metadata_text(
+            raw,
+            "participant user id",
+            "userId",
+            "user_id",
+            "staffId",
+            "employeeId",
+            "uid",
+        )
         if not name or not user_id:
             raise MeetingSourceIncomplete("meeting participant data is incomplete")
         participants.append(
             MeetingParticipant(
                 name=name,
                 user_id=user_id,
-                open_dingtalk_id=_text(
+                open_dingtalk_id=_metadata_text(
                     raw,
+                    "participant open dingtalk id",
                     "openDingTalkId",
                     "openDingtalkId",
                     "open_dingtalk_id",
