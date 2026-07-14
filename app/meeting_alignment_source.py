@@ -1,7 +1,9 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Protocol
 
-from app.dws_client import DwsClient, DwsError
+from pydantic import BaseModel, ConfigDict
+
+from app.dws_client import DwsCalendarEvent, DwsClient, DwsError
 from app.meeting_alignment_models import (
     MeetingParticipant,
     MeetingSource,
@@ -11,6 +13,19 @@ from app.meeting_alignment_models import (
 
 class MeetingSourceIncomplete(RuntimeError):
     """The Minutes record cannot yet prove a complete, eligible meeting source."""
+
+
+CALENDAR_BOUNDARY_DRIFT_SECONDS = 120
+
+
+class CalendarMeetingEvidence(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    event_id: str
+    title: str
+    started_at: str
+    ended_at: str
+    participants: list[MeetingParticipant]
 
 
 class MeetingSourceDws(Protocol):
@@ -27,7 +42,7 @@ def read_meeting_source(
     dws: MeetingSourceDws,
     meeting_id: str,
     *,
-    discovery_metadata: dict[str, Any] | None = None,
+    calendar_evidence: CalendarMeetingEvidence,
 ) -> MeetingSource:
     info = dws.get_minutes_info(meeting_id)
     summary = dws.get_minutes_summary(meeting_id)
@@ -39,7 +54,7 @@ def read_meeting_source(
         ) from exc
     current_user_id = dws.get_current_user_id()
     return normalize_meeting_source(
-        _merge_discovery_metadata(info, discovery_metadata),
+        _merge_calendar_evidence(info, calendar_evidence, current_user_id),
         transcription,
         current_user_id=current_user_id,
         summary=summary,
@@ -159,39 +174,104 @@ def _payload_data(payload: Any) -> dict[str, Any]:
     return data if isinstance(data, dict) else payload
 
 
-def _merge_discovery_metadata(
+def _merge_calendar_evidence(
     info: dict[str, Any],
-    discovery_metadata: dict[str, Any] | None,
+    evidence: CalendarMeetingEvidence,
+    current_user_id: str,
 ) -> dict[str, Any]:
     live = dict(_payload_data(info))
-    discovered = _payload_data(discovery_metadata)
     _validate_metadata_aliases(live)
-    _validate_metadata_aliases(discovered)
-    if not discovered:
-        return {"result": live}
-    participant_aliases = (
-        "participants",
-        "participantList",
-        "attendees",
-        "attendeeList",
-        "members",
-        "memberList",
-    )
-    discovered_participants = _explicit_value(discovered, *participant_aliases)
-    if discovered_participants is not None:
-        participant_source = _metadata_text(
-            discovered,
-            "participant metadata source",
-            "participants_source",
-            "participantsSource",
-        )
-        if participant_source != "calendar_event":
-            raise MeetingSourceIncomplete(
-                "participant metadata must come from one unique calendar event"
-            )
-        if _explicit_value(live, *participant_aliases) is None:
-            live["participants"] = discovered_participants
+    _verify_calendar_evidence(live, evidence, current_user_id)
+    live["participants"] = [
+        participant.model_dump() for participant in evidence.participants
+    ]
     return {"result": live}
+
+
+def build_calendar_meeting_evidence(
+    info: dict[str, Any],
+    events: list[DwsCalendarEvent],
+    current_user_id: str,
+) -> CalendarMeetingEvidence:
+    data = _payload_data(info)
+    _validate_metadata_aliases(data)
+    matches = [event for event in events if _calendar_event_matches(data, event)]
+    if len(matches) != 1:
+        raise MeetingSourceIncomplete("meeting requires exactly one calendar event")
+    event = matches[0]
+    self_attendees = [detail for detail in event.attendee_details if detail.is_self]
+    if len(self_attendees) != 1:
+        raise MeetingSourceIncomplete("calendar event requires one self attendee")
+    self_attendee = self_attendees[0]
+    if self_attendee.user_id and self_attendee.user_id != current_user_id:
+        raise MeetingSourceIncomplete("calendar self attendee conflicts with current user")
+    participants: list[MeetingParticipant] = []
+    for detail in event.attendee_details:
+        if not detail.display_name.strip():
+            continue
+        participants.append(
+            MeetingParticipant(
+                name=detail.display_name.strip(),
+                user_id=current_user_id if detail.is_self else detail.user_id.strip(),
+                open_dingtalk_id=detail.open_dingtalk_id.strip(),
+            )
+        )
+    return CalendarMeetingEvidence(
+        event_id=event.event_id,
+        title=event.title,
+        started_at=_normalized_time(event.start_time),
+        ended_at=_normalized_time(event.end_time),
+        participants=participants,
+    )
+
+
+def _calendar_event_matches(data: dict[str, Any], event: DwsCalendarEvent) -> bool:
+    if not event.event_id.strip() or event.status.strip().casefold() != "confirmed":
+        return False
+    title = _metadata_text(data, "meeting title", "title", "name")
+    normalized_title = _normalized_title(title)
+    normalized_event_title = _normalized_title(event.title)
+    if not normalized_title or normalized_title != normalized_event_title:
+        return False
+    try:
+        meeting_start = _parsed_time(_metadata_time(
+            data, "meeting start time", "startTimeISO", "started_at", "startedAt",
+            "startTime", "start_time"
+        ))
+        meeting_end = _parsed_time(_metadata_time(
+            data, "meeting end time", "endTimeISO", "ended_at", "endedAt",
+            "endTime", "end_time"
+        ))
+        event_start = _parsed_time(_normalized_time(event.start_time))
+        event_end = _parsed_time(_normalized_time(event.end_time))
+    except MeetingSourceIncomplete:
+        return False
+    drift = timedelta(seconds=CALENDAR_BOUNDARY_DRIFT_SECONDS)
+    return meeting_start >= event_start - drift and meeting_end <= event_end + drift
+
+
+def _verify_calendar_evidence(
+    data: dict[str, Any], evidence: CalendarMeetingEvidence, current_user_id: str
+) -> None:
+    event = DwsCalendarEvent(
+        event_id=evidence.event_id,
+        title=evidence.title,
+        start_time=evidence.started_at,
+        end_time=evidence.ended_at,
+        status="confirmed",
+    )
+    if not _calendar_event_matches(data, event):
+        raise MeetingSourceIncomplete("calendar evidence is stale or mismatched")
+    if sum(p.user_id == current_user_id for p in evidence.participants) != 1:
+        raise MeetingSourceIncomplete("calendar evidence lacks stable current user")
+
+
+def _normalized_title(value: str) -> str:
+    return " ".join(value.split()).casefold()
+
+
+def _parsed_time(value: str) -> datetime:
+    return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
 
 def _value(payload: dict[str, Any], *aliases: str) -> Any:
@@ -300,12 +380,6 @@ def _validate_metadata_aliases(data: dict[str, Any]) -> None:
         "sourceUrl",
         "source_url",
     )
-    _metadata_text(
-        data,
-        "participant metadata source",
-        "participants_source",
-        "participantsSource",
-    )
     _participants(data)
 
 
@@ -409,7 +483,7 @@ def _parse_participants(raw_participants: Any) -> list[MeetingParticipant]:
             "employeeId",
             "uid",
         )
-        if not name or not user_id:
+        if not name:
             raise MeetingSourceIncomplete("meeting participant data is incomplete")
         participants.append(
             MeetingParticipant(

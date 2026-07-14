@@ -2660,6 +2660,56 @@ def test_list_calendar_events_uses_dws_calendar_event_list():
     assert events[0].description == "固定例会"
 
 
+def test_parse_calendar_events_preserves_live_attendee_details():
+    events = DwsClient.parse_calendar_events(
+        {
+            "result": {
+                "events": [
+                    {
+                        "id": "event-1",
+                        "title": "上线评审",
+                        "status": "confirmed",
+                        "start": {"dateTime": "2026-07-14T19:45:00+08:00"},
+                        "end": {"dateTime": "2026-07-14T21:30:00+08:00"},
+                        "attendees": [
+                            {
+                                "displayName": "Derek",
+                                "self": True,
+                                "responseStatus": "accepted",
+                                "userId": "u-derek",
+                                "openDingTalkId": "open-derek",
+                            },
+                            {
+                                "displayName": "A",
+                                "self": False,
+                                "responseStatus": "accepted",
+                            },
+                        ],
+                    }
+                ]
+            }
+        }
+    )
+
+    assert events[0].attendees == ["Derek", "A"]
+    assert [detail.model_dump() for detail in events[0].attendee_details] == [
+        {
+            "display_name": "Derek",
+            "is_self": True,
+            "response_status": "accepted",
+            "user_id": "u-derek",
+            "open_dingtalk_id": "open-derek",
+        },
+        {
+            "display_name": "A",
+            "is_self": False,
+            "response_status": "accepted",
+            "user_id": "",
+            "open_dingtalk_id": "",
+        },
+    ]
+
+
 def test_respond_calendar_event_uses_mcp_calendar_respond():
     client = RecordingDwsClient({"success": True})
 

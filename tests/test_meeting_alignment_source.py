@@ -1,9 +1,11 @@
 import pytest
 
-from app.dws_client import DwsError
+from app.dws_client import DwsCalendarAttendee, DwsCalendarEvent, DwsClient, DwsError
 from app.meeting_alignment_models import MeetingSource
 from app.meeting_alignment_source import (
+    CalendarMeetingEvidence,
     MeetingSourceIncomplete,
+    build_calendar_meeting_evidence,
     normalize_meeting_source,
     read_meeting_source,
 )
@@ -22,8 +24,12 @@ def live_minutes_info(*, status: str | None = None) -> dict:
     return {"result": result}
 
 
-def calendar_participant_metadata(*, source: str | None = "calendar_event") -> dict:
-    metadata = {
+def calendar_evidence(**overrides) -> CalendarMeetingEvidence:
+    payload = {
+        "event_id": "event-1",
+        "title": "上线评审",
+        "started_at": "2026-07-14T11:45:00+00:00",
+        "ended_at": "2026-07-14T13:30:00+00:00",
         "participants": [
             {
                 "name": "Derek",
@@ -33,9 +39,33 @@ def calendar_participant_metadata(*, source: str | None = "calendar_event") -> d
             {"name": "A", "user_id": "u-a", "open_dingtalk_id": "open-a"},
         ],
     }
-    if source is not None:
-        metadata["participants_source"] = source
-    return metadata
+    payload.update(overrides)
+    return CalendarMeetingEvidence.model_validate(payload)
+
+
+def calendar_event(**overrides) -> DwsCalendarEvent:
+    payload = {
+        "event_id": "event-1",
+        "title": "上线评审",
+        "start_time": "2026-07-14T19:45:00+08:00",
+        "end_time": "2026-07-14T21:30:00+08:00",
+        "status": "confirmed",
+        "attendee_details": [
+            DwsCalendarAttendee(
+                display_name="Derek",
+                is_self=True,
+                response_status="accepted",
+                user_id="u-derek",
+                open_dingtalk_id="open-derek",
+            ),
+            DwsCalendarAttendee(
+                display_name="A",
+                response_status="accepted",
+            ),
+        ],
+    }
+    payload.update(overrides)
+    return DwsCalendarEvent(**payload)
 
 
 def normalized_info(*, status: str | None = None) -> dict:
@@ -96,7 +126,7 @@ def test_read_meeting_source_combines_metadata_summary_transcript_and_current_us
     source = read_meeting_source(
         dws,
         "minutes-1",
-        discovery_metadata=calendar_participant_metadata(),
+        calendar_evidence=calendar_evidence(),
     )
 
     assert isinstance(source, MeetingSource)
@@ -146,7 +176,7 @@ def test_read_meeting_source_merges_producer_discovery_metadata():
     source = read_meeting_source(
         dws,
         "minutes-1",
-        discovery_metadata=calendar_participant_metadata(),
+        calendar_evidence=calendar_evidence(),
     )
 
     assert source.title == "上线评审"
@@ -167,10 +197,7 @@ def test_discovery_metadata_does_not_override_conflicting_live_status():
         read_meeting_source(
             RunningMeetingDws(),
             "minutes-1",
-            discovery_metadata={
-                **calendar_participant_metadata(),
-                "status": "ended",
-            },
+            calendar_evidence=calendar_evidence(),
         )
 
 
@@ -184,31 +211,85 @@ def test_explicit_non_ended_live_status_is_rejected(status):
         read_meeting_source(
             NonEndedDws(),
             "minutes-1",
-            discovery_metadata=calendar_participant_metadata(),
+            calendar_evidence=calendar_evidence(),
         )
 
 
-@pytest.mark.parametrize("source", [None, "minutes_info", "ambiguous_calendar"])
-def test_discovery_participants_require_unique_calendar_event_source(source):
-    with pytest.raises(MeetingSourceIncomplete, match="calendar event"):
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"event_id": ""},
+        {"title": "另一个会议"},
+        {"started_at": "2026-07-14T12:00:00+00:00"},
+        {"ended_at": "2026-07-14T13:00:00+00:00"},
+    ],
+)
+def test_read_meeting_source_rejects_stale_calendar_evidence(overrides):
+    with pytest.raises(MeetingSourceIncomplete, match="calendar evidence"):
         read_meeting_source(
             FakeDws(),
             "minutes-1",
-            discovery_metadata=calendar_participant_metadata(source=source),
+            calendar_evidence=calendar_evidence(**overrides),
         )
 
 
-def test_discovery_metadata_rejects_conflicting_status_aliases():
-    with pytest.raises(MeetingSourceIncomplete, match="conflicting meeting status"):
-        read_meeting_source(
-            FakeDws(),
-            "minutes-1",
-            discovery_metadata={
-                **calendar_participant_metadata(),
-                "status": "ended",
-                "meetingStatus": "running",
-            },
+def test_build_calendar_evidence_requires_exactly_one_match():
+    with pytest.raises(MeetingSourceIncomplete, match="exactly one"):
+        build_calendar_meeting_evidence(live_minutes_info(), [], "u-derek")
+    with pytest.raises(MeetingSourceIncomplete, match="exactly one"):
+        build_calendar_meeting_evidence(
+            live_minutes_info(),
+            [calendar_event(), calendar_event(event_id="event-2")],
+            "u-derek",
         )
+    untitled_info = live_minutes_info()
+    untitled_info["result"]["title"] = ""
+    with pytest.raises(MeetingSourceIncomplete, match="exactly one"):
+        build_calendar_meeting_evidence(
+            untitled_info, [calendar_event(title="")], "u-derek"
+        )
+
+
+def test_build_calendar_evidence_requires_self_attendee():
+    event = calendar_event(
+        attendee_details=[
+            DwsCalendarAttendee(display_name="Derek", user_id="u-derek")
+        ]
+    )
+    with pytest.raises(MeetingSourceIncomplete, match="self attendee"):
+        build_calendar_meeting_evidence(live_minutes_info(), [event], "u-derek")
+
+
+def test_raw_calendar_parse_to_unique_match_to_source():
+    events = DwsClient.parse_calendar_events(
+        {
+            "result": {
+                "events": [
+                    {
+                        "id": "event-1",
+                        "title": "  上线评审  ",
+                        "status": "confirmed",
+                        "startTime": "2026-07-14T19:45:00+08:00",
+                        "endTime": "2026-07-14T21:30:00+08:00",
+                        "attendees": [
+                            {"displayName": "Derek", "self": True},
+                            {"displayName": "A", "responseStatus": "accepted"},
+                        ],
+                    }
+                ]
+            }
+        }
+    )
+    evidence = build_calendar_meeting_evidence(
+        live_minutes_info(), events, "u-derek"
+    )
+
+    source = read_meeting_source(
+        FakeDws(), "minutes-1", calendar_evidence=evidence
+    )
+
+    assert source.participants[0].user_id == "u-derek"
+    assert source.participants[1].user_id == ""
 
 
 def test_live_info_rejects_conflicting_participant_aliases():
@@ -359,12 +440,13 @@ def test_normalization_requires_current_user_to_be_a_participant():
         normalize_meeting_source(info, [], current_user_id="u-someone-else")
 
 
-def test_normalization_rejects_participant_without_stable_user_id():
+def test_normalization_allows_non_current_participant_without_stable_user_id():
     info = normalized_info()
     del info["result"]["participantList"][1]["userId"]
 
-    with pytest.raises(MeetingSourceIncomplete, match="participant data"):
-        normalize_meeting_source(info, [], current_user_id="u-derek")
+    source = normalize_meeting_source(info, [], current_user_id="u-derek")
+
+    assert source.participants[1].user_id == ""
 
 
 def test_read_meeting_source_converts_pagination_integrity_error_to_typed_error():
@@ -378,5 +460,5 @@ def test_read_meeting_source_converts_pagination_integrity_error_to_typed_error(
         read_meeting_source(
             dws,
             "minutes-1",
-            discovery_metadata=calendar_participant_metadata(),
+            calendar_evidence=calendar_evidence(),
         )

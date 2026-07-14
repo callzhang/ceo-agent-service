@@ -175,6 +175,14 @@ class DwsDocumentSearchResult(BaseModel):
     doc_url: str = ""
 
 
+class DwsCalendarAttendee(BaseModel):
+    display_name: str = ""
+    is_self: bool = False
+    response_status: str = ""
+    user_id: str = ""
+    open_dingtalk_id: str = ""
+
+
 class DwsCalendarEvent(BaseModel):
     event_id: str = ""
     title: str = ""
@@ -185,6 +193,7 @@ class DwsCalendarEvent(BaseModel):
     response_status: str = ""
     self_response_status: str = ""
     attendees: list[str] = Field(default_factory=list)
+    attendee_details: list[DwsCalendarAttendee] = Field(default_factory=list)
     comments: list[str] = Field(default_factory=list)
     status: str = ""
     created_ms: int = 0
@@ -3684,6 +3693,9 @@ class DwsClient:
                 or DwsClient._calendar_self_response_status(record.get("attendees"))
             ),
             attendees=DwsClient._calendar_attendees(record.get("attendees")),
+            attendee_details=DwsClient._calendar_attendee_details(
+                record.get("attendees")
+            ),
             comments=DwsClient._calendar_comments(record),
             status=DwsClient._first_string(record, "status"),
             created_ms=DwsClient._first_int(record, "created", "createTime"),
@@ -3737,6 +3749,42 @@ class DwsClient:
             person = DwsClient._calendar_person(item)
             if person:
                 result.append(person)
+        return result
+
+    @staticmethod
+    def _calendar_attendee_details(value: Any) -> list[DwsCalendarAttendee]:
+        if not isinstance(value, list):
+            return []
+        result: list[DwsCalendarAttendee] = []
+        for item in value:
+            if isinstance(item, str):
+                if item.strip():
+                    result.append(DwsCalendarAttendee(display_name=item.strip()))
+                continue
+            if not isinstance(item, dict):
+                continue
+            is_self = item.get("self", item.get("isSelf", False))
+            if isinstance(is_self, str):
+                is_self = is_self.casefold() == "true"
+            result.append(
+                DwsCalendarAttendee(
+                    display_name=DwsClient._calendar_person(item),
+                    is_self=bool(is_self),
+                    response_status=DwsClient._first_string(
+                        item, "responseStatus", "response_status", "status"
+                    ),
+                    user_id=DwsClient._first_string(
+                        item, "userId", "user_id", "staffId"
+                    ),
+                    open_dingtalk_id=DwsClient._first_string(
+                        item,
+                        "openDingTalkId",
+                        "openDingtalkId",
+                        "openId",
+                        "open_id",
+                    ),
+                )
+            )
         return result
 
     @staticmethod
