@@ -2226,6 +2226,26 @@ class DwsClient:
             raise DwsError("invalid minutes transcription response")
         return payload
 
+    def get_all_minutes_transcription(self, task_uuid: str) -> dict[str, Any]:
+        paragraphs: list[dict[str, Any]] = []
+        next_token = ""
+        seen_tokens: set[str] = set()
+        for _ in range(100):
+            page = self.get_minutes_transcription(
+                task_uuid,
+                next_token=next_token,
+            )
+            paragraphs.extend(self.parse_minutes_transcription_paragraphs(page))
+            next_token = self.parse_minutes_next_token(page)
+            if not next_token:
+                return {"paragraphs": paragraphs}
+            if next_token in seen_tokens:
+                raise DwsError(
+                    "minutes transcription pagination repeated next token"
+                )
+            seen_tokens.add(next_token)
+        raise DwsError("minutes transcription pagination exceeded 100 pages")
+
     def create_doc_comment(self, node_id: str, content: str) -> dict[str, Any]:
         payload = self.run_json(self.build_create_doc_comment_command(node_id, content))
         if not isinstance(payload, dict):
@@ -3296,7 +3316,9 @@ class DwsClient:
     @staticmethod
     def parse_minutes_next_token(payload: Any) -> str:
         result = payload.get("result") if isinstance(payload, dict) else None
-        candidates = [payload, result]
+        data = payload.get("data") if isinstance(payload, dict) else None
+        result_data = result.get("data") if isinstance(result, dict) else None
+        candidates = [payload, result, data, result_data]
         for candidate in candidates:
             if not isinstance(candidate, dict):
                 continue
@@ -3304,6 +3326,25 @@ class DwsClient:
             if value:
                 return str(value)
         return ""
+
+    @staticmethod
+    def parse_minutes_transcription_paragraphs(
+        payload: Any,
+    ) -> list[dict[str, Any]]:
+        if not isinstance(payload, dict):
+            return []
+        result = payload.get("result")
+        data = payload.get("data")
+        result_data = result.get("data") if isinstance(result, dict) else None
+        for candidate in (payload, result, data, result_data):
+            if not isinstance(candidate, dict):
+                continue
+            paragraphs = candidate.get("paragraphList")
+            if not isinstance(paragraphs, list):
+                paragraphs = candidate.get("paragraphs")
+            if isinstance(paragraphs, list):
+                return [item for item in paragraphs if isinstance(item, dict)]
+        return []
 
     @staticmethod
     def _unwrap_minutes_list_rows(payload: Any) -> list[Any]:

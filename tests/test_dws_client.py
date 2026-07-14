@@ -833,6 +833,105 @@ def test_minutes_transcription_command_shape_with_next_token():
     ]
 
 
+def test_parse_minutes_transcription_accepts_live_result_nesting():
+    payload = {
+        "dingOpenErrcode": 0,
+        "result": {
+            "hasNext": True,
+            "nextToken": "page-2",
+            "paragraphList": [
+                {
+                    "nickName": "A",
+                    "paragraph": "先全量",
+                    "startTime": 1200,
+                    "unionId": "union-a",
+                }
+            ],
+        },
+        "success": True,
+    }
+
+    assert DwsClient.parse_minutes_transcription_paragraphs(payload) == [
+        {
+            "nickName": "A",
+            "paragraph": "先全量",
+            "startTime": 1200,
+            "unionId": "union-a",
+        }
+    ]
+    assert DwsClient.parse_minutes_next_token(payload) == "page-2"
+
+
+def test_get_all_minutes_transcription_walks_every_page():
+    client = SequenceRecordingDwsClient(
+        [
+            {
+                "result": {
+                    "paragraphList": [{"nickName": "A", "paragraph": "先全量"}],
+                    "nextToken": "page-2",
+                }
+            },
+            {
+                "result": {
+                    "paragraphList": [{"nickName": "B", "paragraph": "先灰度"}],
+                }
+            },
+        ]
+    )
+
+    result = client.get_all_minutes_transcription("minutes-1")
+
+    assert [item["paragraph"] for item in result["paragraphs"]] == [
+        "先全量",
+        "先灰度",
+    ]
+    assert client.commands == [
+        client.build_minutes_transcription_command("minutes-1"),
+        client.build_minutes_transcription_command("minutes-1", next_token="page-2"),
+    ]
+
+
+def test_get_all_minutes_transcription_rejects_repeated_token_without_partial_result():
+    client = SequenceRecordingDwsClient(
+        [
+            {
+                "result": {
+                    "paragraphList": [{"paragraph": "第一页"}],
+                    "nextToken": "same-token",
+                }
+            },
+            {
+                "result": {
+                    "paragraphList": [{"paragraph": "第二页"}],
+                    "nextToken": "same-token",
+                }
+            },
+        ]
+    )
+
+    with pytest.raises(DwsError, match="repeated next token"):
+        client.get_all_minutes_transcription("minutes-1")
+
+
+def test_get_all_minutes_transcription_rejects_more_than_100_pages():
+    client = SequenceRecordingDwsClient(
+        [
+            {
+                "result": {
+                    "paragraphList": [{"paragraph": f"page-{page}"}],
+                    "nextToken": f"token-{page + 1}",
+                }
+            }
+            for page in range(100)
+        ]
+    )
+
+    with pytest.raises(DwsError, match="exceeded 100 pages"):
+        client.get_all_minutes_transcription("minutes-1")
+
+    assert len(client.commands) == 100
+
+
 def test_get_resource_download_url_command_uses_chat_download_media():
     client = DwsClient(dws_bin="dws")
 
