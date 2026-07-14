@@ -15,7 +15,7 @@ class MeetingSourceIncomplete(RuntimeError):
     """The Minutes record cannot yet prove a complete, eligible meeting source."""
 
 
-CALENDAR_BOUNDARY_DRIFT_SECONDS = 120
+CALENDAR_BOUNDARY_DRIFT_SECONDS = 4 * 60 * 60
 
 
 class CalendarMeetingEvidence(BaseModel):
@@ -247,7 +247,9 @@ def _calendar_event_matches(data: dict[str, Any], event: DwsCalendarEvent) -> bo
     except MeetingSourceIncomplete:
         return False
     return (
-        abs(meeting_start.timestamp() - event_start.timestamp())
+        meeting_start < event_end
+        and event_start < meeting_end
+        and abs(meeting_start.timestamp() - event_start.timestamp())
         <= CALENDAR_BOUNDARY_DRIFT_SECONDS
         and abs(meeting_end.timestamp() - event_end.timestamp())
         <= CALENDAR_BOUNDARY_DRIFT_SECONDS

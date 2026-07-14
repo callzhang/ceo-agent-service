@@ -220,8 +220,8 @@ def test_explicit_non_ended_live_status_is_rejected(status):
     [
         {"event_id": ""},
         {"title": "另一个会议"},
-        {"started_at": "2026-07-14T12:00:00+00:00"},
-        {"ended_at": "2026-07-14T13:00:00+00:00"},
+        {"started_at": "2026-07-14T07:49:19+00:00"},
+        {"ended_at": "2026-07-14T17:27:25+00:00"},
     ],
 )
 def test_read_meeting_source_rejects_stale_calendar_evidence(overrides):
@@ -262,6 +262,81 @@ def test_build_calendar_evidence_rejects_same_title_all_day_event():
             ],
             "u-derek",
         )
+
+
+def test_build_calendar_evidence_accepts_real_delayed_meeting_shape():
+    evidence = build_calendar_meeting_evidence(
+        live_minutes_info(),
+        [
+            calendar_event(
+                start_time="2026-07-14T18:00:00+08:00",
+                end_time="2026-07-14T20:00:00+08:00",
+            )
+        ],
+        "u-derek",
+    )
+
+    assert evidence.event_id == "event-1"
+
+
+def test_build_calendar_evidence_rejects_non_overlapping_event_within_four_hours():
+    with pytest.raises(MeetingSourceIncomplete, match="exactly one"):
+        build_calendar_meeting_evidence(
+            live_minutes_info(),
+            [
+                calendar_event(
+                    start_time="2026-07-14T16:00:00+08:00",
+                    end_time="2026-07-14T19:00:00+08:00",
+                )
+            ],
+            "u-derek",
+        )
+
+
+@pytest.mark.parametrize(
+    ("start_time", "matches"),
+    [
+        ("2026-07-14T15:49:20+08:00", True),
+        ("2026-07-14T15:49:19+08:00", False),
+    ],
+)
+def test_calendar_meeting_start_delta_four_hour_boundary(start_time, matches):
+    event = calendar_event(
+        start_time=start_time,
+        end_time="2026-07-14T21:27:24+08:00",
+    )
+    if matches:
+        assert build_calendar_meeting_evidence(
+            live_minutes_info(), [event], "u-derek"
+        ).event_id == "event-1"
+    else:
+        with pytest.raises(MeetingSourceIncomplete, match="exactly one"):
+            build_calendar_meeting_evidence(
+                live_minutes_info(), [event], "u-derek"
+            )
+
+
+@pytest.mark.parametrize(
+    ("end_time", "matches"),
+    [
+        ("2026-07-15T01:27:24+08:00", True),
+        ("2026-07-15T01:27:25+08:00", False),
+    ],
+)
+def test_calendar_meeting_end_delta_four_hour_boundary(end_time, matches):
+    event = calendar_event(
+        start_time="2026-07-14T19:49:20+08:00",
+        end_time=end_time,
+    )
+    if matches:
+        assert build_calendar_meeting_evidence(
+            live_minutes_info(), [event], "u-derek"
+        ).event_id == "event-1"
+    else:
+        with pytest.raises(MeetingSourceIncomplete, match="exactly one"):
+            build_calendar_meeting_evidence(
+                live_minutes_info(), [event], "u-derek"
+            )
 
 
 def test_build_calendar_evidence_requires_self_attendee():
