@@ -220,6 +220,70 @@ def test_meeting_job_retry_and_startup_recovery_preserve_attempts(tmp_path):
     )
 
 
+def test_ready_to_send_transition_releases_processing_lock(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    job_id = seed_job(store)
+    [processing] = store.claim_meeting_alignment_jobs(
+        limit=1,
+        now="2026-07-14 02:11:00",
+    )
+    assert processing.locked_at
+
+    store.update_meeting_alignment_job(
+        job_id,
+        status="ready_to_send",
+        decision_json='{"action":"send"}',
+        send_result_json='{"task_id":"task-1","status":"pending"}',
+    )
+
+    ready = store.get_meeting_alignment_job(job_id)
+    assert ready.status == "ready_to_send"
+    assert ready.locked_at is None
+    assert ready.attempts == 1
+
+
+def test_ready_delivery_claim_is_exclusive_and_recovers_after_crash(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    job_id = seed_job(store)
+    store.claim_meeting_alignment_jobs(
+        limit=1,
+        now="2026-07-14 02:11:00",
+    )
+    store.update_meeting_alignment_job(
+        job_id,
+        status="ready_to_send",
+        decision_json='{"action":"send"}',
+        send_result_json='{"task_id":"task-1","status":"pending"}',
+    )
+
+    first_claim = store.claim_ready_to_send_meeting_alignment_jobs(limit=1)
+    assert [job.id for job in first_claim] == [job_id]
+    assert first_claim[0].locked_at
+    assert store.claim_ready_to_send_meeting_alignment_jobs(limit=1) == []
+    store.update_meeting_alignment_job(
+        job_id,
+        status="ready_to_send",
+        send_result_json='{"task_id":"task-1","status":"checking"}',
+    )
+    assert store.get_meeting_alignment_job(job_id).locked_at
+    assert store.claim_ready_to_send_meeting_alignment_jobs(limit=1) == []
+
+    reset = store.reset_ready_to_send_meeting_alignment_jobs()
+    assert [job.id for job in reset] == [job_id]
+    recovered = reset[0]
+    assert recovered.status == "ready_to_send"
+    assert recovered.locked_at is None
+    assert recovered.attempts == 1
+    assert recovered.decision_json == '{"action":"send"}'
+    assert recovered.send_result_json == (
+        '{"task_id":"task-1","status":"checking"}'
+    )
+
+    second_claim = store.claim_ready_to_send_meeting_alignment_jobs(limit=1)
+    assert [job.id for job in second_claim] == [job_id]
+    assert second_claim[0].locked_at
+
+
 def test_meeting_agent_runs_are_immutable(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     job_id = seed_job(store)

@@ -1533,11 +1533,17 @@ class AutoReplyStore:
             "send_result_json",
         }
         filtered = self._filter_allowed_values(values, allowed_columns)
+        release_ready_lock_on_transition = False
         if "status" in filtered:
             filtered["status"] = self._validate_meeting_alignment_status(
                 filtered["status"]
             )
-            if filtered["status"] in {
+            if (
+                filtered["status"] == "ready_to_send"
+                and "locked_at" not in filtered
+            ):
+                release_ready_lock_on_transition = True
+            elif filtered["status"] in {
                 "waiting",
                 "pending",
                 "no_action",
@@ -1546,13 +1552,19 @@ class AutoReplyStore:
                 "failed",
             }:
                 filtered.setdefault("locked_at", None)
-        assignments = ", ".join(f"{column}=?" for column in filtered)
+        assignments = [f"{column}=?" for column in filtered]
+        if release_ready_lock_on_transition:
+            assignments.append(
+                "locked_at=case "
+                "when status!='ready_to_send' then null "
+                "else locked_at end"
+            )
         args = [*filtered.values(), job_id]
         with self._connect() as db:
             db.execute(
                 f"""
                 update meeting_alignment_jobs
-                set {assignments}, updated_at=current_timestamp
+                set {', '.join(assignments)}, updated_at=current_timestamp
                 where id=?
                 """,
                 args,
@@ -1572,6 +1584,53 @@ class AutoReplyStore:
             available_at=available_at,
             error=error,
         )
+
+    def claim_ready_to_send_meeting_alignment_jobs(
+        self,
+        limit: int,
+    ) -> list[MeetingAlignmentJob]:
+        if limit <= 0:
+            return []
+        with self._connect() as db:
+            rows = db.execute(
+                """
+                with candidates as (
+                    select id
+                    from meeting_alignment_jobs
+                    where status='ready_to_send'
+                      and locked_at is null
+                    order by id
+                    limit ?
+                )
+                update meeting_alignment_jobs
+                set locked_at=current_timestamp,
+                    updated_at=current_timestamp
+                where id in (select id from candidates)
+                  and status='ready_to_send'
+                  and locked_at is null
+                returning *
+                """,
+                (limit,),
+            ).fetchall()
+            jobs = [self._meeting_alignment_job_from_row(row) for row in rows]
+            return sorted(jobs, key=lambda job: job.id)
+
+    def reset_ready_to_send_meeting_alignment_jobs(
+        self,
+    ) -> list[MeetingAlignmentJob]:
+        with self._connect() as db:
+            rows = db.execute(
+                """
+                update meeting_alignment_jobs
+                set locked_at=null,
+                    updated_at=current_timestamp
+                where status='ready_to_send'
+                  and locked_at is not null
+                returning *
+                """
+            ).fetchall()
+            jobs = [self._meeting_alignment_job_from_row(row) for row in rows]
+            return sorted(jobs, key=lambda job: job.id)
 
     def reset_processing_meeting_alignment_jobs(
         self,
