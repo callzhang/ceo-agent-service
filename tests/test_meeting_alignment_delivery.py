@@ -126,12 +126,14 @@ class FakeDws:
         self.send_status_result = {"success": True, "result": {"status": "SUCCESS"}}
         self.sent: list[dict] = []
         self.status_queries: list[str] = []
+        self.search_queries: list[str] = []
 
     def get_conversation_info(self, conversation_id):
         assert conversation_id == "cid-first"
         return self.conversation_info
 
     def search_user_profiles(self, query):
+        self.search_queries.append(query)
         return list(self.profiles.get(query, []))
 
     def read_recent_messages(self, conversation, limit=50):
@@ -254,6 +256,32 @@ def test_ambiguous_mention_is_omitted_without_blocking_group_delivery():
     assert result.resolved_mentions == []
     assert result.unresolved_mention_names == ["张三"]
     assert dws.sent[0]["at_open_dingtalk_ids"] == []
+
+
+def test_duplicate_canonical_participant_names_are_inherently_ambiguous():
+    dws = FakeDws()
+    source_payload = meeting_source().model_dump()
+    source_payload["participants"].append(
+        {
+            "name": " a ",
+            "user_id": "u-a-duplicate",
+            "open_dingtalk_id": "open-a-duplicate",
+        }
+    )
+    dws.profiles["A"] = [
+        DwsUserProfile(user_id="u-a", name="A", open_dingtalk_id="open-a")
+    ]
+
+    result = deliver_meeting_alignment(
+        send_decision(mention_names=["A"]),
+        MeetingSource.model_validate(source_payload),
+        dws,
+    )
+
+    assert result.resolved_mentions == []
+    assert result.unresolved_mention_names == ["A"]
+    assert dws.sent[0]["at_open_dingtalk_ids"] == []
+    assert dws.search_queries == []
 
 
 def test_participant_user_id_mismatch_is_not_replaced_by_name_match():

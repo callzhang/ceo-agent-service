@@ -219,6 +219,9 @@ def _resolve_mentions(
             for participant in source.participants
             if _canonical(participant.name) == _canonical(mention_name)
         ]
+        if len(participants) > 1:
+            unresolved.append(mention_name)
+            continue
         participant = participants[0] if len(participants) == 1 else None
         if participant is not None and participant.open_dingtalk_id.strip():
             mention = ResolvedMention(
