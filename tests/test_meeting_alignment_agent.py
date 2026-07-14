@@ -48,6 +48,15 @@ def source(*, participant_count: int = 3) -> MeetingSource:
     )
 
 
+def source_with_unresolved_one_to_one_counterpart() -> MeetingSource:
+    payload = source(participant_count=2).model_dump(mode="json")
+    payload["participants"][1].update(
+        user_id="",
+        open_dingtalk_id="open-alex-evidence",
+    )
+    return MeetingSource.model_validate(payload)
+
+
 def no_action_payload() -> dict:
     return {
         "action": "no_action",
@@ -161,6 +170,19 @@ def test_one_to_one_prompt_requires_direct_other_participant():
     assert "1:1 会议必须返回 direct target" in prompt
 
 
+def test_one_to_one_prompt_defers_empty_user_id_to_identity_resolver():
+    prompt = build_meeting_alignment_prompt(
+        source_with_unresolved_one_to_one_counterpart(),
+        work_profile="",
+        work_profile_source="profile",
+    )
+    assert "direct_user_id 为空" in prompt
+    assert "title=Alex" in prompt
+    assert "发送层唯一解析身份" in prompt
+    assert "open_dingtalk_id=open-alex-evidence" in prompt
+    assert "不要把 open_dingtalk_id 填进 direct_user_id" in prompt
+
+
 @pytest.mark.parametrize(
     ("target", "message"),
     [
@@ -214,6 +236,57 @@ def test_agent_accepts_direct_target_for_other_one_to_one_participant():
     ).decide(source(participant_count=2))
     assert decision.target is not None
     assert decision.target.direct_user_id == "alex"
+
+
+def test_agent_accepts_unresolved_direct_target_named_for_counterpart():
+    target = {
+        "kind": "direct",
+        "conversation_id": "",
+        "direct_user_id": "",
+        "title": "  ALEX  ",
+        "candidates": [],
+    }
+    decision = MeetingAlignmentAgent(
+        FakeMeetingCodex(send_payload_with_target(target))
+    ).decide(source_with_unresolved_one_to_one_counterpart())
+    assert decision.target is not None
+    assert decision.target.direct_user_id == ""
+
+
+def test_agent_rejects_guessed_id_for_unresolved_counterpart():
+    target = {
+        "kind": "direct",
+        "conversation_id": "",
+        "direct_user_id": "guessed-alex",
+        "title": "Alex",
+        "candidates": [],
+    }
+    agent = MeetingAlignmentAgent(
+        FakeMeetingCodex(send_payload_with_target(target))
+    )
+    with pytest.raises(
+        MeetingAlignmentTargetError,
+        match="must leave direct_user_id empty",
+    ):
+        agent.decide(source_with_unresolved_one_to_one_counterpart())
+
+
+def test_agent_rejects_wrong_name_for_unresolved_counterpart():
+    target = {
+        "kind": "direct",
+        "conversation_id": "",
+        "direct_user_id": "",
+        "title": "Mina",
+        "candidates": [],
+    }
+    agent = MeetingAlignmentAgent(
+        FakeMeetingCodex(send_payload_with_target(target))
+    )
+    with pytest.raises(
+        MeetingAlignmentTargetError,
+        match="title must identify the other participant",
+    ):
+        agent.decide(source_with_unresolved_one_to_one_counterpart())
 
 
 def test_agent_rejects_direct_target_for_multi_party_meeting():

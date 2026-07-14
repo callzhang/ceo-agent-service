@@ -166,8 +166,23 @@ def build_meeting_alignment_prompt(
             for participant in participants
             if participant.user_id != source.current_user_id
         )
+        if other.user_id:
+            direct_identity_contract = (
+                f"direct_user_id={other.user_id}、title={other.name}。"
+            )
+        else:
+            open_id_evidence = (
+                f"open_dingtalk_id={other.open_dingtalk_id}"
+                if other.open_dingtalk_id
+                else "没有 open_dingtalk_id"
+            )
+            direct_identity_contract = (
+                f"当前对方 user_id 未解析：direct_user_id 为空、title={other.name}，"
+                f"交给发送层唯一解析身份。{open_id_evidence} 只能作为来源证据；"
+                "不要把 open_dingtalk_id 填进 direct_user_id。"
+            )
         target_contract = f"""这是 1:1 会议：
-- 目标只能是另一位参会人，kind=direct、direct_user_id={other.user_id}。
+- 目标只能是另一位参会人，kind=direct、{direct_identity_contract}
 - 1:1 会议必须返回 direct target；不能返回 target=null。
 - 禁止搜索或选择群；conversation_id 和 candidates 必须为空。"""
     else:
@@ -304,12 +319,27 @@ def _validate_source_aware_target(
             raise MeetingAlignmentTargetError(
                 "1:1 send requires a direct target for the other participant"
             )
-        expected_user_id = other_participants[0].user_id
-        if target.direct_user_id != expected_user_id:
+        counterpart = other_participants[0]
+        expected_user_id = counterpart.user_id
+        if expected_user_id and target.direct_user_id != expected_user_id:
             raise MeetingAlignmentTargetError(
                 "1:1 direct target must target the other participant: "
                 f"expected {expected_user_id!r}, got {target.direct_user_id!r}"
             )
+        if not expected_user_id:
+            if target.direct_user_id:
+                raise MeetingAlignmentTargetError(
+                    "unresolved 1:1 identity must leave direct_user_id empty; "
+                    "delivery resolves it from source evidence"
+                )
+            if _canonical_person_name(target.title) != _canonical_person_name(
+                counterpart.name
+            ):
+                raise MeetingAlignmentTargetError(
+                    "unresolved 1:1 target title must identify the other "
+                    f"participant: expected {counterpart.name!r}, "
+                    f"got {target.title!r}"
+                )
         return
 
     if participant_count > 2:
@@ -322,3 +352,7 @@ def _validate_source_aware_target(
     raise MeetingAlignmentTargetError(
         "send decision requires at least two meeting participants"
     )
+
+
+def _canonical_person_name(value: str) -> str:
+    return " ".join(value.split()).casefold()

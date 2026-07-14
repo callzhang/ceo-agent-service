@@ -301,7 +301,7 @@ def test_combined_triggers_accept_all_required_evidence():
     assert MeetingAlignmentDecision.model_validate(payload).action == "send"
 
 
-def test_direct_target_requires_only_a_direct_user_id():
+def test_direct_target_accepts_resolved_user_id_and_requires_no_group_fields():
     payload = valid_send_decision()
     payload["target"] = {
         "kind": "direct",
@@ -315,7 +315,26 @@ def test_direct_target_requires_only_a_direct_user_id():
     )
 
     payload["target"]["direct_user_id"] = ""
-    with pytest.raises(ValidationError):
+    assert MeetingAlignmentDecision.model_validate(payload).target.title == (
+        "一对一会话"
+    )
+
+
+def test_unresolved_direct_target_requires_nonempty_counterpart_title():
+    payload = valid_send_decision()
+    payload["target"] = {
+        "kind": "direct",
+        "conversation_id": "",
+        "direct_user_id": "",
+        "title": "Alex",
+        "candidates": [],
+    }
+    decision = MeetingAlignmentDecision.model_validate(payload)
+    assert decision.target.direct_user_id == ""
+    assert decision.target.title == "Alex"
+
+    payload["target"]["title"] = "  "
+    with pytest.raises(ValidationError, match="direct target requires title"):
         MeetingAlignmentDecision.model_validate(payload)
 
 

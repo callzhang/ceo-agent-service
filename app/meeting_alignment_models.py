@@ -184,12 +184,12 @@ class MeetingAlignmentDecision(StrictModel):
                     "group target must select the first ranked candidate"
                 )
         else:
-            if not self.target.direct_user_id.strip():
-                raise ValueError("direct target requires direct_user_id")
             if self.target.conversation_id.strip() or self.target.candidates:
                 raise ValueError(
                     "direct target cannot contain group delivery fields"
                 )
+            if not self.target.title.strip():
+                raise ValueError("direct target requires title")
         return self
 
 
