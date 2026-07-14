@@ -2092,12 +2092,14 @@ def _initialize_meeting_discovery_on_service_start(
     store = AutoReplyStore(settings.db_path)
     existing = store.get_service_state(MEETING_DISCOVERY_ACTIVATED_AT_STATE_KEY)
     if existing:
+        store.baseline_meeting_alignment_jobs_before(existing)
         return existing
     activated_at = (now or datetime.now().astimezone()).isoformat()
     store.set_service_state(
         MEETING_DISCOVERY_ACTIVATED_AT_STATE_KEY,
         activated_at,
     )
+    store.baseline_meeting_alignment_jobs_before(activated_at)
     return activated_at
 
 

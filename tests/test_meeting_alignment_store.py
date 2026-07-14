@@ -220,6 +220,42 @@ def test_meeting_job_retry_and_startup_recovery_preserve_attempts(tmp_path):
     )
 
 
+def test_activation_baseline_silences_unsent_historical_jobs(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    processing_id = seed_job(store, meeting_id="historical-processing")
+    [processing] = store.claim_meeting_alignment_jobs(
+        limit=1, now="2026-07-14 02:11:00"
+    )
+    assert processing.id == processing_id
+    failed_id = seed_job(store, meeting_id="historical-failed")
+    store.update_meeting_alignment_job(
+        failed_id,
+        status="failed",
+        error='{"kind":"meeting_agent"}',
+    )
+    current_id = store.upsert_meeting_alignment_job(
+        meeting_id="current-meeting",
+        title="当前会议",
+        source_json='{"meeting_id":"current-meeting"}',
+        participants_json="[]",
+        ended_at="2026-07-15T02:01:00+08:00",
+        eligible_at="2026-07-15T02:11:00+08:00",
+        status="pending",
+    )
+
+    baselined = store.baseline_meeting_alignment_jobs_before(
+        "2026-07-15T02:00:00+08:00"
+    )
+
+    assert [job.id for job in baselined] == [processing_id, failed_id]
+    for job_id in (processing_id, failed_id):
+        job = store.get_meeting_alignment_job(job_id)
+        assert job.status == "no_action"
+        assert job.locked_at is None
+        assert job.error == ""
+    assert store.get_meeting_alignment_job(current_id).status == "pending"
+
+
 def test_ready_to_send_transition_releases_processing_lock(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     job_id = seed_job(store)

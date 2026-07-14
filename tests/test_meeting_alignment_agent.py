@@ -144,13 +144,19 @@ def test_prompt_contains_full_transcript_and_behavioral_contracts():
     )
 
     assert "我建议全量上线以验证收入" in prompt
+    assert "后来明确对齐也仍然触发发布" in prompt
     assert "沉默不算对齐" in prompt
     assert "明确同意、承诺或复述一致" in prompt
+    assert "aligned_disagreement" in prompt
+    assert "unresolved_disagreement" in prompt
     assert "可以提出多个问题" in prompt
     assert "完成对齐所需的最小集合" in prompt
     assert "Derek 的观点输出解读" in prompt
     assert "只能解释 Derek 在会议中明确表达的观点" in prompt
     assert "不能用历史信息发明或替换 Derek 的立场" in prompt
+    assert "能只靠会议证据解释时，historical_sources 必须为空数组" in prompt
+    assert "必须逐字填写 `/configured/work_profile.md`" in prompt
+    assert "不得改写、加标题或写成说明性文字" in prompt
     assert "每场会议最多生成一条合并消息" in prompt
     assert "候选列表第 1 个" in prompt
     assert "关联较弱也不能降级为私聊" in prompt
@@ -339,6 +345,29 @@ def test_runner_always_starts_fresh_and_uses_schema(tmp_path: Path):
     assert runner.last_transcript_start_line == 0
 
 
+def test_runner_treats_invalid_model_decision_as_retryable(tmp_path: Path):
+    payload = derek_view_payload(historical_sources=[])
+    payload["topics"] = [
+        {
+            "title": "发布范围",
+            "state": "aligned",
+            "views": [
+                {"speaker": "Alex", "view": "全量", "reason": "收入"},
+                {"speaker": "Mina", "view": "灰度", "reason": "风险"},
+            ],
+            "conclusion": "先 10% 后扩量",
+            "alignment_reason": "双方明确同意并承诺执行",
+        }
+    ]
+    runner = MeetingAlignmentCodexRunner(
+        workspace=tmp_path,
+        executor=lambda command, prompt: json.dumps(payload, ensure_ascii=False),
+    )
+
+    with pytest.raises(RuntimeError, match="MeetingAlignmentDecision"):
+        runner.decide(prompt="decide")
+
+
 def test_runner_clears_prior_audit_metadata_before_executor_failure(tmp_path: Path):
     calls = 0
 
@@ -423,7 +452,7 @@ def test_runner_accepts_configured_profile_as_unqueried_history(tmp_path: Path):
     assert runner.decide(prompt="decide").action == "send"
 
 
-def test_runner_rejects_unaudited_historical_sources(tmp_path: Path):
+def test_runner_retries_unaudited_historical_sources(tmp_path: Path):
     runner = MeetingAlignmentCodexRunner(
         workspace=tmp_path,
         executor=lambda command, prompt: json.dumps(
@@ -432,7 +461,7 @@ def test_runner_rejects_unaudited_historical_sources(tmp_path: Path):
         ),
         work_profile_source="/configured/work_profile.md",
     )
-    with pytest.raises(ValueError, match="historical_sources require"):
+    with pytest.raises(RuntimeError, match="valid MeetingAlignmentDecision"):
         runner.decide(prompt="decide")
 
 

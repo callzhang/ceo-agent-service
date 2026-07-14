@@ -446,6 +446,39 @@ def test_consumer_records_no_action_run_and_terminal_job(tmp_path):
     assert json.loads(run.audit_tool_events_json)[0]["tool"] == "dws"
 
 
+def test_consumer_retries_invalid_model_decision(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    dws = ConsumerDws()
+    job_id = seed_consumer_job(store, dws)
+
+    class InvalidDecisionRunner:
+        last_session_id = "meeting-invalid-decision"
+        last_transcript_start_line = 0
+        last_transcript_end_line = 12
+        last_audit_tool_events = []
+
+        def decide(self, *, prompt: str):
+            raise RuntimeError(
+                "Codex did not return a valid MeetingAlignmentDecision"
+            )
+
+    assert consume_meeting_alignment_jobs(
+        store,
+        dws,
+        InvalidDecisionRunner(),
+        now=NOW,
+        limit=1,
+    ) == 1
+
+    job = store.get_meeting_alignment_job(job_id)
+    assert job.status == "retry"
+    assert job.available_at == (NOW + timedelta(minutes=1)).isoformat()
+    [run] = store.list_meeting_alignment_runs(job_id)
+    assert run.status == "retry"
+    assert json.loads(run.error)["kind"] == "meeting_agent"
+    assert dws.send_calls == []
+
+
 def test_consumer_persists_ready_before_external_send_and_marks_sent(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     dws = ConsumerDws()

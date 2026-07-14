@@ -116,12 +116,17 @@ class MeetingAlignmentCodexRunner:
                 limit=MEETING_ALIGNMENT_AUDIT_EVENT_LIMIT,
             )
         )
-        decision = parse_meeting_alignment_decision(raw)
-        _validate_historical_sources(
-            decision,
-            audit_tool_events=self.last_audit_tool_events,
-            work_profile_source=self.work_profile_source,
-        )
+        try:
+            decision = parse_meeting_alignment_decision(raw)
+            _validate_historical_sources(
+                decision,
+                audit_tool_events=self.last_audit_tool_events,
+                work_profile_source=self.work_profile_source,
+            )
+        except ValueError as exc:
+            raise RuntimeError(
+                "Codex did not return a valid MeetingAlignmentDecision"
+            ) from exc
         return decision
 
     def _execute(self, *, prompt: str) -> str:
@@ -200,8 +205,10 @@ def build_meeting_alignment_prompt(
 
 触发边界：
 - 只有出现实质观点分歧，或 Derek 的观点在后续讨论中没有被完整还原、需要做“Derek 的观点输出解读”时，action=send；否则保持安静，action=no_action。
+- 只要会议中曾经出现实质观点分歧，后来明确对齐也仍然触发发布；必须总结对齐过程和结论，不能因为最终已对齐而改成 no_action。
 - 措辞不同、补充信息、探索性讨论或已经自然顺畅推进，不算实质分歧。
 - 沉默不算对齐。只有相关各方明确同意、承诺或复述一致，才把议题标为 aligned；主持人单方面宣布结论不够。
+- topics 中有 aligned 时，trigger_reasons 必须包含 aligned_disagreement；topics 中有 unresolved 时，trigger_reasons 必须包含 unresolved_disagreement。两类议题同时存在时两个 trigger 都必须包含。
 - 每场会议最多生成一条合并消息；多个议题或同时存在分歧和观点解读时必须合并，不得拆成多条。
 
 内容合同：
@@ -212,6 +219,8 @@ def build_meeting_alignment_prompt(
 - “Derek 的观点输出解读”只能解释 Derek 在会议中明确表达的观点，meeting_evidence 必须引用会议原话或可核验片段。
 - 可以结合工作人格和 memory_recall 找到的历史案例、信息来打比方、举例和补全解释，但不能用历史信息发明或替换 Derek 的立场，也不能让历史材料覆盖会议证据。
 - 使用历史内容时，historical_sources 必须逐项记录来源。未经 memory_recall 核验时，唯一允许的历史来源是服务端注入的工作人格来源 `{work_profile_source}`；不使用历史内容则返回空列表。
+- 能只靠会议证据解释时，historical_sources 必须为空数组。只有实际引用了工作人格中的具体判断或案例时才记录工作人格来源。
+- 记录注入的工作人格来源时，historical_sources 的数组元素必须逐字填写 `{work_profile_source}`，不得改写、加标题或写成说明性文字。
 - final_message 不要暴露工具、审计过程、本地路径或置信度。
 
 目标合同：

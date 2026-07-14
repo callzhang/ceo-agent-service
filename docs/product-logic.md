@@ -96,8 +96,16 @@ need for `Derek 的观点输出解读`. An aligned disagreement requires explici
 agreement, commitment, or consistent restatement by the relevant sides. For an
 unresolved disagreement the output includes the parties' views and reasons plus
 one or more minimum-sufficient tradeoff questions whose answers can directly
-produce alignment. Derek's explanation may use historical cases and the work
-profile only to clarify a view that was actually expressed in the meeting.
+produce alignment. A disagreement that becomes aligned still produces the one
+meeting follow-up; final alignment does not convert it to `no_action`. Derek's
+explanation may use historical cases and the work profile only to clarify a view
+that was actually expressed in the meeting. Work-profile source identifiers must
+remain exact so the service can audit them.
+
+The service persists a discovery activation timestamp. Before startup recovery,
+all pre-activation jobs with no send evidence are baselined to terminal
+`no_action`, including work that an older process had already claimed. This
+prevents deployment-time recovery from analyzing or sending historical meetings.
 
 Multi-party meetings are sent to the highest-ranked sendable group with real
 mentions. They never fall back to a direct message. A 1:1 meeting sends directly
@@ -105,10 +113,13 @@ to the other participant. No DING or reaction is added by this workflow.
 
 The queue persists analysis before delivery. `no_action` is terminal;
 `ready_to_send` is persisted before any external send; `sent` records delivery.
-Retryable failures use `retry` plus `available_at`; invalid evidence or schema
-violations use `failed`. An ambiguous send with an `openTaskId` is reconciled by
-status lookup only, with bounded backoff and no resend. In dry-run mode the
-consumer may analyze a job but does not claim `ready_to_send` delivery.
+Retryable failures use `retry` plus `available_at`; invalid persisted source or
+delivery evidence and queue invariant violations use `failed`. Codex decision
+schema and historical-source protocol violations are treated as retryable
+model-output failures before the bounded attempt limit. An ambiguous send with
+an `openTaskId` is reconciled by status lookup only, with bounded backoff and no
+resend. In dry-run mode the consumer may analyze a job but does not claim
+`ready_to_send` delivery.
 
 Every Codex invocation appends an immutable `meeting_alignment_run`. The History
 page merges these runs with reply attempts in one globally chronological feed,

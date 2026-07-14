@@ -4508,6 +4508,35 @@ def test_meeting_discovery_activation_watermark_is_set_once(tmp_path):
     ) == first.isoformat()
 
 
+def test_meeting_discovery_activation_baselines_existing_unsent_history(tmp_path):
+    settings = WorkerSettings(db_path=tmp_path / "worker.sqlite3")
+    store = AutoReplyStore(settings.db_path)
+    historical_id = store.upsert_meeting_alignment_job(
+        meeting_id="historical-meeting",
+        title="历史会议",
+        source_json="{}",
+        participants_json="[]",
+        ended_at="2026-07-14T18:00:00+08:00",
+        eligible_at="2026-07-14T18:10:00+08:00",
+        status="pending",
+    )
+    store.update_meeting_alignment_job(
+        historical_id,
+        status="failed",
+        error='{"kind":"meeting_agent"}',
+    )
+
+    cli._initialize_meeting_discovery_on_service_start(
+        settings,
+        now=datetime.fromisoformat("2026-07-15T02:00:00+08:00"),
+    )
+    assert cli._recover_meeting_alignment_jobs_on_service_start(settings) == 0
+
+    job = store.get_meeting_alignment_job(historical_id)
+    assert job.status == "no_action"
+    assert job.error == ""
+
+
 def test_run_service_starts_web_producer_and_consumer(monkeypatch, tmp_path):
     calls = []
     failures = []

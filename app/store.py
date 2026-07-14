@@ -1685,6 +1685,43 @@ class AutoReplyStore:
             jobs = [self._meeting_alignment_job_from_row(row) for row in rows]
             return sorted(jobs, key=lambda job: job.id)
 
+    def baseline_meeting_alignment_jobs_before(
+        self,
+        activated_at: str,
+    ) -> list[MeetingAlignmentJob]:
+        with self._connect() as db:
+            rows = db.execute(
+                """
+                update meeting_alignment_jobs
+                set status='no_action',
+                    locked_at=null,
+                    available_at='',
+                    error='',
+                    decision_json='{}',
+                    target_kind='',
+                    target_id='',
+                    target_title='',
+                    mentions_json='[]',
+                    final_message='',
+                    send_result_json='{}',
+                    updated_at=current_timestamp
+                where datetime(ended_at) < datetime(?)
+                  and status in (
+                      'waiting',
+                      'pending',
+                      'processing',
+                      'retry',
+                      'ready_to_send',
+                      'failed'
+                  )
+                  and send_result_json='{}'
+                returning *
+                """,
+                (activated_at,),
+            ).fetchall()
+            jobs = [self._meeting_alignment_job_from_row(row) for row in rows]
+            return sorted(jobs, key=lambda job: job.id)
+
     def record_meeting_alignment_run(
         self,
         *,
