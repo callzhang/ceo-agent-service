@@ -128,11 +128,13 @@ def _list_all_minutes(dws: MeetingProducerDws) -> list[dict[str, Any]]:
         )
         page_items = page.get("items") or []
         items.extend(item for item in page_items if isinstance(item, dict))
-        if not bool(page.get("has_more")):
+        has_more, next_token = _validate_pagination(
+            page,
+            source="minutes",
+            cursor_key="next_token",
+        )
+        if not has_more:
             return items
-        next_token = str(page.get("next_token") or "")
-        if not next_token:
-            raise DwsError("minutes pagination hasMore without next token")
         if next_token in seen_tokens:
             raise DwsError("minutes pagination repeated next token")
         seen_tokens.add(next_token)
@@ -158,17 +160,44 @@ def _list_all_calendar_events(
         events.extend(
             event for event in page_events if isinstance(event, DwsCalendarEvent)
         )
-        if not bool(page.get("has_more")):
+        has_more, cursor = _validate_pagination(
+            page,
+            source="calendar",
+            cursor_key="next_cursor",
+        )
+        if not has_more:
             return events
-        cursor = str(page.get("next_cursor") or "")
-        if not cursor:
-            raise DwsError("calendar pagination hasMore without next cursor")
         if cursor in seen_cursors:
             raise DwsError("calendar pagination repeated next cursor")
         seen_cursors.add(cursor)
     raise DwsError(
         f"calendar pagination exceeded {DISCOVERY_PAGE_LIMIT} pages"
     )
+
+
+def _validate_pagination(
+    page: dict[str, Any],
+    *,
+    source: str,
+    cursor_key: str,
+) -> tuple[bool, str]:
+    has_more = page.get("has_more")
+    if not isinstance(has_more, bool):
+        raise DwsError(f"{source} pagination has_more must be boolean")
+    raw_cursor = page.get(cursor_key)
+    if raw_cursor is None:
+        cursor = ""
+    elif isinstance(raw_cursor, str):
+        cursor = raw_cursor
+    else:
+        raise DwsError(f"{source} pagination cursor must be a string")
+    if has_more and not cursor:
+        raise DwsError(f"{source} pagination hasMore without next cursor")
+    if not has_more and cursor:
+        raise DwsError(
+            f"{source} pagination terminal page has continuation cursor"
+        )
+    return has_more, cursor
 
 
 def _discovery_metadata(

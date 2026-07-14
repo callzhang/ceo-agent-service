@@ -1821,13 +1821,13 @@ class DwsClient:
                 cursor=cursor,
             )
         )
-        result = payload.get("result", payload)
+        result = payload.get("result")
         if not isinstance(result, dict):
             result = {}
         return {
             "events": self.parse_calendar_events(payload),
-            "has_more": bool(result.get("hasMore")),
-            "next_cursor": str(result.get("nextCursor") or ""),
+            "has_more": result.get("hasMore"),
+            "next_cursor": result.get("nextCursor"),
         }
 
     def get_calendar_event(self, event_id: str) -> DwsCalendarEvent | None:
@@ -2199,10 +2199,12 @@ class DwsClient:
                 next_token=next_token,
             )
         )
+        result = payload.get("result")
+        pagination = result if isinstance(result, dict) else {}
         return {
             "items": self.parse_minutes_list(payload),
-            "has_more": self.parse_minutes_has_more(payload),
-            "next_token": self.parse_minutes_next_token(payload),
+            "has_more": pagination.get("hasMore"),
+            "next_token": pagination.get("nextToken"),
         }
 
     def get_minutes_info(self, task_uuid: str) -> dict[str, Any]:

@@ -249,6 +249,69 @@ def test_producer_hard_fails_repeated_pagination_cursor(
 
 
 @pytest.mark.parametrize("pages_attribute", ["minutes_pages", "calendar_pages"])
+def test_producer_rejects_terminal_page_with_continuation_cursor(
+    tmp_path, pages_attribute
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    dws = FakeDws()
+    if pages_attribute == "minutes_pages":
+        pages = {
+            "": {"items": [], "has_more": False, "next_token": "unexpected"}
+        }
+    else:
+        pages = {
+            "": {
+                "events": [matching_calendar_event()],
+                "has_more": False,
+                "next_cursor": "unexpected",
+            }
+        }
+    setattr(dws, pages_attribute, pages)
+
+    with pytest.raises(DwsError, match="continuation"):
+        produce_meeting_alignment_jobs(store, dws, now=NOW)
+
+
+@pytest.mark.parametrize("pages_attribute", ["minutes_pages", "calendar_pages"])
+def test_producer_rejects_continuing_page_without_cursor(
+    tmp_path, pages_attribute
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    dws = FakeDws()
+    if pages_attribute == "minutes_pages":
+        pages = {"": {"items": [], "has_more": True, "next_token": ""}}
+    else:
+        pages = {"": {"events": [], "has_more": True, "next_cursor": ""}}
+    setattr(dws, pages_attribute, pages)
+
+    with pytest.raises(DwsError, match="without next"):
+        produce_meeting_alignment_jobs(store, dws, now=NOW)
+
+
+@pytest.mark.parametrize("pages_attribute", ["minutes_pages", "calendar_pages"])
+@pytest.mark.parametrize("invalid_has_more", [None, "false", 0])
+def test_producer_rejects_missing_or_nonboolean_has_more(
+    tmp_path, pages_attribute, invalid_has_more
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    dws = FakeDws()
+    if pages_attribute == "minutes_pages":
+        page = {"items": [], "next_token": "page-2"}
+        if invalid_has_more is not None:
+            page["has_more"] = invalid_has_more
+        pages = {"": page}
+    else:
+        page = {"events": [], "next_cursor": "page-2"}
+        if invalid_has_more is not None:
+            page["has_more"] = invalid_has_more
+        pages = {"": page}
+    setattr(dws, pages_attribute, pages)
+
+    with pytest.raises(DwsError, match="has_more must be boolean"):
+        produce_meeting_alignment_jobs(store, dws, now=NOW)
+
+
+@pytest.mark.parametrize("pages_attribute", ["minutes_pages", "calendar_pages"])
 def test_producer_hard_fails_pagination_page_limit(
     tmp_path, monkeypatch, pages_attribute
 ):

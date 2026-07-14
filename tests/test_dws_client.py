@@ -777,6 +777,31 @@ def test_list_minutes_page_returns_pagination_metadata():
     ]
 
 
+@pytest.mark.parametrize(
+    ("pagination_fields", "expected_has_more"),
+    [
+        ({}, None),
+        ({"hasMore": "false", "nextToken": "token-2"}, "false"),
+        ({"hasMore": 0, "nextToken": "token-2"}, 0),
+    ],
+)
+def test_list_minutes_page_preserves_invalid_has_more_for_validation(
+    pagination_fields, expected_has_more
+):
+    client = RecordingDwsClient(
+        {
+            "result": {
+                "itemList": [],
+                **pagination_fields,
+            }
+        }
+    )
+
+    page = client.list_minutes_page()
+
+    assert page["has_more"] == expected_has_more
+
+
 def test_parse_minutes_list_accepts_common_wrappers():
     assert DwsClient.parse_minutes_list(
         {"data": {"records": [{"minutesId": "minutes-1", "title": "周会"}]}}
@@ -2707,6 +2732,53 @@ def test_list_calendar_events_page_preserves_pagination_metadata():
             "json",
         ]
     ]
+
+
+@pytest.mark.parametrize(
+    ("pagination_fields", "expected_has_more"),
+    [
+        ({}, None),
+        ({"hasMore": "false", "nextCursor": "cursor-2"}, "false"),
+        ({"hasMore": 0, "nextCursor": "cursor-2"}, 0),
+    ],
+)
+def test_list_calendar_events_page_preserves_invalid_has_more_for_validation(
+    pagination_fields, expected_has_more
+):
+    client = RecordingDwsClient(
+        {
+            "success": True,
+            "result": {
+                "events": [],
+                **pagination_fields,
+            },
+        }
+    )
+
+    page = client.list_calendar_events_page(
+        start="2026-05-14T10:00:00+08:00",
+        end="2026-05-14T12:00:00+08:00",
+    )
+
+    assert page["has_more"] == expected_has_more
+
+
+def test_list_calendar_events_page_does_not_fallback_to_top_level_pagination():
+    client = RecordingDwsClient(
+        {
+            "events": [],
+            "hasMore": False,
+            "nextCursor": "top-level-cursor",
+        }
+    )
+
+    page = client.list_calendar_events_page(
+        start="2026-05-14T10:00:00+08:00",
+        end="2026-05-14T12:00:00+08:00",
+    )
+
+    assert page["has_more"] is None
+    assert page["next_cursor"] is None
 
 
 def test_parse_calendar_events_preserves_live_attendee_details():
