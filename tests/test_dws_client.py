@@ -646,12 +646,12 @@ def test_download_doc_supplies_required_output_path():
 def test_minutes_read_commands_shape():
     client = DwsClient(dws_bin="dws")
 
-    assert client.build_list_minutes_command(max_results=20) == [
+    assert client.build_list_minutes_command(limit=20) == [
         "dws",
         "minutes",
         "list",
         "all",
-        "--max",
+        "--limit",
         "20",
         "--format",
         "json",
@@ -713,7 +713,7 @@ def test_list_minutes_returns_parsed_items():
         }
     )
 
-    rows = client.list_minutes(scope="mine", max_results=3)
+    rows = client.list_minutes(scope="mine", limit=3)
 
     assert rows == [
         {
@@ -731,7 +731,7 @@ def test_list_minutes_returns_parsed_items():
             "minutes",
             "list",
             "mine",
-            "--max",
+            "--limit",
             "3",
             "--format",
             "json",
@@ -752,8 +752,10 @@ def test_list_minutes_page_returns_pagination_metadata():
 
     page = client.list_minutes_page(
         scope="all",
-        max_results=1,
-        next_token="token-1",
+        limit=1,
+        cursor="token-1",
+        start="2026-07-07T10:10:00+08:00",
+        end="2026-07-14T10:10:00+08:00",
     )
 
     assert page == {
@@ -767,10 +769,14 @@ def test_list_minutes_page_returns_pagination_metadata():
             "minutes",
             "list",
             "all",
-            "--max",
+            "--limit",
             "1",
-            "--next-token",
+            "--cursor",
             "token-1",
+            "--start",
+            "2026-07-07T10:10:00+08:00",
+            "--end",
+            "2026-07-14T10:10:00+08:00",
             "--format",
             "json",
         ]

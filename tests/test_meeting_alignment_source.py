@@ -1,14 +1,100 @@
+from datetime import datetime
+
 import pytest
 
+import app.meeting_alignment_source as meeting_alignment_source
 from app.dws_client import DwsCalendarAttendee, DwsCalendarEvent, DwsClient, DwsError
 from app.meeting_alignment_models import MeetingSource
 from app.meeting_alignment_source import (
     CalendarMeetingEvidence,
     MeetingSourceIncomplete,
     build_calendar_meeting_evidence,
+    minutes_meeting_id,
+    normalize_minutes_discovery_metadata,
     normalize_meeting_source,
     read_meeting_source,
 )
+
+
+def discovery_list_item(**overrides) -> dict:
+    item = {
+        "uuid": "minutes-1",
+        "title": "上线评审",
+        "startTime": "2026-07-14T09:00:00+08:00",
+        "endTime": "2026-07-14T10:00:00+08:00",
+        "status": "ended",
+    }
+    item.update(overrides)
+    return item
+
+
+def discovery_info(**overrides) -> dict:
+    info = {
+        "taskUuid": "minutes-1",
+        "title": "上线评审",
+        "startTimeISO": "2026-07-14T09:00:00+08:00",
+        "endTimeISO": "2026-07-14T10:00:00+08:00",
+        "status": "ended",
+    }
+    info.update(overrides)
+    return {"result": info}
+
+
+@pytest.mark.parametrize(
+    "info_override",
+    [
+        {"taskUuid": "minutes-other"},
+        {"title": "另一个会议"},
+        {"startTimeISO": "2026-07-14T09:01:00+08:00"},
+        {"endTimeISO": "2026-07-14T10:01:00+08:00"},
+        {"status": "running"},
+    ],
+)
+def test_discovery_metadata_rejects_cross_source_conflicts(info_override):
+    with pytest.raises(MeetingSourceIncomplete, match="conflicting"):
+        normalize_minutes_discovery_metadata(
+            discovery_list_item(),
+            discovery_info(**info_override),
+        )
+
+
+@pytest.mark.parametrize(
+    "invalid_time",
+    [float("nan"), float("inf"), 10**400, "nan", "inf", "1e100000"],
+)
+def test_discovery_metadata_rejects_unsafe_numeric_times(invalid_time):
+    item = discovery_list_item(endTime=invalid_time)
+
+    with pytest.raises(MeetingSourceIncomplete, match="invalid meeting time"):
+        normalize_minutes_discovery_metadata(item, discovery_info())
+
+
+def test_minutes_meeting_id_rejects_conflicting_aliases():
+    with pytest.raises(MeetingSourceIncomplete, match="conflicting meeting id"):
+        minutes_meeting_id(
+            discovery_list_item(taskUuid="minutes-1", uuid="minutes-other")
+        )
+
+
+def test_discovery_metadata_converts_platform_timestamp_error_to_typed_error(
+    monkeypatch,
+):
+    class PlatformDatetime:
+        @classmethod
+        def fromtimestamp(cls, value, tz=None):
+            raise OSError("platform timestamp range")
+
+        @classmethod
+        def fromisoformat(cls, value):
+            return datetime.fromisoformat(value)
+
+    monkeypatch.setattr(meeting_alignment_source, "datetime", PlatformDatetime)
+
+    with pytest.raises(MeetingSourceIncomplete, match="invalid meeting time"):
+        normalize_minutes_discovery_metadata(
+            discovery_list_item(endTime=1784035644000),
+            discovery_info(),
+        )
 
 
 def live_minutes_info(*, status: str | None = None) -> dict:

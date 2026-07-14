@@ -7,18 +7,21 @@ from app.meeting_alignment_source import (
     CalendarMeetingEvidence,
     MeetingSourceIncomplete,
     build_calendar_meeting_evidence,
+    minutes_meeting_id,
+    normalize_minutes_discovery_metadata,
 )
 from app.store import AutoReplyStore
 
 
 DISCOVERY_PAGE_LIMIT = 100
 DISCOVERY_PAGE_SIZE = 50
+DEFAULT_MEETING_DISCOVERY_LOOKBACK = timedelta(days=7)
 TERMINAL_STATUSES = frozenset({"no_action", "sent", "failed"})
 
 
 class MeetingProducerDws(Protocol):
     def list_minutes_page(
-        self, *, max_results: int, next_token: str
+        self, *, limit: int, cursor: str, start: str, end: str
     ) -> dict[str, Any]: ...
 
     def get_minutes_info(self, meeting_id: str) -> dict[str, Any]: ...
@@ -36,19 +39,29 @@ def produce_meeting_alignment_jobs(
     *,
     now: datetime,
     settle_seconds: int = 600,
+    discovery_lookback: timedelta = DEFAULT_MEETING_DISCOVERY_LOOKBACK,
 ) -> int:
     if now.tzinfo is None or now.utcoffset() is None:
         raise ValueError("meeting producer now must include a timezone")
     if settle_seconds < 0:
         raise ValueError("settle_seconds must not be negative")
+    if discovery_lookback.total_seconds() <= 0:
+        raise ValueError("meeting discovery lookback must be positive")
 
     current_user_id = dws.get_current_user_id().strip()
     if not current_user_id:
         raise DwsError("meeting producer current user id is missing")
 
     created = 0
-    for list_item in _list_all_minutes(dws):
-        meeting_id = _text(list_item, "taskUuid", "minutesId", "id", "uuid")
+    for list_item in _list_all_minutes(
+        dws,
+        start=(now - discovery_lookback).isoformat(),
+        end=now.isoformat(),
+    ):
+        try:
+            meeting_id = minutes_meeting_id(list_item)
+        except MeetingSourceIncomplete:
+            continue
         if not meeting_id:
             continue
         existing = store.get_meeting_alignment_job_by_meeting_id(meeting_id)
@@ -56,11 +69,16 @@ def produce_meeting_alignment_jobs(
             continue
 
         info = dws.get_minutes_info(meeting_id)
-        metadata = _discovery_metadata(meeting_id, list_item, info)
-        if metadata is None:
+        try:
+            metadata = normalize_minutes_discovery_metadata(list_item, info)
+        except MeetingSourceIncomplete:
             continue
-        started_at = _parse_time(metadata["started_at"])
-        ended_at = _parse_time(metadata["ended_at"])
+        if metadata.meeting_id != meeting_id:
+            continue
+        if metadata.status and metadata.status != "ended":
+            continue
+        started_at = datetime.fromisoformat(metadata.started_at)
+        ended_at = datetime.fromisoformat(metadata.ended_at)
         if started_at >= ended_at:
             continue
 
@@ -71,9 +89,9 @@ def produce_meeting_alignment_jobs(
         )
         matcher_info = {
             "taskUuid": meeting_id,
-            "title": metadata["title"],
-            "startTimeISO": metadata["started_at"],
-            "endTimeISO": metadata["ended_at"],
+            "title": metadata.title,
+            "startTimeISO": metadata.started_at,
+            "endTimeISO": metadata.ended_at,
         }
         try:
             evidence = build_calendar_meeting_evidence(
@@ -91,14 +109,14 @@ def produce_meeting_alignment_jobs(
         status = "pending" if now >= eligible_at else "waiting"
         source_json = _source_json(
             meeting_id=meeting_id,
-            metadata=metadata,
+            metadata=metadata.model_dump(mode="json"),
             list_item=list_item,
             info=info,
             evidence=evidence,
         )
         store.upsert_meeting_alignment_job(
             meeting_id=meeting_id,
-            title=metadata["title"],
+            title=metadata.title,
             source_json=source_json,
             participants_json=json.dumps(
                 [
@@ -117,14 +135,18 @@ def produce_meeting_alignment_jobs(
     return created
 
 
-def _list_all_minutes(dws: MeetingProducerDws) -> list[dict[str, Any]]:
+def _list_all_minutes(
+    dws: MeetingProducerDws, *, start: str, end: str
+) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
     next_token = ""
     seen_tokens: set[str] = set()
     for _ in range(DISCOVERY_PAGE_LIMIT):
         page = dws.list_minutes_page(
-            max_results=DISCOVERY_PAGE_SIZE,
-            next_token=next_token,
+            limit=DISCOVERY_PAGE_SIZE,
+            cursor=next_token,
+            start=start,
+            end=end,
         )
         page_items = page.get("items") or []
         items.extend(item for item in page_items if isinstance(item, dict))
@@ -200,55 +222,6 @@ def _validate_pagination(
     return has_more, cursor
 
 
-def _discovery_metadata(
-    meeting_id: str,
-    list_item: dict[str, Any],
-    info: dict[str, Any],
-) -> dict[str, str] | None:
-    if not isinstance(info, dict):
-        return None
-    info_data = _payload_data(info)
-    if not info_data:
-        return None
-    info_id = _text(
-        info_data, "taskUuid", "meetingId", "minutesId", "meeting_id", "uuid", "id"
-    )
-    if info_id and info_id != meeting_id:
-        return None
-    status = _text(
-        info_data, "status", "meetingStatus", "state", "taskStatus"
-    ).casefold()
-    if status in {"running", "cancelled", "canceled"}:
-        return None
-    title = _text(info_data, "title", "name") or _text(
-        list_item, "title", "name"
-    )
-    started_at = _time_text(
-        info_data, "startTimeISO", "started_at", "startedAt", "startTime", "start_time"
-    ) or _time_text(
-        list_item, "startTimeISO", "started_at", "startedAt", "startTime", "start_time"
-    )
-    ended_at = _time_text(
-        info_data, "endTimeISO", "ended_at", "endedAt", "endTime", "end_time"
-    ) or _time_text(
-        list_item, "endTimeISO", "ended_at", "endedAt", "endTime", "end_time"
-    )
-    if not title or not started_at or not ended_at:
-        return None
-    try:
-        normalized_start = _parse_time(started_at).isoformat()
-        normalized_end = _parse_time(ended_at).isoformat()
-    except (TypeError, ValueError):
-        return None
-    return {
-        "meeting_id": meeting_id,
-        "title": title,
-        "started_at": normalized_start,
-        "ended_at": normalized_end,
-        "source_status": status,
-    }
-
-
 def _source_json(
     *,
     meeting_id: str,
@@ -268,43 +241,3 @@ def _source_json(
         ensure_ascii=False,
         sort_keys=True,
     )
-
-
-def _payload_data(payload: dict[str, Any]) -> dict[str, Any]:
-    result = payload.get("result")
-    data = payload.get("data")
-    if isinstance(result, dict):
-        nested_data = result.get("data")
-        return nested_data if isinstance(nested_data, dict) else result
-    return data if isinstance(data, dict) else payload
-
-
-def _text(payload: dict[str, Any], *aliases: str) -> str:
-    for alias in aliases:
-        value = payload.get(alias)
-        if value is not None and str(value).strip():
-            return str(value).strip()
-    return ""
-
-
-def _time_text(payload: dict[str, Any], *aliases: str) -> Any:
-    for alias in aliases:
-        value = payload.get(alias)
-        if value is not None and value != "":
-            return value
-    return ""
-
-
-def _parse_time(value: Any) -> datetime:
-    if isinstance(value, bool):
-        raise ValueError("invalid meeting time")
-    if isinstance(value, (int, float)):
-        seconds = float(value)
-        if abs(seconds) >= 100_000_000_000:
-            seconds /= 1000
-        parsed = datetime.fromtimestamp(seconds).astimezone()
-    else:
-        parsed = datetime.fromisoformat(str(value).strip().replace("Z", "+00:00"))
-    if parsed.tzinfo is None or parsed.utcoffset() is None:
-        raise ValueError("meeting time must include a timezone")
-    return parsed

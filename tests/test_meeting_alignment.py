@@ -1,5 +1,5 @@
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import pytest
 
@@ -77,14 +77,18 @@ class FakeDws:
             }
         }
         self.info = info or {meeting["taskUuid"]: meeting}
-        self.minutes_calls: list[str] = []
+        self.minutes_calls: list[dict] = []
         self.calendar_calls: list[str] = []
         self.info_calls: list[str] = []
 
-    def list_minutes_page(self, *, max_results: int, next_token: str) -> dict:
-        assert max_results == 50
-        self.minutes_calls.append(next_token)
-        return self.minutes_pages[next_token]
+    def list_minutes_page(
+        self, *, limit: int, cursor: str, start: str, end: str
+    ) -> dict:
+        assert limit == 50
+        self.minutes_calls.append(
+            {"cursor": cursor, "start": start, "end": end}
+        )
+        return self.minutes_pages[cursor]
 
     def get_minutes_info(self, meeting_id: str) -> dict:
         self.info_calls.append(meeting_id)
@@ -220,8 +224,124 @@ def test_producer_paginates_minutes_and_calendar_before_matching(tmp_path):
     )
 
     assert produce_meeting_alignment_jobs(store, dws, now=NOW) == 1
-    assert dws.minutes_calls == ["", "minutes-2"]
+    assert [call["cursor"] for call in dws.minutes_calls] == ["", "minutes-2"]
     assert dws.calendar_calls == ["", "calendar-2"]
+
+
+def test_producer_passes_bounded_minutes_discovery_window(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    dws = FakeDws()
+
+    produce_meeting_alignment_jobs(
+        store,
+        dws,
+        now=NOW,
+        discovery_lookback=timedelta(days=3),
+    )
+
+    assert dws.minutes_calls == [
+        {
+            "cursor": "",
+            "start": "2026-07-11T10:10:00+08:00",
+            "end": "2026-07-14T10:10:00+08:00",
+        }
+    ]
+
+
+def test_producer_defaults_to_seven_day_discovery_window(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    dws = FakeDws()
+
+    produce_meeting_alignment_jobs(store, dws, now=NOW)
+
+    assert dws.minutes_calls[0]["start"] == "2026-07-07T10:10:00+08:00"
+    assert dws.minutes_calls[0]["end"] == "2026-07-14T10:10:00+08:00"
+
+
+@pytest.mark.parametrize("lookback", [timedelta(0), timedelta(seconds=-1)])
+def test_producer_rejects_nonpositive_discovery_lookback(tmp_path, lookback):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+
+    with pytest.raises(ValueError, match="lookback must be positive"):
+        produce_meeting_alignment_jobs(
+            store,
+            FakeDws(),
+            now=NOW,
+            discovery_lookback=lookback,
+        )
+
+
+def test_malformed_minutes_record_does_not_prevent_later_valid_meeting(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    malformed = ended_meeting(meeting_id="minutes-bad")
+    malformed["endTimeISO"] = float("inf")
+    valid = ended_meeting()
+    dws = FakeDws(
+        minutes_pages={
+            "": {
+                "items": [malformed, valid],
+                "has_more": False,
+                "next_token": "",
+            }
+        },
+        info={"minutes-bad": malformed, "minutes-1": valid},
+    )
+
+    assert produce_meeting_alignment_jobs(store, dws, now=NOW) == 1
+    assert store.get_meeting_alignment_job_by_meeting_id("minutes-bad") is None
+    assert store.get_meeting_alignment_job_by_meeting_id("minutes-1") is not None
+
+
+@pytest.mark.parametrize(
+    ("target", "conflicting_alias", "conflicting_value"),
+    [
+        ("list", "uuid", "minutes-other"),
+        ("info", "state", "running"),
+        ("info", "startedAt", "2026-07-14T09:01:00+08:00"),
+        ("info", "endedAt", "2026-07-14T10:01:00+08:00"),
+        ("info", "name", "另一个会议"),
+    ],
+)
+def test_producer_leaves_conflicting_minutes_aliases_unqueued(
+    tmp_path, target, conflicting_alias, conflicting_value
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    list_item = ended_meeting()
+    info = ended_meeting()
+    (list_item if target == "list" else info)[conflicting_alias] = conflicting_value
+    dws = FakeDws(
+        minutes_pages={
+            "": {
+                "items": [list_item],
+                "has_more": False,
+                "next_token": "",
+            }
+        },
+        info={"minutes-1": info},
+    )
+
+    assert produce_meeting_alignment_jobs(store, dws, now=NOW) == 0
+    assert store.get_meeting_alignment_job_by_meeting_id("minutes-1") is None
+
+
+@pytest.mark.parametrize("status", ["processing", "unknown"])
+def test_producer_requires_explicit_status_to_be_ended(tmp_path, status):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    meeting = ended_meeting()
+    meeting["status"] = status
+    dws = FakeDws(
+        minutes_pages={
+            "": {
+                "items": [meeting],
+                "has_more": False,
+                "next_token": "",
+            }
+        },
+        info={"minutes-1": meeting},
+    )
+
+    assert produce_meeting_alignment_jobs(store, dws, now=NOW) == 0
+    assert store.get_meeting_alignment_job_by_meeting_id("minutes-1") is None
 
 
 @pytest.mark.parametrize(

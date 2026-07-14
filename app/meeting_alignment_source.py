@@ -1,3 +1,4 @@
+import math
 from datetime import datetime, timezone
 from typing import Any, Protocol
 
@@ -26,6 +27,76 @@ class CalendarMeetingEvidence(BaseModel):
     started_at: str
     ended_at: str
     participants: list[MeetingParticipant]
+
+
+class MinutesDiscoveryMetadata(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    meeting_id: str
+    title: str
+    status: str
+    started_at: str
+    ended_at: str
+
+
+def minutes_meeting_id(payload: dict[str, Any]) -> str:
+    return _metadata_text(
+        _payload_data(payload),
+        "meeting id",
+        "taskUuid",
+        "meetingId",
+        "minutesId",
+        "meeting_id",
+        "uuid",
+        "id",
+    )
+
+
+def normalize_minutes_discovery_metadata(
+    list_item: dict[str, Any],
+    info: dict[str, Any],
+) -> MinutesDiscoveryMetadata:
+    listed = _discovery_metadata_fields(_payload_data(list_item))
+    detailed = _discovery_metadata_fields(_payload_data(info))
+    meeting_id = _same_metadata_value(
+        "meeting id", listed["meeting_id"], detailed["meeting_id"]
+    )
+    title = _same_metadata_value(
+        "meeting title",
+        listed["title"],
+        detailed["title"],
+        signature=_normalized_title,
+    )
+    status = _same_metadata_value(
+        "meeting status", listed["status"], detailed["status"]
+    )
+    started_at = _same_metadata_value(
+        "meeting start time",
+        listed["started_at"],
+        detailed["started_at"],
+        signature=_time_signature,
+    )
+    ended_at = _same_metadata_value(
+        "meeting end time",
+        listed["ended_at"],
+        detailed["ended_at"],
+        signature=_time_signature,
+    )
+    if not meeting_id:
+        raise MeetingSourceIncomplete("meeting id is missing")
+    if not title:
+        raise MeetingSourceIncomplete("meeting title is missing")
+    if not started_at:
+        raise MeetingSourceIncomplete("meeting start time is missing")
+    if not ended_at:
+        raise MeetingSourceIncomplete("meeting end time is missing")
+    return MinutesDiscoveryMetadata(
+        meeting_id=meeting_id,
+        title=title,
+        status=status,
+        started_at=started_at,
+        ended_at=ended_at,
+    )
 
 
 class MeetingSourceDws(Protocol):
@@ -228,20 +299,15 @@ def build_calendar_meeting_evidence(
 def _calendar_event_matches(data: dict[str, Any], event: DwsCalendarEvent) -> bool:
     if not event.event_id.strip() or event.status.strip().casefold() != "confirmed":
         return False
-    title = _metadata_text(data, "meeting title", "title", "name")
+    metadata = _discovery_metadata_fields(data)
+    title = metadata["title"]
     normalized_title = _normalized_title(title)
     normalized_event_title = _normalized_title(event.title)
     if not normalized_title or normalized_title != normalized_event_title:
         return False
     try:
-        meeting_start = _parsed_time(_metadata_time(
-            data, "meeting start time", "startTimeISO", "started_at", "startedAt",
-            "startTime", "start_time"
-        ))
-        meeting_end = _parsed_time(_metadata_time(
-            data, "meeting end time", "endTimeISO", "ended_at", "endedAt",
-            "endTime", "end_time"
-        ))
+        meeting_start = _parsed_time(metadata["started_at"])
+        meeting_end = _parsed_time(metadata["ended_at"])
         event_start = _parsed_time(_normalized_time(event.start_time))
         event_end = _parsed_time(_normalized_time(event.end_time))
     except MeetingSourceIncomplete:
@@ -333,6 +399,61 @@ def _metadata_time(
     return values[0]
 
 
+def _discovery_metadata_fields(payload: dict[str, Any]) -> dict[str, str]:
+    return {
+        "meeting_id": _metadata_text(
+            payload,
+            "meeting id",
+            "taskUuid",
+            "meetingId",
+            "minutesId",
+            "meeting_id",
+            "uuid",
+            "id",
+        ),
+        "title": _metadata_text(payload, "meeting title", "title", "name"),
+        "status": _metadata_text(
+            payload,
+            "meeting status",
+            "status",
+            "meetingStatus",
+            "state",
+            "taskStatus",
+            normalizer=lambda value: str(value).strip().casefold(),
+        ),
+        "started_at": _metadata_time(
+            payload,
+            "meeting start time",
+            "startTimeISO",
+            "started_at",
+            "startedAt",
+            "startTime",
+            "start_time",
+        ),
+        "ended_at": _metadata_time(
+            payload,
+            "meeting end time",
+            "endTimeISO",
+            "ended_at",
+            "endedAt",
+            "endTime",
+            "end_time",
+        ),
+    }
+
+
+def _same_metadata_value(
+    label: str,
+    listed: str,
+    detailed: str,
+    *,
+    signature=lambda value: value,
+) -> str:
+    if listed and detailed and signature(listed) != signature(detailed):
+        raise MeetingSourceIncomplete(f"conflicting {label} between list and info")
+    return detailed or listed
+
+
 def _is_explicit(value: Any) -> bool:
     return value is not None and value != "" and value != []
 
@@ -340,44 +461,7 @@ def _is_explicit(value: Any) -> bool:
 def _validate_metadata_aliases(data: dict[str, Any]) -> None:
     if not data:
         return
-    _metadata_text(
-        data,
-        "meeting id",
-        "taskUuid",
-        "meetingId",
-        "minutesId",
-        "meeting_id",
-        "uuid",
-        "id",
-    )
-    _metadata_text(data, "meeting title", "title", "name")
-    _metadata_text(
-        data,
-        "meeting status",
-        "status",
-        "meetingStatus",
-        "state",
-        "taskStatus",
-        normalizer=lambda value: str(value).strip().casefold(),
-    )
-    _metadata_time(
-        data,
-        "meeting start time",
-        "startTimeISO",
-        "started_at",
-        "startedAt",
-        "startTime",
-        "start_time",
-    )
-    _metadata_time(
-        data,
-        "meeting end time",
-        "endTimeISO",
-        "ended_at",
-        "endedAt",
-        "endTime",
-        "end_time",
-    )
+    _discovery_metadata_fields(data)
     _metadata_text(
         data,
         "meeting source url",
@@ -398,7 +482,12 @@ def _normalized_time(value: Any) -> str:
     if value is None or isinstance(value, bool):
         raise MeetingSourceIncomplete("invalid meeting time")
     if isinstance(value, (int, float)):
-        seconds = float(value)
+        try:
+            seconds = float(value)
+        except (OverflowError, TypeError, ValueError) as exc:
+            raise MeetingSourceIncomplete("invalid meeting time") from exc
+        if not math.isfinite(seconds):
+            raise MeetingSourceIncomplete("invalid meeting time")
         if abs(seconds) >= 100_000_000_000:
             seconds /= 1000
         try:
@@ -430,7 +519,10 @@ def _time_signature(value: str) -> str | float:
         return value
     if parsed.tzinfo is None:
         return value
-    return parsed.timestamp()
+    try:
+        return parsed.timestamp()
+    except (OverflowError, OSError, ValueError) as exc:
+        raise MeetingSourceIncomplete("invalid meeting time") from exc
 
 
 def _participants(data: dict[str, Any]) -> list[MeetingParticipant]:

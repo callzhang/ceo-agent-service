@@ -1124,23 +1124,29 @@ class DwsClient:
         self,
         *,
         scope: str = "all",
-        max_results: int = 20,
-        next_token: str = "",
+        limit: int = 20,
+        cursor: str = "",
+        start: str = "",
+        end: str = "",
     ) -> list[str]:
         if scope not in {"all", "mine", "shared"}:
             raise ValueError("minutes scope must be one of: all, mine, shared")
-        if max_results < 1:
-            raise ValueError("max_results must be positive")
+        if limit < 1:
+            raise ValueError("limit must be positive")
         command = [
             self.dws_bin,
             "minutes",
             "list",
             scope,
-            "--max",
-            str(max_results),
+            "--limit",
+            str(limit),
         ]
-        if next_token:
-            command.extend(["--next-token", next_token])
+        if cursor:
+            command.extend(["--cursor", cursor])
+        if start:
+            command.extend(["--start", start])
+        if end:
+            command.extend(["--end", end])
         command.extend(["--format", "json"])
         return command
 
@@ -2176,27 +2182,35 @@ class DwsClient:
         self,
         *,
         scope: str = "all",
-        max_results: int = 20,
-        next_token: str = "",
+        limit: int = 20,
+        cursor: str = "",
+        start: str = "",
+        end: str = "",
     ) -> list[dict[str, Any]]:
         return self.list_minutes_page(
             scope=scope,
-            max_results=max_results,
-            next_token=next_token,
+            limit=limit,
+            cursor=cursor,
+            start=start,
+            end=end,
         )["items"]
 
     def list_minutes_page(
         self,
         *,
         scope: str = "all",
-        max_results: int = 20,
-        next_token: str = "",
+        limit: int = 20,
+        cursor: str = "",
+        start: str = "",
+        end: str = "",
     ) -> dict[str, Any]:
         payload = self.run_json(
             self.build_list_minutes_command(
                 scope=scope,
-                max_results=max_results,
-                next_token=next_token,
+                limit=limit,
+                cursor=cursor,
+                start=start,
+                end=end,
             )
         )
         result = payload.get("result")
