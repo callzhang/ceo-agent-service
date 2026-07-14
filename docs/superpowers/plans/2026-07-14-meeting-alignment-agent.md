@@ -522,9 +522,11 @@ return a partial transcript on repeated tokens or page-limit exhaustion.
 `read_meeting_source()` must combine `get_minutes_info`,
 `get_minutes_summary`, and `get_all_minutes_transcription`, resolve the
 authenticated current user through `get_current_user_id()`, and return a strict
-`MeetingSource`. Normalize external field aliases at this boundary only. Raise
-typed `MeetingSourceIncomplete` errors for missing participant data, explicit
-ended state, end time, or incomplete pagination.
+`MeetingSource`. The producer's typed calendar evidence must be revalidated
+against the live Minutes metadata before returning the source. Normalize
+external field aliases at this boundary only. Raise typed
+`MeetingSourceIncomplete` errors for missing/ambiguous calendar evidence,
+contradictory live state, end time, or incomplete pagination.
 
 - [ ] **Step 5: Run source tests**
 
@@ -547,14 +549,17 @@ git commit -m "feat: hydrate complete meeting minutes"
 
 - [ ] **Step 1: Write failing eligibility tests**
 
-Cover: Derek absent, participant data unavailable, ended less than ten minutes
-ago, ended exactly ten minutes ago, stable-ID deduplication, and a previously
-terminal job.
+Cover: no calendar match, ambiguous calendar matches, no self attendee, ended
+less than ten minutes ago, ended exactly ten minutes ago, stable-ID
+deduplication, calendar pagination, and a previously terminal job.
 
 ```python
 def test_producer_queues_at_exactly_ten_minutes(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    dws = FakeDws([ended_meeting(end="2026-07-14T10:00:00+08:00", participants=["u-derek"])])
+    dws = FakeDws(
+        minutes=[ended_meeting(end="2026-07-14T10:00:00+08:00")],
+        calendar_events=[matching_calendar_event(self_user="u-derek")],
+    )
     queued = produce_meeting_alignment_jobs(
         store, dws, now=datetime.fromisoformat("2026-07-14T10:10:00+08:00"),
         settle_seconds=600,
@@ -571,10 +576,14 @@ Expected: FAIL with missing `produce_meeting_alignment_jobs`.
 
 - [ ] **Step 3: Implement deterministic discovery only**
 
-The producer must paginate `list_minutes_page`, use only list/info metadata for
-eligibility, compare authenticated current-user ID plus configured principal
-aliases, upsert `waiting` after participation is confirmed, and promote to
-`pending` at `ended_at + settle_seconds`. It must not read the transcript,
+The producer must paginate `list_minutes_page` and calendar results. It uses
+only Minutes list/info metadata plus the deterministic calendar matcher from
+Task 3: confirmed status, exact normalized title, overlapping intervals,
+start/end drift no greater than four hours, exactly one candidate, and exactly
+one attendee marked `self=true`. The self attendee is bound to the authenticated
+current-user ID. Only then does it upsert `waiting`, preserving the typed
+calendar evidence and participant roster for consumer revalidation, and promote
+to `pending` at `ended_at + settle_seconds`. It must not read the transcript,
 invoke Codex, search groups, or send messages.
 
 - [ ] **Step 4: Run producer and task-scanner tests**
