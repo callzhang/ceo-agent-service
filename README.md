@@ -94,8 +94,9 @@ OKR 审核 runner 默认使用叮当 OKR Web live source，不再依赖本地 xl
   `{user_id}` 和 `{period_label}` 占位符，并返回 worker 可用的实时 OKR JSON。
   本机 Dingteam Web source 命令示例：
   `CEO_OKR_LIVE_SOURCE_COMMAND=/Users/derek/Documents/Projects/ceo-agent-service/scripts/dingteam_okr_live_source.py --user-id {user_id} --period-label {period_label}`。
-  该命令要求 Chrome 已打开并登录 `dingokr.dingteam.com`，只通过页面内 API 拉取数据，不读取浏览器
-  cookie、localStorage 或 session 文件。
+  该命令要求 Chrome 已登录 `dingokr.dingteam.com`，Chrome 会正常保存登录 cookie；脚本只通过页面内
+  API 拉取数据，不导出或复制浏览器 cookie、localStorage 或 session 文件。若 DingTeam 返回未登录，
+  脚本会把 DingTeam tab 切到前台并发本机通知，提醒 Derek 在 Chrome 中完成登录。
 - 只有确认企业 OKR 数据暴露在 Agoal objective API 中时，才设置 `CEO_OKR_SOURCE_KIND=agoal`。
 - Agoal 模式从 `~/.dingtalk-skills/config` 或 `.env` 读取应用凭证；如果规则列表为空或不唯一，
   设置 `CEO_OKR_OBJECTIVE_RULE_ID`，否则服务会直接报错。

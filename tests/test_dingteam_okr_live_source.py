@@ -1,6 +1,7 @@
 import importlib.util
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 
 SCRIPT_PATH = Path(__file__).resolve().parents[1] / "scripts" / "dingteam_okr_live_source.py"
@@ -44,6 +45,15 @@ def test_page_script_uses_page_api_without_browser_storage_access():
     assert "} catch (error) {" in script
 
 
+def test_module_uses_chrome_cookie_persistence_without_copying_cookie_files():
+    source = SCRIPT_PATH.read_text()
+
+    assert "Chrome persists the login cookies" in source
+    assert "not export or copy browser cookies" in source
+    assert "Cookies" not in source
+    assert "Local Storage" not in source
+
+
 def test_injected_script_does_not_inline_page_source():
     module = load_module()
 
@@ -59,8 +69,10 @@ def test_chrome_tab_matching_requires_real_dingteam_page():
 
     assert 'starts with "https://dingokr.dingteam.com/"' in module.APPLESCRIPT
     assert 'starts with "https://dingokr.dingteam.com/"' in module.OPEN_TAB_APPLESCRIPT
+    assert 'starts with "https://dingokr.dingteam.com/"' in module.FOCUS_DINGTEAM_TAB_APPLESCRIPT
     assert 'contains "dingokr.dingteam.com"' not in module.APPLESCRIPT
     assert 'contains "dingokr.dingteam.com"' not in module.OPEN_TAB_APPLESCRIPT
+    assert 'contains "dingokr.dingteam.com"' not in module.FOCUS_DINGTEAM_TAB_APPLESCRIPT
 
 
 def test_format_page_error_uses_page_error_message():
@@ -90,6 +102,36 @@ def test_print_cli_error_writes_safe_json(capsys):
         "message": "Dingteam OKR live source failed",
         "reason": "Dingteam OKR page script failed: api missing",
     }
+
+
+def test_dingteam_login_prompt_focuses_tab_and_notifies(monkeypatch):
+    module = load_module()
+    calls = []
+
+    def fake_run(command, **kwargs):
+        calls.append((command, kwargs))
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+
+    module._prompt_dingteam_login()
+
+    assert calls[0][0][:3] == ["osascript", "-e", module.FOCUS_DINGTEAM_TAB_APPLESCRIPT]
+    assert calls[0][0][3] == module.DINGTEAM_URL
+    assert calls[0][1]["capture_output"] is True
+    assert "display notification" in calls[1][0][2]
+    assert "CEO DingTeam login required" in calls[1][0][2]
+
+
+def test_dingteam_login_error_detection_requires_api_103():
+    module = load_module()
+
+    assert module._is_dingteam_login_error(
+        "Dingteam OKR page script failed: Dingteam OKR API error 103: 未登录"
+    )
+    assert not module._is_dingteam_login_error(
+        "Dingteam OKR page script failed: Dingteam OKR API error 500: 未登录"
+    )
 
 
 def test_default_timeout_allows_slow_dingteam_page():

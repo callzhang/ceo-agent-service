@@ -2,8 +2,8 @@
 """Fetch live Dingteam OKR data from an authorized Chrome tab.
 
 This script intentionally uses the page's own API module from the logged-in
-`dingokr.dingteam.com` tab. It does not read browser cookies, localStorage, or
-profile files.
+`dingokr.dingteam.com` tab. Chrome persists the login cookies; this script does
+not export or copy browser cookies, localStorage, or profile files.
 """
 
 from __future__ import annotations
@@ -71,6 +71,39 @@ end run
 """
 
 
+FOCUS_DINGTEAM_TAB_APPLESCRIPT = """
+on run argv
+  set targetUrl to item 1 of argv
+  tell application "Google Chrome"
+    activate
+    set targetWindow to missing value
+    set targetTabIndex to 0
+    repeat with w in windows
+      set currentIndex to 0
+      repeat with t in tabs of w
+        set currentIndex to currentIndex + 1
+        if (URL of t) starts with "https://dingokr.dingteam.com/" then
+          set targetWindow to w
+          set targetTabIndex to currentIndex
+          exit repeat
+        end if
+      end repeat
+      if targetWindow is not missing value then exit repeat
+    end repeat
+    if targetWindow is missing value then
+      if (count of windows) = 0 then
+        make new window
+      end if
+      tell front window to make new tab with properties {URL:targetUrl}
+    else
+      set active tab index of targetWindow to targetTabIndex
+      set index of targetWindow to 1
+    end if
+  end tell
+end run
+"""
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--user-id", required=True)
@@ -98,7 +131,10 @@ def main() -> int:
         if raw:
             result = json.loads(raw)
             if not result.get("ok"):
-                raise RuntimeError(_format_page_error(result))
+                detail = _format_page_error(result)
+                if _is_dingteam_login_error(detail):
+                    _prompt_dingteam_login()
+                raise RuntimeError(detail)
             print(json.dumps(result["data"], ensure_ascii=False))
             return 0
         time.sleep(0.4)
@@ -112,6 +148,37 @@ def _format_page_error(result: dict) -> str:
     first_stack_line = next((line.strip() for line in stack.splitlines() if line.strip()), "")
     detail = error or first_stack_line or json.dumps(result, ensure_ascii=False)
     return f"Dingteam OKR page script failed: {detail}"
+
+
+def _is_dingteam_login_error(detail: str) -> bool:
+    return "Dingteam OKR API error 103" in detail and "未登录" in detail
+
+
+def _prompt_dingteam_login() -> None:
+    _focus_dingteam_tab()
+    _display_notification(
+        title="CEO DingTeam login required",
+        message="DingTeam OKR session expired. Please finish login in Chrome.",
+    )
+
+
+def _focus_dingteam_tab() -> None:
+    subprocess.run(
+        ["osascript", "-e", FOCUS_DINGTEAM_TAB_APPLESCRIPT, DINGTEAM_URL],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+
+def _display_notification(*, title: str, message: str) -> None:
+    script = (
+        "display notification "
+        + json.dumps(message, ensure_ascii=False)
+        + " with title "
+        + json.dumps(title, ensure_ascii=False)
+    )
+    subprocess.run(["osascript", "-e", script], check=False)
 
 
 def _print_cli_error(exc: BaseException) -> None:
