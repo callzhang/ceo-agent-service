@@ -187,7 +187,8 @@ def consume_meeting_alignment_jobs(
         )
 
     delivery_jobs = store.claim_ready_to_send_meeting_alignment_jobs(
-        limit=limit
+        limit=limit,
+        now=now.isoformat(),
     )
     for job in delivery_jobs:
         processed_ids.add(job.id)
@@ -448,12 +449,14 @@ def _deliver_meeting_job(
                 ),
             )
             return
-        store.update_meeting_alignment_job(
-            job.id,
-            status="ready_to_send",
-            locked_at=None,
-            send_result_json=result_json,
-            error=_error_json("meeting_send", str(exc)),
+        _schedule_ready_reconciliation_or_fail(
+            store,
+            job,
+            result_json=result_json,
+            message=str(exc),
+            now=now,
+            retry_delay=retry_delay,
+            max_attempts=max_attempts,
         )
         return
     except MeetingDeliveryRetry as exc:
@@ -521,11 +524,14 @@ def _reconcile_ambiguous_delivery(
     try:
         verification = dws.verify_message_send_result(previous.send_result)
     except (DwsError, subprocess.TimeoutExpired, TimeoutError) as exc:
-        store.update_meeting_alignment_job(
-            job.id,
-            status="ready_to_send",
-            locked_at=None,
-            error=_error_json("meeting_send_reconcile", str(exc)),
+        _schedule_ready_reconciliation_or_fail(
+            store,
+            job,
+            result_json=previous.model_dump_json(),
+            message=str(exc),
+            now=now,
+            retry_delay=retry_delay,
+            max_attempts=max_attempts,
         )
         return
     except Exception as exc:
@@ -566,15 +572,45 @@ def _reconcile_ambiguous_delivery(
             extra_values={"send_result_json": updated.model_dump_json()},
         )
         return
+    _schedule_ready_reconciliation_or_fail(
+        store,
+        job,
+        result_json=updated.model_dump_json(),
+        message="previous send remains ambiguous",
+        now=now,
+        retry_delay=retry_delay,
+        max_attempts=max_attempts,
+    )
+
+
+def _schedule_ready_reconciliation_or_fail(
+    store: AutoReplyStore,
+    job: Any,
+    *,
+    result_json: str,
+    message: str,
+    now: datetime,
+    retry_delay: timedelta,
+    max_attempts: int,
+) -> None:
     store.update_meeting_alignment_job(
         job.id,
-        status="ready_to_send",
-        locked_at=None,
-        send_result_json=updated.model_dump_json(),
-        error=_error_json(
-            "meeting_send_reconcile",
-            "previous send remains ambiguous",
-        ),
+        send_result_json=result_json,
+    )
+    if job.attempts >= max_attempts:
+        store.update_meeting_alignment_job(
+            job.id,
+            status="failed",
+            error=_error_json(
+                "meeting_send_reconcile_max",
+                f"{message}; reconciliation attempt limit reached",
+            ),
+        )
+        return
+    store.schedule_ready_to_send_meeting_alignment_reconciliation(
+        job.id,
+        error=_error_json("meeting_send_reconcile", message),
+        available_at=(now + retry_delay).isoformat(),
     )
 
 

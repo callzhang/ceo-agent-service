@@ -339,6 +339,49 @@ def test_runner_always_starts_fresh_and_uses_schema(tmp_path: Path):
     assert runner.last_transcript_start_line == 0
 
 
+def test_runner_clears_prior_audit_metadata_before_executor_failure(tmp_path: Path):
+    calls = 0
+
+    def executor(command, prompt):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return "\n".join(
+                [
+                    json.dumps(
+                        {"type": "thread.started", "thread_id": "session-old"}
+                    ),
+                    json.dumps(
+                        {
+                            "type": "item.completed",
+                            "item": {
+                                "type": "tool_call",
+                                "tool_name": "dws",
+                                "arguments": {"cmd": "dws chat search"},
+                            },
+                        }
+                    ),
+                    json.dumps(no_action_payload(), ensure_ascii=False),
+                ]
+            )
+        raise RuntimeError("executor failed")
+
+    runner = MeetingAlignmentCodexRunner(workspace=tmp_path, executor=executor)
+    runner._session_line_count = lambda session_id: 17 if session_id else 0
+    runner.decide(prompt="first")
+    assert runner.last_session_id == "session-old"
+    assert runner.last_transcript_end_line == 17
+    assert runner.last_audit_tool_events
+
+    with pytest.raises(RuntimeError, match="executor failed"):
+        runner.decide(prompt="second")
+
+    assert runner.last_session_id is None
+    assert runner.last_transcript_start_line == 0
+    assert runner.last_transcript_end_line == 0
+    assert runner.last_audit_tool_events == []
+
+
 def test_runner_accepts_historical_sources_with_memory_recall_audit(tmp_path: Path):
     payload = derek_view_payload(historical_sources=["历史上线案例"])
 

@@ -92,7 +92,10 @@ class MeetingAlignmentCodexRunner:
     def decide(self, *, prompt: str) -> MeetingAlignmentDecision:
         # Meeting decisions are intentionally isolated: never resume a reply,
         # task, or earlier meeting session.
+        self.last_session_id = None
         self.last_transcript_start_line = 0
+        self.last_transcript_end_line = 0
+        self.last_audit_tool_events = []
         raw = self._execute(prompt=prompt)
         self.last_session_id = self._extract_codex_session_id(raw)
         self.last_transcript_end_line = self._session_line_count(

@@ -1543,6 +1543,7 @@ class AutoReplyStore:
                 and "locked_at" not in filtered
             ):
                 release_ready_lock_on_transition = True
+                filtered.setdefault("available_at", "")
             elif filtered["status"] in {
                 "waiting",
                 "pending",
@@ -1588,6 +1589,7 @@ class AutoReplyStore:
     def claim_ready_to_send_meeting_alignment_jobs(
         self,
         limit: int,
+        now: str,
     ) -> list[MeetingAlignmentJob]:
         if limit <= 0:
             return []
@@ -1599,6 +1601,10 @@ class AutoReplyStore:
                     from meeting_alignment_jobs
                     where status='ready_to_send'
                       and locked_at is null
+                      and (
+                          available_at=''
+                          or datetime(available_at) <= datetime(?)
+                      )
                     order by id
                     limit ?
                 )
@@ -1610,10 +1616,39 @@ class AutoReplyStore:
                   and locked_at is null
                 returning *
                 """,
-                (limit,),
+                (now, limit),
             ).fetchall()
             jobs = [self._meeting_alignment_job_from_row(row) for row in rows]
             return sorted(jobs, key=lambda job: job.id)
+
+    def schedule_ready_to_send_meeting_alignment_reconciliation(
+        self,
+        job_id: int,
+        *,
+        error: str,
+        available_at: str,
+    ) -> MeetingAlignmentJob:
+        with self._connect() as db:
+            row = db.execute(
+                """
+                update meeting_alignment_jobs
+                set attempts=attempts + 1,
+                    available_at=?,
+                    error=?,
+                    locked_at=null,
+                    updated_at=current_timestamp
+                where id=?
+                  and status='ready_to_send'
+                  and locked_at is not null
+                returning *
+                """,
+                (available_at, error, job_id),
+            ).fetchone()
+            if row is None:
+                raise ValueError(
+                    "ready meeting reconciliation requires an exclusive claim"
+                )
+            return self._meeting_alignment_job_from_row(row)
 
     def reset_ready_to_send_meeting_alignment_jobs(
         self,
