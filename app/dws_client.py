@@ -2602,7 +2602,15 @@ class DwsClient:
                 "open_task_id": "",
                 "status_result": {},
             }
-        status_result = self.query_message_send_status(open_task_id)
+        try:
+            status_result = self.query_message_send_status(open_task_id)
+        except (DwsError, subprocess.TimeoutExpired, TimeoutError) as exc:
+            return {
+                "state": "ambiguous",
+                "open_task_id": open_task_id,
+                "status_result": {},
+                "status_error": str(exc),
+            }
         status = self._find_nested_string(
             status_result,
             {"status", "sendStatus", "taskStatus"},
@@ -2956,6 +2964,7 @@ class DwsClient:
         command_timeout_seconds = timeout_seconds or self.timeout_seconds
         remaining_retries = self.transient_retry_attempts
         attempt_index = 0
+        automatic_retry_allowed = self._automatic_retry_allowed(command)
         while True:
             try:
                 result = subprocess.run(
@@ -2967,7 +2976,7 @@ class DwsClient:
                     env=self._cli_environment(),
                 )
             except subprocess.TimeoutExpired as exc:
-                if remaining_retries > 0:
+                if automatic_retry_allowed and remaining_retries > 0:
                     self._sleep_before_retry(attempt_index)
                     attempt_index += 1
                     remaining_retries -= 1
@@ -2982,7 +2991,11 @@ class DwsClient:
                 or self._error_code(result.stdout)
                 or self._process_error_code(result.returncode)
             )
-            if self._is_retryable_error(command, code) and remaining_retries > 0:
+            if (
+                automatic_retry_allowed
+                and self._is_retryable_error(command, code)
+                and remaining_retries > 0
+            ):
                 if code in self.DISCOVERY_CACHE_REFRESH_CODES:
                     self._refresh_cache()
                 self._sleep_before_retry(attempt_index)
@@ -3086,6 +3099,16 @@ class DwsClient:
             code in cls.DOC_READ_RETRYABLE_ERROR_CODES
             and len(command) >= 3
             and command[1:3] == ["doc", "read"]
+        )
+
+    @staticmethod
+    def _automatic_retry_allowed(command: list[str]) -> bool:
+        if len(command) < 4 or command[1:4] != ["chat", "message", "send"]:
+            return True
+        return any(
+            argument == "--idempotency-key"
+            or argument.startswith("--idempotency-key=")
+            for argument in command[4:]
         )
 
     def _refresh_cache(self) -> None:

@@ -3493,6 +3493,22 @@ def test_verify_message_send_result_extracts_task_and_queries_status():
     ]
 
 
+def test_verify_message_send_result_preserves_task_when_status_query_errors():
+    client = SequenceRecordingDwsClient([DwsError("status query timed out")])
+
+    verified = client.verify_message_send_result(
+        {"success": True, "result": {"openTaskId": "task-1"}}
+    )
+
+    assert verified == {
+        "state": "ambiguous",
+        "open_task_id": "task-1",
+        "status_result": {},
+        "status_error": "status query timed out",
+    }
+    assert len(client.commands) == 1
+
+
 def test_verify_message_send_result_without_identifier_is_ambiguous():
     client = SequenceRecordingDwsClient([])
 
@@ -4443,6 +4459,58 @@ def test_run_json_does_not_retry_send_internal_error(monkeypatch):
     with pytest.raises(DwsError, match="internalError"):
         DwsClient().run_json(command)
     assert calls == [command]
+
+
+def test_run_json_does_not_retry_chat_message_send_timeout(monkeypatch):
+    calls = []
+    command = ["dws", "chat", "message", "send", "--group", "cid-1"]
+
+    def fake_run(command_arg, text, capture_output, check, timeout, env=None):
+        calls.append(command_arg)
+        raise subprocess.TimeoutExpired(command_arg, timeout)
+
+    monkeypatch.setattr("app.dws_client.subprocess.run", fake_run)
+    monkeypatch.setattr("app.dws_client.time.sleep", lambda seconds: None)
+
+    with pytest.raises(DwsError, match="timed out"):
+        DwsClient(transient_retry_attempts=2).run_json(command)
+    assert calls == [command]
+
+
+def test_run_json_does_not_retry_chat_message_send_retryable_network_error(
+    monkeypatch,
+):
+    calls = []
+    command = ["dws", "chat", "message", "send", "--group", "cid-1"]
+    payload = '{"error":{"code":"NETWORK_ERROR","message":"connection reset"}}'
+
+    def fake_run(command_arg, text, capture_output, check, timeout, env=None):
+        calls.append(command_arg)
+        return SimpleNamespace(returncode=1, stdout="", stderr=payload)
+
+    monkeypatch.setattr("app.dws_client.subprocess.run", fake_run)
+    monkeypatch.setattr("app.dws_client.time.sleep", lambda seconds: None)
+
+    with pytest.raises(DwsError):
+        DwsClient(transient_retry_attempts=2).run_json(command)
+    assert calls == [command]
+
+
+def test_run_json_still_retries_read_timeout(monkeypatch):
+    calls = []
+    command = ["dws", "chat", "message", "list", "--group", "cid-1"]
+
+    def fake_run(command_arg, text, capture_output, check, timeout, env=None):
+        calls.append(command_arg)
+        if len(calls) == 1:
+            raise subprocess.TimeoutExpired(command_arg, timeout)
+        return SimpleNamespace(returncode=0, stdout='{"ok":true}', stderr="")
+
+    monkeypatch.setattr("app.dws_client.subprocess.run", fake_run)
+    monkeypatch.setattr("app.dws_client.time.sleep", lambda seconds: None)
+
+    assert DwsClient(transient_retry_attempts=1).run_json(command) == {"ok": True}
+    assert calls == [command, command]
 
 
 def test_run_json_retries_chat_message_list_system_error(monkeypatch):

@@ -1,7 +1,9 @@
+import subprocess
+
 import pytest
 
 from app.dingtalk_models import DingTalkMessage
-from app.dws_client import DwsUserProfile
+from app.dws_client import DwsError, DwsUserProfile
 from app.meeting_alignment_delivery import (
     MeetingDeliveryAmbiguous,
     MeetingDeliveryError,
@@ -124,6 +126,8 @@ class FakeDws:
         self.recent_messages: list[DingTalkMessage] = []
         self.send_result = {"success": True, "result": {"openMessageId": "msg-sent"}}
         self.send_status_result = {"success": True, "result": {"status": "SUCCESS"}}
+        self.send_error = None
+        self.verify_error = None
         self.sent: list[dict] = []
         self.status_queries: list[str] = []
         self.search_queries: list[str] = []
@@ -144,9 +148,13 @@ class FakeDws:
         self.sent.append(
             {"conversation_id": conversation_id, "text": text, **kwargs}
         )
+        if self.send_error is not None:
+            raise self.send_error
         return self.send_result
 
     def verify_message_send_result(self, send_result):
+        if self.verify_error is not None:
+            raise self.verify_error
         task_id = send_result.get("result", {}).get("openTaskId", "")
         if send_result.get("result", {}).get("openMessageId"):
             return {"state": "sent", "open_task_id": "", "status_result": {}}
@@ -219,6 +227,30 @@ def test_one_to_one_direct_delivery_resolves_empty_participant_id_uniquely():
     assert result.status == "sent"
     assert dws.sent[0]["conversation_id"] is None
     assert dws.sent[0]["user_id"] == "u-a"
+
+
+def test_one_to_one_direct_delivery_uses_authoritative_open_id_without_search():
+    dws = FakeDws()
+    decision_payload = send_decision(
+        target="direct", mention_names=["A"]
+    ).model_dump()
+    decision_payload["target"]["direct_user_id"] = ""
+    source_payload = meeting_source(
+        one_to_one=True, unresolved_other=True
+    ).model_dump()
+    source_payload["participants"][1]["open_dingtalk_id"] = "open-a"
+
+    result = deliver_meeting_alignment(
+        MeetingAlignmentDecision.model_validate(decision_payload),
+        MeetingSource.model_validate(source_payload),
+        dws,
+    )
+
+    assert result.status == "sent"
+    assert dws.sent[0]["conversation_id"] is None
+    assert dws.sent[0]["open_dingtalk_id"] == "open-a"
+    assert dws.sent[0].get("user_id") is None
+    assert dws.search_queries == []
 
 
 def test_one_to_one_unresolved_identity_retries_without_sending():
@@ -398,4 +430,42 @@ def test_send_without_verifiable_id_raises_ambiguous_outcome_once():
 
     assert caught.value.result.status == "ambiguous"
     assert caught.value.result.send_result == dws.send_result
+    assert len(dws.sent) == 1
+
+
+@pytest.mark.parametrize(
+    "send_error",
+    [
+        DwsError("connection reset"),
+        subprocess.TimeoutExpired(["dws", "chat", "message", "send"], 30),
+    ],
+)
+def test_send_transport_uncertainty_is_auditable_and_never_resent(send_error):
+    dws = FakeDws()
+    dws.send_error = send_error
+
+    with pytest.raises(MeetingDeliveryAmbiguous, match="ambiguous") as caught:
+        deliver_meeting_alignment(send_decision(), meeting_source(), dws)
+
+    assert caught.value.result.status == "ambiguous"
+    assert caught.value.result.send_result == {}
+    assert caught.value.result.send_verification["state"] == "ambiguous"
+    assert "connection reset" in caught.value.result.send_verification["send_error"] \
+        or "timed out" in caught.value.result.send_verification["send_error"]
+    assert len(dws.sent) == 1
+
+
+def test_status_query_uncertainty_preserves_original_task_and_never_resends():
+    dws = FakeDws()
+    dws.send_result = {"success": True, "result": {"openTaskId": "task-1"}}
+    dws.verify_error = DwsError("status query timed out")
+
+    with pytest.raises(MeetingDeliveryAmbiguous) as caught:
+        deliver_meeting_alignment(send_decision(), meeting_source(), dws)
+
+    assert caught.value.result.send_result == dws.send_result
+    assert caught.value.result.send_verification["open_task_id"] == "task-1"
+    assert caught.value.result.send_verification["status_error"] == (
+        "status query timed out"
+    )
     assert len(dws.sent) == 1

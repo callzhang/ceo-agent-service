@@ -1,9 +1,10 @@
+import subprocess
 from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict
 
 from app.dingtalk_models import DingTalkConversation, DingTalkMessage
-from app.dws_client import DwsUserProfile
+from app.dws_client import DwsError, DwsUserProfile
 from app.meeting_alignment_models import (
     MeetingAlignmentDecision,
     MeetingParticipant,
@@ -82,6 +83,8 @@ def deliver_meeting_alignment(
 
     target = decision.target
     recent_messages: list[DingTalkMessage] = []
+    direct_user_id = ""
+    direct_open_dingtalk_id = ""
     if participant_count > 2:
         if target is None:
             raise MeetingDeliveryRetry("multi-party meeting has no sendable group")
@@ -106,7 +109,6 @@ def deliver_meeting_alignment(
         recent_messages = dws.read_recent_messages(conversation, limit=50)
         target_kind = "group"
         target_id = target.conversation_id
-        direct_user_id = ""
     else:
         counterpart = _one_to_one_counterpart(source)
         if target is None or target.kind != "direct":
@@ -128,12 +130,15 @@ def deliver_meeting_alignment(
                 raise MeetingDeliveryError(
                     "unresolved 1:1 target cannot supply a guessed user id"
                 )
-            profile = _resolve_profile(counterpart.name, counterpart, dws, [])
-            if profile is None or not profile.user_id.strip():
-                raise MeetingDeliveryRetry("1:1 target identity is unresolved")
-            direct_user_id = profile.user_id.strip()
+            if counterpart.open_dingtalk_id.strip():
+                direct_open_dingtalk_id = counterpart.open_dingtalk_id.strip()
+            else:
+                profile = _resolve_profile(counterpart.name, counterpart, dws, [])
+                if profile is None or not profile.user_id.strip():
+                    raise MeetingDeliveryRetry("1:1 target identity is unresolved")
+                direct_user_id = profile.user_id.strip()
         target_kind = "direct"
-        target_id = direct_user_id
+        target_id = direct_user_id or direct_open_dingtalk_id
 
     resolved_mentions, unresolved_names = _resolve_mentions(
         decision.mention_names,
@@ -143,22 +148,56 @@ def deliver_meeting_alignment(
     )
     mention_ids = [mention.open_dingtalk_id for mention in resolved_mentions]
     mention_display_names = [mention.display_name for mention in resolved_mentions]
-    if target_kind == "group":
-        send_result = dws.send_message(
-            target_id,
-            decision.final_message,
-            at_open_dingtalk_ids=mention_ids,
-            at_open_dingtalk_names=mention_display_names,
-            title=target.title if target is not None else source.title,
+    try:
+        if target_kind == "group":
+            send_result = dws.send_message(
+                target_id,
+                decision.final_message,
+                at_open_dingtalk_ids=mention_ids,
+                at_open_dingtalk_names=mention_display_names,
+                title=target.title if target is not None else source.title,
+            )
+        else:
+            direct_target = (
+                {"user_id": direct_user_id}
+                if direct_user_id
+                else {"open_dingtalk_id": direct_open_dingtalk_id}
+            )
+            send_result = dws.send_message(
+                None,
+                decision.final_message,
+                **direct_target,
+                title=target.title if target is not None else source.title,
+            )
+    except (DwsError, subprocess.TimeoutExpired, TimeoutError) as exc:
+        result = MeetingDeliveryResult(
+            status="ambiguous",
+            target_kind=target_kind,
+            target_id=target_id,
+            target_title=target.title if target is not None else source.title,
+            resolved_mentions=resolved_mentions,
+            unresolved_mention_names=unresolved_names,
+            send_result={},
+            send_verification={
+                "state": "ambiguous",
+                "open_task_id": "",
+                "status_result": {},
+                "send_error": str(exc),
+            },
         )
-    else:
-        send_result = dws.send_message(
-            None,
-            decision.final_message,
-            user_id=direct_user_id,
-            title=target.title if target is not None else source.title,
-        )
-    verification = dws.verify_message_send_result(send_result)
+        raise MeetingDeliveryAmbiguous(
+            "meeting send outcome is ambiguous; do not send again immediately",
+            result=result,
+        ) from exc
+    try:
+        verification = dws.verify_message_send_result(send_result)
+    except (DwsError, subprocess.TimeoutExpired, TimeoutError) as exc:
+        verification = {
+            "state": "ambiguous",
+            "open_task_id": _find_nested_string(send_result, "openTaskId"),
+            "status_result": {},
+            "status_error": str(exc),
+        }
     result_status = "sent" if verification.get("state") == "sent" else "ambiguous"
     result = MeetingDeliveryResult(
         status=result_status,
@@ -351,3 +390,20 @@ def _profile_context_score(profile: DwsUserProfile, value: str) -> int:
 
 def _canonical(value: str) -> str:
     return " ".join(value.split()).casefold()
+
+
+def _find_nested_string(payload: Any, key: str) -> str:
+    if isinstance(payload, dict):
+        value = payload.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+        for nested in payload.values():
+            found = _find_nested_string(nested, key)
+            if found:
+                return found
+    elif isinstance(payload, list):
+        for nested in payload:
+            found = _find_nested_string(nested, key)
+            if found:
+                return found
+    return ""
