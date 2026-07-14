@@ -519,6 +519,18 @@ def test_codex_developer_instructions_include_dws_material_reading_guidance():
     instructions = codex_developer_instructions()
 
     assert "DingTalk material reading" in instructions
+
+
+def test_codex_developer_instructions_require_full_mail_lookup_and_structured_reply():
+    instructions = codex_developer_instructions()
+
+    assert "DingTalk mail handling" in instructions
+    assert "mailbox list" in instructions
+    assert "mail message search" in instructions
+    assert "mail message get" in instructions
+    assert "truncated mail card" in instructions
+    assert "dws_mail_reply" in instructions
+    assert "do not execute `dws mail message reply` directly" in instructions
     assert "dws doc info --node" in instructions
     assert "dws doc read --node" in instructions
     assert "dws minutes get info --id" in instructions

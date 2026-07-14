@@ -74,6 +74,45 @@
       "title": "AgentSensitivityKind",
       "type": "string"
     },
+    "DwsMailReplyAction": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "dws_mail_reply",
+          "title": "Type",
+          "type": "string"
+        },
+        "mailbox": {
+          "minLength": 1,
+          "title": "Mailbox",
+          "type": "string"
+        },
+        "message_id": {
+          "minLength": 1,
+          "title": "Message Id",
+          "type": "string"
+        },
+        "subject": {
+          "minLength": 1,
+          "title": "Subject",
+          "type": "string"
+        },
+        "content": {
+          "minLength": 1,
+          "title": "Content",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "mailbox",
+        "message_id",
+        "subject",
+        "content"
+      ],
+      "title": "DwsMailReplyAction",
+      "type": "object"
+    },
     "DwsMarkdownDocumentReplyAction": {
       "additionalProperties": false,
       "properties": {
@@ -316,6 +355,7 @@
       "items": {
         "discriminator": {
           "mapping": {
+            "dws_mail_reply": "#/$defs/DwsMailReplyAction",
             "dws_markdown_document_reply": "#/$defs/DwsMarkdownDocumentReplyAction",
             "dws_message_reaction": "#/$defs/DwsMessageReactionAction",
             "dws_oa_approval_action": "#/$defs/DwsOaApprovalAction",
@@ -338,6 +378,9 @@
           },
           {
             "$ref": "#/$defs/DwsOaApprovalCommentAction"
+          },
+          {
+            "$ref": "#/$defs/DwsMailReplyAction"
           },
           {
             "$ref": "#/$defs/PersistOkrReviewAction"

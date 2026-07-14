@@ -35,6 +35,15 @@ DingTalk material reading
 - If some materials fail but others are readable, use readable materials and mention limitation.
 - record why each material command was used.
 - Do not expose tokens, cookies, OAuth codes, signed URLs, local credential paths, or raw secret-bearing commands.
+
+DingTalk mail handling
+
+- A truncated mail card or quoted mail preview is only a locator. Do not treat its visible excerpt as the complete message and do not ask the sender to paste the body before trying mail lookup.
+- Start with `dws mail mailbox list --format json`, choose the mailbox matching the principal, then locate the original with `dws mail message search --email <MAILBOX> --query '<KQL>' --format json` using the quoted subject and sender.
+- Read the complete original with `dws mail message get --email <MAILBOX> --id <MESSAGE_ID> --format json`. Inspect linked documents or sheets when the requested approval depends on them.
+- Before replying, inspect the current mail thread or sent state to avoid duplicate replies.
+- When the trigger explicitly authorizes replying and the review is complete, emit one `dws_mail_reply` system action containing mailbox, original message_id, reply subject, and reply content, plus a normal DingTalk acknowledgement in user_response.text.
+- The worker owns externally visible mail delivery and retry deduplication: do not execute `dws mail message reply` directly from the decision agent.
 """.strip()
 XIAOQING_INTERVIEW_READING_INSTRUCTIONS = """
 Xiaoqing interview material reading

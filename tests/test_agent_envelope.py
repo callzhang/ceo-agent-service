@@ -6,11 +6,72 @@ from pydantic import ValidationError
 from app.agent_envelope import (
     AgentEnvelope,
     AgentKind,
+    DwsMailReplyAction,
     DwsMarkdownDocumentReplyAction,
     DwsMessageReactionAction,
     QueueOkrReviewAction,
     SendDingTalkReplyAction,
 )
+
+
+def test_agent_envelope_accepts_mail_reply_action():
+    envelope = AgentEnvelope.model_validate(
+        {
+            "kind": "reply",
+            "user_response": {
+                "mode": "send_reply",
+                "text": "邮件已审阅并回复。",
+                "sensitivity_kind": "general",
+            },
+            "system_actions": [
+                {
+                    "type": "dws_mail_reply",
+                    "mailbox": "derek@example.com",
+                    "message_id": "mail-1",
+                    "subject": "Re: 评奖结果",
+                    "content": "评奖结果确认无误，可以按此发布。",
+                },
+                {"type": "send_dingtalk_reply", "reply_text_ref": "user_response.text"},
+            ],
+            "domain_payload": {},
+            "audit": {
+                "summary": "已读取原邮件和评奖材料。",
+                "documents": [],
+                "confidence": 0.9,
+            },
+        }
+    )
+
+    assert isinstance(envelope.system_actions[0], DwsMailReplyAction)
+
+
+def test_agent_envelope_rejects_mail_reply_without_send_reply_mode():
+    with pytest.raises(ValidationError):
+        AgentEnvelope.model_validate(
+            {
+                "kind": "no_action",
+                "user_response": {
+                    "mode": "no_reply",
+                    "text": "",
+                    "sensitivity_kind": "general",
+                },
+                "system_actions": [
+                    {
+                        "type": "dws_mail_reply",
+                        "mailbox": "derek@example.com",
+                        "message_id": "mail-1",
+                        "subject": "Re: 评奖结果",
+                        "content": "确认无误。",
+                    }
+                ],
+                "domain_payload": {},
+                "audit": {
+                    "summary": "invalid mail reply",
+                    "documents": [],
+                    "confidence": 0.9,
+                },
+            }
+        )
 
 
 def test_agent_envelope_accepts_typed_system_action():

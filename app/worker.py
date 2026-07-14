@@ -5028,6 +5028,7 @@ class DingTalkAutoReplyWorker:
             if normalized_reason != decision.reason:
                 decision = decision.model_copy(update={"reason": normalized_reason})
         attempt_session_id = after_session_id or session_id or ""
+        mail_reply_action = self._mail_reply_action(decision.system_actions)
         attempt_id = self.store.record_reply_attempt_for_trigger(
             conversation_id=conversation.open_conversation_id,
             conversation_title=conversation.title,
@@ -5056,6 +5057,26 @@ class DingTalkAutoReplyWorker:
             audit_summary=decision.audit_summary,
             calendar_event_id=(
                 calendar_response_event.event_id if calendar_response_event else ""
+            ),
+            mail_mailbox=(
+                str(mail_reply_action.get("mailbox") or "")
+                if mail_reply_action
+                else ""
+            ),
+            mail_message_id=(
+                str(mail_reply_action.get("message_id") or "")
+                if mail_reply_action
+                else ""
+            ),
+            mail_subject=(
+                str(mail_reply_action.get("subject") or "")
+                if mail_reply_action
+                else ""
+            ),
+            mail_reply_text=(
+                str(mail_reply_action.get("content") or "")
+                if mail_reply_action
+                else ""
             ),
         )
 
@@ -7470,6 +7491,13 @@ class DingTalkAutoReplyWorker:
             )
             self._mark_seen(new_messages)
             return False
+        if not self._execute_mail_reply_if_needed(
+            conversation=conversation,
+            trigger=trigger,
+            attempt_id=attempt_id,
+            raise_on_delivery_failure=raise_on_delivery_failure,
+        ):
+            return False
         document_delivery_payload = None
         try:
             document_delivery_payload = self._create_markdown_document_reply_if_needed(
@@ -7666,6 +7694,91 @@ class DingTalkAutoReplyWorker:
             ):
                 return action
         return None
+
+    @staticmethod
+    def _mail_reply_action(system_actions: list[dict]) -> dict[str, Any] | None:
+        for action in system_actions:
+            if isinstance(action, dict) and action.get("type") == "dws_mail_reply":
+                return action
+        return None
+
+    def _execute_mail_reply_if_needed(
+        self,
+        *,
+        conversation: DingTalkConversation,
+        trigger: DingTalkMessage,
+        attempt_id: int,
+        raise_on_delivery_failure: bool,
+    ) -> bool:
+        attempt = self.store.get_reply_attempt(attempt_id)
+        if attempt is None or not attempt.mail_message_id.strip():
+            return True
+        if attempt.mail_action_result_json.strip():
+            return True
+        command = self.dws.build_mail_reply_command(
+            mailbox=attempt.mail_mailbox,
+            message_id=attempt.mail_message_id,
+            subject=attempt.mail_subject,
+            content=attempt.mail_reply_text,
+        )
+        audit_command = command.copy()
+        content_index = audit_command.index("--content") + 1
+        audit_command[content_index] = "<mail-body-redacted>"
+        event = {
+            "tool": "dws",
+            "call_id": f"mail_reply_{attempt_id}",
+            "command": " ".join(audit_command),
+            "input": json.dumps(
+                {
+                    "mailbox": attempt.mail_mailbox,
+                    "message_id": attempt.mail_message_id,
+                    "subject": attempt.mail_subject,
+                },
+                ensure_ascii=False,
+            ),
+        }
+        try:
+            result = self.dws.reply_mail(
+                attempt.mail_mailbox,
+                attempt.mail_message_id,
+                attempt.mail_subject,
+                attempt.mail_reply_text,
+            )
+        except Exception as exc:
+            event["error"] = str(exc)
+            self._append_attempt_audit_tool_events(attempt_id, [event])
+            self.store.update_reply_attempt(
+                attempt_id,
+                send_status="failed",
+                send_error=f"mail_reply_failed: {exc}",
+            )
+            self.store.record_error(
+                conversation.open_conversation_id,
+                trigger.open_message_id,
+                "mail_reply",
+                str(exc),
+            )
+            self._notify(
+                title=f"CEO mail reply failed: {conversation.title}",
+                message=str(exc)[:120],
+                conversation=conversation,
+                attempt_id=attempt_id,
+            )
+            if raise_on_delivery_failure:
+                raise ReplyDeliveryError(str(exc)) from exc
+            return False
+        event["output"] = json.dumps(result or {}, ensure_ascii=False)
+        self._append_attempt_audit_tool_events(attempt_id, [event])
+        self.store.update_reply_attempt(
+            attempt_id,
+            mail_action_result_json=json.dumps(
+                result or {},
+                ensure_ascii=False,
+                sort_keys=True,
+            ),
+            send_error="",
+        )
+        return True
 
     def _markdown_document_reply_title(
         self,

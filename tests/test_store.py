@@ -1593,3 +1593,33 @@ def test_setup_wizard_steps_list_has_stable_tie_breaker(tmp_path):
     rows = store.list_setup_wizard_steps()
 
     assert [row["step_id"] for row in rows] == ["mcp", "preflight"]
+
+
+def test_reply_attempt_round_trips_mail_action_state(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+
+    attempt_id = store.record_reply_attempt(
+        conversation_id="cid-1",
+        conversation_title="HR",
+        trigger_message_id="msg-1",
+        trigger_sender="Alan",
+        trigger_text="审批并回复邮件",
+        action="send_reply",
+        sensitivity_kind="general",
+        mail_mailbox="derek@example.com",
+        mail_message_id="mail-1",
+        mail_subject="Re: 评奖结果",
+        mail_reply_text="确认无误，可以发布。",
+    )
+    store.update_reply_attempt(
+        attempt_id,
+        mail_action_result_json='{"success": true}',
+    )
+
+    attempt = store.get_reply_attempt(attempt_id)
+    assert attempt is not None
+    assert attempt.mail_mailbox == "derek@example.com"
+    assert attempt.mail_message_id == "mail-1"
+    assert attempt.mail_subject == "Re: 评奖结果"
+    assert attempt.mail_reply_text == "确认无误，可以发布。"
+    assert attempt.mail_action_result_json == '{"success": true}'

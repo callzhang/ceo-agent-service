@@ -540,6 +540,36 @@ class DwsClient:
             "--yes",
         ]
 
+    def build_mail_reply_command(
+        self,
+        *,
+        mailbox: str,
+        message_id: str,
+        subject: str,
+        content: str,
+    ) -> list[str]:
+        if not all(
+            value.strip() for value in (mailbox, message_id, subject, content)
+        ):
+            raise ValueError("mailbox, message id, subject, and content are required")
+        return [
+            self.dws_bin,
+            "mail",
+            "message",
+            "reply",
+            "--from",
+            mailbox,
+            "--id",
+            message_id,
+            "--subject",
+            subject,
+            "--content",
+            content,
+            "--format",
+            "json",
+            "--yes",
+        ]
+
     def build_read_recent_messages_command(
         self, conversation: DingTalkConversation, limit: int = 50
     ) -> list[str]:
@@ -2336,6 +2366,22 @@ class DwsClient:
                 at_users=at_users,
                 at_open_dingtalk_ids=at_open_dingtalk_ids,
                 at_open_dingtalk_names=at_open_dingtalk_names,
+            )
+        )
+
+    def reply_mail(
+        self,
+        mailbox: str,
+        message_id: str,
+        subject: str,
+        content: str,
+    ) -> dict[str, Any]:
+        return self.run_json(
+            self.build_mail_reply_command(
+                mailbox=mailbox,
+                message_id=message_id,
+                subject=subject,
+                content=content,
             )
         )
 

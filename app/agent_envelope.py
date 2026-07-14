@@ -109,6 +109,14 @@ class DwsOaApprovalCommentAction(StrictBaseModel):
     text: str = Field(min_length=1)
 
 
+class DwsMailReplyAction(StrictBaseModel):
+    type: Literal["dws_mail_reply"]
+    mailbox: str = Field(min_length=1)
+    message_id: str = Field(min_length=1)
+    subject: str = Field(min_length=1)
+    content: str = Field(min_length=1)
+
+
 class PersistOkrReviewAction(StrictBaseModel):
     type: Literal["persist_okr_review"]
     request_id: int
@@ -147,6 +155,7 @@ SystemAction = Annotated[
         DwsMarkdownDocumentReplyAction,
         DwsOaApprovalAction,
         DwsOaApprovalCommentAction,
+        DwsMailReplyAction,
         PersistOkrReviewAction,
         QueueOkrReviewAction,
         DwsMessageReactionAction,
@@ -177,6 +186,22 @@ class AgentEnvelope(StrictBaseModel):
             isinstance(action, DwsMarkdownDocumentReplyAction)
             for action in self.system_actions
         )
+        mail_reply_actions = [
+            action
+            for action in self.system_actions
+            if isinstance(action, DwsMailReplyAction)
+        ]
+        if len(mail_reply_actions) > 1:
+            raise ValueError("at most one dws_mail_reply action is allowed")
+        if mail_reply_actions:
+            if self.user_response.mode != UserResponseMode.SEND_REPLY:
+                raise ValueError(
+                    "dws_mail_reply requires user_response.mode=send_reply"
+                )
+            if not self.user_response.text.strip():
+                raise ValueError(
+                    "dws_mail_reply requires non-empty user_response.text"
+                )
         if not has_reply_action and not has_markdown_document_reply_action:
             if any(
                 isinstance(action, DwsMessageReactionAction)

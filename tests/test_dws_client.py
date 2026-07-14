@@ -1304,6 +1304,33 @@ def test_send_message_command_shape():
     ]
 
 
+def test_build_mail_reply_command_shape():
+    client = DwsClient(dws_bin="dws")
+
+    assert client.build_mail_reply_command(
+        mailbox="derek@example.com",
+        message_id="mail-1",
+        subject="Re: 评奖结果",
+        content="确认无误，可以发布。",
+    ) == [
+        "dws",
+        "mail",
+        "message",
+        "reply",
+        "--from",
+        "derek@example.com",
+        "--id",
+        "mail-1",
+        "--subject",
+        "Re: 评奖结果",
+        "--content",
+        "确认无误，可以发布。",
+        "--format",
+        "json",
+        "--yes",
+    ]
+
+
 def test_send_message_command_keeps_existing_text_without_injecting_at_placeholder():
     client = DwsClient(dws_bin="dws")
 

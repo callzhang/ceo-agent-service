@@ -132,6 +132,8 @@ class FakeDws:
         self.robot_message_file_download_calls: list[str] = []
         self.sent: list[tuple[str, str]] = []
         self.reply_messages: list[tuple[str, str, str, str]] = []
+        self.mail_replies: list[tuple[str, str, str, str]] = []
+        self.mail_reply_error: Exception | None = None
         self.created_markdown_docs: list[tuple[str, str]] = []
         self.doc_editor_permissions: list[tuple[str, list[str]]] = []
         self.doc_editor_permission_error: Exception | None = None
@@ -564,6 +566,35 @@ class FakeDws:
                 "name": name,
             }
         }
+
+    def reply_mail(
+        self, mailbox: str, message_id: str, subject: str, content: str
+    ) -> dict:
+        if self.mail_reply_error:
+            raise self.mail_reply_error
+        self.mail_replies.append((mailbox, message_id, subject, content))
+        return {"success": True, "messageId": "reply-mail-1"}
+
+    def build_mail_reply_command(
+        self, *, mailbox: str, message_id: str, subject: str, content: str
+    ) -> list[str]:
+        return [
+            "dws",
+            "mail",
+            "message",
+            "reply",
+            "--from",
+            mailbox,
+            "--id",
+            message_id,
+            "--subject",
+            subject,
+            "--content",
+            content,
+            "--format",
+            "json",
+            "--yes",
+        ]
 
     def add_doc_editor_permission(self, node: str, user_ids: list[str]) -> dict:
         if self.doc_editor_permission_error:
@@ -12671,3 +12702,70 @@ def test_stale_codex_last_session_id_is_not_persisted(tmp_path: Path, monkeypatc
     worker.run_once()
 
     assert store.get_codex_session_id("cid-1") is None
+
+
+def test_mail_reply_action_executes_before_chat_and_persists_result(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message("@Alex Chen(明哥) 审批并回复这封邮件")
+    dws = FakeDws([conversation()], {"cid-1": [trigger]})
+    decision = CodexDecision(
+        action=CodexAction.SEND_REPLY,
+        reply_text="邮件已审阅并回复。",
+        system_actions=[
+            {
+                "type": "dws_mail_reply",
+                "mailbox": "derek@example.com",
+                "message_id": "mail-1",
+                "subject": "Re: 评奖结果",
+                "content": "确认无误，可以发布。",
+            },
+            {"type": "send_dingtalk_reply", "reply_text_ref": "user_response.text"},
+        ],
+    )
+    worker = make_worker(tmp_path, dws, FakeCodex(decision), monkeypatch)
+
+    worker.run_once()
+
+    assert dws.mail_replies == [
+        ("derek@example.com", "mail-1", "Re: 评奖结果", "确认无误，可以发布。")
+    ]
+    assert len(final_sent(dws)) == 1
+    attempt = worker.store.get_reply_attempt(1)
+    assert attempt is not None
+    assert attempt.mail_message_id == "mail-1"
+    assert json.loads(attempt.mail_action_result_json)["success"] is True
+    assert attempt.send_status == "sent"
+
+
+def test_retry_after_chat_failure_does_not_send_mail_twice(tmp_path: Path, monkeypatch):
+    trigger = message("@Alex Chen(明哥) 审批并回复这封邮件")
+    dws = FakeDws([conversation()], {"cid-1": [trigger]}, send_error=DwsError("chat down"))
+    decision = CodexDecision(
+        action=CodexAction.SEND_REPLY,
+        reply_text="邮件已审阅并回复。",
+        system_actions=[
+            {
+                "type": "dws_mail_reply",
+                "mailbox": "derek@example.com",
+                "message_id": "mail-1",
+                "subject": "Re: 评奖结果",
+                "content": "确认无误，可以发布。",
+            }
+        ],
+    )
+    worker = make_worker(tmp_path, dws, FakeCodex(decision), monkeypatch)
+
+    worker.run_once()
+    assert len(dws.mail_replies) == 1
+    attempt = worker.store.get_reply_attempt(1)
+    assert attempt is not None
+    assert attempt.send_status == "failed"
+
+    dws.send_error = None
+    assert worker._retry_existing_reply_attempt(
+        conversation(), trigger, [trigger], attempt
+    ) is True
+
+    assert len(dws.mail_replies) == 1
+    assert worker.store.get_reply_attempt(1).send_status == "sent"

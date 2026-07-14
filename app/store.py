@@ -68,6 +68,11 @@ class ReplyAttempt(BaseModel):
     calendar_event_id: str = ""
     calendar_response_status: str = ""
     calendar_response_result_json: str = ""
+    mail_mailbox: str = ""
+    mail_message_id: str = ""
+    mail_subject: str = ""
+    mail_reply_text: str = ""
+    mail_action_result_json: str = ""
     final_reply_text: str
     permission_action: str
     permission_reason: str
@@ -368,6 +373,11 @@ class AutoReplyStore:
                     calendar_event_id text not null default '',
                     calendar_response_status text not null default '',
                     calendar_response_result_json text not null default '',
+                    mail_mailbox text not null default '',
+                    mail_message_id text not null default '',
+                    mail_subject text not null default '',
+                    mail_reply_text text not null default '',
+                    mail_action_result_json text not null default '',
                     final_reply_text text not null default '',
                     permission_action text not null default '',
                     permission_reason text not null default '',
@@ -713,6 +723,11 @@ class AutoReplyStore:
                 ("calendar_event_id", "text not null default ''"),
                 ("calendar_response_status", "text not null default ''"),
                 ("calendar_response_result_json", "text not null default ''"),
+                ("mail_mailbox", "text not null default ''"),
+                ("mail_message_id", "text not null default ''"),
+                ("mail_subject", "text not null default ''"),
+                ("mail_reply_text", "text not null default ''"),
+                ("mail_action_result_json", "text not null default ''"),
             ):
                 if column not in reply_attempt_columns:
                     try:
@@ -2381,6 +2396,11 @@ class AutoReplyStore:
         calendar_event_id: str = "",
         calendar_response_status: str = "",
         calendar_response_result_json: str = "",
+        mail_mailbox: str = "",
+        mail_message_id: str = "",
+        mail_subject: str = "",
+        mail_reply_text: str = "",
+        mail_action_result_json: str = "",
         send_status: str = "pending",
     ) -> int:
         with self._connect() as db:
@@ -2413,9 +2433,14 @@ class AutoReplyStore:
                     calendar_event_id,
                     calendar_response_status,
                     calendar_response_result_json,
+                    mail_mailbox,
+                    mail_message_id,
+                    mail_subject,
+                    mail_reply_text,
+                    mail_action_result_json,
                     send_status
                 )
-                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     conversation_id,
@@ -2444,6 +2469,11 @@ class AutoReplyStore:
                     calendar_event_id,
                     calendar_response_status,
                     calendar_response_result_json,
+                    mail_mailbox,
+                    mail_message_id,
+                    mail_subject,
+                    mail_reply_text,
+                    mail_action_result_json,
                     send_status,
                 ),
             )
@@ -2478,6 +2508,11 @@ class AutoReplyStore:
         calendar_event_id: str = "",
         calendar_response_status: str = "",
         calendar_response_result_json: str = "",
+        mail_mailbox: str = "",
+        mail_message_id: str = "",
+        mail_subject: str = "",
+        mail_reply_text: str = "",
+        mail_action_result_json: str = "",
         send_status: str = "pending",
     ) -> int:
         existing_attempt = self.get_latest_reply_attempt_for_trigger(
@@ -2513,6 +2548,11 @@ class AutoReplyStore:
                 calendar_event_id=calendar_event_id,
                 calendar_response_status=calendar_response_status,
                 calendar_response_result_json=calendar_response_result_json,
+                mail_mailbox=mail_mailbox,
+                mail_message_id=mail_message_id,
+                mail_subject=mail_subject,
+                mail_reply_text=mail_reply_text,
+                mail_action_result_json=mail_action_result_json,
                 send_status=send_status,
             )
         with self._connect() as db:
@@ -2545,6 +2585,11 @@ class AutoReplyStore:
                     calendar_event_id=?,
                     calendar_response_status=?,
                     calendar_response_result_json=?,
+                    mail_mailbox=?,
+                    mail_message_id=?,
+                    mail_subject=?,
+                    mail_reply_text=?,
+                    mail_action_result_json=?,
                     final_reply_text='',
                     permission_action='',
                     permission_reason='',
@@ -2581,6 +2626,11 @@ class AutoReplyStore:
                     calendar_event_id,
                     calendar_response_status,
                     calendar_response_result_json,
+                    mail_mailbox,
+                    mail_message_id,
+                    mail_subject,
+                    mail_reply_text,
+                    mail_action_result_json,
                     send_status,
                     existing_attempt.id,
                 ),
@@ -2606,6 +2656,11 @@ class AutoReplyStore:
         calendar_event_id: str | None = None,
         calendar_response_status: str | None = None,
         calendar_response_result_json: str | None = None,
+        mail_mailbox: str | None = None,
+        mail_message_id: str | None = None,
+        mail_subject: str | None = None,
+        mail_reply_text: str | None = None,
+        mail_action_result_json: str | None = None,
         audit_tool_events_json: str | None = None,
         send_status: str | None = None,
         send_error: str | None = None,
@@ -2627,6 +2682,11 @@ class AutoReplyStore:
             calendar_event_id=calendar_event_id,
             calendar_response_status=calendar_response_status,
             calendar_response_result_json=calendar_response_result_json,
+            mail_mailbox=mail_mailbox,
+            mail_message_id=mail_message_id,
+            mail_subject=mail_subject,
+            mail_reply_text=mail_reply_text,
+            mail_action_result_json=mail_action_result_json,
             audit_tool_events_json=audit_tool_events_json,
             send_status=send_status,
             send_error=send_error,
@@ -2690,6 +2750,11 @@ class AutoReplyStore:
             "calendar_event_id",
             "calendar_response_status",
             "calendar_response_result_json",
+            "mail_mailbox",
+            "mail_message_id",
+            "mail_subject",
+            "mail_reply_text",
+            "mail_action_result_json",
             "audit_tool_events_json",
             "send_status",
             "send_error",

@@ -178,6 +178,24 @@ The worker still preprocesses:
   part of the service state machine.
 - Images, because Codex receives local image paths rather than DingTalk media
   IDs.
+
+## Mail review and reply
+
+A quoted DingTalk mail card is treated as a locator, not as the complete mail
+body. The decision agent lists the principal's mailboxes, searches by the quoted
+sender and subject, reads the full original message, and opens linked review
+materials before making a decision. If a required result or attachment is still
+missing, the agent asks for that specific material instead of approving from the
+preview.
+
+The decision agent never sends mail directly. When the trigger explicitly
+authorizes a reply and the review is complete, it emits a structured
+`dws_mail_reply` action with the selected mailbox, original message ID, subject,
+and reply body. The worker persists those fields on `reply_attempts`, executes the
+mail action before the DingTalk acknowledgement, and stores the DWS result. If
+mail succeeds but the DingTalk acknowledgement fails, a retry sees the stored
+mail result and retries only the chat delivery. This prevents duplicate email
+replies while keeping the two externally visible actions auditable.
 - OA approvals, because approval ownership, task state, comments, and action
   execution are handled by the OA handler. The handler uses the unified
   structured Codex runner with the OA skill injected, then performs the
