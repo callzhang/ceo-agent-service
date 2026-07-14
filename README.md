@@ -163,6 +163,7 @@ cp .env.example .env
 | `CEO_CODEX_MODEL` / `CEO_CODEX_MODEL_PROVIDER` | 可选的显式模型和 provider；默认留空，使用原生 `codex exec` 登录态和默认配置 |
 | `CEO_CODEX_PASSTHROUGH_MCP_SERVERS` | `--ignore-user-config` 下仍允许透传的 MCP 白名单；默认保留 `xiaoqing_interview,exa`。`memory_connector` 单独注入；飞书走 `lark-cli`，不是默认 MCP |
 | `CEO_MENTION_ALIASES` | 群聊中触发本人的 @ 别名 |
+| `CEO_DING_ROBOT_NAME` | handoff/DING 通知使用的机器人名称；默认服务启动配置为 `磊哥`，运行时解析 robot code |
 | `CEO_CHAT_BOT_NAMES` | 允许触发自动回复的机器人名称列表，默认复用 `CEO_DING_ROBOT_NAME` |
 | `CEO_ROBOT_DIRECT_MESSAGE_LOOKBACK` | 机器人私聊轮询窗口，默认 `4h` |
 | `CEO_ASSISTANT_SIGNATURE` | 自动回复签名 |
