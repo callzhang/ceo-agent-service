@@ -1,0 +1,80 @@
+[
+  {
+    "id": "wording-only",
+    "summary": "双方目标一致，只是在讨论如何表述发布说明。",
+    "transcript": [
+      ["Alex", "我觉得叫灰度发布更准确。"],
+      ["Mina", "我习惯叫分批发布，实际范围和你的方案一样。"]
+    ],
+    "expected_action": "no_action"
+  },
+  {
+    "id": "host-announces-no-confirmation",
+    "summary": "全量还是灰度存在分歧，主持人宣布全量，但 Mina 没有确认。",
+    "transcript": [
+      ["Alex", "全量才能在本周验证收入。"],
+      ["Mina", "我不同意，当前回滚能力只支持 10% 灰度。"],
+      ["Host", "那就按全量推进，下一题。"]
+    ],
+    "expected_action": "send",
+    "expected_state": "unresolved"
+  },
+  {
+    "id": "all-sides-restate",
+    "summary": "各方先有分歧，随后明确复述并承诺同一个方案。",
+    "transcript": [
+      ["Alex", "我原本主张全量验证收入。"],
+      ["Mina", "我原本主张 10% 灰度控制风险。"],
+      ["Alex", "我同意先 10%，指标达标后扩到全量，我按这个计划改。"],
+      ["Mina", "同意，我也按先 10% 再扩量执行。"]
+    ],
+    "expected_action": "send",
+    "expected_state": "aligned"
+  },
+  {
+    "id": "two-independent-tradeoffs",
+    "summary": "发布范围和延迟预算是两个独立取舍，均未对齐。",
+    "transcript": [
+      ["Alex", "为了收入验证我希望全量，本周必须看到转化。"],
+      ["Mina", "为了故障面我只接受 10% 灰度。"],
+      ["Chen", "模型精度优先，我接受接口多 500ms。"],
+      ["Alex", "客户体验优先，延迟最多只能增加 100ms。"]
+    ],
+    "expected_action": "send",
+    "expected_state": "unresolved",
+    "expected_question_count": 2
+  },
+  {
+    "id": "derek-view-lost",
+    "summary": "Derek 说应先定义风险预算，后续讨论却只还原成了选择灰度。",
+    "transcript": [
+      ["Derek", "我的重点不是固定做灰度，而是先定义可接受的故障面，再倒推发布范围。"],
+      ["Alex", "明白，Derek 支持灰度。"],
+      ["Mina", "那我们讨论灰度比例，不用再看风险预算。"]
+    ],
+    "expected_action": "send",
+    "expected_trigger": "derek_viewpoint"
+  },
+  {
+    "id": "history-would-invent-position",
+    "summary": "Derek 没有在会议中发言，历史偏好不能被当成他的本次立场。",
+    "transcript": [
+      ["Alex", "我猜 Derek 过去偏向小步灰度。"],
+      ["Mina", "也许，但他今天没有表达意见，我们先不替他下结论。"]
+    ],
+    "expected_action": "no_action",
+    "forbidden_trigger": "derek_viewpoint"
+  },
+  {
+    "id": "aligned-plus-derek-explanation",
+    "summary": "分歧已明确对齐，但 Derek 的风险预算观点仍被误解为固定灰度偏好。",
+    "transcript": [
+      ["Derek", "先定义最多允许 1% 用户受影响，再按这个风险预算倒推范围；不是永远只做灰度。"],
+      ["Alex", "我原本要全量，现在同意先 10%，指标达标后扩量，并按此执行。"],
+      ["Mina", "我也同意先 10% 后扩量。Derek 就是更喜欢保守灰度。"]
+    ],
+    "expected_action": "send",
+    "expected_state": "aligned",
+    "expected_trigger": "derek_viewpoint"
+  }
+]
