@@ -17,6 +17,10 @@ MEETING_ALIGNMENT_DECISION_SCHEMA_PATH = (
 MEETING_ALIGNMENT_AUDIT_EVENT_LIMIT = 200
 
 
+class MeetingAlignmentTargetError(ValueError):
+    """A decision target contradicts the authoritative meeting roster."""
+
+
 class MeetingAlignmentCodex(Protocol):
     last_session_id: str | None
     last_transcript_start_line: int
@@ -33,13 +37,15 @@ class MeetingAlignmentAgent:
         self.codex = codex
 
     def decide(self, source: MeetingSource) -> MeetingAlignmentDecision:
-        return self.codex.decide(
+        decision = self.codex.decide(
             prompt=build_meeting_alignment_prompt(
                 source,
                 work_profile=work_profile_instruction(),
                 work_profile_source=str(work_profile_path()),
             )
         )
+        _validate_source_aware_target(source, decision)
+        return decision
 
 
 class MeetingAlignmentCodexRunner:
@@ -162,6 +168,7 @@ def build_meeting_alignment_prompt(
         )
         target_contract = f"""这是 1:1 会议：
 - 目标只能是另一位参会人，kind=direct、direct_user_id={other.user_id}。
+- 1:1 会议必须返回 direct target；不能返回 target=null。
 - 禁止搜索或选择群；conversation_id 和 candidates 必须为空。"""
     else:
         target_contract = """这是多人会议：
@@ -195,7 +202,8 @@ def build_meeting_alignment_prompt(
 输出合同：
 - 只输出 MeetingAlignmentDecision JSON，严格遵守 schema，不添加字段。
 - no_action 时分析和发送字段必须为空，只保留 audit_summary 与 confidence。
-- send 时 target、final_message、trigger_reasons 必须完整；最终只是一条可直接发送的合并消息。
+- send 时 final_message 和 trigger_reasons 必须完整；target 通常必填，唯一例外是多人会议已经穷尽群发现却没有可发送群，此时 target=null 供发送层重试。1:1 会议始终必须返回另一位参会人的 direct target。
+- 最终只生成一条可直接发送或等待发送层重试的合并消息。
 
 服务端注入的工作人格（仅作解释辅助，不能创造会议立场）：
 {work_profile or "（无可用工作人格）"}
@@ -270,4 +278,47 @@ def _validate_historical_sources(
     raise ValueError(
         "historical_sources require memory_recall audit evidence or the "
         "configured work profile source"
+    )
+
+
+def _validate_source_aware_target(
+    source: MeetingSource,
+    decision: MeetingAlignmentDecision,
+) -> None:
+    if decision.action == "no_action":
+        return
+
+    participant_count = len(source.participants)
+    target = decision.target
+    if participant_count == 2:
+        other_participants = [
+            participant
+            for participant in source.participants
+            if participant.user_id != source.current_user_id
+        ]
+        if len(other_participants) != 1:
+            raise MeetingAlignmentTargetError(
+                "1:1 meeting source must identify exactly one other participant"
+            )
+        if target is None or target.kind != "direct":
+            raise MeetingAlignmentTargetError(
+                "1:1 send requires a direct target for the other participant"
+            )
+        expected_user_id = other_participants[0].user_id
+        if target.direct_user_id != expected_user_id:
+            raise MeetingAlignmentTargetError(
+                "1:1 direct target must target the other participant: "
+                f"expected {expected_user_id!r}, got {target.direct_user_id!r}"
+            )
+        return
+
+    if participant_count > 2:
+        if target is not None and target.kind == "direct":
+            raise MeetingAlignmentTargetError(
+                "multi-party send cannot use a direct target"
+            )
+        return
+
+    raise MeetingAlignmentTargetError(
+        "send decision requires at least two meeting participants"
     )

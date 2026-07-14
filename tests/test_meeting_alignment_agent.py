@@ -4,7 +4,9 @@ from pathlib import Path
 import pytest
 
 from app.meeting_alignment_agent import (
+    MeetingAlignmentAgent,
     MeetingAlignmentCodexRunner,
+    MeetingAlignmentTargetError,
     build_meeting_alignment_prompt,
     parse_meeting_alignment_decision,
 )
@@ -104,6 +106,27 @@ def derek_view_payload(*, historical_sources: list[str]) -> dict:
     }
 
 
+class FakeMeetingCodex:
+    last_session_id = "meeting-session"
+    last_transcript_start_line = 0
+    last_transcript_end_line = 10
+    last_audit_tool_events = []
+
+    def __init__(self, payload: dict):
+        self.payload = payload
+
+    def decide(self, *, prompt: str):
+        from app.meeting_alignment_models import MeetingAlignmentDecision
+
+        return MeetingAlignmentDecision.model_validate(self.payload)
+
+
+def send_payload_with_target(target) -> dict:
+    payload = derek_view_payload(historical_sources=[])
+    payload["target"] = target
+    return payload
+
+
 def test_prompt_contains_full_transcript_and_behavioral_contracts():
     prompt = build_meeting_alignment_prompt(
         source(),
@@ -135,6 +158,88 @@ def test_one_to_one_prompt_requires_direct_other_participant():
     assert "这是 1:1 会议" in prompt
     assert "direct_user_id=alex" in prompt
     assert "禁止搜索或选择群" in prompt
+    assert "1:1 会议必须返回 direct target" in prompt
+
+
+@pytest.mark.parametrize(
+    ("target", "message"),
+    [
+        (None, "1:1 send requires a direct target"),
+        (
+            {
+                "kind": "group",
+                "conversation_id": "cid-1",
+                "direct_user_id": "",
+                "title": "项目群",
+                "candidates": [
+                    {
+                        "conversation_id": "cid-1",
+                        "title": "项目群",
+                        "evidence": ["同一议题"],
+                    }
+                ],
+            },
+            "1:1 send requires a direct target",
+        ),
+        (
+            {
+                "kind": "direct",
+                "conversation_id": "",
+                "direct_user_id": "mina",
+                "title": "Mina",
+                "candidates": [],
+            },
+            "must target the other participant",
+        ),
+    ],
+)
+def test_agent_rejects_invalid_one_to_one_send_targets(target, message):
+    agent = MeetingAlignmentAgent(
+        FakeMeetingCodex(send_payload_with_target(target))
+    )
+    with pytest.raises(MeetingAlignmentTargetError, match=message):
+        agent.decide(source(participant_count=2))
+
+
+def test_agent_accepts_direct_target_for_other_one_to_one_participant():
+    target = {
+        "kind": "direct",
+        "conversation_id": "",
+        "direct_user_id": "alex",
+        "title": "Alex",
+        "candidates": [],
+    }
+    decision = MeetingAlignmentAgent(
+        FakeMeetingCodex(send_payload_with_target(target))
+    ).decide(source(participant_count=2))
+    assert decision.target is not None
+    assert decision.target.direct_user_id == "alex"
+
+
+def test_agent_rejects_direct_target_for_multi_party_meeting():
+    target = {
+        "kind": "direct",
+        "conversation_id": "",
+        "direct_user_id": "alex",
+        "title": "Alex",
+        "candidates": [],
+    }
+    agent = MeetingAlignmentAgent(
+        FakeMeetingCodex(send_payload_with_target(target))
+    )
+    with pytest.raises(
+        MeetingAlignmentTargetError,
+        match="multi-party send cannot use a direct target",
+    ):
+        agent.decide(source())
+
+
+def test_agent_accepts_null_target_retry_for_multi_party_meeting():
+    decision = MeetingAlignmentAgent(
+        FakeMeetingCodex(send_payload_with_target(None))
+    ).decide(source())
+    assert decision.action == "send"
+    assert decision.target is None
 
 
 def test_parser_rejects_extra_fields():
