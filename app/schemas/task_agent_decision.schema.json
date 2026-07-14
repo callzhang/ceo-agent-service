@@ -299,6 +299,7 @@
         "todo_id",
         "todo_ref",
         "title",
+        "description",
         "owner_user_id",
         "owner_name",
         "status",
@@ -321,6 +322,9 @@
           "type": "string"
         },
         "title": {
+          "type": "string"
+        },
+        "description": {
           "type": "string"
         },
         "owner_user_id": {

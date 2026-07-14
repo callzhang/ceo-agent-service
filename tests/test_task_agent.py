@@ -687,6 +687,7 @@ def test_process_work_item_creates_project_todo_update_and_run(tmp_path):
                 {
                     "action": "create",
                     "title": "补齐来源链接",
+                    "description": "基于售前群 2026-06-07 的讨论，Alex 需要补齐售前知识库材料来源链接，写清每份材料对应的客户场景、缺口 owner 和可验收的完成状态。",
                     "owner_user_id": "owner-1",
                     "owner_name": "Alex",
                     "status": "open",
@@ -712,7 +713,12 @@ def test_process_work_item_creates_project_todo_update_and_run(tmp_path):
     assert len(projects) == 1
     assert projects[0].title == "售前知识库建设"
     assert json.loads(projects[0].memory_context_json) == _memory_context()
-    assert store.list_work_todos(project_id=projects[0].id)[0].title == "补齐来源链接"
+    todo = store.list_work_todos(project_id=projects[0].id)[0]
+    assert todo.title == "补齐来源链接"
+    assert todo.description == (
+        "基于售前群 2026-06-07 的讨论，Alex 需要补齐售前知识库材料来源链接，"
+        "写清每份材料对应的客户场景、缺口 owner 和可验收的完成状态。"
+    )
     assert store.list_work_updates(project_id=projects[0].id)[0].summary == "创建售前知识库项目。"
     assert store.claim_work_summary_inputs(limit=1) == []
     assert "memory_recall" in codex.prompts[0]
@@ -1087,6 +1093,96 @@ def test_follow_up_close_skips_pending_follow_up_without_closing_todo(
     assert todo is not None
     assert todo.status == "open"
     assert todo.completion_evidence_json == "{}"
+
+
+def test_follow_up_keep_open_syncs_question_from_updated_todo(tmp_path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    project_id = store.create_work_project(
+        title="会议治理",
+        category="management",
+        status="active",
+    )
+    todo_id = store.create_work_todo(
+        project_id=project_id,
+        title="整理本周最需要改的3场会议",
+        owner_user_id="mina-user-1",
+        owner_name="邹婧玮(Mina 邹)",
+        status="open",
+        priority="P1",
+        deadline_at="2026-07-17T18:00:00+08:00",
+        next_follow_up_at="2026-07-16T10:00:00+08:00",
+        follow_up_question="旧问题：本周会议分析完成了吗？",
+    )
+    follow_up_id = store.create_follow_up_draft(
+        project_id=project_id,
+        todo_id=todo_id,
+        owner_user_id="mina-user-1",
+        owner_name="邹婧玮(Mina 邹)",
+        target_conversation_id="cid-mina",
+        target_kind="direct",
+        question_text="旧问题：本周会议分析完成了吗？",
+        status="draft",
+        scheduled_at="2026-07-16T10:00:00+08:00",
+    )
+    updated_question = (
+        "Mina，基于你反馈待办必须有真实事项和 context，"
+        "本周最需要改的3场具体会议是否已写清问题、改法和用途？"
+    )
+    decision = TaskAgentDecision.model_validate(
+        {
+            "action": "update_project",
+            "project": {
+                "id": project_id,
+                "title": "会议治理",
+                "category": "management",
+                "status": "active",
+                "memory_context": _memory_context(),
+            },
+            "todo_changes": [
+                {
+                    "action": "update",
+                    "todo_id": todo_id,
+                    "title": "整理本周最需要改的3场具体会议，并写清问题、改法和用途",
+                    "owner_user_id": "mina-user-1",
+                    "owner_name": "邹婧玮(Mina 邹)",
+                    "status": "open",
+                    "priority": "P1",
+                    "deadline_at": "2026-07-17T18:00:00+08:00",
+                    "next_follow_up_at": "2026-07-16T10:00:00+08:00",
+                    "follow_up_question": updated_question,
+                    "blocker": "待办若不写清具体事项和用途，owner 无法判断交付内容。",
+                }
+            ],
+            "follow_up_drafts": [],
+            "follow_up_changes": [
+                {
+                    "follow_up_id": follow_up_id,
+                    "todo_id": todo_id,
+                    "action": "keep_open",
+                    "reason": "保留跟进，但按 Mina 的反馈更新问题上下文。",
+                    "evidence_check": {"source": "reply_attempt:2704"},
+                }
+            ],
+            "update_summary": "按 Mina 反馈更新待办上下文。",
+            "merge_reason": "matched existing meeting-governance TODO",
+            "memory_recall_used": True,
+            "confidence": 0.88,
+        }
+    )
+
+    apply_task_agent_decision(
+        store,
+        summary_input_id=1,
+        work_item=_work_item(project_name="会议治理"),
+        decision=decision,
+        memory_recall_attempted=True,
+    )
+
+    follow_up = store.get_follow_up_draft(follow_up_id)
+    assert follow_up is not None
+    assert follow_up.status == "draft"
+    assert follow_up.question_text == updated_question
+    assert follow_up.reaction_summary == "保留跟进，但按 Mina 的反馈更新问题上下文。"
 
 
 def test_follow_up_change_rejects_missing_positive_follow_up_id(tmp_path):
@@ -2484,6 +2580,7 @@ def test_sparse_todo_update_preserves_existing_status_and_priority(tmp_path):
                 {
                     "action": "update",
                     "todo_id": todo_id,
+                    "description": "客户交付 ETA 需要说明当前阻塞、责任人、下一次对客户同步的时间，以及是否影响原承诺。",
                     "blocker": "等待 owner 回复",
                 }
             ],
@@ -2506,12 +2603,16 @@ def test_sparse_todo_update_preserves_existing_status_and_priority(tmp_path):
     todo = store.list_work_todos(project_id=project_id)[0]
     assert todo.status == "waiting_owner"
     assert todo.priority == "P0"
+    assert todo.description == (
+        "客户交付 ETA 需要说明当前阻塞、责任人、下一次对客户同步的时间，以及是否影响原承诺。"
+    )
     assert todo.blocker == "等待 owner 回复"
     update = store.list_work_updates(project_id=project_id)[0]
     todo_change = json.loads(update.changes_json)["todo_changes"][0]
     assert todo_change == {
         "action": "update",
         "todo_id": todo_id,
+        "description": "客户交付 ETA 需要说明当前阻塞、责任人、下一次对客户同步的时间，以及是否影响原承诺。",
         "blocker": "等待 owner 回复",
     }
 

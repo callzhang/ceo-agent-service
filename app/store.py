@@ -550,6 +550,7 @@ class AutoReplyStore:
                     id integer primary key autoincrement,
                     project_id integer not null,
                     title text not null,
+                    description text not null default '',
                     owner_user_id text not null default '',
                     owner_name text not null default '',
                     status text not null default 'open',
@@ -780,6 +781,17 @@ class AutoReplyStore:
                 if column not in work_summary_input_columns:
                     db.execute(
                         f"alter table work_summary_inputs add column {column} {definition}"
+                    )
+            work_todo_columns = {
+                row["name"]
+                for row in db.execute("pragma table_info(work_todos)").fetchall()
+            }
+            for column, definition in (
+                ("description", "text not null default ''"),
+            ):
+                if column not in work_todo_columns:
+                    db.execute(
+                        f"alter table work_todos add column {column} {definition}"
                     )
             follow_up_draft_columns = {
                 row["name"]
@@ -3327,6 +3339,7 @@ class AutoReplyStore:
         allowed_columns = {
             "project_id",
             "title",
+            "description",
             "owner_user_id",
             "owner_name",
             "status",
@@ -3355,6 +3368,7 @@ class AutoReplyStore:
         allowed_columns = {
             "project_id",
             "title",
+            "description",
             "owner_user_id",
             "owner_name",
             "status",

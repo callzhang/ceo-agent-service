@@ -178,6 +178,7 @@ class TodoChange(BaseModel):
     todo_id: int | None = None
     todo_ref: str = ""
     title: str = ""
+    description: str = ""
     owner_user_id: str = ""
     owner_name: str = ""
     status: TodoStatus = TodoStatus.OPEN
@@ -259,6 +260,7 @@ class WorkTodo(BaseModel):
     id: int
     project_id: int
     title: str
+    description: str = ""
     owner_user_id: str = ""
     owner_name: str = ""
     status: TodoStatus

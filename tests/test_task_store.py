@@ -185,6 +185,7 @@ def test_create_project_todo_update_and_follow_up(tmp_path: Path):
     todo_id = store.create_work_todo(
         project_id=project_id,
         title="补齐售前材料来源链接",
+        description="确认售前知识库里每份材料的来源链接、使用场景和缺口 owner。",
         owner_user_id="owner-1",
         owner_name="Alex",
         priority="P1",
@@ -195,6 +196,14 @@ def test_create_project_todo_update_and_follow_up(tmp_path: Path):
     todos = store.list_work_todos(project_id=project_id)
     assert [todo.id for todo in todos] == [todo_id]
     assert todos[0].title == "补齐售前材料来源链接"
+    assert todos[0].description == "确认售前知识库里每份材料的来源链接、使用场景和缺口 owner。"
+    store.update_work_todo(
+        todo_id,
+        description="补齐来源链接，并写清每份材料用于哪个客户场景。",
+    )
+    updated_todo = store.get_work_todo(todo_id)
+    assert updated_todo is not None
+    assert updated_todo.description == "补齐来源链接，并写清每份材料用于哪个客户场景。"
 
     update_id = store.create_work_update(
         project_id=project_id,

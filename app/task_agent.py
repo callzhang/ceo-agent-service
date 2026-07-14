@@ -202,6 +202,7 @@ def build_task_agent_prompt(
 - risk_check 是结构化输出必填的审计说明。涉及人事、试用期、转正、绩效、薪酬、offer、候选人隐私、客户敏感承诺或财务敏感信息时，必须设置 sensitive=true，并优先使用 direct target。
 - risk_check.owner_in_group 只记录 group target 是否包含 owner；direct target 可填 false 表示不适用，但不能用它阻断发送。
 - follow_up_draft.question_text 必须包含一句简短来源或依据，例如“基于某群/某会议/某文档提到的事项”，避免让 owner 不知道 AI 为什么突然追问；措辞必须是确认进展，不要像分配新任务。
+- todo_changes.title 必须短，只写 owner 要完成的动作；todo_changes.description 用来写详细上下文，必须说明来源事项、具体对象、交付内容、完成标准和产出用途。不要把这些细节塞进 title。
 - 跟进时间指导：P0 今天跟进；P1 在 3 天内跟进；P2 在上下文或 OKR 暗示需要时本周内跟进。scheduled_at 和 next_follow_up_at 必须落在工作日 09:00-18:00；夜间或周末不要安排发送。
 
 输出要求：
@@ -761,6 +762,7 @@ def _todo_values(
     values: dict[str, object] = {}
     fields = [
         "title",
+        "description",
         "owner_user_id",
         "owner_name",
         "status",
@@ -883,6 +885,10 @@ def _apply_follow_up_change(
         values["reaction_summary"] = change.reason
     elif change.action == "keep_open":
         values["reaction_summary"] = change.reason
+        if change.todo_id is not None:
+            todo = store.get_work_todo(change.todo_id)
+            if todo is not None and todo.follow_up_question.strip():
+                values["question_text"] = todo.follow_up_question.strip()
 
     store.update_follow_up_draft(change.follow_up_id, **values)
 

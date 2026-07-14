@@ -3213,6 +3213,7 @@ def _task_project_search_values(project, todos) -> list[str]:
                 todo.owner_name,
                 str(todo.status),
                 str(todo.priority),
+                todo.description,
                 todo.deadline_at,
                 todo.next_follow_up_at,
                 todo.follow_up_question,
@@ -3508,6 +3509,7 @@ def _task_todo_detail_item(
         f"<span>Next {escape(next_follow_up)}</span>"
         "</div>"
         '<div class="todo-detail-fields">'
+        f"{_task_todo_detail_field('Description', todo.description or '-')}"
         f"{_task_todo_detail_field('Question', todo.follow_up_question or '-')}"
         f"{_task_todo_detail_field('Blocker', todo.blocker or '-')}"
         f"{_task_todo_detail_field('Evidence', evidence)}"
