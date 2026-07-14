@@ -83,6 +83,38 @@ Every attempt is stored locally, including:
 The audit summary is a concise explanation of evidence and applied rules. It is
 not hidden chain of thought.
 
+## Meeting Alignment
+
+Meeting follow-up is an independent producer/consumer pipeline inside the same
+`com.ceo-agent-service.main` process. There is no separate cron job or launchd
+plist. The producer combines AI Minutes metadata with one uniquely matching
+calendar event, so a job is eligible only when Derek attended and the meeting
+has explicitly ended for at least ten minutes.
+
+The agent remains silent unless it finds a material viewpoint disagreement or a
+need for `Derek 的观点输出解读`. An aligned disagreement requires explicit
+agreement, commitment, or consistent restatement by the relevant sides. For an
+unresolved disagreement the output includes the parties' views and reasons plus
+one or more minimum-sufficient tradeoff questions whose answers can directly
+produce alignment. Derek's explanation may use historical cases and the work
+profile only to clarify a view that was actually expressed in the meeting.
+
+Multi-party meetings are sent to the highest-ranked sendable group with real
+mentions. They never fall back to a direct message. A 1:1 meeting sends directly
+to the other participant. No DING or reaction is added by this workflow.
+
+The queue persists analysis before delivery. `no_action` is terminal;
+`ready_to_send` is persisted before any external send; `sent` records delivery.
+Retryable failures use `retry` plus `available_at`; invalid evidence or schema
+violations use `failed`. An ambiguous send with an `openTaskId` is reconciled by
+status lookup only, with bounded backoff and no resend. In dry-run mode the
+consumer may analyze a job but does not claim `ready_to_send` delivery.
+
+Every Codex invocation appends an immutable `meeting_alignment_run`. The History
+page merges these runs with reply attempts in one globally chronological feed,
+including common search, status filters, pagination, event chart, detail view,
+and Codex-session related history.
+
 ## Task Summary
 
 The task summary system is project-centered, not inbox-centered. It records
