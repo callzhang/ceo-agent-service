@@ -2660,6 +2660,55 @@ def test_list_calendar_events_uses_dws_calendar_event_list():
     assert events[0].description == "固定例会"
 
 
+def test_list_calendar_events_page_preserves_pagination_metadata():
+    client = RecordingDwsClient(
+        {
+            "success": True,
+            "result": {
+                "events": [
+                    {
+                        "id": "event-1",
+                        "title": "产品周会",
+                        "startTime": "2026-05-14T10:30:00+08:00",
+                        "endTime": "2026-05-14T11:30:00+08:00",
+                    }
+                ],
+                "hasMore": True,
+                "nextCursor": "cursor-2",
+            },
+        }
+    )
+
+    page = client.list_calendar_events_page(
+        start="2026-05-14T10:00:00+08:00",
+        end="2026-05-14T12:00:00+08:00",
+        limit=50,
+        cursor="cursor-1",
+    )
+
+    assert page["has_more"] is True
+    assert page["next_cursor"] == "cursor-2"
+    assert [event.event_id for event in page["events"]] == ["event-1"]
+    assert client.commands == [
+        [
+            "dws",
+            "calendar",
+            "event",
+            "list",
+            "--start",
+            "2026-05-14T10:00:00+08:00",
+            "--end",
+            "2026-05-14T12:00:00+08:00",
+            "--limit",
+            "50",
+            "--cursor",
+            "cursor-1",
+            "--format",
+            "json",
+        ]
+    ]
+
+
 def test_parse_calendar_events_preserves_live_attendee_details():
     events = DwsClient.parse_calendar_events(
         {

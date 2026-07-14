@@ -636,8 +636,15 @@ class DwsClient:
         )
         return command
 
-    def build_list_calendar_events_command(self, start: str, end: str) -> list[str]:
-        return [
+    def build_list_calendar_events_command(
+        self,
+        start: str,
+        end: str,
+        *,
+        limit: int | None = None,
+        cursor: str | None = None,
+    ) -> list[str]:
+        command = [
             self.dws_bin,
             "calendar",
             "event",
@@ -646,9 +653,13 @@ class DwsClient:
             start,
             "--end",
             end,
-            "--format",
-            "json",
         ]
+        if limit is not None:
+            command.extend(["--limit", str(limit)])
+        if cursor is not None:
+            command.extend(["--cursor", cursor])
+        command.extend(["--format", "json"])
+        return command
 
     def build_get_calendar_event_command(self, event_id: str) -> list[str]:
         return [
@@ -1793,6 +1804,31 @@ class DwsClient:
     def list_calendar_events(self, start: str, end: str) -> list[DwsCalendarEvent]:
         payload = self.run_json(self.build_list_calendar_events_command(start, end))
         return self.parse_calendar_events(payload)
+
+    def list_calendar_events_page(
+        self,
+        *,
+        start: str,
+        end: str,
+        limit: int = 50,
+        cursor: str = "",
+    ) -> dict[str, Any]:
+        payload = self.run_json(
+            self.build_list_calendar_events_command(
+                start,
+                end,
+                limit=limit,
+                cursor=cursor,
+            )
+        )
+        result = payload.get("result", payload)
+        if not isinstance(result, dict):
+            result = {}
+        return {
+            "events": self.parse_calendar_events(payload),
+            "has_more": bool(result.get("hasMore")),
+            "next_cursor": str(result.get("nextCursor") or ""),
+        }
 
     def get_calendar_event(self, event_id: str) -> DwsCalendarEvent | None:
         try:
