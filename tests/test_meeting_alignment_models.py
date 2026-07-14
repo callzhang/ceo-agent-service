@@ -144,8 +144,12 @@ def test_no_action_without_delivery_output_is_valid():
     payload.update(
         action="no_action",
         trigger_reasons=[],
+        topics=[],
+        derek_viewpoint=None,
+        key_questions=[],
+        mention_names=[],
         target=None,
-        final_message="  ",
+        final_message="",
     )
     decision = MeetingAlignmentDecision.model_validate(payload)
     assert decision.action == "no_action"
@@ -154,6 +158,46 @@ def test_no_action_without_delivery_output_is_valid():
 def test_no_action_requires_empty_trigger_reasons():
     payload = valid_send_decision()
     payload.update(action="no_action", target=None, final_message="")
+    with pytest.raises(ValidationError):
+        MeetingAlignmentDecision.model_validate(payload)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        (
+            "topics",
+            [
+                {
+                    "title": "上线范围",
+                    "state": "unresolved",
+                    "views": [],
+                    "conclusion": "",
+                    "alignment_reason": "",
+                }
+            ],
+        ),
+        ("derek_viewpoint", valid_derek_viewpoint()),
+        (
+            "key_questions",
+            [{"question": "是否上线？", "answer_owner_names": ["A"]}],
+        ),
+        ("mention_names", ["A"]),
+    ],
+)
+def test_no_action_rejects_analysis_payload(field, value):
+    payload = valid_send_decision()
+    payload.update(
+        action="no_action",
+        trigger_reasons=[],
+        topics=[],
+        derek_viewpoint=None,
+        key_questions=[],
+        mention_names=[],
+        target=None,
+        final_message="",
+    )
+    payload[field] = value
     with pytest.raises(ValidationError):
         MeetingAlignmentDecision.model_validate(payload)
 
@@ -171,6 +215,54 @@ def test_disagreement_triggers_require_matching_topics_and_questions():
 
     payload = valid_send_decision()
     payload["key_questions"] = []
+    with pytest.raises(ValidationError):
+        MeetingAlignmentDecision.model_validate(payload)
+
+
+def test_topic_states_require_matching_disagreement_triggers():
+    payload = valid_send_decision()
+    payload["topics"].append(
+        {
+            "title": "回滚门槛",
+            "state": "aligned",
+            "views": [],
+            "conclusion": "错误率超过 1% 时回滚。",
+            "alignment_reason": "参会者已明确确认。",
+        }
+    )
+    with pytest.raises(ValidationError):
+        MeetingAlignmentDecision.model_validate(payload)
+
+    payload = valid_send_decision()
+    payload["trigger_reasons"] = ["aligned_disagreement"]
+    payload["topics"][0].update(
+        state="aligned",
+        conclusion="错误率超过 1% 时回滚。",
+        alignment_reason="参会者已明确确认。",
+    )
+    payload["topics"].append(
+        {
+            "title": "上线范围",
+            "state": "unresolved",
+            "views": [],
+            "conclusion": "",
+            "alignment_reason": "",
+        }
+    )
+    with pytest.raises(ValidationError):
+        MeetingAlignmentDecision.model_validate(payload)
+
+
+@pytest.mark.parametrize("field", ["conclusion", "alignment_reason"])
+def test_aligned_topic_requires_conclusion_and_alignment_reason(field):
+    payload = valid_send_decision()
+    payload["trigger_reasons"] = ["aligned_disagreement"]
+    payload["topics"][0].update(
+        state="aligned",
+        conclusion="错误率超过 1% 时回滚。",
+        alignment_reason="参会者已明确确认。",
+    )
+    payload["topics"][0][field] = "  "
     with pytest.raises(ValidationError):
         MeetingAlignmentDecision.model_validate(payload)
 

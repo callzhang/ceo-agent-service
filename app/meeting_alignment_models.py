@@ -46,6 +46,16 @@ class AlignmentTopic(StrictModel):
     conclusion: str
     alignment_reason: str
 
+    @model_validator(mode="after")
+    def validate_aligned_result(self) -> Self:
+        if self.state == "aligned" and (
+            not self.conclusion.strip() or not self.alignment_reason.strip()
+        ):
+            raise ValueError(
+                "aligned topic requires conclusion and alignment_reason"
+            )
+        return self
+
 
 class DerekViewpoint(StrictModel):
     expressed_view: str
@@ -103,6 +113,13 @@ class MeetingAlignmentDecision(StrictModel):
             and "aligned" not in topic_states
         ):
             raise ValueError("aligned_disagreement requires an aligned topic")
+        if (
+            "aligned" in topic_states
+            and "aligned_disagreement" not in trigger_reasons
+        ):
+            raise ValueError(
+                "aligned topic requires aligned_disagreement trigger"
+            )
         if "unresolved_disagreement" in trigger_reasons:
             if "unresolved" not in topic_states:
                 raise ValueError(
@@ -112,6 +129,13 @@ class MeetingAlignmentDecision(StrictModel):
                 raise ValueError(
                     "unresolved_disagreement requires key_questions"
                 )
+        if (
+            "unresolved" in topic_states
+            and "unresolved_disagreement" not in trigger_reasons
+        ):
+            raise ValueError(
+                "unresolved topic requires unresolved_disagreement trigger"
+            )
         has_derek_viewpoint_trigger = "derek_viewpoint" in trigger_reasons
         has_derek_viewpoint = self.derek_viewpoint is not None
         if has_derek_viewpoint_trigger != has_derek_viewpoint:
@@ -122,11 +146,15 @@ class MeetingAlignmentDecision(StrictModel):
         if self.action == "no_action":
             if (
                 self.trigger_reasons
+                or self.topics
+                or self.derek_viewpoint is not None
+                or self.key_questions
+                or self.mention_names
                 or self.target is not None
                 or self.final_message.strip()
             ):
                 raise ValueError(
-                    "no_action requires empty trigger_reasons and no delivery output"
+                    "no_action requires empty analysis and delivery output"
                 )
             return self
         if self.target is None or not self.final_message.strip():
