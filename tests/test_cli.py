@@ -4293,6 +4293,85 @@ def test_producer_and_consumer_loops_call_separate_methods_once():
     ]
 
 
+def test_meeting_loops_call_separate_workers_once(monkeypatch, tmp_path):
+    calls = []
+
+    class StopLoop(Exception):
+        pass
+
+    store = object()
+    dws = object()
+    runner = object()
+    settings = WorkerSettings(
+        db_path=tmp_path / "worker.sqlite3",
+        workspace=tmp_path / "memory",
+    )
+    monkeypatch.setattr(cli, "AutoReplyStore", lambda path: store)
+    monkeypatch.setattr(cli, "_create_meeting_dws", lambda received: dws)
+    monkeypatch.setattr(
+        cli,
+        "MeetingAlignmentCodexRunner",
+        lambda **kwargs: calls.append(("runner", kwargs)) or runner,
+    )
+    monkeypatch.setattr(
+        cli,
+        "produce_meeting_alignment_jobs",
+        lambda received_store, received_dws, *, now, settle_seconds: calls.append(
+            ("produce-meeting", received_store, received_dws, now, settle_seconds)
+        ),
+    )
+    monkeypatch.setattr(
+        cli,
+        "consume_meeting_alignment_jobs",
+        lambda received_store, received_dws, received_runner, *, now, limit: calls.append(
+            (
+                "consume-meeting",
+                received_store,
+                received_dws,
+                received_runner,
+                now,
+                limit,
+            )
+        ),
+    )
+
+    def sleep(seconds):
+        calls.append(("sleep", seconds))
+        raise StopLoop
+
+    with pytest.raises(StopLoop):
+        cli.run_meeting_producer_loop(
+            settings,
+            poll_interval_seconds=60,
+            settle_seconds=600,
+            sleep=sleep,
+        )
+    with pytest.raises(StopLoop):
+        cli.run_meeting_consumer_loop(
+            settings,
+            poll_interval_seconds=10,
+            max_tasks=4,
+            sleep=sleep,
+        )
+
+    assert calls[0][:3] == ("produce-meeting", store, dws)
+    assert calls[0][3].utcoffset() is not None
+    assert calls[0][4] == 600
+    assert calls[1] == ("sleep", 60)
+    assert calls[2] == (
+        "runner",
+        {
+            "workspace": tmp_path / "memory",
+            "timeout_seconds": 1200,
+            "idle_timeout_seconds": 900,
+        },
+    )
+    assert calls[3][:4] == ("consume-meeting", store, dws, runner)
+    assert calls[3][4].utcoffset() is not None
+    assert calls[3][5] == 4
+    assert calls[4] == ("sleep", 10)
+
+
 def test_task_maintenance_loop_processes_work_and_daily_steps(monkeypatch, tmp_path):
     calls = []
     times = iter([10.0, 10.0])
@@ -4386,6 +4465,27 @@ def test_run_service_starts_web_producer_and_consumer(monkeypatch, tmp_path):
     )
     monkeypatch.setattr(
         cli,
+        "run_meeting_producer_loop",
+        lambda settings, poll_interval_seconds, settle_seconds: calls.append(
+            ("meeting-producer", poll_interval_seconds, settle_seconds)
+        )
+        or stop("meeting-producer"),
+    )
+    monkeypatch.setattr(
+        cli,
+        "run_meeting_consumer_loop",
+        lambda settings, poll_interval_seconds, max_tasks=None: calls.append(
+            ("meeting-consumer", poll_interval_seconds, max_tasks)
+        )
+        or stop("meeting-consumer"),
+    )
+    monkeypatch.setattr(
+        cli,
+        "_recover_meeting_alignment_jobs_on_service_start",
+        lambda settings: calls.append(("meeting-recovery", settings.db_path)) or 0,
+    )
+    monkeypatch.setattr(
+        cli,
         "run_audit_web_command",
         lambda settings, host, port, reload=False: calls.append(
             ("audit-web", host, port, reload)
@@ -4423,10 +4523,15 @@ def test_run_service_starts_web_producer_and_consumer(monkeypatch, tmp_path):
     )
 
     assert calls == [
+        ("meeting-recovery", tmp_path / "worker.sqlite3"),
         ("start", "ceo-agent-service-producer", True),
         ("producer", 60, 4),
         ("start", "ceo-agent-service-consumer", True),
         ("consumer", 10, 4),
+        ("start", "ceo-agent-service-meeting-producer", True),
+        ("meeting-producer", 60, 600),
+        ("start", "ceo-agent-service-meeting-consumer", True),
+        ("meeting-consumer", 10, 4),
         ("start", "ceo-agent-service-audit-web", True),
         ("audit-web", "127.0.0.1", 8765, False),
         ("start", "ceo-agent-service-task-maintenance", True),
@@ -4436,10 +4541,12 @@ def test_run_service_starts_web_producer_and_consumer(monkeypatch, tmp_path):
     assert failures == [
         ("producer", "stop producer"),
         ("consumer", "stop consumer"),
+        ("meeting-producer", "stop meeting-producer"),
+        ("meeting-consumer", "stop meeting-consumer"),
         ("audit-web", "stop audit-web"),
         ("task-maintenance", "stop task-maintenance"),
     ]
-    assert exits == [1, 1, 1, 1]
+    assert exits == [1, 1, 1, 1, 1, 1]
 
 
 def test_run_service_requeues_processing_reply_tasks_on_startup(tmp_path):

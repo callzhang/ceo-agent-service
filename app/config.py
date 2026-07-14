@@ -207,6 +207,18 @@ def consumer_poll_interval_seconds() -> int:
     return env_int("CEO_CONSUMER_POLL_INTERVAL_SECONDS", 10)
 
 
+def meeting_producer_interval_seconds() -> int:
+    return env_int("CEO_MEETING_PRODUCER_INTERVAL_SECONDS", 60)
+
+
+def meeting_consumer_poll_interval_seconds() -> int:
+    return env_int("CEO_MEETING_CONSUMER_POLL_INTERVAL_SECONDS", 10)
+
+
+def meeting_settle_seconds() -> int:
+    return env_int("CEO_MEETING_SETTLE_SECONDS", 600)
+
+
 def poll_interval_seconds() -> int:
     return env_int("CEO_POLL_INTERVAL_SECONDS", 30)
 
