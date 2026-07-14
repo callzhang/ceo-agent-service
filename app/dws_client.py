@@ -1653,6 +1653,18 @@ class DwsClient:
         payload = self.run_json(self.build_conversation_info_command(open_conversation_id))
         return self.parse_client_conversation_id(payload, open_conversation_id)
 
+    def get_conversation_info(
+        self, open_conversation_id: str
+    ) -> dict[str, Any]:
+        payload = self.run_json(
+            self.build_conversation_info_command(open_conversation_id)
+        )
+        result = payload.get("result")
+        info = result.get("conversationInfo") if isinstance(result, dict) else None
+        if not isinstance(info, dict):
+            raise DwsError("conversation-info response is missing conversationInfo")
+        return info
+
     def read_recent_messages(
         self, conversation: DingTalkConversation, limit: int = 50
     ) -> list[DingTalkMessage]:
@@ -2560,6 +2572,56 @@ class DwsClient:
         return self.run_json(
             self.build_query_message_send_status_command(open_task_id)
         )
+
+    def verify_message_send_result(
+        self, send_result: dict[str, Any]
+    ) -> dict[str, Any]:
+        if send_result.get("success") is False:
+            return {
+                "state": "failed",
+                "open_task_id": "",
+                "status_result": {},
+            }
+        message_id = self._find_nested_string(
+            send_result,
+            {"openMessageId", "messageId", "msgId"},
+        )
+        if message_id:
+            return {
+                "state": "sent",
+                "open_task_id": "",
+                "status_result": {},
+            }
+        open_task_id = self._find_nested_string(
+            send_result,
+            {"openTaskId"},
+        )
+        if not open_task_id:
+            return {
+                "state": "ambiguous",
+                "open_task_id": "",
+                "status_result": {},
+            }
+        status_result = self.query_message_send_status(open_task_id)
+        status = self._find_nested_string(
+            status_result,
+            {"status", "sendStatus", "taskStatus"},
+        ).casefold()
+        if status_result.get("success") is False or status in {
+            "failed",
+            "fail",
+            "error",
+        }:
+            state = "failed"
+        elif status in {"success", "succeeded", "sent", "finished"}:
+            state = "sent"
+        else:
+            state = "ambiguous"
+        return {
+            "state": state,
+            "open_task_id": open_task_id,
+            "status_result": status_result,
+        }
 
     def add_message_emoji(
         self,
@@ -3889,6 +3951,23 @@ class DwsClient:
             value = record.get(key)
             if isinstance(value, str) and value.strip():
                 return value.strip()
+        return ""
+
+    @staticmethod
+    def _find_nested_string(payload: Any, keys: set[str]) -> str:
+        if isinstance(payload, dict):
+            for key, value in payload.items():
+                if key in keys and isinstance(value, str) and value.strip():
+                    return value.strip()
+            for value in payload.values():
+                found = DwsClient._find_nested_string(value, keys)
+                if found:
+                    return found
+        elif isinstance(payload, list):
+            for value in payload:
+                found = DwsClient._find_nested_string(value, keys)
+                if found:
+                    return found
         return ""
 
     @staticmethod

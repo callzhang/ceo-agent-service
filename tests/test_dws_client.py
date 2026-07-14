@@ -3436,6 +3436,107 @@ def test_client_conversation_id_uses_conversation_info():
     assert client_cid == "75217569357"
 
 
+def test_get_conversation_info_returns_live_group_evidence():
+    payload = {
+        "result": {
+            "conversationInfo": {
+                "openConversationId": "cid-open",
+                "title": "项目群",
+                "singleChat": False,
+                "memberCount": 3,
+            }
+        }
+    }
+    client = RecordingDwsClient(payload)
+
+    info = client.get_conversation_info("cid-open")
+
+    assert info["openConversationId"] == "cid-open"
+    assert client.commands == [
+        [
+            "dws",
+            "chat",
+            "conversation-info",
+            "--group",
+            "cid-open",
+            "--format",
+            "json",
+        ]
+    ]
+
+
+def test_verify_message_send_result_extracts_task_and_queries_status():
+    client = SequenceRecordingDwsClient(
+        [{"success": True, "result": {"status": "SUCCESS"}}]
+    )
+
+    verified = client.verify_message_send_result(
+        {"success": True, "result": {"openTaskId": "task-1"}}
+    )
+
+    assert verified == {
+        "state": "sent",
+        "open_task_id": "task-1",
+        "status_result": {"success": True, "result": {"status": "SUCCESS"}},
+    }
+    assert client.commands == [
+        [
+            "dws",
+            "chat",
+            "message",
+            "query-send-status",
+            "--open-task-id",
+            "task-1",
+            "--format",
+            "json",
+        ]
+    ]
+
+
+def test_verify_message_send_result_without_identifier_is_ambiguous():
+    client = SequenceRecordingDwsClient([])
+
+    verified = client.verify_message_send_result({"success": True, "result": {}})
+
+    assert verified == {
+        "state": "ambiguous",
+        "open_task_id": "",
+        "status_result": {},
+    }
+    assert client.commands == []
+
+
+def test_verify_message_send_result_explicit_failure_needs_no_task_id():
+    client = SequenceRecordingDwsClient([])
+
+    verified = client.verify_message_send_result(
+        {"success": False, "errorMsg": "permission denied"}
+    )
+
+    assert verified == {
+        "state": "failed",
+        "open_task_id": "",
+        "status_result": {},
+    }
+    assert client.commands == []
+
+
+@pytest.mark.parametrize(
+    "send_result",
+    [
+        {"success": False, "result": {"openMessageId": "msg-1"}},
+        {"success": False, "result": {"openTaskId": "task-1"}},
+    ],
+)
+def test_verify_message_send_result_failure_overrides_identifiers(send_result):
+    client = SequenceRecordingDwsClient([])
+
+    verified = client.verify_message_send_result(send_result)
+
+    assert verified["state"] == "failed"
+    assert client.commands == []
+
+
 def test_read_mentioned_messages_parses_conversation_messages_list(monkeypatch):
     monkeypatch.setattr(dws_client, "_local_time_zone", lambda: TEST_LOCAL_TZ)
     payload = {
