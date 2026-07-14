@@ -43,7 +43,7 @@ def main() -> int:
 
     rows = _load_attempts(db_path, args.attempt_id)
     for row in rows:
-        user_id = _extract_user_id(row["send_error"], row["id"])
+        user_id = _extract_user_id(row["send_error"], row["id"], row["source_errors"])
         period = requested_okr_period(row["trigger_text"], today=args.today)
         okr_payload = source.fetch_user_okr(
             user_id=user_id,
@@ -106,7 +106,13 @@ def _load_attempts(db_path: Path, attempt_ids: list[int]) -> list[sqlite3.Row]:
                    trigger_message_id,
                    trigger_sender,
                    trigger_text,
-                   send_error
+                   send_error,
+                   (
+                       select group_concat(detail, char(10))
+                       from errors
+                       where message_id = reply_attempts.trigger_message_id
+                         and detail like '%dingteam_okr_live_source.py --user-id%'
+                   ) as source_errors
             from reply_attempts
             where id in ({placeholders})
             order by id
@@ -115,11 +121,12 @@ def _load_attempts(db_path: Path, attempt_ids: list[int]) -> list[sqlite3.Row]:
         ).fetchall()
 
 
-def _extract_user_id(send_error: str, attempt_id: int) -> str:
-    tokens = (send_error or "").replace(";", " ").split()
-    for index, token in enumerate(tokens):
-        if token == "--user-id" and index + 1 < len(tokens):
-            return tokens[index + 1]
+def _extract_user_id(send_error: str, attempt_id: int, *fallback_sources: str) -> str:
+    for source in (send_error, *fallback_sources):
+        tokens = (source or "").replace(";", " ").split()
+        for index, token in enumerate(tokens):
+            if token == "--user-id" and index + 1 < len(tokens):
+                return tokens[index + 1]
     raise RuntimeError(f"missing OKR user id in attempt {attempt_id}")
 
 
