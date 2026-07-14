@@ -463,6 +463,25 @@ def test_consumer_persists_ready_before_external_send_and_marks_sent(tmp_path):
     assert run.status == "ready_to_send"
 
 
+def test_consumer_dry_run_analyzes_but_does_not_claim_or_send(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    dws = ConsumerDws()
+    job_id = seed_consumer_job(store, dws)
+    runner = FakeMeetingRunner(consumer_send_decision())
+
+    assert consume_meeting_alignment_jobs(
+        store,
+        dws,
+        runner,
+        now=NOW,
+        limit=1,
+        deliver=False,
+    ) == 1
+
+    assert store.get_meeting_alignment_job(job_id).status == "ready_to_send"
+    assert dws.send_calls == []
+
+
 def test_consumer_reconciles_ambiguous_task_without_duplicate_send(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     dws = ConsumerDws()

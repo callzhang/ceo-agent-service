@@ -4323,7 +4323,7 @@ def test_meeting_loops_call_separate_workers_once(monkeypatch, tmp_path):
     monkeypatch.setattr(
         cli,
         "consume_meeting_alignment_jobs",
-        lambda received_store, received_dws, received_runner, *, now, limit: calls.append(
+        lambda received_store, received_dws, received_runner, *, now, limit, deliver: calls.append(
             (
                 "consume-meeting",
                 received_store,
@@ -4331,6 +4331,7 @@ def test_meeting_loops_call_separate_workers_once(monkeypatch, tmp_path):
                 received_runner,
                 now,
                 limit,
+                deliver,
             )
         ),
     )
@@ -4368,8 +4369,74 @@ def test_meeting_loops_call_separate_workers_once(monkeypatch, tmp_path):
     )
     assert calls[3][:4] == ("consume-meeting", store, dws, runner)
     assert calls[3][4].utcoffset() is not None
-    assert calls[3][5] == 4
+    assert calls[3][5:] == (4, True)
     assert calls[4] == ("sleep", 10)
+
+
+def test_meeting_consumer_dry_run_and_zero_limit_never_deliver(monkeypatch, tmp_path):
+    calls = []
+
+    class StopLoop(Exception):
+        pass
+
+    settings = WorkerSettings(
+        db_path=tmp_path / "worker.sqlite3",
+        workspace=tmp_path / "memory",
+        dry_run=True,
+    )
+    monkeypatch.setattr(cli, "AutoReplyStore", lambda path: object())
+    monkeypatch.setattr(cli, "_create_meeting_dws", lambda received: object())
+    monkeypatch.setattr(cli, "MeetingAlignmentCodexRunner", lambda **kwargs: object())
+    monkeypatch.setattr(
+        cli,
+        "consume_meeting_alignment_jobs",
+        lambda *args, **kwargs: calls.append(kwargs),
+    )
+
+    with pytest.raises(StopLoop):
+        cli.run_meeting_consumer_loop(
+            settings,
+            poll_interval_seconds=10,
+            max_tasks=0,
+            sleep=lambda seconds: (_ for _ in ()).throw(StopLoop()),
+        )
+
+    assert calls[0]["limit"] == 0
+    assert calls[0]["deliver"] is False
+
+
+def test_meeting_loop_failure_isolated_and_retried(monkeypatch, tmp_path):
+    calls = []
+
+    class StopLoop(Exception):
+        pass
+
+    store = SimpleNamespace(record_error=lambda *args: calls.append(("error", args)))
+    settings = WorkerSettings(db_path=tmp_path / "worker.sqlite3")
+    monkeypatch.setattr(cli, "AutoReplyStore", lambda path: store)
+    monkeypatch.setattr(cli, "_create_meeting_dws", lambda received: object())
+    monkeypatch.setattr(
+        cli,
+        "produce_meeting_alignment_jobs",
+        lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("minutes down")),
+    )
+
+    def sleep(seconds):
+        calls.append(("sleep", seconds))
+        raise StopLoop
+
+    with pytest.raises(StopLoop):
+        cli.run_meeting_producer_loop(
+            settings,
+            poll_interval_seconds=60,
+            settle_seconds=600,
+            sleep=sleep,
+        )
+
+    assert calls[0][0] == "error"
+    assert calls[0][1][2] == "meeting_alignment_producer"
+    assert "minutes down" in calls[0][1][3]
+    assert calls[1] == ("sleep", 60)
 
 
 def test_task_maintenance_loop_processes_work_and_daily_steps(monkeypatch, tmp_path):

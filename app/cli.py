@@ -1931,12 +1931,20 @@ def run_meeting_producer_loop(
     store = AutoReplyStore(settings.db_path)
     dws = _create_meeting_dws(settings)
     while True:
-        produce_meeting_alignment_jobs(
-            store,
-            dws,
-            now=datetime.now().astimezone(),
-            settle_seconds=settle_seconds,
-        )
+        try:
+            produce_meeting_alignment_jobs(
+                store,
+                dws,
+                now=datetime.now().astimezone(),
+                settle_seconds=settle_seconds,
+            )
+        except Exception as exc:
+            store.record_error(
+                "",
+                "",
+                "meeting_alignment_producer",
+                str(exc),
+            )
         sleep(poll_interval_seconds)
 
 
@@ -1954,13 +1962,22 @@ def run_meeting_consumer_loop(
         idle_timeout_seconds=settings.codex_idle_timeout_seconds,
     )
     while True:
-        consume_meeting_alignment_jobs(
-            store,
-            dws,
-            runner,
-            now=datetime.now().astimezone(),
-            limit=max_tasks or 1,
-        )
+        try:
+            consume_meeting_alignment_jobs(
+                store,
+                dws,
+                runner,
+                now=datetime.now().astimezone(),
+                limit=1 if max_tasks is None else max_tasks,
+                deliver=not settings.dry_run,
+            )
+        except Exception as exc:
+            store.record_error(
+                "",
+                "",
+                "meeting_alignment_consumer",
+                str(exc),
+            )
         sleep(poll_interval_seconds)
 
 

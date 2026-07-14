@@ -162,6 +162,7 @@ def consume_meeting_alignment_jobs(
     limit: int = 1,
     retry_delay: timedelta = DEFAULT_MEETING_RETRY_DELAY,
     max_attempts: int = DEFAULT_MEETING_MAX_ATTEMPTS,
+    deliver: bool = True,
 ) -> int:
     if now.tzinfo is None or now.utcoffset() is None:
         raise ValueError("meeting consumer now must include a timezone")
@@ -186,9 +187,13 @@ def consume_meeting_alignment_jobs(
             max_attempts=max_attempts,
         )
 
-    delivery_jobs = store.claim_ready_to_send_meeting_alignment_jobs(
-        limit=limit,
-        now=now.isoformat(),
+    delivery_jobs = (
+        store.claim_ready_to_send_meeting_alignment_jobs(
+            limit=limit,
+            now=now.isoformat(),
+        )
+        if deliver
+        else []
     )
     for job in delivery_jobs:
         processed_ids.add(job.id)
