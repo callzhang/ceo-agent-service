@@ -107,6 +107,7 @@ CRITICAL_INFO_UNAVAILABLE_PREFIX = "critical_info_unavailable:"
 XIAOQING_CRITICAL_INFO_UNAVAILABLE_MARKER = (
     f"{CRITICAL_INFO_UNAVAILABLE_PREFIX}xiaoqing_interview"
 )
+BLOCKED_UNRECOVERABLE_EXTERNAL_AUTH_PREFIX = "blocked_unrecoverable_external_auth"
 DEFAULT_TEXT_EMOTION_BACKGROUND_ID = "im_bg_5"
 LEAK_CHECK_REGENERATION_SCHEMA = REPLY_AGENT_ENVELOPE_SCHEMA_HINT
 SPLIT_PERSON_SIGNATURE = assistant_signature()
@@ -259,6 +260,19 @@ def _codex_provider_transport_error(reason: str) -> str:
         "wait for network/provider recovery or verify native codex exec works "
         "in the service environment before rerunning"
     )
+
+
+def _is_dingteam_okr_login_error(reason: str) -> bool:
+    normalized = reason.strip().lower()
+    return (
+        "dingteam okr" in normalized
+        and "api error 103" in normalized
+        and "未登录" in reason
+    )
+
+
+def _blocked_unrecoverable_external_auth_error(reason: str) -> str:
+    return f"{BLOCKED_UNRECOVERABLE_EXTERNAL_AUTH_PREFIX}: {reason}"
 
 
 def _normalize_codex_stop_error_reason(reason: str) -> str:
@@ -2690,10 +2704,16 @@ class DingTalkAutoReplyWorker:
                 period_label=period.period_label,
             )
         except Exception as exc:
+            error = str(exc)
+            send_status = "failed"
+            send_error = error
+            if _is_dingteam_okr_login_error(error):
+                send_status = "blocked"
+                send_error = _blocked_unrecoverable_external_auth_error(error)
             updates = {
                 "action": "okr_review",
-                "send_status": "failed",
-                "send_error": str(exc),
+                "send_status": send_status,
+                "send_error": send_error,
             }
             if complete_task_id is not None:
                 self.store.update_reply_attempt_and_complete_task(
@@ -2707,7 +2727,7 @@ class DingTalkAutoReplyWorker:
                 conversation.open_conversation_id,
                 trigger.open_message_id,
                 "okr_review_source",
-                str(exc),
+                error,
             )
             return True
         self.store.create_okr_review_request(

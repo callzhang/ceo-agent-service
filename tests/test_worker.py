@@ -10535,6 +10535,46 @@ def test_okr_review_live_source_error_fails_after_agent_queue_action(
     assert final_sent(dws) == []
 
 
+def test_okr_review_dingteam_login_error_blocks_after_agent_queue_action(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message("帮我审核 OKR", single_chat=True)
+    dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
+    codex = FakeCodex(
+        CodexDecision(
+            action=CodexAction.NO_REPLY,
+            reason="用户明确请求审核 OKR，交给 OKR handler 处理。",
+            system_actions=[{"type": "queue_okr_review"}],
+        )
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch, max_task_attempts=1)
+    worker.okr_live_source = type(
+        "LiveSource",
+        (),
+        {
+            "fetch_user_okr": lambda self, user_id, period_label: (_ for _ in ()).throw(
+                RuntimeError(
+                    "Dingteam OKR live source failed: "
+                    "Dingteam OKR API error 103: 未登录"
+                )
+            )
+        },
+    )()
+
+    worker.run_once()
+
+    attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
+    assert attempt is not None
+    assert attempt.action == "okr_review"
+    assert attempt.send_status == "blocked"
+    assert attempt.send_error.startswith("blocked_unrecoverable_external_auth:")
+    assert "未登录" in attempt.send_error
+    assert worker.store.count_reply_tasks(status="failed") == 0
+    assert worker.store.count_reply_tasks(status="done") == 1
+    assert worker.store.claim_okr_review_requests(1) == []
+    assert final_sent(dws) == []
+
+
 def test_queued_okr_review_ack_delivery_failure_requeues_after_agent_queue_action(
     tmp_path: Path, monkeypatch
 ):
