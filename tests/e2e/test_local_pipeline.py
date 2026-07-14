@@ -27,6 +27,8 @@ class FakeDws:
         self.sent = []
         self.sent_at_users = []
         self.dings = []
+        self.created_text_emotions = []
+        self.message_text_emotions = []
         self.org_calls = []
         self.chat_calls = []
         self.conversation = DingTalkConversation(
@@ -50,6 +52,13 @@ class FakeDws:
     def get_current_user_id(self):
         self.org_calls.append("get_current_user_id")
         return "principal-user"
+
+    def auth_status(self):
+        return {
+            "authenticated": True,
+            "token_valid": True,
+            "refresh_token_valid": True,
+        }
 
     def search_department_ids(self, query):
         self.org_calls.append(("search_department_ids", query))
@@ -190,6 +199,41 @@ class FakeDws:
         self.chat_calls.append(("ding_user", user_id))
         self.dings.append((user_id, text))
 
+    def create_message_text_emotion(
+        self,
+        *,
+        text,
+        emotion_name,
+        background_id="",
+    ):
+        self.created_text_emotions.append((text, emotion_name, background_id))
+        return {
+            "emotionId": f"created-{len(self.created_text_emotions)}",
+            "backgroundId": "created-bg",
+        }
+
+    def add_message_text_emotion(
+        self,
+        conversation_id,
+        message_id,
+        *,
+        text,
+        emotion_id,
+        emotion_name,
+        background_id,
+    ):
+        self.message_text_emotions.append(
+            (
+                conversation_id,
+                message_id,
+                text,
+                emotion_id,
+                emotion_name,
+                background_id,
+            )
+        )
+        return {"success": True}
+
 
 class FakeCodex:
     def __init__(self, decision):
@@ -246,14 +290,14 @@ def test_local_pipeline_refreshes_org_cache_then_replies_without_runtime_org_cal
 
     assert raw_dws.org_calls == []
     assert final_sent(raw_dws) == [
-        ("cid-1", "这个涉及其他人的人事信息，我不能直接回答。（by明哥分身）")
+        ("cid-1", "建议先观察一个月（by明哥分身）")
     ]
     assert final_sent_at_users(raw_dws) == [["hr-user"]]
     assert store.has_seen("msg-1") is True
     assert store.get_codex_session_id("cid-1") == "session-1"
 
 
-def test_local_pipeline_handoff_ding_uses_cached_current_user_without_runtime_org_calls(
+def test_local_pipeline_handoff_reacts_and_dings_without_runtime_org_calls(
     tmp_path, monkeypatch
 ):
     monkeypatch.setattr(
@@ -276,8 +320,10 @@ def test_local_pipeline_handoff_ding_uses_cached_current_user_without_runtime_or
     worker.run_once()
 
     assert raw_dws.org_calls == []
-    assert final_sent(raw_dws) == [
-        ("cid-1", "我让明哥本人看一下。（by明哥分身）")
+    assert final_sent(raw_dws) == []
+    assert raw_dws.created_text_emotions == [("我去叫", "我去叫", "im_bg_5")]
+    assert raw_dws.message_text_emotions == [
+        ("cid-1", "msg-1", "我去叫", "created-1", "我去叫", "created-bg")
     ]
     assert raw_dws.dings == [
         (
