@@ -1722,6 +1722,56 @@ class AutoReplyStore:
             jobs = [self._meeting_alignment_job_from_row(row) for row in rows]
             return sorted(jobs, key=lambda job: job.id)
 
+    def reopen_meeting_alignment_job_for_replay(
+        self,
+        job_id: int,
+        *,
+        title: str,
+        source_json: str,
+        participants_json: str,
+        ended_at: str,
+        eligible_at: str,
+    ) -> MeetingAlignmentJob | None:
+        with self._connect() as db:
+            row = db.execute(
+                """
+                update meeting_alignment_jobs
+                set title=?,
+                    source_json=?,
+                    participants_json=?,
+                    ended_at=?,
+                    eligible_at=?,
+                    status='pending',
+                    attempts=0,
+                    locked_at=null,
+                    available_at='',
+                    error='',
+                    decision_json='{}',
+                    target_kind='',
+                    target_id='',
+                    target_title='',
+                    mentions_json='[]',
+                    final_message='',
+                    send_result_json='{}',
+                    updated_at=current_timestamp
+                where id=?
+                  and status='no_action'
+                  and send_result_json='{}'
+                returning *
+                """,
+                (
+                    title,
+                    source_json,
+                    participants_json,
+                    ended_at,
+                    eligible_at,
+                    job_id,
+                ),
+            ).fetchone()
+            if row is None:
+                return None
+            return self._meeting_alignment_job_from_row(row)
+
     def record_meeting_alignment_run(
         self,
         *,

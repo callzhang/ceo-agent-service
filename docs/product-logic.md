@@ -107,6 +107,13 @@ all pre-activation jobs with no send evidence are baselined to terminal
 `no_action`, including work that an older process had already claimed. This
 prevents deployment-time recovery from analyzing or sending historical meetings.
 
+Recordings shorter than ten minutes are excluded before calendar matching and
+queue creation. Actual candidate interviews are excluded by the agent after it
+reads the full meeting source; recruiting planning or hiring-requirement
+discussions are not interviews. The bounded `replay-recent-meetings` command can
+explicitly reopen selected unsent historical `no_action` jobs without changing
+the activation watermark or reopening confirmed sends.
+
 Multi-party meetings are sent to the highest-ranked sendable group with real
 mentions. They never fall back to a direct message. A 1:1 meeting sends directly
 to the other participant. No DING or reaction is added by this workflow.

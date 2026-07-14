@@ -388,6 +388,8 @@ scripts/install-auto-reply-agents.sh
 
 meeting producer 首次启用时会持久化激活时间。服务启动恢复队列前，会把激活时间以前且从未尝试发送的历史任务统一标记为 `no_action`；因此切换瞬间已被旧进程领取的历史会议也不会在重启后重新进入分析或发送。
 
+实际时长小于 10 分钟的听记在日历匹配和建队列前跳过；实际候选人面试由 agent 根据标题、摘要、参会人和完整转写识别并终止为 `no_action`。招聘站会、招聘计划、人才讨论和招聘需求对齐仍按普通业务会议处理。
+
 会后队列状态为 `waiting → pending → processing → no_action | ready_to_send → sent`；可重试错误进入 `retry` 并带 `available_at`，Codex 结构化输出或历史来源协议偶发不合格也会先按可重试错误处理，达到上限后才隔离。发送结果不确定但有 `openTaskId` 时只核验状态，不重复发送。meeting run 和 reply attempt 共用 History 时间线、搜索、状态过滤、24 小时事件图和 Codex session 详情。
 
 本地 dry-run 验证：
@@ -404,6 +406,15 @@ select status, count(*) from meeting_alignment_jobs group by status;
 select id, job_id, status, codex_session_id, created_at
 from meeting_alignment_runs order by id desc limit 20;
 ```
+
+受控回放最近 N 条听记（会重开其中未发送的历史 `no_action`，但不会重开 `sent`）：
+
+```bash
+CEO_NOT_SEND_MESSAGE=0 CEO_LIVE_SEND_BLOCKERS_ACCEPTED=1 \
+  .venv/bin/ceo-agent replay-recent-meetings --limit 10
+```
+
+可用 `--offset` 跳过已完成的小批量窗口，例如先跑 `--limit 1`，确认后再跑 `--limit 9 --offset 1`，两次合计覆盖最新 10 条且不重复。
 
 手动发送已审阅 attempt：
 

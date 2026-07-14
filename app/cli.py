@@ -57,6 +57,7 @@ from app.meeting_alignment import (
     MEETING_DISCOVERY_ACTIVATED_AT_STATE_KEY,
     consume_meeting_alignment_jobs,
     produce_meeting_alignment_jobs,
+    queue_recent_meeting_alignment_replay,
     recover_meeting_alignment_jobs,
 )
 from app.meeting_alignment_agent import MeetingAlignmentCodexRunner
@@ -256,6 +257,7 @@ def build_parser() -> argparse.ArgumentParser:
         "send-attempt",
         "reset-codex-sessions",
         "build-work-profile",
+        "replay-recent-meetings",
     ):
         subparser = subparsers.add_parser(command)
         subparser.add_argument("--db", default=os.getenv("CEO_WORKER_DB", str(defaults.db_path)))
@@ -353,6 +355,11 @@ def build_parser() -> argparse.ArgumentParser:
         )
         if command == "refresh-org-cache":
             subparser.add_argument("--user-id", action="append", default=[])
+        if command == "replay-recent-meetings":
+            subparser.add_argument("--limit", type=_positive_int, required=True)
+            subparser.add_argument(
+                "--offset", type=_non_negative_int, default=0
+            )
         if command == "backfill-routine-process-todos":
             subparser.add_argument(
                 "--todo-id",
@@ -1982,6 +1989,24 @@ def run_meeting_consumer_loop(
         sleep(poll_interval_seconds)
 
 
+def replay_recent_meetings_command(
+    settings: WorkerSettings,
+    *,
+    limit: int,
+    offset: int = 0,
+) -> list[dict[str, object]]:
+    results = queue_recent_meeting_alignment_replay(
+        AutoReplyStore(settings.db_path),
+        _create_meeting_dws(settings),
+        now=datetime.now().astimezone(),
+        limit=limit,
+        offset=offset,
+        settle_seconds=settings.meeting_settle_seconds,
+    )
+    print(json.dumps(results, ensure_ascii=False), flush=True)
+    return results
+
+
 def run_task_maintenance_loop(
     settings: WorkerSettings,
     *,
@@ -2455,6 +2480,13 @@ def main() -> None:
         send_attempt_command(settings, attempt_id=args.attempt_id)
     elif args.command == "reset-codex-sessions":
         reset_codex_sessions_command(settings)
+    elif args.command == "replay-recent-meetings":
+        ensure_live_send_allowed(settings)
+        replay_recent_meetings_command(
+            settings,
+            limit=args.limit,
+            offset=args.offset,
+        )
 
 
 if __name__ == "__main__":

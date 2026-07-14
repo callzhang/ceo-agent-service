@@ -78,6 +78,27 @@
     "expected_trigger": "derek_viewpoint"
   },
   {
+    "id": "candidate-interview-scope-skip",
+    "summary": "面试官正在针对售前岗位询问并评估一位具体候选人。",
+    "transcript": [
+      ["Derek", "请你讲一个亲自推动复杂售前项目落地的案例，以及你具体负责的部分。"],
+      ["Alex", "我是本次候选人，之前负责需求访谈和方案汇报，最终签约由销售负责人推进。"],
+      ["Mina", "这个案例里哪些结果可以量化，哪些工作是你独立完成的？"]
+    ],
+    "expected_action": "no_action"
+  },
+  {
+    "id": "recruiting-strategy-is-not-interview",
+    "summary": "团队讨论招聘策略，不是在评估具体候选人，并对人才结构存在未对齐分歧。",
+    "transcript": [
+      ["Alex", "售前岗位应该优先招有行业经验的资深员工，能马上承担客户项目。"],
+      ["Mina", "预算只够两名应届生，我主张培养新人，把资深员工预算留给算法岗位。"],
+      ["Derek", "先把三个月交付压力和全年人才成本放在一起比较，再决定结构。"]
+    ],
+    "expected_action": "send",
+    "expected_state": "unresolved"
+  },
+  {
     "id": "multi-party-no-group-retry",
     "summary": "全量和灰度仍未对齐，已经穷尽群发现但没有可发送群。",
     "transcript": [

@@ -256,6 +256,45 @@ def test_activation_baseline_silences_unsent_historical_jobs(tmp_path):
     assert store.get_meeting_alignment_job(current_id).status == "pending"
 
 
+def test_replay_reopens_only_unsent_no_action_job(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    replay_id = seed_job(store, meeting_id="replay-me")
+    store.update_meeting_alignment_job(
+        replay_id,
+        status="no_action",
+        decision_json='{"action":"no_action"}',
+    )
+    sent_id = seed_job(store, meeting_id="already-sent")
+    store.update_meeting_alignment_job(
+        sent_id,
+        status="sent",
+        send_result_json='{"status":"sent"}',
+    )
+
+    reopened = store.reopen_meeting_alignment_job_for_replay(
+        replay_id,
+        title="回放会议",
+        source_json='{"replay":true}',
+        participants_json="[]",
+        ended_at="2026-07-14T02:00:00+08:00",
+        eligible_at="2026-07-14T02:10:00+08:00",
+    )
+
+    assert reopened is not None
+    assert reopened.status == "pending"
+    assert reopened.attempts == 0
+    assert reopened.decision_json == "{}"
+    assert store.reopen_meeting_alignment_job_for_replay(
+        sent_id,
+        title="已发送",
+        source_json="{}",
+        participants_json="[]",
+        ended_at="2026-07-14T02:00:00+08:00",
+        eligible_at="2026-07-14T02:10:00+08:00",
+    ) is None
+    assert store.get_meeting_alignment_job(sent_id).status == "sent"
+
+
 def test_ready_to_send_transition_releases_processing_lock(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     job_id = seed_job(store)

@@ -86,6 +86,16 @@ def test_parser_supports_worker_commands():
     assert args.db == "/tmp/worker.sqlite3"
 
 
+def test_parser_supports_recent_meeting_replay():
+    args = build_parser().parse_args(
+        ["replay-recent-meetings", "--limit", "9", "--offset", "1"]
+    )
+
+    assert args.command == "replay-recent-meetings"
+    assert args.limit == 9
+    assert args.offset == 1
+
+
 def test_parser_supports_process_work_items():
     args = build_parser().parse_args(["process-work-items", "--max-batches", "3"])
 

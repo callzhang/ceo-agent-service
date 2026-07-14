@@ -31,7 +31,9 @@ from app.store import AutoReplyStore
 
 DISCOVERY_PAGE_LIMIT = 100
 DISCOVERY_PAGE_SIZE = 50
+REPLAY_PAGE_SIZE_LIMIT = 100
 DEFAULT_MEETING_DISCOVERY_LOOKBACK = timedelta(days=7)
+MINIMUM_MEETING_DURATION = timedelta(minutes=10)
 TERMINAL_STATUSES = frozenset({"no_action", "sent", "failed"})
 DEFAULT_MEETING_RETRY_DELAY = timedelta(minutes=1)
 DEFAULT_MEETING_MAX_ATTEMPTS = 3
@@ -114,6 +116,8 @@ def produce_meeting_alignment_jobs(
         ended_at = datetime.fromisoformat(metadata.ended_at)
         if started_at >= ended_at:
             continue
+        if ended_at - started_at < MINIMUM_MEETING_DURATION:
+            continue
         if activated_at is not None and ended_at < activated_at:
             continue
 
@@ -168,6 +172,185 @@ def produce_meeting_alignment_jobs(
         if existing is None:
             created += 1
     return created
+
+
+def queue_recent_meeting_alignment_replay(
+    store: AutoReplyStore,
+    dws: MeetingProducerDws,
+    *,
+    now: datetime,
+    limit: int,
+    offset: int = 0,
+    settle_seconds: int = 600,
+    discovery_lookback: timedelta = DEFAULT_MEETING_DISCOVERY_LOOKBACK,
+) -> list[dict[str, Any]]:
+    if now.tzinfo is None or now.utcoffset() is None:
+        raise ValueError("meeting replay now must include a timezone")
+    if limit <= 0:
+        raise ValueError("meeting replay limit must be positive")
+    if offset < 0:
+        raise ValueError("meeting replay offset must not be negative")
+    fetch_limit = limit + offset
+    if fetch_limit > REPLAY_PAGE_SIZE_LIMIT:
+        raise ValueError(
+            f"meeting replay window must not exceed {REPLAY_PAGE_SIZE_LIMIT}"
+        )
+    if settle_seconds < 0:
+        raise ValueError("settle_seconds must not be negative")
+    if discovery_lookback.total_seconds() <= 0:
+        raise ValueError("meeting discovery lookback must be positive")
+
+    current_user_id = dws.get_current_user_id().strip()
+    if not current_user_id:
+        raise DwsError("meeting producer current user id is missing")
+    page = dws.list_minutes_page(
+        limit=fetch_limit,
+        cursor="",
+        start=(now - discovery_lookback).isoformat(),
+        end=now.isoformat(),
+    )
+    raw_items = page.get("items")
+    if not isinstance(raw_items, list):
+        raise DwsError("meeting replay minutes page items must be a list")
+
+    results: list[dict[str, Any]] = []
+    for list_item in raw_items[offset:fetch_limit]:
+        if not isinstance(list_item, dict):
+            results.append(
+                {
+                    "meeting_id": "",
+                    "title": "",
+                    "duration_seconds": None,
+                    "outcome": "source_incomplete",
+                    "job_id": None,
+                    "error": "minutes list item is not an object",
+                }
+            )
+            continue
+        result: dict[str, Any] = {
+            "meeting_id": "",
+            "title": str(list_item.get("title") or ""),
+            "duration_seconds": None,
+            "outcome": "source_incomplete",
+            "job_id": None,
+            "error": "",
+        }
+        try:
+            meeting_id = minutes_meeting_id(list_item)
+            result["meeting_id"] = meeting_id
+            info = dws.get_minutes_info(meeting_id)
+            metadata = normalize_minutes_discovery_metadata(list_item, info)
+            started_at = datetime.fromisoformat(metadata.started_at)
+            ended_at = datetime.fromisoformat(metadata.ended_at)
+        except (MeetingSourceIncomplete, ValueError, DwsError) as exc:
+            result["error"] = str(exc)
+            results.append(result)
+            continue
+
+        result["title"] = metadata.title
+        duration = ended_at - started_at
+        result["duration_seconds"] = duration.total_seconds()
+        if started_at >= ended_at:
+            results.append(result)
+            continue
+        if duration < MINIMUM_MEETING_DURATION:
+            result["outcome"] = "short_recording"
+            results.append(result)
+            continue
+        if metadata.status and metadata.status != "ended":
+            results.append(result)
+            continue
+
+        existing = store.get_meeting_alignment_job_by_meeting_id(meeting_id)
+        if existing is not None:
+            result["job_id"] = existing.id
+            if existing.status == "sent" or existing.send_result_json != "{}":
+                result["outcome"] = "already_sent"
+                results.append(result)
+                continue
+            if existing.status != "no_action":
+                result["outcome"] = existing.status
+                results.append(result)
+                continue
+
+        try:
+            events = _list_all_calendar_events(
+                dws,
+                start=(started_at - timedelta(hours=4)).isoformat(),
+                end=(ended_at + timedelta(hours=4)).isoformat(),
+            )
+        except DwsError as exc:
+            result["outcome"] = "failed"
+            result["error"] = str(exc)
+            results.append(result)
+            continue
+        matcher_info = {
+            "taskUuid": meeting_id,
+            "title": metadata.title,
+            "startTimeISO": metadata.started_at,
+            "endTimeISO": metadata.ended_at,
+        }
+        try:
+            evidence = build_calendar_meeting_evidence(
+                matcher_info, events, current_user_id
+            )
+        except MeetingSourceIncomplete:
+            result["outcome"] = "calendar_not_unique"
+            results.append(result)
+            continue
+        if sum(
+            participant.user_id == current_user_id
+            for participant in evidence.participants
+        ) != 1:
+            result["outcome"] = "derek_not_attendee"
+            results.append(result)
+            continue
+
+        eligible_at = ended_at + timedelta(seconds=settle_seconds)
+        source_json = _source_json(
+            meeting_id=meeting_id,
+            metadata=metadata.model_dump(mode="json"),
+            list_item=list_item,
+            info=info,
+            evidence=evidence,
+        )
+        participants_json = json.dumps(
+            [
+                participant.model_dump(mode="json")
+                for participant in evidence.participants
+            ],
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+        if existing is not None and existing.status == "no_action":
+            reopened = store.reopen_meeting_alignment_job_for_replay(
+                existing.id,
+                title=metadata.title,
+                source_json=source_json,
+                participants_json=participants_json,
+                ended_at=ended_at.isoformat(),
+                eligible_at=eligible_at.isoformat(),
+            )
+            if reopened is None:
+                refreshed = store.get_meeting_alignment_job(existing.id)
+                result["outcome"] = refreshed.status
+                results.append(result)
+                continue
+            job_id = reopened.id
+        else:
+            job_id = store.upsert_meeting_alignment_job(
+                meeting_id=meeting_id,
+                title=metadata.title,
+                source_json=source_json,
+                participants_json=participants_json,
+                ended_at=ended_at.isoformat(),
+                eligible_at=eligible_at.isoformat(),
+                status="pending",
+            )
+        result["job_id"] = job_id
+        result["outcome"] = "queued"
+        results.append(result)
+    return results
 
 
 def consume_meeting_alignment_jobs(

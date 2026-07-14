@@ -12,6 +12,7 @@ from app.dws_client import (
 from app.meeting_alignment import (
     consume_meeting_alignment_jobs,
     produce_meeting_alignment_jobs,
+    queue_recent_meeting_alignment_replay,
     recover_meeting_alignment_jobs,
 )
 from app.meeting_alignment_models import MeetingAlignmentDecision
@@ -423,6 +424,189 @@ def test_producer_skips_meetings_before_persisted_live_activation(tmp_path):
     assert produce_meeting_alignment_jobs(store, dws, now=NOW) == 0
     assert store.get_meeting_alignment_job_by_meeting_id("minutes-1") is None
     assert dws.calendar_calls == []
+
+
+def test_producer_skips_recording_shorter_than_ten_minutes(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    meeting = ended_meeting(end="2026-07-14T09:09:59.999000+08:00")
+    dws = FakeDws(
+        minutes_pages={
+            "": {"items": [meeting], "has_more": False, "next_token": ""}
+        },
+        info={"minutes-1": meeting},
+    )
+
+    assert produce_meeting_alignment_jobs(store, dws, now=NOW) == 0
+    assert store.get_meeting_alignment_job_by_meeting_id("minutes-1") is None
+    assert dws.calendar_calls == []
+
+
+def test_producer_keeps_recording_exactly_ten_minutes(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    meeting = ended_meeting(end="2026-07-14T09:10:00+08:00")
+    dws = FakeDws(
+        minutes_pages={
+            "": {"items": [meeting], "has_more": False, "next_token": ""}
+        },
+        info={"minutes-1": meeting},
+    )
+
+    assert produce_meeting_alignment_jobs(store, dws, now=NOW) == 1
+    assert store.get_meeting_alignment_job_by_meeting_id("minutes-1") is not None
+    assert dws.calendar_calls == [""]
+
+
+def test_replay_queues_recent_unsent_meeting_and_reports_short_recording(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    short = ended_meeting(
+        meeting_id="minutes-short",
+        title="短会",
+        end="2026-07-14T09:09:59+08:00",
+    )
+    eligible = ended_meeting(meeting_id="minutes-replay")
+
+    class ReplayDws(FakeDws):
+        def list_minutes_page(
+            self, *, limit: int, cursor: str, start: str, end: str
+        ) -> dict:
+            self.minutes_calls.append(
+                {"limit": limit, "cursor": cursor, "start": start, "end": end}
+            )
+            return self.minutes_pages[cursor]
+
+    dws = ReplayDws(
+        minutes_pages={
+            "": {
+                "items": [short, eligible],
+                "has_more": True,
+                "next_token": "not-read",
+            }
+        },
+        info={"minutes-short": short, "minutes-replay": eligible},
+    )
+    old_id = store.upsert_meeting_alignment_job(
+        meeting_id="minutes-replay",
+        title="上线评审",
+        source_json="{}",
+        participants_json="[]",
+        ended_at=eligible["endTimeISO"],
+        eligible_at=NOW.isoformat(),
+        status="pending",
+    )
+    store.update_meeting_alignment_job(old_id, status="no_action")
+
+    results = queue_recent_meeting_alignment_replay(
+        store,
+        dws,
+        now=NOW,
+        limit=2,
+    )
+
+    assert [result["outcome"] for result in results] == [
+        "short_recording",
+        "queued",
+    ]
+    assert dws.minutes_calls == [
+        {
+            "limit": 2,
+            "cursor": "",
+            "start": "2026-07-07T10:10:00+08:00",
+            "end": "2026-07-14T10:10:00+08:00",
+        }
+    ]
+    replayed = store.get_meeting_alignment_job(old_id)
+    assert replayed.status == "pending"
+    assert results[1]["job_id"] == old_id
+
+
+def test_replay_item_failure_does_not_block_later_meeting(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    first = ended_meeting(meeting_id="minutes-fails", title="失败会议")
+    second = ended_meeting(meeting_id="minutes-later")
+
+    class ReplayDws(FakeDws):
+        def __init__(self):
+            super().__init__(
+                minutes_pages={
+                    "": {
+                        "items": [first, second],
+                        "has_more": False,
+                        "next_token": "",
+                    }
+                },
+                info={"minutes-fails": first, "minutes-later": second},
+            )
+            self.calendar_attempts = 0
+
+        def list_minutes_page(
+            self, *, limit: int, cursor: str, start: str, end: str
+        ) -> dict:
+            return self.minutes_pages[cursor]
+
+        def list_calendar_events_page(
+            self, *, start: str, end: str, limit: int, cursor: str
+        ) -> dict:
+            self.calendar_attempts += 1
+            if self.calendar_attempts == 1:
+                raise DwsError("calendar temporarily unavailable")
+            return self.calendar_pages[cursor]
+
+    results = queue_recent_meeting_alignment_replay(
+        store,
+        ReplayDws(),
+        now=NOW,
+        limit=2,
+    )
+
+    assert [result["outcome"] for result in results] == ["failed", "queued"]
+    assert "calendar temporarily unavailable" in results[0]["error"]
+    assert results[1]["job_id"] is not None
+
+
+def test_replay_offset_selects_nonoverlapping_recent_window(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    items = [
+        ended_meeting(
+            meeting_id=f"minutes-{index}",
+            title=f"短会 {index}",
+            end="2026-07-14T09:05:00+08:00",
+        )
+        for index in range(3)
+    ]
+
+    class ReplayDws(FakeDws):
+        def __init__(self):
+            super().__init__(
+                minutes_pages={
+                    "": {
+                        "items": items,
+                        "has_more": False,
+                        "next_token": "",
+                    }
+                },
+                info={item["taskUuid"]: item for item in items},
+            )
+
+        def list_minutes_page(
+            self, *, limit: int, cursor: str, start: str, end: str
+        ) -> dict:
+            self.minutes_calls.append({"limit": limit})
+            return self.minutes_pages[cursor]
+
+    dws = ReplayDws()
+    results = queue_recent_meeting_alignment_replay(
+        store,
+        dws,
+        now=NOW,
+        limit=2,
+        offset=1,
+    )
+
+    assert [result["meeting_id"] for result in results] == [
+        "minutes-1",
+        "minutes-2",
+    ]
+    assert dws.minutes_calls == [{"limit": 3}]
 
 
 def test_consumer_records_no_action_run_and_terminal_job(tmp_path):

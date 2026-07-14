@@ -144,6 +144,9 @@ def test_prompt_contains_full_transcript_and_behavioral_contracts():
     )
 
     assert "我建议全量上线以验证收入" in prompt
+    assert "实际候选人面试" in prompt
+    assert "招聘站会、招聘计划、人才讨论或招聘需求对齐不属于候选人面试" in prompt
+    assert "不要搜索群、解析 @ 或生成消息" in prompt
     assert "后来明确对齐也仍然触发发布" in prompt
     assert "沉默不算对齐" in prompt
     assert "明确同意、承诺或复述一致" in prompt
