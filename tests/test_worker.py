@@ -12609,7 +12609,18 @@ def test_handoff_ding_failure_does_not_block_ack(
 
     worker.run_once()
 
-    assert final_sent(dws) == []
+    expected_handoff_text = (
+        "Friday\n"
+        "周俊杰: @Alex Chen(明哥) 不要分身，真人看一下\n"
+        "previous split-person reply: none"
+    )
+    assert final_sent(dws) == [("", expected_handoff_text)]
+    assert dws.bot_direct_messages == [
+        (
+            "principal-user-1",
+            expected_handoff_text,
+        )
+    ]
     assert dws.message_text_emotions == [
         ("cid-1", "msg-1", "我去叫", "created-1", "我去叫", "created-bg")
     ]
@@ -12622,9 +12633,7 @@ def test_handoff_ding_failure_does_not_block_ack(
         notifications[0]["url"]
         == "http://127.0.0.1:8765/open-dingtalk?conversation_id=cid-1"
     )
-    assert notifications[0]["message"].startswith(
-        "DING unavailable; delivered by local notification. Friday\n"
-    )
+    assert notifications[0]["message"] == "@Alex Chen(明哥) 不要分身，真人看一下"
     assert "不要分身" in notifications[0]["message"]
 
 

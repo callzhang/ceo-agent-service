@@ -6944,10 +6944,23 @@ class DingTalkAutoReplyWorker:
                 "handoff",
                 f"DING handoff delivery failed: {exc}",
             )
+            try:
+                receiver_user_id = getattr(self.dws, "ding_receiver_user_id", None)
+                if not receiver_user_id:
+                    receiver_user_id = self.dws.get_current_user_id()
+                self.dws.send_direct_message_by_bot(receiver_user_id, handoff_text)
+                return False
+            except Exception as bot_exc:
+                self.store.record_error(
+                    conversation.open_conversation_id,
+                    trigger.open_message_id,
+                    "handoff",
+                    f"bot handoff delivery failed: {bot_exc}",
+                )
             self._notify(
                 title=f"CEO handoff: {conversation.title}",
                 message=(
-                    "DING unavailable; delivered by local notification. "
+                    "DING and bot message unavailable; delivered by local notification. "
                     f"{handoff_text}"
                 )[:120],
                 conversation=conversation,
