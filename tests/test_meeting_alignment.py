@@ -4,8 +4,17 @@ from datetime import datetime, timedelta
 import pytest
 
 import app.meeting_alignment as meeting_alignment
-from app.dws_client import DwsCalendarAttendee, DwsCalendarEvent, DwsError
-from app.meeting_alignment import produce_meeting_alignment_jobs
+from app.dws_client import (
+    DwsCalendarAttendee,
+    DwsCalendarEvent,
+    DwsError,
+)
+from app.meeting_alignment import (
+    consume_meeting_alignment_jobs,
+    produce_meeting_alignment_jobs,
+    recover_meeting_alignment_jobs,
+)
+from app.meeting_alignment_models import MeetingAlignmentDecision
 from app.store import AutoReplyStore
 
 
@@ -105,6 +114,151 @@ class FakeDws:
         assert limit == 50
         self.calendar_calls.append(cursor)
         return self.calendar_pages[cursor]
+
+
+class ConsumerDws(FakeDws):
+    def __init__(self):
+        super().__init__()
+        self.calendar_pages[""]["events"][0].attendee_details.append(
+            DwsCalendarAttendee(
+                display_name="B",
+                user_id="u-b",
+                open_dingtalk_id="open-b",
+            )
+        )
+        self.send_calls: list[dict] = []
+        self.verify_calls: list[dict] = []
+        self.send_result = {
+            "success": True,
+            "result": {"openMessageId": "msg-1"},
+        }
+        self.verification_states = ["sent"]
+
+    def get_minutes_summary(self, meeting_id: str) -> dict:
+        return {"result": {"fullSummary": "存在上线范围分歧。"}}
+
+    def get_all_minutes_transcription(self, meeting_id: str) -> dict:
+        return {
+            "paragraphs": [
+                {"nickName": "A", "paragraph": "建议全量"},
+                {"nickName": "Derek", "paragraph": "先定义风险预算"},
+            ]
+        }
+
+    def get_conversation_info(self, conversation_id: str) -> dict:
+        return {
+            "openConversationId": conversation_id,
+            "title": "项目群",
+            "singleChat": False,
+            "memberCount": 3,
+        }
+
+    def search_user_profiles(self, query: str) -> list:
+        return []
+
+    def read_recent_messages(self, conversation, limit=50) -> list:
+        return []
+
+    def send_message(self, conversation_id, text, **kwargs):
+        self.send_calls.append(
+            {"conversation_id": conversation_id, "text": text, **kwargs}
+        )
+        return self.send_result
+
+    def verify_message_send_result(self, send_result: dict) -> dict:
+        self.verify_calls.append(send_result)
+        state = self.verification_states.pop(0)
+        return {
+            "state": state,
+            "open_task_id": send_result.get("result", {}).get(
+                "openTaskId", ""
+            ),
+            "status_result": {"state": state},
+        }
+
+
+class FakeMeetingRunner:
+    last_session_id = "meeting-session-1"
+    last_transcript_start_line = 4
+    last_transcript_end_line = 19
+    last_audit_tool_events = [{"tool": "dws", "command": "group search"}]
+
+    def __init__(self, decision: MeetingAlignmentDecision):
+        self.decision = decision
+        self.calls = 0
+
+    def decide(self, *, prompt: str) -> MeetingAlignmentDecision:
+        self.calls += 1
+        return self.decision
+
+
+def no_action_decision() -> MeetingAlignmentDecision:
+    return MeetingAlignmentDecision.model_validate(
+        {
+            "action": "no_action",
+            "trigger_reasons": [],
+            "topics": [],
+            "derek_viewpoint": None,
+            "key_questions": [],
+            "mention_names": [],
+            "target": None,
+            "final_message": "",
+            "audit_summary": "没有需要发布的观点分歧。",
+            "confidence": 0.9,
+        }
+    )
+
+
+def consumer_send_decision() -> MeetingAlignmentDecision:
+    return MeetingAlignmentDecision.model_validate(
+        {
+            "action": "send",
+            "trigger_reasons": ["unresolved_disagreement"],
+            "topics": [
+                {
+                    "title": "上线范围",
+                    "state": "unresolved",
+                    "views": [
+                        {"speaker": "A", "view": "全量", "reason": "收入"},
+                        {"speaker": "B", "view": "灰度", "reason": "风险"},
+                    ],
+                    "conclusion": "",
+                    "alignment_reason": "",
+                }
+            ],
+            "derek_viewpoint": None,
+            "key_questions": [
+                {
+                    "question": "最多接受多大故障面？",
+                    "answer_owner_names": ["A", "B"],
+                }
+            ],
+            "mention_names": [],
+            "target": {
+                "kind": "group",
+                "conversation_id": "cid-first",
+                "direct_user_id": "",
+                "title": "项目群",
+                "candidates": [
+                    {
+                        "conversation_id": "cid-first",
+                        "title": "项目群",
+                        "evidence": ["会前后讨论同一议题"],
+                    }
+                ],
+            },
+            "final_message": "会后对齐｜上线评审\n\n请确认故障面。",
+            "audit_summary": "存在未对齐的上线范围取舍。",
+            "confidence": 0.88,
+        }
+    )
+
+
+def seed_consumer_job(store: AutoReplyStore, dws: ConsumerDws) -> int:
+    assert produce_meeting_alignment_jobs(store, dws, now=NOW) == 1
+    job = store.get_meeting_alignment_job_by_meeting_id("minutes-1")
+    assert job is not None
+    return job.id
 
 
 def test_producer_leaves_no_calendar_match_unqueued(tmp_path):
@@ -256,6 +410,231 @@ def test_producer_defaults_to_seven_day_discovery_window(tmp_path):
 
     assert dws.minutes_calls[0]["start"] == "2026-07-07T10:10:00+08:00"
     assert dws.minutes_calls[0]["end"] == "2026-07-14T10:10:00+08:00"
+
+
+def test_consumer_records_no_action_run_and_terminal_job(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    dws = ConsumerDws()
+    job_id = seed_consumer_job(store, dws)
+    runner = FakeMeetingRunner(no_action_decision())
+
+    assert consume_meeting_alignment_jobs(
+        store, dws, runner, now=NOW, limit=1
+    ) == 1
+
+    job = store.get_meeting_alignment_job(job_id)
+    assert job.status == "no_action"
+    assert job.locked_at is None
+    [run] = store.list_meeting_alignment_runs(job_id)
+    assert run.status == "no_action"
+    assert run.codex_session_id == "meeting-session-1"
+    assert run.codex_transcript_start_line == 4
+    assert run.codex_transcript_end_line == 19
+    assert json.loads(run.audit_tool_events_json)[0]["tool"] == "dws"
+
+
+def test_consumer_persists_ready_before_external_send_and_marks_sent(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    dws = ConsumerDws()
+    job_id = seed_consumer_job(store, dws)
+    runner = FakeMeetingRunner(consumer_send_decision())
+    seen_statuses: list[str] = []
+    original_send = dws.send_message
+
+    def observing_send(conversation_id, text, **kwargs):
+        seen_statuses.append(store.get_meeting_alignment_job(job_id).status)
+        return original_send(conversation_id, text, **kwargs)
+
+    dws.send_message = observing_send
+
+    assert consume_meeting_alignment_jobs(
+        store, dws, runner, now=NOW, limit=1
+    ) == 1
+
+    job = store.get_meeting_alignment_job(job_id)
+    assert seen_statuses == ["ready_to_send"]
+    assert job.status == "sent"
+    assert job.final_message == consumer_send_decision().final_message
+    assert job.target_kind == "group"
+    assert job.target_id == "cid-first"
+    assert json.loads(job.decision_json)["action"] == "send"
+    assert json.loads(job.send_result_json)["status"] == "sent"
+    [run] = store.list_meeting_alignment_runs(job_id)
+    assert run.status == "ready_to_send"
+
+
+def test_consumer_reconciles_ambiguous_task_without_duplicate_send(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    dws = ConsumerDws()
+    dws.send_result = {
+        "success": True,
+        "result": {"openTaskId": "task-1"},
+    }
+    dws.verification_states = ["ambiguous", "sent"]
+    job_id = seed_consumer_job(store, dws)
+    runner = FakeMeetingRunner(consumer_send_decision())
+
+    consume_meeting_alignment_jobs(store, dws, runner, now=NOW, limit=1)
+    first = store.get_meeting_alignment_job(job_id)
+    assert first.status == "ready_to_send"
+    assert len(dws.send_calls) == 1
+    assert json.loads(first.send_result_json)["send_verification"][
+        "open_task_id"
+    ] == "task-1"
+
+    consume_meeting_alignment_jobs(store, dws, runner, now=NOW, limit=1)
+    second = store.get_meeting_alignment_job(job_id)
+    assert second.status == "sent"
+    assert len(dws.send_calls) == 1
+    assert runner.calls == 1
+    assert len(dws.verify_calls) == 2
+
+
+def test_confirmed_failed_reconciliation_uses_counted_retry_backoff(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    dws = ConsumerDws()
+    dws.send_result = {
+        "success": True,
+        "result": {"openTaskId": "task-1"},
+    }
+    dws.verification_states = ["ambiguous", "failed"]
+    job_id = seed_consumer_job(store, dws)
+    runner = FakeMeetingRunner(consumer_send_decision())
+
+    consume_meeting_alignment_jobs(store, dws, runner, now=NOW, limit=1)
+    consume_meeting_alignment_jobs(store, dws, runner, now=NOW, limit=1)
+
+    job = store.get_meeting_alignment_job(job_id)
+    assert job.status == "retry"
+    assert job.available_at == "2026-07-14T10:11:00+08:00"
+    assert json.loads(job.error)["kind"] == (
+        "meeting_send_reconcile_failed"
+    )
+    assert len(dws.send_calls) == 1
+    assert runner.calls == 1
+
+
+def test_ready_delivery_source_failure_uses_counted_retry(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    dws = ConsumerDws()
+    job_id = seed_consumer_job(store, dws)
+    decision = consumer_send_decision()
+    store.update_meeting_alignment_job(
+        job_id,
+        status="ready_to_send",
+        decision_json=decision.model_dump_json(),
+        final_message=decision.final_message,
+    )
+
+    def fail_info(meeting_id: str):
+        raise DwsError("minutes temporarily unavailable")
+
+    dws.get_minutes_info = fail_info
+    runner = FakeMeetingRunner(decision)
+
+    consume_meeting_alignment_jobs(store, dws, runner, now=NOW, limit=1)
+    job = store.get_meeting_alignment_job(job_id)
+    assert job.status == "retry"
+    assert job.available_at == "2026-07-14T10:11:00+08:00"
+    assert json.loads(job.error)["kind"] == "meeting_source"
+    assert dws.send_calls == []
+    assert runner.calls == 0
+
+
+def test_consumer_quarantines_ambiguous_send_without_verifiable_id(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    dws = ConsumerDws()
+    dws.send_result = {"success": True, "result": {}}
+    dws.verification_states = ["ambiguous"]
+    job_id = seed_consumer_job(store, dws)
+    runner = FakeMeetingRunner(consumer_send_decision())
+
+    consume_meeting_alignment_jobs(store, dws, runner, now=NOW, limit=1)
+    job = store.get_meeting_alignment_job(job_id)
+    assert job.status == "failed"
+    assert json.loads(job.error)["kind"] == "meeting_send_ambiguous_no_id"
+    assert len(dws.send_calls) == 1
+
+    consume_meeting_alignment_jobs(store, dws, runner, now=NOW, limit=1)
+    assert len(dws.send_calls) == 1
+    assert runner.calls == 1
+
+
+def test_consumer_quarantines_corrupt_persisted_send_evidence(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    dws = ConsumerDws()
+    dws.send_result = {
+        "success": True,
+        "result": {"openTaskId": "task-1"},
+    }
+    dws.verification_states = ["ambiguous"]
+    job_id = seed_consumer_job(store, dws)
+    runner = FakeMeetingRunner(consumer_send_decision())
+
+    consume_meeting_alignment_jobs(store, dws, runner, now=NOW, limit=1)
+    assert len(dws.send_calls) == 1
+    store.update_meeting_alignment_job(
+        job_id,
+        send_result_json='{"status":"ambiguous","truncated":true}',
+    )
+
+    consume_meeting_alignment_jobs(store, dws, runner, now=NOW, limit=1)
+    job = store.get_meeting_alignment_job(job_id)
+    assert job.status == "failed"
+    assert json.loads(job.error)["kind"] == "meeting_send_evidence"
+    assert len(dws.send_calls) == 1
+
+
+def test_startup_recovery_only_requeues_processing_and_unlocks_ready(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    dws = ConsumerDws()
+    processing_id = seed_consumer_job(store, dws)
+    [processing] = store.claim_meeting_alignment_jobs(
+        limit=1, now=NOW.isoformat()
+    )
+    assert processing.id == processing_id
+    store.update_meeting_alignment_job(
+        processing_id,
+        decision_json='{"preserve":"analysis"}',
+        send_result_json='{"preserve":"send"}',
+    )
+
+    ready_id = store.upsert_meeting_alignment_job(
+        meeting_id="minutes-ready",
+        title="另一个会议",
+        source_json='{"preserve":"source"}',
+        participants_json="[]",
+        ended_at="2026-07-14T10:00:00+08:00",
+        eligible_at=NOW.isoformat(),
+        status="pending",
+    )
+    store.update_meeting_alignment_job(
+        ready_id,
+        status="ready_to_send",
+        decision_json='{"preserve":"ready"}',
+        send_result_json='{"preserve":"ambiguous"}',
+    )
+    [ready] = store.claim_ready_to_send_meeting_alignment_jobs(limit=1)
+    assert ready.id == ready_id
+
+    assert recover_meeting_alignment_jobs(store) == 2
+
+    processing_after = store.get_meeting_alignment_job(processing_id)
+    assert processing_after.status == "retry"
+    assert processing_after.attempts == 1
+    assert processing_after.decision_json == '{"preserve":"analysis"}'
+    assert processing_after.send_result_json == '{"preserve":"send"}'
+    assert json.loads(processing_after.error)["kind"] == (
+        "meeting_alignment_service_startup_requeue"
+    )
+    ready_after = store.get_meeting_alignment_job(ready_id)
+    assert ready_after.status == "ready_to_send"
+    assert ready_after.locked_at is None
+    assert ready_after.decision_json == '{"preserve":"ready"}'
+    assert ready_after.send_result_json == '{"preserve":"ambiguous"}'
+    assert json.loads(ready_after.error)["kind"] == (
+        "meeting_alignment_service_startup_requeue"
+    )
 
 
 @pytest.mark.parametrize("lookback", [timedelta(0), timedelta(seconds=-1)])

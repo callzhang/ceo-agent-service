@@ -1,14 +1,30 @@
 import json
+import subprocess
 from datetime import datetime, timedelta
 from typing import Any, Protocol
 
+from pydantic import ValidationError
+
 from app.dws_client import DwsCalendarEvent, DwsError
+from app.meeting_alignment_agent import (
+    MeetingAlignmentAgent,
+    MeetingAlignmentTargetError,
+)
+from app.meeting_alignment_delivery import (
+    MeetingDeliveryAmbiguous,
+    MeetingDeliveryError,
+    MeetingDeliveryResult,
+    MeetingDeliveryRetry,
+    deliver_meeting_alignment,
+)
+from app.meeting_alignment_models import MeetingAlignmentDecision
 from app.meeting_alignment_source import (
     CalendarMeetingEvidence,
     MeetingSourceIncomplete,
     build_calendar_meeting_evidence,
     minutes_meeting_id,
     normalize_minutes_discovery_metadata,
+    read_meeting_source,
 )
 from app.store import AutoReplyStore
 
@@ -17,6 +33,8 @@ DISCOVERY_PAGE_LIMIT = 100
 DISCOVERY_PAGE_SIZE = 50
 DEFAULT_MEETING_DISCOVERY_LOOKBACK = timedelta(days=7)
 TERMINAL_STATUSES = frozenset({"no_action", "sent", "failed"})
+DEFAULT_MEETING_RETRY_DELAY = timedelta(minutes=1)
+DEFAULT_MEETING_MAX_ATTEMPTS = 3
 
 
 class MeetingProducerDws(Protocol):
@@ -133,6 +151,540 @@ def produce_meeting_alignment_jobs(
         if existing is None:
             created += 1
     return created
+
+
+def consume_meeting_alignment_jobs(
+    store: AutoReplyStore,
+    dws: Any,
+    runner: Any,
+    *,
+    now: datetime,
+    limit: int = 1,
+    retry_delay: timedelta = DEFAULT_MEETING_RETRY_DELAY,
+    max_attempts: int = DEFAULT_MEETING_MAX_ATTEMPTS,
+) -> int:
+    if now.tzinfo is None or now.utcoffset() is None:
+        raise ValueError("meeting consumer now must include a timezone")
+    if limit <= 0:
+        return 0
+    if retry_delay.total_seconds() < 0:
+        raise ValueError("meeting retry delay must not be negative")
+    if max_attempts <= 0:
+        raise ValueError("meeting max attempts must be positive")
+
+    processed_ids: set[int] = set()
+    jobs = store.claim_meeting_alignment_jobs(limit=limit, now=now.isoformat())
+    for job in jobs:
+        processed_ids.add(job.id)
+        _analyze_meeting_job(
+            store,
+            dws,
+            runner,
+            job,
+            now=now,
+            retry_delay=retry_delay,
+            max_attempts=max_attempts,
+        )
+
+    delivery_jobs = store.claim_ready_to_send_meeting_alignment_jobs(
+        limit=limit
+    )
+    for job in delivery_jobs:
+        processed_ids.add(job.id)
+        _deliver_meeting_job(
+            store,
+            dws,
+            job,
+            now=now,
+            retry_delay=retry_delay,
+            max_attempts=max_attempts,
+        )
+    return len(processed_ids)
+
+
+def recover_meeting_alignment_jobs(store: AutoReplyStore) -> int:
+    recovered = [
+        *store.reset_processing_meeting_alignment_jobs(),
+        *store.reset_ready_to_send_meeting_alignment_jobs(),
+    ]
+    error = _error_json(
+        "meeting_alignment_service_startup_requeue",
+        "service restarted while meeting work was claimed",
+    )
+    for job in recovered:
+        store.update_meeting_alignment_job(job.id, error=error)
+    return len(recovered)
+
+
+def _analyze_meeting_job(
+    store: AutoReplyStore,
+    dws: Any,
+    runner: Any,
+    job: Any,
+    *,
+    now: datetime,
+    retry_delay: timedelta,
+    max_attempts: int,
+) -> None:
+    try:
+        payload = json.loads(job.source_json)
+        evidence = CalendarMeetingEvidence.model_validate(
+            payload["calendar_evidence"]
+        )
+    except (json.JSONDecodeError, KeyError, TypeError, ValidationError) as exc:
+        _fail_job(store, job.id, "meeting_source", exc)
+        return
+
+    try:
+        source = read_meeting_source(
+            dws,
+            job.meeting_id,
+            calendar_evidence=evidence,
+        )
+    except (MeetingSourceIncomplete, DwsError) as exc:
+        _retry_or_fail(
+            store,
+            job,
+            kind="meeting_source",
+            exc=exc,
+            now=now,
+            retry_delay=retry_delay,
+            max_attempts=max_attempts,
+        )
+        return
+    except Exception as exc:
+        _fail_job(store, job.id, "meeting_source", exc)
+        return
+
+    agent = MeetingAlignmentAgent(runner)
+    try:
+        decision = agent.decide(source)
+    except MeetingAlignmentTargetError as exc:
+        error = _error_json("meeting_target", str(exc))
+        _record_agent_run(
+            store,
+            runner,
+            job_id=job.id,
+            decision=None,
+            status="failed",
+            error=error,
+        )
+        store.update_meeting_alignment_job(
+            job.id, status="failed", error=error
+        )
+        return
+    except (ValidationError, ValueError) as exc:
+        error = _error_json("meeting_agent", str(exc))
+        _record_agent_run(
+            store,
+            runner,
+            job_id=job.id,
+            decision=None,
+            status="failed",
+            error=error,
+        )
+        store.update_meeting_alignment_job(
+            job.id, status="failed", error=error
+        )
+        return
+    except RuntimeError as exc:
+        error = _error_json("meeting_agent", str(exc))
+        _record_agent_run(
+            store,
+            runner,
+            job_id=job.id,
+            decision=None,
+            status="retry" if job.attempts < max_attempts else "failed",
+            error=error,
+        )
+        _retry_or_fail(
+            store,
+            job,
+            kind="meeting_agent",
+            exc=exc,
+            now=now,
+            retry_delay=retry_delay,
+            max_attempts=max_attempts,
+        )
+        return
+    except Exception as exc:
+        error = _error_json("meeting_agent", str(exc))
+        _record_agent_run(
+            store,
+            runner,
+            job_id=job.id,
+            decision=None,
+            status="failed",
+            error=error,
+        )
+        store.update_meeting_alignment_job(
+            job.id, status="failed", error=error
+        )
+        return
+
+    decision_json = decision.model_dump_json()
+    if decision.action == "no_action":
+        _record_agent_run(
+            store,
+            runner,
+            job_id=job.id,
+            decision=decision,
+            status="no_action",
+            error="",
+        )
+        store.update_meeting_alignment_job(
+            job.id,
+            status="no_action",
+            decision_json=decision_json,
+            error="",
+        )
+        return
+
+    target = decision.target
+    target_id = ""
+    if target is not None:
+        target_id = (
+            target.conversation_id
+            if target.kind == "group"
+            else target.direct_user_id
+        )
+    _record_agent_run(
+        store,
+        runner,
+        job_id=job.id,
+        decision=decision,
+        status="ready_to_send",
+        error="",
+    )
+    store.update_meeting_alignment_job(
+        job.id,
+        status="ready_to_send",
+        decision_json=decision_json,
+        target_kind=target.kind if target is not None else "",
+        target_id=target_id,
+        target_title=target.title if target is not None else "",
+        mentions_json=json.dumps(decision.mention_names, ensure_ascii=False),
+        final_message=decision.final_message,
+        send_result_json="{}",
+        error="",
+    )
+
+
+def _deliver_meeting_job(
+    store: AutoReplyStore,
+    dws: Any,
+    job: Any,
+    *,
+    now: datetime,
+    retry_delay: timedelta,
+    max_attempts: int,
+) -> None:
+    try:
+        previous = _saved_delivery_result(job.send_result_json)
+    except (ValidationError, ValueError) as exc:
+        _fail_job(store, job.id, "meeting_send_evidence", exc)
+        return
+    if previous is not None and previous.status == "ambiguous":
+        _reconcile_ambiguous_delivery(
+            store,
+            dws,
+            job,
+            previous,
+            now=now,
+            retry_delay=retry_delay,
+            max_attempts=max_attempts,
+        )
+        return
+
+    try:
+        decision = MeetingAlignmentDecision.model_validate_json(
+            job.decision_json
+        )
+    except (ValidationError, ValueError) as exc:
+        _fail_job(store, job.id, "meeting_target", exc)
+        return
+    try:
+        source_payload = json.loads(job.source_json)
+        evidence = CalendarMeetingEvidence.model_validate(
+            source_payload["calendar_evidence"]
+        )
+    except (json.JSONDecodeError, KeyError, TypeError, ValidationError) as exc:
+        _fail_job(store, job.id, "meeting_source", exc)
+        return
+    try:
+        source = read_meeting_source(
+            dws,
+            job.meeting_id,
+            calendar_evidence=evidence,
+        )
+    except (MeetingSourceIncomplete, DwsError) as exc:
+        _retry_or_fail(
+            store,
+            job,
+            kind="meeting_source",
+            exc=exc,
+            now=now,
+            retry_delay=retry_delay,
+            max_attempts=max_attempts,
+        )
+        return
+    except Exception as exc:
+        _fail_job(store, job.id, "meeting_source", exc)
+        return
+
+    try:
+        result = deliver_meeting_alignment(decision, source, dws)
+    except MeetingDeliveryAmbiguous as exc:
+        result = exc.result
+        result_json = result.model_dump_json()
+        if not _delivery_open_task_id(result):
+            store.update_meeting_alignment_job(
+                job.id,
+                status="failed",
+                send_result_json=result_json,
+                error=_error_json(
+                    "meeting_send_ambiguous_no_id",
+                    "ambiguous delivery has no verifiable identifier; quarantined",
+                ),
+            )
+            return
+        store.update_meeting_alignment_job(
+            job.id,
+            status="ready_to_send",
+            locked_at=None,
+            send_result_json=result_json,
+            error=_error_json("meeting_send", str(exc)),
+        )
+        return
+    except MeetingDeliveryRetry as exc:
+        values: dict[str, object] = {}
+        if exc.result is not None:
+            values["send_result_json"] = exc.result.model_dump_json()
+        _retry_or_fail(
+            store,
+            job,
+            kind="meeting_send",
+            exc=exc,
+            now=now,
+            retry_delay=retry_delay,
+            max_attempts=max_attempts,
+            extra_values=values,
+        )
+        return
+    except MeetingDeliveryError as exc:
+        _fail_job(store, job.id, "meeting_target", exc)
+        return
+    except (DwsError, subprocess.TimeoutExpired, TimeoutError) as exc:
+        _retry_or_fail(
+            store,
+            job,
+            kind="meeting_send",
+            exc=exc,
+            now=now,
+            retry_delay=retry_delay,
+            max_attempts=max_attempts,
+        )
+        return
+    except Exception as exc:
+        _fail_job(store, job.id, "meeting_send", exc)
+        return
+
+    store.update_meeting_alignment_job(
+        job.id,
+        status="sent",
+        send_result_json=result.model_dump_json(),
+        error="",
+    )
+
+
+def _reconcile_ambiguous_delivery(
+    store: AutoReplyStore,
+    dws: Any,
+    job: Any,
+    previous: MeetingDeliveryResult,
+    *,
+    now: datetime,
+    retry_delay: timedelta,
+    max_attempts: int,
+) -> None:
+    open_task_id = _delivery_open_task_id(previous)
+    if not open_task_id:
+        store.update_meeting_alignment_job(
+            job.id,
+            status="failed",
+            error=_error_json(
+                "meeting_send_ambiguous_no_id",
+                "stored ambiguous delivery has no verifiable identifier",
+            ),
+        )
+        return
+    try:
+        verification = dws.verify_message_send_result(previous.send_result)
+    except (DwsError, subprocess.TimeoutExpired, TimeoutError) as exc:
+        store.update_meeting_alignment_job(
+            job.id,
+            status="ready_to_send",
+            locked_at=None,
+            error=_error_json("meeting_send_reconcile", str(exc)),
+        )
+        return
+    except Exception as exc:
+        store.update_meeting_alignment_job(
+            job.id,
+            status="failed",
+            error=_error_json("meeting_send_reconcile", str(exc)),
+        )
+        return
+
+    state = verification.get("state")
+    updated = previous.model_copy(
+        update={
+            "status": "sent" if state == "sent" else "ambiguous",
+            "send_verification": verification,
+        }
+    )
+    if state == "sent":
+        store.update_meeting_alignment_job(
+            job.id,
+            status="sent",
+            send_result_json=updated.model_dump_json(),
+            error="",
+        )
+        return
+    if state == "failed":
+        # This attempt only reconciles the old operation. A counted retry may
+        # safely reanalyze and send because the prior operation is confirmed
+        # failed; backoff/max-attempt policy prevents a hot infinite loop.
+        _retry_or_fail(
+            store,
+            job,
+            kind="meeting_send_reconcile_failed",
+            exc=MeetingDeliveryRetry("previous send was confirmed failed"),
+            now=now,
+            retry_delay=retry_delay,
+            max_attempts=max_attempts,
+            extra_values={"send_result_json": updated.model_dump_json()},
+        )
+        return
+    store.update_meeting_alignment_job(
+        job.id,
+        status="ready_to_send",
+        locked_at=None,
+        send_result_json=updated.model_dump_json(),
+        error=_error_json(
+            "meeting_send_reconcile",
+            "previous send remains ambiguous",
+        ),
+    )
+
+
+def _record_agent_run(
+    store: AutoReplyStore,
+    runner: Any,
+    *,
+    job_id: int,
+    decision: MeetingAlignmentDecision | None,
+    status: str,
+    error: str,
+) -> None:
+    store.record_meeting_alignment_run(
+        job_id=job_id,
+        codex_session_id=str(getattr(runner, "last_session_id", "") or ""),
+        codex_transcript_start_line=int(
+            getattr(runner, "last_transcript_start_line", 0) or 0
+        ),
+        codex_transcript_end_line=int(
+            getattr(runner, "last_transcript_end_line", 0) or 0
+        ),
+        decision_json=decision.model_dump_json() if decision is not None else "{}",
+        audit_tool_events_json=json.dumps(
+            getattr(runner, "last_audit_tool_events", []) or [],
+            ensure_ascii=False,
+        ),
+        audit_summary=decision.audit_summary if decision is not None else str(error),
+        status=status,
+        error=error,
+    )
+
+
+def _retry_or_fail(
+    store: AutoReplyStore,
+    job: Any,
+    *,
+    kind: str,
+    exc: Exception,
+    now: datetime,
+    retry_delay: timedelta,
+    max_attempts: int,
+    extra_values: dict[str, object] | None = None,
+) -> None:
+    error = _error_json(kind, str(exc))
+    if job.attempts >= max_attempts:
+        store.update_meeting_alignment_job(
+            job.id,
+            status="failed",
+            error=error,
+            **(extra_values or {}),
+        )
+        return
+    store.update_meeting_alignment_job(
+        job.id,
+        status="retry",
+        available_at=(now + retry_delay).isoformat(),
+        error=error,
+        **(extra_values or {}),
+    )
+
+
+def _fail_job(
+    store: AutoReplyStore,
+    job_id: int,
+    kind: str,
+    exc: Exception,
+) -> None:
+    store.update_meeting_alignment_job(
+        job_id,
+        status="failed",
+        error=_error_json(kind, str(exc)),
+    )
+
+
+def _saved_delivery_result(raw: str) -> MeetingDeliveryResult | None:
+    if not raw.strip() or raw.strip() == "{}":
+        return None
+    return MeetingDeliveryResult.model_validate_json(raw)
+
+
+def _delivery_open_task_id(result: MeetingDeliveryResult) -> str:
+    value = result.send_verification.get("open_task_id")
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return _find_nested_string(result.send_result, "openTaskId")
+
+
+def _find_nested_string(payload: Any, key: str) -> str:
+    if isinstance(payload, dict):
+        value = payload.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+        for nested in payload.values():
+            found = _find_nested_string(nested, key)
+            if found:
+                return found
+    elif isinstance(payload, list):
+        for nested in payload:
+            found = _find_nested_string(nested, key)
+            if found:
+                return found
+    return ""
+
+
+def _error_json(kind: str, message: str) -> str:
+    return json.dumps(
+        {"kind": kind, "message": message},
+        ensure_ascii=False,
+        sort_keys=True,
+    )
 
 
 def _list_all_minutes(
