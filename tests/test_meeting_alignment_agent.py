@@ -122,6 +122,9 @@ def test_prompt_contains_full_transcript_and_behavioral_contracts():
     assert "每场会议最多生成一条合并消息" in prompt
     assert "候选列表第 1 个" in prompt
     assert "关联较弱也不能降级为私聊" in prompt
+    assert "target=null" in prompt
+    assert "交给发送层重试" in prompt
+    assert "不能改成 no_action" in prompt
     assert "真实 @" in prompt
 
 
@@ -274,19 +277,24 @@ def _deterministic_payload(case: dict) -> dict:
         "derek_viewpoint": viewpoint,
         "key_questions": questions,
         "mention_names": ["Alex", "Mina"],
-        "target": {
-            "kind": "group",
-            "conversation_id": "cid-best",
-            "direct_user_id": "",
-            "title": "上线项目群",
-            "candidates": [
-                {
-                    "conversation_id": "cid-best",
-                    "title": "上线项目群",
-                    "evidence": ["会议标题和近期讨论匹配"],
-                }
-            ],
-        },
+        "target": (
+            None
+            if case.get("expected_target") is None
+            and "expected_target" in case
+            else {
+                "kind": "group",
+                "conversation_id": "cid-best",
+                "direct_user_id": "",
+                "title": "上线项目群",
+                "candidates": [
+                    {
+                        "conversation_id": "cid-best",
+                        "title": "上线项目群",
+                        "evidence": ["会议标题和近期讨论匹配"],
+                    }
+                ],
+            }
+        ),
         "final_message": (
             "Derek 的观点输出解读\n\n合并后的单条消息。"
             if viewpoint is not None
@@ -322,3 +330,5 @@ def test_semantic_fixtures_with_deterministic_executor(tmp_path: Path, case: dic
         assert expected_trigger in decision.trigger_reasons, fixture_id
     if forbidden_trigger := case.get("forbidden_trigger"):
         assert forbidden_trigger not in decision.trigger_reasons, fixture_id
+    if "expected_target" in case:
+        assert decision.target == case["expected_target"], fixture_id

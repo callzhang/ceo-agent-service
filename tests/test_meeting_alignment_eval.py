@@ -11,7 +11,11 @@ from app.meeting_alignment_models import MeetingSource
 
 
 FIXTURE_PATH = Path(__file__).parent / "fixtures" / "meeting_alignment_cases.json"
-CASES = json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))
+CASES = [
+    case
+    for case in json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))
+    if case.get("live", True)
+]
 
 
 def _source(case: dict) -> MeetingSource:
@@ -60,3 +64,5 @@ def test_live_meeting_alignment_semantics(case: dict):
         assert expected_trigger in decision.trigger_reasons, fixture_id
     if forbidden_trigger := case.get("forbidden_trigger"):
         assert forbidden_trigger not in decision.trigger_reasons, fixture_id
+    if "expected_target" in case:
+        assert decision.target == case["expected_target"], fixture_id

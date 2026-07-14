@@ -76,5 +76,17 @@
     "expected_action": "send",
     "expected_state": "aligned",
     "expected_trigger": "derek_viewpoint"
+  },
+  {
+    "id": "multi-party-no-group-retry",
+    "summary": "全量和灰度仍未对齐，已经穷尽群发现但没有可发送群。",
+    "transcript": [
+      ["Alex", "本周必须全量才能验证收入。"],
+      ["Mina", "我只接受 10% 灰度，否则故障面不可控。"]
+    ],
+    "expected_action": "send",
+    "expected_state": "unresolved",
+    "expected_target": null,
+    "live": false
   }
 ]

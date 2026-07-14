@@ -93,7 +93,7 @@ def valid_derek_viewpoint():
     }
 
 
-def test_send_decision_requires_message_and_target():
+def test_send_decision_requires_message_but_allows_missing_group_target_for_retry():
     payload = valid_send_decision()
     payload["final_message"] = ""
     with pytest.raises(ValidationError):
@@ -101,8 +101,10 @@ def test_send_decision_requires_message_and_target():
 
     payload = valid_send_decision()
     payload["target"] = None
-    with pytest.raises(ValidationError):
-        MeetingAlignmentDecision.model_validate(payload)
+    decision = MeetingAlignmentDecision.model_validate(payload)
+    assert decision.action == "send"
+    assert decision.target is None
+    assert decision.final_message
 
 
 def test_no_action_rejects_delivery_payload():
@@ -444,3 +446,14 @@ def test_committed_schema_matches_the_decision_model():
         "https://json-schema.org/draft/2020-12/schema"
     )
     assert committed_schema == MeetingAlignmentDecision.model_json_schema()
+
+
+def test_committed_schema_allows_null_target_for_delivery_retry():
+    schema_path = (
+        Path(__file__).resolve().parents[1]
+        / "app"
+        / "schemas"
+        / "meeting_alignment_decision.schema.json"
+    )
+    target_schema = json.loads(schema_path.read_text())["properties"]["target"]
+    assert {entry.get("type") for entry in target_schema["anyOf"]} >= {"null"}

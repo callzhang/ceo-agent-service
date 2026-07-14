@@ -168,7 +168,8 @@ def build_meeting_alignment_prompt(
 - 只允许发群，不允许私聊或在找不到强关联群时降级为私聊。
 - 必须使用 DWS 做群发现并按证据强弱排序：先找会议内明确提及或分享的群链接；再搜会议标题/核心议题消息；再看参会人近期共同活跃；再看组织者/关键发言人重合；再看会前会后时间邻近性；最后查看近期可访问群。
 - 每个 candidate 都必须写具体 evidence。target 必须选择候选列表第 1 个（得分最高的可发送群）；即使关联较弱也选择它，关联较弱也不能降级为私聊。
-- 如果没有任何可访问且可发送的群，则 no_action，不能私聊。"""
+- 如果已经穷尽上述群发现仍没有任何可访问且可发送的群，但会议确实命中 send 触发条件，必须保留 action=send、trigger_reasons、topics/derek_viewpoint、key_questions、mention_names 和 final_message，并返回 target=null，交给发送层重试。
+- target=null 是暂时无法投递的运行状态：不能改成 no_action，也绝不能降级为私聊。"""
 
     return f"""你是 Meeting Alignment Agent。你分析已经结束的会议，但不直接发送消息。
 
