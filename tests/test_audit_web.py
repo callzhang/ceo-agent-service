@@ -2742,6 +2742,36 @@ def test_render_attempt_list_uses_failed_action_pill_color(tmp_path: Path):
     assert 'class="pill status-action action-state-failed">💬 Failed</span>' in html
 
 
+def test_render_attempt_list_labels_unrecoverable_blocked_as_terminal(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    attempt_id = store.record_reply_attempt(
+        conversation_id="cid-1",
+        conversation_title="OKR",
+        trigger_message_id="msg-1",
+        trigger_sender="Mina",
+        trigger_text="@Alex Chen 这个 OKR 怎么评分？",
+        action="okr_review",
+        sensitivity_kind="general",
+        codex_reason="live source auth missing",
+        send_status="blocked",
+    )
+    store.update_reply_attempt(
+        attempt_id,
+        send_status="blocked",
+        send_error="blocked_unrecoverable_external_auth: DingTeam OKR page is not logged in",
+    )
+
+    html = render_attempt_list(store)
+
+    assert (
+        'class="pill status-action action-state-blocked-terminal">'
+        "💬 Blocked terminal</span>"
+    ) in html
+    assert 'class="pill status-action action-state-blocked">💬 Blocked</span>' not in html
+
+
 def test_render_attempt_detail_allows_explained_empty_documents(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     attempt_id = store.record_reply_attempt(

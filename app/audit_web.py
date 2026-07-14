@@ -408,7 +408,7 @@ a.nav-item:hover{color:var(--ink);text-decoration:none;border-color:var(--ink)}
 .action-state-sent,.action-state-accepted,.action-state-approved,.action-state-resolved{background:rgba(0,212,164,.12);color:#006b55;border-color:rgba(0,180,138,.28)}
 .action-state-skipped{background:var(--surface);color:var(--stone);border-color:var(--hairline)}
 .action-state-pending,.action-state-processing,.action-state-dry-run,.action-state-commented{background:rgba(55,114,207,.10);color:#245aa5;border-color:rgba(55,114,207,.24)}
-.action-state-tentative,.action-state-returned{background:rgba(195,125,13,.12);color:#8a5a08;border-color:rgba(195,125,13,.24)}
+.action-state-tentative,.action-state-returned,.action-state-blocked-terminal{background:rgba(195,125,13,.12);color:#8a5a08;border-color:rgba(195,125,13,.24)}
 .action-state-failed,.action-state-blocked,.action-state-declined,.action-state-rejected{background:rgba(212,86,86,.12);color:#9a2f2f;border-color:rgba(212,86,86,.24)}
 .log-feed{display:grid;gap:8px}
 .log-item{display:grid;gap:8px;padding:11px 12px;border:1px solid var(--hairline);border-radius:8px;background:var(--canvas)}
@@ -2062,6 +2062,8 @@ def _history_event_label(attempt: ReplyAttempt) -> str:
     if status == "skipped":
         return "💬 Skipped"
     if status == "blocked":
+        if _is_unrecoverable_blocked_attempt(attempt):
+            return "💬 Blocked terminal"
         return "💬 Blocked"
     if status == "failed":
         return "💬 Failed"
@@ -5645,7 +5647,16 @@ def _send_status_action(attempt: ReplyAttempt) -> tuple[str, str]:
     send_status = attempt.send_status
     if send_status.strip().lower() == "reacted":
         return "🙂 Reacted", send_status
+    if _is_unrecoverable_blocked_attempt(attempt):
+        return "💬 Blocked terminal", "blocked-terminal"
     return f"💬 {_display_action_state(send_status)}", send_status
+
+
+def _is_unrecoverable_blocked_attempt(attempt: ReplyAttempt) -> bool:
+    return (
+        attempt.send_status.strip().lower() == "blocked"
+        and attempt.send_error.strip().lower().startswith("blocked_unrecoverable_")
+    )
 
 
 def _action_state_class(value: str) -> str:
