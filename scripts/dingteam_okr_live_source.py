@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Fetch live Dingteam OKR data from an authorized Chrome tab.
 
-This script intentionally uses the page's own API module from the logged-in
-`dingokr.dingteam.com` tab. Chrome persists the login cookies; this script does
-not export or copy browser cookies, localStorage, or profile files.
+This script intentionally runs inside the logged-in `dingokr.dingteam.com` tab.
+Chrome persists the login cookies and page auth storage; this script reads the
+minimum request headers from the page context without exporting or printing
+browser cookies, tokens, localStorage, or profile files.
 """
 
 from __future__ import annotations
@@ -365,6 +366,38 @@ def _build_page_script(*, user_id: str, period_label: str, result_attribute: str
     return pieces.length ? pieces.join('\\n') : '[未撰写进度]';
   }}
 
+  function urlParam(name) {{
+    return new URLSearchParams(location.search).get(name) || '';
+  }}
+
+  const appId = urlParam('appid') || urlParam('appId') || '40707';
+  const corpId = urlParam('corpid') || urlParam('corpId') || '';
+  const suiteId = urlParam('suiteid') || urlParam('suiteId') || '';
+
+  function storageGet(key) {{
+    try {{
+      return localStorage.getItem(key) || '';
+    }} catch (_) {{
+      return '';
+    }}
+  }}
+
+  function pageAuthToken() {{
+    const scopedPrefix = appId && corpId ? appId + '_' + corpId + '_' : '';
+    return (
+      (scopedPrefix ? storageGet(scopedPrefix + 'token') : '') ||
+      (appId ? storageGet(appId + '__token') : '')
+    );
+  }}
+
+  function pageSpaceId() {{
+    const scopedPrefix = appId && corpId ? appId + '_' + corpId + '_' : '';
+    return (
+      (scopedPrefix ? storageGet(scopedPrefix + 'selectedSpaceId') : '') ||
+      (appId ? storageGet(appId + '__selectedSpaceId') : '')
+    );
+  }}
+
   async function fetchObjectiveComments(objectiveId) {{
     const payload = await postJson('/data/okr/objective/findCommentList/v2', {{
       objectiveId: objectiveId, pageNo: 1, pageSize: 100,
@@ -391,9 +424,16 @@ def _build_page_script(*, user_id: str, period_label: str, result_attribute: str
   }}
 
   async function postJson(path, body) {{
+    const headers = {{ 'content-type': 'application/json' }};
+    const token = pageAuthToken();
+    const spaceId = pageSpaceId();
+    if (token) headers.Authorization = token;
+    if (spaceId) headers['X-Space-Id'] = spaceId;
+    if (appId) headers['X-Dingteam-Auth-App-Id'] = suiteId || appId;
+    if (suiteId) headers['X-Dingteam-Auth-Suite-Id'] = suiteId;
     const response = await fetch(path, {{
       method: 'POST',
-      headers: {{ 'content-type': 'application/json' }},
+      headers: headers,
       credentials: 'include',
       body: JSON.stringify(body)
     }});

@@ -33,23 +33,24 @@ def test_page_script_uses_page_api_without_browser_storage_access():
     assert "postJson('/data/okr/objective/log/progressHistory'" in script
     assert "postJson('/data/okr/objective/findCommentList/v2'" in script
     assert "credentials: 'include'" in script
+    assert "headers.Authorization = token" in script
+    assert "headers['X-Space-Id'] = spaceId" in script
+    assert "localStorage.getItem(key)" in script
     assert "Dingteam OKR API error" in script
     assert "mergeUpdates(aggregateHistory(histories), aggregateComments(krComments))" in script
     assert "progressUpdatesAggregated: aggregated" in script
     assert "krDetailsUpdatesAggregated: aggregated" in script
-    assert "cookie" not in script.casefold()
-    assert "localstorage" not in script.casefold()
     assert "sessionstorage" not in script.casefold()
     assert "webpackChunkallinone" not in script
     assert ".catch(" not in script
     assert "} catch (error) {" in script
 
 
-def test_module_uses_chrome_cookie_persistence_without_copying_cookie_files():
+def test_module_uses_chrome_auth_persistence_without_copying_secret_files():
     source = SCRIPT_PATH.read_text()
 
     assert "Chrome persists the login cookies" in source
-    assert "not export or copy browser cookies" in source
+    assert "without exporting or printing" in source
     assert "Cookies" not in source
     assert "Local Storage" not in source
 
