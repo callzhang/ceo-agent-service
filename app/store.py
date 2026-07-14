@@ -3322,12 +3322,18 @@ class AutoReplyStore:
         *,
         send_statuses: tuple[str, ...] | None = None,
         query_text: str = "",
+        kinds: tuple[str, ...] | None = None,
+        created_since: str = "",
     ) -> list[HistoryItem]:
         query, args = self._history_items_query(
             send_statuses=send_statuses,
             query_text=query_text,
+            kinds=kinds,
+            created_since=created_since,
         )
-        query = f"{query} order by datetime(created_at) desc, source_id desc"
+        query = (
+            f"{query} order by datetime(created_at) desc, source_id desc, kind desc"
+        )
         if limit is not None:
             query = f"{query} limit ? offset ?"
             args.extend([limit, max(0, offset)])
@@ -3340,10 +3346,14 @@ class AutoReplyStore:
         *,
         send_statuses: tuple[str, ...] | None = None,
         query_text: str = "",
+        kinds: tuple[str, ...] | None = None,
+        created_since: str = "",
     ) -> int:
         query, args = self._history_items_query(
             send_statuses=send_statuses,
             query_text=query_text,
+            kinds=kinds,
+            created_since=created_since,
         )
         with self._connect() as db:
             row = db.execute(f"select count(*) as count from ({query})", args).fetchone()
@@ -3354,6 +3364,8 @@ class AutoReplyStore:
         *,
         send_statuses: tuple[str, ...] | None,
         query_text: str,
+        kinds: tuple[str, ...] | None,
+        created_since: str,
     ) -> tuple[str, list[object]]:
         query = """
             with history_items as (
@@ -3373,7 +3385,14 @@ class AutoReplyStore:
                     send_status as status,
                     conversation_title as target_title,
                     codex_session_id,
-                    created_at
+                    created_at,
+                    conversation_id || ' ' || conversation_title || ' ' ||
+                    trigger_message_id || ' ' || trigger_sender || ' ' ||
+                    trigger_text || ' ' || action || ' ' || sensitivity_kind || ' ' ||
+                    codex_reason || ' ' || draft_reply_text || ' ' || final_reply_text || ' ' ||
+                    permission_action || ' ' || permission_reason || ' ' || send_status || ' ' ||
+                    send_error || ' ' || reviewer_feedback || ' ' || corrected_reply_text
+                    as search_text
                 from reply_attempts
                 union all
                 select
@@ -3393,14 +3412,22 @@ class AutoReplyStore:
                         else 'meeting_alignment'
                     end as action,
                     case
-                        when jobs.status='no_action' then 'skipped'
-                        when jobs.status='sent' then 'sent'
-                        when jobs.status in ('retry', 'failed') then 'failed'
-                        else jobs.status
+                        when runs.status='no_action' then 'skipped'
+                        when runs.status in ('retry', 'failed') then 'failed'
+                        when runs.status='ready_to_send' and jobs.status='sent' then 'sent'
+                        when runs.status='ready_to_send' and jobs.status in ('retry', 'failed') then 'failed'
+                        else runs.status
                     end as status,
                     jobs.target_title,
                     runs.codex_session_id,
-                    runs.created_at
+                    runs.created_at,
+                    jobs.meeting_id || ' ' || jobs.title || ' ' || jobs.source_json || ' ' ||
+                    jobs.participants_json || ' ' || jobs.error || ' ' || jobs.decision_json || ' ' ||
+                    jobs.target_kind || ' ' || jobs.target_id || ' ' || jobs.target_title || ' ' ||
+                    jobs.mentions_json || ' ' || jobs.final_message || ' ' || jobs.send_result_json || ' ' ||
+                    runs.decision_json || ' ' || runs.audit_summary || ' ' || runs.error || ' ' ||
+                    runs.codex_session_id || ' ' || runs.status
+                    as search_text
                 from meeting_alignment_runs as runs
                 join meeting_alignment_jobs as jobs on jobs.id=runs.job_id
             )
@@ -3412,18 +3439,31 @@ class AutoReplyStore:
             placeholders = ",".join("?" for _ in send_statuses)
             filters.append(f"status in ({placeholders})")
             args.extend(send_statuses)
+        if kinds:
+            placeholders = ",".join("?" for _ in kinds)
+            filters.append(f"kind in ({placeholders})")
+            args.extend(kinds)
+        if created_since.strip():
+            filters.append("datetime(created_at) >= datetime(?)")
+            args.append(created_since)
         if query_text.strip():
             needle = f"%{query_text.strip().lower()}%"
-            filters.append(
-                """lower(
-                    source_title || ' ' || source_actor || ' ' || input_text || ' ' ||
-                    output_text || ' ' || target_title || ' ' || codex_session_id
-                ) like ?"""
-            )
+            filters.append("lower(search_text) like ?")
             args.append(needle)
         if filters:
             query = f"{query} where {' and '.join(filters)}"
         return query, args
+
+    def list_reply_attempts_by_ids(self, attempt_ids: list[int]) -> list[ReplyAttempt]:
+        if not attempt_ids:
+            return []
+        placeholders = ",".join("?" for _ in attempt_ids)
+        with self._connect() as db:
+            rows = db.execute(
+                f"select * from reply_attempts where id in ({placeholders})",
+                attempt_ids,
+            ).fetchall()
+        return [ReplyAttempt.model_validate(dict(row)) for row in rows]
 
     def list_reply_attempts_after(self, attempt_id: int) -> list[ReplyAttempt]:
         with self._connect() as db:

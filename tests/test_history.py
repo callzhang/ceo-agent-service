@@ -76,3 +76,99 @@ def test_history_applies_search_status_and_global_count(tmp_path):
     )
     assert item.kind == "meeting"
     assert item.status == "skipped"
+
+
+def test_history_preserves_immutable_retry_run_after_job_succeeds(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    job_id = store.upsert_meeting_alignment_job(
+        meeting_id="minutes-retry",
+        title="重试会议",
+        source_json="{}",
+        participants_json="[]",
+        ended_at="2026-07-14T09:50:00+08:00",
+        eligible_at="2026-07-14T10:00:00+08:00",
+        status="pending",
+    )
+    retry_run = store.record_meeting_alignment_run(
+        job_id=job_id,
+        codex_session_id="session-retry",
+        decision_json="{}",
+        audit_summary="首次调用失败",
+        status="retry",
+        error="temporary",
+    )
+    sent_run = store.record_meeting_alignment_run(
+        job_id=job_id,
+        codex_session_id="session-sent",
+        decision_json='{"action":"send"}',
+        audit_summary="第二次调用成功",
+        status="ready_to_send",
+        error="",
+    )
+    store.update_meeting_alignment_job(job_id, status="sent")
+
+    items = store.list_history_items(limit=20)
+    statuses = {item.source_id: item.status for item in items}
+
+    assert statuses[retry_run] == "failed"
+    assert statuses[sent_run] == "sent"
+    assert [item.source_id for item in store.list_history_items(
+        limit=20, send_statuses=("failed",)
+    )] == [retry_run]
+
+
+def test_history_retains_reply_legacy_search_fields(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    attempt_id = store.record_reply_attempt(
+        conversation_id="cid-search-legacy",
+        conversation_title="研发群",
+        trigger_message_id="msg-search-legacy",
+        trigger_sender="Mina",
+        trigger_text="原问题",
+        action="send_reply",
+        sensitivity_kind="general",
+        send_status="failed",
+    )
+    with sqlite3.connect(store.path) as db:
+        db.execute(
+            "update reply_attempts set corrected_reply_text='修正版答案', send_error='legacy-error' where id=?",
+            (attempt_id,),
+        )
+
+    for query in (
+        "cid-search-legacy",
+        "msg-search-legacy",
+        "修正版答案",
+        "legacy-error",
+        "send_reply",
+        "failed",
+    ):
+        assert [item.source_id for item in store.list_history_items(
+            limit=20, query_text=query
+        )] == [attempt_id]
+
+
+def test_history_tie_order_is_stable_across_kinds(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    reply_id = store.record_reply_attempt(
+        conversation_id="cid-tie",
+        conversation_title="同秒群",
+        trigger_message_id="msg-tie",
+        trigger_sender="Mina",
+        trigger_text="同秒",
+        action="no_reply",
+        sensitivity_kind="general",
+        send_status="skipped",
+    )
+    meeting_run_id = _seed_meeting_run(store)
+    with sqlite3.connect(store.path) as db:
+        db.execute("update reply_attempts set created_at='2026-07-14 10:00:00'")
+        db.execute("update meeting_alignment_runs set created_at='2026-07-14 10:00:00'")
+
+    first_page = store.list_history_items(limit=1, offset=0)
+    second_page = store.list_history_items(limit=1, offset=1)
+
+    assert [(item.kind, item.source_id) for item in first_page + second_page] == [
+        ("reply", reply_id),
+        ("meeting", meeting_run_id),
+    ]

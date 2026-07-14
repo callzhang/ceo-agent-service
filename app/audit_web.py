@@ -2113,9 +2113,11 @@ def _history_chart_payload(
             continue
         event_label = _history_event_label(attempt)
         bucket_values.setdefault(event_label, [0] * bucket_count)[bucket_index] += 1
-    for item in store.list_history_items(limit=None):
-        if item.kind != "meeting":
-            continue
+    for item in store.list_history_items(
+        limit=None,
+        kinds=("meeting",),
+        created_since=since_utc,
+    ):
         created_at = _parse_utc_timestamp(item.created_at)
         if created_at is None:
             continue
@@ -2680,13 +2682,9 @@ def render_attempt_list(
         send_statuses=send_status_filters,
         query_text=query,
     )
-    attempts = [
-        attempt
-        for item in history_items
-        if item.kind == "reply"
-        for attempt in [store.get_reply_attempt(item.source_id)]
-        if attempt is not None
-    ]
+    attempts = store.list_reply_attempts_by_ids(
+        [item.source_id for item in history_items if item.kind == "reply"]
+    )
     attempts_by_id = {attempt.id: attempt for attempt in attempts}
     sent_replies_by_attempt = store.list_sent_replies_for_attempts(attempts)
     feedback_events_by_token = _feedback_events_by_sent_reply(
@@ -3969,6 +3967,7 @@ def render_meeting_attempt_detail(
             active_nav="history",
         )
     job = store.get_meeting_alignment_job(run.job_id)
+    run_status = _meeting_run_display_status(run.status, job.status)
     codex_link = (
         f'<a href="/codex/{escape(run.codex_session_id)}">'
         f'{escape(run.codex_session_id)}</a>'
@@ -3986,7 +3985,7 @@ def render_meeting_attempt_detail(
         f'<pre>{escape(job.source_json)}</pre></section>'
         '<section class="card"><h2>Decision and delivery</h2>'
         '<div class="grid">'
-        f'<div class="muted">status</div><div>{escape(job.status)}</div>'
+        f'<div class="muted">status</div><div>{escape(run_status)}</div>'
         f'<div class="muted">target</div><div>{escape(job.target_title or job.target_id)}</div>'
         f'<div class="muted">mention resolution</div><div>{escape(job.mentions_json)}</div>'
         f'<div class="muted">send result</div><div>{escape(job.send_result_json)}</div>'
@@ -4002,6 +4001,18 @@ def render_meeting_attempt_detail(
         active_nav="history",
         user_feedback_pending_count=store.count_pending_user_feedback_items(),
     )
+
+
+def _meeting_run_display_status(run_status: str, job_status: str) -> str:
+    if run_status == "no_action":
+        return "skipped"
+    if run_status in {"retry", "failed"}:
+        return "failed"
+    if run_status == "ready_to_send" and job_status == "sent":
+        return "sent"
+    if run_status == "ready_to_send" and job_status in {"retry", "failed"}:
+        return "failed"
+    return run_status
 
 
 def render_codex_session_list(store: AutoReplyStore) -> str:
@@ -5922,7 +5933,7 @@ def _meeting_related_history_card(runs, store: AutoReplyStore) -> str:
             f'<td><a href="/meeting-attempts/{run.id}">#meeting-{run.id}</a></td>'
             f"<td>{escape(_format_local_time(run.created_at))}</td>"
             f"<td>{escape(job.title)}</td>"
-            f"<td>{escape(job.status)}</td>"
+            f"<td>{escape(_meeting_run_display_status(run.status, job.status))}</td>"
             f"<td>{escape(_excerpt(run.audit_summary, 120))}</td>"
             "</tr>"
         )
