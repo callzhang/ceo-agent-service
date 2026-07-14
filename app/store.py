@@ -1758,6 +1758,18 @@ class AutoReplyStore:
             ).fetchone()
         return self._meeting_alignment_run_from_row(row) if row is not None else None
 
+    def has_later_meeting_alignment_run(self, job_id: int, run_id: int) -> bool:
+        with self._connect() as db:
+            row = db.execute(
+                """
+                select 1 from meeting_alignment_runs
+                where job_id=? and id>?
+                limit 1
+                """,
+                (job_id, run_id),
+            ).fetchone()
+        return row is not None
+
     def list_meeting_alignment_runs_for_codex_session(
         self,
         codex_session_id: str,
@@ -3414,6 +3426,10 @@ class AutoReplyStore:
                     case
                         when runs.status='no_action' then 'skipped'
                         when runs.status in ('retry', 'failed') then 'failed'
+                        when runs.status='ready_to_send' and exists (
+                            select 1 from meeting_alignment_runs as later_runs
+                            where later_runs.job_id=runs.job_id and later_runs.id>runs.id
+                        ) then 'failed'
                         when runs.status='ready_to_send' and jobs.status='sent' then 'sent'
                         when runs.status='ready_to_send' and jobs.status in ('retry', 'failed') then 'failed'
                         else runs.status

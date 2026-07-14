@@ -3967,7 +3967,11 @@ def render_meeting_attempt_detail(
             active_nav="history",
         )
     job = store.get_meeting_alignment_job(run.job_id)
-    run_status = _meeting_run_display_status(run.status, job.status)
+    run_status = _meeting_run_display_status(
+        run.status,
+        job.status,
+        has_later_run=store.has_later_meeting_alignment_run(run.job_id, run.id),
+    )
     codex_link = (
         f'<a href="/codex/{escape(run.codex_session_id)}">'
         f'{escape(run.codex_session_id)}</a>'
@@ -4003,10 +4007,17 @@ def render_meeting_attempt_detail(
     )
 
 
-def _meeting_run_display_status(run_status: str, job_status: str) -> str:
+def _meeting_run_display_status(
+    run_status: str,
+    job_status: str,
+    *,
+    has_later_run: bool = False,
+) -> str:
     if run_status == "no_action":
         return "skipped"
     if run_status in {"retry", "failed"}:
+        return "failed"
+    if run_status == "ready_to_send" and has_later_run:
         return "failed"
     if run_status == "ready_to_send" and job_status == "sent":
         return "sent"
@@ -5933,7 +5944,7 @@ def _meeting_related_history_card(runs, store: AutoReplyStore) -> str:
             f'<td><a href="/meeting-attempts/{run.id}">#meeting-{run.id}</a></td>'
             f"<td>{escape(_format_local_time(run.created_at))}</td>"
             f"<td>{escape(job.title)}</td>"
-            f"<td>{escape(_meeting_run_display_status(run.status, job.status))}</td>"
+            f"<td>{escape(_meeting_run_display_status(run.status, job.status, has_later_run=store.has_later_meeting_alignment_run(run.job_id, run.id)))}</td>"
             f"<td>{escape(_excerpt(run.audit_summary, 120))}</td>"
             "</tr>"
         )

@@ -117,6 +117,43 @@ def test_history_preserves_immutable_retry_run_after_job_succeeds(tmp_path):
     )] == [retry_run]
 
 
+def test_history_marks_earlier_ready_run_failed_after_later_send_succeeds(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    job_id = store.upsert_meeting_alignment_job(
+        meeting_id="minutes-two-ready",
+        title="两次投递会议",
+        source_json="{}",
+        participants_json="[]",
+        ended_at="2026-07-14T09:50:00+08:00",
+        eligible_at="2026-07-14T10:00:00+08:00",
+        status="pending",
+    )
+    first_run = store.record_meeting_alignment_run(
+        job_id=job_id,
+        codex_session_id="session-first-ready",
+        decision_json='{"action":"send"}',
+        audit_summary="首次分析完成但发送失败",
+        status="ready_to_send",
+        error="",
+    )
+    second_run = store.record_meeting_alignment_run(
+        job_id=job_id,
+        codex_session_id="session-second-ready",
+        decision_json='{"action":"send"}',
+        audit_summary="重新分析并发送成功",
+        status="ready_to_send",
+        error="",
+    )
+    store.update_meeting_alignment_job(job_id, status="sent")
+
+    statuses = {
+        item.source_id: item.status for item in store.list_history_items(limit=20)
+    }
+
+    assert statuses[first_run] == "failed"
+    assert statuses[second_run] == "sent"
+
+
 def test_history_retains_reply_legacy_search_fields(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     attempt_id = store.record_reply_attempt(
