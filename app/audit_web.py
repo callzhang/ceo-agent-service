@@ -516,7 +516,7 @@ _DINGTALK_BRIDGE_STATUS: deque[dict[str, str]] = deque(maxlen=20)
 DEFAULT_ATTEMPT_LIST_LIMIT = 20
 ATTEMPT_LIST_LIMIT_OPTIONS = (20, 50, 100)
 HISTORY_TYPE_FILTERS = ("sent", "reacted", "skipped", "failed", "done")
-HISTORY_SEARCH_OBJECT_TYPES = ("history", "codex_session")
+HISTORY_SEARCH_OBJECT_TYPES = ("replay", "task", "meeting")
 TASK_PAGE_SIZE_OPTIONS = (20, 50, 100)
 DEFAULT_TASK_PAGE_SIZE = 20
 LOG_PAGE_SIZE_OPTIONS = (20, 50, 100)
@@ -2617,8 +2617,9 @@ def _history_search_object_type_checkboxes(
     search_object_types: tuple[str, ...],
 ) -> str:
     labels = {
-        "history": "History items",
-        "codex_session": "Codex sessions",
+        "replay": "replay",
+        "task": "task",
+        "meeting": "meeting",
     }
     inputs = []
     selected = set(search_object_types)
@@ -2637,6 +2638,19 @@ def _history_search_object_type_checkboxes(
         f"{''.join(inputs)}"
         "</fieldset>"
     )
+
+
+def _history_kinds_for_search_objects(
+    search_object_types: tuple[str, ...],
+) -> tuple[str, ...]:
+    kinds: list[str] = []
+    if "replay" in search_object_types:
+        kinds.append("reply")
+    if "task" in search_object_types:
+        kinds.append("task")
+    if "meeting" in search_object_types:
+        kinds.append("meeting")
+    return tuple(kinds)
 
 
 def _history_limit_select(limit: int | None) -> str:
@@ -2835,13 +2849,16 @@ def render_attempt_list(
     query = query.strip()
     type_filters = _history_type_filters(type_filter)
     object_types = _history_search_object_types(search_object_types)
-    search_history_items = "history" in object_types
-    search_codex_sessions = "codex_session" in object_types
+    history_kinds = _history_kinds_for_search_objects(object_types)
+    search_history_items = bool(history_kinds)
+    search_reply_tasks = "task" in object_types
+    search_codex_sessions = "meeting" in object_types
     send_status_filters = type_filters or None
     total_count = (
         store.count_history_items(
             send_statuses=send_status_filters,
             query_text=query,
+            kinds=history_kinds,
         )
         if search_history_items
         else 0
@@ -2849,12 +2866,17 @@ def render_attempt_list(
     page = _bounded_page(page, limit, total_count)
     offset = _page_offset(page, limit)
     items = []
-    if page == 1 and not type_filters and not query and search_history_items:
+    if page == 1 and not type_filters and search_reply_tasks:
+        task_limit = limit if not query else None
         for task in store.list_reply_tasks(
             statuses=("pending", "processing"),
-            limit=limit,
+            limit=task_limit,
         ):
+            if not _reply_task_matches_query(task, query):
+                continue
             items.append(_reply_task_item(task))
+            if query and limit is not None and len(items) >= limit:
+                break
     session_search_html = ""
     if query and page == 1 and search_codex_sessions:
         session_results = store.search_codex_sessions(
@@ -2869,6 +2891,7 @@ def render_attempt_list(
             offset=offset,
             send_statuses=send_status_filters,
             query_text=query,
+            kinds=history_kinds,
         )
         if search_history_items
         else []
@@ -4163,6 +4186,25 @@ def _reply_task_item(task: ReplyTask) -> str:
         f"{error_html}"
         "</article>"
     )
+
+
+def _reply_task_matches_query(task: ReplyTask, query: str) -> bool:
+    if not query:
+        return True
+    needle = query.casefold()
+    haystack = " ".join(
+        (
+            task.conversation_id,
+            task.conversation_title,
+            task.trigger_message_id,
+            task.trigger_sender,
+            task.trigger_text,
+            task.oa_url,
+            task.error,
+            task.status,
+        )
+    ).casefold()
+    return needle in haystack
 
 
 def _reply_task_progress_text(task: ReplyTask) -> str:

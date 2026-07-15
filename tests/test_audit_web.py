@@ -308,6 +308,16 @@ def test_history_search_object_type_checkboxes_control_results(tmp_path: Path):
         sensitivity_kind="general",
         send_status="sent",
     )
+    store.enqueue_reply_task(
+        conversation_id="cid-task",
+        conversation_title="Task Search Group",
+        single_chat=False,
+        trigger_message_id="msg-task",
+        trigger_create_time="2026-07-15 09:00:00",
+        trigger_sender="Tara",
+        trigger_text="风险预算 task pending",
+        available_at="2026-07-15 09:00:00",
+    )
     run_id = seed_meeting_attempt(store)
     store.upsert_codex_session_search_index(
         session_id="meeting-session-history-1",
@@ -324,40 +334,55 @@ def test_history_search_object_type_checkboxes_control_results(tmp_path: Path):
         query="风险预算",
         query_embedding=[1.0, 0.0],
     )
-    assert 'name="object_type" value="history" checked' in default_html
-    assert 'name="object_type" value="codex_session" checked' in default_html
+    assert 'name="object_type" value="replay" checked' in default_html
+    assert 'name="object_type" value="task" checked' in default_html
+    assert 'name="object_type" value="meeting" checked' in default_html
     assert "History Search Group" in default_html
+    assert "Task Search Group" in default_html
     assert "相似 Codex sessions" in default_html
 
-    history_only_html = render_attempt_list(
+    replay_only_html = render_attempt_list(
         store,
         query="风险预算",
-        search_object_types=("history",),
+        search_object_types=("replay",),
         query_embedding=[1.0, 0.0],
     )
-    assert "History Search Group" in history_only_html
-    assert "相似 Codex sessions" not in history_only_html
+    assert "History Search Group" in replay_only_html
+    assert "Task Search Group" not in replay_only_html
+    assert "相似 Codex sessions" not in replay_only_html
 
-    codex_only_html = render_attempt_list(
+    meeting_only_html = render_attempt_list(
         store,
         query="风险预算",
-        search_object_types=("codex_session",),
+        search_object_types=("meeting",),
         query_embedding=[1.0, 0.0],
     )
-    assert "History Search Group" not in codex_only_html
-    assert "相似 Codex sessions" in codex_only_html
-    assert f"/meeting-attempts/{run_id}" in codex_only_html
+    assert "History Search Group" not in meeting_only_html
+    assert "Task Search Group" not in meeting_only_html
+    assert "相似 Codex sessions" in meeting_only_html
+    assert f"/meeting-attempts/{run_id}" in meeting_only_html
+
+    task_only_html = render_attempt_list(
+        store,
+        query="风险预算",
+        search_object_types=("task",),
+        query_embedding=[1.0, 0.0],
+    )
+    assert "History Search Group" not in task_only_html
+    assert "Task Search Group" in task_only_html
+    assert "相似 Codex sessions" not in task_only_html
 
     object_type_html = render_attempt_list(
         store,
         limit=1,
         query="风险预算",
-        search_object_types=("codex_session",),
+        search_object_types=("meeting",),
         query_embedding=[1.0, 0.0],
     )
-    assert 'name="object_type" value="history"' in object_type_html
-    assert 'name="object_type" value="history" checked' not in object_type_html
-    assert 'name="object_type" value="codex_session" checked' in object_type_html
+    assert 'name="object_type" value="replay"' in object_type_html
+    assert 'name="object_type" value="replay" checked' not in object_type_html
+    assert 'name="object_type" value="task" checked' not in object_type_html
+    assert 'name="object_type" value="meeting" checked' in object_type_html
 
 
 def test_history_chart_labels_terminal_reactions_and_oa_actions(tmp_path: Path):
