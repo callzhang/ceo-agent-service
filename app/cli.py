@@ -1491,7 +1491,12 @@ def send_attempt_command(settings: WorkerSettings, attempt_id: int) -> dict[str,
         )
         raise
 
-    store.update_reply_attempt(attempt.id, send_status="sent", retry_count=0)
+    store.update_reply_attempt(
+        attempt.id,
+        send_status="sent",
+        send_error="",
+        retry_count=0,
+    )
     store.record_sent_reply(
         attempt.conversation_id,
         attempt.trigger_message_id,

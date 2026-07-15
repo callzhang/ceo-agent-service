@@ -2497,6 +2497,7 @@ def test_send_attempt_command_sends_existing_unsent_reply_without_rerunning_code
         attempt_id,
         final_reply_text=final_reply,
         send_status=send_status,
+        send_error="previous delivery failed" if send_status == "failed" else "",
     )
 
     result = send_attempt_command(settings, attempt_id)
@@ -2511,6 +2512,7 @@ def test_send_attempt_command_sends_existing_unsent_reply_without_rerunning_code
     updated = cli.AutoReplyStore(settings.db_path).get_reply_attempt(attempt_id)
     assert updated is not None
     assert updated.send_status == "sent"
+    assert updated.send_error == ""
     assert updated.final_reply_text == "可以先这样处理。（by明哥分身）"
     sent_reply = cli.AutoReplyStore(settings.db_path).get_sent_reply("cid-1", "msg-1")
     assert sent_reply is not None
