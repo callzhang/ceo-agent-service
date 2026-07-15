@@ -183,6 +183,11 @@ def test_group_delivery_uses_first_candidate_and_real_mentions():
     assert dws.sent[0]["at_open_dingtalk_ids"] == ["open-a", "open-b"]
     assert dws.sent[0]["at_open_dingtalk_names"] == ["A", "B"]
     assert dws.sent[0].get("user_id") is None
+    assert dws.sent[0]["text"].startswith(
+        "【会议跟进】上线评审（2026-07-14 09:00-10:00）\n\n"
+    )
+    assert dws.sent[0]["text"].endswith(send_decision().final_message)
+    assert result.message_text == dws.sent[0]["text"]
 
 
 def test_multi_person_no_group_never_falls_back_to_direct():

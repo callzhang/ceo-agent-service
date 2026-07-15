@@ -1,4 +1,5 @@
 import subprocess
+from datetime import datetime
 from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict
@@ -27,6 +28,7 @@ class MeetingDeliveryResult(BaseModel):
     unresolved_mention_names: list[str]
     send_result: dict[str, Any]
     send_verification: dict[str, Any]
+    message_text: str = ""
 
 
 class MeetingDeliveryRetry(RuntimeError):
@@ -59,6 +61,13 @@ def meeting_delivery_conversation_id(result: MeetingDeliveryResult) -> str:
         result.send_verification,
         "openConversationId",
     ) or _find_nested_string(result.send_result, "openConversationId")
+
+
+def meeting_followup_message(
+    decision: MeetingAlignmentDecision,
+    source: MeetingSource,
+) -> str:
+    return f"{_meeting_followup_header(source)}\n\n{decision.final_message.strip()}"
 
 
 class MeetingDeliveryDws(Protocol):
@@ -157,11 +166,12 @@ def deliver_meeting_alignment(
     )
     mention_ids = [mention.open_dingtalk_id for mention in resolved_mentions]
     mention_display_names = [mention.display_name for mention in resolved_mentions]
+    message_text = meeting_followup_message(decision, source)
     try:
         if target_kind == "group":
             send_result = dws.send_message(
                 target_id,
-                decision.final_message,
+                message_text,
                 at_open_dingtalk_ids=mention_ids,
                 at_open_dingtalk_names=mention_display_names,
                 title=target.title if target is not None else source.title,
@@ -174,7 +184,7 @@ def deliver_meeting_alignment(
             )
             send_result = dws.send_message(
                 None,
-                decision.final_message,
+                message_text,
                 **direct_target,
                 title=target.title if target is not None else source.title,
             )
@@ -193,6 +203,7 @@ def deliver_meeting_alignment(
                 "status_result": {},
                 "send_error": str(exc),
             },
+            message_text=message_text,
         )
         raise MeetingDeliveryAmbiguous(
             "meeting send outcome is ambiguous; do not send again immediately",
@@ -217,6 +228,7 @@ def deliver_meeting_alignment(
         unresolved_mention_names=unresolved_names,
         send_result=send_result,
         send_verification=verification,
+        message_text=message_text,
     )
     if verification.get("state") == "sent":
         return result
@@ -399,6 +411,16 @@ def _profile_context_score(profile: DwsUserProfile, value: str) -> int:
 
 def _canonical(value: str) -> str:
     return " ".join(value.split()).casefold()
+
+
+def _meeting_followup_header(source: MeetingSource) -> str:
+    started = datetime.fromisoformat(source.started_at)
+    ended = datetime.fromisoformat(source.ended_at)
+    if started.date() == ended.date():
+        time_range = f"{started:%Y-%m-%d %H:%M}-{ended:%H:%M}"
+    else:
+        time_range = f"{started:%Y-%m-%d %H:%M}-{ended:%Y-%m-%d %H:%M}"
+    return f"【会议跟进】{source.title}（{time_range}）"
 
 
 def _find_nested_string(payload: Any, key: str) -> str:

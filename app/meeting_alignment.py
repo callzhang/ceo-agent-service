@@ -721,6 +721,7 @@ def _deliver_meeting_job(
     store.update_meeting_alignment_job(
         job.id,
         status="sent",
+        final_message=result.message_text or job.final_message,
         send_result_json=result.model_dump_json(),
         error="",
     )
@@ -780,6 +781,7 @@ def _reconcile_ambiguous_delivery(
         store.update_meeting_alignment_job(
             job.id,
             status="sent",
+            final_message=updated.message_text or job.final_message,
             send_result_json=updated.model_dump_json(),
             error="",
         )
@@ -1039,7 +1041,7 @@ def _notify_meeting_sent(job: Any, result: MeetingDeliveryResult) -> None:
     conversation_id = meeting_delivery_conversation_id(result)
     send_macos_notification(
         title=f"CEO meeting follow-up: {job.title}",
-        message=job.final_message,
+        message=result.message_text or job.final_message,
         url=dingtalk_conversation_notification_url(conversation_id),
     )
 

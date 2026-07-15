@@ -744,7 +744,10 @@ def test_consumer_persists_ready_before_external_send_and_marks_sent(tmp_path):
     job = store.get_meeting_alignment_job(job_id)
     assert seen_statuses == ["ready_to_send"]
     assert job.status == "sent"
-    assert job.final_message == consumer_send_decision().final_message
+    assert job.final_message == (
+        "【会议跟进】上线评审（2026-07-14 09:00-10:00）\n\n"
+        f"{consumer_send_decision().final_message}"
+    )
     assert job.target_kind == "group"
     assert job.target_id == "cid-first"
     assert json.loads(job.decision_json)["action"] == "send"
@@ -772,11 +775,17 @@ def test_consumer_notifies_once_after_confirmed_meeting_send(tmp_path, monkeypat
         limit=1,
     )
 
-    assert store.get_meeting_alignment_job(job_id).status == "sent"
+    sent_job = store.get_meeting_alignment_job(job_id)
+    assert sent_job.status == "sent"
+    expected_message = (
+        "【会议跟进】上线评审（2026-07-14 09:00-10:00）\n\n"
+        f"{consumer_send_decision().final_message}"
+    )
+    assert sent_job.final_message == expected_message
     assert notifications == [
         {
             "title": "CEO meeting follow-up: 上线评审",
-            "message": consumer_send_decision().final_message,
+            "message": expected_message,
             "url": (
                 "http://127.0.0.1:8765/open-dingtalk"
                 "?conversation_id=cid-first"

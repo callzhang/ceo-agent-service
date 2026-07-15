@@ -121,6 +121,11 @@ it is treated as 1:1 only when the complete transcript contains exactly Derek
 and one uniquely resolved employee; otherwise it remains unqueued. No DING or
 reaction is added by this workflow.
 
+Every sent meeting follow-up starts with a deterministic source header:
+`【会议跟进】<meeting title>（<meeting time>）`. The header is added by the
+delivery executor, so the sent message, stored final message, and local
+notification preview all identify the same source meeting.
+
 After delivery is confirmed as `sent`, the workflow reuses the reply agent's
 local/Chrome notification bridge. The notification contains the DingTalk
 `openConversationId`, so clicking it opens the group or direct conversation.
