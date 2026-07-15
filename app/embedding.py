@@ -29,7 +29,11 @@ class EmbeddingClient:
             "model": self.model,
             "input": texts,
         }
-        headers = {"Content-Type": "application/json"}
+        headers = {
+            "Accept": "*/*",
+            "Content-Type": "application/json",
+            "User-Agent": "curl/8.7.1",
+        }
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
         request = urllib.request.Request(
