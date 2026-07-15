@@ -2946,6 +2946,39 @@ def test_worker_creates_markdown_doc_for_long_reply_before_sending(
     assert sent_at_users == [["sender-user-1"]]
 
 
+def test_worker_falls_back_to_chunked_reply_when_automatic_long_reply_doc_fails(
+    tmp_path: Path,
+    monkeypatch,
+):
+    trigger = message("@Alex Chen(明哥) 帮我看下")
+    dws = FakeDws([conversation()], {"cid-1": [trigger]})
+    monkeypatch.setattr(
+        dws,
+        "create_markdown_doc",
+        lambda name, content: {"result": {"name": name}},
+    )
+    codex = FakeCodex(
+        CodexDecision(
+            action=CodexAction.SEND_REPLY,
+            reply_text="A" * 6000,
+            sensitivity_kind=SensitivityKind.GENERAL,
+        )
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch, dry_run=False)
+
+    worker.run_once()
+
+    sent = final_sent(dws)
+    assert len(sent) == 3
+    assert sent[0][1].startswith("【1/3】\n@周俊杰 ")
+    assert sent[1][1].startswith("【2/3】\n")
+    assert sent[2][1].startswith("【3/3】\n")
+    attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
+    assert attempt is not None
+    assert attempt.send_status == "sent"
+    assert attempt.send_error == ""
+
+
 def test_worker_creates_markdown_doc_when_decision_requests_document_reply(
     tmp_path: Path,
     monkeypatch,
@@ -2981,7 +3014,7 @@ def test_worker_creates_markdown_doc_when_decision_requests_document_reply(
     assert "https://alidocs.dingtalk.com/i/nodes/doc-1" in sent[0][1]
 
 
-def test_worker_does_not_send_markdown_doc_link_when_permission_fails(
+def test_worker_falls_back_to_chunked_reply_when_automatic_doc_permission_fails(
     tmp_path: Path,
     monkeypatch,
 ):
@@ -3001,9 +3034,44 @@ def test_worker_does_not_send_markdown_doc_link_when_permission_fails(
 
     attempts = worker.store.list_reply_attempts(limit=10)
     assert dws.created_markdown_docs
+    sent = final_sent(dws)
+    assert len(sent) == 3
+    assert all("alidocs.dingtalk.com" not in text for _, text in sent)
+    assert attempts[-1].send_status == "sent"
+    assert attempts[-1].send_error == ""
+
+
+def test_worker_keeps_explicit_document_reply_failed_when_permission_fails(
+    tmp_path: Path,
+    monkeypatch,
+):
+    trigger = message("@Alex Chen(明哥) 写一版方案")
+    dws = FakeDws([conversation()], {"cid-1": [trigger]})
+    dws.doc_editor_permission_error = DwsError("doc permission add failed")
+    codex = FakeCodex(
+        CodexDecision(
+            action=CodexAction.SEND_REPLY,
+            reply_text="# 方案\n\n先按 A 路径推进。",
+            sensitivity_kind=SensitivityKind.GENERAL,
+            system_actions=[
+                {"type": "send_dingtalk_reply", "reply_text_ref": "user_response.text"},
+                {
+                    "type": "dws_markdown_document_reply",
+                    "reply_text_ref": "user_response.text",
+                    "title": "方案建议",
+                },
+            ],
+        )
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch, dry_run=False)
+
+    worker.run_once()
+
     assert final_sent(dws) == []
-    assert attempts[-1].send_status == "failed"
-    assert "doc permission add failed" in attempts[-1].send_error
+    attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
+    assert attempt is not None
+    assert attempt.send_status == "failed"
+    assert "doc permission add failed" in attempt.send_error
 
 
 def test_worker_does_not_fallback_group_send_when_native_reply_visibility_unconfirmed(

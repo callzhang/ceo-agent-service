@@ -2450,8 +2450,9 @@ def test_reset_codex_sessions_command_only_clears_conversation_sessions(tmp_path
     assert attempt.codex_session_id == "session-1"
 
 
-def test_send_attempt_command_sends_existing_dry_run_without_rerunning_codex(
-    monkeypatch, tmp_path, capsys
+@pytest.mark.parametrize("send_status", ["dry_run", "failed"])
+def test_send_attempt_command_sends_existing_unsent_reply_without_rerunning_codex(
+    monkeypatch, tmp_path, capsys, send_status
 ):
     sent = {}
 
@@ -2495,7 +2496,7 @@ def test_send_attempt_command_sends_existing_dry_run_without_rerunning_codex(
     store.update_reply_attempt(
         attempt_id,
         final_reply_text=final_reply,
-        send_status="dry_run",
+        send_status=send_status,
     )
 
     result = send_attempt_command(settings, attempt_id)

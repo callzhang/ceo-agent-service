@@ -7522,6 +7522,9 @@ class DingTalkAutoReplyWorker:
         ):
             return False
         document_delivery_payload = None
+        requested_document_reply = self._markdown_document_reply_action(
+            system_actions or []
+        )
         try:
             document_delivery_payload = self._create_markdown_document_reply_if_needed(
                 conversation=conversation,
@@ -7531,28 +7534,44 @@ class DingTalkAutoReplyWorker:
                 or [self._reply_document_editor_user_id(trigger)],
             )
         except Exception as exc:
-            self.store.update_reply_attempt(
-                attempt_id,
-                send_status="failed",
-                send_error=str(exc),
-                retry_count=0,
-            )
-            self.store.record_error(
-                conversation.open_conversation_id,
-                trigger.open_message_id,
-                "doc_reply_create",
-                str(exc),
-            )
-            if raise_on_delivery_failure:
-                raise ReplyDeliveryError(str(exc)) from exc
-            if failure_notify_title:
-                self._notify(
-                    title=failure_notify_title,
-                    message=str(exc)[:120],
-                    conversation=conversation,
-                    attempt_id=attempt_id,
+            if requested_document_reply is None:
+                logger.warning(
+                    "automatic long-reply document creation failed; "
+                    "falling back to chunked reply conversation_id=%s "
+                    "message_id=%s error=%s",
+                    conversation.open_conversation_id,
+                    trigger.open_message_id,
+                    exc,
                 )
-            return False
+                self.store.record_error(
+                    conversation.open_conversation_id,
+                    trigger.open_message_id,
+                    "doc_reply_create_fallback",
+                    str(exc),
+                )
+            else:
+                self.store.update_reply_attempt(
+                    attempt_id,
+                    send_status="failed",
+                    send_error=str(exc),
+                    retry_count=0,
+                )
+                self.store.record_error(
+                    conversation.open_conversation_id,
+                    trigger.open_message_id,
+                    "doc_reply_create",
+                    str(exc),
+                )
+                if raise_on_delivery_failure:
+                    raise ReplyDeliveryError(str(exc)) from exc
+                if failure_notify_title:
+                    self._notify(
+                        title=failure_notify_title,
+                        message=str(exc)[:120],
+                        conversation=conversation,
+                        attempt_id=attempt_id,
+                    )
+                return False
         if document_delivery_payload is not None:
             reply_text = document_delivery_payload["reply_text"]
             self.store.update_reply_attempt(attempt_id, final_reply_text=reply_text)

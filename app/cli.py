@@ -1348,9 +1348,10 @@ def send_attempt_command(settings: WorkerSettings, attempt_id: int) -> dict[str,
     attempt = store.get_reply_attempt(attempt_id)
     if attempt is None:
         raise SystemExit(f"reply attempt not found: {attempt_id}")
-    if attempt.send_status != "dry_run":
+    if attempt.send_status not in {"dry_run", "failed"}:
         raise SystemExit(
-            f"reply attempt {attempt_id} is not a dry_run attempt: {attempt.send_status}"
+            f"reply attempt {attempt_id} is not an unsent attempt: "
+            f"{attempt.send_status}"
         )
     if attempt.calendar_event_id.strip() and attempt.calendar_response_status.strip():
         return _send_calendar_attempt(settings, store, attempt)
