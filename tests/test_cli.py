@@ -4316,6 +4316,8 @@ def test_meeting_loops_call_separate_workers_once(monkeypatch, tmp_path):
         db_path=tmp_path / "worker.sqlite3",
         workspace=tmp_path / "memory",
     )
+    monkeypatch.setenv("CEO_EMBEDDING_API_KEY", "secret")
+    monkeypatch.delenv("CEO_EMBEDDING_DISABLED", raising=False)
     monkeypatch.setattr(cli, "AutoReplyStore", lambda path: store)
     monkeypatch.setattr(cli, "_create_meeting_dws", lambda received: dws)
     monkeypatch.setattr(

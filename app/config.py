@@ -232,12 +232,13 @@ def embedding_api_key() -> str:
 
 
 def embedding_enabled() -> bool:
-    return os.getenv("CEO_EMBEDDING_DISABLED", "").strip().lower() not in {
+    disabled = os.getenv("CEO_EMBEDDING_DISABLED", "").strip().lower() in {
         "1",
         "true",
         "yes",
         "on",
     }
+    return not disabled and bool(embedding_api_key().strip())
 
 
 def poll_interval_seconds() -> int:
