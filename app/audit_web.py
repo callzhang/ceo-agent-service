@@ -216,6 +216,10 @@ th{background:var(--surface-soft);color:var(--steel);font-size:12px;font-weight:
 .table-search-clear:hover{background:var(--surface-soft);color:var(--ink);text-decoration:none}
 .table-type-select,.table-page-size{height:32px;border:1px solid var(--hairline);border-radius:999px;background:var(--canvas);color:var(--ink);padding:0 10px;font-size:12px;font-weight:750}
 .table-type-select{width:116px}
+.history-object-type-filter{display:flex;align-items:center;gap:8px;margin:0;padding:0;border:0;color:var(--steel);font-size:12px;font-weight:700}
+.history-object-type-filter legend{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+.history-object-type-option{display:inline-flex;align-items:center;gap:4px;white-space:nowrap}
+.history-object-type-option input{margin:0}
 .table-page-links{display:flex;align-items:center;justify-content:center;gap:3px;width:204px;min-width:0;white-space:nowrap}
 .table-page-link,.table-page-arrow,.table-page-ellipsis{display:inline-flex;align-items:center;justify-content:center;height:32px;min-width:28px;padding:0 8px;border:1px solid transparent;border-radius:999px;color:var(--steel);font-size:12px;font-weight:800;line-height:1;background:transparent}
 .table-page-arrow{font-size:18px}
@@ -508,6 +512,7 @@ _DINGTALK_BRIDGE_STATUS: deque[dict[str, str]] = deque(maxlen=20)
 DEFAULT_ATTEMPT_LIST_LIMIT = 20
 ATTEMPT_LIST_LIMIT_OPTIONS = (20, 50, 100)
 HISTORY_TYPE_FILTERS = ("sent", "reacted", "skipped", "failed")
+HISTORY_SEARCH_OBJECT_TYPES = ("history", "codex_session")
 TASK_PAGE_SIZE_OPTIONS = (20, 50, 100)
 DEFAULT_TASK_PAGE_SIZE = 20
 LOG_PAGE_SIZE_OPTIONS = (20, 50, 100)
@@ -1978,6 +1983,19 @@ def _history_type_filters(values: str | Iterable[str]) -> tuple[str, ...]:
     return tuple(selected)
 
 
+def _history_search_object_types(values: str | Iterable[str]) -> tuple[str, ...]:
+    raw_values = [values] if isinstance(values, str) else list(values)
+    selected: list[str] = []
+    for raw_value in raw_values:
+        for part in str(raw_value).split(","):
+            cleaned = part.strip().lower()
+            if cleaned in HISTORY_SEARCH_OBJECT_TYPES and cleaned not in selected:
+                selected.append(cleaned)
+    if not selected:
+        return HISTORY_SEARCH_OBJECT_TYPES
+    return tuple(selected)
+
+
 def _history_type_filter_label(type_filters: tuple[str, ...]) -> str:
     if not type_filters:
         return "type: all"
@@ -2495,6 +2513,7 @@ def _history_table_header(
     total_count: int,
     type_filters: tuple[str, ...],
     query: str = "",
+    search_object_types: tuple[str, ...] = HISTORY_SEARCH_OBJECT_TYPES,
 ) -> str:
     page_count = _page_count(total_count, limit)
     page = min(max(1, page), page_count)
@@ -2507,6 +2526,7 @@ def _history_table_header(
             limit=limit,
             query=query,
             type_filters=type_filters,
+            search_object_types=search_object_types,
         ),
     )
     return _table_toolbar(
@@ -2515,7 +2535,10 @@ def _history_table_header(
         search_label="Search history",
         search_name="q",
         query=query,
-        type_select_html=_history_type_select(type_filters),
+        type_select_html=(
+            _history_type_select(type_filters)
+            + _history_search_object_type_checkboxes(search_object_types)
+        ),
         page_links_html=page_links,
         page_size_select_html=_history_limit_select(limit),
         total_count=total_count,
@@ -2529,6 +2552,7 @@ def _history_page_href(
     limit: int | None,
     query: str,
     type_filters: tuple[str, ...],
+    search_object_types: tuple[str, ...] = HISTORY_SEARCH_OBJECT_TYPES,
 ) -> str:
     params: dict[str, str | list[str]] = {}
     if page > 1:
@@ -2539,6 +2563,8 @@ def _history_page_href(
         params["q"] = query
     if type_filters:
         params["type"] = list(type_filters)
+    if search_object_types != HISTORY_SEARCH_OBJECT_TYPES:
+        params["object_type"] = list(search_object_types)
     if not params:
         return base_path
     return f"{base_path}?{urlencode(params, doseq=True)}"
@@ -2559,6 +2585,32 @@ def _history_type_select(type_filters: tuple[str, ...]) -> str:
         "<select name=\"type\" class=\"table-type-select\" "
         "aria-label=\"History type filter\" onchange=\"this.form.submit()\">"
         f"{''.join(options)}</select>"
+    )
+
+
+def _history_search_object_type_checkboxes(
+    search_object_types: tuple[str, ...],
+) -> str:
+    labels = {
+        "history": "History items",
+        "codex_session": "Codex sessions",
+    }
+    inputs = []
+    selected = set(search_object_types)
+    for value in HISTORY_SEARCH_OBJECT_TYPES:
+        checked = " checked" if value in selected else ""
+        inputs.append(
+            "<label class=\"history-object-type-option\">"
+            f"<input type=\"checkbox\" name=\"object_type\" value=\"{escape(value)}\""
+            f"{checked} onchange=\"this.form.requestSubmit()\">"
+            f"<span>{escape(labels[value])}</span>"
+            "</label>"
+        )
+    return (
+        "<fieldset class=\"history-object-type-filter\">"
+        "<legend>检索对象</legend>"
+        f"{''.join(inputs)}"
+        "</fieldset>"
     )
 
 
@@ -2753,36 +2805,48 @@ def render_attempt_list(
     type_filter: str | Iterable[str] = (),
     query: str = "",
     query_embedding: list[float] | None = None,
+    search_object_types: str | Iterable[str] = HISTORY_SEARCH_OBJECT_TYPES,
 ) -> str:
     query = query.strip()
     type_filters = _history_type_filters(type_filter)
+    object_types = _history_search_object_types(search_object_types)
+    search_history_items = "history" in object_types
+    search_codex_sessions = "codex_session" in object_types
     send_status_filters = type_filters or None
-    total_count = store.count_history_items(
-        send_statuses=send_status_filters,
-        query_text=query,
+    total_count = (
+        store.count_history_items(
+            send_statuses=send_status_filters,
+            query_text=query,
+        )
+        if search_history_items
+        else 0
     )
     page = _bounded_page(page, limit, total_count)
     offset = _page_offset(page, limit)
     items = []
-    if page == 1 and not type_filters and not query:
+    if page == 1 and not type_filters and not query and search_history_items:
         for task in store.list_reply_tasks(
             statuses=("pending", "processing"),
             limit=limit,
         ):
             items.append(_reply_task_item(task))
     session_search_html = ""
-    if query and page == 1:
+    if query and page == 1 and search_codex_sessions:
         session_results = store.search_codex_sessions(
             fts_query=_history_session_fts_query(query),
             query_embedding=query_embedding,
             limit=5,
         )
         session_search_html = _history_session_search_html(session_results)
-    history_items = store.list_history_items(
-        limit=limit,
-        offset=offset,
-        send_statuses=send_status_filters,
-        query_text=query,
+    history_items = (
+        store.list_history_items(
+            limit=limit,
+            offset=offset,
+            send_statuses=send_status_filters,
+            query_text=query,
+        )
+        if search_history_items
+        else []
     )
     attempts = store.list_reply_attempts_by_ids(
         [item.source_id for item in history_items if item.kind == "reply"]
@@ -2844,7 +2908,7 @@ def render_attempt_list(
     if not items:
         body = (
             f"{_render_history_chart(store)}"
-            f"{_history_table_header(base_path='/', page=page, limit=limit, total_count=total_count, type_filters=type_filters, query=query)}"
+            f"{_history_table_header(base_path='/', page=page, limit=limit, total_count=total_count, type_filters=type_filters, query=query, search_object_types=object_types)}"
             "<div data-live-search-region=\"history\">"
             f"{session_search_html}"
             "<section class=\"card\"><p class=\"muted\">No reply attempts recorded.</p>"
@@ -2859,6 +2923,7 @@ def render_attempt_list(
             total_count=total_count,
             type_filters=type_filters,
             query=query,
+            search_object_types=object_types,
         )
         body = (
             f"{_render_history_chart(store)}"
@@ -5060,6 +5125,7 @@ def create_audit_app(
             type_filter=request.query_params.getlist("type"),
             query=query,
             query_embedding=_history_query_embedding(query),
+            search_object_types=request.query_params.getlist("object_type"),
         )
 
     @app.get("/user-feedback", response_class=HTMLResponse)

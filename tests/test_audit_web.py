@@ -260,6 +260,70 @@ def test_history_search_shows_similar_codex_sessions(tmp_path: Path):
     assert f"/meeting-attempts/{run_id}" in html
 
 
+def test_history_search_object_type_checkboxes_control_results(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.record_reply_attempt(
+        conversation_id="cid-history",
+        conversation_title="History Search Group",
+        trigger_message_id="msg-history",
+        trigger_sender="Mina",
+        trigger_text="风险预算需要确认",
+        action="send_reply",
+        sensitivity_kind="general",
+        send_status="sent",
+    )
+    run_id = seed_meeting_attempt(store)
+    store.upsert_codex_session_search_index(
+        session_id="meeting-session-history-1",
+        source_type="meeting_alignment",
+        source_id=str(run_id),
+        title="历史上线范围对齐",
+        summary_text="历史相似会议：上线范围、风险预算、故障面。",
+        fts_text="历史 相似 会议 上线 范围 风险 预算 故障 面",
+        embedding=[1.0, 0.0],
+    )
+
+    default_html = render_attempt_list(
+        store,
+        query="风险预算",
+        query_embedding=[1.0, 0.0],
+    )
+    assert 'name="object_type" value="history" checked' in default_html
+    assert 'name="object_type" value="codex_session" checked' in default_html
+    assert "History Search Group" in default_html
+    assert "相似 Codex sessions" in default_html
+
+    history_only_html = render_attempt_list(
+        store,
+        query="风险预算",
+        search_object_types=("history",),
+        query_embedding=[1.0, 0.0],
+    )
+    assert "History Search Group" in history_only_html
+    assert "相似 Codex sessions" not in history_only_html
+
+    codex_only_html = render_attempt_list(
+        store,
+        query="风险预算",
+        search_object_types=("codex_session",),
+        query_embedding=[1.0, 0.0],
+    )
+    assert "History Search Group" not in codex_only_html
+    assert "相似 Codex sessions" in codex_only_html
+    assert f"/meeting-attempts/{run_id}" in codex_only_html
+
+    object_type_html = render_attempt_list(
+        store,
+        limit=1,
+        query="风险预算",
+        search_object_types=("codex_session",),
+        query_embedding=[1.0, 0.0],
+    )
+    assert 'name="object_type" value="history"' in object_type_html
+    assert 'name="object_type" value="history" checked' not in object_type_html
+    assert 'name="object_type" value="codex_session" checked' in object_type_html
+
+
 def test_history_chart_labels_terminal_reactions_and_oa_actions(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.record_reply_attempt(
