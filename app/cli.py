@@ -991,6 +991,23 @@ def process_okr_reviews_command(settings: WorkerSettings) -> int:
     from app.structured_agent import AgentSpec, StructuredCodexRunner
 
     store = AutoReplyStore(settings.db_path)
+    recovered_requests = store.reset_recoverable_okr_review_requests(
+        processing_max_age_seconds=_okr_review_processing_stale_seconds(settings)
+    )
+    for request in recovered_requests:
+        store.record_error(
+            request.conversation_id,
+            request.trigger_message_id,
+            "okr_review_stale_requeue",
+            (
+                "requeued recoverable OKR review request: "
+                f"request={request.id} "
+                f"status={request.status} "
+                f"conversation={request.conversation_title} "
+                f"updated_at={request.updated_at} "
+                f"error={request.error}"
+            ),
+        )
     spec = AgentSpec(
         name="okr_review",
         schema_path=_repo_root() / "app" / "schemas" / "agent_envelope.schema.json",
@@ -2066,6 +2083,7 @@ def run_service(
     _initialize_meeting_discovery_on_service_start(settings)
     _recover_processing_reply_tasks_on_service_start(settings)
     _recover_processing_work_summary_inputs_on_service_start(settings)
+    _recover_okr_review_requests_on_service_start(settings)
     _recover_meeting_alignment_jobs_on_service_start(settings)
     components = (
         (
@@ -2198,11 +2216,43 @@ def _recover_processing_work_summary_inputs_on_service_start(
     return len(recovered_inputs)
 
 
+def _recover_okr_review_requests_on_service_start(settings: WorkerSettings) -> int:
+    store = AutoReplyStore(settings.db_path)
+    recovered_requests = store.reset_recoverable_okr_review_requests()
+    for request in recovered_requests:
+        store.record_error(
+            request.conversation_id,
+            request.trigger_message_id,
+            "okr_review_service_startup_requeue",
+            (
+                "requeued recoverable OKR review request on service startup: "
+                f"request={request.id} "
+                f"status={request.status} "
+                f"conversation={request.conversation_title} "
+                f"updated_at={request.updated_at} "
+                f"error={request.error}"
+            ),
+        )
+    return len(recovered_requests)
+
+
 def _work_summary_processing_stale_seconds(settings: WorkerSettings) -> int:
     return (
         max(
             int(settings.task_codex_timeout_seconds),
             int(settings.task_codex_idle_timeout_seconds),
+        )
+        + WORK_SUMMARY_INPUT_STALE_GRACE_SECONDS
+    )
+
+
+def _okr_review_processing_stale_seconds(settings: WorkerSettings) -> int:
+    return (
+        max(
+            int(settings.codex_timeout_seconds),
+            int(settings.codex_idle_timeout_seconds),
+            OKR_REVIEW_CODEX_TIMEOUT_SECONDS,
+            OKR_REVIEW_CODEX_IDLE_TIMEOUT_SECONDS,
         )
         + WORK_SUMMARY_INPUT_STALE_GRACE_SECONDS
     )

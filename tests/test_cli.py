@@ -607,6 +607,86 @@ def test_process_okr_reviews_command_marks_process_failure_and_reraises(
     assert errors[0].detail == "codex schema failed"
 
 
+def test_process_okr_reviews_command_requeues_stale_processing_request(
+    tmp_path,
+    monkeypatch,
+):
+    calls = []
+
+    class FakeStructuredRunner:
+        def __init__(self, **kwargs):
+            pass
+
+    class FakeDwsClient:
+        def __init__(self, **kwargs):
+            pass
+
+        @staticmethod
+        def extract_recall_key(send_result):
+            return send_result["result"]["processQueryKey"]
+
+        def send_reply_to_trigger(self, conversation, trigger, text, at_users=None):
+            calls.append(("send", trigger.open_message_id, text))
+            return {"result": {"processQueryKey": "okr-recall-1"}}
+
+    def fake_process(*, store, runner, request, single_chat):
+        calls.append(("process", request.id, single_chat))
+        store.mark_okr_review_request_done(request.id, codex_session_id="session-okr")
+        return "卢鑫 2026 Q3 OKR 审核结果"
+
+    monkeypatch.setattr("app.structured_agent.StructuredCodexRunner", FakeStructuredRunner)
+    monkeypatch.setattr("app.okr_review.process_okr_review_request", fake_process)
+    monkeypatch.setattr(cli, "DwsClient", FakeDwsClient)
+
+    db_path = tmp_path / "worker.sqlite3"
+    store = AutoReplyStore(db_path)
+    enqueue_trigger_task(
+        store,
+        conversation_id="cid-1",
+        conversation_title="卢鑫",
+        single_chat=True,
+        trigger_message_id="msg-okr-1",
+        trigger_sender="卢鑫",
+        trigger_text="查一下我的评分",
+        sender_open_dingtalk_id="open-luxin-1",
+    )
+    request_id = store.create_okr_review_request(
+        conversation_id="cid-1",
+        conversation_title="卢鑫",
+        trigger_message_id="msg-okr-1",
+        trigger_sender="卢鑫",
+        trigger_sender_user_id="user-luxin-1",
+        trigger_text="查一下我的评分",
+        period_label="2026 Q3",
+        period_start="2026-07-01",
+        period_end="2026-09-30",
+        okr_source_json='{"objectives":[]}',
+    )
+    store.claim_okr_review_requests(limit=1)
+    assert store.acquire_codex_session_lock("cid-1", f"okr_review:{request_id}")
+    with sqlite3.connect(db_path) as db:
+        db.execute(
+            "update okr_review_requests set updated_at=datetime('now', '-31 minutes') where id=?",
+            (request_id,),
+        )
+
+    processed = process_okr_reviews_command(
+        WorkerSettings(db_path=db_path, workspace=tmp_path)
+    )
+
+    loaded = AutoReplyStore(db_path)
+    request = loaded.get_okr_review_request(request_id)
+    errors = loaded.list_errors(limit=10)
+    assert processed == 1
+    assert request.status == "done"
+    assert request.codex_session_id == "session-okr"
+    assert errors[0].kind == "okr_review_stale_requeue"
+    assert calls == [
+        ("process", request_id, True),
+        ("send", "msg-okr-1", "卢鑫 2026 Q3 OKR 审核结果"),
+    ]
+
+
 def test_create_worker_wires_configured_okr_live_source(
     tmp_path,
     monkeypatch,
@@ -4775,6 +4855,56 @@ def test_run_service_requeues_processing_work_summary_inputs_on_startup(tmp_path
     assert dict(row) == {"status": "pending", "attempts": 1, "error": ""}
     assert errors[0].kind == "work_summary_input_service_startup_requeue"
     assert f"input={input_id}" in errors[0].detail
+    assert calls[-1] == ("wait",)
+
+
+def test_run_service_requeues_recoverable_okr_requests_on_startup(tmp_path):
+    db_path = tmp_path / "worker.sqlite3"
+    store = AutoReplyStore(db_path)
+    request_id = store.create_okr_review_request(
+        conversation_id="cid-1",
+        conversation_title="卢鑫",
+        trigger_message_id="msg-okr-1",
+        trigger_sender="卢鑫",
+        trigger_sender_user_id="user-luxin-1",
+        trigger_text="查一下我的评分",
+        period_label="2026 Q3",
+        period_start="2026-07-01",
+        period_end="2026-09-30",
+        okr_source_json='{"objectives":[]}',
+    )
+    claimed = store.claim_okr_review_requests(limit=1)[0]
+    assert store.acquire_codex_session_lock("cid-1", f"okr_review:{request_id}")
+    calls = []
+
+    class FakeThread:
+        def __init__(self, target, name, daemon):
+            self.target = target
+            self.name = name
+            self.daemon = daemon
+
+        def start(self):
+            calls.append(("start", self.name, self.daemon))
+
+    run_service(
+        WorkerSettings(db_path=db_path),
+        host="127.0.0.1",
+        port=8765,
+        producer_interval_seconds=60,
+        consumer_poll_interval_seconds=10,
+        thread_factory=FakeThread,
+        wait=lambda: calls.append(("wait",)),
+        exit_process=lambda status: calls.append(("exit", status)),
+    )
+
+    request = store.get_okr_review_request(request_id)
+    errors = store.list_errors(limit=10)
+    assert request.id == claimed.id
+    assert request.status == "pending"
+    assert request.error == ""
+    assert store.acquire_codex_session_lock("cid-1", "reply:msg-1")
+    assert errors[0].kind == "okr_review_service_startup_requeue"
+    assert f"request={request_id}" in errors[0].detail
     assert calls[-1] == ("wait",)
 
 

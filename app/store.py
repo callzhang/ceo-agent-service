@@ -2042,6 +2042,68 @@ class AutoReplyStore:
             ).fetchall()
             return [self._okr_review_request_from_row(row) for row in claimed]
 
+    def reset_recoverable_okr_review_requests(
+        self, *, processing_max_age_seconds: int | None = None
+    ) -> list[OkrReviewRequest]:
+        with self._connect() as db:
+            db.execute("begin immediate")
+            params: list[object] = []
+            processing_clause = "status='processing'"
+            if processing_max_age_seconds is not None:
+                if processing_max_age_seconds <= 0:
+                    return []
+                processing_clause = (
+                    "status='processing' "
+                    "and datetime(updated_at) <= datetime('now', ?)"
+                )
+                params.append(f"-{int(processing_max_age_seconds)} seconds")
+            rows = db.execute(
+                f"""
+                select *
+                from okr_review_requests
+                where ({processing_clause})
+                   or (
+                       status='failed'
+                       and error like 'codex session locked:%'
+                       and not exists (
+                           select 1
+                           from codex_session_locks
+                           where codex_session_locks.conversation_id =
+                                 okr_review_requests.conversation_id
+                             and datetime(codex_session_locks.locked_at) >
+                                 datetime('now', ?)
+                       )
+                   )
+                order by updated_at, id
+                """,
+                (*params, f"-{CODEX_SESSION_LOCK_STALE_SECONDS} seconds"),
+            ).fetchall()
+            request_ids = [row["id"] for row in rows]
+            if not request_ids:
+                return []
+            owners = [f"okr_review:{request_id}" for request_id in request_ids]
+            owner_placeholders = ",".join("?" for _ in owners)
+            db.execute(
+                f"""
+                delete from codex_session_locks
+                where owner in ({owner_placeholders})
+                """,
+                owners,
+            )
+            request_placeholders = ",".join("?" for _ in request_ids)
+            db.execute(
+                f"""
+                update okr_review_requests
+                set status='pending',
+                    error='',
+                    codex_session_id='',
+                    updated_at=current_timestamp
+                where id in ({request_placeholders})
+                """,
+                request_ids,
+            )
+            return [self._okr_review_request_from_row(row) for row in rows]
+
     def get_okr_review_request(self, request_id: int) -> OkrReviewRequest:
         with self._connect() as db:
             row = db.execute(

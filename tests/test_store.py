@@ -679,6 +679,124 @@ def test_recreating_okr_review_request_does_not_reset_processing_request(tmp_pat
     assert json.loads(loaded.okr_source_json)["objectives"] == []
 
 
+def test_reset_recoverable_okr_review_requests_requeues_stale_processing(
+    tmp_path: Path,
+):
+    db_path = tmp_path / "worker.sqlite3"
+    store = AutoReplyStore(db_path)
+    request_id = store.create_okr_review_request(
+        conversation_id="cid-1",
+        conversation_title="卢鑫",
+        trigger_message_id="msg-1",
+        trigger_sender="卢鑫",
+        trigger_sender_user_id="user-1",
+        trigger_text="查一下我的评分",
+        period_label="2026 Q3",
+        period_start="2026-07-01",
+        period_end="2026-09-30",
+        okr_source_json='{"objectives":[]}',
+    )
+    claimed = store.claim_okr_review_requests(limit=1)[0]
+    assert store.acquire_codex_session_lock("cid-1", f"okr_review:{request_id}")
+    with sqlite3.connect(db_path) as db:
+        db.execute(
+            "update okr_review_requests set updated_at=datetime('now', '-31 minutes') where id=?",
+            (request_id,),
+        )
+
+    recovered = store.reset_recoverable_okr_review_requests(
+        processing_max_age_seconds=30 * 60
+    )
+
+    assert [request.id for request in recovered] == [claimed.id]
+    loaded = store.get_okr_review_request(request_id)
+    assert loaded.status == "pending"
+    assert loaded.error == ""
+    assert store.acquire_codex_session_lock("cid-1", "reply:msg-1")
+
+
+def test_reset_recoverable_okr_review_requests_keeps_fresh_processing(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    request_id = store.create_okr_review_request(
+        conversation_id="cid-1",
+        conversation_title="卢鑫",
+        trigger_message_id="msg-1",
+        trigger_sender="卢鑫",
+        trigger_sender_user_id="user-1",
+        trigger_text="查一下我的评分",
+        period_label="2026 Q3",
+        period_start="2026-07-01",
+        period_end="2026-09-30",
+        okr_source_json='{"objectives":[]}',
+    )
+    store.claim_okr_review_requests(limit=1)
+
+    recovered = store.reset_recoverable_okr_review_requests(
+        processing_max_age_seconds=30 * 60
+    )
+
+    assert recovered == []
+    assert store.get_okr_review_request(request_id).status == "processing"
+
+
+def test_reset_recoverable_okr_review_requests_requeues_stale_lock_failure(
+    tmp_path: Path,
+):
+    db_path = tmp_path / "worker.sqlite3"
+    store = AutoReplyStore(db_path)
+    request_id = store.create_okr_review_request(
+        conversation_id="cid-1",
+        conversation_title="卢鑫",
+        trigger_message_id="msg-1",
+        trigger_sender="卢鑫",
+        trigger_sender_user_id="user-1",
+        trigger_text="再查一下我的评分",
+        period_label="2026 Q3",
+        period_start="2026-07-01",
+        period_end="2026-09-30",
+        okr_source_json='{"objectives":[]}',
+    )
+    store.mark_okr_review_request_failed(request_id, "codex session locked: cid-1")
+
+    recovered = store.reset_recoverable_okr_review_requests(
+        processing_max_age_seconds=30 * 60
+    )
+
+    assert [request.id for request in recovered] == [request_id]
+    loaded = store.get_okr_review_request(request_id)
+    assert loaded.status == "pending"
+    assert loaded.error == ""
+
+
+def test_reset_recoverable_okr_review_requests_keeps_fresh_lock_failure(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    request_id = store.create_okr_review_request(
+        conversation_id="cid-1",
+        conversation_title="卢鑫",
+        trigger_message_id="msg-1",
+        trigger_sender="卢鑫",
+        trigger_sender_user_id="user-1",
+        trigger_text="再查一下我的评分",
+        period_label="2026 Q3",
+        period_start="2026-07-01",
+        period_end="2026-09-30",
+        okr_source_json='{"objectives":[]}',
+    )
+    store.mark_okr_review_request_failed(request_id, "codex session locked: cid-1")
+    assert store.acquire_codex_session_lock("cid-1", "okr_review:other")
+
+    recovered = store.reset_recoverable_okr_review_requests(
+        processing_max_age_seconds=30 * 60
+    )
+
+    assert recovered == []
+    assert store.get_okr_review_request(request_id).status == "failed"
+
+
 def test_record_okr_review_run_and_items(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     request_id = store.create_okr_review_request(
