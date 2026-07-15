@@ -3973,12 +3973,6 @@ def render_meeting_attempt_detail(
         job.status,
         has_later_run=store.has_later_meeting_alignment_run(run.job_id, run.id),
     )
-    codex_link = (
-        f'<a href="/codex/{escape(run.codex_session_id)}">'
-        f'{escape(run.codex_session_id)}</a>'
-        if run.codex_session_id
-        else '<span class="muted">unavailable</span>'
-    )
     decision = _meeting_decision_payload(run.decision_json)
     action = str(decision.get("action") or "").strip()
     trigger_reasons = decision.get("trigger_reasons")
@@ -3994,35 +3988,45 @@ def render_meeting_attempt_detail(
     participant_names = _meeting_participant_names(job.participants_json, job.source_json)
     participant_preview = ", ".join(participant_names) if participant_names else ""
     mentions = _meeting_mentions_text(job.mentions_json)
-    body = (
-        '<section class="card"><h2>Meeting source</h2>'
-        '<div class="grid">'
-        f'<div class="muted">title</div><div>{escape(job.title)}</div>'
-        f'<div class="muted">meeting id</div><div>{escape(job.meeting_id)}</div>'
-        f'<div class="muted">ended at</div><div>{escape(job.ended_at)}</div>'
-        f'<div class="muted">participants</div><div>{escape(participant_preview)}</div>'
-        f'<div class="muted">Codex session</div><div>{codex_link}</div>'
-        '</div></section>'
-        '<section class="card"><h2>Decision summary</h2>'
-        '<div class="grid">'
-        f'<div class="muted">status</div><div>{escape(run_status)}</div>'
-        f'<div class="muted">action</div><div>{escape(action)}</div>'
-        f'<div class="muted">trigger reasons</div><div>{escape(trigger_text)}</div>'
-        f'<div class="muted">decision target</div><div>{escape(decision_target)}</div>'
-        f'<div class="muted">delivery target</div><div>{escape(job.target_title or job.target_id)}</div>'
-        f'<div class="muted">Mention resolution</div><div>{escape(mentions)}</div>'
-        '</div>'
-        f'<h3>audit summary</h3><p>{escape(run.audit_summary)}</p>'
-        '</section>'
-        '<section class="card"><h2>Message and delivery</h2>'
-        '<div class="grid">'
-        f'<div class="muted">job status</div><div>{escape(job.status)}</div>'
-        f'<div class="muted">target kind</div><div>{escape(job.target_kind)}</div>'
-        f'<div class="muted">target id</div><div>{escape(job.target_id)}</div>'
-        '</div>'
-        f'<h3>final message</h3><pre>{escape(job.final_message)}</pre>'
-        '</section>'
-        f'{_meeting_audit_tool_uses_card(run)}'
+    fields = [
+        ("meeting id", job.meeting_id),
+        ("action", action),
+        ("status", run_status),
+        ("job status", job.status),
+        ("target kind", job.target_kind),
+        ("delivery target", job.target_title or job.target_id),
+        ("decision target", decision_target),
+        ("Mention resolution", mentions),
+        ("ended at", job.ended_at),
+        ("participants", participant_preview),
+    ]
+    trigger_lines = [
+        f"title: {job.title}",
+        f"meeting id: {job.meeting_id}",
+        f"ended at: {job.ended_at}",
+        f"participants: {participant_preview}",
+    ]
+    if trigger_text:
+        trigger_lines.append(f"trigger reasons: {trigger_text}")
+    body = _agent_detail_body(
+        title_label="会议",
+        title=job.title,
+        subtitle=f"参会人：{participant_preview}" if participant_preview else "",
+        codex_session_id=run.codex_session_id,
+        actions_html="",
+        fields=fields,
+        pills_html=_agent_status_pill(run_status),
+        trigger_title="Trigger",
+        trigger_text="\n".join(trigger_lines),
+        reason_title="Codex reason",
+        reason_text=run.audit_summary,
+        reply_title="生成回复",
+        reply_text=job.final_message or "No generated reply recorded.",
+        side_html="",
+        extra_cards=(
+            f"{_text_card('Audit summary', run.audit_summary)}"
+            f"{_audit_tool_uses_card_for_uses(_audit_event_uses_for_attempt(run))}"
+        ),
     )
     return 200, render_page(
         f"Meeting attempt #{run.id}",
@@ -4080,21 +4084,6 @@ def _meeting_mentions_text(raw: str) -> str:
         if value:
             values.append(value)
     return ", ".join(values)
-
-
-def _meeting_audit_tool_uses_card(run: MeetingAlignmentRun) -> str:
-    uses = _audit_event_uses_for_attempt(run)
-    if not uses:
-        return _collapsible_json_card("Tool uses", "[]")
-    return (
-        "<details class=\"card collapsible-card\" open>"
-        "<summary><h2>Tool uses</h2>"
-        "<span class=\"audit-tool-count\">"
-        f"{len(uses)} calls"
-        "</span></summary>"
-        f"<div class=\"audit-tool-list\">{_audit_tool_uses_html(uses)}</div>"
-        "</details>"
-    )
 
 
 def _meeting_run_display_status(
@@ -5402,18 +5391,69 @@ def _attempt_detail_body(
         ("updated", _format_local_time(attempt.updated_at)),
         ("reviewed", _format_local_time(attempt.reviewed_at or "")),
     ]
-    return (
-        f"{_attempt_conversation_banner(attempt, sent_reply, codex_session_id)}"
-        f"{_attempt_detail_grid(fields)}"
-        f"{_review_panel(attempt, sent_reply, feedback_events)}"
-        f"{_quality_warning_card(attempt)}"
-        f"{_context_only_info_card(attempt)}"
-        f"{_oa_metadata_card(attempt)}"
-        f"{_calendar_metadata_card(attempt)}"
-        f"{_text_card('Audit summary', attempt.audit_summary)}"
-        f"{_audit_tool_uses_card(attempt)}"
-        f"{_text_card('Draft reply (raw Codex reply)', attempt.draft_reply_text)}"
+    return _agent_detail_body(
+        title_label="群名",
+        title=attempt.conversation_title,
+        subtitle=(
+            f"触发人：{attempt.trigger_sender}" if attempt.trigger_sender.strip() else ""
+        ),
+        codex_session_id=codex_session_id,
+        actions_html=_attempt_row_actions(attempt, sent_reply),
+        fields=fields,
+        pills_html=_attempt_action_pills(attempt),
+        trigger_title="Trigger",
+        trigger_text=_trigger_text(attempt),
+        reason_title="Codex reason",
+        reason_text=attempt.codex_reason,
+        reply_title="生成回复",
+        reply_text=_attempt_detail_reply_text(attempt),
+        side_html=(
+            f"{_feedback_form(attempt)}"
+            f"{_counterparty_feedback_card(sent_reply, feedback_events)}"
+        ),
+        extra_cards=(
+            f"{_quality_warning_card(attempt)}"
+            f"{_context_only_info_card(attempt)}"
+            f"{_oa_metadata_card(attempt)}"
+            f"{_calendar_metadata_card(attempt)}"
+            f"{_text_card('Audit summary', attempt.audit_summary)}"
+            f"{_audit_tool_uses_card(attempt)}"
+            f"{_text_card('Draft reply (raw Codex reply)', attempt.draft_reply_text)}"
+        ),
     )
+
+
+def _agent_detail_body(
+    *,
+    title_label: str,
+    title: str,
+    subtitle: str,
+    codex_session_id: str | None,
+    actions_html: str,
+    fields: list[tuple[str, str]],
+    pills_html: str,
+    trigger_title: str,
+    trigger_text: str,
+    reason_title: str,
+    reason_text: str,
+    reply_title: str,
+    reply_text: str,
+    side_html: str,
+    extra_cards: str,
+) -> str:
+    return (
+        f"{_agent_detail_banner(title_label, title, subtitle, codex_session_id, actions_html)}"
+        f"{_attempt_detail_grid(fields)}"
+        f"{_agent_review_panel(pills_html, trigger_title, trigger_text, reason_title, reason_text, reply_title, reply_text, side_html)}"
+        f"{extra_cards}"
+    )
+
+
+def _attempt_detail_reply_text(attempt: ReplyAttempt) -> str:
+    reply_text = attempt.final_reply_text or attempt.draft_reply_text
+    if reply_text.strip():
+        return reply_text
+    return _reaction_display_text(attempt) or "No generated reply recorded."
 
 
 def _permission_display(attempt: ReplyAttempt) -> str:
@@ -5424,14 +5464,16 @@ def _permission_display(attempt: ReplyAttempt) -> str:
     return action or reason
 
 
-def _attempt_conversation_banner(
-    attempt: ReplyAttempt,
-    sent_reply: SentReply | None,
+def _agent_detail_banner(
+    title_label: str,
+    title: str,
+    subtitle: str,
     codex_session_id: str | None,
+    actions_html: str,
 ) -> str:
-    subtitle = (
-        f"<div class=\"attempt-conversation-sub\">触发人：{escape(attempt.trigger_sender)}</div>"
-        if attempt.trigger_sender.strip()
+    subtitle_html = (
+        f"<div class=\"attempt-conversation-sub\">{escape(subtitle)}</div>"
+        if subtitle.strip()
         else ""
     )
     agent_log = (
@@ -5443,15 +5485,15 @@ def _attempt_conversation_banner(
     return (
         "<section class=\"card compact-card attempt-conversation-banner\">"
         "<div class=\"attempt-conversation-left\">"
-        "<div class=\"attempt-conversation-label\">群名</div>"
+        f"<div class=\"attempt-conversation-label\">{escape(title_label)}</div>"
         "<div class=\"attempt-conversation-main\">"
-        f"<div class=\"attempt-conversation-title\">{escape(attempt.conversation_title)}</div>"
-        f"{subtitle}"
+        f"<div class=\"attempt-conversation-title\">{escape(title)}</div>"
+        f"{subtitle_html}"
         "</div>"
         "</div>"
         "<div class=\"attempt-banner-actions\">"
         f"{agent_log}"
-        f"{_attempt_row_actions(attempt, sent_reply)}"
+        f"{actions_html}"
         "</div>"
         "</section>"
     )
@@ -5710,30 +5752,31 @@ def _feedback_event_html(event: FeedbackEvent) -> str:
     )
 
 
-def _review_panel(
-    attempt: ReplyAttempt,
-    sent_reply: SentReply | None,
-    feedback_events: list[FeedbackEvent],
+def _agent_review_panel(
+    pills_html: str,
+    trigger_title: str,
+    trigger_text: str,
+    reason_title: str,
+    reason_text: str,
+    reply_title: str,
+    reply_text: str,
+    side_html: str,
 ) -> str:
-    reply_text = attempt.final_reply_text or attempt.draft_reply_text
-    if not reply_text.strip():
-        reply_text = _reaction_display_text(attempt) or "No generated reply recorded."
     return (
         "<section class=\"review-grid\">"
         "<div class=\"card\">"
         "<div class=\"reply-meta\">"
-        f"{_attempt_action_pills(attempt)}"
+        f"{pills_html}"
         "</div>"
-        "<h2>Trigger</h2>"
-        f"<pre class=\"trigger-pre\">{escape(_trigger_text(attempt))}</pre>"
-        "<h2>Codex reason</h2>"
-        f"<div class=\"codex-reason\">{escape(attempt.codex_reason)}</div>"
-        "<h2>生成回复</h2>"
+        f"<h2>{escape(trigger_title)}</h2>"
+        f"<pre class=\"trigger-pre\">{escape(trigger_text)}</pre>"
+        f"<h2>{escape(reason_title)}</h2>"
+        f"<div class=\"codex-reason\">{escape(reason_text)}</div>"
+        f"<h2>{escape(reply_title)}</h2>"
         f"<pre class=\"reply-pre\">{escape(reply_text)}</pre>"
         "</div>"
         "<div class=\"review-side\">"
-        f"{_feedback_form(attempt)}"
-        f"{_counterparty_feedback_card(sent_reply, feedback_events)}"
+        f"{side_html}"
         "</div>"
         "</section>"
     )
@@ -5841,6 +5884,13 @@ def _attempt_action_pills(attempt: ReplyAttempt) -> str:
         f"<span class=\"pill status-action {_action_state_class(state)}\">"
         f"{escape(label)}</span>"
         for label, state in actions
+    )
+
+
+def _agent_status_pill(status: str) -> str:
+    return (
+        f"<span class=\"pill status-action {_action_state_class(status)}\">"
+        f"💬 {escape(_display_action_state(status))}</span>"
     )
 
 
@@ -6192,7 +6242,10 @@ def _collapsible_json_card(title: str, text: str) -> str:
 
 
 def _audit_tool_uses_card(attempt: ReplyAttempt) -> str:
-    uses = _audit_tool_uses_for_attempt(attempt)
+    return _audit_tool_uses_card_for_uses(_audit_tool_uses_for_attempt(attempt))
+
+
+def _audit_tool_uses_card_for_uses(uses: list[dict[str, object]]) -> str:
     if not uses:
         return _collapsible_json_card("Tool uses", "[]")
     document_count = sum(1 for use in uses if str(use.get("tool") or "") == "document")

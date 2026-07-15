@@ -203,8 +203,16 @@ def test_meeting_history_uses_reply_card_and_detail_contract(tmp_path: Path):
     detail = client.get(f"/meeting-attempts/{run_id}")
     assert detail.status_code == 200
     assert "项目评审会" in detail.text
+    assert "attempt-conversation-banner" in detail.text
+    assert "attempt-banner-actions" in detail.text
+    assert "attempt-detail-grid" in detail.text
+    assert "review-grid" in detail.text
+    assert "reply-pre" in detail.text
     assert "source_json" not in detail.text
     assert "decision_json" not in detail.text
+    assert "Meeting source" not in detail.text
+    assert "Decision summary" not in detail.text
+    assert "Message and delivery" not in detail.text
     assert "Tool uses" in detail.text
     assert "Read meeting memory" in detail.text
     assert "确认会议相关历史判断" in detail.text
