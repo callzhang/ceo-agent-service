@@ -78,6 +78,73 @@ def test_history_applies_search_status_and_global_count(tmp_path):
     assert item.status == "skipped"
 
 
+def test_history_includes_task_updates_and_follow_ups(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    project_id = store.create_work_project(
+        title="AI 待办推进",
+        category="product",
+        priority="P1",
+        risk_level="medium",
+        owner_name="Mina",
+        current_state="等待 Mina 反馈",
+        next_step="补充 TODO 描述",
+    )
+    todo_id = store.create_work_todo(
+        project_id=project_id,
+        title="向 Mina 解释待办更新",
+        description="说明重要事项判断口径，并同步更新后的 TODO。",
+        owner_name="Mina",
+        priority="P1",
+    )
+    update_id = store.create_work_update(
+        project_id=project_id,
+        source_type="reply_attempt",
+        source_ref="42",
+        summary="更新 TODO：补充 Mina 反馈事项描述",
+        changes_json='{"action":"update_project"}',
+        merge_reason="同一任务项目",
+        confidence=0.9,
+    )
+    follow_up_id = store.create_follow_up_draft(
+        project_id=project_id,
+        todo_id=todo_id,
+        owner_user_id="user-mina",
+        owner_name="Mina",
+        target_kind="direct",
+        question_text="Mina，这个 TODO 描述是否清楚？",
+        scheduled_at="2026-07-15 10:00:00",
+        status="sent",
+    )
+    with sqlite3.connect(store.path) as db:
+        db.execute(
+            "update work_updates set created_at='2026-07-15 10:00:00' where id=?",
+            (update_id,),
+        )
+        db.execute(
+            """
+            update follow_up_drafts
+            set sent_at='2026-07-15 10:01:00',
+                updated_at='2026-07-15 10:01:00'
+            where id=?
+            """,
+            (follow_up_id,),
+        )
+
+    items = store.list_history_items(limit=20, query_text="Mina")
+
+    assert [(item.kind, item.source_id) for item in items[:2]] == [
+        ("task", follow_up_id),
+        ("task", update_id),
+    ]
+    assert items[0].project_id == project_id
+    assert items[0].todo_id == todo_id
+    assert items[0].follow_up_id == follow_up_id
+    assert items[0].status == "sent"
+    assert items[1].project_id == project_id
+    assert items[1].status == "done"
+    assert store.count_history_items(send_statuses=("done",), query_text="Mina") == 1
+
+
 def test_history_preserves_immutable_retry_run_after_job_succeeds(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     job_id = store.upsert_meeting_alignment_job(

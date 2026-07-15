@@ -4,7 +4,7 @@ from pydantic import BaseModel
 
 
 class HistoryItem(BaseModel):
-    kind: Literal["reply", "meeting"]
+    kind: Literal["reply", "meeting", "task"]
     source_id: int
     source_title: str
     source_actor: str
@@ -16,4 +16,7 @@ class HistoryItem(BaseModel):
     status: str
     target_title: str = ""
     codex_session_id: str = ""
+    project_id: int = 0
+    todo_id: int = 0
+    follow_up_id: int = 0
     created_at: str

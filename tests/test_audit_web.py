@@ -188,6 +188,42 @@ def test_render_attempt_list_shows_history_rows(tmp_path: Path):
     assert "/codex/session-1" not in html
 
 
+def test_render_attempt_list_links_task_history_to_task_detail(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    project_id = store.create_work_project(
+        title="AI 待办推进",
+        category="product",
+        priority="P1",
+        risk_level="medium",
+        owner_name="Mina",
+    )
+    todo_id = store.create_work_todo(
+        project_id=project_id,
+        title="向 Mina 解释待办更新",
+        description="说明重要事项判断口径，并同步更新后的 TODO。",
+        owner_name="Mina",
+    )
+    follow_up_id = store.create_follow_up_draft(
+        project_id=project_id,
+        todo_id=todo_id,
+        owner_user_id="user-mina",
+        owner_name="Mina",
+        target_kind="direct",
+        question_text="Mina，这个 TODO 描述是否清楚？",
+        scheduled_at="2026-07-15 10:00:00",
+        status="sent",
+    )
+
+    html = render_attempt_list(store)
+    detail = render_task_project_detail(store, project_id)[1]
+
+    assert "task-history-item" in html
+    assert f"/tasks/{project_id}#follow-up-{follow_up_id}" in html
+    assert "查看 task" in html
+    assert f'id="todo-{todo_id}"' in detail
+    assert f'id="follow-up-{follow_up_id}"' in detail
+
+
 def test_meeting_history_uses_reply_card_and_detail_contract(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     run_id = seed_meeting_attempt(store)

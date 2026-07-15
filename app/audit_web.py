@@ -312,6 +312,10 @@ th{background:var(--surface-soft);color:var(--steel);font-size:12px;font-weight:
 .history-chart-empty{display:flex;align-items:center;justify-content:center;height:180px;border:1px dashed var(--hairline);border-radius:8px;color:var(--steel);background:var(--surface-soft);font-size:13px}
 .attempt-feed{display:grid;gap:8px}
 .attempt-item{background:var(--canvas);border:1px solid var(--hairline);border-radius:8px;padding:10px 12px}
+.task-history-item{cursor:pointer}
+.task-history-item:hover{border-color:rgba(55,114,207,.22);background:#f8fbff}
+.todo-detail-item:target{border-color:rgba(55,114,207,.45);box-shadow:0 0 0 3px rgba(55,114,207,.12)}
+.todo-followup-item:target .todo-followup-bubble{border-color:rgba(55,114,207,.45);box-shadow:0 0 0 3px rgba(55,114,207,.12)}
 .attempt-head{display:flex;align-items:center;justify-content:space-between;gap:12px;min-width:0}
 .attempt-title{display:flex;align-items:center;gap:7px;min-width:0;flex-wrap:nowrap}
 .attempt-side{display:flex;align-items:center;gap:10px;flex:0 0 auto}
@@ -511,7 +515,7 @@ _BROWSER_NOTIFICATION_SEQUENCE = count(1)
 _DINGTALK_BRIDGE_STATUS: deque[dict[str, str]] = deque(maxlen=20)
 DEFAULT_ATTEMPT_LIST_LIMIT = 20
 ATTEMPT_LIST_LIMIT_OPTIONS = (20, 50, 100)
-HISTORY_TYPE_FILTERS = ("sent", "reacted", "skipped", "failed")
+HISTORY_TYPE_FILTERS = ("sent", "reacted", "skipped", "failed", "done")
 HISTORY_SEARCH_OBJECT_TYPES = ("history", "codex_session")
 TASK_PAGE_SIZE_OPTIONS = (20, 50, 100)
 DEFAULT_TASK_PAGE_SIZE = 20
@@ -529,6 +533,11 @@ HISTORY_CHART_COLORS = {
     "🙂 Reacted": "#6f8fdd",
     "💬 Failed": "#d45656",
     "💬 Dry run": "#c37d0d",
+    "✅ Task updated": "#00b48a",
+    "📌 Follow-up sent": "#00b48a",
+    "📌 Follow-up skipped": "#a8a8aa",
+    "📌 Follow-up failed": "#d45656",
+    "📌 Follow-up pending": "#3772cf",
     "📆 Calendar": "#6f8fdd",
     "📆 Accepted": "#00b48a",
     "📆 Tentative": "#c37d0d",
@@ -2103,6 +2112,26 @@ def _history_event_label(attempt: ReplyAttempt) -> str:
     return "💬 Processing"
 
 
+def _history_item_event_label(item) -> str:
+    if item.kind == "task":
+        action = item.action.strip().lower()
+        status = item.status.strip().lower()
+        if action.startswith("follow_up_"):
+            if status == "sent":
+                return "📌 Follow-up sent"
+            if status == "skipped":
+                return "📌 Follow-up skipped"
+            if status == "failed":
+                return "📌 Follow-up failed"
+            return "📌 Follow-up pending"
+        return "✅ Task updated"
+    return {
+        "sent": "💬 Sent",
+        "skipped": "💬 Skipped",
+        "failed": "💬 Failed",
+    }.get(item.status, "💬 Processing")
+
+
 def _history_chart_payload(
     store: AutoReplyStore,
     *,
@@ -2140,7 +2169,7 @@ def _history_chart_payload(
         bucket_values.setdefault(event_label, [0] * bucket_count)[bucket_index] += 1
     for item in store.list_history_items(
         limit=None,
-        kinds=("meeting",),
+        kinds=("meeting", "task"),
         created_since=since_utc,
     ):
         created_at = _parse_utc_timestamp(item.created_at)
@@ -2154,11 +2183,7 @@ def _history_chart_payload(
         bucket_index = label_indexes.get(local_bucket.strftime("%m-%d %H:%M"))
         if bucket_index is None:
             continue
-        event_label = {
-            "sent": "💬 Sent",
-            "skipped": "💬 Skipped",
-            "failed": "💬 Failed",
-        }.get(item.status, "💬 Processing")
+        event_label = _history_item_event_label(item)
         bucket_values.setdefault(event_label, [0] * bucket_count)[bucket_index] += 1
     series = [
         {
@@ -2858,6 +2883,9 @@ def render_attempt_list(
         sent_replies_by_attempt.values(),
     )
     for history_item in history_items:
+        if history_item.kind == "task":
+            items.append(_task_history_card(history_item))
+            continue
         if history_item.kind == "meeting":
             items.append(_meeting_history_card(history_item))
             continue
@@ -2961,6 +2989,58 @@ def _meeting_history_card(item) -> str:
         f'<time class="attempt-time">{escape(_format_local_time(item.created_at))}</time>'
         '<div class="attempt-actions">'
         f'<a class="review-link" href="/meeting-attempts/{item.source_id}">查看</a>'
+        '</div></div></div>'
+        '<div class="attempt-lines">'
+        f'{_attempt_text_line(item.input_label, item.input_text, 260)}'
+        f'{_attempt_text_line(item.output_label, item.output_text, 320)}'
+        '</div></article>'
+    )
+
+
+def _task_history_detail_url(item) -> str:
+    if item.project_id <= 0:
+        return "/tasks"
+    if item.follow_up_id > 0:
+        return f"/tasks/{item.project_id}#follow-up-{item.follow_up_id}"
+    if item.todo_id > 0:
+        return f"/tasks/{item.project_id}#todo-{item.todo_id}"
+    return f"/tasks/{item.project_id}"
+
+
+def _task_history_title(item) -> str:
+    action = item.action.strip().lower()
+    if action.startswith("follow_up_"):
+        return "任务跟进"
+    return "任务更新"
+
+
+def _task_history_id_label(item) -> str:
+    if item.action.strip().lower().startswith("follow_up_"):
+        return f"#follow-up-{item.source_id}"
+    return f"#task-update-{item.source_id}"
+
+
+def _task_history_card(item) -> str:
+    status = item.status.strip().lower() or "done"
+    detail_url = _task_history_detail_url(item)
+    return (
+        '<article class="attempt-item task-history-item" role="link" tabindex="0" '
+        f'data-href="{escape(detail_url, quote=True)}" '
+        "onclick=\"if (!event.target.closest('a')) window.location.href=this.dataset.href\" "
+        "onkeydown=\"if ((event.key === 'Enter' || event.key === ' ') && !event.target.closest('a')) { event.preventDefault(); window.location.href=this.dataset.href; }\">"
+        '<div class="attempt-head">'
+        '<div class="attempt-title">'
+        f'<a class="attempt-id" href="{escape(detail_url, quote=True)}">'
+        f'{escape(_task_history_id_label(item))}</a>'
+        f'<span class="pill status-action {_action_state_class(status)}">'
+        f'{escape(_display_action_state(status))}</span>'
+        '<div class="attempt-main">'
+        f'{escape(_task_history_title(item))} · {escape(item.source_title)}</div>'
+        f'<div class="attempt-meta">{escape(item.target_title or item.source_actor)}</div>'
+        '</div><div class="attempt-side">'
+        f'<time class="attempt-time">{escape(_format_local_time(item.created_at))}</time>'
+        '<div class="attempt-actions">'
+        f'<a class="review-link" href="{escape(detail_url, quote=True)}">查看 task</a>'
         '</div></div></div>'
         '<div class="attempt-lines">'
         f'{_attempt_text_line(item.input_label, item.input_text, 260)}'
@@ -3810,7 +3890,7 @@ def _task_follow_up_child_item(draft, conversation_titles: Mapping[str, str]) ->
     owner = draft.owner_name or draft.owner_user_id or "-"
     target = _task_follow_up_target(draft, conversation_titles)
     return (
-        "<li class=\"todo-followup-item\">"
+        f"<li class=\"todo-followup-item\" id=\"follow-up-{draft.id}\">"
         "<div class=\"todo-followup-bubble\">"
         "<div class=\"todo-followup-head\">"
         f"<span class=\"todo-followup-recipient\">{escape(owner)}</span>"

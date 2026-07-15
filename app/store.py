@@ -3554,6 +3554,9 @@ class AutoReplyStore:
                     send_status as status,
                     conversation_title as target_title,
                     codex_session_id,
+                    0 as project_id,
+                    0 as todo_id,
+                    0 as follow_up_id,
                     created_at,
                     conversation_id || ' ' || conversation_title || ' ' ||
                     trigger_message_id || ' ' || trigger_sender || ' ' ||
@@ -3593,6 +3596,9 @@ class AutoReplyStore:
                     end as status,
                     jobs.target_title,
                     runs.codex_session_id,
+                    0 as project_id,
+                    0 as todo_id,
+                    0 as follow_up_id,
                     runs.created_at,
                     jobs.meeting_id || ' ' || jobs.title || ' ' || jobs.source_json || ' ' ||
                     jobs.participants_json || ' ' || jobs.error || ' ' || jobs.decision_json || ' ' ||
@@ -3603,6 +3609,75 @@ class AutoReplyStore:
                     as search_text
                 from meeting_alignment_runs as runs
                 join meeting_alignment_jobs as jobs on jobs.id=runs.job_id
+                union all
+                select
+                    'task' as kind,
+                    updates.id as source_id,
+                    projects.title as source_title,
+                    'Task Agent' as source_actor,
+                    '来源' as input_label,
+                    updates.source_type || ':' || updates.source_ref as input_text,
+                    '更新' as output_label,
+                    updates.summary as output_text,
+                    'task_update' as action,
+                    'done' as status,
+                    projects.title as target_title,
+                    '' as codex_session_id,
+                    updates.project_id as project_id,
+                    0 as todo_id,
+                    0 as follow_up_id,
+                    updates.created_at,
+                    projects.title || ' ' || projects.category || ' ' ||
+                    projects.owner_name || ' ' || projects.goal || ' ' ||
+                    projects.background || ' ' || projects.current_state || ' ' ||
+                    projects.next_step || ' ' || updates.source_type || ' ' ||
+                    updates.source_ref || ' ' || updates.summary || ' ' ||
+                    updates.changes_json || ' ' || updates.merge_reason
+                    as search_text
+                from work_updates as updates
+                join work_projects as projects on projects.id=updates.project_id
+                union all
+                select
+                    'task' as kind,
+                    drafts.id as source_id,
+                    projects.title as source_title,
+                    'Follow-up' as source_actor,
+                    '跟进' as input_label,
+                    drafts.question_text as input_text,
+                    '结果' as output_label,
+                    case
+                        when drafts.status='sent' then coalesce(nullif(drafts.reaction_summary, ''), '已发送跟进')
+                        when drafts.status in ('skipped', 'cancelled') then coalesce(nullif(drafts.suppressed_reason, ''), '已跳过跟进')
+                        when drafts.status='failed' then coalesce(nullif(drafts.send_result_json, '{}'), '发送失败')
+                        else drafts.scheduled_at
+                    end as output_text,
+                    'follow_up_' || drafts.status as action,
+                    case
+                        when drafts.status='sent' then 'sent'
+                        when drafts.status in ('skipped', 'cancelled') then 'skipped'
+                        when drafts.status='failed' then 'failed'
+                        else 'processing'
+                    end as status,
+                    coalesce(nullif(todos.title, ''), drafts.owner_name, projects.title) as target_title,
+                    '' as codex_session_id,
+                    drafts.project_id as project_id,
+                    drafts.todo_id as todo_id,
+                    drafts.id as follow_up_id,
+                    coalesce(nullif(drafts.sent_at, ''), drafts.updated_at, drafts.created_at) as created_at,
+                    projects.title || ' ' || projects.category || ' ' ||
+                    projects.owner_name || ' ' || projects.goal || ' ' ||
+                    projects.background || ' ' || projects.current_state || ' ' ||
+                    projects.next_step || ' ' || coalesce(todos.title, '') || ' ' ||
+                    coalesce(todos.description, '') || ' ' || drafts.owner_name || ' ' ||
+                    drafts.target_conversation_id || ' ' || drafts.target_kind || ' ' ||
+                    drafts.question_text || ' ' || drafts.status || ' ' ||
+                    drafts.send_result_json || ' ' || drafts.evidence_check_json || ' ' ||
+                    drafts.reaction_status || ' ' || drafts.reaction_summary || ' ' ||
+                    drafts.suppressed_reason
+                    as search_text
+                from follow_up_drafts as drafts
+                join work_projects as projects on projects.id=drafts.project_id
+                left join work_todos as todos on todos.id=drafts.todo_id
             )
             select * from history_items
         """
