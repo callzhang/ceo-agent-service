@@ -8843,7 +8843,9 @@ def test_alidocs_permission_setup_is_passed_to_codex_without_worker_read(
     assert worker.store.list_errors() == []
 
 
-def test_codex_stop_with_error_sends_macos_notification(tmp_path: Path, monkeypatch):
+def test_codex_stop_with_error_notifies_only_after_task_retries_are_exhausted(
+    tmp_path: Path, monkeypatch
+):
     trigger = message("@Alex Chen(明哥) 这个怎么处理？")
     dws = FakeDws([conversation()], {"cid-1": [trigger]})
     codex = FakeCodex(
@@ -8853,7 +8855,14 @@ def test_codex_stop_with_error_sends_macos_notification(tmp_path: Path, monkeypa
             macos_notify=False,
         )
     )
-    worker = make_worker(tmp_path, dws, codex, monkeypatch, dry_run=True)
+    worker = make_worker(
+        tmp_path,
+        dws,
+        codex,
+        monkeypatch,
+        dry_run=True,
+        max_task_attempts=1,
+    )
     notifications: list[dict[str, str | None]] = []
     monkeypatch.setattr(
         "app.worker.send_macos_notification",
@@ -8867,11 +8876,13 @@ def test_codex_stop_with_error_sends_macos_notification(tmp_path: Path, monkeypa
     assert attempt is not None
     assert attempt.action == "stop_with_error"
     assert attempt.send_status == "failed"
-    assert notifications[0] == {
-        "title": "CEO agent error: Friday",
-        "message": "codex exec failed",
-        "url": "http://127.0.0.1:8765/open-dingtalk?conversation_id=cid-1",
-    }
+    assert notifications == [
+        {
+            "title": "CEO task failed: Friday",
+            "message": "codex exec failed",
+            "url": "http://127.0.0.1:8765/open-dingtalk?conversation_id=cid-1",
+        }
+    ]
 
 
 def test_codex_login_required_stop_with_error_is_failed(
@@ -8972,13 +8983,17 @@ def test_codex_provider_auth_stop_with_error_records_clear_sanitized_failure(
 def test_codex_stop_with_error_keeps_queued_task_retryable(
     tmp_path: Path, monkeypatch
 ):
+    notifications: list[dict[str, str | None]] = []
     trigger = message("@Alex Chen(明哥) 这个怎么处理？")
     dws = FakeDws([conversation()], {"cid-1": [trigger]})
     codex = SequencedFakeCodex(
         [
             CodexDecision(
                 action=CodexAction.STOP_WITH_ERROR,
-                reason="codex exec timed out after 300 seconds",
+                reason=(
+                    "failed to refresh available models: "
+                    "timeout waiting for child process to exit"
+                ),
             ),
             CodexDecision(
                 action=CodexAction.SEND_REPLY,
@@ -8989,7 +9004,7 @@ def test_codex_stop_with_error_keeps_queued_task_retryable(
     worker = make_worker(tmp_path, dws, codex, monkeypatch)
     monkeypatch.setattr(
         "app.worker.send_macos_notification",
-        lambda **_: None,
+        lambda **kwargs: notifications.append(kwargs),
     )
 
     worker.run_once()
@@ -9000,6 +9015,11 @@ def test_codex_stop_with_error_keeps_queued_task_retryable(
     failed_attempt = worker.store.get_reply_attempt(1)
     assert failed_attempt is not None
     assert failed_attempt.send_status == "failed"
+    assert [
+        notification
+        for notification in notifications
+        if "error" in notification["title"] or "failed" in notification["title"]
+    ] == []
 
     pending = worker.store.list_reply_tasks(statuses=("pending",), limit=1)[0]
     with worker.store._connect() as db:
@@ -9016,6 +9036,11 @@ def test_codex_stop_with_error_keeps_queued_task_retryable(
     assert sent_attempt is not None
     assert sent_attempt.action == "send_reply"
     assert sent_attempt.send_status == "sent"
+    assert [
+        notification
+        for notification in notifications
+        if "error" in notification["title"] or "failed" in notification["title"]
+    ] == []
 
 
 def test_dws_transient_dependency_stop_requeues_task_without_sending(

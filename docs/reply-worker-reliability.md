@@ -242,9 +242,12 @@ task is also skipped. Otherwise the consumer can claim the task and move it to
 ## Consumer retry behavior
 
 Reply tasks move from `pending` to `processing` when claimed. If task processing
-raises an exception, the consumer records a retry error, sends a local
-notification, and moves the task back to `pending` until the task reaches the
-maximum attempt count. The default maximum is three claimed attempts.
+raises an exception, the consumer records a retry error and moves the task back
+to `pending` until the task reaches the maximum attempt count. Intermediate
+attempts do not send failure notifications; the queue owns failure reporting so
+transient Codex startup, model refresh, or provider errors cannot produce a
+false alarm before a later attempt succeeds. The default maximum is three
+claimed attempts.
 
 Delivery failures for an otherwise sendable reply are treated as task processing
 failures after the reply attempt has recorded the failed send. This keeps the
