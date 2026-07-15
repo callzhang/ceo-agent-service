@@ -16,6 +16,12 @@ class EmbeddingClient:
         self.api_key = api_key
         self.timeout_seconds = timeout_seconds
 
+    @property
+    def embeddings_url(self) -> str:
+        if self.base_url.endswith("/v1"):
+            return f"{self.base_url}/embeddings"
+        return f"{self.base_url}/v1/embeddings"
+
     def __call__(self, texts: list[str]) -> list[list[float]]:
         if not texts:
             return []
@@ -27,7 +33,7 @@ class EmbeddingClient:
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
         request = urllib.request.Request(
-            f"{self.base_url}/v1/embeddings",
+            self.embeddings_url,
             data=json.dumps(payload).encode("utf-8"),
             headers=headers,
             method="POST",

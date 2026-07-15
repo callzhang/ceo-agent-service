@@ -17,6 +17,7 @@ from app.config import (
     embedding_base_url,
     embedding_enabled,
     embedding_model,
+    embedding_timeout_seconds,
     feedback_spike_vercel_base_url,
     meeting_consumer_poll_interval_seconds,
     meeting_producer_interval_seconds,
@@ -1979,6 +1980,7 @@ def run_meeting_consumer_loop(
             base_url=embedding_base_url(),
             model=embedding_model(),
             api_key=embedding_api_key(),
+            timeout_seconds=embedding_timeout_seconds(),
         )
         if embedding_enabled()
         else None

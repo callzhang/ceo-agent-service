@@ -220,15 +220,22 @@ def meeting_settle_seconds() -> int:
 
 
 def embedding_base_url() -> str:
-    return os.getenv("CEO_EMBEDDING_BASE_URL", "https://embed.preseen.ai")
+    return os.getenv("CEO_EMBEDDING_BASE_URL", "https://embed.preseen.ai/v1")
 
 
 def embedding_model() -> str:
-    return os.getenv("CEO_EMBEDDING_MODEL", "text-embedding-3-small")
+    return os.getenv("CEO_EMBEDDING_MODEL", "jinaai/jina-embeddings-v5-text-small")
 
 
 def embedding_api_key() -> str:
-    return os.getenv("CEO_EMBEDDING_API_KEY", "")
+    return os.getenv(
+        "CEO_EMBEDDING_API_KEY",
+        "s4BVC8bymjW5cDiQjVKEkxq53lRNtvdiUmk-Tozt8JM",
+    )
+
+
+def embedding_timeout_seconds() -> int:
+    return env_int("CEO_EMBEDDING_TIMEOUT_SECONDS", 120)
 
 
 def embedding_enabled() -> bool:
