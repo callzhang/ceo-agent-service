@@ -283,6 +283,12 @@ def _resolve_mentions(
             unresolved.append(mention_name)
             continue
         participant = participants[0] if len(participants) == 1 else None
+        if participant is None and not _transcript_assigns_non_participant_task(
+            source,
+            mention_name,
+        ):
+            unresolved.append(mention_name)
+            continue
         if participant is not None and participant.open_dingtalk_id.strip():
             mention = ResolvedMention(
                 mention_name=mention_name,
@@ -411,6 +417,33 @@ def _profile_context_score(profile: DwsUserProfile, value: str) -> int:
 
 def _canonical(value: str) -> str:
     return " ".join(value.split()).casefold()
+
+
+def _transcript_assigns_non_participant_task(
+    source: MeetingSource,
+    mention_name: str,
+) -> bool:
+    wanted = _canonical(mention_name)
+    if not wanted:
+        return False
+    assignment_terms = (
+        "任务",
+        "负责",
+        "owner",
+        "Owner",
+        "交给",
+        "找",
+        "确认",
+        "跟进",
+        "推进",
+        "同步",
+        "拉",
+    )
+    for line in source.transcript:
+        text = line.text.strip()
+        if wanted in _canonical(text) and any(term in text for term in assignment_terms):
+            return True
+    return False
 
 
 def _meeting_followup_header(source: MeetingSource) -> str:

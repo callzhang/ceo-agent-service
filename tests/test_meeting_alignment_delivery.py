@@ -319,6 +319,59 @@ def test_ambiguous_mention_is_omitted_without_blocking_group_delivery():
     assert dws.sent[0]["at_open_dingtalk_ids"] == []
 
 
+def test_non_participant_mention_is_not_resolved_from_directory_only():
+    dws = FakeDws()
+    dws.profiles["曹督军"] = [
+        DwsUserProfile(
+            user_id="u-cao",
+            name="曹督军",
+            open_dingtalk_id="open-cao",
+        )
+    ]
+
+    result = deliver_meeting_alignment(
+        send_decision(mention_names=["曹督军"]),
+        meeting_source(),
+        dws,
+    )
+
+    assert result.resolved_mentions == []
+    assert result.unresolved_mention_names == ["曹督军"]
+    assert dws.sent[0]["at_open_dingtalk_ids"] == []
+
+
+def test_non_participant_mention_is_allowed_when_transcript_assigns_task():
+    dws = FakeDws()
+    dws.profiles["曹督军"] = [
+        DwsUserProfile(
+            user_id="u-cao",
+            name="曹督军",
+            open_dingtalk_id="open-cao",
+        )
+    ]
+    payload = meeting_source().model_dump()
+    payload["transcript"] = [
+        {
+            "speaker_name": "A",
+            "speaker_user_id": "u-a",
+            "timestamp": "00:10:00",
+            "text": "客户 sample 时间这个任务交给曹督军负责确认。",
+        }
+    ]
+
+    result = deliver_meeting_alignment(
+        send_decision(mention_names=["曹督军"]),
+        MeetingSource.model_validate(payload),
+        dws,
+    )
+
+    assert [mention.open_dingtalk_id for mention in result.resolved_mentions] == [
+        "open-cao"
+    ]
+    assert result.unresolved_mention_names == []
+    assert dws.sent[0]["at_open_dingtalk_ids"] == ["open-cao"]
+
+
 def test_duplicate_canonical_participant_names_are_inherently_ambiguous():
     dws = FakeDws()
     source_payload = meeting_source().model_dump()
@@ -400,9 +453,20 @@ def test_department_and_title_context_uniquely_resolve_same_name():
             open_dingtalk_id="open-2",
         ),
     ]
+    source_payload = meeting_source().model_dump()
+    source_payload["transcript"] = [
+        {
+            "speaker_name": "A",
+            "speaker_user_id": "u-a",
+            "timestamp": "00:11:00",
+            "text": "客户报价这件事交给张三 销售 总监负责确认。",
+        }
+    ]
 
     result = deliver_meeting_alignment(
-        send_decision(mention_names=["张三 销售 总监"]), meeting_source(), dws
+        send_decision(mention_names=["张三 销售 总监"]),
+        MeetingSource.model_validate(source_payload),
+        dws,
     )
 
     assert [mention.open_dingtalk_id for mention in result.resolved_mentions] == [
@@ -417,9 +481,20 @@ def test_recent_group_sender_disambiguates_same_name():
         DwsUserProfile(user_id="u-2", name="张三", open_dingtalk_id="open-2"),
     ]
     dws.recent_messages = [message("张三", user_id="u-2", open_id="open-2")]
+    source_payload = meeting_source().model_dump()
+    source_payload["transcript"] = [
+        {
+            "speaker_name": "A",
+            "speaker_user_id": "u-a",
+            "timestamp": "00:11:00",
+            "text": "这个任务后面找张三跟进。",
+        }
+    ]
 
     result = deliver_meeting_alignment(
-        send_decision(mention_names=["张三"]), meeting_source(), dws
+        send_decision(mention_names=["张三"]),
+        MeetingSource.model_validate(source_payload),
+        dws,
     )
 
     assert [mention.open_dingtalk_id for mention in result.resolved_mentions] == [

@@ -121,6 +121,12 @@ it is treated as 1:1 only when the complete transcript contains exactly Derek
 and one uniquely resolved employee; otherwise it remains unqueued. No DING or
 reaction is added by this workflow.
 
+Real mentions default to meeting participants. Non-participants can be mentioned
+only when the meeting transcript explicitly says the task is theirs, assigns
+them ownership, or asks them to confirm or follow up. Otherwise their name may
+appear in the message body as context, but the delivery layer will not resolve
+it into a DingTalk @ mention.
+
 Every sent meeting follow-up starts with a deterministic source header:
 `【会议跟进】<meeting title>（<meeting time>）`. The header is added by the
 delivery executor, so the sent message, stored final message, and local

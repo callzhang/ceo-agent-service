@@ -220,7 +220,7 @@ def build_meeting_alignment_prompt(
 - aligned 议题：简述各方观点，并总结最终结论及对齐原因。
 - unresolved 议题：简述各方观点和理由，提出完成对齐所需的最小集合。可以提出多个问题，但每个问题必须对应不同且不可合并的关键取舍；不要为了显得完整而堆问题。
 - 取舍问题应把“选择什么、牺牲什么、承担什么后果”压缩为可回答的问题；回答最小集合后应能直接导出结论或明确下一步。
-- key_questions.answer_owner_names 必须写真正能回答/拍板的人；mention_names 必须覆盖这些 owner。final_message 中使用其真实姓名形成真实 @ 的语义，发送层会解析为钉钉真实 @，不要写泛称“相关同学”。
+- key_questions.answer_owner_names 必须写真正能回答/拍板的人。mention_names 默认只覆盖参会 owner；如果 owner 不是参会人，只有会议中明确说到这是他的任务、由他负责、交给他确认或跟进时，才可以放进 mention_names 并在 final_message 中真实 @。否则可以在正文里写“需要后续同步某某确认”，但不要把这个非参会人放进 mention_names，也不要写成真实 @。
 - “Derek 的观点输出解读”只能解释 Derek 在会议中明确表达的观点，meeting_evidence 必须引用会议原话或可核验片段。
 - 可以结合工作人格和 memory_recall 找到的历史案例、信息来打比方、举例和补全解释，但不能用历史信息发明或替换 Derek 的立场，也不能让历史材料覆盖会议证据。
 - 使用历史内容时，historical_sources 必须逐项记录来源。未经 memory_recall 核验时，唯一允许的历史来源是服务端注入的工作人格来源 `{work_profile_source}`；不使用历史内容则返回空列表。
