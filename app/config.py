@@ -219,6 +219,27 @@ def meeting_settle_seconds() -> int:
     return env_int("CEO_MEETING_SETTLE_SECONDS", 600)
 
 
+def embedding_base_url() -> str:
+    return os.getenv("CEO_EMBEDDING_BASE_URL", "https://embed.preseen.ai")
+
+
+def embedding_model() -> str:
+    return os.getenv("CEO_EMBEDDING_MODEL", "text-embedding-3-small")
+
+
+def embedding_api_key() -> str:
+    return os.getenv("CEO_EMBEDDING_API_KEY", "")
+
+
+def embedding_enabled() -> bool:
+    return os.getenv("CEO_EMBEDDING_DISABLED", "").strip().lower() not in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
 def poll_interval_seconds() -> int:
     return env_int("CEO_POLL_INTERVAL_SECONDS", 30)
 

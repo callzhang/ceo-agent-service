@@ -13,6 +13,10 @@ from pydantic import BaseModel, NonNegativeInt, PositiveInt
 from app.codex_decision import CodexDecisionRunner, append_signature
 from app.config import (
     consumer_poll_interval_seconds,
+    embedding_api_key,
+    embedding_base_url,
+    embedding_enabled,
+    embedding_model,
     feedback_spike_vercel_base_url,
     meeting_consumer_poll_interval_seconds,
     meeting_producer_interval_seconds,
@@ -30,6 +34,7 @@ from app.corpus import (
     load_corpus_records,
     write_records,
 )
+from app.embedding import EmbeddingClient
 from app.dws_client import (
     DINGTALK_MESSAGE_TIME_ZONE,
     DwsClient,
@@ -1969,6 +1974,15 @@ def run_meeting_consumer_loop(
         timeout_seconds=settings.codex_timeout_seconds,
         idle_timeout_seconds=settings.codex_idle_timeout_seconds,
     )
+    embedding_client = (
+        EmbeddingClient(
+            base_url=embedding_base_url(),
+            model=embedding_model(),
+            api_key=embedding_api_key(),
+        )
+        if embedding_enabled()
+        else None
+    )
     while True:
         try:
             consume_meeting_alignment_jobs(
@@ -1978,6 +1992,7 @@ def run_meeting_consumer_loop(
                 now=datetime.now().astimezone(),
                 limit=1 if max_tasks is None else max_tasks,
                 deliver=not settings.dry_run,
+                embedding_client=embedding_client,
             )
         except Exception as exc:
             store.record_error(

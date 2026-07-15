@@ -7,6 +7,44 @@ import pytest
 from app.store import AutoReplyStore
 
 
+def test_store_indexes_and_searches_codex_sessions_with_fts_and_embeddings(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+
+    store.upsert_codex_session_search_index(
+        session_id="session-risk-budget",
+        source_type="meeting_alignment",
+        source_id="10",
+        title="上线评审",
+        summary_text="话题：上线范围 风险预算。Derek 认为先定义可接受故障面。",
+        fts_text="上线 上线范围 风险 风险预算 故障 故障面",
+        embedding=[1.0, 0.0],
+    )
+    store.upsert_codex_session_search_index(
+        session_id="session-customer-script",
+        source_type="meeting_alignment",
+        source_id="11",
+        title="客服话术",
+        summary_text="话题：客服解释口径。",
+        fts_text="客服 话术 解释 口径",
+        embedding=[0.0, 1.0],
+    )
+
+    results = store.search_codex_sessions(
+        fts_query="上线 风险",
+        query_embedding=[1.0, 0.0],
+        limit=2,
+    )
+
+    assert [result.session_id for result in results] == [
+        "session-risk-budget",
+        "session-customer-script",
+    ]
+    assert results[0].embedding_score > results[1].embedding_score
+    assert results[0].bm25_score is not None
+
+
 def test_store_connections_enable_sqlite_concurrency_pragmas(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
 

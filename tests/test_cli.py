@@ -4333,7 +4333,7 @@ def test_meeting_loops_call_separate_workers_once(monkeypatch, tmp_path):
     monkeypatch.setattr(
         cli,
         "consume_meeting_alignment_jobs",
-        lambda received_store, received_dws, received_runner, *, now, limit, deliver: calls.append(
+        lambda received_store, received_dws, received_runner, *, now, limit, deliver, embedding_client=None: calls.append(
             (
                 "consume-meeting",
                 received_store,
@@ -4342,6 +4342,7 @@ def test_meeting_loops_call_separate_workers_once(monkeypatch, tmp_path):
                 now,
                 limit,
                 deliver,
+                embedding_client,
             )
         ),
     )
@@ -4379,7 +4380,8 @@ def test_meeting_loops_call_separate_workers_once(monkeypatch, tmp_path):
     )
     assert calls[3][:4] == ("consume-meeting", store, dws, runner)
     assert calls[3][4].utcoffset() is not None
-    assert calls[3][5:] == (4, True)
+    assert calls[3][5:7] == (4, True)
+    assert calls[3][7] is not None
     assert calls[4] == ("sleep", 10)
 
 

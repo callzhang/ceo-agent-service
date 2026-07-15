@@ -201,6 +201,19 @@ class ConversationRecord(BaseModel):
     codex_session_id: str | None = None
 
 
+class CodexSessionSearchResult(BaseModel):
+    session_id: str
+    source_type: str
+    source_id: str
+    title: str
+    summary_text: str
+    fts_text: str
+    embedding_score: float = 0.0
+    bm25_score: float | None = None
+    score: float = 0.0
+    updated_at: str = ""
+
+
 class ReplyTask(BaseModel):
     id: int
     conversation_id: str
@@ -263,6 +276,39 @@ class CodexSessionLock:
                 f"codex session lock release failed: {self.conversation_id}"
             )
         return False
+
+
+def _embedding_from_json(text: str) -> list[float]:
+    if not text.strip():
+        return []
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(payload, list):
+        return []
+    values: list[float] = []
+    for item in payload:
+        if isinstance(item, (int, float)):
+            values.append(float(item))
+    return values
+
+
+def _embedding_score(
+    query_embedding: list[float] | None,
+    stored_embedding: list[float],
+) -> float:
+    if not query_embedding or not stored_embedding:
+        return 0.0
+    pairs = list(zip(query_embedding, stored_embedding))
+    if not pairs:
+        return 0.0
+    dot = sum(left * right for left, right in pairs)
+    left_norm = sum(left * left for left, _ in pairs) ** 0.5
+    right_norm = sum(right * right for _, right in pairs) ** 0.5
+    if not left_norm or not right_norm:
+        return 0.0
+    return dot / (left_norm * right_norm)
 
 
 class AutoReplyStore:
@@ -465,6 +511,30 @@ class AutoReplyStore:
                 );
                 create index if not exists idx_meeting_alignment_runs_job
                     on meeting_alignment_runs(job_id, id);
+                create table if not exists codex_session_search_index (
+                    id integer primary key autoincrement,
+                    session_id text not null unique,
+                    source_type text not null default '',
+                    source_id text not null default '',
+                    title text not null default '',
+                    summary_text text not null default '',
+                    fts_text text not null default '',
+                    embedding_json text not null default '',
+                    embedding_model text not null default '',
+                    embedding_updated_at text not null default '',
+                    created_at text not null default current_timestamp,
+                    updated_at text not null default current_timestamp
+                );
+                create index if not exists idx_codex_session_search_source
+                    on codex_session_search_index(source_type, source_id);
+                create virtual table if not exists codex_session_search_fts
+                    using fts5(
+                        title,
+                        summary_text,
+                        fts_text,
+                        content='codex_session_search_index',
+                        content_rowid='id'
+                    );
                 create table if not exists corpus_sources (
                     source_key text primary key,
                     last_collected_at text
@@ -3627,6 +3697,175 @@ class AutoReplyStore:
                 args = (codex_session_id, limit)
             rows = db.execute(query, args).fetchall()
             return [ReplyAttempt.model_validate(dict(row)) for row in rows]
+
+    def upsert_codex_session_search_index(
+        self,
+        *,
+        session_id: str,
+        source_type: str,
+        source_id: str,
+        title: str,
+        summary_text: str,
+        fts_text: str,
+        embedding: list[float] | None = None,
+        embedding_model: str = "",
+    ) -> None:
+        if not session_id.strip():
+            return
+        embedding_json = (
+            json.dumps(embedding, ensure_ascii=False) if embedding is not None else ""
+        )
+        embedding_updated_at_sql = (
+            "current_timestamp" if embedding is not None else "embedding_updated_at"
+        )
+        with self._connect() as db:
+            row = db.execute(
+                """
+                select id from codex_session_search_index
+                where session_id=?
+                """,
+                (session_id,),
+            ).fetchone()
+            if row is None:
+                cursor = db.execute(
+                    f"""
+                    insert into codex_session_search_index (
+                        session_id,
+                        source_type,
+                        source_id,
+                        title,
+                        summary_text,
+                        fts_text,
+                        embedding_json,
+                        embedding_model,
+                        embedding_updated_at
+                    )
+                    values (?, ?, ?, ?, ?, ?, ?, ?, {
+                        'current_timestamp' if embedding is not None else "''"
+                    })
+                    """,
+                    (
+                        session_id,
+                        source_type,
+                        source_id,
+                        title,
+                        summary_text,
+                        fts_text,
+                        embedding_json,
+                        embedding_model,
+                    ),
+                )
+                row_id = int(cursor.lastrowid)
+            else:
+                row_id = int(row["id"])
+                db.execute(
+                    f"""
+                    update codex_session_search_index
+                    set source_type=?,
+                        source_id=?,
+                        title=?,
+                        summary_text=?,
+                        fts_text=?,
+                        embedding_json=case when ? != '' then ? else embedding_json end,
+                        embedding_model=case when ? != '' then ? else embedding_model end,
+                        embedding_updated_at={embedding_updated_at_sql},
+                        updated_at=current_timestamp
+                    where id=?
+                    """,
+                    (
+                        source_type,
+                        source_id,
+                        title,
+                        summary_text,
+                        fts_text,
+                        embedding_json,
+                        embedding_json,
+                        embedding_model,
+                        embedding_model,
+                        row_id,
+                    ),
+                )
+                db.execute(
+                    "delete from codex_session_search_fts where rowid=?",
+                    (row_id,),
+                )
+            db.execute(
+                """
+                insert into codex_session_search_fts (
+                    rowid, title, summary_text, fts_text
+                )
+                values (?, ?, ?, ?)
+                """,
+                (row_id, title, summary_text, fts_text),
+            )
+
+    def search_codex_sessions(
+        self,
+        *,
+        fts_query: str,
+        query_embedding: list[float] | None = None,
+        limit: int = 3,
+    ) -> list[CodexSessionSearchResult]:
+        fts_scores: dict[int, float] = {}
+        with self._connect() as db:
+            if fts_query.strip():
+                try:
+                    rows = db.execute(
+                        """
+                        select rowid, bm25(codex_session_search_fts) as bm25_score
+                        from codex_session_search_fts
+                        where codex_session_search_fts match ?
+                        order by bm25_score
+                        limit ?
+                        """,
+                        (fts_query, max(limit * 5, 10)),
+                    ).fetchall()
+                    fts_scores = {
+                        int(row["rowid"]): float(row["bm25_score"]) for row in rows
+                    }
+                except sqlite3.OperationalError:
+                    fts_scores = {}
+            rows = db.execute(
+                """
+                select *
+                from codex_session_search_index
+                order by updated_at desc
+                """
+            ).fetchall()
+        results = []
+        for row in rows:
+            row_id = int(row["id"])
+            stored_embedding = _embedding_from_json(row["embedding_json"])
+            embedding_score = _embedding_score(
+                query_embedding,
+                stored_embedding,
+            )
+            bm25_score = fts_scores.get(row_id)
+            has_embedding_candidate = bool(query_embedding and stored_embedding)
+            if bm25_score is None and not has_embedding_candidate:
+                continue
+            bm25_normalized = (
+                1.0 / (1.0 + max(0.0, bm25_score))
+                if bm25_score is not None
+                else 0.0
+            )
+            score = 0.55 * embedding_score + 0.30 * bm25_normalized
+            results.append(
+                CodexSessionSearchResult(
+                    session_id=row["session_id"],
+                    source_type=row["source_type"],
+                    source_id=row["source_id"],
+                    title=row["title"],
+                    summary_text=row["summary_text"],
+                    fts_text=row["fts_text"],
+                    embedding_score=embedding_score,
+                    bm25_score=bm25_score,
+                    score=score,
+                    updated_at=row["updated_at"],
+                )
+            )
+        results.sort(key=lambda result: result.score, reverse=True)
+        return results[:limit]
 
     def list_reviewed_reply_attempts(
         self, limit: int | None = None

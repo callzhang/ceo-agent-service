@@ -7,6 +7,7 @@ from pydantic import ValidationError
 from app.config import work_profile_path
 from app.meeting_alignment_models import MeetingAlignmentDecision, MeetingSource
 from app.prompt import work_profile_instruction
+from app.store import CodexSessionSearchResult
 
 
 MEETING_ALIGNMENT_DECISION_SCHEMA_PATH = (
@@ -36,12 +37,18 @@ class MeetingAlignmentAgent:
     def __init__(self, codex: MeetingAlignmentCodex):
         self.codex = codex
 
-    def decide(self, source: MeetingSource) -> MeetingAlignmentDecision:
+    def decide(
+        self,
+        source: MeetingSource,
+        *,
+        similar_sessions: list[CodexSessionSearchResult] | None = None,
+    ) -> MeetingAlignmentDecision:
         decision = self.codex.decide(
             prompt=build_meeting_alignment_prompt(
                 source,
                 work_profile=work_profile_instruction(),
                 work_profile_source=str(work_profile_path()),
+                similar_sessions=similar_sessions or [],
             )
         )
         _validate_source_aware_target(source, decision)
@@ -163,6 +170,7 @@ def build_meeting_alignment_prompt(
     *,
     work_profile: str,
     work_profile_source: str,
+    similar_sessions: list[CodexSessionSearchResult] | None = None,
 ) -> str:
     source_json = json.dumps(
         source.model_dump(mode="json"), ensure_ascii=False, indent=2
@@ -200,6 +208,8 @@ def build_meeting_alignment_prompt(
 - 每个 candidate 都必须写具体 evidence。target 必须选择候选列表第 1 个（得分最高的可发送群）；即使关联较弱也选择它，关联较弱也不能降级为私聊。
 - 如果已经穷尽上述群发现仍没有任何可访问且可发送的群，但会议确实命中 send 触发条件，必须保留 action=send、trigger_reasons、topics/derek_viewpoint、key_questions、mention_names 和 final_message，并返回 target=null，交给发送层重试。
 - target=null 是暂时无法投递的运行状态：不能改成 no_action，也绝不能降级为私聊。"""
+
+    similar_sessions_text = _similar_sessions_prompt_block(similar_sessions or [])
 
     return f"""你是 Meeting Alignment Agent。你分析已经结束的会议，但不直接发送消息。
 
@@ -240,9 +250,33 @@ def build_meeting_alignment_prompt(
 服务端注入的工作人格（仅作解释辅助，不能创造会议立场）：
 {work_profile or "（无可用工作人格）"}
 
+相似历史 Codex sessions（仅作上下文复用；当前会议证据优先）：
+{similar_sessions_text}
+
 完整会议来源 JSON：
 {source_json}
 """
+
+
+def _similar_sessions_prompt_block(
+    sessions: list[CodexSessionSearchResult],
+) -> str:
+    if not sessions:
+        return "（无）"
+    lines = []
+    for index, session in enumerate(sessions, start=1):
+        lines.append(
+            "\n".join(
+                [
+                    f"{index}. session_id: {session.session_id}",
+                    f"   title: {session.title}",
+                    f"   source: {session.source_type}:{session.source_id}",
+                    f"   summary: {session.summary_text}",
+                    f"   codex_url: /codex/{session.session_id}",
+                ]
+            )
+        )
+    return "\n".join(lines)
 
 
 def parse_meeting_alignment_decision(raw: str) -> MeetingAlignmentDecision:

@@ -194,9 +194,11 @@ class FakeMeetingRunner:
     def __init__(self, decision: MeetingAlignmentDecision):
         self.decision = decision
         self.calls = 0
+        self.prompts: list[str] = []
 
     def decide(self, *, prompt: str) -> MeetingAlignmentDecision:
         self.calls += 1
+        self.prompts.append(prompt)
         return self.decision
 
 
@@ -688,6 +690,63 @@ def test_consumer_records_no_action_run_and_terminal_job(tmp_path):
     assert run.codex_transcript_start_line == 4
     assert run.codex_transcript_end_line == 19
     assert json.loads(run.audit_tool_events_json)[0]["tool"] == "dws"
+
+
+def test_consumer_injects_similar_codex_sessions_into_meeting_prompt(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.upsert_codex_session_search_index(
+        session_id="session-risk-budget",
+        source_type="meeting_alignment",
+        source_id="7",
+        title="历史上线评审",
+        summary_text="历史相似会议：上线范围和风险预算，Derek 主张先定义故障面。",
+        fts_text="上线 上线范围 风险 风险预算 故障 故障面",
+        embedding=[1.0, 0.0],
+    )
+    dws = ConsumerDws()
+    seed_consumer_job(store, dws)
+    runner = FakeMeetingRunner(no_action_decision())
+
+    assert consume_meeting_alignment_jobs(
+        store,
+        dws,
+        runner,
+        now=NOW,
+        limit=1,
+        embedding_client=lambda texts: [[1.0, 0.0] for _ in texts],
+    ) == 1
+
+    [prompt] = runner.prompts
+    assert "相似历史 Codex sessions" in prompt
+    assert "session-risk-budget" in prompt
+    assert "历史相似会议：上线范围和风险预算" in prompt
+
+
+def test_consumer_indexes_completed_meeting_codex_session(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    dws = ConsumerDws()
+    seed_consumer_job(store, dws)
+    runner = FakeMeetingRunner(consumer_send_decision())
+
+    assert consume_meeting_alignment_jobs(
+        store,
+        dws,
+        runner,
+        now=NOW,
+        limit=1,
+        deliver=False,
+        embedding_client=lambda texts: [[1.0, 0.0] for _ in texts],
+    ) == 1
+
+    results = store.search_codex_sessions(
+        fts_query="上线 OR 风险",
+        query_embedding=[1.0, 0.0],
+        limit=1,
+    )
+    assert [result.session_id for result in results] == ["meeting-session-1"]
+    assert "上线范围" in results[0].summary_text
+    assert "最多接受多大故障面" in results[0].summary_text
+    assert results[0].source_type == "meeting_alignment"
 
 
 def test_consumer_retries_invalid_model_decision(tmp_path):

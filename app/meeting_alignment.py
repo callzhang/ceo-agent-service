@@ -1,7 +1,7 @@
 import json
 import subprocess
 from datetime import datetime, timedelta
-from typing import Any, Protocol
+from typing import Any, Callable, Protocol
 
 from pydantic import ValidationError
 
@@ -384,6 +384,7 @@ def consume_meeting_alignment_jobs(
     retry_delay: timedelta = DEFAULT_MEETING_RETRY_DELAY,
     max_attempts: int = DEFAULT_MEETING_MAX_ATTEMPTS,
     deliver: bool = True,
+    embedding_client: Callable[[list[str]], list[list[float]]] | None = None,
 ) -> int:
     if now.tzinfo is None or now.utcoffset() is None:
         raise ValueError("meeting consumer now must include a timezone")
@@ -406,6 +407,7 @@ def consume_meeting_alignment_jobs(
             now=now,
             retry_delay=retry_delay,
             max_attempts=max_attempts,
+            embedding_client=embedding_client,
         )
 
     delivery_jobs = (
@@ -443,6 +445,132 @@ def recover_meeting_alignment_jobs(store: AutoReplyStore) -> int:
     return len(recovered)
 
 
+def _search_similar_meeting_sessions(
+    store: AutoReplyStore,
+    source: Any,
+    *,
+    embedding_client: Callable[[list[str]], list[list[float]]] | None,
+):
+    query_text = _meeting_session_search_text(source)
+    query_embedding = None
+    if embedding_client is not None:
+        try:
+            vectors = embedding_client([query_text])
+            query_embedding = vectors[0] if vectors else None
+        except Exception:
+            query_embedding = None
+    return store.search_codex_sessions(
+        fts_query=_meeting_fts_query(query_text),
+        query_embedding=query_embedding,
+        limit=3,
+    )
+
+
+def _meeting_session_search_text(source: Any) -> str:
+    participants = " ".join(
+        participant.name for participant in source.participants if participant.name
+    )
+    transcript = " ".join(line.text for line in source.transcript[:40] if line.text)
+    return "\n".join(
+        part
+        for part in (
+            source.title,
+            source.summary,
+            participants,
+            transcript,
+        )
+        if str(part).strip()
+    )
+
+
+def _meeting_fts_query(text: str) -> str:
+    import jieba
+
+    terms = []
+    seen = set()
+    for token in jieba.lcut(text):
+        value = str(token).strip()
+        if not value or value in seen:
+            continue
+        seen.add(value)
+        terms.append(value)
+        if len(terms) >= 12:
+            break
+    return " OR ".join(terms)
+
+
+def _meeting_fts_text(text: str) -> str:
+    import jieba
+
+    tokens = [str(token).strip() for token in jieba.lcut(text)]
+    return " ".join(token for token in tokens if token)
+
+
+def _index_meeting_codex_session(
+    store: AutoReplyStore,
+    runner: Any,
+    job: Any,
+    source: Any,
+    decision: MeetingAlignmentDecision,
+    *,
+    embedding_client: Callable[[list[str]], list[list[float]]] | None,
+) -> None:
+    session_id = str(getattr(runner, "last_session_id", "") or "").strip()
+    if not session_id:
+        return
+    summary_text = _meeting_session_index_text(source, decision)
+    embedding = None
+    if embedding_client is not None:
+        try:
+            vectors = embedding_client([summary_text])
+            embedding = vectors[0] if vectors else None
+        except Exception:
+            embedding = None
+    store.upsert_codex_session_search_index(
+        session_id=session_id,
+        source_type="meeting_alignment",
+        source_id=str(job.id),
+        title=source.title,
+        summary_text=summary_text,
+        fts_text=_meeting_fts_text(summary_text),
+        embedding=embedding,
+    )
+
+
+def _meeting_session_index_text(
+    source: Any,
+    decision: MeetingAlignmentDecision,
+) -> str:
+    topics = "；".join(
+        f"{topic.title}（{topic.state}）："
+        f"{' / '.join(f'{view.speaker}:{view.view}' for view in topic.views)}"
+        for topic in decision.topics
+    )
+    questions = "；".join(question.question for question in decision.key_questions)
+    derek_view = (
+        decision.derek_viewpoint.expressed_view
+        if decision.derek_viewpoint is not None
+        else ""
+    )
+    participants = "、".join(
+        participant.name for participant in source.participants if participant.name
+    )
+    return "\n".join(
+        part
+        for part in (
+            f"会议：{source.title}",
+            f"参会人：{participants}",
+            f"摘要：{source.summary}",
+            f"话题：{topics}",
+            f"Derek 观点：{derek_view}",
+            f"关键问题：{questions}",
+            f"结论/消息：{decision.final_message}",
+            f"审计摘要：{decision.audit_summary}",
+        )
+        if part.strip() and not part.endswith("：")
+    )
+
+
 def _analyze_meeting_job(
     store: AutoReplyStore,
     dws: Any,
@@ -452,6 +580,7 @@ def _analyze_meeting_job(
     now: datetime,
     retry_delay: timedelta,
     max_attempts: int,
+    embedding_client: Callable[[list[str]], list[list[float]]] | None = None,
 ) -> None:
     try:
         payload = json.loads(job.source_json)
@@ -483,9 +612,14 @@ def _analyze_meeting_job(
         _fail_job(store, job.id, "meeting_source", exc)
         return
 
+    similar_sessions = _search_similar_meeting_sessions(
+        store,
+        source,
+        embedding_client=embedding_client,
+    )
     agent = MeetingAlignmentAgent(runner)
     try:
-        decision = agent.decide(source)
+        decision = agent.decide(source, similar_sessions=similar_sessions)
     except MeetingAlignmentTargetError as exc:
         error = _error_json("meeting_target", str(exc))
         _record_agent_run(
@@ -559,6 +693,14 @@ def _analyze_meeting_job(
             status="no_action",
             error="",
         )
+        _index_meeting_codex_session(
+            store,
+            runner,
+            job,
+            source,
+            decision,
+            embedding_client=embedding_client,
+        )
         store.update_meeting_alignment_job(
             job.id,
             status="no_action",
@@ -582,6 +724,14 @@ def _analyze_meeting_job(
         decision=decision,
         status="ready_to_send",
         error="",
+    )
+    _index_meeting_codex_session(
+        store,
+        runner,
+        job,
+        source,
+        decision,
+        embedding_client=embedding_client,
     )
     store.update_meeting_alignment_job(
         job.id,
