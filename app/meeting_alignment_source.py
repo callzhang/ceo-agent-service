@@ -1,6 +1,6 @@
 import math
 from datetime import datetime, timezone
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict
 
@@ -22,6 +22,7 @@ CALENDAR_BOUNDARY_DRIFT_SECONDS = 4 * 60 * 60
 class CalendarMeetingEvidence(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    source: Literal["calendar", "transcript"] = "calendar"
     event_id: str
     title: str
     started_at: str
@@ -125,7 +126,12 @@ def read_meeting_source(
         ) from exc
     current_user_id = dws.get_current_user_id()
     return normalize_meeting_source(
-        _merge_calendar_evidence(info, calendar_evidence, current_user_id),
+        _merge_calendar_evidence(
+            info,
+            calendar_evidence,
+            current_user_id,
+            transcription,
+        ),
         transcription,
         current_user_id=current_user_id,
         summary=summary,
@@ -249,10 +255,11 @@ def _merge_calendar_evidence(
     info: dict[str, Any],
     evidence: CalendarMeetingEvidence,
     current_user_id: str,
+    transcription: dict[str, Any] | list[dict[str, Any]],
 ) -> dict[str, Any]:
     live = dict(_payload_data(info))
     _validate_metadata_aliases(live)
-    _verify_calendar_evidence(live, evidence, current_user_id)
+    _verify_calendar_evidence(live, evidence, current_user_id, transcription)
     live["participants"] = [
         participant.model_dump() for participant in evidence.participants
     ]
@@ -288,11 +295,55 @@ def build_calendar_meeting_evidence(
             )
         )
     return CalendarMeetingEvidence(
+        source="calendar",
         event_id=event.event_id,
         title=event.title,
         started_at=_normalized_time(event.start_time),
         ended_at=_normalized_time(event.end_time),
         participants=participants,
+    )
+
+
+def build_transcript_one_to_one_evidence(
+    info: dict[str, Any],
+    transcription: dict[str, Any] | list[dict[str, Any]],
+    *,
+    current_user_id: str,
+    current_user_name: str,
+    counterpart: MeetingParticipant,
+) -> CalendarMeetingEvidence:
+    data = _payload_data(info)
+    metadata = _discovery_metadata_fields(data)
+    meeting_id = metadata["meeting_id"]
+    if not meeting_id:
+        raise MeetingSourceIncomplete("meeting id is missing")
+    speaker_names = transcript_speaker_names(transcription)
+    current_key = _normalized_title(current_user_name)
+    counterpart_key = _normalized_title(counterpart.name)
+    speaker_keys = {_normalized_title(name) for name in speaker_names}
+    if (
+        len(speaker_names) != 2
+        or not current_key
+        or not counterpart_key
+        or current_key == counterpart_key
+        or speaker_keys != {current_key, counterpart_key}
+    ):
+        raise MeetingSourceIncomplete(
+            "transcript does not prove exactly one current user and one counterpart"
+        )
+    return CalendarMeetingEvidence(
+        source="transcript",
+        event_id=f"transcript:{meeting_id}",
+        title=metadata["title"],
+        started_at=metadata["started_at"],
+        ended_at=metadata["ended_at"],
+        participants=[
+            MeetingParticipant(
+                name=current_user_name.strip(),
+                user_id=current_user_id.strip(),
+            ),
+            counterpart,
+        ],
     )
 
 
@@ -323,8 +374,36 @@ def _calendar_event_matches(data: dict[str, Any], event: DwsCalendarEvent) -> bo
 
 
 def _verify_calendar_evidence(
-    data: dict[str, Any], evidence: CalendarMeetingEvidence, current_user_id: str
+    data: dict[str, Any],
+    evidence: CalendarMeetingEvidence,
+    current_user_id: str,
+    transcription: dict[str, Any] | list[dict[str, Any]],
 ) -> None:
+    if evidence.source == "transcript":
+        current = [
+            participant
+            for participant in evidence.participants
+            if participant.user_id == current_user_id
+        ]
+        counterparts = [
+            participant
+            for participant in evidence.participants
+            if participant.user_id != current_user_id
+        ]
+        if len(current) != 1 or len(counterparts) != 1:
+            raise MeetingSourceIncomplete(
+                "transcript evidence lacks a stable one-to-one roster"
+            )
+        rebuilt = build_transcript_one_to_one_evidence(
+            data,
+            transcription,
+            current_user_id=current_user_id,
+            current_user_name=current[0].name,
+            counterpart=counterparts[0],
+        )
+        if rebuilt != evidence:
+            raise MeetingSourceIncomplete("transcript evidence is stale or mismatched")
+        return
     event = DwsCalendarEvent(
         event_id=evidence.event_id,
         title=evidence.title,
@@ -336,6 +415,18 @@ def _verify_calendar_evidence(
         raise MeetingSourceIncomplete("calendar evidence is stale or mismatched")
     if sum(p.user_id == current_user_id for p in evidence.participants) != 1:
         raise MeetingSourceIncomplete("calendar evidence lacks stable current user")
+
+
+def transcript_speaker_names(
+    transcription: dict[str, Any] | list[dict[str, Any]],
+) -> list[str]:
+    names: dict[str, str] = {}
+    for line in _transcript_lines(transcription):
+        name = line.speaker_name.strip()
+        key = _normalized_title(name)
+        if key and key not in names:
+            names[key] = name
+    return list(names.values())
 
 
 def _normalized_title(value: str) -> str:

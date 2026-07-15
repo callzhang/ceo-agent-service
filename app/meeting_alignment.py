@@ -5,7 +5,8 @@ from typing import Any, Protocol
 
 from pydantic import ValidationError
 
-from app.dws_client import DwsCalendarEvent, DwsError
+from app.config import principal_display_name
+from app.dws_client import DwsCalendarEvent, DwsError, DwsUserProfile
 from app.meeting_alignment_agent import (
     MeetingAlignmentAgent,
     MeetingAlignmentTargetError,
@@ -16,15 +17,25 @@ from app.meeting_alignment_delivery import (
     MeetingDeliveryResult,
     MeetingDeliveryRetry,
     deliver_meeting_alignment,
+    meeting_delivery_conversation_id,
 )
-from app.meeting_alignment_models import MeetingAlignmentDecision
+from app.meeting_alignment_models import (
+    MeetingAlignmentDecision,
+    MeetingParticipant,
+)
 from app.meeting_alignment_source import (
     CalendarMeetingEvidence,
     MeetingSourceIncomplete,
     build_calendar_meeting_evidence,
+    build_transcript_one_to_one_evidence,
     minutes_meeting_id,
     normalize_minutes_discovery_metadata,
     read_meeting_source,
+    transcript_speaker_names,
+)
+from app.notification import (
+    dingtalk_conversation_notification_url,
+    send_macos_notification,
 )
 from app.store import AutoReplyStore
 
@@ -50,6 +61,10 @@ class MeetingProducerDws(Protocol):
     def get_minutes_info(self, meeting_id: str) -> dict[str, Any]: ...
 
     def get_current_user_id(self) -> str: ...
+
+    def get_all_minutes_transcription(self, meeting_id: str) -> dict[str, Any]: ...
+
+    def search_user_profiles(self, query: str) -> list[DwsUserProfile]: ...
 
     def list_calendar_events_page(
         self, *, start: str, end: str, limit: int, cursor: str
@@ -133,8 +148,11 @@ def produce_meeting_alignment_jobs(
             "endTimeISO": metadata.ended_at,
         }
         try:
-            evidence = build_calendar_meeting_evidence(
-                matcher_info, events, current_user_id
+            evidence = _build_meeting_roster_evidence(
+                dws,
+                matcher_info,
+                events,
+                current_user_id=current_user_id,
             )
         except MeetingSourceIncomplete:
             continue
@@ -291,8 +309,11 @@ def queue_recent_meeting_alignment_replay(
             "endTimeISO": metadata.ended_at,
         }
         try:
-            evidence = build_calendar_meeting_evidence(
-                matcher_info, events, current_user_id
+            evidence = _build_meeting_roster_evidence(
+                dws,
+                matcher_info,
+                events,
+                current_user_id=current_user_id,
             )
         except MeetingSourceIncomplete:
             result["outcome"] = "calendar_not_unique"
@@ -703,6 +724,7 @@ def _deliver_meeting_job(
         send_result_json=result.model_dump_json(),
         error="",
     )
+    _notify_meeting_sent(job, result)
 
 
 def _reconcile_ambiguous_delivery(
@@ -761,6 +783,7 @@ def _reconcile_ambiguous_delivery(
             send_result_json=updated.model_dump_json(),
             error="",
         )
+        _notify_meeting_sent(job, updated)
         return
     if state == "failed":
         # This attempt only reconciles the old operation. A counted retry may
@@ -925,6 +948,99 @@ def _error_json(kind: str, message: str) -> str:
         {"kind": kind, "message": message},
         ensure_ascii=False,
         sort_keys=True,
+    )
+
+
+def _build_meeting_roster_evidence(
+    dws: MeetingProducerDws,
+    info: dict[str, Any],
+    events: list[DwsCalendarEvent],
+    *,
+    current_user_id: str,
+) -> CalendarMeetingEvidence:
+    try:
+        return build_calendar_meeting_evidence(info, events, current_user_id)
+    except MeetingSourceIncomplete as calendar_error:
+        try:
+            transcription = dws.get_all_minutes_transcription(
+                minutes_meeting_id(info)
+            )
+            current_user_name = principal_display_name().strip()
+            speaker_names = transcript_speaker_names(transcription)
+            current_key = _canonical_name(current_user_name)
+            other_names = [
+                name
+                for name in speaker_names
+                if _canonical_name(name) != current_key
+            ]
+            if (
+                not current_key
+                or sum(
+                    _canonical_name(name) == current_key
+                    for name in speaker_names
+                )
+                != 1
+                or len(speaker_names) != 2
+                or len(other_names) != 1
+            ):
+                raise MeetingSourceIncomplete(
+                    "transcript does not prove an ad-hoc one-to-one meeting"
+                )
+            counterpart = _resolve_transcript_counterpart(
+                dws,
+                other_names[0],
+            )
+            return build_transcript_one_to_one_evidence(
+                info,
+                transcription,
+                current_user_id=current_user_id,
+                current_user_name=current_user_name,
+                counterpart=counterpart,
+            )
+        except (DwsError, MeetingSourceIncomplete):
+            raise calendar_error
+
+
+def _resolve_transcript_counterpart(
+    dws: MeetingProducerDws,
+    name: str,
+) -> MeetingParticipant:
+    wanted = _canonical_name(name)
+    matches = [
+        profile
+        for profile in dws.search_user_profiles(name)
+        if wanted
+        in {
+            _canonical_name(profile.name),
+            _canonical_name(profile.nick),
+        }
+    ]
+    if len(matches) != 1:
+        raise MeetingSourceIncomplete(
+            "transcript one-to-one counterpart identity is not unique"
+        )
+    profile = matches[0]
+    if not profile.user_id.strip():
+        raise MeetingSourceIncomplete(
+            "transcript one-to-one counterpart user id is missing"
+        )
+    return MeetingParticipant(
+        name=name.strip(),
+        user_id=profile.user_id.strip(),
+        open_dingtalk_id=(profile.open_dingtalk_id or "").strip(),
+    )
+
+
+def _canonical_name(value: str) -> str:
+    return " ".join(value.split()).casefold()
+
+
+def _notify_meeting_sent(job: Any, result: MeetingDeliveryResult) -> None:
+    conversation_id = meeting_delivery_conversation_id(result)
+    send_macos_notification(
+        title=f"CEO meeting follow-up: {job.title}",
+        message=job.final_message,
+        url=dingtalk_conversation_notification_url(conversation_id),
     )
 
 

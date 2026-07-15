@@ -8,6 +8,7 @@ from app.dws_client import (
     DwsCalendarAttendee,
     DwsCalendarEvent,
     DwsError,
+    DwsUserProfile,
 )
 from app.meeting_alignment import (
     consume_meeting_alignment_jobs,
@@ -106,6 +107,12 @@ class FakeDws:
 
     def get_current_user_id(self) -> str:
         return "u-derek"
+
+    def get_all_minutes_transcription(self, meeting_id: str) -> dict:
+        raise DwsError("transcript roster unavailable")
+
+    def search_user_profiles(self, query: str) -> list[DwsUserProfile]:
+        return []
 
     def list_calendar_events_page(
         self, *, start: str, end: str, limit: int, cursor: str
@@ -291,6 +298,59 @@ def test_producer_leaves_ambiguous_calendar_matches_unqueued(tmp_path):
 
     assert produce_meeting_alignment_jobs(store, dws, now=NOW) == 0
     assert store.get_meeting_alignment_job_by_meeting_id("minutes-1") is None
+
+
+def test_producer_queues_ad_hoc_one_to_one_from_two_speaker_transcript(
+    tmp_path, monkeypatch
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+
+    class AdHocOneToOneDws(FakeDws):
+        def get_all_minutes_transcription(self, meeting_id: str) -> dict:
+            assert meeting_id == "minutes-1"
+            return {
+                "paragraphs": [
+                    {"nickName": "Derek", "paragraph": "先确认投入产出。"},
+                    {"nickName": "Claire", "paragraph": "我补齐调研。"},
+                ]
+            }
+
+        def search_user_profiles(self, query: str) -> list[DwsUserProfile]:
+            assert query == "Claire"
+            return [
+                DwsUserProfile(
+                    user_id="u-claire",
+                    name="Claire",
+                    open_dingtalk_id="open-claire",
+                )
+            ]
+
+    dws = AdHocOneToOneDws(
+        calendar_pages={
+            "": {"events": [], "has_more": False, "next_cursor": ""}
+        }
+    )
+    monkeypatch.setattr(meeting_alignment, "principal_display_name", lambda: "Derek")
+
+    assert produce_meeting_alignment_jobs(store, dws, now=NOW) == 1
+
+    job = store.get_meeting_alignment_job_by_meeting_id("minutes-1")
+    assert job is not None
+    evidence = json.loads(job.source_json)["calendar_evidence"]
+    assert evidence["source"] == "transcript"
+    assert evidence["event_id"] == "transcript:minutes-1"
+    assert evidence["participants"] == [
+        {
+            "name": "Derek",
+            "user_id": "u-derek",
+            "open_dingtalk_id": "",
+        },
+        {
+            "name": "Claire",
+            "user_id": "u-claire",
+            "open_dingtalk_id": "open-claire",
+        },
+    ]
 
 
 def test_producer_leaves_meeting_without_exactly_one_self_attendee_unqueued(tmp_path):
@@ -691,6 +751,38 @@ def test_consumer_persists_ready_before_external_send_and_marks_sent(tmp_path):
     assert json.loads(job.send_result_json)["status"] == "sent"
     [run] = store.list_meeting_alignment_runs(job_id)
     assert run.status == "ready_to_send"
+
+
+def test_consumer_notifies_once_after_confirmed_meeting_send(tmp_path, monkeypatch):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    dws = ConsumerDws()
+    job_id = seed_consumer_job(store, dws)
+    notifications: list[dict[str, str]] = []
+    monkeypatch.setattr(
+        meeting_alignment,
+        "send_macos_notification",
+        lambda **payload: notifications.append(payload),
+    )
+
+    consume_meeting_alignment_jobs(
+        store,
+        dws,
+        FakeMeetingRunner(consumer_send_decision()),
+        now=NOW,
+        limit=1,
+    )
+
+    assert store.get_meeting_alignment_job(job_id).status == "sent"
+    assert notifications == [
+        {
+            "title": "CEO meeting follow-up: 上线评审",
+            "message": consumer_send_decision().final_message,
+            "url": (
+                "http://127.0.0.1:8765/open-dingtalk"
+                "?conversation_id=cid-first"
+            ),
+        }
+    ]
 
 
 def test_consumer_dry_run_analyzes_but_does_not_claim_or_send(tmp_path):

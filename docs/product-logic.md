@@ -116,7 +116,15 @@ the activation watermark or reopening confirmed sends.
 
 Multi-party meetings are sent to the highest-ranked sendable group with real
 mentions. They never fall back to a direct message. A 1:1 meeting sends directly
-to the other participant. No DING or reaction is added by this workflow.
+to the other participant. When an ad-hoc call has no matching calendar event,
+it is treated as 1:1 only when the complete transcript contains exactly Derek
+and one uniquely resolved employee; otherwise it remains unqueued. No DING or
+reaction is added by this workflow.
+
+After delivery is confirmed as `sent`, the workflow reuses the reply agent's
+local/Chrome notification bridge. The notification contains the DingTalk
+`openConversationId`, so clicking it opens the group or direct conversation.
+Ambiguous sends do not notify until status reconciliation confirms success.
 
 The queue persists analysis before delivery. `no_action` is terminal;
 `ready_to_send` is persisted before any external send; `sent` records delivery.

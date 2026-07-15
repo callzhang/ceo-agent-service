@@ -4,11 +4,26 @@ import shlex
 import shutil
 import subprocess
 from urllib import error, request
+from urllib.parse import quote
 
 from app.config import notification_bridge_base_url
 
 
 DEFAULT_NOTIFICATION_ICON_PATH = Path(__file__).resolve().parent / "logo.png"
+
+
+def dingtalk_conversation_notification_url(
+    conversation_id: str,
+    *,
+    attempt_id: int | None = None,
+) -> str | None:
+    cleaned_conversation_id = conversation_id.strip()
+    if not cleaned_conversation_id:
+        return None
+    query = f"conversation_id={quote(cleaned_conversation_id, safe='')}"
+    if attempt_id is not None:
+        query = f"{query}&attempt_id={int(attempt_id)}"
+    return f"{notification_bridge_base_url()}/open-dingtalk?{query}"
 
 
 def send_macos_notification(title: str, message: str, url: str | None = None) -> None:

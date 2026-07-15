@@ -145,8 +145,12 @@ Replay delivery uses all existing safeguards:
 - multi-party meetings send only to the highest-ranked sendable group;
 - multi-party meetings never fall back to direct messaging;
 - strict one-to-one meetings send only to the other participant;
+- an ad-hoc call without a calendar event is one-to-one only when the complete
+  transcript proves exactly Derek and one uniquely resolved employee;
 - real mention identities are resolved before delivery;
 - no reaction or DING is added;
+- confirmed sends reuse the reply-agent notification bridge and open the
+  delivered DingTalk conversation when clicked;
 - persisted `ready_to_send` state precedes an external send;
 - ambiguous send results are reconciled by identifier and never blindly resent;
 - confirmed `sent` jobs are immutable for replay.

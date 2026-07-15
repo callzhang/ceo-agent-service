@@ -2,6 +2,7 @@ import subprocess
 
 import pytest
 
+import app.meeting_alignment_delivery as meeting_alignment_delivery
 from app.dingtalk_models import DingTalkMessage
 from app.dws_client import DwsError, DwsUserProfile
 from app.meeting_alignment_delivery import (
@@ -251,6 +252,29 @@ def test_one_to_one_direct_delivery_uses_authoritative_open_id_without_search():
     assert dws.sent[0]["open_dingtalk_id"] == "open-a"
     assert dws.sent[0].get("user_id") is None
     assert dws.search_queries == []
+
+
+def test_direct_delivery_conversation_id_comes_from_verified_send_result():
+    dws = FakeDws()
+    dws.send_result = {"success": True, "result": {"openTaskId": "task-1"}}
+    dws.send_status_result = {
+        "success": True,
+        "result": {
+            "status": "SUCCESS",
+            "openConversationId": "cid-direct-claire",
+        },
+    }
+
+    result = deliver_meeting_alignment(
+        send_decision(target="direct", mention_names=["A"]),
+        meeting_source(one_to_one=True),
+        dws,
+    )
+
+    assert (
+        meeting_alignment_delivery.meeting_delivery_conversation_id(result)
+        == "cid-direct-claire"
+    )
 
 
 def test_one_to_one_unresolved_identity_retries_without_sending():

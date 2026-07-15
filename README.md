@@ -382,15 +382,15 @@ scripts/install-auto-reply-agents.sh
 - `com.ceo-agent-service.main`：唯一的 launchd 主服务。
 - producer loop：按 `CEO_PRODUCER_INTERVAL_SECONDS` 间隔发现消息并入队，默认 60 秒。
 - consumer loop：按 `CEO_CONSUMER_POLL_INTERVAL_SECONDS` 间隔领取任务、调用 agent、执行发送或跳过，默认 10 秒。
-- meeting producer loop：读取 AI 听记与日历参会证据，只为 Derek 参会且明确结束至少 `CEO_MEETING_SETTLE_SECONDS` 的会议建队列；没有触发条件的会议保持安静。
-- meeting consumer loop：独立分析、选择最高分可发送群并投递；多方会议绝不降级私聊，1:1 才私聊另一位参会人。dry-run 只分析到 `ready_to_send`，不会 claim 发送。
+- meeting producer loop：读取 AI 听记与日历参会证据，只为 Derek 参会且明确结束至少 `CEO_MEETING_SETTLE_SECONDS` 的会议建队列；没有匹配日程的临时通话，仅在完整转写恰好证明 Derek 和另一位唯一员工时按 1:1 放行；没有触发条件的会议保持安静。
+- meeting consumer loop：独立分析、选择最高分可发送群并投递；多方会议绝不降级私聊，1:1 才私聊另一位参会人。确认发送成功后复用 reply agent 的本地/Chrome notification 和钉钉会话点击跳转。dry-run 只分析到 `ready_to_send`，不会 claim 发送。
 - task maintenance loop：按 `CEO_TASK_WORK_ITEM_INTERVAL_SECONDS` 处理 Work Item，并按 `CEO_TASK_DAILY_INTERVAL_SECONDS` 扫描 AI 听记、`CEO_WORKSPACE` 文件和到期 follow-up。
 
 meeting producer 首次启用时会持久化激活时间。服务启动恢复队列前，会把激活时间以前且从未尝试发送的历史任务统一标记为 `no_action`；因此切换瞬间已被旧进程领取的历史会议也不会在重启后重新进入分析或发送。
 
 实际时长小于 10 分钟的听记在日历匹配和建队列前跳过；实际候选人面试由 agent 根据标题、摘要、参会人和完整转写识别并终止为 `no_action`。招聘站会、招聘计划、人才讨论和招聘需求对齐仍按普通业务会议处理。
 
-会后队列状态为 `waiting → pending → processing → no_action | ready_to_send → sent`；可重试错误进入 `retry` 并带 `available_at`，Codex 结构化输出或历史来源协议偶发不合格也会先按可重试错误处理，达到上限后才隔离。发送结果不确定但有 `openTaskId` 时只核验状态，不重复发送。meeting run 和 reply attempt 共用 History 时间线、搜索、状态过滤、24 小时事件图和 Codex session 详情。
+会后队列状态为 `waiting → pending → processing → no_action | ready_to_send → sent`；可重试错误进入 `retry` 并带 `available_at`，Codex 结构化输出或历史来源协议偶发不合格也会先按可重试错误处理，达到上限后才隔离。发送结果不确定但有 `openTaskId` 时只核验状态，不重复发送；notification 只在最终确认 `sent` 时弹出一次。meeting run 和 reply attempt 共用 History 时间线、搜索、状态过滤、24 小时事件图和 Codex session 详情。
 
 本地 dry-run 验证：
 

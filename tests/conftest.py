@@ -1,4 +1,7 @@
 import os
+import sys
+
+import pytest
 
 
 os.environ["CEO_ENV_FILE"] = "/private/tmp/ceo-agent-service-test.env.missing"
@@ -16,3 +19,27 @@ os.environ["CEO_PROMPT_VAR_RESPONSIBILITY_SUMMARY"] = (
 os.environ["CEO_DING_ROBOT_NAME"] = "极简云机器人"
 os.environ["CEO_FORBIDDEN_PATH_PREFIXES"] = "/Users/principal/,/home/principal/"
 os.environ["FAST_PATH_UNREAD_BACKOFF"] = "0s"
+
+
+@pytest.fixture(autouse=True)
+def block_real_notifications_in_tests(monkeypatch, request):
+    if request.path.name == "test_notification.py":
+        return
+
+    def noop_notification(**kwargs):
+        del kwargs
+
+    for module_name in (
+        "app.notification",
+        "app.worker",
+        "app.meeting_alignment",
+        "app.cli",
+    ):
+        module = sys.modules.get(module_name)
+        if module is not None:
+            monkeypatch.setattr(
+                module,
+                "send_macos_notification",
+                noop_notification,
+                raising=False,
+            )

@@ -31,7 +31,6 @@ from app.config import (
     feedback_spike_vercel_base_url,
     handoff_ack,
     message_recovery_interval,
-    notification_bridge_base_url,
     principal_display_name,
     single_chat_read_recovery_limit,
     single_chat_read_recovery_window,
@@ -70,7 +69,10 @@ from app.leak_check import (
     contains_forbidden_leak,
 )
 from app.message_split import split_dingtalk_text
-from app.notification import send_macos_notification
+from app.notification import (
+    dingtalk_conversation_notification_url,
+    send_macos_notification,
+)
 from app.oa_approval import extract_oa_url
 from app.okr_review import requested_okr_period
 from app.org_cache import (
@@ -8334,12 +8336,9 @@ class DingTalkAutoReplyWorker:
         open_conversation_id = conversation.open_conversation_id.strip()
         if not open_conversation_id:
             return None
-        query = f"conversation_id={quote(open_conversation_id, safe='')}"
-        if attempt_id is not None:
-            query = f"{query}&attempt_id={int(attempt_id)}"
-        return (
-            f"{notification_bridge_base_url()}/open-dingtalk"
-            f"?{query}"
+        return dingtalk_conversation_notification_url(
+            open_conversation_id,
+            attempt_id=attempt_id,
         )
 
     def _mark_seen(self, messages: list[DingTalkMessage]) -> None:

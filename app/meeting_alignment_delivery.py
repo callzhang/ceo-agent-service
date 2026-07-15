@@ -52,6 +52,15 @@ class ResolvedMention(BaseModel):
     open_dingtalk_id: str
 
 
+def meeting_delivery_conversation_id(result: MeetingDeliveryResult) -> str:
+    if result.target_kind == "group":
+        return result.target_id.strip()
+    return _find_nested_string(
+        result.send_verification,
+        "openConversationId",
+    ) or _find_nested_string(result.send_result, "openConversationId")
+
+
 class MeetingDeliveryDws(Protocol):
     def get_conversation_info(self, conversation_id: str) -> dict[str, Any]: ...
 
