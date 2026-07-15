@@ -106,6 +106,26 @@ def seed_meeting_attempt(store: AutoReplyStore) -> int:
         audit_summary="会后对齐：上线范围仍未一致。",
         status="sent",
         error="",
+        audit_tool_events_json=json.dumps(
+            [
+                {
+                    "event_type": "response_item",
+                    "tool": "exec_command",
+                    "call_id": "meeting-call-1",
+                    "title": "Read meeting memory",
+                    "relevance": "确认会议相关历史判断",
+                    "input": '{"cmd":"rg 上线范围 /Users/principal/Documents/memory"}',
+                    "command": "rg 上线范围 /Users/principal/Documents/memory",
+                },
+                {
+                    "event_type": "response_item",
+                    "tool": "tool_output",
+                    "call_id": "meeting-call-1",
+                    "output": "memory.md:1:上线范围需要先确认风险预算",
+                },
+            ],
+            ensure_ascii=False,
+        ),
     )
 
 
@@ -183,9 +203,14 @@ def test_meeting_history_uses_reply_card_and_detail_contract(tmp_path: Path):
     detail = client.get(f"/meeting-attempts/{run_id}")
     assert detail.status_code == 200
     assert "项目评审会" in detail.text
-    assert "source_json" in detail.text
-    assert "decision_json" in detail.text
-    assert "mention resolution" in detail.text
+    assert "source_json" not in detail.text
+    assert "decision_json" not in detail.text
+    assert "Tool uses" in detail.text
+    assert "Read meeting memory" in detail.text
+    assert "确认会议相关历史判断" in detail.text
+    assert "rg 上线范围 /Users/principal/Documents/memory" in detail.text
+    assert "memory.md:1:上线范围需要先确认风险预算" in detail.text
+    assert "Mention resolution" in detail.text
     assert "/codex/meeting-session-history-1" in detail.text
 
     chart = audit_web_module._history_chart_payload(store)

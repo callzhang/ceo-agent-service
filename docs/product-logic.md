@@ -136,6 +136,9 @@ After delivery is confirmed as `sent`, the workflow reuses the reply agent's
 local/Chrome notification bridge. The notification contains the DingTalk
 `openConversationId`, so clicking it opens the group or direct conversation.
 Ambiguous sends do not notify until status reconciliation confirms success.
+Meeting attempt details reuse the reply-agent audit view: the page emphasizes
+the Codex tool-use timeline, including document, memory, search, and DingTalk
+calls, instead of leading with raw source or decision payloads.
 
 The queue persists analysis before delivery. `no_action` is terminal;
 `ready_to_send` is persisted before any external send; `sent` records delivery.

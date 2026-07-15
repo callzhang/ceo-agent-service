@@ -87,6 +87,7 @@ from app.feedback_events import (
     sync_feedback_events_for_context as sync_feedback_events_for_context_impl,
     sync_feedback_events_for_sent_replies as sync_feedback_events_for_sent_replies_impl,
 )
+from app.meeting_alignment_models import MeetingAlignmentRun
 from app.store import (
     FAST_PATH_UNREAD_BACKOFF_TASK_ERROR,
     AutoReplyStore,
@@ -3978,32 +3979,121 @@ def render_meeting_attempt_detail(
         if run.codex_session_id
         else '<span class="muted">unavailable</span>'
     )
+    decision = _meeting_decision_payload(run.decision_json)
+    action = str(decision.get("action") or "").strip()
+    trigger_reasons = decision.get("trigger_reasons")
+    trigger_text = (
+        ", ".join(str(item) for item in trigger_reasons)
+        if isinstance(trigger_reasons, list)
+        else ""
+    )
+    target = decision.get("target")
+    decision_target = ""
+    if isinstance(target, dict):
+        decision_target = str(target.get("title") or target.get("conversation_id") or "")
+    participant_names = _meeting_participant_names(job.participants_json, job.source_json)
+    participant_preview = ", ".join(participant_names) if participant_names else ""
+    mentions = _meeting_mentions_text(job.mentions_json)
     body = (
         '<section class="card"><h2>Meeting source</h2>'
         '<div class="grid">'
         f'<div class="muted">title</div><div>{escape(job.title)}</div>'
         f'<div class="muted">meeting id</div><div>{escape(job.meeting_id)}</div>'
         f'<div class="muted">ended at</div><div>{escape(job.ended_at)}</div>'
+        f'<div class="muted">participants</div><div>{escape(participant_preview)}</div>'
         f'<div class="muted">Codex session</div><div>{codex_link}</div>'
-        '</div><h3>source_json</h3>'
-        f'<pre>{escape(job.source_json)}</pre></section>'
-        '<section class="card"><h2>Decision and delivery</h2>'
+        '</div></section>'
+        '<section class="card"><h2>Decision summary</h2>'
         '<div class="grid">'
         f'<div class="muted">status</div><div>{escape(run_status)}</div>'
-        f'<div class="muted">target</div><div>{escape(job.target_title or job.target_id)}</div>'
-        f'<div class="muted">mention resolution</div><div>{escape(job.mentions_json)}</div>'
-        f'<div class="muted">send result</div><div>{escape(job.send_result_json)}</div>'
-        '</div><h3>decision_json</h3>'
-        f'<pre>{escape(run.decision_json)}</pre>'
-        f'<h3>final message</h3><pre>{escape(job.final_message)}</pre>'
+        f'<div class="muted">action</div><div>{escape(action)}</div>'
+        f'<div class="muted">trigger reasons</div><div>{escape(trigger_text)}</div>'
+        f'<div class="muted">decision target</div><div>{escape(decision_target)}</div>'
+        f'<div class="muted">delivery target</div><div>{escape(job.target_title or job.target_id)}</div>'
+        f'<div class="muted">Mention resolution</div><div>{escape(mentions)}</div>'
+        '</div>'
         f'<h3>audit summary</h3><p>{escape(run.audit_summary)}</p>'
         '</section>'
+        '<section class="card"><h2>Message and delivery</h2>'
+        '<div class="grid">'
+        f'<div class="muted">job status</div><div>{escape(job.status)}</div>'
+        f'<div class="muted">target kind</div><div>{escape(job.target_kind)}</div>'
+        f'<div class="muted">target id</div><div>{escape(job.target_id)}</div>'
+        '</div>'
+        f'<h3>final message</h3><pre>{escape(job.final_message)}</pre>'
+        '</section>'
+        f'{_meeting_audit_tool_uses_card(run)}'
     )
     return 200, render_page(
         f"Meeting attempt #{run.id}",
         body,
         active_nav="history",
         user_feedback_pending_count=store.count_pending_user_feedback_items(),
+    )
+
+
+def _meeting_decision_payload(raw: str) -> dict[str, object]:
+    try:
+        payload = json.loads(raw or "{}")
+    except json.JSONDecodeError:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _meeting_participant_names(participants_json: str, source_json: str) -> list[str]:
+    participants = _json_list(participants_json)
+    if not participants:
+        try:
+            source = json.loads(source_json or "{}")
+        except json.JSONDecodeError:
+            source = {}
+        if isinstance(source, dict):
+            evidence = source.get("calendar_evidence")
+            if isinstance(evidence, dict):
+                participants = evidence.get("participants") or []
+    names = []
+    for participant in participants:
+        if not isinstance(participant, dict):
+            continue
+        name = str(participant.get("name") or "").strip()
+        if name:
+            names.append(name)
+    return names
+
+
+def _meeting_mentions_text(raw: str) -> str:
+    mentions = _json_list(raw)
+    if not mentions:
+        return ""
+    values = []
+    for mention in mentions:
+        if isinstance(mention, dict):
+            value = str(
+                mention.get("display_name")
+                or mention.get("name")
+                or mention.get("mention_name")
+                or mention.get("user_id")
+                or ""
+            ).strip()
+        else:
+            value = str(mention).strip()
+        if value:
+            values.append(value)
+    return ", ".join(values)
+
+
+def _meeting_audit_tool_uses_card(run: MeetingAlignmentRun) -> str:
+    uses = _audit_event_uses_for_attempt(run)
+    if not uses:
+        return _collapsible_json_card("Tool uses", "[]")
+    return (
+        "<details class=\"card collapsible-card\" open>"
+        "<summary><h2>Tool uses</h2>"
+        "<span class=\"audit-tool-count\">"
+        f"{len(uses)} calls"
+        "</span></summary>"
+        f"<div class=\"audit-tool-list\">{_audit_tool_uses_html(uses)}</div>"
+        "</details>"
     )
 
 
