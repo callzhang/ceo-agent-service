@@ -724,6 +724,15 @@ def test_consumer_injects_similar_codex_sessions_into_meeting_prompt(tmp_path):
 
 def test_consumer_indexes_completed_meeting_codex_session(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.upsert_meeting_alignment_job(
+        meeting_id="offset-job",
+        title="Offset",
+        source_json="{}",
+        participants_json="[]",
+        ended_at="2026-07-14T08:00:00+08:00",
+        eligible_at="2026-07-14T08:10:00+08:00",
+        status="no_action",
+    )
     dws = ConsumerDws()
     seed_consumer_job(store, dws)
     runner = FakeMeetingRunner(consumer_send_decision())
@@ -747,6 +756,7 @@ def test_consumer_indexes_completed_meeting_codex_session(tmp_path):
     assert "上线范围" in results[0].summary_text
     assert "最多接受多大故障面" in results[0].summary_text
     assert results[0].source_type == "meeting_alignment"
+    assert results[0].source_id == "1"
 
 
 def test_consumer_retries_invalid_model_decision(tmp_path):

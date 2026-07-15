@@ -36,6 +36,11 @@ from app.config import (
     consumer_poll_interval_seconds,
     corpus_dir,
     document_extraction_ids,
+    embedding_api_key,
+    embedding_base_url,
+    embedding_enabled,
+    embedding_model,
+    embedding_timeout_seconds,
     env_file_path,
     fast_path_unread_backoff_duration,
     feedback_spike_vercel_base_url,
@@ -56,6 +61,7 @@ from app.config import (
     work_profile_path,
     workspace_path,
 )
+from app.embedding import EmbeddingClient
 from app.developer_prompt import (
     configurable_prompt_variable_pairs,
     DeveloperPromptTemplateError,
@@ -2570,6 +2576,92 @@ def _history_limit_select(limit: int | None) -> str:
     )
 
 
+def _history_session_fts_query(text: str) -> str:
+    try:
+        import jieba
+
+        tokens = jieba.lcut(text)
+    except Exception:
+        tokens = text.split()
+    terms = []
+    seen = set()
+    for token in tokens:
+        value = str(token).strip()
+        if not value or value in seen:
+            continue
+        seen.add(value)
+        terms.append(value)
+        if len(terms) >= 12:
+            break
+    return " OR ".join(terms)
+
+
+def _history_query_embedding(query: str) -> list[float] | None:
+    if not query.strip() or not embedding_enabled():
+        return None
+    try:
+        vectors = EmbeddingClient(
+            base_url=embedding_base_url(),
+            model=embedding_model(),
+            api_key=embedding_api_key(),
+            timeout_seconds=embedding_timeout_seconds(),
+        )([query])
+    except Exception:
+        return None
+    return vectors[0] if vectors else None
+
+
+def _history_session_search_html(results) -> str:
+    if not results:
+        return ""
+    items = []
+    for result in results:
+        source_link = _history_session_source_link(result)
+        score = f"{result.score:.2f}" if result.score else ""
+        score_html = f"<span class=\"pill\">score {escape(score)}</span>" if score else ""
+        items.append(
+            "<article class=\"attempt-item history-session-result\">"
+            "<div class=\"attempt-head\">"
+            "<div class=\"attempt-title\">"
+            f"<a class=\"attempt-id\" href=\"/codex/{escape(result.session_id)}\">Codex</a>"
+            f"{score_html}"
+            f"<div class=\"attempt-main\">{escape(result.title or result.session_id)}</div>"
+            f"<div class=\"attempt-meta\">{escape(result.source_type)}</div>"
+            "</div>"
+            "<div class=\"attempt-side\">"
+            f"{source_link}"
+            "</div>"
+            "</div>"
+            "<div class=\"attempt-lines\">"
+            f"{_attempt_text_line('摘要', result.summary_text, 320)}"
+            "</div>"
+            "</article>"
+        )
+    return (
+        "<section class=\"card history-session-search\">"
+        "<h2>相似 Codex sessions</h2>"
+        "<p class=\"muted\">基于 session search index 的 BM25/embedding 检索结果。</p>"
+        "<section class=\"attempt-feed\">"
+        f"{''.join(items)}"
+        "</section>"
+        "</section>"
+    )
+
+
+def _history_session_source_link(result) -> str:
+    if result.source_type == "meeting_alignment" and str(result.source_id).strip():
+        return (
+            f"<a class=\"compact-button\" href=\"/meeting-attempts/{escape(str(result.source_id))}\">"
+            "meeting</a>"
+        )
+    if result.source_type == "reply" and str(result.source_id).strip():
+        return (
+            f"<a class=\"compact-button\" href=\"/attempts/{escape(str(result.source_id))}\">"
+            "attempt</a>"
+        )
+    return ""
+
+
 def _pagination_controls(
     *,
     base_path: str,
@@ -2660,6 +2752,7 @@ def render_attempt_list(
     page: int = 1,
     type_filter: str | Iterable[str] = (),
     query: str = "",
+    query_embedding: list[float] | None = None,
 ) -> str:
     query = query.strip()
     type_filters = _history_type_filters(type_filter)
@@ -2677,6 +2770,14 @@ def render_attempt_list(
             limit=limit,
         ):
             items.append(_reply_task_item(task))
+    session_search_html = ""
+    if query and page == 1:
+        session_results = store.search_codex_sessions(
+            fts_query=_history_session_fts_query(query),
+            query_embedding=query_embedding,
+            limit=5,
+        )
+        session_search_html = _history_session_search_html(session_results)
     history_items = store.list_history_items(
         limit=limit,
         offset=offset,
@@ -2745,6 +2846,7 @@ def render_attempt_list(
             f"{_render_history_chart(store)}"
             f"{_history_table_header(base_path='/', page=page, limit=limit, total_count=total_count, type_filters=type_filters, query=query)}"
             "<div data-live-search-region=\"history\">"
+            f"{session_search_html}"
             "<section class=\"card\"><p class=\"muted\">No reply attempts recorded.</p>"
             f"<p class=\"muted\">DB: {escape(str(store.path))}</p></section>"
             "</div>"
@@ -2762,6 +2864,7 @@ def render_attempt_list(
             f"{_render_history_chart(store)}"
             f"{header}"
             "<div data-live-search-region=\"history\">"
+            f"{session_search_html}"
             "<section class=\"attempt-feed\">"
             + "".join(items)
             + "</section>"
@@ -4943,6 +5046,7 @@ def create_audit_app(
 
     @app.get("/", response_class=HTMLResponse)
     def attempt_list(request: Request) -> str:
+        query = str(request.query_params.get("q", ""))
         return render_attempt_list(
             AutoReplyStore(db_path),
             limit=_attempt_list_limit(
@@ -4954,7 +5058,8 @@ def create_audit_app(
             ),
             page=_positive_int_query(request, "page", default=1),
             type_filter=request.query_params.getlist("type"),
-            query=str(request.query_params.get("q", "")),
+            query=query,
+            query_embedding=_history_query_embedding(query),
         )
 
     @app.get("/user-feedback", response_class=HTMLResponse)

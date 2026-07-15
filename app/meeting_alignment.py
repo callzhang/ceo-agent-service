@@ -513,6 +513,7 @@ def _index_meeting_codex_session(
     source: Any,
     decision: MeetingAlignmentDecision,
     *,
+    source_id: int,
     embedding_client: Callable[[list[str]], list[list[float]]] | None,
 ) -> None:
     session_id = str(getattr(runner, "last_session_id", "") or "").strip()
@@ -529,7 +530,7 @@ def _index_meeting_codex_session(
     store.upsert_codex_session_search_index(
         session_id=session_id,
         source_type="meeting_alignment",
-        source_id=str(job.id),
+        source_id=str(source_id),
         title=source.title,
         summary_text=summary_text,
         fts_text=_meeting_fts_text(summary_text),
@@ -685,7 +686,7 @@ def _analyze_meeting_job(
 
     decision_json = decision.model_dump_json()
     if decision.action == "no_action":
-        _record_agent_run(
+        run_id = _record_agent_run(
             store,
             runner,
             job_id=job.id,
@@ -699,6 +700,7 @@ def _analyze_meeting_job(
             job,
             source,
             decision,
+            source_id=run_id,
             embedding_client=embedding_client,
         )
         store.update_meeting_alignment_job(
@@ -717,7 +719,7 @@ def _analyze_meeting_job(
             if target.kind == "group"
             else target.direct_user_id
         )
-    _record_agent_run(
+    run_id = _record_agent_run(
         store,
         runner,
         job_id=job.id,
@@ -731,6 +733,7 @@ def _analyze_meeting_job(
         job,
         source,
         decision,
+        source_id=run_id,
         embedding_client=embedding_client,
     )
     store.update_meeting_alignment_job(
@@ -1002,8 +1005,8 @@ def _record_agent_run(
     decision: MeetingAlignmentDecision | None,
     status: str,
     error: str,
-) -> None:
-    store.record_meeting_alignment_run(
+) -> int:
+    return store.record_meeting_alignment_run(
         job_id=job_id,
         codex_session_id=str(getattr(runner, "last_session_id", "") or ""),
         codex_transcript_start_line=int(

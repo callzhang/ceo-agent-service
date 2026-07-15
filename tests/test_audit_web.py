@@ -234,6 +234,32 @@ def test_meeting_history_uses_reply_card_and_detail_contract(tmp_path: Path):
     assert f"/meeting-attempts/{run_id}" in missing_session_html
 
 
+def test_history_search_shows_similar_codex_sessions(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    run_id = seed_meeting_attempt(store)
+    store.upsert_codex_session_search_index(
+        session_id="meeting-session-history-1",
+        source_type="meeting_alignment",
+        source_id=str(run_id),
+        title="历史上线范围对齐",
+        summary_text="历史相似会议：上线范围、风险预算、故障面。",
+        fts_text="历史 相似 会议 上线 范围 风险 预算 故障 面",
+        embedding=[1.0, 0.0],
+    )
+
+    html = render_attempt_list(
+        store,
+        query="风险预算故障面",
+        query_embedding=[1.0, 0.0],
+    )
+
+    assert "相似 Codex sessions" in html
+    assert "历史上线范围对齐" in html
+    assert "历史相似会议：上线范围、风险预算、故障面。" in html
+    assert "/codex/meeting-session-history-1" in html
+    assert f"/meeting-attempts/{run_id}" in html
+
+
 def test_history_chart_labels_terminal_reactions_and_oa_actions(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.record_reply_attempt(
