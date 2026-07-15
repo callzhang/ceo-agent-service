@@ -24,7 +24,7 @@ DWS_MATERIAL_READING_INSTRUCTIONS = """
 DingTalk material reading
 
 - When judgment depends on DingTalk documents, AI minutes, or files, inspect material before deciding.
-- Use DWS read-only commands with `--format json`.
+- Use DWS read-only commands with `--timeout 900 --format json` so unstable network reads can wait up to fifteen minutes.
 - Docs: `dws doc info --node <URL> --format json`; if online doc and content needed, `dws doc read --node <URL> --format json`.
 - Minutes: `dws minutes get info --id <MINUTES_ID> --format json`.
 - Ordinary files: use relevant DWS file/drive read/download capability only when text context is insufficient.
@@ -32,6 +32,7 @@ DingTalk material reading
 - If DWS reports not_authenticated, not authenticated, exit code 2, or a login/session problem, classify it as a DWS login/tool issue, not as missing material from the sender.
 - If DWS reports AGENT_CODE_NOT_EXISTS, openBrowser, personalAuthorization, PAT permission failure, or a CLI authorization page, stop that tool path and classify it as DWS authorization/configuration unavailable; do not retry the command and do not start a login flow.
 - If permission fails, state the missing permission/material and do not invent contents.
+- If a required DWS read still fails and no other material supports the judgment, return an error envelope whose audit summary starts with `dws_transient_dependency_unavailable:`; do not send a refusal, handoff, clarification, or unsupported answer.
 - If some materials fail but others are readable, use readable materials and mention limitation.
 - record why each material command was used.
 - Do not expose tokens, cookies, OAuth codes, signed URLs, local credential paths, or raw secret-bearing commands.

@@ -21,6 +21,9 @@ from app.process_runner import run_process_with_idle_timeout
 
 SIGNATURE = assistant_signature()
 CODEX_TIMEOUT_REASON_PREFIX = "codex exec timed out after"
+DWS_TRANSIENT_DEPENDENCY_UNAVAILABLE_PREFIX = (
+    "dws_transient_dependency_unavailable:"
+)
 TIMEOUT_SESSION_DECISION_GRACE_SECONDS = 90
 SESSION_DECISION_GRACE_SECONDS = 15
 REPLY_AGENT_ENVELOPE_SCHEMA_HINT = (
@@ -369,6 +372,12 @@ def _audit_event_from_payload(payload: Any) -> dict[str, str] | None:
     arguments = source.get("arguments")
     input_text = _json_text(arguments)
     command = _first_string_for_keys(arguments, {"cmd", "command"})
+    if not command and input_text:
+        try:
+            parsed_input = json.loads(input_text)
+        except json.JSONDecodeError:
+            parsed_input = None
+        command = _first_string_for_keys(parsed_input, {"cmd", "command"})
     if not command:
         command = _first_string_for_keys(source, {"cmd", "command"})
     path = _first_pathish_string(output) if output else ""
@@ -595,6 +604,29 @@ def audit_summary_explains_no_documents(summary: str) -> bool:
     return any(marker in normalized for marker in no_document_markers)
 
 
+def _failed_dws_transient_read_command(
+    audit_events: list[dict[str, str]],
+) -> str:
+    dws_commands: dict[str, str] = {}
+    for event in audit_events:
+        call_id = event.get("call_id", "")
+        command = event.get("command", "").strip()
+        if not call_id or not command:
+            continue
+        try:
+            command_parts = shlex.split(command)
+        except ValueError:
+            continue
+        if command_parts and command_parts[0] == "dws":
+            dws_commands[call_id] = " ".join(command_parts[:3])
+    for event in audit_events:
+        call_id = event.get("call_id", "")
+        output = event.get("output", "")
+        if call_id in dws_commands and "Process exited with code 6" in output:
+            return dws_commands[call_id]
+    return ""
+
+
 class CodexDecisionRunner:
     def __init__(
         self,
@@ -636,11 +668,8 @@ class CodexDecisionRunner:
             decision = parse_codex_json(first_raw, allow_legacy=False)
             timeout_session_decision = self._timeout_session_decision(decision)
             if timeout_session_decision is not None:
-                self._remember_audit_tool_events(raw_outputs)
-                return timeout_session_decision
-            self._validate_decision(decision)
-            self._remember_audit_tool_events(raw_outputs)
-            return decision
+                return self._finalize_decision(timeout_session_decision, raw_outputs)
+            return self._finalize_decision(decision, raw_outputs)
         except (json.JSONDecodeError, ValidationError, ValueError) as exc:
             wait_seconds = (
                 0
@@ -652,9 +681,7 @@ class CodexDecisionRunner:
             )
             if session_decision is not None:
                 try:
-                    self._validate_decision(session_decision)
-                    self._remember_audit_tool_events(raw_outputs)
-                    return session_decision
+                    return self._finalize_decision(session_decision, raw_outputs)
                 except ValueError:
                     pass
             retry_session_id = session_id or self.last_session_id
@@ -681,11 +708,11 @@ class CodexDecisionRunner:
                 decision = parse_codex_json(second_raw, allow_legacy=False)
                 timeout_session_decision = self._timeout_session_decision(decision)
                 if timeout_session_decision is not None:
-                    self._remember_audit_tool_events(raw_outputs)
-                    return timeout_session_decision
-                self._validate_decision(decision)
-                self._remember_audit_tool_events(raw_outputs)
-                return decision
+                    return self._finalize_decision(
+                        timeout_session_decision,
+                        raw_outputs,
+                    )
+                return self._finalize_decision(decision, raw_outputs)
             except (json.JSONDecodeError, ValidationError, ValueError) as exc:
                 wait_seconds = (
                     0
@@ -697,9 +724,10 @@ class CodexDecisionRunner:
                 )
                 if session_decision is not None:
                     try:
-                        self._validate_decision(session_decision)
-                        self._remember_audit_tool_events(raw_outputs)
-                        return session_decision
+                        return self._finalize_decision(
+                            session_decision,
+                            raw_outputs,
+                        )
                     except ValueError:
                         pass
                 self._remember_audit_tool_events(raw_outputs)
@@ -708,6 +736,33 @@ class CodexDecisionRunner:
                     reason=f"invalid JSON or Codex decision twice: {first_raw[:200]} | {second_raw[:200]}",
                     macos_notify=True,
                 )
+
+    def _finalize_decision(
+        self,
+        decision: CodexDecision,
+        raw_outputs: list[str],
+    ) -> CodexDecision:
+        self._validate_decision(decision)
+        self._remember_audit_tool_events(raw_outputs)
+        failed_command = _failed_dws_transient_read_command(
+            self.last_audit_tool_events
+        )
+        if (
+            failed_command
+            and decision.action != CodexAction.STOP_WITH_ERROR
+            and not decision.audit_documents
+        ):
+            reason = (
+                f"{DWS_TRANSIENT_DEPENDENCY_UNAVAILABLE_PREFIX} "
+                f"{failed_command} failed with exit code 6 and no usable "
+                "material was recorded"
+            )
+            return CodexDecision(
+                action=CodexAction.STOP_WITH_ERROR,
+                reason=reason,
+                audit_summary=reason,
+            )
+        return decision
 
     def _remember_session_id(self, raw: str) -> None:
         session_id = extract_codex_session_id(raw)

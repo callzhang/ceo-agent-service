@@ -10,6 +10,8 @@ from app.codex_runner import (
     CodexRunner,
     codex_developer_instructions,
 )
+from app.codex_decision import CodexDecisionRunner
+from app.dingtalk_models import CodexAction
 from app.dws_client import DWS_AGENT_CODE_ENV
 
 
@@ -208,6 +210,87 @@ def test_codex_developer_instructions_classify_dws_login_as_tool_issue():
     assert "Never run `dws auth login`" in instructions
     assert "AGENT_CODE_NOT_EXISTS" in instructions
     assert "do not start a login flow" in instructions
+
+
+def test_codex_runner_blocks_reply_when_only_dws_material_read_fails(tmp_path: Path):
+    envelope = {
+        "kind": "reply",
+        "user_response": {
+            "mode": "send_reply",
+            "text": "这个涉及个人敏感信息，单独同步我。",
+            "sensitivity_kind": "internal_personnel",
+        },
+        "system_actions": [],
+        "domain_payload": {},
+        "audit": {
+            "summary": "听记检索超时，未取得可用正文。",
+            "documents": [],
+            "confidence": 0.2,
+        },
+    }
+    raw = "\n".join(
+        [
+            json.dumps(
+                {
+                    "type": "response_item",
+                    "item": {
+                        "type": "function_call",
+                        "name": "exec_command",
+                        "call_id": "call-dws",
+                        "arguments": json.dumps(
+                            {
+                                "cmd": (
+                                    "dws minutes list all --query 连航 "
+                                    "--timeout 900 --format json"
+                                )
+                            }
+                        ),
+                    },
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "response_item",
+                    "item": {
+                        "type": "function_call_output",
+                        "call_id": "call-dws",
+                        "output": (
+                            "Process exited with code 6\n"
+                            '{"error":{"category":"discovery",'
+                            '"reason":"request_failed"}}'
+                        ),
+                    },
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "response_item",
+                    "item": {
+                        "type": "agent_message",
+                        "text": json.dumps(envelope, ensure_ascii=False),
+                    },
+                },
+                ensure_ascii=False,
+            ),
+        ]
+    )
+    runner = CodexDecisionRunner(
+        workspace=tmp_path,
+        executor=lambda _command, _prompt: raw,
+    )
+
+    decision = runner.decide("整理近一个月和连航有关的听记", session_id=None)
+
+    assert decision.action == CodexAction.STOP_WITH_ERROR
+    assert decision.reason.startswith("dws_transient_dependency_unavailable:")
+    assert decision.reply_text == ""
+    assert len(runner.last_audit_tool_events) == 2
+
+
+def test_codex_developer_instructions_give_dws_reads_fifteen_minute_timeout():
+    instructions = codex_developer_instructions()
+
+    assert "--timeout 900" in instructions
 
 
 def test_codex_developer_instructions_require_xiaoqing_for_interview_links():

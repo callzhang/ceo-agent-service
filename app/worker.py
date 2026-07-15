@@ -19,6 +19,7 @@ from pypdf import PdfReader
 
 from app.codex_decision import (
     CODEX_TIMEOUT_REASON_PREFIX,
+    DWS_TRANSIENT_DEPENDENCY_UNAVAILABLE_PREFIX,
     REPLY_AGENT_ENVELOPE_SCHEMA_HINT,
     append_signature,
     codex_decision_from_envelope,
@@ -5203,9 +5204,16 @@ class DingTalkAutoReplyWorker:
             )
             send_error = decision.reason
             authorization_wait = _is_codex_authorization_wait_reason(send_error)
+            transient_dependency = send_error.startswith(
+                DWS_TRANSIENT_DEPENDENCY_UNAVAILABLE_PREFIX
+            )
             self.store.update_reply_attempt(
                 attempt_id,
-                send_status="blocked" if authorization_wait else "failed",
+                send_status=(
+                    "blocked"
+                    if authorization_wait or transient_dependency
+                    else "failed"
+                ),
                 send_error=send_error,
             )
             self.store.record_error(
@@ -5222,7 +5230,7 @@ class DingTalkAutoReplyWorker:
                 raise_on_delivery_failure
                 and _is_retryable_codex_timeout_reason(send_error)
             )
-            if not retryable_timeout:
+            if not retryable_timeout and not transient_dependency:
                 self._notify(
                     title=f"CEO agent error: {conversation.title}",
                     message=send_error[:120],

@@ -8950,6 +8950,43 @@ def test_codex_stop_with_error_keeps_queued_task_retryable(
     assert sent_attempt.send_status == "sent"
 
 
+def test_dws_transient_dependency_stop_requeues_task_without_sending(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message("@Alex Chen(明哥) 帮我整理这份听记")
+    dws = FakeDws([conversation()], {"cid-1": [trigger]})
+    reason = (
+        "dws_transient_dependency_unavailable: "
+        "dws minutes list all failed with exit code 6"
+    )
+    codex = FakeCodex(
+        CodexDecision(
+            action=CodexAction.STOP_WITH_ERROR,
+            reason=reason,
+            audit_summary=reason,
+        )
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch, max_task_attempts=3)
+    notifications: list[dict[str, str | None]] = []
+    monkeypatch.setattr(
+        "app.worker.send_macos_notification",
+        lambda **kwargs: notifications.append(kwargs),
+    )
+
+    worker.produce_once()
+    assert worker.consume_once(max_tasks=1) == 0
+
+    attempt = worker.store.get_reply_attempt(1)
+    assert attempt is not None
+    assert attempt.action == "stop_with_error"
+    assert attempt.send_status == "blocked"
+    assert attempt.send_error == reason
+    assert worker.store.count_reply_tasks(status="pending") == 1
+    assert worker.store.count_reply_tasks(status="failed") == 0
+    assert final_sent(dws) == []
+    assert notifications == []
+
+
 def test_retryable_codex_timeout_does_not_notify_before_final_failure(
     tmp_path: Path, monkeypatch
 ):
