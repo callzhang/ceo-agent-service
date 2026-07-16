@@ -488,9 +488,9 @@ def test_producer_skips_meetings_before_persisted_live_activation(tmp_path):
     assert dws.calendar_calls == []
 
 
-def test_producer_skips_recording_shorter_than_ten_minutes(tmp_path):
+def test_producer_skips_recording_shorter_than_five_minutes(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    meeting = ended_meeting(end="2026-07-14T09:09:59.999000+08:00")
+    meeting = ended_meeting(end="2026-07-14T09:04:59.999000+08:00")
     dws = FakeDws(
         minutes_pages={
             "": {"items": [meeting], "has_more": False, "next_token": ""}
@@ -503,9 +503,9 @@ def test_producer_skips_recording_shorter_than_ten_minutes(tmp_path):
     assert dws.calendar_calls == []
 
 
-def test_producer_keeps_recording_exactly_ten_minutes(tmp_path):
+def test_producer_keeps_recording_exactly_five_minutes(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    meeting = ended_meeting(end="2026-07-14T09:10:00+08:00")
+    meeting = ended_meeting(end="2026-07-14T09:05:00+08:00")
     dws = FakeDws(
         minutes_pages={
             "": {"items": [meeting], "has_more": False, "next_token": ""}
@@ -523,7 +523,7 @@ def test_replay_queues_recent_unsent_meeting_and_reports_short_recording(tmp_pat
     short = ended_meeting(
         meeting_id="minutes-short",
         title="短会",
-        end="2026-07-14T09:09:59+08:00",
+        end="2026-07-14T09:04:59+08:00",
     )
     eligible = ended_meeting(meeting_id="minutes-replay")
 
