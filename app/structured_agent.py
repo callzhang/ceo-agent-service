@@ -284,6 +284,8 @@ class StructuredCodexRunner:
                 "resume",
                 *common,
                 CODEX_BYPASS_APPROVALS_AND_SANDBOX,
+                "--output-schema",
+                str(self.spec.schema_path),
                 session_id,
                 "-",
             ]
@@ -292,6 +294,8 @@ class StructuredCodexRunner:
             "exec",
             *common,
             CODEX_BYPASS_APPROVALS_AND_SANDBOX,
+            "--output-schema",
+            str(self.spec.schema_path),
             "--cd",
             str(self.workspace),
             "-",

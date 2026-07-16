@@ -302,7 +302,13 @@ def test_runner_injects_skill_uses_schema_parses_result_and_records_session(
     assert "get_interview_context" in developer_arg
     assert CODEX_BYPASS_APPROVALS_AND_SANDBOX in command
     assert command[command.index("--disable") + 1] == "hooks"
-    assert "--output-schema" not in command
+    schema_index = command.index("--output-schema") + 1
+    assert command[schema_index] == str(
+        Path(__file__).resolve().parents[1]
+        / "app"
+        / "schemas"
+        / "agent_envelope.schema.json"
+    )
     assert (
         'mcp_servers.xiaoqing_interview.url="https://interview.hr.startask.net/mcp/"'
         in command
@@ -321,7 +327,7 @@ def test_runner_injects_skill_uses_schema_parses_result_and_records_session(
     ]
 
 
-def test_resume_command_omits_agent_envelope_output_schema(tmp_path: Path):
+def test_resume_command_uses_agent_envelope_output_schema(tmp_path: Path):
     skill_path = tmp_path / "skill.md"
     skill_path.write_text("# OA Skill", encoding="utf-8")
     calls: list[list[str]] = []
@@ -346,7 +352,13 @@ def test_resume_command_omits_agent_envelope_output_schema(tmp_path: Path):
     command = calls[0]
     assert command[:3] == ["codex", "exec", "resume"]
     assert command[command.index("--disable") + 1] == "hooks"
-    assert "--output-schema" not in command
+    schema_index = command.index("--output-schema") + 1
+    assert command[schema_index] == str(
+        Path(__file__).resolve().parents[1]
+        / "app"
+        / "schemas"
+        / "agent_envelope.schema.json"
+    )
 
 
 def test_parse_oa_approval_json_accepts_item_completed_message_output_text():
@@ -622,6 +634,47 @@ def test_invalid_oa_json_retries_once_with_repair_prompt(tmp_path: Path):
     assert len(prompts) == 2
     assert "上一次输出不是合法 AgentEnvelope JSON" in prompts[1]
     assert "不要执行任何外部动作" in prompts[1]
+
+
+def test_invalid_oa_json_repair_command_uses_agent_envelope_schema(tmp_path: Path):
+    skill_path = tmp_path / "skill.md"
+    skill_path.write_text("# OA Skill", encoding="utf-8")
+    commands: list[list[str]] = []
+
+    def fake_executor(command: list[str], prompt: str) -> str:
+        commands.append(command)
+        if len(commands) == 1:
+            return "\n".join(
+                [
+                    json.dumps({"type": "session", "id": "session-1"}),
+                    json.dumps(
+                        {
+                            "type": "item.completed",
+                            "item": {"type": "agent_message", "text": "{}"},
+                        }
+                    ),
+                ]
+            )
+        return _oa_envelope_json()
+
+    runner = OaApprovalSpecHandler(
+        workspace=tmp_path,
+        executor=fake_executor,
+        skill_path=skill_path,
+    )
+
+    result = _run_handler(runner, "处理审批", allow_side_effects=False)
+
+    assert result.oa_action == "退回"
+    assert len(commands) == 2
+    for command in commands:
+        schema_index = command.index("--output-schema") + 1
+        assert command[schema_index] == str(
+            Path(__file__).resolve().parents[1]
+            / "app"
+            / "schemas"
+            / "agent_envelope.schema.json"
+        )
 
 
 def test_invalid_oa_json_repair_prompt_requests_agent_envelope(tmp_path: Path):

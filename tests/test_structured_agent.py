@@ -617,8 +617,8 @@ def test_structured_runner_default_executor_uses_process_runner_signature(tmp_pa
     assert kwargs["total_timeout_seconds"] == 7
     assert kwargs["idle_timeout_seconds"] == 3
     assert command[command.index("--disable") + 1] == "hooks"
-    assert "--output-schema" not in command
-    assert str(schema) not in command
+    schema_index = command.index("--output-schema") + 1
+    assert command[schema_index] == str(schema)
 
 
 def test_structured_runner_fails_fast_when_lock_is_held(tmp_path):
