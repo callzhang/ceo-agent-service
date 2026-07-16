@@ -8,6 +8,7 @@ import app.oa_approval as oa_approval
 from app.agent_envelope import AgentEnvelope
 from app.codex_runner import CODEX_BYPASS_APPROVALS_AND_SANDBOX
 from app.oa_approval import (
+    OA_AGENT_ENVELOPE_SCHEMA_PATH,
     OA_APPROVAL_SCHEMA_PATH,
     OaApprovalSpecHandler,
     OaApprovalResult,
@@ -303,12 +304,7 @@ def test_runner_injects_skill_uses_schema_parses_result_and_records_session(
     assert CODEX_BYPASS_APPROVALS_AND_SANDBOX in command
     assert command[command.index("--disable") + 1] == "hooks"
     schema_index = command.index("--output-schema") + 1
-    assert command[schema_index] == str(
-        Path(__file__).resolve().parents[1]
-        / "app"
-        / "schemas"
-        / "agent_envelope.schema.json"
-    )
+    assert command[schema_index] == str(OA_AGENT_ENVELOPE_SCHEMA_PATH)
     assert (
         'mcp_servers.xiaoqing_interview.url="https://interview.hr.startask.net/mcp/"'
         in command
@@ -353,12 +349,7 @@ def test_resume_command_uses_agent_envelope_output_schema(tmp_path: Path):
     assert command[:3] == ["codex", "exec", "resume"]
     assert command[command.index("--disable") + 1] == "hooks"
     schema_index = command.index("--output-schema") + 1
-    assert command[schema_index] == str(
-        Path(__file__).resolve().parents[1]
-        / "app"
-        / "schemas"
-        / "agent_envelope.schema.json"
-    )
+    assert command[schema_index] == str(OA_AGENT_ENVELOPE_SCHEMA_PATH)
 
 
 def test_parse_oa_approval_json_accepts_item_completed_message_output_text():
@@ -669,12 +660,7 @@ def test_invalid_oa_json_repair_command_uses_agent_envelope_schema(tmp_path: Pat
     assert len(commands) == 2
     for command in commands:
         schema_index = command.index("--output-schema") + 1
-        assert command[schema_index] == str(
-            Path(__file__).resolve().parents[1]
-            / "app"
-            / "schemas"
-            / "agent_envelope.schema.json"
-        )
+        assert command[schema_index] == str(OA_AGENT_ENVELOPE_SCHEMA_PATH)
 
 
 def test_invalid_oa_json_repair_prompt_requests_agent_envelope(tmp_path: Path):
@@ -942,6 +928,26 @@ def test_output_schema_uses_strict_object_shapes_required_by_codex():
                     assert_strict_objects(item)
 
     assert_strict_objects(schema)
+
+
+def test_oa_agent_envelope_schema_avoids_union_shapes_rejected_by_codex():
+    schema = json.loads(OA_AGENT_ENVELOPE_SCHEMA_PATH.read_text(encoding="utf-8"))
+
+    def assert_strict_objects_without_one_of(node: object) -> None:
+        if isinstance(node, dict):
+            assert "oneOf" not in node
+            assert "anyOf" not in node
+            if node.get("type") == "object" and "properties" in node:
+                assert node.get("additionalProperties") is not None
+                assert set(node.get("required", [])) == set(node["properties"])
+            for value in node.values():
+                assert_strict_objects_without_one_of(value)
+        elif isinstance(node, list):
+            for item in node:
+                assert_strict_objects_without_one_of(item)
+
+    assert_strict_objects_without_one_of(schema)
+    assert schema["properties"]["system_actions"]["maxItems"] == 0
 
 
 def test_read_only_handle_allows_dws_reads_and_requires_empty_action_result(

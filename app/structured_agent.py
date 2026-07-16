@@ -48,10 +48,15 @@ class AgentSpec:
     primary_skill_paths: list[Path] = field(default_factory=list)
     reply_visible_skill_paths: list[Path] = field(default_factory=list)
     developer_preamble: str = ""
+    output_schema_path: Path | None = None
 
     def developer_instructions(self) -> str:
         if not self.schema_path.exists():
             raise SkillLoadError(f"missing schema file: {self.schema_path}")
+        if self.output_schema_path is not None and not self.output_schema_path.exists():
+            raise SkillLoadError(
+                f"missing output schema file: {self.output_schema_path}"
+            )
         skill_text = load_skill_text(
             [*self.primary_skill_paths, *self.reply_visible_skill_paths]
         )
@@ -277,6 +282,11 @@ class StructuredCodexRunner:
             "-c",
             "include_environment_context=false",
         ]
+        schema_options = (
+            ["--output-schema", str(self.spec.output_schema_path)]
+            if self.spec.output_schema_path is not None
+            else []
+        )
         if session_id:
             return [
                 self.codex_bin,
@@ -284,8 +294,7 @@ class StructuredCodexRunner:
                 "resume",
                 *common,
                 CODEX_BYPASS_APPROVALS_AND_SANDBOX,
-                "--output-schema",
-                str(self.spec.schema_path),
+                *schema_options,
                 session_id,
                 "-",
             ]
@@ -294,8 +303,7 @@ class StructuredCodexRunner:
             "exec",
             *common,
             CODEX_BYPASS_APPROVALS_AND_SANDBOX,
-            "--output-schema",
-            str(self.spec.schema_path),
+            *schema_options,
             "--cd",
             str(self.workspace),
             "-",

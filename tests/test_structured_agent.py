@@ -617,8 +617,69 @@ def test_structured_runner_default_executor_uses_process_runner_signature(tmp_pa
     assert kwargs["total_timeout_seconds"] == 7
     assert kwargs["idle_timeout_seconds"] == 3
     assert command[command.index("--disable") + 1] == "hooks"
-    schema_index = command.index("--output-schema") + 1
-    assert command[schema_index] == str(schema)
+    assert "--output-schema" not in command
+
+
+def test_structured_runner_uses_explicit_output_schema_when_configured(tmp_path):
+    schema = tmp_path / "schema.json"
+    schema.write_text("{}", encoding="utf-8")
+    output_schema = tmp_path / "output.schema.json"
+    output_schema.write_text("{}", encoding="utf-8")
+    skill = tmp_path / "skill.md"
+    skill.write_text("# Skill", encoding="utf-8")
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    calls = []
+
+    def executor(command, prompt, env):
+        del prompt, env
+        calls.append(command)
+        return "\n".join(
+            [
+                json.dumps({"type": "session", "id": "session-output-schema"}),
+                json.dumps(
+                    {
+                        "kind": "reply",
+                        "user_response": {
+                            "mode": "send_reply",
+                            "text": "ok",
+                            "sensitivity_kind": "general",
+                        },
+                        "system_actions": [
+                            {
+                                "type": "send_dingtalk_reply",
+                                "reply_text_ref": "user_response.text",
+                            }
+                        ],
+                        "domain_payload": {},
+                        "audit": {
+                            "summary": "valid",
+                            "documents": [],
+                            "confidence": 0.8,
+                        },
+                    }
+                ),
+            ]
+        )
+
+    spec = AgentSpec(
+        "reply",
+        schema,
+        [skill],
+        [],
+        "Return JSON.",
+        output_schema_path=output_schema,
+    )
+    runner = StructuredCodexRunner(
+        store=store,
+        workspace=tmp_path,
+        spec=spec,
+        executor=executor,
+    )
+
+    runner.run("cid-1", "Friday", True, "hello", owner="reply:msg-1")
+
+    schema_index = calls[0].index("--output-schema") + 1
+    assert calls[0][schema_index] == str(output_schema)
 
 
 def test_structured_runner_fails_fast_when_lock_is_held(tmp_path):

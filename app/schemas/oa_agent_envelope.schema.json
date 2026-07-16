@@ -1,0 +1,170 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "CEO Agent OA Approval Envelope",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "kind",
+    "user_response",
+    "system_actions",
+    "domain_payload",
+    "audit"
+  ],
+  "properties": {
+    "kind": {
+      "type": "string",
+      "enum": [
+        "oa_approval"
+      ]
+    },
+    "user_response": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mode",
+        "text",
+        "sensitivity_kind"
+      ],
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": [
+            "no_reply"
+          ]
+        },
+        "text": {
+          "type": "string"
+        },
+        "sensitivity_kind": {
+          "type": "string",
+          "enum": [
+            "internal_personnel"
+          ]
+        }
+      }
+    },
+    "system_actions": {
+      "type": "array",
+      "maxItems": 0,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [],
+        "properties": {}
+      }
+    },
+    "domain_payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "process_instance_id",
+        "task_id",
+        "oa_url",
+        "oa_action",
+        "oa_remark",
+        "action_result",
+        "audit_summary",
+        "audit_documents"
+      ],
+      "properties": {
+        "process_instance_id": {
+          "type": "string"
+        },
+        "task_id": {
+          "type": "string"
+        },
+        "oa_url": {
+          "type": "string"
+        },
+        "oa_action": {
+          "type": "string",
+          "enum": [
+            "通过",
+            "拒绝",
+            "退回"
+          ]
+        },
+        "oa_remark": {
+          "type": "string",
+          "minLength": 1
+        },
+        "action_result": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [],
+          "properties": {}
+        },
+        "audit_summary": {
+          "type": "string",
+          "minLength": 1
+        },
+        "audit_documents": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "title",
+              "url",
+              "relevance"
+            ],
+            "properties": {
+              "title": {
+                "type": "string"
+              },
+              "url": {
+                "type": "string"
+              },
+              "relevance": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "audit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "summary",
+        "documents",
+        "confidence"
+      ],
+      "properties": {
+        "summary": {
+          "type": "string",
+          "minLength": 1
+        },
+        "documents": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "title",
+              "url",
+              "relevance"
+            ],
+            "properties": {
+              "title": {
+                "type": "string"
+              },
+              "url": {
+                "type": "string"
+              },
+              "relevance": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
+      }
+    }
+  }
+}

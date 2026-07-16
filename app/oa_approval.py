@@ -20,6 +20,9 @@ from app.structured_agent import (
 OA_APPROVAL_SCHEMA_PATH = (
     Path(__file__).resolve().parent / "schemas" / "oa_approval.schema.json"
 )
+OA_AGENT_ENVELOPE_SCHEMA_PATH = (
+    Path(__file__).resolve().parent / "schemas" / "oa_agent_envelope.schema.json"
+)
 DEFAULT_OA_APPROVAL_SKILL_PATH = (
     Path.home() / ".agents" / "skills" / "dingtalk-oa-approval" / "SKILL.md"
 )
@@ -192,6 +195,7 @@ class OaApprovalSpecHandler:
                     "AppKey, AppSecret, cookies, OAuth codes, signed URLs, "
                     "or local credential paths."
                 ),
+                output_schema_path=OA_AGENT_ENVELOPE_SCHEMA_PATH,
             ),
             codex_bin=codex_bin,
             executor=_adapt_executor(executor) if executor is not None else None,
