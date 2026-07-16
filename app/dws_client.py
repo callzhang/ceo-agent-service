@@ -226,6 +226,16 @@ class DwsClient:
     DOC_READ_RETRYABLE_ERROR_CODES = {"internalError"}
     MESSAGE_LIST_RETRYABLE_ERROR_CODES = {"SYSTEM_ERROR"}
     TOKEN_VERIFIED_RETRYABLE_ERROR_CODES = {"TOKEN_VERIFIED_FAILED"}
+    MESSAGE_RETRYABLE_READ_COMMANDS = {
+        ("chat", "message", "list"),
+        ("chat", "message", "list-direct"),
+        ("chat", "message", "list-by-ids"),
+        ("chat", "message", "list-by-sender"),
+        ("chat", "message", "list-mentions"),
+        ("chat", "message", "search"),
+        ("chat", "message", "list-all"),
+        ("chat", "message", "list-unread-conversations"),
+    }
     TOKEN_VERIFIED_RETRYABLE_READ_COMMANDS = {
         ("calendar", "event", "get"),
         ("calendar", "event", "list"),
@@ -236,6 +246,7 @@ class DwsClient:
         ("chat", "message", "list-by-sender"),
         ("chat", "message", "list-mentions"),
         ("chat", "message", "search"),
+        ("chat", "message", "list-all"),
         ("chat", "message", "list-unread-conversations"),
         ("chat", "search"),
         ("contact", "user", "get"),
@@ -3086,22 +3097,32 @@ class DwsClient:
     def _is_retryable_error(cls, command: list[str], code: str | None) -> bool:
         if code in cls.RETRYABLE_ERROR_CODES:
             return True
-        if (
-            code in cls.MESSAGE_LIST_RETRYABLE_ERROR_CODES
-            and len(command) >= 4
-            and command[1:4] == ["chat", "message", "list"]
-        ):
-            return True
+        if code in cls.MESSAGE_LIST_RETRYABLE_ERROR_CODES:
+            command_path = tuple(command[1:])
+            return cls._command_path_matches(
+                command_path,
+                cls.MESSAGE_RETRYABLE_READ_COMMANDS,
+            )
         if code in cls.TOKEN_VERIFIED_RETRYABLE_ERROR_CODES:
             command_path = tuple(command[1:])
-            return any(
-                command_path[: len(retryable_path)] == retryable_path
-                for retryable_path in cls.TOKEN_VERIFIED_RETRYABLE_READ_COMMANDS
+            return cls._command_path_matches(
+                command_path,
+                cls.TOKEN_VERIFIED_RETRYABLE_READ_COMMANDS,
             )
         return (
             code in cls.DOC_READ_RETRYABLE_ERROR_CODES
             and len(command) >= 3
             and command[1:3] == ["doc", "read"]
+        )
+
+    @staticmethod
+    def _command_path_matches(
+        command_path: tuple[str, ...],
+        retryable_paths: set[tuple[str, ...]],
+    ) -> bool:
+        return any(
+            command_path[: len(retryable_path)] == retryable_path
+            for retryable_path in retryable_paths
         )
 
     @staticmethod

@@ -4562,6 +4562,69 @@ def test_run_json_retries_chat_message_list_system_error(monkeypatch):
     assert sleeps == [1.0]
 
 
+@pytest.mark.parametrize(
+    "command",
+    [
+        [
+            "dws",
+            "chat",
+            "message",
+            "list-mentions",
+            "--start",
+            "2026-07-16T02:23:27.100009+08:00",
+            "--end",
+            "2026-07-16T06:23:27.100009+08:00",
+            "--format",
+            "json",
+        ],
+        [
+            "dws",
+            "chat",
+            "message",
+            "search",
+            "--keyword",
+            "@所有人",
+            "--start",
+            "2026-07-16T02:23:33.308564+08:00",
+            "--format",
+            "json",
+        ],
+        [
+            "dws",
+            "chat",
+            "message",
+            "list-all",
+            "--start",
+            "2026-07-16 22:23:04",
+            "--end",
+            "2026-07-17 02:23:04",
+            "--format",
+            "json",
+        ],
+    ],
+)
+def test_run_json_retries_message_read_system_error_commands(monkeypatch, command):
+    calls = []
+    sleeps = []
+    system_error_payload = (
+        '{"error":{"code":1,"server_error_code":"SYSTEM_ERROR",'
+        '"message":"business error: success=false","reason":"business_error"}}'
+    )
+
+    def fake_run(command_arg, text, capture_output, check, timeout, env=None):
+        calls.append(command_arg)
+        if len(calls) == 1:
+            return SimpleNamespace(returncode=1, stdout="", stderr=system_error_payload)
+        return SimpleNamespace(returncode=0, stdout='{"ok":true}', stderr="")
+
+    monkeypatch.setattr("app.dws_client.subprocess.run", fake_run)
+    monkeypatch.setattr("app.dws_client.time.sleep", sleeps.append)
+
+    assert DwsClient().run_json(command) == {"ok": True}
+    assert calls == [command, command]
+    assert sleeps == [1.0]
+
+
 def test_run_json_does_not_retry_chat_message_send_system_error(monkeypatch):
     calls = []
     system_error_payload = (
@@ -4675,6 +4738,18 @@ def test_run_json_retries_chat_message_list_token_verified_failed(monkeypatch):
             "search",
             "--query",
             "Lily",
+            "--format",
+            "json",
+        ],
+        [
+            "dws",
+            "chat",
+            "message",
+            "list-all",
+            "--start",
+            "2026-07-16 22:23:04",
+            "--end",
+            "2026-07-17 02:23:04",
             "--format",
             "json",
         ],

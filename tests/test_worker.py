@@ -1508,6 +1508,65 @@ def test_read_conversation_messages_suppresses_token_verified_errors_until_thres
     assert state["count"] == 3
 
 
+def test_call_dws_suppresses_message_read_system_errors_until_threshold(
+    tmp_path: Path, monkeypatch
+):
+    notifications = []
+    system_error = DwsError(
+        "dws command failed with exit code 1; "
+        "command=dws chat message list-mentions --start 2026-07-16T02:23:27",
+        code="SYSTEM_ERROR",
+    )
+    dws = FakeDws([], {})
+    codex = FakeCodex(CodexDecision(action=CodexAction.SEND_REPLY, reply_text="收到"))
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+    monkeypatch.setattr(
+        "app.worker.send_macos_notification",
+        lambda **kwargs: notifications.append(kwargs),
+    )
+
+    def fail_read():
+        raise system_error
+
+    for _ in range(2):
+        assert (
+            worker._call_dws(
+                "read_mentioned_messages",
+                fail_read,
+                notify_title="CEO read mentioned messages failed",
+                default=[],
+            )
+            == []
+        )
+
+    assert notifications == []
+    assert worker.store.count_errors() == 0
+
+    assert (
+        worker._call_dws(
+            "read_mentioned_messages",
+            fail_read,
+            notify_title="CEO read mentioned messages failed",
+            default=[],
+        )
+        == []
+    )
+
+    assert notifications == [
+        {
+            "title": "CEO read mentioned messages failed",
+            "message": str(system_error)[:120],
+            "url": None,
+        }
+    ]
+    assert worker.store.count_errors() == 1
+    state = json.loads(
+        worker.store.get_service_state("dws_transient_error_count:read_mentioned_messages")
+        or "{}"
+    )
+    assert state["count"] == 3
+
+
 def test_read_recent_messages_missing_direct_chat_target_is_empty_context(
     tmp_path: Path, monkeypatch
 ):
@@ -3924,7 +3983,7 @@ def test_produce_once_does_not_notify_when_only_recent_context_read_fails(
 
     assert queued == 1
     assert worker.store.count_reply_tasks(status="pending") == 1
-    assert worker.store.count_errors() == 1
+    assert worker.store.count_errors() == 0
     assert notifications == []
     assert codex.calls == []
 

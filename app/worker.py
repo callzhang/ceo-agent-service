@@ -506,9 +506,11 @@ class DingTalkAutoReplyWorker:
             if pat_authorization_requested:
                 should_record_error = False
                 should_notify = False
-            if self._is_dws_transient_error(
-                exc
-            ) or self._is_dws_token_verified_read_error(kind, exc):
+            if (
+                self._is_dws_transient_error(exc)
+                or self._is_dws_token_verified_read_error(kind, exc)
+                or self._is_dws_message_read_retryable_error(kind, exc)
+            ):
                 transient_threshold_reached = self._record_dws_transient_error(
                     kind,
                     str(exc),
@@ -546,6 +548,22 @@ class DingTalkAutoReplyWorker:
             }
             and isinstance(exc, DwsError)
             and exc.code in DwsClient.TOKEN_VERIFIED_RETRYABLE_ERROR_CODES
+        )
+
+    @staticmethod
+    def _is_dws_message_read_retryable_error(kind: str, exc: Exception) -> bool:
+        return (
+            kind
+            in {
+                "list_unread_conversations",
+                "read_unread_messages",
+                "read_recent_messages",
+                "read_mentioned_messages",
+                "read_broadcast_messages",
+                "read_robot_direct_messages",
+            }
+            and isinstance(exc, DwsError)
+            and exc.code in DwsClient.MESSAGE_LIST_RETRYABLE_ERROR_CODES
         )
 
     @staticmethod
