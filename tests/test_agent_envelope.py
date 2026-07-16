@@ -493,3 +493,22 @@ def test_agent_envelope_schema_is_strict():
         "relevance",
     }
     assert "handoff_to_human" in schema["$defs"]["UserResponseMode"]["enum"]
+
+
+def test_agent_envelope_schema_uses_strict_object_shapes_required_by_codex():
+    schema = json.loads(
+        open("app/schemas/agent_envelope.schema.json", encoding="utf-8").read()
+    )
+
+    def assert_strict_objects(node: object) -> None:
+        if isinstance(node, dict):
+            if node.get("type") == "object" and "properties" in node:
+                assert node.get("additionalProperties") is not None
+                assert set(node.get("required", [])) == set(node["properties"])
+            for value in node.values():
+                assert_strict_objects(value)
+        elif isinstance(node, list):
+            for item in node:
+                assert_strict_objects(item)
+
+    assert_strict_objects(schema)

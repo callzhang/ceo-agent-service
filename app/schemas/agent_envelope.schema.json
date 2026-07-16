@@ -134,7 +134,8 @@
       },
       "required": [
         "type",
-        "reply_text_ref"
+        "reply_text_ref",
+        "title"
       ],
       "title": "DwsMarkdownDocumentReplyAction",
       "type": "object"
@@ -183,7 +184,13 @@
         }
       },
       "required": [
-        "type"
+        "type",
+        "reaction_type",
+        "emoji",
+        "text",
+        "emotion_id",
+        "emotion_name",
+        "background_id"
       ],
       "title": "DwsMessageReactionAction",
       "type": "object"
