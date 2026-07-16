@@ -512,3 +512,37 @@ def test_agent_envelope_schema_uses_strict_object_shapes_required_by_codex():
                 assert_strict_objects(item)
 
     assert_strict_objects(schema)
+
+
+def test_committed_agent_envelope_schema_avoids_one_of_rejected_by_codex():
+    schema = json.loads(
+        open("app/schemas/agent_envelope.schema.json", encoding="utf-8").read()
+    )
+
+    def assert_no_one_of(node: object) -> None:
+        if isinstance(node, dict):
+            assert "oneOf" not in node
+            for value in node.values():
+                assert_no_one_of(value)
+        elif isinstance(node, list):
+            for item in node:
+                assert_no_one_of(item)
+
+    assert_no_one_of(schema)
+    assert "anyOf" in schema["properties"]["system_actions"]["items"]
+
+
+def test_agent_envelope_model_schema_avoids_one_of_rejected_by_codex():
+    schema = AgentEnvelope.model_json_schema()
+
+    def assert_no_one_of(node: object) -> None:
+        if isinstance(node, dict):
+            assert "oneOf" not in node
+            for value in node.values():
+                assert_no_one_of(value)
+        elif isinstance(node, list):
+            for item in node:
+                assert_no_one_of(item)
+
+    assert_no_one_of(schema)
+    assert "anyOf" in schema["properties"]["system_actions"]["items"]

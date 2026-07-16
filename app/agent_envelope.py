@@ -1,5 +1,5 @@
 from enum import StrEnum
-from typing import Annotated, Any, Literal, Union
+from typing import Any, Literal, Union
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -149,18 +149,15 @@ class DwsMessageReactionAction(StrictBaseModel):
         return self
 
 
-SystemAction = Annotated[
-    Union[
-        SendDingTalkReplyAction,
-        DwsMarkdownDocumentReplyAction,
-        DwsOaApprovalAction,
-        DwsOaApprovalCommentAction,
-        DwsMailReplyAction,
-        PersistOkrReviewAction,
-        QueueOkrReviewAction,
-        DwsMessageReactionAction,
-    ],
-    Field(discriminator="type"),
+SystemAction = Union[
+    SendDingTalkReplyAction,
+    DwsMarkdownDocumentReplyAction,
+    DwsOaApprovalAction,
+    DwsOaApprovalCommentAction,
+    DwsMailReplyAction,
+    PersistOkrReviewAction,
+    QueueOkrReviewAction,
+    DwsMessageReactionAction,
 ]
 
 

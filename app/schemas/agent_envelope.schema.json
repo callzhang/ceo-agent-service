@@ -360,20 +360,7 @@
     },
     "system_actions": {
       "items": {
-        "discriminator": {
-          "mapping": {
-            "dws_mail_reply": "#/$defs/DwsMailReplyAction",
-            "dws_markdown_document_reply": "#/$defs/DwsMarkdownDocumentReplyAction",
-            "dws_message_reaction": "#/$defs/DwsMessageReactionAction",
-            "dws_oa_approval_action": "#/$defs/DwsOaApprovalAction",
-            "dws_oa_approval_comment": "#/$defs/DwsOaApprovalCommentAction",
-            "persist_okr_review": "#/$defs/PersistOkrReviewAction",
-            "queue_okr_review": "#/$defs/QueueOkrReviewAction",
-            "send_dingtalk_reply": "#/$defs/SendDingTalkReplyAction"
-          },
-          "propertyName": "type"
-        },
-        "oneOf": [
+        "anyOf": [
           {
             "$ref": "#/$defs/SendDingTalkReplyAction"
           },
