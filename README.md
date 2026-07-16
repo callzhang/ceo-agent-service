@@ -388,6 +388,8 @@ scripts/install-auto-reply-agents.sh
 - meeting consumer loop：独立分析、选择最高分可发送群并投递；多方会议绝不降级私聊，1:1 才私聊另一位参会人。发送正文固定以 `【会议跟进】会议标题（会议时间）` 开头，便于收件人识别来源会议；真实 @ 默认限于参会人，非参会人只有会议转写明确说到是他的任务、由他负责、交给他确认或跟进时才 @。确认发送成功后复用 reply agent 的本地/Chrome notification 和钉钉会话点击跳转。dry-run 只分析到 `ready_to_send`，不会 claim 发送。
 - task maintenance loop：按 `CEO_TASK_WORK_ITEM_INTERVAL_SECONDS` 处理 Work Item，并按 `CEO_TASK_DAILY_INTERVAL_SECONDS` 扫描 AI 听记、`CEO_WORKSPACE` 文件和到期 follow-up。
 
+这些周期参数统一在审计页 `Config → System Config` 中维护，保存到 `.env` 后由 Python 服务启动时读取；launchd 模板不再在 shell 命令里写死或覆盖这些周期值。
+
 meeting producer 首次启用时会持久化激活时间。服务启动恢复队列前，会把激活时间以前且从未尝试发送的历史任务统一标记为 `no_action`；因此切换瞬间已被旧进程领取的历史会议也不会在重启后重新进入分析或发送。
 
 实际时长小于 10 分钟的听记在日历匹配和建队列前跳过；实际候选人面试由 agent 根据标题、摘要、参会人和完整转写识别并终止为 `no_action`。招聘站会、招聘计划、人才讨论和招聘需求对齐仍按普通业务会议处理。

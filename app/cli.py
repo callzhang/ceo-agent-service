@@ -25,6 +25,8 @@ from app.config import (
     principal_display_name,
     producer_interval_seconds,
     profile_evidence_dir,
+    task_daily_interval_seconds,
+    task_work_item_interval_seconds,
     work_profile_path,
 )
 from app.corpus import (
@@ -481,22 +483,12 @@ def build_parser() -> argparse.ArgumentParser:
             subparser.add_argument(
                 "--task-work-item-interval-seconds",
                 type=_positive_int,
-                default=_positive_int(
-                    os.getenv(
-                        "CEO_TASK_WORK_ITEM_INTERVAL_SECONDS",
-                        str(defaults.task_work_item_interval_seconds),
-                    )
-                ),
+                default=task_work_item_interval_seconds(),
             )
             subparser.add_argument(
                 "--task-daily-interval-seconds",
                 type=_positive_int,
-                default=_positive_int(
-                    os.getenv(
-                        "CEO_TASK_DAILY_INTERVAL_SECONDS",
-                        str(defaults.task_daily_interval_seconds),
-                    )
-                ),
+                default=task_daily_interval_seconds(),
             )
         if command == "export-feedback":
             subparser.add_argument(

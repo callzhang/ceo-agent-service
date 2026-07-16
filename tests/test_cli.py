@@ -2259,6 +2259,16 @@ def test_parser_supports_single_service_command(monkeypatch):
     assert args.task_daily_interval_seconds == 3600
 
 
+def test_service_parser_defaults_task_intervals_from_system_config(monkeypatch):
+    monkeypatch.setenv("CEO_TASK_WORK_ITEM_INTERVAL_SECONDS", "45")
+    monkeypatch.setenv("CEO_TASK_DAILY_INTERVAL_SECONDS", "7200")
+
+    args = build_parser().parse_args(["service"])
+
+    assert args.task_work_item_interval_seconds == 45
+    assert args.task_daily_interval_seconds == 7200
+
+
 def test_parser_keeps_dry_run_as_not_send_message_alias():
     parser = build_parser()
 
