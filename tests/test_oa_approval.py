@@ -674,6 +674,15 @@ def test_invalid_oa_json_repair_prompt_requests_agent_envelope(tmp_path: Path):
     assert "旧 OA approval JSON" not in prompts[1]
 
 
+def test_oa_repair_prompt_forbids_legacy_top_level_fields():
+    prompt = OaApprovalSpecHandler._repair_prompt()
+
+    assert "顶层只能有 kind、user_response、system_actions、domain_payload、audit 五个字段" in prompt
+    assert "不要输出旧 OA 专用字段" in prompt
+    assert "process_instance_id" in prompt
+    assert "旧 OA 专用字段必须放进 domain_payload 内对应字段" in prompt
+
+
 def test_xiaoqing_unavailable_without_mcp_call_forces_oa_retry(tmp_path: Path):
     skill_path = tmp_path / "skill.md"
     skill_path.write_text("# OA Skill", encoding="utf-8")

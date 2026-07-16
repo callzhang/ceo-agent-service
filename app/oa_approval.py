@@ -356,6 +356,11 @@ class OaApprovalSpecHandler:
         return (
             "上一次输出不是合法 OA 审批 AgentEnvelope JSON。不得执行通过、拒绝、退回或评论。"
             "只输出合法 JSON，不要解释。"
+            "顶层只能有 kind、user_response、system_actions、domain_payload、audit 五个字段。"
+            "不要输出旧 OA 专用字段：type、agent_name、schema_version、process_instance_id、"
+            "business_id、readonly、action、action_result、decision、audit_summary、oa_remark、"
+            "critical_info_unavailable、material_gaps、evidence_read、xiaoqing_interview_status、"
+            "next_steps。旧 OA 专用字段必须放进 domain_payload 内对应字段，不能出现在顶层。"
             'JSON schema: {"kind":"oa_approval",'
             '"user_response":{"mode":"no_reply","text":"","sensitivity_kind":"internal_personnel"},'
             '"system_actions":[],"domain_payload":{'
