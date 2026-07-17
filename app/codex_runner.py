@@ -88,6 +88,9 @@ DWS_CLI_AUTH_ENV_KEYS = {
 }
 CODEX_MODEL_ENV = "CEO_CODEX_MODEL"
 CODEX_MODEL_PROVIDER_ENV = "CEO_CODEX_MODEL_PROVIDER"
+CODEX_MODEL_REASONING_EFFORT_ENV = "CEO_CODEX_MODEL_REASONING_EFFORT"
+DEFAULT_CODEX_MODEL = "gpt-5.5"
+DEFAULT_CODEX_MODEL_REASONING_EFFORT = "medium"
 
 
 def codex_developer_instructions() -> str:
@@ -187,17 +190,27 @@ def _model_provider_config_options(config: dict, provider_name: str) -> list[str
 
 
 def codex_model_config_options(*, ignore_user_config: bool = False) -> list[str]:
-    model = os.environ.get(CODEX_MODEL_ENV, "").strip()
+    model = os.environ.get(CODEX_MODEL_ENV, DEFAULT_CODEX_MODEL).strip()
     provider = os.environ.get(CODEX_MODEL_PROVIDER_ENV, "").strip()
+    reasoning_effort = os.environ.get(
+        CODEX_MODEL_REASONING_EFFORT_ENV,
+        DEFAULT_CODEX_MODEL_REASONING_EFFORT,
+    ).strip()
+    options: list[str] = []
     if model:
-        options = ["-m", model]
+        options.extend(["-m", model])
         if provider:
             options.extend(["-c", _config_string("model_provider", provider)])
             if ignore_user_config:
                 options.extend(_model_provider_config_options(_codex_config(), provider))
-        return options
-
-    return []
+    if reasoning_effort:
+        options.extend(
+            [
+                "-c",
+                _config_string("model_reasoning_effort", reasoning_effort),
+            ]
+        )
+    return options
 
 
 def _memory_connector_env_from_config(config_path: Path) -> dict[str, str]:

@@ -12,6 +12,11 @@ def test_local_service_script_runs_single_main_service():
 
     assert '${HOME}/.local/bin' in content
     assert 'export CODEX_HOME="${CODEX_HOME:-${HOME}/.codex}"' in content
+    assert 'export CEO_CODEX_MODEL="${CEO_CODEX_MODEL:-gpt-5.5}"' in content
+    assert (
+        'export CEO_CODEX_MODEL_REASONING_EFFORT="${CEO_CODEX_MODEL_REASONING_EFFORT:-medium}"'
+        in content
+    )
     assert 'export HOME="${CEO_SERVICE_HOME:-${HOME}}"' in content
     assert 'export PYTHONPATH="${PYTHONPATH:-.}"' in content
     assert 'export CEO_WORKSPACE="${CEO_WORKSPACE:-${HOME}/Documents/memory}"' in content
@@ -74,6 +79,11 @@ def test_main_launch_agent_runs_single_keepalive_service():
     assert "CEO_NOT_SEND_MESSAGE=0" in command[2]
     assert "CEO_LIVE_SEND_BLOCKERS_ACCEPTED=1" in command[2]
     assert "CEO_OKR_LIVE_SOURCE_COMMAND" in command[2]
+    assert 'CEO_CODEX_MODEL="${CEO_CODEX_MODEL:-gpt-5.5}"' in command[2]
+    assert (
+        'CEO_CODEX_MODEL_REASONING_EFFORT="${CEO_CODEX_MODEL_REASONING_EFFORT:-medium}"'
+        in command[2]
+    )
     assert "scripts/dingteam_okr_live_source.py --user-id {user_id} --period-label {period_label}" in command[2]
     env = plist["EnvironmentVariables"]
     assert "HOME" not in env

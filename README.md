@@ -167,7 +167,7 @@ cp .env.example .env
 | `CEO_MEETING_PRODUCER_INTERVAL_SECONDS` | 会议信息发现周期，默认 60 秒 |
 | `CEO_MEETING_CONSUMER_POLL_INTERVAL_SECONDS` | 会后对齐队列消费周期，默认 10 秒 |
 | `CEO_MEETING_SETTLE_SECONDS` | 明确会议结束后的静默等待时间，默认 600 秒 |
-| `CEO_CODEX_MODEL` / `CEO_CODEX_MODEL_PROVIDER` | 可选的显式模型和 provider；默认留空，使用原生 `codex exec` 登录态和默认配置 |
+| `CEO_CODEX_MODEL` / `CEO_CODEX_MODEL_REASONING_EFFORT` / `CEO_CODEX_MODEL_PROVIDER` | Codex 模型配置；默认 `gpt-5.5` + `medium`，避免服务继承用户全局 `~/.codex/config.toml` 的模型 |
 | `CEO_CODEX_PASSTHROUGH_MCP_SERVERS` | `--ignore-user-config` 下仍允许透传的 MCP 白名单；默认保留 `xiaoqing_interview,exa`。`memory_connector` 单独注入；飞书走 `lark-cli`，不是默认 MCP |
 | `CEO_MENTION_ALIASES` | 群聊中触发本人的 @ 别名 |
 | `CEO_DING_ROBOT_NAME` | handoff/DING 通知使用的机器人名称；默认服务启动配置为 `磊哥`，运行时解析 robot code |

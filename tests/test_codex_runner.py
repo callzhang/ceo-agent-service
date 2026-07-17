@@ -27,6 +27,7 @@ def _isolate_memory_connector_env(tmp_path: Path, monkeypatch):
     monkeypatch.delenv("MEMORY_CONNECTOR_USER_ID", raising=False)
     monkeypatch.delenv("CEO_CODEX_MODEL", raising=False)
     monkeypatch.delenv("CEO_CODEX_MODEL_PROVIDER", raising=False)
+    monkeypatch.delenv("CEO_CODEX_MODEL_REASONING_EFFORT", raising=False)
     monkeypatch.delenv("CEO_CODEX_PROFILE", raising=False)
     monkeypatch.delenv("CEO_CODEX_PASSTHROUGH_MCP_SERVERS", raising=False)
 
@@ -465,11 +466,12 @@ def test_codex_command_does_not_auto_fallback_to_configured_profile(
 
     command = runner.build_command(prompt="hello", session_id=None)
 
-    assert "-m" not in command
+    assert command[command.index("-m") + 1] == "gpt-5.5"
+    assert 'model_reasoning_effort="medium"' in command
     assert 'model_provider="minimax"' not in command
 
 
-def test_codex_command_ignores_legacy_profile_env_for_native_exec(
+def test_codex_command_ignores_legacy_profile_env_for_service_default_model(
     tmp_path: Path, monkeypatch
 ):
     codex_home = tmp_path / ".codex"
@@ -490,7 +492,8 @@ def test_codex_command_ignores_legacy_profile_env_for_native_exec(
 
     command = runner.build_command(prompt="hello", session_id=None)
 
-    assert "-m" not in command
+    assert command[command.index("-m") + 1] == "gpt-5.5"
+    assert 'model_reasoning_effort="medium"' in command
     assert 'model_provider="minimax"' not in command
 
 
@@ -530,6 +533,7 @@ def test_codex_command_explicit_model_provider_with_ignore_user_config_includes_
     assert "--ignore-user-config" in command
     assert command[command.index("-m") + 1] == "codex-MiniMax-M2.7"
     assert 'model_provider="minimax"' in command
+    assert 'model_reasoning_effort="medium"' in command
     assert 'model_providers.minimax.base_url="https://api.minimaxi.com/v1"' in command
     assert 'model_providers.minimax.env_key="MINIMAX_API_KEY"' in command
 
@@ -672,6 +676,10 @@ def test_builds_new_thread_command(tmp_path: Path):
         "codex",
         "exec",
         "--json",
+        "-m",
+        "gpt-5.5",
+        "-c",
+        'model_reasoning_effort="medium"',
         "--ignore-user-config",
         "--ignore-rules",
         "--disable",
@@ -715,6 +723,10 @@ def test_builds_resume_command(tmp_path: Path):
         "exec",
         "resume",
         "--json",
+        "-m",
+        "gpt-5.5",
+        "-c",
+        'model_reasoning_effort="medium"',
         "--ignore-user-config",
         "--ignore-rules",
         "--disable",
