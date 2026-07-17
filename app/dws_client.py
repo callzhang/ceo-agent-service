@@ -222,6 +222,20 @@ class DwsClient:
     # DWS returns generic code 6 for transient discovery/network failures such as
     # TLS handshake timeouts before the request reaches a business API.
     RETRYABLE_ERROR_CODES = {"TIMEOUT_ERROR", "NETWORK_ERROR", "6"}
+    STRUCTURED_NETWORK_ERROR_MARKERS = (
+        "check network",
+        "connection reset",
+        "connection refused",
+        "dns",
+        "eof",
+        "mcp service is reachable",
+        "network",
+        "no such host",
+        "proxy",
+        "timeout",
+        "timed out",
+        "tls handshake",
+    )
     DISCOVERY_CACHE_REFRESH_CODES = {"6"}
     DOC_READ_RETRYABLE_ERROR_CODES = {"internalError"}
     MESSAGE_LIST_RETRYABLE_ERROR_CODES = {"SYSTEM_ERROR"}
@@ -3285,6 +3299,9 @@ class DwsClient:
         code = payload.get("code")
         if isinstance(code, str) and code:
             return code
+        structured_network_code = DwsClient._structured_network_error_code(payload)
+        if structured_network_code:
+            return structured_network_code
         error = payload.get("error")
         if isinstance(error, dict):
             server_error_code = error.get("server_error_code")
@@ -3295,6 +3312,26 @@ class DwsClient:
                 return nested_code
             if isinstance(nested_code, int):
                 return str(nested_code)
+        return None
+
+    @classmethod
+    def _structured_network_error_code(cls, payload: dict[str, Any]) -> str | None:
+        error = payload.get("error")
+        if not isinstance(error, dict):
+            return None
+        if str(error.get("category") or "").casefold() != "api":
+            return None
+        fields: list[str] = []
+        for key in ("cause", "hint", "message"):
+            value = error.get(key)
+            if isinstance(value, str):
+                fields.append(value)
+        actions = error.get("actions")
+        if isinstance(actions, list):
+            fields.extend(action for action in actions if isinstance(action, str))
+        haystack = " ".join(fields).casefold()
+        if any(marker in haystack for marker in cls.STRUCTURED_NETWORK_ERROR_MARKERS):
+            return "NETWORK_ERROR"
         return None
 
     @classmethod

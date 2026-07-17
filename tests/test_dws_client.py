@@ -550,6 +550,67 @@ def test_run_json_maps_dotted_error_code_to_login_required(monkeypatch):
     assert error_info.value.needs_login is True
 
 
+def test_run_json_retries_structured_network_code_one(monkeypatch):
+    calls = 0
+
+    def fake_run(command, text, capture_output, check, timeout, env=None):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return SimpleNamespace(
+                returncode=1,
+                stdout="",
+                stderr=json.dumps(
+                    {
+                        "error": {
+                            "actions": [
+                                "Check network, proxy, and DNS settings, then retry the original command",
+                                "Verify the MCP service is reachable; if the failure persists, retry later",
+                            ],
+                            "category": "api",
+                            "cause": "Post https://mcp-gw.dingtalk.com/server: EOF",
+                            "code": 1,
+                        }
+                    }
+                ),
+            )
+        return SimpleNamespace(returncode=0, stdout='{"success": true}', stderr="")
+
+    monkeypatch.setattr("app.dws_client.subprocess.run", fake_run)
+    monkeypatch.setattr("app.dws_client.time.sleep", lambda seconds: None)
+
+    result = DwsClient().run_json(
+        ["dws", "chat", "message", "search", "--format", "json"]
+    )
+
+    assert result == {"success": True}
+    assert calls == 2
+
+
+def test_run_json_keeps_non_network_code_one_as_terminal(monkeypatch):
+    def fake_run(command, text, capture_output, check, timeout, env=None):
+        return SimpleNamespace(
+            returncode=1,
+            stdout="",
+            stderr=json.dumps(
+                {
+                    "error": {
+                        "category": "business",
+                        "message": "business rule failed",
+                        "code": 1,
+                    }
+                }
+            ),
+        )
+
+    monkeypatch.setattr("app.dws_client.subprocess.run", fake_run)
+
+    with pytest.raises(DwsError) as error_info:
+        DwsClient().run_json(["dws", "contact", "user", "get-self", "--format", "json"])
+
+    assert error_info.value.code == "1"
+
+
 def test_run_json_does_not_pass_app_oauth_env_to_dws_cli(monkeypatch):
     monkeypatch.setenv("DWS_CLIENT_ID", "app-client-id")
     monkeypatch.setenv("DWS_CLIENT_SECRET", "app-client-secret")
