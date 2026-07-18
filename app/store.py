@@ -8,6 +8,7 @@ from collections.abc import Iterator
 
 from pydantic import BaseModel, Field, TypeAdapter
 
+from app.wechat.models import WechatReplyScope
 from app.meeting_alignment_models import (
     MeetingAlignmentJob,
     MeetingAlignmentQueueStatus,
@@ -216,6 +217,7 @@ class CodexSessionSearchResult(BaseModel):
 
 class ReplyTask(BaseModel):
     id: int
+    channel: str = "dingtalk"
     conversation_id: str
     conversation_title: str
     single_chat: bool
@@ -470,6 +472,52 @@ class AutoReplyStore:
                 );
                 create index if not exists idx_reply_tasks_status
                     on reply_tasks(status, id);
+                create table if not exists wechat_read_state (
+                    account_id text primary key,
+                    account_dir text not null,
+                    db_dir text not null,
+                    app_version text not null,
+                    self_user_id text not null default '',
+                    capability_status text not null default 'blocked',
+                    capability_reason text not null default '',
+                    watermark_sent_at text not null default '',
+                    watermark_message_id text not null default '',
+                    last_scan_at text not null default '',
+                    updated_at text not null default current_timestamp
+                );
+                create table if not exists wechat_reply_scopes (
+                    account_id text not null,
+                    target_type text not null,
+                    target_id text not null,
+                    conversation_id text not null default '',
+                    display_name text not null,
+                    trigger_mode text not null,
+                    enabled integer not null default 1,
+                    binding_status text not null default 'unverified',
+                    binding_evidence_json text not null default '{}',
+                    disabled_reason text not null default '',
+                    last_discovered_at text not null default '',
+                    updated_at text not null default current_timestamp,
+                    primary key(account_id, target_type, target_id)
+                );
+                create table if not exists wechat_deliveries (
+                    id integer primary key autoincrement,
+                    reply_task_id integer not null unique,
+                    account_id text not null,
+                    target_type text not null,
+                    target_id text not null,
+                    conversation_id text not null default '',
+                    reply_text text not null,
+                    status text not null default 'ready_to_send',
+                    action_started_at text not null default '',
+                    evidence_json text not null default '{}',
+                    error text not null default '',
+                    created_at text not null default current_timestamp,
+                    updated_at text not null default current_timestamp,
+                    foreign key(reply_task_id) references reply_tasks(id)
+                );
+                create index if not exists idx_wechat_deliveries_status
+                    on wechat_deliveries(status, id);
                 create table if not exists meeting_alignment_jobs (
                     id integer primary key autoincrement,
                     meeting_id text not null unique,
@@ -883,10 +931,21 @@ class AutoReplyStore:
                 ("force_new_decision", "integer not null default 0"),
                 ("oa_url", "text not null default ''"),
                 ("manual_rerun_attempt_id", "integer not null default 0"),
+                ("channel", "text not null default 'dingtalk'"),
             ):
                 if column not in reply_task_columns:
                     db.execute(
                         f"alter table reply_tasks add column {column} {definition}"
+                    )
+            for table_name in ("reply_attempts", "sent_replies"):
+                existing = {
+                    row["name"]
+                    for row in db.execute(f"pragma table_info({table_name})").fetchall()
+                }
+                if "channel" not in existing:
+                    db.execute(
+                        f"alter table {table_name} add column channel "
+                        f"text not null default 'dingtalk'"
                     )
             work_summary_input_columns = {
                 row["name"]
@@ -958,6 +1017,7 @@ class AutoReplyStore:
     def _reply_task_from_row(row: sqlite3.Row) -> ReplyTask:
         return ReplyTask(
             id=row["id"],
+            channel=(row["channel"] if "channel" in row.keys() else "dingtalk"),
             conversation_id=row["conversation_id"],
             conversation_title=row["conversation_title"],
             single_chat=bool(row["single_chat"]),
@@ -998,11 +1058,13 @@ class AutoReplyStore:
         oa_url: str = "",
         manual_rerun_attempt_id: int = 0,
         error: str = "",
+        channel: str = "dingtalk",
     ) -> bool:
         with self._connect() as db:
             cursor = db.execute(
                 """
                 insert or ignore into reply_tasks (
+                    channel,
                     conversation_id,
                     conversation_title,
                     single_chat,
@@ -1017,9 +1079,10 @@ class AutoReplyStore:
                     manual_rerun_attempt_id,
                     error
                 )
-                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
+                    channel,
                     conversation_id,
                     conversation_title,
                     int(single_chat),
@@ -1114,13 +1177,15 @@ class AutoReplyStore:
                 raise RuntimeError("manual rerun reply task was not persisted")
             return self._reply_task_from_row(row)
 
-    def claim_reply_tasks(self, limit: int, now: str | None = None) -> list[ReplyTask]:
+    def claim_reply_tasks(
+        self, limit: int, now: str | None = None, *, channel: str = "dingtalk"
+    ) -> list[ReplyTask]:
         if limit <= 0:
             return []
         with self._connect() as db:
             db.execute("begin immediate")
             now_expression = "current_timestamp" if now is None else "?"
-            args: list[str | int] = []
+            args: list[str | int] = [channel]
             if now is not None:
                 args.append(now)
             args.append(limit)
@@ -1129,6 +1194,7 @@ class AutoReplyStore:
                 select *
                 from reply_tasks
                 where status='pending'
+                  and channel=?
                   and (available_at='' or available_at <= {now_expression})
                 order by id
                 limit ?
@@ -1396,21 +1462,30 @@ class AutoReplyStore:
     ) -> None:
         self.defer_reply_task(task_id, error, available_at=available_at)
 
-    def count_reply_tasks(self, status: str | None = None) -> int:
+    def count_reply_tasks(
+        self, status: str | None = None, *, channel: str | None = None
+    ) -> int:
+        clauses: list[str] = []
+        args: list[str] = []
+        if status is not None:
+            clauses.append("status=?")
+            args.append(status)
+        if channel is not None:
+            clauses.append("channel=?")
+            args.append(channel)
+        where = f" where {' and '.join(clauses)}" if clauses else ""
         with self._connect() as db:
-            if status is None:
-                row = db.execute("select count(*) as count from reply_tasks").fetchone()
-            else:
-                row = db.execute(
-                    "select count(*) as count from reply_tasks where status=?",
-                    (status,),
-                ).fetchone()
+            row = db.execute(
+                f"select count(*) as count from reply_tasks{where}", args
+            ).fetchone()
             return int(row["count"])
 
     def list_reply_tasks(
         self,
         statuses: tuple[str, ...] | None = None,
         limit: int | None = None,
+        *,
+        channel: str | None = None,
     ) -> list[ReplyTask]:
         with self._connect() as db:
             query = """
@@ -1418,10 +1493,16 @@ class AutoReplyStore:
                 from reply_tasks
             """
             args: list[str | int] = []
+            clauses: list[str] = []
             if statuses:
                 placeholders = ",".join("?" for _ in statuses)
-                query = f"{query} where status in ({placeholders})"
+                clauses.append(f"status in ({placeholders})")
                 args.extend(statuses)
+            if channel is not None:
+                clauses.append("channel=?")
+                args.append(channel)
+            if clauses:
+                query = f"{query} where {' and '.join(clauses)}"
             query = f"{query} order by id desc"
             if limit is not None:
                 query = f"{query} limit ?"
@@ -1446,6 +1527,141 @@ class AutoReplyStore:
             if row is None:
                 return None
             return self._reply_task_from_row(row)
+
+    # ---- WeChat channel: reply scopes ----
+    def replace_wechat_reply_scopes(
+        self, account_id: str, scopes: list[WechatReplyScope]
+    ) -> None:
+        if any(scope.account_id != account_id for scope in scopes):
+            raise ValueError("scope account mismatch")
+        with self._connect() as db:
+            db.execute(
+                "update wechat_reply_scopes set enabled=0, "
+                "disabled_reason='not_selected', updated_at=current_timestamp "
+                "where account_id=?",
+                (account_id,),
+            )
+            for scope in scopes:
+                db.execute(
+                    """
+                    insert into wechat_reply_scopes (
+                        account_id, target_type, target_id, conversation_id,
+                        display_name, trigger_mode, enabled, binding_status,
+                        binding_evidence_json, disabled_reason, last_discovered_at
+                    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?)
+                    on conflict(account_id, target_type, target_id) do update set
+                        conversation_id=excluded.conversation_id,
+                        display_name=excluded.display_name,
+                        trigger_mode=excluded.trigger_mode,
+                        enabled=excluded.enabled,
+                        binding_status=excluded.binding_status,
+                        binding_evidence_json=excluded.binding_evidence_json,
+                        disabled_reason='',
+                        last_discovered_at=excluded.last_discovered_at,
+                        updated_at=current_timestamp
+                    """,
+                    (
+                        scope.account_id, scope.target_type, scope.target_id,
+                        scope.conversation_id, scope.display_name,
+                        scope.trigger_mode, int(scope.enabled),
+                        scope.binding_status,
+                        json.dumps(scope.binding_evidence, ensure_ascii=False),
+                        scope.last_active_at,
+                    ),
+                )
+
+    def list_wechat_reply_scopes(
+        self, account_id: str, *, enabled_only: bool = False
+    ) -> list[WechatReplyScope]:
+        where = "where account_id=?" + (" and enabled=1" if enabled_only else "")
+        with self._connect() as db:
+            rows = db.execute(
+                f"select * from wechat_reply_scopes {where} "
+                f"order by target_type, display_name, target_id",
+                (account_id,),
+            ).fetchall()
+        return [
+            WechatReplyScope(
+                account_id=row["account_id"], target_type=row["target_type"],
+                target_id=row["target_id"], conversation_id=row["conversation_id"],
+                display_name=row["display_name"], trigger_mode=row["trigger_mode"],
+                enabled=bool(row["enabled"]), binding_status=row["binding_status"],
+                binding_evidence=json.loads(row["binding_evidence_json"]),
+                disabled_reason=row["disabled_reason"],
+                last_active_at=row["last_discovered_at"],
+            )
+            for row in rows
+        ]
+
+    def get_wechat_reply_scope(
+        self, account_id: str, target_type: str, target_id: str
+    ) -> WechatReplyScope | None:
+        return next(
+            (
+                scope for scope in self.list_wechat_reply_scopes(account_id)
+                if scope.target_type == target_type and scope.target_id == target_id
+            ),
+            None,
+        )
+
+    # ---- WeChat channel: read state ----
+    def upsert_wechat_read_state(
+        self, *, account_id: str, account_dir: str, db_dir: str,
+        app_version: str, self_user_id: str, capability_status: str,
+        capability_reason: str = "", watermark_sent_at: str = "",
+        watermark_message_id: str = "", last_scan_at: str = "",
+    ) -> None:
+        with self._connect() as db:
+            db.execute(
+                """
+                insert into wechat_read_state (
+                    account_id, account_dir, db_dir, app_version, self_user_id,
+                    capability_status, capability_reason, watermark_sent_at,
+                    watermark_message_id, last_scan_at
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                on conflict(account_id) do update set
+                    account_dir=excluded.account_dir, db_dir=excluded.db_dir,
+                    app_version=excluded.app_version, self_user_id=excluded.self_user_id,
+                    capability_status=excluded.capability_status,
+                    capability_reason=excluded.capability_reason,
+                    watermark_sent_at=excluded.watermark_sent_at,
+                    watermark_message_id=excluded.watermark_message_id,
+                    last_scan_at=excluded.last_scan_at,
+                    updated_at=current_timestamp
+                """,
+                (
+                    account_id, account_dir, db_dir, app_version, self_user_id,
+                    capability_status, capability_reason, watermark_sent_at,
+                    watermark_message_id, last_scan_at,
+                ),
+            )
+
+    def get_wechat_read_state(self, account_id: str) -> dict[str, str] | None:
+        with self._connect() as db:
+            row = db.execute(
+                "select * from wechat_read_state where account_id=?", (account_id,)
+            ).fetchone()
+        return dict(row) if row is not None else None
+
+    def list_wechat_read_states(self) -> list[dict[str, str]]:
+        with self._connect() as db:
+            rows = db.execute(
+                "select * from wechat_read_state order by account_id"
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def list_wechat_reply_scopes_for_ready_account(
+        self, *, enabled_only: bool = True
+    ) -> list[WechatReplyScope]:
+        ready = [
+            row for row in self.list_wechat_read_states()
+            if row["capability_status"] == "ready"
+        ]
+        if len(ready) != 1:
+            return []
+        return self.list_wechat_reply_scopes(
+            ready[0]["account_id"], enabled_only=enabled_only
+        )
 
     @staticmethod
     def _meeting_alignment_job_from_row(
