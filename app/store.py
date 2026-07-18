@@ -1663,6 +1663,68 @@ class AutoReplyStore:
             ready[0]["account_id"], enabled_only=enabled_only
         )
 
+    # ---- WeChat channel: deliveries ----
+    def create_wechat_delivery(
+        self, *, reply_task_id: int, account_id: str, target_type: str,
+        target_id: str, conversation_id: str, reply_text: str,
+        evidence: dict[str, str] | None = None,
+    ) -> int:
+        with self._connect() as db:
+            db.execute(
+                """
+                insert into wechat_deliveries (
+                    reply_task_id, account_id, target_type, target_id,
+                    conversation_id, reply_text, evidence_json
+                ) values (?, ?, ?, ?, ?, ?, ?)
+                on conflict(reply_task_id) do nothing
+                """,
+                (
+                    reply_task_id, account_id, target_type, target_id,
+                    conversation_id, reply_text,
+                    json.dumps(evidence or {}, ensure_ascii=False),
+                ),
+            )
+            row = db.execute(
+                "select id from wechat_deliveries where reply_task_id=?",
+                (reply_task_id,),
+            ).fetchone()
+            return int(row["id"])
+
+    def get_wechat_delivery_for_task(self, reply_task_id: int):
+        from app.wechat.models import WechatDelivery
+        with self._connect() as db:
+            row = db.execute(
+                "select * from wechat_deliveries where reply_task_id=?",
+                (reply_task_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return WechatDelivery(
+            id=row["id"], task_id=row["reply_task_id"], account_id=row["account_id"],
+            target_type=row["target_type"], target_id=row["target_id"],
+            conversation_id=row["conversation_id"], reply_text=row["reply_text"],
+            status=row["status"], evidence=json.loads(row["evidence_json"]),
+            error=row["error"],
+        )
+
+    def set_wechat_delivery_status(
+        self, delivery_id: int, status: str, *, error: str = "",
+        action_started_at: str | None = None,
+    ) -> None:
+        with self._connect() as db:
+            if action_started_at is not None:
+                db.execute(
+                    "update wechat_deliveries set status=?, error=?, "
+                    "action_started_at=?, updated_at=current_timestamp where id=?",
+                    (status, error, action_started_at, delivery_id),
+                )
+            else:
+                db.execute(
+                    "update wechat_deliveries set status=?, error=?, "
+                    "updated_at=current_timestamp where id=?",
+                    (status, error, delivery_id),
+                )
+
     @staticmethod
     def _meeting_alignment_job_from_row(
         row: sqlite3.Row,
