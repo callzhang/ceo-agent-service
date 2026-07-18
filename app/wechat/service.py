@@ -44,6 +44,23 @@ def build_reader(mirror_dir, passphrase_file, *, self_username: str = ""):
     return WechatReader(backend, PassphraseFileKeyProvider(passphrase_file))
 
 
+def build_setup_service(store):
+    """Construct a WechatSetupService from config (reader + accessibility preflight)."""
+    from app import config
+    from app.wechat.setup import WechatSetupService
+    from app.wechat.accessibility import MacWechatAccessibility
+
+    reader = build_reader(config.wechat_mirror_dir(), config.wechat_passphrase_file())
+
+    def _preflight() -> str:
+        try:
+            return MacWechatAccessibility().preflight()
+        except Exception:
+            return "unknown"
+
+    return WechatSetupService(store, reader, _preflight)
+
+
 def run_produce_once(store, reader, account, *, self_user_id: str) -> int:
     from app.wechat.producer import WechatReplyProducer
 

@@ -53,6 +53,7 @@ class SetupWizardEvent(BaseModel):
     step_id: str
     action_id: str
     status: SetupActionStatus
+    next_step_status: str = ""
     summary: str = ""
     evidence: dict[str, str | int | bool] = Field(default_factory=dict)
     stdout_excerpt: str = ""

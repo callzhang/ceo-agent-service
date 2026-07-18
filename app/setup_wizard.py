@@ -104,6 +104,33 @@ SETUP_WIZARD_STEPS: tuple[SetupStepDefinition, ...] = (
         ],
     ),
     SetupStepDefinition(
+        id="wechat_connection",
+        title="Connect WeChat",
+        phase="Phase 3",
+        description="Connect the local personal account and select reply targets.",
+        depends_on=["service_config"],
+        actions=[
+            SetupAction(
+                id="check_wechat_connection",
+                label="Check",
+                step_id="wechat_connection",
+                kind="check",
+            ),
+            SetupAction(
+                id="connect_wechat",
+                label="Connect WeChat",
+                step_id="wechat_connection",
+                kind="run",
+            ),
+            SetupAction(
+                id="verify_wechat",
+                label="Save and verify",
+                step_id="wechat_connection",
+                kind="run",
+            ),
+        ],
+    ),
+    SetupStepDefinition(
         id="data_corpus",
         title="Data Corpus",
         phase="Phase 4",
@@ -446,6 +473,8 @@ def check_setup_step(
     repo_root: Path,
     store: AutoReplyStore | None = None,
 ) -> SetupStepStatus:
+    if step_id == "wechat_connection":
+        return _check_wechat_connection(store)
     del store
     if step_id == "preflight":
         return _check_preflight(repo_root=repo_root)
@@ -555,6 +584,8 @@ def run_setup_action(
         return _setup_service_config(repo_root, env or {})
     if action_id == "setup_mcp":
         return _setup_mcp(repo_root, env or {})
+    if action_id in ("connect_wechat", "verify_wechat"):
+        return _run_wechat_setup_action(action_id)
     try:
         action = get_action_definition(action_id)
     except KeyError:
@@ -569,6 +600,55 @@ def run_setup_action(
         action_id=action_id,
         status="failed",
         summary=f"{action.label} is not automated yet.",
+    )
+
+
+def _check_wechat_connection(store) -> SetupStepStatus:
+    from app import config
+    from app.store import AutoReplyStore
+    from app.wechat import service
+
+    try:
+        store = store or AutoReplyStore(config.worker_db_path())
+        result = service.build_setup_service(store).check()
+        status = "done" if result.status == "done" else "needs_action"
+        summary = result.summary
+    except Exception as exc:  # pragma: no cover - defensive
+        status, summary = "needs_action", f"WeChat check unavailable: {exc}"
+    return SetupStepStatus(
+        step_id="wechat_connection",
+        title="Connect WeChat",
+        status=status,
+        summary=summary,
+    )
+
+
+def _run_wechat_setup_action(action_id: str) -> SetupWizardEvent:
+    from app import config
+    from app.store import AutoReplyStore
+    from app.wechat import service
+
+    _capability_to_step = {"ready": "done", "blocked": "blocked", "failed": "failed"}
+    try:
+        store = AutoReplyStore(config.worker_db_path())
+        setup = service.build_setup_service(store)
+        result = setup.verify() if action_id == "verify_wechat" else setup.connect()
+    except Exception as exc:  # pragma: no cover - defensive
+        return SetupWizardEvent(
+            step_id="wechat_connection",
+            action_id=action_id,
+            status="failed",
+            summary=f"WeChat setup error: {exc}",
+        )
+    return SetupWizardEvent(
+        step_id="wechat_connection",
+        action_id=action_id,
+        status="done" if result.status in ("done", "needs_action") else "failed",
+        next_step_status=_capability_to_step.get(
+            result.next_step_status, result.next_step_status
+        ),
+        summary=result.summary,
+        evidence={key: str(value) for key, value in (result.evidence or {}).items()},
     )
 
 

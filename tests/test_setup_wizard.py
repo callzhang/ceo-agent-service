@@ -33,6 +33,7 @@ def test_setup_wizard_steps_are_ordered_and_gated():
         "cli_components",
         "mcp",
         "service_config",
+        "wechat_connection",
         "data_corpus",
         "work_profile",
         "dry_run",
@@ -40,6 +41,15 @@ def test_setup_wizard_steps_are_ordered_and_gated():
         "live_send",
     ]
     assert get_step_definition("mcp").depends_on == ("cli_components",)
+    # WeChat is an independent Phase-3 sibling of data_corpus (both gate on
+    # service_config); a blocked WeChat must never block the data corpus.
+    assert get_step_definition("wechat_connection").depends_on == ("service_config",)
+    assert get_step_definition("data_corpus").depends_on == ("service_config",)
+    assert [a.id for a in get_step_definition("wechat_connection").actions] == [
+        "check_wechat_connection",
+        "connect_wechat",
+        "verify_wechat",
+    ]
     assert get_step_definition("launchd").depends_on == ("dry_run",)
     assert get_step_definition("live_send").depends_on == ("dry_run",)
     assert get_action_definition("setup_cli_components").step_id == "cli_components"
@@ -89,6 +99,11 @@ def test_setup_wizard_action_metadata_is_gated():
                 False,
                 False,
             ),
+        ],
+        "wechat_connection": [
+            ("check_wechat_connection", "Check", "wechat_connection", "check", False, False),
+            ("connect_wechat", "Connect WeChat", "wechat_connection", "run", False, False),
+            ("verify_wechat", "Save and verify", "wechat_connection", "run", False, False),
         ],
         "data_corpus": [
             ("check_data_corpus", "Check", "data_corpus", "check", False, False),
@@ -632,6 +647,33 @@ def test_run_setup_mcp_handles_missing_and_failed_setup(monkeypatch, tmp_path: P
 
     assert failed.status == "failed"
     assert "cannot write [REDACTED_PATH]" in failed.summary
+
+
+def test_run_setup_action_dispatches_wechat_connect(monkeypatch, tmp_path: Path):
+    from app.wechat.setup import WechatSetupResult
+
+    class _FakeSetup:
+        def connect(self, selected_account_id: str = ""):
+            return WechatSetupResult(
+                action_id="connect_wechat",
+                status="done",
+                next_step_status="blocked",
+                summary="key unavailable",
+                evidence={"database_status": "blocked"},
+            )
+
+    monkeypatch.setattr(
+        "app.wechat.service.build_setup_service", lambda store: _FakeSetup()
+    )
+    monkeypatch.setenv("CEO_WORKER_DB", str(tmp_path / "worker.sqlite3"))
+
+    event = run_setup_action("connect_wechat", repo_root=tmp_path, env={})
+
+    assert event.step_id == "wechat_connection"
+    assert event.action_id == "connect_wechat"
+    assert event.status == "done"
+    assert event.next_step_status == "blocked"  # blocked reader -> step stays blocked
+    assert event.summary == "key unavailable"
 
 
 def test_run_setup_action_rejects_unknown_action(tmp_path: Path):

@@ -5266,6 +5266,15 @@ def create_audit_app(
 ) -> FastAPI:
     app = FastAPI(title="CEO Agent Audit")
 
+    from app.store import AutoReplyStore as _WechatStore
+    from app.wechat import service as _wechat_service
+    from app.wechat.audit_web import register_wechat_tutorial_routes
+
+    register_wechat_tutorial_routes(
+        app,
+        setup_factory=lambda: _wechat_service.build_setup_service(_WechatStore(db_path)),
+    )
+
     @app.get("/", response_class=HTMLResponse)
     def attempt_list(request: Request) -> str:
         query = str(request.query_params.get("q", ""))
@@ -5333,7 +5342,8 @@ def create_audit_app(
         if event.step_id != "unknown":
             store.upsert_setup_wizard_step(
                 step_id=event.step_id,
-                status="done" if event.status == "done" else "failed",
+                status=event.next_step_status
+                or ("done" if event.status == "done" else "failed"),
                 summary=event.summary,
             )
         return _setup_action_response(request, event)
