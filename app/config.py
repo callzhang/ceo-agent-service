@@ -288,3 +288,32 @@ def single_chat_read_recovery_window() -> timedelta:
 
 def single_chat_read_recovery_limit() -> int:
     return env_int("SINGLE_CHAT_READ_RECOVERY_LIMIT", 50)
+
+
+# --- WeChat personal-account channel (disabled by default) ---
+def _wechat_truthy(name: str) -> bool:
+    return os.getenv(name, "0").strip().lower() in ("1", "true", "yes", "on")
+
+
+def wechat_reader_enabled() -> bool:
+    return _wechat_truthy("CEO_WECHAT_READER_ENABLED")
+
+
+def wechat_sender_enabled() -> bool:
+    return _wechat_truthy("CEO_WECHAT_SENDER_ENABLED")
+
+
+def wechat_poll_interval_seconds() -> int:
+    return env_int("CEO_WECHAT_POLL_INTERVAL_SECONDS", 15)
+
+
+def wechat_passphrase_file() -> Path:
+    return env_path("CEO_WECHAT_PASSPHRASE_FILE", "~/.config/wx_read/passphrase.hex")
+
+
+def wechat_mirror_dir() -> Path:
+    return env_path("CEO_WECHAT_MIRROR_DIR", "~/.cache/wx_read/plain")
+
+
+def wechat_snapshot_dir() -> Path:
+    return env_path("CEO_WECHAT_SNAPSHOT_DIR", "data/wechat-snapshots")
