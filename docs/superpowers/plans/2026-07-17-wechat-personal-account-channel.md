@@ -8,6 +8,8 @@
 
 **Tech Stack:** Python 3.12, Pydantic 2, SQLite, FastAPI, pytest, macOS `osascript`/Accessibility, WCDB/SQLCipher through a subprocess boundary, existing Codex decision runner and Memory Connector MCP.
 
+> **实现状态（2026-07-18）：Task 1–13 已实现并测试通过（`tests/wechat/` 48 项绿；`tests/test_store.py`/`test_worker.py` 383 项无回归）。两处硬门槛均已实测证实可行**（本机 4.1.10：读取 1,722,981 条消息 0 HMAC 失败；AX 发送到「文件传输助手」跑通）。SQLCipher 子进程改为纯 Python 解密（`cipher.py`，比子进程可靠且已自证）。**尚待完成**：① 三处 thin wiring（`setup_wizard.py` 注册 `wechat_connection` 步骤、`audit_web.py` 挂载路由、`cli.py` 加子命令并在 `run_service()` 起线程）——逻辑已在 `app/wechat/{setup,audit_web,cli,service}.py` 完成并测试，仅剩接入大文件；② 真机 live rollout（Task 14 的真发消息/@群流程）需人工触发；③ v4 群内 `@self` 精确判定需解析 `packed_info_data`（reader 现返回空 mentions，群触发在解析落地前保持 gated）。运维见 [wechat-channel-operations.md](../../wechat-channel-operations.md)。
+
 ---
 
 ## Scope and execution order
@@ -629,6 +631,12 @@ git commit -m "feat: discover WeChat accounts and snapshot databases"
 
 ### Task 4: Build the key boundary, SQLCipher protocol, and blocked reader
 
+> **⚠️ 2026-07-18 实测校正（本机 4.1.10 / build 268880，已端到端跑通；本块优先级高于下方旧描述）：**
+> - **密钥模型**：4.1+ 不缓存原始 DB key，内存只有 32 字节 **passphrase**。每个库的 `enc_key = PBKDF2-HMAC-SHA512(passphrase, 该库首16字节盐, 256000, 32)`——**逐库派生**，不是「每账号一个 key」。`key_provider` 应返回 passphrase，reader 对每个快照按其盐派生 enc_key。
+> - **SQLCipher-4 参数**：AES-256-CBC、页 4096、HMAC-SHA512、reserve 80（IV16+HMAC64）、`mac_salt = 盐 XOR 0x3a`、`mac_key = PBKDF2-HMAC-SHA512(enc_key, mac_salt, 2, 32)`。若走 sqlcipher 子进程，需 `PRAGMA cipher_compatibility = 4;` 并把**派生后的 enc_key** 以 `PRAGMA key="x'<enc_key_hex>'"`（raw-key 模式）传入，否则即使 passphrase 正确也解不开。更简做法：直接用纯 Python（`cryptography` 的 AES-CBC + hashlib）解密，无需 sqlcipher 二进制与子进程边界（参考实现 `~/wx_read_toolkit/wxlocal.py`）。
+> - **正文压缩**：`message_content` 常被 WCDB zstd 压缩（列 `WCDB_CT_message_content==4`，magic `28b52ffd`，无字典），reader 必须用 `libzstd` 解压后再当 UTF-8/XML 解析。
+> - **已知 schema（4.1.10）**：消息在按会话分表 `Msg_<md5(会话username)>`（列含 local_id, server_id, local_type, sort_seq, real_sender_id, create_time, status, message_content, WCDB_CT_message_content, packed_info_data …）；发言人 `real_sender_id → Name2Id.rowid → user_name`；显示名走 `contact.db`（contact.username→remark/nick_name、chat_room）。版本串是 `4.1.10`（build 268880），非 `4.1.10.80`。
+
 **Files:**
 - Create: `app/wechat/key_provider.py`
 - Create: `app/wechat/sqlcipher.py`
@@ -793,6 +801,13 @@ git commit -m "feat: add blocked-by-default WeChat reader"
 ```
 
 ### Task 5: Execute the current-version key and schema feasibility gate
+
+> **⚠️ 2026-07-18 实测校正（取 key 已跑通；本块优先级高于下方旧描述）：**
+> - **断点选 `CCKeyDerivationPBKDF`（Apple 系统符号、跨 build 稳定），不是 `sqlite3_key`。** 条件 `passwordLen(x2)==32 && rounds(x6)==256000`，读 `x1` 指向的 32 字节 = passphrase，当场用真实 `message_0.db` 首页 HMAC 校验（派生 enc_key 后比对）通过再采纳。`sqlite3_key` 在 4.1+ 拿到的也是 passphrase、仍需 PBKDF2 派生，且不如 CC 符号稳定。
+> - **重签名走「影子副本」，不是就地改签。** macOS 26 的 app-management 会拦截对 `/Applications/WeChat.app` 的改签（root 亦 `Operation not permitted`）。把 App 拷到 `~/`（或 `/private/tmp`），只对副本 ad-hoc 重签（去 Hardened Runtime + 加 `get-task-allow`），原 App 一字节不动、`codesign --verify` 仍过。无需 sudo、无需禁用 SIP。副本因签名身份变化会重登；**挂调试器后在副本里退登再重登**触发一次派生即命中。
+> - **lldb 用常驻同步驱动**：`PYTHONPATH=$(lldb -P) /usr/bin/python3` 跑 `SBDebugger(SetAsync=False)`：attach → `BreakpointCreateByName("CCKeyDerivationPBKDF")` → 循环 `Continue`（`lldb --batch` 会在 `continue` 后立即 detach、抓不到；参考 `~/wx_read_toolkit/capture_driver.py`）。
+> - **策略抉择（覆盖下方「不持久化、保持 blocked」的保守默认）**：本机已证实**唯一可行 key 来源就是这条重签副本 + 断点抓取**（`key_info.db` 存登录 key 非 DB key、内存无原始 key、Keychain 无、只读 task port 够不到读写堆——其它路径均已证伪）。若维持「不持久化、保持 blocked」，reader 将**永久 blocked**、与目标冲突。经用户授权后的正确做法：**一次性抓 passphrase → 安全持久化（Keychain 或 chmod600 非仓库文件，如 `~/.config/wx_read/passphrase.hex`）→ 运行期读取并逐库派生**；capability 置 `ready`。passphrase 账号级、跨重启稳定，仅在退登换号/重装时需重抓。本机已完成：14 个 message 分片 + contact.db 全解、0 HMAC 失败、1,722,981 条消息可读。
+> - report 仍只写指纹不写 key（`sha256:` 前缀）；持久化的 passphrase 文件不入仓库、不入长期记忆。
 
 **Files:**
 - Create: `scripts/wechat_key_probe.py`
@@ -1316,6 +1331,9 @@ git commit -m "feat: decide WeChat replies with existing CEO agent"
 ```
 
 ### Task 10: Implement fail-closed Accessibility delivery and target binding
+
+> **✅ 2026-07-18 AX 发送可行性已实测跑通（到「文件传输助手」自聊，安全）：** WeChat 4.x（Qt）暴露**带开发者 id 的可用 AX 树**，稳定绑定可行，非像素点击。已验证链路：`activate WeChat → 点搜索框 → 输入名字 → 结果项 id=`search_item_function_<名字>` → 鼠标点开 → 组件 `chat_input_field` 的 title==目标名（绑定校验）→ 聚焦输入 → 打字（发送前读回 AXValue 校验）→ Return 发送 → 组件清空=已发`。稳定 id：`session_list`、`session_item_<名>`、`search_item_function_<名>`、`chat_input_field`、`tabbar_handoff/setting`、`voip_button`、`more_button`、`main_window_*_splitter_view`。参考实现 `~/wx_read_toolkit/axkit.py`、`ax_open2.py`、`ax_send.py`。
+> **残留风险与实现要点**：① **重名碰撞**——id 里编码的是显示名，两个同名会话/联系人会撞，绑定不能只靠名字，需用预览/其它证据佐证（计划已要求）。② **列表虚拟化**——AX 树只含当前可见的最近会话；任意联系人须先用搜索浮出（已验证可行）。③ **发送=Return**——默认回车发送；若用户设了「回车换行/⌘回车发送」，Return 不发，需检测组件未清空后回退 ⌘Return。④ **需前台**——合成按键要求 WeChat 前台，发送会瞬时抢焦点（~1s）。⑤ 需给发送进程 Accessibility 权限（启动时缓存，授权后需重启该进程）。⑥ **exact-once**：组件清空是可靠的单次已发信号，配合出站消息入库对账即可实现精确一次。绑定证据只存指纹、发送脚本不把目标/正文插进 AppleScript 源（沿用原设计）。
 
 **Files:**
 - Create: `app/wechat/accessibility.py`
