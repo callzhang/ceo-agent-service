@@ -1,0 +1,113 @@
+"""WeChat Tutorial connection service (independent channel status).
+
+Auto-selects exactly one detected account, probes capability, persists read
+state, and reports separate database and accessibility status. A blocked reader
+still returns a *successful action* whose resulting step is blocked — it never
+reports the channel ready. Returns a plain result the wizard maps to its event
+model, so this stays decoupled from the shared wizard code.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Callable
+
+from app.wechat import discovery, service
+from app.wechat.models import WechatAccount
+
+
+@dataclass
+class WechatSetupResult:
+    action_id: str
+    status: str
+    next_step_status: str = ""
+    summary: str = ""
+    evidence: dict = field(default_factory=dict)
+
+
+def _default_accounts() -> list[WechatAccount]:
+    version = ""
+    try:
+        version = discovery.discover_wechat_install().version
+    except Exception:
+        version = ""
+    out = []
+    for a in discovery.discover_account_directories(discovery.default_xwechat_root()):
+        out.append(WechatAccount(
+            account_id=a.account_id, display_name=a.account_id, self_user_id="",
+            account_dir=str(a.account_dir), db_dir=str(a.db_dir), app_version=version,
+        ))
+    return out
+
+
+class WechatSetupService:
+    def __init__(self, store, reader, accessibility_preflight: Callable[[], str],
+                 accounts_provider: Callable[[], list[WechatAccount]] | None = None):
+        self.store = store
+        self.reader = reader
+        self.accessibility_preflight = accessibility_preflight
+        self.accounts_provider = accounts_provider or _default_accounts
+
+    def discover_accounts(self) -> list[WechatAccount]:
+        return self.accounts_provider()
+
+    def connect(self, selected_account_id: str = "") -> WechatSetupResult:
+        accounts = self.discover_accounts()
+        if not selected_account_id and len(accounts) != 1:
+            return WechatSetupResult(
+                action_id="connect_wechat", status="failed",
+                summary="Select exactly one detected WeChat account.",
+                evidence={"account_count": len(accounts)},
+            )
+        account = next(
+            item for item in accounts
+            if item.account_id == (selected_account_id or accounts[0].account_id)
+        )
+        capability = self.reader.probe(account)
+        self.store.upsert_wechat_read_state(
+            account_id=account.account_id, account_dir=account.account_dir,
+            db_dir=account.db_dir, app_version=account.app_version,
+            self_user_id=account.self_user_id,
+            capability_status=capability.status, capability_reason=capability.reason,
+        )
+        return WechatSetupResult(
+            action_id="connect_wechat", status="done",
+            next_step_status=capability.status,
+            summary=capability.reason or "WeChat database is connected.",
+            evidence={
+                "account_id": account.account_id,
+                "database_status": capability.status,
+                "accessibility_status": self.accessibility_preflight(),
+            },
+        )
+
+    def check(self) -> WechatSetupResult:
+        states = self.store.list_wechat_read_states()
+        ready = [row for row in states if row["capability_status"] == "ready"]
+        done = len(ready) == 1
+        return WechatSetupResult(
+            action_id="check_wechat_connection",
+            status="done" if done else "needs_action",
+            summary="WeChat is ready." if done else "Connect one WeChat account.",
+        )
+
+    def verify(self) -> WechatSetupResult:
+        check = self.check()
+        scopes = self.store.list_wechat_reply_scopes_for_ready_account(enabled_only=True)
+        accessibility_status = self.accessibility_preflight()
+        complete = check.status == "done" and bool(scopes) and accessibility_status == "ready"
+        return WechatSetupResult(
+            action_id="verify_wechat", status="done",
+            next_step_status="done" if complete else "blocked",
+            summary="WeChat scope verified." if complete else "Select at least one stable reply target.",
+            evidence={
+                "selected_target_count": len(scopes),
+                "accessibility_status": accessibility_status,
+            },
+        )
+
+    def list_targets(self, *, query: str, kind: str, limit: int, offset: int) -> list[dict]:
+        state = service.ready_account_state(self.store)
+        if state is None:
+            return []
+        account = service.account_from_state(state)
+        return self.reader.list_targets(account, kind=kind, query=query, limit=limit, offset=offset)
