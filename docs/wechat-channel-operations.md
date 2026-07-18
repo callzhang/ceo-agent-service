@@ -47,22 +47,27 @@ passphrase is account-stable; re-capture only after logout/reinstall.
     --account-db-dir "$HOME/Library/Containers/com.tencent.xinWeChat/Data/Documents/xwechat_files/<acct>/db_storage"
 ```
 
-## Remaining thin integration (into existing shared files)
+## Shared-file integration status
 
-These small wirings were intentionally left as reviewed edits to large shared
-files (the channel logic + tests are complete and isolated):
-
-1. `app/setup_wizard.py` — register a `wechat_connection` step (depends only on
-   `service_config`; actions `check`/`connect`/`verify`) mapping
-   `WechatSetupResult` to `SetupWizardEvent`; extend `SetupWizardEvent` with
-   `next_step_status` so a successful action can leave the step `blocked`.
-2. `app/audit_web.py` — `register_wechat_tutorial_routes(app, setup_factory=...)`
-   and the Memory review routes/render helper.
-3. `app/cli.py` — add `wechat-status` / `wechat-read-recent` / `wechat-produce-once`
-   / `wechat-consume-once` (delegate to `app.wechat.cli`), and start the WeChat
-   producer/consumer threads in `run_service()` only when
-   `config.wechat_reader_enabled()` and the persisted capability is `ready`
-   (`service.wechat_loop_names`). Sender flag checked per delivery.
+1. ✅ **`app/setup_wizard.py`** (done 2026-07-18) — `wechat_connection` step registered
+   (Phase 3, gates only on `service_config`, independent of `data_corpus`; actions
+   `check`/`connect`/`verify`). `run_setup_action`/`check_setup_step` dispatch to
+   `WechatSetupService` via `service.build_setup_service`. `SetupWizardEvent` gained
+   `next_step_status` so a successful action leaves the step `blocked` when the
+   reader is blocked.
+2. ✅ **`app/audit_web.py`** (done 2026-07-18) — `register_wechat_tutorial_routes`
+   mounted in `create_audit_app` (picker `GET /tutorial/wechat/conversations`,
+   `POST /tutorial/wechat/reply-scope`); `tutorial_run` honors `next_step_status`.
+3. ⏳ **`app/cli.py`** (intentionally deferred) — two remaining, both low-value/
+   higher-risk so left for a focused review:
+   - Main-command passthrough (`ceo-agent wechat-status`/`-read-recent`/
+     `-produce-once`/`-consume-once`). Not blocking: the standalone
+     `python -m app.wechat.cli <cmd>` already provides all diagnostics.
+   - Start WeChat producer/consumer threads in `run_service()` when
+     `config.wechat_reader_enabled()` **and** the persisted capability is `ready`
+     (names from `service.wechat_loop_names`; sender flag checked per delivery).
+     Deferred because `run_service()` is the production DingTalk service entry and
+     the threads are disabled by default (no runtime effect until enabled).
 
 ## Controlled verification (before any live send)
 
