@@ -99,10 +99,11 @@ class WcdbReaderBackend:
             id2u = schema.name2id_map(conn)
             q = (
                 f'SELECT local_id, server_id, local_type, real_sender_id, create_time, '
-                f'CAST(message_content AS BLOB), WCDB_CT_message_content '
+                f'CAST(message_content AS BLOB), WCDB_CT_message_content, '
+                f'CAST(source AS BLOB), WCDB_CT_source '
                 f'FROM "{table}" WHERE create_time >= ? ORDER BY create_time DESC LIMIT ?'
             )
-            for local_id, server_id, ltype, sender, ctime, content, flag in conn.execute(q, (since_ts, limit)):
+            for local_id, server_id, ltype, sender, ctime, content, flag, source, source_flag in conn.execute(q, (since_ts, limit)):
                 sender_user = id2u.get(sender, str(sender))
                 rows.append({
                     "message_id": str(server_id) if server_id else f"{shard.name}:{local_id}",
@@ -114,7 +115,7 @@ class WcdbReaderBackend:
                     "sent_at": self._iso(ctime),
                     "kind": schema.kind_for(ltype),
                     "text": schema.decode_content(content, flag) if ltype == 1 else "",
-                    "mentioned_user_ids": [],  # TODO: parse packed_info_data for @self
+                    "mentioned_user_ids": schema.parse_mentions(source, source_flag),
                 })
             conn.close()
         rows.sort(key=lambda r: r["sent_at"], reverse=True)

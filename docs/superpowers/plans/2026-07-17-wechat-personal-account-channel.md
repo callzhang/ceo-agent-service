@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python 3.12, Pydantic 2, SQLite, FastAPI, pytest, macOS `osascript`/Accessibility, WCDB/SQLCipher through a subprocess boundary, existing Codex decision runner and Memory Connector MCP.
 
-> **实现状态（2026-07-18）：Task 1–13 已实现并测试通过（`tests/wechat/` 48 项绿；`tests/test_store.py`/`test_worker.py` 383 项无回归）。两处硬门槛均已实测证实可行**（本机 4.1.10：读取 1,722,981 条消息 0 HMAC 失败；AX 发送到「文件传输助手」跑通）。SQLCipher 子进程改为纯 Python 解密（`cipher.py`，比子进程可靠且已自证）。**尚待完成**：① 三处 thin wiring（`setup_wizard.py` 注册 `wechat_connection` 步骤、`audit_web.py` 挂载路由、`cli.py` 加子命令并在 `run_service()` 起线程）——逻辑已在 `app/wechat/{setup,audit_web,cli,service}.py` 完成并测试，仅剩接入大文件；② 真机 live rollout（Task 14 的真发消息/@群流程）需人工触发；③ v4 群内 `@self` 精确判定需解析 `packed_info_data`（reader 现返回空 mentions，群触发在解析落地前保持 gated）。运维见 [wechat-channel-operations.md](../../wechat-channel-operations.md)。
+> **实现状态（2026-07-18）：Task 1–13 已实现并测试通过（`tests/wechat/` 48 项绿；`tests/test_store.py`/`test_worker.py` 383 项无回归）。两处硬门槛均已实测证实可行**（本机 4.1.10：读取 1,722,981 条消息 0 HMAC 失败；AX 发送到「文件传输助手」跑通）。SQLCipher 子进程改为纯 Python 解密（`cipher.py`，比子进程可靠且已自证）。**尚待完成**：① 三处 thin wiring（`setup_wizard.py` 注册 `wechat_connection` 步骤、`audit_web.py` 挂载路由、`cli.py` 加子命令并在 `run_service()` 起线程）——逻辑已在 `app/wechat/{setup,audit_web,cli,service}.py` 完成并测试，仅剩接入大文件；② 真机 live rollout（Task 14 的真发消息/@群流程）需人工触发；③ ✅ v4 群内 `@self` 精确判定已完成——mentions 存在消息 `source` 列的 `<msgsource><atuserlist>`（wxid 逗号列表，非 `packed_info_data`），`schema.parse_mentions`+`backend.py` 已解析（含 zstd），真机验证通过（self wxid `derek840121` 命中真实群 @ 消息）；群触发需在账号上填好 `self_user_id`。运维见 [wechat-channel-operations.md](../../wechat-channel-operations.md)。
 
 ---
 

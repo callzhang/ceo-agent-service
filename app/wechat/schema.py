@@ -11,6 +11,7 @@ from __future__ import annotations
 import ctypes
 import ctypes.util
 import hashlib
+import re
 
 _ZSTD = None
 for _cand in (
@@ -56,6 +57,32 @@ def decode_content(blob, ct_flag) -> str:
         except Exception:
             return ""
     return b.decode("utf-8", "replace")
+
+
+_ATLIST_RE = re.compile(rb"<atuserlist>(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?</atuserlist>", re.S)
+
+
+def parse_mentions(source_blob, ct_flag) -> list[str]:
+    """Extract @-mention wxids from a message's ``source`` column.
+
+    Verified on 4.1.10: group @-mentions are stored as a comma-separated wxid
+    list inside ``<msgsource><atuserlist><![CDATA[wxid_a,wxid_b]]></atuserlist>``.
+    This is the reliable wxid-based signal for @self — never match display names.
+    The source blob may be WCDB-zstd-compressed (``WCDB_CT_source==4``).
+    """
+    if source_blob is None:
+        return []
+    b = bytes(source_blob)
+    if ct_flag == 4 or b[:4] == ZSTD_MAGIC:
+        try:
+            b = zstd_decompress(b)
+        except Exception:
+            return []
+    match = _ATLIST_RE.search(b)
+    if not match:
+        return []
+    inner = match.group(1).strip()
+    return [x.decode("utf-8", "replace") for x in re.split(rb"[,\s]+", inner) if x]
 
 
 def table_for(conversation_username: str) -> str:

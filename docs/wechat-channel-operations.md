@@ -94,9 +94,13 @@ files (the channel logic + tests are complete and isolated):
 - **Sender**: needs Accessibility permission (cached at process launch); duplicate
   display names require corroboration beyond the name; Return-send fails if the
   user set "Enter=newline" (fall back to ⌘Return); sending steals focus ~1s.
-- **Exact `@self` group detection**: v4 stores mentions in `packed_info_data`;
-  the reader currently returns no mentions from real data (producer mention-gate
-  is proven via tests, real extraction is a TODO) — keep group triggers gated
-  until `packed_info_data` mention parsing lands.
+- **Exact `@self` group detection** ✅ (done 2026-07-18): mentions are stored as a
+  comma-separated wxid list in the message `source` column's
+  `<msgsource><atuserlist>` (NOT `packed_info_data`, which is only flags). The
+  reader (`schema.parse_mentions` + `backend.py`) extracts them, handling zstd
+  (`WCDB_CT_source==4`); `WechatMessage.mentions_user(self_wxid)` gates group
+  replies. Verified end-to-end on real data (self wxid `derek840121` matched in
+  real group @-messages). Group triggers require `self_user_id` populated on the
+  account so the gate has a wxid to match.
 - **Direction**: real outbound/inbound needs the self-wxid; defaults inbound
   until `self_username` is populated.
