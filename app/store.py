@@ -1707,6 +1707,26 @@ class AutoReplyStore:
             error=row["error"],
         )
 
+    def list_wechat_deliveries_by_status(self, status: str) -> list:
+        from app.wechat.models import WechatDelivery
+        with self._connect() as db:
+            rows = db.execute(
+                "select * from wechat_deliveries where status=? order by id", (status,)
+            ).fetchall()
+        return [
+            WechatDelivery(
+                id=row["id"], task_id=row["reply_task_id"], account_id=row["account_id"],
+                target_type=row["target_type"], target_id=row["target_id"],
+                conversation_id=row["conversation_id"], reply_text=row["reply_text"],
+                status=row["status"], evidence=json.loads(row["evidence_json"]),
+                error=row["error"],
+            )
+            for row in rows
+        ]
+
+    def mark_wechat_delivery_sending(self, delivery_id: int, *, now: str = "") -> None:
+        self.set_wechat_delivery_status(delivery_id, "sending", action_started_at=now)
+
     def set_wechat_delivery_status(
         self, delivery_id: int, status: str, *, error: str = "",
         action_started_at: str | None = None,
