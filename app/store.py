@@ -518,6 +518,30 @@ class AutoReplyStore:
                 );
                 create index if not exists idx_wechat_deliveries_status
                     on wechat_deliveries(status, id);
+                create table if not exists wechat_memory_candidates (
+                    id integer primary key autoincrement,
+                    import_run_id text not null,
+                    account_id text not null,
+                    statement text not null,
+                    edited_statement text not null default '',
+                    category text not null,
+                    confidence real not null,
+                    sensitivity text not null,
+                    source_conversation_ids_json text not null default '[]',
+                    source_message_ids_json text not null default '[]',
+                    source_time_start text not null default '',
+                    source_time_end text not null default '',
+                    evidence_excerpt text not null default '',
+                    cleanup_notes text not null default '',
+                    status text not null default 'pending',
+                    reviewer text not null default '',
+                    reviewed_at text not null default '',
+                    memory_write_status text not null default '',
+                    memory_id text not null default '',
+                    created_at text not null default current_timestamp,
+                    updated_at text not null default current_timestamp,
+                    unique(import_run_id, statement)
+                );
                 create table if not exists meeting_alignment_jobs (
                     id integer primary key autoincrement,
                     meeting_id text not null unique,
@@ -1744,6 +1768,81 @@ class AutoReplyStore:
                     "updated_at=current_timestamp where id=?",
                     (status, error, delivery_id),
                 )
+
+    # ---- WeChat channel: memory candidates ----
+    def add_wechat_memory_candidate(self, *, import_run_id: str, account_id: str,
+                                    candidate) -> int | None:
+        with self._connect() as db:
+            cur = db.execute(
+                """
+                insert or ignore into wechat_memory_candidates (
+                    import_run_id, account_id, statement, category, confidence,
+                    sensitivity, source_conversation_ids_json, source_message_ids_json,
+                    source_time_start, source_time_end, evidence_excerpt, cleanup_notes
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    import_run_id, account_id, candidate.statement, candidate.category,
+                    candidate.confidence, candidate.sensitivity,
+                    json.dumps(candidate.source_conversation_ids, ensure_ascii=False),
+                    json.dumps(candidate.source_message_ids, ensure_ascii=False),
+                    candidate.source_time_start, candidate.source_time_end,
+                    candidate.evidence_excerpt, candidate.cleanup_notes,
+                ),
+            )
+            if cur.rowcount != 1:
+                return None
+            return int(cur.lastrowid)
+
+    def get_wechat_memory_candidate(self, candidate_id: int) -> dict | None:
+        with self._connect() as db:
+            row = db.execute(
+                "select * from wechat_memory_candidates where id=?", (candidate_id,)
+            ).fetchone()
+        return dict(row) if row is not None else None
+
+    def list_wechat_memory_candidates(self, *, status: str | None = None) -> list[dict]:
+        with self._connect() as db:
+            if status is None:
+                rows = db.execute(
+                    "select * from wechat_memory_candidates order by id"
+                ).fetchall()
+            else:
+                rows = db.execute(
+                    "select * from wechat_memory_candidates where status=? order by id",
+                    (status,),
+                ).fetchall()
+        return [dict(row) for row in rows]
+
+    def set_wechat_memory_candidate_status(
+        self, candidate_id: int, status: str, *, reviewer: str = "",
+        edited_statement: str | None = None,
+    ) -> None:
+        with self._connect() as db:
+            if edited_statement is None:
+                db.execute(
+                    "update wechat_memory_candidates set status=?, reviewer=?, "
+                    "reviewed_at=current_timestamp, updated_at=current_timestamp "
+                    "where id=?",
+                    (status, reviewer, candidate_id),
+                )
+            else:
+                db.execute(
+                    "update wechat_memory_candidates set status=?, reviewer=?, "
+                    "edited_statement=?, reviewed_at=current_timestamp, "
+                    "updated_at=current_timestamp where id=?",
+                    (status, reviewer, edited_statement, candidate_id),
+                )
+
+    def set_wechat_memory_candidate_written(
+        self, candidate_id: int, *, memory_id: str, memory_write_status: str
+    ) -> None:
+        with self._connect() as db:
+            db.execute(
+                "update wechat_memory_candidates set memory_id=?, "
+                "memory_write_status=?, updated_at=current_timestamp where id=?",
+                (memory_id, memory_write_status, candidate_id),
+            )
 
     @staticmethod
     def _meeting_alignment_job_from_row(
