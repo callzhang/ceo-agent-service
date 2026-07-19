@@ -102,11 +102,34 @@ class MacWechatAccessibility:
     """
     BUNDLE_ID = "com.tencent.xinWeChat"
 
-    def __init__(self, *, settle: float = 1.4, restore_focus: bool = True):
+    def __init__(self, *, settle: float = 1.4, restore_focus: bool = True,
+                 idle_seconds: float = 2.0, idle_max_wait: float = 120.0):
         self.settle = settle
         # After a send, re-activate whatever app was frontmost so switching to
         # WeChat to pick the target chat only steals focus for ~1s.
         self.restore_focus = restore_focus
+        # Selecting a chat needs WeChat briefly key (this build gates search/click
+        # on its window being active). To avoid interrupting the user mid-typing,
+        # wait until they've been idle for idle_seconds before foregrounding (up to
+        # idle_max_wait, then proceed so the reply is not starved).
+        self.idle_seconds = idle_seconds
+        self.idle_max_wait = idle_max_wait
+
+    def _wait_until_idle(self) -> None:
+        import time
+        try:
+            import Quartz
+        except Exception:
+            return
+        waited = 0.0
+        while waited < self.idle_max_wait:
+            idle = Quartz.CGEventSourceSecondsSinceLastEventType(
+                Quartz.kCGEventSourceStateHIDSystemState, Quartz.kCGAnyInputEventType
+            )
+            if idle >= self.idle_seconds:
+                return
+            time.sleep(0.3)
+            waited += 0.3
 
     @staticmethod
     def _frontmost_app():
@@ -231,6 +254,7 @@ class MacWechatAccessibility:
         prev_app = self._frontmost_app()
         try:
             # --- navigation (needs a real click; briefly foreground WeChat) ---
+            self._wait_until_idle()   # don't interrupt the user mid-typing
             self._reactivate(
                 __import__("AppKit").NSRunningApplication
                 .runningApplicationWithProcessIdentifier_(pid)

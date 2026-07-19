@@ -98,12 +98,16 @@ passphrase is account-stable; re-capture only after logout/reinstall.
 - **Sender** (pure-AX, 2026-07-18): composes via `AXValue` set on `chat_input_field`
   and sends by posting Return to WeChat's pid (`CGEventPostToPid`) — **no focus
   steal, no synthetic typing into the frontmost app**. Selecting the target chat
-  still needs one real click (this 4.1.10 build exposes no selectable AX for the
-  session list — rows are static text with empty action lists), so WeChat is
-  briefly foregrounded for navigation and the previously-frontmost app is
-  re-activated afterwards (`restore_focus`). Residual: needs Accessibility
-  permission (cached at process launch — grant then relaunch the sending process);
-  duplicate display names require corroboration beyond the name; if the user set
+  is the one step that needs WeChat briefly key: on 4.1.10 the session list rows
+  are static text with empty AX action lists, background clicks don't register,
+  and background keystrokes land text in the search box but WeChat won't *run* the
+  search unless its window is active — so full-background nav is not possible.
+  Mitigation: the sender **waits until the user has been idle** (`idle_seconds`,
+  no keyboard/mouse via `CGEventSourceSecondsSinceLastEventType`) before the ~1s
+  foreground, then **restores the previously-frontmost app** (`restore_focus`) —
+  so it never interrupts mid-typing. Residual: needs Accessibility permission
+  (cached at process launch — grant then relaunch the sending process); duplicate
+  display names require corroboration beyond the name; if the user set
   "Enter=newline", Return won't send (composer-not-cleared → fall back to ⌘Return).
 - **Exact `@self` group detection** ✅ (done 2026-07-18): mentions are stored as a
   comma-separated wxid list in the message `source` column's
