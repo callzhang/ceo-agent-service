@@ -1508,8 +1508,10 @@ def test_call_dws_suppresses_message_read_system_errors(
     notifications = []
     system_error = DwsError(
         "dws command failed with exit code 1; "
-        "command=dws chat message list-mentions --start 2026-07-16T02:23:27",
-        code="SYSTEM_ERROR",
+        "command=dws contact user search --query 于海龙 --format json; "
+        "stderr={\"error\":{\"actions\":[\"Check network, proxy, and DNS settings\"],"
+        "\"cause\":\"net/http: TLS handshake timeout\"}}",
+        code="1",
     )
     dws = FakeDws([], {})
     codex = FakeCodex(CodexDecision(action=CodexAction.SEND_REPLY, reply_text="收到"))

@@ -529,7 +529,15 @@ class DingTalkAutoReplyWorker:
 
     @staticmethod
     def _is_dws_transient_error(exc: Exception) -> bool:
-        return isinstance(exc, DwsError) and exc.code in DwsClient.RETRYABLE_ERROR_CODES
+        if not isinstance(exc, DwsError):
+            return False
+        if exc.code in DwsClient.RETRYABLE_ERROR_CODES:
+            return True
+        normalized = str(exc).casefold()
+        return any(
+            marker in normalized
+            for marker in DwsClient.STRUCTURED_NETWORK_ERROR_MARKERS
+        )
 
     @staticmethod
     def _is_dws_message_read_kind(kind: str) -> bool:
