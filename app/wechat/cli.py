@@ -120,6 +120,31 @@ def cmd_produce_once(args) -> int:
     return 0
 
 
+def cmd_pending(args) -> int:
+    store = AutoReplyStore(Path(args.db))
+    pend = service.pending_wechat_deliveries(store)
+    print(f"{len(pend)} pending [mode={config.wechat_send_mode()}]:")
+    for d in pend:
+        print(f"  #{d.id} -> [{d.target_type}] {d.target_id}: {d.reply_text[:70]}")
+    return 0
+
+
+def cmd_approve(args) -> int:
+    from app.wechat.accessibility import MacWechatAccessibility, WechatSender
+    store = AutoReplyStore(Path(args.db))
+    sender = WechatSender(store, MacWechatAccessibility())
+    status = service.approve_wechat_delivery(store, sender, args.id)
+    print(f"delivery #{args.id}: {status}")
+    return 0
+
+
+def cmd_reject(args) -> int:
+    store = AutoReplyStore(Path(args.db))
+    service.reject_wechat_delivery(store, args.id)
+    print(f"delivery #{args.id}: rejected")
+    return 0
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(prog="wechat")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -133,6 +158,9 @@ def main(argv=None) -> int:
     p.set_defaults(fn=cmd_read_recent)
     p = sub.add_parser("produce-once"); p.add_argument("--db", default=DEFAULT_DB); p.set_defaults(fn=cmd_produce_once)
     p = sub.add_parser("consume-once"); p.add_argument("--db", default=DEFAULT_DB); p.set_defaults(fn=cmd_consume_once)
+    p = sub.add_parser("pending"); p.add_argument("--db", default=DEFAULT_DB); p.set_defaults(fn=cmd_pending)
+    p = sub.add_parser("approve"); p.add_argument("--db", default=DEFAULT_DB); p.add_argument("--id", type=int, required=True); p.set_defaults(fn=cmd_approve)
+    p = sub.add_parser("reject"); p.add_argument("--db", default=DEFAULT_DB); p.add_argument("--id", type=int, required=True); p.set_defaults(fn=cmd_reject)
 
     args = parser.parse_args(argv)
     return args.fn(args)

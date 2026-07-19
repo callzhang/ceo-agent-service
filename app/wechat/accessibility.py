@@ -304,3 +304,85 @@ class MacWechatAccessibility:
         finally:
             if self.restore_focus:
                 self._reactivate(prev_app)
+
+    def recall_last_outbound(self, text: str) -> bool:
+        """BEST-EFFORT, UNVALIDATED backstop: right-click the message bubble
+        containing ``text`` and click 撤回. Only works inside WeChat's ~2-minute
+        recall window, with the chat still open and WeChat foregroundable. Returns
+        whether 撤回 was clicked. Reliable auto-triggering is limited: immediate
+        wrong-target detection is hard (duplicate names) and the DB reconcile that
+        would catch it is delayed by WAL, often past the 2-minute window — so the
+        real safety is confirm mode + the pre-send binding check, not this.
+        """
+        (time, AXIsProcessTrusted, mk_app, get_attr, set_attr, perform, Quartz) = self._ax()
+        if not AXIsProcessTrusted() or not text.strip():
+            return False
+        pid = next(
+            (w.get("kCGWindowOwnerPID") for w in Quartz.CGWindowListCopyWindowInfo(
+                Quartz.kCGWindowListOptionAll, Quartz.kCGNullWindowID)
+             if w.get("kCGWindowOwnerName") == "WeChat"), None)
+        if not pid:
+            return False
+        app = mk_app(pid)
+
+        def g(el, attr):
+            err, val = get_attr(el, attr, None)
+            return val if err == 0 else None
+
+        def walk(el, depth=0):
+            yield el
+            if depth < 14:
+                for c in (g(el, "AXChildren") or []):
+                    yield from walk(c, depth + 1)
+
+        prev_app = self._frontmost_app()
+        try:
+            self._wait_until_idle()
+            self._reactivate(
+                __import__("AppKit").NSRunningApplication
+                .runningApplicationWithProcessIdentifier_(pid)
+            )
+            time.sleep(0.5)
+            bubble = None
+            for el in walk(app):
+                for a in ("AXValue", "AXTitle"):
+                    v = g(el, a)
+                    if isinstance(v, str) and text in v:
+                        bubble = el
+                        break
+                if bubble is not None:
+                    break
+            if bubble is None:
+                return False
+            from ApplicationServices import AXValueGetValue, kAXValueCGPointType, kAXValueCGSizeType
+            pos, size = g(bubble, "AXPosition"), g(bubble, "AXSize")
+            okp, p = AXValueGetValue(pos, kAXValueCGPointType, None) if pos else (False, None)
+            oks, s = AXValueGetValue(size, kAXValueCGSizeType, None) if size else (False, None)
+            if not (okp and oks):
+                return False
+            cx, cy = p.x + s.width / 2, p.y + s.height / 2
+            for ev in (Quartz.kCGEventRightMouseDown, Quartz.kCGEventRightMouseUp):
+                e = Quartz.CGEventCreateMouseEvent(None, ev, (cx, cy), Quartz.kCGMouseButtonRight)
+                Quartz.CGEventPost(Quartz.kCGHIDEventTap, e)
+                time.sleep(0.05)
+            time.sleep(0.4)
+            recall_item = next(
+                (el for el in walk(app)
+                 if g(el, "AXRole") == "AXMenuItem" and "撤回" in (g(el, "AXTitle") or "")),
+                None,
+            )
+            if recall_item is None:
+                return False
+            perform(recall_item, "AXPress")
+            time.sleep(0.4)
+            confirm = next(
+                (el for el in walk(app)
+                 if g(el, "AXRole") == "AXButton" and (g(el, "AXTitle") or "") in ("确定", "确认", "撤回")),
+                None,
+            )
+            if confirm is not None:
+                perform(confirm, "AXPress")
+            return True
+        finally:
+            if self.restore_focus:
+                self._reactivate(prev_app)

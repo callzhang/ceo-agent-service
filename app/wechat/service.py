@@ -80,3 +80,66 @@ def recover_before_sender(store, reader) -> list:
     from app.wechat.accessibility import reconcile_incomplete_deliveries
 
     return reconcile_incomplete_deliveries(store, reader)
+
+
+# ---- confirm-mode delivery gating (CEO_WECHAT_SEND_MODE) ----
+
+def pending_wechat_deliveries(store) -> list:
+    """Deliveries awaiting a decision (ready_to_send). In confirm mode these are
+    what the user reviews and approves before anything is sent."""
+    return store.list_wechat_deliveries_by_status("ready_to_send")
+
+
+def _scope_for_delivery(store, delivery):
+    return store.get_wechat_reply_scope(
+        delivery.account_id, delivery.target_type, delivery.target_id
+    )
+
+
+def process_ready_wechat_deliveries(store, sender, *, mode: str, sender_enabled: bool) -> int:
+    """Auto mode + sender enabled: send every ready_to_send delivery. Confirm mode
+    (or sender disabled): send nothing — hold them for explicit approval. Returns
+    the number sent."""
+    if not sender_enabled or mode != "auto":
+        return 0
+    sent = 0
+    for delivery in pending_wechat_deliveries(store):
+        scope = _scope_for_delivery(store, delivery)
+        if scope is None:
+            continue
+        sender.send(delivery, scope)
+        sent += 1
+    return sent
+
+
+def approve_wechat_delivery(store, sender, delivery_id: int) -> str:
+    """Explicit user approval of one pending delivery (used by UI/CLI). Sends it
+    regardless of send mode; returns the resulting delivery status."""
+    delivery = next(
+        (d for d in pending_wechat_deliveries(store) if d.id == delivery_id), None
+    )
+    if delivery is None:
+        raise ValueError(f"no pending delivery {delivery_id}")
+    scope = _scope_for_delivery(store, delivery)
+    if scope is None:
+        raise ValueError("no reply scope for delivery target")
+    return sender.send(delivery, scope).status
+
+
+def reject_wechat_delivery(store, delivery_id: int) -> None:
+    """User rejects a pending delivery: mark failed, never send."""
+    store.set_wechat_delivery_status(delivery_id, "failed", error="user_rejected")
+
+
+def recall_wechat_delivery(store, runner, delivery_id: int, reply_text: str) -> bool:
+    """Best-effort recall (撤回) of an already-sent delivery. Only works while the
+    2-minute WeChat recall window is open and the runner supports it; returns
+    whether recall was performed. Detection of a wrong send is delayed (WAL lag on
+    DB reconcile), so this is a backstop, not a guaranteed auto-catch."""
+    recall = getattr(runner, "recall_last_outbound", None)
+    if recall is None:
+        return False
+    ok = bool(recall(reply_text))
+    if ok:
+        store.set_wechat_delivery_status(delivery_id, "failed", error="recalled")
+    return ok

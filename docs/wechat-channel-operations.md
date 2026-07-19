@@ -85,6 +85,28 @@ passphrase is account-stable; re-capture only after logout/reinstall.
    pending rows only; approve one, write once, write again → same Memory id, one
    tool call; reject another → cannot be written.
 
+## Send confirmation & recall (2026-07-18)
+
+- **Confirm vs auto** (`CEO_WECHAT_SEND_MODE`, default `confirm`): the consumer
+  always produces a `ready_to_send` delivery. In **confirm** mode the sender loop
+  sends **nothing** — deliveries wait for explicit approval
+  (`ceo-agent wechat pending` / `approve --id N` / `reject --id N`, or
+  `service.approve_wechat_delivery`/`reject_wechat_delivery`). In **auto** mode the
+  `wechat-sender` loop sends them (only when `CEO_WECHAT_SENDER_ENABLED=1`). This is
+  the primary guard against a wrong/awkward send.
+- **Wrong-target detection is layered, not instant.** Immediate check = the AX
+  binding (`chat_input_field.AXTitle == target`, twice); duplicates it cannot tell
+  apart, so those rely on `binding_status=="verified"` (fail-closed). A **DB check
+  by `conversation_id`** must be **delayed** (reconcile): the just-sent message
+  sits in WeChat's WAL and is not in the decrypted mirror for seconds–minutes, so
+  an immediate DB verify false-negatives and must **not** drive an auto-recall.
+- **Recall (撤回)** is a **best-effort, unvalidated backstop**
+  (`runner.recall_last_outbound(text)` → right-click bubble → 撤回; `service.
+  recall_wechat_delivery`). It only works inside WeChat's ~2-minute window with the
+  chat open, and reliable auto-triggering is limited (immediate wrong detection is
+  hard; the DB reconcile that would catch it is past the window). Treat it as a
+  manual "oops" action, not a guaranteed net — **confirm mode is the real safety.**
+
 ## Disable / rollback
 
 - `CEO_WECHAT_READER_ENABLED=0`, `CEO_WECHAT_SENDER_ENABLED=0` (defaults) — loops

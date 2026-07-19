@@ -2294,10 +2294,16 @@ def _wechat_service_components(settings: WorkerSettings) -> tuple:
     store = AutoReplyStore(settings.db_path)
     if _wx.ready_account_state(store) is None:
         return ()
-    return (
+    components = [
         ("wechat-producer", lambda: _run_wechat_loop(settings, "producer")),
         ("wechat-consumer", lambda: _run_wechat_loop(settings, "consumer")),
-    )
+    ]
+    # The sender loop only auto-sends in 'auto' mode; in 'confirm' mode (default)
+    # it holds ready_to_send deliveries for explicit approval. Only start it when
+    # sending is enabled at all.
+    if _cfg.wechat_sender_enabled():
+        components.append(("wechat-sender", lambda: _run_wechat_loop(settings, "sender")))
+    return tuple(components)
 
 
 def _run_wechat_loop(settings: WorkerSettings, role: str) -> None:
@@ -2322,13 +2328,23 @@ def _run_wechat_loop(settings: WorkerSettings, role: str) -> None:
             timeout_seconds=settings.codex_timeout_seconds,
             idle_timeout_seconds=settings.codex_idle_timeout_seconds,
         )
+    wsender = None
+    if role == "sender":
+        from app.wechat.accessibility import MacWechatAccessibility, WechatSender
+        wsender = WechatSender(store, MacWechatAccessibility())
     interval = max(1, _cfg.wechat_poll_interval_seconds())
     while True:
         try:
             if role == "producer":
                 _wx.run_produce_once(store, reader, account, self_user_id=account.self_user_id)
-            else:
+            elif role == "consumer":
                 _wx.run_consume_once(store, runner, reader, account)
+            else:  # sender: auto-sends only in 'auto' mode, else holds for approval
+                _wx.process_ready_wechat_deliveries(
+                    store, wsender,
+                    mode=_cfg.wechat_send_mode(),
+                    sender_enabled=_cfg.wechat_sender_enabled(),
+                )
         except Exception as exc:  # keep the loop alive; surface via error log
             store.record_error("wechat", "", f"wechat_{role}_loop_error", str(exc))
         time.sleep(interval)

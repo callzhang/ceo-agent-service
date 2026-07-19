@@ -331,3 +331,10 @@ def wechat_send_idle_seconds() -> float:
         return float(os.getenv("CEO_WECHAT_SEND_IDLE_SECONDS", "10"))
     except ValueError:
         return 10.0
+
+
+def wechat_send_mode() -> str:
+    """'confirm' (default): hold ready_to_send deliveries for explicit user
+    approval; 'auto': the sender loop sends them automatically."""
+    mode = os.getenv("CEO_WECHAT_SEND_MODE", "confirm").strip().lower()
+    return mode if mode in ("confirm", "auto") else "confirm"
