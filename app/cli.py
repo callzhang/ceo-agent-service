@@ -2067,6 +2067,7 @@ def _is_dws_transient_dependency_error(exc: Exception) -> bool:
             "mcp service is reachable",
             "network_error",
             "timeout_error",
+            "command timed out after",
         )
     )
 
