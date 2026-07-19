@@ -58,16 +58,15 @@ passphrase is account-stable; re-capture only after logout/reinstall.
 2. ✅ **`app/audit_web.py`** (done 2026-07-18) — `register_wechat_tutorial_routes`
    mounted in `create_audit_app` (picker `GET /tutorial/wechat/conversations`,
    `POST /tutorial/wechat/reply-scope`); `tutorial_run` honors `next_step_status`.
-3. ⏳ **`app/cli.py`** (intentionally deferred) — two remaining, both low-value/
-   higher-risk so left for a focused review:
-   - Main-command passthrough (`ceo-agent wechat-status`/`-read-recent`/
-     `-produce-once`/`-consume-once`). Not blocking: the standalone
-     `python -m app.wechat.cli <cmd>` already provides all diagnostics.
-   - Start WeChat producer/consumer threads in `run_service()` when
-     `config.wechat_reader_enabled()` **and** the persisted capability is `ready`
-     (names from `service.wechat_loop_names`; sender flag checked per delivery).
-     Deferred because `run_service()` is the production DingTalk service entry and
-     the threads are disabled by default (no runtime effect until enabled).
+3. ✅ **`app/cli.py`** (done 2026-07-18):
+   - `ceo-agent wechat <status|read-recent|produce-once|consume-once>` passes
+     through (argparse REMAINDER) to `app.wechat.cli`. `wechat status`
+     auto-detects+persists `self_user_id` and reports `ready`.
+   - `run_service()` starts `wechat-producer`/`wechat-consumer` threads only when
+     `CEO_WECHAT_READER_ENABLED` **and** a single account is persisted `ready`
+     (`_wechat_service_components`); disabled by default (no effect on the DingTalk
+     service). Auto-send stays gated — the loops enqueue tasks and produce
+     `ready_to_send` deliveries but do not send.
 
 ## Controlled verification (before any live send)
 
@@ -96,9 +95,16 @@ passphrase is account-stable; re-capture only after logout/reinstall.
 
 ## Known residual risks / TODO
 
-- **Sender**: needs Accessibility permission (cached at process launch); duplicate
-  display names require corroboration beyond the name; Return-send fails if the
-  user set "Enter=newline" (fall back to ⌘Return); sending steals focus ~1s.
+- **Sender** (pure-AX, 2026-07-18): composes via `AXValue` set on `chat_input_field`
+  and sends by posting Return to WeChat's pid (`CGEventPostToPid`) — **no focus
+  steal, no synthetic typing into the frontmost app**. Selecting the target chat
+  still needs one real click (this 4.1.10 build exposes no selectable AX for the
+  session list — rows are static text with empty action lists), so WeChat is
+  briefly foregrounded for navigation and the previously-frontmost app is
+  re-activated afterwards (`restore_focus`). Residual: needs Accessibility
+  permission (cached at process launch — grant then relaunch the sending process);
+  duplicate display names require corroboration beyond the name; if the user set
+  "Enter=newline", Return won't send (composer-not-cleared → fall back to ⌘Return).
 - **Exact `@self` group detection** ✅ (done 2026-07-18): mentions are stored as a
   comma-separated wxid list in the message `source` column's
   `<msgsource><atuserlist>` (NOT `packed_info_data`, which is only flags). The
