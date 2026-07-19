@@ -131,6 +131,47 @@ def reject_wechat_delivery(store, delivery_id: int) -> None:
     store.set_wechat_delivery_status(delivery_id, "failed", error="user_rejected")
 
 
+def verify_wechat_binding(store, scope, *, runner, is_unique: bool) -> str:
+    """Real (non-asserted) binding verification. Sets binding_status to:
+      - ``verified`` iff the display name maps to EXACTLY this conversation in the
+        DB (is_unique) AND opening it in WeChat shows that same name (UI title);
+      - ``conflict`` if the name is not DB-unique (can't disambiguate by name);
+      - ``unverified`` if the UI could not be corroborated.
+    Stores a fingerprint + redacted evidence; never a raw identity. Returns the
+    new status."""
+    from app.wechat.accessibility import target_fingerprint
+
+    ui_title = ""
+    try:
+        ui_title = runner.open_and_identify(scope.display_name) if runner is not None else ""
+    except Exception:
+        ui_title = ""
+    ui_match = bool(ui_title) and ui_title == scope.display_name
+
+    if not is_unique:
+        status = "conflict"
+    elif ui_match:
+        status = "verified"
+    else:
+        status = "unverified"
+
+    fingerprint = target_fingerprint(scope.account_id, scope.target_type, scope.target_id, ui_title)
+    evidence = {
+        "basis": "db_unique_name+ui_title_match",
+        "db_unique": str(is_unique),
+        "ui_title_match": str(ui_match),
+        "fingerprint": fingerprint,
+    }
+    scopes = store.list_wechat_reply_scopes(scope.account_id)
+    updated = [
+        s.model_copy(update={"binding_status": status, "binding_evidence": evidence})
+        if (s.target_type == scope.target_type and s.target_id == scope.target_id) else s
+        for s in scopes
+    ]
+    store.replace_wechat_reply_scopes(scope.account_id, updated)
+    return status
+
+
 def recall_wechat_delivery(store, runner, delivery_id: int, reply_text: str) -> bool:
     """Best-effort recall (撤回) of an already-sent delivery. Only works while the
     2-minute WeChat recall window is open and the runner supports it; returns

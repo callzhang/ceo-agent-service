@@ -305,6 +305,91 @@ class MacWechatAccessibility:
             if self.restore_focus:
                 self._reactivate(prev_app)
 
+    def open_and_identify(self, target_label: str) -> str:
+        """Open the target via search and return the visible composer title (the
+        opened chat's display name), WITHOUT composing or sending. Used by binding
+        verification to corroborate the UI target. "" if it could not open."""
+        (time, AXIsProcessTrusted, mk_app, get_attr, set_attr, perform, Quartz) = self._ax()
+        if not AXIsProcessTrusted():
+            return ""
+        pid = next(
+            (w.get("kCGWindowOwnerPID") for w in Quartz.CGWindowListCopyWindowInfo(
+                Quartz.kCGWindowListOptionAll, Quartz.kCGNullWindowID)
+             if w.get("kCGWindowOwnerName") == "WeChat"), None)
+        if not pid:
+            return ""
+        app = mk_app(pid)
+
+        def g(el, attr):
+            err, val = get_attr(el, attr, None)
+            return val if err == 0 else None
+
+        def walk(el, depth=0):
+            yield el
+            if depth < 12:
+                for c in (g(el, "AXChildren") or []):
+                    yield from walk(c, depth + 1)
+
+        def first(role=None, id_eq=None, title_contains=None):
+            for el in walk(app):
+                if role and g(el, "AXRole") != role:
+                    continue
+                if id_eq is not None and (g(el, "AXIdentifier") or "") != id_eq:
+                    continue
+                if title_contains and title_contains not in (g(el, "AXTitle") or ""):
+                    continue
+                return el
+            return None
+
+        def click(el, n=1):
+            from ApplicationServices import AXValueGetValue, kAXValueCGPointType, kAXValueCGSizeType
+            pos, size = g(el, "AXPosition"), g(el, "AXSize")
+            okp, p = AXValueGetValue(pos, kAXValueCGPointType, None) if pos else (False, None)
+            oks, s = AXValueGetValue(size, kAXValueCGSizeType, None) if size else (False, None)
+            if not (okp and oks):
+                return
+            c = (p.x + s.width / 2, p.y + s.height / 2)
+            for _ in range(n):
+                for ev in (Quartz.kCGEventLeftMouseDown, Quartz.kCGEventLeftMouseUp):
+                    Quartz.CGEventPost(Quartz.kCGHIDEventTap,
+                                       Quartz.CGEventCreateMouseEvent(None, ev, c, Quartz.kCGMouseButtonLeft))
+                time.sleep(0.04)
+
+        def type_to_wechat(text):
+            for ch in text:
+                for down in (True, False):
+                    e = Quartz.CGEventCreateKeyboardEvent(None, 0, down)
+                    Quartz.CGEventKeyboardSetUnicodeString(e, 1, ch)
+                    Quartz.CGEventPostToPid(pid, e)
+                    time.sleep(0.008)
+
+        prev_app = self._frontmost_app()
+        try:
+            self._wait_until_idle()
+            self._reactivate(
+                __import__("AppKit").NSRunningApplication
+                .runningApplicationWithProcessIdentifier_(pid)
+            )
+            time.sleep(0.6)
+            search = first(role="AXTextArea", title_contains="搜索")
+            if not search:
+                return ""
+            click(search, n=3)
+            time.sleep(0.2)
+            type_to_wechat(target_label)
+            time.sleep(self.settle)
+            result = first(id_eq=f"search_item_function_{target_label}") or \
+                first(role="AXStaticText", title_contains=target_label)
+            if not result:
+                return ""
+            click(result)
+            time.sleep(self.settle)
+            composer = first(id_eq="chat_input_field")
+            return (g(composer, "AXTitle") or "") if composer else ""
+        finally:
+            if self.restore_focus:
+                self._reactivate(prev_app)
+
     def recall_last_outbound(self, text: str) -> bool:
         """BEST-EFFORT, UNVALIDATED backstop: right-click the message bubble
         containing ``text`` and click 撤回. Only works inside WeChat's ~2-minute

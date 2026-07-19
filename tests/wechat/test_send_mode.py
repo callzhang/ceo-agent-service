@@ -84,3 +84,34 @@ def test_recall_uses_runner_capability_with_text(tmp_path):
 def test_recall_noop_when_runner_lacks_capability(tmp_path):
     store = AutoReplyStore(tmp_path / "w.sqlite3"); d = _seed(store)
     assert service.recall_wechat_delivery(store, object(), d.id, "收到") is False
+
+
+def _scope(binding="unverified"):
+    return WechatReplyScope(
+        account_id="a", target_type="group", target_id="g@chatroom",
+        conversation_id="g@chatroom", display_name="G",
+        trigger_mode="mention_current_account", binding_status=binding)
+
+
+class _IdRunner:
+    def __init__(self, title): self.title = title
+    def open_and_identify(self, label): return self.title
+
+
+def test_verify_binding_verified_when_unique_and_ui_matches(tmp_path):
+    store = AutoReplyStore(tmp_path / "w.sqlite3"); store.replace_wechat_reply_scopes("a", [_scope()])
+    st = service.verify_wechat_binding(store, _scope(), runner=_IdRunner("G"), is_unique=True)
+    assert st == "verified"
+    assert store.get_wechat_reply_scope("a", "group", "g@chatroom").binding_status == "verified"
+
+
+def test_verify_binding_conflict_when_not_unique(tmp_path):
+    store = AutoReplyStore(tmp_path / "w.sqlite3"); store.replace_wechat_reply_scopes("a", [_scope()])
+    st = service.verify_wechat_binding(store, _scope(), runner=_IdRunner("G"), is_unique=False)
+    assert st == "conflict"
+
+
+def test_verify_binding_unverified_when_ui_mismatch(tmp_path):
+    store = AutoReplyStore(tmp_path / "w.sqlite3"); store.replace_wechat_reply_scopes("a", [_scope()])
+    st = service.verify_wechat_binding(store, _scope(), runner=_IdRunner("OTHER GROUP"), is_unique=True)
+    assert st == "unverified"
