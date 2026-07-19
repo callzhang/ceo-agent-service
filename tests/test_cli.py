@@ -5373,3 +5373,36 @@ def test_probe_dws_reports_read_blocked_without_crashing(monkeypatch, capsys):
     assert exit_code == 1
     assert "unread_conversations: BLOCKED not_authenticated" in output
     assert "ding_self: BLOCKED DING to self is not configured" in output
+
+
+def test_wechat_subcommand_passes_through_remainder():
+    from app.cli import build_parser
+
+    args = build_parser().parse_args(["wechat", "read-recent", "--target-id", "filehelper", "--include-text"])
+    assert args.command == "wechat"
+    assert args.wechat_args == ["read-recent", "--target-id", "filehelper", "--include-text"]
+
+
+def test_wechat_service_components_disabled_by_default(monkeypatch, tmp_path):
+    import types
+    from app import cli
+
+    monkeypatch.delenv("CEO_WECHAT_READER_ENABLED", raising=False)
+    settings = types.SimpleNamespace(db_path=tmp_path / "w.sqlite3")
+    assert cli._wechat_service_components(settings) == ()
+
+
+def test_wechat_service_components_present_when_reader_ready(monkeypatch, tmp_path):
+    import types
+    from app import cli
+    from app.store import AutoReplyStore
+
+    db = tmp_path / "w.sqlite3"
+    store = AutoReplyStore(db)
+    store.upsert_wechat_read_state(
+        account_id="a1", account_dir="/a1", db_dir="/a1/db_storage",
+        app_version="4.1.10", self_user_id="self-1", capability_status="ready",
+    )
+    monkeypatch.setenv("CEO_WECHAT_READER_ENABLED", "1")
+    comps = cli._wechat_service_components(types.SimpleNamespace(db_path=db))
+    assert [name for name, _ in comps] == ["wechat-producer", "wechat-consumer"]

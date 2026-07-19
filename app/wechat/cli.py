@@ -50,12 +50,31 @@ def cmd_status(args) -> int:
             account_dir=str(a.account_dir), db_dir=str(a.db_dir), app_version=version,
         )
         cap = reader.probe(acct)
-        print(f"{a.account_id}: {cap.status} {cap.reason}".rstrip())
+        self_user_id = config.wechat_self_user_id()
+        if not self_user_id and cap.status == "ready":
+            self_user_id = reader.detect_self_username(acct)
+        suffix = f" self={self_user_id}" if self_user_id else ""
+        print(f"{a.account_id}: {cap.status} {cap.reason}".rstrip() + suffix)
         store.upsert_wechat_read_state(
             account_id=acct.account_id, account_dir=acct.account_dir, db_dir=acct.db_dir,
-            app_version=acct.app_version, self_user_id="",
+            app_version=acct.app_version, self_user_id=self_user_id,
             capability_status=cap.status, capability_reason=cap.reason,
         )
+    return 0
+
+
+def cmd_consume_once(args) -> int:
+    store = AutoReplyStore(Path(args.db))
+    state = service.ready_account_state(store)
+    if state is None:
+        print("no single ready account; run status first")
+        return 1
+    account = service.account_from_state(state)
+    from app.codex_decision import CodexDecisionRunner
+
+    runner = CodexDecisionRunner(workspace=config.workspace_path())
+    n = service.run_consume_once(store, runner, _reader(), account)
+    print(f"processed {n} wechat reply task(s)")
     return 0
 
 
@@ -113,6 +132,7 @@ def main(argv=None) -> int:
     p.add_argument("--include-text", action="store_true")
     p.set_defaults(fn=cmd_read_recent)
     p = sub.add_parser("produce-once"); p.add_argument("--db", default=DEFAULT_DB); p.set_defaults(fn=cmd_produce_once)
+    p = sub.add_parser("consume-once"); p.add_argument("--db", default=DEFAULT_DB); p.set_defaults(fn=cmd_consume_once)
 
     args = parser.parse_args(argv)
     return args.fn(args)

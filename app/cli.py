@@ -587,6 +587,15 @@ def build_parser() -> argparse.ArgumentParser:
                 ),
             )
 
+    # WeChat channel commands pass through to the self-contained app.wechat.cli
+    # (status / read-recent / produce-once / consume-once). REMAINDER keeps its
+    # own flags out of the shared DingTalk arg set.
+    wechat_parser = subparsers.add_parser(
+        "wechat",
+        help="WeChat channel diagnostics (status/read-recent/produce-once/consume-once)",
+    )
+    wechat_parser.add_argument("wechat_args", nargs=argparse.REMAINDER)
+
     return parser
 
 
@@ -2271,6 +2280,60 @@ def run_task_maintenance_loop(
         sleep(work_item_interval_seconds)
 
 
+def _wechat_service_components(settings: WorkerSettings) -> tuple:
+    """WeChat producer/consumer components, only when the reader flag is on AND a
+    single account is persisted ``ready``. Disabled by default (adds nothing to
+    the DingTalk service). Auto-sending stays gated: these loops enqueue tasks and
+    produce ``ready_to_send`` deliveries but do not send."""
+    from app import config as _cfg
+
+    if not _cfg.wechat_reader_enabled():
+        return ()
+    from app.wechat import service as _wx
+
+    store = AutoReplyStore(settings.db_path)
+    if _wx.ready_account_state(store) is None:
+        return ()
+    return (
+        ("wechat-producer", lambda: _run_wechat_loop(settings, "producer")),
+        ("wechat-consumer", lambda: _run_wechat_loop(settings, "consumer")),
+    )
+
+
+def _run_wechat_loop(settings: WorkerSettings, role: str) -> None:
+    import time
+
+    from app import config as _cfg
+    from app.wechat import service as _wx
+
+    store = AutoReplyStore(settings.db_path)
+    state = _wx.ready_account_state(store)
+    if state is None:
+        return
+    account = _wx.account_from_state(state)
+    reader = _wx.build_reader(
+        _cfg.wechat_mirror_dir(), _cfg.wechat_passphrase_file(),
+        self_username=account.self_user_id,
+    )
+    runner = None
+    if role == "consumer":
+        runner = CodexDecisionRunner(
+            workspace=settings.workspace,
+            timeout_seconds=settings.codex_timeout_seconds,
+            idle_timeout_seconds=settings.codex_idle_timeout_seconds,
+        )
+    interval = max(1, _cfg.wechat_poll_interval_seconds())
+    while True:
+        try:
+            if role == "producer":
+                _wx.run_produce_once(store, reader, account, self_user_id=account.self_user_id)
+            else:
+                _wx.run_consume_once(store, runner, reader, account)
+        except Exception as exc:  # keep the loop alive; surface via error log
+            store.record_error("wechat", "", f"wechat_{role}_loop_error", str(exc))
+        time.sleep(interval)
+
+
 def run_service(
     settings: WorkerSettings,
     *,
@@ -2339,6 +2402,7 @@ def run_service(
             ),
         ),
     )
+    components = components + _wechat_service_components(settings)
     for component, target in components:
         thread = thread_factory(
             target=_service_component_target(
@@ -2637,6 +2701,12 @@ def probe_dws() -> int:
 def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
+
+    if args.command == "wechat":
+        from app.wechat import cli as wechat_cli
+
+        raise SystemExit(wechat_cli.main(args.wechat_args))
+
     settings = settings_from_args(args)
 
     if args.command == "run-once":
