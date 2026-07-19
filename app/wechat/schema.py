@@ -85,6 +85,28 @@ def parse_mentions(source_blob, ct_flag) -> list[str]:
     return [x.decode("utf-8", "replace") for x in re.split(rb"[,\s]+", inner) if x]
 
 
+_APPMSG_TITLE = re.compile(r"<title>(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?</title>", re.S)
+_APPMSG_DES = re.compile(r"<des>(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?</des>", re.S)
+
+
+def decode_message(content, ct_flag, local_type) -> str:
+    """Human-readable text for any message. Text (type 1) is returned as-is; a
+    shared link/article (appmsg) becomes ``[链接]《title》 des`` so context readers
+    (the Codex prompt) see what was shared instead of an empty string — for
+    intel/news groups that non-text content is most of the signal."""
+    raw = decode_content(content, ct_flag)
+    if local_type == 1:
+        return raw
+    if "<appmsg" in raw or "<title>" in raw:
+        tm = _APPMSG_TITLE.search(raw)
+        dm = _APPMSG_DES.search(raw)
+        title = (tm.group(1).strip() if tm else "")
+        des = (dm.group(1).strip() if dm else "")
+        if title:
+            return f"[链接]《{title}》" + (f" {des[:100]}" if des else "")
+    return ""
+
+
 def table_for(conversation_username: str) -> str:
     return "Msg_" + hashlib.md5(conversation_username.encode()).hexdigest()
 

@@ -143,7 +143,7 @@ class WcdbReaderBackend:
                     "direction": "outbound" if (self.self_username and sender_user == self.self_username) else "inbound",
                     "sent_at": self._iso(ctime),
                     "kind": schema.kind_for(ltype),
-                    "text": schema.decode_content(content, flag) if ltype == 1 else "",
+                    "text": schema.decode_message(content, flag, ltype),
                     "mentioned_user_ids": schema.parse_mentions(source, source_flag),
                 })
             conn.close()
