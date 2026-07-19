@@ -37,6 +37,32 @@ def target_fingerprint(account_id: str, target_type: str, target_id: str, visibl
     return hashlib.sha256(raw).hexdigest()
 
 
+def _open_target(target_label, *, first, click, type_fn, settle, sleep) -> bool:
+    """Open a chat: prefer the sidebar row (session_item_<name>, present for recent
+    conversations incl. groups — no typing, reliable, and opens named groups whose
+    composer title is exactly the group name), else fall back to search. Groups do
+    NOT get a ``search_item_function_`` result (that prefix is functions only)."""
+    row = first(id_eq=f"session_item_{target_label}")
+    if row is not None:
+        click(row)
+        sleep(settle)
+        return True
+    search = first(role="AXTextArea", title_contains="搜索")
+    if search is None:
+        return False
+    click(search, 3)              # triple-click selects any residual text
+    sleep(0.2)
+    type_fn(target_label)
+    sleep(settle)
+    result = (first(id_eq=f"search_item_function_{target_label}")
+              or first(role="AXStaticText", title_contains=target_label))
+    if result is None:
+        return False
+    click(result)
+    sleep(settle)
+    return True
+
+
 class WechatSender:
     def __init__(self, store, runner):
         self.store = store
@@ -266,19 +292,9 @@ class MacWechatAccessibility:
                 .runningApplicationWithProcessIdentifier_(pid)
             )
             time.sleep(0.6)
-            search = first(role="AXTextArea", title_contains="搜索")
-            if not search:
+            if not _open_target(target_label, first=first, click=click,
+                                type_fn=type_to_wechat, settle=self.settle, sleep=time.sleep):
                 return AccessibilityResult(False, False)
-            click(search, n=3)              # triple-click selects any residual text
-            time.sleep(0.2)
-            type_to_wechat(target_label)     # replaces the selection
-            time.sleep(self.settle)
-            result = first(id_eq=f"search_item_function_{target_label}") or \
-                first(role="AXStaticText", title_contains=target_label)
-            if not result:
-                return AccessibilityResult(False, False)
-            click(result); time.sleep(self.settle)
-
             composer = first(id_eq="chat_input_field")
             if not composer or g(composer, "AXTitle") != target_label:
                 return AccessibilityResult(False, False)  # binding mismatch -> do not send
@@ -371,19 +387,9 @@ class MacWechatAccessibility:
                 .runningApplicationWithProcessIdentifier_(pid)
             )
             time.sleep(0.6)
-            search = first(role="AXTextArea", title_contains="搜索")
-            if not search:
+            if not _open_target(target_label, first=first, click=click,
+                                type_fn=type_to_wechat, settle=self.settle, sleep=time.sleep):
                 return ""
-            click(search, n=3)
-            time.sleep(0.2)
-            type_to_wechat(target_label)
-            time.sleep(self.settle)
-            result = first(id_eq=f"search_item_function_{target_label}") or \
-                first(role="AXStaticText", title_contains=target_label)
-            if not result:
-                return ""
-            click(result)
-            time.sleep(self.settle)
             composer = first(id_eq="chat_input_field")
             return (g(composer, "AXTitle") or "") if composer else ""
         finally:
