@@ -59,6 +59,20 @@ class WechatReader:
             status="ready", account_id=account.account_id, app_version=account.app_version,
         )
 
+    def detect_self_username(self, account: WechatAccount) -> str:
+        """Best-effort account-own wxid via the backend; "" if unavailable."""
+        try:
+            passphrase = self.key_provider.key_for(account)
+        except KeyProviderUnavailable:
+            return ""
+        detect = getattr(self.backend, "detect_self_username", None)
+        if detect is None:
+            return ""
+        try:
+            return detect(account.db_dir, passphrase)
+        except Exception:
+            return ""
+
     def _require_ready(self, account: WechatAccount) -> bytes:
         capability = self.probe(account)
         if capability.status != "ready":

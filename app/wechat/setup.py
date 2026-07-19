@@ -63,10 +63,17 @@ class WechatSetupService:
             if item.account_id == (selected_account_id or accounts[0].account_id)
         )
         capability = self.reader.probe(account)
+        from app import config
+
+        self_user_id = config.wechat_self_user_id() or account.self_user_id
+        if not self_user_id and capability.status == "ready":
+            detect = getattr(self.reader, "detect_self_username", None)
+            if detect is not None:
+                self_user_id = detect(account)
         self.store.upsert_wechat_read_state(
             account_id=account.account_id, account_dir=account.account_dir,
             db_dir=account.db_dir, app_version=account.app_version,
-            self_user_id=account.self_user_id,
+            self_user_id=self_user_id,
             capability_status=capability.status, capability_reason=capability.reason,
         )
         return WechatSetupResult(

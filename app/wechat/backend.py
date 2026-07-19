@@ -39,6 +39,35 @@ class WcdbReaderBackend:
     def _message_shards(self, db_dir: str | Path) -> list[Path]:
         return sorted(Path(p) for p in glob.glob(str(Path(db_dir) / "message" / "message_[0-9]*.db")))
 
+    def detect_self_username(self, db_dir, passphrase) -> str:
+        """Self wxid = the non-'filehelper' sender in the 文件传输助手 self-chat.
+
+        Every message in the File Transfer Helper conversation is sent by the
+        account owner, so its sender resolves to the account's own wxid.
+        """
+        import hashlib
+        table = "Msg_" + hashlib.md5(b"filehelper").hexdigest()
+        for shard in self._message_shards(db_dir):
+            conn = sqlite3.connect(self._plaintext(shard, passphrase))
+            try:
+                if not conn.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
+                ).fetchone():
+                    continue
+                id2u = schema.name2id_map(conn)
+                counts: dict[str, int] = {}
+                for (sid,) in conn.execute(f'SELECT real_sender_id FROM "{table}" LIMIT 500'):
+                    user = id2u.get(sid)
+                    if user and user != "filehelper":
+                        counts[user] = counts.get(user, 0) + 1
+                if counts:
+                    return max(counts, key=counts.get)
+            except sqlite3.Error:
+                pass
+            finally:
+                conn.close()
+        return ""
+
     def _contacts(self, db_dir: str | Path, passphrase: bytes) -> dict[str, str]:
         contact_src = Path(db_dir) / "contact" / "contact.db"
         if not contact_src.exists():

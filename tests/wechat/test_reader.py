@@ -40,3 +40,18 @@ def test_reader_normalizes_exact_group_mentions(fake_account):
     assert messages[0].mentioned_user_ids == frozenset({"self-1"})
     assert messages[0].mentions_user("self-1") is True
     assert messages[0].source_version == "4.1.10"
+
+
+def test_reader_detect_self_username_delegates_to_backend():
+    from app.wechat.reader import WechatReader
+    from app.wechat.models import WechatAccount
+    from tests.wechat.fakes import StaticTestKeyProvider, FakeCipherBackend
+
+    backend = FakeCipherBackend(tables=["Message"])
+    backend.detect_self_username = lambda db_dir, passphrase: "derek840121"
+    reader = WechatReader(backend, StaticTestKeyProvider(b"x" * 32))
+    account = WechatAccount(
+        account_id="a", display_name="a", self_user_id="",
+        account_dir="/d", db_dir="/d/db_storage", app_version="4.1.10",
+    )
+    assert reader.detect_self_username(account) == "derek840121"

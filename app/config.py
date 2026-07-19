@@ -317,3 +317,8 @@ def wechat_mirror_dir() -> Path:
 
 def wechat_snapshot_dir() -> Path:
     return env_path("CEO_WECHAT_SNAPSHOT_DIR", "data/wechat-snapshots")
+
+
+def wechat_self_user_id() -> str:
+    """Optional override for the account's own wxid; auto-detected when empty."""
+    return os.getenv("CEO_WECHAT_SELF_USER_ID", "").strip()
