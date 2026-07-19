@@ -4682,6 +4682,49 @@ def test_meeting_loops_skip_when_network_not_ready(monkeypatch, tmp_path):
     ]
 
 
+def test_meeting_producer_suppresses_transient_dws_dependency_error(
+    monkeypatch, tmp_path
+):
+    calls = []
+
+    class StopLoop(Exception):
+        pass
+
+    settings = WorkerSettings(
+        db_path=tmp_path / "worker.sqlite3",
+        workspace=tmp_path / "memory",
+    )
+    store = cli.AutoReplyStore(settings.db_path)
+    transient_error = cli.DwsError(
+        "dws command failed with exit code 1; "
+        "stderr={\"error\":{\"actions\":[\"Check network, proxy, and DNS settings\"]}}",
+        code="SYSTEM_ERROR",
+    )
+    monkeypatch.setattr(cli, "AutoReplyStore", lambda path: store)
+    monkeypatch.setattr(cli, "_create_meeting_dws", lambda received: object())
+    monkeypatch.setattr(
+        cli,
+        "produce_meeting_alignment_jobs",
+        lambda *args, **kwargs: (_ for _ in ()).throw(transient_error),
+    )
+
+    def sleep(seconds):
+        calls.append(("sleep", seconds))
+        raise StopLoop
+
+    with pytest.raises(StopLoop):
+        cli.run_meeting_producer_loop(
+            settings,
+            poll_interval_seconds=60,
+            settle_seconds=600,
+            sleep=sleep,
+            network_ready=lambda: True,
+        )
+
+    assert calls == [("sleep", 60)]
+    assert store.count_errors() == 0
+
+
 def test_meeting_consumer_dry_run_and_zero_limit_never_deliver(monkeypatch, tmp_path):
     calls = []
 

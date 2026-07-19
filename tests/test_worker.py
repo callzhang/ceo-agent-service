@@ -1356,7 +1356,7 @@ def test_produce_once_records_list_unread_failure_without_crashing(
     assert codex.calls == []
 
 
-def test_produce_once_suppresses_transient_list_unread_notification_until_threshold(
+def test_produce_once_suppresses_transient_list_unread_notification(
     tmp_path: Path, monkeypatch
 ):
     notifications = []
@@ -1375,14 +1375,8 @@ def test_produce_once_suppresses_transient_list_unread_notification_until_thresh
 
     assert worker.produce_once() == 0
 
-    assert notifications == [
-        {
-            "title": "CEO read unread conversations failed",
-            "message": "transient discovery timeout",
-            "url": None,
-        }
-    ]
-    assert worker.store.count_errors() == 1
+    assert notifications == []
+    assert worker.store.count_errors() == 0
     state = json.loads(
         worker.store.get_service_state(
             "dws_transient_error_count:list_unread_conversations"
@@ -1420,7 +1414,7 @@ def test_produce_once_clears_transient_list_unread_error_after_success(
     assert state["last_error"] == ""
 
 
-def test_read_conversation_messages_suppresses_transient_errors_until_threshold(
+def test_read_conversation_messages_suppresses_transient_errors(
     tmp_path: Path, monkeypatch
 ):
     transient_error = DwsError("transient discovery timeout", code="6")
@@ -1456,7 +1450,7 @@ def test_read_conversation_messages_suppresses_transient_errors_until_threshold(
         == []
     )
 
-    assert worker.store.count_errors() == 1
+    assert worker.store.count_errors() == 0
     state = json.loads(
         worker.store.get_service_state("dws_transient_error_count:read_recent_messages")
         or "{}"
@@ -1500,7 +1494,7 @@ def test_read_conversation_messages_suppresses_token_verified_errors_until_thres
         == []
     )
 
-    assert worker.store.count_errors() == 1
+    assert worker.store.count_errors() == 0
     state = json.loads(
         worker.store.get_service_state("dws_transient_error_count:read_recent_messages")
         or "{}"
@@ -1508,7 +1502,7 @@ def test_read_conversation_messages_suppresses_token_verified_errors_until_thres
     assert state["count"] == 3
 
 
-def test_call_dws_suppresses_message_read_system_errors_until_threshold(
+def test_call_dws_suppresses_message_read_system_errors(
     tmp_path: Path, monkeypatch
 ):
     notifications = []
@@ -1552,14 +1546,8 @@ def test_call_dws_suppresses_message_read_system_errors_until_threshold(
         == []
     )
 
-    assert notifications == [
-        {
-            "title": "CEO read mentioned messages failed",
-            "message": str(system_error)[:120],
-            "url": None,
-        }
-    ]
-    assert worker.store.count_errors() == 1
+    assert notifications == []
+    assert worker.store.count_errors() == 0
     state = json.loads(
         worker.store.get_service_state("dws_transient_error_count:read_mentioned_messages")
         or "{}"

@@ -511,12 +511,9 @@ class DingTalkAutoReplyWorker:
                 or self._is_dws_token_verified_read_error(kind, exc)
                 or self._is_dws_message_read_retryable_error(kind, exc)
             ):
-                transient_threshold_reached = self._record_dws_transient_error(
-                    kind,
-                    str(exc),
-                )
-                should_record_error = transient_threshold_reached
-                should_notify = bool(notify_title and transient_threshold_reached)
+                self._record_dws_transient_error(kind, str(exc))
+                should_record_error = False
+                should_notify = False
             elif self._is_missing_direct_chat_recent_context(kind, exc):
                 self._clear_dws_transient_error(kind)
                 should_record_error = False
@@ -535,17 +532,27 @@ class DingTalkAutoReplyWorker:
         return isinstance(exc, DwsError) and exc.code in DwsClient.RETRYABLE_ERROR_CODES
 
     @staticmethod
+    def _is_dws_message_read_kind(kind: str) -> bool:
+        return kind in {
+            "list_unread_conversations",
+            "read_unread_messages",
+            "read_recent_messages",
+            "read_mentioned_messages",
+            "read_broadcast_messages",
+            "read_robot_direct_messages",
+            "list_messages_by_ids",
+            "read_recent_messages_fallback",
+            "read_unread_messages_fallback",
+            "read_recent_messages_calendar_context",
+            "read_recent_messages_rerun",
+            "read_unread_messages_rerun",
+            "list_messages_by_ids_rerun",
+        }
+
+    @staticmethod
     def _is_dws_token_verified_read_error(kind: str, exc: Exception) -> bool:
         return (
-            kind
-            in {
-                "list_unread_conversations",
-                "read_unread_messages",
-                "read_recent_messages",
-                "read_mentioned_messages",
-                "read_broadcast_messages",
-                "read_robot_direct_messages",
-            }
+            DingTalkAutoReplyWorker._is_dws_message_read_kind(kind)
             and isinstance(exc, DwsError)
             and exc.code in DwsClient.TOKEN_VERIFIED_RETRYABLE_ERROR_CODES
         )
@@ -553,15 +560,7 @@ class DingTalkAutoReplyWorker:
     @staticmethod
     def _is_dws_message_read_retryable_error(kind: str, exc: Exception) -> bool:
         return (
-            kind
-            in {
-                "list_unread_conversations",
-                "read_unread_messages",
-                "read_recent_messages",
-                "read_mentioned_messages",
-                "read_broadcast_messages",
-                "read_robot_direct_messages",
-            }
+            DingTalkAutoReplyWorker._is_dws_message_read_kind(kind)
             and isinstance(exc, DwsError)
             and exc.code in DwsClient.MESSAGE_LIST_RETRYABLE_ERROR_CODES
         )

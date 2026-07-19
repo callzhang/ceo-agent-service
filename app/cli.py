@@ -2039,6 +2039,29 @@ def _dws_read_dependency_ready(settings: WorkerSettings) -> bool:
     return True
 
 
+def _is_dws_transient_dependency_error(exc: Exception) -> bool:
+    if isinstance(exc, (subprocess.TimeoutExpired, TimeoutError)):
+        return True
+    if not isinstance(exc, DwsError):
+        return False
+    if exc.code in (
+        DwsClient.RETRYABLE_ERROR_CODES
+        | DwsClient.MESSAGE_LIST_RETRYABLE_ERROR_CODES
+        | DwsClient.TOKEN_VERIFIED_RETRYABLE_ERROR_CODES
+    ):
+        return True
+    normalized = str(exc).casefold()
+    return any(
+        marker in normalized
+        for marker in (
+            "check network, proxy, and dns settings",
+            "mcp service is reachable",
+            "network_error",
+            "timeout_error",
+        )
+    )
+
+
 class ServiceDependencyGate:
     def __init__(
         self,
@@ -2145,12 +2168,13 @@ def run_meeting_producer_loop(
                 settle_seconds=settle_seconds,
             )
         except Exception as exc:
-            store.record_error(
-                "",
-                "",
-                "meeting_alignment_producer",
-                str(exc),
-            )
+            if not _is_dws_transient_dependency_error(exc):
+                store.record_error(
+                    "",
+                    "",
+                    "meeting_alignment_producer",
+                    str(exc),
+                )
         sleep(poll_interval_seconds)
 
 
@@ -2193,12 +2217,13 @@ def run_meeting_consumer_loop(
                 embedding_client=embedding_client,
             )
         except Exception as exc:
-            store.record_error(
-                "",
-                "",
-                "meeting_alignment_consumer",
-                str(exc),
-            )
+            if not _is_dws_transient_dependency_error(exc):
+                store.record_error(
+                    "",
+                    "",
+                    "meeting_alignment_consumer",
+                    str(exc),
+                )
         sleep(poll_interval_seconds)
 
 
