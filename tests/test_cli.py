@@ -4361,9 +4361,106 @@ def test_run_loop_calls_run_once_and_sleeps_once():
         raise StopLoop
 
     with pytest.raises(StopLoop):
-        run_loop(FakeWorker(), poll_interval_seconds=7, max_batches=3, sleep=sleep)
+        run_loop(
+            FakeWorker(),
+            poll_interval_seconds=7,
+            max_batches=3,
+            sleep=sleep,
+            network_ready=lambda: True,
+        )
 
     assert calls == [3, "sleep:7"]
+
+
+def test_macos_wifi_connected_detects_not_associated(monkeypatch):
+    monkeypatch.setattr(cli.sys, "platform", "darwin")
+
+    def run(command, **kwargs):
+        if command == ["/usr/sbin/networksetup", "-listallhardwareports"]:
+            return SimpleNamespace(
+                returncode=0,
+                stdout="Hardware Port: Wi-Fi\nDevice: en0\nEthernet Address: aa\n",
+                stderr="",
+            )
+        if command == ["/sbin/route", "-n", "get", "default"]:
+            return SimpleNamespace(returncode=1, stdout="", stderr="")
+        if command == ["/usr/sbin/scutil", "--nwi"]:
+            return SimpleNamespace(returncode=1, stdout="", stderr="")
+        if command == ["/usr/sbin/networksetup", "-getairportnetwork", "en0"]:
+            return SimpleNamespace(
+                returncode=0,
+                stdout="You are not associated with an AirPort network.\n",
+                stderr="",
+            )
+        raise AssertionError(command)
+
+    assert cli._macos_wifi_connected(run=run) is False
+
+
+def test_macos_wifi_connected_accepts_reachable_wifi_default_route(monkeypatch):
+    monkeypatch.setattr(cli.sys, "platform", "darwin")
+
+    def run(command, **kwargs):
+        if command == ["/usr/sbin/networksetup", "-listallhardwareports"]:
+            return SimpleNamespace(
+                returncode=0,
+                stdout="Hardware Port: Wi-Fi\nDevice: en0\nEthernet Address: aa\n",
+                stderr="",
+            )
+        if command == ["/sbin/route", "-n", "get", "default"]:
+            return SimpleNamespace(
+                returncode=0,
+                stdout="route to: default\ninterface: en0\n",
+                stderr="",
+            )
+        if command == ["/usr/sbin/scutil", "--nwi"]:
+            return SimpleNamespace(
+                returncode=0,
+                stdout="Network information\n     en0 : flags : 0x7 (IPv4,DNS)\n           reach : 0x00000002 (Reachable)\n",
+                stderr="",
+            )
+        raise AssertionError(command)
+
+    assert cli._macos_wifi_connected(run=run) is True
+
+
+def test_service_dependency_gate_skips_dws_when_wifi_is_down(tmp_path):
+    calls = []
+    gate = cli.ServiceDependencyGate(
+        WorkerSettings(db_path=tmp_path / "worker.sqlite3"),
+        monotonic=lambda: 1.0,
+        wifi_connected=lambda: False,
+        dws_ready=lambda settings: calls.append("dws") or True,
+    )
+
+    assert gate.ready() is False
+    assert calls == []
+
+
+def test_service_dependency_gate_caches_dws_failure(tmp_path):
+    times = iter([1.0, 10.0, 40.0])
+    dws_results = iter([False, True])
+    calls = []
+
+    def dws_ready(settings):
+        calls.append(settings.db_path)
+        return next(dws_results)
+
+    gate = cli.ServiceDependencyGate(
+        WorkerSettings(db_path=tmp_path / "worker.sqlite3"),
+        monotonic=lambda: next(times),
+        wifi_connected=lambda: True,
+        dws_ready=dws_ready,
+        check_interval_seconds=30,
+    )
+
+    assert gate.ready() is False
+    assert gate.ready() is False
+    assert gate.ready() is True
+    assert calls == [
+        tmp_path / "worker.sqlite3",
+        tmp_path / "worker.sqlite3",
+    ]
 
 
 def test_producer_and_consumer_loops_call_separate_methods_once():
@@ -4384,14 +4481,66 @@ def test_producer_and_consumer_loops_call_separate_methods_once():
         raise StopLoop
 
     with pytest.raises(StopLoop):
-        run_producer_loop(FakeWorker(), poll_interval_seconds=7, max_tasks=3, sleep=sleep)
+        run_producer_loop(
+            FakeWorker(),
+            poll_interval_seconds=7,
+            max_tasks=3,
+            sleep=sleep,
+            network_ready=lambda: True,
+        )
     with pytest.raises(StopLoop):
-        run_consumer_loop(FakeWorker(), poll_interval_seconds=11, max_tasks=5, sleep=sleep)
+        run_consumer_loop(
+            FakeWorker(),
+            poll_interval_seconds=11,
+            max_tasks=5,
+            sleep=sleep,
+            network_ready=lambda: True,
+        )
 
     assert calls == [
         "produce:3",
         "sleep:7",
         "consume:5",
+        "sleep:11",
+    ]
+
+
+def test_producer_and_consumer_loops_skip_when_network_not_ready():
+    calls = []
+
+    class StopLoop(Exception):
+        pass
+
+    class FakeWorker:
+        def produce_once(self, max_tasks=None):
+            calls.append(f"produce:{max_tasks}")
+
+        def consume_once(self, max_tasks=None):
+            calls.append(f"consume:{max_tasks}")
+
+    def sleep(seconds):
+        calls.append(f"sleep:{seconds}")
+        raise StopLoop
+
+    with pytest.raises(StopLoop):
+        run_producer_loop(
+            FakeWorker(),
+            poll_interval_seconds=7,
+            max_tasks=3,
+            sleep=sleep,
+            network_ready=lambda: False,
+        )
+    with pytest.raises(StopLoop):
+        run_consumer_loop(
+            FakeWorker(),
+            poll_interval_seconds=11,
+            max_tasks=5,
+            sleep=sleep,
+            network_ready=lambda: False,
+        )
+
+    assert calls == [
+        "sleep:7",
         "sleep:11",
     ]
 
@@ -4452,6 +4601,7 @@ def test_meeting_loops_call_separate_workers_once(monkeypatch, tmp_path):
             poll_interval_seconds=60,
             settle_seconds=600,
             sleep=sleep,
+            network_ready=lambda: True,
         )
     with pytest.raises(StopLoop):
         cli.run_meeting_consumer_loop(
@@ -4459,6 +4609,7 @@ def test_meeting_loops_call_separate_workers_once(monkeypatch, tmp_path):
             poll_interval_seconds=10,
             max_tasks=4,
             sleep=sleep,
+            network_ready=lambda: True,
         )
 
     assert calls[0][:3] == ("produce-meeting", store, dws)
@@ -4478,6 +4629,57 @@ def test_meeting_loops_call_separate_workers_once(monkeypatch, tmp_path):
     assert calls[3][5:7] == (4, True)
     assert calls[3][7] is not None
     assert calls[4] == ("sleep", 10)
+
+
+def test_meeting_loops_skip_when_network_not_ready(monkeypatch, tmp_path):
+    calls = []
+
+    class StopLoop(Exception):
+        pass
+
+    settings = WorkerSettings(
+        db_path=tmp_path / "worker.sqlite3",
+        workspace=tmp_path / "memory",
+    )
+    monkeypatch.setattr(cli, "AutoReplyStore", lambda path: object())
+    monkeypatch.setattr(cli, "_create_meeting_dws", lambda received: object())
+    monkeypatch.setattr(cli, "MeetingAlignmentCodexRunner", lambda **kwargs: object())
+    monkeypatch.setattr(
+        cli,
+        "produce_meeting_alignment_jobs",
+        lambda *args, **kwargs: calls.append("produce-meeting"),
+    )
+    monkeypatch.setattr(
+        cli,
+        "consume_meeting_alignment_jobs",
+        lambda *args, **kwargs: calls.append("consume-meeting"),
+    )
+
+    def sleep(seconds):
+        calls.append(("sleep", seconds))
+        raise StopLoop
+
+    with pytest.raises(StopLoop):
+        cli.run_meeting_producer_loop(
+            settings,
+            poll_interval_seconds=60,
+            settle_seconds=600,
+            sleep=sleep,
+            network_ready=lambda: False,
+        )
+    with pytest.raises(StopLoop):
+        cli.run_meeting_consumer_loop(
+            settings,
+            poll_interval_seconds=10,
+            max_tasks=4,
+            sleep=sleep,
+            network_ready=lambda: False,
+        )
+
+    assert calls == [
+        ("sleep", 60),
+        ("sleep", 10),
+    ]
 
 
 def test_meeting_consumer_dry_run_and_zero_limit_never_deliver(monkeypatch, tmp_path):
@@ -4506,10 +4708,58 @@ def test_meeting_consumer_dry_run_and_zero_limit_never_deliver(monkeypatch, tmp_
             poll_interval_seconds=10,
             max_tasks=0,
             sleep=lambda seconds: (_ for _ in ()).throw(StopLoop()),
+            network_ready=lambda: True,
         )
 
     assert calls[0]["limit"] == 0
     assert calls[0]["deliver"] is False
+
+
+def test_task_maintenance_loop_skips_when_network_not_ready(monkeypatch, tmp_path):
+    calls = []
+
+    class StopLoop(Exception):
+        pass
+
+    settings = WorkerSettings(
+        db_path=tmp_path / "worker.sqlite3",
+        workspace=tmp_path / "memory",
+    )
+    monkeypatch.setattr(
+        cli,
+        "process_work_items_command",
+        lambda received: calls.append("work-items"),
+    )
+    monkeypatch.setattr(
+        cli,
+        "process_okr_reviews_command",
+        lambda received: calls.append("okr-reviews"),
+    )
+    monkeypatch.setattr(
+        cli,
+        "scan_task_sources_command",
+        lambda received: calls.append("scan-task-sources"),
+    )
+    monkeypatch.setattr(
+        cli,
+        "process_follow_ups_command",
+        lambda received, refresh_evidence=False: calls.append("follow-ups"),
+    )
+
+    def sleep(seconds):
+        calls.append(("sleep", seconds))
+        raise StopLoop
+
+    with pytest.raises(StopLoop):
+        run_task_maintenance_loop(
+            settings,
+            work_item_interval_seconds=60,
+            daily_interval_seconds=3600,
+            sleep=sleep,
+            network_ready=lambda: False,
+        )
+
+    assert calls == [("sleep", 60)]
 
 
 def test_meeting_loop_failure_isolated_and_retried(monkeypatch, tmp_path):
@@ -4538,6 +4788,7 @@ def test_meeting_loop_failure_isolated_and_retried(monkeypatch, tmp_path):
             poll_interval_seconds=60,
             settle_seconds=600,
             sleep=sleep,
+            network_ready=lambda: True,
         )
 
     assert calls[0][0] == "error"
@@ -4589,6 +4840,7 @@ def test_task_maintenance_loop_processes_work_and_daily_steps(monkeypatch, tmp_p
             daily_interval_seconds=3600,
             sleep=sleep,
             monotonic=lambda: next(times),
+            network_ready=lambda: True,
         )
 
     assert calls == [
@@ -4663,38 +4915,48 @@ def test_run_service_starts_web_producer_and_consumer(monkeypatch, tmp_path):
         raise RuntimeError(f"stop {component}")
 
     monkeypatch.setattr(cli, "create_worker", lambda settings: object())
-    monkeypatch.setattr(
-        cli,
-        "run_producer_loop",
-        lambda worker, poll_interval_seconds, max_tasks=None: calls.append(
-            ("producer", poll_interval_seconds, max_tasks)
+    def producer_loop(worker, poll_interval_seconds, max_tasks=None, network_ready=None):
+        calls.append(
+            ("producer", poll_interval_seconds, max_tasks, network_ready is gate.ready)
         )
-        or stop("producer"),
-    )
-    monkeypatch.setattr(
-        cli,
-        "run_consumer_loop",
-        lambda worker, poll_interval_seconds, max_tasks=None: calls.append(
-            ("consumer", poll_interval_seconds, max_tasks)
+        stop("producer")
+
+    def consumer_loop(worker, poll_interval_seconds, max_tasks=None, network_ready=None):
+        calls.append(
+            ("consumer", poll_interval_seconds, max_tasks, network_ready is gate.ready)
         )
-        or stop("consumer"),
-    )
-    monkeypatch.setattr(
-        cli,
-        "run_meeting_producer_loop",
-        lambda settings, poll_interval_seconds, settle_seconds: calls.append(
-            ("meeting-producer", poll_interval_seconds, settle_seconds)
+        stop("consumer")
+
+    def meeting_producer_loop(
+        settings, poll_interval_seconds, settle_seconds, network_ready=None
+    ):
+        calls.append(
+            (
+                "meeting-producer",
+                poll_interval_seconds,
+                settle_seconds,
+                network_ready is gate.ready,
+            )
         )
-        or stop("meeting-producer"),
-    )
-    monkeypatch.setattr(
-        cli,
-        "run_meeting_consumer_loop",
-        lambda settings, poll_interval_seconds, max_tasks=None: calls.append(
-            ("meeting-consumer", poll_interval_seconds, max_tasks)
+        stop("meeting-producer")
+
+    def meeting_consumer_loop(
+        settings, poll_interval_seconds, max_tasks=None, network_ready=None
+    ):
+        calls.append(
+            (
+                "meeting-consumer",
+                poll_interval_seconds,
+                max_tasks,
+                network_ready is gate.ready,
+            )
         )
-        or stop("meeting-consumer"),
-    )
+        stop("meeting-consumer")
+
+    monkeypatch.setattr(cli, "run_producer_loop", producer_loop)
+    monkeypatch.setattr(cli, "run_consumer_loop", consumer_loop)
+    monkeypatch.setattr(cli, "run_meeting_producer_loop", meeting_producer_loop)
+    monkeypatch.setattr(cli, "run_meeting_consumer_loop", meeting_consumer_loop)
     monkeypatch.setattr(
         cli,
         "_recover_meeting_alignment_jobs_on_service_start",
@@ -4708,19 +4970,30 @@ def test_run_service_starts_web_producer_and_consumer(monkeypatch, tmp_path):
         )
         or stop("audit-web"),
     )
-    monkeypatch.setattr(
-        cli,
-        "run_task_maintenance_loop",
-        lambda settings, work_item_interval_seconds, daily_interval_seconds: calls.append(
-            ("task-maintenance", work_item_interval_seconds, daily_interval_seconds)
+    def task_maintenance_loop(
+        settings,
+        work_item_interval_seconds,
+        daily_interval_seconds,
+        network_ready=None,
+    ):
+        calls.append(
+            (
+                "task-maintenance",
+                work_item_interval_seconds,
+                daily_interval_seconds,
+                network_ready is gate.ready,
+            )
         )
-        or stop("task-maintenance"),
-    )
+        stop("task-maintenance")
+
+    monkeypatch.setattr(cli, "run_task_maintenance_loop", task_maintenance_loop)
     monkeypatch.setattr(
         cli,
         "_record_service_failure",
         lambda settings, component, exc: failures.append((component, str(exc))),
     )
+    gate = SimpleNamespace(ready=lambda: True)
+    monkeypatch.setattr(cli, "ServiceDependencyGate", lambda settings: gate)
 
     run_service(
         WorkerSettings(
@@ -4741,17 +5014,17 @@ def test_run_service_starts_web_producer_and_consumer(monkeypatch, tmp_path):
     assert calls == [
         ("meeting-recovery", tmp_path / "worker.sqlite3"),
         ("start", "ceo-agent-service-producer", True),
-        ("producer", 60, 4),
+        ("producer", 60, 4, True),
         ("start", "ceo-agent-service-consumer", True),
-        ("consumer", 10, 4),
+        ("consumer", 10, 4, True),
         ("start", "ceo-agent-service-meeting-producer", True),
-        ("meeting-producer", 60, 600),
+        ("meeting-producer", 60, 600, True),
         ("start", "ceo-agent-service-meeting-consumer", True),
-        ("meeting-consumer", 10, 4),
+        ("meeting-consumer", 10, 4, True),
         ("start", "ceo-agent-service-audit-web", True),
         ("audit-web", "127.0.0.1", 8765, False),
         ("start", "ceo-agent-service-task-maintenance", True),
-        ("task-maintenance", 31, 3600),
+        ("task-maintenance", 31, 3600, True),
         ("wait",),
     ]
     assert failures == [

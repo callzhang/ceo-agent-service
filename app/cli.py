@@ -2,6 +2,8 @@ import argparse
 import json
 import os
 import shlex
+import subprocess
+import sys
 import threading
 import time
 from collections.abc import Callable
@@ -1908,13 +1910,176 @@ def reset_codex_sessions_command(settings: WorkerSettings) -> int:
     return cleared
 
 
+def _parse_macos_wifi_device(output: str) -> str:
+    current_port = ""
+    for raw_line in output.splitlines():
+        line = raw_line.strip()
+        if line.startswith("Hardware Port:"):
+            current_port = line.split(":", 1)[1].strip()
+            continue
+        if line.startswith("Device:") and current_port in {"Wi-Fi", "AirPort"}:
+            return line.split(":", 1)[1].strip()
+    return ""
+
+
+def _macos_wifi_connected(
+    run: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+) -> bool:
+    if sys.platform != "darwin":
+        return True
+    try:
+        ports = run(
+            ["/usr/sbin/networksetup", "-listallhardwareports"],
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=5,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return True
+    if ports.returncode != 0:
+        return True
+    device = _parse_macos_wifi_device(ports.stdout)
+    if not device:
+        return True
+    if _macos_interface_has_default_reachable_network(device, run):
+        return True
+    try:
+        status = run(
+            ["/usr/sbin/networksetup", "-getairportnetwork", device],
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=5,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    if status.returncode != 0:
+        return False
+    output = status.stdout.strip()
+    normalized = output.casefold()
+    if any(
+        marker in normalized
+        for marker in (
+            "not associated",
+            "not connected",
+            "wi-fi power is currently off",
+            "airport power is off",
+        )
+    ):
+        return False
+    prefix = "current wi-fi network:"
+    if normalized.startswith(prefix):
+        return bool(output.split(":", 1)[1].strip())
+    return True
+
+
+def _macos_interface_has_default_reachable_network(
+    device: str,
+    run: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+) -> bool:
+    try:
+        route = run(
+            ["/sbin/route", "-n", "get", "default"],
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=5,
+        )
+        network = run(
+            ["/usr/sbin/scutil", "--nwi"],
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=5,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    if route.returncode != 0 or network.returncode != 0:
+        return False
+    route_interface = ""
+    for raw_line in route.stdout.splitlines():
+        line = raw_line.strip()
+        if line.startswith("interface:"):
+            route_interface = line.split(":", 1)[1].strip()
+            break
+    if route_interface != device:
+        return False
+    in_interface_block = False
+    for raw_line in network.stdout.splitlines():
+        line = raw_line.strip()
+        if line.startswith(f"{device} :"):
+            in_interface_block = True
+            if "Reachable" in line:
+                return True
+            continue
+        if not in_interface_block:
+            continue
+        if "Reachable" in line:
+            return True
+        if line and not raw_line.startswith((" ", "\t")):
+            in_interface_block = False
+    return False
+
+
+def _dws_read_dependency_ready(settings: WorkerSettings) -> bool:
+    if settings.dry_run:
+        return True
+    client = DwsClient(
+        ding_robot_code=settings.ding_robot_code,
+        ding_robot_name=settings.ding_robot_name,
+        ding_receiver_user_id=settings.ding_receiver_user_id,
+        transient_retry_attempts=1,
+        transient_retry_delay_seconds=0,
+    )
+    try:
+        client.run_json(client.build_get_current_user_command(), timeout_seconds=10)
+    except Exception:
+        return False
+    return True
+
+
+class ServiceDependencyGate:
+    def __init__(
+        self,
+        settings: WorkerSettings,
+        *,
+        monotonic: Callable[[], float] = time.monotonic,
+        wifi_connected: Callable[[], bool] = _macos_wifi_connected,
+        dws_ready: Callable[[WorkerSettings], bool] = _dws_read_dependency_ready,
+        check_interval_seconds: int = 30,
+    ):
+        self.settings = settings
+        self.monotonic = monotonic
+        self.wifi_connected = wifi_connected
+        self.dws_ready = dws_ready
+        self.check_interval_seconds = check_interval_seconds
+        self._last_checked_at: float | None = None
+        self._last_ready = True
+
+    def ready(self) -> bool:
+        now = self.monotonic()
+        if (
+            self._last_checked_at is not None
+            and now - self._last_checked_at < self.check_interval_seconds
+        ):
+            return self._last_ready
+        self._last_checked_at = now
+        self._last_ready = self.wifi_connected() and self.dws_ready(self.settings)
+        return self._last_ready
+
+
 def run_loop(
     worker: DingTalkAutoReplyWorker,
     poll_interval_seconds: int,
     max_batches: int | None = None,
     sleep: Callable[[int], None] = time.sleep,
+    network_ready: Callable[[], bool] = _macos_wifi_connected,
 ) -> None:
     while True:
+        if not network_ready():
+            sleep(poll_interval_seconds)
+            continue
         worker.run_once(max_batches=max_batches)
         sleep(poll_interval_seconds)
 
@@ -1924,8 +2089,12 @@ def run_producer_loop(
     poll_interval_seconds: int,
     max_tasks: int | None = None,
     sleep: Callable[[int], None] = time.sleep,
+    network_ready: Callable[[], bool] = _macos_wifi_connected,
 ) -> None:
     while True:
+        if not network_ready():
+            sleep(poll_interval_seconds)
+            continue
         worker.produce_once(max_tasks=max_tasks)
         sleep(poll_interval_seconds)
 
@@ -1935,8 +2104,12 @@ def run_consumer_loop(
     poll_interval_seconds: int,
     max_tasks: int | None = None,
     sleep: Callable[[int], None] = time.sleep,
+    network_ready: Callable[[], bool] = _macos_wifi_connected,
 ) -> None:
     while True:
+        if not network_ready():
+            sleep(poll_interval_seconds)
+            continue
         worker.consume_once(max_tasks=max_tasks)
         sleep(poll_interval_seconds)
 
@@ -1956,10 +2129,14 @@ def run_meeting_producer_loop(
     poll_interval_seconds: int,
     settle_seconds: int,
     sleep: Callable[[int], None] = time.sleep,
+    network_ready: Callable[[], bool] = _macos_wifi_connected,
 ) -> None:
     store = AutoReplyStore(settings.db_path)
     dws = _create_meeting_dws(settings)
     while True:
+        if not network_ready():
+            sleep(poll_interval_seconds)
+            continue
         try:
             produce_meeting_alignment_jobs(
                 store,
@@ -1982,6 +2159,7 @@ def run_meeting_consumer_loop(
     poll_interval_seconds: int,
     max_tasks: int | None = None,
     sleep: Callable[[int], None] = time.sleep,
+    network_ready: Callable[[], bool] = _macos_wifi_connected,
 ) -> None:
     store = AutoReplyStore(settings.db_path)
     dws = _create_meeting_dws(settings)
@@ -2001,6 +2179,9 @@ def run_meeting_consumer_loop(
         else None
     )
     while True:
+        if not network_ready():
+            sleep(poll_interval_seconds)
+            continue
         try:
             consume_meeting_alignment_jobs(
                 store,
@@ -2046,9 +2227,13 @@ def run_task_maintenance_loop(
     daily_interval_seconds: int,
     sleep: Callable[[int], None] = time.sleep,
     monotonic: Callable[[], float] = time.monotonic,
+    network_ready: Callable[[], bool] = _macos_wifi_connected,
 ) -> None:
     next_daily_run = monotonic()
     while True:
+        if not network_ready():
+            sleep(work_item_interval_seconds)
+            continue
         process_work_items_command(settings)
         process_okr_reviews_command(settings)
         now = monotonic()
@@ -2077,6 +2262,7 @@ def run_service(
     _recover_processing_work_summary_inputs_on_service_start(settings)
     _recover_okr_review_requests_on_service_start(settings)
     _recover_meeting_alignment_jobs_on_service_start(settings)
+    dependency_gate = ServiceDependencyGate(settings)
     components = (
         (
             "producer",
@@ -2084,6 +2270,7 @@ def run_service(
                 create_worker(settings),
                 producer_interval_seconds,
                 max_tasks=settings.max_batches,
+                network_ready=dependency_gate.ready,
             ),
         ),
         (
@@ -2092,6 +2279,7 @@ def run_service(
                 create_worker(settings),
                 consumer_poll_interval_seconds,
                 max_tasks=settings.max_batches,
+                network_ready=dependency_gate.ready,
             ),
         ),
         (
@@ -2100,6 +2288,7 @@ def run_service(
                 settings,
                 settings.meeting_producer_interval_seconds,
                 settings.meeting_settle_seconds,
+                network_ready=dependency_gate.ready,
             ),
         ),
         (
@@ -2108,6 +2297,7 @@ def run_service(
                 settings,
                 settings.meeting_consumer_poll_interval_seconds,
                 max_tasks=settings.max_batches,
+                network_ready=dependency_gate.ready,
             ),
         ),
         (
@@ -2120,6 +2310,7 @@ def run_service(
                 settings,
                 work_item_interval_seconds=settings.task_work_item_interval_seconds,
                 daily_interval_seconds=settings.task_daily_interval_seconds,
+                network_ready=dependency_gate.ready,
             ),
         ),
     )
