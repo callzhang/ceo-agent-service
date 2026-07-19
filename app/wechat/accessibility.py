@@ -102,8 +102,28 @@ class MacWechatAccessibility:
     """
     BUNDLE_ID = "com.tencent.xinWeChat"
 
-    def __init__(self, *, settle: float = 1.4):
+    def __init__(self, *, settle: float = 1.4, restore_focus: bool = True):
         self.settle = settle
+        # After a send, re-activate whatever app was frontmost so switching to
+        # WeChat to pick the target chat only steals focus for ~1s.
+        self.restore_focus = restore_focus
+
+    @staticmethod
+    def _frontmost_app():
+        try:
+            from AppKit import NSWorkspace
+            return NSWorkspace.sharedWorkspace().frontmostApplication()
+        except Exception:
+            return None
+
+    @staticmethod
+    def _reactivate(app_ref):
+        try:
+            from AppKit import NSApplicationActivateIgnoringOtherApps
+            if app_ref is not None:
+                app_ref.activateWithOptions_(NSApplicationActivateIgnoringOtherApps)
+        except Exception:
+            pass
 
     def _ax(self):
         import time
@@ -133,6 +153,14 @@ class MacWechatAccessibility:
         return "wechat_not_running"
 
     def send(self, target_label: str, reply_text: str) -> AccessibilityResult:
+        """Compose via pure AX (AXValue), send via a key posted to WeChat's pid.
+
+        The composer text and the Return are delivered directly to WeChat, so the
+        send never steals focus. Selecting the target chat still needs a real
+        click (this build exposes no selectable AX for the chat list), so WeChat
+        is briefly foregrounded for navigation and the previously-frontmost app is
+        re-activated afterwards.
+        """
         (time, AXIsProcessTrusted, mk_app, get_attr, set_attr, perform, Quartz) = self._ax()
         if not AXIsProcessTrusted():
             return AccessibilityResult(False, False)
@@ -165,68 +193,84 @@ class MacWechatAccessibility:
                 return el
             return None
 
-        def click(el):
+        def center(el):
             from ApplicationServices import AXValueGetValue, kAXValueCGPointType, kAXValueCGSizeType
             pos, size = g(el, "AXPosition"), g(el, "AXSize")
             if not pos or not size:
-                return
+                return None
             okp, p = AXValueGetValue(pos, kAXValueCGPointType, None)
             oks, s = AXValueGetValue(size, kAXValueCGSizeType, None)
             if not (okp and oks):
-                return
-            cx, cy = p.x + s.width / 2, p.y + s.height / 2
-            for ev in (Quartz.kCGEventLeftMouseDown, Quartz.kCGEventLeftMouseUp):
-                e = Quartz.CGEventCreateMouseEvent(None, ev, (cx, cy), Quartz.kCGMouseButtonLeft)
-                Quartz.CGEventPost(Quartz.kCGHIDEventTap, e)
-                time.sleep(0.05)
+                return None
+            return (p.x + s.width / 2, p.y + s.height / 2)
 
-        def type_text(s):
+        def click(el, n=1):
+            c = center(el)
+            if not c:
+                return
+            for _ in range(n):
+                for ev in (Quartz.kCGEventLeftMouseDown, Quartz.kCGEventLeftMouseUp):
+                    e = Quartz.CGEventCreateMouseEvent(None, ev, c, Quartz.kCGMouseButtonLeft)
+                    Quartz.CGEventPost(Quartz.kCGHIDEventTap, e)
+                time.sleep(0.04)
+
+        def type_to_wechat(s):
+            # deliver keystrokes to WeChat's pid (not the frontmost app)
             for ch in s:
                 for down in (True, False):
                     e = Quartz.CGEventCreateKeyboardEvent(None, 0, down)
                     Quartz.CGEventKeyboardSetUnicodeString(e, 1, ch)
-                    Quartz.CGEventPost(Quartz.kCGHIDEventTap, e)
+                    Quartz.CGEventPostToPid(pid, e)
                     time.sleep(0.008)
 
-        # activate
+        def key_to_wechat(keycode):
+            for down in (True, False):
+                Quartz.CGEventPostToPid(pid, Quartz.CGEventCreateKeyboardEvent(None, keycode, down))
+                time.sleep(0.03)
+
+        prev_app = self._frontmost_app()
         try:
-            from AppKit import NSRunningApplication, NSApplicationActivateIgnoringOtherApps
-            a = NSRunningApplication.runningApplicationWithProcessIdentifier_(pid)
-            if a:
-                a.activateWithOptions_(NSApplicationActivateIgnoringOtherApps)
-        except Exception:
-            pass
-        time.sleep(0.6)
+            # --- navigation (needs a real click; briefly foreground WeChat) ---
+            self._reactivate(
+                __import__("AppKit").NSRunningApplication
+                .runningApplicationWithProcessIdentifier_(pid)
+            )
+            time.sleep(0.6)
+            search = first(role="AXTextArea", title_contains="搜索")
+            if not search:
+                return AccessibilityResult(False, False)
+            click(search, n=3)              # triple-click selects any residual text
+            time.sleep(0.2)
+            type_to_wechat(target_label)     # replaces the selection
+            time.sleep(self.settle)
+            result = first(id_eq=f"search_item_function_{target_label}") or \
+                first(role="AXStaticText", title_contains=target_label)
+            if not result:
+                return AccessibilityResult(False, False)
+            click(result); time.sleep(self.settle)
 
-        search = first(role="AXTextArea", title_contains="搜索")
-        if not search:
-            return AccessibilityResult(False, False)
-        click(search); time.sleep(0.3)
-        set_attr(search, "AXValue", "")
-        time.sleep(0.2)
-        type_text(target_label); time.sleep(self.settle)
-        result = first(id_eq=f"search_item_function_{target_label}") or \
-            first(role="AXStaticText", title_contains=target_label)
-        if not result:
-            return AccessibilityResult(False, False)
-        click(result); time.sleep(self.settle)
+            composer = first(id_eq="chat_input_field")
+            if not composer or g(composer, "AXTitle") != target_label:
+                return AccessibilityResult(False, False)  # binding mismatch -> do not send
 
-        composer = first(id_eq="chat_input_field")
-        if not composer or g(composer, "AXTitle") != target_label:
-            return AccessibilityResult(False, False)  # binding mismatch -> do not send
-        click(composer); time.sleep(0.3)
-        type_text(reply_text); time.sleep(0.5)
-        if reply_text not in (g(composer, "AXValue") or ""):
-            return AccessibilityResult(False, False)
-        if g(first(id_eq="chat_input_field"), "AXTitle") != target_label:
-            return AccessibilityResult(False, False)
-        # send via Return (keycode 36)
-        for down in (True, False):
-            e = Quartz.CGEventCreateKeyboardEvent(None, 36, down)
-            Quartz.CGEventPost(Quartz.kCGHIDEventTap, e)
-            time.sleep(0.03)
-        time.sleep(1.0)
-        cleared = (g(first(id_eq="chat_input_field"), "AXValue") or "").strip() == ""
-        fp = target_fingerprint("", "", target_label, target_label)
-        return AccessibilityResult(action_performed=cleared, visible_confirmation=cleared,
-                                   target_fingerprint=fp)
+            # --- compose (PURE AX) + send (key to pid, no focus steal) ---
+            set_attr(composer, "AXFocused", True)
+            set_attr(composer, "AXValue", reply_text)
+            time.sleep(0.3)
+            if reply_text not in (g(composer, "AXValue") or ""):
+                # fallback: some builds ignore AXValue set -> type into WeChat
+                type_to_wechat(reply_text)
+                time.sleep(0.4)
+                if reply_text not in (g(composer, "AXValue") or ""):
+                    return AccessibilityResult(False, False)
+            if g(first(id_eq="chat_input_field"), "AXTitle") != target_label:
+                return AccessibilityResult(False, False)  # binding changed before send
+            key_to_wechat(36)                # Return -> WeChat pid
+            time.sleep(1.0)
+            cleared = (g(first(id_eq="chat_input_field"), "AXValue") or "").strip() == ""
+            fp = target_fingerprint("", "", target_label, target_label)
+            return AccessibilityResult(action_performed=cleared, visible_confirmation=cleared,
+                                       target_fingerprint=fp)
+        finally:
+            if self.restore_focus:
+                self._reactivate(prev_app)
