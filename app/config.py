@@ -338,3 +338,12 @@ def wechat_send_mode() -> str:
     approval; 'auto': the sender loop sends them automatically."""
     mode = os.getenv("CEO_WECHAT_SEND_MODE", "confirm").strip().lower()
     return mode if mode in ("confirm", "auto") else "confirm"
+
+
+def wechat_fetch_articles() -> bool:
+    """Fetch shared-article bodies to enrich Codex context (default on)."""
+    return os.getenv("CEO_WECHAT_FETCH_ARTICLES", "1").strip().lower() in ("1", "true", "yes", "on")
+
+
+def wechat_article_max_chars() -> int:
+    return env_int("CEO_WECHAT_ARTICLE_MAX_CHARS", 1500)

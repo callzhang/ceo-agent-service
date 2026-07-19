@@ -87,23 +87,32 @@ def parse_mentions(source_blob, ct_flag) -> list[str]:
 
 _APPMSG_TITLE = re.compile(r"<title>(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?</title>", re.S)
 _APPMSG_DES = re.compile(r"<des>(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?</des>", re.S)
+_APPMSG_URL = re.compile(r"<url>(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?</url>", re.S)
 
 
 def decode_message(content, ct_flag, local_type) -> str:
-    """Human-readable text for any message. Text (type 1) is returned as-is; a
-    shared link/article (appmsg) becomes ``[链接]《title》 des`` so context readers
-    (the Codex prompt) see what was shared instead of an empty string — for
-    intel/news groups that non-text content is most of the signal."""
+    """Human-readable text for any message. Text (base type 1) is returned as-is;
+    a shared link/article (appmsg — v4 encodes it as ``(subtype<<32)|49``) becomes
+    ``[链接]《title》 des <url>`` so context readers (the Codex prompt + article
+    enrichment) see what was shared and can fetch it, instead of an empty string —
+    for intel/news groups that non-text content is most of the signal."""
     raw = decode_content(content, ct_flag)
-    if local_type == 1:
+    if (local_type & 0xFFFFFFFF) == 1:
         return raw
     if "<appmsg" in raw or "<title>" in raw:
         tm = _APPMSG_TITLE.search(raw)
         dm = _APPMSG_DES.search(raw)
+        um = _APPMSG_URL.search(raw)
         title = (tm.group(1).strip() if tm else "")
         des = (dm.group(1).strip() if dm else "")
+        url = (um.group(1).strip().replace("&amp;", "&") if um else "")
         if title:
-            return f"[链接]《{title}》" + (f" {des[:100]}" if des else "")
+            out = f"[链接]《{title}》"
+            if des:
+                out += f" {des[:100]}"
+            if url.startswith("http"):
+                out += f" {url}"
+            return out
     return ""
 
 

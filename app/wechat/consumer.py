@@ -63,6 +63,11 @@ class WechatReplyConsumer:
                 )
             except Exception:
                 context = []
+        try:
+            from app.wechat.article import enrich_context
+            context = enrich_context(context)
+        except Exception:
+            pass
         prompt = build_wechat_turn_prompt(trigger, context)
         decision = self.runner.decide(prompt, None)
 
