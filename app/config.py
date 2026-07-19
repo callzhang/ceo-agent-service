@@ -322,3 +322,12 @@ def wechat_snapshot_dir() -> Path:
 def wechat_self_user_id() -> str:
     """Optional override for the account's own wxid; auto-detected when empty."""
     return os.getenv("CEO_WECHAT_SELF_USER_ID", "").strip()
+
+
+def wechat_send_idle_seconds() -> float:
+    """Seconds the user must be idle (no keyboard/mouse) before a send briefly
+    foregrounds WeChat to select the chat. Default 10s."""
+    try:
+        return float(os.getenv("CEO_WECHAT_SEND_IDLE_SECONDS", "10"))
+    except ValueError:
+        return 10.0

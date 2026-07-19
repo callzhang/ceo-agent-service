@@ -103,11 +103,17 @@ class MacWechatAccessibility:
     BUNDLE_ID = "com.tencent.xinWeChat"
 
     def __init__(self, *, settle: float = 1.4, restore_focus: bool = True,
-                 idle_seconds: float = 2.0, idle_max_wait: float = 120.0):
+                 idle_seconds: float | None = None, idle_max_wait: float = 120.0):
         self.settle = settle
         # After a send, re-activate whatever app was frontmost so switching to
         # WeChat to pick the target chat only steals focus for ~1s.
         self.restore_focus = restore_focus
+        if idle_seconds is None:
+            try:
+                from app import config
+                idle_seconds = config.wechat_send_idle_seconds()
+            except Exception:
+                idle_seconds = 10.0
         # Selecting a chat needs WeChat briefly key (this build gates search/click
         # on its window being active). To avoid interrupting the user mid-typing,
         # wait until they've been idle for idle_seconds before foregrounding (up to
