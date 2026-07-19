@@ -37,6 +37,22 @@ def target_fingerprint(account_id: str, target_type: str, target_id: str, visibl
     return hashlib.sha256(raw).hexdigest()
 
 
+def _activate_wait(pid, *, first, sleep, reactivate, attempts=4) -> bool:
+    """Bring WeChat to the front and wait until its UI tree is actually populated
+    (the search field / session list is present). WeChat exposes an empty AX tree
+    when it is background or in a stray multi-window state, so retry activation a
+    few times with growing waits before giving up."""
+    from AppKit import NSRunningApplication
+    for i in range(attempts):
+        app = NSRunningApplication.runningApplicationWithProcessIdentifier_(pid)
+        reactivate(app)
+        sleep(0.6 + 0.35 * i)
+        if (first(role="AXTextArea", title_contains="搜索") is not None
+                or first(id_eq="session_list") is not None):
+            return True
+    return False
+
+
 def _open_target(target_label, *, first, click, type_fn, settle, sleep) -> bool:
     """Open a chat: prefer the sidebar row (session_item_<name>, present for recent
     conversations incl. groups — no typing, reliable, and opens named groups whose
@@ -47,6 +63,7 @@ def _open_target(target_label, *, first, click, type_fn, settle, sleep) -> bool:
         click(row)
         sleep(settle)
         return True
+    # not in the sidebar -> search (below)
     search = first(role="AXTextArea", title_contains="搜索")
     if search is None:
         return False
@@ -287,11 +304,7 @@ class MacWechatAccessibility:
         try:
             # --- navigation (needs a real click; briefly foreground WeChat) ---
             self._wait_until_idle()   # don't interrupt the user mid-typing
-            self._reactivate(
-                __import__("AppKit").NSRunningApplication
-                .runningApplicationWithProcessIdentifier_(pid)
-            )
-            time.sleep(0.6)
+            _activate_wait(pid, first=first, sleep=time.sleep, reactivate=self._reactivate)
             if not _open_target(target_label, first=first, click=click,
                                 type_fn=type_to_wechat, settle=self.settle, sleep=time.sleep):
                 return AccessibilityResult(False, False)
@@ -382,11 +395,7 @@ class MacWechatAccessibility:
         prev_app = self._frontmost_app()
         try:
             self._wait_until_idle()
-            self._reactivate(
-                __import__("AppKit").NSRunningApplication
-                .runningApplicationWithProcessIdentifier_(pid)
-            )
-            time.sleep(0.6)
+            _activate_wait(pid, first=first, sleep=time.sleep, reactivate=self._reactivate)
             if not _open_target(target_label, first=first, click=click,
                                 type_fn=type_to_wechat, settle=self.settle, sleep=time.sleep):
                 return ""
