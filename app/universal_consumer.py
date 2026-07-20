@@ -48,6 +48,7 @@ class UniversalConsumerResult:
     reason: str
     executed_actions: tuple[PlannedAction, ...]
     outcome: UniversalConsumerOutcome
+    authorization_required: bool = False
 
 
 class UniversalConsumerOrchestrator:
@@ -247,7 +248,21 @@ class UniversalConsumerOrchestrator:
                 )
 
             audit_action = execution.action.model_copy(deep=True)
-            if not self.executor.execute(deepcopy(execution)):
+            try:
+                action_completed = self.executor.execute(deepcopy(execution))
+            except Exception:
+                if (
+                    self.action_execution_state(deepcopy(execution))
+                    is UniversalActionExecutionState.UNKNOWN
+                ):
+                    return UniversalConsumerResult(
+                        completed=False,
+                        reason=f"action_execution_unknown:{execution.execution_id}",
+                        executed_actions=tuple(executed_actions),
+                        outcome=UniversalConsumerOutcome.ACTION_UNKNOWN,
+                    )
+                raise
+            if not action_completed:
                 return UniversalConsumerResult(
                     completed=False,
                     reason=f"action_execution_failed:{action.kind.value}",
@@ -305,6 +320,7 @@ class UniversalConsumerOrchestrator:
                     reason=status.reason.strip() or f"{dependency}_unavailable",
                     executed_actions=(),
                     outcome=UniversalConsumerOutcome.WAITING_FOR_DEPENDENCY,
+                    authorization_required=status.authorization_required,
                 )
         return None
 

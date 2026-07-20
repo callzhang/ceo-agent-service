@@ -91,10 +91,9 @@ class UniversalPlanner:
                 "available tools and CLI when it is needed to make the plan. You must "
                 "not run mutating MCP or CLI operations; service executors own all "
                 "writes.",
-                "Memory is also a blocking service dependency and must already be "
-                "checked before this planner is invoked. The service owns Memory "
-                "OAuth and memory_write execution; do not start login or open a "
-                "browser.",
+                "The service owns Memory OAuth and memory_write execution. Declare "
+                "the memory dependency only when the plan includes memory_write; do "
+                "not start login or open a browser.",
                 UNIVERSAL_PLAN_SCHEMA_HINT,
                 "Return only UniversalPlan JSON. Do not use Markdown fences or add "
                 "explanatory text.",

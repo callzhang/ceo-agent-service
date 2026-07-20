@@ -7,12 +7,15 @@ from app.universal_plan import PlannedAction, PlannedActionKind, UniversalPlan
 class DependencyStatus:
     ready: bool
     reason: str = ""
+    authorization_required: bool = False
 
     def __post_init__(self) -> None:
         if type(self.ready) is not bool:
             raise TypeError("ready must be bool")
         if not isinstance(self.reason, str):
             raise TypeError("reason must be str")
+        if type(self.authorization_required) is not bool:
+            raise TypeError("authorization_required must be bool")
 
 
 @dataclass(frozen=True)

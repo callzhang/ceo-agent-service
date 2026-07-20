@@ -93,12 +93,23 @@ from app.store import (
     ReplyTask,
 )
 from app.task_models import WorkItem
-from app.universal_context import UniversalContextMessage, UniversalTaskContext
+from app.universal_consumer import (
+    UniversalConsumerOrchestrator,
+    UniversalConsumerOutcome,
+    UniversalConsumerResult,
+)
+from app.universal_context import (
+    UniversalContextMessage,
+    UniversalTaskContext,
+    build_universal_context,
+)
 from app.universal_executor import (
+    UniversalActionExecutor,
     UniversalActionExecution,
     UniversalActionExecutionState,
 )
 from app.universal_plan import PlannedActionKind
+from app.universal_planner import UniversalPlanner
 from app.universal_validator import DependencyStatus
 
 logger = logging.getLogger(__name__)
@@ -435,6 +446,28 @@ class CriticalInformationUnavailableError(ReplyTaskProcessingError):
     """Raised when required material/tool output is unavailable and retrying is unsafe."""
 
 
+class UniversalDependencyAuthorizationError(ReplyTaskProcessingError):
+    """Raised when a universal plan is waiting for explicit service authorization."""
+
+    needs_authorization = True
+
+
+class UniversalDependencyDeferredError(ReplyTaskProcessingError):
+    """Raised when a universal dependency should be checked again later."""
+
+
+class UniversalValidationDeferredError(ReplyTaskProcessingError):
+    """Raised when a nonterminal universal validation block should be revisited."""
+
+
+class UniversalActionFailedError(ReplyTaskProcessingError):
+    """Raised when an action definitely failed and the existing retry policy applies."""
+
+
+class UniversalActionUnknownError(ReplyTaskProcessingError):
+    """Raised when replay could duplicate an externally visible side effect."""
+
+
 class DingTalkAutoReplyWorker:
     def __init__(
         self,
@@ -450,6 +483,8 @@ class DingTalkAutoReplyWorker:
         now_provider: Callable[[], datetime] | None = None,
         oa_approval_handler=None,
         memory_client: MemoryConnectorClient | None = None,
+        universal_planner=None,
+        universal_dependency_status_provider=None,
     ):
         self.store = store
         self.dws = dws
@@ -464,6 +499,10 @@ class DingTalkAutoReplyWorker:
         self.permission_gate = PermissionGate(dws)
         self.oa_approval_handler = oa_approval_handler
         self.memory_client = memory_client
+        self._injected_universal_planner = universal_planner
+        self._universal_dependency_status_provider = (
+            universal_dependency_status_provider or self.universal_dependency_status
+        )
         self._dws_auth_login_process = None
 
     def universal_dependency_status(
@@ -480,6 +519,7 @@ class DingTalkAutoReplyWorker:
                 result["dws"] = DependencyStatus(
                     ready=False,
                     reason="dws_authorization_required",
+                    authorization_required=True,
                 )
             except Exception:
                 result["dws"] = DependencyStatus(
@@ -502,6 +542,7 @@ class DingTalkAutoReplyWorker:
             result["memory"] = DependencyStatus(
                 ready=False,
                 reason="memory_authorization_required",
+                authorization_required=True,
             )
         except Exception:
             result["memory"] = DependencyStatus(
@@ -511,6 +552,126 @@ class DingTalkAutoReplyWorker:
         else:
             result["memory"] = DependencyStatus(ready=True)
         return result
+
+    def _universal_planner(self):
+        if self._injected_universal_planner is not None:
+            return self._injected_universal_planner
+        runner = getattr(self.codex, "runner", None)
+        workspace = getattr(runner, "workspace", None)
+        if workspace is None:
+            raise RuntimeError("native Codex runner workspace is unavailable")
+        timeout_seconds = max(int(getattr(self.codex, "timeout_seconds", 1200)), 900)
+        idle_timeout_seconds = max(
+            int(getattr(self.codex, "idle_timeout_seconds", 900)), 900
+        )
+        self._injected_universal_planner = UniversalPlanner(
+            workspace=Path(workspace),
+            codex_bin=str(getattr(runner, "codex_bin", "codex")),
+            timeout_seconds=timeout_seconds,
+            idle_timeout_seconds=idle_timeout_seconds,
+        )
+        return self._injected_universal_planner
+
+    def _universal_consumer(self) -> UniversalConsumerOrchestrator:
+        return UniversalConsumerOrchestrator(
+            planner=self._universal_planner(),
+            validator_context_factory=self._universal_dependency_status_provider,
+            existing_terminal_attempt=self._universal_existing_terminal_attempt,
+            existing_sent_reply=self._universal_existing_sent_reply,
+            load_plan_execution=self.store.load_universal_plan_execution,
+            create_plan_execution=self.store.create_universal_plan_execution,
+            action_execution_state=self.store.get_universal_action_execution_state,
+            session_id=self._universal_session_id,
+            executor=UniversalActionExecutor(self),
+        )
+
+    def _universal_existing_terminal_attempt(
+        self, context: UniversalTaskContext
+    ) -> bool:
+        if context.force_new_decision:
+            return False
+        attempt = self.store.get_latest_reply_attempt_for_trigger(
+            context.conversation_id,
+            context.trigger_message_id,
+        )
+        return attempt is not None and attempt.send_status in {
+            "sent",
+            "skipped",
+            "blocked",
+            "failed",
+            "commented",
+            "reacted",
+        }
+
+    def _universal_existing_sent_reply(self, context: UniversalTaskContext) -> bool:
+        if context.force_new_decision:
+            return False
+        return self.store.sent_reply_exists(
+            context.conversation_id,
+            context.trigger_message_id,
+        )
+
+    def _universal_session_id(self, context: UniversalTaskContext) -> str | None:
+        if context.force_new_decision:
+            return None
+        return self.store.get_codex_session_id(context.conversation_id)
+
+    def _process_universal_queued_task(
+        self,
+        conversation: DingTalkConversation,
+        task: ReplyTask,
+        trigger: DingTalkMessage,
+        prompt_context_messages: list[DingTalkMessage],
+    ) -> bool:
+        context = build_universal_context(
+            conversation=conversation,
+            trigger=trigger,
+            context_messages=prompt_context_messages,
+            task_id=task.id,
+            force_new_decision=task.force_new_decision,
+            dry_run=self.dry_run,
+            execution_generation=task.execution_generation,
+            reply_task_oa_url=task.oa_url,
+        )
+        planner = self._universal_planner()
+        planner_session_before = getattr(planner, "last_session_id", None)
+        result = self._universal_consumer().process(context)
+        planner_session_after = getattr(planner, "last_session_id", None)
+        if planner_session_after and planner_session_after != planner_session_before:
+            self._persist_codex_session_id(
+                conversation,
+                self.store.get_codex_session_id(context.conversation_id),
+                planner_session_after,
+            )
+        return self._map_universal_consumer_result(result, trigger)
+
+    def _map_universal_consumer_result(
+        self,
+        result: UniversalConsumerResult,
+        trigger: DingTalkMessage,
+    ) -> bool:
+        if result.outcome in {
+            UniversalConsumerOutcome.COMPLETED,
+            UniversalConsumerOutcome.DUPLICATE,
+        }:
+            self._mark_seen([trigger])
+            return True
+        if result.outcome is UniversalConsumerOutcome.DRY_RUN:
+            return False
+        if result.outcome is UniversalConsumerOutcome.WAITING_FOR_DEPENDENCY:
+            if result.authorization_required:
+                raise UniversalDependencyAuthorizationError(result.reason)
+            raise UniversalDependencyDeferredError(result.reason)
+        if result.outcome is UniversalConsumerOutcome.ACTION_FAILED:
+            raise UniversalActionFailedError(result.reason)
+        if result.outcome is UniversalConsumerOutcome.ACTION_UNKNOWN:
+            raise UniversalActionUnknownError(result.reason)
+        if result.outcome in {
+            UniversalConsumerOutcome.VALIDATION_BLOCKED,
+            UniversalConsumerOutcome.NONTERMINAL_BLOCKED,
+        }:
+            raise UniversalValidationDeferredError(result.reason)
+        raise RuntimeError(f"unsupported universal consumer outcome: {result.outcome}")
 
     def execute_universal_send_reply(self, execution: UniversalActionExecution) -> bool:
         if execution.action.kind not in {
@@ -4107,6 +4268,38 @@ class DingTalkAutoReplyWorker:
             )
             try:
                 should_complete_task = self._process_queued_task(conversation, task)
+            except UniversalActionUnknownError as exc:
+                error = str(exc)
+                self.store.fail_reply_task(task.id, error)
+                self.store.record_error(
+                    task.conversation_id,
+                    task.trigger_message_id,
+                    "reply_task_universal_action_unknown",
+                    error,
+                )
+                self._notify(
+                    title=f"CEO task blocked after uncertain action: {task.conversation_title}",
+                    message=error[:120],
+                    conversation=conversation,
+                )
+                continue
+            except (
+                UniversalDependencyDeferredError,
+                UniversalValidationDeferredError,
+            ) as exc:
+                error = str(exc)
+                self.store.defer_reply_task(
+                    task.id,
+                    error,
+                    available_at=self._reply_task_authorization_available_at(),
+                )
+                self.store.record_error(
+                    task.conversation_id,
+                    task.trigger_message_id,
+                    "reply_task_universal_deferred",
+                    error,
+                )
+                continue
             except CriticalInformationUnavailableError as exc:
                 error = str(exc)
                 self.store.fail_reply_task(task.id, error)
@@ -4277,6 +4470,13 @@ class DingTalkAutoReplyWorker:
             )
             self._mark_seen([trigger])
             return True
+        if os.getenv("CEO_UNIVERSAL_CONSUMER", "0") == "1":
+            return self._process_universal_queued_task(
+                conversation,
+                task,
+                trigger,
+                prompt_context_messages,
+            )
         if self._handle_minutes_permission_request_if_actionable(
             conversation,
             trigger,
@@ -9543,6 +9743,37 @@ class DingTalkAutoReplyWorker:
         allow_duplicate_send: bool = False,
     ) -> None:
         reply_text = self._native_reply_body(final_reply_text)
+        if contains_forbidden_leak(reply_text):
+            regenerated_reply_text = self._regenerate_reply_after_leak_check(
+                blocked_reply_text=reply_text,
+            )
+            if regenerated_reply_text:
+                reply_text = append_signature(regenerated_reply_text)
+                reply_text = self._native_reply_body(
+                    self._format_reply_delivery_text(reply_text)
+                )
+        if contains_forbidden_leak(reply_text):
+            self.store.update_reply_attempt(
+                attempt_id,
+                final_reply_text=reply_text,
+                direct_user_id=direct_user_id or "",
+                direct_open_dingtalk_id=direct_open_dingtalk_id or "",
+                send_status="blocked",
+                send_error="leak_check",
+            )
+            self.store.record_error(
+                conversation.open_conversation_id,
+                trigger.open_message_id,
+                "leak_check",
+                reply_text,
+            )
+            self._notify(
+                title=f"CEO agent blocked leak: {conversation.title}",
+                message=reply_text[:120],
+                conversation=conversation,
+                attempt_id=attempt_id,
+            )
+            return
         feedback_base_url = feedback_spike_vercel_base_url()
         if feedback_base_url:
             self._sync_recent_feedback_events_for_conversation(
@@ -9583,29 +9814,6 @@ class DingTalkAutoReplyWorker:
             direct_user_id=direct_user_id or "",
             direct_open_dingtalk_id=direct_open_dingtalk_id or "",
         )
-        if contains_forbidden_leak(reply_text):
-            regenerated_reply_text = self._regenerate_reply_after_leak_check(
-                blocked_reply_text=reply_text,
-            )
-            if regenerated_reply_text:
-                reply_text = append_signature(regenerated_reply_text)
-                reply_text = self._format_reply_delivery_text(reply_text)
-                outgoing_text = prepare_outgoing_reply_text(
-                    reply_text=reply_text,
-                    original_text=trigger.content,
-                    attempt_id=attempt_id,
-                    feedback_base_url=feedback_base_url,
-                    feedback_link_prefix=feedback_link_prefix,
-                    feedback_link_appender=append_feedback_links,
-                )
-                reply_text = outgoing_text.text
-                feedback_token = outgoing_text.feedback_token
-                self.store.update_reply_attempt(
-                    attempt_id,
-                    final_reply_text=reply_text,
-                    direct_user_id=direct_user_id or "",
-                    direct_open_dingtalk_id=direct_open_dingtalk_id or "",
-                )
         reply_text = self._apply_reply_at_mentions(reply_text, reply_at_names or [])
         self.store.update_reply_attempt(
             attempt_id,
@@ -9613,26 +9821,6 @@ class DingTalkAutoReplyWorker:
             direct_user_id=direct_user_id or "",
             direct_open_dingtalk_id=direct_open_dingtalk_id or "",
         )
-        if contains_forbidden_leak(reply_text):
-            self.store.update_reply_attempt(
-                attempt_id,
-                send_status="blocked",
-                send_error="leak_check",
-            )
-            self.store.record_error(
-                conversation.open_conversation_id,
-                trigger.open_message_id,
-                "leak_check",
-                reply_text,
-            )
-            self._notify(
-                title=f"CEO agent blocked leak: {conversation.title}",
-                message=reply_text[:120],
-                conversation=conversation,
-                attempt_id=attempt_id,
-            )
-            return
-
         minutes_comment_target = self._minutes_comment_target(
             comment_target_messages or new_messages
         )

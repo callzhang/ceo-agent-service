@@ -78,7 +78,7 @@ def test_maps_metadata_and_renders_trigger_and_recent_message() -> None:
         "Trusted mail target: none\n"
         "Trusted calendar target: none\n"
         "Trusted document URL: none\n"
-        "Required dependencies: dws, memory\n"
+            "Required dependencies: dws\n"
         "Execution generation: initial\n"
         "Force new decision: true\n"
         "Dry run: false\n"
@@ -147,7 +147,7 @@ def test_snapshots_every_behaviorally_relevant_message_field() -> None:
 
 
 def test_dws_is_required_for_dingtalk_context() -> None:
-    assert build_context([]).required_dependencies == ("dws", "memory")
+    assert build_context([]).required_dependencies == ("dws",)
 
 
 def test_trigger_create_time_is_explicit_and_part_of_context_identity() -> None:

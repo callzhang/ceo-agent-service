@@ -291,7 +291,7 @@ def build_universal_context(
         trigger_sender=trigger.sender_name,
         trigger_text=trigger.content,
         context_messages=tuple(messages),
-        required_dependencies=("dws", "memory"),
+        required_dependencies=("dws",),
         force_new_decision=force_new_decision,
         dry_run=dry_run,
         execution_generation=execution_generation,
