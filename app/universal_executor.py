@@ -11,6 +11,7 @@ from app.universal_plan import PlannedAction, PlannedActionKind, UniversalPlan
 @dataclass(frozen=True)
 class UniversalPlanExecution:
     execution_scope_id: str
+    execution_generation: str
     plan: UniversalPlan
 
     def __post_init__(self) -> None:
@@ -19,6 +20,11 @@ class UniversalPlanExecution:
             or not self.execution_scope_id.strip()
         ):
             raise ValueError("execution_scope_id must be non-empty")
+        if (
+            not isinstance(self.execution_generation, str)
+            or not self.execution_generation.strip()
+        ):
+            raise ValueError("execution_generation must be non-empty")
         if not isinstance(self.plan, UniversalPlan):
             raise TypeError("plan must be UniversalPlan")
         object.__setattr__(self, "plan", self.plan.model_copy(deep=True))
@@ -46,6 +52,8 @@ def build_universal_action_execution(
     action: PlannedAction,
     action_index: int,
 ) -> UniversalActionExecution:
+    if plan_execution.execution_generation != context.execution_generation:
+        raise ValueError("execution generation mismatch")
     canonical_action = json.dumps(
         action.model_dump(mode="json"),
         ensure_ascii=False,

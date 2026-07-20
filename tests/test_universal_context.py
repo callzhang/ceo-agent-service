@@ -54,6 +54,7 @@ def test_maps_metadata_and_renders_trigger_and_recent_message() -> None:
     assert context.trigger_message_id == "trigger-1"
     assert context.trigger_sender == "Derek"
     assert context.trigger_text == "Please review this."
+    assert context.execution_generation == "initial"
     assert context.force_new_decision is True
     assert context.dry_run is False
     assert context.render_for_agent() == (
@@ -65,6 +66,7 @@ def test_maps_metadata_and_renders_trigger_and_recent_message() -> None:
         "Trigger sender: Derek\n"
         "Trigger text: Please review this.\n"
         "Required dependencies: dws\n"
+        "Execution generation: initial\n"
         "Force new decision: true\n"
         "Dry run: false\n"
         "Recent messages:\n"
@@ -75,6 +77,39 @@ def test_maps_metadata_and_renders_trigger_and_recent_message() -> None:
 
 def test_dws_is_required_for_dingtalk_context() -> None:
     assert build_context([]).required_dependencies == ("dws",)
+
+
+def test_explicit_execution_generation_is_snapshotted_and_rendered() -> None:
+    context = build_universal_context(
+        conversation=make_conversation(),
+        trigger=make_message("trigger-1", "Derek", "Please review this."),
+        context_messages=[],
+        task_id=42,
+        force_new_decision=True,
+        dry_run=False,
+        execution_generation="manual-rerun-2",
+    )
+
+    assert context.execution_generation == "manual-rerun-2"
+    assert "Execution generation: manual-rerun-2" in context.render_for_agent()
+
+
+def test_empty_execution_generation_is_rejected() -> None:
+    with pytest.raises(ValueError, match="execution_generation must be non-empty"):
+        UniversalTaskContext(
+            task_id=42,
+            conversation_id="conversation-1",
+            conversation_title="Friday planning",
+            single_chat=True,
+            trigger_message_id="trigger-1",
+            trigger_sender="Derek",
+            trigger_text="Please review this.",
+            context_messages=(),
+            required_dependencies=("dws",),
+            force_new_decision=True,
+            dry_run=False,
+            execution_generation="   ",
+        )
 
 
 def test_trigger_is_appended_when_absent_and_not_duplicated_when_present() -> None:

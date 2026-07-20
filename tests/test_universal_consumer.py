@@ -27,6 +27,7 @@ def make_context(
     required_dependencies: tuple[str, ...] = ("dws",),
     dry_run: bool = False,
     force_new_decision: bool = False,
+    execution_generation: str = "initial",
 ) -> UniversalTaskContext:
     return UniversalTaskContext(
         task_id=42,
@@ -40,6 +41,7 @@ def make_context(
         required_dependencies=required_dependencies,
         force_new_decision=force_new_decision,
         dry_run=dry_run,
+        execution_generation=execution_generation,
     )
 
 
@@ -116,6 +118,7 @@ class CallbackRecorder:
         loaded_plan_execution: UniversalPlanExecution | None = None,
         create_scope_ids: list[str] | None = None,
         created_plan_override: UniversalPlan | None = None,
+        load_misses: int = 0,
     ) -> None:
         self.dependency_status = (
             {"dws": DependencyStatus(ready=True)}
@@ -128,11 +131,16 @@ class CallbackRecorder:
         self.sent_results = list(sent_results or [])
         self.session = session
         self.action_states = action_states or {}
-        self.loaded_plan_execution = loaded_plan_execution
+        self.plan_executions: dict[tuple[int, str], UniversalPlanExecution] = {}
+        if loaded_plan_execution is not None:
+            self.plan_executions[(42, loaded_plan_execution.execution_generation)] = (
+                loaded_plan_execution
+            )
         self.create_scope_ids = (
             list(create_scope_ids) if create_scope_ids is not None else None
         )
         self.created_plan_override = created_plan_override
+        self.load_misses = load_misses
         self.created_plan_executions: list[UniversalPlanExecution] = []
         self.dependency_requests: list[tuple[str, ...]] = []
         self.action_state_calls: list[UniversalActionExecution] = []
@@ -183,20 +191,30 @@ class CallbackRecorder:
         self, context: UniversalTaskContext
     ) -> UniversalPlanExecution | None:
         self.calls["load_plan"] += 1
-        return self.loaded_plan_execution
+        if self.load_misses:
+            self.load_misses -= 1
+            return None
+        return self.plan_executions.get((context.task_id, context.execution_generation))
 
     def create_plan_execution(
         self, context: UniversalTaskContext, plan: UniversalPlan
     ) -> UniversalPlanExecution:
         self.calls["create_plan"] += 1
+        key = (context.task_id, context.execution_generation)
+        existing = self.plan_executions.get(key)
+        if existing is not None:
+            self.created_plan_executions.append(existing)
+            return existing
         if self.create_scope_ids is None:
             scope_id = f"scope-{self.calls['create_plan']}"
         else:
             scope_id = self.create_scope_ids.pop(0)
         plan_execution = UniversalPlanExecution(
             scope_id,
+            context.execution_generation,
             self.created_plan_override or plan,
         )
+        self.plan_executions[key] = plan_execution
         self.created_plan_executions.append(plan_execution)
         return plan_execution
 
@@ -329,7 +347,7 @@ def test_planner_receives_context_and_session_once() -> None:
 def test_normal_retry_loads_plan_and_unknown_execution_is_not_replayed() -> None:
     context = make_context()
     persisted_plan = make_plan(make_action(), reason="Persisted plan reason")
-    persisted = UniversalPlanExecution("persisted-scope", persisted_plan)
+    persisted = UniversalPlanExecution("persisted-scope", "initial", persisted_plan)
     changed_candidate = make_plan(make_action(), reason="Planner drifted reason")
     callbacks = CallbackRecorder(
         loaded_plan_execution=persisted,
@@ -360,29 +378,76 @@ def test_normal_retry_loads_plan_and_unknown_execution_is_not_replayed() -> None
     assert executor.calls == []
 
 
-def test_force_new_skips_load_and_creates_new_scope_for_same_action() -> None:
+def test_force_new_retry_same_generation_loads_scope_and_blocks_unknown_replay() -> (
+    None
+):
     action = make_action()
-    persisted = UniversalPlanExecution(
-        "old-scope", make_plan(action, reason="Old plan")
-    )
     callbacks = CallbackRecorder(
-        loaded_plan_execution=persisted,
-        create_scope_ids=["new-scope-1", "new-scope-2"],
+        create_scope_ids=["manual-scope"],
+        action_states={0: UniversalActionExecutionState.UNKNOWN},
     )
     orchestrator, planner, executor = make_orchestrator(make_plan(action), callbacks)
-    context = make_context(force_new_decision=True)
+    context = make_context(
+        force_new_decision=True,
+        execution_generation="manual-rerun-1",
+    )
 
-    orchestrator.process(context)
-    orchestrator.process(context)
+    first = orchestrator.process(context)
+    second = orchestrator.process(context)
 
-    assert callbacks.calls["load_plan"] == 0
+    assert callbacks.calls["load_plan"] == 2
+    assert callbacks.calls["create_plan"] == 1
+    assert len(planner.calls) == 1
+    assert callbacks.calls["session"] == 1
+    assert len(callbacks.action_state_calls) == 2
+    assert callbacks.action_state_calls[0].execution_id == (
+        callbacks.action_state_calls[1].execution_id
+    )
+    assert first.outcome is UniversalConsumerOutcome.ACTION_UNKNOWN
+    assert second.reason == first.reason
+    assert executor.calls == []
+
+
+def test_different_execution_generations_create_different_action_ids() -> None:
+    action = make_action()
+    callbacks = CallbackRecorder(create_scope_ids=["scope-1", "scope-2"])
+    orchestrator, planner, executor = make_orchestrator(make_plan(action), callbacks)
+
+    orchestrator.process(
+        make_context(force_new_decision=True, execution_generation="rerun-1")
+    )
+    orchestrator.process(
+        make_context(force_new_decision=True, execution_generation="rerun-2")
+    )
+
+    assert callbacks.calls["load_plan"] == 2
     assert callbacks.calls["create_plan"] == 2
     assert len(planner.calls) == 2
-    assert len(executor.calls) == 2
-    assert executor.calls[0].execution_scope_id == "new-scope-1"
-    assert executor.calls[1].execution_scope_id == "new-scope-2"
+    assert [execution.execution_scope_id for execution in executor.calls] == [
+        "scope-1",
+        "scope-2",
+    ]
     assert executor.calls[0].execution_id != executor.calls[1].execution_id
-    assert executor.calls[0].action_hash == executor.calls[1].action_hash
+
+
+def test_new_orchestrator_loads_scope_from_shared_persistent_store() -> None:
+    callbacks = CallbackRecorder(create_scope_ids=["shared-scope"])
+    context = make_context(execution_generation="shared-generation")
+    first_orchestrator, first_planner, first_executor = make_orchestrator(
+        make_plan(make_action(), reason="Persisted reason"), callbacks
+    )
+    second_orchestrator, second_planner, second_executor = make_orchestrator(
+        make_plan(make_action(), reason="Drifted reason"), callbacks
+    )
+
+    first_orchestrator.process(context)
+    second_result = second_orchestrator.process(context)
+
+    assert len(first_planner.calls) == 1
+    assert second_planner.calls == []
+    assert callbacks.calls["create_plan"] == 1
+    assert first_executor.calls[0].execution_id == second_executor.calls[0].execution_id
+    assert second_result.reason == "Persisted reason"
 
 
 def test_loaded_plan_still_runs_current_validator_without_creating_scope() -> None:
@@ -390,7 +455,7 @@ def test_loaded_plan_still_runs_current_validator_without_creating_scope() -> No
     action.target["conversation_id"] = "wrong-conversation"
     callbacks = CallbackRecorder(
         loaded_plan_execution=UniversalPlanExecution(
-            "persisted-scope", make_plan(action)
+            "persisted-scope", "initial", make_plan(action)
         )
     )
     orchestrator, planner, executor = make_orchestrator(
@@ -411,6 +476,7 @@ def test_loaded_plan_rechecks_current_plan_dependencies() -> None:
         dependency_status={"dws": DependencyStatus(ready=True)},
         loaded_plan_execution=UniversalPlanExecution(
             "persisted-scope",
+            "initial",
             make_plan(make_action(), dependencies=("mail",)),
         ),
     )
@@ -428,6 +494,51 @@ def test_loaded_plan_rechecks_current_plan_dependencies() -> None:
     assert executor.calls == []
 
 
+def test_loaded_plan_from_another_generation_fails_closed() -> None:
+    class WrongGenerationCallbacks(CallbackRecorder):
+        def load_plan_execution(
+            self, context: UniversalTaskContext
+        ) -> UniversalPlanExecution | None:
+            self.calls["load_plan"] += 1
+            return UniversalPlanExecution(
+                "wrong-scope",
+                "another-generation",
+                make_plan(make_action()),
+            )
+
+    callbacks = WrongGenerationCallbacks()
+    orchestrator, planner, executor = make_orchestrator(
+        make_plan(make_action()), callbacks
+    )
+
+    with pytest.raises(ValueError, match="execution generation mismatch"):
+        orchestrator.process(make_context(execution_generation="initial"))
+
+    assert planner.calls == []
+    assert executor.calls == []
+
+
+def test_created_plan_from_another_generation_fails_closed() -> None:
+    class WrongGenerationCallbacks(CallbackRecorder):
+        def create_plan_execution(
+            self, context: UniversalTaskContext, plan: UniversalPlan
+        ) -> UniversalPlanExecution:
+            self.calls["create_plan"] += 1
+            return UniversalPlanExecution(
+                "wrong-scope",
+                "another-generation",
+                plan,
+            )
+
+    callbacks = WrongGenerationCallbacks()
+    orchestrator, _, executor = make_orchestrator(make_plan(make_action()), callbacks)
+
+    with pytest.raises(ValueError, match="execution generation mismatch"):
+        orchestrator.process(make_context(execution_generation="initial"))
+
+    assert executor.calls == []
+
+
 def test_empty_created_scope_fails_closed() -> None:
     callbacks = CallbackRecorder(create_scope_ids=["   "])
     orchestrator, _, executor = make_orchestrator(make_plan(make_action()), callbacks)
@@ -438,23 +549,29 @@ def test_empty_created_scope_fails_closed() -> None:
     assert executor.calls == []
 
 
-def test_reused_created_scope_fails_closed() -> None:
-    callbacks = CallbackRecorder(create_scope_ids=["same-scope", "same-scope"])
-    orchestrator, _, executor = make_orchestrator(make_plan(make_action()), callbacks)
-    context = make_context(force_new_decision=True)
-
-    orchestrator.process(context)
-    with pytest.raises(ValueError, match="execution scope was reused"):
-        orchestrator.process(context)
-
-    assert len(executor.calls) == 1
-
-
-def test_created_plan_mismatch_fails_closed() -> None:
+def test_atomic_create_returning_existing_same_plan_is_accepted() -> None:
+    plan = make_plan(make_action(), reason="Candidate plan")
     callbacks = CallbackRecorder(
-        created_plan_override=make_plan(
-            make_action(), reason="Different persisted plan"
-        )
+        loaded_plan_execution=UniversalPlanExecution("existing-scope", "initial", plan),
+        load_misses=1,
+    )
+    orchestrator, planner, executor = make_orchestrator(plan, callbacks)
+
+    result = orchestrator.process(make_context())
+
+    assert result.outcome is UniversalConsumerOutcome.COMPLETED
+    assert len(planner.calls) == 1
+    assert callbacks.calls["create_plan"] == 1
+    assert executor.calls[0].execution_scope_id == "existing-scope"
+
+
+def test_atomic_create_returning_existing_different_plan_fails_closed() -> None:
+    persisted = make_plan(make_action(), reason="Persisted plan")
+    callbacks = CallbackRecorder(
+        loaded_plan_execution=UniversalPlanExecution(
+            "existing-scope", "initial", persisted
+        ),
+        load_misses=1,
     )
     orchestrator, _, executor = make_orchestrator(
         make_plan(make_action(), reason="Candidate plan"), callbacks

@@ -23,6 +23,14 @@ class UniversalTaskContext:
     required_dependencies: tuple[str, ...]
     force_new_decision: bool
     dry_run: bool
+    execution_generation: str = "initial"
+
+    def __post_init__(self) -> None:
+        if (
+            not isinstance(self.execution_generation, str)
+            or not self.execution_generation.strip()
+        ):
+            raise ValueError("execution_generation must be non-empty")
 
     def render_for_agent(self) -> str:
         message_lines = [
@@ -42,6 +50,7 @@ class UniversalTaskContext:
                 f"Trigger sender: {self.trigger_sender}",
                 f"Trigger text: {self.trigger_text}",
                 f"Required dependencies: {', '.join(self.required_dependencies)}",
+                f"Execution generation: {self.execution_generation}",
                 f"Force new decision: {str(self.force_new_decision).lower()}",
                 f"Dry run: {str(self.dry_run).lower()}",
                 "Recent messages:",
@@ -58,6 +67,7 @@ def build_universal_context(
     task_id: int,
     force_new_decision: bool,
     dry_run: bool,
+    execution_generation: str = "initial",
 ) -> UniversalTaskContext:
     trigger_snapshot = _snapshot_message(trigger)
     messages: list[UniversalContextMessage] = []
@@ -85,6 +95,7 @@ def build_universal_context(
         required_dependencies=("dws",),
         force_new_decision=force_new_decision,
         dry_run=dry_run,
+        execution_generation=execution_generation,
     )
 
 

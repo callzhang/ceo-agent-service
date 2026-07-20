@@ -81,7 +81,6 @@ class UniversalConsumerOrchestrator:
         self.session_id = session_id
         self.executor = executor
         self.validator = UniversalValidator()
-        self._known_execution_scope_ids: set[str] = set()
 
     def process(self, context: UniversalTaskContext) -> UniversalConsumerResult:
         has_terminal_attempt = self.existing_terminal_attempt(context)
@@ -107,12 +106,13 @@ class UniversalConsumerOrchestrator:
 
         plan_execution: UniversalPlanExecution | None = None
         candidate_plan = True
-        if not context.force_new_decision:
-            loaded_plan_execution = self.load_plan_execution(context)
-            if loaded_plan_execution is not None:
-                plan_execution = self._copy_plan_execution(loaded_plan_execution)
-                self._known_execution_scope_ids.add(plan_execution.execution_scope_id)
-                candidate_plan = False
+        loaded_plan_execution = self.load_plan_execution(context)
+        if loaded_plan_execution is not None:
+            plan_execution = self._copy_plan_execution(
+                loaded_plan_execution,
+                context,
+            )
+            candidate_plan = False
 
         if plan_execution is None:
             plan = self.planner.plan(
@@ -182,19 +182,13 @@ class UniversalConsumerOrchestrator:
                 self.create_plan_execution(
                     context,
                     plan.model_copy(deep=True),
-                )
+                ),
+                context,
             )
-            if created_plan_execution.execution_scope_id in (
-                self._known_execution_scope_ids
-            ):
-                raise ValueError("execution scope was reused")
             if created_plan_execution.plan.model_dump(mode="json") != plan.model_dump(
                 mode="json"
             ):
                 raise ValueError("created plan does not match candidate")
-            self._known_execution_scope_ids.add(
-                created_plan_execution.execution_scope_id
-            )
             plan_execution = created_plan_execution
 
         if plan_execution is None:
@@ -288,12 +282,17 @@ class UniversalConsumerOrchestrator:
     @staticmethod
     def _copy_plan_execution(
         plan_execution: UniversalPlanExecution,
+        context: UniversalTaskContext,
     ) -> UniversalPlanExecution:
         if not isinstance(plan_execution, UniversalPlanExecution):
             raise TypeError(
                 "plan execution callback must return UniversalPlanExecution"
             )
-        return UniversalPlanExecution(
+        copied = UniversalPlanExecution(
             plan_execution.execution_scope_id,
+            plan_execution.execution_generation,
             plan_execution.plan,
         )
+        if copied.execution_generation != context.execution_generation:
+            raise ValueError("execution generation mismatch")
+        return copied

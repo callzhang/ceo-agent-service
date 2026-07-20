@@ -138,7 +138,11 @@ def make_execution(
     action = make_action(kind)
     return build_universal_action_execution(
         make_context(),
-        UniversalPlanExecution(execution_scope_id, make_plan(action)),
+        UniversalPlanExecution(
+            execution_scope_id=execution_scope_id,
+            execution_generation="initial",
+            plan=make_plan(action),
+        ),
         action,
         action_index,
     )
@@ -158,7 +162,9 @@ def test_action_hash_is_stable_for_canonical_json_and_isolates_action() -> None:
         payload={"nested": {"a": 1, "z": 3}},
     )
 
-    plan_execution = UniversalPlanExecution("scope-1", make_plan(first_action))
+    plan_execution = UniversalPlanExecution(
+        "scope-1", "initial", make_plan(first_action)
+    )
     first = build_universal_action_execution(
         make_context(), plan_execution, first_action, 0
     )
@@ -178,7 +184,7 @@ def test_action_hash_is_stable_for_canonical_json_and_isolates_action() -> None:
 
 def test_same_scope_and_index_keep_id_when_action_changes_but_hash_changes() -> None:
     action = make_action(PlannedActionKind.MEMORY_WRITE)
-    plan_execution = UniversalPlanExecution("scope-1", make_plan(action))
+    plan_execution = UniversalPlanExecution("scope-1", "initial", make_plan(action))
     baseline = build_universal_action_execution(
         make_context(), plan_execution, action, 0
     )
@@ -194,8 +200,8 @@ def test_same_scope_and_index_keep_id_when_action_changes_but_hash_changes() -> 
 
 def test_execution_id_changes_with_scope_or_action_index() -> None:
     action = make_action(PlannedActionKind.MEMORY_WRITE)
-    first_scope = UniversalPlanExecution("scope-1", make_plan(action))
-    second_scope = UniversalPlanExecution("scope-2", make_plan(action))
+    first_scope = UniversalPlanExecution("scope-1", "initial", make_plan(action))
+    second_scope = UniversalPlanExecution("scope-2", "initial", make_plan(action))
 
     baseline = build_universal_action_execution(make_context(), first_scope, action, 0)
     different_index = build_universal_action_execution(
@@ -219,7 +225,7 @@ def test_execution_id_changes_with_scope_or_action_index() -> None:
 
 def test_plan_execution_is_frozen_and_deep_copies_plan() -> None:
     plan = make_plan()
-    plan_execution = UniversalPlanExecution("scope-1", plan)
+    plan_execution = UniversalPlanExecution("scope-1", "initial", plan)
 
     assert plan_execution.plan is not plan
     plan.reason = "Mutated plan"
@@ -228,6 +234,26 @@ def test_plan_execution_is_frozen_and_deep_copies_plan() -> None:
     assert plan_execution.plan.actions[0].payload == {}
     with pytest.raises(FrozenInstanceError):
         plan_execution.execution_scope_id = "scope-2"  # type: ignore[misc]
+
+
+def test_build_rejects_plan_execution_from_another_generation() -> None:
+    action = make_action(PlannedActionKind.NO_REPLY)
+    plan_execution = UniversalPlanExecution(
+        "scope-1", "manual-rerun-2", make_plan(action)
+    )
+
+    with pytest.raises(ValueError, match="execution generation mismatch"):
+        build_universal_action_execution(
+            make_context(),
+            plan_execution,
+            action,
+            0,
+        )
+
+
+def test_plan_execution_rejects_empty_generation() -> None:
+    with pytest.raises(ValueError, match="execution_generation must be non-empty"):
+        UniversalPlanExecution("scope-1", "   ", make_plan())
 
 
 def test_execution_states_are_complete_and_stable() -> None:
