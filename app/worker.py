@@ -403,6 +403,10 @@ class ReplyDeliveryError(RuntimeError):
     """Raised after recording a delivery failure so queued tasks can retry."""
 
 
+class ReplyPreDeliveryError(ReplyDeliveryError):
+    """Raised when reply preparation fails before any transport call."""
+
+
 class ReplyTaskProcessingError(RuntimeError):
     """Raised after recording a processing failure so queued tasks can retry."""
 
@@ -555,6 +559,12 @@ class DingTalkAutoReplyWorker:
                 attempt_id=attempt_id,
                 raise_on_delivery_failure=True,
             )
+        except ReplyPreDeliveryError as exc:
+            self.store.mark_universal_action_execution_failed(
+                execution,
+                str(exc),
+            )
+            raise
         except Exception as exc:
             if self.store.has_sent_reply_for_trigger(
                 execution.context.conversation_id,
@@ -665,17 +675,43 @@ class DingTalkAutoReplyWorker:
             send_error=send_error,
         )
         conversation, trigger, new_messages = self._universal_reply_context(execution)
-        attempt = self.store.get_reply_attempt(attempt_id)
-        if attempt is not None:
-            self._enqueue_conversation_work_item(
+        try:
+            attempt = self.store.get_reply_attempt(attempt_id)
+            if attempt is not None:
+                self._enqueue_conversation_work_item(
+                    attempt_id=attempt_id,
+                    conversation=conversation,
+                    trigger=trigger,
+                    action=attempt.action,
+                    audit_summary=attempt.audit_summary or attempt.codex_reason,
+                    final_reply_text=attempt.final_reply_text,
+                )
+            self._mark_seen(new_messages)
+        except Exception as exc:
+            self._fail_universal_action_before_send(
+                execution,
                 attempt_id=attempt_id,
-                conversation=conversation,
-                trigger=trigger,
-                action=attempt.action,
-                audit_summary=attempt.audit_summary or attempt.codex_reason,
-                final_reply_text=attempt.final_reply_text,
+                error=str(exc),
             )
-        if execution.action.kind is PlannedActionKind.HANDOFF_TO_HUMAN:
+            raise
+
+        if execution.action.kind is not PlannedActionKind.HANDOFF_TO_HUMAN:
+            try:
+                self._complete_universal_action(
+                    execution,
+                    attempt_id=attempt_id,
+                    outcome=send_status,
+                )
+            except Exception as exc:
+                self._fail_universal_action_before_send(
+                    execution,
+                    attempt_id=attempt_id,
+                    error=str(exc),
+                )
+                raise
+            return True
+
+        try:
             handoff_decision = CodexDecision(
                 action=CodexAction.HANDOFF_TO_HUMAN,
                 reason=execution.action.reason,
@@ -723,12 +759,25 @@ class DingTalkAutoReplyWorker:
                 send_error=send_error,
                 retry_count=0,
             )
-        self._mark_seen(new_messages)
-        self._complete_universal_action(
-            execution,
-            attempt_id=attempt_id,
-            outcome=send_status,
-        )
+            self._complete_universal_action(
+                execution,
+                attempt_id=attempt_id,
+                outcome=send_status,
+            )
+        except Exception as exc:
+            if (
+                self.store.get_universal_action_execution_state(execution)
+                is UniversalActionExecutionState.SUCCEEDED
+            ):
+                return True
+            error = f"universal_action_outcome_unknown: {exc}"
+            self.store.update_reply_attempt(
+                attempt_id,
+                send_status="failed",
+                send_error=error,
+            )
+            self.store.mark_universal_action_execution_unknown(execution, error)
+            raise
         return True
 
     @staticmethod
@@ -7584,7 +7633,7 @@ class DingTalkAutoReplyWorker:
                 attempt_id=attempt_id,
             )
             if raise_on_delivery_failure:
-                raise ReplyDeliveryError(str(exc)) from exc
+                raise ReplyPreDeliveryError(str(exc)) from exc
             return
         at_users = [target.user_id for target in at_targets if target.user_id]
         at_open_dingtalk_ids = (

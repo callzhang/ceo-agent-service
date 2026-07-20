@@ -557,6 +557,45 @@ def test_universal_reply_recipient_preflight_failure_is_not_unknown(
     )
 
 
+def test_universal_reply_second_recipient_resolution_failure_is_not_unknown(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    execution = _execution(
+        store,
+        kind=PlannedActionKind.SEND_REPLY,
+        payload={"text": "Reply"},
+    )
+    worker = _worker(store)
+    resolution_calls = 0
+
+    monkeypatch.setattr(worker, "_explicit_reply_at_targets", lambda *args: [])
+
+    def resolve_targets(trigger):
+        nonlocal resolution_calls
+        resolution_calls += 1
+        if resolution_calls == 1:
+            return []
+        raise RuntimeError("late recipient lookup failed")
+
+    monkeypatch.setattr(worker, "_default_reply_at_targets", resolve_targets)
+    monkeypatch.setattr(worker, "_notify", lambda **kwargs: None)
+
+    with pytest.raises(ReplyDeliveryError, match="late recipient lookup failed"):
+        worker.execute_universal_send_reply(execution)
+
+    assert resolution_calls == 2
+    assert (
+        store.get_universal_action_execution_state(execution)
+        is UniversalActionExecutionState.NOT_STARTED
+    )
+    attempt = store.get_latest_reply_attempt_for_trigger("cid-context", "msg-context")
+    assert attempt is not None
+    assert attempt.send_status == "failed"
+    assert attempt.send_error == "late recipient lookup failed"
+
+
 def test_universal_reply_leak_check_block_is_definite_failure(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -662,6 +701,100 @@ def test_universal_terminal_side_effects_happen_before_completion(
     )
 
     assert worker.execute_universal_terminal_action(execution) is True
+
+
+def test_universal_no_reply_local_queue_failure_is_retryable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    execution = _execution(store, kind=PlannedActionKind.NO_REPLY)
+    worker = _worker(store)
+    monkeypatch.setattr(
+        worker,
+        "_enqueue_conversation_work_item",
+        lambda **kwargs: (_ for _ in ()).throw(RuntimeError("queue unavailable")),
+    )
+
+    with pytest.raises(RuntimeError, match="queue unavailable"):
+        worker.execute_universal_terminal_action(execution)
+
+    assert (
+        store.get_universal_action_execution_state(execution)
+        is UniversalActionExecutionState.NOT_STARTED
+    )
+    assert store.has_seen("msg-context") is False
+    attempt = store.get_latest_reply_attempt_for_trigger("cid-context", "msg-context")
+    assert attempt is not None
+    assert attempt.send_status == "failed"
+    assert attempt.send_error == "queue unavailable"
+
+
+def test_universal_handoff_local_failure_precedes_notification(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    execution = _execution(store, kind=PlannedActionKind.HANDOFF_TO_HUMAN)
+    worker = _worker(store)
+    monkeypatch.setattr(
+        worker,
+        "_enqueue_conversation_work_item",
+        lambda **kwargs: (_ for _ in ()).throw(RuntimeError("queue unavailable")),
+    )
+    monkeypatch.setattr(
+        worker,
+        "_execute_message_reactions",
+        lambda **kwargs: pytest.fail("reaction must not start"),
+    )
+    monkeypatch.setattr(
+        worker,
+        "_notify_handoff",
+        lambda **kwargs: pytest.fail("notification must not start"),
+    )
+
+    with pytest.raises(RuntimeError, match="queue unavailable"):
+        worker.execute_universal_terminal_action(execution)
+
+    assert worker.dws.calls == []
+    assert (
+        store.get_universal_action_execution_state(execution)
+        is UniversalActionExecutionState.NOT_STARTED
+    )
+    attempt = store.get_latest_reply_attempt_for_trigger("cid-context", "msg-context")
+    assert attempt is not None
+    assert attempt.send_status == "failed"
+    assert attempt.send_error == "queue unavailable"
+
+
+def test_universal_handoff_failure_after_notification_is_unknown(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    execution = _execution(store, kind=PlannedActionKind.HANDOFF_TO_HUMAN)
+    worker = _worker(store)
+    monkeypatch.setattr(worker, "_execute_message_reactions", lambda **kwargs: True)
+
+    def notify_then_fail(**kwargs):
+        worker.dws.ding_self("handoff started")
+        raise RuntimeError("notification outcome uncertain")
+
+    monkeypatch.setattr(worker, "_notify_handoff", notify_then_fail)
+
+    with pytest.raises(RuntimeError, match="notification outcome uncertain"):
+        worker.execute_universal_terminal_action(execution)
+
+    assert store.has_seen("msg-context") is True
+    assert worker.dws.calls == [("ding_self", "handoff started")]
+    assert (
+        store.get_universal_action_execution_state(execution)
+        is UniversalActionExecutionState.UNKNOWN
+    )
+    attempt = store.get_latest_reply_attempt_for_trigger("cid-context", "msg-context")
+    assert attempt is not None
+    assert attempt.send_status == "failed"
+    assert "universal_action_outcome_unknown" in attempt.send_error
 
 
 def test_universal_terminal_unknown_fails_closed_without_new_attempt(
