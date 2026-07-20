@@ -10,6 +10,7 @@ from app.universal_executor import (
     UniversalActionExecutor,
     UniversalPlanExecution,
     build_universal_action_execution,
+    canonical_universal_action_json,
 )
 from app.universal_plan import (
     PlannedAction,
@@ -183,6 +184,20 @@ def test_action_hash_is_stable_for_canonical_json_and_isolates_action() -> None:
     assert first.action is not first_action
     first_action.target["a"] = "mutated"
     assert first.action.target["a"] == "1"
+
+
+def test_canonical_action_json_is_stable_and_sorted() -> None:
+    action = PlannedAction(
+        kind=PlannedActionKind.MEMORY_WRITE,
+        reason="Remember this",
+        target={"b": "2", "a": "1"},
+        payload={"nested": {"z": 3, "a": 1}},
+    )
+
+    assert canonical_universal_action_json(action) == (
+        '{"kind":"memory_write","payload":{"nested":{"a":1,"z":3}},'
+        '"reason":"Remember this","target":{"a":"1","b":"2"}}'
+    )
 
 
 def test_same_scope_and_index_keep_id_when_action_changes_but_hash_changes() -> None:

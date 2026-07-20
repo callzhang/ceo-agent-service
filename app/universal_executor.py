@@ -46,6 +46,17 @@ class UniversalActionExecutionState(StrEnum):
     UNKNOWN = "unknown"
 
 
+def canonical_universal_action_json(action: PlannedAction) -> str:
+    if not isinstance(action, PlannedAction):
+        raise TypeError("action must be PlannedAction")
+    return json.dumps(
+        action.model_dump(mode="json"),
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+
+
 def build_universal_action_execution(
     context: UniversalTaskContext,
     plan_execution: UniversalPlanExecution,
@@ -54,12 +65,7 @@ def build_universal_action_execution(
 ) -> UniversalActionExecution:
     if plan_execution.execution_generation != context.execution_generation:
         raise ValueError("execution generation mismatch")
-    canonical_action = json.dumps(
-        action.model_dump(mode="json"),
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    )
+    canonical_action = canonical_universal_action_json(action)
     action_hash = hashlib.sha256(canonical_action.encode("utf-8")).hexdigest()
     execution_key = json.dumps(
         [
