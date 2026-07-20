@@ -29,7 +29,9 @@ UNIVERSAL_PLAN_SCHEMA_HINT = (
     '"reason":"non-empty string","target":{},"payload":{}}],'
     '"audit":{"summary":"non-empty string","documents":[{"key":"value"}],'
     '"confidence":0.0}}. '
-    "No fields beyond this contract are allowed. Action payload requirements: "
+    "No fields beyond this contract are allowed. actions must contain at least "
+    "one action. audit.confidence must be in the range 0.0..1.0. Action payload "
+    "requirements: "
     "send_reply and ask_clarifying_question require payload.text; mail_reply "
     "requires target.mailbox, target.message_id, and payload.content; oa_approval "
     "requires payload.action of 同意, 拒绝, 退回, or comment and a non-empty "
@@ -80,8 +82,11 @@ class UniversalPlanner:
         session_id: str | None = None,
     ) -> UniversalPlan:
         prompt = self.build_prompt(context)
-        raw = self._execute(self._build_command(session_id), prompt)
-        current_session_id = extract_codex_session_id(raw) or session_id
+        supplied_session_id = _usable_session_id(session_id)
+        raw = self._execute(self._build_command(supplied_session_id), prompt)
+        current_session_id = _usable_session_id(extract_codex_session_id(raw))
+        if current_session_id is None:
+            current_session_id = supplied_session_id
         self.last_session_id = current_session_id
         try:
             return parse_universal_plan_json(raw)
@@ -91,9 +96,9 @@ class UniversalPlanner:
 
         repair_prompt = _repair_prompt(raw)
         repair_raw = self._execute(self._build_command(current_session_id), repair_prompt)
-        self.last_session_id = (
-            extract_codex_session_id(repair_raw) or current_session_id
-        )
+        self.last_session_id = _usable_session_id(
+            extract_codex_session_id(repair_raw)
+        ) or current_session_id
         return parse_universal_plan_json(repair_raw)
 
     def _execute(self, command: list[str], prompt: str) -> str:
@@ -203,14 +208,17 @@ def _json_payloads(raw: str) -> list[Any]:
 
 
 def _plan_candidates(payload: Any) -> list[dict[str, Any]]:
-    candidates: list[dict[str, Any]] = []
     if isinstance(payload, dict):
-        candidates.append(payload)
+        if _looks_like_universal_plan(payload):
+            return [payload]
+
+        candidates: list[dict[str, Any]] = []
         item = payload.get("item")
         if isinstance(item, dict):
             _append_json_object(candidates, item.get("text"))
         _append_json_object(candidates, payload.get("message"))
-    return candidates
+        return candidates
+    return []
 
 
 def _append_json_object(candidates: list[dict[str, Any]], value: Any) -> None:
@@ -226,6 +234,13 @@ def _append_json_object(candidates: list[dict[str, Any]], value: Any) -> None:
 
 def _looks_like_universal_plan(payload: dict[str, Any]) -> bool:
     return bool({"planner_version", "task_kind", "actions", "audit"} & payload.keys())
+
+
+def _usable_session_id(value: str | None) -> str | None:
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip()
+    return normalized or None
 
 
 def _repair_prompt(raw: str) -> str:
