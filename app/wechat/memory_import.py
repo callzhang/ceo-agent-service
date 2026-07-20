@@ -216,8 +216,15 @@ class CodexMemoryRecallMatcher:
         raw = self._execute(command, prompt)
         recalled_memories = self._validate_audit(raw, expected_query=expected_query)
         payload = self._result_payload(raw)
-        matches = [DurableMemoryMatch.model_validate(item)
-                   for item in payload.get("matches", [])]
+        matches = []
+        for raw_match in payload.get("matches", []):
+            item = DurableMemoryMatch.model_validate(raw_match)
+            evidence = " ".join(item.evidence.split())
+            if item.relation != "none" and len(evidence) < 8:
+                raise RuntimeError("durable Memory match evidence is too short")
+            matches.append(item.model_copy(update={
+                "memory_id": item.memory_id.strip(), "evidence": evidence,
+            }))
         result = {item.statement: item for item in matches}
         if set(result) != set(statements):
             raise RuntimeError("durable Memory matcher returned incomplete results")
@@ -235,7 +242,7 @@ class CodexMemoryRecallMatcher:
                 )
                 if memory_id != item.memory_id:
                     continue
-                texts = self._memory_support_texts(memory)
+                texts = [" ".join(text.split()) for text in self._memory_support_texts(memory)]
                 if any(item.evidence in text for text in texts):
                     supported = True
                     break

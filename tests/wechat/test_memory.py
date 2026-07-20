@@ -379,6 +379,24 @@ def test_codex_recall_explicit_is_error_fails(tmp_path):
             [candidate("fact", category="fact")])
 
 
+@pytest.mark.parametrize("bad_evidence", [" ", "short"])
+def test_codex_recall_rejects_blank_or_too_short_evidence(tmp_path, bad_evidence):
+    query = 'wechat-memory-dedupe:v1:["fact"]'
+    final = {"matches":[{"statement":"fact", "relation":"exact",
+        "memory_id":"mem-1", "evidence":bad_evidence, "merged_statement":""}]}
+    raw = "\n".join([
+        json.dumps({"type":"item.completed","item":{"type":"mcp_tool_call",
+            "call_id":"r1","tool":"memory_recall","arguments":{"query":query}}}),
+        json.dumps({"type":"item.completed","item":{"type":"tool_result",
+            "call_id":"r1","output":{"memories":[{
+                "uuid":"mem-1", "text":f"context {bad_evidence} context"}]}}}),
+        json.dumps({"type":"item.completed","item":{"type":"agent_message","text":json.dumps(final)}}),
+    ])
+    with pytest.raises(RuntimeError, match="evidence is too short"):
+        CodexMemoryRecallMatcher(tmp_path, executor=lambda c, p: raw).match(
+            [candidate("fact", category="fact")])
+
+
 def test_compatible_durable_match_persists_safe_merged_statement(store):
     class Compatible:
         def match(self, candidates):
