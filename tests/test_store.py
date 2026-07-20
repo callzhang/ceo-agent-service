@@ -106,6 +106,76 @@ def test_universal_plan_rejects_trigger_create_time_not_bound_to_reply_task(
         store.create_universal_plan_execution(context, _universal_plan())
 
 
+def test_universal_execution_observability_is_read_only_and_redacted(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    context = _universal_context(task_id)
+    plan = UniversalPlan(
+        task_kind="document_review",
+        reason="Review the linked document",
+        dependencies=["memory"],
+        actions=[
+            PlannedAction(
+                kind=PlannedActionKind.SEND_REPLY,
+                reason="Return the review",
+                sensitivity_kind="general",
+                target={"conversation_id": "cid-universal"},
+                payload={"text": "SENSITIVE_PAYLOAD_SENTINEL"},
+            ),
+            PlannedAction(
+                kind=PlannedActionKind.MEMORY_WRITE,
+                reason="Remember the durable decision",
+                payload={"data": "Durable product decision.", "type": "text"},
+            ),
+        ],
+        audit=UniversalAudit(summary="Review and remember", confidence=0.9),
+    )
+    plan_execution = store.create_universal_plan_execution(context, plan)
+    reply_execution = build_universal_action_execution(
+        context, plan_execution, plan.actions[0], 0
+    )
+    assert store.claim_universal_action_execution(reply_execution).value == "not_started"
+    attempt_id = store.record_universal_reply_attempt(
+        reply_execution,
+        conversation_id=context.conversation_id,
+        conversation_title=context.conversation_title,
+        trigger_message_id=context.trigger_message_id,
+        trigger_sender=context.trigger_sender,
+        trigger_text=context.trigger_text,
+        action="send_reply",
+        sensitivity_kind="general",
+        send_status="sent",
+    )
+    store.complete_universal_action_execution(reply_execution, attempt_id=attempt_id)
+    memory_execution = build_universal_action_execution(
+        context, plan_execution, plan.actions[1], 1
+    )
+    assert store.claim_universal_action_execution(memory_execution).value == "not_started"
+    store.mark_universal_action_execution_failed(
+        memory_execution, "memory service unavailable"
+    )
+    store.defer_reply_task(task_id, "memory_unavailable")
+
+    observation = store.get_universal_execution_observability(attempt_id)
+
+    assert observation is not None
+    assert observation.planner_kind == "universal"
+    assert observation.capability == "document_review"
+    assert observation.dependencies == ["dws", "memory"]
+    assert observation.blocking_dependency == "memory"
+    assert [(action.kind, action.status, action.error) for action in observation.actions] == [
+        ("send_reply", "succeeded", ""),
+        ("memory_write", "failed", "memory service unavailable"),
+    ]
+    serialized = json.dumps(observation.model_dump(mode="json"), ensure_ascii=False)
+    assert "SENSITIVE_PAYLOAD_SENTINEL" not in serialized
+    assert "payload" not in serialized
+    assert "target" not in serialized
+    assert "plan_json" not in serialized
+
+
 def _universal_action_execution(
     store: AutoReplyStore,
     task_id: int,

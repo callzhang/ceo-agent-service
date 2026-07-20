@@ -186,6 +186,19 @@ def test_developer_prompt_documents_agent_envelope_output_protocol():
     assert "reply_text 必须非空" not in template
 
 
+def test_developer_prompt_defines_universal_planning_execution_boundary():
+    template = read_developer_prompt_template(
+        repo_root() / "app" / "defaults" / "developer_prompt.md"
+    )
+
+    assert "通用 consumer" in template
+    assert "DWS 可用性由服务在启动 Codex 前检查" in template
+    assert "不得调用 dws auth login" in template
+    assert "AI 只负责生成结构化计划" in template
+    assert "服务负责校验、权限判断、去重、持久化和执行" in template
+    assert "UNKNOWN" in template
+
+
 def test_work_profile_path_default_is_not_user_specific(monkeypatch):
     monkeypatch.delenv("CEO_WORK_PROFILE_PATH", raising=False)
 

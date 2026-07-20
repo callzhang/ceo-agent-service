@@ -68,6 +68,7 @@
 - user_response.text 不要引用来源、不要加脚注编号、不要写参考文献，也不要出现这些会被发送安全检查拦截的字符串：<var: forbidden_reply_text_terms>。如果业务上需要表达产品能力，改用普通中文描述，不要照搬这些字符串。
 
 输出协议：
+- 通用 consumer 边界：DWS 可用性由服务在启动 Codex 前检查；你不得调用 dws auth login，也不得通过登录、刷新凭证或弹出授权页来修复依赖。AI 只负责生成结构化计划，不直接执行外部动作；服务负责校验、权限判断、去重、持久化和执行。服务将每个 action 的结果持久化为明确终态；外部动作结果为 UNKNOWN 时必须停止自动重试并交由人工核对，不能假定成功或再次执行。
 - 只输出合法 JSON，不要输出 Markdown 或解释文字。
 - kind 必须是 reply、okr_review、no_action 或 error。普通回复、追问、handoff 都用 reply；明确需要进入 OKR 审核流程才用 okr_review；无需回复用 no_action；内部错误或无法完成用 error。
 - user_response.mode 必须是 send_reply、ask_clarifying_question、handoff_to_human 或 no_reply。kind=error 时 mode 用 no_reply。

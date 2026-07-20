@@ -26,7 +26,12 @@ from app.task_models import (
     WorkUpdate,
 )
 from app.feedback_policy import FeedbackPressureStats
-from app.history import HistoryItem
+from app.history import (
+    HistoryItem,
+    UniversalActionObservation,
+    UniversalExecutionObservation,
+    safe_observability_error,
+)
 from app.universal_context import (
     UniversalTaskContext,
     canonical_universal_context_json,
@@ -5223,6 +5228,125 @@ class AutoReplyStore:
                 return None
             return ReplyAttempt.model_validate(dict(row))
 
+    def get_universal_execution_observability(
+        self,
+        attempt_id: int,
+    ) -> UniversalExecutionObservation | None:
+        return self.list_universal_execution_observability([attempt_id]).get(
+            attempt_id
+        )
+
+    def list_universal_execution_observability(
+        self,
+        attempt_ids: list[int],
+    ) -> dict[int, UniversalExecutionObservation]:
+        if not attempt_ids:
+            return {}
+        placeholders = ",".join("?" for _ in attempt_ids)
+        with self._connect() as db:
+            plan_rows = db.execute(
+                f"""
+                select
+                    attempts.id as attempt_id,
+                    plans.execution_scope_id,
+                    plans.plan_json,
+                    plans.context_json,
+                    tasks.status as task_status,
+                    tasks.error as task_error
+                from reply_attempts as attempts
+                join universal_plan_executions as plans
+                  on plans.execution_scope_id=attempts.universal_execution_scope_id
+                join reply_tasks as tasks on tasks.id=plans.reply_task_id
+                where attempts.id in ({placeholders})
+                """,
+                attempt_ids,
+            ).fetchall()
+            scope_ids = [row["execution_scope_id"] for row in plan_rows]
+            action_rows: list[sqlite3.Row] = []
+            if scope_ids:
+                scope_placeholders = ",".join("?" for _ in scope_ids)
+                action_rows = db.execute(
+                    f"""
+                    select execution_scope_id, action_index, action_kind, status, error
+                    from universal_action_executions
+                    where execution_scope_id in ({scope_placeholders})
+                    order by execution_scope_id, action_index
+                    """,
+                    scope_ids,
+                ).fetchall()
+
+        actions_by_scope = {
+            scope_id: {
+                int(row["action_index"]): row
+                for row in action_rows
+                if row["execution_scope_id"] == scope_id
+            }
+            for scope_id in scope_ids
+        }
+        observations: dict[int, UniversalExecutionObservation] = {}
+        for row in plan_rows:
+            plan = UniversalPlan.model_validate_json(row["plan_json"])
+            context_payload = json.loads(row["context_json"])
+            required_dependencies = context_payload.get("required_dependencies", [])
+            dependencies = list(
+                dict.fromkeys(
+                    [
+                        dependency
+                        for dependency in required_dependencies
+                        if isinstance(dependency, str) and dependency
+                    ]
+                    + [str(dependency) for dependency in plan.dependencies]
+                )
+            )
+            blocking_dependency = self._universal_blocking_dependency(
+                dependencies,
+                row["task_status"],
+                row["task_error"],
+            )
+            persisted_actions = actions_by_scope.get(row["execution_scope_id"], {})
+            observations[int(row["attempt_id"])] = UniversalExecutionObservation(
+                capability=plan.task_kind,
+                dependencies=dependencies,
+                blocking_dependency=blocking_dependency,
+                actions=[
+                    UniversalActionObservation(
+                        index=index,
+                        kind=action.kind.value,
+                        status=(
+                            persisted_actions[index]["status"]
+                            if index in persisted_actions
+                            else "not_started"
+                        ),
+                        error=(
+                            safe_observability_error(persisted_actions[index]["error"])
+                            if index in persisted_actions
+                            else ""
+                        ),
+                    )
+                    for index, action in enumerate(plan.actions)
+                ],
+            )
+        return observations
+
+    @staticmethod
+    def _universal_blocking_dependency(
+        dependencies: list[str],
+        task_status: str,
+        task_error: str,
+    ) -> str:
+        if task_status not in {"pending", "processing", "failed"}:
+            return ""
+        normalized_error = task_error.strip().casefold()
+        for dependency in dependencies:
+            normalized_dependency = dependency.casefold()
+            if normalized_error in {
+                f"{normalized_dependency}_unavailable",
+                f"{normalized_dependency}_authorization_required",
+                f"dependency_status_missing:{normalized_dependency}",
+            }:
+                return dependency
+        return ""
+
     def get_latest_reply_attempt_for_trigger(
         self, conversation_id: str, trigger_message_id: str
     ) -> ReplyAttempt | None:
@@ -5293,7 +5417,23 @@ class AutoReplyStore:
             args.extend([limit, max(0, offset)])
         with self._connect() as db:
             rows = db.execute(query, args).fetchall()
-        return [HistoryItem.model_validate(dict(row)) for row in rows]
+        items = [HistoryItem.model_validate(dict(row)) for row in rows]
+        observations = self.list_universal_execution_observability(
+            [item.source_id for item in items if item.kind == "reply"]
+        )
+        return [
+            item.model_copy(
+                update={
+                    "planner_kind": observation.planner_kind,
+                    "capability": observation.capability,
+                    "blocking_dependency": observation.blocking_dependency,
+                    "planned_actions": observation.actions,
+                }
+            )
+            if (observation := observations.get(item.source_id)) is not None
+            else item
+            for item in items
+        ]
 
     def count_history_items(
         self,
