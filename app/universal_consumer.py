@@ -1,9 +1,15 @@
 from collections.abc import Callable
+from copy import deepcopy
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Protocol
 
 from app.universal_context import UniversalTaskContext
+from app.universal_executor import (
+    UniversalActionExecution,
+    UniversalActionExecutionState,
+    build_universal_action_execution,
+)
 from app.universal_plan import PlannedAction, PlannedActionKind, UniversalPlan
 from app.universal_validator import (
     DependencyStatus,
@@ -21,7 +27,7 @@ class _UniversalPlanner(Protocol):
 
 
 class _UniversalExecutor(Protocol):
-    def execute(self, action: PlannedAction) -> bool: ...
+    def execute(self, execution: UniversalActionExecution) -> bool: ...
 
 
 class UniversalConsumerOutcome(StrEnum):
@@ -31,6 +37,7 @@ class UniversalConsumerOutcome(StrEnum):
     DRY_RUN = "dry_run"
     VALIDATION_BLOCKED = "validation_blocked"
     ACTION_FAILED = "action_failed"
+    ACTION_UNKNOWN = "action_unknown"
     NONTERMINAL_BLOCKED = "nonterminal_blocked"
 
 
@@ -51,8 +58,8 @@ class UniversalConsumerOrchestrator:
         ],
         existing_terminal_attempt: Callable[[UniversalTaskContext], bool],
         existing_sent_reply: Callable[[UniversalTaskContext], bool],
-        action_already_completed: Callable[
-            [UniversalTaskContext, PlannedAction, int], bool
+        action_execution_state: Callable[
+            [UniversalActionExecution], UniversalActionExecutionState
         ],
         session_id: Callable[[UniversalTaskContext], str | None],
         executor: _UniversalExecutor,
@@ -61,7 +68,7 @@ class UniversalConsumerOrchestrator:
         self.validator_context_factory = validator_context_factory
         self.existing_terminal_attempt = existing_terminal_attempt
         self.existing_sent_reply = existing_sent_reply
-        self.action_already_completed = action_already_completed
+        self.action_execution_state = action_execution_state
         self.session_id = session_id
         self.executor = executor
         self.validator = UniversalValidator()
@@ -150,10 +157,24 @@ class UniversalConsumerOrchestrator:
 
         executed_actions: list[PlannedAction] = []
         for action_index, action in enumerate(validated.actions):
-            if self.action_already_completed(context, action, action_index):
+            execution = build_universal_action_execution(context, action, action_index)
+            execution_state = self.action_execution_state(deepcopy(execution))
+            if execution_state is UniversalActionExecutionState.SUCCEEDED:
                 continue
-            audit_action = action.model_copy(deep=True)
-            if not self.executor.execute(action.model_copy(deep=True)):
+            if execution_state is UniversalActionExecutionState.UNKNOWN:
+                return UniversalConsumerResult(
+                    completed=False,
+                    reason=f"action_execution_unknown:{execution.execution_id}",
+                    executed_actions=tuple(executed_actions),
+                    outcome=UniversalConsumerOutcome.ACTION_UNKNOWN,
+                )
+            if execution_state is not UniversalActionExecutionState.NOT_STARTED:
+                raise ValueError(
+                    f"Unsupported universal action execution state: {execution_state!r}"
+                )
+
+            audit_action = execution.action.model_copy(deep=True)
+            if not self.executor.execute(deepcopy(execution)):
                 return UniversalConsumerResult(
                     completed=False,
                     reason=f"action_execution_failed:{action.kind.value}",

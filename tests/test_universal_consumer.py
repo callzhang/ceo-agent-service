@@ -6,6 +6,11 @@ from app.universal_consumer import (
     UniversalConsumerResult,
 )
 from app.universal_context import UniversalTaskContext
+from app.universal_executor import (
+    UniversalActionExecution,
+    UniversalActionExecutionState,
+    UniversalActionExecutor,
+)
 from app.universal_plan import (
     PlannedAction,
     PlannedActionKind,
@@ -87,10 +92,10 @@ class RecordingPlanner:
 class RecordingExecutor:
     def __init__(self, results: list[bool] | None = None) -> None:
         self.results = list(results or [])
-        self.calls: list[PlannedAction] = []
+        self.calls: list[UniversalActionExecution] = []
 
-    def execute(self, action: PlannedAction) -> bool:
-        self.calls.append(action)
+    def execute(self, execution: UniversalActionExecution) -> bool:
+        self.calls.append(execution)
         return self.results.pop(0) if self.results else True
 
 
@@ -104,7 +109,7 @@ class CallbackRecorder:
         terminal_results: list[bool] | None = None,
         sent_results: list[bool] | None = None,
         session: str | None = "session-1",
-        completed_action_indexes: set[int] | None = None,
+        action_states: dict[int, UniversalActionExecutionState] | None = None,
     ) -> None:
         self.dependency_status = (
             {"dws": DependencyStatus(ready=True)}
@@ -116,15 +121,15 @@ class CallbackRecorder:
         self.terminal_results = list(terminal_results or [])
         self.sent_results = list(sent_results or [])
         self.session = session
-        self.completed_action_indexes = completed_action_indexes or set()
+        self.action_states = action_states or {}
         self.dependency_requests: list[tuple[str, ...]] = []
-        self.action_completion_calls: list[tuple[PlannedAction, int]] = []
+        self.action_state_calls: list[UniversalActionExecution] = []
         self.calls = {
             "dependencies": 0,
             "terminal": 0,
             "sent": 0,
             "session": 0,
-            "action_completed": 0,
+            "action_state": 0,
         }
 
     def dependencies(
@@ -150,15 +155,15 @@ class CallbackRecorder:
             return self.sent_results.pop(0)
         return self.sent
 
-    def action_already_completed(
-        self,
-        context: UniversalTaskContext,
-        action: PlannedAction,
-        action_index: int,
-    ) -> bool:
-        self.calls["action_completed"] += 1
-        self.action_completion_calls.append((action, action_index))
-        return action_index in self.completed_action_indexes
+    def action_execution_state(
+        self, execution: UniversalActionExecution
+    ) -> UniversalActionExecutionState:
+        self.calls["action_state"] += 1
+        self.action_state_calls.append(execution)
+        return self.action_states.get(
+            execution.action_index,
+            UniversalActionExecutionState.NOT_STARTED,
+        )
 
     def session_id(self, context: UniversalTaskContext) -> str | None:
         self.calls["session"] += 1
@@ -177,7 +182,7 @@ def make_orchestrator(
         callbacks.dependencies,
         callbacks.existing_terminal,
         callbacks.existing_sent,
-        callbacks.action_already_completed,
+        callbacks.action_execution_state,
         callbacks.session_id,
         action_executor,
     )
@@ -211,7 +216,7 @@ def test_duplicate_precedes_dependency_check_and_all_other_work(
     assert callbacks.calls["terminal"] == 1
     assert callbacks.calls["sent"] == 1
     assert callbacks.calls["session"] == 0
-    assert callbacks.calls["action_completed"] == 0
+    assert callbacks.calls["action_state"] == 0
 
 
 def test_missing_required_dependency_stops_before_planner() -> None:
@@ -357,7 +362,7 @@ def test_duplicate_created_during_planning_stops_before_execution() -> None:
     assert executor.calls == []
     assert callbacks.calls["terminal"] == 2
     assert callbacks.calls["sent"] == 2
-    assert callbacks.calls["action_completed"] == 0
+    assert callbacks.calls["action_state"] == 0
 
 
 def test_dry_run_is_validated_without_execution() -> None:
@@ -393,7 +398,7 @@ def test_valid_action_executes_and_returns_plan_reason() -> None:
         executed_actions=(action,),
         outcome=UniversalConsumerOutcome.COMPLETED,
     )
-    assert executor.calls == [action]
+    assert [execution.action for execution in executor.calls] == [action]
 
 
 def test_execution_failure_stops_and_returns_only_successful_actions() -> None:
@@ -414,7 +419,7 @@ def test_execution_failure_stops_and_returns_only_successful_actions() -> None:
         executed_actions=(first,),
         outcome=UniversalConsumerOutcome.ACTION_FAILED,
     )
-    assert executor.calls == [first, second]
+    assert [execution.action for execution in executor.calls] == [first, second]
 
 
 def test_partial_retry_skips_previously_completed_action() -> None:
@@ -422,7 +427,9 @@ def test_partial_retry_skips_previously_completed_action() -> None:
     first.payload["content"] = "first"
     second = make_action(PlannedActionKind.MEMORY_WRITE)
     second.payload["content"] = "second"
-    callbacks = CallbackRecorder(completed_action_indexes={0})
+    callbacks = CallbackRecorder(
+        action_states={0: UniversalActionExecutionState.SUCCEEDED}
+    )
     orchestrator, _, executor = make_orchestrator(make_plan(first, second), callbacks)
 
     result = orchestrator.process(make_context())
@@ -433,32 +440,81 @@ def test_partial_retry_skips_previously_completed_action() -> None:
         executed_actions=(second,),
         outcome=UniversalConsumerOutcome.COMPLETED,
     )
-    assert [index for _, index in callbacks.action_completion_calls] == [0, 1]
-    assert executor.calls == [second]
+    assert [execution.action_index for execution in callbacks.action_state_calls] == [
+        0,
+        1,
+    ]
+    assert [execution.action for execution in executor.calls] == [second]
 
 
-def test_mutating_executor_cannot_change_result_audit_action() -> None:
-    class MutatingExecutor(RecordingExecutor):
-        def execute(self, action: PlannedAction) -> bool:
-            self.calls.append(action)
-            action.target["conversation_id"] = "corrupted"
-            action.payload["text"] = "Corrupted reply."
+def test_unknown_action_execution_stops_without_replay() -> None:
+    callbacks = CallbackRecorder(
+        action_states={0: UniversalActionExecutionState.UNKNOWN}
+    )
+    orchestrator, _, executor = make_orchestrator(make_plan(make_action()), callbacks)
+
+    result = orchestrator.process(make_context())
+
+    execution = callbacks.action_state_calls[0]
+    assert result == UniversalConsumerResult(
+        completed=False,
+        reason=f"action_execution_unknown:{execution.execution_id}",
+        executed_actions=(),
+        outcome=UniversalConsumerOutcome.ACTION_UNKNOWN,
+    )
+    assert executor.calls == []
+
+
+def test_callback_and_worker_mutations_are_isolated_from_audit_action() -> None:
+    class MutatingCallbacks(CallbackRecorder):
+        def action_execution_state(
+            self, execution: UniversalActionExecution
+        ) -> UniversalActionExecutionState:
+            state = super().action_execution_state(execution)
+            execution.action.target["conversation_id"] = "callback-corrupted"
+            execution.action.payload["text"] = "Callback corrupted reply."
+            return state
+
+    class MutatingWorker:
+        def __init__(self) -> None:
+            self.calls: list[UniversalActionExecution] = []
+            self.target_before_mutation = ""
+
+        def execute_universal_send_reply(
+            self, execution: UniversalActionExecution
+        ) -> bool:
+            self.calls.append(execution)
+            self.target_before_mutation = execution.action.target["conversation_id"]
+            execution.action.target["conversation_id"] = "executor-corrupted"
+            execution.action.payload["text"] = "Executor corrupted reply."
             return True
 
     action = make_action()
-    callbacks = CallbackRecorder()
-    executor = MutatingExecutor()
-    orchestrator, _, _ = make_orchestrator(make_plan(action), callbacks, executor)
+    callbacks = MutatingCallbacks()
+    worker = MutatingWorker()
+    planner = RecordingPlanner(make_plan(action))
+    orchestrator = UniversalConsumerOrchestrator(
+        planner,
+        callbacks.dependencies,
+        callbacks.existing_terminal,
+        callbacks.existing_sent,
+        callbacks.action_execution_state,
+        callbacks.session_id,
+        UniversalActionExecutor(worker),
+    )
 
     result = orchestrator.process(make_context())
 
     audited_action = result.executed_actions[0]
     assert audited_action.target["conversation_id"] == "conversation-1"
     assert audited_action.payload["text"] == "Done."
-    assert audited_action is not executor.calls[0]
-    callback_action, _ = callbacks.action_completion_calls[0]
-    assert callback_action.target["conversation_id"] == "conversation-1"
-    assert callback_action.payload["text"] == "Done."
+    callback_execution = callbacks.action_state_calls[0]
+    worker_execution = worker.calls[0]
+    assert callback_execution.execution_id == worker_execution.execution_id
+    assert callback_execution is not worker_execution
+    assert callback_execution.action is not worker_execution.action
+    assert worker.target_before_mutation == "conversation-1"
+    assert audited_action is not worker_execution.action
 
 
 def test_nonterminal_blocked_action_remains_incomplete() -> None:
@@ -524,7 +580,7 @@ def test_callbacks_use_expected_counts_across_successful_processing() -> None:
         "terminal": 2,
         "sent": 2,
         "session": 1,
-        "action_completed": 1,
+        "action_state": 1,
     }
     assert len(planner.calls) == 1
     assert len(executor.calls) == 1
@@ -532,7 +588,7 @@ def test_callbacks_use_expected_counts_across_successful_processing() -> None:
 
 def test_executor_exception_propagates() -> None:
     class RaisingExecutor(RecordingExecutor):
-        def execute(self, action: PlannedAction) -> bool:
+        def execute(self, execution: UniversalActionExecution) -> bool:
             raise RuntimeError("executor exploded")
 
     callbacks = CallbackRecorder()
@@ -552,5 +608,6 @@ def test_consumer_outcomes_are_stable_string_values() -> None:
         "dry_run",
         "validation_blocked",
         "action_failed",
+        "action_unknown",
         "nonterminal_blocked",
     ]
