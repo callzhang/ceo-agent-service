@@ -3063,6 +3063,51 @@ def test_worker_creates_markdown_doc_when_decision_requests_document_reply(
     assert "https://alidocs.dingtalk.com/i/nodes/doc-1" in sent[0][1]
 
 
+def test_worker_falls_back_when_explicit_document_create_has_no_url(
+    tmp_path: Path,
+    monkeypatch,
+):
+    trigger = message("@Alex Chen(明哥) 写一版方案")
+    dws = FakeDws([conversation()], {"cid-1": [trigger]})
+
+    def create_doc_without_url(name: str, content: str) -> dict:
+        dws.created_markdown_docs.append((name, content))
+        return {"result": {"name": name}}
+
+    monkeypatch.setattr(dws, "create_markdown_doc", create_doc_without_url)
+    codex = FakeCodex(
+        CodexDecision(
+            action=CodexAction.SEND_REPLY,
+            reply_text="# 方案\n\n先按 A 路径推进。",
+            sensitivity_kind=SensitivityKind.GENERAL,
+            system_actions=[
+                {"type": "send_dingtalk_reply", "reply_text_ref": "user_response.text"},
+                {
+                    "type": "dws_markdown_document_reply",
+                    "reply_text_ref": "user_response.text",
+                    "title": "方案建议",
+                },
+            ],
+        )
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch, dry_run=False)
+
+    worker.run_once()
+
+    sent = final_sent(dws)
+    assert len(sent) == 1
+    assert "内容我写成了文档" not in sent[0][1]
+    assert "alidocs.dingtalk.com" not in sent[0][1]
+    assert "# 方案" in sent[0][1]
+    attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
+    assert attempt is not None
+    assert attempt.send_status == "sent"
+    assert attempt.send_error == ""
+    error_kinds = [error.kind for error in worker.store.list_errors(limit=10)]
+    assert "doc_reply_create_fallback" in error_kinds
+    assert "doc_reply_create" not in error_kinds
+
+
 def test_worker_falls_back_to_chunked_reply_when_automatic_doc_permission_fails(
     tmp_path: Path,
     monkeypatch,
@@ -9076,6 +9121,53 @@ def test_codex_invalid_refresh_token_waits_for_authorization(
     assert worker.store.count_reply_tasks(status="pending") == 1
     assert worker.store.count_reply_tasks(status="failed") == 0
     assert notifications[0]["title"] == "CEO task waiting for authorization: Friday"
+
+
+def test_codex_invalid_refresh_token_retries_without_duplicate_notification(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message("@Alex Chen(明哥) 这个怎么处理？")
+    dws = FakeDws([conversation()], {"cid-1": [trigger]})
+    reason = "Failed to refresh token: 400 Bad Request: Invalid refresh token."
+    codex_call_count = 0
+
+    def fail_codex(_prompt, _session_id):
+        nonlocal codex_call_count
+        codex_call_count += 1
+        raise RuntimeError(reason)
+
+    codex = FakeCodex(
+        CodexDecision(
+            action=CodexAction.SEND_REPLY,
+            reply_text="先按 A 路径推进。",
+        ),
+        before_decide=fail_codex,
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch, dry_run=True)
+    notifications: list[dict[str, str | None]] = []
+    monkeypatch.setattr(
+        "app.worker.send_macos_notification",
+        lambda **kwargs: notifications.append(kwargs),
+    )
+
+    worker.run_once()
+    pending = worker.store.list_reply_tasks(statuses=("pending",), limit=1)[0]
+    with worker.store._connect() as db:
+        db.execute(
+            "update reply_tasks set available_at='2026-05-13 17:00:00' where id=?",
+            (pending.id,),
+        )
+
+    assert worker.consume_once(max_tasks=1) == 0
+
+    assert worker.store.count_reply_tasks(status="pending") == 1
+    assert worker.store.count_reply_tasks(status="failed") == 0
+    assert codex_call_count == 2
+    assert [
+        notification["title"]
+        for notification in notifications
+        if notification["title"] == "CEO task waiting for authorization: Friday"
+    ] == ["CEO task waiting for authorization: Friday"]
 
 
 @pytest.mark.parametrize(

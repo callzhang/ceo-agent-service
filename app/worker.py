@@ -399,6 +399,10 @@ class ReplyDeliveryError(RuntimeError):
     """Raised after recording a delivery failure so queued tasks can retry."""
 
 
+class MarkdownDocumentCreateIncompleteError(ReplyDeliveryError):
+    """Raised when DWS reports document creation without a usable document."""
+
+
 class ReplyTaskProcessingError(RuntimeError):
     """Raised after recording a processing failure so queued tasks can retry."""
 
@@ -1794,6 +1798,9 @@ class DingTalkAutoReplyWorker:
                 if self._is_authorization_error(
                     exc
                 ) or _is_codex_authorization_wait_reason(authorization_wait_error):
+                    notify_authorization_wait = (
+                        task.error.strip() != authorization_wait_error
+                    )
                     if self._dws_authorization_required_scopes(exc):
                         self._ensure_dws_pat_authorization(exc)
                     self.store.defer_reply_task_for_authorization(
@@ -1807,11 +1814,15 @@ class DingTalkAutoReplyWorker:
                         "reply_task_authorization",
                         authorization_wait_error,
                     )
-                    self._notify(
-                        title=f"CEO task waiting for authorization: {task.conversation_title}",
-                        message=authorization_wait_error[:120],
-                        conversation=conversation,
-                    )
+                    if notify_authorization_wait:
+                        self._notify(
+                            title=(
+                                "CEO task waiting for authorization: "
+                                f"{task.conversation_title}"
+                            ),
+                            message=authorization_wait_error[:120],
+                            conversation=conversation,
+                        )
                     continue
                 if task.attempts < self.max_task_attempts:
                     self.store.requeue_reply_task(
@@ -7587,13 +7598,17 @@ class DingTalkAutoReplyWorker:
                 or [self._reply_document_editor_user_id(trigger)],
             )
         except Exception as exc:
-            if requested_document_reply is None:
+            can_fallback_to_chunked_reply = requested_document_reply is None or isinstance(
+                exc, MarkdownDocumentCreateIncompleteError
+            )
+            if can_fallback_to_chunked_reply:
                 logger.warning(
-                    "automatic long-reply document creation failed; "
+                    "markdown document reply creation failed; "
                     "falling back to chunked reply conversation_id=%s "
-                    "message_id=%s error=%s",
+                    "message_id=%s requested=%s error=%s",
                     conversation.open_conversation_id,
                     trigger.open_message_id,
+                    requested_document_reply is not None,
                     exc,
                 )
                 self.store.record_error(
@@ -7751,10 +7766,14 @@ class DingTalkAutoReplyWorker:
         doc_result = self.dws.create_markdown_doc(title, reply_text)
         doc_url = self._markdown_document_url(doc_result)
         if not doc_url:
-            raise RuntimeError("dws doc create did not return a document URL")
+            raise MarkdownDocumentCreateIncompleteError(
+                "dws doc create did not return a document URL"
+            )
         doc_node_id = self._markdown_document_node_id(doc_result, doc_url)
         if not doc_node_id:
-            raise RuntimeError("dws doc create did not return a document nodeId")
+            raise MarkdownDocumentCreateIncompleteError(
+                "dws doc create did not return a document nodeId"
+            )
         normalized_editor_user_ids = self._document_editor_user_ids(editor_user_ids)
         if not normalized_editor_user_ids:
             raise RuntimeError("dws doc reply has no recipient userId for permission")
