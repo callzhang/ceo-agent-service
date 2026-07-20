@@ -18,7 +18,7 @@ Accessibility send (verified live to 文件传输助手).
 | `producer.py` | Eligible-message → channel-isolated reply task (exact group @-gate) |
 | `prompt.py` / `consumer.py` | WeChat-specific prompt + Codex decision → fail-closed delivery |
 | `accessibility.py` | Exact-once delivery state machine + real AX runner |
-| `memory.py` | Bounded extraction + deterministic cleanup + approved-only writer |
+| `memory_import.py` / `memory_writer.py` | Bounded extraction + deterministic cleanup; claimed, approved-only Memory writer (`memory.py` keeps public imports) |
 | `setup.py` / `audit_web.py` | Tutorial connect service + target picker routes |
 | `service.py` / `cli.py` | Composable steps/loops + diagnostic CLI |
 | `scripts/wechat_key_probe.py` | Fingerprint-only key/schema gate |
@@ -40,12 +40,61 @@ passphrase is account-stable; re-capture only after logout/reinstall.
 
 ```bash
 .venv/bin/python -m app.wechat.cli status                     # probe capability per account
-.venv/bin/python -m app.wechat.cli read-recent --target-id filehelper --limit 100   # redacted metadata
-.venv/bin/python -m app.wechat.cli read-recent --target-id filehelper --include-text  # explicit local verify
+.venv/bin/python -m app.wechat.cli read-recent --db data/auto-reply.sqlite3 --target-id filehelper --limit 100   # uses persisted self_user_id; redacted metadata
+.venv/bin/python -m app.wechat.cli read-recent --db data/auto-reply.sqlite3 --target-id filehelper --include-text  # explicit local verify
 .venv/bin/python -m app.wechat.cli produce-once               # scan enabled scopes → enqueue
+.venv/bin/python -m app.cli wechat import-memory --db data/auto-reply.sqlite3 \
+    --account-id '<ready-account-id>' --target-id '<wxid-or-chatroom-id>' \
+    --since '2026-01-01' --until '2026-07-20T23:59:59+08:00' --limit 1000
 .venv/bin/python scripts/wechat_key_probe.py --passphrase-file ~/.config/wx_read/passphrase.hex \
     --account-db-dir "$HOME/Library/Containers/com.tencent.xinWeChat/Data/Documents/xwechat_files/<acct>/db_storage"
 ```
+
+`import-memory` is an explicit, one-shot operation. It requires exactly one
+persisted `ready` account with a resolved self wxid, one or more `--target-id`
+values (maximum 100), a date bound, and a total `--limit` from 1–10000. It reads
+at most that limit from each target, keeps the globally newest bounded set
+independent of target argument order, and sends only non-empty text messages to
+the extraction runner. It reads only those local conversations, creates
+cleaned `pending` rows, and never changes the automatic-reply activation
+watermark or calls `memory_write`. Repeating the exact same account, targets,
+bounds, and limit is idempotent.
+
+Review the result at `/wechat/memory-review`. Each row shows the cleaned
+statement, category, confidence, sensitivity, minimal redacted evidence, source
+time and message/conversation IDs, cleanup notes, reviewer/time, review state,
+Memory id/error, and write state. Approval is deliberately
+per-row and requires an editable final statement and reviewer. Memory writing is
+a second explicit action that processes only checked, already-approved IDs.
+Bulk reject is available; bulk approve is not. A rejected or revoked row cannot
+be written. If a previously written row is revoked, the page records
+`revocation_unavailable` because the current Memory backend has no supported
+delete/revoke operation; it does not claim that the Memory was removed.
+
+The writer transactionally claims each approved row. Concurrent clicks can call
+the backend at most once. A confirmed successful `memory_write` tool event and a
+stable Memory id are required before `written` is recorded. Ambiguous results are
+marked `unknown` and are never retried automatically; clear failures are marked
+`failed` for an intentional manual retry. Extraction and review persist no raw
+chat transcript, DB path, passphrase, token, or API key.
+If the process crashes while a row is `writing`, an operator can use that row's
+“中断写入标记为 unknown” action; it never turns the row back into an automatically
+retryable state. Cross-run candidates with the same normalized statement reuse
+the existing row and merge source IDs/time without resetting its review/write
+state; rejected/revoked rows do not suppress a later import. Before any pending
+row is created, a read-only Codex matcher is hard-limited to the
+`memory_connector.memory_recall` tool. Exact durable-Memory matches are skipped;
+compatible matches use a separately validated merged statement and remain
+pending; contradictory matches retain the new statement and are flagged pending.
+Every non-`none` relation must cite a Memory id and minimal evidence that are
+programmatically verified against the same object in the connector's returned
+`memories` list; an empty list is a successful `none` result. The recall query
+is deterministic for the whole candidate batch and must match the sole audited
+tool call exactly. Missing, ambiguous, unrelated, or tool-noncompliant recall
+fails the import closed.
+Model-provided cleanup notes are never persisted. The interrupted-write action
+also requires explicit confirmation and a row that has remained `writing` for at
+least 15 minutes.
 
 ## Shared-file integration status
 
@@ -64,6 +113,7 @@ passphrase is account-stable; re-capture only after logout/reinstall.
      auto-detects+persists `self_user_id` and reports `ready`.
    - `run_service()` starts `wechat-producer`/`wechat-consumer` threads only when
      `CEO_WECHAT_READER_ENABLED` **and** a single account is persisted `ready`
+     with a non-empty self-wxid
      (`_wechat_service_components`); disabled by default (no effect on the DingTalk
      service). Auto-send stays gated — the loops enqueue tasks and produce
      `ready_to_send` deliveries but do not send.
@@ -74,6 +124,9 @@ passphrase is account-stable; re-capture only after logout/reinstall.
 2. `wechat status` → the account reports `ready`; `read-recent --include-text` on
    File Transfer Helper — compare count/order/direction/timestamp/sender/text;
    run twice, confirm `produce-once` enqueues zero duplicates on the second scan.
+   `read-recent` requires exactly one account persisted as `ready`; it never falls
+   back to a directory discovered on disk. If that ready row has no self-wxid, it
+   probes only that account and refuses to print guessed directions on failure.
 3. Decision dry-run with `CEO_WECHAT_SENDER_ENABLED=0`: one direct message → one
    task + audited decision; an ordinary group message → no task; a real
    `@current account` group message → one task; no external send.
@@ -140,4 +193,14 @@ passphrase is account-stable; re-capture only after logout/reinstall.
   real group @-messages). Group triggers require `self_user_id` populated on the
   account so the gate has a wxid to match.
 - **Direction**: real outbound/inbound needs the self-wxid; defaults inbound
-  until `self_username` is populated.
+  until `self_username` is populated. The diagnostic CLI now requires a resolved
+  self-wxid before reading, so it cannot silently label every row inbound.
+  Automatic producer, consumer, and sender loops do not start without it, and
+  one-shot produce/consume commands build their reader with that persisted id.
+- **Activation watermark**: each selected scope starts at its activation time;
+  historical messages are never fed into auto-reply. The producer advances that
+  scope only after the entire normalized batch has been handled. Producer pages
+  oldest-first after the watermark while retaining every row in the watermark
+  second as overlap; the unique task key removes duplicates without losing a
+  same-second row that becomes visible later. Historical Memory import remains a
+  separate, bounded, human-reviewed operation.

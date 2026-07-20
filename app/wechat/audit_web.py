@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Callable, Literal
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel, model_validator
 
 from app.wechat.models import WechatReplyScope
@@ -36,6 +36,171 @@ class WechatScopeTarget(BaseModel):
 class WechatReplyScopeRequest(BaseModel):
     account_id: str
     targets: list[WechatScopeTarget]
+
+
+def register_wechat_memory_review_routes(
+    app: FastAPI, *, store_factory: Callable[[], object],
+    writer_factory: Callable[[object], object],
+) -> None:
+    """Human review for cleaned candidates. There is deliberately no bulk approve."""
+    import html
+    import json
+    from urllib.parse import parse_qs
+    from fastapi.responses import HTMLResponse, RedirectResponse
+
+    async def _form(request: Request) -> dict[str, list[str]]:
+        return parse_qs((await request.body()).decode("utf-8"), keep_blank_values=True)
+
+    def _one(form: dict[str, list[str]], key: str) -> str:
+        values = form.get(key, [])
+        return values[0].strip() if values else ""
+
+    @app.get("/wechat/memory-review", response_class=HTMLResponse)
+    def memory_review(status: str = "", category: str = "", sensitivity: str = ""):
+        rows = store_factory().list_wechat_memory_candidates(
+            status=status or None, category=category or None,
+            sensitivity=sensitivity or None,
+        )
+        parts = [
+            "<style>body{font-family:-apple-system,system-ui,sans-serif;margin:24px}"
+            "table{border-collapse:collapse;width:100%}th,td{border:1px solid #ddd;"
+            "padding:7px;vertical-align:top}textarea{width:24em;height:4em}"
+            ".meta{color:#667085;font-size:12px}</style>",
+            "<h2>微信 Memory 人工审核</h2>",
+            "<p>候选只会在人工逐条批准后，通过下方明确勾选写入。此页不提供批量批准。</p>",
+            "<form method='get'><input name='status' placeholder='status' value='",
+            html.escape(status), "'><input name='category' placeholder='category' value='",
+            html.escape(category), "'><input name='sensitivity' placeholder='sensitivity' value='",
+            html.escape(sensitivity), "'><button>筛选</button></form>",
+            "<form method='post'><table><tr><th>选择</th><th>清理后内容</th>"
+            "<th>分类/置信度/敏感度</th><th>最小证据</th><th>来源时间/清理说明</th>"
+            "<th>来源</th><th>状态/写入</th><th>审核</th></tr>",
+        ]
+        for row in rows:
+            cid = int(row["id"])
+            statement = html.escape(row["edited_statement"] or row["statement"])
+            parts.extend([
+                "<tr><td><input type='checkbox' name='candidate_id' value='", str(cid), "'></td>",
+                "<td>", statement, "</td><td>", html.escape(row["category"]), " / ",
+                html.escape(f"{row['confidence']:.2f}"), " / ", html.escape(row["sensitivity"]),
+                "</td><td>", html.escape(row["evidence_excerpt"]), "</td><td><span class='meta'>",
+                html.escape(f"{row['source_time_start']} — {row['source_time_end']}"), "</span><br>",
+                html.escape(row["cleanup_notes"]), "</td><td><span class='meta'>conversations: ",
+                html.escape(", ".join(json.loads(row["source_conversation_ids_json"]))),
+                "<br>messages: ",
+                html.escape(", ".join(json.loads(row["source_message_ids_json"]))),
+                "</span></td><td>", html.escape(row["status"]), " / ",
+                html.escape(row["memory_write_status"] or "not_written"),
+                "<br><span class='meta'>reviewer: ", html.escape(row["reviewer"]),
+                " · ", html.escape(row["reviewed_at"]), "<br>memory: ",
+                html.escape(row["memory_id"]), "<br>error: ",
+                html.escape(row["memory_write_error"]), "</span></td><td>",
+            ])
+            if row["status"] == "pending":
+                parts.extend([
+                    f"<textarea name='final_statement_{cid}'>", html.escape(row["statement"]),
+                    f"</textarea><br><input name='reviewer_{cid}' placeholder='reviewer'>",
+                    f"<button formaction='/wechat/memory-review/{cid}/approve' formmethod='post'>批准</button>",
+                    f"<button formaction='/wechat/memory-review/{cid}/reject' formmethod='post'>拒绝</button>",
+                ])
+            elif row["status"] == "approved":
+                parts.extend([
+                    f"<input name='reviewer_{cid}' placeholder='reviewer'>",
+                    f"<button formaction='/wechat/memory-review/{cid}/revoke' formmethod='post'>撤销批准</button>"
+                ])
+                if row["memory_write_status"] == "writing":
+                    parts.append(
+                        f"<label><input type='checkbox' name='confirm_stale_{cid}' value='1'>"
+                        "确认该写入已超时</label>"
+                        f"<button formaction='/wechat/memory-review/{cid}/resolve-unknown' "
+                        "formmethod='post'>中断写入标记为 unknown</button>"
+                    )
+            parts.append("</td></tr>")
+        parts.append(
+            "</table><button formaction='/wechat/memory-review/write-approved' "
+            "formmethod='post'>写入已勾选且已批准项</button> "
+            "<input name='reviewer' placeholder='bulk reject reviewer'> "
+            "<button formaction='/wechat/memory-review/reject-selected' "
+            "formmethod='post'>批量拒绝已勾选项</button></form>"
+        )
+        return HTMLResponse("".join(parts))
+
+    @app.post("/wechat/memory-review/write-approved")
+    async def write_approved(request: Request):
+        form = await _form(request)
+        store = store_factory()
+        writer = writer_factory(store)
+        for raw_id in form.get("candidate_id", []):
+            try:
+                writer.write(int(raw_id))
+            except (ValueError, RuntimeError):
+                continue
+        return RedirectResponse("/wechat/memory-review", status_code=303)
+
+    @app.post("/wechat/memory-review/reject-selected")
+    async def reject_selected(request: Request):
+        form = await _form(request)
+        store = store_factory()
+        reviewer = _one(form, "reviewer")
+        for raw_id in form.get("candidate_id", []):
+            try:
+                store.review_wechat_memory_candidate(int(raw_id), "reject", reviewer=reviewer)
+            except ValueError:
+                continue
+        return RedirectResponse("/wechat/memory-review", status_code=303)
+
+    @app.post("/wechat/memory-review/{candidate_id}/approve")
+    async def approve_memory(candidate_id: int, request: Request):
+        form = await _form(request)
+        final_statement = _one(form, "final_statement") or _one(
+            form, f"final_statement_{candidate_id}"
+        )
+        try:
+            store_factory().review_wechat_memory_candidate(
+                candidate_id, "approve", reviewer=(
+                    _one(form, f"reviewer_{candidate_id}") or _one(form, "reviewer")
+                ),
+                final_statement=final_statement,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return RedirectResponse("/wechat/memory-review", status_code=303)
+
+    @app.post("/wechat/memory-review/{candidate_id}/reject")
+    async def reject_memory(candidate_id: int, request: Request):
+        form = await _form(request)
+        try:
+            store_factory().review_wechat_memory_candidate(
+                candidate_id, "reject", reviewer=(
+                    _one(form, f"reviewer_{candidate_id}") or _one(form, "reviewer")
+                ))
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return RedirectResponse("/wechat/memory-review", status_code=303)
+
+    @app.post("/wechat/memory-review/{candidate_id}/revoke")
+    async def revoke_memory(candidate_id: int, request: Request):
+        form = await _form(request)
+        try:
+            store_factory().review_wechat_memory_candidate(
+                candidate_id, "revoke", reviewer=(
+                    _one(form, f"reviewer_{candidate_id}") or _one(form, "reviewer")
+                ))
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return RedirectResponse("/wechat/memory-review", status_code=303)
+
+    @app.post("/wechat/memory-review/{candidate_id}/resolve-unknown")
+    async def resolve_unknown(candidate_id: int, request: Request):
+        form = await _form(request)
+        try:
+            store_factory().resolve_wechat_memory_candidate_write_unknown(
+                candidate_id, reviewer=(
+                    _one(form, f"reviewer_{candidate_id}") or _one(form, "reviewer")
+                ), confirm=_one(form, f"confirm_stale_{candidate_id}") == "1")
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return RedirectResponse("/wechat/memory-review", status_code=303)
 
 
 def register_wechat_review_routes(app: FastAPI, *, store_factory: Callable[[], object],

@@ -32,3 +32,13 @@ def test_ready_account_requires_exactly_one(tmp_path):
     assert state is not None and state["account_id"] == "a1"
     account = account_from_state(state)
     assert account.db_dir == "/a1/db_storage"
+
+
+def test_ready_account_requires_self_user_id(tmp_path):
+    store = AutoReplyStore(tmp_path / "w.sqlite3")
+    store.upsert_wechat_read_state(
+        account_id="a1", account_dir="/a1", db_dir="/a1/db_storage",
+        app_version="4.1.10", self_user_id="", capability_status="ready",
+    )
+
+    assert ready_account_state(store) is None

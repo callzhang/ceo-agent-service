@@ -1887,12 +1887,14 @@ class DingTalkAutoReplyWorker:
                 conversation_id=task.conversation_id,
                 trigger_create_time=task.trigger_create_time,
                 exclude_task_id=task.id,
+                channel="dingtalk",
             ):
                 completed_by_id[completed_task.id] = completed_task
         for completed_task in self.store.complete_unfinished_reply_tasks_for_messages(
             conversation_id=task.conversation_id,
             trigger_message_ids=self._coalesced_trigger_message_ids(task),
             exclude_task_id=task.id,
+            channel="dingtalk",
         ):
             completed_by_id[completed_task.id] = completed_task
         for completed_task in completed_by_id.values():
@@ -2132,6 +2134,7 @@ class DingTalkAutoReplyWorker:
                 trigger_message_json=trigger.model_dump_json(),
                 available_at=available_at,
                 error=error,
+                channel="dingtalk",
             )
             if updated:
                 return True
@@ -2146,6 +2149,7 @@ class DingTalkAutoReplyWorker:
             trigger_message_json=trigger.model_dump_json(),
             available_at=available_at,
             error=error,
+            channel="dingtalk",
         )
         if inserted:
             return True
@@ -2154,6 +2158,7 @@ class DingTalkAutoReplyWorker:
             trigger.open_message_id,
             trigger_text=trigger.content,
             trigger_message_json=trigger.model_dump_json(),
+            channel="dingtalk",
         )
         return updated > 0
 

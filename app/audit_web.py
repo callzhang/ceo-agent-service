@@ -5269,6 +5269,7 @@ def create_audit_app(
     from app.store import AutoReplyStore as _WechatStore
     from app.wechat import service as _wechat_service
     from app.wechat.audit_web import (
+        register_wechat_memory_review_routes,
         register_wechat_tutorial_routes, register_wechat_review_routes,
     )
 
@@ -5285,6 +5286,18 @@ def create_audit_app(
         app,
         store_factory=lambda: _WechatStore(db_path),
         sender_factory=_wechat_sender,
+    )
+
+    def _wechat_memory_writer(store):
+        from app import config as _config
+        from app.wechat.memory import CodexMemoryWriteBackend, WechatMemoryWriter
+        return WechatMemoryWriter(
+            store, CodexMemoryWriteBackend(_config.workspace_path())
+        )
+
+    register_wechat_memory_review_routes(
+        app, store_factory=lambda: _WechatStore(db_path),
+        writer_factory=_wechat_memory_writer,
     )
 
     @app.get("/", response_class=HTMLResponse)

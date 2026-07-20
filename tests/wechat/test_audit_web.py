@@ -4,6 +4,7 @@ from fastapi.testclient import TestClient
 
 from app.store import AutoReplyStore
 from app.wechat.audit_web import register_wechat_tutorial_routes
+from app.wechat.memory import ExtractedMemoryCandidate
 
 
 class FakeSetup:
@@ -136,3 +137,108 @@ def test_approve_sends(review_client):
         time.sleep(0.02)
     assert review_client.store.get_wechat_delivery_for_task(1).status == "sent"
     assert review_client.sent == [1]
+
+
+@pytest.fixture
+def memory_client(tmp_path):
+    from app.wechat.audit_web import register_wechat_memory_review_routes
+    store = AutoReplyStore(tmp_path / "w.sqlite3")
+    writes = []
+    class Writer:
+        def write(self, candidate_id):
+            writes.append(candidate_id)
+            assert store.claim_wechat_memory_candidate_write(candidate_id)["outcome"] == "claimed"
+            store.finish_wechat_memory_candidate_write(
+                candidate_id, status="written", memory_id=f"mem-{candidate_id}")
+    app = FastAPI()
+    register_wechat_memory_review_routes(
+        app, store_factory=lambda: store, writer_factory=lambda s: Writer())
+    tc = TestClient(app)
+    tc.store, tc.writes = store, writes
+    return tc
+
+
+def _seed_memory_candidate(store, statement="Derek <likes> concise notes", category="preference"):
+    return store.add_wechat_memory_candidate(
+        import_run_id="run", account_id="acct",
+        candidate=ExtractedMemoryCandidate(
+            statement=statement, category=category, confidence=.9, sensitivity="normal",
+            source_message_ids=["m1"], source_conversation_ids=["c1"],
+            source_time_start="2026-07-17", source_time_end="2026-07-17",
+            evidence_excerpt="minimal <evidence>", cleanup_notes="trimmed",
+        ))
+
+
+def test_memory_review_page_escapes_and_filters(memory_client):
+    _seed_memory_candidate(memory_client.store)
+    response = memory_client.get("/wechat/memory-review?status=pending&category=preference")
+    assert response.status_code == 200
+    assert "Derek &lt;likes&gt; concise notes" in response.text
+    assert "minimal &lt;evidence&gt;" in response.text
+    assert "messages: m1" in response.text and "conversations: c1" in response.text
+    assert "bulk approve" not in response.text.casefold()
+
+
+def test_memory_review_requires_edited_final_statement(memory_client):
+    cid = _seed_memory_candidate(memory_client.store)
+    response = memory_client.post(
+        f"/wechat/memory-review/{cid}/approve",
+        data={"final_statement": "", "reviewer": "Derek"})
+    assert response.status_code == 422
+    assert memory_client.store.get_wechat_memory_candidate(cid)["status"] == "pending"
+
+
+def test_memory_review_rejects_sensitive_human_edit(memory_client):
+    cid = _seed_memory_candidate(memory_client.store)
+    response = memory_client.post(
+        f"/wechat/memory-review/{cid}/approve",
+        data={"final_statement": "API key is secret", "reviewer": "Derek"})
+    assert response.status_code == 422
+    assert memory_client.store.get_wechat_memory_candidate(cid)["status"] == "pending"
+
+
+def test_memory_review_approve_then_explicit_write(memory_client):
+    cid = _seed_memory_candidate(memory_client.store)
+    assert memory_client.post(
+        f"/wechat/memory-review/{cid}/approve",
+        data={"final_statement": "Derek likes short updates", "reviewer": "Derek"},
+        follow_redirects=False).status_code == 303
+    assert memory_client.post(
+        "/wechat/memory-review/write-approved", data={"candidate_id": str(cid)},
+        follow_redirects=False).status_code == 303
+    assert memory_client.writes == [cid]
+    assert memory_client.store.get_wechat_memory_candidate(cid)["memory_id"] == f"mem-{cid}"
+
+
+def test_memory_review_reject_and_revoke_state(memory_client):
+    rejected = _seed_memory_candidate(memory_client.store, "reject me")
+    memory_client.post(f"/wechat/memory-review/{rejected}/reject", data={"reviewer":"D"})
+    assert memory_client.store.get_wechat_memory_candidate(rejected)["status"] == "rejected"
+    approved = _seed_memory_candidate(memory_client.store, "approve me")
+    memory_client.post(f"/wechat/memory-review/{approved}/approve",
+                       data={"final_statement":"approved", "reviewer":"D"})
+    memory_client.post(f"/wechat/memory-review/{approved}/revoke", data={"reviewer":"D"})
+    assert memory_client.store.get_wechat_memory_candidate(approved)["status"] == "revoked"
+
+
+def test_memory_review_can_resolve_interrupted_write_to_unknown(memory_client):
+    cid = _seed_memory_candidate(memory_client.store, "writing candidate")
+    memory_client.store.review_wechat_memory_candidate(
+        cid, "approve", reviewer="D", final_statement="writing candidate")
+    assert memory_client.store.claim_wechat_memory_candidate_write(cid)["outcome"] == "claimed"
+    with memory_client.store._connect() as db:
+        db.execute("update wechat_memory_candidates set updated_at='2000-01-01' where id=?", (cid,))
+    response = memory_client.post(
+        f"/wechat/memory-review/{cid}/resolve-unknown",
+        data={"reviewer": "Derek", f"confirm_stale_{cid}": "1"},
+        follow_redirects=False)
+    assert response.status_code == 303
+    assert memory_client.store.get_wechat_memory_candidate(cid)["memory_write_status"] == "unknown"
+
+
+def test_main_audit_app_registers_memory_review(tmp_path):
+    from app.audit_web import create_audit_app
+    response = TestClient(create_audit_app(tmp_path / "worker.sqlite3")).get(
+        "/wechat/memory-review")
+    assert response.status_code == 200
+    assert "微信 Memory 人工审核" in response.text
