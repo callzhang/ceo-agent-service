@@ -19,6 +19,7 @@ class ReaderBackend(Protocol):
     def read_messages(
         self, db_dir: str, passphrase: bytes, *,
         conversation_id: str, conversation_type: str, since: str, limit: int,
+        order: str = "newest",
     ) -> list[dict]: ...
     def list_targets(
         self, db_dir: str, passphrase: bytes, *,
@@ -98,13 +99,13 @@ class WechatReader:
     def read_messages(
         self, account: WechatAccount, *,
         conversation_id: str = "", conversation_type: str = "direct",
-        since: str = "", limit: int = 100,
+        since: str = "", limit: int = 100, order: str = "newest",
     ) -> list[WechatMessage]:
         passphrase = self._require_ready(account)
         rows = self.backend.read_messages(
             account.db_dir, passphrase,
             conversation_id=conversation_id, conversation_type=conversation_type,
-            since=since, limit=limit,
+            since=since, limit=limit, order=order,
         )
         return [self._normalize(row, account) for row in rows]
 

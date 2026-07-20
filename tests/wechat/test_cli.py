@@ -2,7 +2,7 @@ from types import SimpleNamespace
 
 from app.store import AutoReplyStore
 from app.wechat import cli
-from app.wechat.models import WechatAccount, WechatMessage
+from app.wechat.models import WechatMessage
 
 
 class RecordingReader:
@@ -58,10 +58,14 @@ def test_read_recent_uses_persisted_ready_account_self_id(tmp_path, monkeypatch)
     assert reader.read_account.self_user_id == "self-1"
 
 
-def test_read_recent_fallback_detects_self_id_before_reading(tmp_path, monkeypatch):
-    discovered = WechatAccount(
-        account_id="acct-1", display_name="acct-1", self_user_id="",
-        account_dir="/account", db_dir="/account/db_storage", app_version="4.1.10",
+def test_read_recent_detects_missing_self_id_for_unique_ready_account(
+    tmp_path, monkeypatch,
+):
+    db = tmp_path / "worker.sqlite3"
+    store = AutoReplyStore(db)
+    store.upsert_wechat_read_state(
+        account_id="acct-1", account_dir="/account", db_dir="/account/db_storage",
+        app_version="4.1.10", self_user_id="", capability_status="ready",
     )
     detector = SimpleNamespace(detect_self_username=lambda account: "self-1")
     reader = RecordingReader("self-1")
@@ -71,10 +75,9 @@ def test_read_recent_fallback_detects_self_id_before_reading(tmp_path, monkeypat
         built_with.append(self_username)
         return detector if not self_username else reader
 
-    monkeypatch.setattr(cli, "_single_account", lambda: discovered)
     monkeypatch.setattr(cli, "_reader", build_reader)
 
-    assert cli.cmd_read_recent(_args(tmp_path / "worker.sqlite3")) == 0
+    assert cli.cmd_read_recent(_args(db)) == 0
     assert built_with == ["", "self-1"]
     assert reader.read_account.self_user_id == "self-1"
 
@@ -82,16 +85,62 @@ def test_read_recent_fallback_detects_self_id_before_reading(tmp_path, monkeypat
 def test_read_recent_refuses_to_guess_direction_without_self_id(
     tmp_path, monkeypatch, capsys,
 ):
-    discovered = WechatAccount(
-        account_id="acct-1", display_name="acct-1", self_user_id="",
-        account_dir="/account", db_dir="/account/db_storage", app_version="4.1.10",
+    db = tmp_path / "worker.sqlite3"
+    store = AutoReplyStore(db)
+    store.upsert_wechat_read_state(
+        account_id="acct-1", account_dir="/account", db_dir="/account/db_storage",
+        app_version="4.1.10", self_user_id="", capability_status="ready",
     )
     detector = SimpleNamespace(detect_self_username=lambda account: "")
-    monkeypatch.setattr(cli, "_single_account", lambda: discovered)
     monkeypatch.setattr(cli, "_reader", lambda *, self_username="": detector)
 
-    assert cli.cmd_read_recent(_args(tmp_path / "worker.sqlite3")) == 1
+    assert cli.cmd_read_recent(_args(db)) == 1
     assert "cannot determine current WeChat user" in capsys.readouterr().out
+
+
+def test_read_recent_refuses_zero_persisted_ready_accounts(
+    tmp_path, monkeypatch, capsys,
+):
+    monkeypatch.setattr(
+        cli, "_reader", lambda **kwargs: (_ for _ in ()).throw(AssertionError("no read")),
+    )
+
+    assert cli.cmd_read_recent(_args(tmp_path / "worker.sqlite3")) == 1
+    assert "exactly one persisted ready" in capsys.readouterr().out
+
+
+def test_read_recent_refuses_blocked_persisted_account(tmp_path, monkeypatch, capsys):
+    db = tmp_path / "worker.sqlite3"
+    store = AutoReplyStore(db)
+    store.upsert_wechat_read_state(
+        account_id="acct-1", account_dir="/account", db_dir="/account/db_storage",
+        app_version="4.1.10", self_user_id="self-1", capability_status="blocked",
+    )
+    monkeypatch.setattr(
+        cli, "_reader", lambda **kwargs: (_ for _ in ()).throw(AssertionError("no read")),
+    )
+
+    assert cli.cmd_read_recent(_args(db)) == 1
+    assert "exactly one persisted ready" in capsys.readouterr().out
+
+
+def test_read_recent_refuses_multiple_persisted_ready_accounts(
+    tmp_path, monkeypatch, capsys,
+):
+    db = tmp_path / "worker.sqlite3"
+    store = AutoReplyStore(db)
+    for account_id in ("acct-1", "acct-2"):
+        store.upsert_wechat_read_state(
+            account_id=account_id, account_dir=f"/{account_id}",
+            db_dir=f"/{account_id}/db_storage", app_version="4.1.10",
+            self_user_id=f"self-{account_id}", capability_status="ready",
+        )
+    monkeypatch.setattr(
+        cli, "_reader", lambda **kwargs: (_ for _ in ()).throw(AssertionError("no read")),
+    )
+
+    assert cli.cmd_read_recent(_args(db)) == 1
+    assert "exactly one persisted ready" in capsys.readouterr().out
 
 
 def test_read_recent_parser_accepts_db_path():

@@ -1353,7 +1353,9 @@ def rerun_message_command(
             force_new_decision=force_new_decision,
             oa_url=oa_url,
         )
-        store.complete_reply_task_for_message(conversation_id, processed_message_id)
+        store.complete_reply_task_for_message(
+            conversation_id, processed_message_id, channel="dingtalk"
+        )
     except ValueError as exc:
         raise SystemExit(str(exc)) from exc
     print(

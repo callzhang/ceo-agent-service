@@ -893,6 +893,22 @@ class AutoReplyStore:
                 );
                 """
             )
+            reply_task_columns = {
+                row["name"]
+                for row in db.execute("pragma table_info(reply_tasks)").fetchall()
+            }
+            for column, definition in (
+                ("trigger_message_json", "text not null default '{}'"),
+                ("available_at", "text not null default ''"),
+                ("force_new_decision", "integer not null default 0"),
+                ("oa_url", "text not null default ''"),
+                ("manual_rerun_attempt_id", "integer not null default 0"),
+                ("channel", "text not null default 'dingtalk'"),
+            ):
+                if column not in reply_task_columns:
+                    db.execute(
+                        f"alter table reply_tasks add column {column} {definition}"
+                    )
             self._migrate_reply_task_channel_identity(db)
             sent_reply_columns = {
                 row["name"]
@@ -980,22 +996,6 @@ class AutoReplyStore:
                 where send_status='needs_authorization'
                 """
             )
-            reply_task_columns = {
-                row["name"]
-                for row in db.execute("pragma table_info(reply_tasks)").fetchall()
-            }
-            for column, definition in (
-                ("trigger_message_json", "text not null default '{}'"),
-                ("available_at", "text not null default ''"),
-                ("force_new_decision", "integer not null default 0"),
-                ("oa_url", "text not null default ''"),
-                ("manual_rerun_attempt_id", "integer not null default 0"),
-                ("channel", "text not null default 'dingtalk'"),
-            ):
-                if column not in reply_task_columns:
-                    db.execute(
-                        f"alter table reply_tasks add column {column} {definition}"
-                    )
             for table_name in ("reply_attempts", "sent_replies"):
                 existing = {
                     row["name"]
@@ -1443,6 +1443,7 @@ class AutoReplyStore:
         conversation_id: str,
         trigger_create_time: str,
         exclude_task_id: int,
+        channel: str = "dingtalk",
     ) -> list[ReplyTask]:
         with self._connect() as db:
             db.execute("begin immediate")
@@ -1450,13 +1451,14 @@ class AutoReplyStore:
                 """
                 select *
                 from reply_tasks
-                where conversation_id=?
+                where channel=?
+                  and conversation_id=?
                   and status in ('pending', 'processing')
                   and trigger_create_time < ?
                   and id != ?
                 order by trigger_create_time, id
                 """,
-                (conversation_id, trigger_create_time, exclude_task_id),
+                (channel, conversation_id, trigger_create_time, exclude_task_id),
             ).fetchall()
             task_ids = [row["id"] for row in rows]
             if not task_ids:
@@ -1482,6 +1484,7 @@ class AutoReplyStore:
         conversation_id: str,
         trigger_message_ids: list[str],
         exclude_task_id: int,
+        channel: str = "dingtalk",
     ) -> list[ReplyTask]:
         if not trigger_message_ids:
             return []
@@ -1492,13 +1495,14 @@ class AutoReplyStore:
                 f"""
                 select *
                 from reply_tasks
-                where conversation_id=?
+                where channel=?
+                  and conversation_id=?
                   and status in ('pending', 'processing')
                   and trigger_message_id in ({placeholders})
                   and id != ?
                 order by trigger_create_time, id
                 """,
-                [conversation_id, *trigger_message_ids, exclude_task_id],
+                [channel, conversation_id, *trigger_message_ids, exclude_task_id],
             ).fetchall()
             task_ids = [row["id"] for row in rows]
             if not task_ids:
@@ -1533,7 +1537,8 @@ class AutoReplyStore:
             )
 
     def complete_reply_task_for_message(
-        self, conversation_id: str, trigger_message_id: str
+        self, conversation_id: str, trigger_message_id: str, *,
+        channel: str = "dingtalk",
     ) -> int:
         with self._connect() as db:
             cursor = db.execute(
@@ -1544,10 +1549,11 @@ class AutoReplyStore:
                     error='',
                     available_at='',
                     updated_at=current_timestamp
-                where conversation_id=?
+                where channel=?
+                  and conversation_id=?
                   and trigger_message_id=?
                 """,
-                (conversation_id, trigger_message_id),
+                (channel, conversation_id, trigger_message_id),
             )
             return cursor.rowcount
 
@@ -2889,6 +2895,7 @@ class AutoReplyStore:
         *,
         trigger_text: str,
         trigger_message_json: str,
+        channel: str = "dingtalk",
     ) -> int:
         with self._connect() as db:
             cursor = db.execute(
@@ -2897,7 +2904,8 @@ class AutoReplyStore:
                 set trigger_text=?,
                     trigger_message_json=?,
                     updated_at=current_timestamp
-                where conversation_id=?
+                where channel=?
+                  and conversation_id=?
                   and trigger_message_id=?
                   and status='pending'
                   and attempts=0
@@ -2909,6 +2917,7 @@ class AutoReplyStore:
                 (
                     trigger_text,
                     trigger_message_json,
+                    channel,
                     conversation_id,
                     trigger_message_id,
                     trigger_text,
@@ -2928,13 +2937,15 @@ class AutoReplyStore:
         trigger_message_json: str,
         available_at: str = "",
         error: str = "",
+        channel: str = "dingtalk",
     ) -> int:
         with self._connect() as db:
             target = db.execute(
                 """
                 select id
                 from reply_tasks
-                where conversation_id=?
+                where channel=?
+                  and conversation_id=?
                   and single_chat=1
                   and status='pending'
                   and attempts=0
@@ -2942,7 +2953,7 @@ class AutoReplyStore:
                 order by trigger_create_time desc, id desc
                 limit 1
                 """,
-                (conversation_id, trigger_create_time),
+                (channel, conversation_id, trigger_create_time),
             ).fetchone()
             if target is None:
                 return 0
@@ -2990,13 +3001,14 @@ class AutoReplyStore:
             db.execute(
                 """
                 delete from reply_tasks
-                where conversation_id=?
+                where channel=?
+                  and conversation_id=?
                   and single_chat=1
                   and status='pending'
                   and attempts=0
                   and id != ?
                 """,
-                (conversation_id, task_id),
+                (channel, conversation_id, task_id),
             )
             return cursor.rowcount
 

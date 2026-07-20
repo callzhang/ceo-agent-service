@@ -35,12 +35,15 @@ class FakeCipherBackend:
         del db_dir, passphrase
         return list(self.tables)
 
-    def read_messages(self, db_dir, passphrase, *, conversation_id, conversation_type, since, limit):
+    def read_messages(
+        self, db_dir, passphrase, *, conversation_id, conversation_type, since,
+        limit, order="newest",
+    ):
         del db_dir, passphrase, since
         rows = self.rows
         if conversation_id:
             rows = [r for r in rows if r.get("conversation_id") == conversation_id]
-        return rows[:limit]
+        return rows[:limit] if order == "newest" else list(reversed(rows[:limit]))
 
     def list_targets(self, db_dir, passphrase, *, kind, query, limit, offset):
         del db_dir, passphrase

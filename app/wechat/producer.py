@@ -47,21 +47,22 @@ class WechatReplyProducer:
         enqueued = 0
         for scope in scopes:
             conversation_id = scope.conversation_id or scope.target_id
+            if not scope.last_active_at:
+                self.store.advance_wechat_scope_watermark(
+                    scope.account_id, scope.target_type, scope.target_id,
+                    datetime.now().astimezone().isoformat(),
+                )
+                continue
             messages = self.reader.read_messages(
                 self.account,
                 conversation_id=conversation_id,
                 conversation_type=scope.target_type,
-                since=scope.last_active_at or "",
+                since=scope.last_active_at,
                 limit=self.read_limit,
+                order="oldest",
             )
             ordered = sorted(messages, key=lambda m: m.sent_at)
-            if not scope.last_active_at:
-                baseline = ordered[-1].sent_at if ordered else datetime.now().astimezone().isoformat()
-                self.store.advance_wechat_scope_watermark(
-                    scope.account_id, scope.target_type, scope.target_id, baseline
-                )
-                continue
-            new_messages = [m for m in ordered if m.sent_at > scope.last_active_at]
+            new_messages = [m for m in ordered if m.sent_at >= scope.last_active_at]
             # Oldest-first; the frontier moves only after the complete batch.
             for message in new_messages:
                 if not is_reply_candidate(message, scope, self_user_id=self.self_user_id):

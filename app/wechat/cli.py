@@ -81,24 +81,13 @@ def cmd_consume_once(args) -> int:
     return 0
 
 
-def _single_account() -> WechatAccount | None:
-    accounts = _accounts()
-    if len(accounts) != 1:
-        return None
-    a = accounts[0]
-    return WechatAccount(
-        account_id=a.account_id, display_name=a.account_id, self_user_id="",
-        account_dir=str(a.account_dir), db_dir=str(a.db_dir), app_version=_install_version(),
-    )
-
-
 def cmd_read_recent(args) -> int:
     store = AutoReplyStore(Path(args.db))
     state = service.ready_account_state(store)
-    account = service.account_from_state(state) if state is not None else _single_account()
-    if account is None:
-        print("expected one ready or discovered WeChat account")
+    if state is None:
+        print("expected exactly one persisted ready WeChat account; run status first")
         return 1
+    account = service.account_from_state(state)
     self_user_id = account.self_user_id
     if not self_user_id:
         self_user_id = _reader().detect_self_username(account)

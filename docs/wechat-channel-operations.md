@@ -74,8 +74,9 @@ passphrase is account-stable; re-capture only after logout/reinstall.
 2. `wechat status` → the account reports `ready`; `read-recent --include-text` on
    File Transfer Helper — compare count/order/direction/timestamp/sender/text;
    run twice, confirm `produce-once` enqueues zero duplicates on the second scan.
-   `read-recent` refuses to print guessed directions when neither the single ready
-   account nor automatic self-wxid detection can identify the current user.
+   `read-recent` requires exactly one account persisted as `ready`; it never falls
+   back to a directory discovered on disk. If that ready row has no self-wxid, it
+   probes only that account and refuses to print guessed directions on failure.
 3. Decision dry-run with `CEO_WECHAT_SENDER_ENABLED=0`: one direct message → one
    task + audited decision; an ordinary group message → no task; a real
    `@current account` group message → one task; no external send.
@@ -146,5 +147,8 @@ passphrase is account-stable; re-capture only after logout/reinstall.
   self-wxid before reading, so it cannot silently label every row inbound.
 - **Activation watermark**: each selected scope starts at its activation time;
   historical messages are never fed into auto-reply. The producer advances that
-  scope only after the entire normalized batch has been handled. Historical
-  Memory import remains a separate, bounded, human-reviewed operation.
+  scope only after the entire normalized batch has been handled. Producer pages
+  oldest-first after the watermark while retaining every row in the watermark
+  second as overlap; the unique task key removes duplicates without losing a
+  same-second row that becomes visible later. Historical Memory import remains a
+  separate, bounded, human-reviewed operation.

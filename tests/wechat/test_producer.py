@@ -11,9 +11,23 @@ class FakeReader:
     def __init__(self):
         self.messages: list[WechatMessage] = []
 
-    def read_messages(self, account, *, conversation_id, conversation_type, since, limit):
-        del account, conversation_type, since
-        return [m for m in self.messages if m.conversation_id == conversation_id][:limit]
+    def read_messages(
+        self, account, *, conversation_id, conversation_type, since, limit,
+        order="newest",
+    ):
+        del account, conversation_type
+        messages = [
+            m for m in self.messages
+            if m.conversation_id == conversation_id and (not since or m.sent_at >= since)
+        ]
+        if order == "newest":
+            return sorted(messages, key=lambda m: m.sent_at, reverse=True)[:limit]
+        overlap = [m for m in messages if m.sent_at == since]
+        newer = sorted(
+            (m for m in messages if not since or m.sent_at > since),
+            key=lambda m: m.sent_at,
+        )[:limit]
+        return overlap + newer
 
 
 def _after(timestamp: str, seconds: int = 1) -> str:
@@ -212,3 +226,53 @@ def test_failed_batch_does_not_advance_scope_watermark(
     assert store.get_wechat_reply_scope(
         "acct-1", target_type, target_id
     ).last_active_at == baseline
+
+
+def test_same_second_message_visible_on_later_scan_is_not_lost(store, reader, account):
+    boundary = "2026-07-20T10:00:00+08:00"
+    store.replace_wechat_reply_scopes("acct-1", [
+        WechatReplyScope(
+            account_id="acct-1", target_type="direct", target_id="u9",
+            conversation_id="u9", display_name="Alex",
+            trigger_mode="every_inbound_text", last_active_at=boundary,
+        ),
+    ])
+    first = direct_message("d1", text="first").model_copy(update={"sent_at": boundary})
+    late = direct_message("d2", text="late").model_copy(update={"sent_at": boundary})
+    producer = WechatReplyProducer(store, reader, account, self_user_id="self-1")
+
+    reader.messages = [first]
+    assert producer.run_once() == 1
+    reader.messages = [first, late]
+    assert producer.run_once() == 1
+    assert {
+        task.trigger_message_id for task in store.list_reply_tasks(channel="wechat")
+    } == {"d1", "d2"}
+
+
+def test_backlog_larger_than_read_limit_is_processed_oldest_page_first(
+    store, reader, account,
+):
+    baseline = "2026-07-20T09:00:00+08:00"
+    store.replace_wechat_reply_scopes("acct-1", [
+        WechatReplyScope(
+            account_id="acct-1", target_type="direct", target_id="u9",
+            conversation_id="u9", display_name="Alex",
+            trigger_mode="every_inbound_text", last_active_at=baseline,
+        ),
+    ])
+    reader.messages = [
+        direct_message(f"d{i}", text=str(i)).model_copy(
+            update={"sent_at": _after(baseline, i)}
+        )
+        for i in range(1, 4)
+    ]
+    producer = WechatReplyProducer(
+        store, reader, account, self_user_id="self-1", read_limit=2,
+    )
+
+    assert producer.run_once() == 2
+    assert producer.run_once() == 1
+    assert {
+        task.trigger_message_id for task in store.list_reply_tasks(channel="wechat")
+    } == {"d1", "d2", "d3"}

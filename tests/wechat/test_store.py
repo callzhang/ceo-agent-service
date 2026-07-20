@@ -146,7 +146,6 @@ def test_legacy_reply_task_identity_migration_preserves_rows_and_delivery_fk(tmp
         pragma foreign_keys=on;
         create table reply_tasks (
             id integer primary key autoincrement,
-            channel text not null default 'dingtalk',
             conversation_id text not null,
             conversation_title text not null,
             single_chat integer not null,
@@ -154,11 +153,6 @@ def test_legacy_reply_task_identity_migration_preserves_rows_and_delivery_fk(tmp
             trigger_create_time text not null,
             trigger_sender text not null,
             trigger_text text not null,
-            trigger_message_json text not null default '{}',
-            available_at text not null default '',
-            force_new_decision integer not null default 0,
-            oa_url text not null default '',
-            manual_rerun_attempt_id integer not null default 0,
             status text not null default 'pending',
             attempts integer not null default 0,
             locked_at text,
@@ -184,10 +178,10 @@ def test_legacy_reply_task_identity_migration_preserves_rows_and_delivery_fk(tmp
             foreign key(reply_task_id) references reply_tasks(id)
         );
         insert into reply_tasks (
-            id, channel, conversation_id, conversation_title, single_chat,
+            id, conversation_id, conversation_title, single_chat,
             trigger_message_id, trigger_create_time, trigger_sender, trigger_text
         ) values (
-            7, 'wechat', 'same-conversation', 'Friend', 1,
+            7, 'same-conversation', 'Friend', 1,
             'same-message', '2026-07-20T10:00:00+08:00', 'Friend', 'hello'
         );
         insert into wechat_deliveries (
@@ -201,11 +195,11 @@ def test_legacy_reply_task_identity_migration_preserves_rows_and_delivery_fk(tmp
     store = AutoReplyStore(db_path)
 
     assert store.get_reply_task_for_message(
-        "same-conversation", "same-message", channel="wechat"
+        "same-conversation", "same-message", channel="dingtalk"
     ).id == 7
     assert store.list_wechat_deliveries_by_status("ready_to_send")[0].task_id == 7
     assert store.enqueue_reply_task(
-        channel="dingtalk", conversation_id="same-conversation",
+        channel="wechat", conversation_id="same-conversation",
         conversation_title="Same", single_chat=True,
         trigger_message_id="same-message",
         trigger_create_time="2026-07-20T10:00:00+08:00",
@@ -213,3 +207,78 @@ def test_legacy_reply_task_identity_migration_preserves_rows_and_delivery_fk(tmp
     )
     with store._connect() as migrated:
         assert migrated.execute("pragma foreign_key_check").fetchall() == []
+
+
+def test_dingtalk_message_operations_do_not_modify_same_identity_wechat_task(tmp_path):
+    store = _store(tmp_path)
+    common = dict(
+        conversation_id="shared", conversation_title="Shared", single_chat=True,
+        trigger_message_id="same", trigger_create_time="2026-07-20T10:00:00+08:00",
+        trigger_sender="Sender", trigger_text="original",
+    )
+    assert store.enqueue_reply_task(channel="dingtalk", **common)
+    assert store.enqueue_reply_task(channel="wechat", **common)
+
+    assert store.update_pending_reply_task_trigger_for_message(
+        "shared", "same", trigger_text="updated",
+        trigger_message_json='{"updated":true}',
+    ) == 1
+    assert store.get_reply_task_for_message(
+        "shared", "same", channel="dingtalk"
+    ).trigger_text == "updated"
+    assert store.get_reply_task_for_message(
+        "shared", "same", channel="wechat"
+    ).trigger_text == "original"
+
+    assert store.complete_reply_task_for_message("shared", "same") == 1
+    assert store.get_reply_task_for_message(
+        "shared", "same", channel="dingtalk"
+    ).status == "done"
+    assert store.get_reply_task_for_message(
+        "shared", "same", channel="wechat"
+    ).status == "pending"
+
+
+def test_dingtalk_supersede_operations_leave_wechat_pending_tasks_untouched(tmp_path):
+    store = _store(tmp_path)
+    for channel in ("dingtalk", "wechat"):
+        for message_id, created_at in (
+            ("old", "2026-07-20T10:00:00+08:00"),
+            ("quoted", "2026-07-20T10:01:00+08:00"),
+        ):
+            assert store.enqueue_reply_task(
+                channel=channel, conversation_id="shared", conversation_title="Shared",
+                single_chat=True, trigger_message_id=message_id,
+                trigger_create_time=created_at, trigger_sender="Sender",
+                trigger_text=message_id,
+            )
+
+    completed = store.complete_unfinished_reply_tasks_before_trigger(
+        conversation_id="shared", trigger_create_time="2026-07-20T10:00:30+08:00",
+        exclude_task_id=-1,
+    )
+    assert [task.channel for task in completed] == ["dingtalk"]
+    completed = store.complete_unfinished_reply_tasks_for_messages(
+        conversation_id="shared", trigger_message_ids=["quoted"], exclude_task_id=-1,
+    )
+    assert [task.channel for task in completed] == ["dingtalk"]
+    assert all(
+        task.status == "pending"
+        for task in store.list_reply_tasks(channel="wechat")
+    )
+    for channel in ("dingtalk", "wechat"):
+        assert store.enqueue_reply_task(
+            channel=channel, conversation_id="shared", conversation_title="Shared",
+            single_chat=True, trigger_message_id="replace-old",
+            trigger_create_time="2026-07-20T10:01:30+08:00",
+            trigger_sender="Sender", trigger_text="replace-old",
+        )
+
+    assert store.replace_pending_single_chat_reply_task_trigger(
+        conversation_id="shared", trigger_message_id="replacement",
+        trigger_create_time="2026-07-20T10:02:00+08:00", trigger_sender="Sender",
+        trigger_text="replacement", trigger_message_json="{}",
+    ) == 1
+    assert {
+        task.trigger_message_id for task in store.list_reply_tasks(channel="wechat")
+    } == {"old", "quoted", "replace-old"}
