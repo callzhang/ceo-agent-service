@@ -1313,7 +1313,7 @@ def test_render_tutorial_page_shows_wechat_target_picker_for_ready_account(
     html = render_tutorial_page(store=store)
 
     assert 'id="wechat-target-picker"' in html
-    assert 'id="wechat-target-kind"' in html
+    assert 'id="wechat-target-kind"' not in html
     assert 'id="wechat-target-query"' in html
     assert 'id="wechat-target-results"' in html
     assert 'id="wechat-save-targets"' in html
@@ -1321,6 +1321,8 @@ def test_render_tutorial_page_shows_wechat_target_picker_for_ready_account(
     assert "/tutorial/wechat/reply-scope" in html
     assert "产品讨论群" in html
     assert "群聊仅在有人明确 @你 时回复" in html
+    assert 'kind: "all"' in html
+    assert 'item.target_type === "group" ? "群聊" : "好友"' in html
     assert "/private/account" not in html
     assert "/private/db" not in html
 

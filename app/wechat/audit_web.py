@@ -297,10 +297,37 @@ def register_wechat_review_routes(app: FastAPI, *, store_factory: Callable[[], o
 
 def register_wechat_tutorial_routes(app: FastAPI, *, setup_factory: Callable[[], object]) -> None:
     @app.get("/tutorial/wechat/conversations")
-    def list_targets(query: str = "", kind: str = "direct", limit: int = 50, offset: int = 0):
-        if kind not in {"direct", "group"} or not 1 <= limit <= 100 or offset < 0:
+    def list_targets(query: str = "", kind: str = "all", limit: int = 50, offset: int = 0):
+        if kind not in {"all", "direct", "group"} or not 1 <= limit <= 100 or offset < 0:
             raise HTTPException(status_code=422, detail="invalid target query")
-        items = setup_factory().list_targets(query=query, kind=kind, limit=limit, offset=offset)
+        service = setup_factory()
+        if kind == "all":
+            fetch_limit = limit + offset
+            items = [
+                item
+                for target_type in ("direct", "group")
+                for item in service.list_targets(
+                    query=query,
+                    kind=target_type,
+                    limit=fetch_limit,
+                    offset=0,
+                )
+            ]
+            items.sort(
+                key=lambda item: (
+                    str(item.get("display_name", "")).casefold(),
+                    str(item.get("target_type", "")),
+                    str(item.get("target_id", "")),
+                )
+            )
+            items = items[offset:offset + limit]
+        else:
+            items = service.list_targets(
+                query=query,
+                kind=kind,
+                limit=limit,
+                offset=offset,
+            )
         return {"items": items}
 
     @app.post("/tutorial/wechat/reply-scope")

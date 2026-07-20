@@ -107,7 +107,8 @@ least 15 minutes.
    reader is blocked.
 2. ✅ **`app/audit_web.py`** (updated 2026-07-21) — Tutorial shows Connect WeChat
    as soon as preflight is complete. Once one local account is ready, the same
-   step exposes searchable friend/group selection backed by
+   step exposes one combined search for friends and groups (the results carry a
+   visible type label) backed by
    `GET /tutorial/wechat/conversations` and
    `POST /tutorial/wechat/reply-scope`. Saving immediately runs `verify_wechat`.
    Direct chats use `every_inbound_text`; groups are fixed to

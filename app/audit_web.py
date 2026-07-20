@@ -206,11 +206,13 @@ th{background:var(--surface-soft);color:var(--steel);font-size:12px;font-weight:
 .setup-wizard-step form{margin:0}
 .wechat-setup-panel{display:grid;gap:10px;margin-top:4px;padding:12px;border:1px solid var(--hairline);border-radius:8px;background:var(--surface-soft)}
 .wechat-setup-panel h4{margin:0;color:var(--ink);font-size:14px;line-height:1.4}
-.wechat-target-toolbar{display:grid;grid-template-columns:140px minmax(220px,1fr) auto;align-items:end;gap:8px}
+.wechat-target-toolbar{display:grid;grid-template-columns:minmax(220px,1fr) auto;align-items:end;gap:8px}
 .wechat-target-control{display:grid;gap:4px;color:var(--steel);font-size:11px;font-weight:700}
 .wechat-target-control select,.wechat-target-control input{height:34px;border:1px solid var(--hairline);border-radius:7px;background:var(--canvas);padding:6px 9px;color:var(--ink);font-size:13px}
 .wechat-target-results{display:grid;gap:6px;max-height:280px;overflow:auto}
 .wechat-target-row{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:9px;padding:8px 10px;border:1px solid var(--hairline-soft);border-radius:7px;background:var(--canvas);cursor:pointer}
+.wechat-target-name{display:flex;align-items:center;gap:7px;min-width:0}
+.wechat-target-kind{display:inline-flex;padding:2px 6px;border:1px solid var(--hairline);border-radius:999px;background:var(--surface-soft);color:var(--steel);font-size:10px;font-weight:750;white-space:nowrap}
 .wechat-target-row small{color:var(--steel);font-family:"Geist Mono","SF Mono",Menlo,Consolas,monospace;font-size:10px;overflow-wrap:anywhere}
 .wechat-target-footer{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
 .wechat-target-status{color:var(--steel);font-size:12px}
@@ -745,23 +747,14 @@ def _wechat_target_picker_html(store: AutoReplyStore) -> str:
         }
         for scope in scopes
     ]
-    initial_kind = "group" if any(
-        target["target_type"] == "group" for target in selected_targets
-    ) else "direct"
     selected_json = _safe_inline_json(selected_targets)
     return f"""
 <div id="wechat-target-picker" class="wechat-setup-panel" data-account-id="{escape(account_id)}">
   <h4>自动回复对象</h4>
   <p class="muted">选择已有微信好友和群聊。好友的新入站文本会触发回复；群聊仅在有人明确 @你 时回复。</p>
   <div class="wechat-target-toolbar">
-    <label class="wechat-target-control">类型
-      <select id="wechat-target-kind">
-        <option value="direct"{' selected' if initial_kind == 'direct' else ''}>好友</option>
-        <option value="group"{' selected' if initial_kind == 'group' else ''}>群聊</option>
-      </select>
-    </label>
     <label class="wechat-target-control">名称
-      <input id="wechat-target-query" type="search" placeholder="搜索用户名或群名" autocomplete="off">
+      <input id="wechat-target-query" type="search" placeholder="搜索好友或群聊名称" autocomplete="off">
     </label>
     <button id="wechat-search-targets" type="button">搜索</button>
   </div>
@@ -777,7 +770,6 @@ def _wechat_target_picker_html(store: AutoReplyStore) -> str:
   const panel = document.getElementById("wechat-target-picker");
   if (!panel || panel.dataset.initialized === "true") return;
   panel.dataset.initialized = "true";
-  const kind = document.getElementById("wechat-target-kind");
   const query = document.getElementById("wechat-target-query");
   const results = document.getElementById("wechat-target-results");
   const status = document.getElementById("wechat-target-status");
@@ -805,8 +797,14 @@ def _wechat_target_picker_html(store: AutoReplyStore) -> str:
       const checkbox = document.createElement("input");
       checkbox.type = "checkbox";
       checkbox.checked = selected.has(keyFor(item));
+      const nameWrap = document.createElement("span");
+      nameWrap.className = "wechat-target-name";
       const name = document.createElement("span");
       name.textContent = item.display_name || "未命名对象";
+      const type = document.createElement("span");
+      type.className = "wechat-target-kind";
+      type.textContent = item.target_type === "group" ? "群聊" : "好友";
+      nameWrap.append(name, type);
       const id = document.createElement("small");
       id.textContent = item.target_id;
       checkbox.addEventListener("change", () => {{
@@ -823,7 +821,7 @@ def _wechat_target_picker_html(store: AutoReplyStore) -> str:
         else selected.delete(keyFor(target));
         updateStatus();
       }});
-      row.append(checkbox, name, id);
+      row.append(checkbox, nameWrap, id);
       results.append(row);
     }});
   }}
@@ -832,7 +830,7 @@ def _wechat_target_picker_html(store: AutoReplyStore) -> str:
     results.textContent = "正在读取微信联系人…";
     updateStatus();
     const params = new URLSearchParams({{
-      kind: kind.value,
+      kind: "all",
       query: query.value.trim(),
       limit: "50",
     }});
@@ -847,7 +845,6 @@ def _wechat_target_picker_html(store: AutoReplyStore) -> str:
   }}
 
   document.getElementById("wechat-search-targets").addEventListener("click", searchTargets);
-  kind.addEventListener("change", searchTargets);
   query.addEventListener("keydown", event => {{
     if (event.key === "Enter") {{
       event.preventDefault();

@@ -25,6 +25,7 @@ def client(tmp_path):
     targets = [
         {"target_type": "direct", "target_id": "u-1", "display_name": "Alex"},
         {"target_type": "direct", "target_id": "u-2", "display_name": "Alex"},
+        {"target_type": "group", "target_id": "g-1", "display_name": "Alex Team"},
     ]
     app = FastAPI()
     register_wechat_tutorial_routes(app, setup_factory=lambda: FakeSetup(store, targets))
@@ -37,6 +38,16 @@ def test_wechat_picker_separates_duplicate_names_by_stable_id(client):
     response = client.get("/tutorial/wechat/conversations?kind=direct&query=Alex")
     assert response.status_code == 200
     assert [row["target_id"] for row in response.json()["items"]] == ["u-1", "u-2"]
+
+
+def test_wechat_picker_searches_direct_and_group_targets_together(client):
+    response = client.get("/tutorial/wechat/conversations?kind=all&query=Alex")
+
+    assert response.status_code == 200
+    assert [
+        (row["target_type"], row["target_id"])
+        for row in response.json()["items"]
+    ] == [("direct", "u-1"), ("direct", "u-2"), ("group", "g-1")]
 
 
 def test_invalid_kind_is_422(client):
