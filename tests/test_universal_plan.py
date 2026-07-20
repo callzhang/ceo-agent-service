@@ -144,10 +144,53 @@ def test_memory_write_rejects_transient_errors_and_short_secrets(data: str) -> N
 @pytest.mark.parametrize(
     "data",
     [
+        "OPENAI_API_KEY=sk-proj-abcDEF1234567890",
+        "sk-abcDEF1234567890",
+        "AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE",
+        "2026-07-21T09:15:00Z ERROR memory_write failed: connection reset",
+        "Memory write failed and is retrying because the backend is unavailable.",
+    ],
+)
+def test_memory_write_rejects_reviewer_unsafe_examples(data: str) -> None:
+    with pytest.raises(ValidationError, match="memory_write payload"):
+        PlannedAction(
+            kind="memory_write",
+            reason="Persist durable state",
+            payload={"data": data, "type": "text"},
+        )
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        "api_key: 'abcd1234'",
+        "password = correct-horse",
+        "token=short-token",
+        "private_key: key-material",
+        "Bearer abc.def.ghi",
+        "ASIAIOSFODNN7EXAMPLE",
+    ],
+)
+def test_memory_write_rejects_explicit_credential_shapes(data: str) -> None:
+    with pytest.raises(ValidationError, match="memory_write payload"):
+        PlannedAction(
+            kind="memory_write",
+            reason="Persist durable state",
+            payload={"data": data, "type": "text"},
+        )
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
         "Derek prefers using Codex workspaces for long-running code reviews.",
         "The source selection preference is to prioritize primary documentation.",
         "The team prefers temporary feature branches for isolated development.",
         "The durable API design avoids planner-controlled identity fields.",
+        "Derek prefers explicit error handling in service integrations.",
+        "The project decision is to retry connection resets with exponential backoff.",
+        "The API key rotation policy requires quarterly review.",
+        "The incident policy retries unavailable services with exponential backoff.",
     ],
 )
 def test_memory_write_allows_normal_durable_preferences(data: str) -> None:

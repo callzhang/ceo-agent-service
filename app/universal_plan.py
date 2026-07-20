@@ -6,48 +6,57 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.dingtalk_models import SensitivityKind
+from app.leak_check import contains_credential, contains_local_runtime_leak
+
 MAX_MEMORY_WRITE_DATA_LENGTH = 2_000
 MAX_MEMORY_WRITE_LINES = 12
 
 _MEMORY_STACK_OR_EXCEPTION_PATTERNS = (
     re.compile(r"traceback\s*\(most recent call last\)", re.IGNORECASE),
-    re.compile(r"\b(?:exception|runtimeerror)\s*:", re.IGNORECASE),
+    re.compile(
+        r"\b[A-Za-z_][\w.]*(?:Error|Exception)\s*:",
+        re.IGNORECASE,
+    ),
     re.compile(r"\bstack\s+trace\s*:", re.IGNORECASE),
     re.compile(r'^\s*file\s+"[^"]+",\s+line\s+\d+', re.IGNORECASE | re.MULTILINE),
 )
-_MEMORY_SECRET_PATTERNS = (
-    re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----", re.IGNORECASE),
-    re.compile(r"\bauthorization\s*:\s*bearer\s+\S{6,}", re.IGNORECASE),
-    re.compile(
-        r"\b(?:api[_ -]?key|access[_ -]?token|token|password)\s*(?:=|:)\s*\S{6,}",
-        re.IGNORECASE,
-    ),
+_MEMORY_RAW_LOG_LINE_PATTERN = re.compile(
+    r"^\s*\[?(?:\d{4}-\d{2}-\d{2}[T ][0-9:.+Z-]+|\d{2}:\d{2}:\d{2})\]?"
+    r"\s+(?:DEBUG|INFO|WARN(?:ING)?|ERROR|CRITICAL|TRACE)\b",
+    re.IGNORECASE | re.MULTILINE,
 )
-_MEMORY_TRANSIENT_STATUS_PATTERNS = (
+_MEMORY_TRANSIENT_STATE_PATTERNS = (
     re.compile(
-        r"^\s*(?:status\s*[:=]\s*)?(?:processing|pending)\s*[.!。]?$",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        r"^\s*(?:task|job|request|write|sync)\b.{0,80}\btemporar(?:y|ily)\b",
+        r"^\s*(?:status\s*[:=]\s*)?"
+        r"(?:pending|processing|temporary|failed|retrying|unavailable)\s*[.!。]?$",
         re.IGNORECASE,
     ),
     re.compile(r"(?:一次性错误|临时错误|处理中|等待处理|待处理状态)"),
 )
-_MEMORY_RUNTIME_PATH_PATTERN = re.compile(
-    r"(?:^|\s)(?:source\s*:\s*)?(?:/tmp/|/var/|/private/var/)",
+_MEMORY_RUNTIME_FAILURE_PATTERN = re.compile(
+    r"\b(?:failed|retrying|unavailable|connection\s+reset|timed?\s*out|timeout)\b",
+    re.IGNORECASE,
+)
+_MEMORY_DURABLE_FRAMING_PATTERN = re.compile(
+    r"\b(?:prefers?|preference|decision|policy|rule|strategy|design|standard)\b"
+    r".{0,120}\b(?:handle|handling|retry|retries|use|uses|require|requires|must|should|backoff)\b",
     re.IGNORECASE,
 )
 
 
 def _contains_forbidden_memory_content(data: str) -> bool:
-    patterns = (
-        *_MEMORY_STACK_OR_EXCEPTION_PATTERNS,
-        *_MEMORY_SECRET_PATTERNS,
-        *_MEMORY_TRANSIENT_STATUS_PATTERNS,
-        _MEMORY_RUNTIME_PATH_PATTERN,
+    if contains_credential(data) or contains_local_runtime_leak(data):
+        return True
+    if _MEMORY_RAW_LOG_LINE_PATTERN.search(data):
+        return True
+    if any(pattern.search(data) for pattern in _MEMORY_STACK_OR_EXCEPTION_PATTERNS):
+        return True
+    if any(pattern.search(data) for pattern in _MEMORY_TRANSIENT_STATE_PATTERNS):
+        return True
+    return bool(
+        _MEMORY_RUNTIME_FAILURE_PATTERN.search(data)
+        and not _MEMORY_DURABLE_FRAMING_PATTERN.search(data)
     )
-    return any(pattern.search(data) for pattern in patterns)
 
 
 def _contains_secret_shaped_token(data: str) -> bool:
