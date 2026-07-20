@@ -8,9 +8,15 @@ from app.universal_executor import (
     UniversalActionExecution,
     UniversalActionExecutionState,
     UniversalActionExecutor,
+    UniversalPlanExecution,
     build_universal_action_execution,
 )
-from app.universal_plan import PlannedAction, PlannedActionKind
+from app.universal_plan import (
+    PlannedAction,
+    PlannedActionKind,
+    UniversalAudit,
+    UniversalPlan,
+)
 from app.worker import DingTalkAutoReplyWorker
 
 
@@ -114,15 +120,31 @@ def make_action(kind: PlannedActionKind) -> PlannedAction:
     )
 
 
-def make_execution(
-    kind: PlannedActionKind, *, action_index: int = 0
-) -> UniversalActionExecution:
-    return build_universal_action_execution(
-        make_context(), make_action(kind), action_index
+def make_plan(action: PlannedAction | None = None) -> UniversalPlan:
+    return UniversalPlan(
+        task_kind="message_handling",
+        reason="Handle the task",
+        actions=[action or make_action(PlannedActionKind.NO_REPLY)],
+        audit=UniversalAudit(summary="Plan the task", confidence=0.9),
     )
 
 
-def test_execution_id_is_stable_for_canonical_action_json_and_isolates_action() -> None:
+def make_execution(
+    kind: PlannedActionKind,
+    *,
+    action_index: int = 0,
+    execution_scope_id: str = "scope-1",
+) -> UniversalActionExecution:
+    action = make_action(kind)
+    return build_universal_action_execution(
+        make_context(),
+        UniversalPlanExecution(execution_scope_id, make_plan(action)),
+        action,
+        action_index,
+    )
+
+
+def test_action_hash_is_stable_for_canonical_json_and_isolates_action() -> None:
     first_action = PlannedAction(
         kind=PlannedActionKind.MEMORY_WRITE,
         reason="Remember this",
@@ -136,41 +158,76 @@ def test_execution_id_is_stable_for_canonical_action_json_and_isolates_action() 
         payload={"nested": {"a": 1, "z": 3}},
     )
 
-    first = build_universal_action_execution(make_context(), first_action, 0)
-    repeated = build_universal_action_execution(make_context(), reordered_action, 0)
+    plan_execution = UniversalPlanExecution("scope-1", make_plan(first_action))
+    first = build_universal_action_execution(
+        make_context(), plan_execution, first_action, 0
+    )
+    repeated = build_universal_action_execution(
+        make_context(), plan_execution, reordered_action, 0
+    )
 
     assert first.execution_id == repeated.execution_id
+    assert first.action_hash == repeated.action_hash
     assert len(first.execution_id) == 64
+    assert len(first.action_hash) == 64
     assert all(character in "0123456789abcdef" for character in first.execution_id)
     assert first.action is not first_action
     first_action.target["a"] = "mutated"
     assert first.action.target["a"] == "1"
 
 
-def test_execution_id_changes_with_task_index_or_action() -> None:
+def test_same_scope_and_index_keep_id_when_action_changes_but_hash_changes() -> None:
     action = make_action(PlannedActionKind.MEMORY_WRITE)
-    baseline = build_universal_action_execution(make_context(), action, 0)
-    different_task = build_universal_action_execution(
-        make_context(task_id=43), action, 0
+    plan_execution = UniversalPlanExecution("scope-1", make_plan(action))
+    baseline = build_universal_action_execution(
+        make_context(), plan_execution, action, 0
     )
-    different_index = build_universal_action_execution(make_context(), action, 1)
     changed_action = action.model_copy(deep=True)
-    changed_action.payload["content"] = "different"
-    different_action = build_universal_action_execution(
-        make_context(), changed_action, 0
+    changed_action.reason = "A changed audit reason"
+    changed = build_universal_action_execution(
+        make_context(), plan_execution, changed_action, 0
+    )
+
+    assert baseline.execution_id == changed.execution_id
+    assert baseline.action_hash != changed.action_hash
+
+
+def test_execution_id_changes_with_scope_or_action_index() -> None:
+    action = make_action(PlannedActionKind.MEMORY_WRITE)
+    first_scope = UniversalPlanExecution("scope-1", make_plan(action))
+    second_scope = UniversalPlanExecution("scope-2", make_plan(action))
+
+    baseline = build_universal_action_execution(make_context(), first_scope, action, 0)
+    different_index = build_universal_action_execution(
+        make_context(), first_scope, action, 1
+    )
+    different_scope = build_universal_action_execution(
+        make_context(), second_scope, action, 0
     )
 
     assert (
         len(
             {
                 baseline.execution_id,
-                different_task.execution_id,
                 different_index.execution_id,
-                different_action.execution_id,
+                different_scope.execution_id,
             }
         )
-        == 4
+        == 3
     )
+
+
+def test_plan_execution_is_frozen_and_deep_copies_plan() -> None:
+    plan = make_plan()
+    plan_execution = UniversalPlanExecution("scope-1", plan)
+
+    assert plan_execution.plan is not plan
+    plan.reason = "Mutated plan"
+    plan.actions[0].payload["changed"] = True
+    assert plan_execution.plan.reason == "Handle the task"
+    assert plan_execution.plan.actions[0].payload == {}
+    with pytest.raises(FrozenInstanceError):
+        plan_execution.execution_scope_id = "scope-2"  # type: ignore[misc]
 
 
 def test_execution_states_are_complete_and_stable() -> None:

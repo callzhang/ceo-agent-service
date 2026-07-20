@@ -8,6 +8,7 @@ from app.universal_context import UniversalTaskContext
 from app.universal_executor import (
     UniversalActionExecution,
     UniversalActionExecutionState,
+    UniversalPlanExecution,
     build_universal_action_execution,
 )
 from app.universal_plan import PlannedAction, PlannedActionKind, UniversalPlan
@@ -58,6 +59,12 @@ class UniversalConsumerOrchestrator:
         ],
         existing_terminal_attempt: Callable[[UniversalTaskContext], bool],
         existing_sent_reply: Callable[[UniversalTaskContext], bool],
+        load_plan_execution: Callable[
+            [UniversalTaskContext], UniversalPlanExecution | None
+        ],
+        create_plan_execution: Callable[
+            [UniversalTaskContext, UniversalPlan], UniversalPlanExecution
+        ],
         action_execution_state: Callable[
             [UniversalActionExecution], UniversalActionExecutionState
         ],
@@ -68,10 +75,13 @@ class UniversalConsumerOrchestrator:
         self.validator_context_factory = validator_context_factory
         self.existing_terminal_attempt = existing_terminal_attempt
         self.existing_sent_reply = existing_sent_reply
+        self.load_plan_execution = load_plan_execution
+        self.create_plan_execution = create_plan_execution
         self.action_execution_state = action_execution_state
         self.session_id = session_id
         self.executor = executor
         self.validator = UniversalValidator()
+        self._known_execution_scope_ids: set[str] = set()
 
     def process(self, context: UniversalTaskContext) -> UniversalConsumerResult:
         has_terminal_attempt = self.existing_terminal_attempt(context)
@@ -95,10 +105,22 @@ class UniversalConsumerOrchestrator:
         if dependency_failure is not None:
             return dependency_failure
 
-        plan = self.planner.plan(
-            context,
-            session_id=self.session_id(context),
-        )
+        plan_execution: UniversalPlanExecution | None = None
+        candidate_plan = True
+        if not context.force_new_decision:
+            loaded_plan_execution = self.load_plan_execution(context)
+            if loaded_plan_execution is not None:
+                plan_execution = self._copy_plan_execution(loaded_plan_execution)
+                self._known_execution_scope_ids.add(plan_execution.execution_scope_id)
+                candidate_plan = False
+
+        if plan_execution is None:
+            plan = self.planner.plan(
+                context,
+                session_id=self.session_id(context),
+            )
+        else:
+            plan = plan_execution.plan
 
         has_terminal_attempt = self.existing_terminal_attempt(context)
         has_sent_reply = self.existing_sent_reply(context)
@@ -155,9 +177,37 @@ class UniversalConsumerOrchestrator:
                 outcome=outcome,
             )
 
+        if candidate_plan:
+            created_plan_execution = self._copy_plan_execution(
+                self.create_plan_execution(
+                    context,
+                    plan.model_copy(deep=True),
+                )
+            )
+            if created_plan_execution.execution_scope_id in (
+                self._known_execution_scope_ids
+            ):
+                raise ValueError("execution scope was reused")
+            if created_plan_execution.plan.model_dump(mode="json") != plan.model_dump(
+                mode="json"
+            ):
+                raise ValueError("created plan does not match candidate")
+            self._known_execution_scope_ids.add(
+                created_plan_execution.execution_scope_id
+            )
+            plan_execution = created_plan_execution
+
+        if plan_execution is None:
+            raise RuntimeError("validated plan has no execution scope")
+
         executed_actions: list[PlannedAction] = []
         for action_index, action in enumerate(validated.actions):
-            execution = build_universal_action_execution(context, action, action_index)
+            execution = build_universal_action_execution(
+                context,
+                plan_execution,
+                action,
+                action_index,
+            )
             execution_state = self.action_execution_state(deepcopy(execution))
             if execution_state is UniversalActionExecutionState.SUCCEEDED:
                 continue
@@ -234,3 +284,16 @@ class UniversalConsumerOrchestrator:
                     outcome=UniversalConsumerOutcome.WAITING_FOR_DEPENDENCY,
                 )
         return None
+
+    @staticmethod
+    def _copy_plan_execution(
+        plan_execution: UniversalPlanExecution,
+    ) -> UniversalPlanExecution:
+        if not isinstance(plan_execution, UniversalPlanExecution):
+            raise TypeError(
+                "plan execution callback must return UniversalPlanExecution"
+            )
+        return UniversalPlanExecution(
+            plan_execution.execution_scope_id,
+            plan_execution.plan,
+        )

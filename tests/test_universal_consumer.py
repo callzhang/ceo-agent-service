@@ -10,6 +10,8 @@ from app.universal_executor import (
     UniversalActionExecution,
     UniversalActionExecutionState,
     UniversalActionExecutor,
+    UniversalPlanExecution,
+    build_universal_action_execution,
 )
 from app.universal_plan import (
     PlannedAction,
@@ -24,6 +26,7 @@ def make_context(
     *,
     required_dependencies: tuple[str, ...] = ("dws",),
     dry_run: bool = False,
+    force_new_decision: bool = False,
 ) -> UniversalTaskContext:
     return UniversalTaskContext(
         task_id=42,
@@ -35,7 +38,7 @@ def make_context(
         trigger_text="Please handle this.",
         context_messages=(),
         required_dependencies=required_dependencies,
-        force_new_decision=False,
+        force_new_decision=force_new_decision,
         dry_run=dry_run,
     )
 
@@ -110,6 +113,9 @@ class CallbackRecorder:
         sent_results: list[bool] | None = None,
         session: str | None = "session-1",
         action_states: dict[int, UniversalActionExecutionState] | None = None,
+        loaded_plan_execution: UniversalPlanExecution | None = None,
+        create_scope_ids: list[str] | None = None,
+        created_plan_override: UniversalPlan | None = None,
     ) -> None:
         self.dependency_status = (
             {"dws": DependencyStatus(ready=True)}
@@ -122,6 +128,12 @@ class CallbackRecorder:
         self.sent_results = list(sent_results or [])
         self.session = session
         self.action_states = action_states or {}
+        self.loaded_plan_execution = loaded_plan_execution
+        self.create_scope_ids = (
+            list(create_scope_ids) if create_scope_ids is not None else None
+        )
+        self.created_plan_override = created_plan_override
+        self.created_plan_executions: list[UniversalPlanExecution] = []
         self.dependency_requests: list[tuple[str, ...]] = []
         self.action_state_calls: list[UniversalActionExecution] = []
         self.calls = {
@@ -130,6 +142,8 @@ class CallbackRecorder:
             "sent": 0,
             "session": 0,
             "action_state": 0,
+            "load_plan": 0,
+            "create_plan": 0,
         }
 
     def dependencies(
@@ -165,6 +179,27 @@ class CallbackRecorder:
             UniversalActionExecutionState.NOT_STARTED,
         )
 
+    def load_plan_execution(
+        self, context: UniversalTaskContext
+    ) -> UniversalPlanExecution | None:
+        self.calls["load_plan"] += 1
+        return self.loaded_plan_execution
+
+    def create_plan_execution(
+        self, context: UniversalTaskContext, plan: UniversalPlan
+    ) -> UniversalPlanExecution:
+        self.calls["create_plan"] += 1
+        if self.create_scope_ids is None:
+            scope_id = f"scope-{self.calls['create_plan']}"
+        else:
+            scope_id = self.create_scope_ids.pop(0)
+        plan_execution = UniversalPlanExecution(
+            scope_id,
+            self.created_plan_override or plan,
+        )
+        self.created_plan_executions.append(plan_execution)
+        return plan_execution
+
     def session_id(self, context: UniversalTaskContext) -> str | None:
         self.calls["session"] += 1
         return self.session
@@ -182,6 +217,8 @@ def make_orchestrator(
         callbacks.dependencies,
         callbacks.existing_terminal,
         callbacks.existing_sent,
+        callbacks.load_plan_execution,
+        callbacks.create_plan_execution,
         callbacks.action_execution_state,
         callbacks.session_id,
         action_executor,
@@ -217,6 +254,8 @@ def test_duplicate_precedes_dependency_check_and_all_other_work(
     assert callbacks.calls["sent"] == 1
     assert callbacks.calls["session"] == 0
     assert callbacks.calls["action_state"] == 0
+    assert callbacks.calls["load_plan"] == 0
+    assert callbacks.calls["create_plan"] == 0
 
 
 def test_missing_required_dependency_stops_before_planner() -> None:
@@ -235,6 +274,8 @@ def test_missing_required_dependency_stops_before_planner() -> None:
     )
     assert planner.calls == []
     assert executor.calls == []
+    assert callbacks.calls["load_plan"] == 0
+    assert callbacks.calls["create_plan"] == 0
 
 
 @pytest.mark.parametrize(
@@ -281,6 +322,150 @@ def test_planner_receives_context_and_session_once() -> None:
 
     assert planner.calls == [(context, "session-42")]
     assert callbacks.calls["session"] == 1
+    assert callbacks.calls["load_plan"] == 1
+    assert callbacks.calls["create_plan"] == 1
+
+
+def test_normal_retry_loads_plan_and_unknown_execution_is_not_replayed() -> None:
+    context = make_context()
+    persisted_plan = make_plan(make_action(), reason="Persisted plan reason")
+    persisted = UniversalPlanExecution("persisted-scope", persisted_plan)
+    changed_candidate = make_plan(make_action(), reason="Planner drifted reason")
+    callbacks = CallbackRecorder(
+        loaded_plan_execution=persisted,
+        action_states={0: UniversalActionExecutionState.UNKNOWN},
+    )
+    orchestrator, planner, executor = make_orchestrator(changed_candidate, callbacks)
+
+    first = orchestrator.process(context)
+    second = orchestrator.process(context)
+
+    expected = build_universal_action_execution(
+        context,
+        persisted,
+        persisted.plan.actions[0],
+        0,
+    )
+    assert planner.calls == []
+    assert callbacks.calls["session"] == 0
+    assert callbacks.calls["load_plan"] == 2
+    assert callbacks.calls["create_plan"] == 0
+    assert [execution.execution_id for execution in callbacks.action_state_calls] == [
+        expected.execution_id,
+        expected.execution_id,
+    ]
+    assert first.reason == f"action_execution_unknown:{expected.execution_id}"
+    assert second.reason == first.reason
+    assert first.outcome is UniversalConsumerOutcome.ACTION_UNKNOWN
+    assert executor.calls == []
+
+
+def test_force_new_skips_load_and_creates_new_scope_for_same_action() -> None:
+    action = make_action()
+    persisted = UniversalPlanExecution(
+        "old-scope", make_plan(action, reason="Old plan")
+    )
+    callbacks = CallbackRecorder(
+        loaded_plan_execution=persisted,
+        create_scope_ids=["new-scope-1", "new-scope-2"],
+    )
+    orchestrator, planner, executor = make_orchestrator(make_plan(action), callbacks)
+    context = make_context(force_new_decision=True)
+
+    orchestrator.process(context)
+    orchestrator.process(context)
+
+    assert callbacks.calls["load_plan"] == 0
+    assert callbacks.calls["create_plan"] == 2
+    assert len(planner.calls) == 2
+    assert len(executor.calls) == 2
+    assert executor.calls[0].execution_scope_id == "new-scope-1"
+    assert executor.calls[1].execution_scope_id == "new-scope-2"
+    assert executor.calls[0].execution_id != executor.calls[1].execution_id
+    assert executor.calls[0].action_hash == executor.calls[1].action_hash
+
+
+def test_loaded_plan_still_runs_current_validator_without_creating_scope() -> None:
+    action = make_action()
+    action.target["conversation_id"] = "wrong-conversation"
+    callbacks = CallbackRecorder(
+        loaded_plan_execution=UniversalPlanExecution(
+            "persisted-scope", make_plan(action)
+        )
+    )
+    orchestrator, planner, executor = make_orchestrator(
+        make_plan(make_action()), callbacks
+    )
+
+    result = orchestrator.process(make_context())
+
+    assert result.outcome is UniversalConsumerOutcome.VALIDATION_BLOCKED
+    assert result.reason == "action_target_mismatch"
+    assert planner.calls == []
+    assert callbacks.calls["create_plan"] == 0
+    assert executor.calls == []
+
+
+def test_loaded_plan_rechecks_current_plan_dependencies() -> None:
+    callbacks = CallbackRecorder(
+        dependency_status={"dws": DependencyStatus(ready=True)},
+        loaded_plan_execution=UniversalPlanExecution(
+            "persisted-scope",
+            make_plan(make_action(), dependencies=("mail",)),
+        ),
+    )
+    orchestrator, planner, executor = make_orchestrator(
+        make_plan(make_action()), callbacks
+    )
+
+    result = orchestrator.process(make_context())
+
+    assert result.outcome is UniversalConsumerOutcome.WAITING_FOR_DEPENDENCY
+    assert result.reason == "dependency_status_missing:mail"
+    assert callbacks.dependency_requests == [("dws",), ("mail",)]
+    assert planner.calls == []
+    assert callbacks.calls["create_plan"] == 0
+    assert executor.calls == []
+
+
+def test_empty_created_scope_fails_closed() -> None:
+    callbacks = CallbackRecorder(create_scope_ids=["   "])
+    orchestrator, _, executor = make_orchestrator(make_plan(make_action()), callbacks)
+
+    with pytest.raises(ValueError, match="execution_scope_id must be non-empty"):
+        orchestrator.process(make_context())
+
+    assert executor.calls == []
+
+
+def test_reused_created_scope_fails_closed() -> None:
+    callbacks = CallbackRecorder(create_scope_ids=["same-scope", "same-scope"])
+    orchestrator, _, executor = make_orchestrator(make_plan(make_action()), callbacks)
+    context = make_context(force_new_decision=True)
+
+    orchestrator.process(context)
+    with pytest.raises(ValueError, match="execution scope was reused"):
+        orchestrator.process(context)
+
+    assert len(executor.calls) == 1
+
+
+def test_created_plan_mismatch_fails_closed() -> None:
+    callbacks = CallbackRecorder(
+        created_plan_override=make_plan(
+            make_action(), reason="Different persisted plan"
+        )
+    )
+    orchestrator, _, executor = make_orchestrator(
+        make_plan(make_action(), reason="Candidate plan"), callbacks
+    )
+
+    with pytest.raises(ValueError, match="created plan does not match candidate"):
+        orchestrator.process(make_context())
+
+    assert callbacks.calls["create_plan"] == 1
+    assert callbacks.calls["action_state"] == 0
+    assert executor.calls == []
 
 
 def test_post_plan_dependencies_are_resolved_in_order_without_refetching() -> None:
@@ -363,6 +548,7 @@ def test_duplicate_created_during_planning_stops_before_execution() -> None:
     assert callbacks.calls["terminal"] == 2
     assert callbacks.calls["sent"] == 2
     assert callbacks.calls["action_state"] == 0
+    assert callbacks.calls["create_plan"] == 0
 
 
 def test_dry_run_is_validated_without_execution() -> None:
@@ -381,6 +567,7 @@ def test_dry_run_is_validated_without_execution() -> None:
     )
     assert len(planner.calls) == 1
     assert executor.calls == []
+    assert callbacks.calls["create_plan"] == 0
 
 
 def test_valid_action_executes_and_returns_plan_reason() -> None:
@@ -399,6 +586,7 @@ def test_valid_action_executes_and_returns_plan_reason() -> None:
         outcome=UniversalConsumerOutcome.COMPLETED,
     )
     assert [execution.action for execution in executor.calls] == [action]
+    assert callbacks.calls["create_plan"] == 1
 
 
 def test_execution_failure_stops_and_returns_only_successful_actions() -> None:
@@ -463,6 +651,7 @@ def test_unknown_action_execution_stops_without_replay() -> None:
         outcome=UniversalConsumerOutcome.ACTION_UNKNOWN,
     )
     assert executor.calls == []
+    assert callbacks.calls["create_plan"] == 1
 
 
 def test_callback_and_worker_mutations_are_isolated_from_audit_action() -> None:
@@ -498,6 +687,8 @@ def test_callback_and_worker_mutations_are_isolated_from_audit_action() -> None:
         callbacks.dependencies,
         callbacks.existing_terminal,
         callbacks.existing_sent,
+        callbacks.load_plan_execution,
+        callbacks.create_plan_execution,
         callbacks.action_execution_state,
         callbacks.session_id,
         UniversalActionExecutor(worker),
@@ -545,6 +736,7 @@ def test_validator_rejection_has_distinct_outcome() -> None:
         outcome=UniversalConsumerOutcome.VALIDATION_BLOCKED,
     )
     assert executor.calls == []
+    assert callbacks.calls["create_plan"] == 0
 
 
 @pytest.mark.parametrize(
@@ -581,6 +773,8 @@ def test_callbacks_use_expected_counts_across_successful_processing() -> None:
         "sent": 2,
         "session": 1,
         "action_state": 1,
+        "load_plan": 1,
+        "create_plan": 1,
     }
     assert len(planner.calls) == 1
     assert len(executor.calls) == 1

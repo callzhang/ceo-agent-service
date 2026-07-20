@@ -5,12 +5,30 @@ from enum import StrEnum
 from typing import Any
 
 from app.universal_context import UniversalTaskContext
-from app.universal_plan import PlannedAction, PlannedActionKind
+from app.universal_plan import PlannedAction, PlannedActionKind, UniversalPlan
+
+
+@dataclass(frozen=True)
+class UniversalPlanExecution:
+    execution_scope_id: str
+    plan: UniversalPlan
+
+    def __post_init__(self) -> None:
+        if (
+            not isinstance(self.execution_scope_id, str)
+            or not self.execution_scope_id.strip()
+        ):
+            raise ValueError("execution_scope_id must be non-empty")
+        if not isinstance(self.plan, UniversalPlan):
+            raise TypeError("plan must be UniversalPlan")
+        object.__setattr__(self, "plan", self.plan.model_copy(deep=True))
 
 
 @dataclass(frozen=True)
 class UniversalActionExecution:
     execution_id: str
+    execution_scope_id: str
+    action_hash: str
     context: UniversalTaskContext
     action_index: int
     action: PlannedAction
@@ -24,6 +42,7 @@ class UniversalActionExecutionState(StrEnum):
 
 def build_universal_action_execution(
     context: UniversalTaskContext,
+    plan_execution: UniversalPlanExecution,
     action: PlannedAction,
     action_index: int,
 ) -> UniversalActionExecution:
@@ -33,9 +52,12 @@ def build_universal_action_execution(
         sort_keys=True,
         separators=(",", ":"),
     )
-    execution_key = f"{context.task_id}:{action_index}:{canonical_action}"
+    action_hash = hashlib.sha256(canonical_action.encode("utf-8")).hexdigest()
+    execution_key = f"{plan_execution.execution_scope_id}:{action_index}"
     return UniversalActionExecution(
         execution_id=hashlib.sha256(execution_key.encode("utf-8")).hexdigest(),
+        execution_scope_id=plan_execution.execution_scope_id,
+        action_hash=action_hash,
         context=context,
         action_index=action_index,
         action=action.model_copy(deep=True),
