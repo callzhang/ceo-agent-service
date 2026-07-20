@@ -214,14 +214,13 @@ class CodexMemoryRecallMatcher:
             "-c", 'mcp_servers.memory_connector.disabled_tools=["memory_write"]',
         ]
         raw = self._execute(command, prompt)
-        recall_output = self._validate_audit(raw, expected_query=expected_query)
+        recalled_memories = self._validate_audit(raw, expected_query=expected_query)
         payload = self._result_payload(raw)
         matches = [DurableMemoryMatch.model_validate(item)
                    for item in payload.get("matches", [])]
         result = {item.statement: item for item in matches}
         if set(result) != set(statements):
             raise RuntimeError("durable Memory matcher returned incomplete results")
-        recall_text = json.dumps(recall_output, ensure_ascii=False, sort_keys=True)
         for item in matches:
             if item.relation == "none":
                 if item.memory_id or item.evidence or item.merged_statement:
@@ -229,8 +228,21 @@ class CodexMemoryRecallMatcher:
                 continue
             if not item.memory_id or not item.evidence:
                 raise RuntimeError("durable Memory match lacks supporting evidence")
-            if item.memory_id not in recall_text or item.evidence not in recall_text:
-                raise RuntimeError("durable Memory match support is absent from recall output")
+            supported = False
+            for memory in recalled_memories:
+                memory_id = str(
+                    memory.get("memory_id") or memory.get("uuid") or memory.get("id") or ""
+                )
+                if memory_id != item.memory_id:
+                    continue
+                texts = self._memory_support_texts(memory)
+                if any(item.evidence in text for text in texts):
+                    supported = True
+                    break
+            if not supported:
+                raise RuntimeError(
+                    "durable Memory match support is absent from the same recalled memory"
+                )
             if item.relation == "compatible":
                 validate_final_statement(item.merged_statement)
             elif item.merged_statement:
@@ -253,7 +265,7 @@ class CodexMemoryRecallMatcher:
         return completed.stdout
 
     @staticmethod
-    def _validate_audit(raw: str, *, expected_query: str) -> object:
+    def _validate_audit(raw: str, *, expected_query: str) -> list[dict]:
         from app.codex_decision import extract_codex_audit_events
         from app.store import AutoReplyStore
         events = extract_codex_audit_events(raw, limit=100)
@@ -277,16 +289,55 @@ class CodexMemoryRecallMatcher:
                        if event.get("call_id") == call["call_id"] and event.get("output")]
         if len(outputs) != 1:
             raise RuntimeError("durable Memory recall audit is ambiguous")
+        if CodexMemoryRecallMatcher._tool_event_has_error(raw, call.get("call_id", "")):
+            raise RuntimeError("durable Memory recall tool error")
         output = AutoReplyStore._load_memory_json(outputs[0])
+        if isinstance(output, dict) and (
+            output.get("isError") is True or output.get("error")
+        ):
+            raise RuntimeError("durable Memory recall tool error")
         output = CodexMemoryRecallMatcher._unwrap_recall_output(output)
         if not isinstance(output, dict):
             raise RuntimeError("durable Memory recall output is not structured")
-        processing = str(output.get("processing_status") or "").casefold()
-        if not (output.get("ok") is True or processing in {"completed", "success", "done", "ready"}):
-            raise RuntimeError("durable Memory recall did not explicitly succeed")
-        if output.get("error") or output.get("last_error"):
-            raise RuntimeError("durable Memory recall reported an error")
-        return output
+        memories = output.get("memories")
+        if not isinstance(memories, list) or any(not isinstance(item, dict) for item in memories):
+            raise RuntimeError("durable Memory recall output requires a memories list")
+        return memories
+
+    @staticmethod
+    def _tool_event_has_error(raw: str, call_id: str) -> bool:
+        from app.codex_decision import _iter_json_payloads
+        for payload in _iter_json_payloads(raw):
+            if not isinstance(payload, dict):
+                continue
+            source = payload.get("item") if isinstance(payload.get("item"), dict) else payload
+            if str(source.get("call_id") or payload.get("call_id") or "") != call_id:
+                continue
+            if source.get("isError") is True or source.get("error"):
+                return True
+        return False
+
+    @staticmethod
+    def _memory_support_texts(memory: dict) -> list[str]:
+        allowed = {"text", "summary", "background", "provenance"}
+        texts: list[str] = []
+
+        def collect(value: object, depth: int) -> None:
+            if depth > 4 or len(texts) >= 64:
+                return
+            if isinstance(value, str):
+                texts.append(value[:2000])
+            elif isinstance(value, dict):
+                for nested in list(value.values())[:32]:
+                    collect(nested, depth + 1)
+            elif isinstance(value, list):
+                for nested in value[:32]:
+                    collect(nested, depth + 1)
+
+        for key in allowed:
+            if key in memory:
+                collect(memory[key], 0)
+        return texts
 
     @staticmethod
     def _unwrap_recall_output(payload: object) -> object:

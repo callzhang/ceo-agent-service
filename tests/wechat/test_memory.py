@@ -293,7 +293,7 @@ def test_codex_recall_matcher_accepts_only_audited_memory_recall(tmp_path):
         "memory_id":"mem-1", "evidence":"durable fact", "merged_statement":""}]}
     success = "\n".join([
         json.dumps({"type":"item.completed","item":{"type":"mcp_tool_call","call_id":"r1","tool":"memory_recall","arguments":{"query":query}}}),
-        json.dumps({"type":"item.completed","item":{"type":"tool_result","call_id":"r1","output":{"ok":True,"results":[{"uuid":"mem-1","text":"durable fact"}]}}}),
+        json.dumps({"type":"item.completed","item":{"type":"tool_result","call_id":"r1","output":{"memories":[{"uuid":"mem-1","text":"durable fact"}]}}}),
         json.dumps({"type":"item.completed","item":{"type":"agent_message","text":json.dumps(final)}}),
     ])
     captured = {}
@@ -315,17 +315,67 @@ def test_codex_recall_matcher_accepts_only_audited_memory_recall(tmp_path):
     with pytest.raises(RuntimeError, match="query does not match"):
         CodexMemoryRecallMatcher(tmp_path, executor=lambda c, p: unrelated).match(
             [candidate("fact", category="fact")])
-    no_success = success.replace('"ok": true', '"ok": false')
-    with pytest.raises(RuntimeError, match="explicitly succeed"):
-        CodexMemoryRecallMatcher(tmp_path, executor=lambda c, p: no_success).match(
+    missing_memories = success.replace('"memories":', '"items":')
+    with pytest.raises(RuntimeError, match="memories list"):
+        CodexMemoryRecallMatcher(tmp_path, executor=lambda c, p: missing_memories).match(
             [candidate("fact", category="fact")])
     fabricated = success.replace("durable fact", "unrelated evidence", 1)
-    with pytest.raises(RuntimeError, match="absent from recall output"):
+    with pytest.raises(RuntimeError, match="same recalled memory"):
         CodexMemoryRecallMatcher(tmp_path, executor=lambda c, p: fabricated).match(
             [candidate("fact", category="fact")])
     fabricated_id = success.replace("mem-1", "other-id", 1)
-    with pytest.raises(RuntimeError, match="absent from recall output"):
+    with pytest.raises(RuntimeError, match="same recalled memory"):
         CodexMemoryRecallMatcher(tmp_path, executor=lambda c, p: fabricated_id).match(
+            [candidate("fact", category="fact")])
+
+
+def test_codex_recall_matcher_accepts_real_empty_memories_as_none(tmp_path):
+    query = 'wechat-memory-dedupe:v1:["fact"]'
+    final = {"matches":[{"statement":"fact", "relation":"none",
+        "memory_id":"", "evidence":"", "merged_statement":""}]}
+    raw = "\n".join([
+        json.dumps({"type":"item.completed","item":{"type":"mcp_tool_call",
+            "call_id":"r1","tool":"memory_recall","arguments":{"query":query}}}),
+        json.dumps({"type":"item.completed","item":{"type":"tool_result",
+            "call_id":"r1","output":{"structured_content":{"result":json.dumps({"memories":[]})}}}}),
+        json.dumps({"type":"item.completed","item":{"type":"agent_message","text":json.dumps(final)}}),
+    ])
+    result = CodexMemoryRecallMatcher(tmp_path, executor=lambda c, p: raw).match(
+        [candidate("fact", category="fact")])
+    assert result["fact"].relation == "none"
+
+
+def test_codex_recall_support_must_come_from_same_memory_object(tmp_path):
+    query = 'wechat-memory-dedupe:v1:["fact"]'
+    final = {"matches":[{"statement":"fact", "relation":"exact",
+        "memory_id":"mem-a", "evidence":"evidence from B", "merged_statement":""}]}
+    output = {"memories":[{"uuid":"mem-a","text":"evidence from A"},
+                           {"uuid":"mem-b","summary":"evidence from B"}]}
+    raw = "\n".join([
+        json.dumps({"type":"item.completed","item":{"type":"mcp_tool_call",
+            "call_id":"r1","tool":"memory_recall","arguments":{"query":query}}}),
+        json.dumps({"type":"item.completed","item":{"type":"tool_result",
+            "call_id":"r1","output":output}}),
+        json.dumps({"type":"item.completed","item":{"type":"agent_message","text":json.dumps(final)}}),
+    ])
+    with pytest.raises(RuntimeError, match="same recalled memory"):
+        CodexMemoryRecallMatcher(tmp_path, executor=lambda c, p: raw).match(
+            [candidate("fact", category="fact")])
+
+
+def test_codex_recall_explicit_is_error_fails(tmp_path):
+    query = 'wechat-memory-dedupe:v1:["fact"]'
+    final = {"matches":[{"statement":"fact", "relation":"none",
+        "memory_id":"", "evidence":"", "merged_statement":""}]}
+    raw = "\n".join([
+        json.dumps({"type":"item.completed","item":{"type":"mcp_tool_call",
+            "call_id":"r1","tool":"memory_recall","arguments":{"query":query}}}),
+        json.dumps({"type":"item.completed","item":{"type":"tool_result",
+            "call_id":"r1","isError":True,"output":{"memories":[]}}}),
+        json.dumps({"type":"item.completed","item":{"type":"agent_message","text":json.dumps(final)}}),
+    ])
+    with pytest.raises(RuntimeError, match="tool error"):
+        CodexMemoryRecallMatcher(tmp_path, executor=lambda c, p: raw).match(
             [candidate("fact", category="fact")])
 
 

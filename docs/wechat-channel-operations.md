@@ -87,7 +87,8 @@ row is created, a read-only Codex matcher is hard-limited to the
 compatible matches use a separately validated merged statement and remain
 pending; contradictory matches retain the new statement and are flagged pending.
 Every non-`none` relation must cite a Memory id and minimal evidence that are
-programmatically verified against the successful recall output. The recall query
+programmatically verified against the same object in the connector's returned
+`memories` list; an empty list is a successful `none` result. The recall query
 is deterministic for the whole candidate batch and must match the sole audited
 tool call exactly. Missing, ambiguous, unrelated, or tool-noncompliant recall
 fails the import closed.
