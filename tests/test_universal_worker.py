@@ -68,6 +68,7 @@ class UniversalMailCalendarFakeDws(FakeDws):
         self.calendar_get_error: Exception | None = None
         self.calendar_event = None
         self.apply_calendar_response = True
+        self.hide_calendar_after_response = False
 
     def build_mail_reply_command(self, *, mailbox, message_id, subject, content):
         if self.mail_build_error is not None:
@@ -96,6 +97,8 @@ class UniversalMailCalendarFakeDws(FakeDws):
             self.calendar_event = self.calendar_event.model_copy(
                 update={"self_response_status": response_status}
             )
+        if self.hide_calendar_after_response:
+            self.calendar_event = None
         return {"success": True, "requestId": "calendar-receipt-1"}
 
 
@@ -378,6 +381,10 @@ def test_universal_mail_reply_uses_trusted_target_and_persists_receipt(tmp_path:
         trusted_mail_target=("derek@example.com", "mail-1", "Approval request"),
     )
     dws = UniversalMailCalendarFakeDws()
+    dws.mail_result = {
+        "ok": True,
+        "result": {"messageId": "mail-receipt-1"},
+    }
     worker = DingTalkAutoReplyWorker(store=store, dws=dws, codex=FakeCodex())
 
     assert worker.execute_universal_mail_reply(execution) is True
@@ -389,10 +396,7 @@ def test_universal_mail_reply_uses_trusted_target_and_persists_receipt(tmp_path:
     attempt = store.get_latest_reply_attempt_for_trigger("cid-context", "msg-context")
     assert attempt is not None
     assert attempt.send_status == "sent"
-    assert json.loads(attempt.mail_action_result_json) == {
-        "messageId": "mail-receipt-1",
-        "success": True,
-    }
+    assert json.loads(attempt.mail_action_result_json) == dws.mail_result
     assert store.get_universal_action_execution_state(execution) is UniversalActionExecutionState.SUCCEEDED
 
 
@@ -470,7 +474,18 @@ def test_universal_mail_reply_definite_failure_can_retry_same_execution(tmp_path
     assert attempts[0].send_status == "sent"
 
 
-def test_universal_mail_reply_without_success_receipt_is_unknown(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "mail_result",
+    [
+        {"success": False},
+        {"ok": True, "result": {}},
+        {"ok": False, "result": {"messageId": "not-success"}},
+    ],
+)
+def test_universal_mail_reply_without_success_receipt_is_unknown(
+    tmp_path: Path,
+    mail_result: dict,
+) -> None:
     store = AutoReplyStore(tmp_path / "mail-no-receipt.sqlite3")
     execution = _execution(
         store,
@@ -480,7 +495,7 @@ def test_universal_mail_reply_without_success_receipt_is_unknown(tmp_path: Path)
         trusted_mail_target=("derek@example.com", "mail-1", "S"),
     )
     dws = UniversalMailCalendarFakeDws()
-    dws.mail_result = {"success": False}
+    dws.mail_result = mail_result
     worker = DingTalkAutoReplyWorker(store=store, dws=dws, codex=FakeCodex())
 
     with pytest.raises(ReplyDeliveryError, match="success receipt"):
@@ -546,7 +561,7 @@ def test_universal_calendar_response_already_set_and_organizer_are_terminal_noop
         }
 
 
-def test_universal_calendar_response_blocks_spoof_and_marks_postcheck_mismatch_failed(tmp_path: Path) -> None:
+def test_universal_calendar_response_blocks_spoof_and_marks_postcheck_mismatch_unknown(tmp_path: Path) -> None:
     store = AutoReplyStore(tmp_path / "calendar-spoof.sqlite3")
     spoof = _execution(
         store,
@@ -574,7 +589,10 @@ def test_universal_calendar_response_blocks_spoof_and_marks_postcheck_mismatch_f
     mismatch_worker._notify = lambda **kwargs: None
     with pytest.raises(ReplyDeliveryError):
         mismatch_worker.execute_universal_calendar_response(mismatch)
-    assert mismatch_store.get_universal_action_execution_state(mismatch) is UniversalActionExecutionState.NOT_STARTED
+    assert mismatch_store.get_universal_action_execution_state(mismatch) is UniversalActionExecutionState.UNKNOWN
+    with pytest.raises(RuntimeError, match="outcome is unknown"):
+        mismatch_worker.execute_universal_calendar_response(mismatch)
+    assert dws.calendar_responses == [("event-1", "declined")]
 
 
 def test_universal_calendar_timeout_is_unknown_and_not_replayed(tmp_path: Path) -> None:
@@ -625,7 +643,7 @@ def test_universal_calendar_preflight_timeout_is_definite_and_retryable(tmp_path
     assert dws.calendar_responses == []
 
 
-def test_universal_calendar_success_without_readback_is_unknown(tmp_path: Path) -> None:
+def test_universal_calendar_missing_live_state_fails_before_external_call(tmp_path: Path) -> None:
     store = AutoReplyStore(tmp_path / "calendar-no-readback.sqlite3")
     execution = _execution(
         store,
@@ -636,6 +654,31 @@ def test_universal_calendar_success_without_readback_is_unknown(tmp_path: Path) 
     )
     dws = UniversalMailCalendarFakeDws()
     dws.calendar_event = None
+    worker = DingTalkAutoReplyWorker(store=store, dws=dws, codex=FakeCodex())
+
+    with pytest.raises(ReplyDeliveryError, match="live state unavailable"):
+        worker.execute_universal_calendar_response(execution)
+    assert dws.calendar_responses == []
+    assert store.get_universal_action_execution_state(execution) is UniversalActionExecutionState.NOT_STARTED
+
+
+def test_universal_calendar_live_state_disappears_after_call_is_unknown(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "calendar-disappears.sqlite3")
+    execution = _execution(
+        store,
+        kind=PlannedActionKind.CALENDAR_RESPONSE,
+        target={"event_id": "event-1"},
+        payload={"response_status": "accepted"},
+        trusted_calendar_target=("event-1", "tentative", "Mina"),
+    )
+    dws = UniversalMailCalendarFakeDws()
+    dws.calendar_event = DwsCalendarEvent(
+        event_id="event-1",
+        self_response_status="tentative",
+    )
+    dws.hide_calendar_after_response = True
     worker = DingTalkAutoReplyWorker(store=store, dws=dws, codex=FakeCodex())
 
     with pytest.raises(ReplyDeliveryError, match="verification unavailable"):

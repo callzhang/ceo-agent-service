@@ -1398,10 +1398,39 @@ class AutoReplyStore:
     ) -> None:
         if not row["context_json"] or not row["context_hash"]:
             raise ValueError("legacy plan context missing")
+        if row["context_json"] == context_json and row["context_hash"] == context_hash:
+            return
+        stored_json = row["context_json"]
+        if hashlib.sha256(stored_json.encode("utf-8")).hexdigest() != row["context_hash"]:
+            raise ValueError("context identity mismatch")
+        if hashlib.sha256(context_json.encode("utf-8")).hexdigest() != context_hash:
+            raise ValueError("context identity mismatch")
+        try:
+            stored = json.loads(stored_json)
+            current = json.loads(context_json)
+        except json.JSONDecodeError as exc:
+            raise ValueError("context identity mismatch") from exc
+        if not isinstance(stored, dict) or not isinstance(current, dict):
+            raise ValueError("context identity mismatch")
+        compatible_default_fields = {
+            "trusted_mail_mailbox",
+            "trusted_mail_message_id",
+            "trusted_mail_subject",
+            "trusted_calendar_event_id",
+            "trusted_calendar_response_status",
+            "trusted_calendar_organizer",
+        }
+        missing = set(current) - set(stored)
         if (
-            row["context_json"] != context_json
-            or row["context_hash"] != context_hash
+            set(stored) - set(current)
+            or not missing
+            or not missing <= compatible_default_fields
+            or any(current.get(field_name) != "" for field_name in missing)
         ):
+            raise ValueError("context identity mismatch")
+        normalized_stored = dict(stored)
+        normalized_stored.update({field_name: "" for field_name in missing})
+        if normalized_stored != current:
             raise ValueError("context identity mismatch")
 
     def load_universal_plan_execution(

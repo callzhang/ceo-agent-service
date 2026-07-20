@@ -1421,11 +1421,21 @@ class DingTalkAutoReplyWorker:
             )
             raise
         if event is None:
-            event = DwsCalendarEvent(
-                event_id=event_id,
-                organizer=context.trusted_calendar_organizer,
-                self_response_status=context.trusted_calendar_response_status,
+            error = "calendar live state unavailable"
+            self._fail_universal_action_before_send(
+                execution,
+                attempt_id=attempt_id,
+                error=error,
             )
+            raise ReplyDeliveryError(error)
+        if event.event_id != event_id:
+            error = "calendar live target mismatch"
+            self._fail_universal_action_before_send(
+                execution,
+                attempt_id=attempt_id,
+                error=error,
+            )
+            raise ReplyDeliveryError(error)
         try:
             succeeded = self._execute_calendar_response(
                 conversation=conversation,
@@ -1505,6 +1515,8 @@ class DingTalkAutoReplyWorker:
                 "has no success receipt",
                 "receipt is missing",
                 "verification unavailable",
+                "verification mismatch",
+                "calendar_response_not_applied",
             )
         )
 
@@ -1518,6 +1530,11 @@ class DingTalkAutoReplyWorker:
             return False
         if result.get("success") is True:
             return True
+        if result.get("ok") is True:
+            nested_result = result.get("result")
+            return isinstance(nested_result, dict) and bool(
+                str(nested_result.get("messageId") or "").strip()
+            )
         for key in ("errcode", "code"):
             value = result.get(key)
             if value == 0 or value == "0":

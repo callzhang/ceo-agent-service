@@ -268,9 +268,11 @@ def build_universal_context(
     trusted_mailbox, trusted_mail_message_id, trusted_mail_subject = (
         _trusted_mail_target(trigger)
     )
-    trusted_calendar_event = DwsClient._find_calendar_event_in_payload(
-        trigger.raw_payload
-    )
+    (
+        trusted_calendar_event_id,
+        trusted_calendar_response_status,
+        trusted_calendar_organizer,
+    ) = _trusted_calendar_target(trigger)
     return UniversalTaskContext(
         task_id=task_id,
         conversation_id=conversation.open_conversation_id,
@@ -289,35 +291,28 @@ def build_universal_context(
         trusted_mail_mailbox=trusted_mailbox,
         trusted_mail_message_id=trusted_mail_message_id,
         trusted_mail_subject=trusted_mail_subject,
-        trusted_calendar_event_id=(
-            trusted_calendar_event.event_id if trusted_calendar_event else ""
-        ),
-        trusted_calendar_response_status=(
-            trusted_calendar_event.self_response_status
-            if trusted_calendar_event
-            else ""
-        ),
-        trusted_calendar_organizer=(
-            trusted_calendar_event.organizer if trusted_calendar_event else ""
-        ),
+        trusted_calendar_event_id=trusted_calendar_event_id,
+        trusted_calendar_response_status=trusted_calendar_response_status,
+        trusted_calendar_organizer=trusted_calendar_organizer,
     )
 
 
 def _trusted_mail_target(trigger: DingTalkMessage) -> tuple[str, str, str]:
     candidates: set[tuple[str, str, str]] = set()
 
-    def first_string(value: dict[str, Any], *keys: str) -> str:
+    def first_scalar(value: dict[str, Any], *keys: str) -> str:
         for key in keys:
             item = value.get(key)
-            if isinstance(item, str) and item.strip():
-                return item.strip()
+            normalized = _trusted_scalar(item)
+            if normalized:
+                return normalized
         return ""
 
     def visit(value: Any) -> None:
         if isinstance(value, dict):
-            mailbox = first_string(value, "mailbox", "from", "fromAddress")
-            message_id = first_string(value, "messageId", "message_id", "mailId")
-            subject = first_string(value, "subject", "title")
+            mailbox = first_scalar(value, "mailbox", "from", "fromAddress")
+            message_id = first_scalar(value, "messageId", "message_id", "mailId")
+            subject = first_scalar(value, "subject", "title")
             if mailbox and message_id and subject:
                 candidates.add((mailbox, message_id, subject))
             for nested in value.values():
@@ -331,6 +326,74 @@ def _trusted_mail_target(trigger: DingTalkMessage) -> tuple[str, str, str]:
     if len(candidates) != 1:
         return "", "", ""
     return next(iter(candidates))
+
+
+def _trusted_calendar_target(trigger: DingTalkMessage) -> tuple[str, str, str]:
+    candidates: dict[str, tuple[set[str], set[str]]] = {}
+
+    def visit(value: Any) -> None:
+        if isinstance(value, dict):
+            event_id = ""
+            for key in (
+                "eventId",
+                "eventID",
+                "calendarEventId",
+                "scheduleId",
+                "event_id",
+            ):
+                event_id = _trusted_scalar(value.get(key))
+                if event_id:
+                    break
+            if event_id:
+                statuses, organizers = candidates.setdefault(
+                    event_id, (set(), set())
+                )
+                for key in (
+                    "selfResponseStatus",
+                    "self_response_status",
+                    "selfStatus",
+                ):
+                    status = _trusted_scalar(value.get(key))
+                    if status:
+                        statuses.add(status)
+                organizer = _trusted_calendar_person(value.get("organizer"))
+                if organizer:
+                    organizers.add(organizer)
+            for nested in value.values():
+                if isinstance(nested, (dict, list)):
+                    visit(nested)
+        elif isinstance(value, list):
+            for nested in value:
+                visit(nested)
+
+    visit(trigger.raw_payload)
+    event_id_from_text = DwsClient._calendar_event_id_from_message(trigger)
+    if event_id_from_text:
+        candidates.setdefault(event_id_from_text, (set(), set()))
+    if len(candidates) != 1:
+        return "", "", ""
+    event_id, (statuses, organizers) = next(iter(candidates.items()))
+    return (
+        event_id,
+        next(iter(statuses)) if len(statuses) == 1 else "",
+        next(iter(organizers)) if len(organizers) == 1 else "",
+    )
+
+
+def _trusted_calendar_person(value: Any) -> str:
+    if isinstance(value, dict):
+        for key in ("displayName", "name", "nickName"):
+            normalized = _trusted_scalar(value.get(key))
+            if normalized:
+                return normalized
+        return ""
+    return _trusted_scalar(value)
+
+
+def _trusted_scalar(value: Any) -> str:
+    if isinstance(value, bool) or not isinstance(value, (str, int)):
+        return ""
+    return str(value).strip()
 
 
 def _trusted_oa_target(

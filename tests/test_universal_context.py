@@ -313,6 +313,40 @@ def test_trusted_mail_and_calendar_targets_change_canonical_identity() -> None:
     assert universal_context_sha256(trusted_calendar) != universal_context_sha256(context)
 
 
+def test_build_normalizes_numeric_mail_and_calendar_ids_from_real_nested_payloads() -> None:
+    trigger = make_message("trigger-capabilities", "System", "Action notification")
+    trigger.raw_payload = {
+        "mail": {
+            "mailbox": "derek@example.com",
+            "messageId": 987654,
+            "subject": "Approval request",
+        },
+        "result": {
+            "data": {
+                "event": {
+                    "eventId": 123456,
+                    "selfResponseStatus": "needsAction",
+                    "organizer": {"displayName": "Mina"},
+                }
+            }
+        },
+    }
+
+    context = build_universal_context(
+        conversation=make_conversation(),
+        trigger=trigger,
+        context_messages=[],
+        task_id=42,
+        force_new_decision=False,
+        dry_run=False,
+    )
+
+    assert context.trusted_mail_message_id == "987654"
+    assert context.trusted_calendar_event_id == "123456"
+    assert context.trusted_calendar_response_status == "needsAction"
+    assert context.trusted_calendar_organizer == "Mina"
+
+
 def test_explicit_execution_generation_is_snapshotted_and_rendered() -> None:
     context = build_universal_context(
         conversation=make_conversation(),

@@ -1933,10 +1933,10 @@ class DwsClient:
             if self._calendar_event_detail_unavailable(exc):
                 return None
             raise
-        result = payload.get("result", payload)
-        if not isinstance(result, dict):
+        event = self._find_calendar_event_in_payload(payload)
+        if event is None or event.event_id != event_id:
             return None
-        return self._parse_calendar_event(result, require_event_id=True)
+        return event
 
     def respond_calendar_event(
         self,
@@ -3922,7 +3922,7 @@ class DwsClient:
         *,
         require_event_id: bool = False,
     ) -> DwsCalendarEvent | None:
-        event_id = DwsClient._first_string(
+        event_id = DwsClient._first_identifier(
             record,
             "eventId",
             "eventID",
@@ -4116,6 +4116,17 @@ class DwsClient:
             value = record.get(key)
             if isinstance(value, str) and value.strip():
                 return value.strip()
+        return ""
+
+    @staticmethod
+    def _first_identifier(record: dict[str, Any], *keys: str) -> str:
+        for key in keys:
+            value = record.get(key)
+            if isinstance(value, bool) or not isinstance(value, (str, int)):
+                continue
+            normalized = str(value).strip()
+            if normalized:
+                return normalized
         return ""
 
     @staticmethod

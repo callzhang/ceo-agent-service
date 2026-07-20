@@ -1,3 +1,4 @@
+import hashlib
 import json
 from dataclasses import replace
 from pathlib import Path
@@ -2084,6 +2085,84 @@ def test_universal_plan_execution_get_or_create_keeps_first_snapshot(tmp_path: P
     )
     assert context_json == canonical_universal_context_json(context)
     assert context_hash == universal_context_sha256(context)
+
+
+def test_universal_old_active_plan_context_without_capability_fields_resumes_narrowly(
+    tmp_path: Path,
+):
+    db_path = tmp_path / "worker.sqlite3"
+    store = AutoReplyStore(db_path)
+    task_id = _enqueue_universal_reply_task(store)
+    context = _universal_context(task_id)
+    created = store.create_universal_plan_execution(context, _universal_plan())
+    old_context = json.loads(canonical_universal_context_json(context))
+    for field_name in (
+        "trusted_mail_mailbox",
+        "trusted_mail_message_id",
+        "trusted_mail_subject",
+        "trusted_calendar_event_id",
+        "trusted_calendar_response_status",
+        "trusted_calendar_organizer",
+    ):
+        old_context.pop(field_name)
+    old_context_json = json.dumps(
+        old_context,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    old_context_hash = hashlib.sha256(old_context_json.encode()).hexdigest()
+    with sqlite3.connect(db_path) as db:
+        db.execute(
+            "update universal_plan_executions set context_json=?, context_hash=?",
+            (old_context_json, old_context_hash),
+        )
+
+    loaded = store.load_universal_plan_execution(context)
+    repeated = store.create_universal_plan_execution(
+        context,
+        _universal_plan(reason="Must not replace the active plan"),
+    )
+    assert loaded == created
+    assert repeated == created
+    action = build_universal_action_execution(
+        context,
+        loaded,
+        loaded.plan.actions[0],
+        0,
+    )
+    assert store.claim_universal_action_execution(action) is UniversalActionExecutionState.NOT_STARTED
+
+
+def test_universal_old_active_plan_context_compatibility_rejects_new_non_default_target(
+    tmp_path: Path,
+):
+    db_path = tmp_path / "worker.sqlite3"
+    store = AutoReplyStore(db_path)
+    task_id = _enqueue_universal_reply_task(store)
+    context = _universal_context(task_id)
+    store.create_universal_plan_execution(context, _universal_plan())
+    old_context = json.loads(canonical_universal_context_json(context))
+    old_context.pop("trusted_mail_message_id")
+    old_context_json = json.dumps(
+        old_context,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    with sqlite3.connect(db_path) as db:
+        db.execute(
+            "update universal_plan_executions set context_json=?, context_hash=?",
+            (
+                old_context_json,
+                hashlib.sha256(old_context_json.encode()).hexdigest(),
+            ),
+        )
+
+    with pytest.raises(ValueError, match="context identity mismatch"):
+        store.load_universal_plan_execution(
+            replace(context, trusted_mail_message_id="new-mail-id")
+        )
 
 
 @pytest.mark.parametrize(

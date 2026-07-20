@@ -2720,6 +2720,31 @@ def test_get_calendar_event_returns_none_when_detail_is_unavailable():
     ]
 
 
+def test_get_calendar_event_parses_real_nested_result_data_event():
+    client = RecordingDwsClient(
+        {
+            "ok": True,
+            "result": {
+                "data": {
+                    "event": {
+                        "eventId": 123456,
+                        "summary": "Strategy review",
+                        "start": {"dateTime": "2026-07-21T10:00:00+08:00"},
+                        "end": {"dateTime": "2026-07-21T11:00:00+08:00"},
+                        "selfResponseStatus": "tentative",
+                    }
+                }
+            },
+        }
+    )
+
+    event = client.get_calendar_event("123456")
+
+    assert event is not None
+    assert event.event_id == "123456"
+    assert event.self_response_status == "tentative"
+
+
 def test_calendar_invite_from_message_returns_none_for_unavailable_event_detail():
     class CalendarDetailUnavailableClient(DwsClient):
         def run_json(self, command: list[str]):
