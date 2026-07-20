@@ -191,6 +191,109 @@ def test_render_attempt_list_shows_history_rows(tmp_path: Path):
     assert "/codex/session-1" not in html
 
 
+def _seed_wechat_pending(store: AutoReplyStore) -> int:
+    """A WeChat reply attempt plus its single ready_to_send delivery. Returns the
+    delivery id."""
+    store.record_reply_attempt(
+        conversation_id="wxg@chatroom",
+        conversation_title="AI数据市场行业友商资讯",
+        trigger_message_id="wx-m1",
+        trigger_sender="群友",
+        trigger_text="大家怎么看 RAG？",
+        action="send_reply",
+        sensitivity_kind="general",
+        codex_reason="context-aware",
+        draft_reply_text="我的看法是……",
+        send_status="pending",
+        channel="wechat",
+    )
+    store.enqueue_reply_task(
+        channel="wechat",
+        conversation_id="wxg@chatroom",
+        conversation_title="AI数据市场行业友商资讯",
+        single_chat=False,
+        trigger_message_id="wx-m1",
+        trigger_create_time="2026-07-18T10:00:00",
+        trigger_sender="群友",
+        trigger_text="大家怎么看 RAG？",
+    )
+    task = store.list_reply_tasks(statuses=("pending",), limit=10)[-1]
+    store.create_wechat_delivery(
+        reply_task_id=task.id,
+        account_id="acct-1",
+        target_type="group",
+        target_id="wxg@chatroom",
+        conversation_id="wxg@chatroom",
+        reply_text="我的看法是……",
+    )
+    return store.get_wechat_delivery_for_task(task.id).id
+
+
+def test_history_shows_wechat_badge_and_send_buttons_for_pending_delivery(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    delivery_id = _seed_wechat_pending(store)
+
+    html = render_attempt_list(store)
+
+    # WeChat items are labelled and get inline 发送/拒绝 buttons wired to the
+    # matching delivery, returning to the history page (next=/).
+    assert "微信</span>" in html
+    assert f"/wechat/deliveries/{delivery_id}/approve?next=/" in html
+    assert f"/wechat/deliveries/{delivery_id}/reject?next=/" in html
+    assert ">发送</button>" in html
+    assert ">拒绝</button>" in html
+
+
+def test_history_no_send_buttons_for_dingtalk_attempt(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    seed_attempt(store)  # DingTalk, already sent
+
+    html = render_attempt_list(store)
+
+    assert "微信</span>" not in html
+    assert "/wechat/deliveries/" not in html
+    assert ">发送</button>" not in html
+
+
+def test_history_send_buttons_gone_after_delivery_leaves_pending(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    delivery_id = _seed_wechat_pending(store)
+    # user rejected (or it was sent) -> no longer ready_to_send
+    store.set_wechat_delivery_status(delivery_id, "failed", error="user_rejected")
+
+    html = render_attempt_list(store)
+
+    # badge still shows (it is a WeChat item), but no actionable buttons remain
+    assert "微信</span>" in html
+    assert "💬 Failed" in html
+    assert "💬 Pending" not in html
+    assert f"/wechat/deliveries/{delivery_id}/approve" not in html
+    assert ">发送</button>" not in html
+
+
+def test_history_wechat_send_button_matches_exact_trigger(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    delivery_id = _seed_wechat_pending(store)
+    store.record_reply_attempt(
+        conversation_id="wxg@chatroom",
+        conversation_title="AI数据市场行业友商资讯",
+        trigger_message_id="wx-without-delivery",
+        trigger_sender="另一位群友",
+        trigger_text="另一条消息",
+        action="no_reply",
+        sensitivity_kind="general",
+        send_status="skipped",
+        channel="wechat",
+    )
+
+    html = render_attempt_list(store, search_object_types=("wechat",))
+
+    assert html.count(f"/wechat/deliveries/{delivery_id}/approve?next=/") == 1
+    assert html.count(f"/wechat/deliveries/{delivery_id}/reject?next=/") == 1
+
+
 def test_render_attempt_list_links_task_history_to_task_detail(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     project_id = store.create_work_project(
@@ -386,6 +489,50 @@ def test_history_search_object_type_checkboxes_control_results(tmp_path: Path):
     assert 'name="object_type" value="replay" checked' not in object_type_html
     assert 'name="object_type" value="task" checked' not in object_type_html
     assert 'name="object_type" value="meeting" checked' in object_type_html
+
+
+def test_history_wechat_object_filter_separates_message_channels(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.record_reply_attempt(
+        conversation_id="cid-dingtalk-history",
+        conversation_title="DingTalk History Group",
+        trigger_message_id="msg-dingtalk-history",
+        trigger_sender="Mina",
+        trigger_text="channel filter",
+        action="send_reply",
+        sensitivity_kind="general",
+        send_status="sent",
+    )
+    store.record_reply_attempt(
+        conversation_id="cid-wechat-history",
+        conversation_title="WeChat History Group",
+        trigger_message_id="msg-wechat-history",
+        trigger_sender="Alex",
+        trigger_text="channel filter",
+        action="send_reply",
+        sensitivity_kind="general",
+        send_status="sent",
+        channel="wechat",
+    )
+
+    default_html = render_attempt_list(store, query="channel filter")
+    assert 'name="object_type" value="wechat" checked' in default_html
+
+    wechat_html = render_attempt_list(
+        store,
+        query="channel filter",
+        search_object_types=("wechat",),
+    )
+    assert "WeChat History Group" in wechat_html
+    assert "DingTalk History Group" not in wechat_html
+
+    replay_html = render_attempt_list(
+        store,
+        query="channel filter",
+        search_object_types=("replay",),
+    )
+    assert "DingTalk History Group" in replay_html
+    assert "WeChat History Group" not in replay_html
 
 
 def test_history_chart_labels_terminal_reactions_and_oa_actions(tmp_path: Path):
@@ -1130,6 +1277,55 @@ def test_render_tutorial_page_shows_wizard_status(tmp_path: Path):
     assert "/tasks" in html
     assert "Tutorial" in html
     assert "Landing page" not in html
+
+
+def test_render_tutorial_page_shows_wechat_target_picker_for_ready_account(
+    tmp_path: Path,
+):
+    from app.wechat.models import WechatReplyScope
+
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.upsert_setup_wizard_step(
+        step_id="preflight",
+        status="done",
+        summary="ready",
+    )
+    store.upsert_wechat_read_state(
+        account_id="acct-1",
+        account_dir="/private/account",
+        db_dir="/private/db",
+        app_version="4.0",
+        self_user_id="wxid-self",
+        capability_status="ready",
+    )
+    store.replace_wechat_reply_scopes(
+        "acct-1",
+        [
+            WechatReplyScope(
+                account_id="acct-1",
+                target_type="group",
+                target_id="group-1@chatroom",
+                conversation_id="group-1@chatroom",
+                display_name="产品讨论群",
+                trigger_mode="mention_current_account",
+                binding_status="verified",
+            )
+        ],
+    )
+
+    html = render_tutorial_page(store=store)
+
+    assert 'id="wechat-target-picker"' in html
+    assert 'id="wechat-target-kind"' in html
+    assert 'id="wechat-target-query"' in html
+    assert 'id="wechat-target-results"' in html
+    assert 'id="wechat-save-targets"' in html
+    assert "/tutorial/wechat/conversations" in html
+    assert "/tutorial/wechat/reply-scope" in html
+    assert "产品讨论群" in html
+    assert "群聊仅在有人明确 @你 时回复" in html
+    assert "/private/account" not in html
+    assert "/private/db" not in html
 
 
 def test_render_tutorial_page_expands_tilde_worker_db(

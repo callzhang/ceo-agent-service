@@ -1,0 +1,37 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["matches"],
+  "properties": {
+    "matches": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["statement", "relation", "memory_id", "evidence", "merged_statement"],
+        "properties": {
+          "statement": {"type": "string"},
+          "relation": {
+            "type": "string",
+            "enum": ["none", "exact", "compatible", "contradiction"],
+            "description": "relation=none requires all auxiliary fields to be empty; non-none requires support."
+          },
+          "memory_id": {
+            "type": "string",
+            "description": "Empty only for relation=none; otherwise the supporting recalled memory id."
+          },
+          "evidence": {
+            "type": "string",
+            "maxLength": 240,
+            "description": "Empty for relation=none; otherwise at least 8 characters copied from the same recalled memory."
+          },
+          "merged_statement": {
+            "type": "string",
+            "description": "Required and non-empty only for compatible; empty for exact/contradiction/none."
+          }
+        }
+      }
+    }
+  }
+}

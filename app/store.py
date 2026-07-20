@@ -2,6 +2,7 @@ import json
 import hashlib
 import sqlite3
 import threading
+from datetime import datetime
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -120,6 +121,7 @@ class ReplyAttempt(BaseModel):
     reviewed_at: str | None = None
     reviewer_feedback: str = ""
     corrected_reply_text: str = ""
+    channel: str = "dingtalk"
     created_at: str
     updated_at: str
 
@@ -517,6 +519,7 @@ class AutoReplyStore:
                     on memory_write_events(status, updated_at);
                 create table if not exists reply_tasks (
                     id integer primary key autoincrement,
+                    channel text not null default 'dingtalk',
                     conversation_id text not null,
                     conversation_title text not null,
                     single_chat integer not null,
@@ -536,7 +539,7 @@ class AutoReplyStore:
                     error text not null default '',
                     created_at text not null default current_timestamp,
                     updated_at text not null default current_timestamp,
-                    unique(conversation_id, trigger_message_id)
+                    unique(channel, conversation_id, trigger_message_id)
                 );
                 create index if not exists idx_reply_tasks_status
                     on reply_tasks(status, id);
@@ -641,6 +644,7 @@ class AutoReplyStore:
                     reviewed_at text not null default '',
                     memory_write_status text not null default '',
                     memory_id text not null default '',
+                    memory_write_error text not null default '',
                     created_at text not null default current_timestamp,
                     updated_at text not null default current_timestamp,
                     unique(import_run_id, statement)
@@ -963,6 +967,23 @@ class AutoReplyStore:
                 );
                 """
             )
+            reply_task_columns = {
+                row["name"]
+                for row in db.execute("pragma table_info(reply_tasks)").fetchall()
+            }
+            for column, definition in (
+                ("trigger_message_json", "text not null default '{}'"),
+                ("available_at", "text not null default ''"),
+                ("force_new_decision", "integer not null default 0"),
+                ("oa_url", "text not null default ''"),
+                ("manual_rerun_attempt_id", "integer not null default 0"),
+                ("channel", "text not null default 'dingtalk'"),
+            ):
+                if column not in reply_task_columns:
+                    db.execute(
+                        f"alter table reply_tasks add column {column} {definition}"
+                    )
+            self._migrate_reply_task_channel_identity(db)
             sent_reply_columns = {
                 row["name"]
                 for row in db.execute("pragma table_info(sent_replies)").fetchall()
@@ -994,6 +1015,7 @@ class AutoReplyStore:
                     db.execute(
                         f"alter table feedback_events add column {column} {definition}"
                     )
+
             reply_attempt_columns = {
                 row["name"]
                 for row in db.execute("pragma table_info(reply_attempts)").fetchall()
@@ -1179,6 +1201,98 @@ class AutoReplyStore:
                     db.execute(
                         f"alter table org_user_profiles add column {column} {definition}"
                     )
+            wechat_memory_columns = {
+                row["name"] for row in db.execute(
+                    "pragma table_info(wechat_memory_candidates)"
+                ).fetchall()
+            }
+            if "memory_write_error" not in wechat_memory_columns:
+                db.execute(
+                    "alter table wechat_memory_candidates add column "
+                    "memory_write_error text not null default ''"
+                )
+
+    @staticmethod
+    def _migrate_reply_task_channel_identity(db: sqlite3.Connection) -> None:
+        """Replace the legacy cross-channel UNIQUE constraint in place."""
+        columns = {
+            row["name"] for row in db.execute("pragma table_info(reply_tasks)").fetchall()
+        }
+        if "channel" not in columns:
+            db.execute(
+                "alter table reply_tasks add column channel "
+                "text not null default 'dingtalk'"
+            )
+        unique_columns = {
+            tuple(
+                row["name"]
+                for row in db.execute(
+                    f"pragma index_info('{index['name']}')"
+                ).fetchall()
+            )
+            for index in db.execute("pragma index_list(reply_tasks)").fetchall()
+            if index["unique"]
+        }
+        if ("conversation_id", "trigger_message_id") not in unique_columns:
+            return
+
+        db.execute("pragma foreign_keys=off")
+        try:
+            db.executescript(
+                """
+                begin immediate;
+                create table reply_tasks_channel_migration (
+                    id integer primary key autoincrement,
+                    channel text not null default 'dingtalk',
+                    conversation_id text not null,
+                    conversation_title text not null,
+                    single_chat integer not null,
+                    trigger_message_id text not null,
+                    trigger_create_time text not null,
+                    trigger_sender text not null,
+                    trigger_text text not null,
+                    trigger_message_json text not null default '{}',
+                    available_at text not null default '',
+                    force_new_decision integer not null default 0,
+                    oa_url text not null default '',
+                    manual_rerun_attempt_id integer not null default 0,
+                    status text not null default 'pending',
+                    attempts integer not null default 0,
+                    locked_at text,
+                    error text not null default '',
+                    created_at text not null default current_timestamp,
+                    updated_at text not null default current_timestamp,
+                    unique(channel, conversation_id, trigger_message_id)
+                );
+                insert into reply_tasks_channel_migration (
+                    id, channel, conversation_id, conversation_title, single_chat,
+                    trigger_message_id, trigger_create_time, trigger_sender,
+                    trigger_text, trigger_message_json, available_at,
+                    force_new_decision, oa_url, manual_rerun_attempt_id, status,
+                    attempts, locked_at, error, created_at, updated_at
+                )
+                select
+                    id, channel, conversation_id, conversation_title, single_chat,
+                    trigger_message_id, trigger_create_time, trigger_sender,
+                    trigger_text, trigger_message_json, available_at,
+                    force_new_decision, oa_url, manual_rerun_attempt_id, status,
+                    attempts, locked_at, error, created_at, updated_at
+                from reply_tasks;
+                drop table reply_tasks;
+                alter table reply_tasks_channel_migration rename to reply_tasks;
+                create index idx_reply_tasks_status on reply_tasks(status, id);
+                commit;
+                """
+            )
+        except Exception:
+            if db.in_transaction:
+                db.rollback()
+            raise
+        finally:
+            db.execute("pragma foreign_keys=on")
+        violations = db.execute("pragma foreign_key_check").fetchall()
+        if violations:
+            raise sqlite3.IntegrityError("reply_tasks migration broke foreign keys")
 
     @staticmethod
     def _reply_task_from_row(row: sqlite3.Row) -> ReplyTask:
@@ -1295,6 +1409,7 @@ class AutoReplyStore:
             db.execute(
                 """
                 insert into reply_tasks (
+                    channel,
                     conversation_id,
                     conversation_title,
                     single_chat,
@@ -1312,8 +1427,8 @@ class AutoReplyStore:
                     locked_at,
                     error
                 )
-                values (?, ?, ?, ?, ?, ?, ?, ?, '', 1, ?, ?, ?, 'pending', null, ?)
-                on conflict(conversation_id, trigger_message_id) do update set
+                values ('dingtalk', ?, ?, ?, ?, ?, ?, ?, ?, '', 1, ?, ?, ?, 'pending', null, ?)
+                on conflict(channel, conversation_id, trigger_message_id) do update set
                     conversation_title=excluded.conversation_title,
                     single_chat=excluded.single_chat,
                     trigger_create_time=excluded.trigger_create_time,
@@ -1349,7 +1464,8 @@ class AutoReplyStore:
                 """
                 select *
                 from reply_tasks
-                where conversation_id=? and trigger_message_id=?
+                where channel='dingtalk'
+                  and conversation_id=? and trigger_message_id=?
                 """,
                 (conversation_id, trigger_message_id),
             ).fetchone()
@@ -2323,6 +2439,7 @@ class AutoReplyStore:
         conversation_id: str,
         trigger_create_time: str,
         exclude_task_id: int,
+        channel: str = "dingtalk",
     ) -> list[ReplyTask]:
         with self._connect() as db:
             db.execute("begin immediate")
@@ -2330,13 +2447,14 @@ class AutoReplyStore:
                 """
                 select *
                 from reply_tasks
-                where conversation_id=?
+                where channel=?
+                  and conversation_id=?
                   and status in ('pending', 'processing')
                   and trigger_create_time < ?
                   and id != ?
                 order by trigger_create_time, id
                 """,
-                (conversation_id, trigger_create_time, exclude_task_id),
+                (channel, conversation_id, trigger_create_time, exclude_task_id),
             ).fetchall()
             task_ids = [row["id"] for row in rows]
             if not task_ids:
@@ -2362,6 +2480,7 @@ class AutoReplyStore:
         conversation_id: str,
         trigger_message_ids: list[str],
         exclude_task_id: int,
+        channel: str = "dingtalk",
     ) -> list[ReplyTask]:
         if not trigger_message_ids:
             return []
@@ -2372,13 +2491,14 @@ class AutoReplyStore:
                 f"""
                 select *
                 from reply_tasks
-                where conversation_id=?
+                where channel=?
+                  and conversation_id=?
                   and status in ('pending', 'processing')
                   and trigger_message_id in ({placeholders})
                   and id != ?
                 order by trigger_create_time, id
                 """,
-                [conversation_id, *trigger_message_ids, exclude_task_id],
+                [channel, conversation_id, *trigger_message_ids, exclude_task_id],
             ).fetchall()
             task_ids = [row["id"] for row in rows]
             if not task_ids:
@@ -2413,7 +2533,8 @@ class AutoReplyStore:
             )
 
     def complete_reply_task_for_message(
-        self, conversation_id: str, trigger_message_id: str
+        self, conversation_id: str, trigger_message_id: str, *,
+        channel: str = "dingtalk",
     ) -> int:
         with self._connect() as db:
             cursor = db.execute(
@@ -2424,10 +2545,11 @@ class AutoReplyStore:
                     error='',
                     available_at='',
                     updated_at=current_timestamp
-                where conversation_id=?
+                where channel=?
+                  and conversation_id=?
                   and trigger_message_id=?
                 """,
-                (conversation_id, trigger_message_id),
+                (channel, conversation_id, trigger_message_id),
             )
             return cursor.rowcount
 
@@ -2551,18 +2673,19 @@ class AutoReplyStore:
             return [self._reply_task_from_row(row) for row in rows]
 
     def get_reply_task_for_message(
-        self, conversation_id: str, trigger_message_id: str
+        self, conversation_id: str, trigger_message_id: str, *,
+        channel: str = "dingtalk",
     ) -> ReplyTask | None:
         with self._connect() as db:
             row = db.execute(
                 """
                 select *
                 from reply_tasks
-                where conversation_id=? and trigger_message_id=?
+                where channel=? and conversation_id=? and trigger_message_id=?
                 order by id desc
                 limit 1
                 """,
-                (conversation_id, trigger_message_id),
+                (channel, conversation_id, trigger_message_id),
             ).fetchone()
             if row is None:
                 return None
@@ -2574,7 +2697,15 @@ class AutoReplyStore:
     ) -> None:
         if any(scope.account_id != account_id for scope in scopes):
             raise ValueError("scope account mismatch")
+        activation_at = datetime.now().astimezone().isoformat()
         with self._connect() as db:
+            existing = {
+                (row["target_type"], row["target_id"]): row
+                for row in db.execute(
+                    "select * from wechat_reply_scopes where account_id=?",
+                    (account_id,),
+                ).fetchall()
+            }
             db.execute(
                 "update wechat_reply_scopes set enabled=0, "
                 "disabled_reason='not_selected', updated_at=current_timestamp "
@@ -2582,6 +2713,13 @@ class AutoReplyStore:
                 (account_id,),
             )
             for scope in scopes:
+                previous = existing.get((scope.target_type, scope.target_id))
+                if scope.last_active_at:
+                    watermark = scope.last_active_at
+                elif previous is not None and bool(previous["enabled"]):
+                    watermark = previous["last_discovered_at"] or activation_at
+                else:
+                    watermark = activation_at
                 db.execute(
                     """
                     insert into wechat_reply_scopes (
@@ -2606,9 +2744,29 @@ class AutoReplyStore:
                         scope.trigger_mode, int(scope.enabled),
                         scope.binding_status,
                         json.dumps(scope.binding_evidence, ensure_ascii=False),
-                        scope.last_active_at,
+                        watermark,
                     ),
                 )
+
+    def advance_wechat_scope_watermark(
+        self, account_id: str, target_type: str, target_id: str, sent_at: str
+    ) -> bool:
+        if not sent_at:
+            raise ValueError("scope watermark requires sent_at")
+        with self._connect() as db:
+            cursor = db.execute(
+                """
+                update wechat_reply_scopes
+                set last_discovered_at=?, updated_at=current_timestamp
+                where account_id=? and target_type=? and target_id=?
+                  and (
+                    last_discovered_at=''
+                    or last_discovered_at < ?
+                  )
+                """,
+                (sent_at, account_id, target_type, target_id, sent_at),
+            )
+            return cursor.rowcount == 1
 
     def list_wechat_reply_scopes(
         self, account_id: str, *, enabled_only: bool = False
@@ -2661,12 +2819,25 @@ class AutoReplyStore:
                 ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 on conflict(account_id) do update set
                     account_dir=excluded.account_dir, db_dir=excluded.db_dir,
-                    app_version=excluded.app_version, self_user_id=excluded.self_user_id,
+                    app_version=excluded.app_version,
+                    self_user_id=coalesce(
+                        nullif(excluded.self_user_id, ''),
+                        wechat_read_state.self_user_id
+                    ),
                     capability_status=excluded.capability_status,
                     capability_reason=excluded.capability_reason,
-                    watermark_sent_at=excluded.watermark_sent_at,
-                    watermark_message_id=excluded.watermark_message_id,
-                    last_scan_at=excluded.last_scan_at,
+                    watermark_sent_at=coalesce(
+                        nullif(excluded.watermark_sent_at, ''),
+                        wechat_read_state.watermark_sent_at
+                    ),
+                    watermark_message_id=coalesce(
+                        nullif(excluded.watermark_message_id, ''),
+                        wechat_read_state.watermark_message_id
+                    ),
+                    last_scan_at=coalesce(
+                        nullif(excluded.last_scan_at, ''),
+                        wechat_read_state.last_scan_at
+                    ),
                     updated_at=current_timestamp
                 """,
                 (
@@ -2789,6 +2960,32 @@ class AutoReplyStore:
     def add_wechat_memory_candidate(self, *, import_run_id: str, account_id: str,
                                     candidate) -> int | None:
         with self._connect() as db:
+            canonical = " ".join(candidate.statement.split()).casefold()
+            existing = db.execute(
+                "select * from wechat_memory_candidates where account_id=? "
+                "and status in ('pending', 'approved') order by id",
+                (account_id,),
+            ).fetchall()
+            for row in existing:
+                if " ".join(row["statement"].split()).casefold() != canonical:
+                    continue
+                conversations = sorted(set(json.loads(row["source_conversation_ids_json"]))
+                                       | set(candidate.source_conversation_ids))
+                messages = sorted(set(json.loads(row["source_message_ids_json"]))
+                                  | set(candidate.source_message_ids))
+                starts = [value for value in (row["source_time_start"],
+                          candidate.source_time_start) if value]
+                ends = [value for value in (row["source_time_end"],
+                        candidate.source_time_end) if value]
+                db.execute(
+                    "update wechat_memory_candidates set source_conversation_ids_json=?, "
+                    "source_message_ids_json=?, source_time_start=?, source_time_end=?, "
+                    "updated_at=current_timestamp where id=?",
+                    (json.dumps(conversations, ensure_ascii=False),
+                     json.dumps(messages, ensure_ascii=False), min(starts, default=""),
+                     max(ends, default=""), row["id"]),
+                )
+                return None
             cur = db.execute(
                 """
                 insert or ignore into wechat_memory_candidates (
@@ -2817,48 +3014,170 @@ class AutoReplyStore:
             ).fetchone()
         return dict(row) if row is not None else None
 
-    def list_wechat_memory_candidates(self, *, status: str | None = None) -> list[dict]:
+    def list_wechat_memory_candidates(
+        self, *, status: str | None = None, category: str | None = None,
+        sensitivity: str | None = None,
+    ) -> list[dict]:
         with self._connect() as db:
-            if status is None:
-                rows = db.execute(
-                    "select * from wechat_memory_candidates order by id"
-                ).fetchall()
-            else:
-                rows = db.execute(
-                    "select * from wechat_memory_candidates where status=? order by id",
-                    (status,),
-                ).fetchall()
+            clauses, values = [], []
+            for column, value in (("status", status), ("category", category),
+                                  ("sensitivity", sensitivity)):
+                if value:
+                    clauses.append(f"{column}=?")
+                    values.append(value)
+            where = " where " + " and ".join(clauses) if clauses else ""
+            rows = db.execute(
+                f"select * from wechat_memory_candidates{where} order by id",
+                values,
+            ).fetchall()
         return [dict(row) for row in rows]
 
-    def set_wechat_memory_candidate_status(
-        self, candidate_id: int, status: str, *, reviewer: str = "",
-        edited_statement: str | None = None,
-    ) -> None:
+    def review_wechat_memory_candidate(
+        self, candidate_id: int, action: str, *, reviewer: str = "",
+        final_statement: str = "",
+    ) -> dict:
         with self._connect() as db:
-            if edited_statement is None:
+            row = db.execute(
+                "select * from wechat_memory_candidates where id=?", (candidate_id,)
+            ).fetchone()
+            if row is None:
+                raise ValueError("candidate not found")
+            current = row["status"]
+            write_status = row["memory_write_status"]
+            reviewer = reviewer.strip()
+            if not reviewer:
+                raise ValueError("reviewer required")
+            if write_status == "writing":
+                raise ValueError("candidate is writing and cannot be reviewed")
+            if action == "approve":
+                from app.wechat.memory_import import validate_final_statement
+                statement = validate_final_statement(final_statement)
+                if current != "pending":
+                    raise ValueError("only pending candidate can be approved")
                 db.execute(
-                    "update wechat_memory_candidates set status=?, reviewer=?, "
-                    "reviewed_at=current_timestamp, updated_at=current_timestamp "
-                    "where id=?",
-                    (status, reviewer, candidate_id),
+                    "update wechat_memory_candidates set status='approved', reviewer=?, "
+                    "edited_statement=?, reviewed_at=current_timestamp, "
+                    "updated_at=current_timestamp where id=? and status='pending'",
+                    (reviewer, statement, candidate_id),
+                )
+            elif action == "reject":
+                if current not in {"pending", "approved"} or write_status in {"writing", "written"}:
+                    raise ValueError("candidate cannot be rejected")
+                db.execute(
+                    "update wechat_memory_candidates set status='rejected', reviewer=?, "
+                    "reviewed_at=current_timestamp, updated_at=current_timestamp where id=?",
+                    (reviewer, candidate_id),
+                )
+            elif action == "revoke":
+                if current != "approved":
+                    raise ValueError("only approved candidate can be revoked")
+                next_write_status = (
+                    "revocation_unavailable" if write_status == "written" else write_status
+                )
+                db.execute(
+                    "update wechat_memory_candidates set status='revoked', reviewer=?, "
+                    "memory_write_status=?, reviewed_at=current_timestamp, "
+                    "updated_at=current_timestamp where id=?",
+                    (reviewer, next_write_status, candidate_id),
                 )
             else:
-                db.execute(
-                    "update wechat_memory_candidates set status=?, reviewer=?, "
-                    "edited_statement=?, reviewed_at=current_timestamp, "
-                    "updated_at=current_timestamp where id=?",
-                    (status, reviewer, edited_statement, candidate_id),
-                )
+                raise ValueError("invalid review action")
+        result = self.get_wechat_memory_candidate(candidate_id)
+        assert result is not None
+        return result
 
-    def set_wechat_memory_candidate_written(
-        self, candidate_id: int, *, memory_id: str, memory_write_status: str
-    ) -> None:
+    def claim_wechat_memory_candidate_write(self, candidate_id: int) -> dict:
         with self._connect() as db:
-            db.execute(
-                "update wechat_memory_candidates set memory_id=?, "
-                "memory_write_status=?, updated_at=current_timestamp where id=?",
-                (memory_id, memory_write_status, candidate_id),
+            row = db.execute(
+                "select * from wechat_memory_candidates where id=?", (candidate_id,)
+            ).fetchone()
+            if row is None:
+                return {"outcome": "rejected", "reason": "candidate not found"}
+            candidate = dict(row)
+            if candidate["status"] != "approved":
+                return {"outcome": "rejected", "reason": "candidate must be approved before writing memory"}
+            if candidate["memory_id"]:
+                return {"outcome": "written", "memory_id": candidate["memory_id"]}
+            if candidate["memory_write_status"] == "writing":
+                return {"outcome": "writing"}
+            if candidate["memory_write_status"] == "unknown":
+                return {"outcome": "rejected", "reason": "unknown memory write outcome requires manual resolution"}
+            if candidate["memory_write_status"] == "revocation_unavailable":
+                return {"outcome": "rejected", "reason": "revoked candidate cannot be written"}
+            updated = db.execute(
+                "update wechat_memory_candidates set memory_write_status='writing', "
+                "memory_write_error='', updated_at=current_timestamp where id=? "
+                "and status='approved' and memory_id='' "
+                "and memory_write_status in ('', 'failed')",
+                (candidate_id,),
             )
+            if updated.rowcount != 1:
+                return {"outcome": "writing"}
+            candidate["edited_statement"] = (
+                candidate["edited_statement"] or candidate["statement"]
+            )
+            return {"outcome": "claimed", "candidate": candidate}
+
+    def finish_wechat_memory_candidate_write(
+        self, candidate_id: int, *, status: str, memory_id: str = "",
+        error: str = "",
+    ) -> None:
+        if status not in {"written", "failed", "unknown"}:
+            raise ValueError("invalid memory write status")
+        with self._connect() as db:
+            if status == "written":
+                changed = db.execute(
+                    "update wechat_memory_candidates set memory_write_status='written', "
+                    "memory_id=?, memory_write_error='', updated_at=current_timestamp "
+                    "where id=? and status='approved' and memory_write_status='writing'",
+                    (memory_id, candidate_id),
+                )
+                if changed.rowcount == 1:
+                    return
+                row = db.execute(
+                    "select status, memory_write_status from wechat_memory_candidates where id=?",
+                    (candidate_id,),
+                ).fetchone()
+                if row is None or row["memory_write_status"] != "writing":
+                    raise RuntimeError("memory write claim lost")
+                fallback = "revocation_unavailable" if row["status"] == "revoked" else "unknown"
+                db.execute(
+                    "update wechat_memory_candidates set memory_write_status=?, memory_id=?, "
+                    "memory_write_error='review state changed during write', "
+                    "updated_at=current_timestamp where id=? and memory_write_status='writing'",
+                    (fallback, memory_id, candidate_id),
+                )
+                return
+            changed = db.execute(
+                "update wechat_memory_candidates set memory_write_status=?, memory_id='', "
+                "memory_write_error=?, updated_at=current_timestamp "
+                "where id=? and status='approved' and memory_write_status='writing'",
+                (status, error[:500], candidate_id),
+            )
+            if changed.rowcount != 1:
+                raise RuntimeError("memory write claim lost")
+
+    def resolve_wechat_memory_candidate_write_unknown(
+        self, candidate_id: int, *, reviewer: str, confirm: bool = False,
+        stale_after_seconds: int = 900,
+    ) -> None:
+        if not confirm:
+            raise ValueError("explicit stale write confirmation required")
+        if stale_after_seconds < 900:
+            raise ValueError("stale write threshold cannot be less than 900 seconds")
+        if not reviewer.strip():
+            raise ValueError("reviewer required")
+        with self._connect() as db:
+            changed = db.execute(
+                "update wechat_memory_candidates set memory_write_status='unknown', "
+                "memory_write_error='manually resolved after interrupted write', reviewer=?, "
+                "reviewed_at=current_timestamp, updated_at=current_timestamp "
+                "where id=? and memory_write_status='writing' "
+                "and datetime(updated_at) <= datetime('now', ?)",
+                (reviewer.strip(), candidate_id, f"-{int(stale_after_seconds)} seconds"),
+            )
+            if changed.rowcount != 1:
+                raise ValueError("only confirmed stale writing candidate can be resolved to unknown")
 
     @staticmethod
     def _meeting_alignment_job_from_row(
@@ -3737,6 +4056,7 @@ class AutoReplyStore:
         *,
         trigger_text: str,
         trigger_message_json: str,
+        channel: str = "dingtalk",
     ) -> int:
         with self._connect() as db:
             cursor = db.execute(
@@ -3745,7 +4065,8 @@ class AutoReplyStore:
                 set trigger_text=?,
                     trigger_message_json=?,
                     updated_at=current_timestamp
-                where conversation_id=?
+                where channel=?
+                  and conversation_id=?
                   and trigger_message_id=?
                   and status='pending'
                   and attempts=0
@@ -3757,6 +4078,7 @@ class AutoReplyStore:
                 (
                     trigger_text,
                     trigger_message_json,
+                    channel,
                     conversation_id,
                     trigger_message_id,
                     trigger_text,
@@ -3776,13 +4098,15 @@ class AutoReplyStore:
         trigger_message_json: str,
         available_at: str = "",
         error: str = "",
+        channel: str = "dingtalk",
     ) -> int:
         with self._connect() as db:
             target = db.execute(
                 """
                 select id
                 from reply_tasks
-                where conversation_id=?
+                where channel=?
+                  and conversation_id=?
                   and single_chat=1
                   and status='pending'
                   and attempts=0
@@ -3790,7 +4114,7 @@ class AutoReplyStore:
                 order by trigger_create_time desc, id desc
                 limit 1
                 """,
-                (conversation_id, trigger_create_time),
+                (channel, conversation_id, trigger_create_time),
             ).fetchone()
             if target is None:
                 return 0
@@ -3838,13 +4162,14 @@ class AutoReplyStore:
             db.execute(
                 """
                 delete from reply_tasks
-                where conversation_id=?
+                where channel=?
+                  and conversation_id=?
                   and single_chat=1
                   and status='pending'
                   and attempts=0
                   and id != ?
                 """,
-                (conversation_id, task_id),
+                (channel, conversation_id, task_id),
             )
             return cursor.rowcount
 
@@ -4513,6 +4838,7 @@ class AutoReplyStore:
         mail_reply_text: str = "",
         mail_action_result_json: str = "",
         send_status: str = "pending",
+        channel: str = "dingtalk",
     ) -> int:
         with self._connect() as db:
             cursor = db.execute(
@@ -4551,9 +4877,10 @@ class AutoReplyStore:
                     mail_subject,
                     mail_reply_text,
                     mail_action_result_json,
-                    send_status
+                    send_status,
+                    channel
                 )
-                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     conversation_id,
@@ -4590,6 +4917,7 @@ class AutoReplyStore:
                     mail_reply_text,
                     mail_action_result_json,
                     send_status,
+                    channel,
                 ),
             )
             attempt_id = int(cursor.lastrowid)
@@ -5123,19 +5451,22 @@ class AutoReplyStore:
                 if isinstance(nested, dict):
                     payload = nested
                     break
-        processing_status = str(payload.get("processing_status") or "")
-        ok = bool(payload.get("ok"))
-        status = "written" if ok else "pending"
-        if processing_status == "failed":
+        processing_status = str(payload.get("processing_status") or "").casefold()
+        ok = payload.get("ok") is True
+        if processing_status == "failed" or payload.get("ok") is False:
             status = "failed"
-        elif processing_status in {"completed", "done", "ready"}:
-            status = "written"
+        else:
+            status = "pending"
         memory_episode_id = str(
             payload.get("episode_uuid")
             or payload.get("uuid")
             or payload.get("memory_episode_id")
             or ""
         )
+        if memory_episode_id and (
+            ok or processing_status in {"completed", "success", "done", "ready"}
+        ):
+            status = "written"
         last_error = str(payload.get("last_error") or payload.get("error") or "")
         processing_statuses = payload.get("processing_statuses")
         if not last_error and isinstance(processing_statuses, list):
@@ -5418,12 +5749,14 @@ class AutoReplyStore:
         send_statuses: tuple[str, ...] | None = None,
         query_text: str = "",
         kinds: tuple[str, ...] | None = None,
+        reply_channels: tuple[str, ...] | None = None,
         created_since: str = "",
     ) -> list[HistoryItem]:
         query, args = self._history_items_query(
             send_statuses=send_statuses,
             query_text=query_text,
             kinds=kinds,
+            reply_channels=reply_channels,
             created_since=created_since,
         )
         query = (
@@ -5458,12 +5791,14 @@ class AutoReplyStore:
         send_statuses: tuple[str, ...] | None = None,
         query_text: str = "",
         kinds: tuple[str, ...] | None = None,
+        reply_channels: tuple[str, ...] | None = None,
         created_since: str = "",
     ) -> int:
         query, args = self._history_items_query(
             send_statuses=send_statuses,
             query_text=query_text,
             kinds=kinds,
+            reply_channels=reply_channels,
             created_since=created_since,
         )
         with self._connect() as db:
@@ -5476,6 +5811,7 @@ class AutoReplyStore:
         send_statuses: tuple[str, ...] | None,
         query_text: str,
         kinds: tuple[str, ...] | None,
+        reply_channels: tuple[str, ...] | None,
         created_since: str,
     ) -> tuple[str, list[object]]:
         query = """
@@ -5493,12 +5829,29 @@ class AutoReplyStore:
                         else draft_reply_text
                     end as output_text,
                     action,
-                    send_status as status,
+                    case
+                        when channel != 'wechat' then send_status
+                        else coalesce((
+                            select case deliveries.status
+                                when 'ready_to_send' then 'pending'
+                                when 'sending' then 'processing'
+                                else deliveries.status
+                            end
+                            from reply_tasks as tasks
+                            join wechat_deliveries as deliveries
+                                on deliveries.reply_task_id=tasks.id
+                            where tasks.channel='wechat'
+                              and tasks.conversation_id=reply_attempts.conversation_id
+                              and tasks.trigger_message_id=reply_attempts.trigger_message_id
+                            limit 1
+                        ), send_status)
+                    end as status,
                     conversation_title as target_title,
                     codex_session_id,
                     0 as project_id,
                     0 as todo_id,
                     0 as follow_up_id,
+                    channel,
                     created_at,
                     conversation_id || ' ' || conversation_title || ' ' ||
                     trigger_message_id || ' ' || trigger_sender || ' ' ||
@@ -5541,6 +5894,7 @@ class AutoReplyStore:
                     0 as project_id,
                     0 as todo_id,
                     0 as follow_up_id,
+                    'dingtalk' as channel,
                     runs.created_at,
                     jobs.meeting_id || ' ' || jobs.title || ' ' || jobs.source_json || ' ' ||
                     jobs.participants_json || ' ' || jobs.error || ' ' || jobs.decision_json || ' ' ||
@@ -5568,6 +5922,7 @@ class AutoReplyStore:
                     updates.project_id as project_id,
                     0 as todo_id,
                     0 as follow_up_id,
+                    'dingtalk' as channel,
                     updates.created_at,
                     projects.title || ' ' || projects.category || ' ' ||
                     projects.owner_name || ' ' || projects.goal || ' ' ||
@@ -5605,6 +5960,7 @@ class AutoReplyStore:
                     drafts.project_id as project_id,
                     drafts.todo_id as todo_id,
                     drafts.id as follow_up_id,
+                    'dingtalk' as channel,
                     coalesce(nullif(drafts.sent_at, ''), drafts.updated_at, drafts.created_at) as created_at,
                     projects.title || ' ' || projects.category || ' ' ||
                     projects.owner_name || ' ' || projects.goal || ' ' ||
@@ -5633,6 +5989,10 @@ class AutoReplyStore:
             placeholders = ",".join("?" for _ in kinds)
             filters.append(f"kind in ({placeholders})")
             args.extend(kinds)
+        if reply_channels:
+            placeholders = ",".join("?" for _ in reply_channels)
+            filters.append(f"(kind != 'reply' or channel in ({placeholders}))")
+            args.extend(reply_channels)
         if created_since.strip():
             filters.append("datetime(created_at) >= datetime(?)")
             args.append(created_since)

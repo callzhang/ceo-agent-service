@@ -47,4 +47,5 @@ class HistoryItem(BaseModel):
     capability: str = ""
     blocking_dependency: str = ""
     planned_actions: list[UniversalActionObservation] = Field(default_factory=list)
+    channel: str = "dingtalk"
     created_at: str

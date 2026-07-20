@@ -13,6 +13,7 @@ import glob
 import os
 import sqlite3
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from app.wechat.cipher import WcdbCipherBackend
 from app.wechat import schema
@@ -98,7 +99,10 @@ class WcdbReaderBackend:
         if not since:
             return 0.0
         try:
-            return _dt.datetime.fromisoformat(since).timestamp()
+            parsed = _dt.datetime.fromisoformat(since.replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=ZoneInfo("Asia/Shanghai"))
+            return parsed.timestamp()
         except ValueError:
             return 0.0
 
@@ -112,9 +116,15 @@ class WcdbReaderBackend:
         conn.close()
         return tables
 
-    def read_messages(self, db_dir, passphrase, *, conversation_id, conversation_type, since, limit) -> list[dict]:
+    def read_messages(
+        self, db_dir, passphrase, *, conversation_id, conversation_type, since,
+        limit, until="", order="newest",
+    ) -> list[dict]:
+        if order not in {"newest", "oldest"}:
+            raise ValueError(f"unsupported message order: {order}")
         table = schema.table_for(conversation_id)
         since_ts = self._since_ts(since)
+        until_ts = self._since_ts(until) if until else None
         disp = self._contacts(db_dir, passphrase)
         rows: list[dict] = []
         for shard in self._message_shards(db_dir):
@@ -126,13 +136,44 @@ class WcdbReaderBackend:
                 conn.close()
                 continue
             id2u = schema.name2id_map(conn)
-            q = (
+            columns = (
                 f'SELECT local_id, server_id, local_type, real_sender_id, create_time, '
                 f'CAST(message_content AS BLOB), WCDB_CT_message_content, '
-                f'CAST(source AS BLOB), WCDB_CT_source '
-                f'FROM "{table}" WHERE create_time >= ? ORDER BY create_time DESC LIMIT ?'
+                f'CAST(source AS BLOB), WCDB_CT_source FROM "{table}" '
             )
-            for local_id, server_id, ltype, sender, ctime, content, flag, source, source_flag in conn.execute(q, (since_ts, limit)):
+            if order == "oldest":
+                raw_rows = []
+                if since and (until_ts is None or since_ts <= until_ts):
+                    raw_rows.extend(conn.execute(
+                        columns + "WHERE create_time = ? ORDER BY create_time, local_id",
+                        (since_ts,),
+                    ))
+                if until_ts is None:
+                    raw_rows.extend(conn.execute(
+                        columns
+                        + "WHERE create_time > ? ORDER BY create_time, local_id LIMIT ?",
+                        (since_ts, limit),
+                    ))
+                else:
+                    raw_rows.extend(conn.execute(
+                        columns + "WHERE create_time > ? AND create_time <= ? "
+                        "ORDER BY create_time, local_id LIMIT ?",
+                        (since_ts, until_ts, limit),
+                    ))
+            else:
+                if until_ts is None:
+                    raw_rows = conn.execute(
+                        columns + "WHERE create_time >= ? "
+                        "ORDER BY create_time DESC, local_id DESC LIMIT ?",
+                        (since_ts, limit),
+                    )
+                else:
+                    raw_rows = conn.execute(
+                        columns + "WHERE create_time >= ? AND create_time <= ? "
+                        "ORDER BY create_time DESC, local_id DESC LIMIT ?",
+                        (since_ts, until_ts, limit),
+                    )
+            for local_id, server_id, ltype, sender, ctime, content, flag, source, source_flag in raw_rows:
                 sender_user = id2u.get(sender, str(sender))
                 rows.append({
                     "message_id": str(server_id) if server_id else f"{shard.name}:{local_id}",
@@ -145,9 +186,26 @@ class WcdbReaderBackend:
                     "kind": schema.kind_for(ltype),
                     "text": schema.decode_message(content, flag, ltype),
                     "mentioned_user_ids": schema.parse_mentions(source, source_flag),
+                    "_overlap": bool(since) and ctime == since_ts,
                 })
             conn.close()
-        rows.sort(key=lambda r: r["sent_at"], reverse=True)
+        if order == "oldest":
+            overlap = sorted(
+                (row for row in rows if row["_overlap"]),
+                key=lambda row: (row["sent_at"], row["message_id"]),
+            )
+            forward = sorted(
+                (row for row in rows if not row["_overlap"]),
+                key=lambda row: (row["sent_at"], row["message_id"]),
+            )[:limit]
+            for row in overlap + forward:
+                row.pop("_overlap")
+            return overlap + forward
+        for row in rows:
+            row.pop("_overlap")
+        rows.sort(
+            key=lambda row: (row["sent_at"], row["message_id"]), reverse=True
+        )
         return rows[:limit]
 
     def list_targets(self, db_dir, passphrase, *, kind, query, limit, offset) -> list[dict]:

@@ -5446,3 +5446,22 @@ def test_wechat_service_components_present_when_reader_ready(monkeypatch, tmp_pa
     monkeypatch.setenv("CEO_WECHAT_READER_ENABLED", "1")
     comps = cli._wechat_service_components(types.SimpleNamespace(db_path=db))
     assert [name for name, _ in comps] == ["wechat-producer", "wechat-consumer"]
+
+
+def test_wechat_service_components_absent_when_ready_account_has_no_self_id(
+    monkeypatch, tmp_path,
+):
+    import types
+    from app import cli
+    from app.store import AutoReplyStore
+
+    db = tmp_path / "w.sqlite3"
+    store = AutoReplyStore(db)
+    store.upsert_wechat_read_state(
+        account_id="a1", account_dir="/a1", db_dir="/a1/db_storage",
+        app_version="4.1.10", self_user_id="", capability_status="ready",
+    )
+    monkeypatch.setenv("CEO_WECHAT_READER_ENABLED", "1")
+    monkeypatch.setenv("CEO_WECHAT_SENDER_ENABLED", "1")
+
+    assert cli._wechat_service_components(types.SimpleNamespace(db_path=db)) == ()

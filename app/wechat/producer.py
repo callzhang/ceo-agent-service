@@ -3,10 +3,12 @@
 Eligibility is a pure function so it is trivially testable and auditable: direct
 chats reply to every inbound text; selected groups only reply on an *exact*
 structured mention of the current account (never inferred from display-name
-text). Enqueue is idempotent via the reply_tasks (conversation_id,
+text). Enqueue is idempotent via the reply_tasks (channel, conversation_id,
 trigger_message_id) uniqueness, so repeated scans never duplicate.
 """
 from __future__ import annotations
+
+from datetime import datetime
 
 from app.wechat.models import WechatAccount, WechatMessage, WechatReplyScope
 
@@ -45,15 +47,24 @@ class WechatReplyProducer:
         enqueued = 0
         for scope in scopes:
             conversation_id = scope.conversation_id or scope.target_id
+            if not scope.last_active_at:
+                self.store.advance_wechat_scope_watermark(
+                    scope.account_id, scope.target_type, scope.target_id,
+                    datetime.now().astimezone().isoformat(),
+                )
+                continue
             messages = self.reader.read_messages(
                 self.account,
                 conversation_id=conversation_id,
                 conversation_type=scope.target_type,
-                since=scope.last_active_at or "",
+                since=scope.last_active_at,
                 limit=self.read_limit,
+                order="oldest",
             )
-            # Oldest-first so a partial failure leaves a monotonically safe frontier.
-            for message in sorted(messages, key=lambda m: m.sent_at):
+            ordered = sorted(messages, key=lambda m: m.sent_at)
+            new_messages = [m for m in ordered if m.sent_at >= scope.last_active_at]
+            # Oldest-first; the frontier moves only after the complete batch.
+            for message in new_messages:
                 if not is_reply_candidate(message, scope, self_user_id=self.self_user_id):
                     continue
                 if self.store.enqueue_reply_task(
@@ -68,4 +79,9 @@ class WechatReplyProducer:
                     trigger_message_json=message.model_dump_json(),
                 ):
                     enqueued += 1
+            if new_messages:
+                self.store.advance_wechat_scope_watermark(
+                    scope.account_id, scope.target_type, scope.target_id,
+                    new_messages[-1].sent_at,
+                )
         return enqueued

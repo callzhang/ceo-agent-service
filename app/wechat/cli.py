@@ -7,6 +7,7 @@ is the explicit opt-in for a local verification run.
   python -m app.wechat.cli status [--db ...]
   python -m app.wechat.cli read-recent --target-id filehelper [--type direct] [--limit 100] [--include-text]
   python -m app.wechat.cli produce-once [--db ...]
+  python -m app.cli wechat import-memory --target-id wxid --since 2026-01-01 --limit 1000
 """
 from __future__ import annotations
 
@@ -17,6 +18,9 @@ from app import config
 from app.store import AutoReplyStore
 from app.wechat import discovery, service
 from app.wechat.models import WechatAccount
+from app.wechat.memory import (
+    CodexMemoryExtractionRunner, CodexMemoryRecallMatcher, WechatMemoryImporter,
+)
 
 DEFAULT_DB = "data/auto-reply.sqlite3"
 
@@ -32,8 +36,11 @@ def _install_version() -> str:
         return ""
 
 
-def _reader():
-    return service.build_reader(config.wechat_mirror_dir(), config.wechat_passphrase_file())
+def _reader(*, self_username: str = ""):
+    return service.build_reader(
+        config.wechat_mirror_dir(), config.wechat_passphrase_file(),
+        self_username=self_username,
+    )
 
 
 def cmd_status(args) -> int:
@@ -73,28 +80,36 @@ def cmd_consume_once(args) -> int:
     from app.codex_decision import CodexDecisionRunner
 
     runner = CodexDecisionRunner(workspace=config.workspace_path())
-    n = service.run_consume_once(store, runner, _reader(), account)
+    n = service.run_consume_once(
+        store, runner, _reader(self_username=account.self_user_id), account
+    )
     print(f"processed {n} wechat reply task(s)")
     return 0
 
 
-def _single_account() -> WechatAccount | None:
-    accounts = _accounts()
-    if len(accounts) != 1:
-        return None
-    a = accounts[0]
-    return WechatAccount(
-        account_id=a.account_id, display_name=a.account_id, self_user_id="",
-        account_dir=str(a.account_dir), db_dir=str(a.db_dir), app_version=_install_version(),
-    )
-
-
 def cmd_read_recent(args) -> int:
-    account = _single_account()
-    if account is None:
-        print("expected exactly one WeChat account")
+    store = AutoReplyStore(Path(args.db))
+    state = service.capability_ready_account_state(store)
+    if state is None:
+        print("expected exactly one persisted ready WeChat account; run status first")
         return 1
-    reader = _reader()
+    account = service.account_from_state(state)
+    self_user_id = account.self_user_id
+    if not self_user_id:
+        self_user_id = _reader().detect_self_username(account)
+    if not self_user_id:
+        print("cannot determine current WeChat user; run status and verify self_user_id")
+        return 1
+    if not account.self_user_id:
+        store.upsert_wechat_read_state(
+            account_id=state["account_id"], account_dir=state["account_dir"],
+            db_dir=state["db_dir"], app_version=state["app_version"],
+            self_user_id=self_user_id,
+            capability_status=state["capability_status"],
+            capability_reason=state.get("capability_reason", ""),
+        )
+    account = account.model_copy(update={"self_user_id": self_user_id})
+    reader = _reader(self_username=self_user_id)
     messages = reader.read_messages(
         account, conversation_id=args.target_id, conversation_type=args.type,
         limit=args.limit,
@@ -115,7 +130,10 @@ def cmd_produce_once(args) -> int:
         print("no single ready account; run status first")
         return 1
     account = service.account_from_state(state)
-    n = service.run_produce_once(store, _reader(), account, self_user_id=state.get("self_user_id", ""))
+    n = service.run_produce_once(
+        store, _reader(self_username=account.self_user_id), account,
+        self_user_id=account.self_user_id,
+    )
     print(f"enqueued {n} wechat reply task(s)")
     return 0
 
@@ -145,22 +163,85 @@ def cmd_reject(args) -> int:
     return 0
 
 
-def main(argv=None) -> int:
+def cmd_import_memory(args) -> int:
+    store = AutoReplyStore(Path(args.db))
+    state = service.ready_account_state(store)
+    if state is None:
+        print("no single ready account with self identity; run status first")
+        return 1
+    if args.account_id and args.account_id != state["account_id"]:
+        print("requested account is not the unique persisted ready WeChat account")
+        return 1
+    if not args.target_id or not (args.since or args.until) or not 1 <= args.limit <= 10000:
+        print("import-memory requires target-id, a since/until date bound, and limit 1..10000")
+        return 1
+    account = service.account_from_state(state)
+    importer = WechatMemoryImporter(
+        store, _reader(self_username=account.self_user_id),
+        CodexMemoryExtractionRunner(config.workspace_path()),
+        CodexMemoryRecallMatcher(config.workspace_path()),
+    )
+    try:
+        result = importer.run(
+            account=account, target_ids=args.target_id, since=args.since,
+            until=args.until, limit=args.limit,
+        )
+    except (ValueError, RuntimeError) as exc:
+        print(f"import-memory failed: {exc}")
+        return 1
+    print(
+        f"import {result['import_run_id']}: read {result['messages']} message(s), "
+        f"created {result['candidates']} pending candidate(s), skipped "
+        f"{result.get('durable_duplicates', 0)} durable duplicate(s); no Memory writes"
+    )
+    return 0
+
+
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="wechat")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
-    p = sub.add_parser("status"); p.add_argument("--db", default=DEFAULT_DB); p.set_defaults(fn=cmd_status)
+    p = sub.add_parser("status")
+    p.add_argument("--db", default=DEFAULT_DB)
+    p.set_defaults(fn=cmd_status)
     p = sub.add_parser("read-recent")
+    p.add_argument("--db", default=DEFAULT_DB)
     p.add_argument("--target-id", required=True)
     p.add_argument("--type", default="direct", choices=["direct", "group"])
     p.add_argument("--limit", type=int, default=100)
     p.add_argument("--include-text", action="store_true")
     p.set_defaults(fn=cmd_read_recent)
-    p = sub.add_parser("produce-once"); p.add_argument("--db", default=DEFAULT_DB); p.set_defaults(fn=cmd_produce_once)
-    p = sub.add_parser("consume-once"); p.add_argument("--db", default=DEFAULT_DB); p.set_defaults(fn=cmd_consume_once)
-    p = sub.add_parser("pending"); p.add_argument("--db", default=DEFAULT_DB); p.set_defaults(fn=cmd_pending)
-    p = sub.add_parser("approve"); p.add_argument("--db", default=DEFAULT_DB); p.add_argument("--id", type=int, required=True); p.set_defaults(fn=cmd_approve)
-    p = sub.add_parser("reject"); p.add_argument("--db", default=DEFAULT_DB); p.add_argument("--id", type=int, required=True); p.set_defaults(fn=cmd_reject)
+    p = sub.add_parser("produce-once")
+    p.add_argument("--db", default=DEFAULT_DB)
+    p.set_defaults(fn=cmd_produce_once)
+    p = sub.add_parser("consume-once")
+    p.add_argument("--db", default=DEFAULT_DB)
+    p.set_defaults(fn=cmd_consume_once)
+    p = sub.add_parser("pending")
+    p.add_argument("--db", default=DEFAULT_DB)
+    p.set_defaults(fn=cmd_pending)
+    p = sub.add_parser("approve")
+    p.add_argument("--db", default=DEFAULT_DB)
+    p.add_argument("--id", type=int, required=True)
+    p.set_defaults(fn=cmd_approve)
+    p = sub.add_parser("reject")
+    p.add_argument("--db", default=DEFAULT_DB)
+    p.add_argument("--id", type=int, required=True)
+    p.set_defaults(fn=cmd_reject)
+    p = sub.add_parser("import-memory")
+    p.add_argument("--db", default=DEFAULT_DB)
+    p.add_argument("--account-id", default="")
+    p.add_argument("--target-id", action="append", required=True)
+    p.add_argument("--since", default="")
+    p.add_argument("--until", default="")
+    p.add_argument("--limit", type=int, default=1000)
+    p.set_defaults(fn=cmd_import_memory)
+
+    return parser
+
+
+def main(argv=None) -> int:
+    parser = build_parser()
 
     args = parser.parse_args(argv)
     return args.fn(args)
