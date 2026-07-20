@@ -680,29 +680,35 @@ def _install_launchd_action(
 ) -> SetupWizardEvent:
     merged_env = os.environ.copy()
     merged_env.update(env)
-    args = ["scripts/install-auto-reply-agents.sh"]
-    completed = subprocess.run(
-        args,
-        cwd=repo_root,
-        env=merged_env,
-        text=True,
-        capture_output=True,
-        check=False,
-        timeout=300,
-    )
-    succeeded = completed.returncode == 0
+    args = [
+        "/bin/zsh",
+        "-lc",
+        "sleep 1; exec scripts/install-auto-reply-agents.sh",
+    ]
+    log_path = repo_root / "data" / "setup-launchd-install.log"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    log_file = log_path.open("ab")
+    try:
+        process = subprocess.Popen(
+            args,
+            cwd=repo_root,
+            env=merged_env,
+            stdout=log_file,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+            close_fds=True,
+        )
+    finally:
+        log_file.close()
     return SetupWizardEvent(
         step_id="launchd",
         action_id="install_launchd",
-        status="done" if succeeded else "failed",
-        summary=(
-            "Launchd service installed and restarted."
-            if succeeded
-            else f"Launchd install failed with exit code {completed.returncode}."
-        ),
-        evidence={"returncode": completed.returncode},
-        stdout_excerpt=redact_setup_output((completed.stdout or "")[-4000:]),
-        stderr_excerpt=redact_setup_output((completed.stderr or "")[-4000:]),
+        status="done",
+        summary="Launchd service install started in background.",
+        evidence={
+            "pid": process.pid,
+            "log_path": _redact_evidence_path(log_path),
+        },
     )
 
 

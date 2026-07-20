@@ -809,31 +809,36 @@ def test_run_setup_action_redacts_dry_run_failure_output(
     assert "/Users/derek/private.md" not in event.stderr_excerpt
 
 
-def test_run_setup_action_installs_launchd(monkeypatch, tmp_path: Path):
+def test_run_setup_action_starts_launchd_install_in_background(
+    monkeypatch,
+    tmp_path: Path,
+):
     calls = []
 
-    def fake_run(args, **kwargs):
-        calls.append((args, kwargs))
-        return subprocess.CompletedProcess(
-            args,
-            0,
-            stdout="installed /Users/derek/Library/LaunchAgents/com.ceo-agent-service.main.plist\n",
-            stderr="",
-        )
+    class FakeProcess:
+        pid = 12345
 
-    monkeypatch.setattr("app.setup_wizard.subprocess.run", fake_run)
+    def fake_popen(args, **kwargs):
+        calls.append((args, kwargs))
+        return FakeProcess()
+
+    monkeypatch.setattr("app.setup_wizard.subprocess.Popen", fake_popen)
 
     event = run_setup_action("install_launchd", repo_root=tmp_path, env={})
 
     args, kwargs = calls[0]
-    assert args == ["scripts/install-auto-reply-agents.sh"]
+    assert args == [
+        "/bin/zsh",
+        "-lc",
+        "sleep 1; exec scripts/install-auto-reply-agents.sh",
+    ]
     assert kwargs["cwd"] == tmp_path
-    assert kwargs["timeout"] == 300
+    assert kwargs["start_new_session"] is True
     assert event.step_id == "launchd"
     assert event.status == "done"
-    assert event.summary == "Launchd service installed and restarted."
-    assert event.evidence["returncode"] == 0
-    assert "[REDACTED_PATH]" in event.stdout_excerpt
+    assert event.summary == "Launchd service install started in background."
+    assert event.evidence["pid"] == 12345
+    assert event.evidence["log_path"] == "[REDACTED_PATH]"
 
 
 def test_run_setup_action_rejects_unknown_action(tmp_path: Path):
