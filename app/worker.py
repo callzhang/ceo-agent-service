@@ -89,6 +89,7 @@ from app.store import (
     ReplyTask,
 )
 from app.task_models import WorkItem
+from app.universal_plan import PlannedAction
 
 logger = logging.getLogger(__name__)
 
@@ -444,6 +445,46 @@ class DingTalkAutoReplyWorker:
         self.permission_gate = PermissionGate(dws)
         self.oa_approval_handler = oa_approval_handler
         self._dws_auth_login_process = None
+
+    def execute_universal_send_reply(self, action: PlannedAction) -> bool:
+        raise NotImplementedError(
+            "wire in Task 7 after orchestrator stores attempt context"
+        )
+
+    def execute_universal_oa_approval(self, action: PlannedAction) -> bool:
+        raise NotImplementedError(
+            "wire in Task 7 after orchestrator stores attempt context"
+        )
+
+    def execute_universal_mail_reply(self, action: PlannedAction) -> bool:
+        raise NotImplementedError(
+            "wire in Task 7 after orchestrator stores attempt context"
+        )
+
+    def execute_universal_calendar_response(self, action: PlannedAction) -> bool:
+        raise NotImplementedError(
+            "wire in Task 7 after orchestrator stores attempt context"
+        )
+
+    def execute_universal_document_reply(self, action: PlannedAction) -> bool:
+        raise NotImplementedError(
+            "wire in Task 7 after orchestrator stores attempt context"
+        )
+
+    def execute_universal_message_reaction(self, action: PlannedAction) -> bool:
+        raise NotImplementedError(
+            "wire in Task 7 after orchestrator stores attempt context"
+        )
+
+    def execute_universal_memory_write(self, action: PlannedAction) -> bool:
+        raise NotImplementedError(
+            "wire in Task 7 after orchestrator stores attempt context"
+        )
+
+    def execute_universal_terminal_action(self, action: PlannedAction) -> bool:
+        raise NotImplementedError(
+            "wire in Task 7 after orchestrator stores attempt context"
+        )
 
     def run_once(self, max_batches: int | None = None) -> None:
         try:
