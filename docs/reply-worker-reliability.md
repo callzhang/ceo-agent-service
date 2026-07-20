@@ -239,6 +239,12 @@ still active but later context shows the principal already replied after it, the
 task is also skipped. Otherwise the consumer can claim the task and move it to
 `processing`, even if the unread badge has already cleared.
 
+If a single-chat fast-path task only captured a follow-up sentence and DWS recent
+context contains an earlier OA approval card from the same sender, the consumer
+uses that card's OA URL as the approval target. This keeps `OA card -> please
+review this link` sequences on the OA handler path even when the unread read only
+returns the final follow-up message.
+
 ## Consumer retry behavior
 
 Reply tasks move from `pending` to `processing` when claimed. If task processing

@@ -2795,6 +2795,12 @@ class DingTalkAutoReplyWorker:
         oa_url = oa_url_override.strip()
         is_oa_message = self._is_oa_approval_message(trigger)
         if not is_oa_message:
+            oa_url = oa_url or self._oa_context_url_override(
+                conversation,
+                trigger,
+                context_messages,
+            )
+        if not is_oa_message:
             oa_url = oa_url or self._oa_follow_up_url_override(
                 conversation,
                 trigger,
@@ -2930,6 +2936,38 @@ class DingTalkAutoReplyWorker:
             raise ReplyDeliveryError(send_error)
         self._mark_seen([trigger])
         return True
+
+    def _oa_context_url_override(
+        self,
+        conversation: DingTalkConversation,
+        trigger: DingTalkMessage,
+        context_messages: list[DingTalkMessage],
+    ) -> str:
+        if not conversation.single_chat:
+            return ""
+        trigger_time = self._message_create_time_as_instant(trigger)
+        trigger_sender = self._message_sender_key(trigger)
+        candidates = []
+        for message in context_messages:
+            if message.open_message_id == trigger.open_message_id:
+                continue
+            if not self._is_oa_approval_message(message):
+                continue
+            if self._is_current_user_message_for_candidate_filter(message):
+                continue
+            if self._message_sender_key(message) != trigger_sender:
+                continue
+            message_time = self._message_create_time_as_instant(message)
+            if message_time > trigger_time:
+                continue
+            if trigger_time - message_time > OA_FOLLOW_UP_CONTEXT_WINDOW:
+                continue
+            oa_url = extract_oa_url(message.content)
+            if oa_url:
+                candidates.append((message_time, oa_url))
+        if not candidates:
+            return ""
+        return max(candidates, key=lambda item: item[0])[1]
 
     def _oa_follow_up_url_override(
         self,

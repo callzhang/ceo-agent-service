@@ -11901,6 +11901,66 @@ def test_single_chat_oa_card_followup_triggers_followup_only(
     assert merged.open_message_id == "msg-followup"
 
 
+def test_fast_path_followup_uses_recent_oa_card_url_when_unread_omits_card(
+    tmp_path: Path, monkeypatch
+):
+    oa_card = message(
+        "贾金鹏提交的项目立项全流程（第一曲线）\n"
+        "项目经理: 贾金鹏\n"
+        "销售经理: 曹宇航\n"
+        "[dingtalk://dingtalkclient/action/open_platform_link?"
+        "pcLink=https%3A%2F%2Faflow.dingtalk.com%2Fdingtalk%2Fpc%2Fquery"
+        "%2Fpchomepage.htm%3FprocInstId%3Dproc-1%26taskId%3Dtask-1"
+        "%26swfrom%3Doa%26dinghash%3Dapproval]"
+        "(dingtalk://dingtalkclient/action/open_platform_link)",
+        message_id="msg-oa-card",
+        single_chat=True,
+    )
+    oa_card.create_time = "2026-05-13 17:59:00"
+    followup = message(
+        "这个是审批链接，您看下有问题吗",
+        message_id="msg-followup",
+        single_chat=True,
+    )
+    followup.create_time = "2026-05-13 18:00:00"
+    dws = FakeDws(
+        [conversation(single_chat=True)],
+        {"cid-1": [oa_card, followup]},
+        unread_messages={"cid-1": [followup]},
+    )
+    oa_handler = FakeOaApprovalHandler()
+    worker = make_worker(
+        tmp_path,
+        dws,
+        FakeCodex(CodexDecision(action=CodexAction.NO_REPLY, reason="missing route")),
+        monkeypatch,
+        oa_approval_handler=oa_handler,
+    )
+    worker.store.set_service_state(
+        "message_recovery_checked_at",
+        "2026-05-13T16:30:00+00:00",
+    )
+
+    assert worker.produce_once() == 1
+    task = worker.store.list_reply_tasks(statuses=("pending",), limit=1)[0]
+    assert "coalesced_message_ids" not in task.trigger_message_json
+    dws.conversations = []
+    assert worker.consume_once() == 1
+
+    assert len(oa_handler.calls) == 1
+    trigger_text, context_text, oa_url, execute = oa_handler.calls[0]
+    assert trigger_text == "这个是审批链接，您看下有问题吗"
+    assert "贾金鹏提交的项目立项全流程" in context_text
+    assert "procInstId=proc-1" in oa_url
+    assert "taskId=task-1" in oa_url
+    assert execute is False
+    attempt = worker.store.get_reply_attempt(1)
+    assert attempt is not None
+    assert attempt.action == "oa_approval"
+    assert attempt.oa_process_instance_id == "proc-1"
+    assert worker.store.count_reply_tasks(status="done") == 1
+
+
 def test_mark_seen_tracks_all_latest_trigger_message_ids(tmp_path: Path, monkeypatch):
     first = message("@Alex Chen(明哥) 先看第一点", message_id="msg-mentioned-1")
     second = message("@Alex Chen(明哥) 再看第二点", message_id="msg-mentioned-2")
