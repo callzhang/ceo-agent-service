@@ -1,7 +1,9 @@
 import json
 from dataclasses import replace
 from pathlib import Path
+from queue import Queue
 import sqlite3
+from threading import Barrier, Event, Thread
 
 import pytest
 
@@ -2213,16 +2215,99 @@ def test_universal_plan_execution_is_atomic_across_store_instances(tmp_path: Pat
     task_id = _enqueue_universal_reply_task(first_store)
     second_store = AutoReplyStore(db_path)
     context = _universal_context(task_id)
+    barrier = Barrier(2)
+    results: Queue[UniversalPlanExecution] = Queue()
+    errors: Queue[BaseException] = Queue()
 
-    first = first_store.create_universal_plan_execution(
-        context, _universal_plan(reason="First writer")
-    )
-    second = second_store.create_universal_plan_execution(
-        context, _universal_plan(reason="Second writer")
+    def create(store: AutoReplyStore) -> None:
+        try:
+            barrier.wait(timeout=5)
+            results.put(
+                store.create_universal_plan_execution(
+                    context,
+                    _universal_plan(),
+                )
+            )
+        except BaseException as exc:
+            errors.put(exc)
+
+    threads = [
+        Thread(target=create, args=(first_store,)),
+        Thread(target=create, args=(second_store,)),
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=10)
+
+    assert all(not thread.is_alive() for thread in threads)
+    if not errors.empty():
+        raise errors.get()
+    created = [results.get(timeout=1), results.get(timeout=1)]
+    assert created[0].execution_scope_id == created[1].execution_scope_id
+    assert created[0].plan == created[1].plan
+    assert created[0].plan.reason == "Handle the task"
+    with sqlite3.connect(db_path) as db:
+        row_count = db.execute(
+            "select count(*) from universal_plan_executions"
+        ).fetchone()[0]
+    assert row_count == 1
+
+
+def test_load_universal_plan_execution_reads_one_sqlite_snapshot(
+    tmp_path: Path,
+    monkeypatch,
+):
+    db_path = tmp_path / "worker.sqlite3"
+    store = AutoReplyStore(db_path)
+    task_id = _enqueue_universal_reply_task(store)
+    context = _universal_context(task_id)
+    created = store.create_universal_plan_execution(context, _universal_plan())
+    reader = AutoReplyStore(db_path)
+    first_read_done = Event()
+    continue_read = Event()
+    results: Queue[UniversalPlanExecution | None] = Queue()
+    errors: Queue[BaseException] = Queue()
+    original_validate = reader._validate_context_matches_reply_task
+
+    def pause_after_task_read(task, supplied_context) -> None:
+        original_validate(task, supplied_context)
+        first_read_done.set()
+        if not continue_read.wait(timeout=5):
+            raise TimeoutError("load snapshot test did not resume")
+
+    monkeypatch.setattr(
+        reader,
+        "_validate_context_matches_reply_task",
+        pause_after_task_read,
     )
 
-    assert second.execution_scope_id == first.execution_scope_id
-    assert second.plan.reason == "First writer"
+    def load() -> None:
+        try:
+            results.put(reader.load_universal_plan_execution(context))
+        except BaseException as exc:
+            errors.put(exc)
+
+    thread = Thread(target=load)
+    thread.start()
+    if not first_read_done.wait(timeout=5):
+        continue_read.set()
+        thread.join(timeout=10)
+        raise AssertionError("load did not complete its first snapshot read")
+    with sqlite3.connect(db_path) as db:
+        db.execute(
+            "delete from universal_plan_executions where execution_scope_id=?",
+            (created.execution_scope_id,),
+        )
+    continue_read.set()
+    thread.join(timeout=10)
+
+    assert not thread.is_alive()
+    if not errors.empty():
+        raise errors.get()
+    loaded = results.get(timeout=1)
+    assert loaded is not None
+    assert loaded.execution_scope_id == created.execution_scope_id
 
 
 def test_universal_plan_execution_database_uniqueness_is_enforced(tmp_path: Path):
@@ -2442,6 +2527,98 @@ def test_universal_action_started_survives_restart_as_unknown_and_failed_reclaim
             (execution.execution_id,),
         ).fetchone()
     assert dict(row) == {"status": "unknown", "error": "outcome unavailable"}
+
+
+def test_universal_action_claim_is_atomic_across_store_instances(tmp_path: Path):
+    db_path = tmp_path / "worker.sqlite3"
+    first_store = AutoReplyStore(db_path)
+    task_id = _enqueue_universal_reply_task(first_store)
+    execution = _universal_action_execution(first_store, task_id)
+    second_store = AutoReplyStore(db_path)
+    barrier = Barrier(2)
+    results: Queue[UniversalActionExecutionState] = Queue()
+    errors: Queue[BaseException] = Queue()
+
+    def claim(store: AutoReplyStore) -> None:
+        try:
+            barrier.wait(timeout=5)
+            results.put(store.claim_universal_action_execution(execution))
+        except BaseException as exc:
+            errors.put(exc)
+
+    threads = [
+        Thread(target=claim, args=(first_store,)),
+        Thread(target=claim, args=(second_store,)),
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=10)
+
+    assert all(not thread.is_alive() for thread in threads)
+    if not errors.empty():
+        raise errors.get()
+    states = [results.get(timeout=1), results.get(timeout=1)]
+    assert sorted(state.value for state in states) == ["not_started", "unknown"]
+    with sqlite3.connect(db_path) as db:
+        rows = db.execute(
+            "select execution_id, status from universal_action_executions"
+        ).fetchall()
+    assert rows == [(execution.execution_id, "started")]
+
+
+def test_get_universal_action_state_reads_one_sqlite_snapshot(
+    tmp_path: Path,
+    monkeypatch,
+):
+    db_path = tmp_path / "worker.sqlite3"
+    store = AutoReplyStore(db_path)
+    task_id = _enqueue_universal_reply_task(store)
+    execution = _universal_action_execution(store, task_id)
+    store.claim_universal_action_execution(execution)
+    reader = AutoReplyStore(db_path)
+    first_read_done = Event()
+    continue_read = Event()
+    results: Queue[UniversalActionExecutionState] = Queue()
+    errors: Queue[BaseException] = Queue()
+    original_validate = reader._validate_plan_context_identity
+
+    def pause_after_plan_read(row, context_json, context_hash) -> None:
+        original_validate(row, context_json, context_hash)
+        first_read_done.set()
+        if not continue_read.wait(timeout=5):
+            raise TimeoutError("action snapshot test did not resume")
+
+    monkeypatch.setattr(
+        reader,
+        "_validate_plan_context_identity",
+        pause_after_plan_read,
+    )
+
+    def get_state() -> None:
+        try:
+            results.put(reader.get_universal_action_execution_state(execution))
+        except BaseException as exc:
+            errors.put(exc)
+
+    thread = Thread(target=get_state)
+    thread.start()
+    if not first_read_done.wait(timeout=5):
+        continue_read.set()
+        thread.join(timeout=10)
+        raise AssertionError("action state did not complete its first snapshot read")
+    with sqlite3.connect(db_path) as db:
+        db.execute(
+            "delete from universal_action_executions where execution_id=?",
+            (execution.execution_id,),
+        )
+    continue_read.set()
+    thread.join(timeout=10)
+
+    assert not thread.is_alive()
+    if not errors.empty():
+        raise errors.get()
+    assert results.get(timeout=1) is UniversalActionExecutionState.UNKNOWN
 
 
 def test_universal_action_success_is_persistent_and_idempotent(tmp_path: Path):

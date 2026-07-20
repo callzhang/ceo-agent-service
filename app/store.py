@@ -1398,6 +1398,7 @@ class AutoReplyStore:
         context_json = canonical_universal_context_json(context)
         context_hash = universal_context_sha256(context)
         with self._connect() as db:
+            db.execute("begin")
             task = self._validate_reply_task_generation(
                 db,
                 context.task_id,
@@ -1599,6 +1600,7 @@ class AutoReplyStore:
         execution: UniversalActionExecution,
     ) -> UniversalActionExecutionState:
         with self._connect() as db:
+            db.execute("begin")
             row = self._validate_universal_action_execution(db, execution)
             if row is None or row["status"] == "failed":
                 return UniversalActionExecutionState.NOT_STARTED
