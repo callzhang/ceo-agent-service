@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Literal
 from zoneinfo import ZoneInfo
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from app.wechat.models import WechatAccount, WechatMessage
 
@@ -66,6 +66,24 @@ class DurableMemoryMatch(BaseModel):
     memory_id: str = ""
     evidence: str = Field(default="", max_length=240)
     merged_statement: str = ""
+
+    @model_validator(mode="after")
+    def validate_relation_fields(self) -> "DurableMemoryMatch":
+        memory_id = self.memory_id.strip()
+        evidence = " ".join(self.evidence.split())
+        merged_statement = " ".join(self.merged_statement.split())
+        if self.relation == "none":
+            if memory_id or evidence or merged_statement:
+                raise ValueError("none match auxiliary fields must be empty")
+            return self
+        if not memory_id or len(evidence) < 8:
+            raise ValueError("non-none match requires memory_id and meaningful evidence")
+        if self.relation == "compatible":
+            if not merged_statement:
+                raise ValueError("compatible match requires merged_statement")
+        elif merged_statement:
+            raise ValueError("only compatible match may provide merged_statement")
+        return self
 
 
 def _normalized(value: str, limit: int) -> str:
@@ -238,7 +256,8 @@ class CodexMemoryRecallMatcher:
             + statement
             + "\n只读检查候选是否已存在。禁止 memory_write 和其他工具。"
             "只输出这一条候选的 relation、supporting memory_id、最小 evidence；"
-            "compatible 还必须给 merged_statement。"
+            "relation=none 时 memory_id、evidence、merged_statement 必须全部为空字符串；"
+            "compatible 还必须给非空 merged_statement。"
         )
         command = self.runner.build_command(
             prompt, None, output_schema_path=DEDUPE_SCHEMA_PATH,

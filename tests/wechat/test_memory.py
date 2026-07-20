@@ -262,7 +262,7 @@ def test_durable_exact_match_skips_pending_candidate(store):
         def match(self, candidates):
             return {item.statement: DurableMemoryMatch(
                 statement=item.statement, relation="exact", memory_id="mem-1",
-                evidence="fact") for item in candidates}
+                evidence="durable fact") for item in candidates}
     # Reuse the real bounded import fixture via simple source/extractor.
     from app.wechat.models import WechatAccount
     account = WechatAccount(account_id="a", display_name="D", self_user_id="self",
@@ -338,9 +338,60 @@ def test_codex_recall_matcher_accepts_real_empty_memories_as_none(tmp_path):
             "result":{"structured_content":{"result":json.dumps({"memories":[]})}}}}),
         json.dumps({"type":"item.completed","item":{"type":"agent_message","text":json.dumps(final)}}),
     ])
-    result = CodexMemoryRecallMatcher(tmp_path, executor=lambda c, p: raw).match(
+    captured = {}
+    def execute(command, prompt):
+        captured["prompt"] = prompt
+        return raw
+    result = CodexMemoryRecallMatcher(tmp_path, executor=execute).match(
         [candidate("fact", category="fact")])
     assert result["fact"].relation == "none"
+    assert "relation=none 时 memory_id、evidence、merged_statement 必须全部为空字符串" in (
+        captured["prompt"]
+    )
+
+
+def test_durable_match_model_rejects_observed_none_with_explanation_evidence():
+    observed = {
+        "statement": "fact",
+        "relation": "none",
+        "memory_id": "",
+        "evidence": "未检索到与候选事实匹配的长期记忆",
+        "merged_statement": "",
+    }
+    with pytest.raises(ValidationError, match="none match auxiliary fields must be empty"):
+        DurableMemoryMatch.model_validate(observed)
+
+
+def test_dedupe_output_schema_describes_programmatically_enforced_relation_fields():
+    from app.wechat.memory_import import DEDUPE_SCHEMA_PATH
+
+    item_schema = json.loads(DEDUPE_SCHEMA_PATH.read_text(encoding="utf-8"))[
+        "properties"]["matches"]["items"]
+    assert not {"allOf", "anyOf", "oneOf", "if", "then", "else"} & set(item_schema)
+    properties = item_schema["properties"]
+    assert properties["relation"]["enum"] == [
+        "none", "exact", "compatible", "contradiction"]
+    assert "relation=none" in properties["memory_id"]["description"]
+    assert "relation=none" in properties["evidence"]["description"]
+    assert "compatible" in properties["merged_statement"]["description"]
+    assert "exact/contradiction/none" in properties["merged_statement"]["description"]
+
+
+def test_matcher_rejects_observed_none_with_explanation_evidence(tmp_path):
+    final = {"matches": [{
+        "statement": "fact", "relation": "none", "memory_id": "",
+        "evidence": "未检索到与候选事实匹配的长期记忆", "merged_statement": "",
+    }]}
+    raw = "\n".join([
+        json.dumps({"type": "item.completed", "item": {
+            "type": "mcp_tool_call", "tool": "memory_recall",
+            "arguments": {"query": "fact"}, "result": {"memories": []}}}),
+        json.dumps({"type": "item.completed", "item": {
+            "type": "agent_message", "text": json.dumps(final)}}),
+    ])
+    with pytest.raises(RuntimeError, match="no structured result"):
+        CodexMemoryRecallMatcher(tmp_path, executor=lambda command, prompt: raw).match([
+            candidate("fact", category="fact")])
 
 
 def test_codex_recall_support_must_come_from_same_memory_object(tmp_path):
@@ -387,7 +438,7 @@ def test_codex_recall_rejects_blank_or_too_short_evidence(tmp_path, bad_evidence
                 "uuid":"mem-1", "text":f"context {bad_evidence} context"}]}}}),
         json.dumps({"type":"item.completed","item":{"type":"agent_message","text":json.dumps(final)}}),
     ])
-    with pytest.raises(RuntimeError, match="evidence is too short"):
+    with pytest.raises(RuntimeError, match="no structured result"):
         CodexMemoryRecallMatcher(tmp_path, executor=lambda c, p: raw).match(
             [candidate("fact", category="fact")])
 
@@ -397,7 +448,8 @@ def test_compatible_durable_match_persists_safe_merged_statement(store):
         def match(self, candidates):
             return {item.statement: DurableMemoryMatch(
                 statement=item.statement, relation="compatible", memory_id="mem-1",
-                evidence="support", merged_statement="Derek prefers concise weekly updates")
+                evidence="supporting evidence",
+                merged_statement="Derek prefers concise weekly updates")
                 for item in candidates}
     from app.wechat.models import WechatAccount
     account = WechatAccount(account_id="a", display_name="D", self_user_id="self",
