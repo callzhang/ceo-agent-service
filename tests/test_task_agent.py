@@ -334,6 +334,43 @@ def test_process_work_item_includes_recent_follow_up_candidates_in_prompt(tmp_pa
     assert "张丽丽恢复海外数据合规项目当前状态与未完成清单" in prompt
 
 
+def test_task_agent_prompt_requires_xiaoqing_before_candidate_status_follow_up():
+    item = WorkItem.model_validate(
+        {
+            "source": {
+                "type": "local_file",
+                "ref": "/tmp/刘芸婷一面.md#sha256=abc",
+                "title": "刘芸婷 - 国际销售工程师（北京） - 一面",
+                "conversation_id": "",
+                "conversation_title": "",
+                "created_at": "2026-07-10T13:59:28+08:00",
+            },
+            "summary": "刘芸婷一面记录显示需要判断后续推进状态。",
+            "project_name": "刘芸婷国际销售工程师候选人评估与后续推进",
+            "context": {
+                "sender": "张静",
+                "participants": ["张静", "Melody", "刘芸婷"],
+                "source_conversation_kind": "minutes",
+                "source_conversation_title": "刘芸婷一面",
+            },
+            "task_signals": {
+                "possible_task_update": True,
+                "mentions_follow_up": False,
+                "signal_reason": "关键候选人流程状态需要跟进。",
+            },
+        }
+    )
+
+    prompt = build_task_agent_prompt(item, "候选项目:\n[]\n\n近期 follow-up 候选:\n[]")
+
+    assert "xiaoqing_interview" in prompt
+    assert "当前阶段、最终决策、决策时间和决策说明" in prompt
+    assert "不要再问 HR" in prompt
+    assert "最终决策=淘汰/已淘汰" in prompt
+    assert "todo_changes.close" in prompt
+    assert "follow_up_changes.suppress" in prompt
+
+
 def test_process_work_item_accepts_lily_owner_correction_reply(tmp_path):
     store = AutoReplyStore(tmp_path / "task.sqlite3")
     project_id = store.create_work_project(

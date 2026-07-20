@@ -193,6 +193,8 @@ def build_task_agent_prompt(
 - project.memory_context 必须写入本次记忆查询或替代依据：memory_recall 有命中时写查询、摘要和关键记忆证据；没有命中时写查询和无命中结论；memory_connector 不可用时写查询意图、不可用原因和替代证据。
 - 如果上下文无法支撑稳定项目名称，不要创建模糊项目；生成 follow_up_draft 询问项目、目标、owner。
 - AI听记或本地听记的说话人标签只能作为弱证据；如果多人会议的 transcript 大段只有同一个 speaker，说明说话人标注不可信，不能据此认定 owner，也不能直接私聊该 speaker。
+- 候选人流程状态 follow-up 不能只依赖本地项目里的旧摘要或 AI 听记。若 Work Item、候选项目或 follow-up 涉及候选人的推进、淘汰、人才池、offer、最终决策或流程关闭，先用 xiaoqing_interview 读取候选人当前阶段、最终决策、决策时间和决策说明；小青已给出终态时，关闭/抑制对应 TODO 和 follow-up，不要再问 HR “是否继续/是否关闭”。小青仍是 pending/waiting 且缺决策说明时，才可以生成面向 HR 的状态确认 follow-up。
+- 样例：如果小青显示“最终决策=淘汰/已淘汰”，输出 todo_changes.close 和 follow_up_changes.suppress；如果小青显示“最终决策=waiting/pending”，可以保留跟进，但 question_text 要写成“当前小青最终决策仍为 waiting，请确认是否要更新最终决策”，而不是让 HR 代替你查小青。
 - 行政、工商、法务、财务、人事合规类事项必须区分汇报人、推动人和实际执行 owner；只有材料明确写出“某人负责/待办/owner/由某人完成”且不是低可信说话人标签推导时，才能给该人生成 follow_up_draft。否则只更新项目背景或生成需要确认真实 owner 的 TODO，不要直接私聊。
 - 只有消息、会议纪要或文档明确证明 TODO 完成时，才能自动清理 TODO，并写入 completion_evidence。
 - 生成 follow_up_draft 前必须确定 owner_user_id；只有 owner_name 不够。如果上下文缺少 userId，先用 dws 或已有联系人信息补齐；仍无法唯一确定时，不要生成 follow_up_draft。

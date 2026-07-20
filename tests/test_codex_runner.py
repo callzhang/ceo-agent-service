@@ -303,6 +303,9 @@ def test_codex_developer_instructions_require_xiaoqing_for_interview_links():
     assert "search_candidates" in instructions
     assert "get_interview_context" in instructions
     assert "xiaoqing_interview" in instructions
+    assert "final_decision/current decision" in instructions
+    assert "current stage" in instructions
+    assert "close or suppress the follow-up" in instructions
     assert "critical_info_unavailable:xiaoqing_interview" in instructions
     assert "do not tell HR the sender failed to provide the interview text" in instructions
 
