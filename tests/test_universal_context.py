@@ -72,11 +72,12 @@ def test_maps_metadata_and_renders_trigger_and_recent_message() -> None:
         "Trigger message ID: trigger-1\n"
         "Trigger sender: Derek\n"
         "Trigger text: Please review this.\n"
+        "Trigger create time: 2026-07-20 10:00:00\n"
         "Trusted OA process instance ID: none\n"
         "Trusted OA task ID: none\n"
         "Trusted mail target: none\n"
         "Trusted calendar target: none\n"
-        "Required dependencies: dws\n"
+        "Required dependencies: dws, memory\n"
         "Execution generation: initial\n"
         "Force new decision: true\n"
         "Dry run: false\n"
@@ -145,7 +146,18 @@ def test_snapshots_every_behaviorally_relevant_message_field() -> None:
 
 
 def test_dws_is_required_for_dingtalk_context() -> None:
-    assert build_context([]).required_dependencies == ("dws",)
+    assert build_context([]).required_dependencies == ("dws", "memory")
+
+
+def test_trigger_create_time_is_explicit_and_part_of_context_identity() -> None:
+    context = build_context([])
+
+    assert context.trigger_create_time == "2026-07-20 10:00:00"
+    changed = replace(context, trigger_create_time="2026-07-20 10:00:01")
+    assert canonical_universal_context_json(changed) != canonical_universal_context_json(
+        context
+    )
+    assert universal_context_sha256(changed) != universal_context_sha256(context)
 
 
 def test_build_derives_trusted_oa_target_from_trigger_payload() -> None:
@@ -440,6 +452,7 @@ def test_canonical_context_json_covers_every_field_with_stable_order() -> None:
             "single_chat": True,
             "task_id": 42,
             "trigger_message_id": "trigger-1",
+            "trigger_create_time": "",
             "trigger_sender": "Derek",
             "trigger_text": "Please review this.",
             "trusted_oa_process_instance_id": "",

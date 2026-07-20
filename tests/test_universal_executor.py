@@ -122,6 +122,8 @@ def make_action(kind: PlannedActionKind) -> PlannedAction:
     elif kind is PlannedActionKind.CALENDAR_RESPONSE:
         target = {"event_id": "event-1"}
         payload = {"response_status": "accepted"}
+    elif kind is PlannedActionKind.MEMORY_WRITE:
+        payload = {"data": "Persist the durable decision.", "type": "text"}
 
     return PlannedAction(
         kind=kind,
@@ -172,14 +174,14 @@ def test_action_hash_is_stable_for_canonical_json_and_isolates_action() -> None:
     first_action = PlannedAction(
         kind=PlannedActionKind.MEMORY_WRITE,
         reason="Remember this",
-        target={"b": "2", "a": "1"},
-        payload={"nested": {"z": 3, "a": 1}},
+        target={"b": "2", "a": "1", "nested": {"z": 3, "a": 1}},
+        payload={"data": "Remember this.", "type": "text"},
     )
     reordered_action = PlannedAction(
         kind=PlannedActionKind.MEMORY_WRITE,
         reason="Remember this",
-        target={"a": "1", "b": "2"},
-        payload={"nested": {"a": 1, "z": 3}},
+        target={"nested": {"a": 1, "z": 3}, "a": "1", "b": "2"},
+        payload={"type": "text", "data": "Remember this."},
     )
 
     plan_execution = UniversalPlanExecution(
@@ -206,15 +208,15 @@ def test_canonical_action_json_is_stable_and_sorted() -> None:
     action = PlannedAction(
         kind=PlannedActionKind.MEMORY_WRITE,
         reason="Remember this",
-        target={"b": "2", "a": "1"},
-        payload={"nested": {"z": 3, "a": 1}},
+        target={"b": "2", "a": "1", "nested": {"z": 3, "a": 1}},
+        payload={"data": "Remember this.", "type": "text"},
     )
 
     assert canonical_universal_action_json(action) == (
         '{"candidate_context_known":false,"candidate_department_ids":[],'
-        '"kind":"memory_write","payload":{"nested":{"a":1,"z":3}},'
+        '"kind":"memory_write","payload":{"data":"Remember this.","type":"text"},'
         '"personnel_subject_user_id":null,"reason":"Remember this",'
-        '"sensitivity_kind":null,"target":{"a":"1","b":"2"}}'
+        '"sensitivity_kind":null,"target":{"a":"1","b":"2","nested":{"a":1,"z":3}}}'
     )
 
 
@@ -397,8 +399,9 @@ def test_execute_rejects_an_unsupported_kind(unsupported_kind: object) -> None:
             "execute_universal_oa_approval",
             "execute_universal_send_reply",
             "execute_universal_mail_reply",
-            "execute_universal_calendar_response",
-            "execute_universal_terminal_action",
+                "execute_universal_calendar_response",
+                "execute_universal_memory_write",
+                "execute_universal_terminal_action",
         }
     ),
 )

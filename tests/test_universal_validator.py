@@ -227,7 +227,7 @@ def test_result_actions_are_isolated_from_original_plan_mutation(
         PlannedAction(
             kind=PlannedActionKind.MEMORY_WRITE,
             reason="Mutate the source plan",
-            payload={"content": "Mutation."},
+            payload={"data": "Mutation.", "type": "text"},
         )
     )
 
@@ -448,7 +448,7 @@ def test_memory_write_is_not_terminal() -> None:
     action = PlannedAction(
         kind=PlannedActionKind.MEMORY_WRITE,
         reason="Preserve the decision",
-        payload={"content": "Decision recorded."},
+        payload={"data": "Decision recorded.", "type": "text"},
     )
 
     result = UniversalValidator().validate(make_plan(action), make_context())
@@ -463,7 +463,7 @@ def test_multiple_non_terminal_actions_are_not_terminal() -> None:
     memory_write = PlannedAction(
         kind=PlannedActionKind.MEMORY_WRITE,
         reason="Preserve the decision",
-        payload={"content": "Decision recorded."},
+        payload={"data": "Decision recorded.", "type": "text"},
     )
 
     result = UniversalValidator().validate(

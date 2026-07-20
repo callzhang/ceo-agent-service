@@ -66,6 +66,7 @@ class UniversalTaskContext:
     trusted_calendar_event_id: str = ""
     trusted_calendar_response_status: str = ""
     trusted_calendar_organizer: str = ""
+    trigger_create_time: str = ""
 
     def __post_init__(self) -> None:
         if (
@@ -91,6 +92,7 @@ class UniversalTaskContext:
                 f"Trigger message ID: {self.trigger_message_id}",
                 f"Trigger sender: {self.trigger_sender}",
                 f"Trigger text: {self.trigger_text}",
+                f"Trigger create time: {self.trigger_create_time or 'unknown'}",
                 "Trusted OA process instance ID: "
                 + (self.trusted_oa_process_instance_id or "none"),
                 "Trusted OA task ID: " + (self.trusted_oa_task_id or "none"),
@@ -139,6 +141,7 @@ def canonical_universal_context_json(context: UniversalTaskContext) -> str:
         "trusted_calendar_event_id",
         "trusted_calendar_response_status",
         "trusted_calendar_organizer",
+        "trigger_create_time",
     ):
         if not isinstance(getattr(context, field_name), str):
             raise TypeError(f"{field_name} must be a str")
@@ -224,6 +227,7 @@ def canonical_universal_context_json(context: UniversalTaskContext) -> str:
             "trusted_calendar_event_id": context.trusted_calendar_event_id,
             "trusted_calendar_response_status": context.trusted_calendar_response_status,
             "trusted_calendar_organizer": context.trusted_calendar_organizer,
+            "trigger_create_time": context.trigger_create_time,
         },
         ensure_ascii=False,
         sort_keys=True,
@@ -282,7 +286,7 @@ def build_universal_context(
         trigger_sender=trigger.sender_name,
         trigger_text=trigger.content,
         context_messages=tuple(messages),
-        required_dependencies=("dws",),
+        required_dependencies=("dws", "memory"),
         force_new_decision=force_new_decision,
         dry_run=dry_run,
         execution_generation=execution_generation,
@@ -294,6 +298,7 @@ def build_universal_context(
         trusted_calendar_event_id=trusted_calendar_event_id,
         trusted_calendar_response_status=trusted_calendar_response_status,
         trusted_calendar_organizer=trusted_calendar_organizer,
+        trigger_create_time=trigger.create_time,
     )
 
 

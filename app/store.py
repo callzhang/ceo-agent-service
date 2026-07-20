@@ -38,7 +38,7 @@ from app.universal_executor import (
     build_universal_action_execution,
     canonical_universal_action_json,
 )
-from app.universal_plan import UniversalPlan
+from app.universal_plan import PlannedActionKind, UniversalPlan
 
 FAST_PATH_UNREAD_BACKOFF_TASK_ERROR = "waiting_fast_path_unread_backoff"
 SQLITE_BUSY_TIMEOUT_SECONDS = 30
@@ -543,6 +543,7 @@ class AutoReplyStore:
                     action_kind text not null,
                     action_hash text not null,
                     action_json text not null,
+                    canonical_payload_json text not null default '',
                     status text not null,
                     attempt_id integer not null default 0,
                     result_json text not null default '',
@@ -1066,6 +1067,17 @@ class AutoReplyStore:
                         f"alter table universal_plan_executions add column {column} "
                         "text not null default ''"
                     )
+            universal_action_execution_columns = {
+                row["name"]
+                for row in db.execute(
+                    "pragma table_info(universal_action_executions)"
+                ).fetchall()
+            }
+            if "canonical_payload_json" not in universal_action_execution_columns:
+                db.execute(
+                    "alter table universal_action_executions add column "
+                    "canonical_payload_json text not null default ''"
+                )
             for table_name in ("reply_attempts", "sent_replies"):
                 existing = {
                     row["name"]
@@ -1371,6 +1383,7 @@ class AutoReplyStore:
             task["conversation_title"],
             bool(task["single_chat"]),
             task["trigger_message_id"],
+            task["trigger_create_time"],
             task["trigger_sender"],
             task["trigger_text"],
             bool(task["force_new_decision"]),
@@ -1382,6 +1395,7 @@ class AutoReplyStore:
             context.conversation_title,
             context.single_chat,
             context.trigger_message_id,
+            context.trigger_create_time,
             context.trigger_sender,
             context.trigger_text,
             context.force_new_decision,
@@ -1543,6 +1557,7 @@ class AutoReplyStore:
                 reply_tasks.conversation_title as task_conversation_title,
                 reply_tasks.single_chat as task_single_chat,
                 reply_tasks.trigger_message_id as task_trigger_message_id,
+                reply_tasks.trigger_create_time as task_trigger_create_time,
                 reply_tasks.trigger_sender as task_trigger_sender,
                 reply_tasks.trigger_text as task_trigger_text,
                 reply_tasks.force_new_decision as task_force_new_decision
@@ -1571,6 +1586,7 @@ class AutoReplyStore:
             plan_row["task_conversation_title"],
             bool(plan_row["task_single_chat"]),
             plan_row["task_trigger_message_id"],
+            plan_row["task_trigger_create_time"],
             plan_row["task_trigger_sender"],
             plan_row["task_trigger_text"],
             bool(plan_row["task_force_new_decision"]),
@@ -1580,6 +1596,7 @@ class AutoReplyStore:
             context.conversation_title,
             context.single_chat,
             context.trigger_message_id,
+            context.trigger_create_time,
             context.trigger_sender,
             context.trigger_text,
             context.force_new_decision,
@@ -1700,6 +1717,73 @@ class AutoReplyStore:
             if row["status"] == "succeeded":
                 return UniversalActionExecutionState.SUCCEEDED
             return UniversalActionExecutionState.UNKNOWN
+
+    def claim_universal_memory_action_execution(
+        self,
+        execution: UniversalActionExecution,
+        canonical_payload_json: str,
+    ) -> UniversalActionExecutionState:
+        if execution.action.kind is not PlannedActionKind.MEMORY_WRITE:
+            raise ValueError("memory claim requires a memory_write action")
+        try:
+            payload = json.loads(canonical_payload_json)
+        except (TypeError, json.JSONDecodeError):
+            raise ValueError("canonical memory payload must be valid JSON") from None
+        if not isinstance(payload, dict) or json.dumps(
+            payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ) != canonical_payload_json:
+            raise ValueError("canonical memory payload must be canonical JSON")
+
+        with self._connect() as db:
+            db.execute("begin immediate")
+            row = self._validate_universal_action_execution(db, execution)
+            if row is None:
+                db.execute(
+                    """
+                    insert into universal_action_executions (
+                        execution_id,
+                        execution_scope_id,
+                        action_index,
+                        action_kind,
+                        action_hash,
+                        action_json,
+                        canonical_payload_json,
+                        status,
+                        started_at
+                    ) values (?, ?, ?, ?, ?, ?, ?, 'started', current_timestamp)
+                    """,
+                    (
+                        execution.execution_id,
+                        execution.execution_scope_id,
+                        execution.action_index,
+                        execution.action.kind.value,
+                        execution.action_hash,
+                        canonical_universal_action_json(execution.action),
+                        canonical_payload_json,
+                    ),
+                )
+                return UniversalActionExecutionState.NOT_STARTED
+            if row["canonical_payload_json"] != canonical_payload_json:
+                raise ValueError("memory payload identity mismatch")
+            if row["status"] == "succeeded":
+                return UniversalActionExecutionState.SUCCEEDED
+            db.execute(
+                """
+                update universal_action_executions
+                set status='started',
+                    result_json='',
+                    error='',
+                    started_at=current_timestamp,
+                    completed_at='',
+                    updated_at=current_timestamp
+                where execution_id=?
+                """,
+                (execution.execution_id,),
+            )
+            return UniversalActionExecutionState.NOT_STARTED
 
     def complete_universal_action_execution(
         self,
@@ -4205,7 +4289,6 @@ class AutoReplyStore:
                     "sensitivity_kind": sensitivity_kind,
                     "codex_reason": codex_reason,
                     "draft_reply_text": draft_reply_text,
-                    "audit_summary": audit_summary,
                 }
                 mismatched_fields = [
                     field_name
@@ -4469,6 +4552,7 @@ class AutoReplyStore:
         mail_reply_text: str | None = None,
         mail_action_result_json: str | None = None,
         audit_tool_events_json: str | None = None,
+        audit_summary: str | None = None,
         send_status: str | None = None,
         send_error: str | None = None,
         retry_count: int | None = None,
@@ -4495,6 +4579,7 @@ class AutoReplyStore:
             mail_reply_text=mail_reply_text,
             mail_action_result_json=mail_action_result_json,
             audit_tool_events_json=audit_tool_events_json,
+            audit_summary=audit_summary,
             send_status=send_status,
             send_error=send_error,
             retry_count=retry_count,
@@ -4734,6 +4819,7 @@ class AutoReplyStore:
             "mail_reply_text",
             "mail_action_result_json",
             "audit_tool_events_json",
+            "audit_summary",
             "send_status",
             "send_error",
             "retry_count",

@@ -44,7 +44,7 @@ def test_reply_and_memory_plan_validates_and_converts_enums() -> None:
         PlannedAction(
             kind="memory_write",
             reason="Persist the decision",
-            payload={"content": "The request was completed."},
+            payload={"data": "The request was completed.", "type": "text"},
         ),
     )
 
@@ -54,6 +54,64 @@ def test_reply_and_memory_plan_validates_and_converts_enums() -> None:
     assert plan.dependencies == []
     assert DependencyName("memory") is DependencyName.MEMORY
     assert plan.planner_version == "2026-07-20"
+
+
+@pytest.mark.parametrize(
+    "extra_field",
+    ["created_at", "source_description", "user_id", "graph_id"],
+)
+def test_memory_write_rejects_planner_controlled_identity_fields(
+    extra_field: str,
+) -> None:
+    with pytest.raises(ValidationError, match="memory_write payload"):
+        PlannedAction(
+            kind="memory_write",
+            reason="Persist the durable decision",
+            payload={
+                "data": "The launch decision is approved.",
+                "type": "text",
+                extra_field: "planner-controlled",
+            },
+        )
+
+
+@pytest.mark.parametrize("memory_type", ["text", "message"])
+def test_memory_write_accepts_only_current_client_fields(memory_type: str) -> None:
+    action = PlannedAction(
+        kind="memory_write",
+        reason="Persist the durable decision",
+        payload={"data": "The launch decision is approved.", "type": memory_type},
+    )
+
+    assert action.payload == {
+        "data": "The launch decision is approved.",
+        "type": memory_type,
+    }
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"data": "", "type": "text"},
+        {"data": "x", "type": "json"},
+        {"data": "x" * 2001, "type": "text"},
+        {"data": "source: /private/var/runtime.log", "type": "text"},
+        {
+            "data": (
+                "aB3dE5gH7jK9mN2pQ4sT6vW8yZ1cF3hJ5lM7oR9uX2zC4eG6iL8nP1qS3tV5xY7"
+            ),
+            "type": "text",
+        },
+        {"data": "\n".join(f"log line {index}" for index in range(13)), "type": "text"},
+    ],
+)
+def test_memory_write_rejects_invalid_or_sensitive_content(payload) -> None:
+    with pytest.raises(ValidationError, match="memory_write payload"):
+        PlannedAction(
+            kind="memory_write",
+            reason="Persist the durable decision",
+            payload=payload,
+        )
 
 
 def test_dependency_and_action_enum_members_are_exact() -> None:

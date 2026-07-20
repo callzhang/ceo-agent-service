@@ -1,9 +1,38 @@
 from enum import StrEnum
+import math
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.dingtalk_models import SensitivityKind
+from app.leak_check import contains_forbidden_leak
+
+
+MAX_MEMORY_WRITE_DATA_LENGTH = 2_000
+MAX_MEMORY_WRITE_LINES = 12
+
+
+def _contains_secret_shaped_token(data: str) -> bool:
+    for token in data.split():
+        if len(token) < 48 or not token.isascii():
+            continue
+        character_classes = sum(
+            (
+                any(character.islower() for character in token),
+                any(character.isupper() for character in token),
+                any(character.isdigit() for character in token),
+            )
+        )
+        if character_classes < 3:
+            continue
+        frequencies = {character: token.count(character) for character in set(token)}
+        entropy = -sum(
+            (count / len(token)) * math.log2(count / len(token))
+            for count in frequencies.values()
+        )
+        if entropy >= 4.0:
+            return True
+    return False
 
 
 class DependencyName(StrEnum):
@@ -124,6 +153,27 @@ class PlannedAction(UniversalPlanBase):
                     "calendar_response payload.response_status must be one of "
                     "accepted/tentative/declined"
                 )
+
+        if self.kind is PlannedActionKind.MEMORY_WRITE:
+            if set(self.payload) != {"data", "type"}:
+                raise ValueError(
+                    "memory_write payload must contain only data and type"
+                )
+            data = self.payload.get("data")
+            if not isinstance(data, str) or not data.strip():
+                raise ValueError("memory_write payload.data must be non-empty")
+            data = data.strip()
+            if len(data) > MAX_MEMORY_WRITE_DATA_LENGTH:
+                raise ValueError("memory_write payload.data is too long")
+            if len(data.splitlines()) > MAX_MEMORY_WRITE_LINES:
+                raise ValueError("memory_write payload.data resembles raw logs")
+            if contains_forbidden_leak(data) or _contains_secret_shaped_token(data):
+                raise ValueError("memory_write payload.data contains sensitive data")
+            if self.payload.get("type") not in {"text", "message"}:
+                raise ValueError(
+                    "memory_write payload.type must be text or message"
+                )
+            self.payload = {"data": data, "type": self.payload["type"]}
 
         return self
 

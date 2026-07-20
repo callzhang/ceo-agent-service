@@ -1,3 +1,4 @@
+import hashlib
 import json
 import logging
 import os
@@ -70,6 +71,8 @@ from app.leak_check import (
     contains_forbidden_leak,
 )
 from app.message_split import split_dingtalk_text
+from app.memory_connector_auth import MemoryConnectorAuthorizationRequired
+from app.memory_connector_client import MemoryConnectorClient, MemoryWriteResult
 from app.notification import (
     dingtalk_conversation_notification_url,
     send_macos_notification,
@@ -96,6 +99,7 @@ from app.universal_executor import (
     UniversalActionExecutionState,
 )
 from app.universal_plan import PlannedActionKind
+from app.universal_validator import DependencyStatus
 
 logger = logging.getLogger(__name__)
 
@@ -441,6 +445,7 @@ class DingTalkAutoReplyWorker:
         max_task_attempts: int = MAX_REPLY_TASK_ATTEMPTS,
         now_provider: Callable[[], datetime] | None = None,
         oa_approval_handler=None,
+        memory_client: MemoryConnectorClient | None = None,
     ):
         self.store = store
         self.dws = dws
@@ -454,7 +459,54 @@ class DingTalkAutoReplyWorker:
         self.now_provider = now_provider or (lambda: datetime.now().astimezone())
         self.permission_gate = PermissionGate(dws)
         self.oa_approval_handler = oa_approval_handler
+        self.memory_client = memory_client
         self._dws_auth_login_process = None
+
+    def universal_dependency_status(
+        self,
+        context: UniversalTaskContext,
+        dependencies: tuple[str, ...],
+    ) -> dict[str, DependencyStatus]:
+        del context
+        result: dict[str, DependencyStatus] = {}
+        if "dws" in dependencies:
+            try:
+                self._ensure_dws_ready_for_codex()
+            except DwsAuthorizationRequiredError:
+                result["dws"] = DependencyStatus(
+                    ready=False,
+                    reason="dws_authorization_required",
+                )
+            except Exception:
+                result["dws"] = DependencyStatus(
+                    ready=False,
+                    reason="dws_unavailable",
+                )
+            else:
+                result["dws"] = DependencyStatus(ready=True)
+        if "memory" not in dependencies:
+            return result
+        if self.memory_client is None:
+            result["memory"] = DependencyStatus(
+                ready=False,
+                reason="memory_connector_not_configured",
+            )
+            return result
+        try:
+            self.memory_client.ensure_ready_sync()
+        except MemoryConnectorAuthorizationRequired:
+            result["memory"] = DependencyStatus(
+                ready=False,
+                reason="memory_authorization_required",
+            )
+        except Exception:
+            result["memory"] = DependencyStatus(
+                ready=False,
+                reason="memory_unavailable",
+            )
+        else:
+            result["memory"] = DependencyStatus(ready=True)
+        return result
 
     def execute_universal_send_reply(self, execution: UniversalActionExecution) -> bool:
         if execution.action.kind not in {
@@ -1641,9 +1693,117 @@ class DingTalkAutoReplyWorker:
         )
 
     def execute_universal_memory_write(self, execution: UniversalActionExecution) -> bool:
-        raise NotImplementedError(
-            "wire capability executor before enabling universal consumer"
+        if execution.action.kind is not PlannedActionKind.MEMORY_WRITE:
+            raise ValueError("universal Memory executor received a non-memory action")
+        payload = self._universal_memory_payload(execution)
+        canonical_payload_json = json.dumps(
+            payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
         )
+        claim_state = self.store.claim_universal_memory_action_execution(
+            execution,
+            canonical_payload_json,
+        )
+        if claim_state is UniversalActionExecutionState.SUCCEEDED:
+            return True
+        attempt_id = self._record_universal_reply_attempt(
+            execution,
+            send_status="pending",
+        )
+        if self.memory_client is None:
+            error = "memory_connector_not_configured"
+            self.store.update_reply_attempt(
+                attempt_id,
+                send_status="blocked",
+                send_error=error,
+            )
+            self.store.mark_universal_action_execution_failed(execution, error)
+            raise MemoryConnectorAuthorizationRequired(error)
+        try:
+            result = self.memory_client.memory_write_sync(**payload)
+        except MemoryConnectorAuthorizationRequired:
+            error = "memory_authorization_required"
+            self.store.update_reply_attempt(
+                attempt_id,
+                send_status="blocked",
+                send_error=error,
+            )
+            self.store.mark_universal_action_execution_failed(execution, error)
+            raise
+        except Exception as exc:
+            error = f"memory_write_outcome_unknown:{exc.__class__.__name__}"
+            self.store.update_reply_attempt(
+                attempt_id,
+                send_status="failed",
+                send_error=error,
+            )
+            self.store.mark_universal_action_execution_unknown(execution, error)
+            raise
+        if not isinstance(result, MemoryWriteResult):
+            error = "memory_write_outcome_unknown:invalid_result"
+            self.store.update_reply_attempt(
+                attempt_id,
+                send_status="failed",
+                send_error=error,
+            )
+            self.store.mark_universal_action_execution_unknown(execution, error)
+            raise RuntimeError(error)
+
+        receipt = {
+            "duplicate": result.duplicate,
+            "episode_uuid": result.episode_uuid,
+            "processing_status": result.processing_status,
+        }
+        receipt_json = json.dumps(
+            receipt,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        self.store.update_reply_attempt(
+            attempt_id,
+            audit_summary=receipt_json,
+            send_status="skipped",
+            send_error="",
+        )
+        self.store.complete_universal_action_execution(
+            execution,
+            attempt_id=attempt_id,
+            result_json=receipt_json,
+        )
+        return True
+
+    @staticmethod
+    def _universal_memory_payload(
+        execution: UniversalActionExecution,
+    ) -> dict[str, str]:
+        action_payload = execution.action.payload
+        data = str(action_payload["data"]).strip()
+        memory_type = str(action_payload["type"])
+        trigger_time = datetime.fromisoformat(
+            execution.context.trigger_create_time.replace("Z", "+00:00")
+        )
+        if trigger_time.tzinfo is None:
+            trigger_time = trigger_time.replace(tzinfo=DINGTALK_MESSAGE_TIME_ZONE)
+        source_material = json.dumps(
+            [
+                execution.context.conversation_id,
+                execution.context.trigger_message_id,
+                memory_type,
+                data,
+            ],
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        source_hash = hashlib.sha256(source_material.encode("utf-8")).hexdigest()
+        return {
+            "data": data,
+            "type": memory_type,
+            "created_at": trigger_time.isoformat(),
+            "source_description": f"ceo-agent-memory:{source_hash}",
+        }
 
     def execute_universal_terminal_action(self, execution: UniversalActionExecution) -> bool:
         terminal_statuses = {

@@ -113,6 +113,31 @@ class MemoryConnectorClient:
             ) from None
         return self._parse_memory_write_result(result)
 
+    async def ensure_ready(self) -> None:
+        """Verify noninteractive OAuth and MCP initialization without opening login."""
+        provider = await self.auth.noninteractive_provider()
+        try:
+            async with self._session_factory(provider) as session:
+                await session.initialize()
+        except MemoryConnectorAuthorizationRequired:
+            raise
+        except (OAuthFlowError, OAuthTokenError):
+            raise MemoryConnectorAuthorizationRequired(
+                "memory connector authorization required"
+            ) from None
+        except Exception as exc:
+            raise MemoryConnectorRequestError(
+                f"memory connector readiness check failed ({exc.__class__.__name__})"
+            ) from None
+
+    def ensure_ready_sync(self) -> None:
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            asyncio.run(self.ensure_ready())
+            return
+        raise RuntimeError("ensure_ready_sync cannot run inside an active event loop")
+
     def memory_write_sync(self, **kwargs: Any) -> MemoryWriteResult:
         try:
             asyncio.get_running_loop()

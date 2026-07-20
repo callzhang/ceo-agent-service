@@ -57,7 +57,7 @@ def _universal_plan(*, reason: str = "Handle the task") -> UniversalPlan:
                 kind=PlannedActionKind.MEMORY_WRITE,
                 reason="Remember the result",
                 target={"b": "2", "a": "1"},
-                payload={"nested": {"z": 3, "a": 1}},
+                payload={"data": "Remember the result.", "type": "text"},
             )
         ],
         audit=UniversalAudit(summary="Persist execution", confidence=0.9),
@@ -69,6 +69,7 @@ def _universal_context(
     *,
     execution_generation: str = "initial",
     trigger_text: str = "Handle this task",
+    trigger_create_time: str = "2026-07-20 10:00:00",
     context_messages: tuple[UniversalContextMessage, ...] = (),
     required_dependencies: tuple[str, ...] = ("dws",),
     force_new_decision: bool = False,
@@ -87,7 +88,22 @@ def _universal_context(
         force_new_decision=force_new_decision,
         dry_run=dry_run,
         execution_generation=execution_generation,
+        trigger_create_time=trigger_create_time,
     )
+
+
+def test_universal_plan_rejects_trigger_create_time_not_bound_to_reply_task(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    context = replace(
+        _universal_context(task_id),
+        trigger_create_time="2026-07-20 11:00:00",
+    )
+
+    with pytest.raises(ValueError, match="task context mismatch"):
+        store.create_universal_plan_execution(context, _universal_plan())
 
 
 def _universal_action_execution(
@@ -2221,14 +2237,14 @@ def test_universal_plan_execution_round_trip_is_deep_copied(tmp_path: Path):
 
     created = store.create_universal_plan_execution(context, source)
     source.reason = "Mutated source"
-    source.actions[0].payload["nested"]["a"] = 99
+    source.actions[0].payload["data"] = "Mutated source data."
     created.plan.reason = "Mutated returned snapshot"
-    created.plan.actions[0].payload["nested"]["a"] = 88
+    created.plan.actions[0].payload["data"] = "Mutated returned data."
     loaded = store.load_universal_plan_execution(context)
 
     assert loaded is not None
     assert loaded.plan.reason == "Handle the task"
-    assert loaded.plan.actions[0].payload["nested"]["a"] == 1
+    assert loaded.plan.actions[0].payload["data"] == "Remember the result."
 
 
 def test_universal_plan_execution_uses_new_scope_for_new_generation(tmp_path: Path):
@@ -2252,9 +2268,10 @@ def test_universal_plan_execution_uses_new_scope_for_new_generation(tmp_path: Pa
     current = store.create_universal_plan_execution(
         _universal_context(
             task_id,
-            execution_generation=rerun.execution_generation,
-            trigger_text="Run it again",
-            force_new_decision=True,
+                execution_generation=rerun.execution_generation,
+                trigger_text="Run it again",
+                trigger_create_time="2026-07-20 10:01:00",
+                force_new_decision=True,
         ),
         _universal_plan(reason="Rerun plan"),
     )

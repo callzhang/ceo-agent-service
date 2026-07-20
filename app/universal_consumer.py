@@ -206,13 +206,20 @@ class UniversalConsumerOrchestrator:
             if execution_state is UniversalActionExecutionState.SUCCEEDED:
                 continue
             if execution_state is UniversalActionExecutionState.UNKNOWN:
-                return UniversalConsumerResult(
-                    completed=False,
-                    reason=f"action_execution_unknown:{execution.execution_id}",
-                    executed_actions=tuple(executed_actions),
-                    outcome=UniversalConsumerOutcome.ACTION_UNKNOWN,
+                if action.kind is not PlannedActionKind.MEMORY_WRITE:
+                    return UniversalConsumerResult(
+                        completed=False,
+                        reason=f"action_execution_unknown:{execution.execution_id}",
+                        executed_actions=tuple(executed_actions),
+                        outcome=UniversalConsumerOutcome.ACTION_UNKNOWN,
+                    )
+            if (
+                execution_state is not UniversalActionExecutionState.NOT_STARTED
+                and not (
+                    execution_state is UniversalActionExecutionState.UNKNOWN
+                    and action.kind is PlannedActionKind.MEMORY_WRITE
                 )
-            if execution_state is not UniversalActionExecutionState.NOT_STARTED:
+            ):
                 raise ValueError(
                     f"Unsupported universal action execution state: {execution_state!r}"
                 )

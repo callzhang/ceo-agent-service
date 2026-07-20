@@ -60,6 +60,8 @@ def make_action(
         payload = {"text": "Done."}
     elif kind is PlannedActionKind.BLOCKED:
         payload = {"terminal": terminal}
+    elif kind is PlannedActionKind.MEMORY_WRITE:
+        payload = {"data": "The durable decision is approved.", "type": "text"}
     return PlannedAction(
         kind=kind,
         reason=f"Execute {kind.value}",
@@ -256,6 +258,42 @@ def make_orchestrator(
         action_executor,
     )
     return orchestrator, planner, action_executor
+
+
+def test_memory_unknown_is_delegated_to_memory_executor_for_exact_recovery() -> None:
+    action = make_action(PlannedActionKind.MEMORY_WRITE)
+    callbacks = CallbackRecorder(
+        dependency_status={"memory": DependencyStatus(ready=True)},
+        action_states={0: UniversalActionExecutionState.UNKNOWN},
+    )
+    orchestrator, _, executor = make_orchestrator(
+        make_plan(action, dependencies=("memory",)),
+        callbacks,
+    )
+
+    result = orchestrator.process(
+        make_context(required_dependencies=("memory",))
+    )
+
+    assert result.outcome is UniversalConsumerOutcome.COMPLETED
+    assert [call.action.kind for call in executor.calls] == [
+        PlannedActionKind.MEMORY_WRITE
+    ]
+
+
+def test_non_memory_unknown_is_not_replayed() -> None:
+    callbacks = CallbackRecorder(
+        action_states={0: UniversalActionExecutionState.UNKNOWN},
+    )
+    orchestrator, _, executor = make_orchestrator(
+        make_plan(make_action()),
+        callbacks,
+    )
+
+    result = orchestrator.process(make_context())
+
+    assert result.outcome is UniversalConsumerOutcome.ACTION_UNKNOWN
+    assert executor.calls == []
 
 
 @pytest.mark.parametrize(("terminal", "sent"), [(True, False), (False, True)])
@@ -756,9 +794,9 @@ def test_execution_failure_stops_and_returns_only_successful_actions() -> None:
 
 def test_partial_retry_skips_previously_completed_action() -> None:
     first = make_action(PlannedActionKind.MEMORY_WRITE)
-    first.payload["content"] = "first"
+    first.payload["data"] = "first"
     second = make_action(PlannedActionKind.MEMORY_WRITE)
-    second.payload["content"] = "second"
+    second.payload["data"] = "second"
     callbacks = CallbackRecorder(
         action_states={0: UniversalActionExecutionState.SUCCEEDED}
     )

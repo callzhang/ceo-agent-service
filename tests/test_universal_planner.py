@@ -162,6 +162,8 @@ def test_build_prompt_sets_planner_boundary_and_includes_schema_and_context():
     assert "dws auth logout" in prompt
     assert "must not run mutating MCP or CLI operations" in prompt
     assert "service executors own all writes" in prompt
+    assert "memory_write requires payload with exactly data and type" in prompt
+    assert "do not start login or open a browser" in prompt
     assert "only UniversalPlan JSON" in prompt
     assert UNIVERSAL_PLAN_SCHEMA_HINT in prompt
     assert "at least one action" in prompt

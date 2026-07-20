@@ -45,7 +45,10 @@ UNIVERSAL_PLAN_SCHEMA_HINT = (
     "target.task_id exactly from the trusted OA IDs in task context; if either "
     "trusted ID is missing, emit blocked instead. A 退回 action also requires "
     "payload.target_activity_id and payload.revert_action of "
-    "REVERT_FOR_APPROVAL or REVERT_FOR_RESUBMIT."
+    "REVERT_FOR_APPROVAL or REVERT_FOR_RESUBMIT. memory_write requires payload "
+    "with exactly data and type; type must be text or message. Never provide "
+    "created_at, source_description, user_id, graph_id, secrets, raw logs, or "
+    "temporary runtime errors."
 )
 
 
@@ -81,6 +84,10 @@ class UniversalPlanner:
                 "available tools and CLI when it is needed to make the plan. You must "
                 "not run mutating MCP or CLI operations; service executors own all "
                 "writes.",
+                "Memory is also a blocking service dependency and must already be "
+                "checked before this planner is invoked. The service owns Memory "
+                "OAuth and memory_write execution; do not start login or open a "
+                "browser.",
                 UNIVERSAL_PLAN_SCHEMA_HINT,
                 "Return only UniversalPlan JSON. Do not use Markdown fences or add "
                 "explanatory text.",

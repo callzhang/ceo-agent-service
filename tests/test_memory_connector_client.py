@@ -204,6 +204,21 @@ async def test_auth_required_is_reported_without_opening_interactive_flow() -> N
 
 
 @pytest.mark.anyio
+async def test_readiness_check_only_initializes_noninteractive_session() -> None:
+    session = FakeSession(tool_result({"ok": True}))
+    client = MemoryConnectorClient(
+        url="https://memory.example/mcp/",
+        auth=FakeAuth(),
+        session_factory=session_factory(session),
+    )
+
+    await client.ensure_ready()
+
+    assert session.initialized is True
+    assert session.calls == []
+
+
+@pytest.mark.anyio
 async def test_revoked_token_oauth_flow_is_normalized_as_auth_required() -> None:
     session = FakeSession(OAuthFlowError("missing redirect handler with access-secret"))
     client = MemoryConnectorClient(
