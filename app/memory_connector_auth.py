@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import hashlib
+import ipaddress
 import json
 import os
 import time
 import tomllib
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, Awaitable, Callable
+from typing import Any, AsyncGenerator, Awaitable, Callable
 from urllib.parse import urlparse
 
 import keyring
@@ -15,7 +16,9 @@ from mcp.client.auth import OAuthClientProvider
 from mcp.shared.auth import (
     OAuthClientInformationFull,
     OAuthClientMetadata,
+    OAuthMetadata,
     OAuthToken,
+    ProtectedResourceMetadata,
 )
 
 
@@ -61,7 +64,29 @@ def resolve_memory_connector_url(
         raise MemoryConnectorAuthError("memory connector URL is invalid")
     if parsed.username or parsed.password:
         raise MemoryConnectorAuthError("memory connector URL must not contain credentials")
+    if parsed.scheme == "http" and not _is_loopback_host(parsed.hostname):
+        raise MemoryConnectorAuthError(
+            "memory connector URL must use HTTPS unless it is loopback"
+        )
     return candidate
+
+
+def _is_loopback_host(hostname: str | None) -> bool:
+    if not hostname:
+        return False
+    if hostname.lower() == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(hostname).is_loopback
+    except ValueError:
+        return False
+
+
+@dataclass(frozen=True)
+class OAuthServerMetadata:
+    protected_resource_metadata: ProtectedResourceMetadata | None
+    oauth_metadata: OAuthMetadata | None
+    auth_server_url: str | None
 
 
 class KeyringOAuthStorage:
@@ -161,6 +186,55 @@ class KeyringOAuthStorage:
             },
         )
 
+    async def get_server_metadata(self) -> OAuthServerMetadata:
+        value = self._get_json("oauth-server-metadata")
+        if value is None:
+            return OAuthServerMetadata(None, None, None)
+        try:
+            protected = (
+                ProtectedResourceMetadata.model_validate(
+                    value["protected_resource_metadata"]
+                )
+                if value.get("protected_resource_metadata") is not None
+                else None
+            )
+            oauth = (
+                OAuthMetadata.model_validate(value["oauth_metadata"])
+                if value.get("oauth_metadata") is not None
+                else None
+            )
+            auth_server_url = str(value.get("auth_server_url") or "").strip() or None
+        except Exception:
+            raise MemoryConnectorAuthError(
+                "memory connector keychain server metadata is invalid"
+            ) from None
+        return OAuthServerMetadata(protected, oauth, auth_server_url)
+
+    async def set_server_metadata(
+        self,
+        *,
+        protected_resource_metadata: ProtectedResourceMetadata | None,
+        oauth_metadata: OAuthMetadata | None,
+        auth_server_url: str | None,
+    ) -> None:
+        self._set_json(
+            "oauth-server-metadata",
+            {
+                "schema_version": 1,
+                "protected_resource_metadata": (
+                    protected_resource_metadata.model_dump(mode="json")
+                    if protected_resource_metadata is not None
+                    else None
+                ),
+                "oauth_metadata": (
+                    oauth_metadata.model_dump(mode="json")
+                    if oauth_metadata is not None
+                    else None
+                ),
+                "auth_server_url": auth_server_url,
+            },
+        )
+
     @property
     def token_expiry_time(self) -> float | None:
         value = self._get_json("oauth-token")
@@ -174,7 +248,7 @@ class KeyringOAuthStorage:
             ) from None
 
     async def clear(self) -> None:
-        for name in ("oauth-token", "oauth-client"):
+        for name in ("oauth-token", "oauth-client", "oauth-server-metadata"):
             try:
                 self._keyring.delete_password(self._service, name)
             except Exception:
@@ -199,6 +273,52 @@ class MemoryConnectorAuthStatus:
         return asdict(self)
 
 
+class PersistentOAuthClientProvider(OAuthClientProvider):
+    """OAuth provider that makes SDK discovery state survive process restarts."""
+
+    async def _initialize(self) -> None:
+        await super()._initialize()
+        storage = self.context.storage
+        if not isinstance(storage, KeyringOAuthStorage):
+            return
+        metadata = await storage.get_server_metadata()
+        self.context.protected_resource_metadata = metadata.protected_resource_metadata
+        self.context.oauth_metadata = metadata.oauth_metadata
+        self.context.auth_server_url = metadata.auth_server_url
+
+    async def _persist_server_metadata(self) -> None:
+        storage = self.context.storage
+        if not isinstance(storage, KeyringOAuthStorage):
+            return
+        if not any(
+            (
+                self.context.protected_resource_metadata,
+                self.context.oauth_metadata,
+                self.context.auth_server_url,
+            )
+        ):
+            return
+        await storage.set_server_metadata(
+            protected_resource_metadata=self.context.protected_resource_metadata,
+            oauth_metadata=self.context.oauth_metadata,
+            auth_server_url=self.context.auth_server_url,
+        )
+
+    async def async_auth_flow(
+        self, request: Any
+    ) -> AsyncGenerator[Any, Any]:
+        flow = super().async_auth_flow(request)
+        try:
+            outbound = await flow.__anext__()
+            while True:
+                response = yield outbound
+                outbound = await flow.asend(response)
+        except StopAsyncIteration:
+            return
+        finally:
+            await self._persist_server_metadata()
+
+
 class MemoryConnectorAuthManager:
     def __init__(
         self,
@@ -216,7 +336,7 @@ class MemoryConnectorAuthManager:
         tokens = await self.storage.get_tokens()
         client = await self.storage.get_client_info()
         expiry = self.storage.token_expiry_time
-        scopes = tuple(sorted(set((tokens.scope if tokens else "").split())))
+        scopes = tuple(sorted(set(((tokens.scope or "") if tokens else "").split())))
         expired = expiry is not None and self._now() >= expiry
         can_refresh = bool(
             tokens and tokens.refresh_token and client and client.client_id
@@ -249,7 +369,7 @@ class MemoryConnectorAuthManager:
         redirect_handler: Callable[[str], Awaitable[None]] | None,
         callback_handler: Callable[[], Awaitable[tuple[str, str | None]]] | None,
     ) -> OAuthClientProvider:
-        provider = OAuthClientProvider(
+        provider = PersistentOAuthClientProvider(
             self.url,
             OAuthClientMetadata(
                 client_name="CEO Agent Service",
