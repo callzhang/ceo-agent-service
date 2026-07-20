@@ -68,6 +68,8 @@ class UniversalTaskContext:
     trusted_calendar_organizer: str = ""
     trigger_create_time: str = ""
     trusted_document_url: str = ""
+    image_paths: tuple[str, ...] = ()
+    image_sha256s: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if (
@@ -75,6 +77,19 @@ class UniversalTaskContext:
             or not self.execution_generation.strip()
         ):
             raise ValueError("execution_generation must be non-empty")
+        if not isinstance(self.image_paths, tuple) or any(
+            not isinstance(path, str) or not path.strip() for path in self.image_paths
+        ):
+            raise ValueError("image_paths must be a tuple of non-empty strings")
+        if not isinstance(self.image_sha256s, tuple) or any(
+            not isinstance(value, str)
+            or len(value) != 64
+            or not set(value) <= set("0123456789abcdef")
+            for value in self.image_sha256s
+        ):
+            raise ValueError("image_sha256s must be a tuple of SHA-256 hex strings")
+        if len(self.image_paths) != len(self.image_sha256s):
+            raise ValueError("image_paths and image_sha256s must have equal length")
 
     def render_for_agent(self) -> str:
         message_lines = [
@@ -113,6 +128,9 @@ class UniversalTaskContext:
                     else "none"
                 ),
                 "Trusted document URL: " + (self.trusted_document_url or "none"),
+                f"Attached image count: {len(self.image_paths)}",
+                "Attached image SHA-256: "
+                + (", ".join(self.image_sha256s) if self.image_sha256s else "none"),
                 f"Required dependencies: {', '.join(self.required_dependencies)}",
                 f"Execution generation: {self.execution_generation}",
                 f"Force new decision: {str(self.force_new_decision).lower()}",
@@ -232,6 +250,7 @@ def canonical_universal_context_json(context: UniversalTaskContext) -> str:
             "trusted_calendar_organizer": context.trusted_calendar_organizer,
             "trigger_create_time": context.trigger_create_time,
             "trusted_document_url": context.trusted_document_url,
+            "image_sha256s": list(context.image_sha256s),
         },
         ensure_ascii=False,
         sort_keys=True,
@@ -254,6 +273,11 @@ def build_universal_context(
     dry_run: bool,
     execution_generation: str = "initial",
     reply_task_oa_url: str = "",
+    trusted_calendar_event_id_override: str = "",
+    trusted_calendar_response_status_override: str = "",
+    trusted_calendar_organizer_override: str = "",
+    image_paths: tuple[str, ...] = (),
+    image_sha256s: tuple[str, ...] = (),
 ) -> UniversalTaskContext:
     trigger_snapshot = _snapshot_message(trigger)
     messages: list[UniversalContextMessage] = []
@@ -281,6 +305,16 @@ def build_universal_context(
         trusted_calendar_response_status,
         trusted_calendar_organizer,
     ) = _trusted_calendar_target(trigger)
+    trusted_calendar_event_id = (
+        trusted_calendar_event_id_override.strip() or trusted_calendar_event_id
+    )
+    trusted_calendar_response_status = (
+        trusted_calendar_response_status_override.strip()
+        or trusted_calendar_response_status
+    )
+    trusted_calendar_organizer = (
+        trusted_calendar_organizer_override.strip() or trusted_calendar_organizer
+    )
     trusted_document_url = _trusted_document_url(trigger)
     return UniversalTaskContext(
         task_id=task_id,
@@ -305,6 +339,8 @@ def build_universal_context(
         trusted_calendar_organizer=trusted_calendar_organizer,
         trigger_create_time=trigger.create_time,
         trusted_document_url=trusted_document_url,
+        image_paths=image_paths,
+        image_sha256s=image_sha256s,
     )
 
 

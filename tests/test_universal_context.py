@@ -78,6 +78,8 @@ def test_maps_metadata_and_renders_trigger_and_recent_message() -> None:
         "Trusted mail target: none\n"
         "Trusted calendar target: none\n"
         "Trusted document URL: none\n"
+        "Attached image count: 0\n"
+        "Attached image SHA-256: none\n"
             "Required dependencies: dws\n"
         "Execution generation: initial\n"
         "Force new decision: true\n"
@@ -494,6 +496,7 @@ def test_canonical_context_json_covers_every_field_with_stable_order() -> None:
             "dry_run": False,
             "execution_generation": "manual-rerun-2",
             "force_new_decision": True,
+            "image_sha256s": [],
             "required_dependencies": ["dws", "memory"],
             "single_chat": True,
             "task_id": 42,

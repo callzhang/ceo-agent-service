@@ -29,6 +29,7 @@ WORKER_METHOD_BY_KIND = {
     PlannedActionKind.CALENDAR_RESPONSE: "execute_universal_calendar_response",
     PlannedActionKind.DWS_MARKDOWN_DOCUMENT_REPLY: ("execute_universal_document_reply"),
     PlannedActionKind.DWS_MESSAGE_REACTION: ("execute_universal_message_reaction"),
+    PlannedActionKind.QUEUE_OKR_REVIEW: "execute_universal_okr_review",
     PlannedActionKind.MEMORY_WRITE: "execute_universal_memory_write",
     PlannedActionKind.NO_REPLY: "execute_universal_terminal_action",
     PlannedActionKind.HANDOFF_TO_HUMAN: "execute_universal_terminal_action",
@@ -76,6 +77,11 @@ class FakeWorker:
         self, execution: UniversalActionExecution
     ) -> bool:
         return self._execute("execute_universal_memory_write", execution)
+
+    def execute_universal_okr_review(
+        self, execution: UniversalActionExecution
+    ) -> bool:
+        return self._execute("execute_universal_okr_review", execution)
 
     def execute_universal_terminal_action(
         self, execution: UniversalActionExecution
@@ -136,6 +142,11 @@ def make_action(kind: PlannedActionKind) -> PlannedAction:
             "message_id": "trigger-1",
         }
         payload = {"reaction_type": "emoji", "emoji": "👍"}
+    elif kind is PlannedActionKind.QUEUE_OKR_REVIEW:
+        target = {
+            "conversation_id": "conversation-1",
+            "trigger_message_id": "trigger-1",
+        }
 
     return PlannedAction(
         kind=kind,
@@ -413,8 +424,9 @@ def test_execute_rejects_an_unsupported_kind(unsupported_kind: object) -> None:
             "execute_universal_mail_reply",
             "execute_universal_calendar_response",
             "execute_universal_document_reply",
-            "execute_universal_message_reaction",
-            "execute_universal_memory_write",
+                "execute_universal_message_reaction",
+                "execute_universal_okr_review",
+                "execute_universal_memory_write",
             "execute_universal_terminal_action",
         }
     ),

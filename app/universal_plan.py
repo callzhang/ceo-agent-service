@@ -100,6 +100,7 @@ class PlannedActionKind(StrEnum):
     CALENDAR_RESPONSE = "calendar_response"
     DWS_MARKDOWN_DOCUMENT_REPLY = "dws_markdown_document_reply"
     DWS_MESSAGE_REACTION = "dws_message_reaction"
+    QUEUE_OKR_REVIEW = "queue_okr_review"
     MEMORY_WRITE = "memory_write"
     NO_REPLY = "no_reply"
     HANDOFF_TO_HUMAN = "handoff_to_human"
@@ -120,6 +121,7 @@ def _non_empty(value: Any) -> Any:
 class UniversalAudit(UniversalPlanBase):
     summary: str
     documents: list[dict[str, str]] = Field(default_factory=list)
+    tool_events: list[dict[str, Any]] = Field(default_factory=list)
     confidence: float = Field(ge=0, le=1)
 
     _summary_non_empty = field_validator("summary")(_non_empty)
@@ -257,6 +259,16 @@ class PlannedAction(UniversalPlanBase):
                 raise ValueError(
                     f"dws_message_reaction requires payload.{field_name}"
                 )
+
+        if self.kind is PlannedActionKind.QUEUE_OKR_REVIEW:
+            for field_name in ("conversation_id", "trigger_message_id"):
+                value = self.target.get(field_name)
+                if not isinstance(value, str) or not value.strip():
+                    raise ValueError(
+                        f"queue_okr_review requires target.{field_name}"
+                    )
+            if self.payload:
+                raise ValueError("queue_okr_review payload must be empty")
 
         return self
 

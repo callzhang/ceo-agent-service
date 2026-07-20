@@ -169,7 +169,7 @@ def test_execute_universal_okr_review_fetches_queues_acks_and_completes(
     assert "已受理 2026 Q2 OKR 审核请求" in dws.sent_replies[0][2]
     attempt = store.get_latest_reply_attempt_for_trigger("cid-okr", "msg-okr")
     assert attempt is not None
-    assert attempt.action == "okr_review"
+    assert attempt.action == "queue_okr_review"
     assert attempt.send_status == "sent"
     assert (
         store.get_universal_action_execution_state(execution)
@@ -219,6 +219,24 @@ def test_execute_universal_okr_review_transient_source_failure_is_retryable(
         is UniversalActionExecutionState.NOT_STARTED
     )
     assert store.has_seen("msg-okr") is False
+
+    source.error = None
+    assert worker.execute_universal_okr_review(execution) is True
+
+    assert source.calls == [
+        ("user-yuhang", "2026 Q2"),
+        ("user-yuhang", "2026 Q2"),
+    ]
+    assert len(store.claim_okr_review_requests(1)) == 1
+    retry_attempt = store.get_latest_reply_attempt_for_trigger("cid-okr", "msg-okr")
+    assert retry_attempt is not None
+    assert retry_attempt.action == "queue_okr_review"
+    assert retry_attempt.send_status == "sent"
+    assert (
+        store.get_universal_action_execution_state(execution)
+        is UniversalActionExecutionState.SUCCEEDED
+    )
+    assert store.has_seen("msg-okr") is True
 
 
 def test_execute_universal_okr_review_external_login_block_is_terminal(

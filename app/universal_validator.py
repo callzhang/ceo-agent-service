@@ -46,6 +46,7 @@ _EXTERNAL_ACTION_KINDS = {
     PlannedActionKind.OA_APPROVAL,
     PlannedActionKind.MAIL_REPLY,
     PlannedActionKind.CALENDAR_RESPONSE,
+    PlannedActionKind.QUEUE_OKR_REVIEW,
 }
 _REPLY_ACTION_KINDS = {
     PlannedActionKind.SEND_REPLY,
@@ -106,6 +107,16 @@ class UniversalValidator:
                 reason="conflicting_terminal_actions",
                 terminal=False,
             )
+        if len(plan.actions) != 1 and any(
+            action.kind is PlannedActionKind.QUEUE_OKR_REVIEW
+            for action in plan.actions
+        ):
+            return self._blocked_result(
+                context,
+                kind=PlannedActionKind.BLOCKED,
+                reason="conflicting_okr_review_actions",
+                terminal=False,
+            )
 
         actions = tuple(action.model_copy(deep=True) for action in plan.actions)
         if context.dry_run:
@@ -156,7 +167,10 @@ class UniversalValidator:
                 for field_name, expected_value in expected_target.items()
             ):
                 return "action_target_mismatch"
-            if action.kind in _REPLY_ACTION_KINDS and any(
+            if action.kind in {
+                *_REPLY_ACTION_KINDS,
+                PlannedActionKind.QUEUE_OKR_REVIEW,
+            } and any(
                 not action.target.get(field_name) for field_name in expected_target
             ):
                 return "missing_action_target"

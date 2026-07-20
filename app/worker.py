@@ -629,8 +629,6 @@ class DingTalkAutoReplyWorker:
         return attempt is not None and attempt.send_status in {
             "sent",
             "skipped",
-            "blocked",
-            "failed",
             "commented",
             "reacted",
         }
@@ -655,18 +653,135 @@ class DingTalkAutoReplyWorker:
         trigger: DingTalkMessage,
         prompt_context_messages: list[DingTalkMessage],
     ) -> bool:
+        effective_oa_url = task.oa_url.strip()
+        if not effective_oa_url and not self._is_oa_approval_message(trigger):
+            effective_oa_url = self._oa_context_url_override(
+                conversation,
+                trigger,
+                prompt_context_messages,
+            ) or self._oa_follow_up_url_override(conversation, trigger)
+
+        planner_context_messages = list(prompt_context_messages)
+        calendar_context = self._calendar_invite_context(
+            conversation,
+            trigger,
+            prompt_context_messages,
+            include_resolved_invites=task.force_new_decision,
+        )
+        if calendar_context is not None:
+            calendar_prompt_message = (
+                self._calendar_conflict_prompt_message(
+                    conversation, trigger, calendar_context
+                )
+                if calendar_context.conflicts
+                else self._calendar_invite_prompt_message(
+                    conversation, trigger, calendar_context
+                )
+            )
+            planner_context_messages.append(
+                self._universal_calendar_prompt_message(calendar_prompt_message)
+            )
+
+        linked_documents = self._read_calendar_linked_documents(
+            [trigger],
+            planner_context_messages,
+        )
+        for index, document in enumerate(linked_documents[:3], start=1):
+            planner_context_messages.append(
+                DingTalkMessage(
+                    open_conversation_id=conversation.open_conversation_id,
+                    open_message_id=(
+                        f"{trigger.open_message_id}:trusted-document-{index}"
+                    ),
+                    conversation_title=conversation.title,
+                    single_chat=conversation.single_chat,
+                    sender_name="CEO系统",
+                    create_time=trigger.create_time,
+                    content=(
+                        f"可信材料 {index}：{document.title or '未命名材料'}\n"
+                        f"链接：{document.url or '无'}\n"
+                        "以下正文由服务在规划前读取；必须据此处理，不要只看文件名。\n"
+                        f"{document.markdown[:30000]}"
+                    ),
+                )
+            )
+
+        image_paths, image_download_errors = self._collect_image_paths(
+            [trigger],
+            planner_context_messages,
+        )
+        image_sha256s = tuple(
+            hashlib.sha256(path.read_bytes()).hexdigest() for path in image_paths
+        )
+        if image_download_errors:
+            planner_context_messages.append(
+                DingTalkMessage(
+                    open_conversation_id=conversation.open_conversation_id,
+                    open_message_id=f"{trigger.open_message_id}:image-errors",
+                    conversation_title=conversation.title,
+                    single_chat=conversation.single_chat,
+                    sender_name="CEO系统",
+                    create_time=trigger.create_time,
+                    content="图片材料读取失败：\n- " + "\n- ".join(image_download_errors),
+                )
+            )
         context = build_universal_context(
             conversation=conversation,
             trigger=trigger,
-            context_messages=prompt_context_messages,
+            context_messages=planner_context_messages,
             task_id=task.id,
             force_new_decision=task.force_new_decision,
             dry_run=self.dry_run,
             execution_generation=task.execution_generation,
-            reply_task_oa_url=task.oa_url,
+            reply_task_oa_url=effective_oa_url,
+            trusted_calendar_event_id_override=(
+                calendar_context.invite.event_id if calendar_context else ""
+            ),
+            trusted_calendar_response_status_override=(
+                calendar_context.invite.self_response_status
+                if calendar_context
+                else ""
+            ),
+            trusted_calendar_organizer_override=(
+                calendar_context.invite.organizer if calendar_context else ""
+            ),
+            image_paths=tuple(str(path) for path in image_paths),
+            image_sha256s=image_sha256s,
         )
         result = self._universal_consumer().process(context)
         return self._map_universal_consumer_result(result, trigger)
+
+    @staticmethod
+    def _universal_calendar_prompt_message(
+        message: DingTalkMessage,
+    ) -> DingTalkMessage:
+        content = message.content
+        content = content.replace(
+            "user_response.mode 输出 send_reply",
+            "规划 send_reply action",
+        )
+        content = content.replace(
+            "user_response.mode 输出 no_reply",
+            "不要规划聊天回复",
+        )
+        content = content.replace(
+            "user_response.text",
+            "send_reply payload.text",
+        )
+        content = content.replace(
+            "设置 domain_payload.calendar_response_status 为",
+            "规划 calendar_response action，payload.response_status 使用",
+        )
+        content = content.replace(
+            "domain_payload.calendar_response_status",
+            "calendar_response payload.response_status",
+        )
+        content += (
+            "\nUniversalPlan 日历执行协议：任何接受、暂定或拒绝都必须包含 "
+            "calendar_response action，并从 Trusted calendar target 原样复制 "
+            "event_id；仅在 send_reply 文本里口头表示接受不算完成。"
+        )
+        return message.model_copy(update={"content": content})
 
     def _map_universal_consumer_result(
         self,
@@ -2329,6 +2444,73 @@ class DingTalkAutoReplyWorker:
         )
         return True
 
+    def execute_universal_okr_review(self, execution: UniversalActionExecution) -> bool:
+        if execution.action.kind is not PlannedActionKind.QUEUE_OKR_REVIEW:
+            raise ValueError("universal OKR executor received a non-OKR action")
+        claim_state = self.store.claim_universal_action_execution(execution)
+        if claim_state is UniversalActionExecutionState.SUCCEEDED:
+            return True
+        if claim_state is UniversalActionExecutionState.UNKNOWN:
+            raise RuntimeError(
+                f"universal action outcome is unknown: {execution.execution_id}"
+            )
+        target = execution.action.target
+        if (
+            str(target.get("conversation_id") or "").strip()
+            != execution.context.conversation_id
+            or str(target.get("trigger_message_id") or "").strip()
+            != execution.context.trigger_message_id
+        ):
+            return self._block_universal_capability_target(
+                execution, "untrusted_okr_review_target"
+            )
+
+        attempt_id = self._record_universal_reply_attempt(
+            execution,
+            send_status="pending",
+        )
+        conversation, trigger, new_messages = self._universal_reply_context(execution)
+        try:
+            self._queue_okr_review_from_decision(
+                conversation=conversation,
+                trigger=trigger,
+                new_messages=new_messages,
+                attempt_id=attempt_id,
+                raise_on_delivery_failure=True,
+                preserve_attempt_action=True,
+            )
+        except Exception as exc:
+            self._fail_universal_action_before_send(
+                execution,
+                attempt_id=attempt_id,
+                error=str(exc),
+            )
+            raise
+
+        attempt = self.store.get_reply_attempt(attempt_id)
+        if attempt is not None and attempt.send_status == "blocked":
+            self._mark_seen(new_messages)
+            self._complete_universal_action(
+                execution,
+                attempt_id=attempt_id,
+                outcome="okr_review_blocked_unrecoverable",
+            )
+            return True
+        if attempt is None or attempt.send_status != "sent":
+            error = (
+                attempt.send_error
+                if attempt is not None and attempt.send_error
+                else "OKR review acknowledgement was not delivered"
+            )
+            self.store.mark_universal_action_execution_failed(execution, error)
+            raise ReplyDeliveryError(error)
+        self._complete_universal_action(
+            execution,
+            attempt_id=attempt_id,
+            outcome="okr_review_queued_and_acknowledged",
+        )
+        return True
+
     def _execute_universal_text_emotion_reaction(
         self,
         *,
@@ -2656,6 +2838,15 @@ class DingTalkAutoReplyWorker:
             send_status=send_status,
             send_error=send_error,
         )
+        if execution.action.kind is PlannedActionKind.STOP_WITH_ERROR:
+            self.store.mark_universal_action_execution_failed(
+                execution,
+                send_error,
+            )
+            self.store.rotate_reply_task_execution_generation(
+                execution.context.task_id
+            )
+            raise RuntimeError(send_error)
         conversation, trigger, new_messages = self._universal_reply_context(execution)
         try:
             attempt = self.store.get_reply_attempt(attempt_id)
@@ -2859,7 +3050,8 @@ class DingTalkAutoReplyWorker:
                     "execution_id": execution.execution_id,
                     "execution_scope_id": execution.execution_scope_id,
                     "tool": "universal_consumer",
-                }
+                },
+                *[dict(event) for event in execution.planner_tool_events],
             ],
             ensure_ascii=False,
             sort_keys=True,
@@ -2927,19 +3119,23 @@ class DingTalkAutoReplyWorker:
             sender_name=context.trigger_sender,
             content=context.trigger_text,
         )
-        new_messages: list[DingTalkMessage] = []
-        trigger_added = False
-        for message in context.context_messages:
-            if message.open_message_id == context.trigger_message_id:
-                if not trigger_added:
-                    new_messages.append(trigger)
-                    trigger_added = True
-                continue
-            new_messages.append(
-                DingTalkAutoReplyWorker._universal_dingtalk_message(context, message)
+        new_messages = [trigger]
+        if trigger.quoted_message_id:
+            quoted = next(
+                (
+                    message
+                    for message in context.context_messages
+                    if message.open_message_id == trigger.quoted_message_id
+                ),
+                None,
             )
-        if not trigger_added:
-            new_messages.append(trigger)
+            if quoted is not None:
+                new_messages.append(
+                    DingTalkAutoReplyWorker._universal_dingtalk_message(
+                        context,
+                        quoted,
+                    )
+                )
         return conversation, trigger, new_messages
 
     @staticmethod
@@ -4494,6 +4690,29 @@ class DingTalkAutoReplyWorker:
             self._mark_seen([trigger])
             return True
         if os.getenv("CEO_UNIVERSAL_CONSUMER", "1") != "0":
+            if self._handle_minutes_permission_request_if_actionable(
+                conversation,
+                trigger,
+                ignore_existing_attempt=task.force_new_decision,
+                raise_on_delivery_failure=True,
+            ):
+                return True
+            if self._is_system_or_notification_message(trigger):
+                self._record_system_or_notification_skip(conversation, trigger)
+                self.store.record_reply_attempt_for_trigger(
+                    conversation_id=conversation.open_conversation_id,
+                    conversation_title=conversation.title,
+                    trigger_message_id=trigger.open_message_id,
+                    trigger_sender=trigger.sender_name,
+                    trigger_text=trigger.content,
+                    action=CodexAction.NO_REPLY.value,
+                    sensitivity_kind=SensitivityKind.GENERAL.value,
+                    codex_reason="system_or_notification_message",
+                    audit_summary="系统类或通知类消息，无需自动回复。",
+                    send_status="skipped",
+                )
+                self._mark_seen([trigger])
+                return True
             return self._process_universal_queued_task(
                 conversation,
                 task,
@@ -5254,6 +5473,7 @@ class DingTalkAutoReplyWorker:
         *,
         complete_task_id: int | None = None,
         raise_on_delivery_failure: bool = False,
+        preserve_attempt_action: bool = False,
     ) -> bool:
         period = requested_okr_period(
             trigger.content,
@@ -5261,12 +5481,10 @@ class DingTalkAutoReplyWorker:
         )
         if not hasattr(self, "okr_live_source"):
             error = "OKR live source is not configured"
-            self.store.update_reply_attempt(
-                attempt_id,
-                action="okr_review",
-                send_status="failed",
-                send_error=error,
-            )
+            updates = {"send_status": "failed", "send_error": error}
+            if not preserve_attempt_action:
+                updates["action"] = "okr_review"
+            self.store.update_reply_attempt(attempt_id, **updates)
             self.store.record_error(
                 conversation.open_conversation_id,
                 trigger.open_message_id,
@@ -5287,11 +5505,9 @@ class DingTalkAutoReplyWorker:
             if _is_dingteam_okr_login_error(error):
                 send_status = "blocked"
                 send_error = _blocked_unrecoverable_external_auth_error(error)
-            updates = {
-                "action": "okr_review",
-                "send_status": send_status,
-                "send_error": send_error,
-            }
+            updates = {"send_status": send_status, "send_error": send_error}
+            if not preserve_attempt_action:
+                updates["action"] = "okr_review"
             if complete_task_id is not None:
                 self.store.update_reply_attempt_and_complete_task(
                     attempt_id,
@@ -5323,12 +5539,13 @@ class DingTalkAutoReplyWorker:
             f"已受理 {period.period_label} OKR 审核请求，"
             "正在实时核实 KR 进度和证据。"
         )
-        self.store.update_reply_attempt(
-            attempt_id,
-            action="okr_review",
-            send_status="dry_run" if self.dry_run else "pending",
-            final_reply_text=reply_text,
-        )
+        updates = {
+            "send_status": "dry_run" if self.dry_run else "pending",
+            "final_reply_text": reply_text,
+        }
+        if not preserve_attempt_action:
+            updates["action"] = "okr_review"
+        self.store.update_reply_attempt(attempt_id, **updates)
         if not self.dry_run:
             delivered = self._deliver_trigger_reply(
                 conversation=conversation,

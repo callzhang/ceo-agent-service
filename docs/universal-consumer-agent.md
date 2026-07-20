@@ -10,6 +10,17 @@ The universal consumer separates decision making from side effects:
 4. The service persists the plan identity and executes each action through a capability-specific executor.
 5. Every action has a durable execution row. History and attempt detail read a redacted projection containing only planner kind, capability, dependency names, action kinds, states, and safe error summaries.
 
+Structured AI-minutes permission requests and system notifications are handled by
+deterministic ingress capabilities before planning. They are protocol handling,
+not semantic routing. OKR review requests use the explicit `queue_okr_review`
+action so realtime OKR retrieval, request creation, and acknowledgement remain
+durable and auditable.
+
+Before planning, the service freezes recoverable OA follow-up targets, full
+calendar invitation details and conflict results, and downloaded image paths.
+Planner tool-call proof is persisted with the plan and copied into action audit
+events; tool inputs and outputs are omitted from that proof.
+
 The universal observability projection never exposes the stored plan JSON, action target, action payload, canonical payload, or action result JSON.
 
 ## Terminal States

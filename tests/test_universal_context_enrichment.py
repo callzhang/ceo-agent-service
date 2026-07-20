@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -9,9 +10,13 @@ import pytest
 
 from app.dingtalk_models import DingTalkConversation, DingTalkMessage
 from app.dws_client import DwsCalendarEvent
+from app.prompt import LinkedDocumentContext
 from app.store import AutoReplyStore, ReplyTask
 from app.universal_consumer import UniversalConsumerOutcome, UniversalConsumerResult
-from app.universal_context import build_universal_context
+from app.universal_context import (
+    build_universal_context,
+    canonical_universal_context_json,
+)
 from app.universal_executor import UniversalPlanExecution, build_universal_action_execution
 from app.universal_plan import PlannedAction, PlannedActionKind, UniversalAudit, UniversalPlan
 from app.universal_planner import UniversalPlanner
@@ -177,6 +182,10 @@ def test_universal_worker_enriches_calendar_context_before_planning(
     assert "晚间评审" in synthetic.content
     assert "2026-07-21T18:30:00+08:00" in synthetic.content
     assert "经营复盘" in synthetic.content
+    assert "user_response" not in synthetic.content
+    assert "domain_payload" not in synthetic.content
+    assert "calendar_response action" in synthetic.content
+    assert "口头表示接受不算完成" in synthetic.content
 
 
 @pytest.mark.parametrize("resolver", ["context", "attempt"])
@@ -268,6 +277,119 @@ def test_universal_reply_new_messages_contains_only_trigger() -> None:
     assert rebuilt_trigger.open_message_id == "msg-trigger"
     assert [item.open_message_id for item in new_messages] == ["msg-trigger"]
     assert all("old-minutes" not in item.content for item in new_messages)
+
+
+def test_universal_reply_includes_only_explicitly_quoted_minutes_target() -> None:
+    quoted_minutes = message(
+        "https://alidocs.dingtalk.com/i/u/dingdocSelectorV4/save?taskUuid=minutes-1",
+        message_id="msg-minutes",
+    )
+    trigger = message("请回复这份听记")
+    trigger = trigger.model_copy(
+        update={
+            "quoted_message_id": "msg-minutes",
+            "quoted_content": quoted_minutes.content,
+        }
+    )
+    context = build_universal_context(
+        conversation=conversation(),
+        trigger=trigger,
+        context_messages=[quoted_minutes, trigger],
+        task_id=7,
+        force_new_decision=False,
+        dry_run=False,
+    )
+    action = PlannedAction(
+        kind=PlannedActionKind.SEND_REPLY,
+        reason="回复听记",
+        sensitivity_kind="general",
+        target={"conversation_id": "cid-1", "trigger_message_id": "msg-trigger"},
+        payload={"text": "已处理"},
+    )
+    plan = UniversalPlan(
+        task_kind="reply",
+        reason="回复听记",
+        dependencies=["dws"],
+        actions=[action],
+        audit=UniversalAudit(summary="显式引用", confidence=0.9),
+    )
+    execution = build_universal_action_execution(
+        context,
+        UniversalPlanExecution("scope-quote", "initial", plan),
+        action,
+        0,
+    )
+
+    _, _, new_messages = DingTalkAutoReplyWorker._universal_reply_context(execution)
+
+    assert [item.open_message_id for item in new_messages] == [
+        "msg-trigger",
+        "msg-minutes",
+    ]
+
+
+def test_universal_worker_injects_service_read_file_body_before_planning(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    worker = make_worker(tmp_path)
+    trigger = message("[文件] MorningStar复盘.docx")
+    consumer = CapturingConsumer()
+    monkeypatch.setattr(worker, "_calendar_invite_context", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        worker,
+        "_read_calendar_linked_documents",
+        lambda *_args: [
+            LinkedDocumentContext(
+                url="https://alidocs.dingtalk.com/i/nodes/file-1",
+                title="MorningStar复盘",
+                markdown="核心问题是 owner 决策链过长。",
+            )
+        ],
+    )
+    monkeypatch.setattr(worker, "_collect_image_paths", lambda *_: ([], []))
+    monkeypatch.setattr(worker, "_universal_consumer", lambda: consumer)
+
+    worker._process_universal_queued_task(
+        conversation(), reply_task(trigger), trigger, [trigger]
+    )
+
+    trusted = consumer.contexts[0].context_messages[-1]
+    assert trusted.open_message_id.endswith(":trusted-document-1")
+    assert "必须据此处理，不要只看文件名" in trusted.content
+    assert "owner 决策链过长" in trusted.content
+
+
+def test_universal_worker_freezes_image_content_hash_not_local_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    worker = make_worker(tmp_path)
+    trigger = message("[图片]", message_type="image")
+    image_path = tmp_path / "evidence.png"
+    image_path.write_bytes(b"trusted-image-content")
+    consumer = CapturingConsumer()
+    monkeypatch.setattr(worker, "_calendar_invite_context", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(worker, "_read_calendar_linked_documents", lambda *_: [])
+    monkeypatch.setattr(
+        worker,
+        "_collect_image_paths",
+        lambda *_: ([image_path], []),
+    )
+    monkeypatch.setattr(worker, "_universal_consumer", lambda: consumer)
+
+    worker._process_universal_queued_task(
+        conversation(), reply_task(trigger), trigger, [trigger]
+    )
+
+    context = consumer.contexts[0]
+    assert context.image_paths == (str(image_path),)
+    assert context.image_sha256s == (
+        hashlib.sha256(b"trusted-image-content").hexdigest(),
+    )
+    canonical = json.loads(canonical_universal_context_json(context))
+    assert canonical["image_sha256s"] == list(context.image_sha256s)
+    assert "image_paths" not in canonical
+    assert str(image_path) not in context.render_for_agent()
+    assert str(image_path) not in json.dumps(canonical, ensure_ascii=False)
 
 
 def test_universal_planner_command_passes_every_context_image(tmp_path: Path) -> None:

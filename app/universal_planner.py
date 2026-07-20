@@ -3,7 +3,11 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from app.codex_decision import _subprocess_failure_reason, extract_codex_session_id
+from app.codex_decision import (
+    _subprocess_failure_reason,
+    extract_codex_audit_events,
+    extract_codex_session_id,
+)
 from app.codex_runner import (
     CodexRunner,
     _config_string,
@@ -50,7 +54,7 @@ UNIVERSAL_PLAN_SCHEMA_HINT = (
     '"task_kind":"non-empty string",'
     '"reason":"non-empty string",'
     '"dependencies":["memory"],'
-    '"actions":[{"kind":"send_reply|ask_clarifying_question|oa_approval|mail_reply|calendar_response|dws_markdown_document_reply|dws_message_reaction|memory_write|no_reply|handoff_to_human|blocked|stop_with_error",'
+    '"actions":[{"kind":"send_reply|ask_clarifying_question|oa_approval|mail_reply|calendar_response|dws_markdown_document_reply|dws_message_reaction|queue_okr_review|memory_write|no_reply|handoff_to_human|blocked|stop_with_error",'
     '"reason":"non-empty string",'
     '"sensitivity_kind":"general|internal_personnel|external_candidate|null",'
     '"personnel_subject_user_id":"string|null",'
@@ -83,6 +87,12 @@ UNIVERSAL_PLAN_SCHEMA_HINT = (
     "target.message_id copied exactly from the immutable trigger plus either "
     "payload.reaction_type=emoji with payload.emoji or "
     "payload.reaction_type=text_emotion with payload.text."
+    " queue_okr_review requires target.conversation_id and "
+    "target.trigger_message_id copied exactly from task context and an empty "
+    "payload. Use it only when the sender explicitly asks Derek to review, "
+    "evaluate, verify, or score that sender's own OKR/KR progress; do not combine "
+    "it with reply, document, reaction, or memory actions because the executor "
+    "sends the acknowledgement and queues the dedicated OKR workflow."
 )
 
 
@@ -103,6 +113,7 @@ class UniversalPlanner:
         self._run_process_with_idle_timeout = run_process_with_idle_timeout
         self.last_raw_output = ""
         self.last_session_id: str | None = None
+        self.last_audit_tool_events: list[dict[str, Any]] = []
 
     def build_prompt(self, context: UniversalTaskContext) -> str:
         return "\n\n".join(
@@ -144,19 +155,26 @@ class UniversalPlanner:
         session_id: str | None = None,
     ) -> UniversalPlan:
         prompt = self.build_prompt(context)
+        self.last_audit_tool_events = []
         supplied_session_id = _usable_session_id(session_id)
         self.last_session_id = supplied_session_id
-        raw = self._execute(self._build_command(supplied_session_id), prompt)
+        raw = self._execute(
+            self._build_command(supplied_session_id, context.image_paths),
+            prompt,
+        )
         current_session_id = self.last_session_id
         try:
-            return parse_universal_plan_json(raw)
+            return self._finalize_plan(parse_universal_plan_json(raw))
         except (ValueError, json.JSONDecodeError):
             if not current_session_id:
                 raise
 
         repair_prompt = _repair_prompt(raw)
-        repair_raw = self._execute(self._build_command(current_session_id), repair_prompt)
-        return parse_universal_plan_json(repair_raw)
+        repair_raw = self._execute(
+            self._build_command(current_session_id, context.image_paths),
+            repair_prompt,
+        )
+        return self._finalize_plan(parse_universal_plan_json(repair_raw))
 
     def _execute(self, command: list[str], prompt: str) -> str:
         env = self.runner.build_env()
@@ -188,7 +206,41 @@ class UniversalPlanner:
         if session_id:
             self.last_session_id = session_id
 
-    def _build_command(self, session_id: str | None) -> list[str]:
+        self.last_audit_tool_events.extend(extract_codex_audit_events(raw))
+
+    def _finalize_plan(self, plan: UniversalPlan) -> UniversalPlan:
+        tool_events = [
+            {
+                key: str(event[key])
+                for key in ("event_type", "tool", "call_id")
+                if event.get(key)
+            }
+            for event in self.last_audit_tool_events
+        ]
+        tool_events = [event for event in tool_events if event]
+        audit = plan.audit.model_copy(update={"tool_events": tool_events})
+        finalized = plan.model_copy(update={"audit": audit})
+        if (
+            "critical_info_unavailable:xiaoqing_interview"
+            in finalized.model_dump_json()
+            and not any(
+                "xiaoqing_interview" in str(event.get("tool") or "")
+                for event in tool_events
+            )
+        ):
+            raise RuntimeError("xiaoqing_interview_required_but_not_called")
+        return finalized
+
+    def _build_command(
+        self,
+        session_id: str | None,
+        image_paths: tuple[str, ...] = (),
+    ) -> list[str]:
+        image_options = [
+            option
+            for path in image_paths
+            for option in ("--image", path)
+        ]
         common_options = [
             "--json",
             *codex_model_config_options(ignore_user_config=True),
@@ -226,6 +278,7 @@ class UniversalPlanner:
                 "exec",
                 "resume",
                 *common_options,
+                *image_options,
                 session_id,
                 "-",
             ]
@@ -233,6 +286,7 @@ class UniversalPlanner:
             self.runner.codex_bin,
             "exec",
             *common_options,
+            *image_options,
             "--cd",
             str(self.runner.workspace),
             "-",

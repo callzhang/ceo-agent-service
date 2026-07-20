@@ -1727,7 +1727,6 @@ def test_universal_reply_uses_immutable_context_and_completes_after_delivery(
     assert captured["reason"] == f"Reason for {kind.value}"
     assert captured["kwargs"] == {"raise_on_delivery_failure": True}
     assert [message.open_message_id for message in captured["new_messages"]] == [
-        "msg-earlier",
         "msg-context",
     ]
     assert (
@@ -2107,7 +2106,6 @@ def test_universal_reply_leak_check_block_is_definite_failure(
         (PlannedActionKind.NO_REPLY, "skipped"),
         (PlannedActionKind.HANDOFF_TO_HUMAN, "skipped"),
         (PlannedActionKind.BLOCKED, "blocked"),
-        (PlannedActionKind.STOP_WITH_ERROR, "failed"),
     ],
 )
 def test_universal_terminal_actions_record_attempt_and_complete(
@@ -2149,7 +2147,6 @@ def test_universal_terminal_actions_record_attempt_and_complete(
         PlannedActionKind.NO_REPLY,
         PlannedActionKind.HANDOFF_TO_HUMAN,
         PlannedActionKind.BLOCKED,
-        PlannedActionKind.STOP_WITH_ERROR,
     ],
 )
 def test_universal_terminal_side_effects_happen_before_completion(

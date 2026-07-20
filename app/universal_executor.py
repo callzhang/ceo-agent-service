@@ -1,5 +1,6 @@
 import hashlib
 import json
+from copy import deepcopy
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
@@ -38,6 +39,7 @@ class UniversalActionExecution:
     context: UniversalTaskContext
     action_index: int
     action: PlannedAction
+    planner_tool_events: tuple[dict[str, Any], ...] = ()
 
 
 class UniversalActionExecutionState(StrEnum):
@@ -83,6 +85,9 @@ def build_universal_action_execution(
         context=context,
         action_index=action_index,
         action=action.model_copy(deep=True),
+        planner_tool_events=tuple(
+            deepcopy(event) for event in plan_execution.plan.audit.tool_events
+        ),
     )
 
 
@@ -109,6 +114,8 @@ class UniversalActionExecutor:
             return self.worker.execute_universal_document_reply(execution)
         if action.kind is PlannedActionKind.DWS_MESSAGE_REACTION:
             return self.worker.execute_universal_message_reaction(execution)
+        if action.kind is PlannedActionKind.QUEUE_OKR_REVIEW:
+            return self.worker.execute_universal_okr_review(execution)
         if action.kind is PlannedActionKind.MEMORY_WRITE:
             return self.worker.execute_universal_memory_write(execution)
         if action.kind in {

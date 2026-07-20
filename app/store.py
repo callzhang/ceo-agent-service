@@ -2462,6 +2462,23 @@ class AutoReplyStore:
                 (available_at, error, task_id),
             )
 
+    def rotate_reply_task_execution_generation(self, task_id: int) -> str:
+        execution_generation = uuid4().hex
+        with self._connect() as db:
+            cursor = db.execute(
+                """
+                update reply_tasks
+                set force_new_decision=1,
+                    execution_generation=?,
+                    updated_at=current_timestamp
+                where id=? and status in ('processing', 'pending')
+                """,
+                (execution_generation, task_id),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("retryable reply task was not found")
+        return execution_generation
+
     def defer_reply_task(
         self, task_id: int, error: str, *, available_at: str = ""
     ) -> None:

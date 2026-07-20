@@ -325,11 +325,21 @@ def test_stop_with_error_is_failed_retryable_and_does_not_complete_trigger(
     assert attempt is not None
     assert attempt.action == "stop_with_error"
     assert attempt.send_status == "failed"
-    assert (
+    with pytest.raises(ValueError, match="execution generation mismatch"):
         worker.store.get_universal_action_execution_state(execution)
-        is UniversalActionExecutionState.NOT_STARTED
-    )
     assert worker.store.has_seen("msg-1") is False
     persisted_task = worker.store.get_reply_task_for_message("cid-1", "msg-1")
     assert persisted_task is not None
     assert persisted_task.status != "completed"
+    assert persisted_task.force_new_decision is True
+    assert persisted_task.execution_generation != task.execution_generation
+    replanned_context = build_universal_context(
+        conversation=conversation(),
+        trigger=trigger,
+        context_messages=[trigger],
+        task_id=persisted_task.id,
+        force_new_decision=True,
+        dry_run=False,
+        execution_generation=persisted_task.execution_generation,
+    )
+    assert worker.store.load_universal_plan_execution(replanned_context) is None

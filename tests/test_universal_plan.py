@@ -250,6 +250,7 @@ def test_dependency_and_action_enum_members_are_exact() -> None:
         "calendar_response",
         "dws_markdown_document_reply",
         "dws_message_reaction",
+        "queue_okr_review",
         "memory_write",
         "no_reply",
         "handoff_to_human",
