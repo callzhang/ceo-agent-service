@@ -4,6 +4,13 @@ from app.dingtalk_models import DingTalkConversation, DingTalkMessage
 
 
 @dataclass(frozen=True)
+class UniversalContextMessage:
+    sender_name: str
+    open_message_id: str
+    content: str
+
+
+@dataclass(frozen=True)
 class UniversalTaskContext:
     task_id: int
     conversation_id: str
@@ -12,8 +19,8 @@ class UniversalTaskContext:
     trigger_message_id: str
     trigger_sender: str
     trigger_text: str
-    context_messages: list[DingTalkMessage]
-    required_dependencies: list[str]
+    context_messages: tuple[UniversalContextMessage, ...]
+    required_dependencies: tuple[str, ...]
     force_new_decision: bool
     dry_run: bool
 
@@ -52,18 +59,19 @@ def build_universal_context(
     force_new_decision: bool,
     dry_run: bool,
 ) -> UniversalTaskContext:
-    messages: list[DingTalkMessage] = []
+    trigger_snapshot = _snapshot_message(trigger)
+    messages: list[UniversalContextMessage] = []
     trigger_added = False
     for message in context_messages:
         if message.open_message_id == trigger.open_message_id:
             if not trigger_added:
-                messages.append(trigger)
+                messages.append(trigger_snapshot)
                 trigger_added = True
             continue
-        messages.append(message)
+        messages.append(_snapshot_message(message))
 
     if not trigger_added:
-        messages.append(trigger)
+        messages.append(trigger_snapshot)
 
     return UniversalTaskContext(
         task_id=task_id,
@@ -73,8 +81,16 @@ def build_universal_context(
         trigger_message_id=trigger.open_message_id,
         trigger_sender=trigger.sender_name,
         trigger_text=trigger.content,
-        context_messages=messages,
-        required_dependencies=["dws"],
+        context_messages=tuple(messages),
+        required_dependencies=("dws",),
         force_new_decision=force_new_decision,
         dry_run=dry_run,
+    )
+
+
+def _snapshot_message(message: DingTalkMessage) -> UniversalContextMessage:
+    return UniversalContextMessage(
+        sender_name=message.sender_name,
+        open_message_id=message.open_message_id,
+        content=message.content,
     )

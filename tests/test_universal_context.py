@@ -1,5 +1,8 @@
+import pytest
+
 from app.dingtalk_models import DingTalkConversation, DingTalkMessage
 from app.universal_context import (
+    UniversalContextMessage,
     UniversalTaskContext,
     build_universal_context,
 )
@@ -71,7 +74,7 @@ def test_maps_metadata_and_renders_trigger_and_recent_message() -> None:
 
 
 def test_dws_is_required_for_dingtalk_context() -> None:
-    assert build_context([]).required_dependencies == ["dws"]
+    assert build_context([]).required_dependencies == ("dws",)
 
 
 def test_trigger_is_appended_when_absent_and_not_duplicated_when_present() -> None:
@@ -119,7 +122,49 @@ def test_preserves_duplicate_non_trigger_messages_and_uses_actual_trigger() -> N
         dry_run=True,
     )
 
-    assert context.context_messages == [repeated, trigger, repeated]
+    assert context.context_messages == (
+        UniversalContextMessage("Alex", "repeat-1", "Repeated context."),
+        UniversalContextMessage("Derek", "trigger-1", "Current trigger."),
+        UniversalContextMessage("Alex", "repeat-1", "Repeated context."),
+    )
+
+
+def test_snapshot_membership_cannot_be_mutated() -> None:
+    context = build_context([make_message("prior-1", "Alex", "Earlier message.")])
+
+    assert isinstance(context.context_messages, tuple)
+    assert isinstance(context.required_dependencies, tuple)
+    with pytest.raises(AttributeError):
+        context.context_messages.append(
+            UniversalContextMessage("Alex", "new-1", "New message.")
+        )
+    with pytest.raises(AttributeError):
+        context.required_dependencies.append("memory")
+
+
+def test_snapshot_values_do_not_change_when_original_messages_are_mutated() -> None:
+    trigger = make_message("trigger-1", "Derek", "Current trigger.")
+    prior = make_message("prior-1", "Alex", "Earlier message.")
+    context = build_universal_context(
+        conversation=make_conversation(),
+        trigger=trigger,
+        context_messages=[prior],
+        task_id=1,
+        force_new_decision=False,
+        dry_run=False,
+    )
+
+    trigger.sender_name = "Changed sender"
+    trigger.content = "Changed trigger"
+    prior.sender_name = "Changed prior sender"
+    prior.content = "Changed prior"
+
+    assert context.trigger_sender == "Derek"
+    assert context.trigger_text == "Current trigger."
+    assert context.context_messages[-1] == UniversalContextMessage(
+        "Derek", "trigger-1", "Current trigger."
+    )
+    assert "- Derek (trigger-1): Current trigger." in context.render_for_agent()
 
 
 def test_build_does_not_mutate_callers_context_list() -> None:
@@ -140,8 +185,8 @@ def test_render_explicitly_describes_missing_context() -> None:
         trigger_message_id="trigger-1",
         trigger_sender="Derek",
         trigger_text="Please review this.",
-        context_messages=[],
-        required_dependencies=["dws"],
+        context_messages=(),
+        required_dependencies=("dws",),
         force_new_decision=True,
         dry_run=False,
     ).render_for_agent()
