@@ -1237,6 +1237,54 @@ def test_record_reply_attempt_extracts_memory_write_events(tmp_path: Path):
     assert events[0].memory_episode_id == "episode-1"
 
 
+def test_record_reply_attempt_extracts_memory_write_output_from_tool_output(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    memory_output = {
+        "result": json.dumps(
+            {
+                "ok": True,
+                "episode_uuid": "episode-2",
+                "processing_status": "pending",
+            }
+        )
+    }
+
+    attempt_id = store.record_reply_attempt(
+        conversation_id="cid-1",
+        conversation_title="Friday",
+        trigger_message_id="msg-1",
+        trigger_sender="Xiaomin",
+        trigger_text="记一下这个项目口径",
+        action="send_reply",
+        sensitivity_kind="general",
+        audit_tool_events_json=json.dumps(
+            [
+                {
+                    "event_type": "response_item",
+                    "tool": "memory_write",
+                    "call_id": "call-1",
+                    "input": json.dumps({"data": "stable fact"}),
+                },
+                {
+                    "event_type": "response_item",
+                    "tool": "tool_output",
+                    "call_id": "call-1",
+                    "output": "Wall time: 1.1 seconds\nOutput:\n"
+                    + json.dumps(memory_output),
+                },
+            ]
+        ),
+    )
+
+    events = store.list_memory_write_events_for_attempt(attempt_id)
+
+    assert len(events) == 1
+    assert events[0].status == "written"
+    assert events[0].memory_episode_id == "episode-2"
+
+
 def test_record_reply_attempt_ignores_tool_search_memory_write_mentions(
     tmp_path: Path,
 ):

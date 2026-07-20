@@ -5358,8 +5358,19 @@ class AutoReplyStore:
             audit_events = []
         if not isinstance(audit_events, list):
             audit_events = []
+        tool_outputs_by_call_id = {
+            str(event.get("call_id") or ""): str(event.get("output") or "")
+            for event in audit_events
+            if isinstance(event, dict)
+            and str(event.get("tool") or "") == "tool_output"
+            and str(event.get("call_id") or "")
+            and str(event.get("output") or "")
+        }
         memory_events = [
-            AutoReplyStore._memory_write_event_from_audit_event(event)
+            AutoReplyStore._memory_write_event_from_audit_event(
+                event,
+                tool_outputs_by_call_id=tool_outputs_by_call_id,
+            )
             for event in audit_events
             if isinstance(event, dict)
         ]
@@ -5398,19 +5409,25 @@ class AutoReplyStore:
     @staticmethod
     def _memory_write_event_from_audit_event(
         event: dict[str, object],
+        *,
+        tool_outputs_by_call_id: dict[str, str] | None = None,
     ) -> dict[str, str] | None:
         tool = str(event.get("tool") or "")
         if not AutoReplyStore._is_memory_write_tool_name(tool):
             return None
+        output = str(event.get("output") or "")
+        call_id = str(event.get("call_id") or "")
+        if not output and call_id and tool_outputs_by_call_id:
+            output = tool_outputs_by_call_id.get(call_id, "")
         parsed_output = AutoReplyStore._parse_memory_write_output(
-            str(event.get("output") or "")
+            output
         )
         status = parsed_output.get("status") or "pending"
         payload = {
             "tool": tool,
-            "call_id": str(event.get("call_id") or ""),
+            "call_id": call_id,
             "input": str(event.get("input") or ""),
-            "output": str(event.get("output") or ""),
+            "output": output,
         }
         return {
             "event_type": "memory_write",
@@ -5484,10 +5501,13 @@ class AutoReplyStore:
 
     @staticmethod
     def _load_memory_json(raw: str) -> object | None:
-        if not raw.strip():
+        text = raw.strip()
+        if not text:
             return None
+        if "\nOutput:\n" in text:
+            text = text.rsplit("\nOutput:\n", 1)[1].strip()
         try:
-            return json.loads(raw)
+            return json.loads(text)
         except json.JSONDecodeError:
             return None
 
