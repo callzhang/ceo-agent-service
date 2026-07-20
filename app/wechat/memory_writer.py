@@ -2,13 +2,9 @@
 from __future__ import annotations
 
 import json
-import re
 from pathlib import Path
 
 WRITE_SCHEMA_PATH = Path(__file__).resolve().parents[1] / "schemas" / "wechat_memory_write_result.schema.json"
-_UUID = re.compile(r"\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b", re.I)
-
-
 class MemoryWriteOutcomeUnknown(RuntimeError):
     pass
 
@@ -55,10 +51,15 @@ class CodexMemoryWriteBackend:
                     f"memory write outcome unknown: {reason}"
                 )
             raw = completed.stdout
-        return self._memory_id_from_audit(raw)
+        return self._memory_id_from_audit(
+            raw, statement=statement,
+            expected_created_at=source_time_start or source_time_end,
+        )
 
     @staticmethod
-    def _memory_id_from_audit(raw: str) -> str:
+    def _memory_id_from_audit(
+        raw: str, *, statement: str, expected_created_at: str,
+    ) -> str:
         from app.codex_decision import extract_codex_audit_events
         events = extract_codex_audit_events(raw, limit=100)
         calls = [event for event in events if event.get("tool", "") != "tool_output"]
@@ -67,6 +68,22 @@ class CodexMemoryWriteBackend:
         if len(calls) != 1 or len(memory_calls) != 1:
             raise MemoryWriteOutcomeUnknown("memory write outcome unknown: expected one tool call")
         call = memory_calls[0]
+        try:
+            arguments = json.loads(call.get("input", ""))
+        except json.JSONDecodeError as exc:
+            raise MemoryWriteOutcomeUnknown(
+                "memory write outcome unknown: invalid arguments"
+            ) from exc
+        if (
+            not isinstance(arguments, dict)
+            or set(arguments) != {"data", "type", "created_at"}
+            or arguments.get("data") != statement
+            or arguments.get("type") != "text"
+            or arguments.get("created_at") != expected_created_at
+        ):
+            raise MemoryWriteOutcomeUnknown(
+                "memory write outcome unknown: unsafe arguments"
+            )
         outputs = []
         if call.get("output"):
             outputs.append(call["output"])
@@ -77,26 +94,15 @@ class CodexMemoryWriteBackend:
             )
         if len(outputs) != 1:
             raise MemoryWriteOutcomeUnknown("memory write outcome unknown: missing tool result")
-        output = outputs[0]
-        lowered = output.casefold()
-        if any(marker in lowered for marker in ('"iserror": true', '"status": "error"', "failed")):
-            raise RuntimeError("memory_write failed")
-        match = _UUID.search(output)
-        if match:
-            return match.group(0)
-        try:
-            payload = json.loads(output)
-        except json.JSONDecodeError:
-            payload = None
-        stable_id = ""
-        if isinstance(payload, dict):
-            for key in ("memory_id", "uuid", "id"):
-                value = payload.get(key)
-                if isinstance(value, str) and len(value.strip()) >= 8:
-                    stable_id = value.strip()
-                    break
-        if not stable_id:
-            raise MemoryWriteOutcomeUnknown("memory write outcome unknown: missing memory id")
+        from app.store import AutoReplyStore
+        parsed = AutoReplyStore._parse_memory_write_output(outputs[0])
+        if parsed.get("status") == "failed":
+            raise RuntimeError(parsed.get("last_error") or "memory_write failed")
+        stable_id = parsed.get("memory_episode_id", "").strip()
+        if parsed.get("status") != "written" or not stable_id:
+            raise MemoryWriteOutcomeUnknown(
+                "memory write outcome unknown: no explicit successful tool result"
+            )
         return stable_id
 
 

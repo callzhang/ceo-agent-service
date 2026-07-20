@@ -51,15 +51,19 @@ passphrase is account-stable; re-capture only after logout/reinstall.
 ```
 
 `import-memory` is an explicit, one-shot operation. It requires exactly one
-persisted `ready` account, one or more `--target-id` values, a date bound, and a
-total `--limit` from 1–10000. It reads only those local conversations, creates
+persisted `ready` account with a resolved self wxid, one or more `--target-id`
+values (maximum 100), a date bound, and a total `--limit` from 1–10000. It reads
+at most that limit from each target, keeps the globally newest bounded set
+independent of target argument order, and sends only non-empty text messages to
+the extraction runner. It reads only those local conversations, creates
 cleaned `pending` rows, and never changes the automatic-reply activation
 watermark or calls `memory_write`. Repeating the exact same account, targets,
 bounds, and limit is idempotent.
 
 Review the result at `/wechat/memory-review`. Each row shows the cleaned
 statement, category, confidence, sensitivity, minimal redacted evidence, source
-time, cleanup notes, review state, and write state. Approval is deliberately
+time and message/conversation IDs, cleanup notes, reviewer/time, review state,
+Memory id/error, and write state. Approval is deliberately
 per-row and requires an editable final statement and reviewer. Memory writing is
 a second explicit action that processes only checked, already-approved IDs.
 Bulk reject is available; bulk approve is not. A rejected or revoked row cannot
@@ -73,6 +77,11 @@ stable Memory id are required before `written` is recorded. Ambiguous results ar
 marked `unknown` and are never retried automatically; clear failures are marked
 `failed` for an intentional manual retry. Extraction and review persist no raw
 chat transcript, DB path, passphrase, token, or API key.
+If the process crashes while a row is `writing`, an operator can use that row's
+“中断写入标记为 unknown” action; it never turns the row back into an automatically
+retryable state. Cross-run candidates with the same normalized statement reuse
+the existing row and merge source IDs/time without resetting its review/write
+state.
 
 ## Shared-file integration status
 

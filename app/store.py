@@ -1958,6 +1958,31 @@ class AutoReplyStore:
     def add_wechat_memory_candidate(self, *, import_run_id: str, account_id: str,
                                     candidate) -> int | None:
         with self._connect() as db:
+            canonical = " ".join(candidate.statement.split()).casefold()
+            existing = db.execute(
+                "select * from wechat_memory_candidates where account_id=? order by id",
+                (account_id,),
+            ).fetchall()
+            for row in existing:
+                if " ".join(row["statement"].split()).casefold() != canonical:
+                    continue
+                conversations = sorted(set(json.loads(row["source_conversation_ids_json"]))
+                                       | set(candidate.source_conversation_ids))
+                messages = sorted(set(json.loads(row["source_message_ids_json"]))
+                                  | set(candidate.source_message_ids))
+                starts = [value for value in (row["source_time_start"],
+                          candidate.source_time_start) if value]
+                ends = [value for value in (row["source_time_end"],
+                        candidate.source_time_end) if value]
+                db.execute(
+                    "update wechat_memory_candidates set source_conversation_ids_json=?, "
+                    "source_message_ids_json=?, source_time_start=?, source_time_end=?, "
+                    "updated_at=current_timestamp where id=?",
+                    (json.dumps(conversations, ensure_ascii=False),
+                     json.dumps(messages, ensure_ascii=False), min(starts, default=""),
+                     max(ends, default=""), row["id"]),
+                )
+                return None
             cur = db.execute(
                 """
                 insert or ignore into wechat_memory_candidates (
@@ -2004,37 +2029,6 @@ class AutoReplyStore:
             ).fetchall()
         return [dict(row) for row in rows]
 
-    def set_wechat_memory_candidate_status(
-        self, candidate_id: int, status: str, *, reviewer: str = "",
-        edited_statement: str | None = None,
-    ) -> None:
-        if status not in {"pending", "approved", "rejected", "revoked"}:
-            raise ValueError("invalid WeChat memory candidate status")
-        with self._connect() as db:
-            if edited_statement is None:
-                if status == "approved":
-                    db.execute(
-                        "update wechat_memory_candidates set status=?, reviewer=?, "
-                        "edited_statement=case when edited_statement='' then statement "
-                        "else edited_statement end, reviewed_at=current_timestamp, "
-                        "updated_at=current_timestamp where id=?",
-                        (status, reviewer, candidate_id),
-                    )
-                    return
-                db.execute(
-                    "update wechat_memory_candidates set status=?, reviewer=?, "
-                    "reviewed_at=current_timestamp, updated_at=current_timestamp "
-                    "where id=?",
-                    (status, reviewer, candidate_id),
-                )
-            else:
-                db.execute(
-                    "update wechat_memory_candidates set status=?, reviewer=?, "
-                    "edited_statement=?, reviewed_at=current_timestamp, "
-                    "updated_at=current_timestamp where id=?",
-                    (status, reviewer, edited_statement, candidate_id),
-                )
-
     def review_wechat_memory_candidate(
         self, candidate_id: int, action: str, *, reviewer: str = "",
         final_statement: str = "",
@@ -2050,6 +2044,8 @@ class AutoReplyStore:
             reviewer = reviewer.strip()
             if not reviewer:
                 raise ValueError("reviewer required")
+            if write_status == "writing":
+                raise ValueError("candidate is writing and cannot be reviewed")
             if action == "approve":
                 from app.wechat.memory_import import validate_final_statement
                 statement = validate_final_statement(final_statement)
@@ -2126,24 +2122,53 @@ class AutoReplyStore:
         if status not in {"written", "failed", "unknown"}:
             raise ValueError("invalid memory write status")
         with self._connect() as db:
+            if status == "written":
+                changed = db.execute(
+                    "update wechat_memory_candidates set memory_write_status='written', "
+                    "memory_id=?, memory_write_error='', updated_at=current_timestamp "
+                    "where id=? and status='approved' and memory_write_status='writing'",
+                    (memory_id, candidate_id),
+                )
+                if changed.rowcount == 1:
+                    return
+                row = db.execute(
+                    "select status, memory_write_status from wechat_memory_candidates where id=?",
+                    (candidate_id,),
+                ).fetchone()
+                if row is None or row["memory_write_status"] != "writing":
+                    raise RuntimeError("memory write claim lost")
+                fallback = "revocation_unavailable" if row["status"] == "revoked" else "unknown"
+                db.execute(
+                    "update wechat_memory_candidates set memory_write_status=?, memory_id=?, "
+                    "memory_write_error='review state changed during write', "
+                    "updated_at=current_timestamp where id=? and memory_write_status='writing'",
+                    (fallback, memory_id, candidate_id),
+                )
+                return
             changed = db.execute(
-                "update wechat_memory_candidates set memory_write_status=?, memory_id=?, "
+                "update wechat_memory_candidates set memory_write_status=?, memory_id='', "
                 "memory_write_error=?, updated_at=current_timestamp "
-                "where id=? and memory_write_status='writing'",
-                (status, memory_id, error[:500], candidate_id),
+                "where id=? and status='approved' and memory_write_status='writing'",
+                (status, error[:500], candidate_id),
             )
             if changed.rowcount != 1:
                 raise RuntimeError("memory write claim lost")
 
-    def set_wechat_memory_candidate_written(
-        self, candidate_id: int, *, memory_id: str, memory_write_status: str
+    def resolve_wechat_memory_candidate_write_unknown(
+        self, candidate_id: int, *, reviewer: str,
     ) -> None:
+        if not reviewer.strip():
+            raise ValueError("reviewer required")
         with self._connect() as db:
-            db.execute(
-                "update wechat_memory_candidates set memory_id=?, "
-                "memory_write_status=?, updated_at=current_timestamp where id=?",
-                (memory_id, memory_write_status, candidate_id),
+            changed = db.execute(
+                "update wechat_memory_candidates set memory_write_status='unknown', "
+                "memory_write_error='manually resolved after interrupted write', reviewer=?, "
+                "reviewed_at=current_timestamp, updated_at=current_timestamp "
+                "where id=? and memory_write_status='writing'",
+                (reviewer.strip(), candidate_id),
             )
+            if changed.rowcount != 1:
+                raise ValueError("only writing candidate can be resolved to unknown")
 
     @staticmethod
     def _meeting_alignment_job_from_row(
@@ -4267,19 +4292,22 @@ class AutoReplyStore:
                 if isinstance(nested, dict):
                     payload = nested
                     break
-        processing_status = str(payload.get("processing_status") or "")
-        ok = bool(payload.get("ok"))
-        status = "written" if ok else "pending"
-        if processing_status == "failed":
+        processing_status = str(payload.get("processing_status") or "").casefold()
+        ok = payload.get("ok") is True
+        if processing_status == "failed" or payload.get("ok") is False:
             status = "failed"
-        elif processing_status in {"completed", "done", "ready"}:
-            status = "written"
+        else:
+            status = "pending"
         memory_episode_id = str(
             payload.get("episode_uuid")
             or payload.get("uuid")
             or payload.get("memory_episode_id")
             or ""
         )
+        if memory_episode_id and (
+            ok or processing_status in {"completed", "success", "done", "ready"}
+        ):
+            status = "written"
         last_error = str(payload.get("last_error") or payload.get("error") or "")
         processing_statuses = payload.get("processing_statuses")
         if not last_error and isinstance(processing_statuses, list):

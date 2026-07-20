@@ -180,7 +180,20 @@ def test_import_memory_fails_closed_with_multiple_ready_accounts(tmp_path, monke
     args = SimpleNamespace(db=str(db), account_id="", target_id=["u1"],
                            since="2026-07-01", until="", limit=50)
     assert cli.cmd_import_memory(args) == 1
-    assert "exactly one" in capsys.readouterr().out
+    assert "single ready account" in capsys.readouterr().out
+
+
+def test_import_memory_fails_closed_without_self_identity(tmp_path, monkeypatch, capsys):
+    db = tmp_path / "worker.sqlite3"
+    store = AutoReplyStore(db)
+    store.upsert_wechat_read_state(
+        account_id="a", account_dir="/a", db_dir="/a/db", app_version="4",
+        self_user_id="", capability_status="ready")
+    monkeypatch.setattr(cli, "_reader", lambda **kwargs: (_ for _ in ()).throw(AssertionError()))
+    args = SimpleNamespace(db=str(db), account_id="", target_id=["u1"],
+                           since="2026-07-01", until="", limit=50)
+    assert cli.cmd_import_memory(args) == 1
+    assert "single ready account" in capsys.readouterr().out
 
 
 def test_read_recent_parser_accepts_db_path():

@@ -3,6 +3,7 @@ import threading
 import time
 
 import pytest
+from pydantic import ValidationError
 
 from app.store import AutoReplyStore
 from app.wechat.memory import (
@@ -63,7 +64,7 @@ def test_clean_rejects_non_normal_and_redacts_and_bounds_fields(store):
         candidate("  Derek   likes concise notes  ", category="preference").model_copy(
             update={
                 "evidence_excerpt": "contact derek@example.com or 13800138000; concise",
-                "cleanup_notes": " x " * 500,
+                "cleanup_notes": " x " * 200,
             }
         ),
     ])
@@ -82,6 +83,23 @@ def test_clean_rejects_raw_transcript_sized_evidence_and_missing_source_time(sto
         ),
         candidate("missing time", category="fact").model_copy(
             update={"source_time_start": ""}
+        ),
+    ]) == []
+
+
+def test_candidate_forbids_unknown_fields():
+    with pytest.raises(ValidationError):
+        ExtractedMemoryCandidate(**candidate("x", category="fact").model_dump(), raw_chat="no")
+
+
+def test_clean_rejects_secret_or_transcript_cleanup_notes(store):
+    importer = WechatMemoryImporter(store)
+    assert importer.clean_candidates([
+        candidate("useful", category="fact").model_copy(
+            update={"cleanup_notes": "token sk-proj-abcdefghijklmnopqrstuvwxyz"}
+        ),
+        candidate("also useful", category="fact").model_copy(
+            update={"cleanup_notes": "x" * 501}
         ),
     ]) == []
 
@@ -163,7 +181,56 @@ def test_import_reads_each_target_with_correct_conversation_type_and_total_limit
         until="2026-07-31", limit=2)
     assert result["messages"] == 2
     assert [(c["conversation_id"], c["conversation_type"], c["limit"]) for c in calls] == [
-        ("u1", "direct", 2), ("g@chatroom", "group", 1)]
+        ("u1", "direct", 2), ("g@chatroom", "group", 2)]
+
+
+def test_import_global_newest_selection_is_target_order_independent(store):
+    from app.wechat.models import WechatAccount
+    account = WechatAccount(account_id="acct", display_name="D", self_user_id="self",
+                            account_dir="/a", db_dir="/a/db", app_version="4")
+    rows = {
+        "old": [WechatMessage(account_id="acct", conversation_id="old", message_id=f"o{i}",
+            sender_id="s", sender_display_name="S", conversation_type="direct",
+            direction="inbound", sent_at=f"2026-07-0{i}T10:00:00+08:00", kind="text",
+            text="old", source_version="4") for i in range(1, 4)],
+        "new": [WechatMessage(account_id="acct", conversation_id="new", message_id="n1",
+            sender_id="s", sender_display_name="S", conversation_type="direct",
+            direction="inbound", sent_at="2026-07-20T10:00:00+08:00", kind="text",
+            text="new", source_version="4")],
+    }
+    class Reader:
+        def read_messages(self, account, **kwargs): return rows[kwargs["conversation_id"]]
+    seen = []
+    class Extractor:
+        def extract(self, messages):
+            seen.append([m.message_id for m in messages])
+            return []
+    WechatMemoryImporter(store, Reader(), Extractor()).run(
+        account=account, target_ids=["old", "new"], since="2026-07-01", until="", limit=2)
+    assert set(seen[0]) == {"o3", "n1"}
+    WechatMemoryImporter(store, Reader(), Extractor()).run(
+        account=account, target_ids=["new", "old"], since="2026-07-01", until="", limit=2)
+    assert seen[1] == seen[0]
+
+
+def test_import_filters_non_text_before_extraction(store):
+    from app.wechat.models import WechatAccount
+    account = WechatAccount(account_id="acct", display_name="D", self_user_id="self",
+                            account_dir="/a", db_dir="/a/db", app_version="4")
+    messages = [WechatMessage(account_id="acct", conversation_id="u", message_id=kind,
+        sender_id="s", sender_display_name="S", conversation_type="direct", direction="inbound",
+        sent_at="2026-07-20T10:00:00+08:00", kind=kind, text="payload", source_version="4")
+        for kind in ("text", "image", "file", "system", "unknown")]
+    class Reader:
+        def read_messages(self, account, **kwargs): return messages
+    seen = []
+    class Extractor:
+        def extract(self, batch):
+            seen.extend(m.kind for m in batch)
+            return []
+    WechatMemoryImporter(store, Reader(), Extractor()).run(
+        account=account, target_ids=["u"], since="2026-07-01", until="", limit=10)
+    assert seen == ["text"]
 
 
 def test_import_rejects_invalid_date_bounds_before_read(store):
@@ -177,7 +244,11 @@ def _seed_candidate(store, status):
         import_run_id="r1", account_id="acct-1",
         candidate=candidate("Derek prefers concise updates", category="preference"),
     )
-    store.set_wechat_memory_candidate_status(cid, status)
+    if status == "approved":
+        store.review_wechat_memory_candidate(
+            cid, "approve", reviewer="Derek", final_statement="Derek prefers concise updates")
+    elif status == "rejected":
+        store.review_wechat_memory_candidate(cid, "reject", reviewer="Derek")
     return cid
 
 
@@ -269,14 +340,51 @@ def test_written_candidate_revoke_records_backend_limitation(store):
         WechatMemoryWriter(store, FakeMemoryBackend()).write(cid)
 
 
+def test_review_actions_refuse_candidate_while_write_claimed(store):
+    cid = _seed_candidate(store, status="approved")
+    assert store.claim_wechat_memory_candidate_write(cid)["outcome"] == "claimed"
+    for action in ("approve", "reject", "revoke"):
+        with pytest.raises(ValueError, match="writing"):
+            store.review_wechat_memory_candidate(
+                cid, action, reviewer="Derek", final_statement="safe")
+    store.resolve_wechat_memory_candidate_write_unknown(cid, reviewer="Derek")
+    assert store.get_wechat_memory_candidate(cid)["memory_write_status"] == "unknown"
+
+
+def test_finish_write_race_never_creates_revoked_written(store):
+    cid = _seed_candidate(store, status="approved")
+    assert store.claim_wechat_memory_candidate_write(cid)["outcome"] == "claimed"
+    with store._connect() as db:
+        db.execute("update wechat_memory_candidates set status='revoked' where id=?", (cid,))
+    store.finish_wechat_memory_candidate_write(cid, status="written", memory_id="episode-1")
+    row = store.get_wechat_memory_candidate(cid)
+    assert row["status"] == "revoked"
+    assert row["memory_write_status"] == "revocation_unavailable"
+
+
+def test_cross_run_duplicate_merges_sources_without_new_candidate(store):
+    first = store.add_wechat_memory_candidate(
+        import_run_id="r1", account_id="acct", candidate=candidate(
+            "Derek likes async", category="preference"))
+    duplicate = candidate("  derek   likes ASYNC ", category="preference").model_copy(
+        update={"source_message_ids":["m2"], "source_conversation_ids":["c2"],
+                "source_time_start":"2026-07-16", "source_time_end":"2026-07-18"})
+    assert store.add_wechat_memory_candidate(
+        import_run_id="r2", account_id="acct", candidate=duplicate) is None
+    rows = store.list_wechat_memory_candidates()
+    assert [row["id"] for row in rows] == [first]
+    assert set(json.loads(rows[0]["source_message_ids_json"])) == {"m1", "m2"}
+
+
 def test_codex_write_backend_requires_successful_memory_write_tool_event(tmp_path):
+    output = {"structured_content":{"result":json.dumps({"ok":True,"episode_uuid":"episode-1","processing_status":"completed"})}}
     success = "\n".join([
-        json.dumps({"type":"item.completed","item":{"type":"mcp_tool_call", "call_id":"c1", "tool":"memory_write", "arguments":{"data":"ok","type":"text","created_at":"2026-07-17"}}}),
-        json.dumps({"type":"item.completed","item":{"type":"tool_result", "call_id":"c1", "output":{"status":"success","memory_id":"550e8400-e29b-41d4-a716-446655440000"}}}),
+        json.dumps({"type":"item.completed","item":{"type":"mcp_tool_call", "call_id":"c1", "tool":"memory_write", "arguments":{"data":"final","type":"text","created_at":"2026-07-17"}}}),
+        json.dumps({"type":"item.completed","item":{"type":"tool_result", "call_id":"c1", "output":output}}),
         json.dumps({"status":"attempted"}),
     ])
     backend = CodexMemoryWriteBackend(tmp_path, executor=lambda command, prompt: success)
-    assert backend.write("final", source_time_start="2026-07-17", source_time_end="") == "550e8400-e29b-41d4-a716-446655440000"
+    assert backend.write("final", source_time_start="2026-07-17", source_time_end="") == "episode-1"
     fake = CodexMemoryWriteBackend(tmp_path, executor=lambda command, prompt: json.dumps({"memory_id":"fake"}))
     with pytest.raises(Exception, match="unknown"):
         fake.write("final", source_time_start="2026-07-17", source_time_end="")
@@ -289,6 +397,27 @@ def test_codex_write_backend_requires_successful_memory_write_tool_event(tmp_pat
         CodexMemoryWriteBackend(
             tmp_path, executor=lambda command, prompt: extra_tool
         ).write("final", source_time_start="2026-07-17", source_time_end="")
+
+    malicious = success.replace('"data": "final"', '"data": "evil", "user_id": "u"')
+    with pytest.raises(Exception, match="arguments"):
+        CodexMemoryWriteBackend(tmp_path, executor=lambda c, p: malicious).write(
+            "final", source_time_start="2026-07-17", source_time_end="")
+
+    vague = "\n".join([
+        json.dumps({"type":"item.completed","item":{"type":"mcp_tool_call", "call_id":"c1", "tool":"memory_write", "arguments":{"data":"final","type":"text","created_at":"2026-07-17"}}}),
+        json.dumps({"type":"item.completed","item":{"type":"tool_result", "call_id":"c1", "output":"550e8400-e29b-41d4-a716-446655440000"}}),
+    ])
+    with pytest.raises(Exception, match="unknown"):
+        CodexMemoryWriteBackend(tmp_path, executor=lambda c, p: vague).write(
+            "final", source_time_start="2026-07-17", source_time_end="")
+
+    failed_output = {"structured_content":{"result":json.dumps({
+        "ok":False, "episode_uuid":"episode-failed", "processing_status":"failed",
+        "last_error":"backend rejected"})}}
+    failed = success.replace(json.dumps(output), json.dumps(failed_output))
+    with pytest.raises(RuntimeError, match="backend rejected"):
+        CodexMemoryWriteBackend(tmp_path, executor=lambda c, p: failed).write(
+            "final", source_time_start="2026-07-17", source_time_end="")
 
 
 def test_codex_extraction_runner_parses_batch_envelope_and_forbids_write(tmp_path):
@@ -307,3 +436,12 @@ def test_codex_extraction_runner_parses_batch_envelope_and_forbids_write(tmp_pat
     assert "不会提供 memory_write" in captured["prompt"]
     assert "wechat_memory_candidates.schema.json" in " ".join(captured["command"])
     assert "mcp_servers.memory_connector.enabled=false" in captured["command"]
+
+
+def test_codex_extraction_parses_live_item_completed_agent_message(tmp_path):
+    payload = {"candidates": [candidate("durable fact", category="fact").model_dump()]}
+    raw = json.dumps({"type":"item.completed", "item":{
+        "type":"agent_message", "text":json.dumps(payload)}})
+    result = CodexMemoryExtractionRunner(
+        tmp_path, executor=lambda command, prompt: raw).extract([])
+    assert result[0].statement == "durable fact"

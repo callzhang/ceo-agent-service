@@ -175,6 +175,7 @@ def test_memory_review_page_escapes_and_filters(memory_client):
     assert response.status_code == 200
     assert "Derek &lt;likes&gt; concise notes" in response.text
     assert "minimal &lt;evidence&gt;" in response.text
+    assert "messages: m1" in response.text and "conversations: c1" in response.text
     assert "bulk approve" not in response.text.casefold()
 
 
@@ -218,6 +219,18 @@ def test_memory_review_reject_and_revoke_state(memory_client):
                        data={"final_statement":"approved", "reviewer":"D"})
     memory_client.post(f"/wechat/memory-review/{approved}/revoke", data={"reviewer":"D"})
     assert memory_client.store.get_wechat_memory_candidate(approved)["status"] == "revoked"
+
+
+def test_memory_review_can_resolve_interrupted_write_to_unknown(memory_client):
+    cid = _seed_memory_candidate(memory_client.store, "writing candidate")
+    memory_client.store.review_wechat_memory_candidate(
+        cid, "approve", reviewer="D", final_statement="writing candidate")
+    assert memory_client.store.claim_wechat_memory_candidate_write(cid)["outcome"] == "claimed"
+    response = memory_client.post(
+        f"/wechat/memory-review/{cid}/resolve-unknown",
+        data={"reviewer": "Derek"}, follow_redirects=False)
+    assert response.status_code == 303
+    assert memory_client.store.get_wechat_memory_candidate(cid)["memory_write_status"] == "unknown"
 
 
 def test_main_audit_app_registers_memory_review(tmp_path):

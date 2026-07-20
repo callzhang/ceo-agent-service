@@ -44,6 +44,7 @@ def register_wechat_memory_review_routes(
 ) -> None:
     """Human review for cleaned candidates. There is deliberately no bulk approve."""
     import html
+    import json
     from urllib.parse import parse_qs
     from fastapi.responses import HTMLResponse, RedirectResponse
 
@@ -73,7 +74,7 @@ def register_wechat_memory_review_routes(
             html.escape(sensitivity), "'><button>筛选</button></form>",
             "<form method='post'><table><tr><th>选择</th><th>清理后内容</th>"
             "<th>分类/置信度/敏感度</th><th>最小证据</th><th>来源时间/清理说明</th>"
-            "<th>状态/写入</th><th>审核</th></tr>",
+            "<th>来源</th><th>状态/写入</th><th>审核</th></tr>",
         ]
         for row in rows:
             cid = int(row["id"])
@@ -84,8 +85,16 @@ def register_wechat_memory_review_routes(
                 html.escape(f"{row['confidence']:.2f}"), " / ", html.escape(row["sensitivity"]),
                 "</td><td>", html.escape(row["evidence_excerpt"]), "</td><td><span class='meta'>",
                 html.escape(f"{row['source_time_start']} — {row['source_time_end']}"), "</span><br>",
-                html.escape(row["cleanup_notes"]), "</td><td>", html.escape(row["status"]),
-                " / ", html.escape(row["memory_write_status"] or "not_written"), "</td><td>",
+                html.escape(row["cleanup_notes"]), "</td><td><span class='meta'>conversations: ",
+                html.escape(", ".join(json.loads(row["source_conversation_ids_json"]))),
+                "<br>messages: ",
+                html.escape(", ".join(json.loads(row["source_message_ids_json"]))),
+                "</span></td><td>", html.escape(row["status"]), " / ",
+                html.escape(row["memory_write_status"] or "not_written"),
+                "<br><span class='meta'>reviewer: ", html.escape(row["reviewer"]),
+                " · ", html.escape(row["reviewed_at"]), "<br>memory: ",
+                html.escape(row["memory_id"]), "<br>error: ",
+                html.escape(row["memory_write_error"]), "</span></td><td>",
             ])
             if row["status"] == "pending":
                 parts.extend([
@@ -99,6 +108,11 @@ def register_wechat_memory_review_routes(
                     f"<input name='reviewer_{cid}' placeholder='reviewer'>",
                     f"<button formaction='/wechat/memory-review/{cid}/revoke' formmethod='post'>撤销批准</button>"
                 ])
+                if row["memory_write_status"] == "writing":
+                    parts.append(
+                        f"<button formaction='/wechat/memory-review/{cid}/resolve-unknown' "
+                        "formmethod='post'>中断写入标记为 unknown</button>"
+                    )
             parts.append("</td></tr>")
         parts.append(
             "</table><button formaction='/wechat/memory-review/write-approved' "
@@ -168,6 +182,18 @@ def register_wechat_memory_review_routes(
         try:
             store_factory().review_wechat_memory_candidate(
                 candidate_id, "revoke", reviewer=(
+                    _one(form, f"reviewer_{candidate_id}") or _one(form, "reviewer")
+                ))
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return RedirectResponse("/wechat/memory-review", status_code=303)
+
+    @app.post("/wechat/memory-review/{candidate_id}/resolve-unknown")
+    async def resolve_unknown(candidate_id: int, request: Request):
+        form = await _form(request)
+        try:
+            store_factory().resolve_wechat_memory_candidate_write_unknown(
+                candidate_id, reviewer=(
                     _one(form, f"reviewer_{candidate_id}") or _one(form, "reviewer")
                 ))
         except ValueError as exc:

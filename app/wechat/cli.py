@@ -163,12 +163,10 @@ def cmd_reject(args) -> int:
 
 def cmd_import_memory(args) -> int:
     store = AutoReplyStore(Path(args.db))
-    states = [row for row in store.list_wechat_read_states()
-              if row["capability_status"] == "ready"]
-    if len(states) != 1:
-        print("expected exactly one persisted ready WeChat account; run status first")
+    state = service.ready_account_state(store)
+    if state is None:
+        print("no single ready account with self identity; run status first")
         return 1
-    state = states[0]
     if args.account_id and args.account_id != state["account_id"]:
         print("requested account is not the unique persisted ready WeChat account")
         return 1

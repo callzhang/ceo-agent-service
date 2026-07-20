@@ -2,12 +2,13 @@
 from __future__ import annotations
 
 import hashlib
+import heapq
 import json
 import re
 from datetime import datetime
 from pathlib import Path
 
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app.wechat.models import WechatAccount, WechatMessage
 
@@ -20,6 +21,7 @@ STATEMENT_LIMIT = 800
 EVIDENCE_LIMIT = 300
 CLEANUP_NOTES_LIMIT = 500
 BATCH_SIZE = 100
+MAX_TARGETS = 100
 
 _BLOCK_PATTERNS = tuple(re.compile(pattern, flags) for pattern, flags in (
     (r"验证码|verification\s*code|一次性密码|one[- ]time password", re.I),
@@ -39,6 +41,7 @@ _LONG_NUMBER = re.compile(r"(?<!\d)\d{8,}(?!\d)")
 
 
 class ExtractedMemoryCandidate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     statement: str
     category: str
     confidence: float = Field(ge=0, le=1)
@@ -96,16 +99,17 @@ def _upper_bound(value: str) -> str:
 
 
 def _parse_output(raw: str) -> list[ExtractedMemoryCandidate]:
-    payloads: list[object] = []
-    try:
-        payloads.append(json.loads(raw.strip()))
-    except json.JSONDecodeError:
-        for line in raw.splitlines():
-            try:
-                payloads.append(json.loads(line))
-            except json.JSONDecodeError:
-                continue
-    for payload in reversed(payloads):
+    from app.codex_decision import _decision_text_candidates, _iter_json_payloads
+    payloads = _iter_json_payloads(raw)
+    candidates: list[object] = list(payloads)
+    for payload in payloads:
+        if isinstance(payload, dict):
+            for text in _decision_text_candidates(payload):
+                try:
+                    candidates.append(json.loads(text))
+                except json.JSONDecodeError:
+                    continue
+    for payload in reversed(candidates):
         if not isinstance(payload, dict) or not isinstance(payload.get("candidates"), list):
             continue
         try:
@@ -207,6 +211,9 @@ class WechatMemoryImporter:
                 continue
             if len(" ".join(candidate.evidence_excerpt.split())) > EVIDENCE_LIMIT:
                 continue
+            if (_contains_blocked_content(candidate.cleanup_notes)
+                    or len(" ".join(candidate.cleanup_notes.split())) > CLEANUP_NOTES_LIMIT):
+                continue
             key = statement.casefold()
             if key in seen:
                 continue
@@ -229,6 +236,8 @@ class WechatMemoryImporter:
             raise ValueError("account_id required")
         if not targets or not (since or until):
             raise ValueError("bounded scope required: target_ids and a date bound are required")
+        if len(targets) > MAX_TARGETS:
+            raise ValueError(f"bounded scope required: at most {MAX_TARGETS} targets")
         if not 1 <= limit <= 10000:
             raise ValueError("bounded scope required: 1 <= limit <= 10000")
         _validate_date_bound(since, "since")
@@ -238,20 +247,30 @@ class WechatMemoryImporter:
         if self.reader is None or self.codex is None or account is None:
             raise ValueError("reader, extraction runner, and ready account are required")
 
-        messages: list[WechatMessage] = []
+        heap: list[tuple[str, str, str, int, WechatMessage]] = []
+        sequence = 0
         for target_id in targets:
-            if len(messages) >= limit:
-                break
             rows = self.reader.read_messages(
                 account, conversation_id=target_id,
                 conversation_type="group" if target_id.endswith("@chatroom") else "direct",
                 since=since, until=_upper_bound(until) if until else "",
-                limit=limit - len(messages), order="newest",
+                limit=limit, order="newest",
             )
-            messages.extend(
-                row for row in rows if not until or row.sent_at <= _upper_bound(until)
+            target_rows = heapq.nlargest(
+                limit, rows, key=lambda row: (row.sent_at, row.message_id)
             )
-        messages = sorted(messages, key=lambda row: (row.sent_at, row.message_id))[:limit]
+            for row in target_rows:
+                if row.kind != "text" or not row.text.strip():
+                    continue
+                if until and row.sent_at > _upper_bound(until):
+                    continue
+                item = (row.sent_at, row.message_id, row.conversation_id, sequence, row)
+                sequence += 1
+                if len(heap) < limit:
+                    heapq.heappush(heap, item)
+                elif item[:4] > heap[0][:4]:
+                    heapq.heapreplace(heap, item)
+        messages = [item[-1] for item in sorted(heap)]
         run_id = import_run_id or self.import_run_id(resolved_account_id, targets, since, until, limit)
         candidates: list[ExtractedMemoryCandidate] = []
         for start in range(0, len(messages), BATCH_SIZE):
@@ -259,8 +278,26 @@ class WechatMemoryImporter:
             raw = self.codex.extract(batch)
             parsed = [item if isinstance(item, ExtractedMemoryCandidate)
                       else ExtractedMemoryCandidate.model_validate(item) for item in raw]
+            by_id = {message.message_id: message for message in batch}
+            validated = []
+            for item in parsed:
+                source_rows = [by_id.get(message_id) for message_id in item.source_message_ids]
+                if not source_rows or any(row is None for row in source_rows):
+                    continue
+                actual_conversations = {
+                    row.conversation_id for row in source_rows if row is not None
+                }
+                if set(item.source_conversation_ids) != actual_conversations:
+                    continue
+                actual_start = min(row.sent_at for row in source_rows if row is not None)
+                actual_end = max(row.sent_at for row in source_rows if row is not None)
+                if item.source_time_start > actual_start or item.source_time_end < actual_end:
+                    continue
+                validated.append(item.model_copy(update={
+                    "source_time_start": actual_start, "source_time_end": actual_end,
+                }))
             candidates.extend(self.clean_candidates(
-                parsed, allowed_message_ids={message.message_id for message in batch},
+                validated, allowed_message_ids={message.message_id for message in batch},
                 allowed_conversation_ids={message.conversation_id for message in batch},
                 since=since, until=until,
             ))
