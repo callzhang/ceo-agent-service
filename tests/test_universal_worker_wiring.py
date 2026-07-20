@@ -219,8 +219,8 @@ def enqueue(worker, trigger, *, force_new_decision=False, generation="initial", 
     return worker.store.list_reply_tasks(limit=1)[0]
 
 
-def test_flag_off_preserves_legacy_route(tmp_path, monkeypatch):
-    monkeypatch.delenv("CEO_UNIVERSAL_CONSUMER", raising=False)
+def test_explicit_flag_off_preserves_legacy_route(tmp_path, monkeypatch):
+    monkeypatch.setenv("CEO_UNIVERSAL_CONSUMER", "0")
     planner = RecordingPlanner(no_reply_plan())
     worker, trigger = make_worker(tmp_path, monkeypatch, planner=planner)
     task = enqueue(worker, trigger)
@@ -233,6 +233,24 @@ def test_flag_off_preserves_legacy_route(tmp_path, monkeypatch):
 
     assert len(legacy_calls) == 1
     assert planner.calls == []
+
+
+def test_universal_route_is_default(tmp_path, monkeypatch):
+    monkeypatch.delenv("CEO_UNIVERSAL_CONSUMER", raising=False)
+    planner = RecordingPlanner(no_reply_plan())
+    worker, trigger = make_worker(tmp_path, monkeypatch, planner=planner)
+    task = enqueue(worker, trigger)
+    legacy_calls = []
+    monkeypatch.setattr(
+        worker,
+        "_process_batch",
+        lambda *args, **kwargs: legacy_calls.append((args, kwargs)),
+    )
+
+    assert worker._process_queued_task(conversation(), task) is True
+
+    assert len(planner.calls) == 1
+    assert legacy_calls == []
 
 
 def test_dws_auth_blocks_before_planner_without_starting_login(tmp_path, monkeypatch):

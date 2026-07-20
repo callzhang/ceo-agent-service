@@ -4470,7 +4470,7 @@ class DingTalkAutoReplyWorker:
             )
             self._mark_seen([trigger])
             return True
-        if os.getenv("CEO_UNIVERSAL_CONSUMER", "0") == "1":
+        if os.getenv("CEO_UNIVERSAL_CONSUMER", "1") != "0":
             return self._process_universal_queued_task(
                 conversation,
                 task,
