@@ -132,7 +132,10 @@ class CallbackRecorder:
         load_misses: int = 0,
     ) -> None:
         self.dependency_status = (
-            {"dws": DependencyStatus(ready=True)}
+            {
+                "dws": DependencyStatus(ready=True),
+                "memory": DependencyStatus(ready=True),
+            }
             if dependency_status is None
             else dependency_status
         )
@@ -630,7 +633,7 @@ def test_atomic_create_returning_existing_same_plan_is_accepted() -> None:
     assert executor.calls[0].execution_scope_id == "existing-scope"
 
 
-def test_atomic_create_returning_existing_different_plan_fails_closed() -> None:
+def test_atomic_create_returning_existing_plan_uses_persisted_plan() -> None:
     persisted = make_plan(make_action(), reason="Persisted plan")
     callbacks = CallbackRecorder(
         loaded_plan_execution=UniversalPlanExecution(
@@ -642,12 +645,13 @@ def test_atomic_create_returning_existing_different_plan_fails_closed() -> None:
         make_plan(make_action(), reason="Candidate plan"), callbacks
     )
 
-    with pytest.raises(ValueError, match="created plan does not match candidate"):
-        orchestrator.process(make_context())
+    result = orchestrator.process(make_context())
 
+    assert result.outcome is UniversalConsumerOutcome.COMPLETED
+    assert result.reason == "Persisted plan"
     assert callbacks.calls["create_plan"] == 1
-    assert callbacks.calls["action_state"] == 0
-    assert executor.calls == []
+    assert len(executor.calls) == 1
+    assert executor.calls[0].execution_scope_id == "existing-scope"
 
 
 def test_post_plan_dependencies_are_resolved_in_order_without_refetching() -> None:
@@ -693,6 +697,38 @@ def test_post_plan_missing_dependency_waits_without_execution() -> None:
         outcome=UniversalConsumerOutcome.WAITING_FOR_DEPENDENCY,
     )
     assert callbacks.dependency_requests == [("dws",), ("mail",)]
+    assert callbacks.calls["create_plan"] == 1
+    assert executor.calls == []
+
+
+def test_memory_dependency_is_derived_persisted_and_reused_without_replanning() -> None:
+    callbacks = CallbackRecorder(
+        dependency_status={
+            "dws": DependencyStatus(ready=True),
+            "memory": DependencyStatus(
+                ready=False,
+                reason="memory_authorization_required",
+                authorization_required=True,
+            ),
+        }
+    )
+    plan = make_plan(make_action(PlannedActionKind.MEMORY_WRITE))
+    orchestrator, planner, executor = make_orchestrator(plan, callbacks)
+
+    first = orchestrator.process(make_context())
+    second = orchestrator.process(make_context())
+
+    assert first.outcome is UniversalConsumerOutcome.WAITING_FOR_DEPENDENCY
+    assert first.authorization_required is True
+    assert second == first
+    assert len(planner.calls) == 1
+    assert callbacks.calls["create_plan"] == 1
+    assert callbacks.dependency_requests == [
+        ("dws",),
+        ("memory",),
+        ("dws",),
+        ("memory",),
+    ]
     assert executor.calls == []
 
 
@@ -749,7 +785,7 @@ def test_dry_run_is_validated_without_execution() -> None:
     )
     assert len(planner.calls) == 1
     assert executor.calls == []
-    assert callbacks.calls["create_plan"] == 0
+    assert callbacks.calls["create_plan"] == 1
 
 
 def test_valid_action_executes_and_returns_plan_reason() -> None:
@@ -951,7 +987,7 @@ def test_validator_rejection_has_distinct_outcome() -> None:
         outcome=UniversalConsumerOutcome.VALIDATION_BLOCKED,
     )
     assert executor.calls == []
-    assert callbacks.calls["create_plan"] == 0
+    assert callbacks.calls["create_plan"] == 1
 
 
 @pytest.mark.parametrize(

@@ -271,3 +271,11 @@ class UniversalPlan(UniversalPlanBase):
 
     _task_kind_non_empty = field_validator("task_kind")(_non_empty)
     _reason_non_empty = field_validator("reason")(_non_empty)
+
+    def execution_dependencies(self) -> tuple[str, ...]:
+        ordered = [str(dependency) for dependency in self.dependencies]
+        if any(
+            action.kind is PlannedActionKind.MEMORY_WRITE for action in self.actions
+        ) and DependencyName.MEMORY.value not in ordered:
+            ordered.append(DependencyName.MEMORY.value)
+        return tuple(ordered)

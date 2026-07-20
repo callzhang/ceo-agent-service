@@ -1,8 +1,9 @@
 from collections.abc import Callable
+from contextlib import nullcontext
 from copy import deepcopy
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Protocol
+from typing import ContextManager, Protocol
 
 from app.universal_context import UniversalTaskContext
 from app.universal_executor import (
@@ -71,6 +72,9 @@ class UniversalConsumerOrchestrator:
         ],
         session_id: Callable[[UniversalTaskContext], str | None],
         executor: _UniversalExecutor,
+        planning_lock: Callable[
+            [UniversalTaskContext], ContextManager[None]
+        ] | None = None,
     ) -> None:
         self.planner = planner
         self.validator_context_factory = validator_context_factory
@@ -81,6 +85,7 @@ class UniversalConsumerOrchestrator:
         self.action_execution_state = action_execution_state
         self.session_id = session_id
         self.executor = executor
+        self.planning_lock = planning_lock or (lambda context: nullcontext())
         self.validator = UniversalValidator()
 
     def process(self, context: UniversalTaskContext) -> UniversalConsumerResult:
@@ -132,10 +137,11 @@ class UniversalConsumerOrchestrator:
             candidate_plan = False
 
         if plan_execution is None:
-            plan = self.planner.plan(
-                context,
-                session_id=self.session_id(context),
-            )
+            with self.planning_lock(context):
+                plan = self.planner.plan(
+                    context,
+                    session_id=self.session_id(context),
+                )
         else:
             plan = plan_execution.plan
 
@@ -150,9 +156,19 @@ class UniversalConsumerOrchestrator:
                 outcome=UniversalConsumerOutcome.DUPLICATE,
             )
 
+        if candidate_plan:
+            plan_execution = self._copy_plan_execution(
+                self.create_plan_execution(
+                    context,
+                    plan.model_copy(deep=True),
+                ),
+                context,
+            )
+            plan = plan_execution.plan
+
         required_dependencies = self._ordered_dependencies(
             context.required_dependencies,
-            tuple(str(dependency) for dependency in plan.dependencies),
+            plan.execution_dependencies(),
         )
         unresolved_dependencies = tuple(
             dependency
@@ -197,20 +213,6 @@ class UniversalConsumerOrchestrator:
                 executed_actions=(),
                 outcome=outcome,
             )
-
-        if candidate_plan:
-            created_plan_execution = self._copy_plan_execution(
-                self.create_plan_execution(
-                    context,
-                    plan.model_copy(deep=True),
-                ),
-                context,
-            )
-            if created_plan_execution.plan.model_dump(mode="json") != plan.model_dump(
-                mode="json"
-            ):
-                raise ValueError("created plan does not match candidate")
-            plan_execution = created_plan_execution
 
         if plan_execution is None:
             raise RuntimeError("validated plan has no execution scope")

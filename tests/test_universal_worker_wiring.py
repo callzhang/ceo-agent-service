@@ -3,7 +3,7 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
-from threading import Barrier, Lock
+from threading import Barrier, Event, Lock
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -22,7 +22,10 @@ from app.universal_plan import (
     UniversalPlan,
 )
 from app.universal_validator import DependencyStatus
-from app.worker import DingTalkAutoReplyWorker
+from app.worker import (
+    DingTalkAutoReplyWorker,
+    UniversalDependencyAuthorizationError,
+)
 
 
 class RecordingPlanner:
@@ -152,11 +155,11 @@ def no_reply_plan(*, dependencies=("dws",)) -> UniversalPlan:
     )
 
 
-def reply_then_memory_plan() -> UniversalPlan:
+def reply_then_memory_plan(*, dependencies=("dws", "memory")) -> UniversalPlan:
     return UniversalPlan(
         task_kind="reply_and_memory",
         reason="回复后记录稳定决策",
-        dependencies=["dws", "memory"],
+        dependencies=list(dependencies),
         actions=[
             PlannedAction(
                 kind=PlannedActionKind.SEND_REPLY,
@@ -288,7 +291,7 @@ def test_memory_dependency_is_deferred_without_authorization_side_effects(
     tmp_path, monkeypatch
 ):
     monkeypatch.setenv("CEO_UNIVERSAL_CONSUMER", "1")
-    planner = RecordingPlanner(reply_then_memory_plan())
+    planner = RecordingPlanner(reply_then_memory_plan(dependencies=("dws",)))
     memory = FailingMemoryClient()
     worker, trigger = make_worker(
         tmp_path, monkeypatch, planner=planner, memory_client=memory
@@ -303,6 +306,15 @@ def test_memory_dependency_is_deferred_without_authorization_side_effects(
     assert len(planner.calls) == 1
     assert memory.ready_calls == 1
     assert worker.dws.auth_login_starts == 0
+
+    with pytest.raises(
+        UniversalDependencyAuthorizationError,
+        match="memory_authorization_required",
+    ):
+        worker._process_queued_task(conversation(), stored)
+
+    assert len(planner.calls) == 1
+    assert memory.ready_calls == 2
 
 
 def test_worker_builds_trusted_context_and_force_generation(tmp_path, monkeypatch):
@@ -349,6 +361,28 @@ def test_worker_reuses_existing_native_codex_session(tmp_path, monkeypatch):
     assert worker.consume_once(max_tasks=1) == 1
 
     assert planner.calls[0][1] == "existing-session"
+
+
+def test_planner_exception_persists_new_native_codex_session(tmp_path, monkeypatch):
+    monkeypatch.setenv("CEO_UNIVERSAL_CONSUMER", "1")
+
+    class FailingPlanner(RecordingPlanner):
+        def plan(self, context, session_id=None):
+            self.calls.append((context, session_id))
+            self.last_session_id = "session-created-before-error"
+            raise ValueError("planner parse failed")
+
+    planner = FailingPlanner(no_reply_plan())
+    planner.last_session_id = None
+    worker, trigger = make_worker(tmp_path, monkeypatch, planner=planner)
+    task = enqueue(worker, trigger)
+
+    with pytest.raises(ValueError, match="planner parse failed"):
+        worker._process_queued_task(conversation(), task)
+
+    assert worker.store.get_codex_session_id("cid-1") == (
+        "session-created-before-error"
+    )
 
 
 def test_default_universal_planner_uses_native_codex_runner_and_15_minute_floor(
@@ -516,3 +550,111 @@ def test_concurrent_workers_execute_one_plan(tmp_path, monkeypatch):
 
     assert sorted(results) == [0, 1]
     assert len(planner.calls) == 1
+
+
+def test_same_conversation_tasks_cannot_plan_concurrently(tmp_path, monkeypatch):
+    monkeypatch.setenv("CEO_UNIVERSAL_CONSUMER", "1")
+    first_started = Event()
+    release_first = Event()
+
+    class BlockingPlanner(RecordingPlanner):
+        def plan(self, context, session_id=None):
+            self.calls.append((context, session_id))
+            first_started.set()
+            assert release_first.wait(timeout=5)
+            return self.plan_result.model_copy(deep=True)
+
+    first_trigger = trigger_message()
+    second_trigger = trigger_message(content="请处理第二个任务").model_copy(
+        update={"open_message_id": "msg-2"}
+    )
+    planner = BlockingPlanner(no_reply_plan())
+    worker1, _ = make_worker(
+        tmp_path,
+        monkeypatch,
+        trigger=first_trigger,
+        planner=planner,
+    )
+    first_task = enqueue(worker1, first_trigger)
+    second_task = enqueue(worker1, second_trigger)
+    worker2 = DingTalkAutoReplyWorker(
+        store=AutoReplyStore(tmp_path / "worker.sqlite3"),
+        dws=FakeDws(second_trigger),
+        codex=FakeLegacyCodex(),
+        now_provider=fixed_now,
+        universal_planner=planner,
+    )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first_future = pool.submit(
+            worker1._process_universal_queued_task,
+            conversation(),
+            first_task,
+            first_trigger,
+            [first_trigger],
+        )
+        assert first_started.wait(timeout=5)
+        second_future = pool.submit(
+            worker2._process_universal_queued_task,
+            conversation(),
+            second_task,
+            second_trigger,
+            [second_trigger],
+        )
+        with pytest.raises(RuntimeError, match="codex session locked"):
+            second_future.result(timeout=5)
+        release_first.set()
+        assert first_future.result(timeout=5) is True
+
+    assert len(planner.calls) == 1
+
+
+def test_flag_off_keeps_legacy_leak_check_order(tmp_path, monkeypatch):
+    monkeypatch.setenv("CEO_UNIVERSAL_CONSUMER", "0")
+    worker, trigger = make_worker(tmp_path, monkeypatch)
+    updates = []
+    delivered = []
+    regenerated = []
+    original_update = worker.store.update_reply_attempt
+
+    def recording_update(attempt_id, **kwargs):
+        updates.append(kwargs.copy())
+        return original_update(attempt_id, **kwargs)
+
+    monkeypatch.setattr(worker.store, "update_reply_attempt", recording_update)
+    monkeypatch.setattr("app.worker.feedback_spike_vercel_base_url", lambda: "")
+    monkeypatch.setattr(
+        "app.worker.contains_forbidden_leak",
+        lambda text: "unsafe-leak" in text,
+    )
+    monkeypatch.setattr(
+        worker,
+        "_regenerate_reply_after_leak_check",
+        lambda *, blocked_reply_text: (
+            regenerated.append(blocked_reply_text) or "clean reply"
+        ),
+    )
+    monkeypatch.setattr(worker, "_notify", lambda **kwargs: None)
+    monkeypatch.setattr(
+        worker,
+        "_deliver_trigger_reply",
+        lambda **kwargs: delivered.append(kwargs) or True,
+    )
+
+    worker._deliver_final_reply(
+        conversation=conversation(),
+        trigger=trigger,
+        new_messages=[trigger],
+        attempt_id=999,
+        final_reply_text="unsafe-leak",
+        at_users=[],
+        at_open_dingtalk_ids=[],
+        at_open_dingtalk_names=[],
+        direct_user_id=None,
+        direct_open_dingtalk_id=None,
+    )
+
+    assert updates[0]["final_reply_text"] == "unsafe-leak"
+    assert regenerated == ["unsafe-leak"]
+    assert len(delivered) == 1
+    assert "clean reply" in delivered[0]["reply_text"]

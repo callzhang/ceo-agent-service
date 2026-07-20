@@ -8,6 +8,7 @@ import time
 import urllib.request
 import zipfile
 from collections.abc import Callable
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from io import BytesIO
@@ -572,9 +573,10 @@ class DingTalkAutoReplyWorker:
         )
         return self._injected_universal_planner
 
-    def _universal_consumer(self) -> UniversalConsumerOrchestrator:
+    def _universal_consumer(self, planner=None) -> UniversalConsumerOrchestrator:
+        planner = planner or self._universal_planner()
         return UniversalConsumerOrchestrator(
-            planner=self._universal_planner(),
+            planner=planner,
             validator_context_factory=self._universal_dependency_status_provider,
             existing_terminal_attempt=self._universal_existing_terminal_attempt,
             existing_sent_reply=self._universal_existing_sent_reply,
@@ -583,7 +585,33 @@ class DingTalkAutoReplyWorker:
             action_execution_state=self.store.get_universal_action_execution_state,
             session_id=self._universal_session_id,
             executor=UniversalActionExecutor(self),
+            planning_lock=lambda context: self._universal_planning_session(
+                context,
+                planner,
+            ),
         )
+
+    @contextmanager
+    def _universal_planning_session(self, context: UniversalTaskContext, planner):
+        owner = (
+            f"universal:{context.task_id}:{context.execution_generation}:"
+            f"{id(self)}"
+        )
+        with self.store.codex_session_lock(context.conversation_id, owner):
+            before_session_id = self.store.get_codex_session_id(
+                context.conversation_id
+            )
+            try:
+                yield
+            finally:
+                after_session_id = getattr(planner, "last_session_id", None)
+                if after_session_id and after_session_id != before_session_id:
+                    self.store.upsert_conversation(
+                        conversation_id=context.conversation_id,
+                        title=context.conversation_title,
+                        single_chat=context.single_chat,
+                        codex_session_id=after_session_id,
+                    )
 
     def _universal_existing_terminal_attempt(
         self, context: UniversalTaskContext
@@ -633,16 +661,7 @@ class DingTalkAutoReplyWorker:
             execution_generation=task.execution_generation,
             reply_task_oa_url=task.oa_url,
         )
-        planner = self._universal_planner()
-        planner_session_before = getattr(planner, "last_session_id", None)
         result = self._universal_consumer().process(context)
-        planner_session_after = getattr(planner, "last_session_id", None)
-        if planner_session_after and planner_session_after != planner_session_before:
-            self._persist_codex_session_id(
-                conversation,
-                self.store.get_codex_session_id(context.conversation_id),
-                planner_session_after,
-            )
         return self._map_universal_consumer_result(result, trigger)
 
     def _map_universal_consumer_result(
@@ -9743,7 +9762,8 @@ class DingTalkAutoReplyWorker:
         allow_duplicate_send: bool = False,
     ) -> None:
         reply_text = self._native_reply_body(final_reply_text)
-        if contains_forbidden_leak(reply_text):
+        universal_consumer_enabled = os.getenv("CEO_UNIVERSAL_CONSUMER", "1") != "0"
+        if universal_consumer_enabled and contains_forbidden_leak(reply_text):
             regenerated_reply_text = self._regenerate_reply_after_leak_check(
                 blocked_reply_text=reply_text,
             )
@@ -9752,7 +9772,7 @@ class DingTalkAutoReplyWorker:
                 reply_text = self._native_reply_body(
                     self._format_reply_delivery_text(reply_text)
                 )
-        if contains_forbidden_leak(reply_text):
+        if universal_consumer_enabled and contains_forbidden_leak(reply_text):
             self.store.update_reply_attempt(
                 attempt_id,
                 final_reply_text=reply_text,
@@ -9814,6 +9834,29 @@ class DingTalkAutoReplyWorker:
             direct_user_id=direct_user_id or "",
             direct_open_dingtalk_id=direct_open_dingtalk_id or "",
         )
+        if not universal_consumer_enabled and contains_forbidden_leak(reply_text):
+            regenerated_reply_text = self._regenerate_reply_after_leak_check(
+                blocked_reply_text=reply_text,
+            )
+            if regenerated_reply_text:
+                reply_text = append_signature(regenerated_reply_text)
+                reply_text = self._format_reply_delivery_text(reply_text)
+                outgoing_text = prepare_outgoing_reply_text(
+                    reply_text=reply_text,
+                    original_text=trigger.content,
+                    attempt_id=attempt_id,
+                    feedback_base_url=feedback_base_url,
+                    feedback_link_prefix=feedback_link_prefix,
+                    feedback_link_appender=append_feedback_links,
+                )
+                reply_text = outgoing_text.text
+                feedback_token = outgoing_text.feedback_token
+                self.store.update_reply_attempt(
+                    attempt_id,
+                    final_reply_text=reply_text,
+                    direct_user_id=direct_user_id or "",
+                    direct_open_dingtalk_id=direct_open_dingtalk_id or "",
+                )
         reply_text = self._apply_reply_at_mentions(reply_text, reply_at_names or [])
         self.store.update_reply_attempt(
             attempt_id,
@@ -9821,6 +9864,25 @@ class DingTalkAutoReplyWorker:
             direct_user_id=direct_user_id or "",
             direct_open_dingtalk_id=direct_open_dingtalk_id or "",
         )
+        if not universal_consumer_enabled and contains_forbidden_leak(reply_text):
+            self.store.update_reply_attempt(
+                attempt_id,
+                send_status="blocked",
+                send_error="leak_check",
+            )
+            self.store.record_error(
+                conversation.open_conversation_id,
+                trigger.open_message_id,
+                "leak_check",
+                reply_text,
+            )
+            self._notify(
+                title=f"CEO agent blocked leak: {conversation.title}",
+                message=reply_text[:120],
+                conversation=conversation,
+                attempt_id=attempt_id,
+            )
+            return
         minutes_comment_target = self._minutes_comment_target(
             comment_target_messages or new_messages
         )

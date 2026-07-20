@@ -56,6 +56,19 @@ def test_reply_and_memory_plan_validates_and_converts_enums() -> None:
     assert plan.planner_version == "2026-07-20"
 
 
+def test_memory_write_forces_memory_execution_dependency() -> None:
+    plan = make_plan(
+        PlannedAction(
+            kind="memory_write",
+            reason="Persist the decision",
+            payload={"data": "The request was completed.", "type": "text"},
+        )
+    )
+
+    assert plan.dependencies == []
+    assert plan.execution_dependencies() == ("memory",)
+
+
 @pytest.mark.parametrize(
     "extra_field",
     ["created_at", "source_description", "user_id", "graph_id"],
