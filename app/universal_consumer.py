@@ -83,9 +83,29 @@ class UniversalConsumerOrchestrator:
         self.validator = UniversalValidator()
 
     def process(self, context: UniversalTaskContext) -> UniversalConsumerResult:
+        loaded_action_states: dict[int, UniversalActionExecutionState] = {}
+        loaded_plan_execution = self.load_plan_execution(context)
+        active_plan_incomplete = False
+        if loaded_plan_execution is not None:
+            loaded_plan_execution = self._copy_plan_execution(
+                loaded_plan_execution,
+                context,
+            )
+            for action_index, action in enumerate(loaded_plan_execution.plan.actions):
+                execution = build_universal_action_execution(
+                    context,
+                    loaded_plan_execution,
+                    action,
+                    action_index,
+                )
+                state = self.action_execution_state(deepcopy(execution))
+                loaded_action_states[action_index] = state
+                if state is not UniversalActionExecutionState.SUCCEEDED:
+                    active_plan_incomplete = True
+
         has_terminal_attempt = self.existing_terminal_attempt(context)
         has_sent_reply = self.existing_sent_reply(context)
-        if has_terminal_attempt or has_sent_reply:
+        if not active_plan_incomplete and (has_terminal_attempt or has_sent_reply):
             return UniversalConsumerResult(
                 completed=True,
                 reason="duplicate_trigger_already_terminal",
@@ -106,12 +126,8 @@ class UniversalConsumerOrchestrator:
 
         plan_execution: UniversalPlanExecution | None = None
         candidate_plan = True
-        loaded_plan_execution = self.load_plan_execution(context)
         if loaded_plan_execution is not None:
-            plan_execution = self._copy_plan_execution(
-                loaded_plan_execution,
-                context,
-            )
+            plan_execution = loaded_plan_execution
             candidate_plan = False
 
         if plan_execution is None:
@@ -122,9 +138,10 @@ class UniversalConsumerOrchestrator:
         else:
             plan = plan_execution.plan
 
-        has_terminal_attempt = self.existing_terminal_attempt(context)
-        has_sent_reply = self.existing_sent_reply(context)
-        if has_terminal_attempt or has_sent_reply:
+        if candidate_plan:
+            has_terminal_attempt = self.existing_terminal_attempt(context)
+            has_sent_reply = self.existing_sent_reply(context)
+        if candidate_plan and (has_terminal_attempt or has_sent_reply):
             return UniversalConsumerResult(
                 completed=True,
                 reason="duplicate_trigger_already_terminal",
@@ -157,8 +174,10 @@ class UniversalConsumerOrchestrator:
                 conversation_id=context.conversation_id,
                 trigger_message_id=context.trigger_message_id,
                 dependency_status=dependency_status,
-                existing_terminal_attempt=has_terminal_attempt,
-                existing_sent_reply=has_sent_reply,
+                existing_terminal_attempt=(
+                    has_terminal_attempt and not active_plan_incomplete
+                ),
+                existing_sent_reply=has_sent_reply and not active_plan_incomplete,
                 dry_run=context.dry_run,
                 required_dependencies=context.required_dependencies,
             ),
@@ -202,7 +221,9 @@ class UniversalConsumerOrchestrator:
                 action,
                 action_index,
             )
-            execution_state = self.action_execution_state(deepcopy(execution))
+            execution_state = loaded_action_states.get(action_index)
+            if execution_state is None:
+                execution_state = self.action_execution_state(deepcopy(execution))
             if execution_state is UniversalActionExecutionState.SUCCEEDED:
                 continue
             if execution_state is UniversalActionExecutionState.UNKNOWN:

@@ -3,6 +3,7 @@ import hashlib
 import sqlite3
 import threading
 from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 from collections.abc import Iterator
 from uuid import uuid4
@@ -43,9 +44,16 @@ from app.universal_plan import PlannedActionKind, UniversalPlan
 FAST_PATH_UNREAD_BACKOFF_TASK_ERROR = "waiting_fast_path_unread_backoff"
 SQLITE_BUSY_TIMEOUT_SECONDS = 30
 SQLITE_BUSY_TIMEOUT_MILLISECONDS = SQLITE_BUSY_TIMEOUT_SECONDS * 1000
+UNIVERSAL_MEMORY_LEASE_SECONDS = 15 * 60
 CODEX_SESSION_LOCK_STALE_SECONDS = 20 * 60
 _INITIALIZED_STORE_PATHS: set[Path] = set()
 _INITIALIZE_LOCK = threading.Lock()
+
+
+@dataclass(frozen=True)
+class UniversalMemoryActionClaim:
+    state: UniversalActionExecutionState
+    lease_token: str = ""
 
 
 class OrgUserProfile(BaseModel):
@@ -544,6 +552,8 @@ class AutoReplyStore:
                     action_hash text not null,
                     action_json text not null,
                     canonical_payload_json text not null default '',
+                    lease_token text not null default '',
+                    lease_expires_at text not null default '',
                     status text not null,
                     attempt_id integer not null default 0,
                     result_json text not null default '',
@@ -1073,11 +1083,16 @@ class AutoReplyStore:
                     "pragma table_info(universal_action_executions)"
                 ).fetchall()
             }
-            if "canonical_payload_json" not in universal_action_execution_columns:
-                db.execute(
-                    "alter table universal_action_executions add column "
-                    "canonical_payload_json text not null default ''"
-                )
+            for column in (
+                "canonical_payload_json",
+                "lease_token",
+                "lease_expires_at",
+            ):
+                if column not in universal_action_execution_columns:
+                    db.execute(
+                        "alter table universal_action_executions add column "
+                        f"{column} text not null default ''"
+                    )
             for table_name in ("reply_attempts", "sent_replies"):
                 existing = {
                     row["name"]
@@ -1447,6 +1462,68 @@ class AutoReplyStore:
         if normalized_stored != current:
             raise ValueError("context identity mismatch")
 
+    def _validate_or_upgrade_plan_context_identity(
+        self,
+        db: sqlite3.Connection,
+        row: sqlite3.Row,
+        context_json: str,
+        context_hash: str,
+        trigger_create_time: str,
+    ) -> None:
+        try:
+            self._validate_plan_context_identity(row, context_json, context_hash)
+            return
+        except ValueError as exc:
+            if str(exc) != "context identity mismatch":
+                raise
+        try:
+            stored = json.loads(row["context_json"])
+            supplied = json.loads(context_json)
+        except (TypeError, json.JSONDecodeError):
+            raise ValueError("context identity mismatch") from None
+        if not isinstance(stored, dict) or not isinstance(supplied, dict):
+            raise ValueError("context identity mismatch")
+        if stored.get("trigger_create_time") not in {None, ""}:
+            raise ValueError("context identity mismatch")
+        supplied_trigger_time = supplied.get("trigger_create_time")
+        if supplied_trigger_time != trigger_create_time or not trigger_create_time:
+            raise ValueError("context identity mismatch")
+        stored_without_time = dict(stored)
+        supplied_without_time = dict(supplied)
+        stored_without_time.pop("trigger_create_time", None)
+        supplied_without_time.pop("trigger_create_time", None)
+        if stored_without_time != supplied_without_time:
+            raise ValueError("context identity mismatch")
+        trigger_messages = [
+            message
+            for message in supplied.get("context_messages", [])
+            if isinstance(message, dict)
+            and message.get("open_message_id") == supplied.get("trigger_message_id")
+        ]
+        known_message_times = {
+            message.get("create_time") for message in trigger_messages
+            if message.get("create_time")
+        }
+        if known_message_times and known_message_times != {trigger_create_time}:
+            raise ValueError("context identity mismatch")
+        cursor = db.execute(
+            """
+            update universal_plan_executions
+            set context_json=?, context_hash=?, updated_at=current_timestamp
+            where execution_scope_id=? and status='active'
+              and context_json=? and context_hash=?
+            """,
+            (
+                context_json,
+                context_hash,
+                row["execution_scope_id"],
+                row["context_json"],
+                row["context_hash"],
+            ),
+        )
+        if cursor.rowcount != 1:
+            raise ValueError("context identity mismatch")
+
     def load_universal_plan_execution(
         self,
         context: UniversalTaskContext,
@@ -1471,7 +1548,13 @@ class AutoReplyStore:
             ).fetchone()
             if row is None:
                 return None
-            self._validate_plan_context_identity(row, context_json, context_hash)
+            self._validate_or_upgrade_plan_context_identity(
+                db,
+                row,
+                context_json,
+                context_hash,
+                task["trigger_create_time"],
+            )
             return self._universal_plan_execution_from_row(row)
 
     def create_universal_plan_execution(
@@ -1501,10 +1584,12 @@ class AutoReplyStore:
                 (context.task_id, context.execution_generation),
             ).fetchone()
             if existing is not None:
-                self._validate_plan_context_identity(
+                self._validate_or_upgrade_plan_context_identity(
+                    db,
                     existing,
                     context_json,
                     context_hash,
+                    task["trigger_create_time"],
                 )
                 return self._universal_plan_execution_from_row(existing)
 
@@ -1603,10 +1688,12 @@ class AutoReplyStore:
         )
         if durable_context != supplied_context:
             raise ValueError("task context mismatch")
-        self._validate_plan_context_identity(
+        self._validate_or_upgrade_plan_context_identity(
+            db,
             plan_row,
             canonical_universal_context_json(context),
             universal_context_sha256(context),
+            plan_row["task_trigger_create_time"],
         )
 
         plan_execution = self._universal_plan_execution_from_row(plan_row)
@@ -1722,7 +1809,7 @@ class AutoReplyStore:
         self,
         execution: UniversalActionExecution,
         canonical_payload_json: str,
-    ) -> UniversalActionExecutionState:
+    ) -> UniversalMemoryActionClaim:
         if execution.action.kind is not PlannedActionKind.MEMORY_WRITE:
             raise ValueError("memory claim requires a memory_write action")
         try:
@@ -1740,6 +1827,7 @@ class AutoReplyStore:
         with self._connect() as db:
             db.execute("begin immediate")
             row = self._validate_universal_action_execution(db, execution)
+            lease_token = uuid4().hex
             if row is None:
                 db.execute(
                     """
@@ -1752,8 +1840,13 @@ class AutoReplyStore:
                         action_json,
                         canonical_payload_json,
                         status,
-                        started_at
-                    ) values (?, ?, ?, ?, ?, ?, ?, 'started', current_timestamp)
+                        started_at,
+                        lease_token,
+                        lease_expires_at
+                    ) values (
+                        ?, ?, ?, ?, ?, ?, ?, 'started', current_timestamp, ?,
+                        datetime(current_timestamp, '+' || ? || ' seconds')
+                    )
                     """,
                     (
                         execution.execution_id,
@@ -1763,27 +1856,143 @@ class AutoReplyStore:
                         execution.action_hash,
                         canonical_universal_action_json(execution.action),
                         canonical_payload_json,
+                        lease_token,
+                        UNIVERSAL_MEMORY_LEASE_SECONDS,
                     ),
                 )
-                return UniversalActionExecutionState.NOT_STARTED
+                return UniversalMemoryActionClaim(
+                    UniversalActionExecutionState.NOT_STARTED,
+                    lease_token,
+                )
             if row["canonical_payload_json"] != canonical_payload_json:
                 raise ValueError("memory payload identity mismatch")
             if row["status"] == "succeeded":
-                return UniversalActionExecutionState.SUCCEEDED
-            db.execute(
+                return UniversalMemoryActionClaim(
+                    UniversalActionExecutionState.SUCCEEDED
+                )
+            if row["status"] == "started" and db.execute(
+                "select datetime(?) > current_timestamp",
+                (row["lease_expires_at"],),
+            ).fetchone()[0]:
+                return UniversalMemoryActionClaim(
+                    UniversalActionExecutionState.UNKNOWN
+                )
+            previous_status = row["status"]
+            if previous_status not in {"started", "unknown", "failed"}:
+                return UniversalMemoryActionClaim(
+                    UniversalActionExecutionState.UNKNOWN
+                )
+            cursor = db.execute(
                 """
                 update universal_action_executions
                 set status='started',
                     result_json='',
                     error='',
                     started_at=current_timestamp,
+                    lease_token=?,
+                    lease_expires_at=datetime(
+                        current_timestamp, '+' || ? || ' seconds'
+                    ),
                     completed_at='',
                     updated_at=current_timestamp
-                where execution_id=?
+                where execution_id=? and status=?
                 """,
-                (execution.execution_id,),
+                (
+                    lease_token,
+                    UNIVERSAL_MEMORY_LEASE_SECONDS,
+                    execution.execution_id,
+                    previous_status,
+                ),
             )
-            return UniversalActionExecutionState.NOT_STARTED
+            if cursor.rowcount != 1:
+                return UniversalMemoryActionClaim(
+                    UniversalActionExecutionState.UNKNOWN
+                )
+            return UniversalMemoryActionClaim(
+                UniversalActionExecutionState.NOT_STARTED,
+                lease_token,
+            )
+
+    def complete_universal_memory_action_execution(
+        self,
+        execution: UniversalActionExecution,
+        *,
+        canonical_payload_json: str,
+        lease_token: str,
+        attempt_id: int,
+        result_json: str,
+    ) -> None:
+        self._transition_universal_memory_action_execution(
+            execution,
+            canonical_payload_json=canonical_payload_json,
+            lease_token=lease_token,
+            status="succeeded",
+            attempt_id=attempt_id,
+            result_json=result_json,
+            error="",
+        )
+
+    def mark_universal_memory_action_execution(
+        self,
+        execution: UniversalActionExecution,
+        *,
+        canonical_payload_json: str,
+        lease_token: str,
+        status: str,
+        error: str,
+    ) -> None:
+        if status not in {"unknown", "failed"}:
+            raise ValueError("invalid memory action transition")
+        self._transition_universal_memory_action_execution(
+            execution,
+            canonical_payload_json=canonical_payload_json,
+            lease_token=lease_token,
+            status=status,
+            attempt_id=0,
+            result_json="",
+            error=error,
+        )
+
+    def _transition_universal_memory_action_execution(
+        self,
+        execution: UniversalActionExecution,
+        *,
+        canonical_payload_json: str,
+        lease_token: str,
+        status: str,
+        attempt_id: int,
+        result_json: str,
+        error: str,
+    ) -> None:
+        if not lease_token:
+            raise ValueError("memory action lease token is required")
+        with self._connect() as db:
+            db.execute("begin immediate")
+            row = self._validate_universal_action_execution(db, execution)
+            if row is None or row["canonical_payload_json"] != canonical_payload_json:
+                raise ValueError("memory payload identity mismatch")
+            cursor = db.execute(
+                """
+                update universal_action_executions
+                set status=?, attempt_id=?, result_json=?, error=?,
+                    completed_at=case when ?='succeeded' then current_timestamp else '' end,
+                    lease_token='', lease_expires_at='', updated_at=current_timestamp
+                where execution_id=? and status='started' and lease_token=?
+                      and canonical_payload_json=?
+                """,
+                (
+                    status,
+                    attempt_id,
+                    result_json,
+                    error,
+                    status,
+                    execution.execution_id,
+                    lease_token,
+                    canonical_payload_json,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("memory action lease ownership mismatch")
 
     def complete_universal_action_execution(
         self,

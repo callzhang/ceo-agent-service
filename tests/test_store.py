@@ -2179,6 +2179,65 @@ def test_universal_old_active_plan_context_compatibility_rejects_new_non_default
         store.load_universal_plan_execution(
             replace(context, trusted_mail_message_id="new-mail-id")
         )
+@pytest.mark.parametrize("legacy_value", [None, ""])
+def test_active_plan_upgrades_only_missing_trigger_create_time_once(
+    tmp_path: Path,
+    legacy_value: str | None,
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    context = _universal_context(task_id)
+    created = store.create_universal_plan_execution(context, _universal_plan())
+    legacy = json.loads(canonical_universal_context_json(context))
+    if legacy_value is None:
+        legacy.pop("trigger_create_time")
+    else:
+        legacy["trigger_create_time"] = legacy_value
+    legacy_json = json.dumps(
+        legacy, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    )
+    legacy_hash = hashlib.sha256(legacy_json.encode()).hexdigest()
+    with sqlite3.connect(store.path) as db:
+        db.execute(
+            "update universal_plan_executions set context_json=?, context_hash=?",
+            (legacy_json, legacy_hash),
+        )
+
+    loaded = store.load_universal_plan_execution(context)
+
+    assert loaded == created
+    with sqlite3.connect(store.path) as db:
+        upgraded = db.execute(
+            "select context_json, context_hash from universal_plan_executions"
+        ).fetchone()
+    assert upgraded == (
+        canonical_universal_context_json(context),
+        universal_context_sha256(context),
+    )
+
+
+def test_active_plan_trigger_time_compatibility_rejects_other_context_drift(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    context = _universal_context(task_id)
+    store.create_universal_plan_execution(context, _universal_plan())
+    legacy = json.loads(canonical_universal_context_json(context))
+    legacy.pop("trigger_create_time")
+    legacy["dry_run"] = True
+    legacy_json = json.dumps(
+        legacy, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    )
+    legacy_hash = hashlib.sha256(legacy_json.encode()).hexdigest()
+    with sqlite3.connect(store.path) as db:
+        db.execute(
+            "update universal_plan_executions set context_json=?, context_hash=?",
+            (legacy_json, legacy_hash),
+        )
+
+    with pytest.raises(ValueError, match="context identity mismatch"):
+        store.load_universal_plan_execution(context)
 
 
 @pytest.mark.parametrize(

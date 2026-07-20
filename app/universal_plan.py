@@ -1,15 +1,53 @@
 from enum import StrEnum
 import math
+import re
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.dingtalk_models import SensitivityKind
-from app.leak_check import contains_forbidden_leak
-
-
 MAX_MEMORY_WRITE_DATA_LENGTH = 2_000
 MAX_MEMORY_WRITE_LINES = 12
+
+_MEMORY_STACK_OR_EXCEPTION_PATTERNS = (
+    re.compile(r"traceback\s*\(most recent call last\)", re.IGNORECASE),
+    re.compile(r"\b(?:exception|runtimeerror)\s*:", re.IGNORECASE),
+    re.compile(r"\bstack\s+trace\s*:", re.IGNORECASE),
+    re.compile(r'^\s*file\s+"[^"]+",\s+line\s+\d+', re.IGNORECASE | re.MULTILINE),
+)
+_MEMORY_SECRET_PATTERNS = (
+    re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----", re.IGNORECASE),
+    re.compile(r"\bauthorization\s*:\s*bearer\s+\S{6,}", re.IGNORECASE),
+    re.compile(
+        r"\b(?:api[_ -]?key|access[_ -]?token|token|password)\s*(?:=|:)\s*\S{6,}",
+        re.IGNORECASE,
+    ),
+)
+_MEMORY_TRANSIENT_STATUS_PATTERNS = (
+    re.compile(
+        r"^\s*(?:status\s*[:=]\s*)?(?:processing|pending)\s*[.!。]?$",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"^\s*(?:task|job|request|write|sync)\b.{0,80}\btemporar(?:y|ily)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(r"(?:一次性错误|临时错误|处理中|等待处理|待处理状态)"),
+)
+_MEMORY_RUNTIME_PATH_PATTERN = re.compile(
+    r"(?:^|\s)(?:source\s*:\s*)?(?:/tmp/|/var/|/private/var/)",
+    re.IGNORECASE,
+)
+
+
+def _contains_forbidden_memory_content(data: str) -> bool:
+    patterns = (
+        *_MEMORY_STACK_OR_EXCEPTION_PATTERNS,
+        *_MEMORY_SECRET_PATTERNS,
+        *_MEMORY_TRANSIENT_STATUS_PATTERNS,
+        _MEMORY_RUNTIME_PATH_PATTERN,
+    )
+    return any(pattern.search(data) for pattern in patterns)
 
 
 def _contains_secret_shaped_token(data: str) -> bool:
@@ -167,7 +205,9 @@ class PlannedAction(UniversalPlanBase):
                 raise ValueError("memory_write payload.data is too long")
             if len(data.splitlines()) > MAX_MEMORY_WRITE_LINES:
                 raise ValueError("memory_write payload.data resembles raw logs")
-            if contains_forbidden_leak(data) or _contains_secret_shaped_token(data):
+            if _contains_forbidden_memory_content(
+                data
+            ) or _contains_secret_shaped_token(data):
                 raise ValueError("memory_write payload.data contains sensitive data")
             if self.payload.get("type") not in {"text", "message"}:
                 raise ValueError(

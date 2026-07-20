@@ -279,6 +279,7 @@ def _execution(
         conversation_title="Context title",
         single_chat=False,
         trigger_message_id="msg-context",
+        trigger_create_time=task.trigger_create_time,
         trigger_sender="Context sender",
         trigger_text="Context trigger",
         context_messages=(

@@ -1702,12 +1702,16 @@ class DingTalkAutoReplyWorker:
             sort_keys=True,
             separators=(",", ":"),
         )
-        claim_state = self.store.claim_universal_memory_action_execution(
+        claim = self.store.claim_universal_memory_action_execution(
             execution,
             canonical_payload_json,
         )
-        if claim_state is UniversalActionExecutionState.SUCCEEDED:
+        if claim.state is UniversalActionExecutionState.SUCCEEDED:
             return True
+        if claim.state is UniversalActionExecutionState.UNKNOWN:
+            raise RuntimeError(
+                f"universal memory action lease is active: {execution.execution_id}"
+            )
         attempt_id = self._record_universal_reply_attempt(
             execution,
             send_status="pending",
@@ -1719,7 +1723,13 @@ class DingTalkAutoReplyWorker:
                 send_status="blocked",
                 send_error=error,
             )
-            self.store.mark_universal_action_execution_failed(execution, error)
+            self.store.mark_universal_memory_action_execution(
+                execution,
+                canonical_payload_json=canonical_payload_json,
+                lease_token=claim.lease_token,
+                status="failed",
+                error=error,
+            )
             raise MemoryConnectorAuthorizationRequired(error)
         try:
             result = self.memory_client.memory_write_sync(**payload)
@@ -1730,7 +1740,13 @@ class DingTalkAutoReplyWorker:
                 send_status="blocked",
                 send_error=error,
             )
-            self.store.mark_universal_action_execution_failed(execution, error)
+            self.store.mark_universal_memory_action_execution(
+                execution,
+                canonical_payload_json=canonical_payload_json,
+                lease_token=claim.lease_token,
+                status="failed",
+                error=error,
+            )
             raise
         except Exception as exc:
             error = f"memory_write_outcome_unknown:{exc.__class__.__name__}"
@@ -1739,7 +1755,13 @@ class DingTalkAutoReplyWorker:
                 send_status="failed",
                 send_error=error,
             )
-            self.store.mark_universal_action_execution_unknown(execution, error)
+            self.store.mark_universal_memory_action_execution(
+                execution,
+                canonical_payload_json=canonical_payload_json,
+                lease_token=claim.lease_token,
+                status="unknown",
+                error=error,
+            )
             raise
         if not isinstance(result, MemoryWriteResult):
             error = "memory_write_outcome_unknown:invalid_result"
@@ -1748,7 +1770,13 @@ class DingTalkAutoReplyWorker:
                 send_status="failed",
                 send_error=error,
             )
-            self.store.mark_universal_action_execution_unknown(execution, error)
+            self.store.mark_universal_memory_action_execution(
+                execution,
+                canonical_payload_json=canonical_payload_json,
+                lease_token=claim.lease_token,
+                status="unknown",
+                error=error,
+            )
             raise RuntimeError(error)
 
         receipt = {
@@ -1768,8 +1796,10 @@ class DingTalkAutoReplyWorker:
             send_status="skipped",
             send_error="",
         )
-        self.store.complete_universal_action_execution(
+        self.store.complete_universal_memory_action_execution(
             execution,
+            canonical_payload_json=canonical_payload_json,
+            lease_token=claim.lease_token,
             attempt_id=attempt_id,
             result_json=receipt_json,
         )

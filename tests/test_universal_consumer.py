@@ -324,7 +324,7 @@ def test_duplicate_precedes_dependency_check_and_all_other_work(
     assert callbacks.calls["sent"] == 1
     assert callbacks.calls["session"] == 0
     assert callbacks.calls["action_state"] == 0
-    assert callbacks.calls["load_plan"] == 0
+    assert callbacks.calls["load_plan"] == 1
     assert callbacks.calls["create_plan"] == 0
 
 
@@ -344,7 +344,7 @@ def test_missing_required_dependency_stops_before_planner() -> None:
     )
     assert planner.calls == []
     assert executor.calls == []
-    assert callbacks.calls["load_plan"] == 0
+    assert callbacks.calls["load_plan"] == 1
     assert callbacks.calls["create_plan"] == 0
 
 
@@ -815,6 +815,39 @@ def test_partial_retry_skips_previously_completed_action() -> None:
         1,
     ]
     assert [execution.action for execution in executor.calls] == [second]
+
+
+def test_sent_reply_does_not_hide_pending_memory_in_active_plan() -> None:
+    reply = make_action(PlannedActionKind.SEND_REPLY)
+    memory = make_action(PlannedActionKind.MEMORY_WRITE)
+    persisted = make_plan(reply, memory, dependencies=("dws", "memory"))
+    callbacks = CallbackRecorder(
+        dependency_status={
+            "dws": DependencyStatus(ready=True),
+            "memory": DependencyStatus(ready=True),
+        },
+        terminal=True,
+        sent=True,
+        action_states={
+            0: UniversalActionExecutionState.SUCCEEDED,
+            1: UniversalActionExecutionState.NOT_STARTED,
+        },
+        loaded_plan_execution=UniversalPlanExecution(
+            "persisted-scope", "initial", persisted
+        ),
+    )
+    orchestrator, planner, executor = make_orchestrator(persisted, callbacks)
+
+    result = orchestrator.process(
+        make_context(required_dependencies=("dws", "memory"))
+    )
+
+    assert result.outcome is UniversalConsumerOutcome.COMPLETED
+    assert planner.calls == []
+    assert [call.action_index for call in executor.calls] == [1]
+    assert [call.action.kind for call in executor.calls] == [
+        PlannedActionKind.MEMORY_WRITE
+    ]
 
 
 def test_unknown_action_execution_stops_without_replay() -> None:

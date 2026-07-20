@@ -1,6 +1,7 @@
 import hashlib
 import json
 import sqlite3
+import threading
 from pathlib import Path
 
 import pytest
@@ -51,6 +52,19 @@ class FakeMemoryClient:
         if isinstance(result, Exception):
             raise result
         return result
+
+
+class BlockingMemoryClient(FakeMemoryClient):
+    def __init__(self) -> None:
+        super().__init__()
+        self.entered = threading.Event()
+        self.release = threading.Event()
+
+    def memory_write_sync(self, **kwargs):
+        self.calls.append(kwargs)
+        self.entered.set()
+        assert self.release.wait(timeout=5)
+        return MemoryWriteResult("episode-1", "queued", False)
 
 
 class ReadyDws:
@@ -309,12 +323,17 @@ def test_memory_recovers_when_receipt_was_audited_before_completion_commit(
 
     monkeypatch.setattr(
         store,
-        "complete_universal_action_execution",
+        "complete_universal_memory_action_execution",
         fail_completion,
     )
     with pytest.raises(OSError, match="database unavailable"):
         worker.execute_universal_memory_write(execution)
     assert store.get_universal_action_execution_state(execution).value == "unknown"
+
+    with sqlite3.connect(store.path) as db:
+        db.execute(
+            "update universal_action_executions set lease_expires_at='2000-01-01 00:00:00'"
+        )
 
     resumed = DingTalkAutoReplyWorker(
         store=AutoReplyStore(store.path),
@@ -327,3 +346,50 @@ def test_memory_recovers_when_receipt_was_audited_before_completion_commit(
 
     assert resumed.execute_universal_memory_write(execution) is True
     assert len(resumed.store.list_reply_attempts(limit=10)) == 1
+
+
+def test_concurrent_memory_workers_share_one_mcp_execution_lease(tmp_path) -> None:
+    store, _, execution, failed_worker = build_execution(
+        tmp_path, memory_client=FakeMemoryClient([TimeoutError("network timeout")])
+    )
+    with pytest.raises(TimeoutError):
+        failed_worker.execute_universal_memory_write(execution)
+    assert store.get_universal_action_execution_state(execution).value == "unknown"
+
+    first_client = BlockingMemoryClient()
+    first_worker = DingTalkAutoReplyWorker(
+        store=AutoReplyStore(store.path),
+        dws=object(),
+        codex=object(),
+        memory_client=first_client,
+    )
+    second_client = FakeMemoryClient(
+        [MemoryWriteResult("episode-duplicate", "duplicate", True)]
+    )
+    second_worker = DingTalkAutoReplyWorker(
+        store=AutoReplyStore(store.path),
+        dws=object(),
+        codex=object(),
+        memory_client=second_client,
+    )
+    first_errors: list[BaseException] = []
+
+    def run_first() -> None:
+        try:
+            first_worker.execute_universal_memory_write(execution)
+        except BaseException as exc:  # pragma: no cover - surfaced below
+            first_errors.append(exc)
+
+    thread = threading.Thread(target=run_first)
+    thread.start()
+    assert first_client.entered.wait(timeout=5)
+
+    with pytest.raises(RuntimeError, match="memory action lease is active"):
+        second_worker.execute_universal_memory_write(execution)
+    assert second_client.calls == []
+
+    first_client.release.set()
+    thread.join(timeout=5)
+    assert not thread.is_alive()
+    assert first_errors == []
+    assert len(first_client.calls) == 1
