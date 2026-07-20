@@ -19,6 +19,10 @@ os.environ["CEO_PROMPT_VAR_RESPONSIBILITY_SUMMARY"] = (
 os.environ["CEO_DING_ROBOT_NAME"] = "极简云机器人"
 os.environ["CEO_FORBIDDEN_PATH_PREFIXES"] = "/Users/principal/,/home/principal/"
 os.environ["FAST_PATH_UNREAD_BACKOFF"] = "0s"
+# The historical worker suite exercises the explicit rollback path. Universal
+# wiring tests delete or override this value when verifying the production
+# default.
+os.environ["CEO_UNIVERSAL_CONSUMER"] = "0"
 
 
 @pytest.fixture(autouse=True)
