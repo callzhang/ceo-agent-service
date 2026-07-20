@@ -1,5 +1,6 @@
 from collections.abc import Callable
 from dataclasses import dataclass
+from enum import StrEnum
 from typing import Protocol
 
 from app.universal_context import UniversalTaskContext
@@ -23,11 +24,22 @@ class _UniversalExecutor(Protocol):
     def execute(self, action: PlannedAction) -> bool: ...
 
 
+class UniversalConsumerOutcome(StrEnum):
+    COMPLETED = "completed"
+    DUPLICATE = "duplicate"
+    WAITING_FOR_DEPENDENCY = "waiting_for_dependency"
+    DRY_RUN = "dry_run"
+    VALIDATION_BLOCKED = "validation_blocked"
+    ACTION_FAILED = "action_failed"
+    NONTERMINAL_BLOCKED = "nonterminal_blocked"
+
+
 @dataclass(frozen=True)
 class UniversalConsumerResult:
     completed: bool
     reason: str
     executed_actions: tuple[PlannedAction, ...]
+    outcome: UniversalConsumerOutcome
 
 
 class UniversalConsumerOrchestrator:
@@ -35,10 +47,13 @@ class UniversalConsumerOrchestrator:
         self,
         planner: _UniversalPlanner,
         validator_context_factory: Callable[
-            [UniversalTaskContext], dict[str, DependencyStatus]
+            [UniversalTaskContext, tuple[str, ...]], dict[str, DependencyStatus]
         ],
         existing_terminal_attempt: Callable[[UniversalTaskContext], bool],
         existing_sent_reply: Callable[[UniversalTaskContext], bool],
+        action_already_completed: Callable[
+            [UniversalTaskContext, PlannedAction, int], bool
+        ],
         session_id: Callable[[UniversalTaskContext], str | None],
         executor: _UniversalExecutor,
     ) -> None:
@@ -46,6 +61,7 @@ class UniversalConsumerOrchestrator:
         self.validator_context_factory = validator_context_factory
         self.existing_terminal_attempt = existing_terminal_attempt
         self.existing_sent_reply = existing_sent_reply
+        self.action_already_completed = action_already_completed
         self.session_id = session_id
         self.executor = executor
         self.validator = UniversalValidator()
@@ -58,28 +74,54 @@ class UniversalConsumerOrchestrator:
                 completed=True,
                 reason="duplicate_trigger_already_terminal",
                 executed_actions=(),
+                outcome=UniversalConsumerOutcome.DUPLICATE,
             )
 
-        dependency_status = self.validator_context_factory(context)
-        for dependency in context.required_dependencies:
-            status = dependency_status.get(dependency)
-            if status is None:
-                return UniversalConsumerResult(
-                    completed=False,
-                    reason=f"dependency_status_missing:{dependency}",
-                    executed_actions=(),
-                )
-            if not status.ready:
-                return UniversalConsumerResult(
-                    completed=False,
-                    reason=status.reason.strip() or f"{dependency}_unavailable",
-                    executed_actions=(),
-                )
+        dependency_status = (
+            dict(self.validator_context_factory(context, context.required_dependencies))
+            if context.required_dependencies
+            else {}
+        )
+        dependency_failure = self._dependency_failure(
+            context.required_dependencies, dependency_status
+        )
+        if dependency_failure is not None:
+            return dependency_failure
 
         plan = self.planner.plan(
             context,
             session_id=self.session_id(context),
         )
+
+        has_terminal_attempt = self.existing_terminal_attempt(context)
+        has_sent_reply = self.existing_sent_reply(context)
+        if has_terminal_attempt or has_sent_reply:
+            return UniversalConsumerResult(
+                completed=True,
+                reason="duplicate_trigger_already_terminal",
+                executed_actions=(),
+                outcome=UniversalConsumerOutcome.DUPLICATE,
+            )
+
+        required_dependencies = self._ordered_dependencies(
+            context.required_dependencies,
+            tuple(str(dependency) for dependency in plan.dependencies),
+        )
+        unresolved_dependencies = tuple(
+            dependency
+            for dependency in required_dependencies
+            if dependency not in dependency_status
+        )
+        if unresolved_dependencies:
+            dependency_status.update(
+                self.validator_context_factory(context, unresolved_dependencies)
+            )
+        dependency_failure = self._dependency_failure(
+            required_dependencies, dependency_status
+        )
+        if dependency_failure is not None:
+            return dependency_failure
+
         validated = self.validator.validate(
             plan,
             UniversalValidationContext(
@@ -93,21 +135,32 @@ class UniversalConsumerOrchestrator:
             ),
         )
         if not validated.allowed:
+            if validated.block_reason == "dry_run":
+                outcome = UniversalConsumerOutcome.DRY_RUN
+            elif validated.terminal:
+                outcome = UniversalConsumerOutcome.COMPLETED
+            else:
+                outcome = UniversalConsumerOutcome.VALIDATION_BLOCKED
             return UniversalConsumerResult(
                 completed=validated.terminal,
                 reason=validated.block_reason,
                 executed_actions=(),
+                outcome=outcome,
             )
 
         executed_actions: list[PlannedAction] = []
-        for action in validated.actions:
-            if not self.executor.execute(action):
+        for action_index, action in enumerate(validated.actions):
+            if self.action_already_completed(context, action, action_index):
+                continue
+            audit_action = action.model_copy(deep=True)
+            if not self.executor.execute(action.model_copy(deep=True)):
                 return UniversalConsumerResult(
                     completed=False,
                     reason=f"action_execution_failed:{action.kind.value}",
                     executed_actions=tuple(executed_actions),
+                    outcome=UniversalConsumerOutcome.ACTION_FAILED,
                 )
-            executed_actions.append(action)
+            executed_actions.append(audit_action)
 
         nonterminal_blocked = (
             len(validated.actions) == 1
@@ -118,4 +171,45 @@ class UniversalConsumerOrchestrator:
             completed=not nonterminal_blocked,
             reason=plan.reason,
             executed_actions=tuple(executed_actions),
+            outcome=(
+                UniversalConsumerOutcome.NONTERMINAL_BLOCKED
+                if nonterminal_blocked
+                else UniversalConsumerOutcome.COMPLETED
+            ),
         )
+
+    @staticmethod
+    def _ordered_dependencies(
+        required_dependencies: tuple[str, ...],
+        plan_dependencies: tuple[str, ...],
+    ) -> tuple[str, ...]:
+        ordered: list[str] = []
+        seen: set[str] = set()
+        for dependency in (*required_dependencies, *plan_dependencies):
+            if dependency not in seen:
+                seen.add(dependency)
+                ordered.append(dependency)
+        return tuple(ordered)
+
+    @staticmethod
+    def _dependency_failure(
+        required_dependencies: tuple[str, ...],
+        dependency_status: dict[str, DependencyStatus],
+    ) -> UniversalConsumerResult | None:
+        for dependency in required_dependencies:
+            status = dependency_status.get(dependency)
+            if status is None:
+                return UniversalConsumerResult(
+                    completed=False,
+                    reason=f"dependency_status_missing:{dependency}",
+                    executed_actions=(),
+                    outcome=UniversalConsumerOutcome.WAITING_FOR_DEPENDENCY,
+                )
+            if not status.ready:
+                return UniversalConsumerResult(
+                    completed=False,
+                    reason=status.reason.strip() or f"{dependency}_unavailable",
+                    executed_actions=(),
+                    outcome=UniversalConsumerOutcome.WAITING_FOR_DEPENDENCY,
+                )
+        return None
