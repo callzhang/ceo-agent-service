@@ -149,7 +149,7 @@ def test_duplicate_final_state_wins_despite_dws_unavailable(
     )
 
 
-def test_ready_dependencies_allow_matching_reply() -> None:
+def test_ready_dependencies_allow_matching_non_terminal_reply() -> None:
     action = reply_action()
 
     result = UniversalValidator().validate(
@@ -160,7 +160,7 @@ def test_ready_dependencies_allow_matching_reply() -> None:
     assert result.allowed is True
     assert result.actions == (action,)
     assert result.block_reason == ""
-    assert result.terminal is True
+    assert result.terminal is False
 
 
 def test_dependency_union_is_ordered_and_uses_unavailable_default_reason() -> None:
@@ -235,13 +235,24 @@ def test_reply_actions_missing_target_are_blocked(kind: PlannedActionKind) -> No
             "conversation_id": CONVERSATION_ID,
             "trigger_message_id": "other-trigger",
         },
+        {"conversation_id": "other-conversation"},
+        {"trigger_message_id": "other-trigger"},
     ],
 )
-def test_reply_target_mismatch_is_blocked(target: dict[str, str]) -> None:
+@pytest.mark.parametrize(
+    "kind",
+    [
+        PlannedActionKind.SEND_REPLY,
+        PlannedActionKind.ASK_CLARIFYING_QUESTION,
+    ],
+)
+def test_reply_target_mismatch_is_blocked(
+    target: dict[str, str], kind: PlannedActionKind
+) -> None:
     result = UniversalValidator().validate(
         make_plan(
             PlannedAction(
-                kind=PlannedActionKind.SEND_REPLY,
+                kind=kind,
                 reason="Answer the requester",
                 target=target,
                 payload={"text": "Done."},
@@ -292,6 +303,7 @@ def test_other_external_actions_with_supplied_matching_target_are_allowed(
 
     assert result.allowed is True
     assert result.actions == (action,)
+    assert result.terminal is False
 
 
 def test_external_action_with_supplied_wrong_partial_target_is_mismatch() -> None:
@@ -334,10 +346,49 @@ def test_terminal_action_cannot_be_combined_with_send() -> None:
     )
 
 
-def test_sole_no_reply_is_terminal() -> None:
+def test_memory_write_is_not_terminal() -> None:
     action = PlannedAction(
-        kind=PlannedActionKind.NO_REPLY,
-        reason="No reply is needed",
+        kind=PlannedActionKind.MEMORY_WRITE,
+        reason="Preserve the decision",
+        payload={"content": "Decision recorded."},
+    )
+
+    result = UniversalValidator().validate(make_plan(action), make_context())
+
+    assert result.allowed is True
+    assert result.actions == (action,)
+    assert result.terminal is False
+
+
+def test_multiple_non_terminal_actions_are_not_terminal() -> None:
+    reply = reply_action()
+    memory_write = PlannedAction(
+        kind=PlannedActionKind.MEMORY_WRITE,
+        reason="Preserve the decision",
+        payload={"content": "Decision recorded."},
+    )
+
+    result = UniversalValidator().validate(
+        make_plan(reply, memory_write), make_context()
+    )
+
+    assert result.allowed is True
+    assert result.actions == (reply, memory_write)
+    assert result.terminal is False
+
+
+@pytest.mark.parametrize(
+    "kind",
+    [
+        PlannedActionKind.NO_REPLY,
+        PlannedActionKind.HANDOFF_TO_HUMAN,
+        PlannedActionKind.STOP_WITH_ERROR,
+    ],
+)
+def test_sole_terminal_control_is_terminal(kind: PlannedActionKind) -> None:
+    action = PlannedAction(
+        kind=kind,
+        reason="Stop processing this plan",
     )
 
     result = UniversalValidator().validate(make_plan(action), make_context())

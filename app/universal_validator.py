@@ -137,26 +137,30 @@ class UniversalValidator:
         for action in plan.actions:
             if action.kind not in _EXTERNAL_ACTION_KINDS:
                 continue
-            if action.kind in _REPLY_ACTION_KINDS and any(
-                not action.target.get(field_name) for field_name in expected_target
-            ):
-                return "missing_action_target"
             if any(
                 field_name in action.target
                 and action.target[field_name] != expected_value
                 for field_name, expected_value in expected_target.items()
             ):
                 return "action_target_mismatch"
+            if action.kind in _REPLY_ACTION_KINDS and any(
+                not action.target.get(field_name) for field_name in expected_target
+            ):
+                return "missing_action_target"
         return ""
 
     @staticmethod
     def _is_terminal(actions: tuple[PlannedAction, ...]) -> bool:
         if len(actions) != 1:
-            return True
+            return False
         action = actions[0]
         if action.kind is PlannedActionKind.BLOCKED:
             return action.payload.get("terminal", False) is True
-        return True
+        return action.kind in {
+            PlannedActionKind.NO_REPLY,
+            PlannedActionKind.HANDOFF_TO_HUMAN,
+            PlannedActionKind.STOP_WITH_ERROR,
+        }
 
     @staticmethod
     def _blocked_result(
