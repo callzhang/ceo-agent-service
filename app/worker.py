@@ -193,7 +193,10 @@ def _is_codex_login_required_error(reason: str) -> bool:
     normalized = reason.lower()
     return (
         "failed to refresh token" in normalized
-        and "session has ended" in normalized
+        and (
+            "session has ended" in normalized
+            or "invalid refresh token" in normalized
+        )
     ) or "token_invalidated" in normalized
 
 

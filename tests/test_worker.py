@@ -8973,6 +8973,38 @@ def test_codex_login_required_stop_with_error_is_failed(
     }
 
 
+def test_codex_invalid_refresh_token_waits_for_authorization(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message("@Alex Chen(明哥) 这个怎么处理？")
+    dws = FakeDws([conversation()], {"cid-1": [trigger]})
+    reason = "Failed to refresh token: 400 Bad Request: Invalid refresh token."
+    codex = FakeCodex(
+        CodexDecision(
+            action=CodexAction.STOP_WITH_ERROR,
+            reason=reason,
+            macos_notify=False,
+        )
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch, dry_run=True)
+    notifications: list[dict[str, str | None]] = []
+    monkeypatch.setattr(
+        "app.worker.send_macos_notification",
+        lambda **kwargs: notifications.append(kwargs),
+    )
+
+    worker.run_once()
+
+    attempt = worker.store.get_reply_attempt(1)
+    assert attempt is not None
+    assert attempt.action == "stop_with_error"
+    assert attempt.send_status == "blocked"
+    assert attempt.send_error == f"codex_login_required: {reason}"
+    assert worker.store.count_reply_tasks(status="pending") == 1
+    assert worker.store.count_reply_tasks(status="failed") == 0
+    assert notifications[0]["title"] == "CEO task waiting for authorization: Friday"
+
+
 @pytest.mark.parametrize(
     ("reason", "expected_detail"),
     [
