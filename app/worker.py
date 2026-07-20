@@ -5259,6 +5259,8 @@ class DingTalkAutoReplyWorker:
             )
             send_error = decision.reason
             authorization_wait = _is_codex_authorization_wait_reason(send_error)
+            if authorization_wait:
+                self.store.clear_codex_session(conversation.open_conversation_id)
             transient_dependency = send_error.startswith(
                 DWS_TRANSIENT_DEPENDENCY_UNAVAILABLE_PREFIX
             )

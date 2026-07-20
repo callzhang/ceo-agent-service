@@ -9010,6 +9010,12 @@ def test_codex_login_required_stop_with_error_is_failed(
         )
     )
     worker = make_worker(tmp_path, dws, codex, monkeypatch, dry_run=True)
+    worker.store.upsert_conversation(
+        "cid-1",
+        title="Friday",
+        single_chat=False,
+        codex_session_id="session-1",
+    )
     notifications: list[dict[str, str | None]] = []
     monkeypatch.setattr(
         "app.worker.send_macos_notification",
@@ -9046,6 +9052,12 @@ def test_codex_invalid_refresh_token_waits_for_authorization(
         )
     )
     worker = make_worker(tmp_path, dws, codex, monkeypatch, dry_run=True)
+    worker.store.upsert_conversation(
+        "cid-1",
+        title="Friday",
+        single_chat=False,
+        codex_session_id="session-1",
+    )
     notifications: list[dict[str, str | None]] = []
     monkeypatch.setattr(
         "app.worker.send_macos_notification",
@@ -9059,6 +9071,8 @@ def test_codex_invalid_refresh_token_waits_for_authorization(
     assert attempt.action == "stop_with_error"
     assert attempt.send_status == "blocked"
     assert attempt.send_error == f"codex_login_required: {reason}"
+    assert [session_id for _, session_id, _ in codex.calls] == ["session-1"]
+    assert worker.store.get_codex_session_id("cid-1") is None
     assert worker.store.count_reply_tasks(status="pending") == 1
     assert worker.store.count_reply_tasks(status="failed") == 0
     assert notifications[0]["title"] == "CEO task waiting for authorization: Friday"
