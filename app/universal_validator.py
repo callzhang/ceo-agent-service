@@ -8,6 +8,12 @@ class DependencyStatus:
     ready: bool
     reason: str = ""
 
+    def __post_init__(self) -> None:
+        if type(self.ready) is not bool:
+            raise TypeError("ready must be bool")
+        if not isinstance(self.reason, str):
+            raise TypeError("reason must be str")
+
 
 @dataclass(frozen=True)
 class UniversalValidationContext:
@@ -97,7 +103,7 @@ class UniversalValidator:
                 terminal=False,
             )
 
-        actions = tuple(plan.actions)
+        actions = tuple(action.model_copy(deep=True) for action in plan.actions)
         if context.dry_run:
             return ValidatedUniversalPlan(
                 allowed=False,

@@ -111,6 +111,20 @@ def test_dws_unavailable_blocks_plan() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    ("values", "message"),
+    [
+        ({"ready": 1}, "ready must be bool"),
+        ({"ready": True, "reason": None}, "reason must be str"),
+    ],
+)
+def test_dependency_status_rejects_invalid_field_types(
+    values: dict[str, object], message: str
+) -> None:
+    with pytest.raises(TypeError, match=message):
+        DependencyStatus(**values)
+
+
 def test_missing_required_dws_status_blocks_even_when_model_omits_dws() -> None:
     result = UniversalValidator().validate(
         make_plan(reply_action()),
@@ -195,6 +209,34 @@ def test_dry_run_preserves_actions_and_disallows_execution() -> None:
     assert result.actions == (action,)
     assert result.block_reason == "dry_run"
     assert result.terminal is False
+
+
+@pytest.mark.parametrize("dry_run", [False, True])
+def test_result_actions_are_isolated_from_original_plan_mutation(
+    dry_run: bool,
+) -> None:
+    action = reply_action()
+    plan = make_plan(action)
+
+    result = UniversalValidator().validate(plan, make_context(dry_run=dry_run))
+
+    action.target["conversation_id"] = "mutated-conversation"
+    action.payload["text"] = "Mutated reply."
+    plan.actions.append(
+        PlannedAction(
+            kind=PlannedActionKind.MEMORY_WRITE,
+            reason="Mutate the source plan",
+            payload={"content": "Mutation."},
+        )
+    )
+
+    assert result.actions[0] is not action
+    assert result.actions[0].target == {
+        "conversation_id": CONVERSATION_ID,
+        "trigger_message_id": TRIGGER_MESSAGE_ID,
+    }
+    assert result.actions[0].payload == {"text": "Done."}
+    assert len(result.actions) == 1
 
 
 @pytest.mark.parametrize(
@@ -304,6 +346,47 @@ def test_other_external_actions_with_supplied_matching_target_are_allowed(
     assert result.allowed is True
     assert result.actions == (action,)
     assert result.terminal is False
+
+
+@pytest.mark.parametrize(
+    "action",
+    [
+        PlannedAction(
+            kind=PlannedActionKind.DWS_MARKDOWN_DOCUMENT_REPLY,
+            reason="Reply with a document",
+            target={"document_id": "document-1"},
+        ),
+        PlannedAction(
+            kind=PlannedActionKind.DWS_MESSAGE_REACTION,
+            reason="React to a message",
+            target={"message_id": "message-1"},
+        ),
+        PlannedAction(
+            kind=PlannedActionKind.OA_APPROVAL,
+            reason="Comment on an approval",
+            target={"process_instance_id": "approval-1"},
+            payload={"action": "comment", "remark": "Reviewed."},
+        ),
+        PlannedAction(
+            kind=PlannedActionKind.MAIL_REPLY,
+            reason="Reply to mail",
+            target={"mailbox": "derek@example.com", "message_id": "mail-1"},
+            payload={"content": "Done."},
+        ),
+        PlannedAction(
+            kind=PlannedActionKind.CALENDAR_RESPONSE,
+            reason="Respond to an event",
+            target={"event_id": "event-1"},
+        ),
+    ],
+)
+def test_non_reply_external_actions_do_not_require_conversation_target(
+    action: PlannedAction,
+) -> None:
+    result = UniversalValidator().validate(make_plan(action), make_context())
+
+    assert result.allowed is True
+    assert result.actions == (action,)
 
 
 def test_external_action_with_supplied_wrong_partial_target_is_mismatch() -> None:
