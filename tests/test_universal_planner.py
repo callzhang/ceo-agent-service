@@ -101,6 +101,22 @@ def test_parse_universal_plan_json_rejects_malformed_and_extra_field_payloads():
         )
 
 
+def test_parse_universal_plan_json_does_not_fall_back_from_newer_invalid_plan():
+    from app.universal_planner import parse_universal_plan_json
+
+    raw = "\n".join(
+        [
+            json.dumps(_plan_payload(task_kind="older_valid")),
+            json.dumps(
+                {"message": json.dumps(_plan_payload(unexpected="newer_invalid"))}
+            ),
+        ]
+    )
+
+    with pytest.raises(ValueError):
+        parse_universal_plan_json(raw)
+
+
 def test_build_prompt_sets_planner_boundary_and_includes_schema_and_context():
     from app.universal_planner import UNIVERSAL_PLAN_SCHEMA_HINT, UniversalPlanner
 
@@ -112,6 +128,8 @@ def test_build_prompt_sets_planner_boundary_and_includes_schema_and_context():
     assert "dws auth login" in prompt
     assert "dws auth reset" in prompt
     assert "dws auth logout" in prompt
+    assert "must not run mutating MCP or CLI operations" in prompt
+    assert "service executors own all writes" in prompt
     assert "only UniversalPlan JSON" in prompt
     assert UNIVERSAL_PLAN_SCHEMA_HINT in prompt
     assert "at least one action" in prompt
@@ -162,12 +180,15 @@ def test_plan_uses_new_and_resume_commands_with_configured_mcps(tmp_path, monkey
         assert "--json" in command
         assert "--ignore-user-config" in command
         assert "--ignore-rules" in command
-        assert CODEX_BYPASS_APPROVALS_AND_SANDBOX in command
+        assert CODEX_BYPASS_APPROVALS_AND_SANDBOX not in command
         assert command[command.index("-m") + 1] == "planner-model"
         assert [command[index + 1] for index, value in enumerate(command[:-1]) if value == "--disable"] == ["hooks", "plugins"]
         assert any("mcp_servers.exa.url" in value for value in _config_values(command))
         assert any("mcp_servers.memory_connector.url" in value for value in _config_values(command))
         assert 'model_reasoning_effort="high"' in _config_values(command)
+        assert 'sandbox_mode="read-only"' in _config_values(command)
+        assert 'approval_policy="untrusted"' in _config_values(command)
+        assert 'approvals_reviewer="auto_review"' in _config_values(command)
 
 
 def test_plan_passes_noninteractive_environment_to_executor_and_returns_plan(tmp_path):
@@ -307,5 +328,68 @@ def test_plan_raises_clear_timeout_and_nonzero_process_errors(tmp_path):
         stdout="",
         stderr="codex command failed",
     )
-    with pytest.raises(RuntimeError, match="exited with status 1"):
+    with pytest.raises(RuntimeError, match="codex command failed"):
         planner.plan(_context())
+
+
+def test_plan_returns_valid_stdout_plan_from_nonzero_process_result(tmp_path):
+    from app.universal_planner import UniversalPlanner
+
+    raw = json.dumps(_plan_payload())
+    planner = UniversalPlanner(workspace=tmp_path)
+    planner._run_process_with_idle_timeout = lambda *args, **kwargs: ProcessRunResult(
+        returncode=1,
+        stdout=raw,
+        stderr="process exited late",
+    )
+
+    plan = planner.plan(_context())
+
+    assert plan.task_kind == "supplier_review"
+    assert planner.last_raw_output == raw
+
+
+def test_plan_keeps_nonzero_process_diagnostics_and_session_metadata(tmp_path):
+    from app.universal_planner import UniversalPlanner
+
+    raw = json.dumps({"type": "thread.started", "thread_id": " thread-1 "})
+    planner = UniversalPlanner(workspace=tmp_path)
+    planner._run_process_with_idle_timeout = lambda *args, **kwargs: ProcessRunResult(
+        returncode=1,
+        stdout=raw,
+        stderr="ERROR codex: invalid JSON schema access_token=secret-token",
+    )
+
+    with pytest.raises(RuntimeError, match="invalid JSON schema") as excinfo:
+        planner.plan(_context())
+
+    assert "secret-token" not in str(excinfo.value)
+    assert "[REDACTED]" in str(excinfo.value)
+    assert planner.last_session_id == "thread-1"
+    assert planner.last_raw_output == raw
+
+
+def test_plan_timeout_keeps_bounded_stdout_and_session_metadata(tmp_path):
+    from app.universal_planner import UniversalPlanner
+
+    raw = "\n".join(
+        [
+            json.dumps({"type": "thread.started", "thread_id": "thread-timeout"}),
+            "x" * 20_000,
+        ]
+    )
+    planner = UniversalPlanner(workspace=tmp_path)
+    planner._run_process_with_idle_timeout = lambda *args, **kwargs: ProcessRunResult(
+        returncode=-15,
+        stdout=raw,
+        stderr="",
+        timed_out=True,
+        timeout_reason="process produced no output for 900 seconds",
+    )
+
+    with pytest.raises(RuntimeError, match="no output for 900 seconds"):
+        planner.plan(_context())
+
+    assert planner.last_session_id == "thread-timeout"
+    assert len(planner.last_raw_output) < len(raw)
+    assert planner.last_raw_output.endswith("...[truncated]")

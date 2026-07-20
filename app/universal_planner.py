@@ -3,11 +3,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from pydantic import ValidationError
-
-from app.codex_decision import extract_codex_session_id
+from app.codex_decision import _subprocess_failure_reason, extract_codex_session_id
 from app.codex_runner import (
-    CODEX_BYPASS_APPROVALS_AND_SANDBOX,
     CodexRunner,
     _config_string,
     codex_model_config_options,
@@ -18,6 +15,7 @@ from app.process_runner import run_process_with_idle_timeout
 from app.universal_context import UniversalTaskContext
 from app.universal_plan import UniversalPlan
 
+UNIVERSAL_PLANNER_RAW_OUTPUT_LIMIT = 12_000
 
 UNIVERSAL_PLAN_SCHEMA_HINT = (
     "UniversalPlan JSON contract: "
@@ -68,7 +66,9 @@ class UniversalPlanner:
                 "DWS is blocking for DingTalk and must already be service-checked "
                 "before this planner is invoked. Do not run dws auth login, dws auth "
                 "reset, or dws auth logout. You may gather read-only evidence through "
-                "available tools and CLI when it is needed to make the plan.",
+                "available tools and CLI when it is needed to make the plan. You must "
+                "not run mutating MCP or CLI operations; service executors own all "
+                "writes.",
                 UNIVERSAL_PLAN_SCHEMA_HINT,
                 "Return only UniversalPlan JSON. Do not use Markdown fences or add "
                 "explanatory text.",
@@ -83,11 +83,9 @@ class UniversalPlanner:
     ) -> UniversalPlan:
         prompt = self.build_prompt(context)
         supplied_session_id = _usable_session_id(session_id)
+        self.last_session_id = supplied_session_id
         raw = self._execute(self._build_command(supplied_session_id), prompt)
-        current_session_id = _usable_session_id(extract_codex_session_id(raw))
-        if current_session_id is None:
-            current_session_id = supplied_session_id
-        self.last_session_id = current_session_id
+        current_session_id = self.last_session_id
         try:
             return parse_universal_plan_json(raw)
         except (ValueError, json.JSONDecodeError):
@@ -96,35 +94,42 @@ class UniversalPlanner:
 
         repair_prompt = _repair_prompt(raw)
         repair_raw = self._execute(self._build_command(current_session_id), repair_prompt)
-        self.last_session_id = _usable_session_id(
-            extract_codex_session_id(repair_raw)
-        ) or current_session_id
         return parse_universal_plan_json(repair_raw)
 
     def _execute(self, command: list[str], prompt: str) -> str:
         env = self.runner.build_env()
         if self.executor is not None:
             raw = self.executor(command, prompt, env)
-        else:
-            completed = self._run_process_with_idle_timeout(
-                command,
-                prompt=prompt,
-                env=env,
-                total_timeout_seconds=self.timeout_seconds,
-                idle_timeout_seconds=self.idle_timeout_seconds,
+            self._remember_output(raw)
+            return raw
+
+        completed = self._run_process_with_idle_timeout(
+            command,
+            prompt=prompt,
+            env=env,
+            total_timeout_seconds=self.timeout_seconds,
+            idle_timeout_seconds=self.idle_timeout_seconds,
+        )
+        raw = completed.stdout
+        self._remember_output(raw)
+        if completed.timed_out:
+            raise RuntimeError(
+                completed.timeout_reason or "universal planner codex timed out"
             )
-            if completed.timed_out:
+        if completed.returncode != 0:
+            try:
+                parse_universal_plan_json(raw)
+            except ValueError as exc:
                 raise RuntimeError(
-                    completed.timeout_reason or "universal planner codex timed out"
-                )
-            if completed.returncode != 0:
-                raise RuntimeError(
-                    "universal planner codex exited with status "
-                    f"{completed.returncode}"
-                )
-            raw = completed.stdout
-        self.last_raw_output = raw
+                    _subprocess_failure_reason(completed.stderr, raw)
+                ) from exc
         return raw
+
+    def _remember_output(self, raw: str) -> None:
+        self.last_raw_output = _bounded_stdout(raw)
+        session_id = _usable_session_id(extract_codex_session_id(raw))
+        if session_id:
+            self.last_session_id = session_id
 
     def _build_command(self, session_id: str | None) -> list[str]:
         common_options = [
@@ -139,7 +144,11 @@ class UniversalPlanner:
             *memory_connector_config_options(),
             *passthrough_mcp_server_config_options(),
             "-c",
-            'approval_policy="never"',
+            'sandbox_mode="read-only"',
+            "-c",
+            'approval_policy="untrusted"',
+            "-c",
+            'approvals_reviewer="auto_review"',
             "-c",
             _config_string(
                 "developer_instructions",
@@ -160,7 +169,6 @@ class UniversalPlanner:
                 "exec",
                 "resume",
                 *common_options,
-                CODEX_BYPASS_APPROVALS_AND_SANDBOX,
                 session_id,
                 "-",
             ]
@@ -168,7 +176,6 @@ class UniversalPlanner:
             self.runner.codex_bin,
             "exec",
             *common_options,
-            CODEX_BYPASS_APPROVALS_AND_SANDBOX,
             "--cd",
             str(self.runner.workspace),
             "-",
@@ -177,17 +184,11 @@ class UniversalPlanner:
 
 def parse_universal_plan_json(raw: str) -> UniversalPlan:
     payloads = _json_payloads(raw)
-    validation_error: ValidationError | None = None
     for payload in reversed(payloads):
         for candidate in _plan_candidates(payload):
             if not _looks_like_universal_plan(candidate):
                 continue
-            try:
-                return UniversalPlan.model_validate(candidate)
-            except ValidationError as exc:
-                validation_error = exc
-    if validation_error is not None:
-        raise validation_error
+            return UniversalPlan.model_validate(candidate)
     raise ValueError("No valid UniversalPlan JSON found in Codex output")
 
 
@@ -241,6 +242,12 @@ def _usable_session_id(value: str | None) -> str | None:
         return None
     normalized = value.strip()
     return normalized or None
+
+
+def _bounded_stdout(stdout: str) -> str:
+    if len(stdout) <= UNIVERSAL_PLANNER_RAW_OUTPUT_LIMIT:
+        return stdout
+    return stdout[:UNIVERSAL_PLANNER_RAW_OUTPUT_LIMIT] + "\n...[truncated]"
 
 
 def _repair_prompt(raw: str) -> str:
