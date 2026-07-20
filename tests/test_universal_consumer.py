@@ -132,10 +132,11 @@ class CallbackRecorder:
         self.session = session
         self.action_states = action_states or {}
         self.plan_executions: dict[tuple[int, str], UniversalPlanExecution] = {}
+        self.scope_owner: dict[str, tuple[int, str]] = {}
         if loaded_plan_execution is not None:
-            self.plan_executions[(42, loaded_plan_execution.execution_generation)] = (
-                loaded_plan_execution
-            )
+            loaded_key = (42, loaded_plan_execution.execution_generation)
+            self.plan_executions[loaded_key] = loaded_plan_execution
+            self.scope_owner[loaded_plan_execution.execution_scope_id] = loaded_key
         self.create_scope_ids = (
             list(create_scope_ids) if create_scope_ids is not None else None
         )
@@ -209,12 +210,16 @@ class CallbackRecorder:
             scope_id = f"scope-{self.calls['create_plan']}"
         else:
             scope_id = self.create_scope_ids.pop(0)
+        scope_owner = self.scope_owner.get(scope_id)
+        if scope_owner is not None and scope_owner != key:
+            raise ValueError("execution scope belongs to another generation")
         plan_execution = UniversalPlanExecution(
             scope_id,
             context.execution_generation,
             self.created_plan_override or plan,
         )
         self.plan_executions[key] = plan_execution
+        self.scope_owner[scope_id] = key
         self.created_plan_executions.append(plan_execution)
         return plan_execution
 
@@ -428,6 +433,19 @@ def test_different_execution_generations_create_different_action_ids() -> None:
         "scope-2",
     ]
     assert executor.calls[0].execution_id != executor.calls[1].execution_id
+
+
+def test_persistent_store_rejects_scope_reuse_across_generations() -> None:
+    callbacks = CallbackRecorder(create_scope_ids=["same-scope", "same-scope"])
+    orchestrator, _, executor = make_orchestrator(make_plan(make_action()), callbacks)
+
+    orchestrator.process(make_context(execution_generation="generation-1"))
+    with pytest.raises(
+        ValueError, match="execution scope belongs to another generation"
+    ):
+        orchestrator.process(make_context(execution_generation="generation-2"))
+
+    assert len(executor.calls) == 1
 
 
 def test_new_orchestrator_loads_scope_from_shared_persistent_store() -> None:

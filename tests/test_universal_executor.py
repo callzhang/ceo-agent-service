@@ -82,7 +82,9 @@ class FakeWorker:
         return self._execute("execute_universal_terminal_action", execution)
 
 
-def make_context(task_id: int = 42) -> UniversalTaskContext:
+def make_context(
+    task_id: int = 42, execution_generation: str = "initial"
+) -> UniversalTaskContext:
     return UniversalTaskContext(
         task_id=task_id,
         conversation_id="conversation-1",
@@ -95,6 +97,7 @@ def make_context(task_id: int = 42) -> UniversalTaskContext:
         required_dependencies=("dws",),
         force_new_decision=False,
         dry_run=False,
+        execution_generation=execution_generation,
     )
 
 
@@ -221,6 +224,31 @@ def test_execution_id_changes_with_scope_or_action_index() -> None:
         )
         == 3
     )
+
+
+def test_execution_id_changes_across_generations_even_when_scope_is_reused() -> None:
+    action = make_action(PlannedActionKind.MEMORY_WRITE)
+    first_generation = UniversalPlanExecution(
+        "reused-scope", "generation-1", make_plan(action)
+    )
+    second_generation = UniversalPlanExecution(
+        "reused-scope", "generation-2", make_plan(action)
+    )
+
+    first = build_universal_action_execution(
+        make_context(execution_generation="generation-1"),
+        first_generation,
+        action,
+        0,
+    )
+    second = build_universal_action_execution(
+        make_context(execution_generation="generation-2"),
+        second_generation,
+        action,
+        0,
+    )
+
+    assert first.execution_id != second.execution_id
 
 
 def test_plan_execution_is_frozen_and_deep_copies_plan() -> None:
