@@ -1960,7 +1960,8 @@ class AutoReplyStore:
         with self._connect() as db:
             canonical = " ".join(candidate.statement.split()).casefold()
             existing = db.execute(
-                "select * from wechat_memory_candidates where account_id=? order by id",
+                "select * from wechat_memory_candidates where account_id=? "
+                "and status in ('pending', 'approved') order by id",
                 (account_id,),
             ).fetchall()
             for row in existing:
@@ -2155,8 +2156,11 @@ class AutoReplyStore:
                 raise RuntimeError("memory write claim lost")
 
     def resolve_wechat_memory_candidate_write_unknown(
-        self, candidate_id: int, *, reviewer: str,
+        self, candidate_id: int, *, reviewer: str, confirm: bool = False,
+        stale_after_seconds: int = 900,
     ) -> None:
+        if not confirm:
+            raise ValueError("explicit stale write confirmation required")
         if not reviewer.strip():
             raise ValueError("reviewer required")
         with self._connect() as db:
@@ -2164,11 +2168,12 @@ class AutoReplyStore:
                 "update wechat_memory_candidates set memory_write_status='unknown', "
                 "memory_write_error='manually resolved after interrupted write', reviewer=?, "
                 "reviewed_at=current_timestamp, updated_at=current_timestamp "
-                "where id=? and memory_write_status='writing'",
-                (reviewer.strip(), candidate_id),
+                "where id=? and memory_write_status='writing' "
+                "and datetime(updated_at) <= datetime('now', ?)",
+                (reviewer.strip(), candidate_id, f"-{int(stale_after_seconds)} seconds"),
             )
             if changed.rowcount != 1:
-                raise ValueError("only writing candidate can be resolved to unknown")
+                raise ValueError("only confirmed stale writing candidate can be resolved to unknown")
 
     @staticmethod
     def _meeting_alignment_job_from_row(

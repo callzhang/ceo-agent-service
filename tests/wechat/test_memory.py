@@ -10,6 +10,7 @@ from app.wechat.memory import (
     CodexMemoryExtractionRunner, CodexMemoryWriteBackend,
     ExtractedMemoryCandidate, WechatMemoryImporter, WechatMemoryWriter,
 )
+from app.wechat.memory_import import CodexMemoryRecallMatcher
 from app.wechat.models import WechatMessage
 
 
@@ -21,6 +22,11 @@ def candidate(statement, *, category, source_message_ids=("m1",)):
         source_time_end="2026-07-17T10:00:00+08:00",
         evidence_excerpt=statement, cleanup_notes="test fixture",
     )
+
+
+class NoDurableMatch:
+    def match(self, candidates):
+        return {item.statement: "none" for item in candidates}
 
 
 @pytest.fixture
@@ -92,16 +98,27 @@ def test_candidate_forbids_unknown_fields():
         ExtractedMemoryCandidate(**candidate("x", category="fact").model_dump(), raw_chat="no")
 
 
-def test_clean_rejects_secret_or_transcript_cleanup_notes(store):
+def test_clean_discards_secret_or_transcript_cleanup_notes(store):
     importer = WechatMemoryImporter(store)
-    assert importer.clean_candidates([
+    rows = importer.clean_candidates([
         candidate("useful", category="fact").model_copy(
             update={"cleanup_notes": "token sk-proj-abcdefghijklmnopqrstuvwxyz"}
         ),
         candidate("also useful", category="fact").model_copy(
             update={"cleanup_notes": "x" * 501}
         ),
-    ]) == []
+    ])
+    assert [row.cleanup_notes for row in rows] == [
+        "deterministic_cleanup:v1", "deterministic_cleanup:v1"]
+
+
+def test_cleanup_note_is_deterministic_and_never_keeps_model_pii_or_chat(store):
+    row = WechatMemoryImporter(store).clean_candidates([
+        candidate("useful", category="fact").model_copy(update={
+            "cleanup_notes": "Alex said call 13800138000 or alex@example.com: 原聊天短句"
+        })
+    ])[0]
+    assert row.cleanup_notes == "deterministic_cleanup:v1"
 
 
 def test_run_persists_pending_candidates(store):
@@ -129,7 +146,8 @@ def test_run_persists_pending_candidates(store):
     from app.wechat.models import WechatAccount
     account = WechatAccount(account_id="acct-1", display_name="Derek", self_user_id="self",
                             account_dir="/a", db_dir="/a/db", app_version="4")
-    importer = WechatMemoryImporter(store, reader=FakeReader(), codex=FakeCodex())
+    importer = WechatMemoryImporter(
+        store, reader=FakeReader(), codex=FakeCodex(), matcher=NoDurableMatch())
     result = importer.run(account=account, target_ids=["u1"],
                           since="2026-07-01", until="2026-07-31", limit=100)
     assert result["candidates"] == 1
@@ -153,7 +171,7 @@ def test_import_does_not_change_scope_watermark(store):
     account = WechatAccount(account_id="acct-1", display_name="D", self_user_id="self",
                             account_dir="/a", db_dir="/a/db", app_version="4")
     reader = type("R", (), {"read_messages": lambda self, account, **kw: []})()
-    WechatMemoryImporter(store, reader=reader, codex=type("C", (), {"extract": lambda s, m: []})()).run(
+    WechatMemoryImporter(store, reader=reader, codex=type("C", (), {"extract": lambda s, m: []})(), matcher=NoDurableMatch()).run(
         account=account, target_ids=["u1"], since="2026-07-01", until="", limit=10)
     assert store.get_wechat_reply_scope("acct-1", "direct", "u1").last_active_at == before
 
@@ -176,7 +194,7 @@ def test_import_reads_each_target_with_correct_conversation_type_and_total_limit
     class Extractor:
         def extract(self, messages):
             return []
-    result = WechatMemoryImporter(store, Reader(), Extractor()).run(
+    result = WechatMemoryImporter(store, Reader(), Extractor(), NoDurableMatch()).run(
         account=account, target_ids=["u1", "g@chatroom"], since="2026-07-01",
         until="2026-07-31", limit=2)
     assert result["messages"] == 2
@@ -205,10 +223,10 @@ def test_import_global_newest_selection_is_target_order_independent(store):
         def extract(self, messages):
             seen.append([m.message_id for m in messages])
             return []
-    WechatMemoryImporter(store, Reader(), Extractor()).run(
+    WechatMemoryImporter(store, Reader(), Extractor(), NoDurableMatch()).run(
         account=account, target_ids=["old", "new"], since="2026-07-01", until="", limit=2)
     assert set(seen[0]) == {"o3", "n1"}
-    WechatMemoryImporter(store, Reader(), Extractor()).run(
+    WechatMemoryImporter(store, Reader(), Extractor(), NoDurableMatch()).run(
         account=account, target_ids=["new", "old"], since="2026-07-01", until="", limit=2)
     assert seen[1] == seen[0]
 
@@ -228,7 +246,7 @@ def test_import_filters_non_text_before_extraction(store):
         def extract(self, batch):
             seen.extend(m.kind for m in batch)
             return []
-    WechatMemoryImporter(store, Reader(), Extractor()).run(
+    WechatMemoryImporter(store, Reader(), Extractor(), NoDurableMatch()).run(
         account=account, target_ids=["u"], since="2026-07-01", until="", limit=10)
     assert seen == ["text"]
 
@@ -237,6 +255,54 @@ def test_import_rejects_invalid_date_bounds_before_read(store):
     importer = WechatMemoryImporter(store, reader=object(), codex=object())
     with pytest.raises(ValueError, match="invalid since"):
         importer.run(account_id="acct", target_ids=["u"], since="yesterday", until="", limit=10)
+
+
+def test_durable_exact_match_skips_pending_candidate(store):
+    class Exact:
+        def match(self, candidates): return {item.statement: "exact" for item in candidates}
+    # Reuse the real bounded import fixture via simple source/extractor.
+    from app.wechat.models import WechatAccount
+    account = WechatAccount(account_id="a", display_name="D", self_user_id="self",
+                            account_dir="/a", db_dir="/a/db", app_version="4")
+    message = WechatMessage(account_id="a", conversation_id="c1", message_id="m1",
+        sender_id="s", sender_display_name="S", conversation_type="direct", direction="inbound",
+        sent_at="2026-07-17T10:00:00+08:00", kind="text", text="fact", source_version="4")
+    reader = type("R", (), {"read_messages": lambda self, account, **kw: [message]})()
+    extractor = type("E", (), {"extract": lambda self, batch: [candidate("fact", category="fact")]})()
+    result = WechatMemoryImporter(store, reader, extractor, Exact()).run(
+        account=account, target_ids=["c1"], since="2026-07-01", until="", limit=10)
+    assert result["durable_duplicates"] == 1
+    assert store.list_wechat_memory_candidates() == []
+
+
+def test_import_fails_closed_without_durable_matcher(store):
+    importer = WechatMemoryImporter(store, reader=object(), codex=object())
+    from app.wechat.models import WechatAccount
+    account = WechatAccount(account_id="a", display_name="D", self_user_id="self",
+                            account_dir="/a", db_dir="/a/db", app_version="4")
+    with pytest.raises(RuntimeError, match="durable Memory matcher"):
+        importer.run(account=account, target_ids=["c1"], since="2026-07-01", until="", limit=10)
+
+
+def test_codex_recall_matcher_accepts_only_audited_memory_recall(tmp_path):
+    final = {"matches":[{"statement":"fact", "relation":"exact"}]}
+    success = "\n".join([
+        json.dumps({"type":"item.completed","item":{"type":"mcp_tool_call","call_id":"r1","tool":"memory_recall","arguments":{"query":"fact"}}}),
+        json.dumps({"type":"item.completed","item":{"type":"tool_result","call_id":"r1","output":{"ok":True,"results":[]}}}),
+        json.dumps({"type":"item.completed","item":{"type":"agent_message","text":json.dumps(final)}}),
+    ])
+    captured = {}
+    def execute(command, prompt):
+        captured["command"] = command
+        return success
+    matcher = CodexMemoryRecallMatcher(tmp_path, executor=execute)
+    assert matcher.match([candidate("fact", category="fact")]) == {"fact":"exact"}
+    assert 'mcp_servers.memory_connector.enabled_tools=["memory_recall"]' in captured["command"]
+    assert 'mcp_servers.memory_connector.disabled_tools=["memory_write"]' in captured["command"]
+    malicious = success.replace('"tool": "memory_recall"', '"tool": "memory_write"')
+    with pytest.raises(RuntimeError, match="only memory_recall"):
+        CodexMemoryRecallMatcher(tmp_path, executor=lambda c, p: malicious).match(
+            [candidate("fact", category="fact")])
 
 
 def _seed_candidate(store, status):
@@ -347,7 +413,13 @@ def test_review_actions_refuse_candidate_while_write_claimed(store):
         with pytest.raises(ValueError, match="writing"):
             store.review_wechat_memory_candidate(
                 cid, action, reviewer="Derek", final_statement="safe")
-    store.resolve_wechat_memory_candidate_write_unknown(cid, reviewer="Derek")
+    with pytest.raises(ValueError, match="stale"):
+        store.resolve_wechat_memory_candidate_write_unknown(
+            cid, reviewer="Derek", confirm=True)
+    with store._connect() as db:
+        db.execute("update wechat_memory_candidates set updated_at='2000-01-01' where id=?", (cid,))
+    store.resolve_wechat_memory_candidate_write_unknown(
+        cid, reviewer="Derek", confirm=True)
     assert store.get_wechat_memory_candidate(cid)["memory_write_status"] == "unknown"
 
 
@@ -374,6 +446,23 @@ def test_cross_run_duplicate_merges_sources_without_new_candidate(store):
     rows = store.list_wechat_memory_candidates()
     assert [row["id"] for row in rows] == [first]
     assert set(json.loads(rows[0]["source_message_ids_json"])) == {"m1", "m2"}
+
+
+@pytest.mark.parametrize("terminal", ["rejected", "revoked"])
+def test_rejected_or_revoked_local_candidate_does_not_suppress_new_run(store, terminal):
+    first = store.add_wechat_memory_candidate(
+        import_run_id="r1", account_id="acct",
+        candidate=candidate("Derek likes async", category="preference"))
+    if terminal == "rejected":
+        store.review_wechat_memory_candidate(first, "reject", reviewer="Derek")
+    else:
+        store.review_wechat_memory_candidate(
+            first, "approve", reviewer="Derek", final_statement="Derek likes async")
+        store.review_wechat_memory_candidate(first, "revoke", reviewer="Derek")
+    second = store.add_wechat_memory_candidate(
+        import_run_id="r2", account_id="acct",
+        candidate=candidate(" derek likes ASYNC ", category="preference"))
+    assert second is not None and second != first
 
 
 def test_codex_write_backend_requires_successful_memory_write_tool_event(tmp_path):
@@ -417,6 +506,11 @@ def test_codex_write_backend_requires_successful_memory_write_tool_event(tmp_pat
     failed = success.replace(json.dumps(output), json.dumps(failed_output))
     with pytest.raises(RuntimeError, match="backend rejected"):
         CodexMemoryWriteBackend(tmp_path, executor=lambda c, p: failed).write(
+            "final", source_time_start="2026-07-17", source_time_end="")
+
+    preview = success.replace('"tool": "memory_write"', '"tool": "memory_write_preview"')
+    with pytest.raises(Exception, match="expected one tool call"):
+        CodexMemoryWriteBackend(tmp_path, executor=lambda c, p: preview).write(
             "final", source_time_start="2026-07-17", source_time_end="")
 
 

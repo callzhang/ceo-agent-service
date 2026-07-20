@@ -226,9 +226,12 @@ def test_memory_review_can_resolve_interrupted_write_to_unknown(memory_client):
     memory_client.store.review_wechat_memory_candidate(
         cid, "approve", reviewer="D", final_statement="writing candidate")
     assert memory_client.store.claim_wechat_memory_candidate_write(cid)["outcome"] == "claimed"
+    with memory_client.store._connect() as db:
+        db.execute("update wechat_memory_candidates set updated_at='2000-01-01' where id=?", (cid,))
     response = memory_client.post(
         f"/wechat/memory-review/{cid}/resolve-unknown",
-        data={"reviewer": "Derek"}, follow_redirects=False)
+        data={"reviewer": "Derek", f"confirm_stale_{cid}": "1"},
+        follow_redirects=False)
     assert response.status_code == 303
     assert memory_client.store.get_wechat_memory_candidate(cid)["memory_write_status"] == "unknown"
 

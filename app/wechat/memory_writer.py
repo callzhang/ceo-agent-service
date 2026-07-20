@@ -61,10 +61,12 @@ class CodexMemoryWriteBackend:
         raw: str, *, statement: str, expected_created_at: str,
     ) -> str:
         from app.codex_decision import extract_codex_audit_events
+        from app.store import AutoReplyStore
         events = extract_codex_audit_events(raw, limit=100)
         calls = [event for event in events if event.get("tool", "") != "tool_output"]
         memory_calls = [event for event in calls
-                        if "memory_write" in event.get("tool", "").casefold()]
+                        if AutoReplyStore._is_memory_write_tool_name(
+                            event.get("tool", ""))]
         if len(calls) != 1 or len(memory_calls) != 1:
             raise MemoryWriteOutcomeUnknown("memory write outcome unknown: expected one tool call")
         call = memory_calls[0]
@@ -94,7 +96,6 @@ class CodexMemoryWriteBackend:
             )
         if len(outputs) != 1:
             raise MemoryWriteOutcomeUnknown("memory write outcome unknown: missing tool result")
-        from app.store import AutoReplyStore
         parsed = AutoReplyStore._parse_memory_write_output(outputs[0])
         if parsed.get("status") == "failed":
             raise RuntimeError(parsed.get("last_error") or "memory_write failed")

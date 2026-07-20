@@ -13,13 +13,13 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from app.wechat.models import WechatAccount, WechatMessage
 
 SCHEMA_PATH = Path(__file__).resolve().parents[1] / "schemas" / "wechat_memory_candidates.schema.json"
+DEDUPE_SCHEMA_PATH = Path(__file__).resolve().parents[1] / "schemas" / "wechat_memory_dedupe.schema.json"
 ALLOWED_CATEGORIES = frozenset({
     "fact", "preference", "commitment", "decision", "project_status",
     "relationship", "reusable_experience",
 })
 STATEMENT_LIMIT = 800
 EVIDENCE_LIMIT = 300
-CLEANUP_NOTES_LIMIT = 500
 BATCH_SIZE = 100
 MAX_TARGETS = 100
 
@@ -168,11 +168,103 @@ class CodexMemoryExtractionRunner:
         )
 
 
+class CodexMemoryRecallMatcher:
+    """Read-only durable Memory matcher, hard-limited to memory_recall."""
+
+    def __init__(self, workspace: Path, codex_bin: str = "codex", executor=None,
+                 timeout_seconds: int = 1200, idle_timeout_seconds: int = 900):
+        from app.codex_runner import CodexRunner
+        self.runner = CodexRunner(workspace=workspace, codex_bin=codex_bin)
+        self.executor = executor
+        self.timeout_seconds = timeout_seconds
+        self.idle_timeout_seconds = idle_timeout_seconds
+
+    def match(self, candidates: list[ExtractedMemoryCandidate]) -> dict[str, str]:
+        statements = [item.statement for item in candidates]
+        prompt = (
+            "只能调用 memory_recall，只读检查这些候选是否已存在于 durable Memory。"
+            "禁止 memory_write 和任何其他工具。每条输出 relation: none/exact/compatible/contradiction。\n"
+            + json.dumps(statements, ensure_ascii=False)
+        )
+        command = self.runner.build_command(
+            prompt, None, output_schema_path=DEDUPE_SCHEMA_PATH,
+            ignore_user_config=True)
+        from app.codex_runner import _passthrough_mcp_server_names
+        for name in _passthrough_mcp_server_names():
+            command[-1:-1] = ["-c", f"mcp_servers.{name}.enabled=false"]
+        command[-1:-1] = [
+            "-c", 'mcp_servers.memory_connector.enabled_tools=["memory_recall"]',
+            "-c", 'mcp_servers.memory_connector.disabled_tools=["memory_write"]',
+        ]
+        raw = self._execute(command, prompt)
+        self._validate_audit(raw)
+        payload = self._result_payload(raw)
+        result = {str(item["statement"]): str(item["relation"])
+                  for item in payload.get("matches", [])}
+        if set(result) != set(statements):
+            raise RuntimeError("durable Memory matcher returned incomplete results")
+        return result
+
+    def _execute(self, command: list[str], prompt: str) -> str:
+        if self.executor is not None:
+            return self.executor(command, prompt)
+        from app.codex_decision import _subprocess_failure_reason
+        from app.process_runner import run_process_with_idle_timeout
+        completed = run_process_with_idle_timeout(
+            command, prompt=prompt, env=self.runner.build_env(),
+            total_timeout_seconds=self.timeout_seconds,
+            idle_timeout_seconds=self.idle_timeout_seconds)
+        if completed.timed_out:
+            raise RuntimeError(completed.timeout_reason or "durable Memory matcher timed out")
+        if completed.returncode != 0:
+            raise RuntimeError(_subprocess_failure_reason(completed.stderr, completed.stdout))
+        return completed.stdout
+
+    @staticmethod
+    def _validate_audit(raw: str) -> None:
+        from app.codex_decision import extract_codex_audit_events
+        events = extract_codex_audit_events(raw, limit=100)
+        calls = [event for event in events if event.get("tool", "") != "tool_output"]
+        def is_recall(name: str) -> bool:
+            normalized = name.strip()
+            return normalized == "memory_recall" or normalized.endswith(
+                (".memory_recall", "__memory_recall", " memory_recall"))
+        if not calls or any(not is_recall(event.get("tool", "")) for event in calls):
+            raise RuntimeError("durable Memory matcher may use only memory_recall")
+        for call in calls:
+            outputs = [call.get("output", "")] if call.get("output") else []
+            if not outputs and call.get("call_id"):
+                outputs = [event.get("output", "") for event in events
+                           if event.get("call_id") == call["call_id"] and event.get("output")]
+            if len(outputs) != 1 or "error" in outputs[0].casefold():
+                raise RuntimeError("durable Memory recall audit is ambiguous")
+
+    @staticmethod
+    def _result_payload(raw: str) -> dict:
+        from app.codex_decision import _decision_text_candidates, _iter_json_payloads
+        values: list[object] = list(_iter_json_payloads(raw))
+        for payload in list(values):
+            if isinstance(payload, dict):
+                for text in _decision_text_candidates(payload):
+                    try:
+                        values.append(json.loads(text))
+                    except json.JSONDecodeError:
+                        continue
+        for payload in reversed(values):
+            if isinstance(payload, dict) and isinstance(payload.get("matches"), list):
+                relations = {"none", "exact", "compatible", "contradiction"}
+                if all(isinstance(item, dict) and item.get("relation") in relations
+                       for item in payload["matches"]):
+                    return payload
+        raise RuntimeError("durable Memory matcher returned no structured result")
+
+
 class WechatMemoryImporter:
-    def __init__(self, store, reader=None, codex=None):
+    def __init__(self, store, reader=None, codex=None, matcher=None):
         self.store = store
         self.reader = reader
         self.codex = codex
+        self.matcher = matcher
 
     @staticmethod
     def import_run_id(account_id: str, target_ids: list[str], since: str,
@@ -211,9 +303,6 @@ class WechatMemoryImporter:
                 continue
             if len(" ".join(candidate.evidence_excerpt.split())) > EVIDENCE_LIMIT:
                 continue
-            if (_contains_blocked_content(candidate.cleanup_notes)
-                    or len(" ".join(candidate.cleanup_notes.split())) > CLEANUP_NOTES_LIMIT):
-                continue
             key = statement.casefold()
             if key in seen:
                 continue
@@ -223,7 +312,7 @@ class WechatMemoryImporter:
                 "source_message_ids": source_messages,
                 "source_conversation_ids": source_conversations,
                 "evidence_excerpt": _redacted_excerpt(candidate.evidence_excerpt),
-                "cleanup_notes": _normalized(candidate.cleanup_notes, CLEANUP_NOTES_LIMIT),
+                "cleanup_notes": "deterministic_cleanup:v1",
             }))
         return cleaned
 
@@ -246,6 +335,8 @@ class WechatMemoryImporter:
             raise ValueError("since date bound must not be after until")
         if self.reader is None or self.codex is None or account is None:
             raise ValueError("reader, extraction runner, and ready account are required")
+        if self.matcher is None:
+            raise RuntimeError("durable Memory matcher is required")
 
         heap: list[tuple[str, str, str, int, WechatMessage]] = []
         sequence = 0
@@ -302,7 +393,24 @@ class WechatMemoryImporter:
                 since=since, until=until,
             ))
         candidates = self.clean_candidates(candidates)
+        relations = self.matcher.match(candidates) if candidates else {}
+        durable_duplicates = 0
+        filtered = []
+        for candidate in candidates:
+            relation = relations.get(candidate.statement)
+            if relation not in {"none", "exact", "compatible", "contradiction"}:
+                raise RuntimeError("durable Memory matcher returned incomplete results")
+            if relation == "exact":
+                durable_duplicates += 1
+                continue
+            if relation in {"compatible", "contradiction"}:
+                candidate = candidate.model_copy(update={
+                    "cleanup_notes": f"deterministic_cleanup:v1;dedupe_relation:{relation}"
+                })
+            filtered.append(candidate)
+        candidates = filtered
         written = sum(self.store.add_wechat_memory_candidate(
             import_run_id=run_id, account_id=resolved_account_id, candidate=candidate
         ) is not None for candidate in candidates)
-        return {"import_run_id": run_id, "messages": len(messages), "candidates": written}
+        return {"import_run_id": run_id, "messages": len(messages),
+                "candidates": written, "durable_duplicates": durable_duplicates}

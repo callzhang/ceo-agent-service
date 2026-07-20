@@ -18,7 +18,9 @@ from app import config
 from app.store import AutoReplyStore
 from app.wechat import discovery, service
 from app.wechat.models import WechatAccount
-from app.wechat.memory import CodexMemoryExtractionRunner, WechatMemoryImporter
+from app.wechat.memory import (
+    CodexMemoryExtractionRunner, CodexMemoryRecallMatcher, WechatMemoryImporter,
+)
 
 DEFAULT_DB = "data/auto-reply.sqlite3"
 
@@ -177,6 +179,7 @@ def cmd_import_memory(args) -> int:
     importer = WechatMemoryImporter(
         store, _reader(self_username=account.self_user_id),
         CodexMemoryExtractionRunner(config.workspace_path()),
+        CodexMemoryRecallMatcher(config.workspace_path()),
     )
     try:
         result = importer.run(
@@ -188,7 +191,8 @@ def cmd_import_memory(args) -> int:
         return 1
     print(
         f"import {result['import_run_id']}: read {result['messages']} message(s), "
-        f"created {result['candidates']} pending candidate(s); no Memory writes"
+        f"created {result['candidates']} pending candidate(s), skipped "
+        f"{result.get('durable_duplicates', 0)} durable duplicate(s); no Memory writes"
     )
     return 0
 

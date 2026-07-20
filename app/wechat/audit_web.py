@@ -110,6 +110,8 @@ def register_wechat_memory_review_routes(
                 ])
                 if row["memory_write_status"] == "writing":
                     parts.append(
+                        f"<label><input type='checkbox' name='confirm_stale_{cid}' value='1'>"
+                        "确认该写入已超时</label>"
                         f"<button formaction='/wechat/memory-review/{cid}/resolve-unknown' "
                         "formmethod='post'>中断写入标记为 unknown</button>"
                     )
@@ -195,7 +197,7 @@ def register_wechat_memory_review_routes(
             store_factory().resolve_wechat_memory_candidate_write_unknown(
                 candidate_id, reviewer=(
                     _one(form, f"reviewer_{candidate_id}") or _one(form, "reviewer")
-                ))
+                ), confirm=_one(form, f"confirm_stale_{candidate_id}") == "1")
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         return RedirectResponse("/wechat/memory-review", status_code=303)

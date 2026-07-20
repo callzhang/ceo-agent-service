@@ -154,13 +154,14 @@ def test_import_memory_uses_unique_ready_account_and_explicit_bounds(tmp_path, m
         app_version="4.1.10", self_user_id="self-1", capability_status="ready")
     captured = {}
     class Importer:
-        def __init__(self, store, reader, codex):
-            captured.update(store=store, reader=reader, codex=codex)
+        def __init__(self, store, reader, codex, matcher):
+            captured.update(store=store, reader=reader, codex=codex, matcher=matcher)
         def run(self, **kwargs):
             captured.update(kwargs)
             return {"import_run_id":"run", "messages":3, "candidates":1}
     monkeypatch.setattr(cli, "WechatMemoryImporter", Importer)
     monkeypatch.setattr(cli, "CodexMemoryExtractionRunner", lambda workspace: "runner")
+    monkeypatch.setattr(cli, "CodexMemoryRecallMatcher", lambda workspace: "matcher")
     monkeypatch.setattr(cli, "_reader", lambda **kwargs: "reader")
     args = SimpleNamespace(db=str(db), account_id="acct-1", target_id=["u1", "g@chatroom"],
                            since="2026-07-01", until="2026-07-20", limit=50)
