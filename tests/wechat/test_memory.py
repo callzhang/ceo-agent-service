@@ -10,7 +10,7 @@ from app.wechat.memory import (
     CodexMemoryExtractionRunner, CodexMemoryWriteBackend,
     ExtractedMemoryCandidate, WechatMemoryImporter, WechatMemoryWriter,
 )
-from app.wechat.memory_import import CodexMemoryRecallMatcher
+from app.wechat.memory_import import CodexMemoryRecallMatcher, DurableMemoryMatch
 from app.wechat.models import WechatMessage
 
 
@@ -259,7 +259,10 @@ def test_import_rejects_invalid_date_bounds_before_read(store):
 
 def test_durable_exact_match_skips_pending_candidate(store):
     class Exact:
-        def match(self, candidates): return {item.statement: "exact" for item in candidates}
+        def match(self, candidates):
+            return {item.statement: DurableMemoryMatch(
+                statement=item.statement, relation="exact", memory_id="mem-1",
+                evidence="fact") for item in candidates}
     # Reuse the real bounded import fixture via simple source/extractor.
     from app.wechat.models import WechatAccount
     account = WechatAccount(account_id="a", display_name="D", self_user_id="self",
@@ -285,10 +288,12 @@ def test_import_fails_closed_without_durable_matcher(store):
 
 
 def test_codex_recall_matcher_accepts_only_audited_memory_recall(tmp_path):
-    final = {"matches":[{"statement":"fact", "relation":"exact"}]}
+    query = 'wechat-memory-dedupe:v1:["fact"]'
+    final = {"matches":[{"statement":"fact", "relation":"exact",
+        "memory_id":"mem-1", "evidence":"durable fact", "merged_statement":""}]}
     success = "\n".join([
-        json.dumps({"type":"item.completed","item":{"type":"mcp_tool_call","call_id":"r1","tool":"memory_recall","arguments":{"query":"fact"}}}),
-        json.dumps({"type":"item.completed","item":{"type":"tool_result","call_id":"r1","output":{"ok":True,"results":[]}}}),
+        json.dumps({"type":"item.completed","item":{"type":"mcp_tool_call","call_id":"r1","tool":"memory_recall","arguments":{"query":query}}}),
+        json.dumps({"type":"item.completed","item":{"type":"tool_result","call_id":"r1","output":{"ok":True,"results":[{"uuid":"mem-1","text":"durable fact"}]}}}),
         json.dumps({"type":"item.completed","item":{"type":"agent_message","text":json.dumps(final)}}),
     ])
     captured = {}
@@ -296,13 +301,55 @@ def test_codex_recall_matcher_accepts_only_audited_memory_recall(tmp_path):
         captured["command"] = command
         return success
     matcher = CodexMemoryRecallMatcher(tmp_path, executor=execute)
-    assert matcher.match([candidate("fact", category="fact")]) == {"fact":"exact"}
+    assert matcher.match([candidate("fact", category="fact")])["fact"].relation == "exact"
     assert 'mcp_servers.memory_connector.enabled_tools=["memory_recall"]' in captured["command"]
     assert 'mcp_servers.memory_connector.disabled_tools=["memory_write"]' in captured["command"]
     malicious = success.replace('"tool": "memory_recall"', '"tool": "memory_write"')
     with pytest.raises(RuntimeError, match="only memory_recall"):
         CodexMemoryRecallMatcher(tmp_path, executor=lambda c, p: malicious).match(
             [candidate("fact", category="fact")])
+
+    unrelated_events = [json.loads(line) for line in success.splitlines()]
+    unrelated_events[0]["item"]["arguments"]["query"] = "unrelated"
+    unrelated = "\n".join(json.dumps(event) for event in unrelated_events)
+    with pytest.raises(RuntimeError, match="query does not match"):
+        CodexMemoryRecallMatcher(tmp_path, executor=lambda c, p: unrelated).match(
+            [candidate("fact", category="fact")])
+    no_success = success.replace('"ok": true', '"ok": false')
+    with pytest.raises(RuntimeError, match="explicitly succeed"):
+        CodexMemoryRecallMatcher(tmp_path, executor=lambda c, p: no_success).match(
+            [candidate("fact", category="fact")])
+    fabricated = success.replace("durable fact", "unrelated evidence", 1)
+    with pytest.raises(RuntimeError, match="absent from recall output"):
+        CodexMemoryRecallMatcher(tmp_path, executor=lambda c, p: fabricated).match(
+            [candidate("fact", category="fact")])
+    fabricated_id = success.replace("mem-1", "other-id", 1)
+    with pytest.raises(RuntimeError, match="absent from recall output"):
+        CodexMemoryRecallMatcher(tmp_path, executor=lambda c, p: fabricated_id).match(
+            [candidate("fact", category="fact")])
+
+
+def test_compatible_durable_match_persists_safe_merged_statement(store):
+    class Compatible:
+        def match(self, candidates):
+            return {item.statement: DurableMemoryMatch(
+                statement=item.statement, relation="compatible", memory_id="mem-1",
+                evidence="support", merged_statement="Derek prefers concise weekly updates")
+                for item in candidates}
+    from app.wechat.models import WechatAccount
+    account = WechatAccount(account_id="a", display_name="D", self_user_id="self",
+                            account_dir="/a", db_dir="/a/db", app_version="4")
+    message = WechatMessage(account_id="a", conversation_id="c1", message_id="m1",
+        sender_id="s", sender_display_name="S", conversation_type="direct", direction="inbound",
+        sent_at="2026-07-17T10:00:00+08:00", kind="text", text="fact", source_version="4")
+    reader = type("R", (), {"read_messages": lambda self, account, **kw: [message]})()
+    extractor = type("E", (), {"extract": lambda self, batch: [candidate(
+        "Derek prefers concise updates", category="preference")]})()
+    WechatMemoryImporter(store, reader, extractor, Compatible()).run(
+        account=account, target_ids=["c1"], since="2026-07-01", until="", limit=10)
+    row = store.list_wechat_memory_candidates()[0]
+    assert row["statement"] == "Derek prefers concise weekly updates"
+    assert row["cleanup_notes"].endswith("dedupe_relation:compatible")
 
 
 def _seed_candidate(store, status):
@@ -421,6 +468,14 @@ def test_review_actions_refuse_candidate_while_write_claimed(store):
     store.resolve_wechat_memory_candidate_write_unknown(
         cid, reviewer="Derek", confirm=True)
     assert store.get_wechat_memory_candidate(cid)["memory_write_status"] == "unknown"
+
+
+def test_resolve_writing_rejects_reduced_stale_threshold(store):
+    cid = _seed_candidate(store, status="approved")
+    store.claim_wechat_memory_candidate_write(cid)
+    with pytest.raises(ValueError, match="less than 900"):
+        store.resolve_wechat_memory_candidate_write_unknown(
+            cid, reviewer="Derek", confirm=True, stale_after_seconds=0)
 
 
 def test_finish_write_race_never_creates_revoked_written(store):

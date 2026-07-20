@@ -9,10 +9,13 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["statement", "relation"],
+        "required": ["statement", "relation", "memory_id", "evidence", "merged_statement"],
         "properties": {
           "statement": {"type": "string"},
-          "relation": {"type": "string", "enum": ["none", "exact", "compatible", "contradiction"]}
+          "relation": {"type": "string", "enum": ["none", "exact", "compatible", "contradiction"]},
+          "memory_id": {"type": "string"},
+          "evidence": {"type": "string", "maxLength": 240},
+          "merged_statement": {"type": "string"}
         }
       }
     }

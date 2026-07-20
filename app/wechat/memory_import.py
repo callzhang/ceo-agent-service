@@ -7,6 +7,7 @@ import json
 import re
 from datetime import datetime
 from pathlib import Path
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
@@ -52,6 +53,15 @@ class ExtractedMemoryCandidate(BaseModel):
     source_time_end: str = ""
     evidence_excerpt: str = ""
     cleanup_notes: str = ""
+
+
+class DurableMemoryMatch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    statement: str
+    relation: Literal["none", "exact", "compatible", "contradiction"]
+    memory_id: str = ""
+    evidence: str = Field(default="", max_length=240)
+    merged_statement: str = ""
 
 
 def _normalized(value: str, limit: int) -> str:
@@ -179,12 +189,19 @@ class CodexMemoryRecallMatcher:
         self.timeout_seconds = timeout_seconds
         self.idle_timeout_seconds = idle_timeout_seconds
 
-    def match(self, candidates: list[ExtractedMemoryCandidate]) -> dict[str, str]:
-        statements = [item.statement for item in candidates]
+    def match(
+        self, candidates: list[ExtractedMemoryCandidate]
+    ) -> dict[str, DurableMemoryMatch]:
+        statements = sorted(item.statement for item in candidates)
+        expected_query = (
+            "wechat-memory-dedupe:v1:" + json.dumps(
+                statements, ensure_ascii=False, separators=(",", ":"))
+        )
         prompt = (
-            "只能调用 memory_recall，只读检查这些候选是否已存在于 durable Memory。"
-            "禁止 memory_write 和任何其他工具。每条输出 relation: none/exact/compatible/contradiction。\n"
-            + json.dumps(statements, ensure_ascii=False)
+            "必须且只能调用一次 memory_recall，arguments 只能包含 query，且 query 必须逐字等于：\n"
+            + expected_query
+            + "\n只读检查候选是否已存在。禁止 memory_write 和其他工具。"
+            "每条输出 relation、supporting memory_id、最小 evidence；compatible 还必须给 merged_statement。"
         )
         command = self.runner.build_command(
             prompt, None, output_schema_path=DEDUPE_SCHEMA_PATH,
@@ -197,12 +214,27 @@ class CodexMemoryRecallMatcher:
             "-c", 'mcp_servers.memory_connector.disabled_tools=["memory_write"]',
         ]
         raw = self._execute(command, prompt)
-        self._validate_audit(raw)
+        recall_output = self._validate_audit(raw, expected_query=expected_query)
         payload = self._result_payload(raw)
-        result = {str(item["statement"]): str(item["relation"])
-                  for item in payload.get("matches", [])}
+        matches = [DurableMemoryMatch.model_validate(item)
+                   for item in payload.get("matches", [])]
+        result = {item.statement: item for item in matches}
         if set(result) != set(statements):
             raise RuntimeError("durable Memory matcher returned incomplete results")
+        recall_text = json.dumps(recall_output, ensure_ascii=False, sort_keys=True)
+        for item in matches:
+            if item.relation == "none":
+                if item.memory_id or item.evidence or item.merged_statement:
+                    raise RuntimeError("none durable match must not claim support")
+                continue
+            if not item.memory_id or not item.evidence:
+                raise RuntimeError("durable Memory match lacks supporting evidence")
+            if item.memory_id not in recall_text or item.evidence not in recall_text:
+                raise RuntimeError("durable Memory match support is absent from recall output")
+            if item.relation == "compatible":
+                validate_final_statement(item.merged_statement)
+            elif item.merged_statement:
+                raise RuntimeError("only compatible match may provide merged statement")
         return result
 
     def _execute(self, command: list[str], prompt: str) -> str:
@@ -221,23 +253,60 @@ class CodexMemoryRecallMatcher:
         return completed.stdout
 
     @staticmethod
-    def _validate_audit(raw: str) -> None:
+    def _validate_audit(raw: str, *, expected_query: str) -> object:
         from app.codex_decision import extract_codex_audit_events
+        from app.store import AutoReplyStore
         events = extract_codex_audit_events(raw, limit=100)
         calls = [event for event in events if event.get("tool", "") != "tool_output"]
         def is_recall(name: str) -> bool:
             normalized = name.strip()
             return normalized == "memory_recall" or normalized.endswith(
                 (".memory_recall", "__memory_recall", " memory_recall"))
-        if not calls or any(not is_recall(event.get("tool", "")) for event in calls):
+        if len(calls) != 1 or any(not is_recall(event.get("tool", "")) for event in calls):
             raise RuntimeError("durable Memory matcher may use only memory_recall")
-        for call in calls:
-            outputs = [call.get("output", "")] if call.get("output") else []
-            if not outputs and call.get("call_id"):
-                outputs = [event.get("output", "") for event in events
-                           if event.get("call_id") == call["call_id"] and event.get("output")]
-            if len(outputs) != 1 or "error" in outputs[0].casefold():
-                raise RuntimeError("durable Memory recall audit is ambiguous")
+        call = calls[0]
+        try:
+            arguments = json.loads(call.get("input", ""))
+        except json.JSONDecodeError as exc:
+            raise RuntimeError("durable Memory recall query audit is invalid") from exc
+        if arguments != {"query": expected_query}:
+            raise RuntimeError("durable Memory recall query does not match candidates")
+        outputs = [call.get("output", "")] if call.get("output") else []
+        if not outputs and call.get("call_id"):
+            outputs = [event.get("output", "") for event in events
+                       if event.get("call_id") == call["call_id"] and event.get("output")]
+        if len(outputs) != 1:
+            raise RuntimeError("durable Memory recall audit is ambiguous")
+        output = AutoReplyStore._load_memory_json(outputs[0])
+        output = CodexMemoryRecallMatcher._unwrap_recall_output(output)
+        if not isinstance(output, dict):
+            raise RuntimeError("durable Memory recall output is not structured")
+        processing = str(output.get("processing_status") or "").casefold()
+        if not (output.get("ok") is True or processing in {"completed", "success", "done", "ready"}):
+            raise RuntimeError("durable Memory recall did not explicitly succeed")
+        if output.get("error") or output.get("last_error"):
+            raise RuntimeError("durable Memory recall reported an error")
+        return output
+
+    @staticmethod
+    def _unwrap_recall_output(payload: object) -> object:
+        from app.store import AutoReplyStore
+        if not isinstance(payload, dict):
+            return payload
+        structured = payload.get("structured_content") or payload.get("structuredContent")
+        if isinstance(structured, dict):
+            nested = AutoReplyStore._load_memory_json(str(structured.get("result") or ""))
+            return nested if nested is not None else structured
+        if isinstance(payload.get("result"), str):
+            nested = AutoReplyStore._load_memory_json(payload["result"])
+            return nested if nested is not None else payload
+        if isinstance(payload.get("content"), list):
+            for item in payload["content"]:
+                if isinstance(item, dict):
+                    nested = AutoReplyStore._load_memory_json(str(item.get("text") or ""))
+                    if nested is not None:
+                        return nested
+        return payload
 
     @staticmethod
     def _result_payload(raw: str) -> dict:
@@ -252,10 +321,11 @@ class CodexMemoryRecallMatcher:
                         continue
         for payload in reversed(values):
             if isinstance(payload, dict) and isinstance(payload.get("matches"), list):
-                relations = {"none", "exact", "compatible", "contradiction"}
-                if all(isinstance(item, dict) and item.get("relation") in relations
-                       for item in payload["matches"]):
-                    return payload
+                try:
+                    [DurableMemoryMatch.model_validate(item) for item in payload["matches"]]
+                except ValidationError:
+                    continue
+                return payload
         raise RuntimeError("durable Memory matcher returned no structured result")
 
 
@@ -397,13 +467,22 @@ class WechatMemoryImporter:
         durable_duplicates = 0
         filtered = []
         for candidate in candidates:
-            relation = relations.get(candidate.statement)
+            match = relations.get(candidate.statement)
+            if match == "none":
+                match = DurableMemoryMatch(statement=candidate.statement, relation="none")
+            if not isinstance(match, DurableMemoryMatch):
+                raise RuntimeError("durable Memory matcher returned incomplete results")
+            relation = match.relation
             if relation not in {"none", "exact", "compatible", "contradiction"}:
                 raise RuntimeError("durable Memory matcher returned incomplete results")
             if relation == "exact":
                 durable_duplicates += 1
                 continue
             if relation in {"compatible", "contradiction"}:
+                if relation == "compatible":
+                    candidate = candidate.model_copy(update={
+                        "statement": validate_final_statement(match.merged_statement)
+                    })
                 candidate = candidate.model_copy(update={
                     "cleanup_notes": f"deterministic_cleanup:v1;dedupe_relation:{relation}"
                 })

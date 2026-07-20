@@ -2161,6 +2161,8 @@ class AutoReplyStore:
     ) -> None:
         if not confirm:
             raise ValueError("explicit stale write confirmation required")
+        if stale_after_seconds < 900:
+            raise ValueError("stale write threshold cannot be less than 900 seconds")
         if not reviewer.strip():
             raise ValueError("reviewer required")
         with self._connect() as db:

@@ -84,8 +84,13 @@ the existing row and merge source IDs/time without resetting its review/write
 state; rejected/revoked rows do not suppress a later import. Before any pending
 row is created, a read-only Codex matcher is hard-limited to the
 `memory_connector.memory_recall` tool. Exact durable-Memory matches are skipped;
-compatible or contradictory matches remain pending with a deterministic relation
-note. Missing, ambiguous, or tool-noncompliant recall fails the import closed.
+compatible matches use a separately validated merged statement and remain
+pending; contradictory matches retain the new statement and are flagged pending.
+Every non-`none` relation must cite a Memory id and minimal evidence that are
+programmatically verified against the successful recall output. The recall query
+is deterministic for the whole candidate batch and must match the sole audited
+tool call exactly. Missing, ambiguous, unrelated, or tool-noncompliant recall
+fails the import closed.
 Model-provided cleanup notes are never persisted. The interrupted-write action
 also requires explicit confirmation and a row that has remained `writing` for at
 least 15 minutes.
