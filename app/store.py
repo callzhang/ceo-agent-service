@@ -90,6 +90,7 @@ class ReplyAttempt(BaseModel):
     reviewed_at: str | None = None
     reviewer_feedback: str = ""
     corrected_reply_text: str = ""
+    channel: str = "dingtalk"
     created_at: str
     updated_at: str
 
@@ -3824,6 +3825,7 @@ class AutoReplyStore:
         mail_reply_text: str = "",
         mail_action_result_json: str = "",
         send_status: str = "pending",
+        channel: str = "dingtalk",
     ) -> int:
         with self._connect() as db:
             cursor = db.execute(
@@ -3860,9 +3862,10 @@ class AutoReplyStore:
                     mail_subject,
                     mail_reply_text,
                     mail_action_result_json,
-                    send_status
+                    send_status,
+                    channel
                 )
-                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     conversation_id,
@@ -3897,6 +3900,7 @@ class AutoReplyStore:
                     mail_reply_text,
                     mail_action_result_json,
                     send_status,
+                    channel,
                 ),
             )
             attempt_id = int(cursor.lastrowid)
@@ -4475,12 +4479,14 @@ class AutoReplyStore:
         send_statuses: tuple[str, ...] | None = None,
         query_text: str = "",
         kinds: tuple[str, ...] | None = None,
+        reply_channels: tuple[str, ...] | None = None,
         created_since: str = "",
     ) -> list[HistoryItem]:
         query, args = self._history_items_query(
             send_statuses=send_statuses,
             query_text=query_text,
             kinds=kinds,
+            reply_channels=reply_channels,
             created_since=created_since,
         )
         query = (
@@ -4499,12 +4505,14 @@ class AutoReplyStore:
         send_statuses: tuple[str, ...] | None = None,
         query_text: str = "",
         kinds: tuple[str, ...] | None = None,
+        reply_channels: tuple[str, ...] | None = None,
         created_since: str = "",
     ) -> int:
         query, args = self._history_items_query(
             send_statuses=send_statuses,
             query_text=query_text,
             kinds=kinds,
+            reply_channels=reply_channels,
             created_since=created_since,
         )
         with self._connect() as db:
@@ -4517,6 +4525,7 @@ class AutoReplyStore:
         send_statuses: tuple[str, ...] | None,
         query_text: str,
         kinds: tuple[str, ...] | None,
+        reply_channels: tuple[str, ...] | None,
         created_since: str,
     ) -> tuple[str, list[object]]:
         query = """
@@ -4540,6 +4549,7 @@ class AutoReplyStore:
                     0 as project_id,
                     0 as todo_id,
                     0 as follow_up_id,
+                    channel,
                     created_at,
                     conversation_id || ' ' || conversation_title || ' ' ||
                     trigger_message_id || ' ' || trigger_sender || ' ' ||
@@ -4582,6 +4592,7 @@ class AutoReplyStore:
                     0 as project_id,
                     0 as todo_id,
                     0 as follow_up_id,
+                    'dingtalk' as channel,
                     runs.created_at,
                     jobs.meeting_id || ' ' || jobs.title || ' ' || jobs.source_json || ' ' ||
                     jobs.participants_json || ' ' || jobs.error || ' ' || jobs.decision_json || ' ' ||
@@ -4609,6 +4620,7 @@ class AutoReplyStore:
                     updates.project_id as project_id,
                     0 as todo_id,
                     0 as follow_up_id,
+                    'dingtalk' as channel,
                     updates.created_at,
                     projects.title || ' ' || projects.category || ' ' ||
                     projects.owner_name || ' ' || projects.goal || ' ' ||
@@ -4646,6 +4658,7 @@ class AutoReplyStore:
                     drafts.project_id as project_id,
                     drafts.todo_id as todo_id,
                     drafts.id as follow_up_id,
+                    'dingtalk' as channel,
                     coalesce(nullif(drafts.sent_at, ''), drafts.updated_at, drafts.created_at) as created_at,
                     projects.title || ' ' || projects.category || ' ' ||
                     projects.owner_name || ' ' || projects.goal || ' ' ||
@@ -4674,6 +4687,10 @@ class AutoReplyStore:
             placeholders = ",".join("?" for _ in kinds)
             filters.append(f"kind in ({placeholders})")
             args.extend(kinds)
+        if reply_channels:
+            placeholders = ",".join("?" for _ in reply_channels)
+            filters.append(f"(kind != 'reply' or channel in ({placeholders}))")
+            args.extend(reply_channels)
         if created_since.strip():
             filters.append("datetime(created_at) >= datetime(?)")
             args.append(created_since)

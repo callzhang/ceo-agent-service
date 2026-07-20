@@ -19,4 +19,5 @@ class HistoryItem(BaseModel):
     project_id: int = 0
     todo_id: int = 0
     follow_up_id: int = 0
+    channel: str = "dingtalk"
     created_at: str

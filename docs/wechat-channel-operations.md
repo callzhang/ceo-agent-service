@@ -118,6 +118,15 @@ least 15 minutes.
      service). Auto-send stays gated — the loops enqueue tasks and produce
      `ready_to_send` deliveries but do not send.
 
+## History review
+
+The main History page (`/`) exposes four object checkboxes: `replay`, `wechat`,
+`task`, and `meeting`. All are selected by default. Selecting only `wechat`
+filters the SQL query, count, search, and pagination to WeChat reply attempts;
+selecting only `replay` shows non-WeChat reply attempts. WeChat rows carry a
+green channel badge. In confirm mode, an unambiguous `ready_to_send` delivery
+also shows inline send/reject actions and returns to History after the action.
+
 ## Controlled verification (before any live send)
 
 1. `.venv/bin/python -m pytest -q` — full suite green.

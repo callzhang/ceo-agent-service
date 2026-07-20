@@ -270,8 +270,14 @@ def register_wechat_review_routes(app: FastAPI, *, store_factory: Callable[[], o
         return {"pending": [j(d) for d in pend], "sending": [j(d) for d in sending],
                 "recent": [j(d) for d in recent[-10:]]}
 
+    def _safe_next(next_url: str) -> str:
+        # local-only redirect target (prevents open-redirect); defaults to review page
+        if next_url.startswith("/") and not next_url.startswith("//"):
+            return next_url
+        return "/wechat/review"
+
     @app.post("/wechat/deliveries/{delivery_id}/approve")
-    def wechat_approve(delivery_id: int):
+    def wechat_approve(delivery_id: int, next: str = "/wechat/review"):
         def _run():
             try:
                 from app.wechat import service as _svc
@@ -280,13 +286,13 @@ def register_wechat_review_routes(app: FastAPI, *, store_factory: Callable[[], o
             except Exception:
                 pass
         threading.Thread(target=_run, daemon=True).start()
-        return RedirectResponse("/wechat/review", status_code=303)
+        return RedirectResponse(_safe_next(next), status_code=303)
 
     @app.post("/wechat/deliveries/{delivery_id}/reject")
-    def wechat_reject(delivery_id: int):
+    def wechat_reject(delivery_id: int, next: str = "/wechat/review"):
         from app.wechat import service as _svc
         _svc.reject_wechat_delivery(store_factory(), delivery_id)
-        return RedirectResponse("/wechat/review", status_code=303)
+        return RedirectResponse(_safe_next(next), status_code=303)
 
 
 def register_wechat_tutorial_routes(app: FastAPI, *, setup_factory: Callable[[], object]) -> None:

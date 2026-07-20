@@ -521,7 +521,7 @@ _DINGTALK_BRIDGE_STATUS: deque[dict[str, str]] = deque(maxlen=20)
 DEFAULT_ATTEMPT_LIST_LIMIT = 20
 ATTEMPT_LIST_LIMIT_OPTIONS = (20, 50, 100)
 HISTORY_TYPE_FILTERS = ("sent", "reacted", "skipped", "failed", "done")
-HISTORY_SEARCH_OBJECT_TYPES = ("replay", "task", "meeting")
+HISTORY_SEARCH_OBJECT_TYPES = ("replay", "wechat", "task", "meeting")
 TASK_PAGE_SIZE_OPTIONS = (20, 50, 100)
 DEFAULT_TASK_PAGE_SIZE = 20
 LOG_PAGE_SIZE_OPTIONS = (20, 50, 100)
@@ -2653,6 +2653,7 @@ def _history_search_object_type_checkboxes(
 ) -> str:
     labels = {
         "replay": "replay",
+        "wechat": "wechat",
         "task": "task",
         "meeting": "meeting",
     }
@@ -2679,13 +2680,26 @@ def _history_kinds_for_search_objects(
     search_object_types: tuple[str, ...],
 ) -> tuple[str, ...]:
     kinds: list[str] = []
-    if "replay" in search_object_types:
+    if "replay" in search_object_types or "wechat" in search_object_types:
         kinds.append("reply")
     if "task" in search_object_types:
         kinds.append("task")
     if "meeting" in search_object_types:
         kinds.append("meeting")
     return tuple(kinds)
+
+
+def _history_reply_channels_for_search_objects(
+    search_object_types: tuple[str, ...],
+) -> tuple[str, ...] | None:
+    selected = set(search_object_types)
+    if "replay" in selected and "wechat" in selected:
+        return None
+    if "wechat" in selected:
+        return ("wechat",)
+    if "replay" in selected:
+        return ("dingtalk",)
+    return None
 
 
 def _history_limit_select(limit: int | None) -> str:
@@ -2885,6 +2899,7 @@ def render_attempt_list(
     type_filters = _history_type_filters(type_filter)
     object_types = _history_search_object_types(search_object_types)
     history_kinds = _history_kinds_for_search_objects(object_types)
+    reply_channels = _history_reply_channels_for_search_objects(object_types)
     search_history_items = bool(history_kinds)
     search_reply_tasks = "task" in object_types
     search_codex_sessions = "meeting" in object_types
@@ -2894,6 +2909,7 @@ def render_attempt_list(
             send_statuses=send_status_filters,
             query_text=query,
             kinds=history_kinds,
+            reply_channels=reply_channels,
         )
         if search_history_items
         else 0
@@ -2906,6 +2922,7 @@ def render_attempt_list(
         for task in store.list_reply_tasks(
             statuses=("pending", "processing"),
             limit=task_limit,
+            channel="dingtalk",
         ):
             if not _reply_task_matches_query(task, query):
                 continue
@@ -2927,6 +2944,7 @@ def render_attempt_list(
             send_statuses=send_status_filters,
             query_text=query,
             kinds=history_kinds,
+            reply_channels=reply_channels,
         )
         if search_history_items
         else []
@@ -2935,6 +2953,7 @@ def render_attempt_list(
         [item.source_id for item in history_items if item.kind == "reply"]
     )
     attempts_by_id = {attempt.id: attempt for attempt in attempts}
+    wechat_pending_by_conv = _wechat_pending_delivery_by_conversation(store)
     sent_replies_by_attempt = store.list_sent_replies_for_attempts(attempts)
     feedback_events_by_token = _feedback_events_by_sent_reply(
         store,
@@ -2966,6 +2985,11 @@ def render_attempt_list(
         foot_section = (
             f'<div class="attempt-foot">{warning_html}</div>' if warning_html else ""
         )
+        wechat_delivery_id = (
+            wechat_pending_by_conv.get(attempt.conversation_id)
+            if (attempt.channel or "").strip().lower() == "wechat"
+            else None
+        )
         items.append(
             "<article class=\"attempt-item\">"
             "<div class=\"attempt-head\">"
@@ -2973,12 +2997,13 @@ def render_attempt_list(
             f"<a class=\"attempt-id\" href=\"/attempts/{attempt.id}\">#{attempt.id}</a>"
             f"{info_html}"
             f"{_attempt_action_pills(attempt)}"
-            f"<div class=\"attempt-main\">{escape(attempt.conversation_title)}</div>"
+            f"<div class=\"attempt-main\">{_channel_badge(attempt.channel)}{escape(attempt.conversation_title)}</div>"
             f"<div class=\"attempt-meta\">{escape(attempt.trigger_sender)}</div>"
             "</div>"
             "<div class=\"attempt-side\">"
             f"<time class=\"attempt-time\">{escape(_format_local_time(attempt.created_at))}</time>"
             "<div class=\"attempt-actions\">"
+            f"{_wechat_send_actions(wechat_delivery_id)}"
             f"{_review_link(attempt)}"
             "</div>"
             "</div>"
@@ -3027,6 +3052,55 @@ def render_attempt_list(
         auto_refresh=True,
         active_nav="history",
         user_feedback_pending_count=store.count_pending_user_feedback_items(),
+    )
+
+
+def _channel_badge(channel: str) -> str:
+    if (channel or "").strip().lower() == "wechat":
+        return (
+            '<span class="pill" style="background:#07c160;color:#fff;'
+            'border-color:#07c160">微信</span> '
+        )
+    return ""
+
+
+def _wechat_pending_delivery_by_conversation(store: AutoReplyStore) -> dict[str, int]:
+    """Map conversation_id -> the id of its single ``ready_to_send`` WeChat delivery.
+
+    Used to attach 发送/拒绝 buttons to the matching WeChat history item. Only
+    unambiguous conversations (exactly one pending delivery) are wired directly;
+    if a conversation has several pending deliveries the buttons are omitted and
+    the user falls back to the dedicated /wechat/review page.
+    """
+    try:
+        pending = store.list_wechat_deliveries_by_status("ready_to_send")
+    except Exception:
+        return {}
+    by_conv: dict[str, list[int]] = {}
+    for delivery in pending:
+        by_conv.setdefault(delivery.conversation_id, []).append(delivery.id)
+    return {conv: ids[0] for conv, ids in by_conv.items() if len(ids) == 1}
+
+
+def _wechat_send_actions(delivery_id: int | None) -> str:
+    """发送/拒绝 buttons for a pending WeChat delivery, shown inline on the history
+    item (confirm-mode review). Empty when there is no pending delivery to act on.
+    Both post back to the shared review endpoints with next=/ so the user stays on
+    the history page."""
+    if not delivery_id:
+        return ""
+    send_style = (
+        "background:#07c160;color:#fff;border-color:#07c160;font-weight:700"
+    )
+    return (
+        f"<form method=\"post\" action=\"/wechat/deliveries/{delivery_id}/approve?next=/\" "
+        "style=\"display:inline-flex;margin:0\">"
+        f"<button class=\"compact-button\" type=\"submit\" style=\"{send_style}\">发送</button>"
+        "</form>"
+        f"<form method=\"post\" action=\"/wechat/deliveries/{delivery_id}/reject?next=/\" "
+        "style=\"display:inline-flex;margin:0\">"
+        "<button class=\"compact-button\" type=\"submit\">拒绝</button>"
+        "</form>"
     )
 
 

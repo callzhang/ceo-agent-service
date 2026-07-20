@@ -71,6 +71,27 @@ class WechatReplyConsumer:
         prompt = build_wechat_turn_prompt(trigger, context)
         decision = self.runner.decide(prompt, None)
 
+        # Record a history attempt so WeChat activity appears in the audit feed
+        # (the DingTalk worker does this per decision; WeChat previously only wrote
+        # wechat_deliveries, so it was invisible on the history page).
+        try:
+            self.store.record_reply_attempt(
+                conversation_id=trigger.conversation_id,
+                conversation_title=task.conversation_title,
+                trigger_message_id=trigger.message_id,
+                trigger_sender=trigger.sender_display_name,
+                trigger_text=trigger.text,
+                action=getattr(decision.action, "value", str(decision.action)),
+                sensitivity_kind=getattr(decision, "sensitivity_kind", "") or "normal",
+                codex_reason=decision.reason or "",
+                draft_reply_text=decision.reply_text or "",
+                audit_summary=getattr(decision, "audit_summary", "") or "",
+                send_status="pending",
+                channel="wechat",
+            )
+        except Exception:
+            pass
+
         if decision.action in (CodexAction.SEND_REPLY, CodexAction.ASK_CLARIFYING_QUESTION):
             if getattr(decision, "system_actions", None):
                 self.store.fail_reply_task(task.id, "dingtalk_only_system_actions_rejected")

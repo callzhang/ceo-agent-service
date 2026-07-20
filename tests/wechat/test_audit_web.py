@@ -242,3 +242,38 @@ def test_main_audit_app_registers_memory_review(tmp_path):
         "/wechat/memory-review")
     assert response.status_code == 200
     assert "微信 Memory 人工审核" in response.text
+
+
+def test_reject_default_redirects_to_review(review_client):
+    _seed_delivery(review_client.store)
+    r = review_client.post("/wechat/deliveries/1/reject", follow_redirects=False)
+    assert r.headers["location"] == "/wechat/review"
+
+
+def test_reject_honours_next_for_history_page(review_client):
+    # 发送/拒绝 buttons on the history page pass next=/ so the user stays there.
+    _seed_delivery(review_client.store)
+    r = review_client.post(
+        "/wechat/deliveries/1/reject?next=/", follow_redirects=False
+    )
+    assert r.status_code == 303
+    assert r.headers["location"] == "/"
+    assert review_client.store.get_wechat_delivery_for_task(1).status == "failed"
+
+
+def test_approve_honours_next_for_history_page(review_client):
+    _seed_delivery(review_client.store)
+    r = review_client.post(
+        "/wechat/deliveries/1/approve?next=/", follow_redirects=False
+    )
+    assert r.status_code == 303
+    assert r.headers["location"] == "/"
+
+
+def test_next_rejects_open_redirect(review_client):
+    _seed_delivery(review_client.store)
+    r = review_client.post(
+        "/wechat/deliveries/1/reject?next=//evil.example", follow_redirects=False
+    )
+    # off-site targets fall back to the review page
+    assert r.headers["location"] == "/wechat/review"
