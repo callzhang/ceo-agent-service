@@ -31,7 +31,7 @@ def test_reply_and_memory_plan_validates_and_converts_enums() -> None:
             payload={"text": "The request is complete."},
         ),
         PlannedAction(
-            kind=PlannedActionKind.MEMORY_WRITE,
+            kind="memory_write",
             reason="Persist the decision",
             payload={"content": "The request was completed."},
         ),
@@ -39,6 +39,7 @@ def test_reply_and_memory_plan_validates_and_converts_enums() -> None:
 
     assert isinstance(plan.actions[0].kind, PlannedActionKind)
     assert plan.actions[0].kind is PlannedActionKind.SEND_REPLY
+    assert plan.actions[1].kind is PlannedActionKind.MEMORY_WRITE
     assert plan.dependencies == []
     assert DependencyName("memory") is DependencyName.MEMORY
     assert plan.planner_version == "2026-07-20"
