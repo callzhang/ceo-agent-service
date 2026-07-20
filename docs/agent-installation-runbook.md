@@ -192,6 +192,12 @@ If the deployment uses Friday Memory or another Memory Connector MCP endpoint:
 Codex config uses the installed MCP Authorization header as the authenticated
 OAuth identity. Do not provide or invent a separate `user_id`.
 
+In the Tutorial page, the Memory Connector "Fix automatically" action first
+uses `MEMORY_CONNECTOR_URL` when provided, then falls back to the existing
+`[mcp_servers.memory_connector].url` in the installed Codex config. If Codex
+already has `memory_connector` installed, the agent should not ask the user to
+re-enter the URL.
+
 ### Nvwa Persona Skill
 
 The Nvwa skill is needed for reviewed profile distillation, not for runtime:

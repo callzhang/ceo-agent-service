@@ -1431,7 +1431,12 @@ def test_tutorial_run_route_rejects_blocked_action(tmp_path: Path):
     assert response.status_code == 409
 
 
-def test_tutorial_run_route_persists_failed_action_status(tmp_path: Path):
+def test_tutorial_run_route_persists_failed_action_status(
+    monkeypatch,
+    tmp_path: Path,
+):
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "empty-codex-home"))
+    monkeypatch.setenv("CLAUDE_CONFIG_PATH", str(tmp_path / "claude.json"))
     db_path = tmp_path / "worker.sqlite3"
     store = AutoReplyStore(db_path)
     store.upsert_setup_wizard_step(step_id="preflight", status="done", summary="ok")

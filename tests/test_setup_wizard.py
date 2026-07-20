@@ -641,7 +641,31 @@ def test_run_setup_mcp_uses_os_config_path_and_redacts_output(
     assert "[REDACTED_PATH]" in event.stdout_excerpt
 
 
+def test_run_setup_mcp_uses_installed_codex_memory_connector_url(
+    monkeypatch,
+    tmp_path: Path,
+):
+    codex_home = tmp_path / "codex-home"
+    codex_home.mkdir()
+    codex_config = codex_home / "config.toml"
+    codex_config.write_text(
+        '[mcp_servers.memory_connector]\nurl = "https://memory.example/mcp/"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+    monkeypatch.setenv("CLAUDE_CONFIG_PATH", str(tmp_path / "claude.json"))
+    monkeypatch.delenv("MEMORY_CONNECTOR_URL", raising=False)
+
+    event = run_setup_action("setup_mcp", repo_root=tmp_path, env={})
+
+    assert event.status == "done"
+    assert event.evidence["memory_url_source"] == "installed_codex_config"
+    assert event.evidence["codex_config"] == "[REDACTED_PATH]"
+
+
 def test_run_setup_mcp_handles_missing_and_failed_setup(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "empty-codex-home"))
+    monkeypatch.setenv("CLAUDE_CONFIG_PATH", str(tmp_path / "claude.json"))
     missing = run_setup_action(
         "setup_mcp",
         repo_root=tmp_path,

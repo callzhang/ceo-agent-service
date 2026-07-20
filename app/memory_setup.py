@@ -19,6 +19,23 @@ def codex_config_has_memory_connector(config_path: Path) -> bool:
     return isinstance(mcp_servers, dict) and "memory_connector" in mcp_servers
 
 
+def codex_memory_connector_url(config_path: Path) -> str:
+    if not config_path.exists():
+        return ""
+    try:
+        payload = tomllib.loads(config_path.read_text(encoding="utf-8"))
+    except tomllib.TOMLDecodeError:
+        return ""
+    mcp_servers = payload.get("mcp_servers")
+    if not isinstance(mcp_servers, dict):
+        return ""
+    memory_connector = mcp_servers.get("memory_connector")
+    if not isinstance(memory_connector, dict):
+        return ""
+    url = memory_connector.get("url")
+    return url.strip() if isinstance(url, str) else ""
+
+
 def claude_config_has_memory_connector(config_path: Path) -> bool:
     if not config_path.exists():
         return False

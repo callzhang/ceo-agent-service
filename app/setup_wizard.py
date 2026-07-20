@@ -12,6 +12,7 @@ from app.developer_prompt import (
     SEED_DEVELOPER_PROMPT_TEMPLATE,
     SEED_USER_PROMPT_TEMPLATE,
 )
+from app.memory_setup import codex_memory_connector_url
 from app.prompt import DEFAULT_WORK_PROFILE_TEXT
 from app.setup_wizard_models import (
     SetupAction,
@@ -794,7 +795,18 @@ def _setup_mcp(
     repo_root: Path,
     env: dict[str, str],
 ) -> SetupWizardEvent:
-    memory_url = (env.get("MEMORY_CONNECTOR_URL") or os.getenv("MEMORY_CONNECTOR_URL", "")).strip()
+    codex_config = env.get("CODEX_CONFIG_PATH") or os.getenv("CODEX_CONFIG_PATH", "")
+    if not codex_config:
+        codex_home = env.get("CODEX_HOME") or os.getenv("CODEX_HOME", "~/.codex")
+        codex_config = str(Path(codex_home).expanduser() / "config.toml")
+    codex_config_path = Path(codex_config).expanduser()
+    memory_url = (
+        env.get("MEMORY_CONNECTOR_URL") or os.getenv("MEMORY_CONNECTOR_URL", "")
+    ).strip()
+    memory_url_source = "environment" if memory_url else ""
+    if not memory_url:
+        memory_url = codex_memory_connector_url(codex_config_path)
+        memory_url_source = "installed_codex_config" if memory_url else ""
     if not memory_url:
         return SetupWizardEvent(
             step_id="mcp",
@@ -802,11 +814,6 @@ def _setup_mcp(
             status="failed",
             summary="MEMORY_CONNECTOR_URL is missing.",
         )
-
-    codex_config = env.get("CODEX_CONFIG_PATH") or os.getenv("CODEX_CONFIG_PATH", "")
-    if not codex_config:
-        codex_home = env.get("CODEX_HOME") or os.getenv("CODEX_HOME", "~/.codex")
-        codex_config = str(Path(codex_home).expanduser() / "config.toml")
     claude_config = env.get("CLAUDE_CONFIG_PATH") or os.getenv(
         "CLAUDE_CONFIG_PATH",
         str(
@@ -824,7 +831,7 @@ def _setup_mcp(
         with redirect_stdout(stdout), redirect_stderr(stderr):
             result = setup_memory_connector_command(
                 memory_url=memory_url,
-                codex_config=codex_config,
+                codex_config=str(codex_config_path),
                 claude_config=claude_config,
             )
     except BaseException as exc:
@@ -853,6 +860,7 @@ def _setup_mcp(
         evidence={
             "codex_config": redact_setup_output(result["codex_config"]),
             "claude_status": result["claude_status"],
+            "memory_url_source": memory_url_source,
         },
         stdout_excerpt=redact_setup_output(stdout_excerpt),
         stderr_excerpt=redact_setup_output(stderr.getvalue()),
