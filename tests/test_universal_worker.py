@@ -55,6 +55,86 @@ class FakeCodex:
     pass
 
 
+class UniversalOaFakeDws(FakeDws):
+    def __init__(
+        self,
+        *,
+        owner: str = "principal-user-1",
+        task_status: str = "RUNNING",
+        process_status: str = "RUNNING",
+    ) -> None:
+        super().__init__()
+        self.current_user_id = "principal-user-1"
+        self.owner = owner
+        self.tasks_owner = owner
+        self.task_status = task_status
+        self.process_status = process_status
+        self.action_calls: list[tuple[str, str, str, str]] = []
+        self.comment_calls: list[tuple[str, str]] = []
+        self.raise_after_apply = False
+        self.raise_without_apply = False
+        self.hide_task_after_apply = False
+        self.task_hidden = False
+
+    def get_current_user_id(self) -> str:
+        self.calls.append("get_current_user_id")
+        return self.current_user_id
+
+    def read_oa_approval_detail(self, process_instance_id: str) -> dict:
+        self.calls.append(("detail", process_instance_id))
+        return {
+            "result": {
+                "processInstanceId": process_instance_id,
+                "status": self.process_status,
+                "tasks": [] if self.task_hidden else [self._task()],
+            }
+        }
+
+    def read_oa_approval_tasks(self, process_instance_id: str) -> dict:
+        self.calls.append(("tasks", process_instance_id))
+        if self.task_hidden:
+            return {"result": {"tasks": []}}
+        task = self._task()
+        task["userId"] = self.tasks_owner
+        return {"result": {"tasks": [task]}}
+
+    def execute_oa_approval_action(
+        self,
+        process_instance_id: str,
+        task_id: str,
+        action: str,
+        remark: str,
+    ) -> dict:
+        self.action_calls.append((process_instance_id, task_id, action, remark))
+        if self.raise_after_apply:
+            self._apply()
+            raise TimeoutError("approval response timeout")
+        if self.raise_without_apply:
+            raise TimeoutError("approval response timeout")
+        self._apply()
+        return {"success": True, "requestId": "must-not-be-persisted"}
+
+    def comment_oa_approval(self, process_instance_id: str, text: str) -> dict:
+        self.comment_calls.append((process_instance_id, text))
+        if self.raise_without_apply:
+            raise TimeoutError("comment response timeout")
+        return {"success": True, "requestId": "must-not-be-persisted"}
+
+    def _task(self) -> dict:
+        return {
+            "taskId": "task-1",
+            "status": self.task_status,
+            "userId": self.owner,
+        }
+
+    def _apply(self) -> None:
+        if self.hide_task_after_apply:
+            self.task_hidden = True
+            return
+        self.task_status = "COMPLETED"
+        self.process_status = "COMPLETED"
+
+
 def _execution(
     store: AutoReplyStore,
     *,
@@ -1037,3 +1117,263 @@ def test_legacy_trigger_attempt_does_not_overwrite_universal_owned_attempt(
     assert preserved.action == "no_reply"
     assert preserved.universal_execution_id == execution.execution_id
     assert preserved.send_status == "skipped"
+
+
+@pytest.mark.parametrize("action", ["同意", "拒绝", "退回"])
+def test_universal_oa_owner_action_executes_and_verifies_final_state(
+    tmp_path: Path,
+    action: str,
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    execution = _execution(
+        store,
+        kind=PlannedActionKind.OA_APPROVAL,
+        target={"process_instance_id": "proc-1", "task_id": "task-1"},
+        payload={"action": action, "remark": "按已核实材料处理"},
+    )
+    dws = UniversalOaFakeDws()
+    worker = DingTalkAutoReplyWorker(store=store, dws=dws, codex=FakeCodex())
+
+    assert worker.execute_universal_oa_approval(execution) is True
+
+    assert dws.action_calls == [
+        ("proc-1", "task-1", action, "按已核实材料处理")
+    ]
+    assert dws.comment_calls == []
+    attempt = store.get_latest_reply_attempt_for_trigger("cid-context", "msg-context")
+    assert attempt is not None
+    assert attempt.send_status == "skipped"
+    assert attempt.oa_process_instance_id == "proc-1"
+    assert attempt.oa_task_id == "task-1"
+    assert attempt.oa_action == action
+    assert attempt.oa_remark == "按已核实材料处理"
+    result = json.loads(attempt.oa_action_result_json)
+    assert result["outcome"] == "applied"
+    assert "requestId" not in attempt.oa_action_result_json
+    assert store.has_seen("msg-context") is True
+    assert (
+        store.get_universal_action_execution_state(execution)
+        is UniversalActionExecutionState.SUCCEEDED
+    )
+
+
+def test_universal_oa_comment_uses_comment_api_and_completes(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    execution = _execution(
+        store,
+        kind=PlannedActionKind.OA_APPROVAL,
+        target={"process_instance_id": "proc-1", "task_id": "task-1"},
+        payload={"action": "comment", "remark": "请补充可验证材料"},
+    )
+    dws = UniversalOaFakeDws()
+    worker = DingTalkAutoReplyWorker(store=store, dws=dws, codex=FakeCodex())
+
+    assert worker.execute_universal_oa_approval(execution) is True
+
+    assert dws.comment_calls == [("proc-1", "请补充可验证材料")]
+    assert dws.action_calls == []
+    attempt = store.get_latest_reply_attempt_for_trigger("cid-context", "msg-context")
+    assert attempt is not None
+    assert attempt.send_status == "commented"
+    assert json.loads(attempt.oa_action_result_json)["outcome"] == "commented"
+
+
+@pytest.mark.parametrize(
+    ("target", "owner", "expected_error"),
+    [
+        ({"task_id": "task-1"}, "principal-user-1", "missing_oa_process_instance_id"),
+        ({"process_instance_id": "proc-1"}, "principal-user-1", "missing_oa_task_id"),
+        (
+            {"process_instance_id": "proc-1", "task_id": "task-1"},
+            "other-user",
+            "oa_task_not_current_user",
+        ),
+        (
+            {"process_instance_id": "proc-1", "task_id": "task-1"},
+            "",
+            "missing_oa_task_ownership",
+        ),
+    ],
+)
+def test_universal_oa_preflight_failure_is_final_without_external_action(
+    tmp_path: Path,
+    target: dict[str, str],
+    owner: str,
+    expected_error: str,
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    execution = _execution(
+        store,
+        kind=PlannedActionKind.OA_APPROVAL,
+        target=target,
+        payload={"action": "同意", "remark": "同意"},
+    )
+    dws = UniversalOaFakeDws(owner=owner)
+    worker = DingTalkAutoReplyWorker(store=store, dws=dws, codex=FakeCodex())
+
+    assert worker.execute_universal_oa_approval(execution) is True
+
+    assert dws.action_calls == []
+    assert dws.comment_calls == []
+    attempt = store.get_latest_reply_attempt_for_trigger("cid-context", "msg-context")
+    assert attempt is not None
+    assert attempt.send_status == "blocked"
+    assert attempt.send_error == expected_error
+    assert store.has_seen("msg-context") is True
+    assert (
+        store.get_universal_action_execution_state(execution)
+        is UniversalActionExecutionState.SUCCEEDED
+    )
+
+
+@pytest.mark.parametrize(
+    ("task_status", "tasks_owner", "expected_error"),
+    [
+        ("", "principal-user-1", "missing_oa_task_status"),
+        ("RUNNING", "other-user", "oa_task_ownership_conflict"),
+    ],
+)
+def test_universal_oa_incomplete_or_conflicting_live_material_is_blocked(
+    tmp_path: Path,
+    task_status: str,
+    tasks_owner: str,
+    expected_error: str,
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    execution = _execution(
+        store,
+        kind=PlannedActionKind.OA_APPROVAL,
+        target={"process_instance_id": "proc-1", "task_id": "task-1"},
+        payload={"action": "同意", "remark": "同意"},
+    )
+    dws = UniversalOaFakeDws(task_status=task_status)
+    dws.tasks_owner = tasks_owner
+    worker = DingTalkAutoReplyWorker(store=store, dws=dws, codex=FakeCodex())
+
+    assert worker.execute_universal_oa_approval(execution) is True
+
+    assert dws.action_calls == []
+    attempt = store.get_latest_reply_attempt_for_trigger("cid-context", "msg-context")
+    assert attempt is not None
+    assert attempt.send_status == "blocked"
+    assert attempt.send_error == expected_error
+
+
+def test_universal_oa_already_handled_is_idempotent_success(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    execution = _execution(
+        store,
+        kind=PlannedActionKind.OA_APPROVAL,
+        target={"process_instance_id": "proc-1", "task_id": "task-1"},
+        payload={"action": "同意", "remark": "同意"},
+    )
+    dws = UniversalOaFakeDws(task_status="COMPLETED", process_status="COMPLETED")
+    worker = DingTalkAutoReplyWorker(store=store, dws=dws, codex=FakeCodex())
+
+    assert worker.execute_universal_oa_approval(execution) is True
+
+    assert dws.action_calls == []
+    attempt = store.get_latest_reply_attempt_for_trigger("cid-context", "msg-context")
+    assert attempt is not None
+    assert attempt.send_status == "skipped"
+    assert attempt.send_error == "oa_already_handled"
+    assert json.loads(attempt.oa_action_result_json)["outcome"] == "already_handled"
+
+
+def test_universal_oa_transport_error_is_salvaged_from_live_state(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    execution = _execution(
+        store,
+        kind=PlannedActionKind.OA_APPROVAL,
+        target={"process_instance_id": "proc-1", "task_id": "task-1"},
+        payload={"action": "拒绝", "remark": "材料不成立"},
+    )
+    dws = UniversalOaFakeDws()
+    dws.raise_after_apply = True
+    worker = DingTalkAutoReplyWorker(store=store, dws=dws, codex=FakeCodex())
+
+    assert worker.execute_universal_oa_approval(execution) is True
+
+    attempt = store.get_latest_reply_attempt_for_trigger("cid-context", "msg-context")
+    assert attempt is not None
+    assert attempt.send_status == "skipped"
+    assert json.loads(attempt.oa_action_result_json)["outcome"] == "salvaged"
+
+
+def test_universal_oa_succeeds_when_process_continues_after_current_task_disappears(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    execution = _execution(
+        store,
+        kind=PlannedActionKind.OA_APPROVAL,
+        target={"process_instance_id": "proc-1", "task_id": "task-1"},
+        payload={"action": "同意", "remark": "同意"},
+    )
+    dws = UniversalOaFakeDws()
+    dws.hide_task_after_apply = True
+    worker = DingTalkAutoReplyWorker(store=store, dws=dws, codex=FakeCodex())
+
+    assert worker.execute_universal_oa_approval(execution) is True
+
+    assert dws.process_status == "RUNNING"
+    attempt = store.get_latest_reply_attempt_for_trigger("cid-context", "msg-context")
+    assert attempt is not None
+    assert attempt.send_status == "skipped"
+    assert json.loads(attempt.oa_action_result_json)["outcome"] == "applied"
+
+
+def test_universal_oa_ambiguous_transport_error_marks_unknown_and_retry_fails_closed(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    execution = _execution(
+        store,
+        kind=PlannedActionKind.OA_APPROVAL,
+        target={"process_instance_id": "proc-1", "task_id": "task-1"},
+        payload={"action": "同意", "remark": "同意"},
+    )
+    dws = UniversalOaFakeDws()
+    dws.raise_without_apply = True
+    worker = DingTalkAutoReplyWorker(store=store, dws=dws, codex=FakeCodex())
+
+    with pytest.raises(TimeoutError, match="approval response timeout"):
+        worker.execute_universal_oa_approval(execution)
+
+    assert len(dws.action_calls) == 1
+    assert (
+        store.get_universal_action_execution_state(execution)
+        is UniversalActionExecutionState.UNKNOWN
+    )
+    with pytest.raises(RuntimeError, match="outcome is unknown"):
+        worker.execute_universal_oa_approval(execution)
+    assert len(dws.action_calls) == 1
+
+
+def test_universal_oa_succeeded_retry_is_noop(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    execution = _execution(
+        store,
+        kind=PlannedActionKind.OA_APPROVAL,
+        target={"process_instance_id": "proc-1", "task_id": "task-1"},
+        payload={"action": "同意", "remark": "同意"},
+    )
+    dws = UniversalOaFakeDws()
+    worker = DingTalkAutoReplyWorker(store=store, dws=dws, codex=FakeCodex())
+
+    assert worker.execute_universal_oa_approval(execution) is True
+    assert worker.execute_universal_oa_approval(execution) is True
+
+    assert len(dws.action_calls) == 1
+    attempts = [
+        attempt for attempt in store.list_reply_attempts() if attempt.action == "oa_approval"
+    ]
+    assert len(attempts) == 1

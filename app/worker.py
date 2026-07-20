@@ -621,8 +621,468 @@ class DingTalkAutoReplyWorker:
         return True
 
     def execute_universal_oa_approval(self, execution: UniversalActionExecution) -> bool:
-        raise NotImplementedError(
-            "wire capability executor before enabling universal consumer"
+        if execution.action.kind is not PlannedActionKind.OA_APPROVAL:
+            raise ValueError("universal OA executor received a non-OA action")
+        claim_state = self.store.claim_universal_action_execution(execution)
+        if claim_state is UniversalActionExecutionState.SUCCEEDED:
+            return True
+        if claim_state is UniversalActionExecutionState.UNKNOWN:
+            raise RuntimeError(
+                f"universal action outcome is unknown: {execution.execution_id}"
+            )
+
+        target = execution.action.target
+        payload = execution.action.payload
+        process_instance_id = str(target.get("process_instance_id") or "").strip()
+        task_id = str(target.get("task_id") or "").strip()
+        oa_url = str(target.get("oa_url") or "").strip()
+        oa_action = str(payload["action"]).strip()
+        oa_remark = str(payload["remark"]).strip()
+        attempt_id = self._record_universal_reply_attempt(
+            execution,
+            draft_reply_text=oa_remark,
+            send_status="pending",
+        )
+        self.store.update_reply_attempt(
+            attempt_id,
+            oa_process_instance_id=process_instance_id,
+            oa_task_id=task_id,
+            oa_url=oa_url,
+            oa_action=oa_action,
+            oa_remark=oa_remark,
+            final_reply_text=oa_remark,
+        )
+
+        if not process_instance_id:
+            return self._finalize_universal_oa_action(
+                execution,
+                attempt_id=attempt_id,
+                outcome="blocked",
+                send_status="blocked",
+                send_error="missing_oa_process_instance_id",
+            )
+        if not task_id:
+            return self._finalize_universal_oa_action(
+                execution,
+                attempt_id=attempt_id,
+                outcome="blocked",
+                send_status="blocked",
+                send_error="missing_oa_task_id",
+            )
+
+        try:
+            current_user_id, detail, tasks = self._read_universal_oa_state(
+                process_instance_id
+            )
+        except Exception as exc:
+            self._fail_universal_oa_preflight(
+                execution,
+                attempt_id=attempt_id,
+                error=exc,
+            )
+            raise
+
+        preflight = self._classify_universal_oa_state(
+            process_instance_id=process_instance_id,
+            task_id=task_id,
+            current_user_id=current_user_id,
+            detail=detail,
+            tasks=tasks,
+        )
+        if preflight == "already_handled":
+            return self._finalize_universal_oa_action(
+                execution,
+                attempt_id=attempt_id,
+                outcome="already_handled",
+                send_status="skipped",
+                send_error="oa_already_handled",
+            )
+        if preflight != "actionable":
+            return self._finalize_universal_oa_action(
+                execution,
+                attempt_id=attempt_id,
+                outcome="blocked",
+                send_status="blocked",
+                send_error=preflight,
+            )
+
+        try:
+            if oa_action == "comment":
+                self.dws.comment_oa_approval(process_instance_id, oa_remark)
+            else:
+                self.dws.execute_oa_approval_action(
+                    process_instance_id,
+                    task_id,
+                    oa_action,
+                    oa_remark,
+                )
+        except Exception as exc:
+            if oa_action != "comment" and self._universal_oa_action_was_applied(
+                process_instance_id=process_instance_id,
+                task_id=task_id,
+                current_user_id=current_user_id,
+            ):
+                return self._finalize_universal_oa_action(
+                    execution,
+                    attempt_id=attempt_id,
+                    outcome="salvaged",
+                    send_status="skipped",
+                )
+            self._mark_universal_oa_unknown(
+                execution,
+                attempt_id=attempt_id,
+                error=exc,
+            )
+            raise
+
+        if oa_action == "comment":
+            # A comment deliberately leaves the approval task RUNNING. Re-read the
+            # target to ensure it still belongs to the current user, but treat the
+            # confirmed comment response as the side-effect receipt.
+            try:
+                current_user_id, detail, tasks = self._read_universal_oa_state(
+                    process_instance_id
+                )
+                post_comment = self._classify_universal_oa_state(
+                    process_instance_id=process_instance_id,
+                    task_id=task_id,
+                    current_user_id=current_user_id,
+                    detail=detail,
+                    tasks=tasks,
+                )
+            except Exception as exc:
+                self._mark_universal_oa_unknown(
+                    execution,
+                    attempt_id=attempt_id,
+                    error=exc,
+                )
+                raise
+            if post_comment not in {"actionable", "already_handled"}:
+                error = f"OA comment target verification failed: {post_comment}"
+                self._mark_universal_oa_unknown(
+                    execution,
+                    attempt_id=attempt_id,
+                    error=error,
+                )
+                raise ReplyDeliveryError(error)
+            return self._finalize_universal_oa_action(
+                execution,
+                attempt_id=attempt_id,
+                outcome="commented",
+                send_status="commented",
+            )
+
+        if not self._universal_oa_action_was_applied(
+            process_instance_id=process_instance_id,
+            task_id=task_id,
+            current_user_id=current_user_id,
+        ):
+            error = "OA action returned without a verifiable final state"
+            self._mark_universal_oa_unknown(
+                execution,
+                attempt_id=attempt_id,
+                error=error,
+            )
+            raise ReplyDeliveryError(error)
+        return self._finalize_universal_oa_action(
+            execution,
+            attempt_id=attempt_id,
+            outcome="applied",
+            send_status="skipped",
+        )
+
+    def _read_universal_oa_state(
+        self,
+        process_instance_id: str,
+    ) -> tuple[str, dict[str, Any], dict[str, Any]]:
+        current_user_id = str(self.dws.get_current_user_id() or "").strip()
+        if not current_user_id:
+            raise RuntimeError("missing current DingTalk user identity")
+        detail = self.dws.read_oa_approval_detail(process_instance_id)
+        tasks = self.dws.read_oa_approval_tasks(process_instance_id)
+        if not isinstance(detail, dict) or not isinstance(tasks, dict):
+            raise RuntimeError("invalid OA detail or task response")
+        return current_user_id, detail, tasks
+
+    @classmethod
+    def _classify_universal_oa_state(
+        cls,
+        *,
+        process_instance_id: str,
+        task_id: str,
+        current_user_id: str,
+        detail: dict[str, Any],
+        tasks: dict[str, Any],
+    ) -> str:
+        live_process_id = cls._universal_oa_process_id(detail)
+        if live_process_id and live_process_id != process_instance_id:
+            return "oa_process_instance_mismatch"
+        process_status = cls._universal_oa_process_status(detail)
+        if process_status and process_status != "RUNNING":
+            return "already_handled"
+
+        matching_tasks = [
+            task
+            for task in cls._universal_oa_tasks(detail, tasks)
+            if cls._universal_oa_task_id(task) == task_id
+        ]
+        if not matching_tasks:
+            return "missing_oa_task_ownership"
+
+        complete_records = [
+            task
+            for task in matching_tasks
+            if cls._universal_oa_task_owner(task)
+        ]
+        if not complete_records:
+            return "missing_oa_task_ownership"
+        owners = {
+            cls._universal_oa_task_owner(task) for task in complete_records
+        }
+        if len(owners) > 1:
+            return "oa_task_ownership_conflict"
+        current_user_records = [
+            task
+            for task in complete_records
+            if cls._universal_oa_task_owner(task) == current_user_id
+        ]
+        if not current_user_records:
+            return "oa_task_not_current_user"
+        current_statuses = {
+            cls._universal_oa_task_status(task)
+            for task in current_user_records
+            if cls._universal_oa_task_status(task)
+        }
+        if not current_statuses:
+            return "missing_oa_task_status"
+        if any(
+            cls._universal_oa_task_status(task) == "RUNNING"
+            for task in current_user_records
+        ):
+            return "actionable"
+        return "already_handled"
+
+    def _universal_oa_action_was_applied(
+        self,
+        *,
+        process_instance_id: str,
+        task_id: str,
+        current_user_id: str,
+    ) -> bool:
+        try:
+            refreshed_user_id, detail, tasks = self._read_universal_oa_state(
+                process_instance_id
+            )
+        except Exception:
+            return False
+        if refreshed_user_id != current_user_id:
+            return False
+        process_status = self._universal_oa_process_status(detail)
+        if process_status and process_status != "RUNNING":
+            return True
+        matching_tasks = [
+            task
+            for task in self._universal_oa_tasks(detail, tasks)
+            if self._universal_oa_task_id(task) == task_id
+        ]
+        if not matching_tasks:
+            return True
+        return not any(
+            self._universal_oa_task_owner(task) == current_user_id
+            and self._universal_oa_task_status(task) == "RUNNING"
+            for task in matching_tasks
+        )
+
+    @classmethod
+    def _universal_oa_tasks(
+        cls,
+        detail: dict[str, Any],
+        tasks: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        found: list[dict[str, Any]] = []
+
+        def visit(value: Any) -> None:
+            if isinstance(value, dict):
+                for key, nested in value.items():
+                    if key in {"tasks", "taskList", "taskIdList"} and isinstance(
+                        nested, list
+                    ):
+                        found.extend(item for item in nested if isinstance(item, dict))
+                    elif key in {"result", "process_instance", "processInstance"}:
+                        visit(nested)
+
+        visit(detail)
+        visit(tasks)
+        return found
+
+    @staticmethod
+    def _universal_oa_task_id(task: dict[str, Any]) -> str:
+        return str(
+            task.get("taskId")
+            or task.get("taskid")
+            or task.get("task_id")
+            or task.get("id")
+            or ""
+        ).strip()
+
+    @staticmethod
+    def _universal_oa_task_owner(task: dict[str, Any]) -> str:
+        return str(
+            task.get("userId")
+            or task.get("userid")
+            or task.get("user_id")
+            or ""
+        ).strip()
+
+    @staticmethod
+    def _universal_oa_task_status(task: dict[str, Any]) -> str:
+        return str(
+            task.get("status")
+            or task.get("taskStatus")
+            or task.get("task_status")
+            or ""
+        ).strip().upper()
+
+    @staticmethod
+    def _universal_oa_process_container(detail: dict[str, Any]) -> dict[str, Any]:
+        value: Any = detail
+        for key in ("result", "process_instance", "processInstance"):
+            if isinstance(value, dict) and isinstance(value.get(key), dict):
+                value = value[key]
+        return value if isinstance(value, dict) else {}
+
+    @classmethod
+    def _universal_oa_process_id(cls, detail: dict[str, Any]) -> str:
+        process = cls._universal_oa_process_container(detail)
+        return str(
+            process.get("processInstanceId")
+            or process.get("process_instance_id")
+            or ""
+        ).strip()
+
+    @classmethod
+    def _universal_oa_process_status(cls, detail: dict[str, Any]) -> str:
+        process = cls._universal_oa_process_container(detail)
+        return str(
+            process.get("status")
+            or process.get("processStatus")
+            or process.get("process_status")
+            or ""
+        ).strip().upper()
+
+    def _fail_universal_oa_preflight(
+        self,
+        execution: UniversalActionExecution,
+        *,
+        attempt_id: int,
+        error: Exception,
+    ) -> None:
+        safe_error = self._safe_universal_oa_error(
+            "oa_preflight_failed",
+            error,
+        )
+        self.store.update_reply_attempt(
+            attempt_id,
+            send_status="failed",
+            send_error=safe_error,
+            oa_action_result_json=self._universal_oa_result_json(
+                execution,
+                outcome="preflight_failed",
+            ),
+        )
+        self.store.mark_universal_action_execution_failed(execution, safe_error)
+
+    def _mark_universal_oa_unknown(
+        self,
+        execution: UniversalActionExecution,
+        *,
+        attempt_id: int,
+        error: Exception | str,
+    ) -> None:
+        safe_error = self._safe_universal_oa_error(
+            "universal_action_outcome_unknown",
+            error,
+        )
+        self.store.update_reply_attempt(
+            attempt_id,
+            send_status="failed",
+            send_error=safe_error,
+            oa_action_result_json=self._universal_oa_result_json(
+                execution,
+                outcome="unknown",
+            ),
+        )
+        self.store.mark_universal_action_execution_unknown(execution, safe_error)
+
+    @staticmethod
+    def _safe_universal_oa_error(prefix: str, error: Exception | str) -> str:
+        if isinstance(error, str):
+            category = error
+        else:
+            category = type(error).__name__
+            code = str(getattr(error, "code", "") or "").strip()
+            if code:
+                category = f"{category}:{code}"
+        return f"{prefix}: {category}"
+
+    def _finalize_universal_oa_action(
+        self,
+        execution: UniversalActionExecution,
+        *,
+        attempt_id: int,
+        outcome: str,
+        send_status: str,
+        send_error: str = "",
+    ) -> bool:
+        result_json = self._universal_oa_result_json(execution, outcome=outcome)
+        self.store.update_reply_attempt(
+            attempt_id,
+            send_status=send_status,
+            send_error=send_error,
+            oa_action_result_json=result_json,
+            audit_tool_events_json=json.dumps(
+                [
+                    {
+                        "action": execution.action.payload["action"],
+                        "execution_id": execution.execution_id,
+                        "execution_scope_id": execution.execution_scope_id,
+                        "outcome": outcome,
+                        "tool": "universal_oa_approval",
+                    }
+                ],
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ),
+        )
+        _, trigger, _ = self._universal_reply_context(execution)
+        self._mark_seen([trigger])
+        self.store.complete_universal_action_execution(
+            execution,
+            attempt_id=attempt_id,
+            result_json=result_json,
+        )
+        return True
+
+    @staticmethod
+    def _universal_oa_result_json(
+        execution: UniversalActionExecution,
+        *,
+        outcome: str,
+    ) -> str:
+        return json.dumps(
+            {
+                "action": execution.action.payload["action"],
+                "execution_id": execution.execution_id,
+                "outcome": outcome,
+                "process_instance_id": str(
+                    execution.action.target.get("process_instance_id") or ""
+                ),
+                "task_id": str(execution.action.target.get("task_id") or ""),
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
         )
 
     def execute_universal_mail_reply(self, execution: UniversalActionExecution) -> bool:

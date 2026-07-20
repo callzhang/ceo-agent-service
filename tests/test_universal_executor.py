@@ -387,6 +387,7 @@ def test_execute_rejects_an_unsupported_kind(unsupported_kind: object) -> None:
     sorted(
         set(WORKER_METHOD_BY_KIND.values())
         - {
+            "execute_universal_oa_approval",
             "execute_universal_send_reply",
             "execute_universal_terminal_action",
         }
