@@ -24,6 +24,27 @@ class FakeDws:
         self.calls: list[object] = []
 
 
+class NativeReplyFakeDws(FakeDws):
+    def resolve_message_sender(self, message) -> str:
+        return message.sender_user_id or "resolved-user"
+
+    def send_reply_to_trigger(
+        self,
+        conversation,
+        trigger,
+        text,
+        **kwargs,
+    ) -> dict:
+        assert trigger.sender_open_dingtalk_id == "open-context-sender"
+        assert trigger.sender_user_id == "user-context-sender"
+        assert trigger.create_time == "2026-07-20 10:00:00"
+        self.calls.append((conversation, trigger, text, kwargs))
+        return {"success": True, "messageId": "sent-native-1"}
+
+    def read_recent_messages(self, conversation):
+        raise RuntimeError("visibility unavailable in offline test")
+
+
 class FakeCodex:
     pass
 
@@ -64,6 +85,14 @@ def _execution(
                 sender_name="Context sender",
                 open_message_id="msg-context",
                 content="Context trigger",
+                sender_open_dingtalk_id="open-context-sender",
+                sender_user_id="user-context-sender",
+                message_type="text",
+                create_time="2026-07-20 10:00:00",
+                mentioned_user_ids=("mentioned-user",),
+                quoted_message_id="quoted-message",
+                quoted_content="quoted-content",
+                raw_payload_json='{"source":"reply-task"}',
             ),
         ),
         required_dependencies=("dws",),
@@ -100,6 +129,29 @@ def _worker(store: AutoReplyStore) -> DingTalkAutoReplyWorker:
         dws=FakeDws(),
         codex=FakeCodex(),
     )
+
+
+def test_universal_reply_native_delivery_receives_immutable_sender_identity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    execution = _execution(
+        store,
+        kind=PlannedActionKind.SEND_REPLY,
+        payload={"text": "Native reply"},
+    )
+    dws = NativeReplyFakeDws()
+    worker = DingTalkAutoReplyWorker(store=store, dws=dws, codex=FakeCodex())
+    monkeypatch.setattr(worker, "_notify", lambda **kwargs: None)
+    monkeypatch.setattr("app.worker.feedback_spike_vercel_base_url", lambda: "")
+
+    assert worker.execute_universal_send_reply(execution) is True
+
+    assert len(dws.calls) == 1
+    sent = store.get_sent_reply("cid-context", "msg-context")
+    assert sent is not None
+    assert "Native reply" in sent.reply_text
 
 
 @pytest.mark.parametrize(
@@ -396,3 +448,71 @@ def test_universal_terminal_unknown_fails_closed_without_new_attempt(
         worker.execute_universal_terminal_action(execution)
 
     assert store.list_reply_attempts() == []
+
+
+def test_universal_terminal_preserves_unrelated_prior_attempt(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    prior_id = store.record_reply_attempt(
+        conversation_id="cid-context",
+        conversation_title="Original title",
+        trigger_message_id="msg-context",
+        trigger_sender="Original sender",
+        trigger_text="Original trigger",
+        action="send_reply",
+        sensitivity_kind="general",
+        codex_reason="Original failure",
+        draft_reply_text="Original draft",
+        audit_summary="Original audit",
+        send_status="failed",
+    )
+    store.update_reply_attempt(prior_id, send_error="original_send_error")
+    execution = _execution(store, kind=PlannedActionKind.NO_REPLY)
+
+    assert _worker(store).execute_universal_terminal_action(execution) is True
+
+    attempts = store.list_reply_attempts()
+    assert len(attempts) == 2
+    original = next(attempt for attempt in attempts if attempt.id == prior_id)
+    universal = next(attempt for attempt in attempts if attempt.id != prior_id)
+    assert original.action == "send_reply"
+    assert original.codex_reason == "Original failure"
+    assert original.draft_reply_text == "Original draft"
+    assert original.audit_summary == "Original audit"
+    assert original.send_status == "failed"
+    assert original.send_error == "original_send_error"
+    assert universal.action == "no_reply"
+    assert universal.universal_execution_id == execution.execution_id
+    assert universal.universal_execution_scope_id == execution.execution_scope_id
+
+
+def test_legacy_trigger_attempt_does_not_overwrite_universal_owned_attempt(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    execution = _execution(store, kind=PlannedActionKind.NO_REPLY)
+    assert _worker(store).execute_universal_terminal_action(execution) is True
+    universal = store.get_latest_reply_attempt_for_trigger(
+        "cid-context", "msg-context"
+    )
+    assert universal is not None
+
+    legacy_id = store.record_reply_attempt_for_trigger(
+        conversation_id="cid-context",
+        conversation_title="Legacy title",
+        trigger_message_id="msg-context",
+        trigger_sender="Legacy sender",
+        trigger_text="Legacy trigger",
+        action="send_reply",
+        sensitivity_kind="general",
+        codex_reason="Legacy retry",
+        send_status="pending",
+    )
+
+    assert legacy_id != universal.id
+    preserved = store.get_reply_attempt(universal.id)
+    assert preserved is not None
+    assert preserved.action == "no_reply"
+    assert preserved.universal_execution_id == execution.execution_id
+    assert preserved.send_status == "skipped"

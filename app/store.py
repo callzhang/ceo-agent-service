@@ -80,6 +80,8 @@ class ReplyAttempt(BaseModel):
     audit_documents_json: str = "[]"
     audit_tool_events_json: str = "[]"
     audit_summary: str = ""
+    universal_execution_id: str = ""
+    universal_execution_scope_id: str = ""
     oa_process_instance_id: str = ""
     oa_task_id: str = ""
     oa_url: str = ""
@@ -446,6 +448,8 @@ class AutoReplyStore:
                     audit_documents_json text not null default '[]',
                     audit_tool_events_json text not null default '[]',
                     audit_summary text not null default '',
+                    universal_execution_id text not null default '',
+                    universal_execution_scope_id text not null default '',
                     oa_process_instance_id text not null default '',
                     oa_task_id text not null default '',
                     oa_url text not null default '',
@@ -983,6 +987,8 @@ class AutoReplyStore:
                 ("audit_documents_json", "text not null default '[]'"),
                 ("audit_tool_events_json", "text not null default '[]'"),
                 ("audit_summary", "text not null default ''"),
+                ("universal_execution_id", "text not null default ''"),
+                ("universal_execution_scope_id", "text not null default ''"),
                 ("oa_process_instance_id", "text not null default ''"),
                 ("oa_task_id", "text not null default ''"),
                 ("oa_url", "text not null default ''"),
@@ -1006,6 +1012,13 @@ class AutoReplyStore:
                     except sqlite3.OperationalError as exc:
                         if "duplicate column name" not in str(exc):
                             raise
+            db.execute(
+                """
+                create unique index if not exists idx_reply_attempts_universal_execution
+                on reply_attempts(universal_execution_id)
+                where universal_execution_id <> ''
+                """
+            )
             db.execute(
                 """
                 update reply_attempts
@@ -4012,6 +4025,8 @@ class AutoReplyStore:
         audit_documents_json: str = "[]",
         audit_tool_events_json: str = "[]",
         audit_summary: str = "",
+        universal_execution_id: str = "",
+        universal_execution_scope_id: str = "",
         oa_process_instance_id: str = "",
         oa_task_id: str = "",
         oa_url: str = "",
@@ -4049,6 +4064,8 @@ class AutoReplyStore:
                     audit_documents_json,
                     audit_tool_events_json,
                     audit_summary,
+                    universal_execution_id,
+                    universal_execution_scope_id,
                     oa_process_instance_id,
                     oa_task_id,
                     oa_url,
@@ -4065,7 +4082,7 @@ class AutoReplyStore:
                     mail_action_result_json,
                     send_status
                 )
-                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     conversation_id,
@@ -4085,6 +4102,8 @@ class AutoReplyStore:
                     audit_documents_json,
                     audit_tool_events_json,
                     audit_summary,
+                    universal_execution_id,
+                    universal_execution_scope_id,
                     oa_process_instance_id,
                     oa_task_id,
                     oa_url,
@@ -4109,6 +4128,51 @@ class AutoReplyStore:
                 audit_tool_events_json,
             )
             return attempt_id
+
+    def record_universal_reply_attempt(
+        self,
+        execution: UniversalActionExecution,
+        *,
+        conversation_id: str,
+        conversation_title: str,
+        trigger_message_id: str,
+        trigger_sender: str,
+        trigger_text: str,
+        action: str,
+        sensitivity_kind: str,
+        codex_reason: str = "",
+        draft_reply_text: str = "",
+        audit_tool_events_json: str = "[]",
+        audit_summary: str = "",
+        send_status: str = "pending",
+    ) -> int:
+        if execution.context.conversation_id != conversation_id:
+            raise ValueError("universal attempt conversation mismatch")
+        if execution.context.trigger_message_id != trigger_message_id:
+            raise ValueError("universal attempt trigger mismatch")
+        if execution.action.kind.value != action:
+            raise ValueError("universal attempt action mismatch")
+        with self._connect() as db:
+            db.execute("begin")
+            execution_row = self._validate_universal_action_execution(db, execution)
+            if execution_row is None or execution_row["status"] != "started":
+                raise ValueError("universal action execution must be started")
+        return self.record_reply_attempt(
+            conversation_id=conversation_id,
+            conversation_title=conversation_title,
+            trigger_message_id=trigger_message_id,
+            trigger_sender=trigger_sender,
+            trigger_text=trigger_text,
+            action=action,
+            sensitivity_kind=sensitivity_kind,
+            codex_reason=codex_reason,
+            draft_reply_text=draft_reply_text,
+            audit_tool_events_json=audit_tool_events_json,
+            audit_summary=audit_summary,
+            universal_execution_id=execution.execution_id,
+            universal_execution_scope_id=execution.execution_scope_id,
+            send_status=send_status,
+        )
 
     def record_reply_attempt_for_trigger(
         self,
@@ -4149,8 +4213,10 @@ class AutoReplyStore:
         existing_attempt = self.get_latest_reply_attempt_for_trigger(
             conversation_id, trigger_message_id
         )
-        if existing_attempt is None or self.has_sent_reply_for_trigger(
-            conversation_id, trigger_message_id
+        if (
+            existing_attempt is None
+            or existing_attempt.universal_execution_id
+            or self.has_sent_reply_for_trigger(conversation_id, trigger_message_id)
         ):
             return self.record_reply_attempt(
                 conversation_id=conversation_id,

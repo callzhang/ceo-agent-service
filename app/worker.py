@@ -89,6 +89,7 @@ from app.store import (
     ReplyTask,
 )
 from app.task_models import WorkItem
+from app.universal_context import UniversalContextMessage, UniversalTaskContext
 from app.universal_executor import (
     UniversalActionExecution,
     UniversalActionExecutionState,
@@ -661,7 +662,8 @@ class DingTalkAutoReplyWorker:
         send_error: str = "",
     ) -> int:
         context = execution.context
-        attempt_id = self.store.record_reply_attempt_for_trigger(
+        attempt_id = self.store.record_universal_reply_attempt(
+            execution,
             conversation_id=context.conversation_id,
             conversation_title=context.conversation_title,
             trigger_message_id=context.trigger_message_id,
@@ -690,13 +692,22 @@ class DingTalkAutoReplyWorker:
             single_chat=context.single_chat,
             unread_point=0,
         )
-        trigger = DingTalkMessage(
-            open_conversation_id=context.conversation_id,
-            open_message_id=context.trigger_message_id,
-            conversation_title=context.conversation_title,
-            single_chat=context.single_chat,
+        trigger_snapshot = next(
+            (
+                message
+                for message in context.context_messages
+                if message.open_message_id == context.trigger_message_id
+            ),
+            UniversalContextMessage(
+                sender_name=context.trigger_sender,
+                open_message_id=context.trigger_message_id,
+                content=context.trigger_text,
+            ),
+        )
+        trigger = DingTalkAutoReplyWorker._universal_dingtalk_message(
+            context,
+            trigger_snapshot,
             sender_name=context.trigger_sender,
-            create_time="",
             content=context.trigger_text,
         )
         new_messages: list[DingTalkMessage] = []
@@ -708,19 +719,39 @@ class DingTalkAutoReplyWorker:
                     trigger_added = True
                 continue
             new_messages.append(
-                DingTalkMessage(
-                    open_conversation_id=context.conversation_id,
-                    open_message_id=message.open_message_id,
-                    conversation_title=context.conversation_title,
-                    single_chat=context.single_chat,
-                    sender_name=message.sender_name,
-                    create_time="",
-                    content=message.content,
-                )
+                DingTalkAutoReplyWorker._universal_dingtalk_message(context, message)
             )
         if not trigger_added:
             new_messages.append(trigger)
         return conversation, trigger, new_messages
+
+    @staticmethod
+    def _universal_dingtalk_message(
+        context: UniversalTaskContext,
+        message: UniversalContextMessage,
+        *,
+        sender_name: str | None = None,
+        content: str | None = None,
+    ) -> DingTalkMessage:
+        raw_payload = json.loads(message.raw_payload_json)
+        if not isinstance(raw_payload, dict):
+            raise ValueError("universal message raw payload must be an object")
+        return DingTalkMessage(
+            open_conversation_id=context.conversation_id,
+            open_message_id=message.open_message_id,
+            conversation_title=context.conversation_title,
+            single_chat=context.single_chat,
+            sender_name=message.sender_name if sender_name is None else sender_name,
+            sender_open_dingtalk_id=message.sender_open_dingtalk_id,
+            sender_user_id=message.sender_user_id,
+            message_type=message.message_type,
+            create_time=message.create_time,
+            content=message.content if content is None else content,
+            mentioned_user_ids=list(message.mentioned_user_ids),
+            quoted_message_id=message.quoted_message_id,
+            quoted_content=message.quoted_content,
+            raw_payload=raw_payload,
+        )
 
     def run_once(self, max_batches: int | None = None) -> None:
         try:

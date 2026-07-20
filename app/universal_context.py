@@ -10,6 +10,34 @@ class UniversalContextMessage:
     sender_name: str
     open_message_id: str
     content: str
+    sender_open_dingtalk_id: str | None = None
+    sender_user_id: str | None = None
+    message_type: str | None = None
+    create_time: str = ""
+    mentioned_user_ids: tuple[str, ...] = ()
+    quoted_message_id: str | None = None
+    quoted_content: str | None = None
+    raw_payload_json: str = "{}"
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.mentioned_user_ids, tuple):
+            raise TypeError("mentioned_user_ids must be a tuple")
+        try:
+            raw_payload = json.loads(self.raw_payload_json)
+        except (TypeError, json.JSONDecodeError) as exc:
+            raise ValueError("raw_payload_json must contain valid JSON") from exc
+        if not isinstance(raw_payload, dict):
+            raise ValueError("raw_payload_json must contain a JSON object")
+        object.__setattr__(
+            self,
+            "raw_payload_json",
+            json.dumps(
+                raw_payload,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ),
+        )
 
 
 @dataclass(frozen=True)
@@ -84,18 +112,49 @@ def canonical_universal_context_json(context: UniversalTaskContext) -> str:
     if not isinstance(context.required_dependencies, tuple):
         raise TypeError("required_dependencies must be a tuple")
 
-    context_messages: list[dict[str, str]] = []
+    context_messages: list[dict[str, object]] = []
     for message in context.context_messages:
         if not isinstance(message, UniversalContextMessage):
             raise TypeError("context_messages items must be UniversalContextMessage")
-        for field_name in ("sender_name", "open_message_id", "content"):
+        for field_name in (
+            "sender_name",
+            "open_message_id",
+            "content",
+            "create_time",
+            "raw_payload_json",
+        ):
             if not isinstance(getattr(message, field_name), str):
                 raise TypeError(f"context message {field_name} must be a str")
+        for field_name in (
+            "sender_open_dingtalk_id",
+            "sender_user_id",
+            "message_type",
+            "quoted_message_id",
+            "quoted_content",
+        ):
+            value = getattr(message, field_name)
+            if value is not None and not isinstance(value, str):
+                raise TypeError(f"context message {field_name} must be str or None")
+        if not isinstance(message.mentioned_user_ids, tuple) or any(
+            not isinstance(user_id, str) for user_id in message.mentioned_user_ids
+        ):
+            raise TypeError("context message mentioned_user_ids must be tuple[str, ...]")
+        raw_payload = json.loads(message.raw_payload_json)
+        if not isinstance(raw_payload, dict):
+            raise TypeError("context message raw_payload_json must contain an object")
         context_messages.append(
             {
                 "sender_name": message.sender_name,
+                "sender_open_dingtalk_id": message.sender_open_dingtalk_id,
+                "sender_user_id": message.sender_user_id,
                 "open_message_id": message.open_message_id,
+                "message_type": message.message_type,
+                "create_time": message.create_time,
                 "content": message.content,
+                "mentioned_user_ids": list(message.mentioned_user_ids),
+                "quoted_message_id": message.quoted_message_id,
+                "quoted_content": message.quoted_content,
+                "raw_payload": raw_payload,
             }
         )
 
@@ -176,4 +235,17 @@ def _snapshot_message(message: DingTalkMessage) -> UniversalContextMessage:
         sender_name=message.sender_name,
         open_message_id=message.open_message_id,
         content=message.content,
+        sender_open_dingtalk_id=message.sender_open_dingtalk_id,
+        sender_user_id=message.sender_user_id,
+        message_type=message.message_type,
+        create_time=message.create_time,
+        mentioned_user_ids=tuple(message.mentioned_user_ids),
+        quoted_message_id=message.quoted_message_id,
+        quoted_content=message.quoted_content,
+        raw_payload_json=json.dumps(
+            message.raw_payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ),
     )
