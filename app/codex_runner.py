@@ -75,6 +75,7 @@ MEMORY_CONNECTOR_ENV_KEYS = {
 }
 CODEX_PASSTHROUGH_MCP_SERVERS_ENV = "CEO_CODEX_PASSTHROUGH_MCP_SERVERS"
 DEFAULT_CODEX_PASSTHROUGH_MCP_SERVERS = ("xiaoqing_interview", "exa")
+DEFAULT_EXA_MCP_URL = "https://mcp.exa.ai/mcp"
 PASSTHROUGH_MCP_SCALAR_KEYS = (
     "url",
     "oauth_resource",
@@ -317,6 +318,8 @@ def passthrough_mcp_server_config_options() -> list[str]:
     options: list[str] = []
     for name in _passthrough_mcp_server_names():
         server = servers.get(name)
+        if name == "exa" and not isinstance(server, dict):
+            server = {"url": DEFAULT_EXA_MCP_URL}
         if not isinstance(server, dict):
             continue
         for key in PASSTHROUGH_MCP_SCALAR_KEYS:

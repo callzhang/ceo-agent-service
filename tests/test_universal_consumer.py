@@ -539,7 +539,7 @@ def test_loaded_plan_still_runs_current_validator_without_creating_scope() -> No
     assert executor.calls == []
 
 
-def test_loaded_plan_rechecks_current_plan_dependencies() -> None:
+def test_loaded_plan_ignores_planner_declared_executor_dependencies() -> None:
     callbacks = CallbackRecorder(
         dependency_status={"dws": DependencyStatus(ready=True)},
         loaded_plan_execution=UniversalPlanExecution(
@@ -554,12 +554,11 @@ def test_loaded_plan_rechecks_current_plan_dependencies() -> None:
 
     result = orchestrator.process(make_context())
 
-    assert result.outcome is UniversalConsumerOutcome.WAITING_FOR_DEPENDENCY
-    assert result.reason == "dependency_status_missing:mail"
-    assert callbacks.dependency_requests == [("dws",), ("mail",)]
+    assert result.outcome is UniversalConsumerOutcome.COMPLETED
+    assert callbacks.dependency_requests == [("dws",)]
     assert planner.calls == []
     assert callbacks.calls["create_plan"] == 0
-    assert executor.calls == []
+    assert len(executor.calls) == 1
 
 
 def test_loaded_plan_from_another_generation_fails_closed() -> None:
@@ -674,13 +673,13 @@ def test_post_plan_dependencies_are_resolved_in_order_without_refetching() -> No
     assert result.outcome is UniversalConsumerOutcome.COMPLETED
     assert callbacks.dependency_requests == [
         ("dws", "mail"),
-        ("calendar", "memory"),
+        ("memory",),
     ]
     assert len(planner.calls) == 1
     assert len(executor.calls) == 1
 
 
-def test_post_plan_missing_dependency_waits_without_execution() -> None:
+def test_post_plan_ignores_missing_planner_declared_mail_dependency() -> None:
     callbacks = CallbackRecorder(
         dependency_status={"dws": DependencyStatus(ready=True)}
     )
@@ -690,15 +689,10 @@ def test_post_plan_missing_dependency_waits_without_execution() -> None:
 
     result = orchestrator.process(make_context())
 
-    assert result == UniversalConsumerResult(
-        completed=False,
-        reason="dependency_status_missing:mail",
-        executed_actions=(),
-        outcome=UniversalConsumerOutcome.WAITING_FOR_DEPENDENCY,
-    )
-    assert callbacks.dependency_requests == [("dws",), ("mail",)]
+    assert result.outcome is UniversalConsumerOutcome.COMPLETED
+    assert callbacks.dependency_requests == [("dws",)]
     assert callbacks.calls["create_plan"] == 1
-    assert executor.calls == []
+    assert len(executor.calls) == 1
 
 
 def test_memory_dependency_is_derived_persisted_and_reused_without_replanning() -> None:

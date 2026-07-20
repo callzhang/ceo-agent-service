@@ -129,7 +129,10 @@ class UniversalValidator:
     ) -> tuple[str, ...]:
         ordered: list[str] = []
         seen: set[str] = set()
-        for dependency in (*context.required_dependencies, *plan.dependencies):
+        for dependency in (
+            *context.required_dependencies,
+            *plan.execution_dependencies(),
+        ):
             name = str(dependency)
             if name not in seen:
                 seen.add(name)

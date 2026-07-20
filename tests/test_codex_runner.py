@@ -202,6 +202,22 @@ def test_codex_command_does_not_default_lark_to_mcp_passthrough(
     assert not any("mcp_servers.lark" in item for item in command)
 
 
+def test_codex_command_preserves_exa_when_user_config_omits_it(
+    tmp_path: Path, monkeypatch
+):
+    codex_home = tmp_path / ".codex"
+    codex_home.mkdir()
+    (codex_home / "config.toml").write_text("", encoding="utf-8")
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+
+    command = CodexRunner(workspace=tmp_path).build_command(
+        prompt="hello",
+        session_id=None,
+    )
+
+    assert 'mcp_servers.exa.url="https://mcp.exa.ai/mcp"' in command
+
+
 def test_codex_developer_instructions_classify_dws_login_as_tool_issue():
     instructions = codex_developer_instructions()
 
@@ -727,6 +743,8 @@ def test_builds_new_thread_command(tmp_path: Path):
         "--disable",
         "plugins",
         "-c",
+        'mcp_servers.exa.url="https://mcp.exa.ai/mcp"',
+        "-c",
         'approval_policy="untrusted"',
         "-c",
         'approvals_reviewer="auto_review"',
@@ -773,6 +791,8 @@ def test_builds_resume_command(tmp_path: Path):
         "hooks",
         "--disable",
         "plugins",
+        "-c",
+        'mcp_servers.exa.url="https://mcp.exa.ai/mcp"',
         "-c",
         'approval_policy="untrusted"',
         "-c",

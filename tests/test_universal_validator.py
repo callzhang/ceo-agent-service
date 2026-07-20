@@ -503,7 +503,15 @@ def test_memory_write_is_not_terminal() -> None:
         payload={"data": "Decision recorded.", "type": "text"},
     )
 
-    result = UniversalValidator().validate(make_plan(action), make_context())
+    result = UniversalValidator().validate(
+        make_plan(action),
+        make_context(
+            dependency_status={
+                "dws": DependencyStatus(ready=True),
+                "memory": DependencyStatus(ready=True),
+            }
+        ),
+    )
 
     assert result.allowed is True
     assert result.actions == (action,)
@@ -519,7 +527,13 @@ def test_multiple_non_terminal_actions_are_not_terminal() -> None:
     )
 
     result = UniversalValidator().validate(
-        make_plan(reply, memory_write), make_context()
+        make_plan(reply, memory_write),
+        make_context(
+            dependency_status={
+                "dws": DependencyStatus(ready=True),
+                "memory": DependencyStatus(ready=True),
+            }
+        ),
     )
 
     assert result.allowed is True

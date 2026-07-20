@@ -26,12 +26,30 @@ UNIVERSAL_PLANNER_DEVELOPER_OVERLAY = (
     "side effects but never execute them yourself."
 )
 
+
+def universal_planner_developer_instructions() -> str:
+    shared = codex_developer_instructions()
+    shared = shared.split("\n输出协议：", 1)[0].rstrip()
+    shared = shared.replace(
+        "在输出最终 JSON 前调用 memory_write 记录一条业务 episode",
+        "在 UniversalPlan 中追加 memory_write action 记录一条业务 episode",
+    )
+    shared = shared.replace("调用 memory_write", "规划 memory_write action")
+    shared = shared.replace("system_actions", "UniversalPlan actions")
+    shared = shared.replace("kind=okr_review", "queue_okr_review action")
+    shared = shared.replace("user_response.mode", "planned action kind")
+    shared = shared.replace(
+        "user_response.text",
+        "send_reply/ask_clarifying_question payload.text",
+    )
+    return f"{shared}\n\n{UNIVERSAL_PLANNER_DEVELOPER_OVERLAY}"
+
 UNIVERSAL_PLAN_SCHEMA_HINT = (
     "UniversalPlan JSON contract: "
     '{"planner_version":"2026-07-20",'
     '"task_kind":"non-empty string",'
     '"reason":"non-empty string",'
-    '"dependencies":["dws|lark|exa|memory|xiaoqing_interview|mail|calendar"],'
+    '"dependencies":["memory"],'
     '"actions":[{"kind":"send_reply|ask_clarifying_question|oa_approval|mail_reply|calendar_response|dws_markdown_document_reply|dws_message_reaction|memory_write|no_reply|handoff_to_human|blocked|stop_with_error",'
     '"reason":"non-empty string",'
     '"sensitivity_kind":"general|internal_personnel|external_candidate|null",'
@@ -106,6 +124,10 @@ class UniversalPlanner:
                 "lark or exa as an execution dependency. If required evidence cannot "
                 "be read, return a blocked or stop_with_error action with the concrete "
                 "reason instead of guessing or attempting login.",
+                "dependencies is only for service-gated execution dependencies. The "
+                "only supported value is memory, and it is required for memory_write. "
+                "Do not list dws, lark, exa, xiaoqing_interview, mail, or calendar; "
+                "those are prechecked, planning-time, or executor-owned capabilities.",
                 "The service owns Memory OAuth and memory_write execution. Declare "
                 "the memory dependency only when the plan includes memory_write; do "
                 "not start login or open a browser.",
@@ -187,10 +209,7 @@ class UniversalPlanner:
             "-c",
             _config_string(
                 "developer_instructions",
-                (
-                    f"{codex_developer_instructions()}\n\n"
-                    f"{UNIVERSAL_PLANNER_DEVELOPER_OVERLAY}"
-                ),
+                universal_planner_developer_instructions(),
             ),
             "-c",
             'model_reasoning_summary="concise"',

@@ -233,6 +233,10 @@ def test_plan_uses_new_and_resume_commands_with_configured_mcps(tmp_path, monkey
         )
         assert "先判断是否需要回复" in developer_config
         assert "UniversalPlan output contract overrides" in developer_config
+        assert "在输出最终 JSON 前调用 memory_write" not in developer_config
+        assert "system_actions" not in developer_config
+        assert "kind 必须是 reply" not in developer_config
+        assert "规划 memory_write action" in developer_config
 
 
 def test_plan_passes_noninteractive_environment_to_executor_and_returns_plan(tmp_path):

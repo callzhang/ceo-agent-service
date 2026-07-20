@@ -69,6 +69,22 @@ def test_memory_write_forces_memory_execution_dependency() -> None:
     assert plan.execution_dependencies() == ("memory",)
 
 
+def test_planning_tools_are_not_execution_dependencies() -> None:
+    plan = make_plan(make_reply_action()).model_copy(
+        update={
+            "dependencies": [
+                DependencyName.DWS,
+                DependencyName.LARK,
+                DependencyName.EXA,
+                DependencyName.MAIL,
+                DependencyName.CALENDAR,
+            ]
+        }
+    )
+
+    assert plan.execution_dependencies() == ()
+
+
 @pytest.mark.parametrize(
     "extra_field",
     ["created_at", "source_description", "user_id", "graph_id"],
