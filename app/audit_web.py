@@ -2953,7 +2953,9 @@ def render_attempt_list(
         [item.source_id for item in history_items if item.kind == "reply"]
     )
     attempts_by_id = {attempt.id: attempt for attempt in attempts}
-    wechat_pending_by_conv = _wechat_pending_delivery_by_conversation(store)
+    wechat_ready_delivery_by_attempt = _wechat_ready_delivery_by_attempt(
+        store, attempts
+    )
     sent_replies_by_attempt = store.list_sent_replies_for_attempts(attempts)
     feedback_events_by_token = _feedback_events_by_sent_reply(
         store,
@@ -2969,6 +2971,10 @@ def render_attempt_list(
         attempt = attempts_by_id.get(history_item.source_id)
         if attempt is None:
             continue
+        if (attempt.channel or "").strip().lower() == "wechat":
+            attempt = attempt.model_copy(
+                update={"send_status": history_item.status}
+            )
         sent_reply = sent_replies_by_attempt.get(
             (attempt.conversation_id, attempt.trigger_message_id)
         )
@@ -2985,11 +2991,7 @@ def render_attempt_list(
         foot_section = (
             f'<div class="attempt-foot">{warning_html}</div>' if warning_html else ""
         )
-        wechat_delivery_id = (
-            wechat_pending_by_conv.get(attempt.conversation_id)
-            if (attempt.channel or "").strip().lower() == "wechat"
-            else None
-        )
+        wechat_delivery_id = wechat_ready_delivery_by_attempt.get(attempt.id)
         items.append(
             "<article class=\"attempt-item\">"
             "<div class=\"attempt-head\">"
@@ -3064,22 +3066,26 @@ def _channel_badge(channel: str) -> str:
     return ""
 
 
-def _wechat_pending_delivery_by_conversation(store: AutoReplyStore) -> dict[str, int]:
-    """Map conversation_id -> the id of its single ``ready_to_send`` WeChat delivery.
-
-    Used to attach 发送/拒绝 buttons to the matching WeChat history item. Only
-    unambiguous conversations (exactly one pending delivery) are wired directly;
-    if a conversation has several pending deliveries the buttons are omitted and
-    the user falls back to the dedicated /wechat/review page.
-    """
-    try:
-        pending = store.list_wechat_deliveries_by_status("ready_to_send")
-    except Exception:
-        return {}
-    by_conv: dict[str, list[int]] = {}
-    for delivery in pending:
-        by_conv.setdefault(delivery.conversation_id, []).append(delivery.id)
-    return {conv: ids[0] for conv, ids in by_conv.items() if len(ids) == 1}
+def _wechat_ready_delivery_by_attempt(
+    store: AutoReplyStore,
+    attempts: list[ReplyAttempt],
+) -> dict[int, int]:
+    """Return ready delivery ids keyed by their exact WeChat reply attempt."""
+    result: dict[int, int] = {}
+    for attempt in attempts:
+        if (attempt.channel or "").strip().lower() != "wechat":
+            continue
+        task = store.get_reply_task_for_message(
+            attempt.conversation_id,
+            attempt.trigger_message_id,
+            channel="wechat",
+        )
+        if task is None:
+            continue
+        delivery = store.get_wechat_delivery_for_task(task.id)
+        if delivery is not None and delivery.status == "ready_to_send":
+            result[attempt.id] = delivery.id
+    return result
 
 
 def _wechat_send_actions(delivery_id: int | None) -> str:

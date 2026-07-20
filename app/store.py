@@ -4543,7 +4543,23 @@ class AutoReplyStore:
                         else draft_reply_text
                     end as output_text,
                     action,
-                    send_status as status,
+                    case
+                        when channel != 'wechat' then send_status
+                        else coalesce((
+                            select case deliveries.status
+                                when 'ready_to_send' then 'pending'
+                                when 'sending' then 'processing'
+                                else deliveries.status
+                            end
+                            from reply_tasks as tasks
+                            join wechat_deliveries as deliveries
+                                on deliveries.reply_task_id=tasks.id
+                            where tasks.channel='wechat'
+                              and tasks.conversation_id=reply_attempts.conversation_id
+                              and tasks.trigger_message_id=reply_attempts.trigger_message_id
+                            limit 1
+                        ), send_status)
+                    end as status,
                     conversation_title as target_title,
                     codex_session_id,
                     0 as project_id,

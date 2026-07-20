@@ -126,6 +126,10 @@ filters the SQL query, count, search, and pagination to WeChat reply attempts;
 selecting only `replay` shows non-WeChat reply attempts. WeChat rows carry a
 green channel badge. In confirm mode, an unambiguous `ready_to_send` delivery
 also shows inline send/reject actions and returns to History after the action.
+The action is matched by the exact conversation and trigger-message IDs, not by
+conversation alone. A WeChat History row derives its displayed status from that
+delivery, so a manually rejected delivery is shown as failed rather than stale
+pending.
 
 ## Controlled verification (before any live send)
 

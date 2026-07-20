@@ -264,8 +264,31 @@ def test_history_send_buttons_gone_after_delivery_leaves_pending(tmp_path: Path)
 
     # badge still shows (it is a WeChat item), but no actionable buttons remain
     assert "微信</span>" in html
+    assert "💬 Failed" in html
+    assert "💬 Pending" not in html
     assert f"/wechat/deliveries/{delivery_id}/approve" not in html
     assert ">发送</button>" not in html
+
+
+def test_history_wechat_send_button_matches_exact_trigger(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    delivery_id = _seed_wechat_pending(store)
+    store.record_reply_attempt(
+        conversation_id="wxg@chatroom",
+        conversation_title="AI数据市场行业友商资讯",
+        trigger_message_id="wx-without-delivery",
+        trigger_sender="另一位群友",
+        trigger_text="另一条消息",
+        action="no_reply",
+        sensitivity_kind="general",
+        send_status="skipped",
+        channel="wechat",
+    )
+
+    html = render_attempt_list(store, search_object_types=("wechat",))
+
+    assert html.count(f"/wechat/deliveries/{delivery_id}/approve?next=/") == 1
+    assert html.count(f"/wechat/deliveries/{delivery_id}/reject?next=/") == 1
 
 
 def test_render_attempt_list_links_task_history_to_task_detail(tmp_path: Path):
