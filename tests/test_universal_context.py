@@ -1,3 +1,6 @@
+import hashlib
+from dataclasses import replace
+
 import pytest
 
 from app.dingtalk_models import DingTalkConversation, DingTalkMessage
@@ -5,6 +8,8 @@ from app.universal_context import (
     UniversalContextMessage,
     UniversalTaskContext,
     build_universal_context,
+    canonical_universal_context_json,
+    universal_context_sha256,
 )
 
 
@@ -110,6 +115,74 @@ def test_empty_execution_generation_is_rejected() -> None:
             dry_run=False,
             execution_generation="   ",
         )
+
+
+def test_canonical_context_json_covers_every_field_with_stable_order() -> None:
+    context = UniversalTaskContext(
+        task_id=42,
+        conversation_id="conversation-1",
+        conversation_title="Friday planning",
+        single_chat=True,
+        trigger_message_id="trigger-1",
+        trigger_sender="Derek",
+        trigger_text="Please review this.",
+        context_messages=(
+            UniversalContextMessage("Alex", "prior-1", "Earlier message."),
+            UniversalContextMessage("Derek", "trigger-1", "Please review this."),
+        ),
+        required_dependencies=("dws", "memory"),
+        force_new_decision=True,
+        dry_run=False,
+        execution_generation="manual-rerun-2",
+    )
+
+    canonical = canonical_universal_context_json(context)
+
+    assert canonical == (
+        '{"context_messages":[{"content":"Earlier message.",'
+        '"open_message_id":"prior-1","sender_name":"Alex"},'
+        '{"content":"Please review this.","open_message_id":"trigger-1",'
+        '"sender_name":"Derek"}],"conversation_id":"conversation-1",'
+        '"conversation_title":"Friday planning","dry_run":false,'
+        '"execution_generation":"manual-rerun-2","force_new_decision":true,'
+        '"required_dependencies":["dws","memory"],"single_chat":true,'
+        '"task_id":42,"trigger_message_id":"trigger-1",'
+        '"trigger_sender":"Derek","trigger_text":"Please review this."}'
+    )
+    assert universal_context_sha256(context) == hashlib.sha256(
+        canonical.encode("utf-8")
+    ).hexdigest()
+    assert canonical_universal_context_json(replace(context)) == canonical
+
+
+def test_canonical_context_identity_preserves_message_and_dependency_order() -> None:
+    context = build_context([make_message("prior-1", "Alex", "Earlier message.")])
+    reversed_messages = replace(
+        context,
+        context_messages=tuple(reversed(context.context_messages)),
+    )
+    reordered_dependencies = replace(
+        context,
+        required_dependencies=("memory", "dws"),
+    )
+
+    assert universal_context_sha256(reversed_messages) != universal_context_sha256(
+        context
+    )
+    assert universal_context_sha256(reordered_dependencies) != universal_context_sha256(
+        context
+    )
+
+
+def test_canonical_context_json_rejects_non_strict_field_types() -> None:
+    context = build_context([])
+
+    with pytest.raises(TypeError, match="context_messages must be a tuple"):
+        canonical_universal_context_json(
+            replace(context, context_messages=list(context.context_messages))
+        )
+    with pytest.raises(TypeError, match="task_id must be an int"):
+        canonical_universal_context_json(replace(context, task_id=True))
 
 
 def test_trigger_is_appended_when_absent_and_not_duplicated_when_present() -> None:

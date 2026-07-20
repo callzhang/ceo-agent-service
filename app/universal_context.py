@@ -1,3 +1,5 @@
+import hashlib
+import json
 from dataclasses import dataclass
 
 from app.dingtalk_models import DingTalkConversation, DingTalkMessage
@@ -57,6 +59,76 @@ class UniversalTaskContext:
                 *message_lines,
             ]
         )
+
+
+def canonical_universal_context_json(context: UniversalTaskContext) -> str:
+    if not isinstance(context, UniversalTaskContext):
+        raise TypeError("context must be UniversalTaskContext")
+    if not isinstance(context.task_id, int) or isinstance(context.task_id, bool):
+        raise TypeError("task_id must be an int")
+    for field_name in (
+        "conversation_id",
+        "conversation_title",
+        "trigger_message_id",
+        "trigger_sender",
+        "trigger_text",
+        "execution_generation",
+    ):
+        if not isinstance(getattr(context, field_name), str):
+            raise TypeError(f"{field_name} must be a str")
+    for field_name in ("single_chat", "force_new_decision", "dry_run"):
+        if not isinstance(getattr(context, field_name), bool):
+            raise TypeError(f"{field_name} must be a bool")
+    if not isinstance(context.context_messages, tuple):
+        raise TypeError("context_messages must be a tuple")
+    if not isinstance(context.required_dependencies, tuple):
+        raise TypeError("required_dependencies must be a tuple")
+
+    context_messages: list[dict[str, str]] = []
+    for message in context.context_messages:
+        if not isinstance(message, UniversalContextMessage):
+            raise TypeError("context_messages items must be UniversalContextMessage")
+        for field_name in ("sender_name", "open_message_id", "content"):
+            if not isinstance(getattr(message, field_name), str):
+                raise TypeError(f"context message {field_name} must be a str")
+        context_messages.append(
+            {
+                "sender_name": message.sender_name,
+                "open_message_id": message.open_message_id,
+                "content": message.content,
+            }
+        )
+
+    required_dependencies: list[str] = []
+    for dependency in context.required_dependencies:
+        if not isinstance(dependency, str):
+            raise TypeError("required_dependencies items must be str")
+        required_dependencies.append(dependency)
+
+    return json.dumps(
+        {
+            "task_id": context.task_id,
+            "conversation_id": context.conversation_id,
+            "conversation_title": context.conversation_title,
+            "single_chat": context.single_chat,
+            "trigger_message_id": context.trigger_message_id,
+            "trigger_sender": context.trigger_sender,
+            "trigger_text": context.trigger_text,
+            "context_messages": context_messages,
+            "required_dependencies": required_dependencies,
+            "force_new_decision": context.force_new_decision,
+            "dry_run": context.dry_run,
+            "execution_generation": context.execution_generation,
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+
+
+def universal_context_sha256(context: UniversalTaskContext) -> str:
+    canonical = canonical_universal_context_json(context)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 def build_universal_context(

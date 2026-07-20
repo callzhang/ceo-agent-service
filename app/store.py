@@ -26,6 +26,11 @@ from app.task_models import (
 )
 from app.feedback_policy import FeedbackPressureStats
 from app.history import HistoryItem
+from app.universal_context import (
+    UniversalTaskContext,
+    canonical_universal_context_json,
+    universal_context_sha256,
+)
 from app.universal_executor import (
     UniversalActionExecution,
     UniversalActionExecutionState,
@@ -519,6 +524,8 @@ class AutoReplyStore:
                     reply_task_id integer not null,
                     execution_generation text not null,
                     plan_json text not null,
+                    context_hash text not null default '',
+                    context_json text not null default '',
                     status text not null default 'active',
                     created_at text not null default current_timestamp,
                     updated_at text not null default current_timestamp,
@@ -1034,6 +1041,18 @@ class AutoReplyStore:
                     db.execute(
                         f"alter table reply_tasks add column {column} {definition}"
                     )
+            universal_plan_execution_columns = {
+                row["name"]
+                for row in db.execute(
+                    "pragma table_info(universal_plan_executions)"
+                ).fetchall()
+            }
+            for column in ("context_hash", "context_json"):
+                if column not in universal_plan_execution_columns:
+                    db.execute(
+                        f"alter table universal_plan_executions add column {column} "
+                        "text not null default ''"
+                    )
             for table_name in ("reply_attempts", "sent_replies"):
                 existing = {
                     row["name"]
@@ -1328,54 +1347,108 @@ class AutoReplyStore:
             raise ValueError("execution generation mismatch")
         return task
 
+    @staticmethod
+    def _validate_context_matches_reply_task(
+        task: sqlite3.Row,
+        context: UniversalTaskContext,
+    ) -> None:
+        durable_context = (
+            task["id"],
+            task["conversation_id"],
+            task["conversation_title"],
+            bool(task["single_chat"]),
+            task["trigger_message_id"],
+            task["trigger_sender"],
+            task["trigger_text"],
+            bool(task["force_new_decision"]),
+            task["execution_generation"],
+        )
+        supplied_context = (
+            context.task_id,
+            context.conversation_id,
+            context.conversation_title,
+            context.single_chat,
+            context.trigger_message_id,
+            context.trigger_sender,
+            context.trigger_text,
+            context.force_new_decision,
+            context.execution_generation,
+        )
+        if durable_context != supplied_context:
+            raise ValueError("task context mismatch")
+
+    @staticmethod
+    def _validate_plan_context_identity(
+        row: sqlite3.Row,
+        context_json: str,
+        context_hash: str,
+    ) -> None:
+        if not row["context_json"] or not row["context_hash"]:
+            raise ValueError("legacy plan context missing")
+        if (
+            row["context_json"] != context_json
+            or row["context_hash"] != context_hash
+        ):
+            raise ValueError("context identity mismatch")
+
     def load_universal_plan_execution(
         self,
-        task_id: int,
-        execution_generation: str,
+        context: UniversalTaskContext,
     ) -> UniversalPlanExecution | None:
+        context_json = canonical_universal_context_json(context)
+        context_hash = universal_context_sha256(context)
         with self._connect() as db:
-            self._validate_reply_task_generation(
+            task = self._validate_reply_task_generation(
                 db,
-                task_id,
-                execution_generation,
+                context.task_id,
+                context.execution_generation,
             )
+            self._validate_context_matches_reply_task(task, context)
             row = db.execute(
                 """
                 select *
                 from universal_plan_executions
                 where reply_task_id=? and execution_generation=?
                 """,
-                (task_id, execution_generation),
+                (context.task_id, context.execution_generation),
             ).fetchone()
             if row is None:
                 return None
+            self._validate_plan_context_identity(row, context_json, context_hash)
             return self._universal_plan_execution_from_row(row)
 
     def create_universal_plan_execution(
         self,
-        task_id: int,
-        execution_generation: str,
+        context: UniversalTaskContext,
         plan: UniversalPlan,
     ) -> UniversalPlanExecution:
         if not isinstance(plan, UniversalPlan):
             raise TypeError("plan must be UniversalPlan")
+        context_json = canonical_universal_context_json(context)
+        context_hash = universal_context_sha256(context)
         plan_json = self._canonical_universal_plan_json(plan)
         with self._connect() as db:
             db.execute("begin immediate")
-            self._validate_reply_task_generation(
+            task = self._validate_reply_task_generation(
                 db,
-                task_id,
-                execution_generation,
+                context.task_id,
+                context.execution_generation,
             )
+            self._validate_context_matches_reply_task(task, context)
             existing = db.execute(
                 """
                 select *
                 from universal_plan_executions
                 where reply_task_id=? and execution_generation=?
                 """,
-                (task_id, execution_generation),
+                (context.task_id, context.execution_generation),
             ).fetchone()
             if existing is not None:
+                self._validate_plan_context_identity(
+                    existing,
+                    context_json,
+                    context_hash,
+                )
                 return self._universal_plan_execution_from_row(existing)
 
             execution_scope_id = uuid4().hex
@@ -1385,14 +1458,18 @@ class AutoReplyStore:
                     execution_scope_id,
                     reply_task_id,
                     execution_generation,
-                    plan_json
-                ) values (?, ?, ?, ?)
+                    plan_json,
+                    context_hash,
+                    context_json
+                ) values (?, ?, ?, ?, ?, ?)
                 """,
                 (
                     execution_scope_id,
-                    task_id,
-                    execution_generation,
+                    context.task_id,
+                    context.execution_generation,
                     plan_json,
+                    context_hash,
+                    context_json,
                 ),
             )
             row = db.execute(
@@ -1466,6 +1543,11 @@ class AutoReplyStore:
         )
         if durable_context != supplied_context:
             raise ValueError("task context mismatch")
+        self._validate_plan_context_identity(
+            plan_row,
+            canonical_universal_context_json(context),
+            universal_context_sha256(context),
+        )
 
         plan_execution = self._universal_plan_execution_from_row(plan_row)
         if (
