@@ -170,6 +170,26 @@ def test_build_derives_trusted_oa_target_from_trigger_payload() -> None:
     assert "Trusted OA task ID: task-trusted" in context.render_for_agent()
 
 
+def test_build_normalizes_numeric_trusted_oa_ids_from_trigger_payload() -> None:
+    trigger = make_message("trigger-oa", "Derek", "Please review this approval.")
+    trigger.raw_payload = {
+        "processInstanceId": 987654321,
+        "taskId": 123456789,
+    }
+
+    context = build_universal_context(
+        conversation=make_conversation(),
+        trigger=trigger,
+        context_messages=[],
+        task_id=42,
+        force_new_decision=False,
+        dry_run=False,
+    )
+
+    assert context.trusted_oa_process_instance_id == "987654321"
+    assert context.trusted_oa_task_id == "123456789"
+
+
 def test_build_derives_trusted_oa_target_from_reply_task_url() -> None:
     context = build_universal_context(
         conversation=make_conversation(),

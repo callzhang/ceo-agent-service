@@ -355,11 +355,13 @@ def _trusted_oa_target(
         if isinstance(value, dict):
             for key, nested in value.items():
                 if key in {"procInstId", "processInstanceId", "process_instance_id"}:
-                    if isinstance(nested, str) and nested.strip():
-                        process_ids.add(nested.strip())
+                    normalized = _trusted_oa_id(nested)
+                    if normalized:
+                        process_ids.add(normalized)
                 elif key in {"taskId", "task_id"}:
-                    if isinstance(nested, str) and nested.strip():
-                        task_ids.add(nested.strip())
+                    normalized = _trusted_oa_id(nested)
+                    if normalized:
+                        task_ids.add(normalized)
                 visit(nested)
         elif isinstance(value, list):
             for item in value:
@@ -373,6 +375,12 @@ def _trusted_oa_target(
     if len(process_ids) != 1 or len(task_ids) != 1:
         return "", ""
     return next(iter(process_ids)), next(iter(task_ids))
+
+
+def _trusted_oa_id(value: Any) -> str:
+    if isinstance(value, bool) or not isinstance(value, (str, int)):
+        return ""
+    return str(value).strip()
 
 
 def _snapshot_message(message: DingTalkMessage) -> UniversalContextMessage:

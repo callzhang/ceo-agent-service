@@ -721,32 +721,48 @@ class DingTalkAutoReplyWorker:
                 send_error=preflight,
             )
 
-        action_result: dict[str, Any]
+        target_activity_id = ""
+        revert_action = ""
+        if oa_action == "退回":
+            target_activity_id = str(
+                payload.get("target_activity_id") or ""
+            ).strip()
+            revert_action = str(payload.get("revert_action") or "").strip()
+            try:
+                activities = self.dws.read_oa_revert_activities(task_id)
+                if not isinstance(activities, dict):
+                    raise ValueError("invalid OA revert activities response")
+            except ValueError as exc:
+                return self._finalize_universal_oa_action(
+                    execution,
+                    attempt_id=attempt_id,
+                    outcome="blocked",
+                    send_status="blocked",
+                    send_error=self._safe_universal_oa_error(
+                        "oa_revert_material_invalid",
+                        exc,
+                    ),
+                )
+            if not self._universal_oa_revert_is_allowed(
+                activities,
+                target_activity_id=target_activity_id,
+                revert_action=revert_action,
+            ):
+                return self._finalize_universal_oa_action(
+                    execution,
+                    attempt_id=attempt_id,
+                    outcome="blocked",
+                    send_status="blocked",
+                    send_error="missing_oa_revert_material",
+                )
+
+        action_result: Any
         try:
             if oa_action == "comment":
                 action_result = self.dws.comment_oa_approval(
                     process_instance_id, oa_remark
                 )
             elif oa_action == "退回":
-                target_activity_id = str(
-                    payload.get("target_activity_id") or ""
-                ).strip()
-                revert_action = str(payload.get("revert_action") or "").strip()
-                activities = self.dws.read_oa_revert_activities(task_id)
-                if not isinstance(activities, dict):
-                    raise ValueError("invalid OA revert activities response")
-                if not self._universal_oa_revert_is_allowed(
-                    activities,
-                    target_activity_id=target_activity_id,
-                    revert_action=revert_action,
-                ):
-                    return self._finalize_universal_oa_action(
-                        execution,
-                        attempt_id=attempt_id,
-                        outcome="blocked",
-                        send_status="blocked",
-                        send_error="missing_oa_revert_material",
-                    )
                 action_result = self.dws.revert_oa_approval_task(
                     process_instance_id=process_instance_id,
                     task_id=task_id,
@@ -761,21 +777,6 @@ class DingTalkAutoReplyWorker:
                     "通过" if oa_action == "同意" else oa_action,
                     oa_remark,
                 )
-            if not isinstance(action_result, dict):
-                raise ValueError("invalid OA action response")
-            if action_result.get("success") is False:
-                raise ValueError("OA action response reported failure")
-        except ValueError as exc:
-            return self._finalize_universal_oa_action(
-                execution,
-                attempt_id=attempt_id,
-                outcome="blocked",
-                send_status="blocked",
-                send_error=self._safe_universal_oa_error(
-                    "oa_action_invalid",
-                    exc,
-                ),
-            )
         except Exception as exc:
             if self._universal_oa_action_was_applied(
                 process_instance_id=process_instance_id,
@@ -795,6 +796,33 @@ class DingTalkAutoReplyWorker:
                 error=exc,
             )
             raise
+
+        if not self._universal_oa_receipt_is_success(action_result):
+            if self._universal_oa_action_was_applied(
+                process_instance_id=process_instance_id,
+                task_id=task_id,
+                current_user_id=current_user_id,
+                action=oa_action,
+            ):
+                return self._finalize_universal_oa_action(
+                    execution,
+                    attempt_id=attempt_id,
+                    outcome="salvaged",
+                    send_status="skipped",
+                    dws_action_result=(
+                        action_result if isinstance(action_result, dict) else None
+                    ),
+                )
+            error = "OA action returned without a verifiable receipt"
+            self._mark_universal_oa_unknown(
+                execution,
+                attempt_id=attempt_id,
+                error=error,
+                dws_action_result=(
+                    action_result if isinstance(action_result, dict) else None
+                ),
+            )
+            raise ReplyDeliveryError(error)
 
         if oa_action == "comment":
             return self._finalize_universal_oa_action(
@@ -931,6 +959,13 @@ class DingTalkAutoReplyWorker:
             return False
         if refreshed_user_id != current_user_id:
             return False
+        if action == "comment":
+            return self._universal_oa_records_prove_action(
+                records,
+                task_id=task_id,
+                current_user_id=current_user_id,
+                action=action,
+            )
         matching_tasks = [
             task
             for task in self._universal_oa_tasks(detail, tasks)
@@ -954,8 +989,26 @@ class DingTalkAutoReplyWorker:
             action=action,
         ):
             return True
-        process_status = self._universal_oa_process_status(detail)
-        return process_status not in {"", "RUNNING"}
+        return False
+
+    @staticmethod
+    def _universal_oa_receipt_is_success(result: Any) -> bool:
+        if not isinstance(result, dict):
+            return False
+        if result.get("success") is False:
+            return False
+        for key in ("error", "errorMessage", "error_message"):
+            if result.get(key):
+                return False
+        for key in ("errorCode", "error_code", "code"):
+            value = result.get(key)
+            if value not in (None, "", 0, "0", "OK", "SUCCESS"):
+                return False
+        if result.get("success") is True:
+            return True
+        if any(result.get(key) for key in ("requestId", "request_id", "receipt")):
+            return True
+        return bool(result.get("result"))
 
     @classmethod
     def _universal_oa_records_prove_action(
@@ -1081,7 +1134,8 @@ class DingTalkAutoReplyWorker:
             ).strip()
             if activity_id != target_activity_id:
                 continue
-            return True
+            actions = activity.get("revertActions")
+            return isinstance(actions, list) and revert_action in actions
         return False
 
     @classmethod
@@ -1131,6 +1185,7 @@ class DingTalkAutoReplyWorker:
         *,
         attempt_id: int,
         error: Exception | str,
+        dws_action_result: dict[str, Any] | None = None,
     ) -> None:
         safe_error = self._safe_universal_oa_error(
             "universal_action_outcome_unknown",
@@ -1143,6 +1198,7 @@ class DingTalkAutoReplyWorker:
             oa_action_result_json=self._universal_oa_result_json(
                 execution,
                 outcome="unknown",
+                dws_action_result=dws_action_result,
             ),
         )
         self.store.mark_universal_action_execution_unknown(execution, safe_error)
