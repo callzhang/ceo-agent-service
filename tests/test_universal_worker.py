@@ -31,6 +31,105 @@ class FakeDws:
         self.calls.append(("ding_self", text))
 
 
+class UniversalReactionFakeDws(FakeDws):
+    def __init__(self) -> None:
+        super().__init__()
+        self.emoji_result: object = {
+            "result": {"receipt": {"reactionId": 731}},
+            "success": True,
+        }
+        self.emoji_error: Exception | None = None
+        self.created_text_emotions: list[tuple[str, str, str]] = []
+        self.added_text_emotions: list[tuple[object, ...]] = []
+
+    def add_message_emoji(
+        self,
+        conversation_id: str,
+        message_id: str,
+        emoji: str,
+    ) -> object:
+        self.calls.append(("emoji", conversation_id, message_id, emoji))
+        if self.emoji_error is not None:
+            raise self.emoji_error
+        return self.emoji_result
+
+    def create_message_text_emotion(
+        self,
+        *,
+        text: str,
+        emotion_name: str,
+        background_id: str,
+    ) -> object:
+        self.created_text_emotions.append((text, emotion_name, background_id))
+        return {"result": {"emotion": {"emotionId": 902, "backgroundId": 17}}}
+
+    def add_message_text_emotion(
+        self,
+        conversation_id: str,
+        message_id: str,
+        *,
+        text: str,
+        emotion_id: str,
+        emotion_name: str,
+        background_id: str,
+    ) -> object:
+        self.added_text_emotions.append(
+            (
+                conversation_id,
+                message_id,
+                text,
+                emotion_id,
+                emotion_name,
+                background_id,
+            )
+        )
+        return {"result": {"receipt": {"reactionId": 903}}, "success": True}
+
+
+class UniversalDocumentFakeDws(FakeDws):
+    def __init__(self) -> None:
+        super().__init__()
+        self.created_documents: list[tuple[str, str]] = []
+        self.permission_calls: list[tuple[str, list[str]]] = []
+        self.sent_links: list[tuple[str, str, str]] = []
+        self.send_error: Exception | None = None
+        self.send_results: list[object] = [
+            {"result": {"message": {"messageId": 843}}, "success": True}
+        ]
+        self.document_result: object = {
+            "result": {
+                "document": {
+                    "nodeId": 841,
+                    "url": "https://alidocs.dingtalk.com/i/nodes/841",
+                }
+            }
+        }
+        self.permission_results: list[object] = [{"success": True}]
+
+    def create_markdown_doc(self, title: str, text: str) -> object:
+        self.created_documents.append((title, text))
+        return self.document_result
+
+    def add_doc_editor_permission(self, node_id: str, user_ids: list[str]) -> object:
+        self.permission_calls.append((node_id, user_ids))
+        if len(self.permission_results) > 1:
+            return self.permission_results.pop(0)
+        return self.permission_results[0]
+
+    def send_reply_to_trigger(self, conversation, trigger, text, **kwargs) -> object:
+        self.sent_links.append(
+            (conversation.open_conversation_id, trigger.open_message_id, text)
+        )
+        if self.send_error is not None:
+            raise self.send_error
+        if len(self.send_results) > 1:
+            return self.send_results.pop(0)
+        return self.send_results[0]
+
+    def read_recent_messages(self, conversation) -> list:
+        return []
+
+
 class NativeReplyFakeDws(FakeDws):
     def resolve_message_sender(self, message) -> str:
         return message.sender_user_id or "resolved-user"
@@ -261,6 +360,7 @@ def _execution(
     trusted_oa_task_id: str | None = None,
     trusted_mail_target: tuple[str, str, str] | None = None,
     trusted_calendar_target: tuple[str, str, str] | None = None,
+    trusted_document_url: str = "",
 ) -> UniversalActionExecution:
     inserted = store.enqueue_reply_task(
         conversation_id="cid-context",
@@ -329,6 +429,7 @@ def _execution(
         trusted_calendar_event_id=(trusted_calendar_target or ("", "", ""))[0],
         trusted_calendar_response_status=(trusted_calendar_target or ("", "", ""))[1],
         trusted_calendar_organizer=(trusted_calendar_target or ("", "", ""))[2],
+        trusted_document_url=trusted_document_url,
     )
     action = PlannedAction(
         kind=kind,
@@ -375,6 +476,561 @@ def _worker(store: AutoReplyStore) -> DingTalkAutoReplyWorker:
         store=store,
         dws=FakeDws(),
         codex=FakeCodex(),
+    )
+
+
+def test_universal_reaction_rejects_planner_target_spoof(tmp_path: Path) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    execution = _execution(
+        store,
+        kind=PlannedActionKind.DWS_MESSAGE_REACTION,
+        target={"conversation_id": "cid-spoof", "message_id": "msg-spoof"},
+        payload={"reaction_type": "emoji", "emoji": "👍"},
+    )
+    worker = _worker(store)
+
+    assert worker.execute_universal_message_reaction(execution) is True
+
+    assert worker.dws.calls == []
+    attempt = store.get_latest_reply_attempt_for_trigger("cid-context", "msg-context")
+    assert attempt is not None
+    assert attempt.send_status == "blocked"
+    assert attempt.send_error == "untrusted_message_reaction_target"
+    assert (
+        store.get_universal_action_execution_state(execution)
+        is UniversalActionExecutionState.SUCCEEDED
+    )
+
+
+def test_universal_reaction_strips_one_square_bracket_pair(tmp_path: Path) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    execution = _execution(
+        store,
+        kind=PlannedActionKind.DWS_MESSAGE_REACTION,
+        target={"conversation_id": "cid-context", "message_id": "msg-context"},
+        payload={"reaction_type": "emoji", "emoji": "[👍]"},
+    )
+    dws = UniversalReactionFakeDws()
+    worker = DingTalkAutoReplyWorker(store=store, dws=dws, codex=FakeCodex())
+
+    assert worker.execute_universal_message_reaction(execution) is True
+
+    assert dws.calls == [("emoji", "cid-context", "msg-context", "👍")]
+    attempt = store.get_latest_reply_attempt_for_trigger("cid-context", "msg-context")
+    assert attempt is not None
+    assert attempt.send_error == "emoji: 👍"
+
+
+def test_universal_reaction_persists_nested_numeric_receipt(tmp_path: Path) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    execution = _execution(
+        store,
+        kind=PlannedActionKind.DWS_MESSAGE_REACTION,
+        target={"conversation_id": "cid-context", "message_id": "msg-context"},
+        payload={"reaction_type": "emoji", "emoji": "👍"},
+    )
+    dws = UniversalReactionFakeDws()
+    worker = DingTalkAutoReplyWorker(store=store, dws=dws, codex=FakeCodex())
+
+    assert worker.execute_universal_message_reaction(execution) is True
+
+    attempt = store.get_latest_reply_attempt_for_trigger("cid-context", "msg-context")
+    assert attempt is not None
+    assert json.loads(attempt.reaction_action_result_json) == dws.emoji_result
+
+
+def test_universal_reaction_duplicate_execution_does_not_react_twice(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    execution = _execution(
+        store,
+        kind=PlannedActionKind.DWS_MESSAGE_REACTION,
+        target={"conversation_id": "cid-context", "message_id": "msg-context"},
+        payload={"reaction_type": "emoji", "emoji": "👍"},
+    )
+    dws = UniversalReactionFakeDws()
+    worker = DingTalkAutoReplyWorker(store=store, dws=dws, codex=FakeCodex())
+
+    assert worker.execute_universal_message_reaction(execution) is True
+    assert worker.execute_universal_message_reaction(execution) is True
+
+    assert dws.calls == [("emoji", "cid-context", "msg-context", "👍")]
+    attempts = [
+        attempt
+        for attempt in store.list_reply_attempts()
+        if attempt.universal_execution_id == execution.execution_id
+    ]
+    assert len(attempts) == 1
+
+
+def test_universal_reaction_definite_pre_call_failure_is_retryable(tmp_path: Path) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    execution = _execution(
+        store,
+        kind=PlannedActionKind.DWS_MESSAGE_REACTION,
+        target={"conversation_id": "cid-context", "message_id": "msg-context"},
+        payload={"reaction_type": "emoji", "emoji": "[]"},
+    )
+    dws = UniversalReactionFakeDws()
+    worker = DingTalkAutoReplyWorker(store=store, dws=dws, codex=FakeCodex())
+
+    with pytest.raises(ValueError, match="emoji is required"):
+        worker.execute_universal_message_reaction(execution)
+
+    assert dws.calls == []
+    assert (
+        store.get_universal_action_execution_state(execution)
+        is UniversalActionExecutionState.NOT_STARTED
+    )
+
+
+def test_universal_reaction_post_call_failure_is_unknown(tmp_path: Path) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    execution = _execution(
+        store,
+        kind=PlannedActionKind.DWS_MESSAGE_REACTION,
+        target={"conversation_id": "cid-context", "message_id": "msg-context"},
+        payload={"reaction_type": "emoji", "emoji": "👍"},
+    )
+    dws = UniversalReactionFakeDws()
+    dws.emoji_error = TimeoutError("reaction response timeout")
+    worker = DingTalkAutoReplyWorker(store=store, dws=dws, codex=FakeCodex())
+
+    with pytest.raises(TimeoutError, match="reaction response timeout"):
+        worker.execute_universal_message_reaction(execution)
+
+    attempt = store.get_latest_reply_attempt_for_trigger("cid-context", "msg-context")
+    assert attempt is not None
+    assert attempt.send_status == "failed"
+    assert "universal_action_outcome_unknown" in attempt.send_error
+    assert (
+        store.get_universal_action_execution_state(execution)
+        is UniversalActionExecutionState.UNKNOWN
+    )
+
+
+def test_universal_reaction_explicit_failure_response_is_retryable(tmp_path: Path) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    execution = _execution(
+        store,
+        kind=PlannedActionKind.DWS_MESSAGE_REACTION,
+        target={"conversation_id": "cid-context", "message_id": "msg-context"},
+        payload={"reaction_type": "emoji", "emoji": "👍"},
+    )
+    dws = UniversalReactionFakeDws()
+    dws.emoji_result = {"success": False, "result": {}}
+    worker = DingTalkAutoReplyWorker(store=store, dws=dws, codex=FakeCodex())
+
+    with pytest.raises(ReplyDeliveryError, match="reaction receipt"):
+        worker.execute_universal_message_reaction(execution)
+
+    attempt = store.get_latest_reply_attempt_for_trigger("cid-context", "msg-context")
+    assert attempt is not None
+    assert attempt.send_status == "failed"
+    assert json.loads(attempt.reaction_action_result_json) == dws.emoji_result
+    assert (
+        store.get_universal_action_execution_state(execution)
+        is UniversalActionExecutionState.NOT_STARTED
+    )
+
+
+@pytest.mark.parametrize(
+    ("executor_name", "expected_message"),
+    [
+        ("execute_universal_document_reply", "non-document action"),
+        ("execute_universal_message_reaction", "non-reaction action"),
+    ],
+)
+def test_universal_document_and_reaction_executors_reject_wrong_action_kind(
+    tmp_path: Path,
+    executor_name: str,
+    expected_message: str,
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    execution = _execution(store, kind=PlannedActionKind.NO_REPLY)
+    worker = DingTalkAutoReplyWorker(store=store, dws=FakeDws(), codex=FakeCodex())
+
+    with pytest.raises(ValueError, match=expected_message):
+        getattr(worker, executor_name)(execution)
+
+    assert (
+        store.get_universal_action_execution_state(execution)
+        is UniversalActionExecutionState.NOT_STARTED
+    )
+
+
+@pytest.mark.parametrize(
+    "result",
+    [
+        {"success": True},
+        {"success": True, "result": {"reactionId": 0}},
+        {"result": {"receipt": {"reactionId": "0"}}},
+        {"success": True, "result": {"emotionId": 902}},
+    ],
+)
+def test_universal_reaction_rejects_bare_success_and_zero_receipts(
+    tmp_path: Path,
+    result: dict,
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    execution = _execution(
+        store,
+        kind=PlannedActionKind.DWS_MESSAGE_REACTION,
+        target={"conversation_id": "cid-context", "message_id": "msg-context"},
+        payload={"reaction_type": "emoji", "emoji": "👍"},
+    )
+    dws = UniversalReactionFakeDws()
+    dws.emoji_result = result
+    worker = DingTalkAutoReplyWorker(store=store, dws=dws, codex=FakeCodex())
+
+    with pytest.raises(ReplyDeliveryError, match="reaction receipt"):
+        worker.execute_universal_message_reaction(execution)
+
+    assert (
+        store.get_universal_action_execution_state(execution)
+        is UniversalActionExecutionState.UNKNOWN
+    )
+
+
+@pytest.mark.parametrize(
+    "result",
+    [
+        {"errorCode": "REACTION_DENIED", "message": "denied"},
+        {"result": {"code": 500, "message": "server rejected request"}},
+    ],
+)
+def test_universal_reaction_error_code_response_is_retryable(
+    tmp_path: Path,
+    result: dict,
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    execution = _execution(
+        store,
+        kind=PlannedActionKind.DWS_MESSAGE_REACTION,
+        target={"conversation_id": "cid-context", "message_id": "msg-context"},
+        payload={"reaction_type": "emoji", "emoji": "👍"},
+    )
+    dws = UniversalReactionFakeDws()
+    dws.emoji_result = result
+    worker = DingTalkAutoReplyWorker(store=store, dws=dws, codex=FakeCodex())
+
+    with pytest.raises(ReplyDeliveryError, match="reaction receipt reports failure"):
+        worker.execute_universal_message_reaction(execution)
+
+    assert (
+        store.get_universal_action_execution_state(execution)
+        is UniversalActionExecutionState.NOT_STARTED
+    )
+
+
+def test_universal_text_emotion_parses_nested_numeric_ids(tmp_path: Path) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    execution = _execution(
+        store,
+        kind=PlannedActionKind.DWS_MESSAGE_REACTION,
+        target={"conversation_id": "cid-context", "message_id": "msg-context"},
+        payload={
+            "reaction_type": "text_emotion",
+            "text": "我去摇人",
+            "emotion_name": "我去摇人",
+        },
+    )
+    dws = UniversalReactionFakeDws()
+    worker = DingTalkAutoReplyWorker(store=store, dws=dws, codex=FakeCodex())
+
+    assert worker.execute_universal_message_reaction(execution) is True
+
+    assert dws.added_text_emotions == [
+        ("cid-context", "msg-context", "我去摇人", "902", "我去摇人", "17")
+    ]
+
+
+def test_universal_document_rejects_planner_target_spoof(tmp_path: Path) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    execution = _execution(
+        store,
+        kind=PlannedActionKind.DWS_MARKDOWN_DOCUMENT_REPLY,
+        target={
+            "conversation_id": "cid-spoof",
+            "trigger_message_id": "msg-spoof",
+        },
+        payload={"title": "方案", "text": "# 方案\n\n正文"},
+    )
+    worker = _worker(store)
+
+    assert worker.execute_universal_document_reply(execution) is True
+
+    assert worker.dws.calls == []
+    attempt = store.get_latest_reply_attempt_for_trigger("cid-context", "msg-context")
+    assert attempt is not None
+    assert attempt.send_status == "blocked"
+    assert attempt.send_error == "untrusted_markdown_document_reply_target"
+
+
+def test_universal_document_rejects_planner_document_url_spoof(tmp_path: Path) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    execution = _execution(
+        store,
+        kind=PlannedActionKind.DWS_MARKDOWN_DOCUMENT_REPLY,
+        target={
+            "conversation_id": "cid-context",
+            "trigger_message_id": "msg-context",
+            "document_url": "https://alidocs.dingtalk.com/i/nodes/spoof",
+        },
+        payload={"title": "方案", "text": "# 方案\n\n正文"},
+        trusted_document_url="https://alidocs.dingtalk.com/i/nodes/source-1",
+    )
+    worker = _worker(store)
+
+    assert worker.execute_universal_document_reply(execution) is True
+
+    assert worker.dws.calls == []
+    attempt = store.get_latest_reply_attempt_for_trigger("cid-context", "msg-context")
+    assert attempt is not None
+    assert attempt.send_error == "untrusted_markdown_document_reply_target"
+
+
+def test_universal_document_creates_document_and_delivers_verified_link(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CEO_REPLY_VISIBILITY_RECHECK_SECONDS", "0")
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    execution = _execution(
+        store,
+        kind=PlannedActionKind.DWS_MARKDOWN_DOCUMENT_REPLY,
+        target={
+            "conversation_id": "cid-context",
+            "trigger_message_id": "msg-context",
+        },
+        payload={"title": "方案", "text": "# 方案\n\n正文"},
+    )
+    dws = UniversalDocumentFakeDws()
+    worker = DingTalkAutoReplyWorker(store=store, dws=dws, codex=FakeCodex())
+
+    assert worker.execute_universal_document_reply(execution) is True
+
+    assert dws.created_documents == [("方案", "# 方案\n\n正文")]
+    assert dws.permission_calls == [("841", ["user-context-sender"])]
+    assert len(dws.sent_links) == 1
+    assert "https://alidocs.dingtalk.com/i/nodes/841" in dws.sent_links[0][2]
+    attempt = store.get_latest_reply_attempt_for_trigger("cid-context", "msg-context")
+    assert attempt is not None
+    assert attempt.send_status == "sent"
+    receipt = json.loads(attempt.document_action_result_json)
+    assert receipt["node_id"] == "841"
+    assert receipt["delivery"]["result"]["message"]["messageId"] == 843
+    assert store.get_sent_reply("cid-context", "msg-context") is not None
+    assert (
+        store.get_universal_action_execution_state(execution)
+        is UniversalActionExecutionState.SUCCEEDED
+    )
+
+
+def test_universal_document_recovers_durable_receipt_without_recreating(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CEO_REPLY_VISIBILITY_RECHECK_SECONDS", "0")
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    execution = _execution(
+        store,
+        kind=PlannedActionKind.DWS_MARKDOWN_DOCUMENT_REPLY,
+        target={
+            "conversation_id": "cid-context",
+            "trigger_message_id": "msg-context",
+        },
+        payload={"title": "方案", "text": "# 方案\n\n正文"},
+    )
+    dws = UniversalDocumentFakeDws()
+    worker = DingTalkAutoReplyWorker(store=store, dws=dws, codex=FakeCodex())
+    assert (
+        store.claim_universal_action_execution(execution)
+        is UniversalActionExecutionState.NOT_STARTED
+    )
+    attempt_id = worker._record_universal_reply_attempt(
+        execution,
+        draft_reply_text="# 方案\n\n正文",
+        send_status="failed",
+    )
+    durable_receipt = {
+        "title": "方案",
+        "url": "https://alidocs.dingtalk.com/i/nodes/841",
+        "node_id": "841",
+        "doc_result": {
+            "result": {
+                "document": {
+                    "nodeId": 841,
+                    "url": "https://alidocs.dingtalk.com/i/nodes/841",
+                }
+            }
+        },
+        "permission_result": {
+            "success": True,
+        },
+    }
+    store.update_reply_attempt(
+        attempt_id,
+        document_action_result_json=json.dumps(durable_receipt),
+    )
+    store.mark_universal_action_execution_failed(execution, "delivery_not_started")
+
+    assert worker.execute_universal_document_reply(execution) is True
+
+    assert dws.created_documents == []
+    assert dws.permission_calls == []
+    assert len(dws.sent_links) == 1
+
+
+def test_universal_document_retries_definite_permission_failure_from_checkpoint(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    execution = _execution(
+        store,
+        kind=PlannedActionKind.DWS_MARKDOWN_DOCUMENT_REPLY,
+        target={
+            "conversation_id": "cid-context",
+            "trigger_message_id": "msg-context",
+        },
+        payload={"title": "方案", "text": "# 方案\n\n正文"},
+    )
+    dws = UniversalDocumentFakeDws()
+    dws.permission_results = [
+        {"success": False, "errorCode": "PERMISSION_DENIED"},
+        {"success": True},
+    ]
+    worker = DingTalkAutoReplyWorker(store=store, dws=dws, codex=FakeCodex())
+
+    with pytest.raises(ReplyDeliveryError, match="permission.*receipt"):
+        worker.execute_universal_document_reply(execution)
+
+    assert len(dws.created_documents) == 1
+    assert len(dws.permission_calls) == 1
+    assert dws.sent_links == []
+    assert (
+        store.get_universal_action_execution_state(execution)
+        is UniversalActionExecutionState.NOT_STARTED
+    )
+
+    assert worker.execute_universal_document_reply(execution) is True
+
+    assert len(dws.created_documents) == 1
+    assert len(dws.permission_calls) == 2
+    assert len(dws.sent_links) == 1
+    assert (
+        store.get_universal_action_execution_state(execution)
+        is UniversalActionExecutionState.SUCCEEDED
+    )
+
+
+def test_universal_document_retries_definite_link_failure_from_checkpoint(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    execution = _execution(
+        store,
+        kind=PlannedActionKind.DWS_MARKDOWN_DOCUMENT_REPLY,
+        target={
+            "conversation_id": "cid-context",
+            "trigger_message_id": "msg-context",
+        },
+        payload={"title": "方案", "text": "# 方案\n\n正文"},
+    )
+    dws = UniversalDocumentFakeDws()
+    dws.send_results = [
+        {"success": False, "errorCode": "DELIVERY_REJECTED"},
+        {"success": True, "result": {"message": {"messageId": 843}}},
+    ]
+    worker = DingTalkAutoReplyWorker(store=store, dws=dws, codex=FakeCodex())
+
+    with pytest.raises(ReplyDeliveryError, match="link delivery.*failure"):
+        worker.execute_universal_document_reply(execution)
+
+    assert len(dws.created_documents) == 1
+    assert len(dws.permission_calls) == 1
+    assert len(dws.sent_links) == 1
+    assert (
+        store.get_universal_action_execution_state(execution)
+        is UniversalActionExecutionState.NOT_STARTED
+    )
+
+    assert worker.execute_universal_document_reply(execution) is True
+
+    assert len(dws.created_documents) == 1
+    assert len(dws.permission_calls) == 1
+    assert len(dws.sent_links) == 2
+    assert (
+        store.get_universal_action_execution_state(execution)
+        is UniversalActionExecutionState.SUCCEEDED
+    )
+
+
+def test_universal_document_ambiguous_link_delivery_is_unknown_without_retry(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    execution = _execution(
+        store,
+        kind=PlannedActionKind.DWS_MARKDOWN_DOCUMENT_REPLY,
+        target={
+            "conversation_id": "cid-context",
+            "trigger_message_id": "msg-context",
+        },
+        payload={"title": "方案", "text": "# 方案\n\n正文"},
+    )
+    dws = UniversalDocumentFakeDws()
+    dws.send_error = TimeoutError("link delivery response timeout")
+    worker = DingTalkAutoReplyWorker(store=store, dws=dws, codex=FakeCodex())
+
+    with pytest.raises(TimeoutError, match="link delivery response timeout"):
+        worker.execute_universal_document_reply(execution)
+
+    assert len(dws.created_documents) == 1
+    assert len(dws.sent_links) == 1
+    assert (
+        store.get_universal_action_execution_state(execution)
+        is UniversalActionExecutionState.UNKNOWN
+    )
+    with pytest.raises(RuntimeError, match="outcome is unknown"):
+        worker.execute_universal_document_reply(execution)
+    assert len(dws.created_documents) == 1
+
+
+def test_universal_document_rejects_explicit_failed_creation_receipt(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    execution = _execution(
+        store,
+        kind=PlannedActionKind.DWS_MARKDOWN_DOCUMENT_REPLY,
+        target={
+            "conversation_id": "cid-context",
+            "trigger_message_id": "msg-context",
+        },
+        payload={"title": "方案", "text": "# 方案\n\n正文"},
+    )
+    dws = UniversalDocumentFakeDws()
+    dws.document_result = {
+        "success": False,
+        "result": {
+            "document": {
+                "nodeId": 841,
+                "url": "https://alidocs.dingtalk.com/i/nodes/841",
+            }
+        },
+    }
+    worker = DingTalkAutoReplyWorker(store=store, dws=dws, codex=FakeCodex())
+
+    with pytest.raises(ReplyDeliveryError, match="document creation receipt"):
+        worker.execute_universal_document_reply(execution)
+
+    assert dws.permission_calls == []
+    assert dws.sent_links == []
+    assert (
+        store.get_universal_action_execution_state(execution)
+        is UniversalActionExecutionState.NOT_STARTED
     )
 
 

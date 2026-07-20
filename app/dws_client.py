@@ -29,7 +29,7 @@ DINGTALK_MESSAGE_TIME_ZONE = ZoneInfo("Asia/Shanghai")
 MIN_UNREAD_MESSAGE_LIST_LIMIT = 5
 DWS_AGENT_CODE_ENV = "DINGTALK_DWS_AGENTCODE"
 DWS_DEFAULT_AGENT_CODE = "ceo-agent-service"
-BRACKETED_EMOJI_PATTERN = re.compile(r"^\[([^\[\]]+)\]$")
+BRACKETED_EMOJI_PATTERN = re.compile(r"^\[([^\[\]]*)\]$")
 
 
 def _local_time_zone():

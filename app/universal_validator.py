@@ -24,6 +24,7 @@ class UniversalValidationContext:
     existing_sent_reply: bool
     dry_run: bool
     required_dependencies: tuple[str, ...] = ("dws",)
+    trusted_document_url: str = ""
 
 
 @dataclass(frozen=True)
@@ -153,6 +154,15 @@ class UniversalValidator:
                 not action.target.get(field_name) for field_name in expected_target
             ):
                 return "missing_action_target"
+            if (
+                action.kind is PlannedActionKind.DWS_MESSAGE_REACTION
+                and action.target.get("message_id") != context.trigger_message_id
+            ):
+                return "action_target_mismatch"
+            if action.kind is PlannedActionKind.DWS_MARKDOWN_DOCUMENT_REPLY:
+                document_url = str(action.target.get("document_url") or "").strip()
+                if document_url != context.trusted_document_url.strip():
+                    return "action_target_mismatch"
         return ""
 
     @staticmethod

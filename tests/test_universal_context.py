@@ -77,6 +77,7 @@ def test_maps_metadata_and_renders_trigger_and_recent_message() -> None:
         "Trusted OA task ID: none\n"
         "Trusted mail target: none\n"
         "Trusted calendar target: none\n"
+        "Trusted document URL: none\n"
         "Required dependencies: dws, memory\n"
         "Execution generation: initial\n"
         "Force new decision: true\n"
@@ -253,6 +254,51 @@ def test_trusted_oa_target_changes_canonical_identity() -> None:
     )
 
     assert universal_context_sha256(trusted) != universal_context_sha256(context)
+
+
+def test_build_binds_trusted_document_url_from_trigger_payload() -> None:
+    trigger = make_message("trigger-doc", "Derek", "Please turn this into a reply.")
+    trigger.raw_payload = {
+        "document": {
+            "url": "https://alidocs.dingtalk.com/i/nodes/source-1?utm=test"
+        }
+    }
+
+    context = build_universal_context(
+        conversation=make_conversation(),
+        trigger=trigger,
+        context_messages=[],
+        task_id=42,
+        force_new_decision=False,
+        dry_run=False,
+    )
+
+    assert context.trusted_document_url == (
+        "https://alidocs.dingtalk.com/i/nodes/source-1"
+    )
+    canonical = json.loads(canonical_universal_context_json(context))
+    assert canonical["trusted_document_url"] == context.trusted_document_url
+
+
+def test_build_binds_trusted_document_url_embedded_in_trigger_text() -> None:
+    trigger = make_message(
+        "trigger-doc",
+        "Derek",
+        "Please review https://alidocs.dingtalk.com/i/nodes/source-2?utm=test thanks.",
+    )
+
+    context = build_universal_context(
+        conversation=make_conversation(),
+        trigger=trigger,
+        context_messages=[],
+        task_id=42,
+        force_new_decision=False,
+        dry_run=False,
+    )
+
+    assert context.trusted_document_url == (
+        "https://alidocs.dingtalk.com/i/nodes/source-2"
+    )
 
 
 def test_build_derives_trusted_mail_target_from_trigger_payload() -> None:
@@ -463,6 +509,7 @@ def test_canonical_context_json_covers_every_field_with_stable_order() -> None:
             "trusted_calendar_event_id": "",
             "trusted_calendar_response_status": "",
             "trusted_calendar_organizer": "",
+            "trusted_document_url": "",
         },
         ensure_ascii=False,
         sort_keys=True,

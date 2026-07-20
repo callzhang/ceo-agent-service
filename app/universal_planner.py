@@ -45,10 +45,17 @@ UNIVERSAL_PLAN_SCHEMA_HINT = (
     "target.task_id exactly from the trusted OA IDs in task context; if either "
     "trusted ID is missing, emit blocked instead. A 退回 action also requires "
     "payload.target_activity_id and payload.revert_action of "
-    "REVERT_FOR_APPROVAL or REVERT_FOR_RESUBMIT. memory_write requires payload "
+    "REVERT_FOR_APPROVAL or REVERT_FOR_RESUBMIT; memory_write requires payload "
     "with exactly data and type; type must be text or message. Never provide "
     "created_at, source_description, user_id, graph_id, secrets, raw logs, or "
-    "temporary runtime errors."
+    "temporary runtime errors; "
+    "dws_markdown_document_reply requires target.conversation_id and "
+    "target.trigger_message_id copied exactly from task context, optional "
+    "target.document_url copied exactly from Trusted document URL, and "
+    "payload.text; dws_message_reaction requires target.conversation_id and "
+    "target.message_id copied exactly from the immutable trigger plus either "
+    "payload.reaction_type=emoji with payload.emoji or "
+    "payload.reaction_type=text_emotion with payload.text."
 )
 
 

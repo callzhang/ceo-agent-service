@@ -180,6 +180,7 @@ class UniversalConsumerOrchestrator:
                 existing_sent_reply=has_sent_reply and not active_plan_incomplete,
                 dry_run=context.dry_run,
                 required_dependencies=context.required_dependencies,
+                trusted_document_url=context.trusted_document_url,
             ),
         )
         if not validated.allowed:

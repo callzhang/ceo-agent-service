@@ -40,6 +40,7 @@ def make_context(
     existing_sent_reply: bool = False,
     dry_run: bool = False,
     required_dependencies: tuple[str, ...] = ("dws",),
+    trusted_document_url: str = "",
 ) -> UniversalValidationContext:
     return UniversalValidationContext(
         conversation_id=CONVERSATION_ID,
@@ -53,6 +54,7 @@ def make_context(
         existing_sent_reply=existing_sent_reply,
         dry_run=dry_run,
         required_dependencies=required_dependencies,
+        trusted_document_url=trusted_document_url,
     )
 
 
@@ -332,7 +334,15 @@ def test_other_external_actions_with_supplied_matching_target_are_allowed(
         "trigger_message_id": TRIGGER_MESSAGE_ID,
     }
     payload: dict[str, str] = {}
-    if kind is PlannedActionKind.OA_APPROVAL:
+    if kind is PlannedActionKind.DWS_MARKDOWN_DOCUMENT_REPLY:
+        payload = {"title": "Plan", "text": "# Plan\n\nDetails"}
+    elif kind is PlannedActionKind.DWS_MESSAGE_REACTION:
+        target = {
+            "conversation_id": CONVERSATION_ID,
+            "message_id": TRIGGER_MESSAGE_ID,
+        }
+        payload = {"reaction_type": "emoji", "emoji": "👍"}
+    elif kind is PlannedActionKind.OA_APPROVAL:
         payload = {"action": "comment", "remark": "Reviewed."}
     elif kind is PlannedActionKind.MAIL_REPLY:
         target |= {
@@ -361,16 +371,6 @@ def test_other_external_actions_with_supplied_matching_target_are_allowed(
 @pytest.mark.parametrize(
     "action",
     [
-        PlannedAction(
-            kind=PlannedActionKind.DWS_MARKDOWN_DOCUMENT_REPLY,
-            reason="Reply with a document",
-            target={"document_id": "document-1"},
-        ),
-        PlannedAction(
-            kind=PlannedActionKind.DWS_MESSAGE_REACTION,
-            reason="React to a message",
-            target={"message_id": "message-1"},
-        ),
         PlannedAction(
             kind=PlannedActionKind.OA_APPROVAL,
             reason="Comment on an approval",
@@ -410,10 +410,62 @@ def test_external_action_with_supplied_wrong_partial_target_is_mismatch() -> Non
             PlannedAction(
                 kind=PlannedActionKind.DWS_MESSAGE_REACTION,
                 reason="React to the message",
-                target={"conversation_id": "other-conversation"},
+                target={
+                    "conversation_id": "other-conversation",
+                    "message_id": TRIGGER_MESSAGE_ID,
+                },
+                payload={"reaction_type": "emoji", "emoji": "👍"},
             )
         ),
         make_context(),
+    )
+
+    assert_synthesized_block(
+        result,
+        kind=PlannedActionKind.BLOCKED,
+        reason="action_target_mismatch",
+        terminal=False,
+    )
+
+
+def test_reaction_target_message_id_spoof_is_blocked() -> None:
+    action = PlannedAction(
+        kind=PlannedActionKind.DWS_MESSAGE_REACTION,
+        reason="React to the immutable trigger",
+        target={
+            "conversation_id": CONVERSATION_ID,
+            "message_id": "spoof-message",
+        },
+        payload={"reaction_type": "emoji", "emoji": "👍"},
+    )
+
+    result = UniversalValidator().validate(make_plan(action), make_context())
+
+    assert_synthesized_block(
+        result,
+        kind=PlannedActionKind.BLOCKED,
+        reason="action_target_mismatch",
+        terminal=False,
+    )
+
+
+def test_document_target_url_spoof_is_blocked() -> None:
+    action = PlannedAction(
+        kind=PlannedActionKind.DWS_MARKDOWN_DOCUMENT_REPLY,
+        reason="Reply with a document",
+        target={
+            "conversation_id": CONVERSATION_ID,
+            "trigger_message_id": TRIGGER_MESSAGE_ID,
+            "document_url": "https://alidocs.dingtalk.com/i/nodes/spoof",
+        },
+        payload={"title": "Plan", "text": "# Plan\n\nDetails"},
+    )
+
+    result = UniversalValidator().validate(
+        make_plan(action),
+        make_context(
+            trusted_document_url="https://alidocs.dingtalk.com/i/nodes/trusted"
+        ),
     )
 
     assert_synthesized_block(

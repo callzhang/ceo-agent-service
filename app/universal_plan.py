@@ -215,6 +215,40 @@ class PlannedAction(UniversalPlanBase):
                 )
             self.payload = {"data": data, "type": self.payload["type"]}
 
+        if self.kind is PlannedActionKind.DWS_MARKDOWN_DOCUMENT_REPLY:
+            for field_name in ("conversation_id", "trigger_message_id"):
+                value = self.target.get(field_name)
+                if not isinstance(value, str) or not value.strip():
+                    raise ValueError(
+                        "dws_markdown_document_reply requires "
+                        f"target.{field_name}"
+                    )
+            text = self.payload.get("text")
+            if not isinstance(text, str) or not text.strip():
+                raise ValueError(
+                    "dws_markdown_document_reply requires payload.text"
+                )
+
+        if self.kind is PlannedActionKind.DWS_MESSAGE_REACTION:
+            for field_name in ("conversation_id", "message_id"):
+                value = self.target.get(field_name)
+                if not isinstance(value, str) or not value.strip():
+                    raise ValueError(
+                        f"dws_message_reaction requires target.{field_name}"
+                    )
+            reaction_type = self.payload.get("reaction_type", "emoji")
+            if reaction_type not in {"emoji", "text_emotion"}:
+                raise ValueError(
+                    "dws_message_reaction payload.reaction_type must be "
+                    "emoji or text_emotion"
+                )
+            field_name = "emoji" if reaction_type == "emoji" else "text"
+            value = self.payload.get(field_name)
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(
+                    f"dws_message_reaction requires payload.{field_name}"
+                )
+
         return self
 
 

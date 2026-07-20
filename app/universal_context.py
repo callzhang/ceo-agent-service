@@ -67,6 +67,7 @@ class UniversalTaskContext:
     trusted_calendar_response_status: str = ""
     trusted_calendar_organizer: str = ""
     trigger_create_time: str = ""
+    trusted_document_url: str = ""
 
     def __post_init__(self) -> None:
         if (
@@ -111,6 +112,7 @@ class UniversalTaskContext:
                     if self.trusted_calendar_event_id
                     else "none"
                 ),
+                "Trusted document URL: " + (self.trusted_document_url or "none"),
                 f"Required dependencies: {', '.join(self.required_dependencies)}",
                 f"Execution generation: {self.execution_generation}",
                 f"Force new decision: {str(self.force_new_decision).lower()}",
@@ -142,6 +144,7 @@ def canonical_universal_context_json(context: UniversalTaskContext) -> str:
         "trusted_calendar_response_status",
         "trusted_calendar_organizer",
         "trigger_create_time",
+        "trusted_document_url",
     ):
         if not isinstance(getattr(context, field_name), str):
             raise TypeError(f"{field_name} must be a str")
@@ -228,6 +231,7 @@ def canonical_universal_context_json(context: UniversalTaskContext) -> str:
             "trusted_calendar_response_status": context.trusted_calendar_response_status,
             "trusted_calendar_organizer": context.trusted_calendar_organizer,
             "trigger_create_time": context.trigger_create_time,
+            "trusted_document_url": context.trusted_document_url,
         },
         ensure_ascii=False,
         sort_keys=True,
@@ -277,6 +281,7 @@ def build_universal_context(
         trusted_calendar_response_status,
         trusted_calendar_organizer,
     ) = _trusted_calendar_target(trigger)
+    trusted_document_url = _trusted_document_url(trigger)
     return UniversalTaskContext(
         task_id=task_id,
         conversation_id=conversation.open_conversation_id,
@@ -299,7 +304,41 @@ def build_universal_context(
         trusted_calendar_response_status=trusted_calendar_response_status,
         trusted_calendar_organizer=trusted_calendar_organizer,
         trigger_create_time=trigger.create_time,
+        trusted_document_url=trusted_document_url,
     )
+
+
+def _trusted_document_url(trigger: DingTalkMessage) -> str:
+    candidates: set[str] = set()
+
+    def visit(value: Any) -> None:
+        if isinstance(value, dict):
+            for nested in value.values():
+                visit(nested)
+            return
+        if isinstance(value, list):
+            for nested in value:
+                visit(nested)
+            return
+        if not isinstance(value, str):
+            return
+        for token in (value, *value.split()):
+            parsed = urlparse(token.strip("()[]<>.,;，。；"))
+            if (
+                parsed.scheme == "https"
+                and parsed.hostname in {
+                    "alidocs.dingtalk.com",
+                    "docs.dingtalk.com",
+                }
+                and parsed.path.startswith("/i/nodes/")
+            ):
+                candidates.add(parsed._replace(query="", fragment="").geturl())
+
+    visit(trigger.content)
+    visit(trigger.raw_payload)
+    if len(candidates) != 1:
+        return ""
+    return next(iter(candidates))
 
 
 def _trusted_mail_target(trigger: DingTalkMessage) -> tuple[str, str, str]:

@@ -311,6 +311,8 @@ def _extract_text_emotion_id(payload: object) -> str:
             value = payload.get(key)
             if isinstance(value, str) and value.strip():
                 return value.strip()
+            if isinstance(value, int) and not isinstance(value, bool):
+                return str(value)
         for value in payload.values():
             found = _extract_text_emotion_id(value)
             if found:
@@ -329,6 +331,8 @@ def _extract_text_emotion_background_id(payload: object) -> str:
             value = payload.get(key)
             if isinstance(value, str) and value.strip():
                 return value.strip()
+            if isinstance(value, int) and not isinstance(value, bool):
+                return str(value)
         for value in payload.values():
             found = _extract_text_emotion_background_id(value)
             if found:
@@ -1653,6 +1657,124 @@ class DingTalkAutoReplyWorker:
                 return True
         return False
 
+    @classmethod
+    def _universal_dws_receipt_is_success(cls, payload: object) -> bool:
+        if cls._universal_dws_payload_is_explicit_failure(payload):
+            return False
+        return cls._universal_dws_receipt_has_key(
+            payload,
+            {
+                "id",
+                "messageid",
+                "nodeid",
+                "dentryuuid",
+                "reactionid",
+                "emotionid",
+                "requestid",
+                "receipt",
+            },
+        )
+
+    @classmethod
+    def _universal_dws_receipt_has_key(
+        cls,
+        payload: object,
+        receipt_keys: set[str],
+    ) -> bool:
+        if isinstance(payload, dict):
+            for key, value in payload.items():
+                if (
+                    key.casefold() in receipt_keys
+                    and cls._universal_receipt_value(value)
+                ):
+                    return True
+            return any(
+                cls._universal_dws_receipt_has_key(value, receipt_keys)
+                for value in payload.values()
+                if isinstance(value, (dict, list))
+            )
+        if isinstance(payload, list):
+            return any(
+                cls._universal_dws_receipt_has_key(value, receipt_keys)
+                for value in payload
+            )
+        return False
+
+    @staticmethod
+    def _universal_receipt_value(value: object) -> bool:
+        if isinstance(value, bool):
+            return False
+        if isinstance(value, int):
+            return value > 0
+        return (
+            isinstance(value, str)
+            and bool(value.strip())
+            and value.strip() != "0"
+        )
+
+    @classmethod
+    def _universal_document_permission_receipt_is_success(
+        cls, payload: object
+    ) -> bool:
+        return (
+            isinstance(payload, dict)
+            and payload.get("success") is True
+            and not cls._universal_dws_payload_is_explicit_failure(payload)
+        ) or cls._universal_dws_receipt_is_success(payload)
+
+    @classmethod
+    def _universal_document_delivery_receipt_is_success(cls, payload: object) -> bool:
+        return not cls._universal_dws_payload_is_explicit_failure(
+            payload
+        ) and cls._universal_dws_receipt_has_key(
+            payload,
+            {"messageid", "requestid", "opentaskid", "processquerykey"},
+        )
+
+    @classmethod
+    def _universal_reaction_receipt_is_success(cls, payload: object) -> bool:
+        return not cls._universal_dws_payload_is_explicit_failure(
+            payload
+        ) and cls._universal_dws_receipt_has_key(
+            payload,
+            {"reactionid", "requestid", "receipt"},
+        )
+
+    @classmethod
+    def _universal_dws_payload_is_explicit_failure(cls, payload: object) -> bool:
+        if isinstance(payload, dict):
+            if payload.get("success") is False:
+                return True
+            for key, value in payload.items():
+                folded_key = key.casefold()
+                if folded_key in {"errorcode", "error_code", "errcode"}:
+                    if value not in (None, "", 0, "0"):
+                        return True
+                if folded_key == "code":
+                    if isinstance(value, int) and not isinstance(value, bool) and value != 0:
+                        return True
+                    if isinstance(value, str) and value.strip().lstrip("-").isdigit():
+                        if int(value.strip()) != 0:
+                            return True
+                if folded_key in {"status", "state"} and str(value).casefold() in {
+                    "error",
+                    "failed",
+                    "failure",
+                    "rejected",
+                }:
+                    return True
+            return any(
+                cls._universal_dws_payload_is_explicit_failure(value)
+                for value in payload.values()
+                if isinstance(value, (dict, list))
+            )
+        if isinstance(payload, list):
+            return any(
+                cls._universal_dws_payload_is_explicit_failure(value)
+                for value in payload
+            )
+        return False
+
     def _finish_universal_capability_failure(
         self,
         execution: UniversalActionExecution,
@@ -1683,14 +1805,310 @@ class DingTalkAutoReplyWorker:
         self.store.mark_universal_action_execution_failed(execution, send_error)
 
     def execute_universal_document_reply(self, execution: UniversalActionExecution) -> bool:
-        raise NotImplementedError(
-            "wire capability executor before enabling universal consumer"
+        if execution.action.kind is not PlannedActionKind.DWS_MARKDOWN_DOCUMENT_REPLY:
+            raise ValueError(
+                "universal document executor received a non-document action"
+            )
+        claim_state = self.store.claim_universal_action_execution(execution)
+        if claim_state is UniversalActionExecutionState.SUCCEEDED:
+            return True
+        if claim_state is UniversalActionExecutionState.UNKNOWN:
+            raise RuntimeError(
+                f"universal action outcome is unknown: {execution.execution_id}"
+            )
+        target = execution.action.target
+        planner_document_url = str(target.get("document_url") or "").strip()
+        trusted_document_url = execution.context.trusted_document_url.strip()
+        if (
+            str(target.get("conversation_id") or "").strip()
+            != execution.context.conversation_id
+            or str(target.get("trigger_message_id") or "").strip()
+            != execution.context.trigger_message_id
+            or (
+                planner_document_url or trusted_document_url
+            )
+            and self._canonical_doc_url(planner_document_url)
+            != self._canonical_doc_url(trusted_document_url)
+        ):
+            return self._block_universal_capability_target(
+                execution, "untrusted_markdown_document_reply_target"
+            )
+        text = str(execution.action.payload.get("text") or "").strip()
+        title = str(execution.action.payload.get("title") or "").strip()
+        attempt_id = self._record_universal_reply_attempt(
+            execution,
+            draft_reply_text=text,
+            send_status="pending",
         )
+        conversation, trigger, new_messages = self._universal_reply_context(execution)
+        editor_user_ids = self._document_editor_user_ids(
+            [self._reply_document_editor_user_id(trigger)]
+        )
+        if not text or not editor_user_ids:
+            error = ValueError("markdown document text and recipient are required")
+            self._fail_universal_action_before_send(
+                execution,
+                attempt_id=attempt_id,
+                error=str(error),
+            )
+            raise error
+        title = self._markdown_document_reply_title(
+            conversation,
+            {"title": title} if title else None,
+        )
+        attempt = self.store.get_reply_attempt(attempt_id)
+        receipt: dict[str, Any] = {"title": title}
+        if attempt is not None and attempt.document_action_result_json.strip():
+            try:
+                persisted_receipt = json.loads(attempt.document_action_result_json)
+            except json.JSONDecodeError:
+                persisted_receipt = None
+            if (
+                isinstance(persisted_receipt, dict)
+                and persisted_receipt.get("title") == title
+            ):
+                receipt = persisted_receipt
+        try:
+            doc_result = receipt.get("doc_result")
+            doc_url = str(receipt.get("url") or "").strip()
+            node_id = str(receipt.get("node_id") or "").strip()
+            if not doc_url or not node_id or not isinstance(doc_result, dict):
+                doc_result = self.dws.create_markdown_doc(title, text)
+                doc_url = self._markdown_document_url(doc_result)
+                node_id = self._markdown_document_node_id(doc_result, doc_url)
+                if self._universal_dws_payload_is_explicit_failure(doc_result):
+                    raise ReplyDeliveryError(
+                        "DWS document creation receipt reports failure"
+                    )
+                if not doc_url or not node_id or not self._universal_dws_receipt_is_success(
+                    doc_result
+                ):
+                    raise ReplyDeliveryError(
+                        "DWS document receipt is missing"
+                    )
+                receipt.update(
+                    {
+                        "doc_result": doc_result,
+                        "node_id": node_id,
+                        "url": doc_url,
+                    }
+                )
+                self.store.update_reply_attempt(
+                    attempt_id,
+                    document_action_result_json=json.dumps(
+                        receipt, ensure_ascii=False, sort_keys=True
+                    ),
+                )
+            permission_result = receipt.get("permission_result")
+            if not self._universal_document_permission_receipt_is_success(
+                permission_result
+            ):
+                permission_result = self.dws.add_doc_editor_permission(
+                    node_id,
+                    editor_user_ids,
+                )
+                receipt["permission_result"] = permission_result
+                self.store.update_reply_attempt(
+                    attempt_id,
+                    document_action_result_json=json.dumps(
+                        receipt, ensure_ascii=False, sort_keys=True
+                    ),
+                )
+                if self._universal_dws_payload_is_explicit_failure(
+                    permission_result
+                ):
+                    raise ReplyDeliveryError(
+                        "DWS document permission receipt reports failure"
+                    )
+                if not self._universal_document_permission_receipt_is_success(
+                    permission_result
+                ):
+                    raise ReplyDeliveryError(
+                        "DWS document permission receipt is missing"
+                    )
+            reply_text = append_signature(f"内容我写成了文档：{title}\n{doc_url}")
+            if self._is_robot_direct_trigger(trigger):
+                raw_send_result = self._send_robot_direct_reply(trigger, reply_text)
+            else:
+                raw_send_result = self.dws.send_reply_to_trigger(
+                    conversation,
+                    trigger,
+                    reply_text,
+                    at_users=editor_user_ids,
+                    at_open_dingtalk_ids=[],
+                    at_open_dingtalk_names=[],
+                )
+            retry_count = 0
+            send_result = {
+                "chunks": [
+                    {"index": 1, "text": reply_text, "send_result": raw_send_result}
+                ]
+            }
+            delivery_result = self._single_chunk_send_result(send_result)
+            receipt["delivery"] = delivery_result
+            self.store.update_reply_attempt(
+                attempt_id,
+                document_action_result_json=json.dumps(
+                    receipt, ensure_ascii=False, sort_keys=True
+                ),
+            )
+            if self._universal_dws_payload_is_explicit_failure(send_result):
+                raise ReplyDeliveryError(
+                    "DWS document link delivery receipt reports failure"
+                )
+            if not self._universal_document_delivery_receipt_is_success(send_result):
+                raise ReplyDeliveryError(
+                    "DWS document link delivery receipt is missing"
+                )
+            result_json = json.dumps(receipt, ensure_ascii=False, sort_keys=True)
+            self.store.update_reply_attempt(
+                attempt_id,
+                document_action_result_json=result_json,
+                final_reply_text=reply_text,
+                send_status="sent",
+                send_error="",
+                retry_count=retry_count,
+            )
+            self.store.record_sent_reply(
+                conversation.open_conversation_id,
+                trigger.open_message_id,
+                reply_text,
+                send_result_json=json.dumps(
+                    native_reply_delivery_payload(
+                        conversation,
+                        trigger,
+                        send_result,
+                        extra={"markdown_document_reply": receipt},
+                    ),
+                    ensure_ascii=False,
+                ),
+                recall_key=DwsClient.extract_recall_key(send_result),
+            )
+            self._mark_seen(new_messages)
+            self.store.complete_universal_action_execution(
+                execution,
+                attempt_id=attempt_id,
+                result_json=result_json,
+            )
+            return True
+        except Exception as exc:
+            self.store.update_reply_attempt(
+                attempt_id,
+                document_action_result_json=json.dumps(
+                    receipt, ensure_ascii=False, sort_keys=True
+                ),
+            )
+            self._finish_universal_capability_failure(
+                execution,
+                attempt_id=attempt_id,
+                error=exc,
+            )
+            raise
+
+    @staticmethod
+    def _single_chunk_send_result(send_result: object) -> object:
+        if isinstance(send_result, dict):
+            chunks = send_result.get("chunks")
+            if isinstance(chunks, list) and len(chunks) == 1:
+                chunk = chunks[0]
+                if isinstance(chunk, dict):
+                    return chunk.get("send_result") or {}
+        return send_result
 
     def execute_universal_message_reaction(self, execution: UniversalActionExecution) -> bool:
-        raise NotImplementedError(
-            "wire capability executor before enabling universal consumer"
+        if execution.action.kind is not PlannedActionKind.DWS_MESSAGE_REACTION:
+            raise ValueError(
+                "universal reaction executor received a non-reaction action"
+            )
+        claim_state = self.store.claim_universal_action_execution(execution)
+        if claim_state is UniversalActionExecutionState.SUCCEEDED:
+            return True
+        if claim_state is UniversalActionExecutionState.UNKNOWN:
+            raise RuntimeError(
+                f"universal action outcome is unknown: {execution.execution_id}"
+            )
+        target = execution.action.target
+        if (
+            str(target.get("conversation_id") or "").strip()
+            != execution.context.conversation_id
+            or str(target.get("message_id") or "").strip()
+            != execution.context.trigger_message_id
+        ):
+            return self._block_universal_capability_target(
+                execution, "untrusted_message_reaction_target"
+            )
+        attempt_id = self._record_universal_reply_attempt(
+            execution,
+            send_status="pending",
         )
+        conversation, trigger, new_messages = self._universal_reply_context(execution)
+        reaction_action = dict(execution.action.payload)
+        if str(reaction_action.get("reaction_type") or "emoji").strip() == "emoji":
+            emoji = normalize_message_emoji(str(reaction_action.get("emoji") or ""))
+            if not emoji:
+                error = ValueError("message reaction emoji is required")
+                self._fail_universal_action_before_send(
+                    execution,
+                    attempt_id=attempt_id,
+                    error=str(error),
+                )
+                raise error
+            reaction_action["emoji"] = emoji
+        events: list[dict[str, str]] = []
+        result: object = None
+        try:
+            result = self._execute_message_reaction(
+                conversation=conversation,
+                trigger=trigger,
+                action=reaction_action,
+                call_id="universal_message_reaction",
+                events=events,
+            )
+            self.store.update_reply_attempt(
+                attempt_id,
+                reaction_action_result_json=json.dumps(
+                    result or {}, ensure_ascii=False, sort_keys=True
+                ),
+            )
+            if self._universal_dws_payload_is_explicit_failure(result):
+                raise ReplyDeliveryError(
+                    "DWS message reaction receipt reports failure"
+                )
+            if not self._universal_reaction_receipt_is_success(result):
+                raise ReplyDeliveryError(
+                    "DWS message reaction receipt is missing"
+                )
+        except Exception as exc:
+            self._append_attempt_audit_tool_events(attempt_id, events)
+            self._finish_universal_capability_failure(
+                execution,
+                attempt_id=attempt_id,
+                error=exc,
+            )
+            raise
+        events.append(
+            {
+                "tool": "tool_output",
+                "call_id": "universal_message_reaction",
+                "output": json.dumps(result or {}, ensure_ascii=False),
+            }
+        )
+        self._append_attempt_audit_tool_events(attempt_id, events)
+        self.store.update_reply_attempt(
+            attempt_id,
+            reaction_action_result_json=json.dumps(
+                result or {}, ensure_ascii=False, sort_keys=True
+            ),
+            send_status="reacted",
+            send_error=self._message_reaction_summary(reaction_action),
+        )
+        self._mark_seen(new_messages)
+        self.store.complete_universal_action_execution(
+            execution,
+            attempt_id=attempt_id,
+            result_json=json.dumps(result or {}, ensure_ascii=False, sort_keys=True),
+        )
+        return True
 
     def execute_universal_memory_write(self, execution: UniversalActionExecution) -> bool:
         if execution.action.kind is not PlannedActionKind.MEMORY_WRITE:
@@ -9609,48 +10027,40 @@ class DingTalkAutoReplyWorker:
 
     @staticmethod
     def _markdown_document_url(payload: object) -> str:
-        if not isinstance(payload, dict):
-            return ""
-        candidates = [
-            payload.get("url"),
-            payload.get("docUrl"),
-            payload.get("doc_url"),
-        ]
-        result = payload.get("result")
-        if isinstance(result, dict):
-            candidates.extend(
-                [
-                    result.get("url"),
-                    result.get("docUrl"),
-                    result.get("doc_url"),
-                    result.get("nodeUrl"),
-                ]
-            )
-        for candidate in candidates:
-            if isinstance(candidate, str) and candidate.strip():
-                return candidate.strip()
+        if isinstance(payload, dict):
+            for key in ("url", "docUrl", "doc_url", "nodeUrl"):
+                candidate = payload.get(key)
+                if isinstance(candidate, str) and candidate.strip():
+                    return candidate.strip()
+            for value in payload.values():
+                found = DingTalkAutoReplyWorker._markdown_document_url(value)
+                if found:
+                    return found
+        if isinstance(payload, list):
+            for value in payload:
+                found = DingTalkAutoReplyWorker._markdown_document_url(value)
+                if found:
+                    return found
         return ""
 
     @classmethod
     def _markdown_document_node_id(cls, payload: object, doc_url: str = "") -> str:
         if isinstance(payload, dict):
-            candidates: list[object] = [
-                payload.get("nodeId"),
-                payload.get("node_id"),
-                payload.get("dentryUuid"),
-            ]
-            result = payload.get("result")
-            if isinstance(result, dict):
-                candidates.extend(
-                    [
-                        result.get("nodeId"),
-                        result.get("node_id"),
-                        result.get("dentryUuid"),
-                    ]
-                )
-            for candidate in candidates:
+            for key in ("nodeId", "node_id", "dentryUuid"):
+                candidate = payload.get(key)
                 if isinstance(candidate, str) and candidate.strip():
                     return candidate.strip()
+                if isinstance(candidate, int) and not isinstance(candidate, bool):
+                    return str(candidate)
+            for value in payload.values():
+                found = cls._markdown_document_node_id(value)
+                if found:
+                    return found
+        if isinstance(payload, list):
+            for value in payload:
+                found = cls._markdown_document_node_id(value)
+                if found:
+                    return found
         match = re.search(r"/nodes/([^/?#]+)", doc_url)
         if match:
             return match.group(1)

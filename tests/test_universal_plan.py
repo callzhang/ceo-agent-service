@@ -312,6 +312,16 @@ def test_mail_reply_with_required_fields_validates() -> None:
     assert action.kind is PlannedActionKind.MAIL_REPLY
 
 
+def test_message_reaction_rejects_unsupported_reaction_type() -> None:
+    with pytest.raises(ValidationError, match="reaction_type"):
+        PlannedAction(
+            kind="dws_message_reaction",
+            reason="React to the immutable trigger.",
+            target={"conversation_id": "cid-1", "message_id": "msg-1"},
+            payload={"reaction_type": "gif", "emoji": "👍"},
+        )
+
+
 @pytest.mark.parametrize("response_status", ["accepted", "tentative", "declined"])
 def test_calendar_response_with_supported_status_validates(response_status: str) -> None:
     action = PlannedAction(

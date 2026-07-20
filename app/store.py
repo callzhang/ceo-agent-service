@@ -104,6 +104,8 @@ class ReplyAttempt(BaseModel):
     mail_subject: str = ""
     mail_reply_text: str = ""
     mail_action_result_json: str = ""
+    reaction_action_result_json: str = ""
+    document_action_result_json: str = ""
     final_reply_text: str
     permission_action: str
     permission_reason: str
@@ -472,6 +474,8 @@ class AutoReplyStore:
                     mail_subject text not null default '',
                     mail_reply_text text not null default '',
                     mail_action_result_json text not null default '',
+                    reaction_action_result_json text not null default '',
+                    document_action_result_json text not null default '',
                     final_reply_text text not null default '',
                     permission_action text not null default '',
                     permission_reason text not null default '',
@@ -1014,6 +1018,8 @@ class AutoReplyStore:
                 ("mail_subject", "text not null default ''"),
                 ("mail_reply_text", "text not null default ''"),
                 ("mail_action_result_json", "text not null default ''"),
+                ("reaction_action_result_json", "text not null default ''"),
+                ("document_action_result_json", "text not null default ''"),
             ):
                 if column not in reply_attempt_columns:
                     try:
@@ -4760,6 +4766,8 @@ class AutoReplyStore:
         mail_subject: str | None = None,
         mail_reply_text: str | None = None,
         mail_action_result_json: str | None = None,
+        reaction_action_result_json: str | None = None,
+        document_action_result_json: str | None = None,
         audit_tool_events_json: str | None = None,
         audit_summary: str | None = None,
         send_status: str | None = None,
@@ -4787,6 +4795,8 @@ class AutoReplyStore:
             mail_subject=mail_subject,
             mail_reply_text=mail_reply_text,
             mail_action_result_json=mail_action_result_json,
+            reaction_action_result_json=reaction_action_result_json,
+            document_action_result_json=document_action_result_json,
             audit_tool_events_json=audit_tool_events_json,
             audit_summary=audit_summary,
             send_status=send_status,
@@ -5027,6 +5037,8 @@ class AutoReplyStore:
             "mail_subject",
             "mail_reply_text",
             "mail_action_result_json",
+            "reaction_action_result_json",
+            "document_action_result_json",
             "audit_tool_events_json",
             "audit_summary",
             "send_status",

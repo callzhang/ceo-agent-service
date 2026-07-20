@@ -124,6 +124,18 @@ def make_action(kind: PlannedActionKind) -> PlannedAction:
         payload = {"response_status": "accepted"}
     elif kind is PlannedActionKind.MEMORY_WRITE:
         payload = {"data": "Persist the durable decision.", "type": "text"}
+    elif kind is PlannedActionKind.DWS_MARKDOWN_DOCUMENT_REPLY:
+        target = {
+            "conversation_id": "conversation-1",
+            "trigger_message_id": "trigger-1",
+        }
+        payload = {"title": "Plan", "text": "# Plan\n\nDetails"}
+    elif kind is PlannedActionKind.DWS_MESSAGE_REACTION:
+        target = {
+            "conversation_id": "conversation-1",
+            "message_id": "trigger-1",
+        }
+        payload = {"reaction_type": "emoji", "emoji": "👍"}
 
     return PlannedAction(
         kind=kind,
@@ -399,9 +411,11 @@ def test_execute_rejects_an_unsupported_kind(unsupported_kind: object) -> None:
             "execute_universal_oa_approval",
             "execute_universal_send_reply",
             "execute_universal_mail_reply",
-                "execute_universal_calendar_response",
-                "execute_universal_memory_write",
-                "execute_universal_terminal_action",
+            "execute_universal_calendar_response",
+            "execute_universal_document_reply",
+            "execute_universal_message_reaction",
+            "execute_universal_memory_write",
+            "execute_universal_terminal_action",
         }
     ),
 )
