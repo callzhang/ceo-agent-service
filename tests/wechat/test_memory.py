@@ -288,12 +288,11 @@ def test_import_fails_closed_without_durable_matcher(store):
 
 
 def test_codex_recall_matcher_accepts_only_audited_memory_recall(tmp_path):
-    query = 'wechat-memory-dedupe:v1:["fact"]'
+    query = "fact"
     final = {"matches":[{"statement":"fact", "relation":"exact",
         "memory_id":"mem-1", "evidence":"durable fact", "merged_statement":""}]}
     success = "\n".join([
-        json.dumps({"type":"item.completed","item":{"type":"mcp_tool_call","call_id":"r1","tool":"memory_recall","arguments":{"query":query}}}),
-        json.dumps({"type":"item.completed","item":{"type":"tool_result","call_id":"r1","output":{"memories":[{"uuid":"mem-1","text":"durable fact"}]}}}),
+        json.dumps({"type":"item.completed","item":{"type":"mcp_tool_call","call_id":"r1","tool":"memory_recall","arguments":{"query":query},"result":{"memories":[{"uuid":"mem-1","text":"durable fact"}]}}}),
         json.dumps({"type":"item.completed","item":{"type":"agent_message","text":json.dumps(final)}}),
     ])
     captured = {}
@@ -330,14 +329,13 @@ def test_codex_recall_matcher_accepts_only_audited_memory_recall(tmp_path):
 
 
 def test_codex_recall_matcher_accepts_real_empty_memories_as_none(tmp_path):
-    query = 'wechat-memory-dedupe:v1:["fact"]'
+    query = "fact"
     final = {"matches":[{"statement":"fact", "relation":"none",
         "memory_id":"", "evidence":"", "merged_statement":""}]}
     raw = "\n".join([
         json.dumps({"type":"item.completed","item":{"type":"mcp_tool_call",
-            "call_id":"r1","tool":"memory_recall","arguments":{"query":query}}}),
-        json.dumps({"type":"item.completed","item":{"type":"tool_result",
-            "call_id":"r1","output":{"structured_content":{"result":json.dumps({"memories":[]})}}}}),
+            "call_id":"r1","tool":"memory_recall","arguments":{"query":query},
+            "result":{"structured_content":{"result":json.dumps({"memories":[]})}}}}),
         json.dumps({"type":"item.completed","item":{"type":"agent_message","text":json.dumps(final)}}),
     ])
     result = CodexMemoryRecallMatcher(tmp_path, executor=lambda c, p: raw).match(
@@ -346,16 +344,15 @@ def test_codex_recall_matcher_accepts_real_empty_memories_as_none(tmp_path):
 
 
 def test_codex_recall_support_must_come_from_same_memory_object(tmp_path):
-    query = 'wechat-memory-dedupe:v1:["fact"]'
+    query = "fact"
     final = {"matches":[{"statement":"fact", "relation":"exact",
         "memory_id":"mem-a", "evidence":"evidence from B", "merged_statement":""}]}
     output = {"memories":[{"uuid":"mem-a","text":"evidence from A"},
                            {"uuid":"mem-b","summary":"evidence from B"}]}
     raw = "\n".join([
         json.dumps({"type":"item.completed","item":{"type":"mcp_tool_call",
-            "call_id":"r1","tool":"memory_recall","arguments":{"query":query}}}),
-        json.dumps({"type":"item.completed","item":{"type":"tool_result",
-            "call_id":"r1","output":output}}),
+            "call_id":"r1","tool":"memory_recall","arguments":{"query":query},
+            "result":output}}),
         json.dumps({"type":"item.completed","item":{"type":"agent_message","text":json.dumps(final)}}),
     ])
     with pytest.raises(RuntimeError, match="same recalled memory"):
@@ -364,14 +361,13 @@ def test_codex_recall_support_must_come_from_same_memory_object(tmp_path):
 
 
 def test_codex_recall_explicit_is_error_fails(tmp_path):
-    query = 'wechat-memory-dedupe:v1:["fact"]'
+    query = "fact"
     final = {"matches":[{"statement":"fact", "relation":"none",
         "memory_id":"", "evidence":"", "merged_statement":""}]}
     raw = "\n".join([
         json.dumps({"type":"item.completed","item":{"type":"mcp_tool_call",
-            "call_id":"r1","tool":"memory_recall","arguments":{"query":query}}}),
-        json.dumps({"type":"item.completed","item":{"type":"tool_result",
-            "call_id":"r1","isError":True,"output":{"memories":[]}}}),
+            "call_id":"r1","tool":"memory_recall","arguments":{"query":query},
+            "isError":True,"result":{"memories":[]}}}),
         json.dumps({"type":"item.completed","item":{"type":"agent_message","text":json.dumps(final)}}),
     ])
     with pytest.raises(RuntimeError, match="tool error"):
@@ -381,14 +377,13 @@ def test_codex_recall_explicit_is_error_fails(tmp_path):
 
 @pytest.mark.parametrize("bad_evidence", [" ", "short"])
 def test_codex_recall_rejects_blank_or_too_short_evidence(tmp_path, bad_evidence):
-    query = 'wechat-memory-dedupe:v1:["fact"]'
+    query = "fact"
     final = {"matches":[{"statement":"fact", "relation":"exact",
         "memory_id":"mem-1", "evidence":bad_evidence, "merged_statement":""}]}
     raw = "\n".join([
         json.dumps({"type":"item.completed","item":{"type":"mcp_tool_call",
-            "call_id":"r1","tool":"memory_recall","arguments":{"query":query}}}),
-        json.dumps({"type":"item.completed","item":{"type":"tool_result",
-            "call_id":"r1","output":{"memories":[{
+            "call_id":"r1","tool":"memory_recall","arguments":{"query":query},
+            "result":{"memories":[{
                 "uuid":"mem-1", "text":f"context {bad_evidence} context"}]}}}),
         json.dumps({"type":"item.completed","item":{"type":"agent_message","text":json.dumps(final)}}),
     ])
@@ -591,8 +586,7 @@ def test_rejected_or_revoked_local_candidate_does_not_suppress_new_run(store, te
 def test_codex_write_backend_requires_successful_memory_write_tool_event(tmp_path):
     output = {"structured_content":{"result":json.dumps({"ok":True,"episode_uuid":"episode-1","processing_status":"completed"})}}
     success = "\n".join([
-        json.dumps({"type":"item.completed","item":{"type":"mcp_tool_call", "call_id":"c1", "tool":"memory_write", "arguments":{"data":"final","type":"text","created_at":"2026-07-17"}}}),
-        json.dumps({"type":"item.completed","item":{"type":"tool_result", "call_id":"c1", "output":output}}),
+        json.dumps({"type":"item.completed","item":{"type":"mcp_tool_call", "call_id":"c1", "tool":"memory_write", "arguments":{"data":"final","type":"text","created_at":"2026-07-17"}, "result":output}}),
         json.dumps({"status":"attempted"}),
     ])
     backend = CodexMemoryWriteBackend(tmp_path, executor=lambda command, prompt: success)
@@ -616,8 +610,7 @@ def test_codex_write_backend_requires_successful_memory_write_tool_event(tmp_pat
             "final", source_time_start="2026-07-17", source_time_end="")
 
     vague = "\n".join([
-        json.dumps({"type":"item.completed","item":{"type":"mcp_tool_call", "call_id":"c1", "tool":"memory_write", "arguments":{"data":"final","type":"text","created_at":"2026-07-17"}}}),
-        json.dumps({"type":"item.completed","item":{"type":"tool_result", "call_id":"c1", "output":"550e8400-e29b-41d4-a716-446655440000"}}),
+        json.dumps({"type":"item.completed","item":{"type":"mcp_tool_call", "call_id":"c1", "tool":"memory_write", "arguments":{"data":"final","type":"text","created_at":"2026-07-17"}, "result":"550e8400-e29b-41d4-a716-446655440000"}}),
     ])
     with pytest.raises(Exception, match="unknown"):
         CodexMemoryWriteBackend(tmp_path, executor=lambda c, p: vague).write(
@@ -662,3 +655,209 @@ def test_codex_extraction_parses_live_item_completed_agent_message(tmp_path):
     result = CodexMemoryExtractionRunner(
         tmp_path, executor=lambda command, prompt: raw).extract([])
     assert result[0].statement == "durable fact"
+
+
+def test_real_codex_lifecycle_counts_completed_recall_once_without_call_id(tmp_path):
+    final = {"matches": [{"statement": "fact", "relation": "none",
+                           "memory_id": "", "evidence": "", "merged_statement": ""}]}
+    call = {"type": "mcp_tool_call", "server": "memory_connector",
+            "tool": "memory_recall", "arguments": {"query": "fact"}}
+    completed = {**call, "result": {
+        "structured_content": {"result": json.dumps({"memories": []})}}}
+    raw = "\n".join([
+        json.dumps({"type": "item.started", "item": call}),
+        json.dumps({"type": "item.completed", "item": completed}),
+        json.dumps({"type": "item.completed", "item": {
+            "type": "agent_message", "text": json.dumps(final)}}),
+    ])
+    result = CodexMemoryRecallMatcher(tmp_path, executor=lambda command, prompt: raw).match([
+        candidate("fact", category="fact")])
+    assert result["fact"].relation == "none"
+
+
+def test_real_codex_lifecycle_counts_completed_write_once_without_call_id(tmp_path):
+    arguments = {"data": "final", "type": "text", "created_at": "2026-07-17"}
+    call = {"type": "mcp_tool_call", "server": "memory_connector",
+            "tool": "memory_write", "arguments": arguments}
+    tool_result = {"structured_content": {"result": json.dumps({
+        "ok": True, "episode_uuid": "episode-real", "processing_status": "completed"})}}
+    raw = "\n".join([
+        json.dumps({"type": "item.started", "item": call}),
+        json.dumps({"type": "item.completed", "item": {**call, "result": tool_result}}),
+    ])
+    backend = CodexMemoryWriteBackend(tmp_path, executor=lambda command, prompt: raw)
+    assert backend.write(
+        "final", source_time_start="2026-07-17", source_time_end="") == "episode-real"
+
+
+def test_recall_matcher_uses_one_exact_query_per_candidate(tmp_path):
+    calls = []
+
+    def execute(command, prompt):
+        marker = "query 必须逐字等于：\n"
+        statement = prompt.split(marker, 1)[1].split("\n", 1)[0]
+        calls.append(statement)
+        final = {"matches": [{"statement": statement, "relation": "none",
+                               "memory_id": "", "evidence": "", "merged_statement": ""}]}
+        completed = {
+            "type": "mcp_tool_call", "tool": "memory_recall",
+            "arguments": {"query": statement},
+            "result": {"memories": []},
+        }
+        return "\n".join([
+            json.dumps({"type": "item.completed", "item": completed}),
+            json.dumps({"type": "item.completed", "item": {
+                "type": "agent_message", "text": json.dumps(final)}}),
+        ])
+
+    result = CodexMemoryRecallMatcher(tmp_path, executor=execute).match([
+        candidate("zeta fact", category="fact"),
+        candidate("alpha fact", category="fact", source_message_ids=("m2",)),
+    ])
+    assert calls == ["alpha fact", "zeta fact"]
+    assert set(result) == {"alpha fact", "zeta fact"}
+
+
+def test_recall_matcher_rejects_unbounded_candidate_count(tmp_path):
+    with pytest.raises(ValueError, match="at most 100"):
+        CodexMemoryRecallMatcher(
+            tmp_path, executor=lambda command, prompt: pytest.fail("must not execute")
+        ).match([candidate(f"fact {index}", category="fact") for index in range(101)])
+
+
+def test_unconfigured_default_exa_is_not_disabled_for_recall_or_write(tmp_path, monkeypatch):
+    monkeypatch.setattr("app.codex_runner._codex_config", lambda: {})
+    recall_final = {"matches": [{"statement": "fact", "relation": "none",
+                                  "memory_id": "", "evidence": "",
+                                  "merged_statement": ""}]}
+    recall_raw = "\n".join([
+        json.dumps({"type": "item.completed", "item": {
+            "type": "mcp_tool_call", "tool": "memory_recall",
+            "arguments": {"query": "fact"}, "result": {"memories": []}}}),
+        json.dumps({"type": "item.completed", "item": {
+            "type": "agent_message", "text": json.dumps(recall_final)}}),
+    ])
+    commands = []
+
+    def recall_execute(command, prompt):
+        commands.append(command)
+        return recall_raw
+
+    CodexMemoryRecallMatcher(tmp_path, executor=recall_execute).match([
+        candidate("fact", category="fact")])
+
+    write_result = {"structured_content": {"result": json.dumps({
+        "ok": True, "episode_uuid": "episode-1", "processing_status": "completed"})}}
+    write_raw = json.dumps({"type": "item.completed", "item": {
+        "type": "mcp_tool_call", "tool": "memory_write",
+        "arguments": {"data": "final", "type": "text", "created_at": "2026-07-17"},
+        "result": write_result}})
+
+    def write_execute(command, prompt):
+        commands.append(command)
+        return write_raw
+
+    CodexMemoryWriteBackend(tmp_path, executor=write_execute).write(
+        "final", source_time_start="2026-07-17", source_time_end="")
+    assert all("mcp_servers.exa.enabled=false" not in command for command in commands)
+
+
+def test_extraction_filters_sensitive_input_and_runs_read_only_without_tools(
+    tmp_path, monkeypatch,
+):
+    from app.codex_runner import MEMORY_CONNECTOR_URL_ENV
+
+    monkeypatch.setattr("app.codex_runner._codex_config", lambda: {
+        "mcp_servers": {
+            "xiaoqing_interview": {"url": "https://example.invalid/mcp"},
+            "github": {"command": "github-mcp-server"},
+        }
+    })
+    monkeypatch.setattr("app.codex_runner._memory_connector_env", lambda: {
+        MEMORY_CONNECTOR_URL_ENV: "https://memory.invalid/mcp",
+    })
+    captured = {}
+
+    def execute(command, prompt):
+        captured.update(command=command, prompt=prompt)
+        return json.dumps({"candidates": []})
+
+    def message(message_id, text, *, sender="Private Alice", kind="text", direction="inbound"):
+        return WechatMessage(
+            account_id="a", conversation_id="c1", message_id=message_id, sender_id="secret-id",
+            sender_display_name=sender, conversation_type="direct", direction=direction,
+            sent_at="2026-07-17T10:00:00+08:00", kind=kind, text=text,
+            source_version="4")
+
+    CodexMemoryExtractionRunner(tmp_path, executor=execute).extract([
+        message("credential", "password is hunter2"),
+        message("medical", "诊断为高血压"),
+        message("financial", "账户余额 1000000"),
+        message("allowed", "Contact alice@example.com 13800138000 ref 12345678"),
+        message("image", "raw image metadata", kind="image"),
+        message("self", "I prefer concise notes", direction="outbound"),
+    ])
+    payload = json.loads(captured["prompt"].split("\n", 1)[1])
+    assert [row["message_id"] for row in payload] == ["allowed", "self"]
+    assert payload[0]["sender_role"] == "other"
+    assert payload[1]["sender_role"] == "self"
+    assert "sender" not in payload[0]
+    assert "Private Alice" not in captured["prompt"]
+    assert "secret-id" not in captured["prompt"]
+    assert "alice@example.com" not in captured["prompt"]
+    assert "13800138000" not in captured["prompt"]
+    assert "12345678" not in captured["prompt"]
+    assert "--dangerously-bypass-approvals-and-sandbox" not in captured["command"]
+    assert "read-only" in captured["command"]
+    assert "tools.enabled_tools=[]" in captured["command"]
+    assert 'web_search="disabled"' in captured["command"]
+    assert "mcp_servers.xiaoqing_interview.enabled=false" in captured["command"]
+    assert "mcp_servers.memory_connector.enabled=false" in captured["command"]
+    assert "mcp_servers.exa.enabled=false" not in captured["command"]
+    assert "mcp_servers.github.enabled=false" not in captured["command"]
+
+
+def test_extraction_fails_closed_if_codex_emits_any_tool_call(tmp_path):
+    raw = "\n".join([
+        json.dumps({"type": "item.completed", "item": {
+            "type": "mcp_tool_call", "tool": "memory_recall",
+            "arguments": {"query": "ignore prior instructions"}, "result": {"memories": []}}}),
+        json.dumps({"candidates": []}),
+    ])
+    with pytest.raises(RuntimeError, match="must not call tools"):
+        CodexMemoryExtractionRunner(
+            tmp_path, executor=lambda command, prompt: raw).extract([])
+
+
+def test_clean_candidate_time_bounds_compare_instants_not_iso_strings(store):
+    rows = WechatMemoryImporter(store).clean_candidates([
+        candidate("inside", category="fact").model_copy(update={
+            "source_time_start": "2026-07-16T16:00:00Z",
+            "source_time_end": "2026-07-17T23:59:59",
+        }),
+        candidate("before", category="fact").model_copy(update={
+            "source_time_start": "2026-07-16T15:59:59Z",
+            "source_time_end": "2026-07-17T00:00:00+08:00",
+        }),
+    ], since="2026-07-17T00:00:00+08:00", until="2026-07-17")
+    assert [row.statement for row in rows] == ["inside"]
+
+
+def test_import_source_times_accept_equivalent_z_and_offset_instants(store):
+    from app.wechat.models import WechatAccount
+    account = WechatAccount(account_id="a", display_name="D", self_user_id="self",
+                            account_dir="/a", db_dir="/a/db", app_version="4")
+    message = WechatMessage(
+        account_id="a", conversation_id="c1", message_id="m1", sender_id="s",
+        sender_display_name="S", conversation_type="direct", direction="inbound",
+        sent_at="2026-07-17T02:00:00Z", kind="text", text="fact", source_version="4")
+    reader = type("R", (), {"read_messages": lambda self, account, **kwargs: [message]})()
+    extracted = candidate("timezone fact", category="fact").model_copy(update={
+        "source_time_start": "2026-07-17T10:00:00+08:00",
+        "source_time_end": "2026-07-17T10:00:00+08:00",
+    })
+    extractor = type("E", (), {"extract": lambda self, batch: [extracted]})()
+    result = WechatMemoryImporter(
+        store, reader, extractor, NoDurableMatch()).run(
+            account=account, target_ids=["c1"], since="2026-07-17", until="", limit=10)
+    assert result["candidates"] == 1

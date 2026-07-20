@@ -13,6 +13,7 @@ import glob
 import os
 import sqlite3
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from app.wechat.cipher import WcdbCipherBackend
 from app.wechat import schema
@@ -98,7 +99,10 @@ class WcdbReaderBackend:
         if not since:
             return 0.0
         try:
-            return _dt.datetime.fromisoformat(since).timestamp()
+            parsed = _dt.datetime.fromisoformat(since.replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=ZoneInfo("Asia/Shanghai"))
+            return parsed.timestamp()
         except ValueError:
             return 0.0
 

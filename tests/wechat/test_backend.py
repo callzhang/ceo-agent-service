@@ -106,3 +106,9 @@ def test_until_bound_is_applied_before_newest_limit(tmp_path):
     )
 
     assert [row["message_id"] for row in rows] == ["1"]
+
+
+def test_since_timestamp_treats_naive_values_as_asia_shanghai():
+    assert WcdbReaderBackend._since_ts("2026-07-17T10:00:00") == (
+        WcdbReaderBackend._since_ts("2026-07-17T02:00:00Z")
+    )

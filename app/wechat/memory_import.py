@@ -5,9 +5,10 @@ import hashlib
 import heapq
 import json
 import re
-from datetime import datetime
+from datetime import datetime, time, timezone
 from pathlib import Path
 from typing import Literal
+from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
@@ -23,6 +24,9 @@ STATEMENT_LIMIT = 800
 EVIDENCE_LIMIT = 300
 BATCH_SIZE = 100
 MAX_TARGETS = 100
+MAX_RECALL_CANDIDATES = 100
+INPUT_TEXT_LIMIT = 2000
+LOCAL_TIMEZONE = ZoneInfo("Asia/Shanghai")
 
 _BLOCK_PATTERNS = tuple(re.compile(pattern, flags) for pattern, flags in (
     (r"验证码|verification\s*code|一次性密码|one[- ]time password", re.I),
@@ -68,11 +72,15 @@ def _normalized(value: str, limit: int) -> str:
     return " ".join(value.split())[:limit]
 
 
-def _redacted_excerpt(value: str) -> str:
+def _redacted(value: str, limit: int) -> str:
     value = _EMAIL.sub("[redacted-email]", value)
     value = _PHONE.sub("[redacted-phone]", value)
     value = _LONG_NUMBER.sub("[redacted-number]", value)
-    return _normalized(value, EVIDENCE_LIMIT)
+    return _normalized(value, limit)
+
+
+def _redacted_excerpt(value: str) -> str:
+    return _redacted(value, EVIDENCE_LIMIT)
 
 
 def _contains_blocked_content(*values: str) -> bool:
@@ -95,17 +103,25 @@ def _validate_date_bound(value: str, name: str) -> None:
     if not value:
         return
     try:
-        datetime.fromisoformat(value.replace("Z", "+00:00"))
+        _parse_instant(value)
     except ValueError as exc:
         raise ValueError(f"invalid {name} date bound") from exc
 
 
-def _lower_bound(value: str) -> str:
-    return value + "T00:00:00" if len(value) == 10 else value
-
-
 def _upper_bound(value: str) -> str:
     return value + "T23:59:59.999999" if len(value) == 10 else value
+
+
+def _parse_instant(value: str, *, end_of_day: bool = False) -> datetime:
+    normalized = value.strip().replace("Z", "+00:00")
+    parsed = datetime.fromisoformat(normalized)
+    if len(normalized) == 10:
+        parsed = datetime.combine(
+            parsed.date(), time.max if end_of_day else time.min,
+        )
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=LOCAL_TIMEZONE)
+    return parsed.astimezone(timezone.utc)
 
 
 def _parse_output(raw: str) -> list[ExtractedMemoryCandidate]:
@@ -144,7 +160,8 @@ class CodexMemoryExtractionRunner:
         prompt = self._prompt(messages)
         command = self.runner.build_command(prompt, None, output_schema_path=SCHEMA_PATH,
                                             ignore_user_config=True)
-        command[-1:-1] = ["-c", "mcp_servers.memory_connector.enabled=false"]
+        from app.wechat.codex_safety import make_read_only_without_tools
+        make_read_only_without_tools(command)
         if self.executor is not None:
             raw = self.executor(command, prompt)
         else:
@@ -160,15 +177,26 @@ class CodexMemoryExtractionRunner:
             if completed.returncode != 0:
                 raise RuntimeError(_subprocess_failure_reason(completed.stderr, completed.stdout))
             raw = completed.stdout
+        from app.wechat.codex_safety import has_any_tool_event
+        if has_any_tool_event(raw):
+            raise RuntimeError("WeChat Memory extraction must not call tools")
         return _parse_output(raw)
 
     @staticmethod
     def _prompt(messages: list[WechatMessage]) -> str:
-        payload = [{
-            "message_id": m.message_id, "conversation_id": m.conversation_id,
-            "sent_at": m.sent_at, "direction": m.direction,
-            "sender": m.sender_display_name, "text": m.text,
-        } for m in messages]
+        payload = []
+        for message in messages:
+            if message.kind != "text" or not message.text.strip():
+                continue
+            if _contains_blocked_content(message.text):
+                continue
+            payload.append({
+                "message_id": message.message_id,
+                "conversation_id": message.conversation_id,
+                "sent_at": message.sent_at,
+                "sender_role": "self" if message.direction == "outbound" else "other",
+                "text": _redacted(message.text, INPUT_TEXT_LIMIT),
+            })
         return (
             "从下面有界微信消息批次提取长期有价值、可复用且明确的事实。"
             "只输出 schema 指定的 candidates JSON。不要调用任何工具；运行时也不会提供 memory_write。"
@@ -192,29 +220,38 @@ class CodexMemoryRecallMatcher:
     def match(
         self, candidates: list[ExtractedMemoryCandidate]
     ) -> dict[str, DurableMemoryMatch]:
-        statements = sorted(item.statement for item in candidates)
-        expected_query = (
-            "wechat-memory-dedupe:v1:" + json.dumps(
-                statements, ensure_ascii=False, separators=(",", ":"))
-        )
+        if len(candidates) > MAX_RECALL_CANDIDATES:
+            raise ValueError(
+                f"durable Memory matcher accepts at most {MAX_RECALL_CANDIDATES} candidates"
+            )
+        statements = sorted(validate_final_statement(item.statement) for item in candidates)
+        if len(set(statements)) != len(statements):
+            raise ValueError("durable Memory matcher requires unique candidate statements")
+        result: dict[str, DurableMemoryMatch] = {}
+        for statement in statements:
+            result[statement] = self._match_statement(statement)
+        return result
+
+    def _match_statement(self, statement: str) -> DurableMemoryMatch:
         prompt = (
             "必须且只能调用一次 memory_recall，arguments 只能包含 query，且 query 必须逐字等于：\n"
-            + expected_query
+            + statement
             + "\n只读检查候选是否已存在。禁止 memory_write 和其他工具。"
-            "每条输出 relation、supporting memory_id、最小 evidence；compatible 还必须给 merged_statement。"
+            "只输出这一条候选的 relation、supporting memory_id、最小 evidence；"
+            "compatible 还必须给 merged_statement。"
         )
         command = self.runner.build_command(
             prompt, None, output_schema_path=DEDUPE_SCHEMA_PATH,
             ignore_user_config=True)
-        from app.codex_runner import _passthrough_mcp_server_names
-        for name in _passthrough_mcp_server_names():
-            command[-1:-1] = ["-c", f"mcp_servers.{name}.enabled=false"]
+        from app.wechat.codex_safety import disable_configured_mcp_servers
+        disable_configured_mcp_servers(
+            command, except_names=frozenset({"memory_connector"}))
         command[-1:-1] = [
             "-c", 'mcp_servers.memory_connector.enabled_tools=["memory_recall"]',
             "-c", 'mcp_servers.memory_connector.disabled_tools=["memory_write"]',
         ]
         raw = self._execute(command, prompt)
-        recalled_memories = self._validate_audit(raw, expected_query=expected_query)
+        recalled_memories = self._validate_audit(raw, expected_query=statement)
         payload = self._result_payload(raw)
         matches = []
         for raw_match in payload.get("matches", []):
@@ -226,7 +263,7 @@ class CodexMemoryRecallMatcher:
                 "memory_id": item.memory_id.strip(), "evidence": evidence,
             }))
         result = {item.statement: item for item in matches}
-        if set(result) != set(statements):
+        if set(result) != {statement}:
             raise RuntimeError("durable Memory matcher returned incomplete results")
         for item in matches:
             if item.relation == "none":
@@ -254,7 +291,7 @@ class CodexMemoryRecallMatcher:
                 validate_final_statement(item.merged_statement)
             elif item.merged_statement:
                 raise RuntimeError("only compatible match may provide merged statement")
-        return result
+        return result[statement]
 
     def _execute(self, command: list[str], prompt: str) -> str:
         if self.executor is not None:
@@ -273,32 +310,36 @@ class CodexMemoryRecallMatcher:
 
     @staticmethod
     def _validate_audit(raw: str, *, expected_query: str) -> list[dict]:
-        from app.codex_decision import extract_codex_audit_events
         from app.store import AutoReplyStore
-        events = extract_codex_audit_events(raw, limit=100)
-        calls = [event for event in events if event.get("tool", "") != "tool_output"]
+        from app.wechat.codex_safety import completed_mcp_tool_calls, completed_tool_events
+
+        calls = completed_mcp_tool_calls(raw)
         def is_recall(name: str) -> bool:
             normalized = name.strip()
             return normalized == "memory_recall" or normalized.endswith(
                 (".memory_recall", "__memory_recall", " memory_recall"))
-        if len(calls) != 1 or any(not is_recall(event.get("tool", "")) for event in calls):
+        if (
+            len(completed_tool_events(raw)) != 1
+            or len(calls) != 1
+            or any(not is_recall(str(call.get("tool") or "")) for call in calls)
+        ):
             raise RuntimeError("durable Memory matcher may use only memory_recall")
         call = calls[0]
-        try:
-            arguments = json.loads(call.get("input", ""))
-        except json.JSONDecodeError as exc:
-            raise RuntimeError("durable Memory recall query audit is invalid") from exc
+        arguments = call.get("arguments")
+        if isinstance(arguments, str):
+            try:
+                arguments = json.loads(arguments)
+            except json.JSONDecodeError as exc:
+                raise RuntimeError("durable Memory recall query audit is invalid") from exc
         if arguments != {"query": expected_query}:
             raise RuntimeError("durable Memory recall query does not match candidates")
-        outputs = [call.get("output", "")] if call.get("output") else []
-        if not outputs and call.get("call_id"):
-            outputs = [event.get("output", "") for event in events
-                       if event.get("call_id") == call["call_id"] and event.get("output")]
-        if len(outputs) != 1:
+        output = call.get("result")
+        if output is None:
             raise RuntimeError("durable Memory recall audit is ambiguous")
-        if CodexMemoryRecallMatcher._tool_event_has_error(raw, call.get("call_id", "")):
+        if call.get("isError") is True or call.get("error"):
             raise RuntimeError("durable Memory recall tool error")
-        output = AutoReplyStore._load_memory_json(outputs[0])
+        if isinstance(output, str):
+            output = AutoReplyStore._load_memory_json(output)
         if isinstance(output, dict) and (
             output.get("isError") is True or output.get("error")
         ):
@@ -310,19 +351,6 @@ class CodexMemoryRecallMatcher:
         if not isinstance(memories, list) or any(not isinstance(item, dict) for item in memories):
             raise RuntimeError("durable Memory recall output requires a memories list")
         return memories
-
-    @staticmethod
-    def _tool_event_has_error(raw: str, call_id: str) -> bool:
-        from app.codex_decision import _iter_json_payloads
-        for payload in _iter_json_payloads(raw):
-            if not isinstance(payload, dict):
-                continue
-            source = payload.get("item") if isinstance(payload.get("item"), dict) else payload
-            if str(source.get("call_id") or payload.get("call_id") or "") != call_id:
-                continue
-            if source.get("isError") is True or source.get("error"):
-                return True
-        return False
 
     @staticmethod
     def _memory_support_texts(memory: dict) -> list[str]:
@@ -423,9 +451,16 @@ class WechatMemoryImporter:
                 not source_conversations or not set(source_conversations) <= allowed_conversation_ids
             ):
                 continue
-            if since and candidate.source_time_start < _lower_bound(since):
+            try:
+                source_start = _parse_instant(candidate.source_time_start)
+                source_end = _parse_instant(candidate.source_time_end)
+            except ValueError:
                 continue
-            if until and candidate.source_time_end > _upper_bound(until):
+            if source_start > source_end:
+                continue
+            if since and source_start < _parse_instant(since):
+                continue
+            if until and source_end > _parse_instant(until, end_of_day=len(until) == 10):
                 continue
             if _contains_blocked_content(statement, candidate.evidence_excerpt):
                 continue
@@ -459,14 +494,16 @@ class WechatMemoryImporter:
             raise ValueError("bounded scope required: 1 <= limit <= 10000")
         _validate_date_bound(since, "since")
         _validate_date_bound(until, "until")
-        if since and until and since > until:
+        if since and until and _parse_instant(since) > _parse_instant(
+            until, end_of_day=len(until) == 10
+        ):
             raise ValueError("since date bound must not be after until")
         if self.reader is None or self.codex is None or account is None:
             raise ValueError("reader, extraction runner, and ready account are required")
         if self.matcher is None:
             raise RuntimeError("durable Memory matcher is required")
 
-        heap: list[tuple[str, str, str, int, WechatMessage]] = []
+        heap: list[tuple[datetime, str, str, int, WechatMessage]] = []
         sequence = 0
         for target_id in targets:
             rows = self.reader.read_messages(
@@ -476,14 +513,17 @@ class WechatMemoryImporter:
                 limit=limit, order="newest",
             )
             target_rows = heapq.nlargest(
-                limit, rows, key=lambda row: (row.sent_at, row.message_id)
+                limit, rows, key=lambda row: (_parse_instant(row.sent_at), row.message_id)
             )
             for row in target_rows:
                 if row.kind != "text" or not row.text.strip():
                     continue
-                if until and row.sent_at > _upper_bound(until):
+                row_time = _parse_instant(row.sent_at)
+                if until and row_time > _parse_instant(
+                    until, end_of_day=len(until) == 10
+                ):
                     continue
-                item = (row.sent_at, row.message_id, row.conversation_id, sequence, row)
+                item = (row_time, row.message_id, row.conversation_id, sequence, row)
                 sequence += 1
                 if len(heap) < limit:
                     heapq.heappush(heap, item)
@@ -508,9 +548,23 @@ class WechatMemoryImporter:
                 }
                 if set(item.source_conversation_ids) != actual_conversations:
                     continue
-                actual_start = min(row.sent_at for row in source_rows if row is not None)
-                actual_end = max(row.sent_at for row in source_rows if row is not None)
-                if item.source_time_start > actual_start or item.source_time_end < actual_end:
+                actual_start = min(
+                    (row for row in source_rows if row is not None),
+                    key=lambda row: _parse_instant(row.sent_at),
+                ).sent_at
+                actual_end = max(
+                    (row for row in source_rows if row is not None),
+                    key=lambda row: _parse_instant(row.sent_at),
+                ).sent_at
+                try:
+                    claimed_start = _parse_instant(item.source_time_start)
+                    claimed_end = _parse_instant(item.source_time_end)
+                except ValueError:
+                    continue
+                if (
+                    claimed_start > _parse_instant(actual_start)
+                    or claimed_end < _parse_instant(actual_end)
+                ):
                     continue
                 validated.append(item.model_copy(update={
                     "source_time_start": actual_start, "source_time_end": actual_end,
