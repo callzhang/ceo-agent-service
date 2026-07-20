@@ -2000,6 +2000,127 @@ class AutoReplyStore:
             if cursor.rowcount != 1:
                 raise ValueError("memory action lease ownership mismatch")
 
+    @staticmethod
+    def _valid_universal_recovery_checkpoint(
+        execution: UniversalActionExecution,
+        checkpoint_json: str,
+    ) -> bool:
+        if not checkpoint_json.strip():
+            return False
+        try:
+            checkpoint = json.loads(checkpoint_json)
+        except json.JSONDecodeError:
+            return False
+        if not isinstance(checkpoint, dict):
+            return False
+        if execution.action.kind is PlannedActionKind.DWS_MARKDOWN_DOCUMENT_REPLY:
+            return (
+                isinstance(checkpoint.get("doc_result"), dict)
+                and bool(str(checkpoint.get("node_id") or "").strip())
+                and bool(str(checkpoint.get("url") or "").strip())
+            )
+        if (
+            execution.action.kind is PlannedActionKind.DWS_MESSAGE_REACTION
+            and str(execution.action.payload.get("reaction_type") or "emoji").strip()
+            == "text_emotion"
+        ):
+            create = checkpoint.get("create")
+            add_state = str(checkpoint.get("add_state") or "").strip()
+            return (
+                isinstance(create, dict)
+                and isinstance(create.get("result"), dict)
+                and create.get("trusted") is True
+                and bool(str(create.get("emotion_id") or "").strip())
+                and add_state not in {"ambiguous", "started"}
+            )
+        return False
+
+    def claim_universal_action_execution_recovery(
+        self,
+        execution: UniversalActionExecution,
+        *,
+        checkpoint_column: str,
+    ) -> tuple[UniversalActionExecutionState, str]:
+        if checkpoint_column not in {
+            "document_action_result_json",
+            "reaction_action_result_json",
+        }:
+            raise ValueError("unsupported universal recovery checkpoint")
+        with self._connect() as db:
+            db.execute("begin immediate")
+            row = self._validate_universal_action_execution(db, execution)
+            attempt = db.execute(
+                f"""
+                select {checkpoint_column} as checkpoint_json
+                from reply_attempts
+                where universal_execution_id=?
+                """,
+                (execution.execution_id,),
+            ).fetchone()
+            checkpoint_json = (
+                str(attempt["checkpoint_json"] or "") if attempt is not None else ""
+            )
+            has_checkpoint = self._valid_universal_recovery_checkpoint(
+                execution,
+                checkpoint_json,
+            )
+            if row is None:
+                db.execute(
+                    """
+                    insert into universal_action_executions (
+                        execution_id,
+                        execution_scope_id,
+                        action_index,
+                        action_kind,
+                        action_hash,
+                        action_json,
+                        status,
+                        started_at
+                    ) values (?, ?, ?, ?, ?, ?, 'started', current_timestamp)
+                    """,
+                    (
+                        execution.execution_id,
+                        execution.execution_scope_id,
+                        execution.action_index,
+                        execution.action.kind.value,
+                        execution.action_hash,
+                        canonical_universal_action_json(execution.action),
+                    ),
+                )
+                return UniversalActionExecutionState.NOT_STARTED, checkpoint_json
+            if row["status"] == "failed":
+                db.execute(
+                    """
+                    update universal_action_executions
+                    set status='started',
+                        attempt_id=0,
+                        result_json='',
+                        error='',
+                        started_at=current_timestamp,
+                        completed_at='',
+                        updated_at=current_timestamp
+                    where execution_id=? and status='failed'
+                    """,
+                    (execution.execution_id,),
+                )
+                return UniversalActionExecutionState.NOT_STARTED, checkpoint_json
+            if row["status"] == "succeeded":
+                return UniversalActionExecutionState.SUCCEEDED, checkpoint_json
+            if row["status"] == "started" and has_checkpoint:
+                cursor = db.execute(
+                    """
+                    update universal_action_executions
+                    set status='recovering',
+                        started_at=current_timestamp,
+                        updated_at=current_timestamp
+                    where execution_id=? and status='started'
+                    """,
+                    (execution.execution_id,),
+                )
+                if cursor.rowcount == 1:
+                    return UniversalActionExecutionState.NOT_STARTED, checkpoint_json
+            return UniversalActionExecutionState.UNKNOWN, checkpoint_json
+
     def complete_universal_action_execution(
         self,
         execution: UniversalActionExecution,
@@ -2009,7 +2130,7 @@ class AutoReplyStore:
         with self._connect() as db:
             db.execute("begin immediate")
             row = self._validate_universal_action_execution(db, execution)
-            if row is None or row["status"] != "started":
+            if row is None or row["status"] not in {"started", "recovering"}:
                 raise ValueError("universal action execution must be started")
             cursor = db.execute(
                 """
@@ -2020,7 +2141,7 @@ class AutoReplyStore:
                     error='',
                     completed_at=current_timestamp,
                     updated_at=current_timestamp
-                where execution_id=? and status='started'
+                where execution_id=? and status in ('started', 'recovering')
                 """,
                 (attempt_id, result_json, execution.execution_id),
             )
@@ -2059,7 +2180,7 @@ class AutoReplyStore:
         with self._connect() as db:
             db.execute("begin immediate")
             row = self._validate_universal_action_execution(db, execution)
-            if row is None or row["status"] != "started":
+            if row is None or row["status"] not in {"started", "recovering"}:
                 raise ValueError("universal action execution must be started")
             cursor = db.execute(
                 """
@@ -2067,7 +2188,7 @@ class AutoReplyStore:
                 set status=?,
                     error=?,
                     updated_at=current_timestamp
-                where execution_id=? and status='started'
+                where execution_id=? and status in ('started', 'recovering')
                 """,
                 (status, error, execution.execution_id),
             )
@@ -4483,7 +4604,10 @@ class AutoReplyStore:
         with self._connect() as db:
             db.execute("begin immediate")
             execution_row = self._validate_universal_action_execution(db, execution)
-            if execution_row is None or execution_row["status"] != "started":
+            if execution_row is None or execution_row["status"] not in {
+                "started",
+                "recovering",
+            }:
                 raise ValueError("universal action execution must be started")
             existing = db.execute(
                 """

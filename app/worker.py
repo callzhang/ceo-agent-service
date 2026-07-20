@@ -1630,6 +1630,7 @@ class DingTalkAutoReplyWorker:
                 "connection reset",
                 "has no success receipt",
                 "receipt is missing",
+                "outcome is ambiguous",
                 "verification unavailable",
                 "verification mismatch",
                 "calendar_response_not_applied",
@@ -1741,6 +1742,14 @@ class DingTalkAutoReplyWorker:
         )
 
     @classmethod
+    def _universal_text_emotion_create_receipt_is_success(
+        cls, payload: object
+    ) -> bool:
+        return not cls._universal_dws_payload_is_explicit_failure(
+            payload
+        ) and cls._universal_dws_receipt_has_key(payload, {"emotionid"})
+
+    @classmethod
     def _universal_dws_payload_is_explicit_failure(cls, payload: object) -> bool:
         if isinstance(payload, dict):
             if payload.get("success") is False:
@@ -1809,7 +1818,12 @@ class DingTalkAutoReplyWorker:
             raise ValueError(
                 "universal document executor received a non-document action"
             )
-        claim_state = self.store.claim_universal_action_execution(execution)
+        claim_state, checkpoint_json = (
+            self.store.claim_universal_action_execution_recovery(
+                execution,
+                checkpoint_column="document_action_result_json",
+            )
+        )
         if claim_state is UniversalActionExecutionState.SUCCEEDED:
             return True
         if claim_state is UniversalActionExecutionState.UNKNOWN:
@@ -1856,11 +1870,10 @@ class DingTalkAutoReplyWorker:
             conversation,
             {"title": title} if title else None,
         )
-        attempt = self.store.get_reply_attempt(attempt_id)
         receipt: dict[str, Any] = {"title": title}
-        if attempt is not None and attempt.document_action_result_json.strip():
+        if checkpoint_json.strip():
             try:
-                persisted_receipt = json.loads(attempt.document_action_result_json)
+                persisted_receipt = json.loads(checkpoint_json)
             except json.JSONDecodeError:
                 persisted_receipt = None
             if (
@@ -2020,7 +2033,19 @@ class DingTalkAutoReplyWorker:
             raise ValueError(
                 "universal reaction executor received a non-reaction action"
             )
-        claim_state = self.store.claim_universal_action_execution(execution)
+        reaction_type = str(
+            execution.action.payload.get("reaction_type") or "emoji"
+        ).strip()
+        checkpoint_json = ""
+        if reaction_type == "text_emotion":
+            claim_state, checkpoint_json = (
+                self.store.claim_universal_action_execution_recovery(
+                    execution,
+                    checkpoint_column="reaction_action_result_json",
+                )
+            )
+        else:
+            claim_state = self.store.claim_universal_action_execution(execution)
         if claim_state is UniversalActionExecutionState.SUCCEEDED:
             return True
         if claim_state is UniversalActionExecutionState.UNKNOWN:
@@ -2057,13 +2082,23 @@ class DingTalkAutoReplyWorker:
         events: list[dict[str, str]] = []
         result: object = None
         try:
-            result = self._execute_message_reaction(
-                conversation=conversation,
-                trigger=trigger,
-                action=reaction_action,
-                call_id="universal_message_reaction",
-                events=events,
-            )
+            if reaction_type == "text_emotion":
+                result = self._execute_universal_text_emotion_reaction(
+                    conversation=conversation,
+                    trigger=trigger,
+                    action=reaction_action,
+                    attempt_id=attempt_id,
+                    checkpoint_json=checkpoint_json,
+                    events=events,
+                )
+            else:
+                result = self._execute_message_reaction(
+                    conversation=conversation,
+                    trigger=trigger,
+                    action=reaction_action,
+                    call_id="universal_message_reaction",
+                    events=events,
+                )
             self.store.update_reply_attempt(
                 attempt_id,
                 reaction_action_result_json=json.dumps(
@@ -2109,6 +2144,166 @@ class DingTalkAutoReplyWorker:
             result_json=json.dumps(result or {}, ensure_ascii=False, sort_keys=True),
         )
         return True
+
+    def _execute_universal_text_emotion_reaction(
+        self,
+        *,
+        conversation: DingTalkConversation,
+        trigger: DingTalkMessage,
+        action: dict,
+        attempt_id: int,
+        checkpoint_json: str,
+        events: list[dict[str, str]],
+    ) -> dict[str, object]:
+        try:
+            checkpoint = json.loads(checkpoint_json) if checkpoint_json.strip() else {}
+        except json.JSONDecodeError:
+            checkpoint = {}
+        if not isinstance(checkpoint, dict):
+            checkpoint = {}
+        checkpoint["reaction_type"] = "text_emotion"
+        text = str(action.get("text") or "").strip()
+        emotion_name = str(action.get("emotion_name") or "").strip() or text
+        background_id = (
+            str(action.get("background_id") or "").strip()
+            or DEFAULT_TEXT_EMOTION_BACKGROUND_ID
+        )
+        create = checkpoint.get("create")
+        emotion_id = ""
+        if isinstance(create, dict) and create.get("trusted") is True:
+            emotion_id = str(create.get("emotion_id") or "").strip()
+            background_id = (
+                str(create.get("background_id") or "").strip() or background_id
+            )
+        if not emotion_id:
+            create_command = [
+                "dws",
+                "chat",
+                "message",
+                "create-text-emotion",
+                "--text",
+                text,
+                "--emotion-name",
+                emotion_name,
+                "--background-id",
+                background_id,
+                "--format",
+                "json",
+                "--yes",
+            ]
+            events.append(
+                {
+                    "tool": "dws",
+                    "call_id": "universal_message_reaction_create",
+                    "command": " ".join(create_command),
+                    "input": json.dumps(
+                        {
+                            "text": text,
+                            "emotion_name": emotion_name,
+                            "background_id": background_id,
+                        },
+                        ensure_ascii=False,
+                    ),
+                }
+            )
+            create_result = self.dws.create_message_text_emotion(
+                text=text,
+                emotion_name=emotion_name,
+                background_id=background_id,
+            )
+            events[-1]["output"] = json.dumps(create_result, ensure_ascii=False)
+            create = {"result": create_result}
+            checkpoint["create"] = create
+            self.store.update_reply_attempt(
+                attempt_id,
+                reaction_action_result_json=json.dumps(
+                    checkpoint, ensure_ascii=False, sort_keys=True
+                ),
+            )
+            if self._universal_dws_payload_is_explicit_failure(create_result):
+                raise ReplyDeliveryError(
+                    "DWS text emotion create receipt reports failure"
+                )
+            emotion_id = _extract_text_emotion_id(create_result)
+            if (
+                not emotion_id
+                or not self._universal_text_emotion_create_receipt_is_success(
+                    create_result
+                )
+            ):
+                raise ReplyDeliveryError(
+                    "DWS text emotion create receipt is missing"
+                )
+            background_id = (
+                _extract_text_emotion_background_id(create_result) or background_id
+            )
+            create.update(
+                {
+                    "background_id": background_id,
+                    "emotion_id": emotion_id,
+                    "trusted": True,
+                }
+            )
+            self.store.update_reply_attempt(
+                attempt_id,
+                reaction_action_result_json=json.dumps(
+                    checkpoint, ensure_ascii=False, sort_keys=True
+                ),
+            )
+        add_state = str(checkpoint.get("add_state") or "").strip()
+        add_result = checkpoint.get("add_result")
+        if (
+            add_state == "succeeded"
+            and self._universal_reaction_receipt_is_success(add_result)
+        ):
+            return checkpoint
+        if add_state in {"ambiguous", "started"}:
+            raise ReplyDeliveryError("DWS text emotion add outcome is ambiguous")
+        add_action = dict(action)
+        add_action.update(
+            {
+                "background_id": background_id,
+                "emotion_id": emotion_id,
+                "emotion_name": emotion_name,
+                "reaction_type": "text_emotion",
+                "text": text,
+            }
+        )
+        checkpoint["add_state"] = "started"
+        checkpoint.pop("add_result", None)
+        self.store.update_reply_attempt(
+            attempt_id,
+            reaction_action_result_json=json.dumps(
+                checkpoint, ensure_ascii=False, sort_keys=True
+            ),
+        )
+        add_result = self._execute_message_reaction(
+            conversation=conversation,
+            trigger=trigger,
+            action=add_action,
+            call_id="universal_message_reaction_add",
+            events=events,
+        )
+        if events:
+            events[-1]["output"] = json.dumps(add_result, ensure_ascii=False)
+        checkpoint["add_result"] = add_result
+        if self._universal_dws_payload_is_explicit_failure(add_result):
+            checkpoint["add_state"] = "failed"
+        elif self._universal_reaction_receipt_is_success(add_result):
+            checkpoint["add_state"] = "succeeded"
+        else:
+            checkpoint["add_state"] = "ambiguous"
+        self.store.update_reply_attempt(
+            attempt_id,
+            reaction_action_result_json=json.dumps(
+                checkpoint, ensure_ascii=False, sort_keys=True
+            ),
+        )
+        if checkpoint["add_state"] == "failed":
+            raise ReplyDeliveryError("DWS text emotion add receipt reports failure")
+        if checkpoint["add_state"] == "ambiguous":
+            raise ReplyDeliveryError("DWS text emotion add receipt is missing")
+        return checkpoint
 
     def execute_universal_memory_write(self, execution: UniversalActionExecution) -> bool:
         if execution.action.kind is not PlannedActionKind.MEMORY_WRITE:

@@ -41,6 +41,14 @@ class UniversalReactionFakeDws(FakeDws):
         self.emoji_error: Exception | None = None
         self.created_text_emotions: list[tuple[str, str, str]] = []
         self.added_text_emotions: list[tuple[object, ...]] = []
+        self.text_emotion_create_result: object = {
+            "result": {"emotion": {"emotionId": 902, "backgroundId": 17}}
+        }
+        self.text_emotion_create_error: Exception | None = None
+        self.text_emotion_add_results: list[object] = [
+            {"result": {"receipt": {"reactionId": 903}}, "success": True}
+        ]
+        self.text_emotion_add_error: Exception | None = None
 
     def add_message_emoji(
         self,
@@ -61,7 +69,9 @@ class UniversalReactionFakeDws(FakeDws):
         background_id: str,
     ) -> object:
         self.created_text_emotions.append((text, emotion_name, background_id))
-        return {"result": {"emotion": {"emotionId": 902, "backgroundId": 17}}}
+        if self.text_emotion_create_error is not None:
+            raise self.text_emotion_create_error
+        return self.text_emotion_create_result
 
     def add_message_text_emotion(
         self,
@@ -83,7 +93,11 @@ class UniversalReactionFakeDws(FakeDws):
                 background_id,
             )
         )
-        return {"result": {"receipt": {"reactionId": 903}}, "success": True}
+        if self.text_emotion_add_error is not None:
+            raise self.text_emotion_add_error
+        if len(self.text_emotion_add_results) > 1:
+            return self.text_emotion_add_results.pop(0)
+        return self.text_emotion_add_results[0]
 
 
 class UniversalDocumentFakeDws(FakeDws):
@@ -746,6 +760,153 @@ def test_universal_text_emotion_parses_nested_numeric_ids(tmp_path: Path) -> Non
     ]
 
 
+def test_universal_text_emotion_create_without_id_is_unknown_and_not_recreated(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    execution = _execution(
+        store,
+        kind=PlannedActionKind.DWS_MESSAGE_REACTION,
+        target={"conversation_id": "cid-context", "message_id": "msg-context"},
+        payload={"reaction_type": "text_emotion", "text": "我去摇人"},
+    )
+    dws = UniversalReactionFakeDws()
+    dws.text_emotion_create_result = {"success": True}
+    worker = DingTalkAutoReplyWorker(store=store, dws=dws, codex=FakeCodex())
+
+    with pytest.raises(ReplyDeliveryError, match="create receipt is missing"):
+        worker.execute_universal_message_reaction(execution)
+
+    assert len(dws.created_text_emotions) == 1
+    assert dws.added_text_emotions == []
+    assert (
+        store.get_universal_action_execution_state(execution)
+        is UniversalActionExecutionState.UNKNOWN
+    )
+    with pytest.raises(RuntimeError, match="outcome is unknown"):
+        worker.execute_universal_message_reaction(execution)
+    assert len(dws.created_text_emotions) == 1
+
+
+def test_universal_text_emotion_retries_add_from_durable_create_checkpoint(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    execution = _execution(
+        store,
+        kind=PlannedActionKind.DWS_MESSAGE_REACTION,
+        target={"conversation_id": "cid-context", "message_id": "msg-context"},
+        payload={"reaction_type": "text_emotion", "text": "我去摇人"},
+    )
+    dws = UniversalReactionFakeDws()
+    dws.text_emotion_add_results = [
+        {"success": False, "errorCode": "REACTION_DENIED"},
+        {"success": True, "result": {"receipt": {"reactionId": 904}}},
+    ]
+    worker = DingTalkAutoReplyWorker(store=store, dws=dws, codex=FakeCodex())
+
+    with pytest.raises(ReplyDeliveryError, match="add receipt reports failure"):
+        worker.execute_universal_message_reaction(execution)
+
+    assert len(dws.created_text_emotions) == 1
+    assert len(dws.added_text_emotions) == 1
+    attempt = store.get_latest_reply_attempt_for_trigger("cid-context", "msg-context")
+    assert attempt is not None
+    checkpoint = json.loads(attempt.reaction_action_result_json)
+    assert checkpoint["create"]["emotion_id"] == "902"
+    assert (
+        store.get_universal_action_execution_state(execution)
+        is UniversalActionExecutionState.NOT_STARTED
+    )
+
+    assert worker.execute_universal_message_reaction(execution) is True
+
+    assert len(dws.created_text_emotions) == 1
+    assert len(dws.added_text_emotions) == 2
+
+
+def test_universal_text_emotion_recovers_started_create_checkpoint_after_restart(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "worker.sqlite3"
+    store = AutoReplyStore(db_path)
+    execution = _execution(
+        store,
+        kind=PlannedActionKind.DWS_MESSAGE_REACTION,
+        target={"conversation_id": "cid-context", "message_id": "msg-context"},
+        payload={"reaction_type": "text_emotion", "text": "我去摇人"},
+    )
+    worker = DingTalkAutoReplyWorker(
+        store=store,
+        dws=UniversalReactionFakeDws(),
+        codex=FakeCodex(),
+    )
+    assert (
+        store.claim_universal_action_execution(execution)
+        is UniversalActionExecutionState.NOT_STARTED
+    )
+    attempt_id = worker._record_universal_reply_attempt(
+        execution,
+        send_status="pending",
+    )
+    store.update_reply_attempt(
+        attempt_id,
+        reaction_action_result_json=json.dumps(
+            {
+                "reaction_type": "text_emotion",
+                "create": {
+                    "background_id": "17",
+                    "emotion_id": "902",
+                    "result": {
+                        "result": {
+                            "emotion": {"emotionId": 902, "backgroundId": 17}
+                        }
+                    },
+                    "trusted": True,
+                },
+            }
+        ),
+    )
+
+    reopened = AutoReplyStore(db_path)
+    dws = UniversalReactionFakeDws()
+    resumed_worker = DingTalkAutoReplyWorker(
+        store=reopened,
+        dws=dws,
+        codex=FakeCodex(),
+    )
+
+    assert resumed_worker.execute_universal_message_reaction(execution) is True
+
+    assert dws.created_text_emotions == []
+    assert len(dws.added_text_emotions) == 1
+
+
+def test_universal_text_emotion_ambiguous_add_is_unknown_from_checkpoint(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    execution = _execution(
+        store,
+        kind=PlannedActionKind.DWS_MESSAGE_REACTION,
+        target={"conversation_id": "cid-context", "message_id": "msg-context"},
+        payload={"reaction_type": "text_emotion", "text": "我去摇人"},
+    )
+    dws = UniversalReactionFakeDws()
+    dws.text_emotion_add_results = [{"success": True}]
+    worker = DingTalkAutoReplyWorker(store=store, dws=dws, codex=FakeCodex())
+
+    with pytest.raises(ReplyDeliveryError, match="add receipt is missing"):
+        worker.execute_universal_message_reaction(execution)
+
+    assert len(dws.created_text_emotions) == 1
+    assert len(dws.added_text_emotions) == 1
+    assert (
+        store.get_universal_action_execution_state(execution)
+        is UniversalActionExecutionState.UNKNOWN
+    )
+
+
 def test_universal_document_rejects_planner_target_spoof(tmp_path: Path) -> None:
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     execution = _execution(
@@ -881,6 +1042,128 @@ def test_universal_document_recovers_durable_receipt_without_recreating(
     assert dws.created_documents == []
     assert dws.permission_calls == []
     assert len(dws.sent_links) == 1
+
+
+def test_universal_document_recovers_started_create_checkpoint_after_restart(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CEO_REPLY_VISIBILITY_RECHECK_SECONDS", "0")
+    db_path = tmp_path / "worker.sqlite3"
+    store = AutoReplyStore(db_path)
+    execution = _execution(
+        store,
+        kind=PlannedActionKind.DWS_MARKDOWN_DOCUMENT_REPLY,
+        target={
+            "conversation_id": "cid-context",
+            "trigger_message_id": "msg-context",
+        },
+        payload={"title": "方案", "text": "# 方案\n\n正文"},
+    )
+    worker = DingTalkAutoReplyWorker(
+        store=store,
+        dws=UniversalDocumentFakeDws(),
+        codex=FakeCodex(),
+    )
+    assert (
+        store.claim_universal_action_execution(execution)
+        is UniversalActionExecutionState.NOT_STARTED
+    )
+    attempt_id = worker._record_universal_reply_attempt(
+        execution,
+        draft_reply_text="# 方案\n\n正文",
+        send_status="pending",
+    )
+    durable_receipt = {
+        "title": "方案",
+        "url": "https://alidocs.dingtalk.com/i/nodes/841",
+        "node_id": "841",
+        "doc_result": {
+            "result": {
+                "document": {
+                    "nodeId": 841,
+                    "url": "https://alidocs.dingtalk.com/i/nodes/841",
+                }
+            }
+        },
+    }
+    store.update_reply_attempt(
+        attempt_id,
+        document_action_result_json=json.dumps(durable_receipt),
+    )
+
+    reopened = AutoReplyStore(db_path)
+    dws = UniversalDocumentFakeDws()
+    resumed_worker = DingTalkAutoReplyWorker(
+        store=reopened,
+        dws=dws,
+        codex=FakeCodex(),
+    )
+
+    assert resumed_worker.execute_universal_document_reply(execution) is True
+
+    assert dws.created_documents == []
+    assert dws.permission_calls == [("841", ["user-context-sender"])]
+    assert len(dws.sent_links) == 1
+
+
+def test_universal_document_recovery_claim_is_atomic(tmp_path: Path) -> None:
+    db_path = tmp_path / "worker.sqlite3"
+    store = AutoReplyStore(db_path)
+    execution = _execution(
+        store,
+        kind=PlannedActionKind.DWS_MARKDOWN_DOCUMENT_REPLY,
+        target={
+            "conversation_id": "cid-context",
+            "trigger_message_id": "msg-context",
+        },
+        payload={"title": "方案", "text": "# 方案\n\n正文"},
+    )
+    worker = DingTalkAutoReplyWorker(
+        store=store,
+        dws=UniversalDocumentFakeDws(),
+        codex=FakeCodex(),
+    )
+    store.claim_universal_action_execution(execution)
+    attempt_id = worker._record_universal_reply_attempt(
+        execution,
+        draft_reply_text="# 方案\n\n正文",
+        send_status="pending",
+    )
+    store.update_reply_attempt(
+        attempt_id,
+        document_action_result_json=json.dumps(
+            {
+                "title": "方案",
+                "url": "https://alidocs.dingtalk.com/i/nodes/841",
+                "node_id": "841",
+                "doc_result": {
+                    "result": {
+                        "document": {
+                            "nodeId": 841,
+                            "url": "https://alidocs.dingtalk.com/i/nodes/841",
+                        }
+                    }
+                },
+            }
+        ),
+    )
+
+    def claim() -> UniversalActionExecutionState:
+        recovered, _ = AutoReplyStore(
+            db_path
+        ).claim_universal_action_execution_recovery(
+            execution,
+            checkpoint_column="document_action_result_json",
+        )
+        return recovered
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        states = sorted(
+            (future.result().value for future in (pool.submit(claim), pool.submit(claim)))
+        )
+
+    assert states == ["not_started", "unknown"]
 
 
 def test_universal_document_retries_definite_permission_failure_from_checkpoint(
