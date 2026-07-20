@@ -91,6 +91,12 @@ class UniversalPlanner:
                 "available tools and CLI when it is needed to make the plan. You must "
                 "not run mutating MCP or CLI operations; service executors own all "
                 "writes.",
+                "For Feishu/Lark material, use the available read-only lark CLI. "
+                "For external web retrieval, use the configured Exa MCP. These are "
+                "planning-time evidence tools: when a read succeeds, do not declare "
+                "lark or exa as an execution dependency. If required evidence cannot "
+                "be read, return a blocked or stop_with_error action with the concrete "
+                "reason instead of guessing or attempting login.",
                 "The service owns Memory OAuth and memory_write execution. Declare "
                 "the memory dependency only when the plan includes memory_write; do "
                 "not start login or open a browser.",
