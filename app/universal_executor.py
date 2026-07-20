@@ -61,9 +61,14 @@ def build_universal_action_execution(
         separators=(",", ":"),
     )
     action_hash = hashlib.sha256(canonical_action.encode("utf-8")).hexdigest()
-    execution_key = (
-        f"{plan_execution.execution_scope_id}:"
-        f"{plan_execution.execution_generation}:{action_index}"
+    execution_key = json.dumps(
+        [
+            plan_execution.execution_scope_id,
+            plan_execution.execution_generation,
+            action_index,
+        ],
+        ensure_ascii=False,
+        separators=(",", ":"),
     )
     return UniversalActionExecution(
         execution_id=hashlib.sha256(execution_key.encode("utf-8")).hexdigest(),

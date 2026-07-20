@@ -251,6 +251,27 @@ def test_execution_id_changes_across_generations_even_when_scope_is_reused() -> 
     assert first.execution_id != second.execution_id
 
 
+def test_execution_identity_has_no_scope_generation_delimiter_alias() -> None:
+    action = make_action(PlannedActionKind.MEMORY_WRITE)
+    first_plan = UniversalPlanExecution("a:b", "c", make_plan(action))
+    second_plan = UniversalPlanExecution("a", "b:c", make_plan(action))
+
+    first = build_universal_action_execution(
+        make_context(execution_generation="c"),
+        first_plan,
+        action,
+        0,
+    )
+    second = build_universal_action_execution(
+        make_context(execution_generation="b:c"),
+        second_plan,
+        action,
+        0,
+    )
+
+    assert first.execution_id != second.execution_id
+
+
 def test_plan_execution_is_frozen_and_deep_copies_plan() -> None:
     plan = make_plan()
     plan_execution = UniversalPlanExecution("scope-1", "initial", plan)
