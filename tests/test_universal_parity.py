@@ -5,12 +5,15 @@ from pathlib import Path
 from unittest.mock import Mock
 from zoneinfo import ZoneInfo
 
+import pytest
+
 from app.dingtalk_models import DingTalkConversation, DingTalkMessage
 from app.dws_client import DwsMinutesPermissionRequest
 from app.store import AutoReplyStore
 from app.universal_context import build_universal_context
 from app.universal_executor import (
     UniversalActionExecutor,
+    UniversalActionExecutionState,
     UniversalPlanExecution,
     build_universal_action_execution,
 )
@@ -241,3 +244,92 @@ def test_queue_okr_review_plan_dispatches_to_worker_executor():
 
     assert UniversalActionExecutor(worker).execute(execution) is True
     worker.execute_universal_okr_review.assert_called_once_with(execution)
+
+
+@pytest.mark.parametrize("send_status", ["failed", "blocked"])
+def test_failed_or_blocked_attempt_is_not_a_universal_terminal_duplicate(
+    tmp_path, monkeypatch, send_status
+):
+    trigger = message()
+    worker, _, task = make_worker(tmp_path, monkeypatch, trigger, RecordingPlanner())
+    worker.store.record_reply_attempt(
+        conversation_id="cid-1",
+        conversation_title="测试群",
+        trigger_message_id="msg-1",
+        trigger_sender="宇航",
+        trigger_text="请处理",
+        action="stop_with_error" if send_status == "failed" else "blocked",
+        sensitivity_kind="general",
+        codex_reason="temporary execution failure",
+        send_status=send_status,
+    )
+    context = build_universal_context(
+        conversation=conversation(),
+        trigger=trigger,
+        context_messages=[trigger],
+        task_id=task.id,
+        force_new_decision=False,
+        dry_run=False,
+        execution_generation=task.execution_generation,
+    )
+
+    assert worker.store.load_universal_plan_execution(context) is None
+    assert worker._universal_existing_terminal_attempt(context) is False
+
+
+def test_stop_with_error_is_failed_retryable_and_does_not_complete_trigger(
+    tmp_path, monkeypatch
+):
+    trigger = message()
+    worker, _, task = make_worker(tmp_path, monkeypatch, trigger, RecordingPlanner())
+    context = build_universal_context(
+        conversation=conversation(),
+        trigger=trigger,
+        context_messages=[trigger],
+        task_id=task.id,
+        force_new_decision=False,
+        dry_run=False,
+        execution_generation=task.execution_generation,
+    )
+    action = PlannedAction(
+        kind=PlannedActionKind.STOP_WITH_ERROR,
+        reason="critical_info_unavailable: document permission denied",
+        target={
+            "conversation_id": "cid-1",
+            "trigger_message_id": "msg-1",
+        },
+        payload={},
+    )
+    plan = UniversalPlan(
+        task_kind="reply",
+        reason="critical material is unavailable",
+        dependencies=["dws"],
+        actions=[action],
+        audit=UniversalAudit(summary="document unavailable", confidence=0.99),
+    )
+    plan_execution = worker.store.create_universal_plan_execution(context, plan)
+    execution = build_universal_action_execution(
+        context,
+        plan_execution,
+        action,
+        0,
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match="stop_with_error: critical_info_unavailable",
+    ):
+        UniversalActionExecutor(worker).execute(execution)
+
+    attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
+    assert attempt is not None
+    assert attempt.action == "stop_with_error"
+    assert attempt.send_status == "failed"
+    assert (
+        worker.store.get_universal_action_execution_state(execution)
+        is UniversalActionExecutionState.NOT_STARTED
+    )
+    assert worker.store.has_seen("msg-1") is False
+    persisted_task = worker.store.get_reply_task_for_message("cid-1", "msg-1")
+    assert persisted_task is not None
+    assert persisted_task.status != "completed"
