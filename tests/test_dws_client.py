@@ -1805,11 +1805,35 @@ def test_oa_approval_comment_command_uses_stable_oa_comment_command():
         "oa-comments",
         "--instance-id",
         "proc-1",
-        "--text",
+        "--content",
         "请补充预算来源和项目归属后重新提交。",
         "--format",
         "json",
         "--yes",
+    ]
+
+
+def test_oa_revert_activities_and_revert_task_commands_match_dws_v1_0_52():
+    client = DwsClient(dws_bin="dws")
+
+    assert client.build_oa_revert_activities_command("task-1") == [
+        "dws", "oa", "approval", "revert-activities",
+        "--task-id", "task-1", "--format", "json",
+    ]
+    assert client.build_oa_revert_task_command(
+        process_instance_id="proc-1",
+        task_id="task-1",
+        target_activity_id="activity-1",
+        revert_action="REVERT_FOR_RESUBMIT",
+        remark="请补充材料",
+    ) == [
+        "dws", "oa", "approval", "revert-task",
+        "--instance-id", "proc-1",
+        "--task-id", "task-1",
+        "--target-activity-id", "activity-1",
+        "--action", "REVERT_FOR_RESUBMIT",
+        "--remark", "请补充材料",
+        "--format", "json", "--yes",
     ]
 
 
@@ -2694,6 +2718,31 @@ def test_get_calendar_event_returns_none_when_detail_is_unavailable():
             "json",
         ]
     ]
+
+
+def test_get_calendar_event_parses_real_nested_result_data_event():
+    client = RecordingDwsClient(
+        {
+            "ok": True,
+            "result": {
+                "data": {
+                    "event": {
+                        "eventId": 123456,
+                        "summary": "Strategy review",
+                        "start": {"dateTime": "2026-07-21T10:00:00+08:00"},
+                        "end": {"dateTime": "2026-07-21T11:00:00+08:00"},
+                        "selfResponseStatus": "tentative",
+                    }
+                }
+            },
+        }
+    )
+
+    event = client.get_calendar_event("123456")
+
+    assert event is not None
+    assert event.event_id == "123456"
+    assert event.self_response_status == "tentative"
 
 
 def test_calendar_invite_from_message_returns_none_for_unavailable_event_detail():

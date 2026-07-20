@@ -147,6 +147,44 @@ def extract_feedback_link_context(text: str) -> FeedbackLinkContext | None:
     return None
 
 
+def contains_forbidden_leak_outside_feedback_links(
+    text: str,
+    *,
+    vercel_base_url: str,
+    feedback_token: str,
+    attempt_id: int | str | None,
+) -> bool:
+    """Ignore only the two callback URLs generated for this exact reply."""
+    if not feedback_token or not vercel_base_url:
+        return contains_forbidden_leak(text)
+    expected_base = urlparse(normalize_vercel_base_url(vercel_base_url))
+    expected_attempt_id = str(attempt_id or "").strip()
+    ratings: set[str] = set()
+    spans: list[tuple[int, int]] = []
+    for match in re.finditer(r"https?://[^\s)）]+", text):
+        parsed = urlparse(match.group(0))
+        query = parse_qs(parsed.query)
+        rating = (query.get("rating") or [""])[0]
+        token = (query.get("feedback_token") or [""])[0]
+        callback_attempt_id = (query.get("attempt_id") or [""])[0]
+        if (
+            parsed.scheme == expected_base.scheme
+            and parsed.netloc == expected_base.netloc
+            and parsed.path == "/api/dingtalk-feedback-spike"
+            and token == feedback_token
+            and rating in {"up", "down"}
+            and callback_attempt_id == expected_attempt_id
+        ):
+            ratings.add(rating)
+            spans.append(match.span())
+    if ratings != {"up", "down"}:
+        return contains_forbidden_leak(text)
+    body = text
+    for start, end in reversed(spans):
+        body = body[:start] + body[end:]
+    return contains_forbidden_leak(body)
+
+
 def build_feedback_spike_link_message(
     *,
     vercel_base_url: str,

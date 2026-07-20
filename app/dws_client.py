@@ -29,7 +29,7 @@ DINGTALK_MESSAGE_TIME_ZONE = ZoneInfo("Asia/Shanghai")
 MIN_UNREAD_MESSAGE_LIST_LIMIT = 5
 DWS_AGENT_CODE_ENV = "DINGTALK_DWS_AGENTCODE"
 DWS_DEFAULT_AGENT_CODE = "ceo-agent-service"
-BRACKETED_EMOJI_PATTERN = re.compile(r"^\[([^\[\]]+)\]$")
+BRACKETED_EMOJI_PATTERN = re.compile(r"^\[([^\[\]]*)\]$")
 
 
 def _local_time_zone():
@@ -798,8 +798,61 @@ class DwsClient:
             "oa-comments",
             "--instance-id",
             process_instance_id,
-            "--text",
+            "--content",
             self._literal_cli_value(text),
+            "--format",
+            "json",
+            "--yes",
+        ]
+
+    def build_oa_revert_activities_command(self, task_id: str) -> list[str]:
+        if not task_id.strip():
+            raise ValueError("missing OA task id")
+        return [
+            self.dws_bin,
+            "oa",
+            "approval",
+            "revert-activities",
+            "--task-id",
+            task_id,
+            "--format",
+            "json",
+        ]
+
+    def build_oa_revert_task_command(
+        self,
+        *,
+        process_instance_id: str,
+        task_id: str,
+        target_activity_id: str,
+        revert_action: str,
+        remark: str,
+    ) -> list[str]:
+        if revert_action not in {"REVERT_FOR_APPROVAL", "REVERT_FOR_RESUBMIT"}:
+            raise ValueError("unsupported OA revert action")
+        for name, value in (
+            ("process instance id", process_instance_id),
+            ("task id", task_id),
+            ("target activity id", target_activity_id),
+            ("remark", remark),
+        ):
+            if not value.strip():
+                raise ValueError(f"missing OA {name}")
+        return [
+            self.dws_bin,
+            "oa",
+            "approval",
+            "revert-task",
+            "--instance-id",
+            process_instance_id,
+            "--task-id",
+            task_id,
+            "--target-activity-id",
+            target_activity_id,
+            "--action",
+            revert_action,
+            "--remark",
+            self._literal_cli_value(remark),
             "--format",
             "json",
             "--yes",
@@ -1880,10 +1933,10 @@ class DwsClient:
             if self._calendar_event_detail_unavailable(exc):
                 return None
             raise
-        result = payload.get("result", payload)
-        if not isinstance(result, dict):
+        event = self._find_calendar_event_in_payload(payload)
+        if event is None or event.event_id != event_id:
             return None
-        return self._parse_calendar_event(result, require_event_id=True)
+        return event
 
     def respond_calendar_event(
         self,
@@ -1966,6 +2019,34 @@ class DwsClient:
         )
         if not isinstance(payload, dict):
             raise DwsError("invalid OA approval tasks response")
+        return payload
+
+    def read_oa_revert_activities(self, task_id: str) -> dict[str, Any]:
+        payload = self.run_json(self.build_oa_revert_activities_command(task_id))
+        if not isinstance(payload, dict):
+            raise DwsError("invalid OA revert activities response")
+        return payload
+
+    def revert_oa_approval_task(
+        self,
+        *,
+        process_instance_id: str,
+        task_id: str,
+        target_activity_id: str,
+        revert_action: str,
+        remark: str,
+    ) -> dict[str, Any]:
+        payload = self.run_json(
+            self.build_oa_revert_task_command(
+                process_instance_id=process_instance_id,
+                task_id=task_id,
+                target_activity_id=target_activity_id,
+                revert_action=revert_action,
+                remark=remark,
+            )
+        )
+        if not isinstance(payload, dict):
+            raise DwsError("invalid OA revert task response")
         return payload
 
     def read_oa_process_instance_openapi(
@@ -3841,7 +3922,7 @@ class DwsClient:
         *,
         require_event_id: bool = False,
     ) -> DwsCalendarEvent | None:
-        event_id = DwsClient._first_string(
+        event_id = DwsClient._first_identifier(
             record,
             "eventId",
             "eventID",
@@ -4035,6 +4116,17 @@ class DwsClient:
             value = record.get(key)
             if isinstance(value, str) and value.strip():
                 return value.strip()
+        return ""
+
+    @staticmethod
+    def _first_identifier(record: dict[str, Any], *keys: str) -> str:
+        for key in keys:
+            value = record.get(key)
+            if isinstance(value, bool) or not isinstance(value, (str, int)):
+                continue
+            normalized = str(value).strip()
+            if normalized:
+                return normalized
         return ""
 
     @staticmethod

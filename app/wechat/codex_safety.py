@@ -69,6 +69,7 @@ def configured_transport_server_names(command: list[str]) -> tuple[str, ...]:
     from app.codex_runner import _codex_config, _passthrough_mcp_server_names
 
     names: set[str] = set()
+    explicitly_configured_names: set[str] = set()
     passthrough_names = frozenset(_passthrough_mcp_server_names())
     servers = _codex_config().get("mcp_servers") or {}
     if isinstance(servers, dict):
@@ -80,12 +81,19 @@ def configured_transport_server_names(command: list[str]) -> tuple[str, ...]:
                 for key in ("url", "command")
             ):
                 names.add(name)
+                explicitly_configured_names.add(name)
     for index, value in enumerate(command[:-1]):
         if value != "-c" or index + 1 >= len(command):
             continue
         match = _TRANSPORT_OPTION.match(command[index + 1])
         if match:
-            names.add(match.group(1))
+            name = match.group(1)
+            # CodexRunner injects the default Exa transport even when the user
+            # did not configure it. Keep that shared retrieval capability
+            # available; only an explicitly configured Exa server participates
+            # in workflow-local MCP isolation.
+            if name != "exa" or name in explicitly_configured_names:
+                names.add(name)
     return tuple(sorted(names))
 
 

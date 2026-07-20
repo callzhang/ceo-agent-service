@@ -1,6 +1,9 @@
 import sqlite3
 
 from app.store import AutoReplyStore
+from app.universal_context import UniversalTaskContext
+from app.universal_executor import build_universal_action_execution
+from app.universal_plan import PlannedAction, PlannedActionKind, UniversalAudit, UniversalPlan
 
 
 def _seed_meeting_run(store: AutoReplyStore, *, status: str = "sent") -> int:
@@ -62,6 +65,74 @@ def test_history_merges_reply_and_meeting_runs_by_time(tmp_path):
     assert items[0].source_title == "项目评审会"
     assert items[0].target_title == "项目群"
     assert items[0].codex_session_id == "meeting-session-1"
+
+
+def test_history_reply_item_includes_redacted_universal_plan_summary(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    assert store.enqueue_reply_task(
+        conversation_id="cid-observe",
+        conversation_title="可观测性群",
+        single_chat=False,
+        trigger_message_id="msg-observe",
+        trigger_create_time="2026-07-21 09:00:00",
+        trigger_sender="Mina",
+        trigger_text="请审阅文档",
+    )
+    task = store.claim_reply_tasks(limit=1)[0]
+    context = UniversalTaskContext(
+        task_id=task.id,
+        conversation_id=task.conversation_id,
+        conversation_title=task.conversation_title,
+        single_chat=task.single_chat,
+        trigger_message_id=task.trigger_message_id,
+        trigger_create_time=task.trigger_create_time,
+        trigger_sender=task.trigger_sender,
+        trigger_text=task.trigger_text,
+        context_messages=(),
+        required_dependencies=("dws",),
+        force_new_decision=False,
+        dry_run=False,
+        execution_generation=task.execution_generation,
+    )
+    plan = UniversalPlan(
+        task_kind="document_review",
+        reason="Review document",
+        dependencies=["dws"],
+        actions=[
+            PlannedAction(
+                kind=PlannedActionKind.SEND_REPLY,
+                reason="Send review",
+                sensitivity_kind="general",
+                payload={"text": "HISTORY_SECRET_SENTINEL"},
+            )
+        ],
+        audit=UniversalAudit(summary="Document reviewed", confidence=0.9),
+    )
+    plan_execution = store.create_universal_plan_execution(context, plan)
+    execution = build_universal_action_execution(context, plan_execution, plan.actions[0], 0)
+    store.claim_universal_action_execution(execution)
+    attempt_id = store.record_universal_reply_attempt(
+        execution,
+        conversation_id=task.conversation_id,
+        conversation_title=task.conversation_title,
+        trigger_message_id=task.trigger_message_id,
+        trigger_sender=task.trigger_sender,
+        trigger_text=task.trigger_text,
+        action="send_reply",
+        sensitivity_kind="general",
+        send_status="sent",
+    )
+    store.complete_universal_action_execution(execution, attempt_id=attempt_id)
+
+    [item] = store.list_history_items(limit=20, kinds=("reply",))
+
+    assert item.planner_kind == "universal"
+    assert item.capability == "document_review"
+    assert item.blocking_dependency == ""
+    assert [(action.kind, action.status) for action in item.planned_actions] == [
+        ("send_reply", "succeeded")
+    ]
+    assert "HISTORY_SECRET_SENTINEL" not in item.model_dump_json()
 
 
 def test_history_applies_search_status_and_global_count(tmp_path):

@@ -99,6 +99,7 @@ from app.feedback_events import (
     sync_feedback_events_for_sent_replies as sync_feedback_events_for_sent_replies_impl,
 )
 from app.meeting_alignment_models import MeetingAlignmentRun
+from app.history import UniversalExecutionObservation
 from app.store import (
     FAST_PATH_UNREAD_BACKOFF_TASK_ERROR,
     AutoReplyStore,
@@ -3208,6 +3209,7 @@ def render_attempt_list(
             f"{_attempt_text_line('问', attempt.trigger_text, 260)}"
             f"{_attempt_reply_line(attempt)}"
             "</div>"
+            f"{_universal_history_observability(history_item)}"
             f"{_attempt_feedback_summary(feedback_events, sent_reply)}"
             f"{foot_section}"
             "</article>"
@@ -4547,9 +4549,16 @@ def render_attempt_detail(store: AutoReplyStore, attempt_id: int) -> tuple[int, 
     codex_session_id = attempt.codex_session_id or store.get_codex_session_id(
         attempt.conversation_id
     )
+    universal_observation = store.get_universal_execution_observability(attempt_id)
     return 200, render_page(
         f"Attempt #{attempt.id}",
-        _attempt_detail_body(attempt, sent_reply, codex_session_id, feedback_events),
+        _attempt_detail_body(
+            attempt,
+            sent_reply,
+            codex_session_id,
+            feedback_events,
+            universal_observation,
+        ),
         active_nav="history",
         user_feedback_pending_count=store.count_pending_user_feedback_items(),
     )
@@ -6015,6 +6024,7 @@ def _attempt_detail_body(
     sent_reply: SentReply | None,
     codex_session_id: str | None,
     feedback_events: list[FeedbackEvent],
+    universal_observation: UniversalExecutionObservation | None = None,
 ) -> str:
     fields = [
         ("trigger message id", attempt.trigger_message_id),
@@ -6053,10 +6063,74 @@ def _attempt_detail_body(
             f"{_context_only_info_card(attempt)}"
             f"{_oa_metadata_card(attempt)}"
             f"{_calendar_metadata_card(attempt)}"
+            f"{_universal_execution_card(universal_observation)}"
             f"{_text_card('Audit summary', attempt.audit_summary)}"
             f"{_audit_tool_uses_card(attempt)}"
             f"{_text_card('Draft reply (raw Codex reply)', attempt.draft_reply_text)}"
         ),
+    )
+
+
+def _universal_history_observability(item) -> str:
+    if item.planner_kind != "universal":
+        return ""
+    blocker = (
+        f'<span class="attempt-warning">Blocking dependency: '
+        f'{escape(item.blocking_dependency)}</span>'
+        if item.blocking_dependency
+        else ""
+    )
+    actions = "".join(
+        f'<span class="pill status-action {_action_state_class(action.status)}">'
+        f'{escape(action.kind)} · {escape(_display_action_state(action.status))}</span>'
+        + (
+            f'<span class="attempt-warning">{escape(action.error)}</span>'
+            if action.error
+            else ""
+        )
+        for action in item.planned_actions
+    )
+    return (
+        '<div class="attempt-foot">'
+        '<span class="pill status-action">Universal planner</span>'
+        f'<span class="pill status-action">{escape(item.capability)}</span>'
+        f'{blocker}{actions}</div>'
+    )
+
+
+def _universal_execution_card(
+    observation: UniversalExecutionObservation | None,
+) -> str:
+    if observation is None:
+        return ""
+    blocking_dependency = observation.blocking_dependency or "None"
+    rows = "".join(
+        f'<div class="muted">{escape(label)}</div><div>{escape(value)}</div>'
+        for label, value in (
+            ("Planner kind", "universal"),
+            ("Capability", observation.capability),
+            ("Dependencies", ", ".join(observation.dependencies) or "None"),
+            ("Blocking dependency", blocking_dependency),
+        )
+    )
+    action_rows = "".join(
+        '<div class="attempt-detail-cell">'
+        f'<div class="attempt-detail-label">Action {action.index + 1}</div>'
+        f'<div class="attempt-detail-value">{escape(action.kind)} · '
+        f'{escape(_display_action_state(action.status))}</div>'
+        + (
+            f'<div class="attempt-warning">{escape(action.error)}</div>'
+            if action.error
+            else ""
+        )
+        + '</div>'
+        for action in observation.actions
+    )
+    return (
+        '<section class="card compact-card"><h2>Universal planner</h2>'
+        f'<div class="grid">{rows}</div>'
+        f'<div class="attempt-detail-grid">{action_rows}</div>'
+        '</section>'
     )
 
 

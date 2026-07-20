@@ -1,3 +1,4 @@
+import hashlib
 import json
 import logging
 import os
@@ -7,6 +8,7 @@ import time
 import urllib.request
 import zipfile
 from collections.abc import Callable
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from io import BytesIO
@@ -44,7 +46,11 @@ from app.dws_client import (
     native_reply_delivery_payload,
     normalize_message_emoji,
 )
-from app.feedback_spike import append_feedback_links, prepare_outgoing_reply_text
+from app.feedback_spike import (
+    append_feedback_links,
+    contains_forbidden_leak_outside_feedback_links,
+    prepare_outgoing_reply_text,
+)
 from app.feedback_events import sync_feedback_events_for_sent_replies
 from app.feedback_policy import (
     FEEDBACK_REQUIRED_LINK_PREFIX,
@@ -63,12 +69,15 @@ from app.dingtalk_models import (
     CodexDecision,
     DingTalkConversation,
     DingTalkMessage,
+    SensitivityKind,
 )
 from app.leak_check import (
     FORBIDDEN_MARKERS,
     contains_forbidden_leak,
 )
 from app.message_split import split_dingtalk_text
+from app.memory_connector_auth import MemoryConnectorAuthorizationRequired
+from app.memory_connector_client import MemoryConnectorClient, MemoryWriteResult
 from app.notification import (
     dingtalk_conversation_notification_url,
     send_macos_notification,
@@ -89,6 +98,24 @@ from app.store import (
     ReplyTask,
 )
 from app.task_models import WorkItem
+from app.universal_consumer import (
+    UniversalConsumerOrchestrator,
+    UniversalConsumerOutcome,
+    UniversalConsumerResult,
+)
+from app.universal_context import (
+    UniversalContextMessage,
+    UniversalTaskContext,
+    build_universal_context,
+)
+from app.universal_executor import (
+    UniversalActionExecutor,
+    UniversalActionExecution,
+    UniversalActionExecutionState,
+)
+from app.universal_plan import PlannedActionKind
+from app.universal_planner import UniversalPlanner
+from app.universal_validator import DependencyStatus
 
 logger = logging.getLogger(__name__)
 
@@ -303,6 +330,8 @@ def _extract_text_emotion_id(payload: object) -> str:
             value = payload.get(key)
             if isinstance(value, str) and value.strip():
                 return value.strip()
+            if isinstance(value, int) and not isinstance(value, bool):
+                return str(value)
         for value in payload.values():
             found = _extract_text_emotion_id(value)
             if found:
@@ -321,6 +350,8 @@ def _extract_text_emotion_background_id(payload: object) -> str:
             value = payload.get(key)
             if isinstance(value, str) and value.strip():
                 return value.strip()
+            if isinstance(value, int) and not isinstance(value, bool):
+                return str(value)
         for value in payload.values():
             found = _extract_text_emotion_background_id(value)
             if found:
@@ -399,6 +430,10 @@ class ReplyDeliveryError(RuntimeError):
     """Raised after recording a delivery failure so queued tasks can retry."""
 
 
+class ReplyPreDeliveryError(ReplyDeliveryError):
+    """Raised when reply preparation fails before any transport call."""
+
+
 class MarkdownDocumentCreateIncompleteError(ReplyDeliveryError):
     """Raised when DWS reports document creation without a usable document."""
 
@@ -423,6 +458,28 @@ class CriticalInformationUnavailableError(ReplyTaskProcessingError):
     """Raised when required material/tool output is unavailable and retrying is unsafe."""
 
 
+class UniversalDependencyAuthorizationError(ReplyTaskProcessingError):
+    """Raised when a universal plan is waiting for explicit service authorization."""
+
+    needs_authorization = True
+
+
+class UniversalDependencyDeferredError(ReplyTaskProcessingError):
+    """Raised when a universal dependency should be checked again later."""
+
+
+class UniversalValidationDeferredError(ReplyTaskProcessingError):
+    """Raised when a nonterminal universal validation block should be revisited."""
+
+
+class UniversalActionFailedError(ReplyTaskProcessingError):
+    """Raised when an action definitely failed and the existing retry policy applies."""
+
+
+class UniversalActionUnknownError(ReplyTaskProcessingError):
+    """Raised when replay could duplicate an externally visible side effect."""
+
+
 class DingTalkAutoReplyWorker:
     def __init__(
         self,
@@ -437,6 +494,9 @@ class DingTalkAutoReplyWorker:
         max_task_attempts: int = MAX_REPLY_TASK_ATTEMPTS,
         now_provider: Callable[[], datetime] | None = None,
         oa_approval_handler=None,
+        memory_client: MemoryConnectorClient | None = None,
+        universal_planner=None,
+        universal_dependency_status_provider=None,
     ):
         self.store = store
         self.dws = dws
@@ -450,7 +510,2668 @@ class DingTalkAutoReplyWorker:
         self.now_provider = now_provider or (lambda: datetime.now().astimezone())
         self.permission_gate = PermissionGate(dws)
         self.oa_approval_handler = oa_approval_handler
+        self.memory_client = memory_client
+        self._injected_universal_planner = universal_planner
+        self._universal_dependency_status_provider = (
+            universal_dependency_status_provider or self.universal_dependency_status
+        )
         self._dws_auth_login_process = None
+
+    def universal_dependency_status(
+        self,
+        context: UniversalTaskContext,
+        dependencies: tuple[str, ...],
+    ) -> dict[str, DependencyStatus]:
+        del context
+        result: dict[str, DependencyStatus] = {}
+        if "dws" in dependencies:
+            try:
+                self._ensure_dws_ready_for_codex()
+            except DwsAuthorizationRequiredError:
+                result["dws"] = DependencyStatus(
+                    ready=False,
+                    reason="dws_authorization_required",
+                    authorization_required=True,
+                )
+            except Exception:
+                result["dws"] = DependencyStatus(
+                    ready=False,
+                    reason="dws_unavailable",
+                )
+            else:
+                result["dws"] = DependencyStatus(ready=True)
+        if "memory" not in dependencies:
+            return result
+        if self.memory_client is None:
+            result["memory"] = DependencyStatus(
+                ready=False,
+                reason="memory_connector_not_configured",
+            )
+            return result
+        try:
+            self.memory_client.ensure_ready_sync()
+        except MemoryConnectorAuthorizationRequired:
+            result["memory"] = DependencyStatus(
+                ready=False,
+                reason="memory_authorization_required",
+                authorization_required=True,
+            )
+        except Exception:
+            result["memory"] = DependencyStatus(
+                ready=False,
+                reason="memory_unavailable",
+            )
+        else:
+            result["memory"] = DependencyStatus(ready=True)
+        return result
+
+    def _universal_planner(self):
+        if self._injected_universal_planner is not None:
+            return self._injected_universal_planner
+        runner = getattr(self.codex, "runner", None)
+        workspace = getattr(runner, "workspace", None)
+        if workspace is None:
+            raise RuntimeError("native Codex runner workspace is unavailable")
+        timeout_seconds = max(int(getattr(self.codex, "timeout_seconds", 1200)), 900)
+        idle_timeout_seconds = max(
+            int(getattr(self.codex, "idle_timeout_seconds", 900)), 900
+        )
+        self._injected_universal_planner = UniversalPlanner(
+            workspace=Path(workspace),
+            codex_bin=str(getattr(runner, "codex_bin", "codex")),
+            timeout_seconds=timeout_seconds,
+            idle_timeout_seconds=idle_timeout_seconds,
+        )
+        return self._injected_universal_planner
+
+    def _universal_consumer(self, planner=None) -> UniversalConsumerOrchestrator:
+        planner = planner or self._universal_planner()
+        return UniversalConsumerOrchestrator(
+            planner=planner,
+            validator_context_factory=self._universal_dependency_status_provider,
+            existing_terminal_attempt=self._universal_existing_terminal_attempt,
+            existing_sent_reply=self._universal_existing_sent_reply,
+            load_plan_execution=self.store.load_universal_plan_execution,
+            create_plan_execution=self.store.create_universal_plan_execution,
+            action_execution_state=self.store.get_universal_action_execution_state,
+            session_id=self._universal_session_id,
+            executor=UniversalActionExecutor(self),
+            planning_lock=lambda context: self._universal_planning_session(
+                context,
+                planner,
+            ),
+        )
+
+    @contextmanager
+    def _universal_planning_session(self, context: UniversalTaskContext, planner):
+        owner = (
+            f"universal:{context.task_id}:{context.execution_generation}:"
+            f"{id(self)}"
+        )
+        with self.store.codex_session_lock(context.conversation_id, owner):
+            before_session_id = self.store.get_codex_session_id(
+                context.conversation_id
+            )
+            try:
+                yield
+            finally:
+                after_session_id = getattr(planner, "last_session_id", None)
+                if after_session_id and after_session_id != before_session_id:
+                    self.store.upsert_conversation(
+                        conversation_id=context.conversation_id,
+                        title=context.conversation_title,
+                        single_chat=context.single_chat,
+                        codex_session_id=after_session_id,
+                    )
+
+    def _universal_existing_terminal_attempt(
+        self, context: UniversalTaskContext
+    ) -> bool:
+        if context.force_new_decision:
+            return False
+        attempt = self.store.get_latest_reply_attempt_for_trigger(
+            context.conversation_id,
+            context.trigger_message_id,
+        )
+        return attempt is not None and attempt.send_status in {
+            "sent",
+            "skipped",
+            "commented",
+            "reacted",
+        }
+
+    def _universal_existing_sent_reply(self, context: UniversalTaskContext) -> bool:
+        if context.force_new_decision:
+            return False
+        return self.store.sent_reply_exists(
+            context.conversation_id,
+            context.trigger_message_id,
+        )
+
+    def _universal_session_id(self, context: UniversalTaskContext) -> str | None:
+        if context.force_new_decision:
+            return None
+        return self.store.get_codex_session_id(context.conversation_id)
+
+    def _process_universal_queued_task(
+        self,
+        conversation: DingTalkConversation,
+        task: ReplyTask,
+        trigger: DingTalkMessage,
+        prompt_context_messages: list[DingTalkMessage],
+    ) -> bool:
+        effective_oa_url = task.oa_url.strip()
+        if not effective_oa_url and not self._is_oa_approval_message(trigger):
+            effective_oa_url = self._oa_context_url_override(
+                conversation,
+                trigger,
+                prompt_context_messages,
+            ) or self._oa_follow_up_url_override(conversation, trigger)
+
+        planner_context_messages = list(prompt_context_messages)
+        calendar_context = self._calendar_invite_context(
+            conversation,
+            trigger,
+            prompt_context_messages,
+            include_resolved_invites=task.force_new_decision,
+        )
+        if calendar_context is not None:
+            calendar_prompt_message = (
+                self._calendar_conflict_prompt_message(
+                    conversation, trigger, calendar_context
+                )
+                if calendar_context.conflicts
+                else self._calendar_invite_prompt_message(
+                    conversation, trigger, calendar_context
+                )
+            )
+            planner_context_messages.append(
+                self._universal_calendar_prompt_message(calendar_prompt_message)
+            )
+
+        linked_documents = self._read_calendar_linked_documents(
+            [trigger],
+            planner_context_messages,
+        )
+        for index, document in enumerate(linked_documents[:3], start=1):
+            planner_context_messages.append(
+                DingTalkMessage(
+                    open_conversation_id=conversation.open_conversation_id,
+                    open_message_id=(
+                        f"{trigger.open_message_id}:trusted-document-{index}"
+                    ),
+                    conversation_title=conversation.title,
+                    single_chat=conversation.single_chat,
+                    sender_name="CEO系统",
+                    create_time=trigger.create_time,
+                    content=(
+                        f"可信材料 {index}：{document.title or '未命名材料'}\n"
+                        f"链接：{document.url or '无'}\n"
+                        "以下正文由服务在规划前读取；必须据此处理，不要只看文件名。\n"
+                        f"{document.markdown[:30000]}"
+                    ),
+                )
+            )
+
+        image_paths, image_download_errors = self._collect_image_paths(
+            [trigger],
+            planner_context_messages,
+        )
+        image_sha256s = tuple(
+            hashlib.sha256(path.read_bytes()).hexdigest() for path in image_paths
+        )
+        if image_download_errors:
+            planner_context_messages.append(
+                DingTalkMessage(
+                    open_conversation_id=conversation.open_conversation_id,
+                    open_message_id=f"{trigger.open_message_id}:image-errors",
+                    conversation_title=conversation.title,
+                    single_chat=conversation.single_chat,
+                    sender_name="CEO系统",
+                    create_time=trigger.create_time,
+                    content="图片材料读取失败：\n- " + "\n- ".join(image_download_errors),
+                )
+            )
+        context = build_universal_context(
+            conversation=conversation,
+            trigger=trigger,
+            context_messages=planner_context_messages,
+            task_id=task.id,
+            force_new_decision=task.force_new_decision,
+            dry_run=self.dry_run,
+            execution_generation=task.execution_generation,
+            reply_task_oa_url=effective_oa_url,
+            trusted_calendar_event_id_override=(
+                calendar_context.invite.event_id if calendar_context else ""
+            ),
+            trusted_calendar_response_status_override=(
+                calendar_context.invite.self_response_status
+                if calendar_context
+                else ""
+            ),
+            trusted_calendar_organizer_override=(
+                calendar_context.invite.organizer if calendar_context else ""
+            ),
+            image_paths=tuple(str(path) for path in image_paths),
+            image_sha256s=image_sha256s,
+        )
+        result = self._universal_consumer().process(context)
+        return self._map_universal_consumer_result(result, trigger)
+
+    @staticmethod
+    def _universal_calendar_prompt_message(
+        message: DingTalkMessage,
+    ) -> DingTalkMessage:
+        content = message.content
+        content = content.replace(
+            "user_response.mode 输出 send_reply",
+            "规划 send_reply action",
+        )
+        content = content.replace(
+            "user_response.mode 输出 no_reply",
+            "不要规划聊天回复",
+        )
+        content = content.replace(
+            "user_response.text",
+            "send_reply payload.text",
+        )
+        content = content.replace(
+            "设置 domain_payload.calendar_response_status 为",
+            "规划 calendar_response action，payload.response_status 使用",
+        )
+        content = content.replace(
+            "domain_payload.calendar_response_status",
+            "calendar_response payload.response_status",
+        )
+        content += (
+            "\nUniversalPlan 日历执行协议：任何接受、暂定或拒绝都必须包含 "
+            "calendar_response action，并从 Trusted calendar target 原样复制 "
+            "event_id；仅在 send_reply 文本里口头表示接受不算完成。"
+        )
+        return message.model_copy(update={"content": content})
+
+    def _map_universal_consumer_result(
+        self,
+        result: UniversalConsumerResult,
+        trigger: DingTalkMessage,
+    ) -> bool:
+        if result.outcome in {
+            UniversalConsumerOutcome.COMPLETED,
+            UniversalConsumerOutcome.DUPLICATE,
+        }:
+            self._mark_seen([trigger])
+            return True
+        if result.outcome is UniversalConsumerOutcome.DRY_RUN:
+            return False
+        if result.outcome is UniversalConsumerOutcome.WAITING_FOR_DEPENDENCY:
+            if result.authorization_required:
+                raise UniversalDependencyAuthorizationError(result.reason)
+            raise UniversalDependencyDeferredError(result.reason)
+        if result.outcome is UniversalConsumerOutcome.ACTION_FAILED:
+            raise UniversalActionFailedError(result.reason)
+        if result.outcome is UniversalConsumerOutcome.ACTION_UNKNOWN:
+            raise UniversalActionUnknownError(result.reason)
+        if result.outcome in {
+            UniversalConsumerOutcome.VALIDATION_BLOCKED,
+            UniversalConsumerOutcome.NONTERMINAL_BLOCKED,
+        }:
+            raise UniversalValidationDeferredError(result.reason)
+        raise RuntimeError(f"unsupported universal consumer outcome: {result.outcome}")
+
+    def execute_universal_send_reply(self, execution: UniversalActionExecution) -> bool:
+        if execution.action.kind not in {
+            PlannedActionKind.SEND_REPLY,
+            PlannedActionKind.ASK_CLARIFYING_QUESTION,
+        }:
+            raise ValueError("universal reply executor received a non-reply action")
+        claim_state = self.store.claim_universal_action_execution(execution)
+        if claim_state is UniversalActionExecutionState.SUCCEEDED:
+            return True
+        if claim_state is UniversalActionExecutionState.UNKNOWN:
+            raise RuntimeError(
+                f"universal action outcome is unknown: {execution.execution_id}"
+            )
+
+        conversation, trigger, new_messages = self._universal_reply_context(execution)
+        reply_text = str(execution.action.payload["text"]).strip()
+        attempt_id = self._record_universal_reply_attempt(
+            execution,
+            draft_reply_text=reply_text,
+            send_status="pending",
+        )
+        if self.store.has_sent_reply_for_trigger(
+            execution.context.conversation_id,
+            execution.context.trigger_message_id,
+        ):
+            self.store.update_reply_attempt(
+                attempt_id,
+                send_status="skipped",
+                send_error="duplicate_sent_reply_for_trigger",
+            )
+            self._complete_universal_action(
+                execution,
+                attempt_id=attempt_id,
+                outcome="duplicate_existing_delivery",
+            )
+            return True
+
+        decision = self._universal_codex_decision(execution, reply_text)
+        try:
+            permission = self.permission_gate.evaluate(decision, trigger)
+        except Exception as exc:
+            error = str(exc)
+            self._fail_universal_action_before_send(
+                execution,
+                attempt_id=attempt_id,
+                error=error,
+            )
+            self.store.record_error(
+                conversation.open_conversation_id,
+                trigger.open_message_id,
+                "permission",
+                error,
+            )
+            raise ReplyDeliveryError(error) from exc
+        self.store.update_reply_attempt(
+            attempt_id,
+            permission_action=permission.action.value,
+            permission_reason=permission.reason,
+        )
+        if permission.action is PermissionAction.ERROR:
+            error = permission.reason or "permission evaluation failed"
+            self._fail_universal_action_before_send(
+                execution,
+                attempt_id=attempt_id,
+                error=error,
+            )
+            self.store.record_error(
+                conversation.open_conversation_id,
+                trigger.open_message_id,
+                "permission",
+                error,
+            )
+            raise ReplyDeliveryError(error)
+        if permission.action is PermissionAction.REPLY:
+            reply_text = permission.reply_text
+
+        try:
+            self._preflight_universal_reply_recipient(trigger, reply_text)
+        except Exception as exc:
+            error = str(exc)
+            self._fail_universal_action_before_send(
+                execution,
+                attempt_id=attempt_id,
+                error=error,
+            )
+            self.store.record_error(
+                conversation.open_conversation_id,
+                trigger.open_message_id,
+                "reply_at_users",
+                error,
+            )
+            raise ReplyDeliveryError(error) from exc
+
+        try:
+            self._send_reply(
+                conversation=conversation,
+                trigger=trigger,
+                new_messages=new_messages,
+                reply_text=reply_text,
+                reason=execution.action.reason,
+                attempt_id=attempt_id,
+                raise_on_delivery_failure=True,
+            )
+        except ReplyPreDeliveryError as exc:
+            self.store.mark_universal_action_execution_failed(
+                execution,
+                str(exc),
+            )
+            raise
+        except Exception as exc:
+            if self.store.has_sent_reply_for_trigger(
+                execution.context.conversation_id,
+                execution.context.trigger_message_id,
+            ):
+                self.store.update_reply_attempt(
+                    attempt_id,
+                    send_status="sent",
+                    send_error="",
+                )
+                self._complete_universal_action(
+                    execution,
+                    attempt_id=attempt_id,
+                    outcome="delivery_salvaged_after_error",
+                )
+                return True
+            attempt = self.store.get_reply_attempt(attempt_id)
+            if self._is_definite_universal_send_failure(attempt):
+                error = attempt.send_error or str(exc)
+                self.store.mark_universal_action_execution_failed(execution, error)
+                raise
+            error = f"universal_action_outcome_unknown: {exc}"
+            self.store.update_reply_attempt(
+                attempt_id,
+                send_status="failed",
+                send_error=error,
+            )
+            self.store.mark_universal_action_execution_unknown(execution, error)
+            raise
+
+        if not self.store.has_sent_reply_for_trigger(
+            execution.context.conversation_id,
+            execution.context.trigger_message_id,
+        ):
+            attempt = self.store.get_reply_attempt(attempt_id)
+            if self._is_definite_universal_send_failure(attempt):
+                error = attempt.send_error or "definite pre-send failure"
+                self.store.mark_universal_action_execution_failed(execution, error)
+                raise ReplyDeliveryError(error)
+            error = "universal_action_outcome_unknown: delivery not recorded"
+            self.store.update_reply_attempt(
+                attempt_id,
+                send_status="failed",
+                send_error=error,
+            )
+            self.store.mark_universal_action_execution_unknown(execution, error)
+            raise ReplyDeliveryError(error)
+
+        self._complete_universal_action(
+            execution,
+            attempt_id=attempt_id,
+            outcome="delivered",
+        )
+        return True
+
+    def execute_universal_oa_approval(self, execution: UniversalActionExecution) -> bool:
+        if execution.action.kind is not PlannedActionKind.OA_APPROVAL:
+            raise ValueError("universal OA executor received a non-OA action")
+        claim_state = self.store.claim_universal_action_execution(execution)
+        if claim_state is UniversalActionExecutionState.SUCCEEDED:
+            return True
+        if claim_state is UniversalActionExecutionState.UNKNOWN:
+            raise RuntimeError(
+                f"universal action outcome is unknown: {execution.execution_id}"
+            )
+
+        target = execution.action.target
+        payload = execution.action.payload
+        process_instance_id = str(target.get("process_instance_id") or "").strip()
+        task_id = str(target.get("task_id") or "").strip()
+        oa_url = str(target.get("oa_url") or "").strip()
+        oa_action = str(payload["action"]).strip()
+        oa_remark = str(payload["remark"]).strip()
+        attempt_id = self._record_universal_reply_attempt(
+            execution,
+            draft_reply_text=oa_remark,
+            send_status="pending",
+        )
+        self.store.update_reply_attempt(
+            attempt_id,
+            oa_process_instance_id=process_instance_id,
+            oa_task_id=task_id,
+            oa_url=oa_url,
+            oa_action=oa_action,
+            oa_remark=oa_remark,
+            final_reply_text=oa_remark,
+        )
+
+        trusted_process_id = execution.context.trusted_oa_process_instance_id
+        trusted_task_id = execution.context.trusted_oa_task_id
+        if not trusted_process_id or not trusted_task_id:
+            return self._finalize_universal_oa_action(
+                execution,
+                attempt_id=attempt_id,
+                outcome="blocked",
+                send_status="blocked",
+                send_error="missing_trusted_oa_target",
+            )
+        if process_instance_id != trusted_process_id or task_id != trusted_task_id:
+            return self._finalize_universal_oa_action(
+                execution,
+                attempt_id=attempt_id,
+                outcome="blocked",
+                send_status="blocked",
+                send_error="oa_target_mismatch",
+            )
+
+        try:
+            current_user_id, detail, tasks, records = self._read_universal_oa_state(
+                process_instance_id
+            )
+        except ValueError as exc:
+            return self._finalize_universal_oa_action(
+                execution,
+                attempt_id=attempt_id,
+                outcome="blocked",
+                send_status="blocked",
+                send_error=self._safe_universal_oa_error(
+                    "oa_preflight_invalid",
+                    exc,
+                ),
+            )
+        except Exception as exc:
+            self._fail_universal_oa_preflight(
+                execution,
+                attempt_id=attempt_id,
+                error=exc,
+            )
+            raise
+
+        preflight = self._classify_universal_oa_state(
+            process_instance_id=process_instance_id,
+            task_id=task_id,
+            current_user_id=current_user_id,
+            detail=detail,
+            tasks=tasks,
+            records=records,
+            action=oa_action,
+        )
+        if preflight == "already_handled":
+            return self._finalize_universal_oa_action(
+                execution,
+                attempt_id=attempt_id,
+                outcome="already_handled",
+                send_status="skipped",
+                send_error="oa_already_handled",
+            )
+        if preflight == "handled_by_different_action":
+            return self._finalize_universal_oa_action(
+                execution,
+                attempt_id=attempt_id,
+                outcome="handled_by_different_action",
+                send_status="skipped",
+                send_error="oa_handled_by_different_action",
+            )
+        if preflight != "actionable":
+            return self._finalize_universal_oa_action(
+                execution,
+                attempt_id=attempt_id,
+                outcome="blocked",
+                send_status="blocked",
+                send_error=preflight,
+            )
+
+        target_activity_id = ""
+        revert_action = ""
+        if oa_action == "退回":
+            target_activity_id = str(
+                payload.get("target_activity_id") or ""
+            ).strip()
+            revert_action = str(payload.get("revert_action") or "").strip()
+            try:
+                activities = self.dws.read_oa_revert_activities(task_id)
+                if not isinstance(activities, dict):
+                    raise ValueError("invalid OA revert activities response")
+            except ValueError as exc:
+                return self._finalize_universal_oa_action(
+                    execution,
+                    attempt_id=attempt_id,
+                    outcome="blocked",
+                    send_status="blocked",
+                    send_error=self._safe_universal_oa_error(
+                        "oa_revert_material_invalid",
+                        exc,
+                    ),
+                )
+            if not self._universal_oa_revert_is_allowed(
+                activities,
+                target_activity_id=target_activity_id,
+                revert_action=revert_action,
+            ):
+                return self._finalize_universal_oa_action(
+                    execution,
+                    attempt_id=attempt_id,
+                    outcome="blocked",
+                    send_status="blocked",
+                    send_error="missing_oa_revert_material",
+                )
+
+        action_result: Any
+        try:
+            if oa_action == "comment":
+                action_result = self.dws.comment_oa_approval(
+                    process_instance_id, oa_remark
+                )
+            elif oa_action == "退回":
+                action_result = self.dws.revert_oa_approval_task(
+                    process_instance_id=process_instance_id,
+                    task_id=task_id,
+                    target_activity_id=target_activity_id,
+                    revert_action=revert_action,
+                    remark=oa_remark,
+                )
+            else:
+                action_result = self.dws.execute_oa_approval_action(
+                    process_instance_id,
+                    task_id,
+                    "通过" if oa_action == "同意" else oa_action,
+                    oa_remark,
+                )
+        except Exception as exc:
+            completion = self._universal_oa_action_completion_state(
+                process_instance_id=process_instance_id,
+                task_id=task_id,
+                current_user_id=current_user_id,
+                action=oa_action,
+            )
+            if completion == "expected":
+                return self._finalize_universal_oa_action(
+                    execution,
+                    attempt_id=attempt_id,
+                    outcome="salvaged",
+                    send_status="skipped",
+                )
+            if completion == "different":
+                return self._finalize_universal_oa_action(
+                    execution,
+                    attempt_id=attempt_id,
+                    outcome="handled_by_different_action",
+                    send_status="skipped",
+                    send_error="oa_handled_by_different_action",
+                )
+            self._mark_universal_oa_unknown(
+                execution,
+                attempt_id=attempt_id,
+                error=exc,
+            )
+            raise
+
+        if not self._universal_oa_receipt_is_success(action_result):
+            completion = self._universal_oa_action_completion_state(
+                process_instance_id=process_instance_id,
+                task_id=task_id,
+                current_user_id=current_user_id,
+                action=oa_action,
+            )
+            if completion == "expected":
+                return self._finalize_universal_oa_action(
+                    execution,
+                    attempt_id=attempt_id,
+                    outcome="salvaged",
+                    send_status="skipped",
+                    dws_action_result=(
+                        action_result if isinstance(action_result, dict) else None
+                    ),
+                )
+            if completion == "different":
+                return self._finalize_universal_oa_action(
+                    execution,
+                    attempt_id=attempt_id,
+                    outcome="handled_by_different_action",
+                    send_status="skipped",
+                    send_error="oa_handled_by_different_action",
+                    dws_action_result=(
+                        action_result if isinstance(action_result, dict) else None
+                    ),
+                )
+            error = "OA action returned without a verifiable receipt"
+            self._mark_universal_oa_unknown(
+                execution,
+                attempt_id=attempt_id,
+                error=error,
+                dws_action_result=(
+                    action_result if isinstance(action_result, dict) else None
+                ),
+            )
+            raise ReplyDeliveryError(error)
+
+        if oa_action == "comment":
+            return self._finalize_universal_oa_action(
+                execution,
+                attempt_id=attempt_id,
+                outcome="commented",
+                send_status="commented",
+                dws_action_result=action_result,
+            )
+
+        completion = self._universal_oa_action_completion_state(
+            process_instance_id=process_instance_id,
+            task_id=task_id,
+            current_user_id=current_user_id,
+            action=oa_action,
+        )
+        if completion == "different":
+            return self._finalize_universal_oa_action(
+                execution,
+                attempt_id=attempt_id,
+                outcome="handled_by_different_action",
+                send_status="skipped",
+                send_error="oa_handled_by_different_action",
+                dws_action_result=action_result,
+            )
+        if completion != "expected":
+            error = "OA action returned without a verifiable final state"
+            self._mark_universal_oa_unknown(
+                execution,
+                attempt_id=attempt_id,
+                error=error,
+            )
+            raise ReplyDeliveryError(error)
+        return self._finalize_universal_oa_action(
+            execution,
+            attempt_id=attempt_id,
+            outcome="applied",
+            send_status="skipped",
+            dws_action_result=action_result,
+        )
+
+    def _read_universal_oa_state(
+        self,
+        process_instance_id: str,
+    ) -> tuple[str, dict[str, Any], dict[str, Any], dict[str, Any]]:
+        current_user_id = str(self.dws.get_current_user_id() or "").strip()
+        if not current_user_id:
+            raise RuntimeError("missing current DingTalk user identity")
+        detail = self.dws.read_oa_approval_detail(process_instance_id)
+        tasks = self.dws.read_oa_approval_tasks(process_instance_id)
+        records = self.dws.read_oa_approval_records(process_instance_id)
+        if not all(isinstance(value, dict) for value in (detail, tasks, records)):
+            raise RuntimeError("invalid OA detail, task, or records response")
+        if not self._universal_oa_process_status(detail):
+            openapi_reader = getattr(self.dws, "read_oa_process_instance_openapi", None)
+            if callable(openapi_reader):
+                fallback = openapi_reader(process_instance_id)
+                if not isinstance(fallback, dict):
+                    raise RuntimeError("invalid OA OpenAPI detail response")
+                detail = {"result": [detail, fallback]}
+        return current_user_id, detail, tasks, records
+
+    @classmethod
+    def _classify_universal_oa_state(
+        cls,
+        *,
+        process_instance_id: str,
+        task_id: str,
+        current_user_id: str,
+        detail: dict[str, Any],
+        tasks: dict[str, Any],
+        records: dict[str, Any],
+        action: str,
+    ) -> str:
+        live_process_id = cls._universal_oa_process_id(detail)
+        if live_process_id and live_process_id != process_instance_id:
+            return "oa_process_instance_mismatch"
+        process_status = cls._universal_oa_process_status(detail)
+        matching_tasks = [
+            task
+            for task in cls._universal_oa_tasks(detail, tasks)
+            if cls._universal_oa_task_id(task) == task_id
+        ]
+        record_state = cls._universal_oa_record_action_state(
+            records,
+            task_id=task_id,
+            current_user_id=current_user_id,
+            action=action,
+        )
+        if record_state == "expected":
+            return "already_handled"
+        if record_state == "different":
+            return "handled_by_different_action"
+        if not matching_tasks:
+            return "missing_oa_task_ownership"
+
+        complete_records = [
+            task
+            for task in matching_tasks
+            if cls._universal_oa_task_owner(task)
+        ]
+        if not complete_records:
+            return "missing_oa_task_ownership"
+        owners = {
+            cls._universal_oa_task_owner(task) for task in complete_records
+        }
+        if len(owners) > 1:
+            return "oa_task_ownership_conflict"
+        current_user_records = [
+            task
+            for task in complete_records
+            if cls._universal_oa_task_owner(task) == current_user_id
+        ]
+        if not current_user_records:
+            return "oa_task_not_current_user"
+        current_statuses = {
+            cls._universal_oa_task_status(task)
+            for task in current_user_records
+            if cls._universal_oa_task_status(task)
+        }
+        if not current_statuses:
+            return "missing_oa_task_status"
+        if process_status != "RUNNING":
+            if all(status != "RUNNING" for status in current_statuses):
+                return "oa_terminal_action_unverified"
+            return "oa_process_not_running"
+        if any(
+            cls._universal_oa_task_status(task) == "RUNNING"
+            for task in current_user_records
+        ):
+            return "actionable"
+        return "oa_terminal_action_unverified"
+
+    def _universal_oa_action_was_applied(
+        self,
+        *,
+        process_instance_id: str,
+        task_id: str,
+        current_user_id: str,
+        action: str,
+    ) -> bool:
+        return self._universal_oa_action_completion_state(
+            process_instance_id=process_instance_id,
+            task_id=task_id,
+            current_user_id=current_user_id,
+            action=action,
+        ) == "expected"
+
+    def _universal_oa_action_completion_state(
+        self,
+        *,
+        process_instance_id: str,
+        task_id: str,
+        current_user_id: str,
+        action: str,
+    ) -> str:
+        try:
+            refreshed_user_id, _, _, records = self._read_universal_oa_state(
+                process_instance_id
+            )
+        except Exception:
+            return "none"
+        if refreshed_user_id != current_user_id:
+            return "none"
+        return self._universal_oa_record_action_state(
+            records,
+            task_id=task_id,
+            current_user_id=current_user_id,
+            action=action,
+        )
+
+    @staticmethod
+    def _universal_oa_receipt_is_success(result: Any) -> bool:
+        if not isinstance(result, dict):
+            return False
+        if result.get("success") is False:
+            return False
+        for key in ("error", "errorMessage", "error_message"):
+            if result.get(key):
+                return False
+        for key in ("errorCode", "error_code", "code"):
+            value = result.get(key)
+            if value not in (None, "", 0, "0", "OK", "SUCCESS"):
+                return False
+        if result.get("success") is True:
+            return True
+        if any(result.get(key) for key in ("requestId", "request_id", "receipt")):
+            return True
+        return bool(result.get("result"))
+
+    @classmethod
+    def _universal_oa_records_prove_action(
+        cls,
+        records: dict[str, Any],
+        *,
+        task_id: str,
+        current_user_id: str,
+        action: str,
+    ) -> bool:
+        return cls._universal_oa_record_action_state(
+            records,
+            task_id=task_id,
+            current_user_id=current_user_id,
+            action=action,
+        ) == "expected"
+
+    @classmethod
+    def _universal_oa_record_action_state(
+        cls,
+        records: dict[str, Any],
+        *,
+        task_id: str,
+        current_user_id: str,
+        action: str,
+    ) -> str:
+        found_different = False
+        for record in cls._universal_oa_dicts(records):
+            if cls._universal_oa_task_id(record) != task_id:
+                continue
+            if cls._universal_oa_task_owner(record) != current_user_id:
+                continue
+            operation = str(
+                record.get("operationType")
+                or record.get("action")
+                or record.get("result")
+                or record.get("operation")
+                or ""
+            ).strip().upper()
+            recorded_action = cls._universal_oa_canonical_action(operation)
+            if not recorded_action:
+                continue
+            if recorded_action == action:
+                return "expected"
+            found_different = True
+        return "different" if found_different else "none"
+
+    @staticmethod
+    def _universal_oa_canonical_action(operation: str) -> str:
+        normalized = operation.strip().upper()
+        for action, values in {
+            "同意": {"同意", "通过", "AGREE", "APPROVE"},
+            "拒绝": {"拒绝", "REFUSE", "REJECT"},
+            "退回": {"退回", "REVERT", "RETURN", "REDIRECTED"},
+            "comment": {"COMMENT", "评论", "备注"},
+        }.items():
+            if normalized in {value.upper() for value in values}:
+                return action
+        return ""
+
+    @staticmethod
+    def _universal_oa_dicts(value: Any) -> list[dict[str, Any]]:
+        found: list[dict[str, Any]] = []
+
+        def visit(item: Any) -> None:
+            if isinstance(item, dict):
+                found.append(item)
+                for nested in item.values():
+                    visit(nested)
+            elif isinstance(item, list):
+                for nested in item:
+                    visit(nested)
+
+        visit(value)
+        return found
+
+    @classmethod
+    def _universal_oa_tasks(
+        cls,
+        detail: dict[str, Any],
+        tasks: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        return [
+            item
+            for item in cls._universal_oa_dicts([detail, tasks])
+            if cls._universal_oa_task_id(item)
+        ]
+
+    @staticmethod
+    def _universal_oa_task_id(task: dict[str, Any]) -> str:
+        return str(
+            task.get("taskId")
+            or task.get("taskid")
+            or task.get("task_id")
+            or task.get("id")
+            or ""
+        ).strip()
+
+    @staticmethod
+    def _universal_oa_task_owner(task: dict[str, Any]) -> str:
+        return str(
+            task.get("userId")
+            or task.get("userid")
+            or task.get("user_id")
+            or ""
+        ).strip()
+
+    @staticmethod
+    def _universal_oa_task_status(task: dict[str, Any]) -> str:
+        return str(
+            task.get("status")
+            or task.get("taskStatus")
+            or task.get("task_status")
+            or ""
+        ).strip().upper()
+
+    @staticmethod
+    def _universal_oa_process_container(detail: dict[str, Any]) -> dict[str, Any]:
+        for item in DingTalkAutoReplyWorker._universal_oa_dicts(detail):
+            if any(
+                key in item
+                for key in (
+                    "processInstanceId",
+                    "process_instance_id",
+                    "processStatus",
+                    "process_status",
+                )
+            ):
+                return item
+        return {}
+
+    @classmethod
+    def _universal_oa_revert_is_allowed(
+        cls,
+        activities: dict[str, Any],
+        *,
+        target_activity_id: str,
+        revert_action: str,
+    ) -> bool:
+        if not target_activity_id or revert_action not in {
+            "REVERT_FOR_APPROVAL",
+            "REVERT_FOR_RESUBMIT",
+        }:
+            return False
+        for activity in cls._universal_oa_dicts(activities):
+            activity_id = str(
+                activity.get("activityId")
+                or activity.get("targetActivityId")
+                or activity.get("activity_id")
+                or ""
+            ).strip()
+            if activity_id != target_activity_id:
+                continue
+            actions = activity.get("revertActions")
+            return isinstance(actions, list) and revert_action in actions
+        return False
+
+    @classmethod
+    def _universal_oa_process_id(cls, detail: dict[str, Any]) -> str:
+        process = cls._universal_oa_process_container(detail)
+        return str(
+            process.get("processInstanceId")
+            or process.get("process_instance_id")
+            or ""
+        ).strip()
+
+    @classmethod
+    def _universal_oa_process_status(cls, detail: dict[str, Any]) -> str:
+        process = cls._universal_oa_process_container(detail)
+        return str(
+            process.get("status")
+            or process.get("processStatus")
+            or process.get("process_status")
+            or ""
+        ).strip().upper()
+
+    def _fail_universal_oa_preflight(
+        self,
+        execution: UniversalActionExecution,
+        *,
+        attempt_id: int,
+        error: Exception,
+    ) -> None:
+        safe_error = self._safe_universal_oa_error(
+            "oa_preflight_failed",
+            error,
+        )
+        self.store.update_reply_attempt(
+            attempt_id,
+            send_status="failed",
+            send_error=safe_error,
+            oa_action_result_json=self._universal_oa_result_json(
+                execution,
+                outcome="preflight_failed",
+            ),
+        )
+        self.store.mark_universal_action_execution_failed(execution, safe_error)
+
+    def _mark_universal_oa_unknown(
+        self,
+        execution: UniversalActionExecution,
+        *,
+        attempt_id: int,
+        error: Exception | str,
+        dws_action_result: dict[str, Any] | None = None,
+    ) -> None:
+        safe_error = self._safe_universal_oa_error(
+            "universal_action_outcome_unknown",
+            error,
+        )
+        self.store.update_reply_attempt(
+            attempt_id,
+            send_status="failed",
+            send_error=safe_error,
+            oa_action_result_json=self._universal_oa_result_json(
+                execution,
+                outcome="unknown",
+                dws_action_result=dws_action_result,
+            ),
+        )
+        self.store.mark_universal_action_execution_unknown(execution, safe_error)
+
+    @staticmethod
+    def _safe_universal_oa_error(prefix: str, error: Exception | str) -> str:
+        if isinstance(error, str):
+            category = error
+        else:
+            category = type(error).__name__
+            code = str(getattr(error, "code", "") or "").strip()
+            if code:
+                category = f"{category}:{code}"
+        return f"{prefix}: {category}"
+
+    def _finalize_universal_oa_action(
+        self,
+        execution: UniversalActionExecution,
+        *,
+        attempt_id: int,
+        outcome: str,
+        send_status: str,
+        send_error: str = "",
+        dws_action_result: dict[str, Any] | None = None,
+    ) -> bool:
+        result_json = self._universal_oa_result_json(
+            execution,
+            outcome=outcome,
+            dws_action_result=dws_action_result,
+        )
+        self.store.update_reply_attempt(
+            attempt_id,
+            send_status=send_status,
+            send_error=send_error,
+            oa_action_result_json=result_json,
+            audit_tool_events_json=json.dumps(
+                [
+                    {
+                        "action": execution.action.payload["action"],
+                        "execution_id": execution.execution_id,
+                        "execution_scope_id": execution.execution_scope_id,
+                        "outcome": outcome,
+                        "tool": "universal_oa_approval",
+                    }
+                ],
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ),
+        )
+        _, trigger, _ = self._universal_reply_context(execution)
+        self._mark_seen([trigger])
+        self.store.complete_universal_action_execution(
+            execution,
+            attempt_id=attempt_id,
+            result_json=result_json,
+        )
+        return True
+
+    @staticmethod
+    def _universal_oa_result_json(
+        execution: UniversalActionExecution,
+        *,
+        outcome: str,
+        dws_action_result: dict[str, Any] | None = None,
+    ) -> str:
+        result: dict[str, Any] = {
+                "action": execution.action.payload["action"],
+                "execution_id": execution.execution_id,
+                "execution_scope_id": execution.execution_scope_id,
+                "outcome": outcome,
+                "process_instance_id": str(
+                    execution.action.target.get("process_instance_id") or ""
+                ),
+                "task_id": str(execution.action.target.get("task_id") or ""),
+            }
+        if dws_action_result is not None:
+            result["dws_action_result"] = dws_action_result
+        return json.dumps(
+            result,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+
+    def execute_universal_mail_reply(self, execution: UniversalActionExecution) -> bool:
+        if execution.action.kind is not PlannedActionKind.MAIL_REPLY:
+            raise ValueError("universal mail executor received a non-mail action")
+        claim_state = self.store.claim_universal_action_execution(execution)
+        if claim_state is UniversalActionExecutionState.SUCCEEDED:
+            return True
+        if claim_state is UniversalActionExecutionState.UNKNOWN:
+            raise RuntimeError(
+                f"universal action outcome is unknown: {execution.execution_id}"
+            )
+
+        context = execution.context
+        action = execution.action
+        target = (
+            str(action.target.get("mailbox") or "").strip(),
+            str(action.target.get("message_id") or "").strip(),
+            str(action.target.get("subject") or "").strip(),
+        )
+        trusted_target = (
+            context.trusted_mail_mailbox.strip(),
+            context.trusted_mail_message_id.strip(),
+            context.trusted_mail_subject.strip(),
+        )
+        if not all(trusted_target) or target != trusted_target:
+            return self._block_universal_capability_target(
+                execution, "untrusted_mail_reply_target"
+            )
+
+        content = str(action.payload.get("content") or "").strip()
+        attempt_id = self._record_universal_reply_attempt(
+            execution,
+            draft_reply_text=content,
+            send_status="dry_run",
+        )
+        self.store.update_reply_attempt(
+            attempt_id,
+            mail_mailbox=target[0],
+            mail_message_id=target[1],
+            mail_subject=target[2],
+            mail_reply_text=content,
+        )
+        conversation, trigger, messages = self._universal_reply_context(execution)
+        try:
+            self.dws.build_mail_reply_command(
+                mailbox=target[0],
+                message_id=target[1],
+                subject=target[2],
+                content=content,
+            )
+        except Exception as exc:
+            self._fail_universal_action_before_send(
+                execution,
+                attempt_id=attempt_id,
+                error=str(exc),
+            )
+            raise
+        try:
+            succeeded = self._execute_mail_reply_if_needed(
+                conversation=conversation,
+                trigger=trigger,
+                attempt_id=attempt_id,
+                raise_on_delivery_failure=True,
+            )
+            if not succeeded:
+                raise ReplyDeliveryError("mail reply was not delivered")
+            attempt = self.store.get_reply_attempt(attempt_id)
+            if attempt is None or not attempt.mail_action_result_json.strip():
+                raise ReplyDeliveryError("mail reply receipt is missing")
+            if not self._universal_mail_receipt_is_success(
+                attempt.mail_action_result_json
+            ):
+                raise ReplyDeliveryError("mail reply has no success receipt")
+            self.store.update_reply_attempt(
+                attempt_id,
+                final_reply_text=content,
+                send_status="sent",
+                send_error="",
+            )
+            self._mark_seen(messages)
+            self.store.complete_universal_action_execution(
+                execution,
+                attempt_id=attempt_id,
+                result_json=attempt.mail_action_result_json,
+            )
+            return True
+        except Exception as exc:
+            self._finish_universal_capability_failure(
+                execution,
+                attempt_id=attempt_id,
+                error=exc,
+            )
+            raise
+
+    def execute_universal_calendar_response(self, execution: UniversalActionExecution) -> bool:
+        if execution.action.kind is not PlannedActionKind.CALENDAR_RESPONSE:
+            raise ValueError("universal calendar executor received a non-calendar action")
+        claim_state = self.store.claim_universal_action_execution(execution)
+        if claim_state is UniversalActionExecutionState.SUCCEEDED:
+            return True
+        if claim_state is UniversalActionExecutionState.UNKNOWN:
+            raise RuntimeError(
+                f"universal action outcome is unknown: {execution.execution_id}"
+            )
+
+        context = execution.context
+        event_id = str(execution.action.target.get("event_id") or "").strip()
+        response_status = str(
+            execution.action.payload.get("response_status") or ""
+        ).strip()
+        if (
+            not context.trusted_calendar_event_id.strip()
+            or event_id != context.trusted_calendar_event_id.strip()
+        ):
+            return self._block_universal_capability_target(
+                execution, "untrusted_calendar_response_target"
+            )
+
+        attempt_id = self._record_universal_reply_attempt(
+            execution,
+            send_status="dry_run",
+        )
+        self.store.update_reply_attempt(
+            attempt_id,
+            calendar_event_id=event_id,
+            calendar_response_status=response_status,
+        )
+        conversation, trigger, messages = self._universal_reply_context(execution)
+        try:
+            event = self._verified_calendar_event_after_response(event_id)
+        except Exception as exc:
+            self._fail_universal_action_before_send(
+                execution,
+                attempt_id=attempt_id,
+                error=str(exc),
+            )
+            raise
+        if event is None:
+            error = "calendar live state unavailable"
+            self._fail_universal_action_before_send(
+                execution,
+                attempt_id=attempt_id,
+                error=error,
+            )
+            raise ReplyDeliveryError(error)
+        if event.event_id != event_id:
+            error = "calendar live target mismatch"
+            self._fail_universal_action_before_send(
+                execution,
+                attempt_id=attempt_id,
+                error=error,
+            )
+            raise ReplyDeliveryError(error)
+        try:
+            succeeded = self._execute_calendar_response(
+                conversation=conversation,
+                trigger=trigger,
+                event=event,
+                response_status=response_status,
+                attempt_id=attempt_id,
+                mark_attempt_terminal=True,
+                raise_on_delivery_failure=True,
+            )
+            if not succeeded:
+                raise ReplyDeliveryError("calendar response was not applied")
+            attempt = self.store.get_reply_attempt(attempt_id)
+            if attempt is None or not attempt.calendar_response_result_json.strip():
+                raise ReplyDeliveryError("calendar response receipt is missing")
+            result = json.loads(attempt.calendar_response_result_json)
+            if not isinstance(result, dict):
+                raise ReplyDeliveryError("calendar response receipt is invalid")
+            if not str(result.get("noop_reason") or "").strip():
+                verified_event = self._verified_calendar_event_after_response(event_id)
+                if verified_event is None:
+                    raise ReplyDeliveryError(
+                        "calendar response verification unavailable"
+                    )
+                if not self._calendar_response_status_matches(
+                    verified_event.self_response_status,
+                    response_status,
+                ):
+                    raise ReplyDeliveryError(
+                        "calendar response verification mismatch"
+                    )
+            self._mark_seen(messages)
+            self.store.complete_universal_action_execution(
+                execution,
+                attempt_id=attempt_id,
+                result_json=attempt.calendar_response_result_json,
+            )
+            return True
+        except Exception as exc:
+            self._finish_universal_capability_failure(
+                execution,
+                attempt_id=attempt_id,
+                error=exc,
+            )
+            raise
+
+    def _block_universal_capability_target(
+        self,
+        execution: UniversalActionExecution,
+        error: str,
+    ) -> bool:
+        attempt_id = self._record_universal_reply_attempt(
+            execution,
+            send_status="blocked",
+            send_error=error,
+        )
+        self._complete_universal_action(
+            execution,
+            attempt_id=attempt_id,
+            outcome="blocked",
+        )
+        return True
+
+    @staticmethod
+    def _universal_capability_outcome_may_be_unknown(error: Exception) -> bool:
+        current: BaseException | None = error
+        while current is not None:
+            if isinstance(current, (TimeoutError, ConnectionError)):
+                return True
+            current = current.__cause__
+        text = str(error).casefold()
+        return any(
+            marker in text
+            for marker in (
+                "timeout",
+                "connection reset",
+                "has no success receipt",
+                "receipt is missing",
+                "outcome is ambiguous",
+                "verification unavailable",
+                "verification mismatch",
+                "calendar_response_not_applied",
+            )
+        )
+
+    @staticmethod
+    def _universal_mail_receipt_is_success(result_json: str) -> bool:
+        try:
+            result = json.loads(result_json)
+        except json.JSONDecodeError:
+            return False
+        if not isinstance(result, dict):
+            return False
+        if result.get("success") is True:
+            return True
+        if result.get("ok") is True:
+            nested_result = result.get("result")
+            return isinstance(nested_result, dict) and bool(
+                str(nested_result.get("messageId") or "").strip()
+            )
+        for key in ("errcode", "code"):
+            value = result.get(key)
+            if value == 0 or value == "0":
+                return True
+        return False
+
+    @classmethod
+    def _universal_dws_receipt_is_success(cls, payload: object) -> bool:
+        if cls._universal_dws_payload_is_explicit_failure(payload):
+            return False
+        return cls._universal_dws_receipt_has_key(
+            payload,
+            {
+                "id",
+                "messageid",
+                "nodeid",
+                "dentryuuid",
+                "reactionid",
+                "emotionid",
+                "requestid",
+                "receipt",
+            },
+        )
+
+    @classmethod
+    def _universal_dws_receipt_has_key(
+        cls,
+        payload: object,
+        receipt_keys: set[str],
+    ) -> bool:
+        if isinstance(payload, dict):
+            for key, value in payload.items():
+                if (
+                    key.casefold() in receipt_keys
+                    and cls._universal_receipt_value(value)
+                ):
+                    return True
+            return any(
+                cls._universal_dws_receipt_has_key(value, receipt_keys)
+                for value in payload.values()
+                if isinstance(value, (dict, list))
+            )
+        if isinstance(payload, list):
+            return any(
+                cls._universal_dws_receipt_has_key(value, receipt_keys)
+                for value in payload
+            )
+        return False
+
+    @staticmethod
+    def _universal_receipt_value(value: object) -> bool:
+        if isinstance(value, bool):
+            return False
+        if isinstance(value, int):
+            return value > 0
+        return (
+            isinstance(value, str)
+            and bool(value.strip())
+            and value.strip() != "0"
+        )
+
+    @classmethod
+    def _universal_document_permission_receipt_is_success(
+        cls, payload: object
+    ) -> bool:
+        return (
+            isinstance(payload, dict)
+            and payload.get("success") is True
+            and not cls._universal_dws_payload_is_explicit_failure(payload)
+        ) or cls._universal_dws_receipt_is_success(payload)
+
+    @classmethod
+    def _universal_document_delivery_receipt_is_success(cls, payload: object) -> bool:
+        return not cls._universal_dws_payload_is_explicit_failure(
+            payload
+        ) and cls._universal_dws_receipt_has_key(
+            payload,
+            {"messageid", "requestid", "opentaskid", "processquerykey"},
+        )
+
+    @classmethod
+    def _universal_reaction_receipt_is_success(cls, payload: object) -> bool:
+        return not cls._universal_dws_payload_is_explicit_failure(
+            payload
+        ) and cls._universal_dws_receipt_has_key(
+            payload,
+            {"reactionid", "requestid", "receipt"},
+        )
+
+    @classmethod
+    def _universal_text_emotion_create_receipt_is_success(
+        cls, payload: object
+    ) -> bool:
+        return not cls._universal_dws_payload_is_explicit_failure(
+            payload
+        ) and cls._universal_dws_receipt_has_key(payload, {"emotionid"})
+
+    @classmethod
+    def _universal_dws_payload_is_explicit_failure(cls, payload: object) -> bool:
+        if isinstance(payload, dict):
+            if payload.get("success") is False:
+                return True
+            for key, value in payload.items():
+                folded_key = key.casefold()
+                if folded_key in {"errorcode", "error_code", "errcode"}:
+                    if value not in (None, "", 0, "0"):
+                        return True
+                if folded_key == "code":
+                    if isinstance(value, int) and not isinstance(value, bool) and value != 0:
+                        return True
+                    if isinstance(value, str) and value.strip().lstrip("-").isdigit():
+                        if int(value.strip()) != 0:
+                            return True
+                if folded_key in {"status", "state"} and str(value).casefold() in {
+                    "error",
+                    "failed",
+                    "failure",
+                    "rejected",
+                }:
+                    return True
+            return any(
+                cls._universal_dws_payload_is_explicit_failure(value)
+                for value in payload.values()
+                if isinstance(value, (dict, list))
+            )
+        if isinstance(payload, list):
+            return any(
+                cls._universal_dws_payload_is_explicit_failure(value)
+                for value in payload
+            )
+        return False
+
+    def _finish_universal_capability_failure(
+        self,
+        execution: UniversalActionExecution,
+        *,
+        attempt_id: int,
+        error: Exception,
+    ) -> None:
+        attempt = self.store.get_reply_attempt(attempt_id)
+        send_error = str(error)
+        if attempt is not None and attempt.send_error.strip():
+            send_error = attempt.send_error.strip()
+        if self._universal_capability_outcome_may_be_unknown(error):
+            unknown_error = f"universal_action_outcome_unknown: {send_error}"
+            self.store.update_reply_attempt(
+                attempt_id,
+                send_status="failed",
+                send_error=unknown_error,
+            )
+            self.store.mark_universal_action_execution_unknown(
+                execution, unknown_error
+            )
+            return
+        self.store.update_reply_attempt(
+            attempt_id,
+            send_status="failed",
+            send_error=send_error,
+        )
+        self.store.mark_universal_action_execution_failed(execution, send_error)
+
+    def execute_universal_document_reply(self, execution: UniversalActionExecution) -> bool:
+        if execution.action.kind is not PlannedActionKind.DWS_MARKDOWN_DOCUMENT_REPLY:
+            raise ValueError(
+                "universal document executor received a non-document action"
+            )
+        claim_state, checkpoint_json = (
+            self.store.claim_universal_action_execution_recovery(
+                execution,
+                checkpoint_column="document_action_result_json",
+            )
+        )
+        if claim_state is UniversalActionExecutionState.SUCCEEDED:
+            return True
+        if claim_state is UniversalActionExecutionState.UNKNOWN:
+            raise RuntimeError(
+                f"universal action outcome is unknown: {execution.execution_id}"
+            )
+        target = execution.action.target
+        planner_document_url = str(target.get("document_url") or "").strip()
+        trusted_document_url = execution.context.trusted_document_url.strip()
+        if (
+            str(target.get("conversation_id") or "").strip()
+            != execution.context.conversation_id
+            or str(target.get("trigger_message_id") or "").strip()
+            != execution.context.trigger_message_id
+            or (
+                planner_document_url or trusted_document_url
+            )
+            and self._canonical_doc_url(planner_document_url)
+            != self._canonical_doc_url(trusted_document_url)
+        ):
+            return self._block_universal_capability_target(
+                execution, "untrusted_markdown_document_reply_target"
+            )
+        text = str(execution.action.payload.get("text") or "").strip()
+        title = str(execution.action.payload.get("title") or "").strip()
+        attempt_id = self._record_universal_reply_attempt(
+            execution,
+            draft_reply_text=text,
+            send_status="pending",
+        )
+        conversation, trigger, new_messages = self._universal_reply_context(execution)
+        editor_user_ids = self._document_editor_user_ids(
+            [self._reply_document_editor_user_id(trigger)]
+        )
+        if not text or not editor_user_ids:
+            error = ValueError("markdown document text and recipient are required")
+            self._fail_universal_action_before_send(
+                execution,
+                attempt_id=attempt_id,
+                error=str(error),
+            )
+            raise error
+        title = self._markdown_document_reply_title(
+            conversation,
+            {"title": title} if title else None,
+        )
+        receipt: dict[str, Any] = {"title": title}
+        if checkpoint_json.strip():
+            try:
+                persisted_receipt = json.loads(checkpoint_json)
+            except json.JSONDecodeError:
+                persisted_receipt = None
+            if (
+                isinstance(persisted_receipt, dict)
+                and persisted_receipt.get("title") == title
+            ):
+                receipt = persisted_receipt
+        try:
+            doc_result = receipt.get("doc_result")
+            doc_url = str(receipt.get("url") or "").strip()
+            node_id = str(receipt.get("node_id") or "").strip()
+            if not doc_url or not node_id or not isinstance(doc_result, dict):
+                doc_result = self.dws.create_markdown_doc(title, text)
+                doc_url = self._markdown_document_url(doc_result)
+                node_id = self._markdown_document_node_id(doc_result, doc_url)
+                if self._universal_dws_payload_is_explicit_failure(doc_result):
+                    raise ReplyDeliveryError(
+                        "DWS document creation receipt reports failure"
+                    )
+                if not doc_url or not node_id or not self._universal_dws_receipt_is_success(
+                    doc_result
+                ):
+                    raise ReplyDeliveryError(
+                        "DWS document receipt is missing"
+                    )
+                receipt.update(
+                    {
+                        "doc_result": doc_result,
+                        "node_id": node_id,
+                        "url": doc_url,
+                    }
+                )
+                self.store.update_reply_attempt(
+                    attempt_id,
+                    document_action_result_json=json.dumps(
+                        receipt, ensure_ascii=False, sort_keys=True
+                    ),
+                )
+            permission_result = receipt.get("permission_result")
+            if not self._universal_document_permission_receipt_is_success(
+                permission_result
+            ):
+                permission_result = self.dws.add_doc_editor_permission(
+                    node_id,
+                    editor_user_ids,
+                )
+                receipt["permission_result"] = permission_result
+                self.store.update_reply_attempt(
+                    attempt_id,
+                    document_action_result_json=json.dumps(
+                        receipt, ensure_ascii=False, sort_keys=True
+                    ),
+                )
+                if self._universal_dws_payload_is_explicit_failure(
+                    permission_result
+                ):
+                    raise ReplyDeliveryError(
+                        "DWS document permission receipt reports failure"
+                    )
+                if not self._universal_document_permission_receipt_is_success(
+                    permission_result
+                ):
+                    raise ReplyDeliveryError(
+                        "DWS document permission receipt is missing"
+                    )
+            reply_text = append_signature(f"内容我写成了文档：{title}\n{doc_url}")
+            if self._is_robot_direct_trigger(trigger):
+                raw_send_result = self._send_robot_direct_reply(trigger, reply_text)
+            else:
+                raw_send_result = self.dws.send_reply_to_trigger(
+                    conversation,
+                    trigger,
+                    reply_text,
+                    at_users=editor_user_ids,
+                    at_open_dingtalk_ids=[],
+                    at_open_dingtalk_names=[],
+                )
+            retry_count = 0
+            send_result = {
+                "chunks": [
+                    {"index": 1, "text": reply_text, "send_result": raw_send_result}
+                ]
+            }
+            delivery_result = self._single_chunk_send_result(send_result)
+            receipt["delivery"] = delivery_result
+            self.store.update_reply_attempt(
+                attempt_id,
+                document_action_result_json=json.dumps(
+                    receipt, ensure_ascii=False, sort_keys=True
+                ),
+            )
+            if self._universal_dws_payload_is_explicit_failure(send_result):
+                raise ReplyDeliveryError(
+                    "DWS document link delivery receipt reports failure"
+                )
+            if not self._universal_document_delivery_receipt_is_success(send_result):
+                raise ReplyDeliveryError(
+                    "DWS document link delivery receipt is missing"
+                )
+            result_json = json.dumps(receipt, ensure_ascii=False, sort_keys=True)
+            self.store.update_reply_attempt(
+                attempt_id,
+                document_action_result_json=result_json,
+                final_reply_text=reply_text,
+                send_status="sent",
+                send_error="",
+                retry_count=retry_count,
+            )
+            self.store.record_sent_reply(
+                conversation.open_conversation_id,
+                trigger.open_message_id,
+                reply_text,
+                send_result_json=json.dumps(
+                    native_reply_delivery_payload(
+                        conversation,
+                        trigger,
+                        send_result,
+                        extra={"markdown_document_reply": receipt},
+                    ),
+                    ensure_ascii=False,
+                ),
+                recall_key=DwsClient.extract_recall_key(send_result),
+            )
+            self._mark_seen(new_messages)
+            self.store.complete_universal_action_execution(
+                execution,
+                attempt_id=attempt_id,
+                result_json=result_json,
+            )
+            return True
+        except Exception as exc:
+            self.store.update_reply_attempt(
+                attempt_id,
+                document_action_result_json=json.dumps(
+                    receipt, ensure_ascii=False, sort_keys=True
+                ),
+            )
+            self._finish_universal_capability_failure(
+                execution,
+                attempt_id=attempt_id,
+                error=exc,
+            )
+            raise
+
+    @staticmethod
+    def _single_chunk_send_result(send_result: object) -> object:
+        if isinstance(send_result, dict):
+            chunks = send_result.get("chunks")
+            if isinstance(chunks, list) and len(chunks) == 1:
+                chunk = chunks[0]
+                if isinstance(chunk, dict):
+                    return chunk.get("send_result") or {}
+        return send_result
+
+    def execute_universal_message_reaction(self, execution: UniversalActionExecution) -> bool:
+        if execution.action.kind is not PlannedActionKind.DWS_MESSAGE_REACTION:
+            raise ValueError(
+                "universal reaction executor received a non-reaction action"
+            )
+        reaction_type = str(
+            execution.action.payload.get("reaction_type") or "emoji"
+        ).strip()
+        checkpoint_json = ""
+        if reaction_type == "text_emotion":
+            claim_state, checkpoint_json = (
+                self.store.claim_universal_action_execution_recovery(
+                    execution,
+                    checkpoint_column="reaction_action_result_json",
+                )
+            )
+        else:
+            claim_state = self.store.claim_universal_action_execution(execution)
+        if claim_state is UniversalActionExecutionState.SUCCEEDED:
+            return True
+        if claim_state is UniversalActionExecutionState.UNKNOWN:
+            raise RuntimeError(
+                f"universal action outcome is unknown: {execution.execution_id}"
+            )
+        target = execution.action.target
+        if (
+            str(target.get("conversation_id") or "").strip()
+            != execution.context.conversation_id
+            or str(target.get("message_id") or "").strip()
+            != execution.context.trigger_message_id
+        ):
+            return self._block_universal_capability_target(
+                execution, "untrusted_message_reaction_target"
+            )
+        attempt_id = self._record_universal_reply_attempt(
+            execution,
+            send_status="pending",
+        )
+        conversation, trigger, new_messages = self._universal_reply_context(execution)
+        reaction_action = dict(execution.action.payload)
+        if str(reaction_action.get("reaction_type") or "emoji").strip() == "emoji":
+            emoji = normalize_message_emoji(str(reaction_action.get("emoji") or ""))
+            if not emoji:
+                error = ValueError("message reaction emoji is required")
+                self._fail_universal_action_before_send(
+                    execution,
+                    attempt_id=attempt_id,
+                    error=str(error),
+                )
+                raise error
+            reaction_action["emoji"] = emoji
+        events: list[dict[str, str]] = []
+        result: object = None
+        try:
+            if reaction_type == "text_emotion":
+                result = self._execute_universal_text_emotion_reaction(
+                    conversation=conversation,
+                    trigger=trigger,
+                    action=reaction_action,
+                    attempt_id=attempt_id,
+                    checkpoint_json=checkpoint_json,
+                    events=events,
+                )
+            else:
+                result = self._execute_message_reaction(
+                    conversation=conversation,
+                    trigger=trigger,
+                    action=reaction_action,
+                    call_id="universal_message_reaction",
+                    events=events,
+                )
+            self.store.update_reply_attempt(
+                attempt_id,
+                reaction_action_result_json=json.dumps(
+                    result or {}, ensure_ascii=False, sort_keys=True
+                ),
+            )
+            if self._universal_dws_payload_is_explicit_failure(result):
+                raise ReplyDeliveryError(
+                    "DWS message reaction receipt reports failure"
+                )
+            if not self._universal_reaction_receipt_is_success(result):
+                raise ReplyDeliveryError(
+                    "DWS message reaction receipt is missing"
+                )
+        except Exception as exc:
+            self._append_attempt_audit_tool_events(attempt_id, events)
+            self._finish_universal_capability_failure(
+                execution,
+                attempt_id=attempt_id,
+                error=exc,
+            )
+            raise
+        events.append(
+            {
+                "tool": "tool_output",
+                "call_id": "universal_message_reaction",
+                "output": json.dumps(result or {}, ensure_ascii=False),
+            }
+        )
+        self._append_attempt_audit_tool_events(attempt_id, events)
+        self.store.update_reply_attempt(
+            attempt_id,
+            reaction_action_result_json=json.dumps(
+                result or {}, ensure_ascii=False, sort_keys=True
+            ),
+            send_status="reacted",
+            send_error=self._message_reaction_summary(reaction_action),
+        )
+        self._mark_seen(new_messages)
+        self.store.complete_universal_action_execution(
+            execution,
+            attempt_id=attempt_id,
+            result_json=json.dumps(result or {}, ensure_ascii=False, sort_keys=True),
+        )
+        return True
+
+    def execute_universal_okr_review(self, execution: UniversalActionExecution) -> bool:
+        if execution.action.kind is not PlannedActionKind.QUEUE_OKR_REVIEW:
+            raise ValueError("universal OKR executor received a non-OKR action")
+        claim_state = self.store.claim_universal_action_execution(execution)
+        if claim_state is UniversalActionExecutionState.SUCCEEDED:
+            return True
+        if claim_state is UniversalActionExecutionState.UNKNOWN:
+            raise RuntimeError(
+                f"universal action outcome is unknown: {execution.execution_id}"
+            )
+        target = execution.action.target
+        if (
+            str(target.get("conversation_id") or "").strip()
+            != execution.context.conversation_id
+            or str(target.get("trigger_message_id") or "").strip()
+            != execution.context.trigger_message_id
+        ):
+            return self._block_universal_capability_target(
+                execution, "untrusted_okr_review_target"
+            )
+
+        attempt_id = self._record_universal_reply_attempt(
+            execution,
+            send_status="pending",
+        )
+        conversation, trigger, new_messages = self._universal_reply_context(execution)
+        try:
+            self._queue_okr_review_from_decision(
+                conversation=conversation,
+                trigger=trigger,
+                new_messages=new_messages,
+                attempt_id=attempt_id,
+                raise_on_delivery_failure=True,
+                preserve_attempt_action=True,
+            )
+        except Exception as exc:
+            self._fail_universal_action_before_send(
+                execution,
+                attempt_id=attempt_id,
+                error=str(exc),
+            )
+            raise
+
+        attempt = self.store.get_reply_attempt(attempt_id)
+        if attempt is not None and attempt.send_status == "blocked":
+            self._mark_seen(new_messages)
+            self._complete_universal_action(
+                execution,
+                attempt_id=attempt_id,
+                outcome="okr_review_blocked_unrecoverable",
+            )
+            return True
+        if attempt is None or attempt.send_status != "sent":
+            error = (
+                attempt.send_error
+                if attempt is not None and attempt.send_error
+                else "OKR review acknowledgement was not delivered"
+            )
+            self.store.mark_universal_action_execution_failed(execution, error)
+            raise ReplyDeliveryError(error)
+        self._complete_universal_action(
+            execution,
+            attempt_id=attempt_id,
+            outcome="okr_review_queued_and_acknowledged",
+        )
+        return True
+
+    def _execute_universal_text_emotion_reaction(
+        self,
+        *,
+        conversation: DingTalkConversation,
+        trigger: DingTalkMessage,
+        action: dict,
+        attempt_id: int,
+        checkpoint_json: str,
+        events: list[dict[str, str]],
+    ) -> dict[str, object]:
+        try:
+            checkpoint = json.loads(checkpoint_json) if checkpoint_json.strip() else {}
+        except json.JSONDecodeError:
+            checkpoint = {}
+        if not isinstance(checkpoint, dict):
+            checkpoint = {}
+        checkpoint["reaction_type"] = "text_emotion"
+        text = str(action.get("text") or "").strip()
+        emotion_name = str(action.get("emotion_name") or "").strip() or text
+        background_id = (
+            str(action.get("background_id") or "").strip()
+            or DEFAULT_TEXT_EMOTION_BACKGROUND_ID
+        )
+        create = checkpoint.get("create")
+        emotion_id = ""
+        if isinstance(create, dict) and create.get("trusted") is True:
+            emotion_id = str(create.get("emotion_id") or "").strip()
+            background_id = (
+                str(create.get("background_id") or "").strip() or background_id
+            )
+        if not emotion_id:
+            create_command = [
+                "dws",
+                "chat",
+                "message",
+                "create-text-emotion",
+                "--text",
+                text,
+                "--emotion-name",
+                emotion_name,
+                "--background-id",
+                background_id,
+                "--format",
+                "json",
+                "--yes",
+            ]
+            events.append(
+                {
+                    "tool": "dws",
+                    "call_id": "universal_message_reaction_create",
+                    "command": " ".join(create_command),
+                    "input": json.dumps(
+                        {
+                            "text": text,
+                            "emotion_name": emotion_name,
+                            "background_id": background_id,
+                        },
+                        ensure_ascii=False,
+                    ),
+                }
+            )
+            create_result = self.dws.create_message_text_emotion(
+                text=text,
+                emotion_name=emotion_name,
+                background_id=background_id,
+            )
+            events[-1]["output"] = json.dumps(create_result, ensure_ascii=False)
+            create = {"result": create_result}
+            checkpoint["create"] = create
+            self.store.update_reply_attempt(
+                attempt_id,
+                reaction_action_result_json=json.dumps(
+                    checkpoint, ensure_ascii=False, sort_keys=True
+                ),
+            )
+            if self._universal_dws_payload_is_explicit_failure(create_result):
+                raise ReplyDeliveryError(
+                    "DWS text emotion create receipt reports failure"
+                )
+            emotion_id = _extract_text_emotion_id(create_result)
+            if (
+                not emotion_id
+                or not self._universal_text_emotion_create_receipt_is_success(
+                    create_result
+                )
+            ):
+                raise ReplyDeliveryError(
+                    "DWS text emotion create receipt is missing"
+                )
+            background_id = (
+                _extract_text_emotion_background_id(create_result) or background_id
+            )
+            create.update(
+                {
+                    "background_id": background_id,
+                    "emotion_id": emotion_id,
+                    "trusted": True,
+                }
+            )
+            self.store.update_reply_attempt(
+                attempt_id,
+                reaction_action_result_json=json.dumps(
+                    checkpoint, ensure_ascii=False, sort_keys=True
+                ),
+            )
+        add_state = str(checkpoint.get("add_state") or "").strip()
+        add_result = checkpoint.get("add_result")
+        if (
+            add_state == "succeeded"
+            and self._universal_reaction_receipt_is_success(add_result)
+        ):
+            return checkpoint
+        if add_state in {"ambiguous", "started"}:
+            raise ReplyDeliveryError("DWS text emotion add outcome is ambiguous")
+        add_action = dict(action)
+        add_action.update(
+            {
+                "background_id": background_id,
+                "emotion_id": emotion_id,
+                "emotion_name": emotion_name,
+                "reaction_type": "text_emotion",
+                "text": text,
+            }
+        )
+        checkpoint["add_state"] = "started"
+        checkpoint.pop("add_result", None)
+        self.store.update_reply_attempt(
+            attempt_id,
+            reaction_action_result_json=json.dumps(
+                checkpoint, ensure_ascii=False, sort_keys=True
+            ),
+        )
+        add_result = self._execute_message_reaction(
+            conversation=conversation,
+            trigger=trigger,
+            action=add_action,
+            call_id="universal_message_reaction_add",
+            events=events,
+        )
+        if events:
+            events[-1]["output"] = json.dumps(add_result, ensure_ascii=False)
+        checkpoint["add_result"] = add_result
+        if self._universal_dws_payload_is_explicit_failure(add_result):
+            checkpoint["add_state"] = "failed"
+        elif self._universal_reaction_receipt_is_success(add_result):
+            checkpoint["add_state"] = "succeeded"
+        else:
+            checkpoint["add_state"] = "ambiguous"
+        self.store.update_reply_attempt(
+            attempt_id,
+            reaction_action_result_json=json.dumps(
+                checkpoint, ensure_ascii=False, sort_keys=True
+            ),
+        )
+        if checkpoint["add_state"] == "failed":
+            raise ReplyDeliveryError("DWS text emotion add receipt reports failure")
+        if checkpoint["add_state"] == "ambiguous":
+            raise ReplyDeliveryError("DWS text emotion add receipt is missing")
+        return checkpoint
+
+    def execute_universal_memory_write(self, execution: UniversalActionExecution) -> bool:
+        if execution.action.kind is not PlannedActionKind.MEMORY_WRITE:
+            raise ValueError("universal Memory executor received a non-memory action")
+        payload = self._universal_memory_payload(execution)
+        canonical_payload_json = json.dumps(
+            payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        claim = self.store.claim_universal_memory_action_execution(
+            execution,
+            canonical_payload_json,
+        )
+        if claim.state is UniversalActionExecutionState.SUCCEEDED:
+            return True
+        if claim.state is UniversalActionExecutionState.UNKNOWN:
+            raise RuntimeError(
+                f"universal memory action lease is active: {execution.execution_id}"
+            )
+        attempt_id = self._record_universal_reply_attempt(
+            execution,
+            send_status="pending",
+        )
+        if self.memory_client is None:
+            error = "memory_connector_not_configured"
+            self.store.update_reply_attempt(
+                attempt_id,
+                send_status="blocked",
+                send_error=error,
+            )
+            self.store.mark_universal_memory_action_execution(
+                execution,
+                canonical_payload_json=canonical_payload_json,
+                lease_token=claim.lease_token,
+                status="failed",
+                error=error,
+            )
+            raise MemoryConnectorAuthorizationRequired(error)
+        try:
+            result = self.memory_client.memory_write_sync(**payload)
+        except MemoryConnectorAuthorizationRequired:
+            error = "memory_authorization_required"
+            self.store.update_reply_attempt(
+                attempt_id,
+                send_status="blocked",
+                send_error=error,
+            )
+            self.store.mark_universal_memory_action_execution(
+                execution,
+                canonical_payload_json=canonical_payload_json,
+                lease_token=claim.lease_token,
+                status="failed",
+                error=error,
+            )
+            raise
+        except Exception as exc:
+            error = f"memory_write_outcome_unknown:{exc.__class__.__name__}"
+            self.store.update_reply_attempt(
+                attempt_id,
+                send_status="failed",
+                send_error=error,
+            )
+            self.store.mark_universal_memory_action_execution(
+                execution,
+                canonical_payload_json=canonical_payload_json,
+                lease_token=claim.lease_token,
+                status="unknown",
+                error=error,
+            )
+            raise
+        if not isinstance(result, MemoryWriteResult):
+            error = "memory_write_outcome_unknown:invalid_result"
+            self.store.update_reply_attempt(
+                attempt_id,
+                send_status="failed",
+                send_error=error,
+            )
+            self.store.mark_universal_memory_action_execution(
+                execution,
+                canonical_payload_json=canonical_payload_json,
+                lease_token=claim.lease_token,
+                status="unknown",
+                error=error,
+            )
+            raise RuntimeError(error)
+
+        receipt = {
+            "duplicate": result.duplicate,
+            "episode_uuid": result.episode_uuid,
+            "processing_status": result.processing_status,
+        }
+        receipt_json = json.dumps(
+            receipt,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        self.store.update_reply_attempt(
+            attempt_id,
+            audit_summary=receipt_json,
+            send_status="skipped",
+            send_error="",
+        )
+        self.store.complete_universal_memory_action_execution(
+            execution,
+            canonical_payload_json=canonical_payload_json,
+            lease_token=claim.lease_token,
+            attempt_id=attempt_id,
+            result_json=receipt_json,
+        )
+        return True
+
+    @staticmethod
+    def _universal_memory_payload(
+        execution: UniversalActionExecution,
+    ) -> dict[str, str]:
+        action_payload = execution.action.payload
+        data = str(action_payload["data"]).strip()
+        memory_type = str(action_payload["type"])
+        trigger_time = datetime.fromisoformat(
+            execution.context.trigger_create_time.replace("Z", "+00:00")
+        )
+        if trigger_time.tzinfo is None:
+            trigger_time = trigger_time.replace(tzinfo=DINGTALK_MESSAGE_TIME_ZONE)
+        source_material = json.dumps(
+            [
+                execution.context.conversation_id,
+                execution.context.trigger_message_id,
+                memory_type,
+                data,
+            ],
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        source_hash = hashlib.sha256(source_material.encode("utf-8")).hexdigest()
+        return {
+            "data": data,
+            "type": memory_type,
+            "created_at": trigger_time.isoformat(),
+            "source_description": f"ceo-agent-memory:{source_hash}",
+        }
+
+    def execute_universal_terminal_action(self, execution: UniversalActionExecution) -> bool:
+        terminal_statuses = {
+            PlannedActionKind.NO_REPLY: "skipped",
+            PlannedActionKind.HANDOFF_TO_HUMAN: "skipped",
+            PlannedActionKind.BLOCKED: "blocked",
+            PlannedActionKind.STOP_WITH_ERROR: "failed",
+        }
+        send_status = terminal_statuses.get(execution.action.kind)
+        if send_status is None:
+            raise ValueError("universal terminal executor received a non-terminal action")
+        claim_state = self.store.claim_universal_action_execution(execution)
+        if claim_state is UniversalActionExecutionState.SUCCEEDED:
+            return True
+        if claim_state is UniversalActionExecutionState.UNKNOWN:
+            raise RuntimeError(
+                f"universal action outcome is unknown: {execution.execution_id}"
+            )
+
+        send_error = f"{execution.action.kind.value}: {execution.action.reason}"
+        attempt_id = self._record_universal_reply_attempt(
+            execution,
+            send_status=send_status,
+            send_error=send_error,
+        )
+        if execution.action.kind is PlannedActionKind.STOP_WITH_ERROR:
+            self.store.mark_universal_action_execution_failed(
+                execution,
+                send_error,
+            )
+            self.store.rotate_reply_task_execution_generation(
+                execution.context.task_id
+            )
+            raise RuntimeError(send_error)
+        conversation, trigger, new_messages = self._universal_reply_context(execution)
+        try:
+            attempt = self.store.get_reply_attempt(attempt_id)
+            if attempt is not None:
+                self._enqueue_conversation_work_item(
+                    attempt_id=attempt_id,
+                    conversation=conversation,
+                    trigger=trigger,
+                    action=attempt.action,
+                    audit_summary=attempt.audit_summary or attempt.codex_reason,
+                    final_reply_text=attempt.final_reply_text,
+                )
+            self._mark_seen(new_messages)
+        except Exception as exc:
+            self._fail_universal_action_before_send(
+                execution,
+                attempt_id=attempt_id,
+                error=str(exc),
+            )
+            raise
+
+        if execution.action.kind is not PlannedActionKind.HANDOFF_TO_HUMAN:
+            try:
+                self._complete_universal_action(
+                    execution,
+                    attempt_id=attempt_id,
+                    outcome=send_status,
+                )
+            except Exception as exc:
+                self._fail_universal_action_before_send(
+                    execution,
+                    attempt_id=attempt_id,
+                    error=str(exc),
+                )
+                raise
+            return True
+
+        try:
+            handoff_decision = CodexDecision(
+                action=CodexAction.HANDOFF_TO_HUMAN,
+                reason=execution.action.reason,
+                sensitivity_kind=SensitivityKind.GENERAL,
+            )
+            reacted = self._execute_message_reactions(
+                conversation=conversation,
+                trigger=trigger,
+                new_messages=new_messages,
+                attempt_id=attempt_id,
+                decision=self._handoff_reaction_decision(handoff_decision),
+                raise_on_delivery_failure=False,
+            )
+            handoff_notified_locally = self._notify_handoff(
+                conversation=conversation,
+                trigger=trigger,
+                context_messages=new_messages,
+            )
+            if not handoff_notified_locally:
+                self._notify(
+                    title=f"CEO handoff: {conversation.title}",
+                    message=trigger.content[:120],
+                    conversation=conversation,
+                    attempt_id=attempt_id,
+                )
+            self._append_attempt_audit_tool_events(
+                attempt_id,
+                [
+                    {
+                        "tool": "universal_handoff",
+                        "output": json.dumps(
+                            {
+                                "notification_invoked": True,
+                                "reaction_succeeded": reacted,
+                            },
+                            ensure_ascii=False,
+                            sort_keys=True,
+                        ),
+                    }
+                ],
+            )
+            self.store.update_reply_attempt(
+                attempt_id,
+                send_status="skipped",
+                send_error=send_error,
+                retry_count=0,
+            )
+            self._complete_universal_action(
+                execution,
+                attempt_id=attempt_id,
+                outcome=send_status,
+            )
+        except Exception as exc:
+            if (
+                self.store.get_universal_action_execution_state(execution)
+                is UniversalActionExecutionState.SUCCEEDED
+            ):
+                return True
+            error = f"universal_action_outcome_unknown: {exc}"
+            self.store.update_reply_attempt(
+                attempt_id,
+                send_status="failed",
+                send_error=error,
+            )
+            self.store.mark_universal_action_execution_unknown(execution, error)
+            raise
+        return True
+
+    @staticmethod
+    def _universal_codex_decision(
+        execution: UniversalActionExecution,
+        reply_text: str,
+    ) -> CodexDecision:
+        action = execution.action
+        if action.sensitivity_kind is None:
+            raise ValueError("universal reply action is missing sensitivity_kind")
+        return CodexDecision(
+            action=(
+                CodexAction.SEND_REPLY
+                if action.kind is PlannedActionKind.SEND_REPLY
+                else CodexAction.ASK_CLARIFYING_QUESTION
+            ),
+            reply_text=reply_text,
+            reason=action.reason,
+            sensitivity_kind=action.sensitivity_kind,
+            personnel_subject_user_id=action.personnel_subject_user_id,
+            candidate_context_known=action.candidate_context_known,
+            candidate_department_ids=list(action.candidate_department_ids),
+        )
+
+    def _preflight_universal_reply_recipient(
+        self,
+        trigger: DingTalkMessage,
+        reply_text: str,
+    ) -> None:
+        explicit_targets = self._explicit_reply_at_targets(trigger, reply_text)
+        if not explicit_targets:
+            self._default_reply_at_targets(trigger)
+
+    def _fail_universal_action_before_send(
+        self,
+        execution: UniversalActionExecution,
+        *,
+        attempt_id: int,
+        error: str,
+    ) -> None:
+        self.store.update_reply_attempt(
+            attempt_id,
+            send_status="failed",
+            send_error=error,
+        )
+        self.store.mark_universal_action_execution_failed(execution, error)
+
+    @staticmethod
+    def _is_definite_universal_send_failure(
+        attempt: ReplyAttempt | None,
+    ) -> bool:
+        if attempt is None or attempt.send_status not in {"blocked", "failed"}:
+            return False
+        return attempt.send_error == "leak_check" or attempt.send_error.startswith(
+            "empty_reply:"
+        )
+
+    @staticmethod
+    def _universal_result_json(
+        execution: UniversalActionExecution,
+        *,
+        outcome: str,
+    ) -> str:
+        return json.dumps(
+            {
+                "action_kind": execution.action.kind.value,
+                "execution_id": execution.execution_id,
+                "execution_scope_id": execution.execution_scope_id,
+                "outcome": outcome,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+
+    def _complete_universal_action(
+        self,
+        execution: UniversalActionExecution,
+        *,
+        attempt_id: int,
+        outcome: str,
+    ) -> None:
+        self.store.complete_universal_action_execution(
+            execution,
+            attempt_id=attempt_id,
+            result_json=self._universal_result_json(execution, outcome=outcome),
+        )
+
+    @staticmethod
+    def _universal_audit_tool_events_json(
+        execution: UniversalActionExecution,
+    ) -> str:
+        return json.dumps(
+            [
+                {
+                    "action_kind": execution.action.kind.value,
+                    "execution_id": execution.execution_id,
+                    "execution_scope_id": execution.execution_scope_id,
+                    "tool": "universal_consumer",
+                },
+                *[dict(event) for event in execution.planner_tool_events],
+            ],
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+
+    def _record_universal_reply_attempt(
+        self,
+        execution: UniversalActionExecution,
+        *,
+        draft_reply_text: str = "",
+        send_status: str,
+        send_error: str = "",
+    ) -> int:
+        context = execution.context
+        attempt_id = self.store.record_universal_reply_attempt(
+            execution,
+            conversation_id=context.conversation_id,
+            conversation_title=context.conversation_title,
+            trigger_message_id=context.trigger_message_id,
+            trigger_sender=context.trigger_sender,
+            trigger_text=context.trigger_text,
+            action=execution.action.kind.value,
+            sensitivity_kind=(
+                execution.action.sensitivity_kind.value
+                if execution.action.sensitivity_kind is not None
+                else SensitivityKind.GENERAL.value
+            ),
+            codex_reason=execution.action.reason,
+            draft_reply_text=draft_reply_text,
+            audit_tool_events_json=self._universal_audit_tool_events_json(execution),
+            audit_summary=execution.action.reason,
+            send_status=send_status,
+        )
+        if send_error:
+            self.store.update_reply_attempt(attempt_id, send_error=send_error)
+        return attempt_id
+
+    @staticmethod
+    def _universal_reply_context(
+        execution: UniversalActionExecution,
+    ) -> tuple[DingTalkConversation, DingTalkMessage, list[DingTalkMessage]]:
+        context = execution.context
+        conversation = DingTalkConversation(
+            open_conversation_id=context.conversation_id,
+            title=context.conversation_title,
+            single_chat=context.single_chat,
+            unread_point=0,
+        )
+        trigger_snapshot = next(
+            (
+                message
+                for message in context.context_messages
+                if message.open_message_id == context.trigger_message_id
+            ),
+            UniversalContextMessage(
+                sender_name=context.trigger_sender,
+                open_message_id=context.trigger_message_id,
+                content=context.trigger_text,
+            ),
+        )
+        trigger = DingTalkAutoReplyWorker._universal_dingtalk_message(
+            context,
+            trigger_snapshot,
+            sender_name=context.trigger_sender,
+            content=context.trigger_text,
+        )
+        new_messages = [trigger]
+        if trigger.quoted_message_id:
+            quoted = next(
+                (
+                    message
+                    for message in context.context_messages
+                    if message.open_message_id == trigger.quoted_message_id
+                ),
+                None,
+            )
+            if quoted is not None:
+                new_messages.append(
+                    DingTalkAutoReplyWorker._universal_dingtalk_message(
+                        context,
+                        quoted,
+                    )
+                )
+        return conversation, trigger, new_messages
+
+    @staticmethod
+    def _universal_dingtalk_message(
+        context: UniversalTaskContext,
+        message: UniversalContextMessage,
+        *,
+        sender_name: str | None = None,
+        content: str | None = None,
+    ) -> DingTalkMessage:
+        raw_payload = json.loads(message.raw_payload_json)
+        if not isinstance(raw_payload, dict):
+            raise ValueError("universal message raw payload must be an object")
+        return DingTalkMessage(
+            open_conversation_id=context.conversation_id,
+            open_message_id=message.open_message_id,
+            conversation_title=context.conversation_title,
+            single_chat=context.single_chat,
+            sender_name=message.sender_name if sender_name is None else sender_name,
+            sender_open_dingtalk_id=message.sender_open_dingtalk_id,
+            sender_user_id=message.sender_user_id,
+            message_type=message.message_type,
+            create_time=message.create_time,
+            content=message.content if content is None else content,
+            mentioned_user_ids=list(message.mentioned_user_ids),
+            quoted_message_id=message.quoted_message_id,
+            quoted_content=message.quoted_content,
+            raw_payload=raw_payload,
+        )
 
     def run_once(self, max_batches: int | None = None) -> None:
         try:
@@ -1777,6 +4498,38 @@ class DingTalkAutoReplyWorker:
             )
             try:
                 should_complete_task = self._process_queued_task(conversation, task)
+            except UniversalActionUnknownError as exc:
+                error = str(exc)
+                self.store.fail_reply_task(task.id, error)
+                self.store.record_error(
+                    task.conversation_id,
+                    task.trigger_message_id,
+                    "reply_task_universal_action_unknown",
+                    error,
+                )
+                self._notify(
+                    title=f"CEO task blocked after uncertain action: {task.conversation_title}",
+                    message=error[:120],
+                    conversation=conversation,
+                )
+                continue
+            except (
+                UniversalDependencyDeferredError,
+                UniversalValidationDeferredError,
+            ) as exc:
+                error = str(exc)
+                self.store.defer_reply_task(
+                    task.id,
+                    error,
+                    available_at=self._reply_task_authorization_available_at(),
+                )
+                self.store.record_error(
+                    task.conversation_id,
+                    task.trigger_message_id,
+                    "reply_task_universal_deferred",
+                    error,
+                )
+                continue
             except CriticalInformationUnavailableError as exc:
                 error = str(exc)
                 self.store.fail_reply_task(task.id, error)
@@ -1956,6 +4709,36 @@ class DingTalkAutoReplyWorker:
             )
             self._mark_seen([trigger])
             return True
+        if os.getenv("CEO_UNIVERSAL_CONSUMER", "1") != "0":
+            if self._handle_minutes_permission_request_if_actionable(
+                conversation,
+                trigger,
+                ignore_existing_attempt=task.force_new_decision,
+                raise_on_delivery_failure=True,
+            ):
+                return True
+            if self._is_system_or_notification_message(trigger):
+                self._record_system_or_notification_skip(conversation, trigger)
+                self.store.record_reply_attempt_for_trigger(
+                    conversation_id=conversation.open_conversation_id,
+                    conversation_title=conversation.title,
+                    trigger_message_id=trigger.open_message_id,
+                    trigger_sender=trigger.sender_name,
+                    trigger_text=trigger.content,
+                    action=CodexAction.NO_REPLY.value,
+                    sensitivity_kind=SensitivityKind.GENERAL.value,
+                    codex_reason="system_or_notification_message",
+                    audit_summary="系统类或通知类消息，无需自动回复。",
+                    send_status="skipped",
+                )
+                self._mark_seen([trigger])
+                return True
+            return self._process_universal_queued_task(
+                conversation,
+                task,
+                trigger,
+                prompt_context_messages,
+            )
         if self._handle_minutes_permission_request_if_actionable(
             conversation,
             trigger,
@@ -2713,6 +5496,7 @@ class DingTalkAutoReplyWorker:
         *,
         complete_task_id: int | None = None,
         raise_on_delivery_failure: bool = False,
+        preserve_attempt_action: bool = False,
     ) -> bool:
         period = requested_okr_period(
             trigger.content,
@@ -2720,12 +5504,10 @@ class DingTalkAutoReplyWorker:
         )
         if not hasattr(self, "okr_live_source"):
             error = "OKR live source is not configured"
-            self.store.update_reply_attempt(
-                attempt_id,
-                action="okr_review",
-                send_status="failed",
-                send_error=error,
-            )
+            updates = {"send_status": "failed", "send_error": error}
+            if not preserve_attempt_action:
+                updates["action"] = "okr_review"
+            self.store.update_reply_attempt(attempt_id, **updates)
             self.store.record_error(
                 conversation.open_conversation_id,
                 trigger.open_message_id,
@@ -2746,11 +5528,9 @@ class DingTalkAutoReplyWorker:
             if _is_dingteam_okr_login_error(error):
                 send_status = "blocked"
                 send_error = _blocked_unrecoverable_external_auth_error(error)
-            updates = {
-                "action": "okr_review",
-                "send_status": send_status,
-                "send_error": send_error,
-            }
+            updates = {"send_status": send_status, "send_error": send_error}
+            if not preserve_attempt_action:
+                updates["action"] = "okr_review"
             if complete_task_id is not None:
                 self.store.update_reply_attempt_and_complete_task(
                     attempt_id,
@@ -2782,12 +5562,13 @@ class DingTalkAutoReplyWorker:
             f"已受理 {period.period_label} OKR 审核请求，"
             "正在实时核实 KR 进度和证据。"
         )
-        self.store.update_reply_attempt(
-            attempt_id,
-            action="okr_review",
-            send_status="dry_run" if self.dry_run else "pending",
-            final_reply_text=reply_text,
-        )
+        updates = {
+            "send_status": "dry_run" if self.dry_run else "pending",
+            "final_reply_text": reply_text,
+        }
+        if not preserve_attempt_action:
+            updates["action"] = "okr_review"
+        self.store.update_reply_attempt(attempt_id, **updates)
         if not self.dry_run:
             delivered = self._deliver_trigger_reply(
                 conversation=conversation,
@@ -7115,7 +9896,7 @@ class DingTalkAutoReplyWorker:
                 attempt_id=attempt_id,
             )
             if raise_on_delivery_failure:
-                raise ReplyDeliveryError(str(exc)) from exc
+                raise ReplyPreDeliveryError(str(exc)) from exc
             return
         at_users = [target.user_id for target in at_targets if target.user_id]
         at_open_dingtalk_ids = (
@@ -7227,6 +10008,38 @@ class DingTalkAutoReplyWorker:
         allow_duplicate_send: bool = False,
     ) -> None:
         reply_text = self._native_reply_body(final_reply_text)
+        universal_consumer_enabled = os.getenv("CEO_UNIVERSAL_CONSUMER", "1") != "0"
+        if universal_consumer_enabled and contains_forbidden_leak(reply_text):
+            regenerated_reply_text = self._regenerate_reply_after_leak_check(
+                blocked_reply_text=reply_text,
+            )
+            if regenerated_reply_text:
+                reply_text = append_signature(regenerated_reply_text)
+                reply_text = self._native_reply_body(
+                    self._format_reply_delivery_text(reply_text)
+                )
+        if universal_consumer_enabled and contains_forbidden_leak(reply_text):
+            self.store.update_reply_attempt(
+                attempt_id,
+                final_reply_text=reply_text,
+                direct_user_id=direct_user_id or "",
+                direct_open_dingtalk_id=direct_open_dingtalk_id or "",
+                send_status="blocked",
+                send_error="leak_check",
+            )
+            self.store.record_error(
+                conversation.open_conversation_id,
+                trigger.open_message_id,
+                "leak_check",
+                reply_text,
+            )
+            self._notify(
+                title=f"CEO agent blocked leak: {conversation.title}",
+                message=reply_text[:120],
+                conversation=conversation,
+                attempt_id=attempt_id,
+            )
+            return
         feedback_base_url = feedback_spike_vercel_base_url()
         if feedback_base_url:
             self._sync_recent_feedback_events_for_conversation(
@@ -7261,13 +10074,24 @@ class DingTalkAutoReplyWorker:
             feedback_token = outgoing_text.feedback_token
         else:
             feedback_token = ""
+
+        def delivery_text_has_forbidden_leak() -> bool:
+            if not feedback_base_url or not feedback_token:
+                return contains_forbidden_leak(reply_text)
+            return contains_forbidden_leak_outside_feedback_links(
+                reply_text,
+                vercel_base_url=feedback_base_url,
+                feedback_token=feedback_token,
+                attempt_id=attempt_id,
+            )
+
         self.store.update_reply_attempt(
             attempt_id,
             final_reply_text=reply_text,
             direct_user_id=direct_user_id or "",
             direct_open_dingtalk_id=direct_open_dingtalk_id or "",
         )
-        if contains_forbidden_leak(reply_text):
+        if not universal_consumer_enabled and delivery_text_has_forbidden_leak():
             regenerated_reply_text = self._regenerate_reply_after_leak_check(
                 blocked_reply_text=reply_text,
             )
@@ -7297,7 +10121,7 @@ class DingTalkAutoReplyWorker:
             direct_user_id=direct_user_id or "",
             direct_open_dingtalk_id=direct_open_dingtalk_id or "",
         )
-        if contains_forbidden_leak(reply_text):
+        if not universal_consumer_enabled and delivery_text_has_forbidden_leak():
             self.store.update_reply_attempt(
                 attempt_id,
                 send_status="blocked",
@@ -7316,7 +10140,6 @@ class DingTalkAutoReplyWorker:
                 attempt_id=attempt_id,
             )
             return
-
         minutes_comment_target = self._minutes_comment_target(
             comment_target_messages or new_messages
         )
@@ -7914,48 +10737,40 @@ class DingTalkAutoReplyWorker:
 
     @staticmethod
     def _markdown_document_url(payload: object) -> str:
-        if not isinstance(payload, dict):
-            return ""
-        candidates = [
-            payload.get("url"),
-            payload.get("docUrl"),
-            payload.get("doc_url"),
-        ]
-        result = payload.get("result")
-        if isinstance(result, dict):
-            candidates.extend(
-                [
-                    result.get("url"),
-                    result.get("docUrl"),
-                    result.get("doc_url"),
-                    result.get("nodeUrl"),
-                ]
-            )
-        for candidate in candidates:
-            if isinstance(candidate, str) and candidate.strip():
-                return candidate.strip()
+        if isinstance(payload, dict):
+            for key in ("url", "docUrl", "doc_url", "nodeUrl"):
+                candidate = payload.get(key)
+                if isinstance(candidate, str) and candidate.strip():
+                    return candidate.strip()
+            for value in payload.values():
+                found = DingTalkAutoReplyWorker._markdown_document_url(value)
+                if found:
+                    return found
+        if isinstance(payload, list):
+            for value in payload:
+                found = DingTalkAutoReplyWorker._markdown_document_url(value)
+                if found:
+                    return found
         return ""
 
     @classmethod
     def _markdown_document_node_id(cls, payload: object, doc_url: str = "") -> str:
         if isinstance(payload, dict):
-            candidates: list[object] = [
-                payload.get("nodeId"),
-                payload.get("node_id"),
-                payload.get("dentryUuid"),
-            ]
-            result = payload.get("result")
-            if isinstance(result, dict):
-                candidates.extend(
-                    [
-                        result.get("nodeId"),
-                        result.get("node_id"),
-                        result.get("dentryUuid"),
-                    ]
-                )
-            for candidate in candidates:
+            for key in ("nodeId", "node_id", "dentryUuid"):
+                candidate = payload.get(key)
                 if isinstance(candidate, str) and candidate.strip():
                     return candidate.strip()
+                if isinstance(candidate, int) and not isinstance(candidate, bool):
+                    return str(candidate)
+            for value in payload.values():
+                found = cls._markdown_document_node_id(value)
+                if found:
+                    return found
+        if isinstance(payload, list):
+            for value in payload:
+                found = cls._markdown_document_node_id(value)
+                if found:
+                    return found
         match = re.search(r"/nodes/([^/?#]+)", doc_url)
         if match:
             return match.group(1)

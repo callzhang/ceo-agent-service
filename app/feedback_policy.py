@@ -2,8 +2,8 @@ from dataclasses import dataclass
 
 
 FEEDBACK_REQUIRED_LINK_PREFIX = (
-    "【请反馈】这次回复有帮助吗？请点 👍 或 👎。收到反馈后将停止提醒；"
-    "长期未反馈时，系统可能暂停后续自动回复："
+    "【评价本次回复】请点 👍 或 👎。提交评价后不再提醒；"
+    "若连续多次未评价，后续自动回复可能暂停："
 )
 
 

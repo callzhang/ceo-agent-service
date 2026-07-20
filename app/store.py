@@ -4,8 +4,10 @@ import sqlite3
 import threading
 from datetime import datetime
 from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 from collections.abc import Iterator
+from uuid import uuid4
 
 from pydantic import BaseModel, Field, TypeAdapter
 
@@ -25,14 +27,39 @@ from app.task_models import (
     WorkUpdate,
 )
 from app.feedback_policy import FeedbackPressureStats
-from app.history import HistoryItem
+from app.history import (
+    HistoryItem,
+    UniversalActionObservation,
+    UniversalExecutionObservation,
+    safe_observability_error,
+)
+from app.universal_context import (
+    UniversalTaskContext,
+    canonical_universal_context_json,
+    universal_context_sha256,
+)
+from app.universal_executor import (
+    UniversalActionExecution,
+    UniversalActionExecutionState,
+    UniversalPlanExecution,
+    build_universal_action_execution,
+    canonical_universal_action_json,
+)
+from app.universal_plan import PlannedActionKind, UniversalPlan
 
 FAST_PATH_UNREAD_BACKOFF_TASK_ERROR = "waiting_fast_path_unread_backoff"
 SQLITE_BUSY_TIMEOUT_SECONDS = 30
 SQLITE_BUSY_TIMEOUT_MILLISECONDS = SQLITE_BUSY_TIMEOUT_SECONDS * 1000
+UNIVERSAL_MEMORY_LEASE_SECONDS = 15 * 60
 CODEX_SESSION_LOCK_STALE_SECONDS = 20 * 60
 _INITIALIZED_STORE_PATHS: set[Path] = set()
 _INITIALIZE_LOCK = threading.Lock()
+
+
+@dataclass(frozen=True)
+class UniversalMemoryActionClaim:
+    state: UniversalActionExecutionState
+    lease_token: str = ""
 
 
 class OrgUserProfile(BaseModel):
@@ -67,6 +94,8 @@ class ReplyAttempt(BaseModel):
     audit_documents_json: str = "[]"
     audit_tool_events_json: str = "[]"
     audit_summary: str = ""
+    universal_execution_id: str = ""
+    universal_execution_scope_id: str = ""
     oa_process_instance_id: str = ""
     oa_task_id: str = ""
     oa_url: str = ""
@@ -81,6 +110,8 @@ class ReplyAttempt(BaseModel):
     mail_subject: str = ""
     mail_reply_text: str = ""
     mail_action_result_json: str = ""
+    reaction_action_result_json: str = ""
+    document_action_result_json: str = ""
     final_reply_text: str
     permission_action: str
     permission_reason: str
@@ -245,6 +276,7 @@ class ReplyTask(BaseModel):
     force_new_decision: bool = False
     oa_url: str = ""
     manual_rerun_attempt_id: int = 0
+    execution_generation: str = "initial"
     status: str
     attempts: int
     locked_at: str | None = None
@@ -433,6 +465,8 @@ class AutoReplyStore:
                     audit_documents_json text not null default '[]',
                     audit_tool_events_json text not null default '[]',
                     audit_summary text not null default '',
+                    universal_execution_id text not null default '',
+                    universal_execution_scope_id text not null default '',
                     oa_process_instance_id text not null default '',
                     oa_task_id text not null default '',
                     oa_url text not null default '',
@@ -447,6 +481,8 @@ class AutoReplyStore:
                     mail_subject text not null default '',
                     mail_reply_text text not null default '',
                     mail_action_result_json text not null default '',
+                    reaction_action_result_json text not null default '',
+                    document_action_result_json text not null default '',
                     final_reply_text text not null default '',
                     permission_action text not null default '',
                     permission_reason text not null default '',
@@ -496,6 +532,7 @@ class AutoReplyStore:
                     force_new_decision integer not null default 0,
                     oa_url text not null default '',
                     manual_rerun_attempt_id integer not null default 0,
+                    execution_generation text not null default 'initial',
                     status text not null default 'pending',
                     attempts integer not null default 0,
                     locked_at text,
@@ -506,6 +543,41 @@ class AutoReplyStore:
                 );
                 create index if not exists idx_reply_tasks_status
                     on reply_tasks(status, id);
+                create table if not exists universal_plan_executions (
+                    execution_scope_id text primary key,
+                    reply_task_id integer not null,
+                    execution_generation text not null,
+                    plan_json text not null,
+                    context_hash text not null default '',
+                    context_json text not null default '',
+                    status text not null default 'active',
+                    created_at text not null default current_timestamp,
+                    updated_at text not null default current_timestamp,
+                    unique(reply_task_id, execution_generation),
+                    foreign key(reply_task_id) references reply_tasks(id)
+                );
+                create table if not exists universal_action_executions (
+                    execution_id text primary key,
+                    execution_scope_id text not null,
+                    action_index integer not null,
+                    action_kind text not null,
+                    action_hash text not null,
+                    action_json text not null,
+                    canonical_payload_json text not null default '',
+                    lease_token text not null default '',
+                    lease_expires_at text not null default '',
+                    status text not null,
+                    attempt_id integer not null default 0,
+                    result_json text not null default '',
+                    error text not null default '',
+                    started_at text not null default '',
+                    completed_at text not null default '',
+                    created_at text not null default current_timestamp,
+                    updated_at text not null default current_timestamp,
+                    unique(execution_scope_id, action_index),
+                    foreign key(execution_scope_id)
+                        references universal_plan_executions(execution_scope_id)
+                );
                 create table if not exists wechat_read_state (
                     account_id text primary key,
                     account_dir text not null,
@@ -957,6 +1029,8 @@ class AutoReplyStore:
                 ("audit_documents_json", "text not null default '[]'"),
                 ("audit_tool_events_json", "text not null default '[]'"),
                 ("audit_summary", "text not null default ''"),
+                ("universal_execution_id", "text not null default ''"),
+                ("universal_execution_scope_id", "text not null default ''"),
                 ("oa_process_instance_id", "text not null default ''"),
                 ("oa_task_id", "text not null default ''"),
                 ("oa_url", "text not null default ''"),
@@ -971,6 +1045,8 @@ class AutoReplyStore:
                 ("mail_subject", "text not null default ''"),
                 ("mail_reply_text", "text not null default ''"),
                 ("mail_action_result_json", "text not null default ''"),
+                ("reaction_action_result_json", "text not null default ''"),
+                ("document_action_result_json", "text not null default ''"),
             ):
                 if column not in reply_attempt_columns:
                     try:
@@ -980,6 +1056,13 @@ class AutoReplyStore:
                     except sqlite3.OperationalError as exc:
                         if "duplicate column name" not in str(exc):
                             raise
+            db.execute(
+                """
+                create unique index if not exists idx_reply_attempts_universal_execution
+                on reply_attempts(universal_execution_id)
+                where universal_execution_id <> ''
+                """
+            )
             db.execute(
                 """
                 update reply_attempts
@@ -998,6 +1081,51 @@ class AutoReplyStore:
                 where send_status='needs_authorization'
                 """
             )
+            reply_task_columns = {
+                row["name"]
+                for row in db.execute("pragma table_info(reply_tasks)").fetchall()
+            }
+            for column, definition in (
+                ("trigger_message_json", "text not null default '{}'"),
+                ("available_at", "text not null default ''"),
+                ("force_new_decision", "integer not null default 0"),
+                ("oa_url", "text not null default ''"),
+                ("manual_rerun_attempt_id", "integer not null default 0"),
+                ("channel", "text not null default 'dingtalk'"),
+                ("execution_generation", "text not null default 'initial'"),
+            ):
+                if column not in reply_task_columns:
+                    db.execute(
+                        f"alter table reply_tasks add column {column} {definition}"
+                    )
+            universal_plan_execution_columns = {
+                row["name"]
+                for row in db.execute(
+                    "pragma table_info(universal_plan_executions)"
+                ).fetchall()
+            }
+            for column in ("context_hash", "context_json"):
+                if column not in universal_plan_execution_columns:
+                    db.execute(
+                        f"alter table universal_plan_executions add column {column} "
+                        "text not null default ''"
+                    )
+            universal_action_execution_columns = {
+                row["name"]
+                for row in db.execute(
+                    "pragma table_info(universal_action_executions)"
+                ).fetchall()
+            }
+            for column in (
+                "canonical_payload_json",
+                "lease_token",
+                "lease_expires_at",
+            ):
+                if column not in universal_action_execution_columns:
+                    db.execute(
+                        "alter table universal_action_executions add column "
+                        f"{column} text not null default ''"
+                    )
             for table_name in ("reply_attempts", "sent_replies"):
                 existing = {
                     row["name"]
@@ -1183,6 +1311,7 @@ class AutoReplyStore:
             force_new_decision=bool(row["force_new_decision"]),
             oa_url=row["oa_url"],
             manual_rerun_attempt_id=row["manual_rerun_attempt_id"],
+            execution_generation=row["execution_generation"],
             status=row["status"],
             attempts=row["attempts"],
             locked_at=row["locked_at"],
@@ -1212,7 +1341,13 @@ class AutoReplyStore:
         manual_rerun_attempt_id: int = 0,
         error: str = "",
         channel: str = "dingtalk",
+        execution_generation: str = "initial",
     ) -> bool:
+        if (
+            not isinstance(execution_generation, str)
+            or not execution_generation.strip()
+        ):
+            raise ValueError("execution_generation must be non-empty")
         with self._connect() as db:
             cursor = db.execute(
                 """
@@ -1230,9 +1365,10 @@ class AutoReplyStore:
                     force_new_decision,
                     oa_url,
                     manual_rerun_attempt_id,
+                    execution_generation,
                     error
                 )
-                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     channel,
@@ -1248,6 +1384,7 @@ class AutoReplyStore:
                     int(force_new_decision),
                     oa_url,
                     manual_rerun_attempt_id,
+                    execution_generation,
                     error,
                 ),
             )
@@ -1267,6 +1404,7 @@ class AutoReplyStore:
         oa_url: str = "",
         attempt_id: int = 0,
     ) -> ReplyTask:
+        execution_generation = uuid4().hex
         with self._connect() as db:
             db.execute(
                 """
@@ -1284,11 +1422,12 @@ class AutoReplyStore:
                     force_new_decision,
                     oa_url,
                     manual_rerun_attempt_id,
+                    execution_generation,
                     status,
                     locked_at,
                     error
                 )
-                values ('dingtalk', ?, ?, ?, ?, ?, ?, ?, ?, '', 1, ?, ?, 'pending', null, ?)
+                values ('dingtalk', ?, ?, ?, ?, ?, ?, ?, ?, '', 1, ?, ?, ?, 'pending', null, ?)
                 on conflict(channel, conversation_id, trigger_message_id) do update set
                     conversation_title=excluded.conversation_title,
                     single_chat=excluded.single_chat,
@@ -1300,6 +1439,7 @@ class AutoReplyStore:
                     force_new_decision=1,
                     oa_url=excluded.oa_url,
                     manual_rerun_attempt_id=excluded.manual_rerun_attempt_id,
+                    execution_generation=excluded.execution_generation,
                     status='pending',
                     locked_at=null,
                     error=excluded.error,
@@ -1316,6 +1456,7 @@ class AutoReplyStore:
                     trigger_message_json,
                     oa_url,
                     attempt_id,
+                    execution_generation,
                     f"manual_rerun_from_attempt:{attempt_id}",
                 ),
             )
@@ -1331,6 +1472,849 @@ class AutoReplyStore:
             if row is None:
                 raise RuntimeError("manual rerun reply task was not persisted")
             return self._reply_task_from_row(row)
+
+    @staticmethod
+    def _canonical_universal_plan_json(plan: UniversalPlan) -> str:
+        return json.dumps(
+            plan.model_dump(mode="json"),
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+
+    @staticmethod
+    def _universal_plan_execution_from_row(
+        row: sqlite3.Row,
+    ) -> UniversalPlanExecution:
+        plan = UniversalPlan.model_validate_json(row["plan_json"], strict=True)
+        return UniversalPlanExecution(
+            execution_scope_id=row["execution_scope_id"],
+            execution_generation=row["execution_generation"],
+            plan=plan,
+        )
+
+    @staticmethod
+    def _validate_reply_task_generation(
+        db: sqlite3.Connection,
+        task_id: int,
+        execution_generation: str,
+    ) -> sqlite3.Row:
+        if (
+            not isinstance(execution_generation, str)
+            or not execution_generation.strip()
+        ):
+            raise ValueError("execution_generation must be non-empty")
+        task = db.execute(
+            "select * from reply_tasks where id=?",
+            (task_id,),
+        ).fetchone()
+        if task is None:
+            raise ValueError("reply task not found")
+        if task["execution_generation"] != execution_generation:
+            raise ValueError("execution generation mismatch")
+        return task
+
+    @staticmethod
+    def _validate_context_matches_reply_task(
+        task: sqlite3.Row,
+        context: UniversalTaskContext,
+    ) -> None:
+        durable_context = (
+            task["id"],
+            task["conversation_id"],
+            task["conversation_title"],
+            bool(task["single_chat"]),
+            task["trigger_message_id"],
+            task["trigger_create_time"],
+            task["trigger_sender"],
+            task["trigger_text"],
+            bool(task["force_new_decision"]),
+            task["execution_generation"],
+        )
+        supplied_context = (
+            context.task_id,
+            context.conversation_id,
+            context.conversation_title,
+            context.single_chat,
+            context.trigger_message_id,
+            context.trigger_create_time,
+            context.trigger_sender,
+            context.trigger_text,
+            context.force_new_decision,
+            context.execution_generation,
+        )
+        if durable_context != supplied_context:
+            raise ValueError("task context mismatch")
+
+    @staticmethod
+    def _validate_plan_context_identity(
+        row: sqlite3.Row,
+        context_json: str,
+        context_hash: str,
+    ) -> None:
+        if not row["context_json"] or not row["context_hash"]:
+            raise ValueError("legacy plan context missing")
+        if row["context_json"] == context_json and row["context_hash"] == context_hash:
+            return
+        stored_json = row["context_json"]
+        if hashlib.sha256(stored_json.encode("utf-8")).hexdigest() != row["context_hash"]:
+            raise ValueError("context identity mismatch")
+        if hashlib.sha256(context_json.encode("utf-8")).hexdigest() != context_hash:
+            raise ValueError("context identity mismatch")
+        try:
+            stored = json.loads(stored_json)
+            current = json.loads(context_json)
+        except json.JSONDecodeError as exc:
+            raise ValueError("context identity mismatch") from exc
+        if not isinstance(stored, dict) or not isinstance(current, dict):
+            raise ValueError("context identity mismatch")
+        compatible_default_fields = {
+            "trusted_mail_mailbox",
+            "trusted_mail_message_id",
+            "trusted_mail_subject",
+            "trusted_calendar_event_id",
+            "trusted_calendar_response_status",
+            "trusted_calendar_organizer",
+        }
+        missing = set(current) - set(stored)
+        if (
+            set(stored) - set(current)
+            or not missing
+            or not missing <= compatible_default_fields
+            or any(current.get(field_name) != "" for field_name in missing)
+        ):
+            raise ValueError("context identity mismatch")
+        normalized_stored = dict(stored)
+        normalized_stored.update({field_name: "" for field_name in missing})
+        if normalized_stored != current:
+            raise ValueError("context identity mismatch")
+
+    def _validate_or_upgrade_plan_context_identity(
+        self,
+        db: sqlite3.Connection,
+        row: sqlite3.Row,
+        context_json: str,
+        context_hash: str,
+        trigger_create_time: str,
+    ) -> None:
+        try:
+            self._validate_plan_context_identity(row, context_json, context_hash)
+            return
+        except ValueError as exc:
+            if str(exc) != "context identity mismatch":
+                raise
+        try:
+            stored = json.loads(row["context_json"])
+            supplied = json.loads(context_json)
+        except (TypeError, json.JSONDecodeError):
+            raise ValueError("context identity mismatch") from None
+        if not isinstance(stored, dict) or not isinstance(supplied, dict):
+            raise ValueError("context identity mismatch")
+        if stored.get("trigger_create_time") not in {None, ""}:
+            raise ValueError("context identity mismatch")
+        supplied_trigger_time = supplied.get("trigger_create_time")
+        if supplied_trigger_time != trigger_create_time or not trigger_create_time:
+            raise ValueError("context identity mismatch")
+        stored_without_time = dict(stored)
+        supplied_without_time = dict(supplied)
+        stored_without_time.pop("trigger_create_time", None)
+        supplied_without_time.pop("trigger_create_time", None)
+        if stored_without_time != supplied_without_time:
+            raise ValueError("context identity mismatch")
+        trigger_messages = [
+            message
+            for message in supplied.get("context_messages", [])
+            if isinstance(message, dict)
+            and message.get("open_message_id") == supplied.get("trigger_message_id")
+        ]
+        known_message_times = {
+            message.get("create_time") for message in trigger_messages
+            if message.get("create_time")
+        }
+        if known_message_times and known_message_times != {trigger_create_time}:
+            raise ValueError("context identity mismatch")
+        cursor = db.execute(
+            """
+            update universal_plan_executions
+            set context_json=?, context_hash=?, updated_at=current_timestamp
+            where execution_scope_id=? and status='active'
+              and context_json=? and context_hash=?
+            """,
+            (
+                context_json,
+                context_hash,
+                row["execution_scope_id"],
+                row["context_json"],
+                row["context_hash"],
+            ),
+        )
+        if cursor.rowcount != 1:
+            raise ValueError("context identity mismatch")
+
+    def load_universal_plan_execution(
+        self,
+        context: UniversalTaskContext,
+    ) -> UniversalPlanExecution | None:
+        context_json = canonical_universal_context_json(context)
+        context_hash = universal_context_sha256(context)
+        with self._connect() as db:
+            db.execute("begin")
+            task = self._validate_reply_task_generation(
+                db,
+                context.task_id,
+                context.execution_generation,
+            )
+            self._validate_context_matches_reply_task(task, context)
+            row = db.execute(
+                """
+                select *
+                from universal_plan_executions
+                where reply_task_id=? and execution_generation=?
+                """,
+                (context.task_id, context.execution_generation),
+            ).fetchone()
+            if row is None:
+                return None
+            self._validate_or_upgrade_plan_context_identity(
+                db,
+                row,
+                context_json,
+                context_hash,
+                task["trigger_create_time"],
+            )
+            return self._universal_plan_execution_from_row(row)
+
+    def create_universal_plan_execution(
+        self,
+        context: UniversalTaskContext,
+        plan: UniversalPlan,
+    ) -> UniversalPlanExecution:
+        if not isinstance(plan, UniversalPlan):
+            raise TypeError("plan must be UniversalPlan")
+        context_json = canonical_universal_context_json(context)
+        context_hash = universal_context_sha256(context)
+        plan_json = self._canonical_universal_plan_json(plan)
+        with self._connect() as db:
+            db.execute("begin immediate")
+            task = self._validate_reply_task_generation(
+                db,
+                context.task_id,
+                context.execution_generation,
+            )
+            self._validate_context_matches_reply_task(task, context)
+            existing = db.execute(
+                """
+                select *
+                from universal_plan_executions
+                where reply_task_id=? and execution_generation=?
+                """,
+                (context.task_id, context.execution_generation),
+            ).fetchone()
+            if existing is not None:
+                self._validate_or_upgrade_plan_context_identity(
+                    db,
+                    existing,
+                    context_json,
+                    context_hash,
+                    task["trigger_create_time"],
+                )
+                return self._universal_plan_execution_from_row(existing)
+
+            execution_scope_id = uuid4().hex
+            db.execute(
+                """
+                insert into universal_plan_executions (
+                    execution_scope_id,
+                    reply_task_id,
+                    execution_generation,
+                    plan_json,
+                    context_hash,
+                    context_json
+                ) values (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    execution_scope_id,
+                    context.task_id,
+                    context.execution_generation,
+                    plan_json,
+                    context_hash,
+                    context_json,
+                ),
+            )
+            row = db.execute(
+                """
+                select *
+                from universal_plan_executions
+                where execution_scope_id=?
+                """,
+                (execution_scope_id,),
+            ).fetchone()
+            if row is None:
+                raise RuntimeError("universal plan execution was not persisted")
+            return self._universal_plan_execution_from_row(row)
+
+    def _validate_universal_action_execution(
+        self,
+        db: sqlite3.Connection,
+        execution: UniversalActionExecution,
+    ) -> sqlite3.Row | None:
+        if not isinstance(execution, UniversalActionExecution):
+            raise TypeError("execution must be UniversalActionExecution")
+        plan_row = db.execute(
+            """
+            select
+                universal_plan_executions.*,
+                reply_tasks.execution_generation as task_execution_generation,
+                reply_tasks.conversation_id as task_conversation_id,
+                reply_tasks.conversation_title as task_conversation_title,
+                reply_tasks.single_chat as task_single_chat,
+                reply_tasks.trigger_message_id as task_trigger_message_id,
+                reply_tasks.trigger_create_time as task_trigger_create_time,
+                reply_tasks.trigger_sender as task_trigger_sender,
+                reply_tasks.trigger_text as task_trigger_text,
+                reply_tasks.force_new_decision as task_force_new_decision
+            from universal_plan_executions
+            join reply_tasks
+              on reply_tasks.id=universal_plan_executions.reply_task_id
+            where universal_plan_executions.execution_scope_id=?
+            """,
+            (execution.execution_scope_id,),
+        ).fetchone()
+        if plan_row is None:
+            raise ValueError("execution scope mismatch")
+        if plan_row["status"] != "active":
+            raise ValueError("plan execution is not active")
+
+        context = execution.context
+        if plan_row["reply_task_id"] != context.task_id:
+            raise ValueError("task context mismatch")
+        if (
+            plan_row["execution_generation"] != context.execution_generation
+            or plan_row["task_execution_generation"] != context.execution_generation
+        ):
+            raise ValueError("execution generation mismatch")
+        durable_context = (
+            plan_row["task_conversation_id"],
+            plan_row["task_conversation_title"],
+            bool(plan_row["task_single_chat"]),
+            plan_row["task_trigger_message_id"],
+            plan_row["task_trigger_create_time"],
+            plan_row["task_trigger_sender"],
+            plan_row["task_trigger_text"],
+            bool(plan_row["task_force_new_decision"]),
+        )
+        supplied_context = (
+            context.conversation_id,
+            context.conversation_title,
+            context.single_chat,
+            context.trigger_message_id,
+            context.trigger_create_time,
+            context.trigger_sender,
+            context.trigger_text,
+            context.force_new_decision,
+        )
+        if durable_context != supplied_context:
+            raise ValueError("task context mismatch")
+        self._validate_or_upgrade_plan_context_identity(
+            db,
+            plan_row,
+            canonical_universal_context_json(context),
+            universal_context_sha256(context),
+            plan_row["task_trigger_create_time"],
+        )
+
+        plan_execution = self._universal_plan_execution_from_row(plan_row)
+        if (
+            not isinstance(execution.action_index, int)
+            or isinstance(execution.action_index, bool)
+            or execution.action_index < 0
+            or execution.action_index >= len(plan_execution.plan.actions)
+        ):
+            raise ValueError("action index mismatch")
+        planned_action = plan_execution.plan.actions[execution.action_index]
+        expected = build_universal_action_execution(
+            context,
+            plan_execution,
+            planned_action,
+            execution.action_index,
+        )
+        expected_action_json = canonical_universal_action_json(planned_action)
+        supplied_action_json = canonical_universal_action_json(execution.action)
+        if (
+            execution.execution_id != expected.execution_id
+            or execution.action_hash != expected.action_hash
+            or supplied_action_json != expected_action_json
+        ):
+            raise ValueError("action identity mismatch")
+
+        action_row = db.execute(
+            """
+            select *
+            from universal_action_executions
+            where execution_scope_id=? and action_index=?
+            """,
+            (execution.execution_scope_id, execution.action_index),
+        ).fetchone()
+        if action_row is None:
+            return None
+        if (
+            action_row["execution_id"] != execution.execution_id
+            or action_row["execution_scope_id"] != execution.execution_scope_id
+            or action_row["action_index"] != execution.action_index
+            or action_row["action_kind"] != execution.action.kind.value
+            or action_row["action_hash"] != execution.action_hash
+            or action_row["action_json"] != expected_action_json
+        ):
+            raise ValueError("action identity mismatch")
+        return action_row
+
+    def get_universal_action_execution_state(
+        self,
+        execution: UniversalActionExecution,
+    ) -> UniversalActionExecutionState:
+        with self._connect() as db:
+            db.execute("begin")
+            row = self._validate_universal_action_execution(db, execution)
+            if row is None or row["status"] == "failed":
+                return UniversalActionExecutionState.NOT_STARTED
+            if row["status"] == "succeeded":
+                return UniversalActionExecutionState.SUCCEEDED
+            return UniversalActionExecutionState.UNKNOWN
+
+    def claim_universal_action_execution(
+        self,
+        execution: UniversalActionExecution,
+    ) -> UniversalActionExecutionState:
+        with self._connect() as db:
+            db.execute("begin immediate")
+            row = self._validate_universal_action_execution(db, execution)
+            if row is None:
+                db.execute(
+                    """
+                    insert into universal_action_executions (
+                        execution_id,
+                        execution_scope_id,
+                        action_index,
+                        action_kind,
+                        action_hash,
+                        action_json,
+                        status,
+                        started_at
+                    ) values (?, ?, ?, ?, ?, ?, 'started', current_timestamp)
+                    """,
+                    (
+                        execution.execution_id,
+                        execution.execution_scope_id,
+                        execution.action_index,
+                        execution.action.kind.value,
+                        execution.action_hash,
+                        canonical_universal_action_json(execution.action),
+                    ),
+                )
+                return UniversalActionExecutionState.NOT_STARTED
+            if row["status"] == "failed":
+                db.execute(
+                    """
+                    update universal_action_executions
+                    set status='started',
+                        attempt_id=0,
+                        result_json='',
+                        error='',
+                        started_at=current_timestamp,
+                        completed_at='',
+                        updated_at=current_timestamp
+                    where execution_id=?
+                    """,
+                    (execution.execution_id,),
+                )
+                return UniversalActionExecutionState.NOT_STARTED
+            if row["status"] == "succeeded":
+                return UniversalActionExecutionState.SUCCEEDED
+            return UniversalActionExecutionState.UNKNOWN
+
+    def claim_universal_memory_action_execution(
+        self,
+        execution: UniversalActionExecution,
+        canonical_payload_json: str,
+    ) -> UniversalMemoryActionClaim:
+        if execution.action.kind is not PlannedActionKind.MEMORY_WRITE:
+            raise ValueError("memory claim requires a memory_write action")
+        try:
+            payload = json.loads(canonical_payload_json)
+        except (TypeError, json.JSONDecodeError):
+            raise ValueError("canonical memory payload must be valid JSON") from None
+        if not isinstance(payload, dict) or json.dumps(
+            payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ) != canonical_payload_json:
+            raise ValueError("canonical memory payload must be canonical JSON")
+
+        with self._connect() as db:
+            db.execute("begin immediate")
+            row = self._validate_universal_action_execution(db, execution)
+            lease_token = uuid4().hex
+            if row is None:
+                db.execute(
+                    """
+                    insert into universal_action_executions (
+                        execution_id,
+                        execution_scope_id,
+                        action_index,
+                        action_kind,
+                        action_hash,
+                        action_json,
+                        canonical_payload_json,
+                        status,
+                        started_at,
+                        lease_token,
+                        lease_expires_at
+                    ) values (
+                        ?, ?, ?, ?, ?, ?, ?, 'started', current_timestamp, ?,
+                        datetime(current_timestamp, '+' || ? || ' seconds')
+                    )
+                    """,
+                    (
+                        execution.execution_id,
+                        execution.execution_scope_id,
+                        execution.action_index,
+                        execution.action.kind.value,
+                        execution.action_hash,
+                        canonical_universal_action_json(execution.action),
+                        canonical_payload_json,
+                        lease_token,
+                        UNIVERSAL_MEMORY_LEASE_SECONDS,
+                    ),
+                )
+                return UniversalMemoryActionClaim(
+                    UniversalActionExecutionState.NOT_STARTED,
+                    lease_token,
+                )
+            if row["canonical_payload_json"] != canonical_payload_json:
+                raise ValueError("memory payload identity mismatch")
+            if row["status"] == "succeeded":
+                return UniversalMemoryActionClaim(
+                    UniversalActionExecutionState.SUCCEEDED
+                )
+            if row["status"] == "started" and db.execute(
+                "select datetime(?) > current_timestamp",
+                (row["lease_expires_at"],),
+            ).fetchone()[0]:
+                return UniversalMemoryActionClaim(
+                    UniversalActionExecutionState.UNKNOWN
+                )
+            previous_status = row["status"]
+            if previous_status not in {"started", "unknown", "failed"}:
+                return UniversalMemoryActionClaim(
+                    UniversalActionExecutionState.UNKNOWN
+                )
+            cursor = db.execute(
+                """
+                update universal_action_executions
+                set status='started',
+                    result_json='',
+                    error='',
+                    started_at=current_timestamp,
+                    lease_token=?,
+                    lease_expires_at=datetime(
+                        current_timestamp, '+' || ? || ' seconds'
+                    ),
+                    completed_at='',
+                    updated_at=current_timestamp
+                where execution_id=? and status=?
+                """,
+                (
+                    lease_token,
+                    UNIVERSAL_MEMORY_LEASE_SECONDS,
+                    execution.execution_id,
+                    previous_status,
+                ),
+            )
+            if cursor.rowcount != 1:
+                return UniversalMemoryActionClaim(
+                    UniversalActionExecutionState.UNKNOWN
+                )
+            return UniversalMemoryActionClaim(
+                UniversalActionExecutionState.NOT_STARTED,
+                lease_token,
+            )
+
+    def complete_universal_memory_action_execution(
+        self,
+        execution: UniversalActionExecution,
+        *,
+        canonical_payload_json: str,
+        lease_token: str,
+        attempt_id: int,
+        result_json: str,
+    ) -> None:
+        self._transition_universal_memory_action_execution(
+            execution,
+            canonical_payload_json=canonical_payload_json,
+            lease_token=lease_token,
+            status="succeeded",
+            attempt_id=attempt_id,
+            result_json=result_json,
+            error="",
+        )
+
+    def mark_universal_memory_action_execution(
+        self,
+        execution: UniversalActionExecution,
+        *,
+        canonical_payload_json: str,
+        lease_token: str,
+        status: str,
+        error: str,
+    ) -> None:
+        if status not in {"unknown", "failed"}:
+            raise ValueError("invalid memory action transition")
+        self._transition_universal_memory_action_execution(
+            execution,
+            canonical_payload_json=canonical_payload_json,
+            lease_token=lease_token,
+            status=status,
+            attempt_id=0,
+            result_json="",
+            error=error,
+        )
+
+    def _transition_universal_memory_action_execution(
+        self,
+        execution: UniversalActionExecution,
+        *,
+        canonical_payload_json: str,
+        lease_token: str,
+        status: str,
+        attempt_id: int,
+        result_json: str,
+        error: str,
+    ) -> None:
+        if not lease_token:
+            raise ValueError("memory action lease token is required")
+        with self._connect() as db:
+            db.execute("begin immediate")
+            row = self._validate_universal_action_execution(db, execution)
+            if row is None or row["canonical_payload_json"] != canonical_payload_json:
+                raise ValueError("memory payload identity mismatch")
+            cursor = db.execute(
+                """
+                update universal_action_executions
+                set status=?, attempt_id=?, result_json=?, error=?,
+                    completed_at=case when ?='succeeded' then current_timestamp else '' end,
+                    lease_token='', lease_expires_at='', updated_at=current_timestamp
+                where execution_id=? and status='started' and lease_token=?
+                      and canonical_payload_json=?
+                """,
+                (
+                    status,
+                    attempt_id,
+                    result_json,
+                    error,
+                    status,
+                    execution.execution_id,
+                    lease_token,
+                    canonical_payload_json,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("memory action lease ownership mismatch")
+
+    @staticmethod
+    def _valid_universal_recovery_checkpoint(
+        execution: UniversalActionExecution,
+        checkpoint_json: str,
+    ) -> bool:
+        if not checkpoint_json.strip():
+            return False
+        try:
+            checkpoint = json.loads(checkpoint_json)
+        except json.JSONDecodeError:
+            return False
+        if not isinstance(checkpoint, dict):
+            return False
+        if execution.action.kind is PlannedActionKind.DWS_MARKDOWN_DOCUMENT_REPLY:
+            return (
+                isinstance(checkpoint.get("doc_result"), dict)
+                and bool(str(checkpoint.get("node_id") or "").strip())
+                and bool(str(checkpoint.get("url") or "").strip())
+            )
+        if (
+            execution.action.kind is PlannedActionKind.DWS_MESSAGE_REACTION
+            and str(execution.action.payload.get("reaction_type") or "emoji").strip()
+            == "text_emotion"
+        ):
+            create = checkpoint.get("create")
+            add_state = str(checkpoint.get("add_state") or "").strip()
+            return (
+                isinstance(create, dict)
+                and isinstance(create.get("result"), dict)
+                and create.get("trusted") is True
+                and bool(str(create.get("emotion_id") or "").strip())
+                and add_state not in {"ambiguous", "started"}
+            )
+        return False
+
+    def claim_universal_action_execution_recovery(
+        self,
+        execution: UniversalActionExecution,
+        *,
+        checkpoint_column: str,
+    ) -> tuple[UniversalActionExecutionState, str]:
+        if checkpoint_column not in {
+            "document_action_result_json",
+            "reaction_action_result_json",
+        }:
+            raise ValueError("unsupported universal recovery checkpoint")
+        with self._connect() as db:
+            db.execute("begin immediate")
+            row = self._validate_universal_action_execution(db, execution)
+            attempt = db.execute(
+                f"""
+                select {checkpoint_column} as checkpoint_json
+                from reply_attempts
+                where universal_execution_id=?
+                """,
+                (execution.execution_id,),
+            ).fetchone()
+            checkpoint_json = (
+                str(attempt["checkpoint_json"] or "") if attempt is not None else ""
+            )
+            has_checkpoint = self._valid_universal_recovery_checkpoint(
+                execution,
+                checkpoint_json,
+            )
+            if row is None:
+                db.execute(
+                    """
+                    insert into universal_action_executions (
+                        execution_id,
+                        execution_scope_id,
+                        action_index,
+                        action_kind,
+                        action_hash,
+                        action_json,
+                        status,
+                        started_at
+                    ) values (?, ?, ?, ?, ?, ?, 'started', current_timestamp)
+                    """,
+                    (
+                        execution.execution_id,
+                        execution.execution_scope_id,
+                        execution.action_index,
+                        execution.action.kind.value,
+                        execution.action_hash,
+                        canonical_universal_action_json(execution.action),
+                    ),
+                )
+                return UniversalActionExecutionState.NOT_STARTED, checkpoint_json
+            if row["status"] == "failed":
+                db.execute(
+                    """
+                    update universal_action_executions
+                    set status='started',
+                        attempt_id=0,
+                        result_json='',
+                        error='',
+                        started_at=current_timestamp,
+                        completed_at='',
+                        updated_at=current_timestamp
+                    where execution_id=? and status='failed'
+                    """,
+                    (execution.execution_id,),
+                )
+                return UniversalActionExecutionState.NOT_STARTED, checkpoint_json
+            if row["status"] == "succeeded":
+                return UniversalActionExecutionState.SUCCEEDED, checkpoint_json
+            if row["status"] == "started" and has_checkpoint:
+                cursor = db.execute(
+                    """
+                    update universal_action_executions
+                    set status='recovering',
+                        started_at=current_timestamp,
+                        updated_at=current_timestamp
+                    where execution_id=? and status='started'
+                    """,
+                    (execution.execution_id,),
+                )
+                if cursor.rowcount == 1:
+                    return UniversalActionExecutionState.NOT_STARTED, checkpoint_json
+            return UniversalActionExecutionState.UNKNOWN, checkpoint_json
+
+    def complete_universal_action_execution(
+        self,
+        execution: UniversalActionExecution,
+        attempt_id: int = 0,
+        result_json: str = "",
+    ) -> None:
+        with self._connect() as db:
+            db.execute("begin immediate")
+            row = self._validate_universal_action_execution(db, execution)
+            if row is None or row["status"] not in {"started", "recovering"}:
+                raise ValueError("universal action execution must be started")
+            cursor = db.execute(
+                """
+                update universal_action_executions
+                set status='succeeded',
+                    attempt_id=?,
+                    result_json=?,
+                    error='',
+                    completed_at=current_timestamp,
+                    updated_at=current_timestamp
+                where execution_id=? and status in ('started', 'recovering')
+                """,
+                (attempt_id, result_json, execution.execution_id),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("universal action execution must be started")
+
+    def mark_universal_action_execution_unknown(
+        self,
+        execution: UniversalActionExecution,
+        error: str,
+    ) -> None:
+        self._mark_universal_action_execution(
+            execution,
+            status="unknown",
+            error=error,
+        )
+
+    def mark_universal_action_execution_failed(
+        self,
+        execution: UniversalActionExecution,
+        error: str,
+    ) -> None:
+        self._mark_universal_action_execution(
+            execution,
+            status="failed",
+            error=error,
+        )
+
+    def _mark_universal_action_execution(
+        self,
+        execution: UniversalActionExecution,
+        *,
+        status: str,
+        error: str,
+    ) -> None:
+        with self._connect() as db:
+            db.execute("begin immediate")
+            row = self._validate_universal_action_execution(db, execution)
+            if row is None or row["status"] not in {"started", "recovering"}:
+                raise ValueError("universal action execution must be started")
+            cursor = db.execute(
+                """
+                update universal_action_executions
+                set status=?,
+                    error=?,
+                    updated_at=current_timestamp
+                where execution_id=? and status in ('started', 'recovering')
+                """,
+                (status, error, execution.execution_id),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("universal action execution must be started")
 
     def claim_reply_tasks(
         self, limit: int, now: str | None = None, *, channel: str = "dingtalk"
@@ -1599,6 +2583,23 @@ class AutoReplyStore:
                 """,
                 (available_at, error, task_id),
             )
+
+    def rotate_reply_task_execution_generation(self, task_id: int) -> str:
+        execution_generation = uuid4().hex
+        with self._connect() as db:
+            cursor = db.execute(
+                """
+                update reply_tasks
+                set force_new_decision=1,
+                    execution_generation=?,
+                    updated_at=current_timestamp
+                where id=? and status in ('processing', 'pending')
+                """,
+                (execution_generation, task_id),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("retryable reply task was not found")
+        return execution_generation
 
     def defer_reply_task(
         self, task_id: int, error: str, *, available_at: str = ""
@@ -3382,6 +4383,16 @@ class AutoReplyStore:
             ).fetchone()
             return row is not None
 
+    def sent_reply_exists(
+        self,
+        conversation_id: str,
+        trigger_message_id: str,
+    ) -> bool:
+        return self.has_sent_reply_for_trigger(
+            conversation_id,
+            trigger_message_id,
+        )
+
     def get_sent_reply(
         self, conversation_id: str, trigger_message_id: str
     ) -> SentReply | None:
@@ -3810,6 +4821,8 @@ class AutoReplyStore:
         audit_documents_json: str = "[]",
         audit_tool_events_json: str = "[]",
         audit_summary: str = "",
+        universal_execution_id: str = "",
+        universal_execution_scope_id: str = "",
         oa_process_instance_id: str = "",
         oa_task_id: str = "",
         oa_url: str = "",
@@ -3848,6 +4861,8 @@ class AutoReplyStore:
                     audit_documents_json,
                     audit_tool_events_json,
                     audit_summary,
+                    universal_execution_id,
+                    universal_execution_scope_id,
                     oa_process_instance_id,
                     oa_task_id,
                     oa_url,
@@ -3865,7 +4880,7 @@ class AutoReplyStore:
                     send_status,
                     channel
                 )
-                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     conversation_id,
@@ -3885,6 +4900,8 @@ class AutoReplyStore:
                     audit_documents_json,
                     audit_tool_events_json,
                     audit_summary,
+                    universal_execution_id,
+                    universal_execution_scope_id,
                     oa_process_instance_id,
                     oa_task_id,
                     oa_url,
@@ -3901,6 +4918,129 @@ class AutoReplyStore:
                     mail_action_result_json,
                     send_status,
                     channel,
+                ),
+            )
+            attempt_id = int(cursor.lastrowid)
+            self._record_memory_write_events_in_connection(
+                db,
+                attempt_id,
+                audit_tool_events_json,
+            )
+            return attempt_id
+
+    def record_universal_reply_attempt(
+        self,
+        execution: UniversalActionExecution,
+        *,
+        conversation_id: str,
+        conversation_title: str,
+        trigger_message_id: str,
+        trigger_sender: str,
+        trigger_text: str,
+        action: str,
+        sensitivity_kind: str,
+        codex_reason: str = "",
+        draft_reply_text: str = "",
+        audit_tool_events_json: str = "[]",
+        audit_summary: str = "",
+        send_status: str = "pending",
+    ) -> int:
+        if execution.context.conversation_id != conversation_id:
+            raise ValueError("universal attempt conversation mismatch")
+        if execution.context.trigger_message_id != trigger_message_id:
+            raise ValueError("universal attempt trigger mismatch")
+        if execution.action.kind.value != action:
+            raise ValueError("universal attempt action mismatch")
+        with self._connect() as db:
+            db.execute("begin immediate")
+            execution_row = self._validate_universal_action_execution(db, execution)
+            if execution_row is None or execution_row["status"] not in {
+                "started",
+                "recovering",
+            }:
+                raise ValueError("universal action execution must be started")
+            existing = db.execute(
+                """
+                select * from reply_attempts
+                where universal_execution_id=?
+                """,
+                (execution.execution_id,),
+            ).fetchone()
+            if existing is not None:
+                immutable_fields = {
+                    "universal_execution_scope_id": execution.execution_scope_id,
+                    "conversation_id": conversation_id,
+                    "conversation_title": conversation_title,
+                    "trigger_message_id": trigger_message_id,
+                    "trigger_sender": trigger_sender,
+                    "trigger_text": trigger_text,
+                    "action": action,
+                    "sensitivity_kind": sensitivity_kind,
+                    "codex_reason": codex_reason,
+                    "draft_reply_text": draft_reply_text,
+                }
+                mismatched_fields = [
+                    field_name
+                    for field_name, expected_value in immutable_fields.items()
+                    if existing[field_name] != expected_value
+                ]
+                if mismatched_fields:
+                    raise ValueError(
+                        "universal attempt identity mismatch: "
+                        + ", ".join(mismatched_fields)
+                    )
+                db.execute(
+                    """
+                    update reply_attempts
+                    set direct_user_id='',
+                        direct_open_dingtalk_id='',
+                        final_reply_text='',
+                        permission_action='',
+                        permission_reason='',
+                        send_status=?,
+                        send_error='',
+                        retry_count=retry_count + 1,
+                        updated_at=current_timestamp
+                    where id=?
+                    """,
+                    (send_status, existing["id"]),
+                )
+                return int(existing["id"])
+
+            cursor = db.execute(
+                """
+                insert into reply_attempts (
+                    conversation_id,
+                    conversation_title,
+                    trigger_message_id,
+                    trigger_sender,
+                    trigger_text,
+                    action,
+                    sensitivity_kind,
+                    codex_reason,
+                    draft_reply_text,
+                    audit_tool_events_json,
+                    audit_summary,
+                    universal_execution_id,
+                    universal_execution_scope_id,
+                    send_status
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    conversation_id,
+                    conversation_title,
+                    trigger_message_id,
+                    trigger_sender,
+                    trigger_text,
+                    action,
+                    sensitivity_kind,
+                    codex_reason,
+                    draft_reply_text,
+                    audit_tool_events_json,
+                    audit_summary,
+                    execution.execution_id,
+                    execution.execution_scope_id,
+                    send_status,
                 ),
             )
             attempt_id = int(cursor.lastrowid)
@@ -3950,8 +5090,10 @@ class AutoReplyStore:
         existing_attempt = self.get_latest_reply_attempt_for_trigger(
             conversation_id, trigger_message_id
         )
-        if existing_attempt is None or self.has_sent_reply_for_trigger(
-            conversation_id, trigger_message_id
+        if (
+            existing_attempt is None
+            or existing_attempt.universal_execution_id
+            or self.has_sent_reply_for_trigger(conversation_id, trigger_message_id)
         ):
             return self.record_reply_attempt(
                 conversation_id=conversation_id,
@@ -4098,7 +5240,10 @@ class AutoReplyStore:
         mail_subject: str | None = None,
         mail_reply_text: str | None = None,
         mail_action_result_json: str | None = None,
+        reaction_action_result_json: str | None = None,
+        document_action_result_json: str | None = None,
         audit_tool_events_json: str | None = None,
+        audit_summary: str | None = None,
         send_status: str | None = None,
         send_error: str | None = None,
         retry_count: int | None = None,
@@ -4124,7 +5269,10 @@ class AutoReplyStore:
             mail_subject=mail_subject,
             mail_reply_text=mail_reply_text,
             mail_action_result_json=mail_action_result_json,
+            reaction_action_result_json=reaction_action_result_json,
+            document_action_result_json=document_action_result_json,
             audit_tool_events_json=audit_tool_events_json,
+            audit_summary=audit_summary,
             send_status=send_status,
             send_error=send_error,
             retry_count=retry_count,
@@ -4366,7 +5514,10 @@ class AutoReplyStore:
             "mail_subject",
             "mail_reply_text",
             "mail_action_result_json",
+            "reaction_action_result_json",
+            "document_action_result_json",
             "audit_tool_events_json",
+            "audit_summary",
             "send_status",
             "send_error",
             "retry_count",
@@ -4424,6 +5575,125 @@ class AutoReplyStore:
             if row is None:
                 return None
             return ReplyAttempt.model_validate(dict(row))
+
+    def get_universal_execution_observability(
+        self,
+        attempt_id: int,
+    ) -> UniversalExecutionObservation | None:
+        return self.list_universal_execution_observability([attempt_id]).get(
+            attempt_id
+        )
+
+    def list_universal_execution_observability(
+        self,
+        attempt_ids: list[int],
+    ) -> dict[int, UniversalExecutionObservation]:
+        if not attempt_ids:
+            return {}
+        placeholders = ",".join("?" for _ in attempt_ids)
+        with self._connect() as db:
+            plan_rows = db.execute(
+                f"""
+                select
+                    attempts.id as attempt_id,
+                    plans.execution_scope_id,
+                    plans.plan_json,
+                    plans.context_json,
+                    tasks.status as task_status,
+                    tasks.error as task_error
+                from reply_attempts as attempts
+                join universal_plan_executions as plans
+                  on plans.execution_scope_id=attempts.universal_execution_scope_id
+                join reply_tasks as tasks on tasks.id=plans.reply_task_id
+                where attempts.id in ({placeholders})
+                """,
+                attempt_ids,
+            ).fetchall()
+            scope_ids = [row["execution_scope_id"] for row in plan_rows]
+            action_rows: list[sqlite3.Row] = []
+            if scope_ids:
+                scope_placeholders = ",".join("?" for _ in scope_ids)
+                action_rows = db.execute(
+                    f"""
+                    select execution_scope_id, action_index, action_kind, status, error
+                    from universal_action_executions
+                    where execution_scope_id in ({scope_placeholders})
+                    order by execution_scope_id, action_index
+                    """,
+                    scope_ids,
+                ).fetchall()
+
+        actions_by_scope = {
+            scope_id: {
+                int(row["action_index"]): row
+                for row in action_rows
+                if row["execution_scope_id"] == scope_id
+            }
+            for scope_id in scope_ids
+        }
+        observations: dict[int, UniversalExecutionObservation] = {}
+        for row in plan_rows:
+            plan = UniversalPlan.model_validate_json(row["plan_json"])
+            context_payload = json.loads(row["context_json"])
+            required_dependencies = context_payload.get("required_dependencies", [])
+            dependencies = list(
+                dict.fromkeys(
+                    [
+                        dependency
+                        for dependency in required_dependencies
+                        if isinstance(dependency, str) and dependency
+                    ]
+                    + [str(dependency) for dependency in plan.dependencies]
+                )
+            )
+            blocking_dependency = self._universal_blocking_dependency(
+                dependencies,
+                row["task_status"],
+                row["task_error"],
+            )
+            persisted_actions = actions_by_scope.get(row["execution_scope_id"], {})
+            observations[int(row["attempt_id"])] = UniversalExecutionObservation(
+                capability=plan.task_kind,
+                dependencies=dependencies,
+                blocking_dependency=blocking_dependency,
+                actions=[
+                    UniversalActionObservation(
+                        index=index,
+                        kind=action.kind.value,
+                        status=(
+                            persisted_actions[index]["status"]
+                            if index in persisted_actions
+                            else "not_started"
+                        ),
+                        error=(
+                            safe_observability_error(persisted_actions[index]["error"])
+                            if index in persisted_actions
+                            else ""
+                        ),
+                    )
+                    for index, action in enumerate(plan.actions)
+                ],
+            )
+        return observations
+
+    @staticmethod
+    def _universal_blocking_dependency(
+        dependencies: list[str],
+        task_status: str,
+        task_error: str,
+    ) -> str:
+        if task_status not in {"pending", "processing", "failed"}:
+            return ""
+        normalized_error = task_error.strip().casefold()
+        for dependency in dependencies:
+            normalized_dependency = dependency.casefold()
+            if normalized_error in {
+                f"{normalized_dependency}_unavailable",
+                f"{normalized_dependency}_authorization_required",
+                f"dependency_status_missing:{normalized_dependency}",
+            }:
+                return dependency
+        return ""
 
     def get_latest_reply_attempt_for_trigger(
         self, conversation_id: str, trigger_message_id: str
@@ -4497,7 +5767,23 @@ class AutoReplyStore:
             args.extend([limit, max(0, offset)])
         with self._connect() as db:
             rows = db.execute(query, args).fetchall()
-        return [HistoryItem.model_validate(dict(row)) for row in rows]
+        items = [HistoryItem.model_validate(dict(row)) for row in rows]
+        observations = self.list_universal_execution_observability(
+            [item.source_id for item in items if item.kind == "reply"]
+        )
+        return [
+            item.model_copy(
+                update={
+                    "planner_kind": observation.planner_kind,
+                    "capability": observation.capability,
+                    "blocking_dependency": observation.blocking_dependency,
+                    "planned_actions": observation.actions,
+                }
+            )
+            if (observation := observations.get(item.source_id)) is not None
+            else item
+            for item in items
+        ]
 
     def count_history_items(
         self,

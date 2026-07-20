@@ -8,6 +8,8 @@ dependencies = [
   "cryptography>=42",
   "fastapi>=0.115",
   "jieba>=0.42",
+  "keyring>=25,<26",
+  "mcp==1.27.0",
   "pypdf>=5.0",
   "pydantic>=2.10",
   "robust-json-parser>=0.1.6,<0.2",

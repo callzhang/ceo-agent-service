@@ -39,6 +39,9 @@ from app.config import load_env_file
 from app.dingtalk_models import DingTalkConversation, DingTalkMessage
 from app.setup_wizard_models import SetupWizardEvent
 from app.store import AutoReplyStore
+from app.universal_context import UniversalTaskContext
+from app.universal_executor import build_universal_action_execution
+from app.universal_plan import PlannedAction, PlannedActionKind, UniversalAudit, UniversalPlan
 
 
 def task_script_json(html: str, element_id: str):
@@ -3495,6 +3498,93 @@ def test_render_attempt_detail_shows_full_decision_and_feedback_form(tmp_path: P
     assert "/codex/session-1" in html
     assert "Codex local history" not in html
     assert "Final reply (send-ready text)" not in html
+
+
+def test_history_and_attempt_detail_show_redacted_universal_execution(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    assert store.enqueue_reply_task(
+        conversation_id="cid-universal-audit",
+        conversation_title="通用任务群",
+        single_chat=False,
+        trigger_message_id="msg-universal-audit",
+        trigger_create_time="2026-07-21 10:00:00",
+        trigger_sender="Mina",
+        trigger_text="请处理并记录",
+    )
+    task = store.claim_reply_tasks(limit=1)[0]
+    context = UniversalTaskContext(
+        task_id=task.id,
+        conversation_id=task.conversation_id,
+        conversation_title=task.conversation_title,
+        single_chat=task.single_chat,
+        trigger_message_id=task.trigger_message_id,
+        trigger_create_time=task.trigger_create_time,
+        trigger_sender=task.trigger_sender,
+        trigger_text=task.trigger_text,
+        context_messages=(),
+        required_dependencies=("dws",),
+        force_new_decision=False,
+        dry_run=False,
+        execution_generation=task.execution_generation,
+    )
+    plan = UniversalPlan(
+        task_kind="document_review",
+        reason="Review and answer",
+        dependencies=["dws", "memory"],
+        actions=[
+            PlannedAction(
+                kind=PlannedActionKind.SEND_REPLY,
+                reason="Send the review",
+                sensitivity_kind="general",
+                payload={"text": "AUDIT_SECRET_SENTINEL"},
+            ),
+            PlannedAction(
+                kind=PlannedActionKind.MEMORY_WRITE,
+                reason="Store the decision",
+                payload={"data": "Durable review decision.", "type": "text"},
+            ),
+        ],
+        audit=UniversalAudit(summary="Review complete", confidence=0.9),
+    )
+    plan_execution = store.create_universal_plan_execution(context, plan)
+    reply_execution = build_universal_action_execution(
+        context, plan_execution, plan.actions[0], 0
+    )
+    store.claim_universal_action_execution(reply_execution)
+    attempt_id = store.record_universal_reply_attempt(
+        reply_execution,
+        conversation_id=task.conversation_id,
+        conversation_title=task.conversation_title,
+        trigger_message_id=task.trigger_message_id,
+        trigger_sender=task.trigger_sender,
+        trigger_text=task.trigger_text,
+        action="send_reply",
+        sensitivity_kind="general",
+        send_status="sent",
+    )
+    store.complete_universal_action_execution(reply_execution, attempt_id=attempt_id)
+    memory_execution = build_universal_action_execution(
+        context, plan_execution, plan.actions[1], 1
+    )
+    store.claim_universal_action_execution(memory_execution)
+    store.mark_universal_action_execution_unknown(memory_execution, "timeout after write")
+    store.fail_reply_task(task.id, "action_execution_unknown:memory")
+
+    history_html = render_attempt_list(store)
+    status, detail_html = render_attempt_detail(store, attempt_id)
+
+    assert status == 200
+    for html in (history_html, detail_html):
+        assert "Universal planner" in html
+        assert "document_review" in html
+        assert "memory" in html
+        assert "AUDIT_SECRET_SENTINEL" not in html
+    assert "send_reply" in detail_html
+    assert "Succeeded" in detail_html
+    assert "memory_write" in detail_html
+    assert "Unknown" in detail_html
+    assert "timeout after write" in detail_html
+    assert "plan_json" not in detail_html
 
 
 def test_render_attempt_detail_renders_audit_tool_inputs_and_outputs(tmp_path: Path):
