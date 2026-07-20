@@ -712,6 +712,14 @@ class DingTalkAutoReplyWorker:
                 send_status="skipped",
                 send_error="oa_already_handled",
             )
+        if preflight == "handled_by_different_action":
+            return self._finalize_universal_oa_action(
+                execution,
+                attempt_id=attempt_id,
+                outcome="handled_by_different_action",
+                send_status="skipped",
+                send_error="oa_handled_by_different_action",
+            )
         if preflight != "actionable":
             return self._finalize_universal_oa_action(
                 execution,
@@ -778,17 +786,26 @@ class DingTalkAutoReplyWorker:
                     oa_remark,
                 )
         except Exception as exc:
-            if self._universal_oa_action_was_applied(
+            completion = self._universal_oa_action_completion_state(
                 process_instance_id=process_instance_id,
                 task_id=task_id,
                 current_user_id=current_user_id,
                 action=oa_action,
-            ):
+            )
+            if completion == "expected":
                 return self._finalize_universal_oa_action(
                     execution,
                     attempt_id=attempt_id,
                     outcome="salvaged",
                     send_status="skipped",
+                )
+            if completion == "different":
+                return self._finalize_universal_oa_action(
+                    execution,
+                    attempt_id=attempt_id,
+                    outcome="handled_by_different_action",
+                    send_status="skipped",
+                    send_error="oa_handled_by_different_action",
                 )
             self._mark_universal_oa_unknown(
                 execution,
@@ -798,17 +815,29 @@ class DingTalkAutoReplyWorker:
             raise
 
         if not self._universal_oa_receipt_is_success(action_result):
-            if self._universal_oa_action_was_applied(
+            completion = self._universal_oa_action_completion_state(
                 process_instance_id=process_instance_id,
                 task_id=task_id,
                 current_user_id=current_user_id,
                 action=oa_action,
-            ):
+            )
+            if completion == "expected":
                 return self._finalize_universal_oa_action(
                     execution,
                     attempt_id=attempt_id,
                     outcome="salvaged",
                     send_status="skipped",
+                    dws_action_result=(
+                        action_result if isinstance(action_result, dict) else None
+                    ),
+                )
+            if completion == "different":
+                return self._finalize_universal_oa_action(
+                    execution,
+                    attempt_id=attempt_id,
+                    outcome="handled_by_different_action",
+                    send_status="skipped",
+                    send_error="oa_handled_by_different_action",
                     dws_action_result=(
                         action_result if isinstance(action_result, dict) else None
                     ),
@@ -833,12 +862,22 @@ class DingTalkAutoReplyWorker:
                 dws_action_result=action_result,
             )
 
-        if not self._universal_oa_action_was_applied(
+        completion = self._universal_oa_action_completion_state(
             process_instance_id=process_instance_id,
             task_id=task_id,
             current_user_id=current_user_id,
             action=oa_action,
-        ):
+        )
+        if completion == "different":
+            return self._finalize_universal_oa_action(
+                execution,
+                attempt_id=attempt_id,
+                outcome="handled_by_different_action",
+                send_status="skipped",
+                send_error="oa_handled_by_different_action",
+                dws_action_result=action_result,
+            )
+        if completion != "expected":
             error = "OA action returned without a verifiable final state"
             self._mark_universal_oa_unknown(
                 execution,
@@ -896,13 +935,16 @@ class DingTalkAutoReplyWorker:
             for task in cls._universal_oa_tasks(detail, tasks)
             if cls._universal_oa_task_id(task) == task_id
         ]
-        if cls._universal_oa_records_prove_action(
+        record_state = cls._universal_oa_record_action_state(
             records,
             task_id=task_id,
             current_user_id=current_user_id,
             action=action,
-        ):
+        )
+        if record_state == "expected":
             return "already_handled"
+        if record_state == "different":
+            return "handled_by_different_action"
         if not matching_tasks:
             return "missing_oa_task_ownership"
 
@@ -934,14 +976,14 @@ class DingTalkAutoReplyWorker:
             return "missing_oa_task_status"
         if process_status != "RUNNING":
             if all(status != "RUNNING" for status in current_statuses):
-                return "already_handled"
+                return "oa_terminal_action_unverified"
             return "oa_process_not_running"
         if any(
             cls._universal_oa_task_status(task) == "RUNNING"
             for task in current_user_records
         ):
             return "actionable"
-        return "already_handled"
+        return "oa_terminal_action_unverified"
 
     def _universal_oa_action_was_applied(
         self,
@@ -951,45 +993,35 @@ class DingTalkAutoReplyWorker:
         current_user_id: str,
         action: str,
     ) -> bool:
+        return self._universal_oa_action_completion_state(
+            process_instance_id=process_instance_id,
+            task_id=task_id,
+            current_user_id=current_user_id,
+            action=action,
+        ) == "expected"
+
+    def _universal_oa_action_completion_state(
+        self,
+        *,
+        process_instance_id: str,
+        task_id: str,
+        current_user_id: str,
+        action: str,
+    ) -> str:
         try:
-            refreshed_user_id, detail, tasks, records = self._read_universal_oa_state(
+            refreshed_user_id, _, _, records = self._read_universal_oa_state(
                 process_instance_id
             )
         except Exception:
-            return False
+            return "none"
         if refreshed_user_id != current_user_id:
-            return False
-        if action == "comment":
-            return self._universal_oa_records_prove_action(
-                records,
-                task_id=task_id,
-                current_user_id=current_user_id,
-                action=action,
-            )
-        matching_tasks = [
-            task
-            for task in self._universal_oa_tasks(detail, tasks)
-            if self._universal_oa_task_id(task) == task_id
-        ]
-        owned_tasks = [
-            task
-            for task in matching_tasks
-            if self._universal_oa_task_owner(task) == current_user_id
-        ]
-        if any(
-            self._universal_oa_task_status(task)
-            and self._universal_oa_task_status(task) != "RUNNING"
-            for task in owned_tasks
-        ):
-            return True
-        if self._universal_oa_records_prove_action(
+            return "none"
+        return self._universal_oa_record_action_state(
             records,
             task_id=task_id,
             current_user_id=current_user_id,
             action=action,
-        ):
-            return True
-        return False
+        )
 
     @staticmethod
     def _universal_oa_receipt_is_success(result: Any) -> bool:
@@ -1019,12 +1051,23 @@ class DingTalkAutoReplyWorker:
         current_user_id: str,
         action: str,
     ) -> bool:
-        expected = {
-            "同意": {"同意", "通过", "AGREE", "APPROVE"},
-            "拒绝": {"拒绝", "REFUSE", "REJECT"},
-            "退回": {"退回", "REVERT", "RETURN", "REDIRECTED"},
-            "comment": {"COMMENT", "评论", "备注"},
-        }[action]
+        return cls._universal_oa_record_action_state(
+            records,
+            task_id=task_id,
+            current_user_id=current_user_id,
+            action=action,
+        ) == "expected"
+
+    @classmethod
+    def _universal_oa_record_action_state(
+        cls,
+        records: dict[str, Any],
+        *,
+        task_id: str,
+        current_user_id: str,
+        action: str,
+    ) -> str:
+        found_different = False
         for record in cls._universal_oa_dicts(records):
             if cls._universal_oa_task_id(record) != task_id:
                 continue
@@ -1037,9 +1080,26 @@ class DingTalkAutoReplyWorker:
                 or record.get("operation")
                 or ""
             ).strip().upper()
-            if operation in {item.upper() for item in expected}:
-                return True
-        return False
+            recorded_action = cls._universal_oa_canonical_action(operation)
+            if not recorded_action:
+                continue
+            if recorded_action == action:
+                return "expected"
+            found_different = True
+        return "different" if found_different else "none"
+
+    @staticmethod
+    def _universal_oa_canonical_action(operation: str) -> str:
+        normalized = operation.strip().upper()
+        for action, values in {
+            "同意": {"同意", "通过", "AGREE", "APPROVE"},
+            "拒绝": {"拒绝", "REFUSE", "REJECT"},
+            "退回": {"退回", "REVERT", "RETURN", "REDIRECTED"},
+            "comment": {"COMMENT", "评论", "备注"},
+        }.items():
+            if normalized in {value.upper() for value in values}:
+                return action
+        return ""
 
     @staticmethod
     def _universal_oa_dicts(value: Any) -> list[dict[str, Any]]:
