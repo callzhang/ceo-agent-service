@@ -809,6 +809,33 @@ def test_run_setup_action_redacts_dry_run_failure_output(
     assert "/Users/derek/private.md" not in event.stderr_excerpt
 
 
+def test_run_setup_action_installs_launchd(monkeypatch, tmp_path: Path):
+    calls = []
+
+    def fake_run(args, **kwargs):
+        calls.append((args, kwargs))
+        return subprocess.CompletedProcess(
+            args,
+            0,
+            stdout="installed /Users/derek/Library/LaunchAgents/com.ceo-agent-service.main.plist\n",
+            stderr="",
+        )
+
+    monkeypatch.setattr("app.setup_wizard.subprocess.run", fake_run)
+
+    event = run_setup_action("install_launchd", repo_root=tmp_path, env={})
+
+    args, kwargs = calls[0]
+    assert args == ["scripts/install-auto-reply-agents.sh"]
+    assert kwargs["cwd"] == tmp_path
+    assert kwargs["timeout"] == 300
+    assert event.step_id == "launchd"
+    assert event.status == "done"
+    assert event.summary == "Launchd service installed and restarted."
+    assert event.evidence["returncode"] == 0
+    assert "[REDACTED_PATH]" in event.stdout_excerpt
+
+
 def test_run_setup_action_rejects_unknown_action(tmp_path: Path):
     event = run_setup_action("unknown", repo_root=tmp_path, env={})
 

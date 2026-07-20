@@ -622,6 +622,8 @@ def run_setup_action(
         return _run_wechat_setup_action(action_id)
     if action_id == "run_dry_run":
         return _run_dry_run_action(repo_root, env or {})
+    if action_id == "install_launchd":
+        return _install_launchd_action(repo_root, env or {})
     try:
         action = get_action_definition(action_id)
     except KeyError:
@@ -665,6 +667,38 @@ def _run_dry_run_action(
             "Dry-run validation completed."
             if succeeded
             else f"Dry-run validation failed with exit code {completed.returncode}."
+        ),
+        evidence={"returncode": completed.returncode},
+        stdout_excerpt=redact_setup_output((completed.stdout or "")[-4000:]),
+        stderr_excerpt=redact_setup_output((completed.stderr or "")[-4000:]),
+    )
+
+
+def _install_launchd_action(
+    repo_root: Path,
+    env: dict[str, str],
+) -> SetupWizardEvent:
+    merged_env = os.environ.copy()
+    merged_env.update(env)
+    args = ["scripts/install-auto-reply-agents.sh"]
+    completed = subprocess.run(
+        args,
+        cwd=repo_root,
+        env=merged_env,
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=300,
+    )
+    succeeded = completed.returncode == 0
+    return SetupWizardEvent(
+        step_id="launchd",
+        action_id="install_launchd",
+        status="done" if succeeded else "failed",
+        summary=(
+            "Launchd service installed and restarted."
+            if succeeded
+            else f"Launchd install failed with exit code {completed.returncode}."
         ),
         evidence={"returncode": completed.returncode},
         stdout_excerpt=redact_setup_output((completed.stdout or "")[-4000:]),
