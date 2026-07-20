@@ -361,6 +361,39 @@ def test_check_setup_step_dispatches_real_service_config_checker(tmp_path: Path)
     assert result.summary == ".env is missing."
 
 
+def test_check_dry_run_passes_without_failed_or_processing_backlog(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+
+    result = check_setup_step("dry_run", repo_root=tmp_path, store=store)
+
+    assert result.status == "done"
+    assert result.summary == "Dry-run audit state has no unresolved backlog."
+    assert result.evidence == {
+        "processing_reply_tasks": 0,
+        "failed_reply_tasks": 0,
+    }
+
+
+def test_check_dry_run_reports_processing_backlog(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="cid-1",
+        conversation_title="测试群",
+        single_chat=False,
+        trigger_message_id="msg-1",
+        trigger_create_time="2026-07-21 12:00:00",
+        trigger_sender="测试用户",
+        trigger_text="测试消息",
+    )
+    store.claim_reply_tasks(limit=1)
+
+    result = check_setup_step("dry_run", repo_root=tmp_path, store=store)
+
+    assert result.status == "needs_action"
+    assert result.summary == "Unresolved failed or processing reply tasks exist."
+    assert result.evidence["processing_reply_tasks"] == 1
+
+
 def test_check_service_config_accepts_env_and_directories(tmp_path: Path):
     (tmp_path / ".env").write_text(
         "CEO_WORKSPACE=workspace\nCEO_WORKER_DB=data/auto-reply.sqlite3\nCEO_CORPUS_DIR=data/corpus\nCEO_NOT_SEND_MESSAGE=1\n",
@@ -718,6 +751,62 @@ def test_run_setup_action_dispatches_wechat_connect(monkeypatch, tmp_path: Path)
     assert event.status == "done"
     assert event.next_step_status == "blocked"  # blocked reader -> step stays blocked
     assert event.summary == "key unavailable"
+
+
+def test_run_setup_action_executes_dry_run_without_sending(
+    monkeypatch,
+    tmp_path: Path,
+):
+    calls = []
+
+    def fake_run(args, **kwargs):
+        calls.append((args, kwargs))
+        return subprocess.CompletedProcess(
+            args,
+            0,
+            stdout='{"counts":{"reply_attempts":0,"sent_replies":0,"errors":0}}\n',
+            stderr="",
+        )
+
+    monkeypatch.setattr("app.setup_wizard.subprocess.run", fake_run)
+
+    event = run_setup_action(
+        "run_dry_run",
+        repo_root=tmp_path,
+        env={"CEO_NOT_SEND_MESSAGE": "0"},
+    )
+
+    args, kwargs = calls[0]
+    assert args == [".venv/bin/ceo-agent", "run-once", "--not-send-message"]
+    assert kwargs["cwd"] == tmp_path
+    assert kwargs["env"]["CEO_NOT_SEND_MESSAGE"] == "1"
+    assert kwargs["timeout"] == 900
+    assert event.status == "done"
+    assert event.summary == "Dry-run validation completed."
+    assert event.evidence["returncode"] == 0
+
+
+def test_run_setup_action_redacts_dry_run_failure_output(
+    monkeypatch,
+    tmp_path: Path,
+):
+    def fake_run(args, **kwargs):
+        del kwargs
+        return subprocess.CompletedProcess(
+            args,
+            1,
+            stdout="",
+            stderr="token=secret path=/Users/derek/private.md",
+        )
+
+    monkeypatch.setattr("app.setup_wizard.subprocess.run", fake_run)
+
+    event = run_setup_action("run_dry_run", repo_root=tmp_path, env={})
+
+    assert event.status == "failed"
+    assert event.summary == "Dry-run validation failed with exit code 1."
+    assert "secret" not in event.stderr_excerpt
+    assert "/Users/derek/private.md" not in event.stderr_excerpt
 
 
 def test_run_setup_action_rejects_unknown_action(tmp_path: Path):

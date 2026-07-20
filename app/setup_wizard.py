@@ -476,6 +476,15 @@ def check_setup_step(
 ) -> SetupStepStatus:
     if step_id == "wechat_connection":
         return _check_wechat_connection(store)
+    if step_id == "dry_run":
+        if store is None:
+            values = _env_values(repo_root / ".env")
+            db_path = _resolve_repo_path(
+                repo_root,
+                values.get("CEO_WORKER_DB", "data/auto-reply.sqlite3"),
+            )
+            store = AutoReplyStore(db_path)
+        return check_dry_run(store=store)
     del store
     if step_id == "preflight":
         return _check_preflight(repo_root=repo_root)
@@ -493,6 +502,30 @@ def check_setup_step(
         title=definition.title,
         status="needs_action",
         summary=f"{definition.title} requires a run action or external verification.",
+    )
+
+
+def check_dry_run(*, store: AutoReplyStore) -> SetupStepStatus:
+    processing = store.count_reply_tasks("processing")
+    failed = store.count_reply_tasks("failed")
+    evidence = {
+        "processing_reply_tasks": processing,
+        "failed_reply_tasks": failed,
+    }
+    if processing or failed:
+        return _status(
+            "dry_run",
+            title="Dry-Run Validation",
+            status="needs_action",
+            summary="Unresolved failed or processing reply tasks exist.",
+            evidence=evidence,
+        )
+    return _status(
+        "dry_run",
+        title="Dry-Run Validation",
+        status="done",
+        summary="Dry-run audit state has no unresolved backlog.",
+        evidence=evidence,
     )
 
 
@@ -587,6 +620,8 @@ def run_setup_action(
         return _setup_mcp(repo_root, env or {})
     if action_id in ("connect_wechat", "verify_wechat"):
         return _run_wechat_setup_action(action_id)
+    if action_id == "run_dry_run":
+        return _run_dry_run_action(repo_root, env or {})
     try:
         action = get_action_definition(action_id)
     except KeyError:
@@ -601,6 +636,39 @@ def run_setup_action(
         action_id=action_id,
         status="failed",
         summary=f"{action.label} is not automated yet.",
+    )
+
+
+def _run_dry_run_action(
+    repo_root: Path,
+    env: dict[str, str],
+) -> SetupWizardEvent:
+    merged_env = os.environ.copy()
+    merged_env.update(env)
+    merged_env["CEO_NOT_SEND_MESSAGE"] = "1"
+    args = [".venv/bin/ceo-agent", "run-once", "--not-send-message"]
+    completed = subprocess.run(
+        args,
+        cwd=repo_root,
+        env=merged_env,
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=900,
+    )
+    succeeded = completed.returncode == 0
+    return SetupWizardEvent(
+        step_id="dry_run",
+        action_id="run_dry_run",
+        status="done" if succeeded else "failed",
+        summary=(
+            "Dry-run validation completed."
+            if succeeded
+            else f"Dry-run validation failed with exit code {completed.returncode}."
+        ),
+        evidence={"returncode": completed.returncode},
+        stdout_excerpt=redact_setup_output((completed.stdout or "")[-4000:]),
+        stderr_excerpt=redact_setup_output((completed.stderr or "")[-4000:]),
     )
 
 
