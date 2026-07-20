@@ -19,7 +19,7 @@ Accessibility send (verified live to 文件传输助手).
 | `prompt.py` / `consumer.py` | WeChat-specific prompt + Codex decision → fail-closed delivery |
 | `accessibility.py` | Exact-once delivery state machine + real AX runner |
 | `memory_import.py` / `memory_writer.py` | Bounded extraction + deterministic cleanup; claimed, approved-only Memory writer (`memory.py` keeps public imports) |
-| `setup.py` / `audit_web.py` | Tutorial connect service + target picker routes |
+| `setup.py` / `audit_web.py` | Tutorial connect service + visible contact/group picker |
 | `service.py` / `cli.py` | Composable steps/loops + diagnostic CLI |
 | `scripts/wechat_key_probe.py` | Fingerprint-only key/schema gate |
 
@@ -98,15 +98,20 @@ least 15 minutes.
 
 ## Shared-file integration status
 
-1. ✅ **`app/setup_wizard.py`** (done 2026-07-18) — `wechat_connection` step registered
-   (Phase 3, gates only on `service_config`, independent of `data_corpus`; actions
+1. ✅ **`app/setup_wizard.py`** (updated 2026-07-21) — `wechat_connection` step registered
+   (Phase 3, gates only on local `preflight`, independent of optional Memory MCP,
+   `service_config`, and `data_corpus`; actions
    `check`/`connect`/`verify`). `run_setup_action`/`check_setup_step` dispatch to
    `WechatSetupService` via `service.build_setup_service`. `SetupWizardEvent` gained
    `next_step_status` so a successful action leaves the step `blocked` when the
    reader is blocked.
-2. ✅ **`app/audit_web.py`** (done 2026-07-18) — `register_wechat_tutorial_routes`
-   mounted in `create_audit_app` (picker `GET /tutorial/wechat/conversations`,
-   `POST /tutorial/wechat/reply-scope`); `tutorial_run` honors `next_step_status`.
+2. ✅ **`app/audit_web.py`** (updated 2026-07-21) — Tutorial shows Connect WeChat
+   as soon as preflight is complete. Once one local account is ready, the same
+   step exposes searchable friend/group selection backed by
+   `GET /tutorial/wechat/conversations` and
+   `POST /tutorial/wechat/reply-scope`. Saving immediately runs `verify_wechat`.
+   Direct chats use `every_inbound_text`; groups are fixed to
+   `mention_current_account`. The page does not expose DB paths or raw messages.
 3. ✅ **`app/cli.py`** (done 2026-07-18):
    - `ceo-agent wechat <status|read-recent|produce-once|consume-once>` passes
      through (argparse REMAINDER) to `app.wechat.cli`. `wechat status`

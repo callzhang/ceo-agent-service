@@ -41,9 +41,10 @@ def test_setup_wizard_steps_are_ordered_and_gated():
         "live_send",
     ]
     assert get_step_definition("mcp").depends_on == ("cli_components",)
-    # WeChat is an independent Phase-3 sibling of data_corpus (both gate on
-    # service_config); a blocked WeChat must never block the data corpus.
-    assert get_step_definition("wechat_connection").depends_on == ("service_config",)
+    # Memory Connector is optional for local channel setup, and WeChat can be
+    # connected as soon as the local checkout passes preflight.
+    assert get_step_definition("service_config").depends_on == ("cli_components",)
+    assert get_step_definition("wechat_connection").depends_on == ("preflight",)
     assert get_step_definition("data_corpus").depends_on == ("service_config",)
     assert [a.id for a in get_step_definition("wechat_connection").actions] == [
         "check_wechat_connection",
@@ -54,6 +55,25 @@ def test_setup_wizard_steps_are_ordered_and_gated():
     assert get_step_definition("live_send").depends_on == ("dry_run",)
     assert get_action_definition("setup_cli_components").step_id == "cli_components"
     assert get_action_definition("setup_mcp").step_id == "mcp"
+
+
+def test_wechat_setup_is_available_without_mcp_or_service_config(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.upsert_setup_wizard_step(
+        step_id="preflight",
+        status="done",
+        summary="ready",
+    )
+
+    status = build_wizard_status(store)
+    wechat = next(step for step in status.steps if step.step_id == "wechat_connection")
+
+    assert wechat.status == "not_started"
+    assert [action.id for action in wechat.available_actions] == [
+        "check_wechat_connection",
+        "connect_wechat",
+        "verify_wechat",
+    ]
 
 
 def test_setup_wizard_action_metadata_is_gated():

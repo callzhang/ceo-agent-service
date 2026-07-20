@@ -204,7 +204,18 @@ th{background:var(--surface-soft);color:var(--steel);font-size:12px;font-weight:
 .setup-status-needs_action{background:rgba(195,125,13,.12);border-color:rgba(195,125,13,.24);color:#8a5a08}
 .setup-status-failed,.setup-status-blocked{background:rgba(212,86,86,.12);border-color:rgba(212,86,86,.24);color:#9a2f2f}
 .setup-wizard-step form{margin:0}
+.wechat-setup-panel{display:grid;gap:10px;margin-top:4px;padding:12px;border:1px solid var(--hairline);border-radius:8px;background:var(--surface-soft)}
+.wechat-setup-panel h4{margin:0;color:var(--ink);font-size:14px;line-height:1.4}
+.wechat-target-toolbar{display:grid;grid-template-columns:140px minmax(220px,1fr) auto;align-items:end;gap:8px}
+.wechat-target-control{display:grid;gap:4px;color:var(--steel);font-size:11px;font-weight:700}
+.wechat-target-control select,.wechat-target-control input{height:34px;border:1px solid var(--hairline);border-radius:7px;background:var(--canvas);padding:6px 9px;color:var(--ink);font-size:13px}
+.wechat-target-results{display:grid;gap:6px;max-height:280px;overflow:auto}
+.wechat-target-row{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:9px;padding:8px 10px;border:1px solid var(--hairline-soft);border-radius:7px;background:var(--canvas);cursor:pointer}
+.wechat-target-row small{color:var(--steel);font-family:"Geist Mono","SF Mono",Menlo,Consolas,monospace;font-size:10px;overflow-wrap:anywhere}
+.wechat-target-footer{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
+.wechat-target-status{color:var(--steel);font-size:12px}
 @media (max-width:900px){.tutorial-summary,.tutorial-lists{grid-template-columns:1fr}.tutorial-step{grid-template-columns:1fr}.tutorial-step-number{width:30px;height:30px}}
+@media (max-width:640px){.wechat-target-toolbar{grid-template-columns:1fr}}
 .notification-panel{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:12px 0}
 .notification-log{max-height:260px}
 .card-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px;flex-wrap:wrap}
@@ -623,7 +634,9 @@ def render_tutorial_page(*, store: AutoReplyStore | None = None) -> str:
     if store is None:
         store = AutoReplyStore(_configured_worker_db_path())
     status = build_wizard_status(store)
-    steps_html = "".join(_setup_wizard_step_html(step) for step in status.steps)
+    steps_html = "".join(
+        _setup_wizard_step_html(step, store=store) for step in status.steps
+    )
     body = (
         "<section class=\"card tutorial-intro\">"
         "<h2>Initialization Wizard</h2>"
@@ -647,7 +660,11 @@ def render_tutorial_page(*, store: AutoReplyStore | None = None) -> str:
     return render_page("Tutorial", body, active_nav="tutorial")
 
 
-def _setup_wizard_step_html(step: SetupStepStatus) -> str:
+def _setup_wizard_step_html(
+    step: SetupStepStatus,
+    *,
+    store: AutoReplyStore | None = None,
+) -> str:
     action_html = "".join(
         "<form method=\"post\" action=\"/tutorial/"
         f"{'check' if action.kind == 'check' else 'run' if action.kind == 'run' else 'confirm'}"
@@ -669,6 +686,11 @@ def _setup_wizard_step_html(step: SetupStepStatus) -> str:
         if evidence_html
         else ""
     )
+    wechat_setup_html = (
+        _wechat_target_picker_html(store)
+        if step.step_id == "wechat_connection" and store is not None
+        else ""
+    )
     return (
         "<li class=\"tutorial-step setup-wizard-step\">"
         "<div class=\"tutorial-step-number\" aria-hidden=\"true\"></div>"
@@ -681,9 +703,184 @@ def _setup_wizard_step_html(step: SetupStepStatus) -> str:
         f"<p>{escape(step.summary or 'Not checked yet.')}</p>"
         f"{evidence_list}"
         f"<div class=\"tutorial-links\">{action_html}</div>"
+        f"{wechat_setup_html}"
         "</div>"
         "</li>"
     )
+
+
+def _safe_inline_json(value: object) -> str:
+    return (
+        json.dumps(value, ensure_ascii=False)
+        .replace("&", "\\u0026")
+        .replace("<", "\\u003c")
+        .replace(">", "\\u003e")
+    )
+
+
+def _wechat_target_picker_html(store: AutoReplyStore) -> str:
+    ready_accounts = [
+        row
+        for row in store.list_wechat_read_states()
+        if row["capability_status"] == "ready"
+    ]
+    if len(ready_accounts) != 1:
+        return (
+            '<div id="wechat-target-picker" class="wechat-setup-panel">'
+            "<h4>自动回复对象</h4>"
+            '<p class="muted">先点击 Connect WeChat 连接本机微信数据库，'
+            "连接成功后即可在这里选择好友和群聊。</p>"
+            "</div>"
+        )
+
+    account_id = ready_accounts[0]["account_id"]
+    scopes = store.list_wechat_reply_scopes(account_id, enabled_only=True)
+    selected_targets = [
+        {
+            "target_type": scope.target_type,
+            "target_id": scope.target_id,
+            "conversation_id": scope.conversation_id,
+            "display_name": scope.display_name,
+            "trigger_mode": scope.trigger_mode,
+        }
+        for scope in scopes
+    ]
+    initial_kind = "group" if any(
+        target["target_type"] == "group" for target in selected_targets
+    ) else "direct"
+    selected_json = _safe_inline_json(selected_targets)
+    return f"""
+<div id="wechat-target-picker" class="wechat-setup-panel" data-account-id="{escape(account_id)}">
+  <h4>自动回复对象</h4>
+  <p class="muted">选择已有微信好友和群聊。好友的新入站文本会触发回复；群聊仅在有人明确 @你 时回复。</p>
+  <div class="wechat-target-toolbar">
+    <label class="wechat-target-control">类型
+      <select id="wechat-target-kind">
+        <option value="direct"{' selected' if initial_kind == 'direct' else ''}>好友</option>
+        <option value="group"{' selected' if initial_kind == 'group' else ''}>群聊</option>
+      </select>
+    </label>
+    <label class="wechat-target-control">名称
+      <input id="wechat-target-query" type="search" placeholder="搜索用户名或群名" autocomplete="off">
+    </label>
+    <button id="wechat-search-targets" type="button">搜索</button>
+  </div>
+  <div id="wechat-target-results" class="wechat-target-results" aria-live="polite"></div>
+  <div class="wechat-target-footer">
+    <span id="wechat-target-status" class="wechat-target-status"></span>
+    <button id="wechat-save-targets" type="button">保存自动回复对象</button>
+  </div>
+</div>
+<script id="wechat-selected-targets" type="application/json">{selected_json}</script>
+<script>
+(() => {{
+  const panel = document.getElementById("wechat-target-picker");
+  if (!panel || panel.dataset.initialized === "true") return;
+  panel.dataset.initialized = "true";
+  const kind = document.getElementById("wechat-target-kind");
+  const query = document.getElementById("wechat-target-query");
+  const results = document.getElementById("wechat-target-results");
+  const status = document.getElementById("wechat-target-status");
+  const selected = new Map();
+  const initial = JSON.parse(document.getElementById("wechat-selected-targets").textContent);
+  const keyFor = item => `${{item.target_type}}:${{item.target_id}}`;
+  initial.forEach(item => selected.set(keyFor(item), item));
+
+  function updateStatus(message = "") {{
+    status.textContent = message || `已选择 ${{selected.size}} 个对象`;
+  }}
+
+  function renderItems(items) {{
+    results.replaceChildren();
+    if (!items.length) {{
+      const empty = document.createElement("p");
+      empty.className = "muted";
+      empty.textContent = "没有找到匹配对象。";
+      results.append(empty);
+      return;
+    }}
+    items.forEach(item => {{
+      const row = document.createElement("label");
+      row.className = "wechat-target-row";
+      const checkbox = document.createElement("input");
+      checkbox.type = "checkbox";
+      checkbox.checked = selected.has(keyFor(item));
+      const name = document.createElement("span");
+      name.textContent = item.display_name || "未命名对象";
+      const id = document.createElement("small");
+      id.textContent = item.target_id;
+      checkbox.addEventListener("change", () => {{
+        const target = {{
+          target_type: item.target_type,
+          target_id: item.target_id,
+          conversation_id: item.conversation_id || item.target_id,
+          display_name: item.display_name || "未命名对象",
+          trigger_mode: item.target_type === "group"
+            ? "mention_current_account"
+            : "every_inbound_text",
+        }};
+        if (checkbox.checked) selected.set(keyFor(target), target);
+        else selected.delete(keyFor(target));
+        updateStatus();
+      }});
+      row.append(checkbox, name, id);
+      results.append(row);
+    }});
+  }}
+
+  async function searchTargets() {{
+    results.textContent = "正在读取微信联系人…";
+    updateStatus();
+    const params = new URLSearchParams({{
+      kind: kind.value,
+      query: query.value.trim(),
+      limit: "50",
+    }});
+    try {{
+      const response = await fetch(`/tutorial/wechat/conversations?${{params}}`);
+      if (!response.ok) throw new Error(`读取失败 (${{response.status}})`);
+      renderItems((await response.json()).items || []);
+    }} catch (error) {{
+      results.replaceChildren();
+      updateStatus(error.message || "读取微信联系人失败");
+    }}
+  }}
+
+  document.getElementById("wechat-search-targets").addEventListener("click", searchTargets);
+  kind.addEventListener("change", searchTargets);
+  query.addEventListener("keydown", event => {{
+    if (event.key === "Enter") {{
+      event.preventDefault();
+      searchTargets();
+    }}
+  }});
+  document.getElementById("wechat-save-targets").addEventListener("click", async () => {{
+    updateStatus("正在保存并校验…");
+    try {{
+      const response = await fetch("/tutorial/wechat/reply-scope", {{
+        method: "POST",
+        headers: {{"Content-Type": "application/json"}},
+        body: JSON.stringify({{
+          account_id: panel.dataset.accountId,
+          targets: Array.from(selected.values()),
+        }}),
+      }});
+      if (!response.ok) throw new Error(`保存失败 (${{response.status}})`);
+      const verification = await fetch("/tutorial/run/verify_wechat", {{
+        method: "POST",
+        headers: {{"Accept": "application/json"}},
+      }});
+      if (!verification.ok) throw new Error(`校验失败 (${{verification.status}})`);
+      window.location.reload();
+    }} catch (error) {{
+      updateStatus(error.message || "保存微信对象失败");
+    }}
+  }});
+  updateStatus();
+  searchTargets();
+}})();
+</script>
+"""
 
 
 def _tutorial_step_html(step: _TutorialStep) -> str:

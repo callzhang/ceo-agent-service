@@ -87,7 +87,7 @@ SETUP_WIZARD_STEPS: tuple[SetupStepDefinition, ...] = (
         title="Service Config",
         phase="Phase 3",
         description="Create and validate .env, runtime paths, and dry-run defaults.",
-        depends_on=["mcp"],
+        depends_on=["cli_components"],
         actions=[
             SetupAction(
                 id="check_service_config",
@@ -108,7 +108,7 @@ SETUP_WIZARD_STEPS: tuple[SetupStepDefinition, ...] = (
         title="Connect WeChat",
         phase="Phase 3",
         description="Connect the local personal account and select reply targets.",
-        depends_on=["service_config"],
+        depends_on=["preflight"],
         actions=[
             SetupAction(
                 id="check_wechat_connection",
