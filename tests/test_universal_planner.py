@@ -117,6 +117,34 @@ def test_parse_universal_plan_json_does_not_fall_back_from_newer_invalid_plan():
         parse_universal_plan_json(raw)
 
 
+def test_parse_universal_plan_json_rejects_newer_malformed_item_text():
+    from app.universal_planner import parse_universal_plan_json
+
+    raw = "\n".join(
+        [
+            json.dumps(_plan_payload(task_kind="older_valid")),
+            json.dumps({"item": {"text": "not json"}}),
+        ]
+    )
+
+    with pytest.raises(ValueError, match="item.text"):
+        parse_universal_plan_json(raw)
+
+
+def test_parse_universal_plan_json_rejects_newer_malformed_message():
+    from app.universal_planner import parse_universal_plan_json
+
+    raw = "\n".join(
+        [
+            json.dumps(_plan_payload(task_kind="older_valid")),
+            json.dumps({"message": "not json"}),
+        ]
+    )
+
+    with pytest.raises(ValueError, match="message"):
+        parse_universal_plan_json(raw)
+
+
 def test_build_prompt_sets_planner_boundary_and_includes_schema_and_context():
     from app.universal_planner import UNIVERSAL_PLAN_SCHEMA_HINT, UniversalPlanner
 
@@ -270,7 +298,7 @@ def test_plan_does_not_repair_invalid_output_without_a_usable_session(tmp_path):
 
     planner = UniversalPlanner(workspace=tmp_path, executor=executor)
 
-    with pytest.raises(ValueError, match="No valid UniversalPlan JSON"):
+    with pytest.raises(ValueError, match="Codex message is not valid JSON"):
         planner.plan(_context(), session_id=" \n")
 
     assert len(calls) == 1
@@ -294,7 +322,7 @@ def test_plan_stops_after_one_invalid_repair_attempt(tmp_path):
 
     planner = UniversalPlanner(workspace=tmp_path, executor=executor)
 
-    with pytest.raises(ValueError, match="No valid UniversalPlan JSON"):
+    with pytest.raises(ValueError, match="Codex message is not valid JSON"):
         planner.plan(_context())
 
     assert len(calls) == 2
@@ -332,20 +360,26 @@ def test_plan_raises_clear_timeout_and_nonzero_process_errors(tmp_path):
         planner.plan(_context())
 
 
-def test_plan_returns_valid_stdout_plan_from_nonzero_process_result(tmp_path):
+def test_plan_nonzero_valid_stdout_still_raises_and_retains_session_state(tmp_path):
     from app.universal_planner import UniversalPlanner
 
-    raw = json.dumps(_plan_payload())
+    raw = "\n".join(
+        [
+            json.dumps({"type": "thread.started", "thread_id": "thread-nonzero"}),
+            json.dumps(_plan_payload()),
+        ]
+    )
     planner = UniversalPlanner(workspace=tmp_path)
     planner._run_process_with_idle_timeout = lambda *args, **kwargs: ProcessRunResult(
         returncode=1,
         stdout=raw,
-        stderr="process exited late",
+        stderr="ERROR codex: process exited late",
     )
 
-    plan = planner.plan(_context())
+    with pytest.raises(RuntimeError, match="process exited late"):
+        planner.plan(_context())
 
-    assert plan.task_kind == "supplier_review"
+    assert planner.last_session_id == "thread-nonzero"
     assert planner.last_raw_output == raw
 
 

@@ -117,12 +117,7 @@ class UniversalPlanner:
                 completed.timeout_reason or "universal planner codex timed out"
             )
         if completed.returncode != 0:
-            try:
-                parse_universal_plan_json(raw)
-            except ValueError as exc:
-                raise RuntimeError(
-                    _subprocess_failure_reason(completed.stderr, raw)
-                ) from exc
+            raise RuntimeError(_subprocess_failure_reason(completed.stderr, raw))
         return raw
 
     def _remember_output(self, raw: str) -> None:
@@ -185,9 +180,8 @@ class UniversalPlanner:
 def parse_universal_plan_json(raw: str) -> UniversalPlan:
     payloads = _json_payloads(raw)
     for payload in reversed(payloads):
-        for candidate in _plan_candidates(payload):
-            if not _looks_like_universal_plan(candidate):
-                continue
+        candidate = _authoritative_plan_candidate(payload)
+        if candidate is not None:
             return UniversalPlan.model_validate(candidate)
     raise ValueError("No valid UniversalPlan JSON found in Codex output")
 
@@ -208,29 +202,30 @@ def _json_payloads(raw: str) -> list[Any]:
         return payloads
 
 
-def _plan_candidates(payload: Any) -> list[dict[str, Any]]:
-    if isinstance(payload, dict):
-        if _looks_like_universal_plan(payload):
-            return [payload]
+def _authoritative_plan_candidate(payload: Any) -> dict[str, Any] | None:
+    if not isinstance(payload, dict):
+        return None
+    if _looks_like_universal_plan(payload):
+        return payload
 
-        candidates: list[dict[str, Any]] = []
-        item = payload.get("item")
-        if isinstance(item, dict):
-            _append_json_object(candidates, item.get("text"))
-        _append_json_object(candidates, payload.get("message"))
-        return candidates
-    return []
+    item = payload.get("item")
+    if isinstance(item, dict) and "text" in item:
+        return _model_output_object(item["text"], "item.text")
+    if "message" in payload:
+        return _model_output_object(payload["message"], "message")
+    return None
 
 
-def _append_json_object(candidates: list[dict[str, Any]], value: Any) -> None:
+def _model_output_object(value: Any, field_name: str) -> dict[str, Any]:
     if not isinstance(value, str):
-        return
+        raise ValueError(f"Codex {field_name} must contain a JSON object")
     try:
         payload = json.loads(value)
-    except json.JSONDecodeError:
-        return
-    if isinstance(payload, dict):
-        candidates.append(payload)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Codex {field_name} is not valid JSON") from exc
+    if not isinstance(payload, dict):
+        raise ValueError(f"Codex {field_name} must contain a JSON object")
+    return payload
 
 
 def _looks_like_universal_plan(payload: dict[str, Any]) -> bool:
