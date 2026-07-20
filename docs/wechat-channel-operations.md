@@ -64,6 +64,7 @@ passphrase is account-stable; re-capture only after logout/reinstall.
      auto-detects+persists `self_user_id` and reports `ready`.
    - `run_service()` starts `wechat-producer`/`wechat-consumer` threads only when
      `CEO_WECHAT_READER_ENABLED` **and** a single account is persisted `ready`
+     with a non-empty self-wxid
      (`_wechat_service_components`); disabled by default (no effect on the DingTalk
      service). Auto-send stays gated — the loops enqueue tasks and produce
      `ready_to_send` deliveries but do not send.
@@ -145,6 +146,8 @@ passphrase is account-stable; re-capture only after logout/reinstall.
 - **Direction**: real outbound/inbound needs the self-wxid; defaults inbound
   until `self_username` is populated. The diagnostic CLI now requires a resolved
   self-wxid before reading, so it cannot silently label every row inbound.
+  Automatic producer, consumer, and sender loops do not start without it, and
+  one-shot produce/consume commands build their reader with that persisted id.
 - **Activation watermark**: each selected scope starts at its activation time;
   historical messages are never fed into auto-reply. The producer advances that
   scope only after the entire normalized batch has been handled. Producer pages

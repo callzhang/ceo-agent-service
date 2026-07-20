@@ -1,5 +1,7 @@
 from types import SimpleNamespace
 
+import pytest
+
 from app.store import AutoReplyStore
 from app.wechat import cli
 from app.wechat.models import WechatMessage
@@ -80,6 +82,7 @@ def test_read_recent_detects_missing_self_id_for_unique_ready_account(
     assert cli.cmd_read_recent(_args(db)) == 0
     assert built_with == ["", "self-1"]
     assert reader.read_account.self_user_id == "self-1"
+    assert AutoReplyStore(db).get_wechat_read_state("acct-1")["self_user_id"] == "self-1"
 
 
 def test_read_recent_refuses_to_guess_direction_without_self_id(
@@ -149,3 +152,76 @@ def test_read_recent_parser_accepts_db_path():
         "read-recent", "--db", "/tmp/w.sqlite3", "--target-id", "filehelper",
     ])
     assert args.db == "/tmp/w.sqlite3"
+
+
+def test_produce_once_builds_direction_aware_reader(tmp_path, monkeypatch):
+    db = tmp_path / "worker.sqlite3"
+    store = AutoReplyStore(db)
+    store.upsert_wechat_read_state(
+        account_id="acct-1", account_dir="/account", db_dir="/account/db_storage",
+        app_version="4.1.10", self_user_id="self-1", capability_status="ready",
+    )
+    reader = object()
+    built_with = []
+    captured = []
+    monkeypatch.setattr(
+        cli, "_reader",
+        lambda *, self_username="": built_with.append(self_username) or reader,
+    )
+    monkeypatch.setattr(
+        cli.service, "run_produce_once",
+        lambda store, used_reader, account, *, self_user_id: captured.append(
+            (used_reader, account.self_user_id, self_user_id)
+        ) or 0,
+    )
+
+    assert cli.cmd_produce_once(SimpleNamespace(db=str(db))) == 0
+    assert built_with == ["self-1"]
+    assert captured == [(reader, "self-1", "self-1")]
+
+
+def test_consume_once_builds_direction_aware_reader(tmp_path, monkeypatch):
+    from app import codex_decision
+
+    db = tmp_path / "worker.sqlite3"
+    store = AutoReplyStore(db)
+    store.upsert_wechat_read_state(
+        account_id="acct-1", account_dir="/account", db_dir="/account/db_storage",
+        app_version="4.1.10", self_user_id="self-1", capability_status="ready",
+    )
+    reader = object()
+    built_with = []
+    captured = []
+    monkeypatch.setattr(codex_decision, "CodexDecisionRunner", lambda **kwargs: object())
+    monkeypatch.setattr(
+        cli, "_reader",
+        lambda *, self_username="": built_with.append(self_username) or reader,
+    )
+    monkeypatch.setattr(
+        cli.service, "run_consume_once",
+        lambda store, runner, used_reader, account: captured.append(
+            (used_reader, account.self_user_id)
+        ) or 0,
+    )
+
+    assert cli.cmd_consume_once(SimpleNamespace(db=str(db))) == 0
+    assert built_with == ["self-1"]
+    assert captured == [(reader, "self-1")]
+
+
+@pytest.mark.parametrize("command", [cli.cmd_produce_once, cli.cmd_consume_once])
+def test_automatic_once_commands_reject_ready_account_without_self_id(
+    command, tmp_path, monkeypatch, capsys,
+):
+    db = tmp_path / "worker.sqlite3"
+    store = AutoReplyStore(db)
+    store.upsert_wechat_read_state(
+        account_id="acct-1", account_dir="/account", db_dir="/account/db_storage",
+        app_version="4.1.10", self_user_id="", capability_status="ready",
+    )
+    monkeypatch.setattr(
+        cli, "_reader", lambda **kwargs: (_ for _ in ()).throw(AssertionError("no read")),
+    )
+
+    assert command(SimpleNamespace(db=str(db))) == 1
+    assert "no single ready account" in capsys.readouterr().out

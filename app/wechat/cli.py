@@ -76,14 +76,16 @@ def cmd_consume_once(args) -> int:
     from app.codex_decision import CodexDecisionRunner
 
     runner = CodexDecisionRunner(workspace=config.workspace_path())
-    n = service.run_consume_once(store, runner, _reader(), account)
+    n = service.run_consume_once(
+        store, runner, _reader(self_username=account.self_user_id), account
+    )
     print(f"processed {n} wechat reply task(s)")
     return 0
 
 
 def cmd_read_recent(args) -> int:
     store = AutoReplyStore(Path(args.db))
-    state = service.ready_account_state(store)
+    state = service.capability_ready_account_state(store)
     if state is None:
         print("expected exactly one persisted ready WeChat account; run status first")
         return 1
@@ -94,6 +96,14 @@ def cmd_read_recent(args) -> int:
     if not self_user_id:
         print("cannot determine current WeChat user; run status and verify self_user_id")
         return 1
+    if not account.self_user_id:
+        store.upsert_wechat_read_state(
+            account_id=state["account_id"], account_dir=state["account_dir"],
+            db_dir=state["db_dir"], app_version=state["app_version"],
+            self_user_id=self_user_id,
+            capability_status=state["capability_status"],
+            capability_reason=state.get("capability_reason", ""),
+        )
     account = account.model_copy(update={"self_user_id": self_user_id})
     reader = _reader(self_username=self_user_id)
     messages = reader.read_messages(
@@ -116,7 +126,10 @@ def cmd_produce_once(args) -> int:
         print("no single ready account; run status first")
         return 1
     account = service.account_from_state(state)
-    n = service.run_produce_once(store, _reader(), account, self_user_id=state.get("self_user_id", ""))
+    n = service.run_produce_once(
+        store, _reader(self_username=account.self_user_id), account,
+        self_user_id=account.self_user_id,
+    )
     print(f"enqueued {n} wechat reply task(s)")
     return 0
 

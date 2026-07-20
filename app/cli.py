@@ -2284,10 +2284,9 @@ def run_task_maintenance_loop(
 
 
 def _wechat_service_components(settings: WorkerSettings) -> tuple:
-    """WeChat producer/consumer components, only when the reader flag is on AND a
-    single account is persisted ``ready``. Disabled by default (adds nothing to
-    the DingTalk service). Auto-sending stays gated: these loops enqueue tasks and
-    produce ``ready_to_send`` deliveries but do not send."""
+    """WeChat components, only when the reader flag is on and exactly one account
+    is persisted ``ready`` with a self wxid. Disabled by default (adds nothing to
+    the DingTalk service). Auto-sending stays separately gated."""
     from app import config as _cfg
 
     if not _cfg.wechat_reader_enabled():

@@ -1,7 +1,7 @@
 """Compose the WeChat channel into produce/consume/reconcile steps and loops.
 
-Loops start only when the reader flag is on AND the persisted capability for a
-single account is ``ready``; the sender flag is checked again per delivery.
+Loops start only when the reader flag is on AND exactly one persisted account is
+``ready`` with a non-empty self wxid; the sender flag is checked again per delivery.
 Recovery runs before sender startup and turns orphaned ``sending`` rows into
 ``send_unknown`` (never ``ready_to_send``). Everything is disabled by default.
 """
@@ -24,9 +24,16 @@ def account_from_state(state: dict) -> WechatAccount:
     )
 
 
-def ready_account_state(store) -> dict | None:
+def capability_ready_account_state(store) -> dict | None:
     ready = [s for s in store.list_wechat_read_states() if s["capability_status"] == "ready"]
     return ready[0] if len(ready) == 1 else None
+
+
+def ready_account_state(store) -> dict | None:
+    state = capability_ready_account_state(store)
+    if state is None or not state.get("self_user_id", "").strip():
+        return None
+    return state
 
 
 def wechat_loop_names(*, reader_enabled: bool, capability_ready: bool) -> list[str]:

@@ -107,6 +107,17 @@ def test_outbound_and_nontext_ignored(producer, reader):
     assert producer.run_once() == 0
 
 
+def test_own_direct_message_is_never_enqueued(producer, reader, store):
+    reader.messages = [
+        direct_message("d5", text="sent by me", direction="outbound").model_copy(
+            update={"sender_id": "self-1", "sender_display_name": "Derek"}
+        )
+    ]
+
+    assert producer.run_once() == 0
+    assert store.count_reply_tasks(channel="wechat") == 0
+
+
 def test_repeated_scan_does_not_duplicate_wechat_task(producer, reader, store):
     reader.messages = [group_message("m2", text="@Derek", mentioned_user_ids=["self-1"])]
     assert producer.run_once() == 1
