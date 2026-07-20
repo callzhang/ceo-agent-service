@@ -371,8 +371,17 @@ def test_execute_rejects_an_unsupported_kind(unsupported_kind: object) -> None:
     assert worker.calls == []
 
 
-@pytest.mark.parametrize("method_name", sorted(set(WORKER_METHOD_BY_KIND.values())))
-def test_worker_universal_methods_require_capability_executor(
+@pytest.mark.parametrize(
+    "method_name",
+    sorted(
+        set(WORKER_METHOD_BY_KIND.values())
+        - {
+            "execute_universal_send_reply",
+            "execute_universal_terminal_action",
+        }
+    ),
+)
+def test_unimplemented_worker_universal_methods_require_capability_executor(
     method_name: str,
 ) -> None:
     worker = object.__new__(DingTalkAutoReplyWorker)

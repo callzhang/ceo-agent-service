@@ -89,7 +89,11 @@ from app.store import (
     ReplyTask,
 )
 from app.task_models import WorkItem
-from app.universal_executor import UniversalActionExecution
+from app.universal_executor import (
+    UniversalActionExecution,
+    UniversalActionExecutionState,
+)
+from app.universal_plan import PlannedActionKind
 
 logger = logging.getLogger(__name__)
 
@@ -447,9 +451,96 @@ class DingTalkAutoReplyWorker:
         self._dws_auth_login_process = None
 
     def execute_universal_send_reply(self, execution: UniversalActionExecution) -> bool:
-        raise NotImplementedError(
-            "wire capability executor before enabling universal consumer"
+        if execution.action.kind not in {
+            PlannedActionKind.SEND_REPLY,
+            PlannedActionKind.ASK_CLARIFYING_QUESTION,
+        }:
+            raise ValueError("universal reply executor received a non-reply action")
+        claim_state = self.store.claim_universal_action_execution(execution)
+        if claim_state is UniversalActionExecutionState.SUCCEEDED:
+            return True
+        if claim_state is UniversalActionExecutionState.UNKNOWN:
+            raise RuntimeError(
+                f"universal action outcome is unknown: {execution.execution_id}"
+            )
+
+        conversation, trigger, new_messages = self._universal_reply_context(execution)
+        reply_text = str(execution.action.payload["text"]).strip()
+        attempt_id = self._record_universal_reply_attempt(
+            execution,
+            draft_reply_text=reply_text,
+            send_status="pending",
         )
+        if self.store.has_sent_reply_for_trigger(
+            execution.context.conversation_id,
+            execution.context.trigger_message_id,
+        ):
+            self.store.update_reply_attempt(
+                attempt_id,
+                send_status="skipped",
+                send_error="duplicate_sent_reply_for_trigger",
+            )
+            self._complete_universal_action(
+                execution,
+                attempt_id=attempt_id,
+                outcome="duplicate_existing_delivery",
+            )
+            return True
+
+        try:
+            self._send_reply(
+                conversation=conversation,
+                trigger=trigger,
+                new_messages=new_messages,
+                reply_text=reply_text,
+                reason=execution.action.reason,
+                attempt_id=attempt_id,
+                raise_on_delivery_failure=True,
+            )
+        except Exception as exc:
+            if self.store.has_sent_reply_for_trigger(
+                execution.context.conversation_id,
+                execution.context.trigger_message_id,
+            ):
+                self.store.update_reply_attempt(
+                    attempt_id,
+                    send_status="sent",
+                    send_error="",
+                )
+                self._complete_universal_action(
+                    execution,
+                    attempt_id=attempt_id,
+                    outcome="delivery_salvaged_after_error",
+                )
+                return True
+            error = f"universal_action_outcome_unknown: {exc}"
+            self.store.update_reply_attempt(
+                attempt_id,
+                send_status="failed",
+                send_error=error,
+            )
+            self.store.mark_universal_action_execution_unknown(execution, error)
+            raise
+
+        if not self.store.has_sent_reply_for_trigger(
+            execution.context.conversation_id,
+            execution.context.trigger_message_id,
+        ):
+            error = "universal_action_outcome_unknown: delivery not recorded"
+            self.store.update_reply_attempt(
+                attempt_id,
+                send_status="failed",
+                send_error=error,
+            )
+            self.store.mark_universal_action_execution_unknown(execution, error)
+            raise ReplyDeliveryError(error)
+
+        self._complete_universal_action(
+            execution,
+            attempt_id=attempt_id,
+            outcome="delivered",
+        )
+        return True
 
     def execute_universal_oa_approval(self, execution: UniversalActionExecution) -> bool:
         raise NotImplementedError(
@@ -482,9 +573,154 @@ class DingTalkAutoReplyWorker:
         )
 
     def execute_universal_terminal_action(self, execution: UniversalActionExecution) -> bool:
-        raise NotImplementedError(
-            "wire capability executor before enabling universal consumer"
+        terminal_statuses = {
+            PlannedActionKind.NO_REPLY: "skipped",
+            PlannedActionKind.HANDOFF_TO_HUMAN: "skipped",
+            PlannedActionKind.BLOCKED: "blocked",
+            PlannedActionKind.STOP_WITH_ERROR: "failed",
+        }
+        send_status = terminal_statuses.get(execution.action.kind)
+        if send_status is None:
+            raise ValueError("universal terminal executor received a non-terminal action")
+        claim_state = self.store.claim_universal_action_execution(execution)
+        if claim_state is UniversalActionExecutionState.SUCCEEDED:
+            return True
+        if claim_state is UniversalActionExecutionState.UNKNOWN:
+            raise RuntimeError(
+                f"universal action outcome is unknown: {execution.execution_id}"
+            )
+
+        send_error = f"{execution.action.kind.value}: {execution.action.reason}"
+        attempt_id = self._record_universal_reply_attempt(
+            execution,
+            send_status=send_status,
+            send_error=send_error,
         )
+        self._complete_universal_action(
+            execution,
+            attempt_id=attempt_id,
+            outcome=send_status,
+        )
+        return True
+
+    @staticmethod
+    def _universal_result_json(
+        execution: UniversalActionExecution,
+        *,
+        outcome: str,
+    ) -> str:
+        return json.dumps(
+            {
+                "action_kind": execution.action.kind.value,
+                "execution_id": execution.execution_id,
+                "execution_scope_id": execution.execution_scope_id,
+                "outcome": outcome,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+
+    def _complete_universal_action(
+        self,
+        execution: UniversalActionExecution,
+        *,
+        attempt_id: int,
+        outcome: str,
+    ) -> None:
+        self.store.complete_universal_action_execution(
+            execution,
+            attempt_id=attempt_id,
+            result_json=self._universal_result_json(execution, outcome=outcome),
+        )
+
+    @staticmethod
+    def _universal_audit_tool_events_json(
+        execution: UniversalActionExecution,
+    ) -> str:
+        return json.dumps(
+            [
+                {
+                    "action_kind": execution.action.kind.value,
+                    "execution_id": execution.execution_id,
+                    "execution_scope_id": execution.execution_scope_id,
+                    "tool": "universal_consumer",
+                }
+            ],
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+
+    def _record_universal_reply_attempt(
+        self,
+        execution: UniversalActionExecution,
+        *,
+        draft_reply_text: str = "",
+        send_status: str,
+        send_error: str = "",
+    ) -> int:
+        context = execution.context
+        attempt_id = self.store.record_reply_attempt_for_trigger(
+            conversation_id=context.conversation_id,
+            conversation_title=context.conversation_title,
+            trigger_message_id=context.trigger_message_id,
+            trigger_sender=context.trigger_sender,
+            trigger_text=context.trigger_text,
+            action=execution.action.kind.value,
+            sensitivity_kind="general",
+            codex_reason=execution.action.reason,
+            draft_reply_text=draft_reply_text,
+            audit_tool_events_json=self._universal_audit_tool_events_json(execution),
+            audit_summary=execution.action.reason,
+            send_status=send_status,
+        )
+        if send_error:
+            self.store.update_reply_attempt(attempt_id, send_error=send_error)
+        return attempt_id
+
+    @staticmethod
+    def _universal_reply_context(
+        execution: UniversalActionExecution,
+    ) -> tuple[DingTalkConversation, DingTalkMessage, list[DingTalkMessage]]:
+        context = execution.context
+        conversation = DingTalkConversation(
+            open_conversation_id=context.conversation_id,
+            title=context.conversation_title,
+            single_chat=context.single_chat,
+            unread_point=0,
+        )
+        trigger = DingTalkMessage(
+            open_conversation_id=context.conversation_id,
+            open_message_id=context.trigger_message_id,
+            conversation_title=context.conversation_title,
+            single_chat=context.single_chat,
+            sender_name=context.trigger_sender,
+            create_time="",
+            content=context.trigger_text,
+        )
+        new_messages: list[DingTalkMessage] = []
+        trigger_added = False
+        for message in context.context_messages:
+            if message.open_message_id == context.trigger_message_id:
+                if not trigger_added:
+                    new_messages.append(trigger)
+                    trigger_added = True
+                continue
+            new_messages.append(
+                DingTalkMessage(
+                    open_conversation_id=context.conversation_id,
+                    open_message_id=message.open_message_id,
+                    conversation_title=context.conversation_title,
+                    single_chat=context.single_chat,
+                    sender_name=message.sender_name,
+                    create_time="",
+                    content=message.content,
+                )
+            )
+        if not trigger_added:
+            new_messages.append(trigger)
+        return conversation, trigger, new_messages
 
     def run_once(self, max_batches: int | None = None) -> None:
         try:
