@@ -4153,26 +4153,102 @@ class AutoReplyStore:
         if execution.action.kind.value != action:
             raise ValueError("universal attempt action mismatch")
         with self._connect() as db:
-            db.execute("begin")
+            db.execute("begin immediate")
             execution_row = self._validate_universal_action_execution(db, execution)
             if execution_row is None or execution_row["status"] != "started":
                 raise ValueError("universal action execution must be started")
-        return self.record_reply_attempt(
-            conversation_id=conversation_id,
-            conversation_title=conversation_title,
-            trigger_message_id=trigger_message_id,
-            trigger_sender=trigger_sender,
-            trigger_text=trigger_text,
-            action=action,
-            sensitivity_kind=sensitivity_kind,
-            codex_reason=codex_reason,
-            draft_reply_text=draft_reply_text,
-            audit_tool_events_json=audit_tool_events_json,
-            audit_summary=audit_summary,
-            universal_execution_id=execution.execution_id,
-            universal_execution_scope_id=execution.execution_scope_id,
-            send_status=send_status,
-        )
+            existing = db.execute(
+                """
+                select * from reply_attempts
+                where universal_execution_id=?
+                """,
+                (execution.execution_id,),
+            ).fetchone()
+            if existing is not None:
+                immutable_fields = {
+                    "universal_execution_scope_id": execution.execution_scope_id,
+                    "conversation_id": conversation_id,
+                    "conversation_title": conversation_title,
+                    "trigger_message_id": trigger_message_id,
+                    "trigger_sender": trigger_sender,
+                    "trigger_text": trigger_text,
+                    "action": action,
+                    "sensitivity_kind": sensitivity_kind,
+                    "codex_reason": codex_reason,
+                    "draft_reply_text": draft_reply_text,
+                    "audit_summary": audit_summary,
+                }
+                mismatched_fields = [
+                    field_name
+                    for field_name, expected_value in immutable_fields.items()
+                    if existing[field_name] != expected_value
+                ]
+                if mismatched_fields:
+                    raise ValueError(
+                        "universal attempt identity mismatch: "
+                        + ", ".join(mismatched_fields)
+                    )
+                db.execute(
+                    """
+                    update reply_attempts
+                    set direct_user_id='',
+                        direct_open_dingtalk_id='',
+                        final_reply_text='',
+                        permission_action='',
+                        permission_reason='',
+                        send_status=?,
+                        send_error='',
+                        retry_count=retry_count + 1,
+                        updated_at=current_timestamp
+                    where id=?
+                    """,
+                    (send_status, existing["id"]),
+                )
+                return int(existing["id"])
+
+            cursor = db.execute(
+                """
+                insert into reply_attempts (
+                    conversation_id,
+                    conversation_title,
+                    trigger_message_id,
+                    trigger_sender,
+                    trigger_text,
+                    action,
+                    sensitivity_kind,
+                    codex_reason,
+                    draft_reply_text,
+                    audit_tool_events_json,
+                    audit_summary,
+                    universal_execution_id,
+                    universal_execution_scope_id,
+                    send_status
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    conversation_id,
+                    conversation_title,
+                    trigger_message_id,
+                    trigger_sender,
+                    trigger_text,
+                    action,
+                    sensitivity_kind,
+                    codex_reason,
+                    draft_reply_text,
+                    audit_tool_events_json,
+                    audit_summary,
+                    execution.execution_id,
+                    execution.execution_scope_id,
+                    send_status,
+                ),
+            )
+            attempt_id = int(cursor.lastrowid)
+            self._record_memory_write_events_in_connection(
+                db,
+                attempt_id,
+                audit_tool_events_json,
+            )
+            return attempt_id
 
     def record_reply_attempt_for_trigger(
         self,

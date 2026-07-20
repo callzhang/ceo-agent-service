@@ -1,4 +1,5 @@
 import json
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -795,6 +796,165 @@ def test_universal_handoff_failure_after_notification_is_unknown(
     assert attempt is not None
     assert attempt.send_status == "failed"
     assert "universal_action_outcome_unknown" in attempt.send_error
+
+
+def test_universal_terminal_retry_reuses_owned_attempt_and_succeeds(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    execution = _execution(store, kind=PlannedActionKind.NO_REPLY)
+    worker = _worker(store)
+    enqueue_work_item = worker._enqueue_conversation_work_item
+    monkeypatch.setattr(
+        worker,
+        "_enqueue_conversation_work_item",
+        lambda **kwargs: (_ for _ in ()).throw(RuntimeError("queue unavailable")),
+    )
+
+    with pytest.raises(RuntimeError, match="queue unavailable"):
+        worker.execute_universal_terminal_action(execution)
+
+    first_attempt = store.get_latest_reply_attempt_for_trigger(
+        "cid-context", "msg-context"
+    )
+    assert first_attempt is not None
+    assert first_attempt.send_status == "failed"
+    assert (
+        store.get_universal_action_execution_state(execution)
+        is UniversalActionExecutionState.NOT_STARTED
+    )
+
+    monkeypatch.setattr(
+        worker,
+        "_enqueue_conversation_work_item",
+        enqueue_work_item,
+    )
+
+    assert worker.execute_universal_terminal_action(execution) is True
+
+    attempts = [
+        attempt
+        for attempt in store.list_reply_attempts()
+        if attempt.universal_execution_id == execution.execution_id
+    ]
+    assert len(attempts) == 1
+    assert attempts[0].id == first_attempt.id
+    assert attempts[0].retry_count == 1
+    assert attempts[0].send_status == "skipped"
+    assert attempts[0].send_error == "no_reply: Reason for no_reply"
+    assert (
+        store.get_universal_action_execution_state(execution)
+        is UniversalActionExecutionState.SUCCEEDED
+    )
+
+
+def test_universal_reply_pre_send_retry_reuses_owned_attempt_and_succeeds(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    execution = _execution(
+        store,
+        kind=PlannedActionKind.SEND_REPLY,
+        payload={"text": "Reply after retry"},
+    )
+    worker = _worker(store)
+    monkeypatch.setattr(worker, "_explicit_reply_at_targets", lambda *args: [])
+    monkeypatch.setattr(
+        worker,
+        "_default_reply_at_targets",
+        lambda trigger: (_ for _ in ()).throw(RuntimeError("recipient unavailable")),
+    )
+
+    with pytest.raises(ReplyDeliveryError, match="recipient unavailable"):
+        worker.execute_universal_send_reply(execution)
+
+    first_attempt = store.get_latest_reply_attempt_for_trigger(
+        "cid-context", "msg-context"
+    )
+    assert first_attempt is not None
+    assert first_attempt.send_status == "failed"
+    assert (
+        store.get_universal_action_execution_state(execution)
+        is UniversalActionExecutionState.NOT_STARTED
+    )
+
+    monkeypatch.setattr(worker, "_default_reply_at_targets", lambda trigger: [])
+
+    def deliver(conversation, trigger, reply_text, attempt_id, **kwargs):
+        store.update_reply_attempt(
+            attempt_id,
+            final_reply_text=reply_text,
+            send_status="sent",
+        )
+        store.record_sent_reply(
+            conversation.open_conversation_id,
+            trigger.open_message_id,
+            reply_text,
+        )
+
+    monkeypatch.setattr(worker, "_send_reply", deliver)
+
+    assert worker.execute_universal_send_reply(execution) is True
+
+    attempts = [
+        attempt
+        for attempt in store.list_reply_attempts()
+        if attempt.universal_execution_id == execution.execution_id
+    ]
+    assert len(attempts) == 1
+    assert attempts[0].id == first_attempt.id
+    assert attempts[0].retry_count == 1
+    assert attempts[0].send_status == "sent"
+    assert attempts[0].send_error == ""
+    assert (
+        store.get_universal_action_execution_state(execution)
+        is UniversalActionExecutionState.SUCCEEDED
+    )
+
+
+def test_concurrent_universal_attempt_retry_reuses_one_owned_row(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    execution = _execution(store, kind=PlannedActionKind.NO_REPLY)
+    worker = _worker(store)
+    assert (
+        store.claim_universal_action_execution(execution)
+        is UniversalActionExecutionState.NOT_STARTED
+    )
+    first_attempt_id = worker._record_universal_reply_attempt(
+        execution,
+        send_status="skipped",
+        send_error="first failure",
+    )
+    store.mark_universal_action_execution_failed(execution, "first failure")
+    assert (
+        store.claim_universal_action_execution(execution)
+        is UniversalActionExecutionState.NOT_STARTED
+    )
+
+    def record_retry(_: int) -> int:
+        return worker._record_universal_reply_attempt(
+            execution,
+            send_status="skipped",
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        retry_attempt_ids = list(pool.map(record_retry, range(2)))
+
+    assert retry_attempt_ids == [first_attempt_id, first_attempt_id]
+    attempts = [
+        attempt
+        for attempt in store.list_reply_attempts()
+        if attempt.universal_execution_id == execution.execution_id
+    ]
+    assert len(attempts) == 1
+    assert attempts[0].universal_execution_scope_id == execution.execution_scope_id
+    assert attempts[0].conversation_id == execution.context.conversation_id
+    assert attempts[0].trigger_message_id == execution.context.trigger_message_id
+    assert attempts[0].action == execution.action.kind.value
 
 
 def test_universal_terminal_unknown_fails_closed_without_new_attempt(
