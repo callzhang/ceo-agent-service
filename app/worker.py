@@ -1757,10 +1757,14 @@ class DingTalkAutoReplyWorker:
                 title="CEO task retrying stale tasks",
                 message=f"requeued {reset_count} stale task(s)",
             )
-        for task in self.store.claim_reply_tasks(
-            limit,
-            now=self._sqlite_timestamp(self._now()),
-        ):
+        for _ in range(limit):
+            claimed_tasks = self.store.claim_reply_tasks(
+                1,
+                now=self._sqlite_timestamp(self._now()),
+            )
+            if not claimed_tasks:
+                break
+            task = claimed_tasks[0]
             conversation = DingTalkConversation(
                 open_conversation_id=task.conversation_id,
                 title=task.conversation_title,

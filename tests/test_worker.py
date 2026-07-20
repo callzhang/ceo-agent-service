@@ -3995,6 +3995,65 @@ def test_consume_once_processes_queued_task(tmp_path: Path, monkeypatch):
     assert final_sent(dws) == [("cid-1", "@周俊杰 先按A方案走（by明哥分身）")]
 
 
+def test_consume_once_claims_one_reply_task_at_a_time(
+    tmp_path: Path, monkeypatch
+):
+    class WorkerInterrupted(BaseException):
+        pass
+
+    first = message(
+        "@Alex Chen(明哥) 第一条怎么处理？",
+        message_id="msg-1",
+    )
+    second = message(
+        "@Alex Chen(明哥) 第二条怎么处理？",
+        message_id="msg-2",
+    )
+    dws = FakeDws(
+        [conversation()],
+        {"cid-1": [second, first]},
+    )
+
+    def interrupt(_prompt, _session_id):
+        raise WorkerInterrupted()
+
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该执行"),
+        before_decide=interrupt,
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+    worker.store.enqueue_reply_task(
+        conversation_id="cid-1",
+        conversation_title="Friday",
+        single_chat=False,
+        trigger_message_id=first.open_message_id,
+        trigger_create_time=first.create_time,
+        trigger_sender=first.sender_name,
+        trigger_text=first.content,
+        trigger_message_json=first.model_dump_json(),
+    )
+    worker.store.enqueue_reply_task(
+        conversation_id="cid-1",
+        conversation_title="Friday",
+        single_chat=False,
+        trigger_message_id=second.open_message_id,
+        trigger_create_time=second.create_time,
+        trigger_sender=second.sender_name,
+        trigger_text=second.content,
+        trigger_message_json=second.model_dump_json(),
+    )
+
+    with pytest.raises(WorkerInterrupted):
+        worker.consume_once(max_tasks=2)
+
+    tasks = {
+        task.trigger_message_id: task
+        for task in worker.store.list_reply_tasks(statuses=("pending", "processing"))
+    }
+    assert tasks["msg-1"].status == "processing"
+    assert tasks["msg-2"].status == "pending"
+
+
 def test_sent_reply_enqueues_conversation_work_item(tmp_path: Path, monkeypatch):
     trigger = message("@Alex Chen 这个项目需要 Alex 三天内给进展")
     dws = FakeDws([conversation()], {"cid-1": [trigger]})
