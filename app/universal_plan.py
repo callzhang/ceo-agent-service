@@ -1,7 +1,7 @@
 from enum import StrEnum
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class DependencyName(StrEnum):
@@ -29,13 +29,17 @@ class PlannedActionKind(StrEnum):
     STOP_WITH_ERROR = "stop_with_error"
 
 
+class UniversalPlanBase(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
 def _non_empty(value: Any) -> Any:
     if not isinstance(value, str) or not value.strip():
         raise ValueError("must be non-empty after trimming")
     return value.strip()
 
 
-class UniversalAudit(BaseModel):
+class UniversalAudit(UniversalPlanBase):
     summary: str
     documents: list[dict[str, str]] = Field(default_factory=list)
     confidence: float = Field(ge=0, le=1)
@@ -43,7 +47,7 @@ class UniversalAudit(BaseModel):
     _summary_non_empty = field_validator("summary")(_non_empty)
 
 
-class PlannedAction(BaseModel):
+class PlannedAction(UniversalPlanBase):
     kind: PlannedActionKind
     reason: str
     target: dict[str, Any] = Field(default_factory=dict)
@@ -86,7 +90,7 @@ class PlannedAction(BaseModel):
         return self
 
 
-class UniversalPlan(BaseModel):
+class UniversalPlan(UniversalPlanBase):
     planner_version: Literal["2026-07-20"] = "2026-07-20"
     task_kind: str
     reason: str
