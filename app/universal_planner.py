@@ -7,6 +7,7 @@ from app.codex_decision import _subprocess_failure_reason, extract_codex_session
 from app.codex_runner import (
     CodexRunner,
     _config_string,
+    codex_developer_instructions,
     codex_model_config_options,
     memory_connector_config_options,
     passthrough_mcp_server_config_options,
@@ -16,6 +17,14 @@ from app.universal_context import UniversalTaskContext
 from app.universal_plan import UniversalPlan
 
 UNIVERSAL_PLANNER_RAW_OUTPUT_LIMIT = 12_000
+
+UNIVERSAL_PLANNER_DEVELOPER_OVERLAY = (
+    "For this Universal Planner invocation, the UniversalPlan output contract "
+    "overrides any legacy AgentEnvelope output protocol in the shared CEO rules. "
+    "Apply all shared business, permission, evidence, style, privacy, and safety "
+    "rules when deciding the plan. Return UniversalPlan JSON only. Plan external "
+    "side effects but never execute them yourself."
+)
 
 UNIVERSAL_PLAN_SCHEMA_HINT = (
     "UniversalPlan JSON contract: "
@@ -178,7 +187,10 @@ class UniversalPlanner:
             "-c",
             _config_string(
                 "developer_instructions",
-                "You are a planning-only agent. Return only the requested JSON.",
+                (
+                    f"{codex_developer_instructions()}\n\n"
+                    f"{UNIVERSAL_PLANNER_DEVELOPER_OVERLAY}"
+                ),
             ),
             "-c",
             'model_reasoning_summary="concise"',

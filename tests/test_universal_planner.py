@@ -226,6 +226,13 @@ def test_plan_uses_new_and_resume_commands_with_configured_mcps(tmp_path, monkey
         assert 'sandbox_mode="read-only"' in _config_values(command)
         assert 'approval_policy="untrusted"' in _config_values(command)
         assert 'approvals_reviewer="auto_review"' in _config_values(command)
+        developer_config = next(
+            value
+            for value in _config_values(command)
+            if value.startswith('developer_instructions=')
+        )
+        assert "先判断是否需要回复" in developer_config
+        assert "UniversalPlan output contract overrides" in developer_config
 
 
 def test_plan_passes_noninteractive_environment_to_executor_and_returns_plan(tmp_path):
