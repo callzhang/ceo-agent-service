@@ -1229,14 +1229,273 @@ class DingTalkAutoReplyWorker:
         )
 
     def execute_universal_mail_reply(self, execution: UniversalActionExecution) -> bool:
-        raise NotImplementedError(
-            "wire capability executor before enabling universal consumer"
+        if execution.action.kind is not PlannedActionKind.MAIL_REPLY:
+            raise ValueError("universal mail executor received a non-mail action")
+        claim_state = self.store.claim_universal_action_execution(execution)
+        if claim_state is UniversalActionExecutionState.SUCCEEDED:
+            return True
+        if claim_state is UniversalActionExecutionState.UNKNOWN:
+            raise RuntimeError(
+                f"universal action outcome is unknown: {execution.execution_id}"
+            )
+
+        context = execution.context
+        action = execution.action
+        target = (
+            str(action.target.get("mailbox") or "").strip(),
+            str(action.target.get("message_id") or "").strip(),
+            str(action.target.get("subject") or "").strip(),
         )
+        trusted_target = (
+            context.trusted_mail_mailbox.strip(),
+            context.trusted_mail_message_id.strip(),
+            context.trusted_mail_subject.strip(),
+        )
+        if not all(trusted_target) or target != trusted_target:
+            return self._block_universal_capability_target(
+                execution, "untrusted_mail_reply_target"
+            )
+
+        content = str(action.payload.get("content") or "").strip()
+        attempt_id = self._record_universal_reply_attempt(
+            execution,
+            draft_reply_text=content,
+            send_status="dry_run",
+        )
+        self.store.update_reply_attempt(
+            attempt_id,
+            mail_mailbox=target[0],
+            mail_message_id=target[1],
+            mail_subject=target[2],
+            mail_reply_text=content,
+        )
+        conversation, trigger, messages = self._universal_reply_context(execution)
+        try:
+            self.dws.build_mail_reply_command(
+                mailbox=target[0],
+                message_id=target[1],
+                subject=target[2],
+                content=content,
+            )
+        except Exception as exc:
+            self._fail_universal_action_before_send(
+                execution,
+                attempt_id=attempt_id,
+                error=str(exc),
+            )
+            raise
+        try:
+            succeeded = self._execute_mail_reply_if_needed(
+                conversation=conversation,
+                trigger=trigger,
+                attempt_id=attempt_id,
+                raise_on_delivery_failure=True,
+            )
+            if not succeeded:
+                raise ReplyDeliveryError("mail reply was not delivered")
+            attempt = self.store.get_reply_attempt(attempt_id)
+            if attempt is None or not attempt.mail_action_result_json.strip():
+                raise ReplyDeliveryError("mail reply receipt is missing")
+            if not self._universal_mail_receipt_is_success(
+                attempt.mail_action_result_json
+            ):
+                raise ReplyDeliveryError("mail reply has no success receipt")
+            self.store.update_reply_attempt(
+                attempt_id,
+                final_reply_text=content,
+                send_status="sent",
+                send_error="",
+            )
+            self._mark_seen(messages)
+            self.store.complete_universal_action_execution(
+                execution,
+                attempt_id=attempt_id,
+                result_json=attempt.mail_action_result_json,
+            )
+            return True
+        except Exception as exc:
+            self._finish_universal_capability_failure(
+                execution,
+                attempt_id=attempt_id,
+                error=exc,
+            )
+            raise
 
     def execute_universal_calendar_response(self, execution: UniversalActionExecution) -> bool:
-        raise NotImplementedError(
-            "wire capability executor before enabling universal consumer"
+        if execution.action.kind is not PlannedActionKind.CALENDAR_RESPONSE:
+            raise ValueError("universal calendar executor received a non-calendar action")
+        claim_state = self.store.claim_universal_action_execution(execution)
+        if claim_state is UniversalActionExecutionState.SUCCEEDED:
+            return True
+        if claim_state is UniversalActionExecutionState.UNKNOWN:
+            raise RuntimeError(
+                f"universal action outcome is unknown: {execution.execution_id}"
+            )
+
+        context = execution.context
+        event_id = str(execution.action.target.get("event_id") or "").strip()
+        response_status = str(
+            execution.action.payload.get("response_status") or ""
+        ).strip()
+        if (
+            not context.trusted_calendar_event_id.strip()
+            or event_id != context.trusted_calendar_event_id.strip()
+        ):
+            return self._block_universal_capability_target(
+                execution, "untrusted_calendar_response_target"
+            )
+
+        attempt_id = self._record_universal_reply_attempt(
+            execution,
+            send_status="dry_run",
         )
+        self.store.update_reply_attempt(
+            attempt_id,
+            calendar_event_id=event_id,
+            calendar_response_status=response_status,
+        )
+        conversation, trigger, messages = self._universal_reply_context(execution)
+        try:
+            event = self._verified_calendar_event_after_response(event_id)
+        except Exception as exc:
+            self._fail_universal_action_before_send(
+                execution,
+                attempt_id=attempt_id,
+                error=str(exc),
+            )
+            raise
+        if event is None:
+            event = DwsCalendarEvent(
+                event_id=event_id,
+                organizer=context.trusted_calendar_organizer,
+                self_response_status=context.trusted_calendar_response_status,
+            )
+        try:
+            succeeded = self._execute_calendar_response(
+                conversation=conversation,
+                trigger=trigger,
+                event=event,
+                response_status=response_status,
+                attempt_id=attempt_id,
+                mark_attempt_terminal=True,
+                raise_on_delivery_failure=True,
+            )
+            if not succeeded:
+                raise ReplyDeliveryError("calendar response was not applied")
+            attempt = self.store.get_reply_attempt(attempt_id)
+            if attempt is None or not attempt.calendar_response_result_json.strip():
+                raise ReplyDeliveryError("calendar response receipt is missing")
+            result = json.loads(attempt.calendar_response_result_json)
+            if not isinstance(result, dict):
+                raise ReplyDeliveryError("calendar response receipt is invalid")
+            if not str(result.get("noop_reason") or "").strip():
+                verified_event = self._verified_calendar_event_after_response(event_id)
+                if verified_event is None:
+                    raise ReplyDeliveryError(
+                        "calendar response verification unavailable"
+                    )
+                if not self._calendar_response_status_matches(
+                    verified_event.self_response_status,
+                    response_status,
+                ):
+                    raise ReplyDeliveryError(
+                        "calendar response verification mismatch"
+                    )
+            self._mark_seen(messages)
+            self.store.complete_universal_action_execution(
+                execution,
+                attempt_id=attempt_id,
+                result_json=attempt.calendar_response_result_json,
+            )
+            return True
+        except Exception as exc:
+            self._finish_universal_capability_failure(
+                execution,
+                attempt_id=attempt_id,
+                error=exc,
+            )
+            raise
+
+    def _block_universal_capability_target(
+        self,
+        execution: UniversalActionExecution,
+        error: str,
+    ) -> bool:
+        attempt_id = self._record_universal_reply_attempt(
+            execution,
+            send_status="blocked",
+            send_error=error,
+        )
+        self._complete_universal_action(
+            execution,
+            attempt_id=attempt_id,
+            outcome="blocked",
+        )
+        return True
+
+    @staticmethod
+    def _universal_capability_outcome_may_be_unknown(error: Exception) -> bool:
+        current: BaseException | None = error
+        while current is not None:
+            if isinstance(current, (TimeoutError, ConnectionError)):
+                return True
+            current = current.__cause__
+        text = str(error).casefold()
+        return any(
+            marker in text
+            for marker in (
+                "timeout",
+                "connection reset",
+                "has no success receipt",
+                "receipt is missing",
+                "verification unavailable",
+            )
+        )
+
+    @staticmethod
+    def _universal_mail_receipt_is_success(result_json: str) -> bool:
+        try:
+            result = json.loads(result_json)
+        except json.JSONDecodeError:
+            return False
+        if not isinstance(result, dict):
+            return False
+        if result.get("success") is True:
+            return True
+        for key in ("errcode", "code"):
+            value = result.get(key)
+            if value == 0 or value == "0":
+                return True
+        return False
+
+    def _finish_universal_capability_failure(
+        self,
+        execution: UniversalActionExecution,
+        *,
+        attempt_id: int,
+        error: Exception,
+    ) -> None:
+        attempt = self.store.get_reply_attempt(attempt_id)
+        send_error = str(error)
+        if attempt is not None and attempt.send_error.strip():
+            send_error = attempt.send_error.strip()
+        if self._universal_capability_outcome_may_be_unknown(error):
+            unknown_error = f"universal_action_outcome_unknown: {send_error}"
+            self.store.update_reply_attempt(
+                attempt_id,
+                send_status="failed",
+                send_error=unknown_error,
+            )
+            self.store.mark_universal_action_execution_unknown(
+                execution, unknown_error
+            )
+            return
+        self.store.update_reply_attempt(
+            attempt_id,
+            send_status="failed",
+            send_error=send_error,
+        )
+        self.store.mark_universal_action_execution_failed(execution, send_error)
 
     def execute_universal_document_reply(self, execution: UniversalActionExecution) -> bool:
         raise NotImplementedError(

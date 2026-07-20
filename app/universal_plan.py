@@ -78,7 +78,7 @@ class PlannedAction(UniversalPlanBase):
                 )
 
         if self.kind is PlannedActionKind.MAIL_REPLY:
-            for field_name in ("mailbox", "message_id"):
+            for field_name in ("mailbox", "message_id", "subject"):
                 value = self.target.get(field_name)
                 if not isinstance(value, str) or not value.strip():
                     raise ValueError(
@@ -110,6 +110,20 @@ class PlannedAction(UniversalPlanBase):
                         "oa_approval return payload.revert_action must be "
                         "REVERT_FOR_APPROVAL or REVERT_FOR_RESUBMIT"
                     )
+
+        if self.kind is PlannedActionKind.CALENDAR_RESPONSE:
+            event_id = self.target.get("event_id")
+            if not isinstance(event_id, str) or not event_id.strip():
+                raise ValueError("calendar_response requires target.event_id")
+            if self.payload.get("response_status") not in {
+                "accepted",
+                "tentative",
+                "declined",
+            }:
+                raise ValueError(
+                    "calendar_response payload.response_status must be one of "
+                    "accepted/tentative/declined"
+                )
 
         return self
 

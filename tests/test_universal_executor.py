@@ -113,8 +113,15 @@ def make_action(kind: PlannedActionKind) -> PlannedAction:
     elif kind is PlannedActionKind.OA_APPROVAL:
         payload = {"action": "comment", "remark": "Needs review"}
     elif kind is PlannedActionKind.MAIL_REPLY:
-        target = {"mailbox": "ceo@example.com", "message_id": "mail-1"}
+        target = {
+            "mailbox": "ceo@example.com",
+            "message_id": "mail-1",
+            "subject": "Subject",
+        }
         payload = {"content": "Mail reply"}
+    elif kind is PlannedActionKind.CALENDAR_RESPONSE:
+        target = {"event_id": "event-1"}
+        payload = {"response_status": "accepted"}
 
     return PlannedAction(
         kind=kind,
@@ -389,6 +396,8 @@ def test_execute_rejects_an_unsupported_kind(unsupported_kind: object) -> None:
         - {
             "execute_universal_oa_approval",
             "execute_universal_send_reply",
+            "execute_universal_mail_reply",
+            "execute_universal_calendar_response",
             "execute_universal_terminal_action",
         }
     ),

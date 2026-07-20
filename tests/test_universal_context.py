@@ -74,6 +74,8 @@ def test_maps_metadata_and_renders_trigger_and_recent_message() -> None:
         "Trigger text: Please review this.\n"
         "Trusted OA process instance ID: none\n"
         "Trusted OA task ID: none\n"
+        "Trusted mail target: none\n"
+        "Trusted calendar target: none\n"
         "Required dependencies: dws\n"
         "Execution generation: initial\n"
         "Force new decision: true\n"
@@ -221,6 +223,76 @@ def test_trusted_oa_target_changes_canonical_identity() -> None:
     assert universal_context_sha256(trusted) != universal_context_sha256(context)
 
 
+def test_build_derives_trusted_mail_target_from_trigger_payload() -> None:
+    trigger = make_message("trigger-mail", "Mail", "Mail notification")
+    trigger.raw_payload = {
+        "mail": {
+            "mailbox": "derek@example.com",
+            "messageId": "mail-1",
+            "subject": "Approval request",
+        }
+    }
+
+    context = build_universal_context(
+        conversation=make_conversation(),
+        trigger=trigger,
+        context_messages=[],
+        task_id=42,
+        force_new_decision=False,
+        dry_run=False,
+    )
+
+    assert context.trusted_mail_mailbox == "derek@example.com"
+    assert context.trusted_mail_message_id == "mail-1"
+    assert context.trusted_mail_subject == "Approval request"
+
+
+def test_build_derives_trusted_calendar_target_and_status_from_trigger_payload() -> None:
+    trigger = make_message("trigger-calendar", "Calendar", "Calendar invitation")
+    trigger.raw_payload = {
+        "calendarEvent": {
+            "eventId": "event-1",
+            "summary": "Strategy review",
+            "start": {"dateTime": "2026-07-21T10:00:00+08:00"},
+            "end": {"dateTime": "2026-07-21T11:00:00+08:00"},
+            "organizer": {"displayName": "Mina"},
+            "selfResponseStatus": "tentative",
+        }
+    }
+
+    context = build_universal_context(
+        conversation=make_conversation(),
+        trigger=trigger,
+        context_messages=[],
+        task_id=42,
+        force_new_decision=False,
+        dry_run=False,
+    )
+
+    assert context.trusted_calendar_event_id == "event-1"
+    assert context.trusted_calendar_response_status == "tentative"
+    assert context.trusted_calendar_organizer == "Mina"
+
+
+def test_trusted_mail_and_calendar_targets_change_canonical_identity() -> None:
+    context = build_context([])
+    trusted_mail = replace(
+        context,
+        trusted_mail_mailbox="derek@example.com",
+        trusted_mail_message_id="mail-1",
+        trusted_mail_subject="Subject",
+    )
+    trusted_calendar = replace(
+        context,
+        trusted_calendar_event_id="event-1",
+        trusted_calendar_response_status="accepted",
+        trusted_calendar_organizer="Mina",
+    )
+
+    assert universal_context_sha256(trusted_mail) != universal_context_sha256(context)
+    assert universal_context_sha256(trusted_calendar) != universal_context_sha256(context)
+
+
 def test_explicit_execution_generation_is_snapshotted_and_rendered() -> None:
     context = build_universal_context(
         conversation=make_conversation(),
@@ -318,6 +390,12 @@ def test_canonical_context_json_covers_every_field_with_stable_order() -> None:
             "trigger_text": "Please review this.",
             "trusted_oa_process_instance_id": "",
             "trusted_oa_task_id": "",
+            "trusted_mail_mailbox": "",
+            "trusted_mail_message_id": "",
+            "trusted_mail_subject": "",
+            "trusted_calendar_event_id": "",
+            "trusted_calendar_response_status": "",
+            "trusted_calendar_organizer": "",
         },
         ensure_ascii=False,
         sort_keys=True,

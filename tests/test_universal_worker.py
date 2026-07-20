@@ -19,6 +19,7 @@ from app.universal_plan import (
     UniversalAudit,
     UniversalPlan,
 )
+from app.dws_client import DwsCalendarEvent
 from app.worker import DingTalkAutoReplyWorker, ReplyDeliveryError
 
 
@@ -53,6 +54,49 @@ class NativeReplyFakeDws(FakeDws):
 
 class FakeCodex:
     pass
+
+
+class UniversalMailCalendarFakeDws(FakeDws):
+    def __init__(self) -> None:
+        super().__init__()
+        self.mail_replies: list[tuple[str, str, str, str]] = []
+        self.mail_error: Exception | None = None
+        self.mail_build_error: Exception | None = None
+        self.mail_result: dict = {"success": True, "messageId": "mail-receipt-1"}
+        self.calendar_responses: list[tuple[str, str]] = []
+        self.calendar_error: Exception | None = None
+        self.calendar_get_error: Exception | None = None
+        self.calendar_event = None
+        self.apply_calendar_response = True
+
+    def build_mail_reply_command(self, *, mailbox, message_id, subject, content):
+        if self.mail_build_error is not None:
+            raise self.mail_build_error
+        if not all((mailbox, message_id, subject, content)):
+            raise ValueError("mail target is incomplete")
+        return ["dws", "mail", "message", "reply", "--content", content]
+
+    def reply_mail(self, mailbox, message_id, subject, content):
+        self.mail_replies.append((mailbox, message_id, subject, content))
+        if self.mail_error is not None:
+            raise self.mail_error
+        return self.mail_result
+
+    def get_calendar_event(self, event_id):
+        if self.calendar_get_error is not None:
+            raise self.calendar_get_error
+        assert self.calendar_event is None or self.calendar_event.event_id == event_id
+        return self.calendar_event
+
+    def respond_calendar_event(self, event_id, response_status):
+        self.calendar_responses.append((event_id, response_status))
+        if self.calendar_error is not None:
+            raise self.calendar_error
+        if self.calendar_event is not None and self.apply_calendar_response:
+            self.calendar_event = self.calendar_event.model_copy(
+                update={"self_response_status": response_status}
+            )
+        return {"success": True, "requestId": "calendar-receipt-1"}
 
 
 class UniversalOaFakeDws(FakeDws):
@@ -185,6 +229,8 @@ def _execution(
     trusted_oa_target: bool = True,
     trusted_oa_process_instance_id: str | None = None,
     trusted_oa_task_id: str | None = None,
+    trusted_mail_target: tuple[str, str, str] | None = None,
+    trusted_calendar_target: tuple[str, str, str] | None = None,
 ) -> UniversalActionExecution:
     inserted = store.enqueue_reply_task(
         conversation_id="cid-context",
@@ -246,6 +292,12 @@ def _execution(
                 else ""
             )
         ),
+        trusted_mail_mailbox=(trusted_mail_target or ("", "", ""))[0],
+        trusted_mail_message_id=(trusted_mail_target or ("", "", ""))[1],
+        trusted_mail_subject=(trusted_mail_target or ("", "", ""))[2],
+        trusted_calendar_event_id=(trusted_calendar_target or ("", "", ""))[0],
+        trusted_calendar_response_status=(trusted_calendar_target or ("", "", ""))[1],
+        trusted_calendar_organizer=(trusted_calendar_target or ("", "", ""))[2],
     )
     action = PlannedAction(
         kind=kind,
@@ -293,6 +345,286 @@ def _worker(store: AutoReplyStore) -> DingTalkAutoReplyWorker:
         dws=FakeDws(),
         codex=FakeCodex(),
     )
+
+
+def test_universal_mail_reply_uses_trusted_target_and_persists_receipt(tmp_path: Path) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    execution = _execution(
+        store,
+        kind=PlannedActionKind.MAIL_REPLY,
+        target={
+            "mailbox": "derek@example.com",
+            "message_id": "mail-1",
+            "subject": "Approval request",
+        },
+        payload={"content": "Approved."},
+        trusted_mail_target=("derek@example.com", "mail-1", "Approval request"),
+    )
+    dws = UniversalMailCalendarFakeDws()
+    worker = DingTalkAutoReplyWorker(store=store, dws=dws, codex=FakeCodex())
+
+    assert worker.execute_universal_mail_reply(execution) is True
+    assert worker.execute_universal_mail_reply(execution) is True
+
+    assert dws.mail_replies == [
+        ("derek@example.com", "mail-1", "Approval request", "Approved.")
+    ]
+    attempt = store.get_latest_reply_attempt_for_trigger("cid-context", "msg-context")
+    assert attempt is not None
+    assert attempt.send_status == "sent"
+    assert json.loads(attempt.mail_action_result_json) == {
+        "messageId": "mail-receipt-1",
+        "success": True,
+    }
+    assert store.get_universal_action_execution_state(execution) is UniversalActionExecutionState.SUCCEEDED
+
+
+def test_universal_mail_reply_blocks_spoofed_target(tmp_path: Path) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    execution = _execution(
+        store,
+        kind=PlannedActionKind.MAIL_REPLY,
+        target={"mailbox": "attacker@example.com", "message_id": "mail-1", "subject": "S"},
+        payload={"content": "Send this."},
+        trusted_mail_target=("derek@example.com", "mail-1", "S"),
+    )
+    dws = UniversalMailCalendarFakeDws()
+    worker = DingTalkAutoReplyWorker(store=store, dws=dws, codex=FakeCodex())
+
+    assert worker.execute_universal_mail_reply(execution) is True
+    assert dws.mail_replies == []
+    attempt = store.get_latest_reply_attempt_for_trigger("cid-context", "msg-context")
+    assert attempt is not None
+    assert attempt.send_status == "blocked"
+    assert attempt.send_error == "untrusted_mail_reply_target"
+
+
+def test_universal_mail_reply_timeout_is_unknown_and_not_replayed(tmp_path: Path) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    execution = _execution(
+        store,
+        kind=PlannedActionKind.MAIL_REPLY,
+        target={"mailbox": "derek@example.com", "message_id": "mail-1", "subject": "S"},
+        payload={"content": "Send once."},
+        trusted_mail_target=("derek@example.com", "mail-1", "S"),
+    )
+    dws = UniversalMailCalendarFakeDws()
+    dws.mail_error = TimeoutError("response timeout")
+    worker = DingTalkAutoReplyWorker(store=store, dws=dws, codex=FakeCodex())
+    worker._notify = lambda **kwargs: None
+
+    with pytest.raises(ReplyDeliveryError):
+        worker.execute_universal_mail_reply(execution)
+    with pytest.raises(RuntimeError, match="outcome is unknown"):
+        worker.execute_universal_mail_reply(execution)
+
+    assert len(dws.mail_replies) == 1
+    assert store.get_universal_action_execution_state(execution) is UniversalActionExecutionState.UNKNOWN
+
+
+def test_universal_mail_reply_definite_failure_can_retry_same_execution(tmp_path: Path) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    execution = _execution(
+        store,
+        kind=PlannedActionKind.MAIL_REPLY,
+        target={"mailbox": "derek@example.com", "message_id": "mail-1", "subject": "S"},
+        payload={"content": "Retry safely."},
+        trusted_mail_target=("derek@example.com", "mail-1", "S"),
+    )
+    dws = UniversalMailCalendarFakeDws()
+    dws.mail_build_error = ValueError("mail request is invalid")
+    worker = DingTalkAutoReplyWorker(store=store, dws=dws, codex=FakeCodex())
+    worker._notify = lambda **kwargs: None
+
+    with pytest.raises(ValueError, match="mail request is invalid"):
+        worker.execute_universal_mail_reply(execution)
+    assert store.get_universal_action_execution_state(execution) is UniversalActionExecutionState.NOT_STARTED
+
+    dws.mail_build_error = None
+    assert worker.execute_universal_mail_reply(execution) is True
+    assert len(dws.mail_replies) == 1
+    attempts = [
+        attempt
+        for attempt in store.list_reply_attempts(limit=20)
+        if attempt.universal_execution_id == execution.execution_id
+    ]
+    assert len(attempts) == 1
+    assert attempts[0].retry_count == 1
+    assert attempts[0].send_status == "sent"
+
+
+def test_universal_mail_reply_without_success_receipt_is_unknown(tmp_path: Path) -> None:
+    store = AutoReplyStore(tmp_path / "mail-no-receipt.sqlite3")
+    execution = _execution(
+        store,
+        kind=PlannedActionKind.MAIL_REPLY,
+        target={"mailbox": "derek@example.com", "message_id": "mail-1", "subject": "S"},
+        payload={"content": "Send once."},
+        trusted_mail_target=("derek@example.com", "mail-1", "S"),
+    )
+    dws = UniversalMailCalendarFakeDws()
+    dws.mail_result = {"success": False}
+    worker = DingTalkAutoReplyWorker(store=store, dws=dws, codex=FakeCodex())
+
+    with pytest.raises(ReplyDeliveryError, match="success receipt"):
+        worker.execute_universal_mail_reply(execution)
+    assert store.get_universal_action_execution_state(execution) is UniversalActionExecutionState.UNKNOWN
+
+
+def test_universal_calendar_response_prechecks_and_verifies_state(tmp_path: Path) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    execution = _execution(
+        store,
+        kind=PlannedActionKind.CALENDAR_RESPONSE,
+        target={"event_id": "event-1"},
+        payload={"response_status": "accepted"},
+        trusted_calendar_target=("event-1", "tentative", "Mina"),
+    )
+    dws = UniversalMailCalendarFakeDws()
+    dws.calendar_event = DwsCalendarEvent(
+        event_id="event-1", organizer="Mina", self_response_status="tentative"
+    )
+    worker = DingTalkAutoReplyWorker(store=store, dws=dws, codex=FakeCodex())
+
+    assert worker.execute_universal_calendar_response(execution) is True
+    assert worker.execute_universal_calendar_response(execution) is True
+
+    assert dws.calendar_responses == [("event-1", "accepted")]
+    attempt = store.get_latest_reply_attempt_for_trigger("cid-context", "msg-context")
+    assert attempt is not None
+    assert attempt.send_status == "calendar"
+    assert json.loads(attempt.calendar_response_result_json) == {
+        "requestId": "calendar-receipt-1",
+        "success": True,
+    }
+
+
+def test_universal_calendar_response_already_set_and_organizer_are_terminal_noops(tmp_path: Path) -> None:
+    for organizer_error in (False, True):
+        store = AutoReplyStore(tmp_path / f"calendar-{organizer_error}.sqlite3")
+        execution = _execution(
+            store,
+            kind=PlannedActionKind.CALENDAR_RESPONSE,
+            target={"event_id": "event-1"},
+            payload={"response_status": "accepted"},
+            trusted_calendar_target=("event-1", "accepted" if not organizer_error else "tentative", "Mina"),
+        )
+        dws = UniversalMailCalendarFakeDws()
+        dws.calendar_event = DwsCalendarEvent(
+            event_id="event-1",
+            organizer="Mina",
+            self_response_status="accepted" if not organizer_error else "tentative",
+        )
+        if organizer_error:
+            dws.calendar_error = RuntimeError("Cannot change response status of event organizer")
+        worker = DingTalkAutoReplyWorker(store=store, dws=dws, codex=FakeCodex())
+
+        assert worker.execute_universal_calendar_response(execution) is True
+        attempt = store.get_latest_reply_attempt_for_trigger("cid-context", "msg-context")
+        assert attempt is not None
+        result = json.loads(attempt.calendar_response_result_json)
+        assert result["noop_reason"] in {
+            "calendar_response_already_set",
+            "calendar_event_organizer",
+        }
+
+
+def test_universal_calendar_response_blocks_spoof_and_marks_postcheck_mismatch_failed(tmp_path: Path) -> None:
+    store = AutoReplyStore(tmp_path / "calendar-spoof.sqlite3")
+    spoof = _execution(
+        store,
+        kind=PlannedActionKind.CALENDAR_RESPONSE,
+        target={"event_id": "event-other"},
+        payload={"response_status": "declined"},
+        trusted_calendar_target=("event-1", "tentative", "Mina"),
+    )
+    dws = UniversalMailCalendarFakeDws()
+    worker = DingTalkAutoReplyWorker(store=store, dws=dws, codex=FakeCodex())
+    assert worker.execute_universal_calendar_response(spoof) is True
+    assert dws.calendar_responses == []
+
+    mismatch_store = AutoReplyStore(tmp_path / "calendar-mismatch.sqlite3")
+    mismatch = _execution(
+        mismatch_store,
+        kind=PlannedActionKind.CALENDAR_RESPONSE,
+        target={"event_id": "event-1"},
+        payload={"response_status": "declined"},
+        trusted_calendar_target=("event-1", "tentative", "Mina"),
+    )
+    dws.calendar_event = DwsCalendarEvent(event_id="event-1", self_response_status="tentative")
+    dws.apply_calendar_response = False
+    mismatch_worker = DingTalkAutoReplyWorker(store=mismatch_store, dws=dws, codex=FakeCodex())
+    mismatch_worker._notify = lambda **kwargs: None
+    with pytest.raises(ReplyDeliveryError):
+        mismatch_worker.execute_universal_calendar_response(mismatch)
+    assert mismatch_store.get_universal_action_execution_state(mismatch) is UniversalActionExecutionState.NOT_STARTED
+
+
+def test_universal_calendar_timeout_is_unknown_and_not_replayed(tmp_path: Path) -> None:
+    store = AutoReplyStore(tmp_path / "calendar-timeout.sqlite3")
+    execution = _execution(
+        store,
+        kind=PlannedActionKind.CALENDAR_RESPONSE,
+        target={"event_id": "event-1"},
+        payload={"response_status": "accepted"},
+        trusted_calendar_target=("event-1", "tentative", "Mina"),
+    )
+    dws = UniversalMailCalendarFakeDws()
+    dws.calendar_event = DwsCalendarEvent(event_id="event-1", self_response_status="tentative")
+    dws.calendar_error = TimeoutError("calendar response timeout")
+    worker = DingTalkAutoReplyWorker(store=store, dws=dws, codex=FakeCodex())
+    worker._notify = lambda **kwargs: None
+
+    with pytest.raises(ReplyDeliveryError):
+        worker.execute_universal_calendar_response(execution)
+    with pytest.raises(RuntimeError, match="outcome is unknown"):
+        worker.execute_universal_calendar_response(execution)
+
+    assert dws.calendar_responses == [("event-1", "accepted")]
+    assert store.get_universal_action_execution_state(execution) is UniversalActionExecutionState.UNKNOWN
+
+
+def test_universal_calendar_preflight_timeout_is_definite_and_retryable(tmp_path: Path) -> None:
+    store = AutoReplyStore(tmp_path / "calendar-preflight-timeout.sqlite3")
+    execution = _execution(
+        store,
+        kind=PlannedActionKind.CALENDAR_RESPONSE,
+        target={"event_id": "event-1"},
+        payload={"response_status": "accepted"},
+        trusted_calendar_target=("event-1", "tentative", "Mina"),
+    )
+    dws = UniversalMailCalendarFakeDws()
+    dws.calendar_get_error = TimeoutError("calendar read timeout")
+    worker = DingTalkAutoReplyWorker(store=store, dws=dws, codex=FakeCodex())
+
+    with pytest.raises(TimeoutError):
+        worker.execute_universal_calendar_response(execution)
+    assert dws.calendar_responses == []
+    assert store.get_universal_action_execution_state(execution) is UniversalActionExecutionState.NOT_STARTED
+
+    dws.calendar_get_error = None
+    dws.calendar_event = DwsCalendarEvent(event_id="event-1", self_response_status="accepted")
+    assert worker.execute_universal_calendar_response(execution) is True
+    assert dws.calendar_responses == []
+
+
+def test_universal_calendar_success_without_readback_is_unknown(tmp_path: Path) -> None:
+    store = AutoReplyStore(tmp_path / "calendar-no-readback.sqlite3")
+    execution = _execution(
+        store,
+        kind=PlannedActionKind.CALENDAR_RESPONSE,
+        target={"event_id": "event-1"},
+        payload={"response_status": "accepted"},
+        trusted_calendar_target=("event-1", "tentative", "Mina"),
+    )
+    dws = UniversalMailCalendarFakeDws()
+    dws.calendar_event = None
+    worker = DingTalkAutoReplyWorker(store=store, dws=dws, codex=FakeCodex())
+
+    with pytest.raises(ReplyDeliveryError, match="verification unavailable"):
+        worker.execute_universal_calendar_response(execution)
+    assert dws.calendar_responses == [("event-1", "accepted")]
+    assert store.get_universal_action_execution_state(execution) is UniversalActionExecutionState.UNKNOWN
 
 
 def test_universal_reply_native_delivery_receives_immutable_sender_identity(

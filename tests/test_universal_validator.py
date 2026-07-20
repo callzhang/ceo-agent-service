@@ -335,8 +335,15 @@ def test_other_external_actions_with_supplied_matching_target_are_allowed(
     if kind is PlannedActionKind.OA_APPROVAL:
         payload = {"action": "comment", "remark": "Reviewed."}
     elif kind is PlannedActionKind.MAIL_REPLY:
-        target |= {"mailbox": "derek@example.com", "message_id": "mail-1"}
+        target |= {
+            "mailbox": "derek@example.com",
+            "message_id": "mail-1",
+            "subject": "Subject",
+        }
         payload = {"content": "Done."}
+    elif kind is PlannedActionKind.CALENDAR_RESPONSE:
+        target["event_id"] = "event-1"
+        payload = {"response_status": "accepted"}
     action = PlannedAction(
         kind=kind,
         reason="Perform the external action",
@@ -373,13 +380,18 @@ def test_other_external_actions_with_supplied_matching_target_are_allowed(
         PlannedAction(
             kind=PlannedActionKind.MAIL_REPLY,
             reason="Reply to mail",
-            target={"mailbox": "derek@example.com", "message_id": "mail-1"},
+            target={
+                "mailbox": "derek@example.com",
+                "message_id": "mail-1",
+                "subject": "Subject",
+            },
             payload={"content": "Done."},
         ),
         PlannedAction(
             kind=PlannedActionKind.CALENDAR_RESPONSE,
             reason="Respond to an event",
             target={"event_id": "event-1"},
+            payload={"response_status": "accepted"},
         ),
     ],
 )

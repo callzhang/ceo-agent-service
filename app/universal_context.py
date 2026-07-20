@@ -5,6 +5,7 @@ from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 from app.dingtalk_models import DingTalkConversation, DingTalkMessage
+from app.dws_client import DwsClient
 from app.oa_approval import extract_oa_url
 
 
@@ -59,6 +60,12 @@ class UniversalTaskContext:
     execution_generation: str = "initial"
     trusted_oa_process_instance_id: str = ""
     trusted_oa_task_id: str = ""
+    trusted_mail_mailbox: str = ""
+    trusted_mail_message_id: str = ""
+    trusted_mail_subject: str = ""
+    trusted_calendar_event_id: str = ""
+    trusted_calendar_response_status: str = ""
+    trusted_calendar_organizer: str = ""
 
     def __post_init__(self) -> None:
         if (
@@ -87,6 +94,21 @@ class UniversalTaskContext:
                 "Trusted OA process instance ID: "
                 + (self.trusted_oa_process_instance_id or "none"),
                 "Trusted OA task ID: " + (self.trusted_oa_task_id or "none"),
+                "Trusted mail target: "
+                + (
+                    f"{self.trusted_mail_mailbox} / {self.trusted_mail_message_id} / "
+                    f"{self.trusted_mail_subject}"
+                    if self.trusted_mail_message_id
+                    else "none"
+                ),
+                "Trusted calendar target: "
+                + (
+                    f"{self.trusted_calendar_event_id} / "
+                    f"{self.trusted_calendar_response_status or 'unknown'} / "
+                    f"{self.trusted_calendar_organizer or 'unknown'}"
+                    if self.trusted_calendar_event_id
+                    else "none"
+                ),
                 f"Required dependencies: {', '.join(self.required_dependencies)}",
                 f"Execution generation: {self.execution_generation}",
                 f"Force new decision: {str(self.force_new_decision).lower()}",
@@ -111,6 +133,12 @@ def canonical_universal_context_json(context: UniversalTaskContext) -> str:
         "execution_generation",
         "trusted_oa_process_instance_id",
         "trusted_oa_task_id",
+        "trusted_mail_mailbox",
+        "trusted_mail_message_id",
+        "trusted_mail_subject",
+        "trusted_calendar_event_id",
+        "trusted_calendar_response_status",
+        "trusted_calendar_organizer",
     ):
         if not isinstance(getattr(context, field_name), str):
             raise TypeError(f"{field_name} must be a str")
@@ -190,6 +218,12 @@ def canonical_universal_context_json(context: UniversalTaskContext) -> str:
             "execution_generation": context.execution_generation,
             "trusted_oa_process_instance_id": context.trusted_oa_process_instance_id,
             "trusted_oa_task_id": context.trusted_oa_task_id,
+            "trusted_mail_mailbox": context.trusted_mail_mailbox,
+            "trusted_mail_message_id": context.trusted_mail_message_id,
+            "trusted_mail_subject": context.trusted_mail_subject,
+            "trusted_calendar_event_id": context.trusted_calendar_event_id,
+            "trusted_calendar_response_status": context.trusted_calendar_response_status,
+            "trusted_calendar_organizer": context.trusted_calendar_organizer,
         },
         ensure_ascii=False,
         sort_keys=True,
@@ -231,6 +265,12 @@ def build_universal_context(
         trigger,
         reply_task_oa_url=reply_task_oa_url,
     )
+    trusted_mailbox, trusted_mail_message_id, trusted_mail_subject = (
+        _trusted_mail_target(trigger)
+    )
+    trusted_calendar_event = DwsClient._find_calendar_event_in_payload(
+        trigger.raw_payload
+    )
     return UniversalTaskContext(
         task_id=task_id,
         conversation_id=conversation.open_conversation_id,
@@ -246,7 +286,51 @@ def build_universal_context(
         execution_generation=execution_generation,
         trusted_oa_process_instance_id=trusted_process_id,
         trusted_oa_task_id=trusted_task_id,
+        trusted_mail_mailbox=trusted_mailbox,
+        trusted_mail_message_id=trusted_mail_message_id,
+        trusted_mail_subject=trusted_mail_subject,
+        trusted_calendar_event_id=(
+            trusted_calendar_event.event_id if trusted_calendar_event else ""
+        ),
+        trusted_calendar_response_status=(
+            trusted_calendar_event.self_response_status
+            if trusted_calendar_event
+            else ""
+        ),
+        trusted_calendar_organizer=(
+            trusted_calendar_event.organizer if trusted_calendar_event else ""
+        ),
     )
+
+
+def _trusted_mail_target(trigger: DingTalkMessage) -> tuple[str, str, str]:
+    candidates: set[tuple[str, str, str]] = set()
+
+    def first_string(value: dict[str, Any], *keys: str) -> str:
+        for key in keys:
+            item = value.get(key)
+            if isinstance(item, str) and item.strip():
+                return item.strip()
+        return ""
+
+    def visit(value: Any) -> None:
+        if isinstance(value, dict):
+            mailbox = first_string(value, "mailbox", "from", "fromAddress")
+            message_id = first_string(value, "messageId", "message_id", "mailId")
+            subject = first_string(value, "subject", "title")
+            if mailbox and message_id and subject:
+                candidates.add((mailbox, message_id, subject))
+            for nested in value.values():
+                if isinstance(nested, (dict, list)):
+                    visit(nested)
+        elif isinstance(value, list):
+            for nested in value:
+                visit(nested)
+
+    visit(trigger.raw_payload)
+    if len(candidates) != 1:
+        return "", "", ""
+    return next(iter(candidates))
 
 
 def _trusted_oa_target(

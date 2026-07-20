@@ -163,14 +163,19 @@ def test_audit_summary_and_action_reason_must_be_non_empty_after_trimming() -> N
             "target.message_id",
         ),
         (
-            {"mailbox": "mailbox", "message_id": "message-1"},
+            {"mailbox": "mailbox", "message_id": "message-1", "subject": "S"},
             {},
             "payload.content",
         ),
         (
-            {"mailbox": "mailbox", "message_id": "message-1"},
+            {"mailbox": "mailbox", "message_id": "message-1", "subject": "S"},
             {"content": "  "},
             "payload.content",
+        ),
+        (
+            {"mailbox": "mailbox", "message_id": "message-1", "subject": "  "},
+            {"content": "Done"},
+            "target.subject",
         ),
     ],
 )
@@ -192,11 +197,38 @@ def test_mail_reply_with_required_fields_validates() -> None:
     action = PlannedAction(
         kind="mail_reply",
         reason="Reply to the email",
-        target={"mailbox": "derek@example.com", "message_id": "message-1"},
+        target={
+            "mailbox": "derek@example.com",
+            "message_id": "message-1",
+            "subject": "Subject",
+        },
         payload={"content": "Done"},
     )
 
     assert action.kind is PlannedActionKind.MAIL_REPLY
+
+
+@pytest.mark.parametrize("response_status", ["accepted", "tentative", "declined"])
+def test_calendar_response_with_supported_status_validates(response_status: str) -> None:
+    action = PlannedAction(
+        kind="calendar_response",
+        reason="Respond to the trusted invitation.",
+        target={"event_id": "event-1"},
+        payload={"response_status": response_status},
+    )
+
+    assert action.kind is PlannedActionKind.CALENDAR_RESPONSE
+
+
+@pytest.mark.parametrize("response_status", ["", "yes", "ACCEPTED", None])
+def test_calendar_response_rejects_unsupported_status(response_status) -> None:
+    with pytest.raises(ValidationError, match="calendar_response"):
+        PlannedAction(
+            kind="calendar_response",
+            reason="Respond to the trusted invitation.",
+            target={"event_id": "event-1"},
+            payload={"response_status": response_status},
+        )
 
 
 def test_oa_approval_requires_supported_action_and_remark() -> None:
