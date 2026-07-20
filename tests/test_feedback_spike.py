@@ -12,11 +12,41 @@ from app.feedback_spike import (
     build_events_url,
     build_feedback_link_text,
     build_feedback_spike_link_message,
+    contains_forbidden_leak_outside_feedback_links,
     extract_feedback_link_context,
     normalize_vercel_base_url,
     prepare_outgoing_reply_text,
     send_feedback_spike_links,
 )
+
+
+def test_leak_check_trusts_only_exact_generated_feedback_callbacks():
+    message = build_feedback_spike_link_message(
+        vercel_base_url="https://feedback.example.com",
+        reply_text="先按A方案走",
+        original_text="怎么处理",
+        attempt_id=42,
+        feedback_token="spike_1_abcd",
+    )
+
+    assert not contains_forbidden_leak_outside_feedback_links(
+        message.text,
+        vercel_base_url="https://feedback.example.com",
+        feedback_token=message.feedback_token,
+        attempt_id=42,
+    )
+    assert contains_forbidden_leak_outside_feedback_links(
+        message.text + "\n参考 [1]",
+        vercel_base_url="https://feedback.example.com",
+        feedback_token=message.feedback_token,
+        attempt_id=42,
+    )
+    assert contains_forbidden_leak_outside_feedback_links(
+        message.text,
+        vercel_base_url="https://feedback.example.com",
+        feedback_token=message.feedback_token,
+        attempt_id=99,
+    )
 
 
 def test_build_callback_url_contains_token_and_rating():

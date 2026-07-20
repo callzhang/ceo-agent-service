@@ -46,7 +46,11 @@ from app.dws_client import (
     native_reply_delivery_payload,
     normalize_message_emoji,
 )
-from app.feedback_spike import append_feedback_links, prepare_outgoing_reply_text
+from app.feedback_spike import (
+    append_feedback_links,
+    contains_forbidden_leak_outside_feedback_links,
+    prepare_outgoing_reply_text,
+)
 from app.feedback_events import sync_feedback_events_for_sent_replies
 from app.feedback_policy import (
     FEEDBACK_REQUIRED_LINK_PREFIX,
@@ -9762,8 +9766,7 @@ class DingTalkAutoReplyWorker:
         allow_duplicate_send: bool = False,
     ) -> None:
         reply_text = self._native_reply_body(final_reply_text)
-        universal_consumer_enabled = os.getenv("CEO_UNIVERSAL_CONSUMER", "1") != "0"
-        if universal_consumer_enabled and contains_forbidden_leak(reply_text):
+        if contains_forbidden_leak(reply_text):
             regenerated_reply_text = self._regenerate_reply_after_leak_check(
                 blocked_reply_text=reply_text,
             )
@@ -9772,7 +9775,7 @@ class DingTalkAutoReplyWorker:
                 reply_text = self._native_reply_body(
                     self._format_reply_delivery_text(reply_text)
                 )
-        if universal_consumer_enabled and contains_forbidden_leak(reply_text):
+        if contains_forbidden_leak(reply_text):
             self.store.update_reply_attempt(
                 attempt_id,
                 final_reply_text=reply_text,
@@ -9834,7 +9837,12 @@ class DingTalkAutoReplyWorker:
             direct_user_id=direct_user_id or "",
             direct_open_dingtalk_id=direct_open_dingtalk_id or "",
         )
-        if not universal_consumer_enabled and contains_forbidden_leak(reply_text):
+        if contains_forbidden_leak_outside_feedback_links(
+            reply_text,
+            vercel_base_url=feedback_base_url,
+            feedback_token=feedback_token,
+            attempt_id=attempt_id,
+        ):
             regenerated_reply_text = self._regenerate_reply_after_leak_check(
                 blocked_reply_text=reply_text,
             )
@@ -9864,7 +9872,12 @@ class DingTalkAutoReplyWorker:
             direct_user_id=direct_user_id or "",
             direct_open_dingtalk_id=direct_open_dingtalk_id or "",
         )
-        if not universal_consumer_enabled and contains_forbidden_leak(reply_text):
+        if contains_forbidden_leak_outside_feedback_links(
+            reply_text,
+            vercel_base_url=feedback_base_url,
+            feedback_token=feedback_token,
+            attempt_id=attempt_id,
+        ):
             self.store.update_reply_attempt(
                 attempt_id,
                 send_status="blocked",
