@@ -51,6 +51,7 @@ from app.dws_client import (
 from app.feedback_spike import (
     append_feedback_links,
     build_events_url,
+    contains_forbidden_leak_outside_feedback_links,
     prepare_outgoing_reply_text,
     send_feedback_spike_links,
 )
@@ -1460,7 +1461,16 @@ def send_attempt_command(settings: WorkerSettings, attempt_id: int) -> dict[str,
         reply_text = outgoing_text.text
         feedback_token = outgoing_text.feedback_token
         store.update_reply_attempt(attempt.id, final_reply_text=reply_text)
-        if contains_forbidden_leak(reply_text):
+
+        def delivery_text_has_forbidden_leak() -> bool:
+            return contains_forbidden_leak_outside_feedback_links(
+                reply_text,
+                vercel_base_url=feedback_base_url,
+                feedback_token=feedback_token,
+                attempt_id=attempt.id,
+            )
+
+        if delivery_text_has_forbidden_leak():
             regenerated_reply_text = _regenerate_send_attempt_after_leak_check(
                 settings,
                 blocked_reply_text=reply_text,
@@ -1479,7 +1489,7 @@ def send_attempt_command(settings: WorkerSettings, attempt_id: int) -> dict[str,
                 reply_text = outgoing_text.text
                 feedback_token = outgoing_text.feedback_token
                 store.update_reply_attempt(attempt.id, final_reply_text=reply_text)
-        if contains_forbidden_leak(reply_text):
+        if delivery_text_has_forbidden_leak():
             store.update_reply_attempt(
                 attempt.id,
                 send_status="blocked",

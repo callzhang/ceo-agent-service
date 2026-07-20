@@ -2781,9 +2781,9 @@ def test_send_attempt_command_keeps_reply_when_feedback_is_overdue(
 
     sent_text = sent["reply"][3]
     assert "可以先这样处理。（by明哥分身）" in sent_text
-    assert "【请反馈】这次回复有帮助吗？" in sent_text
-    assert "收到反馈后将停止提醒" in sent_text
-    assert "长期未反馈时，系统可能暂停后续自动回复" in sent_text
+    assert "【评价本次回复】" in sent_text
+    assert "提交评价后不再提醒" in sent_text
+    assert "若连续多次未评价，后续自动回复可能暂停" in sent_text
     assert "/api/dingtalk-feedback-spike" in sent_text
     assert "请对我提供反馈后再提问" not in sent_text
     sent_reply = cli.AutoReplyStore(settings.db_path).get_sent_reply("cid-1", "msg-1")
