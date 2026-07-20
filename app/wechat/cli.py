@@ -32,8 +32,11 @@ def _install_version() -> str:
         return ""
 
 
-def _reader():
-    return service.build_reader(config.wechat_mirror_dir(), config.wechat_passphrase_file())
+def _reader(*, self_username: str = ""):
+    return service.build_reader(
+        config.wechat_mirror_dir(), config.wechat_passphrase_file(),
+        self_username=self_username,
+    )
 
 
 def cmd_status(args) -> int:
@@ -90,11 +93,20 @@ def _single_account() -> WechatAccount | None:
 
 
 def cmd_read_recent(args) -> int:
-    account = _single_account()
+    store = AutoReplyStore(Path(args.db))
+    state = service.ready_account_state(store)
+    account = service.account_from_state(state) if state is not None else _single_account()
     if account is None:
-        print("expected exactly one WeChat account")
+        print("expected one ready or discovered WeChat account")
         return 1
-    reader = _reader()
+    self_user_id = account.self_user_id
+    if not self_user_id:
+        self_user_id = _reader().detect_self_username(account)
+    if not self_user_id:
+        print("cannot determine current WeChat user; run status and verify self_user_id")
+        return 1
+    account = account.model_copy(update={"self_user_id": self_user_id})
+    reader = _reader(self_username=self_user_id)
     messages = reader.read_messages(
         account, conversation_id=args.target_id, conversation_type=args.type,
         limit=args.limit,
@@ -145,12 +157,13 @@ def cmd_reject(args) -> int:
     return 0
 
 
-def main(argv=None) -> int:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="wechat")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     p = sub.add_parser("status"); p.add_argument("--db", default=DEFAULT_DB); p.set_defaults(fn=cmd_status)
     p = sub.add_parser("read-recent")
+    p.add_argument("--db", default=DEFAULT_DB)
     p.add_argument("--target-id", required=True)
     p.add_argument("--type", default="direct", choices=["direct", "group"])
     p.add_argument("--limit", type=int, default=100)
@@ -161,6 +174,12 @@ def main(argv=None) -> int:
     p = sub.add_parser("pending"); p.add_argument("--db", default=DEFAULT_DB); p.set_defaults(fn=cmd_pending)
     p = sub.add_parser("approve"); p.add_argument("--db", default=DEFAULT_DB); p.add_argument("--id", type=int, required=True); p.set_defaults(fn=cmd_approve)
     p = sub.add_parser("reject"); p.add_argument("--db", default=DEFAULT_DB); p.add_argument("--id", type=int, required=True); p.set_defaults(fn=cmd_reject)
+
+    return parser
+
+
+def main(argv=None) -> int:
+    parser = build_parser()
 
     args = parser.parse_args(argv)
     return args.fn(args)

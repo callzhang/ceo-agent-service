@@ -2,6 +2,7 @@ import json
 import hashlib
 import sqlite3
 import threading
+from datetime import datetime
 from contextlib import contextmanager
 from pathlib import Path
 from collections.abc import Iterator
@@ -481,6 +482,7 @@ class AutoReplyStore:
                     on memory_write_events(status, updated_at);
                 create table if not exists reply_tasks (
                     id integer primary key autoincrement,
+                    channel text not null default 'dingtalk',
                     conversation_id text not null,
                     conversation_title text not null,
                     single_chat integer not null,
@@ -499,7 +501,7 @@ class AutoReplyStore:
                     error text not null default '',
                     created_at text not null default current_timestamp,
                     updated_at text not null default current_timestamp,
-                    unique(conversation_id, trigger_message_id)
+                    unique(channel, conversation_id, trigger_message_id)
                 );
                 create index if not exists idx_reply_tasks_status
                     on reply_tasks(status, id);
@@ -891,6 +893,7 @@ class AutoReplyStore:
                 );
                 """
             )
+            self._migrate_reply_task_channel_identity(db)
             sent_reply_columns = {
                 row["name"]
                 for row in db.execute("pragma table_info(sent_replies)").fetchall()
@@ -922,6 +925,7 @@ class AutoReplyStore:
                     db.execute(
                         f"alter table feedback_events add column {column} {definition}"
                     )
+
             reply_attempt_columns = {
                 row["name"]
                 for row in db.execute("pragma table_info(reply_attempts)").fetchall()
@@ -1069,6 +1073,88 @@ class AutoReplyStore:
                     )
 
     @staticmethod
+    def _migrate_reply_task_channel_identity(db: sqlite3.Connection) -> None:
+        """Replace the legacy cross-channel UNIQUE constraint in place."""
+        columns = {
+            row["name"] for row in db.execute("pragma table_info(reply_tasks)").fetchall()
+        }
+        if "channel" not in columns:
+            db.execute(
+                "alter table reply_tasks add column channel "
+                "text not null default 'dingtalk'"
+            )
+        unique_columns = {
+            tuple(
+                row["name"]
+                for row in db.execute(
+                    f"pragma index_info('{index['name']}')"
+                ).fetchall()
+            )
+            for index in db.execute("pragma index_list(reply_tasks)").fetchall()
+            if index["unique"]
+        }
+        if ("conversation_id", "trigger_message_id") not in unique_columns:
+            return
+
+        db.execute("pragma foreign_keys=off")
+        try:
+            db.executescript(
+                """
+                begin immediate;
+                create table reply_tasks_channel_migration (
+                    id integer primary key autoincrement,
+                    channel text not null default 'dingtalk',
+                    conversation_id text not null,
+                    conversation_title text not null,
+                    single_chat integer not null,
+                    trigger_message_id text not null,
+                    trigger_create_time text not null,
+                    trigger_sender text not null,
+                    trigger_text text not null,
+                    trigger_message_json text not null default '{}',
+                    available_at text not null default '',
+                    force_new_decision integer not null default 0,
+                    oa_url text not null default '',
+                    manual_rerun_attempt_id integer not null default 0,
+                    status text not null default 'pending',
+                    attempts integer not null default 0,
+                    locked_at text,
+                    error text not null default '',
+                    created_at text not null default current_timestamp,
+                    updated_at text not null default current_timestamp,
+                    unique(channel, conversation_id, trigger_message_id)
+                );
+                insert into reply_tasks_channel_migration (
+                    id, channel, conversation_id, conversation_title, single_chat,
+                    trigger_message_id, trigger_create_time, trigger_sender,
+                    trigger_text, trigger_message_json, available_at,
+                    force_new_decision, oa_url, manual_rerun_attempt_id, status,
+                    attempts, locked_at, error, created_at, updated_at
+                )
+                select
+                    id, channel, conversation_id, conversation_title, single_chat,
+                    trigger_message_id, trigger_create_time, trigger_sender,
+                    trigger_text, trigger_message_json, available_at,
+                    force_new_decision, oa_url, manual_rerun_attempt_id, status,
+                    attempts, locked_at, error, created_at, updated_at
+                from reply_tasks;
+                drop table reply_tasks;
+                alter table reply_tasks_channel_migration rename to reply_tasks;
+                create index idx_reply_tasks_status on reply_tasks(status, id);
+                commit;
+                """
+            )
+        except Exception:
+            if db.in_transaction:
+                db.rollback()
+            raise
+        finally:
+            db.execute("pragma foreign_keys=on")
+        violations = db.execute("pragma foreign_key_check").fetchall()
+        if violations:
+            raise sqlite3.IntegrityError("reply_tasks migration broke foreign keys")
+
+    @staticmethod
     def _reply_task_from_row(row: sqlite3.Row) -> ReplyTask:
         return ReplyTask(
             id=row["id"],
@@ -1173,6 +1259,7 @@ class AutoReplyStore:
             db.execute(
                 """
                 insert into reply_tasks (
+                    channel,
                     conversation_id,
                     conversation_title,
                     single_chat,
@@ -1189,8 +1276,8 @@ class AutoReplyStore:
                     locked_at,
                     error
                 )
-                values (?, ?, ?, ?, ?, ?, ?, ?, '', 1, ?, ?, 'pending', null, ?)
-                on conflict(conversation_id, trigger_message_id) do update set
+                values ('dingtalk', ?, ?, ?, ?, ?, ?, ?, ?, '', 1, ?, ?, 'pending', null, ?)
+                on conflict(channel, conversation_id, trigger_message_id) do update set
                     conversation_title=excluded.conversation_title,
                     single_chat=excluded.single_chat,
                     trigger_create_time=excluded.trigger_create_time,
@@ -1224,7 +1311,8 @@ class AutoReplyStore:
                 """
                 select *
                 from reply_tasks
-                where conversation_id=? and trigger_message_id=?
+                where channel='dingtalk'
+                  and conversation_id=? and trigger_message_id=?
                 """,
                 (conversation_id, trigger_message_id),
             ).fetchone()
@@ -1566,18 +1654,19 @@ class AutoReplyStore:
             return [self._reply_task_from_row(row) for row in rows]
 
     def get_reply_task_for_message(
-        self, conversation_id: str, trigger_message_id: str
+        self, conversation_id: str, trigger_message_id: str, *,
+        channel: str = "dingtalk",
     ) -> ReplyTask | None:
         with self._connect() as db:
             row = db.execute(
                 """
                 select *
                 from reply_tasks
-                where conversation_id=? and trigger_message_id=?
+                where channel=? and conversation_id=? and trigger_message_id=?
                 order by id desc
                 limit 1
                 """,
-                (conversation_id, trigger_message_id),
+                (channel, conversation_id, trigger_message_id),
             ).fetchone()
             if row is None:
                 return None
@@ -1589,7 +1678,15 @@ class AutoReplyStore:
     ) -> None:
         if any(scope.account_id != account_id for scope in scopes):
             raise ValueError("scope account mismatch")
+        activation_at = datetime.now().astimezone().isoformat()
         with self._connect() as db:
+            existing = {
+                (row["target_type"], row["target_id"]): row
+                for row in db.execute(
+                    "select * from wechat_reply_scopes where account_id=?",
+                    (account_id,),
+                ).fetchall()
+            }
             db.execute(
                 "update wechat_reply_scopes set enabled=0, "
                 "disabled_reason='not_selected', updated_at=current_timestamp "
@@ -1597,6 +1694,13 @@ class AutoReplyStore:
                 (account_id,),
             )
             for scope in scopes:
+                previous = existing.get((scope.target_type, scope.target_id))
+                if scope.last_active_at:
+                    watermark = scope.last_active_at
+                elif previous is not None and bool(previous["enabled"]):
+                    watermark = previous["last_discovered_at"] or activation_at
+                else:
+                    watermark = activation_at
                 db.execute(
                     """
                     insert into wechat_reply_scopes (
@@ -1621,9 +1725,29 @@ class AutoReplyStore:
                         scope.trigger_mode, int(scope.enabled),
                         scope.binding_status,
                         json.dumps(scope.binding_evidence, ensure_ascii=False),
-                        scope.last_active_at,
+                        watermark,
                     ),
                 )
+
+    def advance_wechat_scope_watermark(
+        self, account_id: str, target_type: str, target_id: str, sent_at: str
+    ) -> bool:
+        if not sent_at:
+            raise ValueError("scope watermark requires sent_at")
+        with self._connect() as db:
+            cursor = db.execute(
+                """
+                update wechat_reply_scopes
+                set last_discovered_at=?, updated_at=current_timestamp
+                where account_id=? and target_type=? and target_id=?
+                  and (
+                    last_discovered_at=''
+                    or last_discovered_at < ?
+                  )
+                """,
+                (sent_at, account_id, target_type, target_id, sent_at),
+            )
+            return cursor.rowcount == 1
 
     def list_wechat_reply_scopes(
         self, account_id: str, *, enabled_only: bool = False
@@ -1676,12 +1800,25 @@ class AutoReplyStore:
                 ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 on conflict(account_id) do update set
                     account_dir=excluded.account_dir, db_dir=excluded.db_dir,
-                    app_version=excluded.app_version, self_user_id=excluded.self_user_id,
+                    app_version=excluded.app_version,
+                    self_user_id=coalesce(
+                        nullif(excluded.self_user_id, ''),
+                        wechat_read_state.self_user_id
+                    ),
                     capability_status=excluded.capability_status,
                     capability_reason=excluded.capability_reason,
-                    watermark_sent_at=excluded.watermark_sent_at,
-                    watermark_message_id=excluded.watermark_message_id,
-                    last_scan_at=excluded.last_scan_at,
+                    watermark_sent_at=coalesce(
+                        nullif(excluded.watermark_sent_at, ''),
+                        wechat_read_state.watermark_sent_at
+                    ),
+                    watermark_message_id=coalesce(
+                        nullif(excluded.watermark_message_id, ''),
+                        wechat_read_state.watermark_message_id
+                    ),
+                    last_scan_at=coalesce(
+                        nullif(excluded.last_scan_at, ''),
+                        wechat_read_state.last_scan_at
+                    ),
                     updated_at=current_timestamp
                 """,
                 (

@@ -40,8 +40,8 @@ passphrase is account-stable; re-capture only after logout/reinstall.
 
 ```bash
 .venv/bin/python -m app.wechat.cli status                     # probe capability per account
-.venv/bin/python -m app.wechat.cli read-recent --target-id filehelper --limit 100   # redacted metadata
-.venv/bin/python -m app.wechat.cli read-recent --target-id filehelper --include-text  # explicit local verify
+.venv/bin/python -m app.wechat.cli read-recent --db data/auto-reply.sqlite3 --target-id filehelper --limit 100   # uses persisted self_user_id; redacted metadata
+.venv/bin/python -m app.wechat.cli read-recent --db data/auto-reply.sqlite3 --target-id filehelper --include-text  # explicit local verify
 .venv/bin/python -m app.wechat.cli produce-once               # scan enabled scopes → enqueue
 .venv/bin/python scripts/wechat_key_probe.py --passphrase-file ~/.config/wx_read/passphrase.hex \
     --account-db-dir "$HOME/Library/Containers/com.tencent.xinWeChat/Data/Documents/xwechat_files/<acct>/db_storage"
@@ -74,6 +74,8 @@ passphrase is account-stable; re-capture only after logout/reinstall.
 2. `wechat status` → the account reports `ready`; `read-recent --include-text` on
    File Transfer Helper — compare count/order/direction/timestamp/sender/text;
    run twice, confirm `produce-once` enqueues zero duplicates on the second scan.
+   `read-recent` refuses to print guessed directions when neither the single ready
+   account nor automatic self-wxid detection can identify the current user.
 3. Decision dry-run with `CEO_WECHAT_SENDER_ENABLED=0`: one direct message → one
    task + audited decision; an ordinary group message → no task; a real
    `@current account` group message → one task; no external send.
@@ -140,4 +142,9 @@ passphrase is account-stable; re-capture only after logout/reinstall.
   real group @-messages). Group triggers require `self_user_id` populated on the
   account so the gate has a wxid to match.
 - **Direction**: real outbound/inbound needs the self-wxid; defaults inbound
-  until `self_username` is populated.
+  until `self_username` is populated. The diagnostic CLI now requires a resolved
+  self-wxid before reading, so it cannot silently label every row inbound.
+- **Activation watermark**: each selected scope starts at its activation time;
+  historical messages are never fed into auto-reply. The producer advances that
+  scope only after the entire normalized batch has been handled. Historical
+  Memory import remains a separate, bounded, human-reviewed operation.
