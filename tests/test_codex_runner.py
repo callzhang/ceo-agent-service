@@ -9,6 +9,7 @@ from app.codex_runner import (
     CODEX_DECISION_SCHEMA_PATH,
     CodexRunner,
     codex_developer_instructions,
+    memory_connector_config_issue,
 )
 from app.codex_decision import CodexDecisionRunner
 from app.dingtalk_models import CodexAction
@@ -440,6 +441,42 @@ def test_codex_runner_env_loads_memory_connector_from_codex_config(
         '"Content-Type" = "MEMORY_CONNECTOR_CONTENT_TYPE"}'
         in command
     )
+
+
+def test_codex_command_supports_oauth_memory_connector_without_bearer_token(
+    tmp_path: Path, monkeypatch
+):
+    codex_home = tmp_path / ".codex"
+    codex_home.mkdir()
+    (codex_home / "config.toml").write_text(
+        "\n".join(
+            [
+                "[mcp_servers.memory_connector]",
+                'url = "https://memory.example/mcp/"',
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+    monkeypatch.delenv("CONNECTOR_API_KEY", raising=False)
+    monkeypatch.delenv("MEMORY_CONNECTOR_URL", raising=False)
+    runner = CodexRunner(workspace=tmp_path, codex_bin="codex")
+
+    command = runner.build_command(
+        prompt="hello",
+        session_id=None,
+        ignore_user_config=True,
+    )
+
+    assert (
+        'mcp_servers.memory_connector.url="https://memory.example/mcp/"'
+        in command
+    )
+    assert not any(
+        "mcp_servers.memory_connector.bearer_token_env_var" in item
+        for item in command
+    )
+    assert memory_connector_config_issue() == ""
 
 
 def test_codex_command_does_not_auto_fallback_to_configured_profile(

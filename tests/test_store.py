@@ -906,6 +906,76 @@ def test_reset_codex_sessions_clears_conversation_mapping_only(tmp_path: Path):
     assert attempt.codex_transcript_end_line == 9
 
 
+def test_record_reply_attempt_extracts_memory_write_events(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    memory_output = {
+        "structured_content": {
+            "result": json.dumps(
+                {
+                    "ok": True,
+                    "episode_uuid": "episode-1",
+                    "processing_status": "completed",
+                }
+            )
+        }
+    }
+
+    attempt_id = store.record_reply_attempt(
+        conversation_id="cid-1",
+        conversation_title="Friday",
+        trigger_message_id="msg-1",
+        trigger_sender="Xiaomin",
+        trigger_text="记一下这个项目口径",
+        action="send_reply",
+        sensitivity_kind="general",
+        audit_tool_events_json=json.dumps(
+            [
+                {
+                    "event_type": "response_item",
+                    "tool": "memory_write",
+                    "call_id": "call-1",
+                    "input": json.dumps({"data": "stable fact"}),
+                    "output": json.dumps(memory_output),
+                }
+            ]
+        ),
+    )
+
+    events = store.list_memory_write_events_for_attempt(attempt_id)
+
+    assert len(events) == 1
+    assert events[0].status == "written"
+    assert events[0].memory_episode_id == "episode-1"
+
+
+def test_record_reply_attempt_ignores_tool_search_memory_write_mentions(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+
+    attempt_id = store.record_reply_attempt(
+        conversation_id="cid-1",
+        conversation_title="Friday",
+        trigger_message_id="msg-1",
+        trigger_sender="Xiaomin",
+        trigger_text="查一下记忆",
+        action="send_reply",
+        sensitivity_kind="general",
+        audit_tool_events_json=json.dumps(
+            [
+                {
+                    "event_type": "response_item",
+                    "tool": "tool_search_call",
+                    "call_id": "call-1",
+                    "input": json.dumps({"query": "memory_connector memory_write"}),
+                }
+            ]
+        ),
+    )
+
+    assert store.list_memory_write_events_for_attempt(attempt_id) == []
+
+
 def test_reply_attempt_migration_backfills_codex_session_from_conversation(tmp_path: Path):
     db_path = tmp_path / "worker.sqlite3"
     with sqlite3.connect(db_path) as db:

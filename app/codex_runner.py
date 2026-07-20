@@ -263,14 +263,18 @@ def memory_connector_config_issue() -> str:
     configured_token = config_env.get(MEMORY_CONNECTOR_API_KEY_ENV)
     if configured_token and _jwt_token_is_expired(configured_token):
         return "memory connector token is expired"
-    return "memory connector token is missing"
+    return ""
 
 
 def memory_connector_config_options() -> list[str]:
     env = _memory_connector_env()
     url = env.get(MEMORY_CONNECTOR_URL_ENV)
     token = env.get(MEMORY_CONNECTOR_API_KEY_ENV)
-    if not url or not token:
+    if not url:
+        return []
+    config_env = _memory_connector_env_from_config(_codex_home() / "config.toml")
+    configured_token = config_env.get(MEMORY_CONNECTOR_API_KEY_ENV)
+    if not token and configured_token and _jwt_token_is_expired(configured_token):
         return []
     env_http_headers: dict[str, str] = {}
     if env.get(MEMORY_CONNECTOR_AUTH_TYPE_ENV):
@@ -280,12 +284,17 @@ def memory_connector_config_options() -> list[str]:
     options = [
         "-c",
         _config_string("mcp_servers.memory_connector.url", url),
-        "-c",
-        _config_string(
-            "mcp_servers.memory_connector.bearer_token_env_var",
-            MEMORY_CONNECTOR_API_KEY_ENV,
-        ),
     ]
+    if token:
+        options.extend(
+            [
+                "-c",
+                _config_string(
+                    "mcp_servers.memory_connector.bearer_token_env_var",
+                    MEMORY_CONNECTOR_API_KEY_ENV,
+                ),
+            ]
+        )
     if env_http_headers:
         options.extend(
             [

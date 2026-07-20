@@ -160,6 +160,19 @@ class SentReply(BaseModel):
     sent_at: str
 
 
+class MemoryWriteEvent(BaseModel):
+    id: int
+    attempt_id: int
+    event_type: str
+    payload_json: str
+    status: str
+    attempts: int
+    last_error: str
+    memory_episode_id: str
+    created_at: str
+    updated_at: str
+
+
 class FeedbackEvent(BaseModel):
     key: str
     feedback_token: str
@@ -448,6 +461,24 @@ class AutoReplyStore:
                     on reply_attempts(trigger_message_id);
                 create index if not exists idx_reply_attempts_status
                     on reply_attempts(send_status, created_at);
+                create table if not exists memory_write_events (
+                    id integer primary key autoincrement,
+                    attempt_id integer not null,
+                    event_type text not null,
+                    payload_json text not null,
+                    status text not null default 'pending',
+                    attempts integer not null default 0,
+                    last_error text not null default '',
+                    memory_episode_id text not null default '',
+                    created_at text not null default current_timestamp,
+                    updated_at text not null default current_timestamp,
+                    unique(attempt_id, event_type),
+                    foreign key(attempt_id) references reply_attempts(id)
+                );
+                create index if not exists idx_memory_write_events_attempt
+                    on memory_write_events(attempt_id, id);
+                create index if not exists idx_memory_write_events_status
+                    on memory_write_events(status, updated_at);
                 create table if not exists reply_tasks (
                     id integer primary key autoincrement,
                     conversation_id text not null,
@@ -3560,7 +3591,13 @@ class AutoReplyStore:
                     send_status,
                 ),
             )
-            return int(cursor.lastrowid)
+            attempt_id = int(cursor.lastrowid)
+            self._record_memory_write_events_in_connection(
+                db,
+                attempt_id,
+                audit_tool_events_json,
+            )
+            return attempt_id
 
     def record_reply_attempt_for_trigger(
         self,
@@ -3718,6 +3755,11 @@ class AutoReplyStore:
                     existing_attempt.id,
                 ),
             )
+            self._record_memory_write_events_in_connection(
+                db,
+                existing_attempt.id,
+                audit_tool_events_json,
+            )
         return existing_attempt.id
 
     def update_reply_attempt(
@@ -3779,6 +3821,12 @@ class AutoReplyStore:
             return
         with self._connect() as db:
             self._update_reply_attempt_in_connection(db, attempt_id, updates)
+            if audit_tool_events_json is not None:
+                self._record_memory_write_events_in_connection(
+                    db,
+                    attempt_id,
+                    audit_tool_events_json,
+                )
 
     def update_reply_attempt_and_complete_task(
         self,
@@ -3794,6 +3842,13 @@ class AutoReplyStore:
                     attempt_id,
                     update_values,
                 )
+                audit_tool_events_json = update_values.get("audit_tool_events_json")
+                if isinstance(audit_tool_events_json, str):
+                    self._record_memory_write_events_in_connection(
+                        db,
+                        attempt_id,
+                        audit_tool_events_json,
+                    )
             db.execute(
                 """
                 update reply_tasks
@@ -3814,6 +3869,164 @@ class AutoReplyStore:
                 (task_id,),
             ).fetchone()
         return bool(row and row["status"] == "done")
+
+    def list_memory_write_events_for_attempt(
+        self,
+        attempt_id: int,
+    ) -> list[MemoryWriteEvent]:
+        with self._connect() as db:
+            rows = db.execute(
+                """
+                select *
+                from memory_write_events
+                where attempt_id=?
+                order by id
+                """,
+                (attempt_id,),
+            ).fetchall()
+        return [MemoryWriteEvent.model_validate(dict(row)) for row in rows]
+
+    @staticmethod
+    def _record_memory_write_events_in_connection(
+        db: sqlite3.Connection,
+        attempt_id: int,
+        audit_tool_events_json: str,
+    ) -> None:
+        try:
+            audit_events = json.loads(audit_tool_events_json or "[]")
+        except json.JSONDecodeError:
+            audit_events = []
+        if not isinstance(audit_events, list):
+            audit_events = []
+        memory_events = [
+            AutoReplyStore._memory_write_event_from_audit_event(event)
+            for event in audit_events
+            if isinstance(event, dict)
+        ]
+        memory_events = [event for event in memory_events if event is not None]
+        db.execute("delete from memory_write_events where attempt_id=?", (attempt_id,))
+        event_type_counts: dict[str, int] = {}
+        for event in memory_events:
+            base_event_type = event["event_type"]
+            count = event_type_counts.get(base_event_type, 0) + 1
+            event_type_counts[base_event_type] = count
+            event_type = base_event_type if count == 1 else f"{base_event_type}_{count}"
+            db.execute(
+                """
+                insert into memory_write_events (
+                    attempt_id,
+                    event_type,
+                    payload_json,
+                    status,
+                    attempts,
+                    last_error,
+                    memory_episode_id
+                )
+                values (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    attempt_id,
+                    event_type,
+                    event["payload_json"],
+                    event["status"],
+                    1,
+                    event["last_error"],
+                    event["memory_episode_id"],
+                ),
+            )
+
+    @staticmethod
+    def _memory_write_event_from_audit_event(
+        event: dict[str, object],
+    ) -> dict[str, str] | None:
+        tool = str(event.get("tool") or "")
+        if not AutoReplyStore._is_memory_write_tool_name(tool):
+            return None
+        parsed_output = AutoReplyStore._parse_memory_write_output(
+            str(event.get("output") or "")
+        )
+        status = parsed_output.get("status") or "pending"
+        payload = {
+            "tool": tool,
+            "call_id": str(event.get("call_id") or ""),
+            "input": str(event.get("input") or ""),
+            "output": str(event.get("output") or ""),
+        }
+        return {
+            "event_type": "memory_write",
+            "payload_json": json.dumps(payload, ensure_ascii=False),
+            "status": status,
+            "last_error": parsed_output.get("last_error") or "",
+            "memory_episode_id": parsed_output.get("memory_episode_id") or "",
+        }
+
+    @staticmethod
+    def _is_memory_write_tool_name(tool: str) -> bool:
+        normalized = tool.strip()
+        return normalized == "memory_write" or normalized.endswith(
+            (".memory_write", "__memory_write", " memory_write")
+        )
+
+    @staticmethod
+    def _parse_memory_write_output(output: str) -> dict[str, str]:
+        if not output.strip():
+            return {}
+        payload = AutoReplyStore._load_memory_json(output)
+        if not isinstance(payload, dict):
+            return {}
+        result = payload.get("structured_content")
+        if isinstance(result, dict):
+            nested = AutoReplyStore._load_memory_json(str(result.get("result") or ""))
+            if isinstance(nested, dict):
+                payload = nested
+        elif isinstance(payload.get("result"), str):
+            nested = AutoReplyStore._load_memory_json(str(payload.get("result") or ""))
+            if isinstance(nested, dict):
+                payload = nested
+        elif isinstance(payload.get("content"), list):
+            for item in payload["content"]:
+                if not isinstance(item, dict):
+                    continue
+                nested = AutoReplyStore._load_memory_json(str(item.get("text") or ""))
+                if isinstance(nested, dict):
+                    payload = nested
+                    break
+        processing_status = str(payload.get("processing_status") or "")
+        ok = bool(payload.get("ok"))
+        status = "written" if ok else "pending"
+        if processing_status == "failed":
+            status = "failed"
+        elif processing_status in {"completed", "done", "ready"}:
+            status = "written"
+        memory_episode_id = str(
+            payload.get("episode_uuid")
+            or payload.get("uuid")
+            or payload.get("memory_episode_id")
+            or ""
+        )
+        last_error = str(payload.get("last_error") or payload.get("error") or "")
+        processing_statuses = payload.get("processing_statuses")
+        if not last_error and isinstance(processing_statuses, list):
+            for item in processing_statuses:
+                if not isinstance(item, dict):
+                    continue
+                last_error = str(item.get("last_error") or item.get("error") or "")
+                if last_error:
+                    break
+        return {
+            "status": status,
+            "memory_episode_id": memory_episode_id,
+            "last_error": last_error,
+        }
+
+    @staticmethod
+    def _load_memory_json(raw: str) -> object | None:
+        if not raw.strip():
+            return None
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError:
+            return None
 
     @staticmethod
     def _reply_attempt_update_values(**updates: object) -> dict[str, object]:
