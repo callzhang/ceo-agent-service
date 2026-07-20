@@ -37,9 +37,9 @@ class FakeCipherBackend:
 
     def read_messages(
         self, db_dir, passphrase, *, conversation_id, conversation_type, since,
-        limit, order="newest",
+        limit, until="", order="newest",
     ):
-        del db_dir, passphrase, since
+        del db_dir, passphrase, since, until
         rows = self.rows
         if conversation_id:
             rows = [r for r in rows if r.get("conversation_id") == conversation_id]

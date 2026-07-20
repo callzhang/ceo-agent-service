@@ -87,3 +87,22 @@ def test_default_newest_order_is_preserved_for_diagnostics(tmp_path):
     )
 
     assert [row["message_id"] for row in rows] == ["2"]
+
+
+def test_until_bound_is_applied_before_newest_limit(tmp_path):
+    conversation_id = "friend-1"
+    boundary = datetime.fromisoformat("2026-07-20T10:00:00+08:00")
+    epoch = int(boundary.timestamp())
+    source = tmp_path / "db_storage/message/message_0.db"
+    _create_message_db(source, conversation_id, [
+        (1, 1, epoch, "inside"),
+        (2, 2, epoch + 100, "too new"),
+    ])
+    backend = WcdbReaderBackend(tmp_path / "mirror", cipher=CopyCipher())
+
+    rows = backend.read_messages(
+        tmp_path / "db_storage", b"key", conversation_id=conversation_id,
+        conversation_type="direct", since="", until=boundary.isoformat(), limit=1,
+    )
+
+    assert [row["message_id"] for row in rows] == ["1"]

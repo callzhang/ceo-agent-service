@@ -13,8 +13,9 @@ class FakeReader:
 
     def read_messages(
         self, account, *, conversation_id, conversation_type, since, limit,
-        order="newest",
+        until="", order="newest",
     ):
+        del until
         del account, conversation_type
         messages = [
             m for m in self.messages

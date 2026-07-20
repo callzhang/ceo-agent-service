@@ -146,6 +146,43 @@ def test_read_recent_refuses_multiple_persisted_ready_accounts(
     assert "exactly one persisted ready" in capsys.readouterr().out
 
 
+def test_import_memory_uses_unique_ready_account_and_explicit_bounds(tmp_path, monkeypatch):
+    db = tmp_path / "worker.sqlite3"
+    store = AutoReplyStore(db)
+    store.upsert_wechat_read_state(
+        account_id="acct-1", account_dir="/account", db_dir="/account/db_storage",
+        app_version="4.1.10", self_user_id="self-1", capability_status="ready")
+    captured = {}
+    class Importer:
+        def __init__(self, store, reader, codex):
+            captured.update(store=store, reader=reader, codex=codex)
+        def run(self, **kwargs):
+            captured.update(kwargs)
+            return {"import_run_id":"run", "messages":3, "candidates":1}
+    monkeypatch.setattr(cli, "WechatMemoryImporter", Importer)
+    monkeypatch.setattr(cli, "CodexMemoryExtractionRunner", lambda workspace: "runner")
+    monkeypatch.setattr(cli, "_reader", lambda **kwargs: "reader")
+    args = SimpleNamespace(db=str(db), account_id="acct-1", target_id=["u1", "g@chatroom"],
+                           since="2026-07-01", until="2026-07-20", limit=50)
+    assert cli.cmd_import_memory(args) == 0
+    assert captured["account"].account_id == "acct-1"
+    assert captured["target_ids"] == ["u1", "g@chatroom"]
+
+
+def test_import_memory_fails_closed_with_multiple_ready_accounts(tmp_path, monkeypatch, capsys):
+    db = tmp_path / "worker.sqlite3"
+    store = AutoReplyStore(db)
+    for account_id in ("a", "b"):
+        store.upsert_wechat_read_state(
+            account_id=account_id, account_dir=f"/{account_id}", db_dir=f"/{account_id}/db",
+            app_version="4", self_user_id="self", capability_status="ready")
+    monkeypatch.setattr(cli, "_reader", lambda **kwargs: (_ for _ in ()).throw(AssertionError()))
+    args = SimpleNamespace(db=str(db), account_id="", target_id=["u1"],
+                           since="2026-07-01", until="", limit=50)
+    assert cli.cmd_import_memory(args) == 1
+    assert "exactly one" in capsys.readouterr().out
+
+
 def test_read_recent_parser_accepts_db_path():
     parser = cli.build_parser()
     args = parser.parse_args([

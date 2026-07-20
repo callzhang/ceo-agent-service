@@ -571,6 +571,7 @@ class AutoReplyStore:
                     reviewed_at text not null default '',
                     memory_write_status text not null default '',
                     memory_id text not null default '',
+                    memory_write_error text not null default '',
                     created_at text not null default current_timestamp,
                     updated_at text not null default current_timestamp,
                     unique(import_run_id, statement)
@@ -1071,6 +1072,16 @@ class AutoReplyStore:
                     db.execute(
                         f"alter table org_user_profiles add column {column} {definition}"
                     )
+            wechat_memory_columns = {
+                row["name"] for row in db.execute(
+                    "pragma table_info(wechat_memory_candidates)"
+                ).fetchall()
+            }
+            if "memory_write_error" not in wechat_memory_columns:
+                db.execute(
+                    "alter table wechat_memory_candidates add column "
+                    "memory_write_error text not null default ''"
+                )
 
     @staticmethod
     def _migrate_reply_task_channel_identity(db: sqlite3.Connection) -> None:
@@ -1975,25 +1986,41 @@ class AutoReplyStore:
             ).fetchone()
         return dict(row) if row is not None else None
 
-    def list_wechat_memory_candidates(self, *, status: str | None = None) -> list[dict]:
+    def list_wechat_memory_candidates(
+        self, *, status: str | None = None, category: str | None = None,
+        sensitivity: str | None = None,
+    ) -> list[dict]:
         with self._connect() as db:
-            if status is None:
-                rows = db.execute(
-                    "select * from wechat_memory_candidates order by id"
-                ).fetchall()
-            else:
-                rows = db.execute(
-                    "select * from wechat_memory_candidates where status=? order by id",
-                    (status,),
-                ).fetchall()
+            clauses, values = [], []
+            for column, value in (("status", status), ("category", category),
+                                  ("sensitivity", sensitivity)):
+                if value:
+                    clauses.append(f"{column}=?")
+                    values.append(value)
+            where = " where " + " and ".join(clauses) if clauses else ""
+            rows = db.execute(
+                f"select * from wechat_memory_candidates{where} order by id",
+                values,
+            ).fetchall()
         return [dict(row) for row in rows]
 
     def set_wechat_memory_candidate_status(
         self, candidate_id: int, status: str, *, reviewer: str = "",
         edited_statement: str | None = None,
     ) -> None:
+        if status not in {"pending", "approved", "rejected", "revoked"}:
+            raise ValueError("invalid WeChat memory candidate status")
         with self._connect() as db:
             if edited_statement is None:
+                if status == "approved":
+                    db.execute(
+                        "update wechat_memory_candidates set status=?, reviewer=?, "
+                        "edited_statement=case when edited_statement='' then statement "
+                        "else edited_statement end, reviewed_at=current_timestamp, "
+                        "updated_at=current_timestamp where id=?",
+                        (status, reviewer, candidate_id),
+                    )
+                    return
                 db.execute(
                     "update wechat_memory_candidates set status=?, reviewer=?, "
                     "reviewed_at=current_timestamp, updated_at=current_timestamp "
@@ -2007,6 +2034,106 @@ class AutoReplyStore:
                     "updated_at=current_timestamp where id=?",
                     (status, reviewer, edited_statement, candidate_id),
                 )
+
+    def review_wechat_memory_candidate(
+        self, candidate_id: int, action: str, *, reviewer: str = "",
+        final_statement: str = "",
+    ) -> dict:
+        with self._connect() as db:
+            row = db.execute(
+                "select * from wechat_memory_candidates where id=?", (candidate_id,)
+            ).fetchone()
+            if row is None:
+                raise ValueError("candidate not found")
+            current = row["status"]
+            write_status = row["memory_write_status"]
+            reviewer = reviewer.strip()
+            if not reviewer:
+                raise ValueError("reviewer required")
+            if action == "approve":
+                from app.wechat.memory_import import validate_final_statement
+                statement = validate_final_statement(final_statement)
+                if current != "pending":
+                    raise ValueError("only pending candidate can be approved")
+                db.execute(
+                    "update wechat_memory_candidates set status='approved', reviewer=?, "
+                    "edited_statement=?, reviewed_at=current_timestamp, "
+                    "updated_at=current_timestamp where id=? and status='pending'",
+                    (reviewer, statement, candidate_id),
+                )
+            elif action == "reject":
+                if current not in {"pending", "approved"} or write_status in {"writing", "written"}:
+                    raise ValueError("candidate cannot be rejected")
+                db.execute(
+                    "update wechat_memory_candidates set status='rejected', reviewer=?, "
+                    "reviewed_at=current_timestamp, updated_at=current_timestamp where id=?",
+                    (reviewer, candidate_id),
+                )
+            elif action == "revoke":
+                if current != "approved":
+                    raise ValueError("only approved candidate can be revoked")
+                next_write_status = (
+                    "revocation_unavailable" if write_status == "written" else write_status
+                )
+                db.execute(
+                    "update wechat_memory_candidates set status='revoked', reviewer=?, "
+                    "memory_write_status=?, reviewed_at=current_timestamp, "
+                    "updated_at=current_timestamp where id=?",
+                    (reviewer, next_write_status, candidate_id),
+                )
+            else:
+                raise ValueError("invalid review action")
+        result = self.get_wechat_memory_candidate(candidate_id)
+        assert result is not None
+        return result
+
+    def claim_wechat_memory_candidate_write(self, candidate_id: int) -> dict:
+        with self._connect() as db:
+            row = db.execute(
+                "select * from wechat_memory_candidates where id=?", (candidate_id,)
+            ).fetchone()
+            if row is None:
+                return {"outcome": "rejected", "reason": "candidate not found"}
+            candidate = dict(row)
+            if candidate["status"] != "approved":
+                return {"outcome": "rejected", "reason": "candidate must be approved before writing memory"}
+            if candidate["memory_id"]:
+                return {"outcome": "written", "memory_id": candidate["memory_id"]}
+            if candidate["memory_write_status"] == "writing":
+                return {"outcome": "writing"}
+            if candidate["memory_write_status"] == "unknown":
+                return {"outcome": "rejected", "reason": "unknown memory write outcome requires manual resolution"}
+            if candidate["memory_write_status"] == "revocation_unavailable":
+                return {"outcome": "rejected", "reason": "revoked candidate cannot be written"}
+            updated = db.execute(
+                "update wechat_memory_candidates set memory_write_status='writing', "
+                "memory_write_error='', updated_at=current_timestamp where id=? "
+                "and status='approved' and memory_id='' "
+                "and memory_write_status in ('', 'failed')",
+                (candidate_id,),
+            )
+            if updated.rowcount != 1:
+                return {"outcome": "writing"}
+            candidate["edited_statement"] = (
+                candidate["edited_statement"] or candidate["statement"]
+            )
+            return {"outcome": "claimed", "candidate": candidate}
+
+    def finish_wechat_memory_candidate_write(
+        self, candidate_id: int, *, status: str, memory_id: str = "",
+        error: str = "",
+    ) -> None:
+        if status not in {"written", "failed", "unknown"}:
+            raise ValueError("invalid memory write status")
+        with self._connect() as db:
+            changed = db.execute(
+                "update wechat_memory_candidates set memory_write_status=?, memory_id=?, "
+                "memory_write_error=?, updated_at=current_timestamp "
+                "where id=? and memory_write_status='writing'",
+                (status, memory_id, error[:500], candidate_id),
+            )
+            if changed.rowcount != 1:
+                raise RuntimeError("memory write claim lost")
 
     def set_wechat_memory_candidate_written(
         self, candidate_id: int, *, memory_id: str, memory_write_status: str

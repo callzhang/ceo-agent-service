@@ -114,12 +114,13 @@ class WcdbReaderBackend:
 
     def read_messages(
         self, db_dir, passphrase, *, conversation_id, conversation_type, since,
-        limit, order="newest",
+        limit, until="", order="newest",
     ) -> list[dict]:
         if order not in {"newest", "oldest"}:
             raise ValueError(f"unsupported message order: {order}")
         table = schema.table_for(conversation_id)
         since_ts = self._since_ts(since)
+        until_ts = self._since_ts(until) if until else None
         disp = self._contacts(db_dir, passphrase)
         rows: list[dict] = []
         for shard in self._message_shards(db_dir):
@@ -138,22 +139,36 @@ class WcdbReaderBackend:
             )
             if order == "oldest":
                 raw_rows = []
-                if since:
+                if since and (until_ts is None or since_ts <= until_ts):
                     raw_rows.extend(conn.execute(
                         columns + "WHERE create_time = ? ORDER BY create_time, local_id",
                         (since_ts,),
                     ))
-                raw_rows.extend(conn.execute(
-                    columns
-                    + "WHERE create_time > ? ORDER BY create_time, local_id LIMIT ?",
-                    (since_ts, limit),
-                ))
+                if until_ts is None:
+                    raw_rows.extend(conn.execute(
+                        columns
+                        + "WHERE create_time > ? ORDER BY create_time, local_id LIMIT ?",
+                        (since_ts, limit),
+                    ))
+                else:
+                    raw_rows.extend(conn.execute(
+                        columns + "WHERE create_time > ? AND create_time <= ? "
+                        "ORDER BY create_time, local_id LIMIT ?",
+                        (since_ts, until_ts, limit),
+                    ))
             else:
-                raw_rows = conn.execute(
-                    columns
-                    + "WHERE create_time >= ? ORDER BY create_time DESC, local_id DESC LIMIT ?",
-                    (since_ts, limit),
-                )
+                if until_ts is None:
+                    raw_rows = conn.execute(
+                        columns + "WHERE create_time >= ? "
+                        "ORDER BY create_time DESC, local_id DESC LIMIT ?",
+                        (since_ts, limit),
+                    )
+                else:
+                    raw_rows = conn.execute(
+                        columns + "WHERE create_time >= ? AND create_time <= ? "
+                        "ORDER BY create_time DESC, local_id DESC LIMIT ?",
+                        (since_ts, until_ts, limit),
+                    )
             for local_id, server_id, ltype, sender, ctime, content, flag, source, source_flag in raw_rows:
                 sender_user = id2u.get(sender, str(sender))
                 rows.append({

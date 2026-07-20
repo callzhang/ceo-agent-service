@@ -18,7 +18,7 @@ Accessibility send (verified live to 文件传输助手).
 | `producer.py` | Eligible-message → channel-isolated reply task (exact group @-gate) |
 | `prompt.py` / `consumer.py` | WeChat-specific prompt + Codex decision → fail-closed delivery |
 | `accessibility.py` | Exact-once delivery state machine + real AX runner |
-| `memory.py` | Bounded extraction + deterministic cleanup + approved-only writer |
+| `memory_import.py` / `memory_writer.py` | Bounded extraction + deterministic cleanup; claimed, approved-only Memory writer (`memory.py` keeps public imports) |
 | `setup.py` / `audit_web.py` | Tutorial connect service + target picker routes |
 | `service.py` / `cli.py` | Composable steps/loops + diagnostic CLI |
 | `scripts/wechat_key_probe.py` | Fingerprint-only key/schema gate |
@@ -43,9 +43,36 @@ passphrase is account-stable; re-capture only after logout/reinstall.
 .venv/bin/python -m app.wechat.cli read-recent --db data/auto-reply.sqlite3 --target-id filehelper --limit 100   # uses persisted self_user_id; redacted metadata
 .venv/bin/python -m app.wechat.cli read-recent --db data/auto-reply.sqlite3 --target-id filehelper --include-text  # explicit local verify
 .venv/bin/python -m app.wechat.cli produce-once               # scan enabled scopes → enqueue
+.venv/bin/python -m app.cli wechat import-memory --db data/auto-reply.sqlite3 \
+    --account-id '<ready-account-id>' --target-id '<wxid-or-chatroom-id>' \
+    --since '2026-01-01' --until '2026-07-20T23:59:59+08:00' --limit 1000
 .venv/bin/python scripts/wechat_key_probe.py --passphrase-file ~/.config/wx_read/passphrase.hex \
     --account-db-dir "$HOME/Library/Containers/com.tencent.xinWeChat/Data/Documents/xwechat_files/<acct>/db_storage"
 ```
+
+`import-memory` is an explicit, one-shot operation. It requires exactly one
+persisted `ready` account, one or more `--target-id` values, a date bound, and a
+total `--limit` from 1–10000. It reads only those local conversations, creates
+cleaned `pending` rows, and never changes the automatic-reply activation
+watermark or calls `memory_write`. Repeating the exact same account, targets,
+bounds, and limit is idempotent.
+
+Review the result at `/wechat/memory-review`. Each row shows the cleaned
+statement, category, confidence, sensitivity, minimal redacted evidence, source
+time, cleanup notes, review state, and write state. Approval is deliberately
+per-row and requires an editable final statement and reviewer. Memory writing is
+a second explicit action that processes only checked, already-approved IDs.
+Bulk reject is available; bulk approve is not. A rejected or revoked row cannot
+be written. If a previously written row is revoked, the page records
+`revocation_unavailable` because the current Memory backend has no supported
+delete/revoke operation; it does not claim that the Memory was removed.
+
+The writer transactionally claims each approved row. Concurrent clicks can call
+the backend at most once. A confirmed successful `memory_write` tool event and a
+stable Memory id are required before `written` is recorded. Ambiguous results are
+marked `unknown` and are never retried automatically; clear failures are marked
+`failed` for an intentional manual retry. Extraction and review persist no raw
+chat transcript, DB path, passphrase, token, or API key.
 
 ## Shared-file integration status
 
