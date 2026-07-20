@@ -105,6 +105,23 @@ def test_trigger_is_appended_when_absent_and_not_duplicated_when_present() -> No
     ]
 
 
+def test_preserves_duplicate_non_trigger_messages_and_uses_actual_trigger() -> None:
+    trigger = make_message("trigger-1", "Derek", "Current trigger.")
+    stale_trigger = make_message("trigger-1", "Old sender", "Stale trigger.")
+    repeated = make_message("repeat-1", "Alex", "Repeated context.")
+
+    context = build_universal_context(
+        conversation=make_conversation(),
+        trigger=trigger,
+        context_messages=[repeated, stale_trigger, repeated, stale_trigger],
+        task_id=1,
+        force_new_decision=False,
+        dry_run=True,
+    )
+
+    assert context.context_messages == [repeated, trigger, repeated]
+
+
 def test_build_does_not_mutate_callers_context_list() -> None:
     prior = make_message("prior-1", "Alex", "Earlier message.")
     original = [prior]

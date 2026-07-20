@@ -53,12 +53,17 @@ def build_universal_context(
     dry_run: bool,
 ) -> UniversalTaskContext:
     messages: list[DingTalkMessage] = []
-    seen_message_ids: set[str] = set()
-    for message in [*context_messages, trigger]:
-        if message.open_message_id in seen_message_ids:
+    trigger_added = False
+    for message in context_messages:
+        if message.open_message_id == trigger.open_message_id:
+            if not trigger_added:
+                messages.append(trigger)
+                trigger_added = True
             continue
-        seen_message_ids.add(message.open_message_id)
         messages.append(message)
+
+    if not trigger_added:
+        messages.append(trigger)
 
     return UniversalTaskContext(
         task_id=task_id,
