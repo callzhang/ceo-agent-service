@@ -39,6 +39,10 @@ def _plan_payload(**overrides):
             {
                 "kind": "send_reply",
                 "reason": "Reply after the service executes this plan.",
+                "sensitivity_kind": "general",
+                "personnel_subject_user_id": None,
+                "candidate_context_known": False,
+                "candidate_department_ids": [],
                 "target": {},
                 "payload": {"text": "I will review it today."},
             }

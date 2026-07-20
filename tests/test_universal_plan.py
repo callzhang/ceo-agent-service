@@ -8,6 +8,7 @@ from app.universal_plan import (
     UniversalAudit,
     UniversalPlan,
 )
+from app.dingtalk_models import SensitivityKind
 
 
 def make_plan(*actions: PlannedAction) -> UniversalPlan:
@@ -27,6 +28,7 @@ def make_reply_action() -> PlannedAction:
     return PlannedAction(
         kind="send_reply",
         reason="Answer the requester",
+        sensitivity_kind="general",
         payload={"text": "The request is complete."},
     )
 
@@ -36,6 +38,7 @@ def test_reply_and_memory_plan_validates_and_converts_enums() -> None:
         PlannedAction(
             kind="send_reply",
             reason="Answer the requester",
+            sensitivity_kind="general",
             payload={"text": "The request is complete."},
         ),
         PlannedAction(
@@ -86,8 +89,44 @@ def test_empty_send_reply_text_is_rejected() -> None:
         PlannedAction(
             kind=PlannedActionKind.SEND_REPLY,
             reason="Answer the requester",
+            sensitivity_kind="general",
             payload={"text": "  "},
         )
+
+
+@pytest.mark.parametrize(
+    "kind",
+    [
+        PlannedActionKind.SEND_REPLY,
+        PlannedActionKind.ASK_CLARIFYING_QUESTION,
+    ],
+)
+def test_reply_actions_require_explicit_sensitivity_kind(
+    kind: PlannedActionKind,
+) -> None:
+    with pytest.raises(ValidationError, match="sensitivity_kind is required"):
+        PlannedAction(
+            kind=kind,
+            reason="Answer the requester",
+            payload={"text": "Done."},
+        )
+
+
+def test_reply_action_preserves_permission_metadata() -> None:
+    action = PlannedAction(
+        kind="send_reply",
+        reason="Answer a candidate question",
+        sensitivity_kind="external_candidate",
+        personnel_subject_user_id="subject-user",
+        candidate_context_known=True,
+        candidate_department_ids=["dept-1", "dept-2"],
+        payload={"text": "Candidate response."},
+    )
+
+    assert action.sensitivity_kind is SensitivityKind.EXTERNAL_CANDIDATE
+    assert action.personnel_subject_user_id == "subject-user"
+    assert action.candidate_context_known is True
+    assert action.candidate_department_ids == ["dept-1", "dept-2"]
 
 
 def test_blocked_action_with_dws_authorization_blocker_validates() -> None:

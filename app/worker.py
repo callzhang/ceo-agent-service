@@ -63,6 +63,7 @@ from app.dingtalk_models import (
     CodexDecision,
     DingTalkConversation,
     DingTalkMessage,
+    SensitivityKind,
 )
 from app.leak_check import (
     FORBIDDEN_MARKERS,
@@ -488,6 +489,62 @@ class DingTalkAutoReplyWorker:
             )
             return True
 
+        decision = self._universal_codex_decision(execution, reply_text)
+        try:
+            permission = self.permission_gate.evaluate(decision, trigger)
+        except Exception as exc:
+            error = str(exc)
+            self._fail_universal_action_before_send(
+                execution,
+                attempt_id=attempt_id,
+                error=error,
+            )
+            self.store.record_error(
+                conversation.open_conversation_id,
+                trigger.open_message_id,
+                "permission",
+                error,
+            )
+            raise ReplyDeliveryError(error) from exc
+        self.store.update_reply_attempt(
+            attempt_id,
+            permission_action=permission.action.value,
+            permission_reason=permission.reason,
+        )
+        if permission.action is PermissionAction.ERROR:
+            error = permission.reason or "permission evaluation failed"
+            self._fail_universal_action_before_send(
+                execution,
+                attempt_id=attempt_id,
+                error=error,
+            )
+            self.store.record_error(
+                conversation.open_conversation_id,
+                trigger.open_message_id,
+                "permission",
+                error,
+            )
+            raise ReplyDeliveryError(error)
+        if permission.action is PermissionAction.REPLY:
+            reply_text = permission.reply_text
+
+        try:
+            self._preflight_universal_reply_recipient(trigger, reply_text)
+        except Exception as exc:
+            error = str(exc)
+            self._fail_universal_action_before_send(
+                execution,
+                attempt_id=attempt_id,
+                error=error,
+            )
+            self.store.record_error(
+                conversation.open_conversation_id,
+                trigger.open_message_id,
+                "reply_at_users",
+                error,
+            )
+            raise ReplyDeliveryError(error) from exc
+
         try:
             self._send_reply(
                 conversation=conversation,
@@ -514,6 +571,11 @@ class DingTalkAutoReplyWorker:
                     outcome="delivery_salvaged_after_error",
                 )
                 return True
+            attempt = self.store.get_reply_attempt(attempt_id)
+            if self._is_definite_universal_send_failure(attempt):
+                error = attempt.send_error or str(exc)
+                self.store.mark_universal_action_execution_failed(execution, error)
+                raise
             error = f"universal_action_outcome_unknown: {exc}"
             self.store.update_reply_attempt(
                 attempt_id,
@@ -527,6 +589,11 @@ class DingTalkAutoReplyWorker:
             execution.context.conversation_id,
             execution.context.trigger_message_id,
         ):
+            attempt = self.store.get_reply_attempt(attempt_id)
+            if self._is_definite_universal_send_failure(attempt):
+                error = attempt.send_error or "definite pre-send failure"
+                self.store.mark_universal_action_execution_failed(execution, error)
+                raise ReplyDeliveryError(error)
             error = "universal_action_outcome_unknown: delivery not recorded"
             self.store.update_reply_attempt(
                 attempt_id,
@@ -597,12 +664,127 @@ class DingTalkAutoReplyWorker:
             send_status=send_status,
             send_error=send_error,
         )
+        conversation, trigger, new_messages = self._universal_reply_context(execution)
+        attempt = self.store.get_reply_attempt(attempt_id)
+        if attempt is not None:
+            self._enqueue_conversation_work_item(
+                attempt_id=attempt_id,
+                conversation=conversation,
+                trigger=trigger,
+                action=attempt.action,
+                audit_summary=attempt.audit_summary or attempt.codex_reason,
+                final_reply_text=attempt.final_reply_text,
+            )
+        if execution.action.kind is PlannedActionKind.HANDOFF_TO_HUMAN:
+            handoff_decision = CodexDecision(
+                action=CodexAction.HANDOFF_TO_HUMAN,
+                reason=execution.action.reason,
+                sensitivity_kind=SensitivityKind.GENERAL,
+            )
+            reacted = self._execute_message_reactions(
+                conversation=conversation,
+                trigger=trigger,
+                new_messages=new_messages,
+                attempt_id=attempt_id,
+                decision=self._handoff_reaction_decision(handoff_decision),
+                raise_on_delivery_failure=False,
+            )
+            handoff_notified_locally = self._notify_handoff(
+                conversation=conversation,
+                trigger=trigger,
+                context_messages=new_messages,
+            )
+            if not handoff_notified_locally:
+                self._notify(
+                    title=f"CEO handoff: {conversation.title}",
+                    message=trigger.content[:120],
+                    conversation=conversation,
+                    attempt_id=attempt_id,
+                )
+            self._append_attempt_audit_tool_events(
+                attempt_id,
+                [
+                    {
+                        "tool": "universal_handoff",
+                        "output": json.dumps(
+                            {
+                                "notification_invoked": True,
+                                "reaction_succeeded": reacted,
+                            },
+                            ensure_ascii=False,
+                            sort_keys=True,
+                        ),
+                    }
+                ],
+            )
+            self.store.update_reply_attempt(
+                attempt_id,
+                send_status="skipped",
+                send_error=send_error,
+                retry_count=0,
+            )
+        self._mark_seen(new_messages)
         self._complete_universal_action(
             execution,
             attempt_id=attempt_id,
             outcome=send_status,
         )
         return True
+
+    @staticmethod
+    def _universal_codex_decision(
+        execution: UniversalActionExecution,
+        reply_text: str,
+    ) -> CodexDecision:
+        action = execution.action
+        if action.sensitivity_kind is None:
+            raise ValueError("universal reply action is missing sensitivity_kind")
+        return CodexDecision(
+            action=(
+                CodexAction.SEND_REPLY
+                if action.kind is PlannedActionKind.SEND_REPLY
+                else CodexAction.ASK_CLARIFYING_QUESTION
+            ),
+            reply_text=reply_text,
+            reason=action.reason,
+            sensitivity_kind=action.sensitivity_kind,
+            personnel_subject_user_id=action.personnel_subject_user_id,
+            candidate_context_known=action.candidate_context_known,
+            candidate_department_ids=list(action.candidate_department_ids),
+        )
+
+    def _preflight_universal_reply_recipient(
+        self,
+        trigger: DingTalkMessage,
+        reply_text: str,
+    ) -> None:
+        explicit_targets = self._explicit_reply_at_targets(trigger, reply_text)
+        if not explicit_targets:
+            self._default_reply_at_targets(trigger)
+
+    def _fail_universal_action_before_send(
+        self,
+        execution: UniversalActionExecution,
+        *,
+        attempt_id: int,
+        error: str,
+    ) -> None:
+        self.store.update_reply_attempt(
+            attempt_id,
+            send_status="failed",
+            send_error=error,
+        )
+        self.store.mark_universal_action_execution_failed(execution, error)
+
+    @staticmethod
+    def _is_definite_universal_send_failure(
+        attempt: ReplyAttempt | None,
+    ) -> bool:
+        if attempt is None or attempt.send_status not in {"blocked", "failed"}:
+            return False
+        return attempt.send_error == "leak_check" or attempt.send_error.startswith(
+            "empty_reply:"
+        )
 
     @staticmethod
     def _universal_result_json(
@@ -670,7 +852,11 @@ class DingTalkAutoReplyWorker:
             trigger_sender=context.trigger_sender,
             trigger_text=context.trigger_text,
             action=execution.action.kind.value,
-            sensitivity_kind="general",
+            sensitivity_kind=(
+                execution.action.sensitivity_kind.value
+                if execution.action.sensitivity_kind is not None
+                else SensitivityKind.GENERAL.value
+            ),
             codex_reason=execution.action.reason,
             draft_reply_text=draft_reply_text,
             audit_tool_events_json=self._universal_audit_tool_events_json(execution),

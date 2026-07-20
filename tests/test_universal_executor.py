@@ -119,6 +119,15 @@ def make_action(kind: PlannedActionKind) -> PlannedAction:
     return PlannedAction(
         kind=kind,
         reason="Execute the planned action",
+        sensitivity_kind=(
+            "general"
+            if kind
+            in {
+                PlannedActionKind.SEND_REPLY,
+                PlannedActionKind.ASK_CLARIFYING_QUESTION,
+            }
+            else None
+        ),
         target=target,
         payload=payload,
     )
@@ -195,8 +204,10 @@ def test_canonical_action_json_is_stable_and_sorted() -> None:
     )
 
     assert canonical_universal_action_json(action) == (
-        '{"kind":"memory_write","payload":{"nested":{"a":1,"z":3}},'
-        '"reason":"Remember this","target":{"a":"1","b":"2"}}'
+        '{"candidate_context_known":false,"candidate_department_ids":[],'
+        '"kind":"memory_write","payload":{"nested":{"a":1,"z":3}},'
+        '"personnel_subject_user_id":null,"reason":"Remember this",'
+        '"sensitivity_kind":null,"target":{"a":"1","b":"2"}}'
     )
 
 

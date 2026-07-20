@@ -3,6 +3,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from app.dingtalk_models import SensitivityKind
+
 
 class DependencyName(StrEnum):
     DWS = "dws"
@@ -50,6 +52,10 @@ class UniversalAudit(UniversalPlanBase):
 class PlannedAction(UniversalPlanBase):
     kind: PlannedActionKind
     reason: str
+    sensitivity_kind: SensitivityKind | None = None
+    personnel_subject_user_id: str | None = None
+    candidate_context_known: bool = False
+    candidate_department_ids: list[str] = Field(default_factory=list)
     target: dict[str, Any] = Field(default_factory=dict)
     payload: dict[str, Any] = Field(default_factory=dict)
 
@@ -61,6 +67,10 @@ class PlannedAction(UniversalPlanBase):
             PlannedActionKind.SEND_REPLY,
             PlannedActionKind.ASK_CLARIFYING_QUESTION,
         }:
+            if self.sensitivity_kind is None:
+                raise ValueError(
+                    f"{self.kind.value} sensitivity_kind is required"
+                )
             text = self.payload.get("text")
             if not isinstance(text, str) or not text.strip():
                 raise ValueError(

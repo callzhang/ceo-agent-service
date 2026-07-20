@@ -24,13 +24,18 @@ UNIVERSAL_PLAN_SCHEMA_HINT = (
     '"reason":"non-empty string",'
     '"dependencies":["dws|lark|exa|memory|xiaoqing_interview|mail|calendar"],'
     '"actions":[{"kind":"send_reply|ask_clarifying_question|oa_approval|mail_reply|calendar_response|dws_markdown_document_reply|dws_message_reaction|memory_write|no_reply|handoff_to_human|blocked|stop_with_error",'
-    '"reason":"non-empty string","target":{},"payload":{}}],'
+    '"reason":"non-empty string",'
+    '"sensitivity_kind":"general|internal_personnel|external_candidate|null",'
+    '"personnel_subject_user_id":"string|null",'
+    '"candidate_context_known":false,"candidate_department_ids":[],'
+    '"target":{},"payload":{}}],'
     '"audit":{"summary":"non-empty string","documents":[{"key":"value"}],'
     '"confidence":0.0}}. '
     "No fields beyond this contract are allowed. actions must contain at least "
     "one action. audit.confidence must be in the range 0.0..1.0. Action payload "
     "requirements: "
-    "send_reply and ask_clarifying_question require payload.text; mail_reply "
+    "send_reply and ask_clarifying_question require payload.text and an explicit "
+    "non-null sensitivity_kind; mail_reply "
     "requires target.mailbox, target.message_id, and payload.content; oa_approval "
     "requires payload.action of 同意, 拒绝, 退回, or comment and a non-empty "
     "payload.remark."

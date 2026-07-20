@@ -3,7 +3,9 @@ from pathlib import Path
 
 import pytest
 
+from app.leak_check import FORBIDDEN_MARKERS
 from app.store import AutoReplyStore
+from app.permission import PermissionAction, PermissionResult
 from app.universal_context import UniversalContextMessage, UniversalTaskContext
 from app.universal_executor import (
     UniversalActionExecution,
@@ -22,6 +24,9 @@ from app.worker import DingTalkAutoReplyWorker, ReplyDeliveryError
 class FakeDws:
     def __init__(self) -> None:
         self.calls: list[object] = []
+
+    def ding_self(self, text: str) -> None:
+        self.calls.append(("ding_self", text))
 
 
 class NativeReplyFakeDws(FakeDws):
@@ -55,6 +60,10 @@ def _execution(
     kind: PlannedActionKind,
     target: dict | None = None,
     payload: dict | None = None,
+    sensitivity_kind: str | None = None,
+    personnel_subject_user_id: str | None = None,
+    candidate_context_known: bool = False,
+    candidate_department_ids: list[str] | None = None,
 ) -> UniversalActionExecution:
     inserted = store.enqueue_reply_task(
         conversation_id="cid-context",
@@ -102,6 +111,22 @@ def _execution(
     action = PlannedAction(
         kind=kind,
         reason=f"Reason for {kind.value}",
+        sensitivity_kind=(
+            sensitivity_kind
+            if sensitivity_kind is not None
+            else (
+                "general"
+                if kind
+                in {
+                    PlannedActionKind.SEND_REPLY,
+                    PlannedActionKind.ASK_CLARIFYING_QUESTION,
+                }
+                else None
+            )
+        ),
+        personnel_subject_user_id=personnel_subject_user_id,
+        candidate_context_known=candidate_context_known,
+        candidate_department_ids=candidate_department_ids or [],
         target=target or {},
         payload=payload or {},
     )
@@ -402,6 +427,160 @@ def test_universal_reply_exception_without_delivery_marks_unknown(
     assert "universal_action_outcome_unknown" in attempt.send_error
 
 
+def test_universal_reply_permission_refusal_is_sent_and_audited(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    execution = _execution(
+        store,
+        kind=PlannedActionKind.SEND_REPLY,
+        sensitivity_kind="internal_personnel",
+        personnel_subject_user_id="another-user",
+        payload={"text": "Sensitive answer"},
+    )
+    worker = _worker(store)
+    evaluated: dict[str, object] = {}
+
+    def evaluate_permission(decision, trigger) -> PermissionResult:
+        evaluated.update(decision=decision, trigger=trigger)
+        return PermissionResult(
+            action=PermissionAction.REPLY,
+            reply_text="Safe refusal",
+            reason="requester is unrelated",
+        )
+
+    worker.permission_gate = type(
+        "Gate",
+        (),
+        {"evaluate": staticmethod(evaluate_permission)},
+    )()
+    sent_texts: list[str] = []
+
+    def fake_send_reply(conversation, trigger, reply_text, attempt_id, **kwargs):
+        sent_texts.append(reply_text)
+        store.update_reply_attempt(attempt_id, send_status="sent")
+        store.record_sent_reply(
+            conversation.open_conversation_id,
+            trigger.open_message_id,
+            reply_text,
+        )
+
+    monkeypatch.setattr(worker, "_send_reply", fake_send_reply)
+
+    assert worker.execute_universal_send_reply(execution) is True
+    assert sent_texts == ["Safe refusal"]
+    attempt = store.get_latest_reply_attempt_for_trigger("cid-context", "msg-context")
+    assert attempt is not None
+    assert attempt.sensitivity_kind == "internal_personnel"
+    assert attempt.permission_action == "reply"
+    assert attempt.permission_reason == "requester is unrelated"
+    decision = evaluated["decision"]
+    assert decision.sensitivity_kind.value == "internal_personnel"
+    assert decision.personnel_subject_user_id == "another-user"
+
+
+def test_universal_reply_permission_error_is_definite_retryable_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    execution = _execution(
+        store,
+        kind=PlannedActionKind.SEND_REPLY,
+        sensitivity_kind="external_candidate",
+        candidate_context_known=True,
+        candidate_department_ids=["dept-1"],
+        payload={"text": "Sensitive answer"},
+    )
+    worker = _worker(store)
+    worker.permission_gate = type(
+        "Gate",
+        (),
+        {
+            "evaluate": staticmethod(
+                lambda decision, trigger: PermissionResult(
+                    action=PermissionAction.ERROR,
+                    reason="requester identity unavailable",
+                )
+            )
+        },
+    )()
+    monkeypatch.setattr(
+        worker,
+        "_send_reply",
+        lambda *args, **kwargs: pytest.fail("permission error must not send"),
+    )
+
+    with pytest.raises(RuntimeError, match="requester identity unavailable"):
+        worker.execute_universal_send_reply(execution)
+
+    assert (
+        store.get_universal_action_execution_state(execution)
+        is UniversalActionExecutionState.NOT_STARTED
+    )
+    attempt = store.get_latest_reply_attempt_for_trigger("cid-context", "msg-context")
+    assert attempt is not None
+    assert attempt.permission_action == "error"
+    assert attempt.send_status == "failed"
+
+
+def test_universal_reply_recipient_preflight_failure_is_not_unknown(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    execution = _execution(
+        store,
+        kind=PlannedActionKind.SEND_REPLY,
+        payload={"text": "Reply"},
+    )
+    worker = _worker(store)
+    monkeypatch.setattr(worker, "_explicit_reply_at_targets", lambda *args: [])
+    monkeypatch.setattr(
+        worker,
+        "_default_reply_at_targets",
+        lambda trigger: (_ for _ in ()).throw(RuntimeError("recipient lookup failed")),
+    )
+    monkeypatch.setattr(
+        worker,
+        "_send_reply",
+        lambda *args, **kwargs: pytest.fail("recipient failure must not send"),
+    )
+
+    with pytest.raises(RuntimeError, match="recipient lookup failed"):
+        worker.execute_universal_send_reply(execution)
+
+    assert (
+        store.get_universal_action_execution_state(execution)
+        is UniversalActionExecutionState.NOT_STARTED
+    )
+
+
+def test_universal_reply_leak_check_block_is_definite_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    execution = _execution(
+        store,
+        kind=PlannedActionKind.SEND_REPLY,
+        payload={"text": f"Blocked reply {FORBIDDEN_MARKERS[0]}"},
+    )
+    worker = _worker(store)
+    monkeypatch.setattr(worker, "_regenerate_reply_after_leak_check", lambda **kwargs: "")
+    monkeypatch.setattr(worker, "_notify", lambda **kwargs: None)
+    monkeypatch.setattr("app.worker.feedback_spike_vercel_base_url", lambda: "")
+
+    with pytest.raises(ReplyDeliveryError, match="leak_check"):
+        worker.execute_universal_send_reply(execution)
+
+    assert (
+        store.get_universal_action_execution_state(execution)
+        is UniversalActionExecutionState.NOT_STARTED
+    )
+
+
 @pytest.mark.parametrize(
     ("kind", "send_status"),
     [
@@ -422,7 +601,10 @@ def test_universal_terminal_actions_record_attempt_and_complete(
 
     assert worker.execute_universal_terminal_action(execution) is True
 
-    assert worker.dws.calls == []
+    if kind is PlannedActionKind.HANDOFF_TO_HUMAN:
+        assert any(call[0] == "ding_self" for call in worker.dws.calls)
+    else:
+        assert worker.dws.calls == []
     assert (
         store.get_universal_action_execution_state(execution)
         is UniversalActionExecutionState.SUCCEEDED
@@ -434,6 +616,52 @@ def test_universal_terminal_actions_record_attempt_and_complete(
     assert attempt.send_error == f"{kind.value}: Reason for {kind.value}"
     event = json.loads(attempt.audit_tool_events_json)[0]
     assert event["execution_id"] == execution.execution_id
+    if kind is PlannedActionKind.HANDOFF_TO_HUMAN:
+        handoff_event = json.loads(attempt.audit_tool_events_json)[-1]
+        assert handoff_event["tool"] == "universal_handoff"
+        assert json.loads(handoff_event["output"])["notification_invoked"] is True
+    assert store.has_seen("msg-context") is True
+
+
+@pytest.mark.parametrize(
+    "kind",
+    [
+        PlannedActionKind.NO_REPLY,
+        PlannedActionKind.HANDOFF_TO_HUMAN,
+        PlannedActionKind.BLOCKED,
+        PlannedActionKind.STOP_WITH_ERROR,
+    ],
+)
+def test_universal_terminal_side_effects_happen_before_completion(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    kind: PlannedActionKind,
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    execution = _execution(store, kind=kind)
+    worker = _worker(store)
+    enqueued: list[int] = []
+    monkeypatch.setattr(
+        worker,
+        "_enqueue_conversation_work_item",
+        lambda **kwargs: enqueued.append(kwargs["attempt_id"]),
+    )
+    original_complete = store.complete_universal_action_execution
+
+    def assert_side_effects_before_complete(*args, **kwargs):
+        assert store.has_seen("msg-context") is True
+        assert enqueued
+        if kind is PlannedActionKind.HANDOFF_TO_HUMAN:
+            assert any(call[0] == "ding_self" for call in worker.dws.calls)
+        return original_complete(*args, **kwargs)
+
+    monkeypatch.setattr(
+        store,
+        "complete_universal_action_execution",
+        assert_side_effects_before_complete,
+    )
+
+    assert worker.execute_universal_terminal_action(execution) is True
 
 
 def test_universal_terminal_unknown_fails_closed_without_new_attempt(

@@ -63,6 +63,15 @@ def make_action(
     return PlannedAction(
         kind=kind,
         reason=f"Execute {kind.value}",
+        sensitivity_kind=(
+            "general"
+            if kind
+            in {
+                PlannedActionKind.SEND_REPLY,
+                PlannedActionKind.ASK_CLARIFYING_QUESTION,
+            }
+            else None
+        ),
         target=target,
         payload=payload,
     )

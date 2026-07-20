@@ -62,6 +62,7 @@ def reply_action(
     return PlannedAction(
         kind=PlannedActionKind.SEND_REPLY,
         reason="Answer the requester",
+        sensitivity_kind="general",
         target={
             "conversation_id": conversation_id,
             "trigger_message_id": message_id,
@@ -252,6 +253,7 @@ def test_reply_actions_missing_target_are_blocked(kind: PlannedActionKind) -> No
             PlannedAction(
                 kind=kind,
                 reason="Respond to the requester",
+                sensitivity_kind="general",
                 payload={"text": "Please clarify."},
             )
         ),
@@ -296,6 +298,7 @@ def test_reply_target_mismatch_is_blocked(
             PlannedAction(
                 kind=kind,
                 reason="Answer the requester",
+                sensitivity_kind="general",
                 target=target,
                 payload={"text": "Done."},
             )
