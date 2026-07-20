@@ -96,6 +96,20 @@ class PlannedAction(UniversalPlanBase):
             remark = self.payload.get("remark")
             if not isinstance(remark, str) or not remark.strip():
                 raise ValueError("oa_approval payload.remark must be non-empty")
+            if self.payload.get("action") == "退回":
+                target_activity_id = self.payload.get("target_activity_id")
+                if not isinstance(target_activity_id, str) or not target_activity_id.strip():
+                    raise ValueError(
+                        "oa_approval return payload.target_activity_id must be non-empty"
+                    )
+                if self.payload.get("revert_action") not in {
+                    "REVERT_FOR_APPROVAL",
+                    "REVERT_FOR_RESUBMIT",
+                }:
+                    raise ValueError(
+                        "oa_approval return payload.revert_action must be "
+                        "REVERT_FOR_APPROVAL or REVERT_FOR_RESUBMIT"
+                    )
 
         return self
 

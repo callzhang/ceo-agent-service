@@ -72,6 +72,8 @@ def test_maps_metadata_and_renders_trigger_and_recent_message() -> None:
         "Trigger message ID: trigger-1\n"
         "Trigger sender: Derek\n"
         "Trigger text: Please review this.\n"
+        "Trusted OA process instance ID: none\n"
+        "Trusted OA task ID: none\n"
         "Required dependencies: dws\n"
         "Execution generation: initial\n"
         "Force new decision: true\n"
@@ -142,6 +144,81 @@ def test_snapshots_every_behaviorally_relevant_message_field() -> None:
 
 def test_dws_is_required_for_dingtalk_context() -> None:
     assert build_context([]).required_dependencies == ("dws",)
+
+
+def test_build_derives_trusted_oa_target_from_trigger_payload() -> None:
+    trigger = make_message("trigger-oa", "Derek", "Please review this approval.")
+    trigger.raw_payload = {
+        "processInstanceId": "proc-trusted",
+        "taskId": "task-trusted",
+    }
+
+    context = build_universal_context(
+        conversation=make_conversation(),
+        trigger=trigger,
+        context_messages=[],
+        task_id=42,
+        force_new_decision=False,
+        dry_run=False,
+    )
+
+    assert context.trusted_oa_process_instance_id == "proc-trusted"
+    assert context.trusted_oa_task_id == "task-trusted"
+    assert "Trusted OA process instance ID: proc-trusted" in context.render_for_agent()
+    assert "Trusted OA task ID: task-trusted" in context.render_for_agent()
+
+
+def test_build_derives_trusted_oa_target_from_reply_task_url() -> None:
+    context = build_universal_context(
+        conversation=make_conversation(),
+        trigger=make_message("trigger-oa", "Derek", "Approval notification"),
+        context_messages=[],
+        task_id=42,
+        force_new_decision=False,
+        dry_run=False,
+        reply_task_oa_url=(
+            "https://aflow.dingtalk.com/dingtalk/web/query/pchomepage.htm"
+            "?procInstId=proc-url&taskId=task-url"
+        ),
+    )
+
+    assert context.trusted_oa_process_instance_id == "proc-url"
+    assert context.trusted_oa_task_id == "task-url"
+
+
+def test_conflicting_trusted_oa_sources_fail_closed() -> None:
+    trigger = make_message("trigger-oa", "Derek", "Approval notification")
+    trigger.raw_payload = {
+        "processInstanceId": "proc-payload",
+        "taskId": "task-payload",
+    }
+
+    context = build_universal_context(
+        conversation=make_conversation(),
+        trigger=trigger,
+        context_messages=[],
+        task_id=42,
+        force_new_decision=False,
+        dry_run=False,
+        reply_task_oa_url=(
+            "https://aflow.dingtalk.com/dingtalk/web/query/pchomepage.htm"
+            "?procInstId=proc-url&taskId=task-url"
+        ),
+    )
+
+    assert context.trusted_oa_process_instance_id == ""
+    assert context.trusted_oa_task_id == ""
+
+
+def test_trusted_oa_target_changes_canonical_identity() -> None:
+    context = build_context([])
+    trusted = replace(
+        context,
+        trusted_oa_process_instance_id="proc-1",
+        trusted_oa_task_id="task-1",
+    )
+
+    assert universal_context_sha256(trusted) != universal_context_sha256(context)
 
 
 def test_explicit_execution_generation_is_snapshotted_and_rendered() -> None:
@@ -239,6 +316,8 @@ def test_canonical_context_json_covers_every_field_with_stable_order() -> None:
             "trigger_message_id": "trigger-1",
             "trigger_sender": "Derek",
             "trigger_text": "Please review this.",
+            "trusted_oa_process_instance_id": "",
+            "trusted_oa_task_id": "",
         },
         ensure_ascii=False,
         sort_keys=True,

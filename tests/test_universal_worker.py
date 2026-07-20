@@ -71,6 +71,8 @@ class UniversalOaFakeDws(FakeDws):
         self.process_status = process_status
         self.action_calls: list[tuple[str, str, str, str]] = []
         self.comment_calls: list[tuple[str, str]] = []
+        self.revert_calls: list[tuple[str, str, str, str, str]] = []
+        self.records: list[dict] = []
         self.raise_after_apply = False
         self.raise_without_apply = False
         self.hide_task_after_apply = False
@@ -98,6 +100,26 @@ class UniversalOaFakeDws(FakeDws):
         task["userId"] = self.tasks_owner
         return {"result": {"tasks": [task]}}
 
+    def read_oa_approval_records(self, process_instance_id: str) -> dict:
+        self.calls.append(("records", process_instance_id))
+        return {"result": [self.records]}
+
+    def read_oa_revert_activities(self, task_id: str) -> dict:
+        self.calls.append(("revert-activities", task_id))
+        return {
+            "_mock": True,
+            "_tool": "get_inst_revert_activities",
+            "result": [[{
+                "activityId": "activity-1",
+                "revertActions": ["REVERT_FOR_APPROVAL", "REVERT_FOR_RESUBMIT"],
+            }]],
+            "success": True,
+        }
+
+    def read_oa_process_instance_openapi(self, process_instance_id: str) -> dict:
+        self.calls.append(("openapi", process_instance_id))
+        return self.read_oa_approval_detail(process_instance_id)
+
     def execute_oa_approval_action(
         self,
         process_instance_id: str,
@@ -112,13 +134,28 @@ class UniversalOaFakeDws(FakeDws):
         if self.raise_without_apply:
             raise TimeoutError("approval response timeout")
         self._apply()
-        return {"success": True, "requestId": "must-not-be-persisted"}
+        return {"success": True, "requestId": "request-action-1", "result": []}
 
     def comment_oa_approval(self, process_instance_id: str, text: str) -> dict:
         self.comment_calls.append((process_instance_id, text))
         if self.raise_without_apply:
             raise TimeoutError("comment response timeout")
-        return {"success": True, "requestId": "must-not-be-persisted"}
+        return {"success": True, "requestId": "request-comment-1", "result": []}
+
+    def revert_oa_approval_task(
+        self,
+        *,
+        process_instance_id: str,
+        task_id: str,
+        target_activity_id: str,
+        revert_action: str,
+        remark: str,
+    ) -> dict:
+        self.revert_calls.append(
+            (process_instance_id, task_id, target_activity_id, revert_action, remark)
+        )
+        self._apply()
+        return {"success": True, "requestId": "request-revert-1", "result": []}
 
     def _task(self) -> dict:
         return {
@@ -145,6 +182,9 @@ def _execution(
     personnel_subject_user_id: str | None = None,
     candidate_context_known: bool = False,
     candidate_department_ids: list[str] | None = None,
+    trusted_oa_target: bool = True,
+    trusted_oa_process_instance_id: str | None = None,
+    trusted_oa_task_id: str | None = None,
 ) -> UniversalActionExecution:
     inserted = store.enqueue_reply_task(
         conversation_id="cid-context",
@@ -188,6 +228,24 @@ def _execution(
         required_dependencies=("dws",),
         force_new_decision=False,
         dry_run=False,
+        trusted_oa_process_instance_id=(
+            trusted_oa_process_instance_id
+            if trusted_oa_process_instance_id is not None
+            else (
+                str((target or {}).get("process_instance_id") or "")
+                if kind is PlannedActionKind.OA_APPROVAL and trusted_oa_target
+                else ""
+            )
+        ),
+        trusted_oa_task_id=(
+            trusted_oa_task_id
+            if trusted_oa_task_id is not None
+            else (
+                str((target or {}).get("task_id") or "")
+                if kind is PlannedActionKind.OA_APPROVAL and trusted_oa_target
+                else ""
+            )
+        ),
     )
     action = PlannedAction(
         kind=kind,
@@ -1129,16 +1187,33 @@ def test_universal_oa_owner_action_executes_and_verifies_final_state(
         store,
         kind=PlannedActionKind.OA_APPROVAL,
         target={"process_instance_id": "proc-1", "task_id": "task-1"},
-        payload={"action": action, "remark": "按已核实材料处理"},
+        payload={
+            "action": action,
+            "remark": "按已核实材料处理",
+            **(
+                {
+                    "target_activity_id": "activity-1",
+                    "revert_action": "REVERT_FOR_APPROVAL",
+                }
+                if action == "退回"
+                else {}
+            ),
+        },
     )
     dws = UniversalOaFakeDws()
     worker = DingTalkAutoReplyWorker(store=store, dws=dws, codex=FakeCodex())
 
     assert worker.execute_universal_oa_approval(execution) is True
 
-    assert dws.action_calls == [
-        ("proc-1", "task-1", action, "按已核实材料处理")
-    ]
+    if action == "退回":
+        assert dws.action_calls == []
+        assert dws.revert_calls == [
+            ("proc-1", "task-1", "activity-1", "REVERT_FOR_APPROVAL", "按已核实材料处理")
+        ]
+    else:
+        assert dws.action_calls == [
+            ("proc-1", "task-1", "通过" if action == "同意" else action, "按已核实材料处理")
+        ]
     assert dws.comment_calls == []
     attempt = store.get_latest_reply_attempt_for_trigger("cid-context", "msg-context")
     assert attempt is not None
@@ -1149,7 +1224,7 @@ def test_universal_oa_owner_action_executes_and_verifies_final_state(
     assert attempt.oa_remark == "按已核实材料处理"
     result = json.loads(attempt.oa_action_result_json)
     assert result["outcome"] == "applied"
-    assert "requestId" not in attempt.oa_action_result_json
+    assert result["dws_action_result"]["requestId"].startswith("request-")
     assert store.has_seen("msg-context") is True
     assert (
         store.get_universal_action_execution_state(execution)
@@ -1177,14 +1252,107 @@ def test_universal_oa_comment_uses_comment_api_and_completes(
     attempt = store.get_latest_reply_attempt_for_trigger("cid-context", "msg-context")
     assert attempt is not None
     assert attempt.send_status == "commented"
-    assert json.loads(attempt.oa_action_result_json)["outcome"] == "commented"
+    result = json.loads(attempt.oa_action_result_json)
+    assert result["outcome"] == "commented"
+    assert result["dws_action_result"]["requestId"] == "request-comment-1"
+
+
+def test_universal_oa_requires_trusted_context_target_before_dws_read(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    execution = _execution(
+        store,
+        kind=PlannedActionKind.OA_APPROVAL,
+        target={"process_instance_id": "proc-model", "task_id": "task-model"},
+        payload={"action": "同意", "remark": "同意"},
+        trusted_oa_target=False,
+    )
+    dws = UniversalOaFakeDws()
+    worker = DingTalkAutoReplyWorker(store=store, dws=dws, codex=FakeCodex())
+
+    assert worker.execute_universal_oa_approval(execution) is True
+
+    assert dws.calls == []
+    attempt = store.get_latest_reply_attempt_for_trigger("cid-context", "msg-context")
+    assert attempt is not None
+    assert attempt.send_status == "blocked"
+    assert attempt.send_error == "missing_trusted_oa_target"
+
+
+def test_universal_oa_rejects_model_target_mismatch_before_dws_read(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    execution = _execution(
+        store,
+        kind=PlannedActionKind.OA_APPROVAL,
+        target={"process_instance_id": "proc-model", "task_id": "task-model"},
+        payload={"action": "同意", "remark": "同意"},
+        trusted_oa_process_instance_id="proc-trigger",
+        trusted_oa_task_id="task-trigger",
+    )
+    dws = UniversalOaFakeDws()
+    worker = DingTalkAutoReplyWorker(store=store, dws=dws, codex=FakeCodex())
+
+    assert worker.execute_universal_oa_approval(execution) is True
+    assert dws.calls == []
+    attempt = store.get_latest_reply_attempt_for_trigger("cid-context", "msg-context")
+    assert attempt is not None
+    assert attempt.send_error == "oa_target_mismatch"
+
+
+def test_universal_oa_dws_mock_empty_results_are_missing_preflight_evidence(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    execution = _execution(
+        store,
+        kind=PlannedActionKind.OA_APPROVAL,
+        target={"process_instance_id": "proc-1", "task_id": "task-1"},
+        payload={"action": "同意", "remark": "同意"},
+    )
+    dws = UniversalOaFakeDws()
+    empty = {"_mock": True, "result": [], "success": True}
+    dws.read_oa_approval_detail = lambda process_id: dict(empty)
+    dws.read_oa_approval_tasks = lambda process_id: dict(empty)
+    dws.read_oa_approval_records = lambda process_id: dict(empty)
+    dws.read_oa_process_instance_openapi = lambda process_id: dict(empty)
+    worker = DingTalkAutoReplyWorker(store=store, dws=dws, codex=FakeCodex())
+
+    assert worker.execute_universal_oa_approval(execution) is True
+    assert dws.action_calls == []
+    attempt = store.get_latest_reply_attempt_for_trigger("cid-context", "msg-context")
+    assert attempt is not None
+    assert attempt.send_status == "blocked"
+    assert attempt.send_error == "missing_oa_task_ownership"
+
+
+def test_universal_oa_completed_process_without_current_user_ownership_is_blocked(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    execution = _execution(
+        store,
+        kind=PlannedActionKind.OA_APPROVAL,
+        target={"process_instance_id": "proc-1", "task_id": "task-1"},
+        payload={"action": "同意", "remark": "同意"},
+    )
+    dws = UniversalOaFakeDws(owner="other-user", process_status="COMPLETED")
+    worker = DingTalkAutoReplyWorker(store=store, dws=dws, codex=FakeCodex())
+
+    assert worker.execute_universal_oa_approval(execution) is True
+    attempt = store.get_latest_reply_attempt_for_trigger("cid-context", "msg-context")
+    assert attempt is not None
+    assert attempt.send_status == "blocked"
+    assert attempt.send_error == "oa_task_not_current_user"
 
 
 @pytest.mark.parametrize(
     ("target", "owner", "expected_error"),
     [
-        ({"task_id": "task-1"}, "principal-user-1", "missing_oa_process_instance_id"),
-        ({"process_instance_id": "proc-1"}, "principal-user-1", "missing_oa_task_id"),
+        ({"task_id": "task-1"}, "principal-user-1", "missing_trusted_oa_target"),
+        ({"process_instance_id": "proc-1"}, "principal-user-1", "missing_trusted_oa_target"),
         (
             {"process_instance_id": "proc-1", "task_id": "task-1"},
             "other-user",
@@ -1306,7 +1474,7 @@ def test_universal_oa_transport_error_is_salvaged_from_live_state(
     assert json.loads(attempt.oa_action_result_json)["outcome"] == "salvaged"
 
 
-def test_universal_oa_succeeds_when_process_continues_after_current_task_disappears(
+def test_universal_oa_missing_task_after_action_is_unknown_without_explicit_proof(
     tmp_path: Path,
 ) -> None:
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
@@ -1320,13 +1488,14 @@ def test_universal_oa_succeeds_when_process_continues_after_current_task_disappe
     dws.hide_task_after_apply = True
     worker = DingTalkAutoReplyWorker(store=store, dws=dws, codex=FakeCodex())
 
-    assert worker.execute_universal_oa_approval(execution) is True
+    with pytest.raises(ReplyDeliveryError, match="verifiable final state"):
+        worker.execute_universal_oa_approval(execution)
 
     assert dws.process_status == "RUNNING"
     attempt = store.get_latest_reply_attempt_for_trigger("cid-context", "msg-context")
     assert attempt is not None
-    assert attempt.send_status == "skipped"
-    assert json.loads(attempt.oa_action_result_json)["outcome"] == "applied"
+    assert attempt.send_status == "failed"
+    assert json.loads(attempt.oa_action_result_json)["outcome"] == "unknown"
 
 
 def test_universal_oa_ambiguous_transport_error_marks_unknown_and_retry_fails_closed(

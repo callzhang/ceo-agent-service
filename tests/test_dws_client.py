@@ -1805,11 +1805,35 @@ def test_oa_approval_comment_command_uses_stable_oa_comment_command():
         "oa-comments",
         "--instance-id",
         "proc-1",
-        "--text",
+        "--content",
         "请补充预算来源和项目归属后重新提交。",
         "--format",
         "json",
         "--yes",
+    ]
+
+
+def test_oa_revert_activities_and_revert_task_commands_match_dws_v1_0_52():
+    client = DwsClient(dws_bin="dws")
+
+    assert client.build_oa_revert_activities_command("task-1") == [
+        "dws", "oa", "approval", "revert-activities",
+        "--task-id", "task-1", "--format", "json",
+    ]
+    assert client.build_oa_revert_task_command(
+        process_instance_id="proc-1",
+        task_id="task-1",
+        target_activity_id="activity-1",
+        revert_action="REVERT_FOR_RESUBMIT",
+        remark="请补充材料",
+    ) == [
+        "dws", "oa", "approval", "revert-task",
+        "--instance-id", "proc-1",
+        "--task-id", "task-1",
+        "--target-activity-id", "activity-1",
+        "--action", "REVERT_FOR_RESUBMIT",
+        "--remark", "请补充材料",
+        "--format", "json", "--yes",
     ]
 
 

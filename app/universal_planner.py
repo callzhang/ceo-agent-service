@@ -38,7 +38,11 @@ UNIVERSAL_PLAN_SCHEMA_HINT = (
     "non-null sensitivity_kind; mail_reply "
     "requires target.mailbox, target.message_id, and payload.content; oa_approval "
     "requires payload.action of 同意, 拒绝, 退回, or comment and a non-empty "
-    "payload.remark."
+    "payload.remark. For oa_approval, copy target.process_instance_id and "
+    "target.task_id exactly from the trusted OA IDs in task context; if either "
+    "trusted ID is missing, emit blocked instead. A 退回 action also requires "
+    "payload.target_activity_id and payload.revert_action of "
+    "REVERT_FOR_APPROVAL or REVERT_FOR_RESUBMIT."
 )
 
 

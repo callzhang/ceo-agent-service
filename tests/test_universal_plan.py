@@ -226,6 +226,38 @@ def test_oa_approval_with_supported_action_and_remark_validates() -> None:
     assert action.kind is PlannedActionKind.OA_APPROVAL
 
 
+def test_oa_return_requires_activity_and_supported_revert_action() -> None:
+    with pytest.raises(ValidationError, match="target_activity_id"):
+        PlannedAction(
+            kind="oa_approval",
+            reason="Return for correction",
+            payload={"action": "退回", "remark": "请补充材料"},
+        )
+    with pytest.raises(ValidationError, match="revert_action"):
+        PlannedAction(
+            kind="oa_approval",
+            reason="Return for correction",
+            payload={
+                "action": "退回",
+                "remark": "请补充材料",
+                "target_activity_id": "activity-1",
+                "revert_action": "INVALID",
+            },
+        )
+
+    action = PlannedAction(
+        kind="oa_approval",
+        reason="Return for correction",
+        payload={
+            "action": "退回",
+            "remark": "请补充材料",
+            "target_activity_id": "activity-1",
+            "revert_action": "REVERT_FOR_APPROVAL",
+        },
+    )
+    assert action.payload["target_activity_id"] == "activity-1"
+
+
 def test_empty_actions_are_rejected_with_valid_audit() -> None:
     with pytest.raises(ValidationError):
         UniversalPlan(

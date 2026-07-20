@@ -1,8 +1,11 @@
 import hashlib
 import json
 from dataclasses import dataclass
+from typing import Any
+from urllib.parse import parse_qs, urlparse
 
 from app.dingtalk_models import DingTalkConversation, DingTalkMessage
+from app.oa_approval import extract_oa_url
 
 
 @dataclass(frozen=True)
@@ -54,6 +57,8 @@ class UniversalTaskContext:
     force_new_decision: bool
     dry_run: bool
     execution_generation: str = "initial"
+    trusted_oa_process_instance_id: str = ""
+    trusted_oa_task_id: str = ""
 
     def __post_init__(self) -> None:
         if (
@@ -79,6 +84,9 @@ class UniversalTaskContext:
                 f"Trigger message ID: {self.trigger_message_id}",
                 f"Trigger sender: {self.trigger_sender}",
                 f"Trigger text: {self.trigger_text}",
+                "Trusted OA process instance ID: "
+                + (self.trusted_oa_process_instance_id or "none"),
+                "Trusted OA task ID: " + (self.trusted_oa_task_id or "none"),
                 f"Required dependencies: {', '.join(self.required_dependencies)}",
                 f"Execution generation: {self.execution_generation}",
                 f"Force new decision: {str(self.force_new_decision).lower()}",
@@ -101,6 +109,8 @@ def canonical_universal_context_json(context: UniversalTaskContext) -> str:
         "trigger_sender",
         "trigger_text",
         "execution_generation",
+        "trusted_oa_process_instance_id",
+        "trusted_oa_task_id",
     ):
         if not isinstance(getattr(context, field_name), str):
             raise TypeError(f"{field_name} must be a str")
@@ -178,6 +188,8 @@ def canonical_universal_context_json(context: UniversalTaskContext) -> str:
             "force_new_decision": context.force_new_decision,
             "dry_run": context.dry_run,
             "execution_generation": context.execution_generation,
+            "trusted_oa_process_instance_id": context.trusted_oa_process_instance_id,
+            "trusted_oa_task_id": context.trusted_oa_task_id,
         },
         ensure_ascii=False,
         sort_keys=True,
@@ -199,6 +211,7 @@ def build_universal_context(
     force_new_decision: bool,
     dry_run: bool,
     execution_generation: str = "initial",
+    reply_task_oa_url: str = "",
 ) -> UniversalTaskContext:
     trigger_snapshot = _snapshot_message(trigger)
     messages: list[UniversalContextMessage] = []
@@ -214,6 +227,10 @@ def build_universal_context(
     if not trigger_added:
         messages.append(trigger_snapshot)
 
+    trusted_process_id, trusted_task_id = _trusted_oa_target(
+        trigger,
+        reply_task_oa_url=reply_task_oa_url,
+    )
     return UniversalTaskContext(
         task_id=task_id,
         conversation_id=conversation.open_conversation_id,
@@ -227,7 +244,51 @@ def build_universal_context(
         force_new_decision=force_new_decision,
         dry_run=dry_run,
         execution_generation=execution_generation,
+        trusted_oa_process_instance_id=trusted_process_id,
+        trusted_oa_task_id=trusted_task_id,
     )
+
+
+def _trusted_oa_target(
+    trigger: DingTalkMessage,
+    *,
+    reply_task_oa_url: str,
+) -> tuple[str, str]:
+    process_ids: set[str] = set()
+    task_ids: set[str] = set()
+
+    def add_url(value: str) -> None:
+        oa_url = extract_oa_url(value)
+        if not oa_url:
+            return
+        query = parse_qs(urlparse(oa_url).query)
+        for key in ("procInstId", "processInstanceId", "process_instance_id"):
+            process_ids.update(item.strip() for item in query.get(key, []) if item.strip())
+        for key in ("taskId", "task_id"):
+            task_ids.update(item.strip() for item in query.get(key, []) if item.strip())
+
+    def visit(value: Any) -> None:
+        if isinstance(value, dict):
+            for key, nested in value.items():
+                if key in {"procInstId", "processInstanceId", "process_instance_id"}:
+                    if isinstance(nested, str) and nested.strip():
+                        process_ids.add(nested.strip())
+                elif key in {"taskId", "task_id"}:
+                    if isinstance(nested, str) and nested.strip():
+                        task_ids.add(nested.strip())
+                visit(nested)
+        elif isinstance(value, list):
+            for item in value:
+                visit(item)
+        elif isinstance(value, str):
+            add_url(value)
+
+    add_url(trigger.content)
+    add_url(reply_task_oa_url)
+    visit(trigger.raw_payload)
+    if len(process_ids) != 1 or len(task_ids) != 1:
+        return "", ""
+    return next(iter(process_ids)), next(iter(task_ids))
 
 
 def _snapshot_message(message: DingTalkMessage) -> UniversalContextMessage:
