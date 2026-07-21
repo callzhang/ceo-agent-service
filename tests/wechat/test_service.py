@@ -1,4 +1,5 @@
 from app.store import AutoReplyStore
+from app.wechat import service as wechat_service
 from app.wechat.service import (
     account_from_state, build_reader, ready_account_state, wechat_loop_names,
 )
@@ -54,3 +55,12 @@ def test_build_reader_is_an_ipc_client_and_ignores_legacy_db_credentials(tmp_pat
     assert reader.socket_path == tmp_path / "reader.sock"
     assert not hasattr(reader, "backend")
     assert not hasattr(reader, "key_provider")
+
+
+def test_build_sender_is_a_dedicated_ipc_client(tmp_path):
+    build_sender = getattr(wechat_service, "build_sender", None)
+    assert build_sender is not None
+    sender = build_sender(socket_path=tmp_path / "sender.sock")
+
+    assert sender.socket_path == tmp_path / "sender.sock"
+    assert sender.__class__.__name__ == "WechatSenderClient"

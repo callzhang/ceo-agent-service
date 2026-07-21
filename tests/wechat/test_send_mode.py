@@ -94,8 +94,13 @@ def _scope(binding="unverified"):
 
 
 class _IdRunner:
-    def __init__(self, title): self.title = title
-    def open_and_identify(self, label): return self.title
+    def __init__(self, title):
+        self.title = title
+        self.calls = []
+
+    def open_and_identify(self, label, *, search_query=None):
+        self.calls.append((label, search_query))
+        return self.title
 
 
 def test_verify_binding_verified_when_unique_and_ui_matches(tmp_path):
@@ -115,3 +120,23 @@ def test_verify_binding_unverified_when_ui_mismatch(tmp_path):
     store = AutoReplyStore(tmp_path / "w.sqlite3"); store.replace_wechat_reply_scopes("a", [_scope()])
     st = service.verify_wechat_binding(store, _scope(), runner=_IdRunner("OTHER GROUP"), is_unique=True)
     assert st == "unverified"
+
+
+def test_verify_duplicate_direct_name_by_unique_target_id(tmp_path):
+    store = AutoReplyStore(tmp_path / "w.sqlite3")
+    scope = WechatReplyScope(
+        account_id="a", target_type="direct", target_id="melody115",
+        conversation_id="melody115", display_name="Melody",
+        trigger_mode="every_inbound_text",
+    )
+    store.replace_wechat_reply_scopes("a", [scope])
+    runner = _IdRunner("Melody")
+
+    status = service.verify_wechat_binding(
+        store, scope, runner=runner, is_unique=False,
+    )
+
+    assert status == "verified"
+    assert runner.calls == [("Melody", "melody115")]
+    persisted = store.get_wechat_reply_scope("a", "direct", "melody115")
+    assert persisted.binding_evidence["navigation_query"] == "melody115"

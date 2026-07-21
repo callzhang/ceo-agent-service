@@ -78,3 +78,34 @@ def test_check_requires_running_dedicated_reader(store):
     )
     assert svc.check().status == "needs_action"
     assert "Reader app" in svc.check().summary
+
+
+def test_connect_requests_dedicated_sender_accessibility_when_needed(store):
+    requested = []
+    svc = WechatSetupService(
+        store,
+        FakeReader(),
+        lambda: "accessibility_not_trusted",
+        accessibility_request=lambda: requested.append(True) or "ready",
+        accounts_provider=lambda: [_account()],
+    )
+
+    result = svc.connect()
+
+    assert requested == [True]
+    assert result.evidence["accessibility_status"] == "ready"
+
+
+def test_check_requires_ready_dedicated_sender(store):
+    svc = WechatSetupService(
+        store,
+        FakeReader(),
+        lambda: "accessibility_not_trusted",
+        accounts_provider=lambda: [_account()],
+    )
+    svc.connect()
+
+    result = svc.check()
+
+    assert result.status == "needs_action"
+    assert "Sender app" in result.summary

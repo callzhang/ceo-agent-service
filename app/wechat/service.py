@@ -65,17 +65,34 @@ def build_reader(
     )
 
 
+def build_sender(*, socket_path=None):
+    """Build the IPC facade for the stable, Accessibility-trusted Sender app."""
+    from app import config
+    from app.wechat.sender_ipc import WechatSenderClient
+
+    return WechatSenderClient(
+        socket_path or config.wechat_sender_socket(),
+        timeout_seconds=config.wechat_sender_timeout_seconds(),
+    )
+
+
 def build_setup_service(store):
     """Construct a WechatSetupService from config (reader + accessibility preflight)."""
     from app import config
     from app.wechat.setup import WechatSetupService
-    from app.wechat.accessibility import MacWechatAccessibility
 
     reader = build_reader(config.wechat_mirror_dir(), config.wechat_passphrase_file())
+    sender = build_sender()
 
     def _preflight() -> str:
         try:
-            return MacWechatAccessibility().preflight()
+            return sender.preflight()
+        except Exception:
+            return "unknown"
+
+    def _request_accessibility() -> str:
+        try:
+            return sender.request_accessibility()
         except Exception:
             return "unknown"
 
@@ -83,6 +100,7 @@ def build_setup_service(store):
         store,
         reader,
         _preflight,
+        accessibility_request=_request_accessibility,
         accounts_provider=reader.discover_accounts,
     )
 
@@ -167,14 +185,22 @@ def verify_wechat_binding(store, scope, *, runner, is_unique: bool) -> str:
     new status."""
     from app.wechat.accessibility import target_fingerprint
 
+    navigation_query = (
+        scope.target_id if scope.target_type == "direct" else scope.display_name
+    )
     ui_title = ""
     try:
-        ui_title = runner.open_and_identify(scope.display_name) if runner is not None else ""
+        ui_title = (
+            runner.open_and_identify(
+                scope.display_name, search_query=navigation_query,
+            )
+            if runner is not None else ""
+        )
     except Exception:
         ui_title = ""
     ui_match = bool(ui_title) and ui_title == scope.display_name
 
-    if not is_unique:
+    if scope.target_type == "group" and not is_unique:
         status = "conflict"
     elif ui_match:
         status = "verified"
@@ -187,6 +213,7 @@ def verify_wechat_binding(store, scope, *, runner, is_unique: bool) -> str:
         "db_unique": str(is_unique),
         "ui_title_match": str(ui_match),
         "fingerprint": fingerprint,
+        "navigation_query": navigation_query,
     }
     scopes = store.list_wechat_reply_scopes(scope.account_id)
     updated = [

@@ -1,10 +1,13 @@
 # WeChat Personal-Account Channel — Operations
 
-Status: read-first pipeline implemented and tested; live automatic sending stays
-disabled by default. Both feasibility gates are proven (see
+Status: the local personal-account receive/read/decide/send pipeline is implemented
+and verified on this Mac. Sending remains disabled by default in repository
+configuration, while this deployment explicitly enables automatic sending. Both
+feasibility gates are proven (see
 [research doc](wechat-channel-and-local-memory-research.md) and the plan's Task 4/5/10
 correction blocks): local-DB read (1.72M messages decrypted, 0 HMAC failures) and
-Accessibility send (verified live to 文件传输助手).
+Accessibility send (verified live to 文件传输助手, including background queue status
+`sent` followed by an exact outbound database readback).
 
 ## What is implemented (`app/wechat/`)
 
@@ -18,6 +21,7 @@ Accessibility send (verified live to 文件传输助手).
 | `producer.py` | Eligible-message → channel-isolated reply task (exact group @-gate) |
 | `prompt.py` / `consumer.py` | WeChat-specific prompt + Codex decision → fail-closed delivery |
 | `accessibility.py` | Exact-once delivery state machine + real AX runner |
+| `sender_ipc.py` / `sender_helper.py` | Owner-only IPC client/server and dedicated signed Sender app entrypoint |
 | `memory_import.py` / `memory_writer.py` | Bounded extraction + deterministic cleanup; claimed, approved-only Memory writer (`memory.py` keeps public imports) |
 | `setup.py` / `audit_web.py` | Tutorial connect service + visible contact/group picker |
 | `service.py` / `cli.py` | Composable steps/loops + diagnostic CLI |
@@ -36,22 +40,38 @@ See `~/wx_read_toolkit/README.md`. Summary: shadow-copy WeChat → re-sign the c
 `message_0.db` and saved to `~/.config/wx_read/passphrase.hex` (chmod 600). The
 passphrase is account-stable; re-capture only after logout/reinstall.
 
-## App Data permission boundary
+## Dedicated Reader permission boundary
 
-The current Python reader is an interim implementation and must stay disabled
-by default. Granting macOS App Data / Full Disk Access to
-`/Users/derek/miniforge3/bin/python3.12` would authorize a shared interpreter,
-not only this service, and its ad-hoc code identity can change after a Python
-upgrade.
-
-The production target is a dedicated **CEO WeChat Reader** executable with a
+The production reader is the dedicated **CEO WeChat Reader** executable with a
 fixed bundle identifier and stable signing identity. Only that helper receives
 App Data permission; it returns normalized, bounded results to the main service
 over a local authenticated IPC interface, so the main Python service never opens
-the WeChat database. Until a stable signing identity exists and the helper is
-installed, keep `CEO_WECHAT_READER_ENABLED=0`. First authorization remains an
+the WeChat database. Granting App Data / Full Disk Access to a shared Python
+interpreter is neither required nor recommended. First authorization remains an
 explicit local user action; zero-click deployment requires managed macOS/MDM
 privacy policy.
+
+## Dedicated Sender permission boundary
+
+Accessibility is granted to `~/Applications/CEO WeChat Sender.app` (bundle ID
+`com.stardust.ceo-agent.wechat-sender`), not to Miniforge Python or the main
+launchd service. The main service calls a strict owner-only Unix socket (mode
+`0600`); the helper only exposes health/preflight, target identification, bounded
+text send, and best-effort recall operations. Build and install it with:
+
+```sh
+CEO_WECHAT_READER_SIGNING_IDENTITY='CEO WeChat Reader Local Signing' \
+  ./scripts/build-wechat-sender-app.sh
+./scripts/install-wechat-sender-app.sh
+```
+
+The stable signing identity prevents ordinary rebuilds from producing a new TCC
+identity. After first install, add the dedicated app once in System Settings →
+Privacy & Security → Accessibility and restart its LaunchAgent. The AX runner
+resolves the actual WeChat application by bundle ID, waits for asynchronous UI
+state, and navigates duplicate direct-chat names with the stable target ID before
+requiring the composer title to match the expected display name. Group navigation
+uses the verified unique group name.
 
 ## Diagnostic CLI
 
@@ -169,9 +189,11 @@ pending.
    task + audited decision; an ordinary group message → no task; a real
    `@current account` group message → one task; no external send.
 4. Sender only after File Transfer Helper binding is `verified`: one fixed test
-   reply, confirm visible receipt + matching outbound DB record, restart before a
-   second send and confirm no duplicate; force a post-action ambiguity and verify
-   `send_unknown` pauses the target with no auto-retry.
+   reply, confirm delivery status `sent` + matching outbound DB record, restart
+   before a second send and confirm no duplicate; force a post-action ambiguity
+   and verify `send_unknown` pauses the target with no auto-retry. This exact
+   background-queue → dedicated Sender → outbound DB readback passed on
+   2026-07-21.
 5. Bounded Memory import on an approved test scope → review page shows cleaned
    pending rows only; approve one, write once, write again → same Memory id, one
    tool call; reject another → cannot be written.
@@ -208,7 +230,7 @@ pending.
 
 ## Known residual risks / TODO
 
-- **Sender** (pure-AX, 2026-07-18): composes via `AXValue` set on `chat_input_field`
+- **Sender** (pure-AX, reverified 2026-07-21): composes via `AXValue` set on `chat_input_field`
   and sends by posting Return to WeChat's pid (`CGEventPostToPid`) — **no focus
   steal, no synthetic typing into the frontmost app**. Selecting the target chat
   is the one step that needs WeChat briefly key: on 4.1.10 the session list rows
@@ -219,8 +241,10 @@ pending.
   no keyboard/mouse via `CGEventSourceSecondsSinceLastEventType`) before the ~1s
   foreground, then **restores the previously-frontmost app** (`restore_focus`) —
   so it never interrupts mid-typing. Residual: needs Accessibility permission
-  (cached at process launch — grant then relaunch the sending process); duplicate
-  display names require corroboration beyond the name; if the user set
+  (cached at process launch — grant then relaunch the dedicated Sender app).
+  Duplicate direct-chat display names are navigated with their stable target ID
+  and then corroborated against the visible composer title; groups remain
+  fail-closed on unique verified names. If the user set
   "Enter=newline", Return won't send (composer-not-cleared → fall back to ⌘Return).
 - **Exact `@self` group detection** ✅ (done 2026-07-18): mentions are stored as a
   comma-separated wxid list in the message `source` column's

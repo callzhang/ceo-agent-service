@@ -329,6 +329,20 @@ def wechat_reader_timeout_seconds() -> float:
         return 5.0
 
 
+def wechat_sender_socket() -> Path:
+    return env_path(
+        "CEO_WECHAT_SENDER_SOCKET",
+        "~/Library/Application Support/CEO Agent/WeChatSender/sender.sock",
+    )
+
+
+def wechat_sender_timeout_seconds() -> float:
+    try:
+        return max(1.0, float(os.getenv("CEO_WECHAT_SENDER_TIMEOUT_SECONDS", "140")))
+    except ValueError:
+        return 140.0
+
+
 def wechat_snapshot_dir() -> Path:
     return env_path("CEO_WECHAT_SNAPSHOT_DIR", "data/wechat-snapshots")
 

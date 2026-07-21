@@ -2376,8 +2376,8 @@ def _run_wechat_loop(settings: WorkerSettings, role: str) -> None:
         )
     wsender = None
     if role == "sender":
-        from app.wechat.accessibility import MacWechatAccessibility, WechatSender
-        wsender = WechatSender(store, MacWechatAccessibility())
+        from app.wechat.accessibility import WechatSender
+        wsender = WechatSender(store, _wx.build_sender())
     interval = max(1, _cfg.wechat_poll_interval_seconds())
     while True:
         try:

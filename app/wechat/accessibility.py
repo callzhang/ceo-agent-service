@@ -53,31 +53,57 @@ def _activate_wait(pid, *, first, sleep, reactivate, attempts=4) -> bool:
     return False
 
 
-def _open_target(target_label, *, first, click, type_fn, settle, sleep) -> bool:
+def _poll_value(probe, *, sleep, attempts=20, interval=0.2):
+    for attempt in range(attempts):
+        value = probe()
+        if value is not None:
+            return value
+        if attempt + 1 < attempts:
+            sleep(interval)
+    return None
+
+
+def _open_target(
+    target_label, *, first, click, type_fn, settle, sleep, search_query=None,
+):
     """Open a chat: prefer the sidebar row (session_item_<name>, present for recent
     conversations incl. groups — no typing, reliable, and opens named groups whose
     composer title is exactly the group name), else fall back to search. Groups do
     NOT get a ``search_item_function_`` result (that prefix is functions only)."""
-    row = first(id_eq=f"session_item_{target_label}")
+    navigation_query = search_query or target_label
+    row = (
+        first(id_eq=f"session_item_{target_label}")
+        if navigation_query == target_label
+        else None
+    )
     if row is not None:
         click(row)
-        sleep(settle)
-        return True
+        composer = _poll_value(
+            lambda: first(id_eq="chat_input_field", title_contains=target_label),
+            sleep=sleep,
+        )
+        if composer is not None:
+            return composer
     # not in the sidebar -> search (below)
     search = first(role="AXTextArea", title_contains="搜索")
     if search is None:
-        return False
+        return None
     click(search, 3)              # triple-click selects any residual text
     sleep(0.2)
-    type_fn(target_label)
+    type_fn(navigation_query)
     sleep(settle)
-    result = (first(id_eq=f"search_item_function_{target_label}")
-              or first(role="AXStaticText", title_contains=target_label))
+    result = _poll_value(
+        lambda: (first(id_eq=f"search_item_function_{target_label}")
+                 or first(role="AXStaticText", title_contains=target_label)),
+        sleep=sleep,
+    )
     if result is None:
-        return False
+        return None
     click(result)
-    sleep(settle)
-    return True
+    return _poll_value(
+        lambda: first(id_eq="chat_input_field", title_contains=target_label),
+        sleep=sleep,
+    )
 
 
 class WechatSender:
@@ -94,7 +120,11 @@ class WechatSender:
             return SendOutcome("failed", "target_binding_unverified")
 
         self.store.mark_wechat_delivery_sending(delivery.id)
-        result = self.runner.send(scope.display_name, delivery.reply_text)
+        result = self.runner.send(
+            scope.display_name,
+            delivery.reply_text,
+            search_query=scope.binding_evidence.get("navigation_query") or None,
+        )
 
         if result.action_performed and result.visible_confirmation:
             status, error = "sent", ""
@@ -189,6 +219,23 @@ class MacWechatAccessibility:
             return None
 
     @staticmethod
+    def _wechat_pid(running_applications=None):
+        if running_applications is None:
+            from AppKit import NSRunningApplication
+            running_applications = (
+                NSRunningApplication.runningApplicationsWithBundleIdentifier_
+            )
+        applications = running_applications(MacWechatAccessibility.BUNDLE_ID)
+        return next(
+            (
+                int(application.processIdentifier())
+                for application in applications
+                if int(application.processIdentifier()) > 0
+            ),
+            None,
+        )
+
+    @staticmethod
     def _reactivate(app_ref):
         try:
             from AppKit import NSApplicationActivateIgnoringOtherApps
@@ -217,14 +264,30 @@ class MacWechatAccessibility:
             return "pyobjc_unavailable"
         if not AXIsProcessTrusted():
             return "accessibility_not_trusted"
+        pid = self._wechat_pid()
+        if not pid:
+            return "wechat_not_running"
         for w in Quartz.CGWindowListCopyWindowInfo(
             Quartz.kCGWindowListOptionAll, Quartz.kCGNullWindowID
         ):
-            if w.get("kCGWindowOwnerName") == "WeChat":
+            if w.get("kCGWindowOwnerPID") == pid:
                 return "ready"
         return "wechat_not_running"
 
-    def send(self, target_label: str, reply_text: str) -> AccessibilityResult:
+    def request_accessibility(self) -> str:
+        try:
+            from ApplicationServices import (
+                AXIsProcessTrustedWithOptions,
+                kAXTrustedCheckOptionPrompt,
+            )
+        except Exception:
+            return "pyobjc_unavailable"
+        trusted = AXIsProcessTrustedWithOptions({kAXTrustedCheckOptionPrompt: True})
+        return self.preflight() if trusted else "accessibility_not_trusted"
+
+    def send(
+        self, target_label: str, reply_text: str, *, search_query: str | None = None,
+    ) -> AccessibilityResult:
         """Compose via pure AX (AXValue), send via a key posted to WeChat's pid.
 
         The composer text and the Return are delivered directly to WeChat, so the
@@ -236,10 +299,7 @@ class MacWechatAccessibility:
         (time, AXIsProcessTrusted, mk_app, get_attr, set_attr, perform, Quartz) = self._ax()
         if not AXIsProcessTrusted():
             return AccessibilityResult(False, False)
-        pid = next(
-            (w.get("kCGWindowOwnerPID") for w in Quartz.CGWindowListCopyWindowInfo(
-                Quartz.kCGWindowListOptionAll, Quartz.kCGNullWindowID)
-             if w.get("kCGWindowOwnerName") == "WeChat"), None)
+        pid = self._wechat_pid()
         if not pid:
             return AccessibilityResult(False, False)
         app = mk_app(pid)
@@ -305,10 +365,13 @@ class MacWechatAccessibility:
             # --- navigation (needs a real click; briefly foreground WeChat) ---
             self._wait_until_idle()   # don't interrupt the user mid-typing
             _activate_wait(pid, first=first, sleep=time.sleep, reactivate=self._reactivate)
-            if not _open_target(target_label, first=first, click=click,
-                                type_fn=type_to_wechat, settle=self.settle, sleep=time.sleep):
+            composer = _open_target(
+                target_label, first=first, click=click,
+                type_fn=type_to_wechat, settle=self.settle, sleep=time.sleep,
+                search_query=search_query,
+            )
+            if composer is None:
                 return AccessibilityResult(False, False)
-            composer = first(id_eq="chat_input_field")
             if not composer or g(composer, "AXTitle") != target_label:
                 return AccessibilityResult(False, False)  # binding mismatch -> do not send
 
@@ -334,17 +397,16 @@ class MacWechatAccessibility:
             if self.restore_focus:
                 self._reactivate(prev_app)
 
-    def open_and_identify(self, target_label: str) -> str:
+    def open_and_identify(
+        self, target_label: str, *, search_query: str | None = None,
+    ) -> str:
         """Open the target via search and return the visible composer title (the
         opened chat's display name), WITHOUT composing or sending. Used by binding
         verification to corroborate the UI target. "" if it could not open."""
         (time, AXIsProcessTrusted, mk_app, get_attr, set_attr, perform, Quartz) = self._ax()
         if not AXIsProcessTrusted():
             return ""
-        pid = next(
-            (w.get("kCGWindowOwnerPID") for w in Quartz.CGWindowListCopyWindowInfo(
-                Quartz.kCGWindowListOptionAll, Quartz.kCGNullWindowID)
-             if w.get("kCGWindowOwnerName") == "WeChat"), None)
+        pid = self._wechat_pid()
         if not pid:
             return ""
         app = mk_app(pid)
@@ -396,10 +458,13 @@ class MacWechatAccessibility:
         try:
             self._wait_until_idle()
             _activate_wait(pid, first=first, sleep=time.sleep, reactivate=self._reactivate)
-            if not _open_target(target_label, first=first, click=click,
-                                type_fn=type_to_wechat, settle=self.settle, sleep=time.sleep):
+            composer = _open_target(
+                target_label, first=first, click=click,
+                type_fn=type_to_wechat, settle=self.settle, sleep=time.sleep,
+                search_query=search_query,
+            )
+            if composer is None:
                 return ""
-            composer = first(id_eq="chat_input_field")
             return (g(composer, "AXTitle") or "") if composer else ""
         finally:
             if self.restore_focus:
@@ -417,10 +482,7 @@ class MacWechatAccessibility:
         (time, AXIsProcessTrusted, mk_app, get_attr, set_attr, perform, Quartz) = self._ax()
         if not AXIsProcessTrusted() or not text.strip():
             return False
-        pid = next(
-            (w.get("kCGWindowOwnerPID") for w in Quartz.CGWindowListCopyWindowInfo(
-                Quartz.kCGWindowListOptionAll, Quartz.kCGNullWindowID)
-             if w.get("kCGWindowOwnerName") == "WeChat"), None)
+        pid = self._wechat_pid()
         if not pid:
             return False
         app = mk_app(pid)

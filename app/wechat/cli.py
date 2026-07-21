@@ -131,9 +131,9 @@ def cmd_pending(args) -> int:
 
 
 def cmd_approve(args) -> int:
-    from app.wechat.accessibility import MacWechatAccessibility, WechatSender
+    from app.wechat.accessibility import WechatSender
     store = AutoReplyStore(Path(args.db))
-    sender = WechatSender(store, MacWechatAccessibility())
+    sender = WechatSender(store, service.build_sender())
     status = service.approve_wechat_delivery(store, sender, args.id)
     print(f"delivery #{args.id}: {status}")
     return 0

@@ -5596,8 +5596,8 @@ def create_audit_app(
     )
 
     def _wechat_sender(store):
-        from app.wechat.accessibility import MacWechatAccessibility, WechatSender
-        return WechatSender(store, MacWechatAccessibility())
+        from app.wechat.accessibility import WechatSender
+        return WechatSender(store, _wechat_service.build_sender())
 
     register_wechat_review_routes(
         app,

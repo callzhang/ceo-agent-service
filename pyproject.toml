@@ -22,7 +22,10 @@ dev = [
   "pytest>=8.3"
 ]
 reader-build = [
-  "pyinstaller>=6.14,<7"
+  "pyinstaller>=6.14,<7",
+  "pyobjc-framework-ApplicationServices>=12,<13; sys_platform == 'darwin'",
+  "pyobjc-framework-Cocoa>=12,<13; sys_platform == 'darwin'",
+  "pyobjc-framework-Quartz>=12,<13; sys_platform == 'darwin'"
 ]
 
 [project.scripts]
