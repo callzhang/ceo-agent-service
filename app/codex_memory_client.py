@@ -8,6 +8,7 @@ from app.codex_decision import _subprocess_failure_reason
 from app.codex_runner import CodexRunner, _config_string
 from app.memory_connector_auth import MemoryConnectorAuthorizationRequired
 from app.memory_connector_client import MemoryWriteResult
+from app.memory_setup import codex_config_has_memory_connector
 from app.process_runner import run_process_with_idle_timeout
 from app.store import AutoReplyStore
 from app.wechat.codex_safety import completed_mcp_tool_calls, completed_tool_events
@@ -32,17 +33,23 @@ class CodexMcpMemoryClient:
         workspace: Path,
         direct_client: Any | None = None,
         codex_bin: str = "codex",
+        codex_config_path: Path | None = None,
         executor=None,
         timeout_seconds: int = 1200,
         idle_timeout_seconds: int = 900,
     ) -> None:
         self.direct_client = direct_client
         self.runner = CodexRunner(workspace=workspace, codex_bin=codex_bin)
+        self.codex_config_path = codex_config_path or Path.home() / ".codex" / "config.toml"
         self.executor = executor
         self.timeout_seconds = timeout_seconds
         self.idle_timeout_seconds = idle_timeout_seconds
 
     def ensure_ready_sync(self) -> None:
+        if not codex_config_has_memory_connector(self.codex_config_path):
+            raise MemoryConnectorAuthorizationRequired(
+                "memory connector native Codex MCP is not configured"
+            )
         if self.direct_client is None:
             return
         try:
@@ -83,6 +90,7 @@ class CodexMcpMemoryClient:
         type: Literal["text", "message"],
         created_at: str,
     ) -> MemoryWriteResult:
+        self.ensure_ready_sync()
         prompt = (
             "必须且只能调用一次 memory_write MCP 工具。"
             "arguments 必须严格等于输入 JSON 中的 data、type、created_at 三个字段；"

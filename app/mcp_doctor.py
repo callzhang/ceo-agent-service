@@ -1,4 +1,3 @@
-import asyncio
 import json
 import os
 import tomllib
@@ -14,10 +13,7 @@ from app.codex_runner import (
     DEFAULT_CODEX_PASSTHROUGH_MCP_SERVERS,
     DEFAULT_EXA_MCP_URL,
 )
-from app.memory_connector_auth import (
-    MemoryConnectorAuthError,
-    MemoryConnectorAuthManager,
-)
+from app.memory_setup import codex_config_has_memory_connector, codex_memory_connector_url
 from app.notification import send_macos_notification
 from app.store import AutoReplyStore
 
@@ -89,7 +85,6 @@ def check_mcp_statuses(
     *,
     codex_config_path: Path | None = None,
     verify_live: bool = False,
-    memory_auth_factory: Callable[[], MemoryConnectorAuthManager] | None = None,
     memory_reachability_checker: Callable[[str], None] | None = None,
 ) -> list[McpStatus]:
     config_path = codex_config_path or _codex_config_path()
@@ -102,7 +97,6 @@ def check_mcp_statuses(
         _memory_connector_status(
             config_path=config_path,
             verify_live=verify_live,
-            memory_auth_factory=memory_auth_factory,
             memory_reachability_checker=memory_reachability_checker,
         ),
         _passthrough_server_status(
@@ -177,52 +171,32 @@ def _memory_connector_status(
     *,
     config_path: Path,
     verify_live: bool,
-    memory_auth_factory: Callable[[], MemoryConnectorAuthManager] | None,
     memory_reachability_checker: Callable[[str], None] | None,
 ) -> McpStatus:
-    try:
-        manager = (
-            memory_auth_factory()
-            if memory_auth_factory is not None
-            else MemoryConnectorAuthManager(config_path=config_path)
-        )
-    except MemoryConnectorAuthError as exc:
+    if not codex_config_has_memory_connector(config_path):
         return McpStatus(
             name="memory_connector",
             state="missing_config",
             ready=False,
-            reason=str(exc),
+            reason="[mcp_servers.memory_connector] is missing from Codex config",
             recover_command="ceo-agent setup-memory-connector --memory-url <memory-mcp-url>",
         )
-
-    try:
-        auth_status = asyncio.run(manager.status())
-    except MemoryConnectorAuthError as exc:
+    url = codex_memory_connector_url(config_path)
+    if not url:
         return McpStatus(
             name="memory_connector",
             state="missing_config",
             ready=False,
-            reason=str(exc),
+            reason="[mcp_servers.memory_connector] has no url",
             recover_command="ceo-agent setup-memory-connector --memory-url <memory-mcp-url>",
-        )
-
-    if not auth_status.ready:
-        state = "token_expired" if "expired" in auth_status.reason else "needs_login"
-        return McpStatus(
-            name="memory_connector",
-            state=state,
-            ready=False,
-            reason=auth_status.reason,
-            authorization_required=True,
-            recover_command="ceo-agent login-memory-connector",
         )
 
     if verify_live:
         try:
             if memory_reachability_checker is not None:
-                memory_reachability_checker(manager.url)
+                memory_reachability_checker(url)
             else:
-                _check_http_reachable(manager.url)
+                _check_http_reachable(url)
         except Exception as exc:
             return McpStatus(
                 name="memory_connector",
@@ -236,7 +210,7 @@ def _memory_connector_status(
         name="memory_connector",
         state="ready",
         ready=True,
-        reason="ready",
+        reason="native Codex MCP configured",
     )
 
 

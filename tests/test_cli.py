@@ -38,7 +38,6 @@ from app.cli import (
 from app.corpus import CorpusRecord, append_records
 from app.codex_memory_client import CodexMcpMemoryClient
 from app.dws_client import DwsError
-from app.memory_connector_client import MemoryConnectorClient
 from app.store import AutoReplyStore
 from app.task_models import TaskAgentDecision, WorkItem
 
@@ -3753,7 +3752,7 @@ def test_create_worker_wires_store_dws_codex_and_dry_run(monkeypatch, tmp_path):
     assert len(constructed["style_records"]) == 1
     assert constructed["style_records"][0].message_id == "style-msg-1"
     assert isinstance(constructed["memory_client"], CodexMcpMemoryClient)
-    assert isinstance(constructed["memory_client"].direct_client, MemoryConnectorClient)
+    assert constructed["memory_client"].direct_client is None
 
 
 def test_run_once_command_calls_worker_once(monkeypatch, tmp_path):

@@ -182,6 +182,11 @@ def test_memory_dependency_blocks_before_planner_and_never_opens_browser(
 
 
 def test_codex_mcp_memory_client_falls_back_to_native_codex_config(tmp_path: Path):
+    codex_config = tmp_path / "config.toml"
+    codex_config.write_text(
+        '[mcp_servers.memory_connector]\nurl = "https://memory.example/mcp/"\n',
+        encoding="utf-8",
+    )
     output = {
         "structured_content": {
             "result": json.dumps(
@@ -227,6 +232,7 @@ def test_codex_mcp_memory_client_falls_back_to_native_codex_config(tmp_path: Pat
     client = CodexMcpMemoryClient(
         workspace=tmp_path,
         direct_client=direct,
+        codex_config_path=codex_config,
         executor=executor,
     )
 
@@ -250,6 +256,20 @@ def test_codex_mcp_memory_client_falls_back_to_native_codex_config(tmp_path: Pat
     assert 'mcp_servers.memory_connector.enabled_tools=["memory_write"]' in captured[
         "command"
     ]
+
+
+def test_codex_mcp_memory_client_requires_native_codex_config(tmp_path: Path):
+    client = CodexMcpMemoryClient(
+        workspace=tmp_path,
+        codex_config_path=tmp_path / "missing-config.toml",
+        executor=lambda _command, _prompt: "",
+    )
+
+    with pytest.raises(
+        MemoryConnectorAuthorizationRequired,
+        match="native Codex MCP is not configured",
+    ):
+        client.ensure_ready_sync()
 
 
 def test_dependency_status_checks_dws_and_memory_before_planner(tmp_path) -> None:

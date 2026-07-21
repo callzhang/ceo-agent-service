@@ -258,7 +258,6 @@ def build_parser() -> argparse.ArgumentParser:
         "daily-task-maintenance",
         "doctor-mcp",
         "setup-memory-connector",
-        "login-memory-connector",
         "build-corpus",
         "collect-corpus",
         "refresh-org-cache",
@@ -416,12 +415,6 @@ def build_parser() -> argparse.ArgumentParser:
                     / "claude_desktop_config.json"
                 ),
                 help="Claude Desktop config JSON path",
-            )
-        if command == "login-memory-connector":
-            subparser.add_argument(
-                "--memory-url",
-                default=os.getenv("MEMORY_CONNECTOR_URL", ""),
-                help="memory connector MCP URL; defaults to CEO/Codex config",
             )
         if command == "doctor-mcp":
             subparser.add_argument(
@@ -724,12 +717,8 @@ def create_worker(settings: WorkerSettings) -> DingTalkAutoReplyWorker:
 
 def _create_memory_connector_client(workspace: Path):
     from app.codex_memory_client import CodexMcpMemoryClient
-    from app.memory_connector_client import MemoryConnectorClient
 
-    return CodexMcpMemoryClient(
-        workspace=workspace,
-        direct_client=MemoryConnectorClient(),
-    )
+    return CodexMcpMemoryClient(workspace=workspace)
 
 
 def _okr_source_kind() -> str:
@@ -1337,71 +1326,6 @@ def setup_memory_connector_command(
         flush=True,
     )
     return result
-
-
-def login_memory_connector_command(*, memory_url: str = "") -> dict[str, str]:
-    import asyncio
-    import queue
-    import webbrowser
-    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-    from urllib.parse import parse_qs, urlparse
-
-    from app.memory_connector_client import MemoryConnectorClient
-
-    callback_queue: queue.Queue[tuple[str, str | None]] = queue.Queue(maxsize=1)
-
-    class CallbackHandler(BaseHTTPRequestHandler):
-        def do_GET(self) -> None:  # noqa: N802 - stdlib API
-            parsed = urlparse(self.path)
-            if parsed.path != "/callback":
-                self.send_response(404)
-                self.end_headers()
-                return
-            query = parse_qs(parsed.query)
-            code = (query.get("code") or [""])[0]
-            state = (query.get("state") or [None])[0]
-            if code:
-                try:
-                    callback_queue.put_nowait((code, state))
-                except queue.Full:
-                    pass
-                self.send_response(200)
-                self.end_headers()
-                self.wfile.write(b"Memory Connector authorization complete.")
-                return
-            self.send_response(400)
-            self.end_headers()
-
-        def log_message(self, format: str, *args) -> None:  # noqa: A002
-            return
-
-    server = ThreadingHTTPServer(("127.0.0.1", 8766), CallbackHandler)
-    server_thread = threading.Thread(target=server.serve_forever, daemon=True)
-    server_thread.start()
-    client = MemoryConnectorClient(url=memory_url.strip() or None)
-
-    async def redirect_handler(url: str) -> None:
-        print("Open the Memory Connector authorization URL in your browser.", flush=True)
-        webbrowser.open(url)
-
-    async def callback_handler() -> tuple[str, str | None]:
-        try:
-            return await asyncio.to_thread(callback_queue.get, True, 900)
-        except queue.Empty:
-            raise TimeoutError("memory connector authorization timed out") from None
-
-    try:
-        asyncio.run(
-            client.login(
-                redirect_handler=redirect_handler,
-                callback_handler=callback_handler,
-            )
-        )
-    finally:
-        server.shutdown()
-        server.server_close()
-    print("memory-connector-login status=ok", flush=True)
-    return {"status": "ok"}
 
 
 def doctor_mcp_command(
@@ -2973,8 +2897,6 @@ def main() -> None:
             codex_config=args.codex_config,
             claude_config=args.claude_config,
         )
-    elif args.command == "login-memory-connector":
-        login_memory_connector_command(memory_url=args.memory_url)
     elif args.command == "build-corpus":
         build_style_corpus(settings.workspace, settings.corpus_dir)
     elif args.command == "collect-corpus":

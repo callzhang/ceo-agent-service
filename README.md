@@ -374,6 +374,12 @@ CEO reply agent 默认复用本机 Codex MCP/OAuth 配置，但仍显式禁用 h
 .venv/bin/ceo-agent doctor-mcp --verify-live
 ```
 
+Memory 写入使用 Codex 原生 MCP 配置，不再走 CEO 服务自建的 Memory OAuth 登录。若 `memory_connector` 需要重新授权，使用 Codex 原生命令：
+
+```bash
+codex mcp login memory_connector
+```
+
 Follow-up 发送仍遵守 live-send 安全边界：默认 dry-run 时只生成/记录草稿；真实发送需要 `CEO_NOT_SEND_MESSAGE=0` 且显式设置 `CEO_LIVE_SEND_BLOCKERS_ACCEPTED=1`。
 
 ## 生产运行

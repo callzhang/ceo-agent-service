@@ -2,10 +2,6 @@ from pathlib import Path
 
 import pytest
 
-from app.memory_connector_auth import (
-    MemoryConnectorAuthError,
-    MemoryConnectorAuthStatus,
-)
 from app.mcp_doctor import (
     McpDoctorState,
     McpStatus,
@@ -13,14 +9,6 @@ from app.mcp_doctor import (
     mcp_doctor_report,
     record_and_notify_mcp_doctor,
 )
-
-
-class FakeAuthManager:
-    def __init__(self, status: MemoryConnectorAuthStatus) -> None:
-        self._status = status
-
-    async def status(self) -> MemoryConnectorAuthStatus:
-        return self._status
 
 
 class FakeStore:
@@ -44,29 +32,15 @@ def clear_fake_store() -> None:
     FakeStore.rows = []
 
 
-def _auth_status(
-    *,
-    ready: bool,
-    reason: str,
-    can_refresh: bool = False,
-) -> MemoryConnectorAuthStatus:
-    return MemoryConnectorAuthStatus(
-        configured=True,
-        ready=ready,
-        authorization_required=not ready,
-        can_refresh=can_refresh,
-        scopes=("memory.write",) if ready else (),
-        expires_at=None,
-        reason=reason,
-    )
-
-
-def test_mcp_doctor_reports_memory_login_and_passthrough_config(
+def test_mcp_doctor_reports_native_memory_and_passthrough_config(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     config = tmp_path / "config.toml"
     config.write_text(
         """
+[mcp_servers.memory_connector]
+url = "https://memory.example/mcp/"
+
 [mcp_servers.xiaoqing_interview]
 url = "https://xiaoqing.example/mcp"
 """,
@@ -76,15 +50,12 @@ url = "https://xiaoqing.example/mcp"
 
     statuses = check_mcp_statuses(
         codex_config_path=config,
-        memory_auth_factory=lambda: FakeAuthManager(
-            _auth_status(ready=False, reason="authorization required")
-        ),
     )
     by_name = {status.name: status for status in statuses}
 
-    assert by_name["memory_connector"].state == "needs_login"
-    assert by_name["memory_connector"].authorization_required is True
-    assert by_name["memory_connector"].recover_command == "ceo-agent login-memory-connector"
+    assert by_name["memory_connector"].state == "ready"
+    assert by_name["memory_connector"].authorization_required is False
+    assert by_name["memory_connector"].recover_command == ""
     assert by_name["exa"].ready is True
     assert by_name["xiaoqing_interview"].ready is True
 
@@ -92,16 +63,13 @@ url = "https://xiaoqing.example/mcp"
 def test_mcp_doctor_reports_missing_memory_config(tmp_path: Path) -> None:
     statuses = check_mcp_statuses(
         codex_config_path=tmp_path / "missing.toml",
-        memory_auth_factory=lambda: (_ for _ in ()).throw(
-            MemoryConnectorAuthError("memory connector URL is missing")
-        ),
     )
 
     assert statuses[0] == McpStatus(
         name="memory_connector",
         state="missing_config",
         ready=False,
-        reason="memory connector URL is missing",
+        reason="[mcp_servers.memory_connector] is missing from Codex config",
         recover_command="ceo-agent setup-memory-connector --memory-url <memory-mcp-url>",
     )
 
@@ -115,9 +83,6 @@ def test_mcp_doctor_marks_disabled_passthrough_as_tool_not_found(
 
     statuses = check_mcp_statuses(
         codex_config_path=config,
-        memory_auth_factory=lambda: FakeAuthManager(
-            _auth_status(ready=True, reason="ready")
-        ),
     )
     by_name = {status.name: status for status in statuses}
 
@@ -133,7 +98,7 @@ def test_mcp_doctor_notification_is_sent_once(tmp_path: Path) -> None:
         ready=False,
         reason="authorization required",
         authorization_required=True,
-        recover_command="ceo-agent login-memory-connector",
+        recover_command="codex mcp login memory_connector",
     )
 
     for _ in range(2):
