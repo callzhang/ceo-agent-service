@@ -91,6 +91,26 @@ def test_scan_local_files_skips_hidden_paths(tmp_path):
     assert str(hidden_file) not in claimed[0].payload_json
 
 
+def test_scan_local_files_skips_default_generated_work_dirs(tmp_path):
+    workspace = tmp_path / "workspace"
+    ai_minutes_dir = workspace / "AI听记"
+    frontier_dir = workspace / "tech" / "daily frontier report"
+    ai_minutes_dir.mkdir(parents=True)
+    frontier_dir.mkdir(parents=True)
+    (ai_minutes_dir / "meeting.md").write_text("AI 听记导出", encoding="utf-8")
+    (frontier_dir / "report.md").write_text("已发布报告", encoding="utf-8")
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+
+    count = scan_local_workspace_files(
+        store,
+        workspace=workspace,
+        enqueue_existing_on_first_scan=True,
+    )
+
+    assert count == 0
+    assert store.claim_work_summary_inputs(limit=10) == []
+
+
 def test_scan_local_files_skips_virtualenv_and_package_cache_paths(tmp_path):
     workspace = tmp_path / "workspace"
     package_dir = (
