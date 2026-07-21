@@ -256,6 +256,7 @@ def build_parser() -> argparse.ArgumentParser:
         "scan-task-sources",
         "process-follow-ups",
         "daily-task-maintenance",
+        "doctor-mcp",
         "setup-memory-connector",
         "login-memory-connector",
         "build-corpus",
@@ -421,6 +422,25 @@ def build_parser() -> argparse.ArgumentParser:
                 "--memory-url",
                 default=os.getenv("MEMORY_CONNECTOR_URL", ""),
                 help="memory connector MCP URL; defaults to CEO/Codex config",
+            )
+        if command == "doctor-mcp":
+            subparser.add_argument(
+                "--codex-config",
+                default=str(
+                    Path(os.getenv("CODEX_HOME", "~/.codex")).expanduser()
+                    / "config.toml"
+                ),
+                help="Codex config.toml path",
+            )
+            subparser.add_argument(
+                "--verify-live",
+                action="store_true",
+                help="also verify live reachability for services that support it",
+            )
+            subparser.add_argument(
+                "--notify",
+                action="store_true",
+                help="record non-ready auth states and notify once",
             )
         if command == "feedback":
             subparser.add_argument("--attempt-id", type=int, required=True)
@@ -1382,6 +1402,25 @@ def login_memory_connector_command(*, memory_url: str = "") -> dict[str, str]:
         server.server_close()
     print("memory-connector-login status=ok", flush=True)
     return {"status": "ok"}
+
+
+def doctor_mcp_command(
+    settings: WorkerSettings,
+    *,
+    codex_config: str,
+    verify_live: bool = False,
+    notify: bool = False,
+) -> dict[str, object]:
+    from app.mcp_doctor import mcp_doctor_report
+
+    report = mcp_doctor_report(
+        db_path=settings.db_path,
+        codex_config_path=Path(codex_config).expanduser(),
+        verify_live=verify_live,
+        notify=notify,
+    )
+    print(json.dumps(report, ensure_ascii=False), flush=True)
+    return report
 
 
 def _record_service_failure(
@@ -2496,6 +2535,13 @@ def run_service(
     _recover_processing_work_summary_inputs_on_service_start(settings)
     _recover_okr_review_requests_on_service_start(settings)
     _recover_meeting_alignment_jobs_on_service_start(settings)
+    doctor_mcp_command(
+        settings,
+        codex_config=str(
+            Path(os.getenv("CODEX_HOME", "~/.codex")).expanduser() / "config.toml"
+        ),
+        notify=True,
+    )
     dependency_gate = ServiceDependencyGate(settings)
     components = (
         (
@@ -2914,6 +2960,13 @@ def main() -> None:
     elif args.command == "daily-task-maintenance":
         ensure_live_send_allowed(settings)
         daily_task_maintenance_command(settings)
+    elif args.command == "doctor-mcp":
+        doctor_mcp_command(
+            settings,
+            codex_config=args.codex_config,
+            verify_live=args.verify_live,
+            notify=args.notify,
+        )
     elif args.command == "setup-memory-connector":
         setup_memory_connector_command(
             memory_url=args.memory_url,

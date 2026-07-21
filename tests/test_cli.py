@@ -36,6 +36,7 @@ from app.cli import (
     run_audit_web_command,
 )
 from app.corpus import CorpusRecord, append_records
+from app.codex_memory_client import CodexMcpMemoryClient
 from app.dws_client import DwsError
 from app.memory_connector_client import MemoryConnectorClient
 from app.store import AutoReplyStore
@@ -3751,7 +3752,8 @@ def test_create_worker_wires_store_dws_codex_and_dry_run(monkeypatch, tmp_path):
     assert "先结论" in constructed["style_profile"]
     assert len(constructed["style_records"]) == 1
     assert constructed["style_records"][0].message_id == "style-msg-1"
-    assert isinstance(constructed["memory_client"], MemoryConnectorClient)
+    assert isinstance(constructed["memory_client"], CodexMcpMemoryClient)
+    assert isinstance(constructed["memory_client"].direct_client, MemoryConnectorClient)
 
 
 def test_run_once_command_calls_worker_once(monkeypatch, tmp_path):

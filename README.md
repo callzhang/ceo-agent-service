@@ -169,6 +169,7 @@ cp .env.example .env
 | `CEO_MEETING_SETTLE_SECONDS` | 明确会议结束后的静默等待时间，默认 600 秒 |
 | `CEO_CODEX_MODEL` / `CEO_CODEX_MODEL_REASONING_EFFORT` / `CEO_CODEX_MODEL_PROVIDER` | Codex 模型配置；默认 `gpt-5.5` + `medium`，避免服务继承用户全局 `~/.codex/config.toml` 的模型 |
 | `CEO_CODEX_PASSTHROUGH_MCP_SERVERS` | 允许显式透传给 agent 的 MCP 白名单；默认保留 `xiaoqing_interview,exa`。`memory_connector` 会优先复用本机 Codex MCP 配置；飞书走 `lark-cli`，不是默认 MCP |
+| `data/mcp-doctor-state.json` | MCP doctor 的一次性提醒状态文件；用于避免 `needs_login` / `token_expired` 状态重复弹授权提醒 |
 | `CEO_MENTION_ALIASES` | 群聊中触发本人的 @ 别名 |
 | `CEO_DING_ROBOT_NAME` | handoff/DING 通知使用的机器人名称；默认服务启动配置为 `磊哥`，运行时解析 robot code |
 | `CEO_CHAT_BOT_NAMES` | 允许触发自动回复的机器人名称列表，默认复用 `CEO_DING_ROBOT_NAME` |
@@ -363,9 +364,15 @@ Codex 配置会写入 `[mcp_servers.memory_connector]`，并使用现有 OAuth A
 CEO reply agent 默认复用本机 Codex MCP/OAuth 配置，但仍显式禁用 hooks 和 plugins，避免个人自动化脚本影响服务行为。需要保留给 agent 的外部能力分两类：
 
 - CLI 能力：`dws` 和 `lark-cli` 由服务环境直接提供。DWS 负责钉钉消息、文档、审批、日历、通讯录和 AI 听记；`lark-cli` 负责飞书文档读取。两者都不通过 MCP 透传。
-- MCP 能力：`memory_connector` 复用 `~/.codex/config.toml` 里的同名 MCP 配置，并在存在可转交 bearer 时注入给隔离子流程；`xiaoqing_interview` 和 `exa` 从 `~/.codex/config.toml` 的同名 `[mcp_servers.*]` 读取安全连接字段后透传。若安装者没有配置 `[mcp_servers.exa]`，Exa 能力不会生效，但也不会阻止服务启动。
+- MCP 能力：`memory_connector` 复用 `~/.codex/config.toml` 里的同名 MCP 配置，并在存在可转交 bearer 时注入给隔离子流程；`xiaoqing_interview` 和 `exa` 从 `~/.codex/config.toml` 的同名 `[mcp_servers.*]` 读取安全连接字段后透传。若安装者没有配置 `[mcp_servers.exa]`，服务使用默认 Exa remote MCP URL；若没有配置 `[mcp_servers.xiaoqing_interview]`，涉及小青面试资料的任务会被视为阻断性依赖缺失。
 
 为了避免把个人密钥写进进程命令行，MCP 透传只复制 URL、OAuth resource、command、args、startup timeout 和 bearer token 环境变量名，不复制 `[mcp_servers.*.env]` 里的密钥值。需要 API key 的 stdio MCP 应把密钥放在 launchd 或 shell 环境中。
+
+服务启动会先运行 MCP doctor，检查 `memory_connector`、`exa`、`xiaoqing_interview`，状态只使用 `ready`、`needs_login`、`missing_config`、`token_expired`、`network_blocked`、`tool_not_found` 等明确值。`needs_login` 和 `token_expired` 只记录/提醒一次，然后暂停相关任务，不让 agent 自己触发登录循环。手动检查：
+
+```bash
+.venv/bin/ceo-agent doctor-mcp --verify-live
+```
 
 Follow-up 发送仍遵守 live-send 安全边界：默认 dry-run 时只生成/记录草稿；真实发送需要 `CEO_NOT_SEND_MESSAGE=0` 且显式设置 `CEO_LIVE_SEND_BLOCKERS_ACCEPTED=1`。
 
