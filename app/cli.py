@@ -72,6 +72,7 @@ from app.meeting_alignment import (
     recover_meeting_alignment_jobs,
 )
 from app.meeting_alignment_agent import MeetingAlignmentCodexRunner
+from app.memory_connector_client import MemoryConnectorClient
 from app.oa_approval import OaApprovalSpecHandler
 from app.org_cache import (
     CachedDwsClient,
@@ -675,6 +676,7 @@ def create_worker(settings: WorkerSettings) -> DingTalkAutoReplyWorker:
         dry_run=settings.dry_run,
         style_profile=style_profile,
         style_records=style_records,
+        memory_client=MemoryConnectorClient(),
     )
     worker.oa_approval_handler = oa_approval_handler
     okr_source_kind = _okr_source_kind()
