@@ -229,7 +229,7 @@ def test_plan_uses_new_and_resume_commands_with_configured_mcps(tmp_path, monkey
     assert resume_command[-2:] == ["session-1", "-"]
     for command in (new_command, resume_command):
         assert "--json" in command
-        assert "--ignore-user-config" in command
+        assert "--ignore-user-config" not in command
         assert "--ignore-rules" in command
         assert CODEX_BYPASS_APPROVALS_AND_SANDBOX not in command
         assert command[command.index("-m") + 1] == "planner-model"

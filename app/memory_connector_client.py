@@ -67,7 +67,11 @@ class MemoryConnectorClient:
     @asynccontextmanager
     async def _default_session(self, provider: object):
         timeout = httpx.Timeout(self._request_timeout_seconds)
-        async with httpx.AsyncClient(auth=provider, timeout=timeout) as http_client:
+        async with httpx.AsyncClient(
+            auth=provider,
+            timeout=timeout,
+            trust_env=False,
+        ) as http_client:
             async with streamable_http_client(
                 self.url, http_client=http_client
             ) as (read_stream, write_stream, _get_session_id):

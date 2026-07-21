@@ -106,6 +106,20 @@ def test_codex_command_exposes_memory_connector_mcp(tmp_path: Path, monkeypatch)
     assert "x-memory-user-id" not in " ".join(command)
 
 
+def test_codex_command_reuses_user_config_by_default(tmp_path: Path):
+    runner = CodexRunner(workspace=tmp_path, codex_bin="codex")
+
+    command = runner.build_command(prompt="hello", session_id=None)
+
+    assert "--ignore-user-config" not in command
+    disabled_features = [
+        command[index + 1]
+        for index, value in enumerate(command[:-1])
+        if value == "--disable"
+    ]
+    assert disabled_features == ["hooks", "plugins"]
+
+
 def test_codex_command_exposes_default_passthrough_mcps_from_codex_config(
     tmp_path: Path, monkeypatch
 ):
@@ -136,7 +150,7 @@ def test_codex_command_exposes_default_passthrough_mcps_from_codex_config(
 
     command = runner.build_command(prompt="hello", session_id=None)
 
-    assert "--ignore-user-config" in command
+    assert "--ignore-user-config" not in command
     assert (
         'mcp_servers.xiaoqing_interview.url="https://interview.hr.startask.net/mcp/"'
         in command
@@ -735,7 +749,6 @@ def test_builds_new_thread_command(tmp_path: Path):
         "gpt-5.5",
         "-c",
         'model_reasoning_effort="medium"',
-        "--ignore-user-config",
         "--ignore-rules",
         "--disable",
         "hooks",
@@ -784,7 +797,6 @@ def test_builds_resume_command(tmp_path: Path):
         "gpt-5.5",
         "-c",
         'model_reasoning_effort="medium"',
-        "--ignore-user-config",
         "--ignore-rules",
         "--disable",
         "hooks",

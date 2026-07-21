@@ -250,8 +250,7 @@ class UniversalPlanner:
         ]
         common_options = [
             "--json",
-            *codex_model_config_options(ignore_user_config=True),
-            "--ignore-user-config",
+            *codex_model_config_options(ignore_user_config=False),
             "--ignore-rules",
             "--disable",
             "hooks",

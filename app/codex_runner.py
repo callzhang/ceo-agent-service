@@ -427,8 +427,8 @@ class CodexRunner:
         )
         common_options = [
             "--json",
-            *codex_model_config_options(ignore_user_config=True),
-            "--ignore-user-config",
+            *codex_model_config_options(ignore_user_config=ignore_user_config),
+            *(["--ignore-user-config"] if ignore_user_config else []),
             "--ignore-rules",
             "--disable",
             "hooks",

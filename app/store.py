@@ -5652,10 +5652,13 @@ class AutoReplyStore:
             payload.get("episode_uuid")
             or payload.get("uuid")
             or payload.get("memory_episode_id")
+            or payload.get("duplicate_of_episode_uuid")
             or ""
         )
         if memory_episode_id and (
-            ok or processing_status in {"completed", "success", "done", "ready"}
+            ok
+            or payload.get("failure_kind") == "duplicate_memory_write"
+            or processing_status in {"completed", "success", "done", "ready"}
         ):
             status = "written"
         last_error = str(payload.get("last_error") or payload.get("error") or "")

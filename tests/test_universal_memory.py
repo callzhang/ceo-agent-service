@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from app.codex_memory_client import CodexMcpMemoryClient
 from app.memory_connector_auth import MemoryConnectorAuthorizationRequired
 from app.memory_connector_client import MemoryWriteResult
 from app.store import AutoReplyStore
@@ -178,6 +179,77 @@ def test_memory_dependency_blocks_before_planner_and_never_opens_browser(
     assert result.reason == "memory_authorization_required"
     assert planner.calls == 0
     assert client.login_calls == 0
+
+
+def test_codex_mcp_memory_client_falls_back_to_native_codex_config(tmp_path: Path):
+    output = {
+        "structured_content": {
+            "result": json.dumps(
+                {
+                    "ok": True,
+                    "episode_uuid": "episode-1",
+                    "processing_status": "completed",
+                }
+            )
+        }
+    }
+    raw = "\n".join(
+        [
+            json.dumps(
+                {
+                    "type": "item.completed",
+                    "item": {
+                        "type": "mcp_tool_call",
+                        "tool": "memory_write",
+                        "arguments": {
+                            "data": "Durable decision",
+                            "type": "text",
+                            "created_at": "2026-07-20T10:00:00+08:00",
+                        },
+                        "result": output,
+                    },
+                }
+            ),
+            json.dumps({"status": "attempted"}),
+        ]
+    )
+
+    direct = FakeMemoryClient(
+        [MemoryConnectorAuthorizationRequired("authorization required")]
+    )
+    captured = {}
+
+    def executor(command, prompt):
+        captured["command"] = command
+        captured["prompt"] = prompt
+        return raw
+
+    client = CodexMcpMemoryClient(
+        workspace=tmp_path,
+        direct_client=direct,
+        executor=executor,
+    )
+
+    result = client.memory_write_sync(
+        data="Durable decision",
+        type="text",
+        created_at="2026-07-20T10:00:00+08:00",
+        source_description="source",
+    )
+
+    assert result == MemoryWriteResult("episode-1", "completed", False)
+    assert "--ignore-user-config" not in captured["command"]
+    developer_options = [
+        captured["command"][index + 1]
+        for index, value in enumerate(captured["command"][:-1])
+        if value == "-c"
+        and captured["command"][index + 1].startswith("developer_instructions=")
+    ]
+    assert len(developer_options) == 1
+    assert "service-owned Memory write" in developer_options[0]
+    assert 'mcp_servers.memory_connector.enabled_tools=["memory_write"]' in captured[
+        "command"
+    ]
 
 
 def test_dependency_status_checks_dws_and_memory_before_planner(tmp_path) -> None:
