@@ -2900,14 +2900,12 @@ class DingTalkAutoReplyWorker:
             send_error=send_error,
         )
         if execution.action.kind is PlannedActionKind.STOP_WITH_ERROR:
-            self.store.mark_universal_action_execution_failed(
+            self._complete_universal_action(
                 execution,
-                send_error,
+                attempt_id=attempt_id,
+                outcome=send_status,
             )
-            self.store.rotate_reply_task_execution_generation(
-                execution.context.task_id
-            )
-            raise RuntimeError(send_error)
+            return True
         conversation, trigger, new_messages = self._universal_reply_context(execution)
         try:
             attempt = self.store.get_reply_attempt(attempt_id)

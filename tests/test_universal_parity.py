@@ -277,7 +277,7 @@ def test_failed_or_blocked_attempt_is_not_a_universal_terminal_duplicate(
     assert worker._universal_existing_terminal_attempt(context) is False
 
 
-def test_stop_with_error_is_failed_retryable_and_does_not_complete_trigger(
+def test_universal_stop_with_error_records_terminal_failure_without_replanning(
     tmp_path, monkeypatch
 ):
     trigger = message()
@@ -315,31 +315,16 @@ def test_stop_with_error_is_failed_retryable_and_does_not_complete_trigger(
         0,
     )
 
-    with pytest.raises(
-        RuntimeError,
-        match="stop_with_error: critical_info_unavailable",
-    ):
-        UniversalActionExecutor(worker).execute(execution)
+    assert UniversalActionExecutor(worker).execute(execution) is True
 
     attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
     assert attempt is not None
     assert attempt.action == "stop_with_error"
     assert attempt.send_status == "failed"
-    with pytest.raises(ValueError, match="execution generation mismatch"):
-        worker.store.get_universal_action_execution_state(execution)
+    assert worker.store.get_universal_action_execution_state(execution).value == "succeeded"
     assert worker.store.has_seen("msg-1") is False
     persisted_task = worker.store.get_reply_task_for_message("cid-1", "msg-1")
     assert persisted_task is not None
-    assert persisted_task.status != "completed"
-    assert persisted_task.force_new_decision is True
-    assert persisted_task.execution_generation != task.execution_generation
-    replanned_context = build_universal_context(
-        conversation=conversation(),
-        trigger=trigger,
-        context_messages=[trigger],
-        task_id=persisted_task.id,
-        force_new_decision=True,
-        dry_run=False,
-        execution_generation=persisted_task.execution_generation,
-    )
-    assert worker.store.load_universal_plan_execution(replanned_context) is None
+    assert persisted_task.status == "pending"
+    assert persisted_task.force_new_decision is False
+    assert persisted_task.execution_generation == task.execution_generation
