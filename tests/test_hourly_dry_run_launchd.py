@@ -70,6 +70,7 @@ def test_main_launch_agent_runs_single_keepalive_service():
     assert "--host" in command[2]
     assert "--port" in command[2]
     assert "CEO_SERVICE_ROOT" in command[2]
+    assert 'CEO_MAX_BATCHES="${CEO_MAX_BATCHES:-1}"' in command[2]
     assert 'DWS_DISABLE_KEYCHAIN="${DWS_DISABLE_KEYCHAIN:-1}"' in command[2]
     assert (
         'DWS_KEYCHAIN_DIR="${DWS_KEYCHAIN_DIR:-${service_root}/data/dws-keychain}"'

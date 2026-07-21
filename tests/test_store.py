@@ -251,6 +251,15 @@ def test_store_connections_enable_sqlite_concurrency_pragmas(tmp_path: Path):
     assert foreign_keys == 1
 
 
+def test_store_connections_can_use_short_busy_timeout(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3", busy_timeout_seconds=2)
+
+    with store._connect() as db:
+        busy_timeout = db.execute("pragma busy_timeout").fetchone()[0]
+
+    assert busy_timeout == 2_000
+
+
 def test_store_connections_close_after_context_exit(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
 

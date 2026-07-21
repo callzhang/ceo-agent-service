@@ -1,5 +1,6 @@
 import json
 import asyncio
+import sqlite3
 from collections.abc import Callable, Iterable, Mapping
 from collections import deque
 from datetime import datetime, timedelta, timezone, tzinfo
@@ -123,6 +124,7 @@ from app.task_models import ProjectPriority, ProjectStatus, RiskLevel, TodoStatu
 from app.user_prompt_blocks import USER_PROMPT_BLOCKS, UserPromptBlock
 
 DISPLAY_TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
+AUDIT_WEB_SQLITE_BUSY_TIMEOUT_SECONDS = 2
 USER_FEEDBACK_SYNC_BATCH_LIMIT = 5
 USER_FEEDBACK_SYNC_TIMEOUT_SECONDS = 0.5
 USER_FEEDBACK_SYNC_LIMIT_PER_TOKEN = 5
@@ -5542,6 +5544,32 @@ def _reviewed_reply_lookup_messages(
     return result
 
 
+def _audit_store(db_path: Path) -> AutoReplyStore:
+    return AutoReplyStore(
+        db_path,
+        busy_timeout_seconds=AUDIT_WEB_SQLITE_BUSY_TIMEOUT_SECONDS,
+    )
+
+
+def _is_sqlite_busy_error(exc: sqlite3.OperationalError) -> bool:
+    message = str(exc).lower()
+    return "database is locked" in message or "database is busy" in message
+
+
+def _render_history_busy_page() -> str:
+    return render_page(
+        "CEO Agent Audit",
+        """
+        <section class="panel">
+          <h2>History is temporarily busy</h2>
+          <p>The service is processing background work and the audit database is locked. This page will retry automatically.</p>
+        </section>
+        """,
+        active_nav="history",
+        auto_refresh=True,
+    )
+
+
 def create_audit_app(
     db_path: Path,
     ding_robot_code: str | None = None,
@@ -5586,26 +5614,31 @@ def create_audit_app(
     @app.get("/", response_class=HTMLResponse)
     def attempt_list(request: Request) -> str:
         query = str(request.query_params.get("q", ""))
-        return render_attempt_list(
-            AutoReplyStore(db_path),
-            limit=_attempt_list_limit(
-                _positive_int_query(
-                    request,
-                    "limit",
-                    default=DEFAULT_ATTEMPT_LIST_LIMIT,
-                )
-            ),
-            page=_positive_int_query(request, "page", default=1),
-            type_filter=request.query_params.getlist("type"),
-            query=query,
-            query_embedding=_history_query_embedding(query),
-            search_object_types=request.query_params.getlist("object_type"),
-        )
+        try:
+            return render_attempt_list(
+                _audit_store(db_path),
+                limit=_attempt_list_limit(
+                    _positive_int_query(
+                        request,
+                        "limit",
+                        default=DEFAULT_ATTEMPT_LIST_LIMIT,
+                    )
+                ),
+                page=_positive_int_query(request, "page", default=1),
+                type_filter=request.query_params.getlist("type"),
+                query=query,
+                query_embedding=_history_query_embedding(query),
+                search_object_types=request.query_params.getlist("object_type"),
+            )
+        except sqlite3.OperationalError as exc:
+            if _is_sqlite_busy_error(exc):
+                return _render_history_busy_page()
+            raise
 
     @app.get("/user-feedback", response_class=HTMLResponse)
     def user_feedback_list(request: Request) -> str:
         return render_user_feedback_list(
-            AutoReplyStore(db_path),
+            _audit_store(db_path),
             page=_positive_int_query(request, "page", default=1),
         )
 

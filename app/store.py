@@ -361,8 +361,15 @@ def _embedding_score(
 
 
 class AutoReplyStore:
-    def __init__(self, path: Path):
+    def __init__(
+        self,
+        path: Path,
+        *,
+        busy_timeout_seconds: int = SQLITE_BUSY_TIMEOUT_SECONDS,
+    ):
         self.path = path
+        self.busy_timeout_seconds = busy_timeout_seconds
+        self.busy_timeout_milliseconds = busy_timeout_seconds * 1000
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._ensure_initialized()
 
@@ -380,9 +387,9 @@ class AutoReplyStore:
     def _connect(self) -> Iterator[sqlite3.Connection]:
         connection = sqlite3.connect(
             self.path,
-            timeout=SQLITE_BUSY_TIMEOUT_SECONDS,
+            timeout=self.busy_timeout_seconds,
         )
-        connection.execute(f"pragma busy_timeout = {SQLITE_BUSY_TIMEOUT_MILLISECONDS}")
+        connection.execute(f"pragma busy_timeout = {self.busy_timeout_milliseconds}")
         connection.execute("pragma synchronous = normal")
         connection.execute("pragma foreign_keys = on")
         connection.row_factory = sqlite3.Row

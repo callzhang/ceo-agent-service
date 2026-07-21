@@ -1,5 +1,6 @@
 import json
 import os
+import sqlite3
 import subprocess
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -1382,6 +1383,24 @@ def test_tutorial_status_route_returns_json(tmp_path: Path):
     payload = response.json()
     assert payload["steps"][0]["step_id"] == "preflight"
     assert payload["steps"][0]["title"] == "Preflight"
+
+
+def test_history_route_returns_busy_page_when_database_is_locked(
+    monkeypatch,
+    tmp_path: Path,
+):
+    def locked_attempt_list(*args, **kwargs):
+        del args, kwargs
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(audit_web_module, "render_attempt_list", locked_attempt_list)
+    client = TestClient(create_audit_app(tmp_path / "worker.sqlite3"))
+
+    response = client.get("/")
+
+    assert response.status_code == 200
+    assert "History is temporarily busy" in response.text
+    assert "refresh" in response.text
 
 
 def test_tutorial_check_route_records_real_step_status(tmp_path: Path):
