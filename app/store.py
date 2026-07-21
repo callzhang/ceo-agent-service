@@ -45,7 +45,11 @@ from app.universal_executor import (
     build_universal_action_execution,
     canonical_universal_action_json,
 )
-from app.universal_plan import PlannedActionKind, UniversalPlan
+from app.universal_plan import (
+    PlannedActionKind,
+    UniversalPlan,
+    with_context_action_targets,
+)
 
 FAST_PATH_UNREAD_BACKOFF_TASK_ERROR = "waiting_fast_path_unread_backoff"
 SQLITE_BUSY_TIMEOUT_SECONDS = 30
@@ -1500,6 +1504,42 @@ class AutoReplyStore:
             plan=plan,
         )
 
+    def _normalize_universal_plan_execution_targets(
+        self,
+        db: sqlite3.Connection,
+        row: sqlite3.Row,
+        context: UniversalTaskContext,
+    ) -> UniversalPlanExecution:
+        plan = UniversalPlan.model_validate_json(row["plan_json"], strict=True)
+        normalized = with_context_action_targets(
+            plan,
+            conversation_id=context.conversation_id,
+            trigger_message_id=context.trigger_message_id,
+        )
+        if normalized == plan:
+            return UniversalPlanExecution(
+                execution_scope_id=row["execution_scope_id"],
+                execution_generation=row["execution_generation"],
+                plan=plan,
+            )
+
+        plan_json = self._canonical_universal_plan_json(normalized)
+        cursor = db.execute(
+            """
+            update universal_plan_executions
+            set plan_json=?, updated_at=current_timestamp
+            where execution_scope_id=? and status='active' and plan_json=?
+            """,
+            (plan_json, row["execution_scope_id"], row["plan_json"]),
+        )
+        if cursor.rowcount != 1:
+            raise ValueError("plan execution changed during target normalization")
+        return UniversalPlanExecution(
+            execution_scope_id=row["execution_scope_id"],
+            execution_generation=row["execution_generation"],
+            plan=normalized,
+        )
+
     @staticmethod
     def _validate_reply_task_generation(
         db: sqlite3.Connection,
@@ -1689,7 +1729,7 @@ class AutoReplyStore:
                 context_hash,
                 task["trigger_create_time"],
             )
-            return self._universal_plan_execution_from_row(row)
+            return self._normalize_universal_plan_execution_targets(db, row, context)
 
     def create_universal_plan_execution(
         self,
@@ -1698,6 +1738,11 @@ class AutoReplyStore:
     ) -> UniversalPlanExecution:
         if not isinstance(plan, UniversalPlan):
             raise TypeError("plan must be UniversalPlan")
+        plan = with_context_action_targets(
+            plan,
+            conversation_id=context.conversation_id,
+            trigger_message_id=context.trigger_message_id,
+        )
         context_json = canonical_universal_context_json(context)
         context_hash = universal_context_sha256(context)
         plan_json = self._canonical_universal_plan_json(plan)
@@ -1725,7 +1770,9 @@ class AutoReplyStore:
                     context_hash,
                     task["trigger_create_time"],
                 )
-                return self._universal_plan_execution_from_row(existing)
+                return self._normalize_universal_plan_execution_targets(
+                    db, existing, context
+                )
 
             execution_scope_id = uuid4().hex
             db.execute(

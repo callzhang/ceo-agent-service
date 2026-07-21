@@ -289,3 +289,36 @@ class UniversalPlan(UniversalPlanBase):
             action.kind is PlannedActionKind.MEMORY_WRITE for action in self.actions
         )
         return (DependencyName.MEMORY.value,) if memory_required else ()
+
+
+def with_context_action_targets(
+    plan: UniversalPlan,
+    *,
+    conversation_id: str,
+    trigger_message_id: str,
+) -> UniversalPlan:
+    context_target = {
+        "conversation_id": conversation_id,
+        "trigger_message_id": trigger_message_id,
+    }
+    normalized_actions: list[PlannedAction] = []
+    changed = False
+    for action in plan.actions:
+        if action.kind not in {
+            PlannedActionKind.SEND_REPLY,
+            PlannedActionKind.ASK_CLARIFYING_QUESTION,
+            PlannedActionKind.QUEUE_OKR_REVIEW,
+        }:
+            normalized_actions.append(action)
+            continue
+
+        target = dict(action.target)
+        for field_name, field_value in context_target.items():
+            if not target.get(field_name):
+                target[field_name] = field_value
+                changed = True
+        normalized_actions.append(action.model_copy(update={"target": target}))
+
+    if not changed:
+        return plan
+    return plan.model_copy(update={"actions": normalized_actions})

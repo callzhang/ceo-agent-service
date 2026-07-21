@@ -64,6 +64,22 @@ def _universal_plan(*, reason: str = "Handle the task") -> UniversalPlan:
     )
 
 
+def _reply_plan_without_target() -> UniversalPlan:
+    return UniversalPlan(
+        task_kind="message_reply",
+        reason="Reply to the current trigger",
+        actions=[
+            PlannedAction(
+                kind=PlannedActionKind.SEND_REPLY,
+                reason="Send the reply",
+                sensitivity_kind="general",
+                payload={"text": "Done"},
+            )
+        ],
+        audit=UniversalAudit(summary="Reply is needed", confidence=0.9),
+    )
+
+
 def _universal_context(
     task_id: int,
     *,
@@ -134,7 +150,7 @@ def test_universal_execution_observability_is_read_only_and_redacted(
     )
     plan_execution = store.create_universal_plan_execution(context, plan)
     reply_execution = build_universal_action_execution(
-        context, plan_execution, plan.actions[0], 0
+        context, plan_execution, plan_execution.plan.actions[0], 0
     )
     assert store.claim_universal_action_execution(reply_execution).value == "not_started"
     attempt_id = store.record_universal_reply_attempt(
@@ -150,7 +166,7 @@ def test_universal_execution_observability_is_read_only_and_redacted(
     )
     store.complete_universal_action_execution(reply_execution, attempt_id=attempt_id)
     memory_execution = build_universal_action_execution(
-        context, plan_execution, plan.actions[1], 1
+        context, plan_execution, plan_execution.plan.actions[1], 1
     )
     assert store.claim_universal_action_execution(memory_execution).value == "not_started"
     store.mark_universal_action_execution_failed(
@@ -2278,6 +2294,47 @@ def test_universal_plan_execution_get_or_create_keeps_first_snapshot(tmp_path: P
     )
     assert context_json == canonical_universal_context_json(context)
     assert context_hash == universal_context_sha256(context)
+
+
+def test_load_universal_plan_execution_upgrades_missing_reply_target(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "worker.sqlite3"
+    store = AutoReplyStore(db_path)
+    task_id = _enqueue_universal_reply_task(store)
+    context = _universal_context(task_id)
+    old_plan = _reply_plan_without_target()
+    created = store.create_universal_plan_execution(context, old_plan)
+    old_plan_json = json.dumps(
+        old_plan.model_dump(mode="json"),
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    with sqlite3.connect(db_path) as db:
+        db.execute(
+            "update universal_plan_executions set plan_json=? where execution_scope_id=?",
+            (old_plan_json, created.execution_scope_id),
+        )
+
+    loaded = store.load_universal_plan_execution(context)
+
+    assert loaded is not None
+    assert loaded.plan.actions[0].target == {
+        "conversation_id": "cid-universal",
+        "trigger_message_id": "msg-universal",
+    }
+    with sqlite3.connect(db_path) as db:
+        (plan_json,) = db.execute(
+            "select plan_json from universal_plan_executions where execution_scope_id=?",
+            (created.execution_scope_id,),
+        ).fetchone()
+    assert plan_json == json.dumps(
+        loaded.plan.model_dump(mode="json"),
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
 
 
 def test_single_chat_trigger_replacement_rotates_universal_execution_generation(
