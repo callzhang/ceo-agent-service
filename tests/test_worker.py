@@ -4249,7 +4249,7 @@ def test_consume_once_appends_feedback_links_when_configured(
     assert processed == 1
     sent_text = final_sent(dws)[0][1]
     assert sent_text.startswith("@周俊杰 先按A方案走（by明哥分身）")
-    assert "反馈：[👍 赞](https://feedback.example.com/api/dingtalk-feedback-spike" in sent_text
+    assert "反馈：[👍 有帮助](https://feedback.example.com/api/dingtalk-feedback-spike" in sent_text
     assert "rating=up" in sent_text
     assert "rating=down" in sent_text
     assert "attempt_id=1" in sent_text
@@ -4291,9 +4291,9 @@ def test_consume_once_uses_required_feedback_prefix_after_unanswered_week(
 
     assert processed == 1
     sent_text = final_sent(dws)[0][1]
-    assert "【评价本次回复】" in sent_text
-    assert "提交评价后不再提醒" in sent_text
-    assert "若连续多次未评价，后续自动回复可能暂停" in sent_text
+    assert "【反馈】" in sent_text
+    assert "点过后不再提示" in sent_text
+    assert "这条回复有帮助吗？" in sent_text
     assert "反馈：[👍]" not in sent_text
     assert "先按A方案走" in sent_text
     sent_reply = worker.store.get_sent_reply("cid-1", "msg-1")
@@ -4331,9 +4331,9 @@ def test_consume_once_keeps_reply_after_unanswered_feedback_deadline(
 
     assert processed == 1
     sent_text = final_sent(dws)[0][1]
-    assert "【评价本次回复】" in sent_text
-    assert "提交评价后不再提醒" in sent_text
-    assert "若连续多次未评价，后续自动回复可能暂停" in sent_text
+    assert "【反馈】" in sent_text
+    assert "点过后不再提示" in sent_text
+    assert "这条回复有帮助吗？" in sent_text
     assert "请对我提供反馈后再提问" not in sent_text
     assert "先按A方案走" in sent_text
     assert "/api/dingtalk-feedback-spike" in sent_text
@@ -4388,8 +4388,8 @@ def test_consume_once_syncs_feedback_before_block_check(
     assert processed == 1
     sent_text = final_sent(dws)[0][1]
     assert "先按A方案走" in sent_text
-    assert "【评价本次回复】" not in sent_text
-    assert "提交评价后不再提醒" not in sent_text
+    assert "【反馈】" not in sent_text
+    assert "点过后不再提示" not in sent_text
     assert "请对我提供反馈后再提问" not in sent_text
     sent_reply = worker.store.get_sent_reply("cid-1", "msg-1")
     assert sent_reply is not None

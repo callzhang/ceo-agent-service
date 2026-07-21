@@ -2715,7 +2715,7 @@ def test_send_attempt_command_appends_feedback_links_when_configured(
     send_attempt_command(settings, attempt_id)
 
     sent_text = sent["reply"][3]
-    assert "反馈：[👍 赞](https://feedback.example.com/api/dingtalk-feedback-spike" in sent_text
+    assert "反馈：[👍 有帮助](https://feedback.example.com/api/dingtalk-feedback-spike" in sent_text
     assert "source=" not in sent_text
     assert f"attempt_id={attempt_id}" in sent_text
     sent_reply = cli.AutoReplyStore(settings.db_path).get_sent_reply("cid-1", "msg-1")
@@ -2786,9 +2786,9 @@ def test_send_attempt_command_keeps_reply_when_feedback_is_overdue(
 
     sent_text = sent["reply"][3]
     assert "可以先这样处理。（by明哥分身）" in sent_text
-    assert "【评价本次回复】" in sent_text
-    assert "提交评价后不再提醒" in sent_text
-    assert "若连续多次未评价，后续自动回复可能暂停" in sent_text
+    assert "【反馈】" in sent_text
+    assert "点过后不再提示" in sent_text
+    assert "这条回复有帮助吗？" in sent_text
     assert "/api/dingtalk-feedback-spike" in sent_text
     assert "请对我提供反馈后再提问" not in sent_text
     sent_reply = cli.AutoReplyStore(settings.db_path).get_sent_reply("cid-1", "msg-1")

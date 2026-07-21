@@ -10,8 +10,8 @@ from app.dws_client import DwsClient
 from app.leak_check import contains_forbidden_leak
 
 MAX_FEEDBACK_CONTEXT_CHARS = 30
-FEEDBACK_UP_LINK_LABEL = "👍 赞"
-FEEDBACK_DOWN_LINK_LABEL = "👎 踩"
+FEEDBACK_UP_LINK_LABEL = "👍 有帮助"
+FEEDBACK_DOWN_LINK_LABEL = "👎 需改进"
 
 
 @dataclass(frozen=True)
