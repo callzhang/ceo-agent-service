@@ -363,6 +363,43 @@ def test_worker_reuses_existing_native_codex_session(tmp_path, monkeypatch):
     assert planner.calls[0][1] == "existing-session"
 
 
+def test_universal_stale_codex_resume_clears_session_and_retries_fresh(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setenv("CEO_UNIVERSAL_CONSUMER", "1")
+
+    class StaleThenFreshPlanner(RecordingPlanner):
+        def __init__(self):
+            super().__init__(no_reply_plan())
+            self.last_session_id = None
+
+        def plan(self, context, session_id=None):
+            self.calls.append((context, session_id))
+            if session_id == "existing-session":
+                self.last_session_id = session_id
+                raise RuntimeError(
+                    "thread/resume failed: no rollout found for thread id "
+                    "019f3bc6"
+                )
+            self.last_session_id = "fresh-session"
+            return self.plan_result.model_copy(deep=True)
+
+    planner = StaleThenFreshPlanner()
+    worker, trigger = make_worker(tmp_path, monkeypatch, planner=planner)
+    enqueue(worker, trigger)
+    worker.store.upsert_conversation("cid-1", "测试群", False, "existing-session")
+
+    assert worker.consume_once(max_tasks=1) == 1
+
+    assert [session_id for _, session_id in planner.calls] == [
+        "existing-session",
+        "existing-session",
+        None,
+    ]
+    assert worker.store.get_codex_session_id("cid-1") == "fresh-session"
+
+
 def test_planner_exception_persists_new_native_codex_session(tmp_path, monkeypatch):
     monkeypatch.setenv("CEO_UNIVERSAL_CONSUMER", "1")
 

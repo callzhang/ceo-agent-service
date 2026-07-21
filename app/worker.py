@@ -586,6 +586,7 @@ class DingTalkAutoReplyWorker:
 
     def _universal_consumer(self, planner=None) -> UniversalConsumerOrchestrator:
         planner = planner or self._universal_planner()
+        planner = self._universal_stale_resume_recovering_planner(planner)
         return UniversalConsumerOrchestrator(
             planner=planner,
             validator_context_factory=self._universal_dependency_status_provider,
@@ -601,6 +602,59 @@ class DingTalkAutoReplyWorker:
                 planner,
             ),
         )
+
+    def _universal_stale_resume_recovering_planner(self, planner):
+        worker = self
+
+        class _RecoveringUniversalPlanner:
+            @property
+            def last_session_id(self):
+                return getattr(planner, "last_session_id", None)
+
+            @last_session_id.setter
+            def last_session_id(self, value):
+                setattr(planner, "last_session_id", value)
+
+            def plan(self, context, session_id=None):
+                if not session_id:
+                    return planner.plan(context, session_id=session_id)
+
+                last_stale_error: RuntimeError | None = None
+                for _ in range(STALE_CODEX_RESUME_ATTEMPTS):
+                    try:
+                        return planner.plan(context, session_id=session_id)
+                    except RuntimeError as exc:
+                        if not worker._is_stale_codex_resume_reason(
+                            str(exc),
+                            session_id,
+                        ):
+                            raise
+                        last_stale_error = exc
+                        logger.warning(
+                            "universal Codex session resume failed for "
+                            "conversation_id=%s task_id=%s; retrying before "
+                            "opening a fresh session",
+                            context.conversation_id,
+                            context.task_id,
+                        )
+
+                worker.store.clear_codex_session(context.conversation_id)
+                self.last_session_id = None
+                logger.warning(
+                    "cleared stale universal Codex session for "
+                    "conversation_id=%s task_id=%s; opening a fresh session",
+                    context.conversation_id,
+                    context.task_id,
+                )
+                try:
+                    return planner.plan(context, session_id=None)
+                except Exception:
+                    if last_stale_error is not None:
+                        worker.store.clear_codex_session(context.conversation_id)
+                        self.last_session_id = None
+                    raise
+
+        return _RecoveringUniversalPlanner()
 
     @contextmanager
     def _universal_planning_session(self, context: UniversalTaskContext, planner):
@@ -11363,7 +11417,16 @@ class DingTalkAutoReplyWorker:
     def _is_stale_codex_resume(decision: CodexDecision, session_id: str | None) -> bool:
         if not session_id or decision.action != CodexAction.STOP_WITH_ERROR:
             return False
-        reason = decision.reason
+        return DingTalkAutoReplyWorker._is_stale_codex_resume_reason(
+            decision.reason,
+            session_id,
+        )
+
+    @staticmethod
+    def _is_stale_codex_resume_reason(reason: str, session_id: str | None) -> bool:
+        if not session_id:
+            return False
+        reason = reason or ""
         return (
             (
                 "thread/resume failed" in reason
