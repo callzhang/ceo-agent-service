@@ -2602,6 +2602,43 @@ def test_universal_oa_comment_uses_comment_api_and_completes(
     assert result["dws_action_result"]["requestId"] == "request-comment-1"
 
 
+def test_universal_oa_comment_falls_back_to_tasks_when_detail_parse_fails(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    execution = _execution(
+        store,
+        kind=PlannedActionKind.OA_APPROVAL,
+        target={"process_instance_id": "proc-1", "task_id": "task-1"},
+        payload={"action": "comment", "remark": "请补充可验证材料"},
+    )
+    dws = UniversalOaFakeDws()
+
+    def detail_parse_failure(process_instance_id: str) -> dict:
+        del process_instance_id
+        raise RuntimeError("DWS detail response parse failed")
+
+    dws.read_oa_approval_detail = detail_parse_failure
+    dws.read_oa_approval_tasks = lambda process_id: {
+        "result": {"taskIdList": [{"taskId": "task-1"}]}
+    }
+    dws.read_oa_approval_records = lambda process_id: {
+        "result": {
+            "processInstanceId": process_id,
+            "operationRecords": [],
+        }
+    }
+    worker = DingTalkAutoReplyWorker(store=store, dws=dws, codex=FakeCodex())
+
+    assert worker.execute_universal_oa_approval(execution) is True
+
+    assert dws.comment_calls == [("proc-1", "请补充可验证材料")]
+    attempt = store.get_latest_reply_attempt_for_trigger("cid-context", "msg-context")
+    assert attempt is not None
+    assert attempt.send_status == "commented"
+    assert attempt.send_error == ""
+
+
 @pytest.mark.parametrize(
     "comment_result",
     [

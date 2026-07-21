@@ -1092,6 +1092,15 @@ class DingTalkAutoReplyWorker:
             current_user_id, detail, tasks, records = self._read_universal_oa_state(
                 process_instance_id
             )
+            preflight = self._classify_universal_oa_state(
+                process_instance_id=process_instance_id,
+                task_id=task_id,
+                current_user_id=current_user_id,
+                detail=detail,
+                tasks=tasks,
+                records=records,
+                action=oa_action,
+            )
         except ValueError as exc:
             return self._finalize_universal_oa_action(
                 execution,
@@ -1104,22 +1113,43 @@ class DingTalkAutoReplyWorker:
                 ),
             )
         except Exception as exc:
-            self._fail_universal_oa_preflight(
-                execution,
-                attempt_id=attempt_id,
-                error=exc,
+            if oa_action != "comment":
+                self._fail_universal_oa_preflight(
+                    execution,
+                    attempt_id=attempt_id,
+                    error=exc,
+                )
+                raise
+            try:
+                _current_user_id, tasks, records = (
+                    self._read_universal_oa_comment_fallback_state(
+                        process_instance_id
+                    )
+                )
+            except ValueError as fallback_exc:
+                return self._finalize_universal_oa_action(
+                    execution,
+                    attempt_id=attempt_id,
+                    outcome="blocked",
+                    send_status="blocked",
+                    send_error=self._safe_universal_oa_error(
+                        "oa_preflight_invalid",
+                        fallback_exc,
+                    ),
+                )
+            except Exception as fallback_exc:
+                self._fail_universal_oa_preflight(
+                    execution,
+                    attempt_id=attempt_id,
+                    error=fallback_exc,
+                )
+                raise
+            preflight = self._classify_universal_oa_comment_fallback_state(
+                process_instance_id=process_instance_id,
+                task_id=task_id,
+                tasks=tasks,
+                records=records,
             )
-            raise
-
-        preflight = self._classify_universal_oa_state(
-            process_instance_id=process_instance_id,
-            task_id=task_id,
-            current_user_id=current_user_id,
-            detail=detail,
-            tasks=tasks,
-            records=records,
-            action=oa_action,
-        )
         if preflight == "already_handled":
             return self._finalize_universal_oa_action(
                 execution,
@@ -1329,6 +1359,40 @@ class DingTalkAutoReplyWorker:
                     raise RuntimeError("invalid OA OpenAPI detail response")
                 detail = {"result": [detail, fallback]}
         return current_user_id, detail, tasks, records
+
+    def _read_universal_oa_comment_fallback_state(
+        self,
+        process_instance_id: str,
+    ) -> tuple[str, dict[str, Any], dict[str, Any]]:
+        current_user_id = str(self.dws.get_current_user_id() or "").strip()
+        if not current_user_id:
+            raise RuntimeError("missing current DingTalk user identity")
+        tasks = self.dws.read_oa_approval_tasks(process_instance_id)
+        records = self.dws.read_oa_approval_records(process_instance_id)
+        if not all(isinstance(value, dict) for value in (tasks, records)):
+            raise ValueError("invalid OA task or records response")
+        return current_user_id, tasks, records
+
+    @classmethod
+    def _classify_universal_oa_comment_fallback_state(
+        cls,
+        *,
+        process_instance_id: str,
+        task_id: str,
+        tasks: dict[str, Any],
+        records: dict[str, Any],
+    ) -> str:
+        live_process_id = cls._universal_oa_process_id(records)
+        if live_process_id and live_process_id != process_instance_id:
+            return "oa_process_instance_mismatch"
+        matching_tasks = [
+            task
+            for task in cls._universal_oa_tasks({}, tasks)
+            if cls._universal_oa_task_id(task) == task_id
+        ]
+        if not matching_tasks:
+            return "missing_oa_task_ownership"
+        return "actionable"
 
     @classmethod
     def _classify_universal_oa_state(
