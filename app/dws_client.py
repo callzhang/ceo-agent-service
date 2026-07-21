@@ -534,9 +534,9 @@ class DwsClient:
         del at_users
         send_text = text
         if conversation_id is not None and at_open_dingtalk_ids:
-            send_text = self._with_visible_at_mentions(
+            send_text = self._with_open_dingtalk_at_placeholders(
                 text,
-                at_open_dingtalk_names or [],
+                at_open_dingtalk_ids,
             )
         command.extend(
             ["--text", self._literal_cli_value(send_text), "--format", "json", "--yes"]
@@ -3328,20 +3328,22 @@ class DwsClient:
         return value
 
     @staticmethod
-    def _with_visible_at_mentions(text: str, names: list[str]) -> str:
-        mention_names = []
-        for name in names:
-            clean_name = name.strip()
-            if clean_name.startswith("@"):
-                clean_name = clean_name[1:].strip()
-            if clean_name and f"@{clean_name}" not in text:
-                mention_names.append(clean_name)
-        if not mention_names:
+    def _with_open_dingtalk_at_placeholders(
+        text: str,
+        open_dingtalk_ids: list[str],
+    ) -> str:
+        placeholders = []
+        for open_dingtalk_id in open_dingtalk_ids:
+            cleaned = open_dingtalk_id.strip()
+            placeholder = f"<@{cleaned}>"
+            if cleaned and placeholder not in text:
+                placeholders.append(placeholder)
+        if not placeholders:
             return text
-        mention_text = " ".join(f"@{name}" for name in mention_names)
+        mention_text = " ".join(placeholders)
         if text.lstrip().startswith(mention_text):
             return text
-        return f" {mention_text} {text}"
+        return f"{mention_text} {text}"
 
     @staticmethod
     def _message_title_source(text: str) -> str:

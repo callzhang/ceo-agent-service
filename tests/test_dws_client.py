@@ -1544,7 +1544,7 @@ def test_send_message_command_shape():
         "--at-open-dingtalk-ids",
         "open-1",
         "--text",
-        "收到（by明哥分身）",
+        "<@open-1> 收到（by明哥分身）",
         "--format",
         "json",
         "--yes",
@@ -1630,10 +1630,10 @@ def test_send_message_command_uses_open_dingtalk_id_mentions():
 
     assert "--at-users" not in command
     assert command[command.index("--at-open-dingtalk-ids") + 1] == "open-owner-1"
-    assert command[command.index("--text") + 1] == "请同步进展"
+    assert command[command.index("--text") + 1] == "<@open-owner-1> 请同步进展"
 
 
-def test_send_message_command_adds_visible_names_for_structured_group_mentions():
+def test_send_message_command_adds_placeholders_for_structured_group_mentions():
     client = DwsClient(dws_bin="dws")
 
     command = client.build_send_message_command(
@@ -1644,20 +1644,20 @@ def test_send_message_command_adds_visible_names_for_structured_group_mentions()
     )
 
     assert command[command.index("--at-open-dingtalk-ids") + 1] == "open-owner-1"
-    assert command[command.index("--text") + 1] == " @磊哥 请同步进展"
+    assert command[command.index("--text") + 1] == "<@open-owner-1> 请同步进展"
 
 
-def test_send_message_command_does_not_duplicate_existing_visible_mentions():
+def test_send_message_command_does_not_duplicate_existing_open_dingtalk_placeholders():
     client = DwsClient(dws_bin="dws")
 
     command = client.build_send_message_command(
         conversation_id="cid-1",
-        text=" @磊哥 请同步进展",
+        text="<@open-owner-1> 请同步进展",
         at_open_dingtalk_ids=["open-owner-1"],
         at_open_dingtalk_names=["磊哥"],
     )
 
-    assert command[command.index("--text") + 1] == " @磊哥 请同步进展"
+    assert command[command.index("--text") + 1] == "<@open-owner-1> 请同步进展"
 
 
 def test_send_message_command_does_not_duplicate_mentions_already_in_body():
@@ -1671,7 +1671,7 @@ def test_send_message_command_does_not_duplicate_mentions_already_in_body():
     )
 
     assert command[command.index("--text") + 1] == (
-        " @ET(张毅倜) 先出方案；@Roy Han(韩露) 补材料。"
+        "<@open-et> <@open-roy> @ET(张毅倜) 先出方案；@Roy Han(韩露) 补材料。"
     )
 
 
@@ -4123,7 +4123,7 @@ def test_send_message_high_level_method_uses_command():
             "--at-open-dingtalk-ids",
             "open-1",
             "--text",
-            "收到（by明哥分身）",
+            "<@open-1> 收到（by明哥分身）",
             "--format",
             "json",
             "--yes",
