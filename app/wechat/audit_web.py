@@ -296,6 +296,7 @@ def register_wechat_review_routes(app: FastAPI, *, store_factory: Callable[[], o
 
 
 def register_wechat_tutorial_routes(app: FastAPI, *, setup_factory: Callable[[], object]) -> None:
+    @app.get("/config/wechat/conversations")
     @app.get("/tutorial/wechat/conversations")
     def list_targets(query: str = "", kind: str = "all", limit: int = 50, offset: int = 0):
         if kind not in {"all", "direct", "group"} or not 1 <= limit <= 100 or offset < 0:
@@ -330,6 +331,7 @@ def register_wechat_tutorial_routes(app: FastAPI, *, setup_factory: Callable[[],
             )
         return {"items": items}
 
+    @app.post("/config/wechat/reply-scope")
     @app.post("/tutorial/wechat/reply-scope")
     def save_scope(payload: WechatReplyScopeRequest):
         service = setup_factory()

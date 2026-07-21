@@ -36,6 +36,23 @@ See `~/wx_read_toolkit/README.md`. Summary: shadow-copy WeChat → re-sign the c
 `message_0.db` and saved to `~/.config/wx_read/passphrase.hex` (chmod 600). The
 passphrase is account-stable; re-capture only after logout/reinstall.
 
+## App Data permission boundary
+
+The current Python reader is an interim implementation and must stay disabled
+by default. Granting macOS App Data / Full Disk Access to
+`/Users/derek/miniforge3/bin/python3.12` would authorize a shared interpreter,
+not only this service, and its ad-hoc code identity can change after a Python
+upgrade.
+
+The production target is a dedicated **CEO WeChat Reader** executable with a
+fixed bundle identifier and stable signing identity. Only that helper receives
+App Data permission; it returns normalized, bounded results to the main service
+over a local authenticated IPC interface, so the main Python service never opens
+the WeChat database. Until a stable signing identity exists and the helper is
+installed, keep `CEO_WECHAT_READER_ENABLED=0`. First authorization remains an
+explicit local user action; zero-click deployment requires managed macOS/MDM
+privacy policy.
+
 ## Diagnostic CLI
 
 ```bash
@@ -100,17 +117,16 @@ least 15 minutes.
 
 1. ✅ **`app/setup_wizard.py`** (updated 2026-07-21) — `wechat_connection` step registered
    (Phase 3, gates only on local `preflight`, independent of optional Memory MCP,
-   `service_config`, and `data_corpus`; actions
-   `check`/`connect`/`verify`). `run_setup_action`/`check_setup_step` dispatch to
+   `service_config`, and `data_corpus`; actions `check`/`connect` only).
+   `run_setup_action`/`check_setup_step` dispatch to
    `WechatSetupService` via `service.build_setup_service`. `SetupWizardEvent` gained
    `next_step_status` so a successful action leaves the step `blocked` when the
    reader is blocked.
-2. ✅ **`app/audit_web.py`** (updated 2026-07-21) — Tutorial shows Connect WeChat
-   as soon as preflight is complete. Once one local account is ready, the same
-   step exposes one combined search for friends and groups (the results carry a
-   visible type label) backed by
-   `GET /tutorial/wechat/conversations` and
-   `POST /tutorial/wechat/reply-scope`. Saving immediately runs `verify_wechat`.
+2. ✅ **`app/audit_web.py`** (updated 2026-07-21) — Tutorial shows only Check and
+   Connect WeChat as soon as preflight is complete. Config → WeChat exposes one
+   combined search for friends and groups (the results carry a visible type
+   label) backed by `GET /config/wechat/conversations` and
+   `POST /config/wechat/reply-scope`.
    Direct chats use `every_inbound_text`; groups are fixed to
    `mention_current_account`. The page does not expose DB paths or raw messages.
 3. ✅ **`app/cli.py`** (done 2026-07-18):
@@ -123,6 +139,9 @@ least 15 minutes.
      (`_wechat_service_components`); disabled by default (no effect on the DingTalk
      service). Auto-send stays gated — the loops enqueue tasks and produce
      `ready_to_send` deliveries but do not send.
+   - If macOS denies access to another app's data (`EACCES`/`EPERM`), the WeChat
+     loop records one `wechat_data_permission_required` error and stops until
+     service restart instead of retrying every poll interval.
 
 ## History review
 

@@ -639,9 +639,7 @@ def render_tutorial_page(*, store: AutoReplyStore | None = None) -> str:
     if store is None:
         store = AutoReplyStore(_configured_worker_db_path())
     status = build_wizard_status(store)
-    steps_html = "".join(
-        _setup_wizard_step_html(step, store=store) for step in status.steps
-    )
+    steps_html = "".join(_setup_wizard_step_html(step) for step in status.steps)
     body = (
         "<section class=\"card tutorial-intro\">"
         "<h2>Initialization Wizard</h2>"
@@ -665,11 +663,7 @@ def render_tutorial_page(*, store: AutoReplyStore | None = None) -> str:
     return render_page("Tutorial", body, active_nav="tutorial")
 
 
-def _setup_wizard_step_html(
-    step: SetupStepStatus,
-    *,
-    store: AutoReplyStore | None = None,
-) -> str:
+def _setup_wizard_step_html(step: SetupStepStatus) -> str:
     action_html = "".join(
         "<form method=\"post\" action=\"/tutorial/"
         f"{'check' if action.kind == 'check' else 'run' if action.kind == 'run' else 'confirm'}"
@@ -691,11 +685,6 @@ def _setup_wizard_step_html(
         if evidence_html
         else ""
     )
-    wechat_setup_html = (
-        _wechat_target_picker_html(store)
-        if step.step_id == "wechat_connection" and store is not None
-        else ""
-    )
     return (
         "<li class=\"tutorial-step setup-wizard-step\">"
         "<div class=\"tutorial-step-number\" aria-hidden=\"true\"></div>"
@@ -708,7 +697,6 @@ def _setup_wizard_step_html(
         f"<p>{escape(step.summary or 'Not checked yet.')}</p>"
         f"{evidence_list}"
         f"<div class=\"tutorial-links\">{action_html}</div>"
-        f"{wechat_setup_html}"
         "</div>"
         "</li>"
     )
@@ -838,7 +826,7 @@ def _wechat_target_picker_html(store: AutoReplyStore) -> str:
       limit: "50",
     }});
     try {{
-      const response = await fetch(`/tutorial/wechat/conversations?${{params}}`);
+      const response = await fetch(`/config/wechat/conversations?${{params}}`);
       if (!response.ok) throw new Error(`读取失败 (${{response.status}})`);
       renderItems((await response.json()).items || []);
     }} catch (error) {{
@@ -857,7 +845,7 @@ def _wechat_target_picker_html(store: AutoReplyStore) -> str:
   document.getElementById("wechat-save-targets").addEventListener("click", async () => {{
     updateStatus("正在保存并校验…");
     try {{
-      const response = await fetch("/tutorial/wechat/reply-scope", {{
+      const response = await fetch("/config/wechat/reply-scope", {{
         method: "POST",
         headers: {{"Content-Type": "application/json"}},
         body: JSON.stringify({{
@@ -866,12 +854,7 @@ def _wechat_target_picker_html(store: AutoReplyStore) -> str:
         }}),
       }});
       if (!response.ok) throw new Error(`保存失败 (${{response.status}})`);
-      const verification = await fetch("/tutorial/run/verify_wechat", {{
-        method: "POST",
-        headers: {{"Accept": "application/json"}},
-      }});
-      if (!verification.ok) throw new Error(`校验失败 (${{verification.status}})`);
-      window.location.reload();
+      updateStatus(`已保存 ${{selected.size}} 个对象`);
     }} catch (error) {{
       updateStatus(error.message || "保存微信对象失败");
     }}
@@ -1694,10 +1677,14 @@ def render_config_page(
         content = _render_user_prompt_editor_content(saved=saved)
     elif active_tab == "system":
         content = _render_system_config(db_path=db_path)
+    elif active_tab == "wechat":
+        store_path = db_path or _configured_worker_db_path()
+        content = _render_wechat_config(AutoReplyStore(store_path))
     else:
         active_tab = "info"
         content = _render_config_info()
-    body = f"{_prompt_config_card(active_tab)}{_config_tabs(active_tab)}{content}"
+    prompt_card = "" if active_tab == "wechat" else _prompt_config_card(active_tab)
+    body = f"{prompt_card}{_config_tabs(active_tab)}{content}"
     pending_count = (
         AutoReplyStore(db_path).count_pending_user_feedback_items()
         if db_path is not None
@@ -1769,6 +1756,16 @@ def _render_config_info() -> str:
         "<h2>Producer 路由配置</h2>"
         "<p class=\"muted\">这里展示 producer 如何把钉钉消息变成 reply task。</p>"
         f"<div class=\"logic-list\">{logic_html}</div>"
+        "</section>"
+    )
+
+
+def _render_wechat_config(store: AutoReplyStore) -> str:
+    return (
+        '<section class="card">'
+        "<h2>微信自动回复对象</h2>"
+        '<p class="muted">在这里持续维护自动回复范围；微信连接和能力检查请在 Tutorial 完成。</p>'
+        f"{_wechat_target_picker_html(store)}"
         "</section>"
     )
 
@@ -5029,11 +5026,13 @@ def _config_tabs(active_tab: str) -> str:
         "prompt-tab active" if active_tab == "developer" else "prompt-tab"
     )
     user_class = "prompt-tab active" if active_tab == "user" else "prompt-tab"
+    wechat_class = "prompt-tab active" if active_tab == "wechat" else "prompt-tab"
     return (
         "<nav class=\"prompt-tabs\" aria-label=\"Config sections\">"
         f"<a class=\"{info_class}\" href=\"/config?tab=info\">Info</a>"
         f"<a class=\"{system_class}\" href=\"/config?tab=system\">"
         "System Config</a>"
+        f"<a class=\"{wechat_class}\" href=\"/config?tab=wechat\">WeChat</a>"
         f"<a class=\"{developer_class}\" href=\"/config?tab=developer\">"
         "Developer Prompt</a>"
         f"<a class=\"{user_class}\" href=\"/config?tab=user\">"

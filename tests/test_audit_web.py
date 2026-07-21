@@ -1280,7 +1280,7 @@ def test_render_tutorial_page_shows_wizard_status(tmp_path: Path):
     assert "Landing page" not in html
 
 
-def test_render_tutorial_page_shows_wechat_target_picker_for_ready_account(
+def test_tutorial_wechat_step_only_shows_check_and_connect(
     tmp_path: Path,
 ):
     from app.wechat.models import WechatReplyScope
@@ -1316,13 +1316,52 @@ def test_render_tutorial_page_shows_wechat_target_picker_for_ready_account(
 
     html = render_tutorial_page(store=store)
 
-    assert 'id="wechat-target-picker"' in html
+    assert 'data-action-id="check_wechat_connection"' in html
+    assert 'data-action-id="connect_wechat"' in html
+    assert 'data-action-id="verify_wechat"' not in html
+    assert 'id="wechat-target-picker"' not in html
+
+
+def test_render_config_page_shows_wechat_target_picker_for_ready_account(
+    tmp_path: Path,
+):
+    from app.wechat.models import WechatReplyScope
+
+    db_path = tmp_path / "worker.sqlite3"
+    store = AutoReplyStore(db_path)
+    store.upsert_wechat_read_state(
+        account_id="acct-1",
+        account_dir="/private/account",
+        db_dir="/private/db",
+        app_version="4.0",
+        self_user_id="wxid-self",
+        capability_status="ready",
+    )
+    store.replace_wechat_reply_scopes(
+        "acct-1",
+        [
+            WechatReplyScope(
+                account_id="acct-1",
+                target_type="group",
+                target_id="group-1@chatroom",
+                conversation_id="group-1@chatroom",
+                display_name="产品讨论群",
+                trigger_mode="mention_current_account",
+                binding_status="verified",
+            )
+        ],
+    )
+
+    html = render_config_page(active_tab="wechat", db_path=db_path)
+
+    assert 'href="/config?tab=wechat"' in html
     assert 'id="wechat-target-kind"' not in html
     assert 'id="wechat-target-query"' in html
     assert 'id="wechat-target-results"' in html
     assert 'id="wechat-save-targets"' in html
-    assert "/tutorial/wechat/conversations" in html
-    assert "/tutorial/wechat/reply-scope" in html
+    assert "/config/wechat/conversations" in html
+    assert "/config/wechat/reply-scope" in html
+    assert "/tutorial/run/verify_wechat" not in html
     assert "产品讨论群" in html
     assert "群聊仅在有人明确 @你 时回复" in html
     assert 'kind: "all"' in html

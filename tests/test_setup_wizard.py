@@ -49,7 +49,6 @@ def test_setup_wizard_steps_are_ordered_and_gated():
     assert [a.id for a in get_step_definition("wechat_connection").actions] == [
         "check_wechat_connection",
         "connect_wechat",
-        "verify_wechat",
     ]
     assert get_step_definition("launchd").depends_on == ("dry_run",)
     assert get_step_definition("live_send").depends_on == ("dry_run",)
@@ -72,7 +71,6 @@ def test_wechat_setup_is_available_without_mcp_or_service_config(tmp_path: Path)
     assert [action.id for action in wechat.available_actions] == [
         "check_wechat_connection",
         "connect_wechat",
-        "verify_wechat",
     ]
 
 
@@ -123,7 +121,6 @@ def test_setup_wizard_action_metadata_is_gated():
         "wechat_connection": [
             ("check_wechat_connection", "Check", "wechat_connection", "check", False, False),
             ("connect_wechat", "Connect WeChat", "wechat_connection", "run", False, False),
-            ("verify_wechat", "Save and verify", "wechat_connection", "run", False, False),
         ],
         "data_corpus": [
             ("check_data_corpus", "Check", "data_corpus", "check", False, False),

@@ -151,20 +151,18 @@ rename updates the display label discovered on later scans but does not change
 the saved stable identity. A disappeared or identity-conflicting conversation
 becomes disabled and requires review rather than silently remapping by name.
 
-After saving, **Save and verify** runs a bounded read check and sender
-preflight. The step is `done` only when the selected account remains readable,
-at least one conversation is selected, every selection has a stable identity,
-and the required permissions are verified. This verification does not send a
-message. The later controlled-send rollout remains a separate explicit action.
+Connection is a one-time Tutorial concern; reply-target selection is ongoing
+runtime configuration. Tutorial therefore exposes only **Check** and
+**Connect WeChat**. The Config → WeChat tab owns the searchable selector and
+saves stable reply policies without calling a Tutorial verification action.
 
 The existing setup API pattern remains authoritative, with narrow additions
 for picker data and scope persistence:
 
 - `POST /tutorial/run/connect_wechat` performs connection and capability checks;
-- `GET /tutorial/wechat/conversations` lists discovered friends/groups with
+- `GET /config/wechat/conversations` lists discovered friends/groups with
   query, type, and pagination filters;
-- `POST /tutorial/wechat/reply-scope` validates and saves selected stable IDs;
-- `POST /tutorial/run/verify_wechat` rechecks the saved scope and permissions.
+- `POST /config/wechat/reply-scope` validates and saves selected stable IDs.
 
 All endpoints are local audit-console operations. They return redacted evidence
 and never return a database key or decrypted snapshot path.

@@ -108,7 +108,7 @@ SETUP_WIZARD_STEPS: tuple[SetupStepDefinition, ...] = (
         id="wechat_connection",
         title="Connect WeChat",
         phase="Phase 3",
-        description="Connect the local personal account and select reply targets.",
+        description="Connect the local personal account and check database access.",
         depends_on=["preflight"],
         actions=[
             SetupAction(
@@ -120,12 +120,6 @@ SETUP_WIZARD_STEPS: tuple[SetupStepDefinition, ...] = (
             SetupAction(
                 id="connect_wechat",
                 label="Connect WeChat",
-                step_id="wechat_connection",
-                kind="run",
-            ),
-            SetupAction(
-                id="verify_wechat",
-                label="Save and verify",
                 step_id="wechat_connection",
                 kind="run",
             ),
@@ -618,7 +612,7 @@ def run_setup_action(
         return _setup_service_config(repo_root, env or {})
     if action_id == "setup_mcp":
         return _setup_mcp(repo_root, env or {})
-    if action_id in ("connect_wechat", "verify_wechat"):
+    if action_id == "connect_wechat":
         return _run_wechat_setup_action(action_id)
     if action_id == "run_dry_run":
         return _run_dry_run_action(repo_root, env or {})

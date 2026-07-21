@@ -35,13 +35,13 @@ def client(tmp_path):
 
 
 def test_wechat_picker_separates_duplicate_names_by_stable_id(client):
-    response = client.get("/tutorial/wechat/conversations?kind=direct&query=Alex")
+    response = client.get("/config/wechat/conversations?kind=direct&query=Alex")
     assert response.status_code == 200
     assert [row["target_id"] for row in response.json()["items"]] == ["u-1", "u-2"]
 
 
 def test_wechat_picker_searches_direct_and_group_targets_together(client):
-    response = client.get("/tutorial/wechat/conversations?kind=all&query=Alex")
+    response = client.get("/config/wechat/conversations?kind=all&query=Alex")
 
     assert response.status_code == 200
     assert [
@@ -51,11 +51,11 @@ def test_wechat_picker_searches_direct_and_group_targets_together(client):
 
 
 def test_invalid_kind_is_422(client):
-    assert client.get("/tutorial/wechat/conversations?kind=bogus").status_code == 422
+    assert client.get("/config/wechat/conversations?kind=bogus").status_code == 422
 
 
 def test_scope_api_forces_group_mention_trigger(client):
-    response = client.post("/tutorial/wechat/reply-scope", json={
+    response = client.post("/config/wechat/reply-scope", json={
         "account_id": "acct-1",
         "targets": [{
             "target_type": "group", "target_id": "g-1",
@@ -66,7 +66,7 @@ def test_scope_api_forces_group_mention_trigger(client):
 
 
 def test_scope_api_saves_valid_targets(client):
-    response = client.post("/tutorial/wechat/reply-scope", json={
+    response = client.post("/config/wechat/reply-scope", json={
         "account_id": "acct-1",
         "targets": [{
             "target_type": "group", "target_id": "g-1",
