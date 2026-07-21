@@ -5100,6 +5100,8 @@ def test_run_service_starts_web_producer_and_consumer(monkeypatch, tmp_path):
 
     assert calls == [
         ("meeting-recovery", tmp_path / "worker.sqlite3"),
+        ("start", "ceo-agent-service-audit-web", True),
+        ("audit-web", "127.0.0.1", 8765, False),
         ("start", "ceo-agent-service-producer", True),
         ("producer", 60, 4, True),
         ("start", "ceo-agent-service-consumer", True),
@@ -5108,18 +5110,16 @@ def test_run_service_starts_web_producer_and_consumer(monkeypatch, tmp_path):
         ("meeting-producer", 60, 600, True),
         ("start", "ceo-agent-service-meeting-consumer", True),
         ("meeting-consumer", 10, 4, True),
-        ("start", "ceo-agent-service-audit-web", True),
-        ("audit-web", "127.0.0.1", 8765, False),
         ("start", "ceo-agent-service-task-maintenance", True),
         ("task-maintenance", 31, 3600, True),
         ("wait",),
     ]
     assert failures == [
+        ("audit-web", "stop audit-web"),
         ("producer", "stop producer"),
         ("consumer", "stop consumer"),
         ("meeting-producer", "stop meeting-producer"),
         ("meeting-consumer", "stop meeting-consumer"),
-        ("audit-web", "stop audit-web"),
         ("task-maintenance", "stop task-maintenance"),
     ]
     assert exits == [1, 1, 1, 1, 1, 1]

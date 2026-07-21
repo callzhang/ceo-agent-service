@@ -72,7 +72,6 @@ from app.meeting_alignment import (
     recover_meeting_alignment_jobs,
 )
 from app.meeting_alignment_agent import MeetingAlignmentCodexRunner
-from app.memory_connector_client import MemoryConnectorClient
 from app.oa_approval import OaApprovalSpecHandler
 from app.org_cache import (
     CachedDwsClient,
@@ -676,7 +675,7 @@ def create_worker(settings: WorkerSettings) -> DingTalkAutoReplyWorker:
         dry_run=settings.dry_run,
         style_profile=style_profile,
         style_records=style_records,
-        memory_client=MemoryConnectorClient(),
+        memory_client=_create_memory_connector_client(),
     )
     worker.oa_approval_handler = oa_approval_handler
     okr_source_kind = _okr_source_kind()
@@ -693,6 +692,12 @@ def create_worker(settings: WorkerSettings) -> DingTalkAutoReplyWorker:
     else:
         worker.okr_live_source = UnconfiguredOkrLiveSource(OKR_SOURCE_KIND_ENV)
     return worker
+
+
+def _create_memory_connector_client():
+    from app.memory_connector_client import MemoryConnectorClient
+
+    return MemoryConnectorClient()
 
 
 def _okr_source_kind() -> str:
@@ -2383,6 +2388,10 @@ def run_service(
     dependency_gate = ServiceDependencyGate(settings)
     components = (
         (
+            "audit-web",
+            lambda: run_audit_web_command(settings, host=host, port=port, reload=False),
+        ),
+        (
             "producer",
             lambda: run_producer_loop(
                 create_worker(settings),
@@ -2417,10 +2426,6 @@ def run_service(
                 max_tasks=settings.max_batches,
                 network_ready=dependency_gate.ready,
             ),
-        ),
-        (
-            "audit-web",
-            lambda: run_audit_web_command(settings, host=host, port=port, reload=False),
         ),
         (
             "task-maintenance",
