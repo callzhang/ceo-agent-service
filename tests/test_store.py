@@ -2280,6 +2280,75 @@ def test_universal_plan_execution_get_or_create_keeps_first_snapshot(tmp_path: P
     assert context_hash == universal_context_sha256(context)
 
 
+def test_single_chat_trigger_replacement_rotates_universal_execution_generation(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    assert store.enqueue_reply_task(
+        conversation_id="cid-single",
+        conversation_title="Single",
+        single_chat=True,
+        trigger_message_id="msg-old",
+        trigger_create_time="2026-07-20 10:00:00",
+        trigger_sender="Alex",
+        trigger_text="old message",
+    )
+    task = store.get_reply_task_for_message("cid-single", "msg-old")
+    assert task is not None
+    old_context = UniversalTaskContext(
+        task_id=task.id,
+        conversation_id="cid-single",
+        conversation_title="Single",
+        single_chat=True,
+        trigger_message_id="msg-old",
+        trigger_create_time="2026-07-20 10:00:00",
+        trigger_sender="Alex",
+        trigger_text="old message",
+        context_messages=(),
+        required_dependencies=("dws",),
+        force_new_decision=False,
+        dry_run=False,
+        execution_generation=task.execution_generation,
+    )
+    old_plan = store.create_universal_plan_execution(old_context, _universal_plan())
+
+    assert store.replace_pending_single_chat_reply_task_trigger(
+        conversation_id="cid-single",
+        trigger_message_id="msg-new",
+        trigger_create_time="2026-07-21 10:00:00",
+        trigger_sender="Alex",
+        trigger_text="new message",
+        trigger_message_json='{"openMessageId":"msg-new"}',
+    ) == 1
+    replaced = store.get_reply_task_for_message("cid-single", "msg-new")
+    assert replaced is not None
+    assert replaced.id == task.id
+    assert replaced.execution_generation != task.execution_generation
+
+    new_context = UniversalTaskContext(
+        task_id=replaced.id,
+        conversation_id="cid-single",
+        conversation_title="Single",
+        single_chat=True,
+        trigger_message_id="msg-new",
+        trigger_create_time="2026-07-21 10:00:00",
+        trigger_sender="Alex",
+        trigger_text="new message",
+        context_messages=(),
+        required_dependencies=("dws",),
+        force_new_decision=False,
+        dry_run=False,
+        execution_generation=replaced.execution_generation,
+    )
+    assert store.load_universal_plan_execution(new_context) is None
+    new_plan = store.create_universal_plan_execution(
+        new_context, _universal_plan(reason="New trigger plan")
+    )
+
+    assert new_plan.execution_scope_id != old_plan.execution_scope_id
+    assert new_plan.execution_generation == replaced.execution_generation
+
+
 def test_universal_old_active_plan_context_without_capability_fields_resumes_narrowly(
     tmp_path: Path,
 ):

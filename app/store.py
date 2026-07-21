@@ -4211,6 +4211,7 @@ class AutoReplyStore:
             if target is None:
                 return 0
             task_id = int(target["id"])
+            execution_generation = uuid4().hex
             cursor = db.execute(
                 """
                 update reply_tasks
@@ -4219,6 +4220,7 @@ class AutoReplyStore:
                     trigger_sender=?,
                     trigger_text=?,
                     trigger_message_json=?,
+                    execution_generation=?,
                     available_at=?,
                     error=?,
                     updated_at=current_timestamp
@@ -4239,6 +4241,7 @@ class AutoReplyStore:
                     trigger_sender,
                     trigger_text,
                     trigger_message_json,
+                    execution_generation,
                     available_at,
                     error,
                     task_id,
