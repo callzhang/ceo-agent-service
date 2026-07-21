@@ -4449,6 +4449,38 @@ def test_consume_once_retries_task_failure_before_final_failure(
     ]
 
 
+def test_consume_once_replans_universal_context_identity_drift(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message("@Alex Chen(明哥) 这个怎么处理？")
+    dws = FakeDws(
+        [conversation()],
+        {"cid-1": [trigger]},
+    )
+    worker = make_worker(tmp_path, dws, FakeCodex([]), monkeypatch)
+    worker.produce_once()
+
+    def raise_context_identity_mismatch(*_args, **_kwargs):
+        raise ValueError("context identity mismatch")
+
+    monkeypatch.setattr(
+        worker,
+        "_process_queued_task",
+        raise_context_identity_mismatch,
+    )
+
+    assert worker.consume_once(max_tasks=1) == 0
+
+    task = worker.store.list_reply_tasks(statuses=["pending"])[0]
+    assert task.attempts == 1
+    assert task.error == "context identity mismatch"
+    assert task.force_new_decision is True
+    assert task.execution_generation != "initial"
+    assert "reply_task_universal_plan_identity_replanned" in [
+        error.kind for error in worker.store.list_errors(limit=10)
+    ]
+
+
 def test_consume_once_records_stale_processing_tasks_before_requeue(
     tmp_path: Path, monkeypatch
 ):

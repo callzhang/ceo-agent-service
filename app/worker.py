@@ -4680,6 +4680,29 @@ class DingTalkAutoReplyWorker:
                         error,
                     )
                     continue
+                if (
+                    error
+                    in {
+                        "context identity mismatch",
+                        "execution generation mismatch",
+                    }
+                    and task.attempts < self.max_task_attempts
+                ):
+                    self.store.rotate_reply_task_execution_generation(task.id)
+                    self.store.requeue_reply_task(
+                        task.id,
+                        error,
+                        available_at=self._reply_task_retry_available_at(
+                            task.attempts
+                        ),
+                    )
+                    self.store.record_error(
+                        task.conversation_id,
+                        task.trigger_message_id,
+                        "reply_task_universal_plan_identity_replanned",
+                        error,
+                    )
+                    continue
                 if task.attempts < self.max_task_attempts:
                     self.store.requeue_reply_task(
                         task.id,
