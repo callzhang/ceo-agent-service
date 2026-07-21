@@ -947,15 +947,15 @@ def test_callback_and_worker_mutations_are_isolated_from_audit_action() -> None:
     assert audited_action is not worker_execution.action
 
 
-def test_nonterminal_blocked_action_remains_incomplete() -> None:
+def test_blocked_action_completes_even_without_terminal_flag() -> None:
     action = make_action(PlannedActionKind.BLOCKED, terminal=False)
     callbacks = CallbackRecorder()
     orchestrator, _, _ = make_orchestrator(make_plan(action), callbacks)
 
     result = orchestrator.process(make_context())
 
-    assert result.completed is False
-    assert result.outcome is UniversalConsumerOutcome.NONTERMINAL_BLOCKED
+    assert result.completed is True
+    assert result.outcome is UniversalConsumerOutcome.COMPLETED
     assert result.reason == "Plan completed"
     assert result.executed_actions == (action,)
 

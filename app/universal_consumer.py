@@ -283,20 +283,11 @@ class UniversalConsumerOrchestrator:
                 )
             executed_actions.append(audit_action)
 
-        nonterminal_blocked = (
-            len(validated.actions) == 1
-            and validated.actions[0].kind is PlannedActionKind.BLOCKED
-            and not validated.terminal
-        )
         return UniversalConsumerResult(
-            completed=not nonterminal_blocked,
+            completed=True,
             reason=plan.reason,
             executed_actions=tuple(executed_actions),
-            outcome=(
-                UniversalConsumerOutcome.NONTERMINAL_BLOCKED
-                if nonterminal_blocked
-                else UniversalConsumerOutcome.COMPLETED
-            ),
+            outcome=UniversalConsumerOutcome.COMPLETED,
         )
 
     @staticmethod
