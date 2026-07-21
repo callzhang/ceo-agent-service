@@ -1,4 +1,5 @@
 import argparse
+import errno
 import json
 import os
 import shlex
@@ -2391,6 +2392,14 @@ def _run_wechat_loop(settings: WorkerSettings, role: str) -> None:
                     sender_enabled=_cfg.wechat_sender_enabled(),
                 )
         except Exception as exc:  # keep the loop alive; surface via error log
+            if isinstance(exc, OSError) and exc.errno in {errno.EACCES, errno.EPERM}:
+                store.record_error(
+                    "wechat",
+                    "",
+                    "wechat_data_permission_required",
+                    "WeChat data access was denied; reader paused until service restart.",
+                )
+                return
             store.record_error("wechat", "", f"wechat_{role}_loop_error", str(exc))
         time.sleep(interval)
 
