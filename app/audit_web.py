@@ -6117,27 +6117,26 @@ def _universal_history_observability(item) -> str:
     if item.planner_kind != "universal":
         return ""
     blocker = (
-        f'<span class="attempt-warning">Blocking dependency: '
-        f'{escape(item.blocking_dependency)}</span>'
+        f'<span class="attempt-warning">'
+        f'{escape(_display_universal_blocker(item.blocking_dependency))}</span>'
         if item.blocking_dependency
         else ""
     )
     actions = "".join(
         f'<span class="pill status-action {_action_state_class(action.status)}">'
-        f'{escape(action.kind)} · {escape(_display_action_state(action.status))}</span>'
+        f'{escape(_display_universal_action_kind(action.kind))} · '
+        f'{escape(_display_action_state(action.status))}</span>'
         + (
-            f'<span class="attempt-warning">{escape(action.error)}</span>'
+            f'<span class="attempt-warning">'
+            f'{escape(_display_universal_error(action.error))}</span>'
             if action.error
             else ""
         )
         for action in item.planned_actions
     )
-    return (
-        '<div class="attempt-foot">'
-        '<span class="pill status-action">Universal planner</span>'
-        f'<span class="pill status-action">{escape(item.capability)}</span>'
-        f'{blocker}{actions}</div>'
-    )
+    if not blocker and not actions:
+        return ""
+    return f'<div class="attempt-foot">{blocker}{actions}</div>'
 
 
 def _universal_execution_card(
@@ -6145,35 +6144,73 @@ def _universal_execution_card(
 ) -> str:
     if observation is None:
         return ""
-    blocking_dependency = observation.blocking_dependency or "None"
-    rows = "".join(
-        f'<div class="muted">{escape(label)}</div><div>{escape(value)}</div>'
-        for label, value in (
-            ("Planner kind", "universal"),
-            ("Capability", observation.capability),
-            ("Dependencies", ", ".join(observation.dependencies) or "None"),
-            ("Blocking dependency", blocking_dependency),
+    rows = ""
+    if observation.blocking_dependency:
+        rows = (
+            f'<div class="muted">阻塞原因</div>'
+            f'<div>{escape(_display_universal_blocker(observation.blocking_dependency))}</div>'
         )
-    )
     action_rows = "".join(
         '<div class="attempt-detail-cell">'
         f'<div class="attempt-detail-label">Action {action.index + 1}</div>'
-        f'<div class="attempt-detail-value">{escape(action.kind)} · '
+        f'<div class="attempt-detail-value">'
+        f'{escape(_display_universal_action_kind(action.kind))} · '
         f'{escape(_display_action_state(action.status))}</div>'
         + (
-            f'<div class="attempt-warning">{escape(action.error)}</div>'
+            f'<div class="attempt-warning">{escape(_display_universal_error(action.error))}</div>'
             if action.error
             else ""
         )
         + '</div>'
         for action in observation.actions
     )
+    if not rows and not action_rows:
+        return ""
+    rows_html = f'<div class="grid">{rows}</div>' if rows else ""
     return (
-        '<section class="card compact-card"><h2>Universal planner</h2>'
-        f'<div class="grid">{rows}</div>'
+        '<section class="card compact-card"><h2>自动处理明细</h2>'
+        f'{rows_html}'
         f'<div class="attempt-detail-grid">{action_rows}</div>'
         '</section>'
     )
+
+
+def _display_universal_action_kind(value: str) -> str:
+    labels = {
+        "send_reply": "回复",
+        "ask_clarifying_question": "追问",
+        "mail_reply": "邮件回复",
+        "calendar_response": "日程处理",
+        "oa_approval": "审批处理",
+        "dws_markdown_document_reply": "文档回复",
+        "dws_message_reaction": "表情反馈",
+        "queue_okr_review": "OKR 评审",
+        "memory_write": "记录到记忆",
+        "no_reply": "无需回复",
+        "handoff_to_human": "转人工",
+        "blocked": "等待处理",
+        "stop_with_error": "处理失败",
+    }
+    return labels.get(value, "自动处理")
+
+
+def _display_universal_blocker(value: str) -> str:
+    labels = {
+        "memory": "记忆服务需要授权",
+        "dws": "钉钉需要授权",
+        "mail": "邮件需要授权",
+        "calendar": "日历需要授权",
+    }
+    return labels.get(value, f"依赖不可用：{value}")
+
+
+def _display_universal_error(value: str) -> str:
+    labels = {
+        "memory_authorization_required": "记忆服务需要授权",
+        "memory_connector_not_configured": "记忆服务未配置",
+        "dws_authorization_required": "钉钉需要授权",
+    }
+    return labels.get(value, value)
 
 
 def _agent_detail_body(

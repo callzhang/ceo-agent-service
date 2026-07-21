@@ -3648,13 +3648,14 @@ def test_history_and_attempt_detail_show_redacted_universal_execution(tmp_path: 
 
     assert status == 200
     for html in (history_html, detail_html):
-        assert "Universal planner" in html
-        assert "document_review" in html
-        assert "memory" in html
+        assert "Universal planner" not in html
+        assert "document_review" not in html
+        assert "记忆" in html
         assert "AUDIT_SECRET_SENTINEL" not in html
-    assert "send_reply" in detail_html
+    assert "自动处理明细" in detail_html
+    assert "回复" in detail_html
     assert "Succeeded" in detail_html
-    assert "memory_write" in detail_html
+    assert "记录到记忆" in detail_html
     assert "Unknown" in detail_html
     assert "timeout after write" in detail_html
     assert "plan_json" not in detail_html
