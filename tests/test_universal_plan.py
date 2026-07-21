@@ -56,7 +56,7 @@ def test_reply_and_memory_plan_validates_and_converts_enums() -> None:
     assert plan.planner_version == "2026-07-20"
 
 
-def test_memory_write_forces_memory_execution_dependency() -> None:
+def test_memory_write_does_not_force_blocking_execution_dependency() -> None:
     plan = make_plan(
         PlannedAction(
             kind="memory_write",
@@ -66,7 +66,7 @@ def test_memory_write_forces_memory_execution_dependency() -> None:
     )
 
     assert plan.dependencies == []
-    assert plan.execution_dependencies() == ("memory",)
+    assert plan.execution_dependencies() == ()
 
 
 def test_planning_tools_are_not_execution_dependencies() -> None:

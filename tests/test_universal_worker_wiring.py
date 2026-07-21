@@ -22,10 +22,7 @@ from app.universal_plan import (
     UniversalPlan,
 )
 from app.universal_validator import DependencyStatus
-from app.worker import (
-    DingTalkAutoReplyWorker,
-    UniversalDependencyAuthorizationError,
-)
+from app.worker import DingTalkAutoReplyWorker
 
 
 class RecordingPlanner:
@@ -90,9 +87,15 @@ class FakeLegacyCodex:
 class FailingMemoryClient:
     def __init__(self) -> None:
         self.ready_calls = 0
+        self.write_calls = 0
 
     def ensure_ready_sync(self):
         self.ready_calls += 1
+        raise MemoryConnectorAuthorizationRequired("login required")
+
+    def memory_write_sync(self, **kwargs):
+        del kwargs
+        self.write_calls += 1
         raise MemoryConnectorAuthorizationRequired("login required")
 
 
@@ -311,7 +314,7 @@ def test_memory_unavailable_does_not_block_memory_unrelated_plan(tmp_path, monke
     assert memory.ready_calls == 0
 
 
-def test_memory_dependency_is_deferred_without_authorization_side_effects(
+def test_memory_write_authorization_failure_does_not_block_reply_task(
     tmp_path, monkeypatch
 ):
     monkeypatch.setenv("CEO_UNIVERSAL_CONSUMER", "1")
@@ -322,23 +325,21 @@ def test_memory_dependency_is_deferred_without_authorization_side_effects(
     )
     task = enqueue(worker, trigger)
 
-    assert worker.consume_once(max_tasks=1) == 0
+    assert worker.consume_once(max_tasks=1) == 1
 
     stored = stored_task(worker, task.id)
-    assert stored.status == "pending"
-    assert stored.error == "memory_authorization_required"
+    assert stored.status == "done"
+    assert stored.error == ""
     assert len(planner.calls) == 1
-    assert memory.ready_calls == 1
+    assert memory.ready_calls == 0
+    assert memory.write_calls == 1
     assert worker.dws.auth_login_starts == 0
-
-    with pytest.raises(
-        UniversalDependencyAuthorizationError,
-        match="memory_authorization_required",
-    ):
-        worker._process_queued_task(conversation(), stored)
-
-    assert len(planner.calls) == 1
-    assert memory.ready_calls == 2
+    attempts = worker.store.list_reply_attempts(limit=10)
+    memory_attempt = next(
+        attempt for attempt in attempts if attempt.action == "memory_write"
+    )
+    assert memory_attempt.send_status == "blocked"
+    assert memory_attempt.send_error == "memory_authorization_required"
 
 
 def test_universal_reply_plan_missing_target_uses_current_trigger(

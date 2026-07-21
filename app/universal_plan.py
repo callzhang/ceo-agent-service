@@ -285,10 +285,7 @@ class UniversalPlan(UniversalPlanBase):
     _reason_non_empty = field_validator("reason")(_non_empty)
 
     def execution_dependencies(self) -> tuple[str, ...]:
-        memory_required = DependencyName.MEMORY in self.dependencies or any(
-            action.kind is PlannedActionKind.MEMORY_WRITE for action in self.actions
-        )
-        return (DependencyName.MEMORY.value,) if memory_required else ()
+        return ()
 
 
 def with_context_action_targets(

@@ -2770,7 +2770,7 @@ class DingTalkAutoReplyWorker:
                 status="failed",
                 error=error,
             )
-            raise MemoryConnectorAuthorizationRequired(error)
+            return True
         try:
             result = self.memory_client.memory_write_sync(**payload)
         except MemoryConnectorAuthorizationRequired:
@@ -2787,7 +2787,7 @@ class DingTalkAutoReplyWorker:
                 status="failed",
                 error=error,
             )
-            raise
+            return True
         except Exception as exc:
             error = f"memory_write_outcome_unknown:{exc.__class__.__name__}"
             self.store.update_reply_attempt(

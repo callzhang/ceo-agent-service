@@ -673,7 +673,6 @@ def test_post_plan_dependencies_are_resolved_in_order_without_refetching() -> No
     assert result.outcome is UniversalConsumerOutcome.COMPLETED
     assert callbacks.dependency_requests == [
         ("dws", "mail"),
-        ("memory",),
     ]
     assert len(planner.calls) == 1
     assert len(executor.calls) == 1
@@ -695,7 +694,7 @@ def test_post_plan_ignores_missing_planner_declared_mail_dependency() -> None:
     assert len(executor.calls) == 1
 
 
-def test_memory_dependency_is_derived_persisted_and_reused_without_replanning() -> None:
+def test_memory_write_dependency_is_non_blocking() -> None:
     callbacks = CallbackRecorder(
         dependency_status={
             "dws": DependencyStatus(ready=True),
@@ -709,21 +708,16 @@ def test_memory_dependency_is_derived_persisted_and_reused_without_replanning() 
     plan = make_plan(make_action(PlannedActionKind.MEMORY_WRITE))
     orchestrator, planner, executor = make_orchestrator(plan, callbacks)
 
-    first = orchestrator.process(make_context())
-    second = orchestrator.process(make_context())
+    result = orchestrator.process(make_context())
 
-    assert first.outcome is UniversalConsumerOutcome.WAITING_FOR_DEPENDENCY
-    assert first.authorization_required is True
-    assert second == first
+    assert result.outcome is UniversalConsumerOutcome.COMPLETED
+    assert result.authorization_required is False
     assert len(planner.calls) == 1
     assert callbacks.calls["create_plan"] == 1
-    assert callbacks.dependency_requests == [
-        ("dws",),
-        ("memory",),
-        ("dws",),
-        ("memory",),
+    assert callbacks.dependency_requests == [("dws",)]
+    assert [call.action.kind for call in executor.calls] == [
+        PlannedActionKind.MEMORY_WRITE
     ]
-    assert executor.calls == []
 
 
 def test_empty_dependency_requests_do_not_call_factory() -> None:
