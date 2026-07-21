@@ -98,8 +98,10 @@ class UniversalValidator:
                 terminal=False,
             )
 
-        if len(plan.actions) != 1 and any(
-            action.kind in _TERMINAL_ACTION_KINDS for action in plan.actions
+        if (
+            len(plan.actions) != 1
+            and any(action.kind in _TERMINAL_ACTION_KINDS for action in plan.actions)
+            and not self._is_no_reply_with_reactions(plan.actions)
         ):
             return self._blocked_result(
                 context,
@@ -197,6 +199,20 @@ class UniversalValidator:
             PlannedActionKind.HANDOFF_TO_HUMAN,
             PlannedActionKind.STOP_WITH_ERROR,
         }
+
+    @staticmethod
+    def _is_no_reply_with_reactions(actions: list[PlannedAction]) -> bool:
+        return (
+            sum(action.kind is PlannedActionKind.NO_REPLY for action in actions) == 1
+            and all(
+                action.kind
+                in {
+                    PlannedActionKind.NO_REPLY,
+                    PlannedActionKind.DWS_MESSAGE_REACTION,
+                }
+                for action in actions
+            )
+        )
 
     @staticmethod
     def _blocked_result(

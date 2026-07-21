@@ -496,6 +496,33 @@ def test_terminal_action_cannot_be_combined_with_send() -> None:
     )
 
 
+def test_no_reply_can_be_combined_with_reaction() -> None:
+    result = UniversalValidator().validate(
+        make_plan(
+            PlannedAction(
+                kind=PlannedActionKind.DWS_MESSAGE_REACTION,
+                reason="React lightly",
+                target={
+                    "conversation_id": CONVERSATION_ID,
+                    "message_id": TRIGGER_MESSAGE_ID,
+                },
+                payload={"reaction_type": "emoji", "emoji": "👍"},
+            ),
+            PlannedAction(
+                kind=PlannedActionKind.NO_REPLY,
+                reason="No text reply is needed",
+            ),
+        ),
+        make_context(),
+    )
+
+    assert result.allowed is True
+    assert [action.kind for action in result.actions] == [
+        PlannedActionKind.DWS_MESSAGE_REACTION,
+        PlannedActionKind.NO_REPLY,
+    ]
+
+
 def test_memory_write_is_not_terminal() -> None:
     action = PlannedAction(
         kind=PlannedActionKind.MEMORY_WRITE,
