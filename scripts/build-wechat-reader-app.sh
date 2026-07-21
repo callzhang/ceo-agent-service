@@ -69,7 +69,10 @@ info_plist="${app_path}/Contents/Info.plist"
 /usr/bin/xattr -cr "${app_path}"
 
 if [[ -n "${signing_identity}" ]]; then
-  codesign --force --deep --options runtime --sign "${signing_identity}" "${app_path}"
+  # A local self-signed identity has no Apple Team ID. Hardened Runtime's
+  # library validation would therefore reject the bundled Python dylibs even
+  # though they are signed by the same certificate.
+  codesign --force --deep --sign "${signing_identity}" "${app_path}"
 else
   codesign --force --deep --sign - "${app_path}"
 fi

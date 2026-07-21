@@ -240,11 +240,22 @@ WeChat 数据目录 + passphrase + 明文镜像
 python3 -m venv .venv-reader-build
 .venv-reader-build/bin/pip install -e '.[reader-build]'
 
-# 生产构建：必须使用稳定的代码签名证书
-CEO_WECHAT_READER_SIGNING_IDENTITY='Developer ID Application: ...' \
+# 首次创建本机稳定身份（会要求一次 Keychain 身份验证）
+./scripts/create-wechat-reader-signing-identity.sh
+
+# 生产构建：使用同一个稳定代码签名身份
+CEO_WECHAT_READER_SIGNING_IDENTITY='CEO WeChat Reader Local Signing' \
   ./scripts/build-wechat-reader-app.sh
 ./scripts/install-wechat-reader-app.sh
 ```
+
+个人电脑没有 Apple Developer 证书时，可使用上面的本机 identity。创建脚本生成一张
+10 年期、`CA:FALSE`、仅有
+`digitalSignature` 和 `codeSigning` 用途的本机证书；私钥以不可导出方式存入登录
+Keychain，并只预授权 `/usr/bin/codesign`。该证书不是 TLS 根证书，也不能用于网站、
+邮件或客户端认证。由于本机自签名证书没有 Apple Team ID，构建不会启用 Hardened
+Runtime，否则 macOS 的 library validation 会拒绝应用内同证书签名的 Python 动态库；
+这里的安全边界由固定签名身份、App Data 权限和仅限当前用户的本地 Socket 共同提供。
 
 构建产物默认放在 `~/Library/Caches/CEO Agent/WeChatReaderBuild/dist/`，安装到
 `~/Applications/CEO WeChat Reader.app`，由

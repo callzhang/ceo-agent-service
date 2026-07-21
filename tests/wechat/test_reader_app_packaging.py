@@ -20,13 +20,36 @@ def test_reader_launch_agent_has_dedicated_identity_and_executable_placeholder()
 def test_build_and_install_scripts_are_valid_and_fail_closed_on_adhoc_signing():
     build = ROOT / "scripts" / "build-wechat-reader-app.sh"
     install = ROOT / "scripts" / "install-wechat-reader-app.sh"
+    identity = ROOT / "scripts" / "create-wechat-reader-signing-identity.sh"
 
     subprocess.run(["bash", "-n", build], check=True)
     subprocess.run(["bash", "-n", install], check=True)
+    subprocess.run(["bash", "-n", identity], check=True)
     build_text = build.read_text()
     install_text = install.read_text()
     assert "com.stardust.ceo-agent.wechat-reader" in build_text
     assert "--adhoc" in build_text
     assert "SIGNING_IDENTITY" in build_text
+    assert "--options runtime" not in build_text
     assert "--allow-adhoc" in install_text
     assert "Signature=adhoc" in install_text
+
+
+def test_local_signing_identity_is_code_signing_only_and_non_exportable():
+    script = ROOT / "scripts" / "create-wechat-reader-signing-identity.sh"
+    text = script.read_text()
+
+    assert "basicConstraints=critical,CA:FALSE" in text
+    assert "keyUsage=critical,digitalSignature" in text
+    assert "extendedKeyUsage=critical,codeSigning" in text
+    assert "Code signing : Yes" in text
+    assert "add-trusted-cert -r trustRoot -p codeSign" in text
+    assert "add-trusted-cert -r trustAsRoot" not in text
+    assert "security import" in text
+    assert " -x " in text
+    assert "-T /usr/bin/codesign" in text
+    assert " -A" not in text
+    assert " -t agg" not in text
+    assert " -f pkcs12" not in text
+    assert "default-keychain -d user" in text
+    assert "| sed -e 's/^[[:space:]" in text
