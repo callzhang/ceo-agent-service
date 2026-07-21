@@ -5635,7 +5635,7 @@ def create_audit_app(
                 query=query,
                 query_embedding=_history_query_embedding(query),
                 search_object_types=request.query_params.getlist("object_type"),
-                include_chart=bool(query or request.query_params),
+                include_chart=True,
                 include_pending_tasks=bool(query or request.query_params),
                 include_feedback_count=False,
             )

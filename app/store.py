@@ -510,6 +510,8 @@ class AutoReplyStore:
                     on reply_attempts(trigger_message_id);
                 create index if not exists idx_reply_attempts_status
                     on reply_attempts(send_status, created_at);
+                create index if not exists idx_reply_attempts_created
+                    on reply_attempts(created_at, id);
                 create table if not exists memory_write_events (
                     id integer primary key autoincrement,
                     attempt_id integer not null,
@@ -701,6 +703,8 @@ class AutoReplyStore:
                 );
                 create index if not exists idx_meeting_alignment_runs_job
                     on meeting_alignment_runs(job_id, id);
+                create index if not exists idx_meeting_alignment_runs_created
+                    on meeting_alignment_runs(created_at, id);
                 create table if not exists codex_session_search_index (
                     id integer primary key autoincrement,
                     session_id text not null unique,
@@ -915,6 +919,8 @@ class AutoReplyStore:
                 );
                 create index if not exists idx_work_updates_project
                     on work_updates(project_id, id);
+                create index if not exists idx_work_updates_created
+                    on work_updates(created_at, id);
                 create table if not exists work_summary_inputs (
                     id integer primary key autoincrement,
                     source_type text not null,
@@ -969,6 +975,8 @@ class AutoReplyStore:
                     on follow_up_drafts(owner_user_id, sent_at, id);
                 create index if not exists idx_follow_up_drafts_conversation_sent
                     on follow_up_drafts(target_conversation_id, sent_at, id);
+                create index if not exists idx_follow_up_drafts_history_updated
+                    on follow_up_drafts(updated_at, id);
                 create table if not exists daily_scan_state (
                     scanner_name text primary key,
                     last_success_at text not null default '',
@@ -1195,6 +1203,30 @@ class AutoReplyStore:
                 """
                 create index if not exists idx_follow_up_drafts_conversation_sent
                     on follow_up_drafts(target_conversation_id, sent_at, id)
+                """
+            )
+            db.execute(
+                """
+                create index if not exists idx_follow_up_drafts_history_updated
+                    on follow_up_drafts(updated_at, id)
+                """
+            )
+            db.execute(
+                """
+                create index if not exists idx_reply_attempts_created
+                    on reply_attempts(created_at, id)
+                """
+            )
+            db.execute(
+                """
+                create index if not exists idx_meeting_alignment_runs_created
+                    on meeting_alignment_runs(created_at, id)
+                """
+            )
+            db.execute(
+                """
+                create index if not exists idx_work_updates_created
+                    on work_updates(created_at, id)
                 """
             )
             org_user_profile_columns = {
@@ -5921,9 +5953,7 @@ class AutoReplyStore:
             reply_channels=reply_channels,
             created_since=created_since,
         )
-        query = (
-            f"{query} order by datetime(created_at) desc, source_id desc, kind desc"
-        )
+        query = f"{query} order by created_at desc, source_id desc, kind desc"
         if limit is not None:
             query = f"{query} limit ? offset ?"
             args.extend([limit, max(0, offset)])
@@ -6156,7 +6186,7 @@ class AutoReplyStore:
             filters.append(f"(kind != 'reply' or channel in ({placeholders}))")
             args.extend(reply_channels)
         if created_since.strip():
-            filters.append("datetime(created_at) >= datetime(?)")
+            filters.append("created_at >= ?")
             args.append(created_since)
         if query_text.strip():
             needle = f"%{query_text.strip().lower()}%"
@@ -6196,7 +6226,7 @@ class AutoReplyStore:
                 """
                 select *
                 from reply_attempts
-                where datetime(created_at) >= datetime(?)
+                where created_at >= ?
                 order by created_at asc, id asc
                 """,
                 (since_utc,),

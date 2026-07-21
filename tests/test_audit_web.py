@@ -1442,18 +1442,14 @@ def test_history_route_returns_busy_page_when_database_is_locked(
     assert "refresh" in response.text
 
 
-def test_history_route_uses_fast_default_page(monkeypatch, tmp_path: Path):
-    def fail_chart(*args, **kwargs):
-        del args, kwargs
-        raise AssertionError("default history route should not render chart")
-
-    monkeypatch.setattr(audit_web_module, "_render_history_chart", fail_chart)
+def test_history_route_renders_chart_on_default_page(tmp_path: Path):
     client = TestClient(create_audit_app(tmp_path / "worker.sqlite3"))
 
     response = client.get("/")
 
     assert response.status_code == 200
     assert "CEO Agent Audit" in response.text
+    assert "最近 24 小时事件" in response.text
 
 
 def test_tutorial_check_route_records_real_step_status(tmp_path: Path):
