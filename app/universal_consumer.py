@@ -144,6 +144,7 @@ class UniversalConsumerOrchestrator:
                 )
         else:
             plan = plan_execution.plan
+        plan = self._with_context_action_targets(plan, context)
 
         if candidate_plan:
             has_terminal_attempt = self.existing_terminal_attempt(context)
@@ -325,6 +326,37 @@ class UniversalConsumerOrchestrator:
                     authorization_required=status.authorization_required,
                 )
         return None
+
+    @staticmethod
+    def _with_context_action_targets(
+        plan: UniversalPlan,
+        context: UniversalTaskContext,
+    ) -> UniversalPlan:
+        context_target = {
+            "conversation_id": context.conversation_id,
+            "trigger_message_id": context.trigger_message_id,
+        }
+        normalized_actions: list[PlannedAction] = []
+        changed = False
+        for action in plan.actions:
+            if action.kind not in {
+                PlannedActionKind.SEND_REPLY,
+                PlannedActionKind.ASK_CLARIFYING_QUESTION,
+                PlannedActionKind.QUEUE_OKR_REVIEW,
+            }:
+                normalized_actions.append(action)
+                continue
+
+            target = dict(action.target)
+            for field_name, field_value in context_target.items():
+                if not target.get(field_name):
+                    target[field_name] = field_value
+                    changed = True
+            normalized_actions.append(action.model_copy(update={"target": target}))
+
+        if not changed:
+            return plan
+        return plan.model_copy(update={"actions": normalized_actions})
 
     @staticmethod
     def _copy_plan_execution(

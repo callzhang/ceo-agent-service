@@ -45,6 +45,7 @@ class FakeDws:
         self.ready = ready
         self.auth_status_calls = 0
         self.auth_login_starts = 0
+        self.sent_replies: list[tuple[str, str, str]] = []
 
     def auth_status(self):
         self.auth_status_calls += 1
@@ -67,6 +68,12 @@ class FakeDws:
     def start_auth_login(self):
         self.auth_login_starts += 1
         raise AssertionError("worker must not start dws auth login")
+
+    def send_reply_to_trigger(self, conversation, trigger, text, **kwargs):
+        self.sent_replies.append(
+            (conversation.open_conversation_id, trigger.open_message_id, text)
+        )
+        return {"success": True, "messageId": "sent-1"}
 
 
 class FakeLegacyCodex:
@@ -175,6 +182,23 @@ def reply_then_memory_plan(*, dependencies=("dws", "memory")) -> UniversalPlan:
             ),
         ],
         audit=UniversalAudit(summary="需要两步完成", confidence=0.9),
+    )
+
+
+def reply_plan_without_target() -> UniversalPlan:
+    return UniversalPlan(
+        task_kind="reply",
+        reason="回复当前触发消息",
+        dependencies=["dws"],
+        actions=[
+            PlannedAction(
+                kind=PlannedActionKind.SEND_REPLY,
+                reason="回复",
+                sensitivity_kind="general",
+                payload={"text": "已按当前消息处理"},
+            )
+        ],
+        audit=UniversalAudit(summary="上下文足够", confidence=0.9),
     )
 
 
@@ -315,6 +339,40 @@ def test_memory_dependency_is_deferred_without_authorization_side_effects(
 
     assert len(planner.calls) == 1
     assert memory.ready_calls == 2
+
+
+def test_universal_reply_plan_missing_target_uses_current_trigger(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("CEO_UNIVERSAL_CONSUMER", "1")
+    planner = RecordingPlanner(reply_plan_without_target())
+    worker, trigger = make_worker(tmp_path, monkeypatch, planner=planner)
+    task = enqueue(worker, trigger)
+
+    assert worker.consume_once(max_tasks=1) == 1
+
+    stored = stored_task(worker, task.id)
+    assert stored.status == "done"
+    assert len(worker.dws.sent_replies) == 1
+    sent_conversation_id, sent_message_id, sent_text = worker.dws.sent_replies[0]
+    assert (sent_conversation_id, sent_message_id) == ("cid-1", "msg-1")
+    assert "已按当前消息处理" in sent_text
+    plan_execution = worker.store.load_universal_plan_execution(
+        build_universal_context(
+            conversation=conversation(),
+            trigger=trigger,
+            context_messages=[trigger],
+            task_id=task.id,
+            force_new_decision=False,
+            dry_run=False,
+            execution_generation=task.execution_generation,
+        )
+    )
+    assert plan_execution is not None
+    assert plan_execution.plan.actions[0].target == {
+        "conversation_id": "cid-1",
+        "trigger_message_id": "msg-1",
+    }
 
 
 def test_worker_builds_trusted_context_and_force_generation(tmp_path, monkeypatch):
