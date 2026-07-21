@@ -96,12 +96,30 @@ DEFAULT_CODEX_MODEL = "gpt-5.5"
 DEFAULT_CODEX_MODEL_REASONING_EFFORT = "medium"
 
 
+def _memory_connector_runtime_instructions() -> str:
+    issue = memory_connector_config_issue()
+    if not issue:
+        return (
+            "Memory connector runtime\n\n"
+            "- memory_connector MCP is available in this Codex invocation."
+        )
+    return (
+        "Memory connector runtime\n\n"
+        f"- memory_connector MCP is unavailable in this Codex invocation: {issue}.\n"
+        "- Do not call memory_connector MCP tools. Use current prompt material, "
+        "DWS, Exa, Lark CLI, Xiaoqing MCP, or local files when available; if "
+        "critical information is still missing, return the appropriate blocked "
+        "or stop_with_error result."
+    )
+
+
 def codex_developer_instructions() -> str:
     return (
         f"{CODEX_DEVELOPER_INSTRUCTIONS_PREFIX}\n\n"
         f"{DWS_MATERIAL_READING_INSTRUCTIONS}\n\n"
         f"{XIAOQING_INTERVIEW_READING_INSTRUCTIONS}\n\n"
-        f"{ceo_agent_thread_prompt()}"
+        f"{ceo_agent_thread_prompt()}\n\n"
+        f"{_memory_connector_runtime_instructions()}"
     )
 
 
@@ -264,7 +282,7 @@ def memory_connector_config_issue() -> str:
     configured_token = config_env.get(MEMORY_CONNECTOR_API_KEY_ENV)
     if configured_token and _jwt_token_is_expired(configured_token):
         return "memory connector token is expired"
-    return ""
+    return "memory connector transferable auth is missing"
 
 
 def memory_connector_config_options() -> list[str]:
@@ -275,7 +293,7 @@ def memory_connector_config_options() -> list[str]:
         return []
     config_env = _memory_connector_env_from_config(_codex_home() / "config.toml")
     configured_token = config_env.get(MEMORY_CONNECTOR_API_KEY_ENV)
-    if not token and configured_token and _jwt_token_is_expired(configured_token):
+    if not token:
         return []
     env_http_headers: dict[str, str] = {}
     if env.get(MEMORY_CONNECTOR_AUTH_TYPE_ENV):

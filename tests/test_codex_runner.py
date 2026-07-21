@@ -459,7 +459,7 @@ def test_codex_runner_env_loads_memory_connector_from_codex_config(
     )
 
 
-def test_codex_command_supports_oauth_memory_connector_without_bearer_token(
+def test_codex_command_rejects_oauth_memory_connector_without_transferable_auth(
     tmp_path: Path, monkeypatch
 ):
     codex_home = tmp_path / ".codex"
@@ -483,16 +483,14 @@ def test_codex_command_supports_oauth_memory_connector_without_bearer_token(
         session_id=None,
         ignore_user_config=True,
     )
+    developer_arg = _developer_instructions_arg(command)
 
-    assert (
-        'mcp_servers.memory_connector.url="https://memory.example/mcp/"'
-        in command
+    assert not any("mcp_servers.memory_connector" in item for item in command)
+    assert memory_connector_config_issue() == (
+        "memory connector transferable auth is missing"
     )
-    assert not any(
-        "mcp_servers.memory_connector.bearer_token_env_var" in item
-        for item in command
-    )
-    assert memory_connector_config_issue() == ""
+    assert "memory_connector MCP is unavailable" in developer_arg
+    assert "Do not call memory_connector MCP tools" in developer_arg
 
 
 def test_codex_command_does_not_auto_fallback_to_configured_profile(
@@ -623,6 +621,7 @@ def test_codex_runner_skips_expired_memory_connector_token_from_codex_config(
     assert "CONNECTOR_API_KEY" not in env
     assert "MEMORY_CONNECTOR_URL" in env
     assert not any("mcp_servers.memory_connector" in item for item in command)
+    assert memory_connector_config_issue() == "memory connector token is expired"
 
 
 def test_codex_runner_does_not_forward_memory_user_id(
