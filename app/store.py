@@ -2371,20 +2371,43 @@ class AutoReplyStore:
         if max_age_seconds <= 0:
             return 0
         with self._connect() as db:
-            cursor = db.execute(
+            db.execute("begin immediate")
+            rows = db.execute(
                 """
+                select *
+                from reply_tasks
+                where status='processing'
+                  and locked_at is not null
+                  and datetime(locked_at) <= datetime('now', ?)
+                order by locked_at, id
+                """,
+                (f"-{int(max_age_seconds)} seconds",),
+            ).fetchall()
+            task_ids = [row["id"] for row in rows]
+            if not task_ids:
+                return 0
+            conversation_ids = [row["conversation_id"] for row in rows]
+            conversation_placeholders = ",".join("?" for _ in conversation_ids)
+            db.execute(
+                f"""
+                delete from codex_session_locks
+                where conversation_id in ({conversation_placeholders})
+                """,
+                conversation_ids,
+            )
+            task_placeholders = ",".join("?" for _ in task_ids)
+            db.execute(
+                f"""
                 update reply_tasks
                 set status='pending',
                     locked_at=null,
                     error='',
                     updated_at=current_timestamp
-                where status='processing'
-                  and locked_at is not null
-                  and datetime(locked_at) <= datetime('now', ?)
+                where id in ({task_placeholders})
                 """,
-                (f"-{int(max_age_seconds)} seconds",),
+                task_ids,
             )
-            return cursor.rowcount
+            return len(task_ids)
 
     def reset_recoverable_reply_tasks(self) -> list[ReplyTask]:
         with self._connect() as db:
@@ -2453,6 +2476,15 @@ class AutoReplyStore:
             task_ids = [row["id"] for row in rows]
             if not task_ids:
                 return []
+            conversation_ids = [row["conversation_id"] for row in rows]
+            conversation_placeholders = ",".join("?" for _ in conversation_ids)
+            db.execute(
+                f"""
+                delete from codex_session_locks
+                where conversation_id in ({conversation_placeholders})
+                """,
+                conversation_ids,
+            )
             placeholders = ",".join("?" for _ in task_ids)
             db.execute(
                 f"""

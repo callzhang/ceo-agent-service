@@ -720,6 +720,7 @@ def test_reset_stale_processing_reply_tasks_requeues_orphans(tmp_path: Path):
         trigger_text="@Alex Chen 看一下",
     )
     claimed = store.claim_reply_tasks(limit=1)
+    assert store.acquire_codex_session_lock("cid-1", "universal:msg-1")
     with sqlite3.connect(db_path) as db:
         db.execute(
             "update reply_tasks set locked_at=datetime('now', '-31 minutes') where id=?",
@@ -730,6 +731,7 @@ def test_reset_stale_processing_reply_tasks_requeues_orphans(tmp_path: Path):
     reclaimed = store.claim_reply_tasks(limit=1)
 
     assert reset_count == 1
+    assert store.acquire_codex_session_lock("cid-1", "reply:msg-1")
     assert reclaimed[0].id == claimed[0].id
     assert reclaimed[0].attempts == 2
 
@@ -794,11 +796,13 @@ def test_reset_processing_reply_tasks_requeues_all_processing_on_startup(
         trigger_text="第一条",
     )
     claimed = store.claim_reply_tasks(limit=1)
+    assert store.acquire_codex_session_lock("cid-1", "universal:msg-1")
 
     recovered = store.reset_processing_reply_tasks()
     reclaimed = store.claim_reply_tasks(limit=1)
 
     assert [task.id for task in recovered] == [claimed[0].id]
+    assert store.acquire_codex_session_lock("cid-1", "reply:msg-1")
     assert reclaimed[0].id == claimed[0].id
     assert reclaimed[0].status == "processing"
     assert reclaimed[0].attempts == 2
