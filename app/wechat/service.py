@@ -42,13 +42,27 @@ def wechat_loop_names(*, reader_enabled: bool, capability_ready: bool) -> list[s
     return []
 
 
-def build_reader(mirror_dir, passphrase_file, *, self_username: str = ""):
-    from app.wechat.backend import WcdbReaderBackend
-    from app.wechat.reader import WechatReader
-    from app.wechat.key_provider import PassphraseFileKeyProvider
+def build_reader(
+    mirror_dir=None,
+    passphrase_file=None,
+    *,
+    self_username: str = "",
+    socket_path=None,
+):
+    """Build the IPC facade; legacy arguments are ignored for compatibility.
 
-    backend = WcdbReaderBackend(mirror_dir, self_username=self_username)
-    return WechatReader(backend, PassphraseFileKeyProvider(passphrase_file))
+    Keeping the old positional parameters temporarily avoids breaking CLI and
+    loop callers while ensuring this process never imports the WCDB backend or
+    opens either path.
+    """
+    del mirror_dir, passphrase_file, self_username
+    from app import config
+    from app.wechat.reader_ipc import WechatReaderClient
+
+    return WechatReaderClient(
+        socket_path or config.wechat_reader_socket(),
+        timeout_seconds=config.wechat_reader_timeout_seconds(),
+    )
 
 
 def build_setup_service(store):
@@ -65,7 +79,12 @@ def build_setup_service(store):
         except Exception:
             return "unknown"
 
-    return WechatSetupService(store, reader, _preflight)
+    return WechatSetupService(
+        store,
+        reader,
+        _preflight,
+        accounts_provider=reader.discover_accounts,
+    )
 
 
 def run_produce_once(store, reader, account, *, self_user_id: str) -> int:

@@ -16,24 +16,12 @@ from pathlib import Path
 
 from app import config
 from app.store import AutoReplyStore
-from app.wechat import discovery, service
-from app.wechat.models import WechatAccount
+from app.wechat import service
 from app.wechat.memory import (
     CodexMemoryExtractionRunner, CodexMemoryRecallMatcher, WechatMemoryImporter,
 )
 
 DEFAULT_DB = "data/auto-reply.sqlite3"
-
-
-def _accounts():
-    return discovery.discover_account_directories(discovery.default_xwechat_root())
-
-
-def _install_version() -> str:
-    try:
-        return discovery.discover_wechat_install().version
-    except Exception:
-        return ""
 
 
 def _reader(*, self_username: str = ""):
@@ -46,22 +34,17 @@ def _reader(*, self_username: str = ""):
 def cmd_status(args) -> int:
     store = AutoReplyStore(Path(args.db))
     reader = _reader()
-    version = _install_version()
-    accounts = _accounts()
+    accounts = reader.discover_accounts()
     if not accounts:
         print("no WeChat account directory found")
         return 1
-    for a in accounts:
-        acct = WechatAccount(
-            account_id=a.account_id, display_name=a.account_id, self_user_id="",
-            account_dir=str(a.account_dir), db_dir=str(a.db_dir), app_version=version,
-        )
+    for acct in accounts:
         cap = reader.probe(acct)
         self_user_id = config.wechat_self_user_id()
         if not self_user_id and cap.status == "ready":
             self_user_id = reader.detect_self_username(acct)
         suffix = f" self={self_user_id}" if self_user_id else ""
-        print(f"{a.account_id}: {cap.status} {cap.reason}".rstrip() + suffix)
+        print(f"{acct.account_id}: {cap.status} {cap.reason}".rstrip() + suffix)
         store.upsert_wechat_read_state(
             account_id=acct.account_id, account_dir=acct.account_dir, db_dir=acct.db_dir,
             app_version=acct.app_version, self_user_id=self_user_id,

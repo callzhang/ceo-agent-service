@@ -315,6 +315,20 @@ def wechat_mirror_dir() -> Path:
     return env_path("CEO_WECHAT_MIRROR_DIR", "~/.cache/wx_read/plain")
 
 
+def wechat_reader_socket() -> Path:
+    return env_path(
+        "CEO_WECHAT_READER_SOCKET",
+        "~/Library/Application Support/CEO Agent/WeChatReader/reader.sock",
+    )
+
+
+def wechat_reader_timeout_seconds() -> float:
+    try:
+        return max(0.1, float(os.getenv("CEO_WECHAT_READER_TIMEOUT_SECONDS", "5")))
+    except ValueError:
+        return 5.0
+
+
 def wechat_snapshot_dir() -> Path:
     return env_path("CEO_WECHAT_SNAPSHOT_DIR", "data/wechat-snapshots")
 

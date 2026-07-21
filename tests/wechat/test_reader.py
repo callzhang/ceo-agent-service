@@ -55,3 +55,21 @@ def test_reader_detect_self_username_delegates_to_backend():
         account_dir="/d", db_dir="/d/db_storage", app_version="4.1.10",
     )
     assert reader.detect_self_username(account) == "derek840121"
+
+
+def test_reader_uses_account_self_id_for_direction_even_if_helper_started_without_it(
+    fake_account,
+):
+    account = fake_account.model_copy(update={"self_user_id": "self-1"})
+    backend = FakeCipherBackend(
+        tables=["Msg_filehelper"],
+        rows=[{
+            "message_id": "m1", "conversation_id": "filehelper",
+            "sender_id": "self-1", "sender_name": "Derek",
+            "direction": "inbound", "sent_at": "2026-07-21T08:00:00+08:00",
+            "kind": "text", "text": "note", "conversation_type": "direct",
+        }],
+    )
+    reader = WechatReader(backend, StaticTestKeyProvider(b"secret"))
+
+    assert reader.read_messages(account, conversation_id="filehelper")[0].direction == "outbound"

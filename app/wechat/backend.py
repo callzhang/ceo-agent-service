@@ -31,10 +31,14 @@ class WcdbReaderBackend:
     def _plaintext(self, source: Path, passphrase: bytes) -> Path:
         source = Path(source)
         dest = self.mirror_dir / source.name
-        if dest.exists() and dest.stat().st_mtime >= source.stat().st_mtime:
+        source_mtime_ns = source.stat().st_mtime_ns
+        if dest.exists() and dest.stat().st_mtime_ns == source_mtime_ns:
             return dest
         self.cipher.decrypt(source, passphrase, dest)
         os.chmod(dest, 0o600)
+        # Make freshness an exact source-version marker. Comparing with ``>=``
+        # misses updates when the mirror was created later than a source mtime.
+        os.utime(dest, ns=(dest.stat().st_atime_ns, source_mtime_ns))
         return dest
 
     def _message_shards(self, db_dir: str | Path) -> list[Path]:

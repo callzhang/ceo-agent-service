@@ -17,6 +17,8 @@ coverage/
 prompts/
 profiles/
 .venv/
+.venv-reader-build/
+.build-wechat-reader/
 __pycache__/
 .pytest_cache/
 .mypy_cache/

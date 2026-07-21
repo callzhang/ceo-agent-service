@@ -82,14 +82,18 @@ class WechatReader:
         return self.key_provider.key_for(account)
 
     def _normalize(self, row: dict, account: WechatAccount) -> WechatMessage:
+        sender_id = row.get("sender_id", "")
+        direction = row.get("direction", "inbound")
+        if account.self_user_id:
+            direction = "outbound" if sender_id == account.self_user_id else "inbound"
         return WechatMessage(
             account_id=account.account_id,
             conversation_id=row["conversation_id"],
             message_id=row["message_id"],
-            sender_id=row.get("sender_id", ""),
+            sender_id=sender_id,
             sender_display_name=row.get("sender_name", ""),
             conversation_type=row.get("conversation_type", "direct"),
-            direction=row.get("direction", "inbound"),
+            direction=direction,
             sent_at=row.get("sent_at", ""),
             kind=row.get("kind", "text"),
             text=row.get("text", ""),

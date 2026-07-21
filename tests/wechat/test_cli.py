@@ -4,7 +4,7 @@ import pytest
 
 from app.store import AutoReplyStore
 from app.wechat import cli
-from app.wechat.models import WechatMessage
+from app.wechat.models import WechatAccount, WechatCapability, WechatMessage
 
 
 class RecordingReader:
@@ -37,6 +37,27 @@ def _args(db):
         db=str(db), target_id="filehelper", type="direct", limit=100,
         include_text=False,
     )
+
+
+def test_status_discovers_accounts_through_reader_process(tmp_path, monkeypatch):
+    account = WechatAccount(
+        account_id="acct-1", display_name="Derek", self_user_id="wxid_self",
+        account_dir="/account", db_dir="/account/db_storage", app_version="4.1.10.80",
+    )
+
+    class Reader:
+        def discover_accounts(self):
+            return [account]
+
+        def probe(self, selected):
+            return WechatCapability(status="ready", account_id=selected.account_id)
+
+        def detect_self_username(self, selected):
+            return selected.self_user_id
+
+    monkeypatch.setattr(cli, "_reader", lambda **kwargs: Reader())
+
+    assert cli.cmd_status(SimpleNamespace(db=str(tmp_path / "worker.sqlite3"))) == 0
 
 
 def test_read_recent_uses_persisted_ready_account_self_id(tmp_path, monkeypatch):

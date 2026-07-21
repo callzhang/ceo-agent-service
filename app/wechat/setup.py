@@ -11,7 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Callable
 
-from app.wechat import discovery, service
+from app.wechat import service
 from app.wechat.models import WechatAccount
 
 
@@ -24,28 +24,15 @@ class WechatSetupResult:
     evidence: dict = field(default_factory=dict)
 
 
-def _default_accounts() -> list[WechatAccount]:
-    version = ""
-    try:
-        version = discovery.discover_wechat_install().version
-    except Exception:
-        version = ""
-    out = []
-    for a in discovery.discover_account_directories(discovery.default_xwechat_root()):
-        out.append(WechatAccount(
-            account_id=a.account_id, display_name=a.account_id, self_user_id="",
-            account_dir=str(a.account_dir), db_dir=str(a.db_dir), app_version=version,
-        ))
-    return out
-
-
 class WechatSetupService:
     def __init__(self, store, reader, accessibility_preflight: Callable[[], str],
                  accounts_provider: Callable[[], list[WechatAccount]] | None = None):
         self.store = store
         self.reader = reader
         self.accessibility_preflight = accessibility_preflight
-        self.accounts_provider = accounts_provider or _default_accounts
+        if accounts_provider is None:
+            raise ValueError("accounts_provider must come from the dedicated reader")
+        self.accounts_provider = accounts_provider
 
     def discover_accounts(self) -> list[WechatAccount]:
         return self.accounts_provider()
@@ -88,6 +75,17 @@ class WechatSetupService:
         )
 
     def check(self) -> WechatSetupResult:
+        health = getattr(self.reader, "health", None)
+        try:
+            reader_ready = health is not None and health().get("status") == "ready"
+        except Exception:
+            reader_ready = False
+        if not reader_ready:
+            return WechatSetupResult(
+                action_id="check_wechat_connection",
+                status="needs_action",
+                summary="CEO WeChat Reader app is not running.",
+            )
         states = self.store.list_wechat_read_states()
         ready = [row for row in states if row["capability_status"] == "ready"]
         done = len(ready) == 1

@@ -21,6 +21,9 @@ dev = [
   "httpx>=0.28",
   "pytest>=8.3"
 ]
+reader-build = [
+  "pyinstaller>=6.14,<7"
+]
 
 [project.scripts]
 ceo-agent = "app.cli:main"

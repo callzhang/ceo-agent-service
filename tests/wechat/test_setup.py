@@ -16,6 +16,9 @@ class FakeReader:
     def list_targets(self, account, *, kind, query, limit, offset):
         return [t for t in self.targets if t["target_type"] == kind][offset:offset + limit]
 
+    def health(self):
+        return {"status": "ready"}
+
 
 def _account(aid="acct-1"):
     return WechatAccount(account_id=aid, display_name=aid, self_user_id="self-1",
@@ -63,3 +66,15 @@ def test_verify_requires_scope_and_accessibility(store):
                          display_name="A", trigger_mode="every_inbound_text"),
     ])
     assert svc.verify().next_step_status == "done"
+
+
+def test_check_requires_running_dedicated_reader(store):
+    class OfflineReader(FakeReader):
+        def health(self):
+            raise RuntimeError("offline")
+
+    svc = WechatSetupService(
+        store, OfflineReader(), lambda: "ready", accounts_provider=lambda: [_account()],
+    )
+    assert svc.check().status == "needs_action"
+    assert "Reader app" in svc.check().summary
