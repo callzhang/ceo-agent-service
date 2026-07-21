@@ -42,6 +42,7 @@ class MaterialReferenceContext:
     source_message_id: str
     source_sender: str
     source_time: str
+    read_command: str = ""
 
 
 def work_profile_instruction() -> str:
@@ -346,7 +347,7 @@ def linked_document_lines(index: int, document: LinkedDocumentContext) -> list[s
 
 
 def material_reference_lines(index: int, material: MaterialReferenceContext) -> list[str]:
-    return [
+    lines = [
         f"- 材料{index}:",
         f"  类型: {material.kind}",
         f"  引用: {_shorten_url(material.reference)}",
@@ -354,6 +355,9 @@ def material_reference_lines(index: int, material: MaterialReferenceContext) -> 
         f"  发送人: {material.source_sender}",
         f"  时间: {material.source_time}",
     ]
+    if material.read_command:
+        lines.append(f"  读取命令: {material.read_command}")
+    return lines
 
 
 def sanitize_dingtalk_prompt_text(text: str) -> str:

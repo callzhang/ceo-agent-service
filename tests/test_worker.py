@@ -8518,6 +8518,39 @@ def test_referenced_file_message_is_passed_to_codex_without_worker_read(
     assert "建议正文：先明确客户边界" not in prompt
 
 
+def test_referenced_file_message_includes_drive_download_command(
+    tmp_path: Path, monkeypatch
+):
+    file_message = message(
+        "[文件] HSW 平台业务流程、规则与自动化测试规格.md "
+        "fileId: Exel2BLV5z6a2P64hPj2OwkzJgk9rpMq url: url "
+        "注意：如需下载使用dws drive download命令下载",
+        message_id="file-msg-1",
+    )
+    trigger = message(
+        "@Alex Chen(明哥) 这个md是HSW要补充的用户流程材料，新的平台设计要能覆盖其中的内容",
+        message_id="msg-2",
+        quoted_content="[文件] HSW 平台业务流程、规则与自动化测试规格.md",
+    )
+    trigger.quoted_message_id = "file-msg-1"
+    dws = FakeDws([conversation()], {"cid-1": [file_message, trigger]})
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="我会先读材料再合并规则")
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch, dry_run=True)
+
+    worker.run_once()
+
+    assert dws.search_document_calls == []
+    assert dws.download_doc_calls == []
+    prompt = codex.calls[0][0]
+    assert "引用: HSW 平台业务流程、规则与自动化测试规格.md" in prompt
+    assert (
+        "读取命令: dws drive download --node Exel2BLV5z6a2P64hPj2OwkzJgk9rpMq "
+        "--output <local-path> --format json"
+    ) in prompt
+
+
 def test_referenced_file_context_is_passed_to_codex_without_worker_read(
     tmp_path: Path, monkeypatch
 ):

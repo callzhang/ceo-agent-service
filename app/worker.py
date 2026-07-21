@@ -367,6 +367,7 @@ def _extract_text_emotion_background_id(payload: object) -> str:
 MINUTES_SUMMARY_MAX_CHARS = 5000
 MINUTES_TRANSCRIPTION_PARAGRAPH_LIMIT = 20
 FILE_MESSAGE_PATTERN = re.compile(r"^\s*\[文件]\s*(?P<name>.+?)\s*$")
+DINGTALK_FILE_ID_PATTERN = re.compile(r"(?:^|\s)fileId:\s*(?P<file_id>\S+)")
 IMAGE_MESSAGE_MEDIA_ID_PATTERN = re.compile(r"\[图片消息]\(mediaId=(?P<media_id>[^)]+)\)")
 MARKDOWN_IMAGE_URL_PATTERN = re.compile(r"!\[[^\]]*]\((?P<url>https?://[^)]+)\)")
 DINGTALK_TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
@@ -8789,7 +8790,13 @@ class DingTalkAutoReplyWorker:
         references: list[MaterialReferenceContext] = []
         seen: set[tuple[str, str]] = set()
 
-        def add(kind: str, reference: str, message: DingTalkMessage) -> None:
+        def add(
+            kind: str,
+            reference: str,
+            message: DingTalkMessage,
+            *,
+            read_command: str = "",
+        ) -> None:
             if not reference:
                 return
             key = (kind, reference)
@@ -8803,6 +8810,7 @@ class DingTalkAutoReplyWorker:
                     source_message_id=message.open_message_id,
                     source_sender=message.sender_name,
                     source_time=message.create_time,
+                    read_command=read_command,
                 )
             )
 
@@ -8844,7 +8852,12 @@ class DingTalkAutoReplyWorker:
             for file_name in file_names:
                 source = file_source_by_name.get(file_name) or fallback_source
                 if source is not None:
-                    add("dingtalk_file", file_name, source)
+                    add(
+                        "dingtalk_file",
+                        file_name,
+                        source,
+                        read_command=self._referenced_file_read_command(source),
+                    )
         return references
 
     @classmethod
@@ -8858,10 +8871,9 @@ class DingTalkAutoReplyWorker:
         def add_from_text(text: str | None, source: DingTalkMessage) -> None:
             if not text:
                 return
-            match = FILE_MESSAGE_PATTERN.match(text.strip())
-            if not match:
+            file_name = cls._file_name_from_message_text(text)
+            if not file_name:
                 return
-            file_name = match.group("name").strip()
             if file_name and file_name not in sources:
                 sources[file_name] = source
 
@@ -9367,10 +9379,9 @@ class DingTalkAutoReplyWorker:
         def add_from_text(text: str | None) -> None:
             if not text:
                 return
-            match = FILE_MESSAGE_PATTERN.match(text.strip())
-            if not match:
+            file_name = cls._file_name_from_message_text(text)
+            if not file_name:
                 return
-            file_name = match.group("name").strip()
             if file_name and file_name not in seen_names:
                 seen_names.add(file_name)
                 names.append(file_name)
@@ -9405,6 +9416,32 @@ class DingTalkAutoReplyWorker:
             if window_start <= message_time <= trigger_time:
                 add_from_text(message.content)
         return names
+
+    @staticmethod
+    def _file_name_from_message_text(text: str) -> str:
+        stripped = text.strip()
+        match = FILE_MESSAGE_PATTERN.match(stripped)
+        if not match:
+            return ""
+        name = match.group("name").strip()
+        file_id_match = DINGTALK_FILE_ID_PATTERN.search(name)
+        if file_id_match:
+            name = name[: file_id_match.start()].strip()
+        return name
+
+    @staticmethod
+    def _file_id_from_message_text(text: str) -> str:
+        match = DINGTALK_FILE_ID_PATTERN.search(text)
+        return match.group("file_id").strip() if match else ""
+
+    @classmethod
+    def _referenced_file_read_command(cls, message: DingTalkMessage) -> str:
+        file_id = cls._file_id_from_message_text(message.content)
+        if not file_id:
+            file_id = cls._file_id_from_message_text(message.quoted_content or "")
+        if not file_id:
+            return ""
+        return f"dws drive download --node {file_id} --output <local-path> --format json"
 
     def _read_referenced_file(self, file_name: str) -> LinkedDocumentContext | None:
         matches = self._matching_document_search_results(
