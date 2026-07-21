@@ -72,6 +72,7 @@ def scan_local_workspace_files(
     include_globs: tuple[str, ...] = ("*.md", "*.txt"),
     exclude_globs: tuple[str, ...] = (),
     enqueue_existing_on_first_scan: bool = False,
+    max_new_items: int | None = None,
 ) -> int:
     workspace = workspace.expanduser().resolve()
     if not workspace.exists() or not workspace.is_dir():
@@ -90,7 +91,9 @@ def scan_local_workspace_files(
         cursor = {}
     previous_path_refs = dict(cursor.get("path_refs") or {})
     first_scan = not previous_path_refs
-    path_refs: dict[str, str] = {}
+    path_refs: dict[str, str] = (
+        dict(previous_path_refs) if max_new_items is not None else {}
+    )
     count = 0
 
     for path in sorted(workspace.rglob("*")):
@@ -123,6 +126,9 @@ def scan_local_workspace_files(
         if previous_path_refs.get(resolved_text) == source_ref:
             continue
         if first_scan and not enqueue_existing_on_first_scan:
+            continue
+        if max_new_items is not None and count >= max_new_items:
+            path_refs.pop(resolved_text, None)
             continue
         item = WorkItem.model_validate(
             {
@@ -171,6 +177,7 @@ def scan_ai_minutes(
     dws,
     *,
     enqueue_existing_on_first_scan: bool = False,
+    max_new_items: int | None = None,
 ) -> int:
     list_minutes = getattr(dws, "list_minutes", None)
     if list_minutes is None:
@@ -217,10 +224,12 @@ def scan_ai_minutes(
         )
         if not minutes_id:
             continue
-        seen_ids.add(minutes_id)
         if minutes_id in previous_seen_ids:
             continue
         if first_scan and not enqueue_existing_on_first_scan:
+            seen_ids.add(minutes_id)
+            continue
+        if max_new_items is not None and count >= max_new_items:
             continue
         title = str(minutes.get("title") or f"AI minutes {minutes_id}")
         item = WorkItem.model_validate(
@@ -251,6 +260,7 @@ def scan_ai_minutes(
             source_ref=item.source.ref,
             payload_json=item.model_dump_json(),
         )
+        seen_ids.add(minutes_id)
         count += 1
 
     store.set_daily_scan_state(

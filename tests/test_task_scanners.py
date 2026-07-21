@@ -360,6 +360,35 @@ def test_scan_ai_minutes_baselines_existing_items_on_first_scan(tmp_path):
     assert claimed[0].source_ref == "minutes-2"
 
 
+def test_scan_ai_minutes_limit_preserves_unqueued_new_items(tmp_path):
+    class FakeDws:
+        def __init__(self):
+            self.items = [
+                {"taskUuid": "minutes-1", "title": "历史会议"},
+            ]
+
+        def list_minutes(self):
+            return self.items
+
+    dws = FakeDws()
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    assert scan_ai_minutes(store, dws) == 0
+
+    dws.items = [
+        {"taskUuid": "minutes-1", "title": "历史会议"},
+        {"taskUuid": "minutes-2", "title": "新增会议 2"},
+        {"taskUuid": "minutes-3", "title": "新增会议 3"},
+    ]
+
+    assert scan_ai_minutes(store, dws, max_new_items=1) == 1
+    first_claimed = store.claim_work_summary_inputs(limit=10)
+    assert [row.source_ref for row in first_claimed] == ["minutes-2"]
+
+    assert scan_ai_minutes(store, dws, max_new_items=1) == 1
+    second_claimed = store.claim_work_summary_inputs(limit=10)
+    assert [row.source_ref for row in second_claimed] == ["minutes-3"]
+
+
 def test_scan_ai_minutes_records_unavailable_adapter(tmp_path):
     store = AutoReplyStore(tmp_path / "task.sqlite3")
 

@@ -216,7 +216,7 @@ def test_setup_memory_connector_command_requires_memory_url(tmp_path):
 def test_process_follow_ups_command_processes_due_drafts(tmp_path, monkeypatch, capsys):
     calls = []
 
-    def fake_process(store, dws, *, now, auto_send, feedback_base_url=""):
+    def fake_process(store, dws, *, now, auto_send, feedback_base_url="", limit=50):
         calls.append(
             (
                 store.path,
@@ -224,6 +224,7 @@ def test_process_follow_ups_command_processes_due_drafts(tmp_path, monkeypatch, 
                 bool(now),
                 auto_send,
                 feedback_base_url,
+                limit,
             )
         )
         return 2
@@ -231,7 +232,10 @@ def test_process_follow_ups_command_processes_due_drafts(tmp_path, monkeypatch, 
     monkeypatch.setattr(
         cli,
         "scan_task_sources_command",
-        lambda settings: calls.append(("scan", settings.db_path)) or 3,
+        lambda settings, max_new_items=None: calls.append(
+            ("scan", settings.db_path, max_new_items)
+        )
+        or 3,
     )
     monkeypatch.setattr(
         cli,
@@ -246,9 +250,9 @@ def test_process_follow_ups_command_processes_due_drafts(tmp_path, monkeypatch, 
 
     assert sent == 2
     assert calls == [
-        ("scan", tmp_path / "worker.sqlite3"),
+        ("scan", tmp_path / "worker.sqlite3", None),
         ("work", tmp_path / "worker.sqlite3"),
-        (tmp_path / "worker.sqlite3", "DwsClient", True, True, ""),
+        (tmp_path / "worker.sqlite3", "DwsClient", True, True, "", 50),
     ]
     assert capsys.readouterr().out == "process-follow-ups sent=2\n"
 
@@ -2196,12 +2200,12 @@ def test_scan_task_sources_command_scans_local_and_minutes(
 
     calls = []
 
-    def fake_local_scan(store, *, workspace):
-        calls.append(("local", store.path, workspace))
+    def fake_local_scan(store, *, workspace, max_new_items=None):
+        calls.append(("local", store.path, workspace, max_new_items))
         return 2
 
-    def fake_minutes_scan(store, dws):
-        calls.append(("minutes", store.path, type(dws).__name__))
+    def fake_minutes_scan(store, dws, *, max_new_items=None):
+        calls.append(("minutes", store.path, type(dws).__name__, max_new_items))
         return 3
 
     class FakeDwsClient:
@@ -2219,8 +2223,8 @@ def test_scan_task_sources_command_scans_local_and_minutes(
 
     assert total == 5
     assert calls == [
-        ("local", db_path, tmp_path),
-        ("minutes", db_path, "FakeDwsClient"),
+        ("local", db_path, tmp_path, None),
+        ("minutes", db_path, "FakeDwsClient", None),
     ]
     assert (
         capsys.readouterr().out
@@ -4825,12 +4829,12 @@ def test_task_maintenance_loop_skips_when_network_not_ready(monkeypatch, tmp_pat
     monkeypatch.setattr(
         cli,
         "scan_task_sources_command",
-        lambda received: calls.append("scan-task-sources"),
+        lambda received, max_new_items=None: calls.append("scan-task-sources"),
     )
     monkeypatch.setattr(
         cli,
         "process_follow_ups_command",
-        lambda received, refresh_evidence=False: calls.append("follow-ups"),
+        lambda received, refresh_evidence=False, limit=50: calls.append("follow-ups"),
     )
 
     def sleep(seconds):
@@ -4891,7 +4895,7 @@ def test_task_maintenance_loop_processes_work_and_daily_steps(monkeypatch, tmp_p
     class StopLoop(Exception):
         pass
 
-    settings = WorkerSettings(db_path=tmp_path / "worker.sqlite3")
+    settings = WorkerSettings(db_path=tmp_path / "worker.sqlite3", max_batches=4)
     monkeypatch.setattr(
         cli,
         "process_work_items_command",
@@ -4900,7 +4904,10 @@ def test_task_maintenance_loop_processes_work_and_daily_steps(monkeypatch, tmp_p
     monkeypatch.setattr(
         cli,
         "scan_task_sources_command",
-        lambda received: calls.append(("scan", received.db_path)) or 3,
+        lambda received, max_new_items=None: calls.append(
+            ("scan", received.db_path, max_new_items)
+        )
+        or 3,
     )
     monkeypatch.setattr(
         cli,
@@ -4910,8 +4917,8 @@ def test_task_maintenance_loop_processes_work_and_daily_steps(monkeypatch, tmp_p
     monkeypatch.setattr(
         cli,
         "process_follow_ups_command",
-        lambda received, refresh_evidence=True: calls.append(
-            ("follow", received.db_path, refresh_evidence)
+        lambda received, refresh_evidence=True, limit=50: calls.append(
+            ("follow", received.db_path, refresh_evidence, limit)
         )
         or 1,
     )
@@ -4933,10 +4940,10 @@ def test_task_maintenance_loop_processes_work_and_daily_steps(monkeypatch, tmp_p
     assert calls == [
         ("work", tmp_path / "worker.sqlite3"),
         ("okr", tmp_path / "worker.sqlite3"),
-        ("scan", tmp_path / "worker.sqlite3"),
+        ("scan", tmp_path / "worker.sqlite3", 4),
         ("work", tmp_path / "worker.sqlite3"),
         ("okr", tmp_path / "worker.sqlite3"),
-        ("follow", tmp_path / "worker.sqlite3", False),
+        ("follow", tmp_path / "worker.sqlite3", False, 4),
         ("sleep", 31),
     ]
 

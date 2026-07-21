@@ -1165,7 +1165,11 @@ def _trigger_message_for_okr_request(
     return trigger
 
 
-def scan_task_sources_command(settings: WorkerSettings) -> int:
+def scan_task_sources_command(
+    settings: WorkerSettings,
+    *,
+    max_new_items: int | None = None,
+) -> int:
     from app.task_scanners import scan_ai_minutes, scan_local_workspace_files
 
     store = AutoReplyStore(settings.db_path)
@@ -1174,8 +1178,21 @@ def scan_task_sources_command(settings: WorkerSettings) -> int:
         ding_robot_name=settings.ding_robot_name,
         ding_receiver_user_id=settings.ding_receiver_user_id,
     )
-    local_count = scan_local_workspace_files(store, workspace=settings.workspace)
-    minutes_count = scan_ai_minutes(store, dws)
+    local_count = scan_local_workspace_files(
+        store,
+        workspace=settings.workspace,
+        max_new_items=max_new_items,
+    )
+    remaining_minutes_items = (
+        None
+        if max_new_items is None
+        else max(0, max_new_items - local_count)
+    )
+    minutes_count = scan_ai_minutes(
+        store,
+        dws,
+        max_new_items=remaining_minutes_items,
+    )
     total = local_count + minutes_count
     print(
         "scan-task-sources "
@@ -1189,11 +1206,12 @@ def process_follow_ups_command(
     settings: WorkerSettings,
     *,
     refresh_evidence: bool = True,
+    limit: int = 50,
 ) -> int:
     from app.follow_up import process_due_follow_ups
 
     if refresh_evidence:
-        scan_task_sources_command(settings)
+        scan_task_sources_command(settings, max_new_items=settings.max_batches)
         process_work_items_command(settings)
 
     dws = DwsClient(
@@ -1207,6 +1225,7 @@ def process_follow_ups_command(
         now=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
         auto_send=not settings.dry_run,
         feedback_base_url=feedback_spike_vercel_base_url(),
+        limit=limit,
     )
     print(f"process-follow-ups sent={sent}", flush=True)
     return sent
@@ -2292,10 +2311,17 @@ def run_task_maintenance_loop(
         process_okr_reviews_command(settings)
         now = monotonic()
         if now >= next_daily_run:
-            scan_task_sources_command(settings)
+            scan_task_sources_command(
+                settings,
+                max_new_items=settings.max_batches,
+            )
             process_work_items_command(settings)
             process_okr_reviews_command(settings)
-            process_follow_ups_command(settings, refresh_evidence=False)
+            process_follow_ups_command(
+                settings,
+                refresh_evidence=False,
+                limit=50 if settings.max_batches is None else settings.max_batches,
+            )
             next_daily_run = now + daily_interval_seconds
         sleep(work_item_interval_seconds)
 
