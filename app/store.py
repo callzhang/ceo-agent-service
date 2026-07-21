@@ -2386,6 +2386,59 @@ class AutoReplyStore:
             )
             return cursor.rowcount
 
+    def reset_recoverable_reply_tasks(self) -> list[ReplyTask]:
+        with self._connect() as db:
+            db.execute("begin immediate")
+            rows = db.execute(
+                """
+                select *
+                from reply_tasks
+                where status='failed'
+                  and error like 'codex session locked:%'
+                  and not exists (
+                      select 1
+                      from codex_session_locks
+                      where codex_session_locks.conversation_id =
+                            reply_tasks.conversation_id
+                        and datetime(codex_session_locks.locked_at) >
+                            datetime('now', ?)
+                  )
+                order by updated_at, id
+                """,
+                (f"-{CODEX_SESSION_LOCK_STALE_SECONDS} seconds",),
+            ).fetchall()
+            task_ids = [row["id"] for row in rows]
+            if not task_ids:
+                return []
+            conversation_ids = [row["conversation_id"] for row in rows]
+            conversation_placeholders = ",".join("?" for _ in conversation_ids)
+            db.execute(
+                f"""
+                delete from codex_session_locks
+                where conversation_id in ({conversation_placeholders})
+                  and datetime(locked_at) <= datetime('now', ?)
+                """,
+                [
+                    *conversation_ids,
+                    f"-{CODEX_SESSION_LOCK_STALE_SECONDS} seconds",
+                ],
+            )
+            task_placeholders = ",".join("?" for _ in task_ids)
+            db.execute(
+                f"""
+                update reply_tasks
+                set status='pending',
+                    attempts=0,
+                    locked_at=null,
+                    available_at='',
+                    error='',
+                    updated_at=current_timestamp
+                where id in ({task_placeholders})
+                """,
+                task_ids,
+            )
+            return [self._reply_task_from_row(row) for row in rows]
+
     def reset_processing_reply_tasks(self) -> list[ReplyTask]:
         with self._connect() as db:
             db.execute("begin immediate")

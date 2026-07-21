@@ -734,6 +734,52 @@ def test_reset_stale_processing_reply_tasks_requeues_orphans(tmp_path: Path):
     assert reclaimed[0].attempts == 2
 
 
+def test_reset_recoverable_reply_tasks_requeues_stale_lock_failure(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="cid-1",
+        conversation_title="Friday",
+        single_chat=False,
+        trigger_message_id="msg-1",
+        trigger_create_time="2026-05-13 18:00:00",
+        trigger_sender="Mina",
+        trigger_text="@Alex Chen 看一下",
+    )
+    task = store.claim_reply_tasks(limit=1)[0]
+    store.fail_reply_task(task.id, "codex session locked: cid-1")
+
+    recovered = store.reset_recoverable_reply_tasks()
+    reclaimed = store.claim_reply_tasks(limit=1)
+
+    assert [task.id for task in recovered] == [task.id]
+    assert reclaimed[0].id == task.id
+    assert reclaimed[0].attempts == 1
+    assert reclaimed[0].error == ""
+
+
+def test_reset_recoverable_reply_tasks_keeps_fresh_lock_failure(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="cid-1",
+        conversation_title="Friday",
+        single_chat=False,
+        trigger_message_id="msg-1",
+        trigger_create_time="2026-05-13 18:00:00",
+        trigger_sender="Mina",
+        trigger_text="@Alex Chen 看一下",
+    )
+    task = store.claim_reply_tasks(limit=1)[0]
+    store.fail_reply_task(task.id, "codex session locked: cid-1")
+    assert store.acquire_codex_session_lock("cid-1", "universal:other")
+
+    recovered = store.reset_recoverable_reply_tasks()
+
+    assert recovered == []
+    assert store.list_reply_tasks(statuses=("failed",))[0].id == task.id
+
+
 def test_reset_processing_reply_tasks_requeues_all_processing_on_startup(
     tmp_path: Path,
 ):

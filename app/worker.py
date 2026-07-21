@@ -4536,6 +4536,24 @@ class DingTalkAutoReplyWorker:
                 title="CEO task retrying stale tasks",
                 message=f"requeued {reset_count} stale task(s)",
             )
+        recovered_lock_tasks = self.store.reset_recoverable_reply_tasks()
+        if recovered_lock_tasks:
+            for recovered_task in recovered_lock_tasks:
+                self.store.record_error(
+                    recovered_task.conversation_id,
+                    recovered_task.trigger_message_id,
+                    "reply_task_codex_session_lock_recovered",
+                    (
+                        "requeued failed task after stale Codex session lock: "
+                        f"task={recovered_task.id} "
+                        f"conversation={recovered_task.conversation_title} "
+                        f"message={recovered_task.trigger_message_id}"
+                    ),
+                )
+            self._notify(
+                title="CEO task retrying Codex session locks",
+                message=f"requeued {len(recovered_lock_tasks)} task(s)",
+            )
         for _ in range(limit):
             claimed_tasks = self.store.claim_reply_tasks(
                 1,
@@ -4629,7 +4647,22 @@ class DingTalkAutoReplyWorker:
                             ),
                             message=authorization_wait_error[:120],
                             conversation=conversation,
-                        )
+                    )
+                    continue
+                if error.startswith("codex session locked:"):
+                    self.store.defer_reply_task(
+                        task.id,
+                        error,
+                        available_at=self._reply_task_retry_available_at(
+                            task.attempts
+                        ),
+                    )
+                    self.store.record_error(
+                        task.conversation_id,
+                        task.trigger_message_id,
+                        "reply_task_codex_session_locked",
+                        error,
+                    )
                     continue
                 if task.attempts < self.max_task_attempts:
                     self.store.requeue_reply_task(
