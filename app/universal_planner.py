@@ -142,6 +142,13 @@ class UniversalPlanner:
                 "The service owns Memory OAuth and memory_write execution. Declare "
                 "the memory dependency only when the plan includes memory_write; do "
                 "not start login or open a browser.",
+                "For internal_personnel reply actions, personnel_subject_user_id "
+                "must be copied only from a Recent messages sender_user_id or a "
+                "trusted organization user_id explicitly shown in context. Never use "
+                "calendar participant uid values, open_dingtalk_id values, display "
+                "names, or other raw payload ids as personnel_subject_user_id. If the "
+                "subject is the sender but no trusted user_id is available, leave "
+                "personnel_subject_user_id null and avoid concrete personnel claims.",
                 UNIVERSAL_PLAN_SCHEMA_HINT,
                 "Return only UniversalPlan JSON. Do not use Markdown fences or add "
                 "explanatory text.",

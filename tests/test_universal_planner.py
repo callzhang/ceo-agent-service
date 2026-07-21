@@ -65,6 +65,20 @@ def _config_values(command: list[str]) -> list[str]:
     ]
 
 
+def test_universal_planner_prompt_restricts_personnel_subject_id_sources():
+    from app.universal_planner import UniversalPlanner
+
+    planner = UniversalPlanner(
+        workspace=Path("/tmp/universal-planner-workspace"),
+        codex_bin="codex",
+    )
+
+    prompt = planner.build_prompt(_context())
+
+    assert "personnel_subject_user_id must be copied only" in prompt
+    assert "Never use calendar participant uid values" in prompt
+
+
 def test_parse_universal_plan_json_accepts_direct_and_newest_nested_jsonl_payload():
     from app.universal_planner import parse_universal_plan_json
 
