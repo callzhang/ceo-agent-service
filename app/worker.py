@@ -2470,9 +2470,29 @@ class DingTalkAutoReplyWorker:
                     "DWS message reaction receipt reports failure"
                 )
             if not self._universal_reaction_receipt_is_success(result):
-                raise ReplyDeliveryError(
-                    "DWS message reaction receipt is missing"
+                events.append(
+                    {
+                        "tool": "tool_output",
+                        "call_id": "universal_message_reaction",
+                        "output": json.dumps(result or {}, ensure_ascii=False),
+                    }
                 )
+                self._append_attempt_audit_tool_events(attempt_id, events)
+                self.store.update_reply_attempt(
+                    attempt_id,
+                    reaction_action_result_json=json.dumps(
+                        result or {}, ensure_ascii=False, sort_keys=True
+                    ),
+                    send_status="skipped",
+                    send_error="reaction_receipt_missing_non_blocking",
+                )
+                self._mark_seen(new_messages)
+                self._complete_universal_action(
+                    execution,
+                    attempt_id=attempt_id,
+                    outcome="reaction_receipt_missing_non_blocking",
+                )
+                return True
         except Exception as exc:
             self._append_attempt_audit_tool_events(attempt_id, events)
             self._finish_universal_capability_failure(
@@ -2685,7 +2705,7 @@ class DingTalkAutoReplyWorker:
         ):
             return checkpoint
         if add_state in {"ambiguous", "started"}:
-            raise ReplyDeliveryError("DWS text emotion add outcome is ambiguous")
+            return checkpoint
         add_action = dict(action)
         add_action.update(
             {
@@ -2728,8 +2748,6 @@ class DingTalkAutoReplyWorker:
         )
         if checkpoint["add_state"] == "failed":
             raise ReplyDeliveryError("DWS text emotion add receipt reports failure")
-        if checkpoint["add_state"] == "ambiguous":
-            raise ReplyDeliveryError("DWS text emotion add receipt is missing")
         return checkpoint
 
     def execute_universal_memory_write(self, execution: UniversalActionExecution) -> bool:

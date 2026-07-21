@@ -683,7 +683,7 @@ def test_universal_document_and_reaction_executors_reject_wrong_action_kind(
         {"success": True, "result": {"emotionId": 902}},
     ],
 )
-def test_universal_reaction_rejects_bare_success_and_zero_receipts(
+def test_universal_reaction_missing_receipt_is_non_blocking(
     tmp_path: Path,
     result: dict,
 ) -> None:
@@ -698,12 +698,15 @@ def test_universal_reaction_rejects_bare_success_and_zero_receipts(
     dws.emoji_result = result
     worker = DingTalkAutoReplyWorker(store=store, dws=dws, codex=FakeCodex())
 
-    with pytest.raises(ReplyDeliveryError, match="reaction receipt"):
-        worker.execute_universal_message_reaction(execution)
+    assert worker.execute_universal_message_reaction(execution) is True
 
+    attempt = store.get_latest_reply_attempt_for_trigger("cid-context", "msg-context")
+    assert attempt is not None
+    assert attempt.send_status == "skipped"
+    assert attempt.send_error == "reaction_receipt_missing_non_blocking"
     assert (
         store.get_universal_action_execution_state(execution)
-        is UniversalActionExecutionState.UNKNOWN
+        is UniversalActionExecutionState.SUCCEEDED
     )
 
 
@@ -882,7 +885,7 @@ def test_universal_text_emotion_recovers_started_create_checkpoint_after_restart
     assert len(dws.added_text_emotions) == 1
 
 
-def test_universal_text_emotion_ambiguous_add_is_unknown_from_checkpoint(
+def test_universal_text_emotion_ambiguous_add_is_non_blocking(
     tmp_path: Path,
 ) -> None:
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
@@ -896,14 +899,17 @@ def test_universal_text_emotion_ambiguous_add_is_unknown_from_checkpoint(
     dws.text_emotion_add_results = [{"success": True}]
     worker = DingTalkAutoReplyWorker(store=store, dws=dws, codex=FakeCodex())
 
-    with pytest.raises(ReplyDeliveryError, match="add receipt is missing"):
-        worker.execute_universal_message_reaction(execution)
+    assert worker.execute_universal_message_reaction(execution) is True
 
     assert len(dws.created_text_emotions) == 1
     assert len(dws.added_text_emotions) == 1
+    attempt = store.get_latest_reply_attempt_for_trigger("cid-context", "msg-context")
+    assert attempt is not None
+    assert attempt.send_status == "skipped"
+    assert attempt.send_error == "reaction_receipt_missing_non_blocking"
     assert (
         store.get_universal_action_execution_state(execution)
-        is UniversalActionExecutionState.UNKNOWN
+        is UniversalActionExecutionState.SUCCEEDED
     )
 
 
