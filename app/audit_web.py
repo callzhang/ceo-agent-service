@@ -3091,6 +3091,9 @@ def render_attempt_list(
     query: str = "",
     query_embedding: list[float] | None = None,
     search_object_types: str | Iterable[str] = HISTORY_SEARCH_OBJECT_TYPES,
+    include_chart: bool = True,
+    include_pending_tasks: bool = True,
+    include_feedback_count: bool = True,
 ) -> str:
     query = query.strip()
     type_filters = _history_type_filters(type_filter)
@@ -3114,7 +3117,7 @@ def render_attempt_list(
     page = _bounded_page(page, limit, total_count)
     offset = _page_offset(page, limit)
     items = []
-    if page == 1 and not type_filters and search_reply_tasks:
+    if include_pending_tasks and page == 1 and not type_filters and search_reply_tasks:
         task_limit = limit if not query else None
         for task in store.list_reply_tasks(
             statuses=("pending", "processing"),
@@ -3217,8 +3220,9 @@ def render_attempt_list(
             "</article>"
         )
     if not items:
+        chart_html = _render_history_chart(store) if include_chart else ""
         body = (
-            f"{_render_history_chart(store)}"
+            f"{chart_html}"
             f"{_history_table_header(base_path='/', page=page, limit=limit, total_count=total_count, type_filters=type_filters, query=query, search_object_types=object_types)}"
             "<div data-live-search-region=\"history\">"
             f"{session_search_html}"
@@ -3227,6 +3231,7 @@ def render_attempt_list(
             "</div>"
         )
     else:
+        chart_html = _render_history_chart(store) if include_chart else ""
         header = _history_table_header(
             base_path="/",
             page=page,
@@ -3237,7 +3242,7 @@ def render_attempt_list(
             search_object_types=object_types,
         )
         body = (
-            f"{_render_history_chart(store)}"
+            f"{chart_html}"
             f"{header}"
             "<div data-live-search-region=\"history\">"
             f"{session_search_html}"
@@ -3251,7 +3256,9 @@ def render_attempt_list(
         body,
         auto_refresh=True,
         active_nav="history",
-        user_feedback_pending_count=store.count_pending_user_feedback_items(),
+        user_feedback_pending_count=(
+            store.count_pending_user_feedback_items() if include_feedback_count else 0
+        ),
     )
 
 
@@ -5629,6 +5636,9 @@ def create_audit_app(
                 query=query,
                 query_embedding=_history_query_embedding(query),
                 search_object_types=request.query_params.getlist("object_type"),
+                include_chart=bool(query or request.query_params),
+                include_pending_tasks=bool(query or request.query_params),
+                include_feedback_count=False,
             )
         except sqlite3.OperationalError as exc:
             if _is_sqlite_busy_error(exc):
