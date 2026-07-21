@@ -3625,7 +3625,7 @@ def test_history_and_attempt_detail_show_redacted_universal_execution(tmp_path: 
     )
     plan_execution = store.create_universal_plan_execution(context, plan)
     reply_execution = build_universal_action_execution(
-        context, plan_execution, plan.actions[0], 0
+        context, plan_execution, plan_execution.plan.actions[0], 0
     )
     store.claim_universal_action_execution(reply_execution)
     attempt_id = store.record_universal_reply_attempt(
@@ -3641,7 +3641,7 @@ def test_history_and_attempt_detail_show_redacted_universal_execution(tmp_path: 
     )
     store.complete_universal_action_execution(reply_execution, attempt_id=attempt_id)
     memory_execution = build_universal_action_execution(
-        context, plan_execution, plan.actions[1], 1
+        context, plan_execution, plan_execution.plan.actions[1], 1
     )
     store.claim_universal_action_execution(memory_execution)
     store.mark_universal_action_execution_unknown(memory_execution, "timeout after write")

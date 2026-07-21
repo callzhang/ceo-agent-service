@@ -75,11 +75,36 @@ class PermissionGate:
                 reply_text=INTERNAL_PERSONNEL_PRIVATE_REFUSAL,
                 reason="missing personnel subject",
             )
+        subject_error = self._invalid_internal_personnel_subject_reason(
+            decision.personnel_subject_user_id
+        )
+        if subject_error:
+            return PermissionResult(
+                action=PermissionAction.ERROR,
+                reason=subject_error,
+            )
         return PermissionResult(
             action=PermissionAction.REPLY,
             reply_text=INTERNAL_PERSONNEL_PRIVATE_REFUSAL,
             reason="private requester is not personnel subject",
         )
+
+    def _invalid_internal_personnel_subject_reason(
+        self, personnel_subject_user_id: str
+    ) -> str:
+        get_user_profile = getattr(self.dws, "get_user_profile", None)
+        if get_user_profile is None:
+            return "personnel subject profile source is not configured"
+        try:
+            profile = get_user_profile(personnel_subject_user_id)
+        except Exception as exc:
+            return f"invalid personnel subject user id: {exc}"
+        profile_user_id = getattr(profile, "user_id", None)
+        if not profile_user_id:
+            return "invalid personnel subject user id: profile id is missing"
+        if str(profile_user_id) != personnel_subject_user_id:
+            return "invalid personnel subject user id: profile id mismatch"
+        return ""
 
     def _evaluate_external_candidate(
         self, decision: CodexDecision, trigger: DingTalkMessage

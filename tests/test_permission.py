@@ -21,12 +21,18 @@ def trigger() -> DingTalkMessage:
 
 
 def test_internal_personnel_private_requester_cannot_receive_other_person_reply():
+    class Profile:
+        user_id = "subject-user-1"
+
     class Dws:
         def resolve_message_sender(self, message):
             return message.sender_user_id
 
         def is_hr_user(self, user_id):
             return False
+
+        def get_user_profile(self, user_id):
+            return Profile()
 
         def user_in_manager_chain(self, manager_user_id, subject_user_id):
             raise RuntimeError("manager chain should not be called")
@@ -43,6 +49,31 @@ def test_internal_personnel_private_requester_cannot_receive_other_person_reply(
     assert result.action == PermissionAction.REPLY
     assert "其他人的人事信息" in result.reply_text
     assert result.reason == "private requester is not personnel subject"
+
+
+def test_internal_personnel_unknown_subject_id_errors_instead_of_refusing():
+    class Dws:
+        def resolve_message_sender(self, message):
+            return message.sender_user_id
+
+        def is_hr_user(self, user_id):
+            return False
+
+        def get_user_profile(self, user_id):
+            raise RuntimeError("profile not found")
+
+    result = PermissionGate(Dws()).evaluate(
+        CodexDecision(
+            action=CodexAction.SEND_REPLY,
+            sensitivity_kind=SensitivityKind.INTERNAL_PERSONNEL,
+            personnel_subject_user_id="calendar-uid-2287838390",
+        ),
+        trigger(),
+    )
+
+    assert result.action == PermissionAction.ERROR
+    assert "invalid personnel subject user id" in result.reason
+    assert result.reply_text == ""
 
 
 def test_internal_personnel_hr_private_requester_can_receive_other_person_reply():

@@ -109,7 +109,9 @@ def test_history_reply_item_includes_redacted_universal_plan_summary(tmp_path):
         audit=UniversalAudit(summary="Document reviewed", confidence=0.9),
     )
     plan_execution = store.create_universal_plan_execution(context, plan)
-    execution = build_universal_action_execution(context, plan_execution, plan.actions[0], 0)
+    execution = build_universal_action_execution(
+        context, plan_execution, plan_execution.plan.actions[0], 0
+    )
     store.claim_universal_action_execution(execution)
     attempt_id = store.record_universal_reply_attempt(
         execution,
