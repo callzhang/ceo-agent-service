@@ -1,4 +1,5 @@
 from app.store import AutoReplyStore
+from app import config
 from app.wechat import service as wechat_service
 from app.wechat.service import (
     account_from_state, build_reader, ready_account_state, wechat_loop_names,
@@ -64,3 +65,9 @@ def test_build_sender_is_a_dedicated_ipc_client(tmp_path):
 
     assert sender.socket_path == tmp_path / "sender.sock"
     assert sender.__class__.__name__ == "WechatSenderClient"
+
+
+def test_reader_timeout_allows_serialized_mirror_refresh(monkeypatch):
+    monkeypatch.delenv("CEO_WECHAT_READER_TIMEOUT_SECONDS", raising=False)
+
+    assert config.wechat_reader_timeout_seconds() == 120.0

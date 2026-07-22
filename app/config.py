@@ -324,9 +324,9 @@ def wechat_reader_socket() -> Path:
 
 def wechat_reader_timeout_seconds() -> float:
     try:
-        return max(0.1, float(os.getenv("CEO_WECHAT_READER_TIMEOUT_SECONDS", "5")))
+        return max(0.1, float(os.getenv("CEO_WECHAT_READER_TIMEOUT_SECONDS", "120")))
     except ValueError:
-        return 5.0
+        return 120.0
 
 
 def wechat_sender_socket() -> Path:

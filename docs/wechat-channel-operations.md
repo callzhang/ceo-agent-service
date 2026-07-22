@@ -51,6 +51,29 @@ interpreter is neither required nor recommended. First authorization remains an
 explicit local user action; zero-click deployment requires managed macOS/MDM
 privacy policy.
 
+### Reader runtime resilience
+
+The Reader owns one mutable decrypted mirror, so database operations are
+serialized inside the helper; health checks remain independent. A source shard
+change may require decrypting tens or hundreds of megabytes before the query can
+run, therefore the IPC timeout defaults to 120 seconds
+(`CEO_WECHAT_READER_TIMEOUT_SECONDS`) rather than 5 seconds.
+
+On 2026-07-22 the previous 5-second timeout was confirmed to cause client
+disconnects, `BrokenPipeError` in the helper, and repeated
+`wechat-producer stopped unexpectedly` notifications. Runtime handling now
+distinguishes the two cases:
+
+- a transient socket refusal or timeout records `wechat_reader_unavailable`,
+  waits for the normal polling interval, and retries automatically;
+- an explicit `permission_required` response records
+  `wechat_data_permission_required` and pauses that loop until service restart,
+  preventing repeated macOS permission prompts and background load.
+
+Do not treat every IPC timeout as revoked App Data permission. Confirm helper
+health, the structured IPC error code, and a bounded real read before changing
+TCC settings.
+
 ## Dedicated Sender permission boundary
 
 Accessibility is granted to `~/Applications/CEO WeChat Sender.app` (bundle ID

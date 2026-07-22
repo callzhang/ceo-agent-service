@@ -1,6 +1,7 @@
 import os
 import socket
 import threading
+import time
 from pathlib import Path
 from uuid import uuid4
 
@@ -94,6 +95,45 @@ def test_rpc_service_validates_bounded_read_arguments(rpc_service):
         })
 
 
+def test_rpc_service_serializes_reader_operations_that_share_the_mirror():
+    class ConcurrencyTrackingReader(FakeLocalReader):
+        def __init__(self):
+            self.active = 0
+            self.max_active = 0
+            self.lock = threading.Lock()
+
+        def read_messages(self, account, **kwargs):
+            with self.lock:
+                self.active += 1
+                self.max_active = max(self.max_active, self.active)
+            try:
+                time.sleep(0.05)
+                return super().read_messages(account, **kwargs)
+            finally:
+                with self.lock:
+                    self.active -= 1
+
+    reader = ConcurrencyTrackingReader()
+    service = WechatReaderRpcService(reader, lambda: [_account()])
+    start = threading.Barrier(3)
+
+    def read():
+        start.wait()
+        service.dispatch("read_messages", {
+            "account": _account().model_dump(),
+            "conversation_id": "friend-1",
+        })
+
+    threads = [threading.Thread(target=read) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    start.wait()
+    for thread in threads:
+        thread.join(timeout=1)
+
+    assert reader.max_active == 1
+
+
 def test_client_round_trip_over_owner_only_unix_socket(tmp_path, rpc_service):
     del tmp_path
     socket_path = _short_socket_path()
@@ -117,8 +157,9 @@ def test_client_round_trip_over_owner_only_unix_socket(tmp_path, rpc_service):
 
 def test_client_fails_closed_when_reader_is_not_running(tmp_path):
     client = WechatReaderClient(tmp_path / "missing.sock", timeout_seconds=0.1)
-    with pytest.raises(ReaderIpcError, match="unavailable"):
+    with pytest.raises(ReaderIpcError, match="unavailable") as caught:
         client.health()
+    assert caught.value.code == "unavailable"
 
 
 def test_socket_rejects_oversized_requests(tmp_path, rpc_service):
@@ -153,6 +194,7 @@ def test_socket_reports_app_data_permission_without_leaking_paths():
     try:
         with pytest.raises(ReaderIpcError, match="App Data permission") as caught:
             WechatReaderClient(socket_path).discover_accounts()
+        assert caught.value.code == "permission_required"
         assert "/private/secret" not in str(caught.value)
     finally:
         server.shutdown()

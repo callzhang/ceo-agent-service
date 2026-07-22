@@ -2440,15 +2440,24 @@ def _run_wechat_loop(settings: WorkerSettings, role: str) -> None:
                     "WeChat data access was denied; reader paused until service restart.",
                 )
                 _pause_wechat_loop_until_service_restart(time.sleep)
-            if isinstance(exc, ReaderIpcError):
+            elif isinstance(exc, ReaderIpcError):
+                if exc.code == "permission_required":
+                    store.record_error(
+                        "wechat",
+                        "",
+                        "wechat_data_permission_required",
+                        "CEO WeChat Reader App Data permission is required; "
+                        f"{role} paused until service restart.",
+                    )
+                    _pause_wechat_loop_until_service_restart(time.sleep)
                 store.record_error(
                     "wechat",
                     "",
                     "wechat_reader_unavailable",
-                    f"WeChat reader unavailable; {role} paused until service restart: {exc}",
+                    f"WeChat reader unavailable; {role} retrying automatically: {exc}",
                 )
-                _pause_wechat_loop_until_service_restart(time.sleep)
-            store.record_error("wechat", "", f"wechat_{role}_loop_error", str(exc))
+            else:
+                store.record_error("wechat", "", f"wechat_{role}_loop_error", str(exc))
         time.sleep(interval)
 
 

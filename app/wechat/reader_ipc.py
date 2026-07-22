@@ -13,6 +13,7 @@ import os
 import socket
 import socketserver
 import stat
+import threading
 from pathlib import Path
 from typing import Any, Callable
 
@@ -26,6 +27,10 @@ DEFAULT_MAX_RESPONSE_BYTES = 8 * 1024 * 1024
 
 class ReaderIpcError(RuntimeError):
     """A rejected request, unavailable helper, or invalid helper response."""
+
+    def __init__(self, message: str, *, code: str = "reader_error"):
+        super().__init__(message)
+        self.code = code
 
 
 def _account(value: Any) -> WechatAccount:
@@ -55,48 +60,50 @@ class WechatReaderRpcService:
     def __init__(self, reader, accounts_provider: Callable[[], list[WechatAccount]]):
         self.reader = reader
         self.accounts_provider = accounts_provider
+        self._operation_lock = threading.Lock()
 
     def dispatch(self, method: str, params: dict) -> Any:
         if not isinstance(params, dict):
             raise ReaderIpcError("params must be an object")
         if method == "health":
             return {"status": "ready", "protocol_version": PROTOCOL_VERSION}
-        if method == "discover_accounts":
-            return [item.model_dump(mode="json") for item in self.accounts_provider()]
-        if method == "probe":
-            return self.reader.probe(_account(params.get("account"))).model_dump(mode="json")
-        if method == "detect_self_username":
-            return self.reader.detect_self_username(_account(params.get("account")))
-        if method == "list_targets":
-            account = _account(params.get("account"))
-            kind = _bounded_text(params, "kind", "direct", 16)
-            if kind not in {"direct", "group"}:
-                raise ReaderIpcError("invalid kind")
-            return self.reader.list_targets(
-                account,
-                kind=kind,
-                query=_bounded_text(params, "query", maximum=256),
-                limit=_bounded_int(params, "limit", 50, 200),
-                offset=max(0, int(params.get("offset", 0))),
-            )
-        if method == "read_messages":
-            account = _account(params.get("account"))
-            conversation_type = _bounded_text(params, "conversation_type", "direct", 16)
-            if conversation_type not in {"direct", "group"}:
-                raise ReaderIpcError("invalid conversation_type")
-            order = _bounded_text(params, "order", "newest", 16)
-            if order not in {"newest", "oldest"}:
-                raise ReaderIpcError("invalid order")
-            messages = self.reader.read_messages(
-                account,
-                conversation_id=_bounded_text(params, "conversation_id", maximum=512),
-                conversation_type=conversation_type,
-                since=_bounded_text(params, "since", maximum=64),
-                until=_bounded_text(params, "until", maximum=64),
-                limit=_bounded_int(params, "limit", 100, 500),
-                order=order,
-            )
-            return [message.model_dump(mode="json") for message in messages]
+        with self._operation_lock:
+            if method == "discover_accounts":
+                return [item.model_dump(mode="json") for item in self.accounts_provider()]
+            if method == "probe":
+                return self.reader.probe(_account(params.get("account"))).model_dump(mode="json")
+            if method == "detect_self_username":
+                return self.reader.detect_self_username(_account(params.get("account")))
+            if method == "list_targets":
+                account = _account(params.get("account"))
+                kind = _bounded_text(params, "kind", "direct", 16)
+                if kind not in {"direct", "group"}:
+                    raise ReaderIpcError("invalid kind")
+                return self.reader.list_targets(
+                    account,
+                    kind=kind,
+                    query=_bounded_text(params, "query", maximum=256),
+                    limit=_bounded_int(params, "limit", 50, 200),
+                    offset=max(0, int(params.get("offset", 0))),
+                )
+            if method == "read_messages":
+                account = _account(params.get("account"))
+                conversation_type = _bounded_text(params, "conversation_type", "direct", 16)
+                if conversation_type not in {"direct", "group"}:
+                    raise ReaderIpcError("invalid conversation_type")
+                order = _bounded_text(params, "order", "newest", 16)
+                if order not in {"newest", "oldest"}:
+                    raise ReaderIpcError("invalid order")
+                messages = self.reader.read_messages(
+                    account,
+                    conversation_id=_bounded_text(params, "conversation_id", maximum=512),
+                    conversation_type=conversation_type,
+                    since=_bounded_text(params, "since", maximum=64),
+                    until=_bounded_text(params, "until", maximum=64),
+                    limit=_bounded_int(params, "limit", 100, 500),
+                    order=order,
+                )
+                return [message.model_dump(mode="json") for message in messages]
         raise ReaderIpcError(f"unsupported method: {method}")
 
 
@@ -210,7 +217,9 @@ class WechatReaderClient:
                 stream = conn.makefile("rb")
                 raw = stream.readline(self.max_response_bytes + 1)
         except (OSError, TimeoutError) as exc:
-            raise ReaderIpcError(f"WeChat reader unavailable: {exc}") from exc
+            raise ReaderIpcError(
+                f"WeChat reader unavailable: {exc}", code="unavailable",
+            ) from exc
         if len(raw) > self.max_response_bytes or not raw.endswith(b"\n"):
             raise ReaderIpcError("invalid or oversized WeChat reader response")
         try:
@@ -220,7 +229,9 @@ class WechatReaderClient:
         if not isinstance(response, dict) or not response.get("ok"):
             error = response.get("error", {}) if isinstance(response, dict) else {}
             message = error.get("message", "reader request failed")
-            raise ReaderIpcError(str(message))
+            raise ReaderIpcError(
+                str(message), code=str(error.get("code", "reader_error")),
+            )
         return response.get("result")
 
     def health(self) -> dict:
