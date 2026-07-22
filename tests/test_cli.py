@@ -5174,8 +5174,7 @@ def test_run_service_requeues_processing_reply_tasks_on_startup(tmp_path):
     assert task.id == claimed.id
     assert task.status == "pending"
     assert task.locked_at is None
-    assert errors[0].kind == "reply_task_service_startup_requeue"
-    assert "task=" in errors[0].detail
+    assert errors == []
     assert calls[-1] == ("wait",)
 
 
@@ -5231,8 +5230,7 @@ def test_run_service_requeues_processing_work_summary_inputs_on_startup(tmp_path
     errors = store.list_errors(limit=10)
     assert claimed.id == input_id
     assert dict(row) == {"status": "pending", "attempts": 1, "error": ""}
-    assert errors[0].kind == "work_summary_input_service_startup_requeue"
-    assert f"input={input_id}" in errors[0].detail
+    assert errors == []
     assert calls[-1] == ("wait",)
 
 

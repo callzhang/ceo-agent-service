@@ -2566,19 +2566,6 @@ def _recover_meeting_alignment_jobs_on_service_start(
 def _recover_processing_reply_tasks_on_service_start(settings: WorkerSettings) -> int:
     store = AutoReplyStore(settings.db_path)
     recovered_tasks = store.reset_processing_reply_tasks()
-    for task in recovered_tasks:
-        store.record_error(
-            task.conversation_id,
-            task.trigger_message_id,
-            "reply_task_service_startup_requeue",
-            (
-                "requeued processing task on service startup: "
-                f"task={task.id} "
-                f"conversation={task.conversation_title} "
-                f"message={task.trigger_message_id} "
-                f"locked_at={task.locked_at}"
-            ),
-        )
     return len(recovered_tasks)
 
 
@@ -2587,20 +2574,6 @@ def _recover_processing_work_summary_inputs_on_service_start(
 ) -> int:
     store = AutoReplyStore(settings.db_path)
     recovered_inputs = store.reset_processing_work_summary_inputs()
-    for work_input in recovered_inputs:
-        store.record_error(
-            None,
-            None,
-            "work_summary_input_service_startup_requeue",
-            (
-                "requeued processing work summary input on service startup: "
-                f"input={work_input.id} "
-                f"source_type={work_input.source_type} "
-                f"source_ref={work_input.source_ref} "
-                f"attempts={work_input.attempts} "
-                f"updated_at={work_input.updated_at}"
-            ),
-        )
     return len(recovered_inputs)
 
 
