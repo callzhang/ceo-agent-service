@@ -28,7 +28,9 @@ from app.codex_decision import (
 from app.config import (
     assistant_signature,
     broadcast_mention_aliases,
+    codex_dev_wake_phrases,
     env_duration,
+    env_int,
     fast_path_unread_backoff_duration,
     feedback_spike_vercel_base_url,
     handoff_ack,
@@ -124,6 +126,7 @@ HANDOFF_TEXT_EMOTION = "我去叫"
 # Historical auto-ack marker. Keep filtering it from context, but do not send
 # new processing acknowledgements before final replies.
 PROCESSING_ACK = "收到，我正在处理（by 分身）"
+CODEX_DEV_RECEIVED_REACTION_TEXT = "收到，正在做"
 CODEX_LOGIN_REQUIRED_PREFIX = "codex_login_required"
 CODEX_PROVIDER_AUTH_FAILED_PREFIX = "codex_provider_auth_failed"
 CODEX_PROVIDER_UNAVAILABLE_PREFIX = "codex_provider_unavailable"
@@ -152,6 +155,23 @@ DWS_TRANSIENT_ERROR_STATE_PREFIX = "dws_transient_error_count:"
 DWS_TRANSIENT_NOTIFY_THRESHOLD = 3
 T = TypeVar("T")
 CALENDAR_ACTION_SEND_STATUS = "calendar"
+GENERIC_CODEX_DEV_WAKE_PATTERN = re.compile(
+    r"[\w\u4e00-\u9fff（）()·.\-]+(?:\s+[\w\u4e00-\u9fff（）()·.\-]+)*"
+    r"\s+agent\s*[\s,，。.:：;；!！?？、]*用\s*codex\s*执行这个任务",
+    re.IGNORECASE,
+)
+CURRENT_USER_CODEX_DEV_SCAN_LOOKBACK = env_duration(
+    "CEO_CURRENT_USER_CODEX_DEV_SCAN_LOOKBACK",
+    timedelta(hours=2),
+)
+CURRENT_USER_CODEX_DEV_SCAN_OVERLAP = env_duration(
+    "CEO_CURRENT_USER_CODEX_DEV_SCAN_OVERLAP",
+    timedelta(hours=2),
+)
+CURRENT_USER_CODEX_DEV_SCAN_MAX_PAGES = env_int(
+    "CEO_CURRENT_USER_CODEX_DEV_SCAN_MAX_PAGES",
+    5,
+)
 TEXT_MESSAGE_TYPES = {"text"}
 RENDERED_NON_TEXT_PREFIXES = (
     "[文件]",
@@ -382,6 +402,7 @@ DWS_UPGRADE_CHECKED_DATE_STATE_KEY = "dws_upgrade_checked_date"
 DWS_UPGRADE_CHECK_RESULT_STATE_KEY = "dws_upgrade_check_result"
 MESSAGE_RECOVERY_CHECKED_AT_STATE_KEY = "message_recovery_checked_at"
 MESSAGE_FAST_PATH_CHECKED_AT_STATE_KEY = "message_fast_path_checked_at"
+CURRENT_USER_CODEX_DEV_CHECKED_AT_STATE_KEY = "current_user_codex_dev_checked_at"
 ROBOT_DIRECT_MESSAGE_LOOKBACK = env_duration(
     "CEO_ROBOT_DIRECT_MESSAGE_LOOKBACK",
     timedelta(hours=4),
@@ -3544,6 +3565,19 @@ class DingTalkAutoReplyWorker:
                 candidate_unread_messages,
                 conversation_mentions,
             )
+            queued_tasks += self._produce_codex_dev_tasks_from_messages(
+                conversation,
+                candidate_source_messages,
+                max_tasks=(
+                    None if max_tasks is None else max(0, max_tasks - queued_tasks)
+                ),
+            )
+            if max_tasks is not None and queued_tasks >= max_tasks:
+                self.store.set_service_state(
+                    MESSAGE_FAST_PATH_CHECKED_AT_STATE_KEY,
+                    fast_path_checked_at.isoformat(),
+                )
+                return queued_tasks
             candidates = self._candidate_messages(
                 conversation,
                 candidate_source_messages,
@@ -3602,11 +3636,196 @@ class DingTalkAutoReplyWorker:
                         fast_path_checked_at.isoformat(),
                     )
                     return queued_tasks
+        queued_tasks += self._produce_current_user_codex_dev_messages(
+            max_tasks=(
+                None if max_tasks is None else max(0, max_tasks - queued_tasks)
+            )
+        )
+        if max_tasks is not None and queued_tasks >= max_tasks:
+            self.store.set_service_state(
+                MESSAGE_FAST_PATH_CHECKED_AT_STATE_KEY,
+                fast_path_checked_at.isoformat(),
+            )
+            return queued_tasks
         self.store.set_service_state(
             MESSAGE_FAST_PATH_CHECKED_AT_STATE_KEY,
             fast_path_checked_at.isoformat(),
         )
         return queued_tasks
+
+    def _produce_current_user_codex_dev_messages(
+        self, max_tasks: int | None = None
+    ) -> int:
+        if max_tasks == 0:
+            return 0
+        list_messages_by_sender = getattr(self.dws, "list_messages_by_sender", None)
+        if list_messages_by_sender is None:
+            return 0
+        current_user_id = self._call_dws(
+            "get_current_user_id",
+            lambda: self.dws.get_current_user_id(),
+            default="",
+        )
+        if not current_user_id:
+            return 0
+        checked_at = self._service_state_datetime(
+            CURRENT_USER_CODEX_DEV_CHECKED_AT_STATE_KEY
+        )
+        end = self._now().astimezone(timezone.utc)
+        start = end - CURRENT_USER_CODEX_DEV_SCAN_LOOKBACK
+        if checked_at is not None:
+            start = max(
+                start,
+                checked_at.astimezone(timezone.utc)
+                - CURRENT_USER_CODEX_DEV_SCAN_OVERLAP,
+            )
+        messages: list[DingTalkMessage] = []
+        cursor = "0"
+        completed_scan = True
+        for _ in range(CURRENT_USER_CODEX_DEV_SCAN_MAX_PAGES):
+            payload = self._call_dws(
+                "list_messages_by_sender",
+                lambda cursor=cursor: list_messages_by_sender(
+                    sender_user_id=current_user_id,
+                    start=start.isoformat(timespec="seconds"),
+                    end=end.isoformat(timespec="seconds"),
+                    limit=50,
+                    cursor=cursor,
+                ),
+                default=None,
+            )
+            if payload is None:
+                completed_scan = False
+                break
+            messages.extend(
+                message.model_copy(update={"sender_user_id": current_user_id})
+                for message in DwsClient.parse_messages(
+                    payload,
+                    conversation_title="",
+                    single_chat=False,
+                )
+            )
+            result = payload.get("result", {}) if isinstance(payload, dict) else {}
+            if not result.get("hasMore"):
+                break
+            next_cursor = str(result.get("nextCursor") or "")
+            if not next_cursor or next_cursor == cursor:
+                break
+            cursor = next_cursor
+        else:
+            completed_scan = False
+        if completed_scan:
+            self.store.set_service_state(
+                CURRENT_USER_CODEX_DEV_CHECKED_AT_STATE_KEY,
+                end.isoformat(),
+            )
+        if not messages:
+            return 0
+        candidates = [
+            message
+            for message in messages
+            if self._message_contains_codex_dev_wake_phrase(message)
+            and not self.store.has_seen(message.open_message_id)
+        ]
+        if not candidates:
+            return 0
+        queued = 0
+        for conversation_id, conversation_messages in self._messages_by_conversation(
+            candidates
+        ).items():
+            if max_tasks is not None and queued >= max_tasks:
+                break
+            first_message = conversation_messages[0]
+            conversation = DingTalkConversation(
+                open_conversation_id=conversation_id,
+                title=first_message.conversation_title or conversation_id,
+                single_chat=first_message.single_chat,
+                unread_point=0,
+            )
+            self.store.upsert_conversation(
+                conversation_id=conversation.open_conversation_id,
+                title=conversation.title,
+                single_chat=conversation.single_chat,
+                codex_session_id=None,
+            )
+            queued += self._produce_codex_dev_tasks_from_messages(
+                conversation,
+                conversation_messages,
+                max_tasks=(
+                    None if max_tasks is None else max(0, max_tasks - queued)
+                ),
+            )
+        return queued
+
+    @staticmethod
+    def _messages_by_conversation(
+        messages: list[DingTalkMessage],
+    ) -> dict[str, list[DingTalkMessage]]:
+        grouped: dict[str, list[DingTalkMessage]] = {}
+        for message in messages:
+            if not message.open_conversation_id:
+                continue
+            grouped.setdefault(message.open_conversation_id, []).append(message)
+        return grouped
+
+    def _produce_codex_dev_tasks_from_messages(
+        self,
+        conversation: DingTalkConversation,
+        messages: list[DingTalkMessage],
+        *,
+        max_tasks: int | None = None,
+    ) -> int:
+        queued = 0
+        for message in messages:
+            if max_tasks is not None and queued >= max_tasks:
+                break
+            if not self._is_authorized_codex_dev_task_message(message):
+                continue
+            instruction = self._codex_dev_instruction_from_message(message)
+            self.store.enqueue_codex_dev_task(
+                conversation_id=conversation.open_conversation_id,
+                conversation_title=conversation.title,
+                trigger_message_id=message.open_message_id,
+                trigger_sender=message.sender_name,
+                trigger_sender_user_id=message.sender_user_id,
+                trigger_text=message.content,
+                instruction=instruction,
+            )
+            self._react_codex_dev_task_received(conversation, message)
+            self._mark_seen([message])
+            queued += 1
+        return queued
+
+    def _react_codex_dev_task_received(
+        self,
+        conversation: DingTalkConversation,
+        message: DingTalkMessage,
+    ) -> None:
+        action = {
+            "type": "dws_message_reaction",
+            "reaction_type": "text_emotion",
+            "text": CODEX_DEV_RECEIVED_REACTION_TEXT,
+            "emotion_name": CODEX_DEV_RECEIVED_REACTION_TEXT,
+            "background_id": DEFAULT_TEXT_EMOTION_BACKGROUND_ID,
+        }
+        events: list[dict[str, str]] = []
+        try:
+            self._execute_message_reaction(
+                conversation=conversation,
+                trigger=message,
+                action=action,
+                call_id="codex_dev_received_reaction",
+                events=events,
+            )
+        except Exception as exc:
+            logger.warning(
+                "failed to add codex dev received reaction: %s",
+                exc,
+                extra={
+                    "conversation_id": conversation.open_conversation_id,
+                    "message_id": message.open_message_id,
+                },
+            )
 
     @staticmethod
     def _should_read_unread_messages(
@@ -7829,6 +8048,52 @@ class DingTalkAutoReplyWorker:
             )
             return profile is not None and profile.user_id == current_user_id
         return False
+
+    def _is_authorized_codex_dev_task_message(
+        self,
+        message: DingTalkMessage,
+    ) -> bool:
+        if not self._is_current_user_message_for_candidate_filter(message):
+            return False
+        return self._message_contains_codex_dev_wake_phrase(message)
+
+    @staticmethod
+    def _message_contains_codex_dev_wake_phrase(message: DingTalkMessage) -> bool:
+        content = DingTalkAutoReplyWorker._normalized_codex_dev_wake_text(
+            message.content
+        )
+        return GENERIC_CODEX_DEV_WAKE_PATTERN.search(message.content) is not None or any(
+            DingTalkAutoReplyWorker._normalized_codex_dev_wake_text(phrase) in content
+            for phrase in codex_dev_wake_phrases()
+        )
+
+    @staticmethod
+    def _codex_dev_instruction_from_message(message: DingTalkMessage) -> str:
+        instruction = message.content.strip()
+        for phrase in codex_dev_wake_phrases():
+            instruction = DingTalkAutoReplyWorker._remove_codex_dev_wake_phrase(
+                instruction,
+                phrase,
+            )
+        instruction = GENERIC_CODEX_DEV_WAKE_PATTERN.sub(" ", instruction, count=1)
+        instruction = instruction.strip(" \t\r\n，。,.：:")
+        return instruction or message.content.strip()
+
+    @staticmethod
+    def _normalized_codex_dev_wake_text(text: str) -> str:
+        return re.sub(r"[\s,，。.:：;；!！?？、]+", "", text).casefold()
+
+    @staticmethod
+    def _remove_codex_dev_wake_phrase(text: str, phrase: str) -> str:
+        separators = r"[\s,，。.:：;；!！?？、]*"
+        pattern = separators.join(
+            re.escape(char)
+            for char in phrase
+            if DingTalkAutoReplyWorker._normalized_codex_dev_wake_text(char)
+        )
+        if not pattern:
+            return text
+        return re.sub(pattern, " ", text, count=1, flags=re.IGNORECASE)
 
     @staticmethod
     def _is_split_person_auto_reply_message(message: DingTalkMessage) -> bool:

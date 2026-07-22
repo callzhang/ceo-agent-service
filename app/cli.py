@@ -14,7 +14,13 @@ from pathlib import Path
 from pydantic import BaseModel, NonNegativeInt, PositiveInt
 
 from app.codex_decision import CodexDecisionRunner, append_signature
+from app.codex_dev import (
+    CodexDevCompletionNotifier,
+    CodexDevRunner,
+    process_codex_dev_tasks,
+)
 from app.config import (
+    codex_bin,
     consumer_poll_interval_seconds,
     embedding_api_key,
     embedding_base_url,
@@ -249,6 +255,7 @@ def build_parser() -> argparse.ArgumentParser:
         "produce",
         "consume-once",
         "consume",
+        "process-codex-dev-tasks",
         "process-work-items",
         "backfill-task-memory-context",
         "backfill-routine-process-todos",
@@ -885,6 +892,28 @@ def process_work_items_command(settings: WorkerSettings) -> int:
     return processed
 
 
+def process_codex_dev_tasks_command(settings: WorkerSettings) -> int:
+    store = AutoReplyStore(settings.db_path)
+    limit = 1 if settings.max_batches is None else settings.max_batches
+    if limit <= 0:
+        print("process-codex-dev-tasks processed=0", flush=True)
+        return 0
+    runner = CodexDevRunner(
+        workspace=settings.workspace,
+        codex_bin=codex_bin(),
+        timeout_seconds=settings.task_codex_timeout_seconds,
+        idle_timeout_seconds=settings.task_codex_idle_timeout_seconds,
+    )
+    processed = process_codex_dev_tasks(
+        store,
+        runner,
+        limit=limit,
+        completion_notifier=CodexDevCompletionNotifier(DwsClient()),
+    )
+    print(f"process-codex-dev-tasks processed={processed}", flush=True)
+    return processed
+
+
 def _should_retry_work_summary_input(error: str, attempts: int) -> bool:
     normalized_error = _normalize_codex_stop_error_reason(error)
     if _is_codex_authorization_wait_reason(normalized_error):
@@ -1234,6 +1263,7 @@ def process_follow_ups_command(
 
 def daily_task_maintenance_command(settings: WorkerSettings) -> dict[str, int]:
     sources = scan_task_sources_command(settings)
+    codex_dev_tasks = process_codex_dev_tasks_command(settings)
     work_items = process_work_items_command(settings)
     okr_reviews = process_okr_reviews_command(settings)
     dws = DwsClient(
@@ -1249,6 +1279,7 @@ def daily_task_maintenance_command(settings: WorkerSettings) -> dict[str, int]:
     follow_ups = process_follow_ups_command(settings, refresh_evidence=False)
     result = {
         "sources": sources,
+        "codex_dev_tasks": codex_dev_tasks,
         "work_items": work_items,
         "okr_reviews": okr_reviews,
         "dingtalk_todos_closed": dingtalk_todos_closed,
@@ -1256,7 +1287,8 @@ def daily_task_maintenance_command(settings: WorkerSettings) -> dict[str, int]:
     }
     print(
         "daily-task-maintenance "
-        f"sources={sources} work_items={work_items} "
+        f"sources={sources} codex_dev_tasks={codex_dev_tasks} "
+        f"work_items={work_items} "
         f"okr_reviews={okr_reviews} "
         f"dingtalk_todos_closed={dingtalk_todos_closed} "
         f"follow_ups={follow_ups}",
@@ -2308,6 +2340,7 @@ def run_task_maintenance_loop(
         if not network_ready():
             sleep(work_item_interval_seconds)
             continue
+        process_codex_dev_tasks_command(settings)
         process_work_items_command(settings)
         process_okr_reviews_command(settings)
         now = monotonic()
@@ -2316,6 +2349,7 @@ def run_task_maintenance_loop(
                 settings,
                 max_new_items=settings.max_batches,
             )
+            process_codex_dev_tasks_command(settings)
             process_work_items_command(settings)
             process_okr_reviews_command(settings)
             process_follow_ups_command(
@@ -2417,6 +2451,7 @@ def run_service(
 ) -> None:
     _initialize_meeting_discovery_on_service_start(settings)
     _recover_processing_reply_tasks_on_service_start(settings)
+    _recover_processing_codex_dev_tasks_on_service_start(settings)
     _recover_processing_work_summary_inputs_on_service_start(settings)
     _recover_okr_review_requests_on_service_start(settings)
     _recover_meeting_alignment_jobs_on_service_start(settings)
@@ -2534,6 +2569,21 @@ def _recover_processing_reply_tasks_on_service_start(settings: WorkerSettings) -
             ),
         )
     return len(recovered_tasks)
+
+
+def _recover_processing_codex_dev_tasks_on_service_start(
+    settings: WorkerSettings,
+) -> int:
+    store = AutoReplyStore(settings.db_path)
+    recovered_count = store.reset_processing_codex_dev_tasks()
+    if recovered_count:
+        store.record_error(
+            None,
+            None,
+            "codex_dev_task_service_startup_requeue",
+            f"requeued processing codex dev tasks on service startup: {recovered_count}",
+        )
+    return recovered_count
 
 
 def _recover_processing_work_summary_inputs_on_service_start(
@@ -2816,6 +2866,8 @@ def main() -> None:
             settings.poll_interval_seconds,
             max_tasks=settings.max_batches,
         )
+    elif args.command == "process-codex-dev-tasks":
+        process_codex_dev_tasks_command(settings)
     elif args.command == "process-work-items":
         process_work_items_command(settings)
     elif args.command == "backfill-task-memory-context":
