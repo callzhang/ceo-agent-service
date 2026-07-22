@@ -252,7 +252,7 @@ delivery 的 App ID 完全一致：
 
 服务内的本机审核入口是 `http://127.0.0.1:8765/feishu/review`。它显示连接健康、
 待批准目标、触发消息、Codex 原因和 delivery 状态；History 也可按 `feishu`
-筛选并对待发项逐条批准或拒绝。所有会改变状态的飞书审核 POST 都要求进程随机
+筛选并对待发项逐条批准或拒绝。飞书审核与审计台其他所有写操作都要求进程随机
 CSRF token、同源 `Origin`/`Referer`、loopback Host 和 loopback 客户端地址；只支持
 从同一 `http://127.0.0.1:8765`、`http://localhost:8765` 或 IPv6 loopback 页面提交。缺少或不匹配
 任一条件都会返回 403，不要为方便远程访问而移除这些校验或把审计服务绑定到公网。

@@ -329,6 +329,16 @@ cd /path/to/ceo-agent-service
 http://127.0.0.1:8765/
 ```
 
+审计台强制保持在 loopback 地址：启动参数会拒绝非 loopback bind，且所有读取和
+写入请求都会同时校验 loopback Host 与 peer，避免远端访问和 DNS rebinding。
+所有会改变本地或外部状态的请求还要求同源 `Origin`/`Referer` 和进程内 CSRF
+token；不要反向代理到远端或绕过这些校验。唯一例外是 `/browser-notifications`：worker 通过仅限 loopback、
+`application/json`、无 `Origin`/`Referer` 且带固定内部协议 header 的窄接口提交；
+header 固定为 `X-CEO-Notification-Bridge: python-worker-v1`，它不是秘密，安全
+边界来自 loopback 和对浏览器来源 header 的拒绝。
+`CEO_NOTIFICATION_BRIDGE_BASE_URL` 只接受无凭据、无 query/fragment 的 HTTP
+loopback base URL。
+
 常用页面：
 
 - `/`：回复历史和待处理任务
@@ -337,7 +347,7 @@ http://127.0.0.1:8765/
 - `/attempts/{id}`：单次处理详情
 - `/codex`：本地 Codex session
 - `/developer-prompt`：Developer/User Prompt 模板管理
-- `/config`：快路径、慢路径、群聊、私聊路由说明；`Channels` tab 展示 DingTalk/Feishu CLI doctor 状态
+- `/config`：快路径、慢路径、群聊、私聊路由说明；`Channels` tab 分开展示 DingTalk、飞书只读 CLI 与飞书官方 Bot 的离线 doctor 状态
 - `/errors`：错误列表
 
 ### 7. 启用 task 总结
@@ -400,7 +410,7 @@ Codex 配置会写入 `[mcp_servers.memory_connector]`，并使用现有 OAuth A
 
 CEO reply agent 默认复用本机 Codex MCP/OAuth 配置，但仍显式禁用 hooks 和 plugins，避免个人自动化脚本影响服务行为。需要保留给 agent 的外部能力分两类：
 
-- CLI 能力：`dws` 和 Feishu/Lark CLI 由服务环境直接提供。DWS 负责钉钉消息、文档、审批、日历、通讯录和 AI 听记；Feishu/Lark CLI 负责飞书读取和显式开启后的回复发送。两者都不通过 MCP 透传。
+- CLI 能力：`dws` 和 Feishu/Lark CLI 由服务环境直接提供。DWS 负责钉钉能力；Feishu/Lark CLI 只负责飞书材料读取和本机诊断，其发送入口永久阻断。飞书消息收发只走官方 Bot SDK 的持久审核链路；这些能力都不通过 MCP 透传给模型。
 - MCP 能力：`memory_connector` 复用 `~/.codex/config.toml` 里的同名 MCP 配置，并在存在可转交 bearer 时注入给隔离子流程；`xiaoqing_interview` 和 `exa` 从 `~/.codex/config.toml` 的同名 `[mcp_servers.*]` 读取安全连接字段后透传。若安装者没有配置 `[mcp_servers.exa]`，服务使用默认 Exa remote MCP URL；若没有配置 `[mcp_servers.xiaoqing_interview]`，涉及小青面试资料的任务会被视为阻断性依赖缺失。
 
 为了避免把个人密钥写进进程命令行，MCP 透传只复制 URL、OAuth resource、command、args、startup timeout 和 bearer token 环境变量名，不复制 `[mcp_servers.*.env]` 里的密钥值。需要 API key 的 stdio MCP 应把密钥放在 launchd 或 shell 环境中。

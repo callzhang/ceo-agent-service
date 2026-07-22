@@ -226,6 +226,17 @@ def test_read_recent_parser_accepts_db_path():
     assert args.db == "/tmp/w.sqlite3"
 
 
+def test_parser_defaults_to_shared_runtime_database(tmp_path, monkeypatch):
+    expected = tmp_path / "Application Support" / "auto-reply.sqlite3"
+    monkeypatch.setattr(cli.config, "worker_db_path", lambda: expected)
+
+    parser = cli.build_parser()
+
+    assert parser.parse_args(["status"]).db == str(expected)
+    assert parser.parse_args(["approve", "--id", "7"]).db == str(expected)
+    assert parser.parse_args(["reject", "--id", "7"]).db == str(expected)
+
+
 def test_produce_once_builds_direction_aware_reader(tmp_path, monkeypatch):
     db = tmp_path / "worker.sqlite3"
     store = AutoReplyStore(db)

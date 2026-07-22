@@ -104,6 +104,21 @@ FEISHU_CONFIRMED_NOT_SENT_ERROR_CODES = frozenset(
         "ssrf_blocked",
     }
 )
+
+_LEGACY_FEISHU_CLI_TASK_KEYS = frozenset(
+    {
+        "channel",
+        "conversation_id",
+        "conversation_title",
+        "conversation_type",
+        "message_id",
+        "sent_at",
+        "sender_display",
+        "text",
+        "raw_json",
+    }
+)
+_LEGACY_FEISHU_CLI_QUARANTINE_PREFIX = "feishu_cli_quarantine:"
 FEISHU_UNCERTAIN_SEND_ERROR_CODES = frozenset({"send_timeout", "unknown"})
 _INITIALIZED_STORE_PATHS: set[Path] = set()
 _INITIALIZE_LOCK = threading.Lock()
@@ -1268,6 +1283,7 @@ class AutoReplyStore:
                         f"{column} text not null default ''"
                     )
             self._migrate_reply_task_channel_identity(db)
+            self._migrate_legacy_feishu_cli_reply_tasks(db)
             sent_reply_columns = {
                 row["name"]
                 for row in db.execute("pragma table_info(sent_replies)").fetchall()
@@ -1646,6 +1662,149 @@ class AutoReplyStore:
         violations = db.execute("pragma foreign_key_check").fetchall()
         if violations:
             raise sqlite3.IntegrityError("reply_tasks migration broke foreign keys")
+
+    @staticmethod
+    def _legacy_feishu_cli_task_matches(row: sqlite3.Row, payload: object) -> bool:
+        """Recognize the exact ChannelMessage envelope emitted by the old CLI.
+
+        Matching the persisted task columns as well as the complete JSON shape
+        prevents a malformed or official Bot trigger from being reclassified
+        merely because it happens to contain one similarly named field.
+        """
+        if not isinstance(payload, dict):
+            return False
+        if frozenset(payload) != _LEGACY_FEISHU_CLI_TASK_KEYS:
+            return False
+        string_fields = (
+            "channel",
+            "conversation_id",
+            "conversation_title",
+            "conversation_type",
+            "message_id",
+            "sent_at",
+            "sender_display",
+            "text",
+        )
+        if any(not isinstance(payload.get(name), str) for name in string_fields):
+            return False
+        if payload["channel"] != "feishu":
+            return False
+        if payload["conversation_type"] not in {"direct", "group", "unknown"}:
+            return False
+        if not all(
+            payload[name].strip()
+            for name in (
+                "conversation_id",
+                "message_id",
+                "sent_at",
+                "sender_display",
+            )
+        ):
+            return False
+        if not isinstance(payload["raw_json"], dict):
+            return False
+        if bool(row["single_chat"]) != (payload["conversation_type"] == "direct"):
+            return False
+        return all(
+            payload[payload_name] == row[column_name]
+            for payload_name, column_name in (
+                ("conversation_id", "conversation_id"),
+                ("conversation_title", "conversation_title"),
+                ("message_id", "trigger_message_id"),
+                ("sent_at", "trigger_create_time"),
+                ("sender_display", "trigger_sender"),
+                ("text", "trigger_text"),
+            )
+        )
+
+    @classmethod
+    def _migrate_legacy_feishu_cli_reply_tasks(
+        cls, db: sqlite3.Connection
+    ) -> None:
+        """Move only provable pre-namespace CLI tasks away from the Bot queue.
+
+        The old diagnostic adapter wrote generic ``ChannelMessage`` envelopes
+        under ``channel='feishu'``, which is now reserved for official durable
+        Bot events.  Official rows are protected only by durable event/delivery
+        ownership.  An unbound normalized-looking trigger is still isolated:
+        the official producer creates its event-to-task binding atomically, so
+        payload shape alone is not sufficient provenance for an active queue.
+        Anything that is not a provable old CLI envelope is likewise isolated
+        instead of being guessed into an active queue.  Failed rows are also
+        reclassified because stale Codex-lock failures can later be recovered
+        into ``pending``; only terminal ``done`` history stays untouched.
+        """
+        rows = db.execute(
+            """
+            select tasks.*,
+                   exists(
+                       select 1 from feishu_events as events
+                       where events.reply_task_id=tasks.id
+                   ) as has_official_event,
+                   exists(
+                       select 1 from feishu_deliveries as deliveries
+                       where deliveries.reply_task_id=tasks.id
+                   ) as has_official_delivery
+            from reply_tasks as tasks
+            where tasks.channel='feishu'
+              and tasks.status in ('pending', 'processing', 'failed')
+            order by tasks.id
+            """
+        ).fetchall()
+        for row in rows:
+            # Durable official Bot ownership always wins, even if a future
+            # payload version happens to add fields resembling the old wrapper.
+            if row["has_official_event"] or row["has_official_delivery"]:
+                continue
+            try:
+                payload = json.loads(row["trigger_message_json"] or "")
+            except (json.JSONDecodeError, TypeError):
+                payload = None
+
+            target_channel = (
+                "feishu_cli"
+                if cls._legacy_feishu_cli_task_matches(row, payload)
+                else f"{_LEGACY_FEISHU_CLI_QUARANTINE_PREFIX}{row['id']}"
+            )
+            cursor = db.execute(
+                """
+                update or ignore reply_tasks
+                set channel=?
+                where id=? and channel='feishu'
+                  and status in ('pending', 'processing', 'failed')
+                  and not exists (
+                      select 1 from feishu_events
+                      where feishu_events.reply_task_id=reply_tasks.id
+                  )
+                  and not exists (
+                      select 1 from feishu_deliveries
+                      where feishu_deliveries.reply_task_id=reply_tasks.id
+                  )
+                """,
+                (target_channel, row["id"]),
+            )
+            if cursor.rowcount or target_channel != "feishu_cli":
+                continue
+            # A separately enqueued post-upgrade CLI task may already own the
+            # destination identity.  Preserve both records while fencing the
+            # legacy duplicate away from every active consumer.
+            db.execute(
+                """
+                update reply_tasks
+                set channel=?
+                where id=? and channel='feishu'
+                  and status in ('pending', 'processing', 'failed')
+                  and not exists (
+                      select 1 from feishu_events
+                      where feishu_events.reply_task_id=reply_tasks.id
+                  )
+                  and not exists (
+                      select 1 from feishu_deliveries
+                      where feishu_deliveries.reply_task_id=reply_tasks.id
+                  )
+                """,
+                (f"{_LEGACY_FEISHU_CLI_QUARANTINE_PREFIX}{row['id']}", row["id"]),
+            )
 
     @classmethod
     def _migrate_feishu_delivery_attempts(
@@ -3376,14 +3535,20 @@ class AutoReplyStore:
             )
             return len(task_ids)
 
-    def reset_recoverable_reply_tasks(self) -> list[ReplyTask]:
+    def reset_recoverable_reply_tasks(
+        self, *, channel: str = ""
+    ) -> list[ReplyTask]:
+        channel_clause = " and channel=?" if channel else ""
+        args: list[str] = [channel] if channel else []
+        args.append(f"-{CODEX_SESSION_LOCK_STALE_SECONDS} seconds")
         with self._connect() as db:
             db.execute("begin immediate")
             rows = db.execute(
-                """
+                f"""
                 select *
                 from reply_tasks
                 where status='failed'
+                  {channel_clause}
                   and error like 'codex session locked:%'
                   and not exists (
                       select 1
@@ -3395,7 +3560,7 @@ class AutoReplyStore:
                   )
                 order by updated_at, id
                 """,
-                (f"-{CODEX_SESSION_LOCK_STALE_SECONDS} seconds",),
+                args,
             ).fetchall()
             task_ids = [row["id"] for row in rows]
             if not task_ids:

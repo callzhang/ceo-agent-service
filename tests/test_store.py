@@ -836,6 +836,35 @@ def test_reset_recoverable_reply_tasks_keeps_fresh_lock_failure(tmp_path: Path):
     assert store.list_reply_tasks(statuses=("failed",))[0].id == task.id
 
 
+def test_reset_recoverable_reply_tasks_can_be_channel_scoped(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_ids: dict[str, int] = {}
+    for channel in ("dingtalk", "feishu"):
+        store.enqueue_reply_task(
+            channel=channel,
+            conversation_id=f"{channel}-conversation",
+            conversation_title=channel,
+            single_chat=False,
+            trigger_message_id=f"{channel}-message",
+            trigger_create_time="2026-05-13 18:00:00",
+            trigger_sender="Mina",
+            trigger_text="locked",
+        )
+        [task] = store.claim_reply_tasks(limit=1, channel=channel)
+        store.fail_reply_task(
+            task.id,
+            f"codex session locked: {task.conversation_id}",
+        )
+        task_ids[channel] = task.id
+
+    recovered = store.reset_recoverable_reply_tasks(channel="dingtalk")
+
+    assert [task.id for task in recovered] == [task_ids["dingtalk"]]
+    tasks = {task.id: task for task in store.list_reply_tasks()}
+    assert tasks[task_ids["dingtalk"]].status == "pending"
+    assert tasks[task_ids["feishu"]].status == "failed"
+
+
 def test_reset_processing_reply_tasks_requeues_all_processing_on_startup(
     tmp_path: Path,
 ):

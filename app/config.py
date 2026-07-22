@@ -310,10 +310,6 @@ def feishu_cli_binary() -> str:
     return os.getenv("CEO_FEISHU_CLI_BINARY", "lark").strip() or "lark"
 
 
-def feishu_live_send_enabled() -> bool:
-    return _env_truthy("CEO_FEISHU_LIVE_SEND_ENABLED")
-
-
 # --- WeChat personal-account channel (disabled by default) ---
 def _wechat_truthy(name: str) -> bool:
     return _env_truthy(name)
@@ -428,10 +424,11 @@ def feishu_sender_enabled() -> bool:
 
 
 def feishu_live_send_allowed() -> bool:
-    """Return true only when both outbound safety gates are explicitly open."""
+    """Return true only when all Feishu outbound gates are explicitly open."""
     return (
-        os.getenv("CEO_NOT_SEND_MESSAGE", "1").strip() == "0"
+        feishu_enabled()
         and feishu_sender_enabled()
+        and os.getenv("CEO_NOT_SEND_MESSAGE", "1").strip() == "0"
     )
 
 

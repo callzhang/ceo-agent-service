@@ -300,7 +300,11 @@ def test_main_audit_app_registers_feishu_review_and_navigation(
     monkeypatch.setattr(config, "feishu_app_id", lambda: "")
     monkeypatch.setattr(config, "feishu_app_secret", lambda: "")
     store = AutoReplyStore(tmp_path / "db.sqlite3")
-    client = TestClient(create_audit_app(store.path))
+    client = TestClient(
+        create_audit_app(store.path),
+        base_url="http://127.0.0.1:8765",
+        client=("127.0.0.1", 50000),
+    )
 
     history = client.get("/")
     review = client.get("/feishu/review")
@@ -309,3 +313,42 @@ def test_main_audit_app_registers_feishu_review_and_navigation(
     assert 'href="/feishu/review">Feishu</a>' in history.text
     assert review.status_code == 200
     assert "飞书通道审核" in review.text
+
+
+def test_main_audit_app_feishu_form_token_survives_global_boundary(
+    tmp_path, monkeypatch
+):
+    from app.audit_web import create_audit_app
+
+    monkeypatch.setattr(config, "feishu_app_id", lambda: "cli_test")
+    monkeypatch.setattr(config, "feishu_app_secret", lambda: "secret-not-rendered")
+    store = AutoReplyStore(tmp_path / "db.sqlite3")
+    _seed(store)
+    client = TestClient(
+        create_audit_app(store.path),
+        base_url="http://127.0.0.1:8765",
+        client=("127.0.0.1", 50000),
+    )
+
+    page = client.get("/feishu/review")
+    form = re.search(
+        r"action='/feishu/scopes/group/oc_audit_1/approve'[^>]*>"
+        r".*?name='csrf_token' value='([^']+)'",
+        page.text,
+        re.DOTALL,
+    )
+    assert form is not None
+
+    response = client.post(
+        "/feishu/scopes/group/oc_audit_1/approve",
+        data={"csrf_token": form.group(1), "approved_by": "browser-reviewer"},
+        headers={"Origin": "http://127.0.0.1:8765"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    scope = store.get_feishu_reply_scope("cli_test", "group", "oc_audit_1")
+    assert scope is not None
+    assert scope.binding_status == "verified"
+    assert scope.enabled is True
+    assert scope.approved_by == "browser-reviewer"

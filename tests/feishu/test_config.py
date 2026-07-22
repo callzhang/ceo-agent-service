@@ -46,12 +46,17 @@ def test_feishu_switches_require_explicit_truthy_values(monkeypatch, value):
     assert config.feishu_sender_enabled() is True
 
 
-def test_feishu_live_send_requires_both_outbound_gates(monkeypatch):
+def test_feishu_live_send_requires_master_sender_and_global_gates(monkeypatch):
+    monkeypatch.setenv("CEO_FEISHU_ENABLED", "1")
     monkeypatch.setenv("CEO_FEISHU_SENDER_ENABLED", "1")
     assert config.feishu_live_send_allowed() is False
 
-    monkeypatch.setenv("CEO_FEISHU_SENDER_ENABLED", "0")
+    monkeypatch.setenv("CEO_FEISHU_ENABLED", "0")
     monkeypatch.setenv("CEO_NOT_SEND_MESSAGE", "0")
+    assert config.feishu_live_send_allowed() is False
+
+    monkeypatch.setenv("CEO_FEISHU_ENABLED", "1")
+    monkeypatch.setenv("CEO_FEISHU_SENDER_ENABLED", "0")
     assert config.feishu_live_send_allowed() is False
 
     monkeypatch.setenv("CEO_FEISHU_SENDER_ENABLED", "1")

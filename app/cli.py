@@ -1376,11 +1376,12 @@ def doctor_mcp_command(
 
 
 def channel_doctor_command() -> dict[str, object]:
-    from app.channels import DingTalkCliAdapter, FeishuCliAdapter
+    from app.channels import DingTalkCliAdapter, FeishuCliAdapter, official_bot_doctor
 
     statuses = [
         DingTalkCliAdapter().doctor().model_dump(mode="json"),
         FeishuCliAdapter().doctor().model_dump(mode="json"),
+        official_bot_doctor().model_dump(mode="json"),
     ]
     report: dict[str, object] = {"channels": statuses}
     print(json.dumps(report, ensure_ascii=False), flush=True)
@@ -1481,6 +1482,13 @@ def send_attempt_command(settings: WorkerSettings, attempt_id: int) -> dict[str,
         raise SystemExit(
             f"reply attempt {attempt_id} is not an unsent attempt: "
             f"{attempt.send_status}"
+        )
+    attempt_channel = (attempt.channel or "dingtalk").strip().lower()
+    if attempt_channel != "dingtalk":
+        review_path = "/feishu/review" if attempt_channel == "feishu" else "channel review"
+        raise SystemExit(
+            f"reply attempt {attempt_id} belongs to channel={attempt_channel}; "
+            f"use {review_path} instead of the DingTalk send-attempt repair path"
         )
     if attempt.calendar_event_id.strip() and attempt.calendar_response_status.strip():
         return _send_calendar_attempt(settings, store, attempt)
@@ -2469,6 +2477,10 @@ def run_task_maintenance_loop(
             )
             process_work_items_command(settings)
             process_okr_reviews_command(settings)
+            # A daily scan can itself run past the hourly follow-up deadline.
+            # Re-sample after all daily work so that deadline is handled below
+            # without waiting for another maintenance-loop iteration.
+            now = monotonic()
             next_daily_run = now + daily_interval_seconds
         if now >= next_follow_up_run:
             process_follow_ups_command(
@@ -2643,6 +2655,10 @@ def run_service(
     wait: Callable[[], None] | None = None,
     exit_process: Callable[[int], None] = os._exit,
 ) -> None:
+    from app.audit_security import is_loopback_host
+
+    if not is_loopback_host(host):
+        raise ValueError("service audit-web host must be a loopback address")
     _initialize_meeting_discovery_on_service_start(settings)
     _recover_processing_reply_tasks_on_service_start(settings)
     _recover_processing_work_summary_inputs_on_service_start(settings)

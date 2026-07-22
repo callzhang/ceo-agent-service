@@ -2,14 +2,13 @@
 from __future__ import annotations
 
 import html
-import ipaddress
-import secrets
-from hmac import compare_digest
 from typing import Callable
-from urllib.parse import parse_qs, quote, urlsplit
+from urllib.parse import parse_qs, quote
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+
+from app.audit_security import csrf_form_input, require_local_mutation
 
 
 DELIVERY_STATUSES = (
@@ -21,74 +20,6 @@ DELIVERY_STATUSES = (
     "failed",
     "rejected",
 )
-_CSRF_TOKEN = secrets.token_urlsafe(32)
-
-
-def csrf_form_input() -> str:
-    """Return the process-local token field used by every Feishu mutation."""
-    return (
-        "<input type='hidden' name='csrf_token' value='"
-        f"{html.escape(_CSRF_TOKEN, quote=True)}'>"
-    )
-
-
-def _is_loopback_host(value: str) -> bool:
-    host = (value or "").strip().rstrip(".").lower()
-    if host == "localhost":
-        return True
-    try:
-        return ipaddress.ip_address(host).is_loopback
-    except ValueError:
-        return False
-
-
-def _effective_port(parts) -> int | None:
-    try:
-        if parts.port is not None:
-            return parts.port
-    except ValueError:
-        return None
-    return {"http": 80, "https": 443}.get(parts.scheme.lower())
-
-
-def _same_local_origin(request: Request, source: str) -> bool:
-    try:
-        expected = urlsplit(str(request.url))
-        supplied = urlsplit(source)
-        expected_host = (expected.hostname or "").rstrip(".").lower()
-        supplied_host = (supplied.hostname or "").rstrip(".").lower()
-    except (TypeError, ValueError):
-        return False
-    return bool(
-        _is_loopback_host(expected_host)
-        and supplied.scheme.lower() in {"http", "https"}
-        and supplied.scheme.lower() == expected.scheme.lower()
-        and supplied_host == expected_host
-        and _effective_port(supplied) == _effective_port(expected)
-        and not supplied.username
-        and not supplied.password
-    )
-
-
-async def _require_local_mutation(request: Request) -> None:
-    """Fail closed unless a state-changing request is local and same-origin."""
-    try:
-        request_host = request.url.hostname or ""
-    except ValueError:
-        request_host = ""
-    client_host = request.client.host if request.client is not None else ""
-    if not _is_loopback_host(request_host) or not _is_loopback_host(client_host):
-        raise HTTPException(status_code=403, detail="local audit request required")
-    source = request.headers.get("origin") or request.headers.get("referer") or ""
-    if not source or not _same_local_origin(request, source):
-        raise HTTPException(status_code=403, detail="same-origin audit request required")
-    supplied_token = request.headers.get("x-ceo-audit-csrf", "").strip()
-    if not supplied_token:
-        supplied_token = await _form_value(request, "csrf_token")
-    if not supplied_token or not compare_digest(supplied_token, _CSRF_TOKEN):
-        raise HTTPException(status_code=403, detail="invalid audit CSRF token")
-
-
 def _safe_next(value: str) -> str:
     if value.startswith("/") and not value.startswith("//"):
         return value
@@ -297,7 +228,7 @@ def register_feishu_review_routes(
     ) -> RedirectResponse:
         from app import config
 
-        await _require_local_mutation(request)
+        await require_local_mutation(request)
         if target_type not in {"direct_sender", "group"}:
             raise HTTPException(status_code=422, detail="invalid Feishu target type")
         app_id = config.feishu_app_id()
@@ -340,7 +271,7 @@ def register_feishu_review_routes(
     ) -> RedirectResponse:
         from app import config
 
-        await _require_local_mutation(request)
+        await require_local_mutation(request)
         if not config.feishu_live_send_allowed():
             raise HTTPException(status_code=409, detail="Feishu outbound gates are closed")
         app_id = str(config.feishu_app_id() or "").strip()
@@ -367,7 +298,7 @@ def register_feishu_review_routes(
     ) -> RedirectResponse:
         from app import config
 
-        await _require_local_mutation(request)
+        await require_local_mutation(request)
         app_id = str(config.feishu_app_id() or "").strip()
         if not app_id:
             raise HTTPException(status_code=409, detail="Feishu App ID is missing")

@@ -4651,7 +4651,9 @@ class DingTalkAutoReplyWorker:
                 title="CEO task retrying stale tasks",
                 message=f"requeued {reset_count} stale task(s)",
             )
-        recovered_lock_tasks = self.store.reset_recoverable_reply_tasks()
+        recovered_lock_tasks = self.store.reset_recoverable_reply_tasks(
+            channel="dingtalk"
+        )
         if recovered_lock_tasks:
             for recovered_task in recovered_lock_tasks:
                 self.store.record_error(
