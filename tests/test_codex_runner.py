@@ -6,6 +6,7 @@ import pytest
 
 from app.codex_runner import (
     AGENT_ENVELOPE_SCHEMA_PATH,
+    CODEX_BYPASS_APPROVALS_AND_SANDBOX,
     CODEX_DECISION_SCHEMA_PATH,
     CodexRunner,
     codex_developer_instructions,
@@ -118,6 +119,113 @@ def test_codex_command_reuses_user_config_by_default(tmp_path: Path):
         if value == "--disable"
     ]
     assert disabled_features == ["hooks", "plugins"]
+
+
+def test_no_tool_codex_command_hard_disables_all_external_capabilities(
+    tmp_path: Path, monkeypatch
+):
+    codex_home = tmp_path / ".codex"
+    codex_home.mkdir()
+    (codex_home / "config.toml").write_text(
+        "\n".join(
+            [
+                "[mcp_servers.xiaoqing_interview]",
+                'url = "https://interview.example.invalid/mcp"',
+                "",
+                "[mcp_servers.exa]",
+                'url = "https://exa.example.invalid/mcp"',
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+    monkeypatch.setenv("MEMORY_CONNECTOR_URL", "https://memory.example.invalid/mcp")
+    monkeypatch.setenv("CONNECTOR_API_KEY", "memory-secret")
+    monkeypatch.setenv("DWS_CLIENT_SECRET", "dws-secret")
+    runner = CodexRunner(workspace=tmp_path, codex_bin="codex", tool_mode="none")
+
+    command = runner.build_command(prompt="hello", session_id=None)
+    env = runner.build_env()
+
+    assert "--ignore-user-config" in command
+    assert CODEX_BYPASS_APPROVALS_AND_SANDBOX not in command
+    assert command[command.index("--sandbox") + 1] == "read-only"
+    assert "tools.enabled_tools=[]" in command
+    assert 'web_search="disabled"' in command
+    assert not any("mcp_servers." in item for item in command)
+    assert "memory-secret" not in env.values()
+    assert "dws-secret" not in env.values()
+    assert "DWS_AGENT_CODE" not in env
+
+
+def _reply_envelope_json(text: str = "收到") -> str:
+    return json.dumps(
+        {
+            "kind": "reply",
+            "user_response": {
+                "mode": "send_reply",
+                "text": text,
+                "sensitivity_kind": "general",
+            },
+            "system_actions": [],
+            "domain_payload": {},
+            "audit": {
+                "summary": "只需当前消息判断",
+                "documents": [],
+                "confidence": 0.9,
+            },
+        },
+        ensure_ascii=False,
+    )
+
+
+def test_no_tool_decision_fails_closed_on_attempted_tool_event(tmp_path: Path):
+    raw = "\n".join(
+        [
+            json.dumps(
+                {
+                    "type": "item.started",
+                    "item": {
+                        "type": "mcp_tool_call",
+                        "tool": "memory_write",
+                    },
+                }
+            ),
+            _reply_envelope_json(),
+        ]
+    )
+    runner = CodexDecisionRunner(
+        workspace=tmp_path,
+        executor=lambda command, prompt: raw,
+        tool_mode="none",
+    )
+
+    decision = runner.decide("hello", None)
+
+    assert decision.action == CodexAction.STOP_WITH_ERROR
+    assert decision.reason == "codex_tool_isolation_violation"
+
+
+def test_no_tool_decision_keeps_repair_command_isolated(tmp_path: Path):
+    commands: list[list[str]] = []
+
+    def execute(command, prompt):
+        commands.append(command)
+        return "not json" if len(commands) == 1 else _reply_envelope_json()
+
+    runner = CodexDecisionRunner(
+        workspace=tmp_path,
+        executor=execute,
+        tool_mode="none",
+    )
+
+    assert runner.decide("hello", None).action == CodexAction.SEND_REPLY
+    assert len(commands) == 2
+    for command in commands:
+        assert "--ignore-user-config" in command
+        assert CODEX_BYPASS_APPROVALS_AND_SANDBOX not in command
+        assert "tools.enabled_tools=[]" in command
+        assert not any("mcp_servers." in item for item in command)
 
 
 def test_codex_command_exposes_default_passthrough_mcps_from_codex_config(

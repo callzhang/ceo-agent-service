@@ -11,6 +11,12 @@ from uuid import uuid4
 
 from pydantic import BaseModel, Field, TypeAdapter
 
+from app.feishu.models import (
+    FeishuDelivery,
+    FeishuEventRecord,
+    FeishuInboundMessage,
+    FeishuReplyScope,
+)
 from app.wechat.models import WechatReplyScope
 from app.meeting_alignment_models import (
     MeetingAlignmentJob,
@@ -56,6 +62,33 @@ SQLITE_BUSY_TIMEOUT_SECONDS = 30
 SQLITE_BUSY_TIMEOUT_MILLISECONDS = SQLITE_BUSY_TIMEOUT_SECONDS * 1000
 UNIVERSAL_MEMORY_LEASE_SECONDS = 15 * 60
 CODEX_SESSION_LOCK_STALE_SECONDS = 20 * 60
+FEISHU_DELIVERY_STATUSES = frozenset(
+    {
+        "ready_to_send",
+        "sending",
+        "sent",
+        "retry",
+        "send_unknown",
+        "failed",
+        "rejected",
+    }
+)
+FEISHU_DELIVERY_TRANSITIONS = frozenset(
+    {
+        ("ready_to_send", "sending"),
+        ("ready_to_send", "rejected"),
+        ("retry", "sending"),
+        ("retry", "rejected"),
+        ("sending", "sent"),
+        ("sending", "retry"),
+        ("sending", "send_unknown"),
+        ("sending", "failed"),
+        ("send_unknown", "sent"),
+        ("send_unknown", "retry"),
+        ("send_unknown", "failed"),
+        ("failed", "retry"),
+    }
+)
 _INITIALIZED_STORE_PATHS: set[Path] = set()
 _INITIALIZE_LOCK = threading.Lock()
 
@@ -556,6 +589,82 @@ class AutoReplyStore:
                 );
                 create index if not exists idx_reply_tasks_status
                     on reply_tasks(status, id);
+                create table if not exists feishu_events (
+                    id integer primary key autoincrement,
+                    event_id text not null unique,
+                    app_id text not null,
+                    message_id text not null,
+                    chat_id text not null,
+                    chat_type text not null,
+                    chat_title text not null default '',
+                    thread_id text not null default '',
+                    reply_to_message_id text not null default '',
+                    sender_open_id text not null,
+                    sender_type text not null default 'user',
+                    sender_name text not null default '',
+                    message_type text not null,
+                    mentioned_bot integer not null default 0,
+                    body_text text not null default '',
+                    event_create_time text not null,
+                    received_at text not null default current_timestamp,
+                    eligibility_status text not null,
+                    reject_reason text not null default '',
+                    reply_task_id integer,
+                    created_at text not null default current_timestamp,
+                    unique(app_id, message_id),
+                    foreign key(reply_task_id) references reply_tasks(id)
+                );
+                create index if not exists idx_feishu_events_context
+                    on feishu_events(app_id, chat_id, eligibility_status,
+                                     event_create_time, id);
+                create index if not exists idx_feishu_events_reply_task
+                    on feishu_events(reply_task_id);
+                create table if not exists feishu_reply_scopes (
+                    app_id text not null,
+                    target_type text not null,
+                    target_id text not null,
+                    display_name text not null default '',
+                    trigger_mode text not null,
+                    enabled integer not null default 0,
+                    binding_status text not null default 'pending',
+                    last_seen_at text not null default '',
+                    approved_at text not null default '',
+                    approved_by text not null default '',
+                    created_at text not null default current_timestamp,
+                    updated_at text not null default current_timestamp,
+                    primary key(app_id, target_type, target_id)
+                );
+                create index if not exists idx_feishu_reply_scopes_review
+                    on feishu_reply_scopes(binding_status, enabled,
+                                           target_type, target_id);
+                create table if not exists feishu_deliveries (
+                    id integer primary key autoincrement,
+                    reply_task_id integer not null unique,
+                    attempt_id integer not null default 0,
+                    app_id text not null,
+                    chat_id text not null,
+                    reply_to_message_id text not null,
+                    reply_in_thread integer not null default 0,
+                    reply_text text not null,
+                    idempotency_key text not null unique,
+                    status text not null default 'ready_to_send',
+                    feishu_message_id text not null default '',
+                    request_log_id text not null default '',
+                    attempts integer not null default 0,
+                    approved_at text not null default '',
+                    approved_by text not null default '',
+                    locked_at text not null default '',
+                    available_at text not null default '',
+                    error_code text not null default '',
+                    error text not null default '',
+                    created_at text not null default current_timestamp,
+                    updated_at text not null default current_timestamp,
+                    foreign key(reply_task_id) references reply_tasks(id)
+                );
+                create index if not exists idx_feishu_deliveries_claim
+                    on feishu_deliveries(status, available_at, id);
+                create index if not exists idx_feishu_deliveries_chat
+                    on feishu_deliveries(app_id, chat_id, id);
                 create table if not exists universal_plan_executions (
                     execution_scope_id text primary key,
                     reply_task_id integer not null,
@@ -1002,6 +1111,18 @@ class AutoReplyStore:
                     db.execute(
                         f"alter table reply_tasks add column {column} {definition}"
                     )
+            feishu_delivery_columns = {
+                row["name"]
+                for row in db.execute(
+                    "pragma table_info(feishu_deliveries)"
+                ).fetchall()
+            }
+            for column in ("approved_at", "approved_by"):
+                if column not in feishu_delivery_columns:
+                    db.execute(
+                        "alter table feishu_deliveries add column "
+                        f"{column} text not null default ''"
+                    )
             self._migrate_reply_task_channel_identity(db)
             sent_reply_columns = {
                 row["name"]
@@ -1358,6 +1479,83 @@ class AutoReplyStore:
             status=row["status"],
             attempts=row["attempts"],
             locked_at=row["locked_at"],
+            error=row["error"],
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
+
+    @staticmethod
+    def _feishu_event_from_row(
+        row: sqlite3.Row,
+        *,
+        inserted: bool = False,
+        enqueued: bool | None = None,
+    ) -> FeishuEventRecord:
+        reply_task_id = int(row["reply_task_id"] or 0)
+        return FeishuEventRecord(
+            id=row["id"],
+            event_id=row["event_id"],
+            app_id=row["app_id"],
+            message_id=row["message_id"],
+            chat_id=row["chat_id"],
+            chat_type=row["chat_type"],
+            chat_title=row["chat_title"],
+            thread_id=row["thread_id"],
+            reply_to_message_id=row["reply_to_message_id"],
+            sender_open_id=row["sender_open_id"],
+            sender_type=row["sender_type"],
+            sender_name=row["sender_name"],
+            message_type=row["message_type"],
+            mentioned_bot=bool(row["mentioned_bot"]),
+            body_text=row["body_text"],
+            event_create_time=row["event_create_time"],
+            received_at=row["received_at"],
+            eligibility_status=row["eligibility_status"],
+            reject_reason=row["reject_reason"],
+            reply_task_id=reply_task_id,
+            created_at=row["created_at"],
+            inserted=inserted,
+            enqueued=(reply_task_id > 0 if enqueued is None else enqueued),
+        )
+
+    @staticmethod
+    def _feishu_scope_from_row(row: sqlite3.Row) -> FeishuReplyScope:
+        return FeishuReplyScope(
+            app_id=row["app_id"],
+            target_type=row["target_type"],
+            target_id=row["target_id"],
+            display_name=row["display_name"],
+            trigger_mode=row["trigger_mode"],
+            enabled=bool(row["enabled"]),
+            binding_status=row["binding_status"],
+            last_seen_at=row["last_seen_at"],
+            approved_at=row["approved_at"],
+            approved_by=row["approved_by"],
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
+
+    @staticmethod
+    def _feishu_delivery_from_row(row: sqlite3.Row) -> FeishuDelivery:
+        return FeishuDelivery(
+            id=row["id"],
+            reply_task_id=row["reply_task_id"],
+            attempt_id=row["attempt_id"],
+            app_id=row["app_id"],
+            chat_id=row["chat_id"],
+            reply_to_message_id=row["reply_to_message_id"],
+            reply_in_thread=bool(row["reply_in_thread"]),
+            reply_text=row["reply_text"],
+            idempotency_key=row["idempotency_key"],
+            status=row["status"],
+            feishu_message_id=row["feishu_message_id"],
+            request_log_id=row["request_log_id"],
+            attempts=row["attempts"],
+            approved_at=row["approved_at"],
+            approved_by=row["approved_by"],
+            locked_at=row["locked_at"],
+            available_at=row["available_at"],
+            error_code=row["error_code"],
             error=row["error"],
             created_at=row["created_at"],
             updated_at=row["updated_at"],
@@ -2861,6 +3059,928 @@ class AutoReplyStore:
             if row is None:
                 return None
             return self._reply_task_from_row(row)
+
+    # ---- Feishu channel: normalized events ----
+    @staticmethod
+    def _enqueue_feishu_event_row(
+        db: sqlite3.Connection, row: sqlite3.Row
+    ) -> int:
+        """Attach one eligible event to its channel-isolated reply task."""
+        if row["eligibility_status"] != "eligible":
+            return int(row["reply_task_id"] or 0)
+        if row["reply_task_id"]:
+            return int(row["reply_task_id"])
+        if not row["body_text"].strip():
+            return 0
+
+        trigger_message = {
+            "event_id": row["event_id"],
+            "app_id": row["app_id"],
+            "message_id": row["message_id"],
+            "chat_id": row["chat_id"],
+            "chat_type": row["chat_type"],
+            "chat_title": row["chat_title"],
+            "thread_id": row["thread_id"],
+            "reply_to_message_id": row["reply_to_message_id"],
+            "sender_open_id": row["sender_open_id"],
+            "sender_type": row["sender_type"],
+            "sender_name": row["sender_name"],
+            "message_type": row["message_type"],
+            "mentioned_bot": bool(row["mentioned_bot"]),
+            "body_text": row["body_text"],
+            "event_create_time": row["event_create_time"],
+            "received_at": row["received_at"],
+        }
+        db.execute(
+            """
+            insert or ignore into reply_tasks (
+                channel, conversation_id, conversation_title, single_chat,
+                trigger_message_id, trigger_create_time, trigger_sender,
+                trigger_text, trigger_message_json
+            ) values ('feishu', ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                row["chat_id"],
+                row["chat_title"] or row["chat_id"],
+                int(row["chat_type"] == "p2p"),
+                row["message_id"],
+                row["event_create_time"],
+                row["sender_name"] or row["sender_open_id"],
+                row["body_text"],
+                json.dumps(
+                    trigger_message,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ),
+            ),
+        )
+        task = db.execute(
+            """
+            select id from reply_tasks
+            where channel='feishu'
+              and conversation_id=? and trigger_message_id=?
+            """,
+            (row["chat_id"], row["message_id"]),
+        ).fetchone()
+        if task is None:
+            raise RuntimeError("eligible Feishu event was not enqueued")
+        task_id = int(task["id"])
+        db.execute(
+            """
+            update feishu_events set reply_task_id=?
+            where id=? and reply_task_id is null
+            """,
+            (task_id, row["id"]),
+        )
+        return task_id
+
+    def record_feishu_event(
+        self,
+        message: FeishuInboundMessage,
+        *,
+        eligibility_status: str,
+        reject_reason: str = "",
+        store_body: bool = False,
+        enqueue_eligible: bool = True,
+    ) -> FeishuEventRecord:
+        """Idempotently record an event and, when eligible, enqueue it atomically.
+
+        The first observation is immutable.  A repeated ``event_id`` or
+        ``(app_id, message_id)`` returns the original row and never stores a
+        later payload.  An eligible event initially recorded in receive-only
+        mode may be attached to its reply task by a later duplicate call.
+        """
+        if not eligibility_status.strip():
+            raise ValueError("eligibility_status must be non-empty")
+        if eligibility_status == "eligible" and not store_body:
+            raise ValueError("eligible Feishu events must persist normalized body")
+        received_at = message.received_at or datetime.now().astimezone().isoformat()
+        body_text = message.body_text if store_body else ""
+        with self._connect() as db:
+            db.execute("begin immediate")
+            matches = db.execute(
+                """
+                select * from feishu_events
+                where event_id=? or (app_id=? and message_id=?)
+                order by id
+                """,
+                (message.event_id, message.app_id, message.message_id),
+            ).fetchall()
+            if len(matches) > 1:
+                raise sqlite3.IntegrityError(
+                    "Feishu event idempotency keys resolve to different rows"
+                )
+            if matches:
+                row = matches[0]
+                if row["event_id"] == message.event_id and (
+                    row["app_id"] != message.app_id
+                    or row["message_id"] != message.message_id
+                ):
+                    raise ValueError("event_id reused for a different Feishu message")
+                if enqueue_eligible and row["eligibility_status"] == "eligible":
+                    self._enqueue_feishu_event_row(db, row)
+                    row = db.execute(
+                        "select * from feishu_events where id=?", (row["id"],)
+                    ).fetchone()
+                return self._feishu_event_from_row(row)
+
+            cursor = db.execute(
+                """
+                insert into feishu_events (
+                    event_id, app_id, message_id, chat_id, chat_type,
+                    chat_title, thread_id, reply_to_message_id,
+                    sender_open_id, sender_type, sender_name, message_type,
+                    mentioned_bot, body_text, event_create_time, received_at,
+                    eligibility_status, reject_reason
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    message.event_id,
+                    message.app_id,
+                    message.message_id,
+                    message.chat_id,
+                    message.chat_type,
+                    message.chat_title,
+                    message.thread_id,
+                    message.reply_to_message_id,
+                    message.sender_open_id,
+                    message.sender_type,
+                    message.sender_name,
+                    message.message_type,
+                    int(message.mentioned_bot),
+                    body_text,
+                    message.event_create_time,
+                    received_at,
+                    eligibility_status,
+                    reject_reason,
+                ),
+            )
+            row = db.execute(
+                "select * from feishu_events where id=?", (cursor.lastrowid,)
+            ).fetchone()
+            if enqueue_eligible and eligibility_status == "eligible":
+                self._enqueue_feishu_event_row(db, row)
+                row = db.execute(
+                    "select * from feishu_events where id=?", (cursor.lastrowid,)
+                ).fetchone()
+            return self._feishu_event_from_row(row, inserted=True)
+
+    def attach_feishu_event_reply_task(
+        self, event_record_id: int
+    ) -> FeishuEventRecord:
+        """Attach a receive-only eligible event without changing its payload."""
+        with self._connect() as db:
+            db.execute("begin immediate")
+            row = db.execute(
+                "select * from feishu_events where id=?", (event_record_id,)
+            ).fetchone()
+            if row is None:
+                raise ValueError("Feishu event not found")
+            self._enqueue_feishu_event_row(db, row)
+            row = db.execute(
+                "select * from feishu_events where id=?", (event_record_id,)
+            ).fetchone()
+            return self._feishu_event_from_row(row)
+
+    def get_feishu_event(self, event_id: str | int) -> FeishuEventRecord | None:
+        column = "id" if isinstance(event_id, int) else "event_id"
+        with self._connect() as db:
+            row = db.execute(
+                f"select * from feishu_events where {column}=?", (event_id,)
+            ).fetchone()
+        return self._feishu_event_from_row(row) if row is not None else None
+
+    def get_feishu_event_for_message(
+        self, app_id: str, message_id: str
+    ) -> FeishuEventRecord | None:
+        with self._connect() as db:
+            row = db.execute(
+                "select * from feishu_events where app_id=? and message_id=?",
+                (app_id, message_id),
+            ).fetchone()
+        return self._feishu_event_from_row(row) if row is not None else None
+
+    def list_feishu_events(
+        self,
+        app_id: str = "",
+        *,
+        eligibility_status: str = "",
+        unqueued_only: bool = False,
+        limit: int | None = 100,
+    ) -> list[FeishuEventRecord]:
+        """List normalized local events for bounded, offline produce-once work."""
+        if limit is not None and limit <= 0:
+            return []
+        where: list[str] = []
+        args: list[str | int] = []
+        if app_id:
+            where.append("app_id=?")
+            args.append(app_id)
+        if eligibility_status:
+            where.append("eligibility_status=?")
+            args.append(eligibility_status)
+        if unqueued_only:
+            where.append("reply_task_id is null")
+        clause = f"where {' and '.join(where)}" if where else ""
+        query = f"select * from feishu_events {clause} order by id"
+        if limit is not None:
+            query += " limit ?"
+            args.append(limit)
+        with self._connect() as db:
+            rows = db.execute(query, args).fetchall()
+        return [self._feishu_event_from_row(row) for row in rows]
+
+    def list_feishu_context(
+        self, chat_id: str, limit: int = 20, *, app_id: str = ""
+    ) -> list[FeishuEventRecord]:
+        """Return approved local context oldest-first, bounded by ``limit``."""
+        if limit <= 0:
+            return []
+        where = ["chat_id=?", "eligibility_status='eligible'", "body_text<>''"]
+        args: list[str | int] = [chat_id]
+        if app_id:
+            where.append("app_id=?")
+            args.append(app_id)
+        args.append(limit)
+        with self._connect() as db:
+            rows = db.execute(
+                f"""
+                select * from feishu_events
+                where {' and '.join(where)}
+                order by event_create_time desc, id desc
+                limit ?
+                """,
+                args,
+            ).fetchall()
+        return [self._feishu_event_from_row(row) for row in reversed(rows)]
+
+    # ---- Feishu channel: reviewed reply scopes ----
+    def upsert_feishu_reply_scope(
+        self, scope: FeishuReplyScope
+    ) -> FeishuReplyScope:
+        """Discover a scope without granting or revoking authorization.
+
+        New targets are always pending and disabled.  Rediscovery updates only
+        descriptive fields and ``last_seen_at``; review state can change only
+        through :meth:`review_feishu_reply_scope`.
+        """
+        last_seen_at = scope.last_seen_at or datetime.now().astimezone().isoformat()
+        with self._connect() as db:
+            db.execute(
+                """
+                insert into feishu_reply_scopes (
+                    app_id, target_type, target_id, display_name, trigger_mode,
+                    enabled, binding_status, last_seen_at
+                ) values (?, ?, ?, ?, ?, 0, 'pending', ?)
+                on conflict(app_id, target_type, target_id) do update set
+                    display_name=coalesce(
+                        nullif(excluded.display_name, ''),
+                        feishu_reply_scopes.display_name
+                    ),
+                    trigger_mode=excluded.trigger_mode,
+                    last_seen_at=excluded.last_seen_at,
+                    updated_at=current_timestamp
+                """,
+                (
+                    scope.app_id,
+                    scope.target_type,
+                    scope.target_id,
+                    scope.display_name,
+                    scope.trigger_mode,
+                    last_seen_at,
+                ),
+            )
+            row = db.execute(
+                """
+                select * from feishu_reply_scopes
+                where app_id=? and target_type=? and target_id=?
+                """,
+                (scope.app_id, scope.target_type, scope.target_id),
+            ).fetchone()
+            return self._feishu_scope_from_row(row)
+
+    def get_feishu_reply_scope(
+        self, app_id: str, target_type: str, target_id: str
+    ) -> FeishuReplyScope | None:
+        with self._connect() as db:
+            row = db.execute(
+                """
+                select * from feishu_reply_scopes
+                where app_id=? and target_type=? and target_id=?
+                """,
+                (app_id, target_type, target_id),
+            ).fetchone()
+        return self._feishu_scope_from_row(row) if row is not None else None
+
+    def list_feishu_reply_scopes(
+        self,
+        app_id: str = "",
+        *,
+        target_type: str = "",
+        binding_status: str = "",
+        enabled_only: bool = False,
+    ) -> list[FeishuReplyScope]:
+        where: list[str] = []
+        args: list[str | int] = []
+        if app_id:
+            where.append("app_id=?")
+            args.append(app_id)
+        if target_type:
+            where.append("target_type=?")
+            args.append(target_type)
+        if binding_status:
+            where.append("binding_status=?")
+            args.append(binding_status)
+        if enabled_only:
+            where.append("enabled=1")
+        clause = f"where {' and '.join(where)}" if where else ""
+        with self._connect() as db:
+            rows = db.execute(
+                f"""
+                select * from feishu_reply_scopes {clause}
+                order by app_id, target_type, display_name, target_id
+                """,
+                args,
+            ).fetchall()
+        return [self._feishu_scope_from_row(row) for row in rows]
+
+    def review_feishu_reply_scope(
+        self,
+        app_id: str,
+        target_type: str,
+        target_id: str,
+        *,
+        approved: bool,
+        approved_by: str,
+        now: str = "",
+    ) -> FeishuReplyScope:
+        if not approved_by.strip():
+            raise ValueError("Feishu scope review requires approved_by")
+        reviewed_at = now or datetime.now().astimezone().isoformat()
+        binding_status = "verified" if approved else "disabled"
+        with self._connect() as db:
+            db.execute("begin immediate")
+            cursor = db.execute(
+                """
+                update feishu_reply_scopes
+                set enabled=?, binding_status=?, approved_at=?, approved_by=?,
+                    updated_at=current_timestamp
+                where app_id=? and target_type=? and target_id=?
+                """,
+                (
+                    int(approved),
+                    binding_status,
+                    reviewed_at,
+                    approved_by,
+                    app_id,
+                    target_type,
+                    target_id,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("Feishu reply scope not found")
+            row = db.execute(
+                """
+                select * from feishu_reply_scopes
+                where app_id=? and target_type=? and target_id=?
+                """,
+                (app_id, target_type, target_id),
+            ).fetchone()
+            return self._feishu_scope_from_row(row)
+
+    # ---- Feishu channel: outbound deliveries ----
+    def create_feishu_delivery(
+        self,
+        *,
+        reply_task_id: int,
+        attempt_id: int = 0,
+        app_id: str,
+        chat_id: str,
+        reply_to_message_id: str,
+        reply_in_thread: bool,
+        reply_text: str,
+        idempotency_key: str = "",
+    ) -> FeishuDelivery:
+        """Create exactly one immutable-idempotency delivery per reply task."""
+        if not app_id.strip() or not chat_id.strip():
+            raise ValueError("Feishu delivery requires app_id and chat_id")
+        if not reply_to_message_id.strip():
+            raise ValueError("Feishu delivery requires reply_to_message_id")
+        if not reply_text.strip():
+            raise ValueError("Feishu delivery reply_text must be non-empty")
+        stable_key = idempotency_key or str(uuid4())
+        with self._connect() as db:
+            db.execute("begin immediate")
+            task = db.execute(
+                "select * from reply_tasks where id=?", (reply_task_id,)
+            ).fetchone()
+            if task is None:
+                raise ValueError("reply task not found")
+            if task["channel"] != "feishu":
+                raise ValueError("Feishu delivery requires channel=feishu task")
+            if task["conversation_id"] != chat_id:
+                raise ValueError("Feishu delivery chat does not match reply task")
+            if attempt_id:
+                attempt = db.execute(
+                    "select * from reply_attempts where id=?", (attempt_id,)
+                ).fetchone()
+                if attempt is None:
+                    raise ValueError("reply attempt not found")
+                if attempt["channel"] != "feishu":
+                    raise ValueError("Feishu delivery requires channel=feishu attempt")
+                if (
+                    attempt["conversation_id"] != task["conversation_id"]
+                    or attempt["trigger_message_id"] != task["trigger_message_id"]
+                ):
+                    raise ValueError("reply attempt does not match reply task")
+            db.execute(
+                """
+                insert into feishu_deliveries (
+                    reply_task_id, attempt_id, app_id, chat_id,
+                    reply_to_message_id, reply_in_thread, reply_text,
+                    idempotency_key
+                ) values (?, ?, ?, ?, ?, ?, ?, ?)
+                on conflict(reply_task_id) do nothing
+                """,
+                (
+                    reply_task_id,
+                    attempt_id,
+                    app_id,
+                    chat_id,
+                    reply_to_message_id,
+                    int(reply_in_thread),
+                    reply_text,
+                    stable_key,
+                ),
+            )
+            row = db.execute(
+                "select * from feishu_deliveries where reply_task_id=?",
+                (reply_task_id,),
+            ).fetchone()
+            if row is None:
+                raise RuntimeError("Feishu delivery was not persisted")
+            return self._feishu_delivery_from_row(row)
+
+    def get_feishu_delivery(self, delivery_id: int) -> FeishuDelivery | None:
+        with self._connect() as db:
+            row = db.execute(
+                "select * from feishu_deliveries where id=?", (delivery_id,)
+            ).fetchone()
+        return self._feishu_delivery_from_row(row) if row is not None else None
+
+    def get_feishu_delivery_for_task(
+        self, reply_task_id: int
+    ) -> FeishuDelivery | None:
+        with self._connect() as db:
+            row = db.execute(
+                "select * from feishu_deliveries where reply_task_id=?",
+                (reply_task_id,),
+            ).fetchone()
+        return self._feishu_delivery_from_row(row) if row is not None else None
+
+    def approve_feishu_delivery(
+        self,
+        delivery_id: int,
+        *,
+        app_id: str,
+        approved_by: str,
+        now: str = "",
+    ) -> FeishuDelivery:
+        """Durably approve one delivery without opening a network client.
+
+        The application identity is part of the compare-and-set boundary.  A
+        reviewer configured for one Feishu application cannot approve a row
+        belonging to another application in the same SQLite database.
+        """
+        if not app_id.strip():
+            raise ValueError("Feishu delivery approval requires app_id")
+        if not approved_by.strip():
+            raise ValueError("Feishu delivery approval requires approved_by")
+        approved_at = now or datetime.now().astimezone().isoformat()
+        with self._connect() as db:
+            db.execute("begin immediate")
+            current = db.execute(
+                "select * from feishu_deliveries where id=?", (delivery_id,)
+            ).fetchone()
+            if current is None:
+                raise ValueError("Feishu delivery not found")
+            if current["app_id"] != app_id:
+                raise PermissionError("Feishu delivery App ID does not match runtime")
+            if current["status"] not in {"ready_to_send", "retry"}:
+                raise ValueError("Feishu delivery is not approvable")
+            if current["approved_at"]:
+                raise ValueError("Feishu delivery is already approved")
+            cursor = db.execute(
+                """
+                update feishu_deliveries
+                set approved_at=?, approved_by=?, updated_at=current_timestamp
+                where id=? and app_id=? and status in ('ready_to_send', 'retry')
+                  and approved_at=''
+                """,
+                (approved_at, approved_by.strip(), delivery_id, app_id),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("Feishu delivery approval lost atomic race")
+            row = db.execute(
+                "select * from feishu_deliveries where id=?", (delivery_id,)
+            ).fetchone()
+            return self._feishu_delivery_from_row(row)
+
+    def list_feishu_deliveries(
+        self,
+        status: str = "",
+        *,
+        statuses: tuple[str, ...] | list[str] | set[str] | None = None,
+        app_id: str = "",
+        limit: int | None = None,
+    ) -> list[FeishuDelivery]:
+        if limit is not None and limit <= 0:
+            return []
+        selected = tuple(statuses or ())
+        if status:
+            if selected:
+                raise ValueError("use either status or statuses")
+            selected = (status,)
+        unknown = set(selected) - FEISHU_DELIVERY_STATUSES
+        if unknown:
+            raise ValueError(f"unknown Feishu delivery statuses: {sorted(unknown)}")
+        where: list[str] = []
+        args: list[str | int] = []
+        if selected:
+            placeholders = ",".join("?" for _ in selected)
+            where.append(f"status in ({placeholders})")
+            args.extend(selected)
+        if app_id:
+            where.append("app_id=?")
+            args.append(app_id)
+        clause = f"where {' and '.join(where)}" if where else ""
+        query = f"select * from feishu_deliveries {clause} order by id"
+        if limit is not None:
+            query += " limit ?"
+            args.append(limit)
+        with self._connect() as db:
+            rows = db.execute(query, args).fetchall()
+        return [self._feishu_delivery_from_row(row) for row in rows]
+
+    def list_feishu_deliveries_by_status(
+        self, status: str
+    ) -> list[FeishuDelivery]:
+        return self.list_feishu_deliveries(status)
+
+    @staticmethod
+    def _validate_feishu_claim_statuses(statuses: tuple[str, ...]) -> None:
+        if not statuses:
+            raise ValueError("Feishu delivery claim statuses must be non-empty")
+        invalid = set(statuses) - {"ready_to_send", "retry"}
+        if invalid:
+            raise ValueError(
+                f"cannot claim Feishu delivery statuses: {sorted(invalid)}"
+            )
+
+    def claim_feishu_delivery(
+        self,
+        delivery_id: int,
+        *,
+        statuses: tuple[str, ...] = ("ready_to_send", "retry"),
+        now: str = "",
+        app_id: str = "",
+        approved_only: bool = False,
+    ) -> FeishuDelivery | None:
+        selected = tuple(statuses)
+        self._validate_feishu_claim_statuses(selected)
+        placeholders = ",".join("?" for _ in selected)
+        now_expression = "current_timestamp" if not now else "?"
+        app_clause = " and app_id=?" if app_id else ""
+        approval_clause = " and approved_at<>''" if approved_only else ""
+        args: list[str | int] = [delivery_id, *selected]
+        if app_id:
+            args.append(app_id)
+        if now:
+            args.append(now)
+        with self._connect() as db:
+            db.execute("begin immediate")
+            row = db.execute(
+                f"""
+                select * from feishu_deliveries
+                where id=? and status in ({placeholders})
+                  {app_clause}
+                  {approval_clause}
+                  and (
+                    available_at=''
+                    or datetime(available_at) <= datetime({now_expression})
+                  )
+                """,
+                args,
+            ).fetchone()
+            if row is None:
+                return None
+            conversation_busy = db.execute(
+                """
+                select 1 from feishu_deliveries
+                where app_id=? and chat_id=? and id<>?
+                  and (
+                    status='sending'
+                    or (
+                      id < ?
+                      and status in ('ready_to_send', 'retry', 'send_unknown')
+                    )
+                  )
+                limit 1
+                """,
+                (row["app_id"], row["chat_id"], delivery_id, delivery_id),
+            ).fetchone()
+            if conversation_busy is not None:
+                return None
+            locked_at = now or datetime.now().astimezone().isoformat()
+            cursor = db.execute(
+                f"""
+                update feishu_deliveries
+                set status='sending', attempts=attempts + 1,
+                    locked_at=?, available_at='', error_code='', error='',
+                    updated_at=current_timestamp
+                where id=? and status in ({placeholders})
+                """,
+                (locked_at, delivery_id, *selected),
+            )
+            if cursor.rowcount != 1:
+                return None
+            claimed = db.execute(
+                "select * from feishu_deliveries where id=?", (delivery_id,)
+            ).fetchone()
+            return self._feishu_delivery_from_row(claimed)
+
+    def claim_feishu_deliveries(
+        self,
+        limit: int,
+        *,
+        statuses: tuple[str, ...] = ("ready_to_send", "retry"),
+        now: str = "",
+        app_id: str = "",
+        approved_only: bool = False,
+    ) -> list[FeishuDelivery]:
+        if limit <= 0:
+            return []
+        selected = tuple(statuses)
+        self._validate_feishu_claim_statuses(selected)
+        placeholders = ",".join("?" for _ in selected)
+        now_expression = "current_timestamp" if not now else "?"
+        app_clause = " and candidate.app_id=?" if app_id else ""
+        approval_clause = (
+            " and candidate.approved_at<>''" if approved_only else ""
+        )
+        args: list[str | int] = list(selected)
+        if app_id:
+            args.append(app_id)
+        if now:
+            args.append(now)
+        args.append(limit)
+        with self._connect() as db:
+            db.execute("begin immediate")
+            rows = db.execute(
+                f"""
+                select candidate.* from feishu_deliveries as candidate
+                where candidate.status in ({placeholders})
+                  {app_clause}
+                  {approval_clause}
+                  and (
+                    candidate.available_at=''
+                    or datetime(candidate.available_at) <= datetime({now_expression})
+                  )
+                  and not exists (
+                    select 1 from feishu_deliveries as active
+                    where active.app_id=candidate.app_id
+                      and active.chat_id=candidate.chat_id
+                      and active.status='sending'
+                  )
+                  and candidate.id=(
+                    select min(head.id) from feishu_deliveries as head
+                    where head.app_id=candidate.app_id
+                      and head.chat_id=candidate.chat_id
+                      and head.status in (
+                        'ready_to_send', 'retry', 'send_unknown'
+                      )
+                  )
+                order by candidate.id
+                limit ?
+                """,
+                args,
+            ).fetchall()
+            ids = [int(row["id"]) for row in rows]
+            if not ids:
+                return []
+            id_placeholders = ",".join("?" for _ in ids)
+            locked_at = now or datetime.now().astimezone().isoformat()
+            db.execute(
+                f"""
+                update feishu_deliveries
+                set status='sending', attempts=attempts + 1,
+                    locked_at=?, available_at='', error_code='', error='',
+                    updated_at=current_timestamp
+                where id in ({id_placeholders})
+                  and status in ({placeholders})
+                """,
+                (locked_at, *ids, *selected),
+            )
+            claimed = db.execute(
+                f"""
+                select * from feishu_deliveries
+                where id in ({id_placeholders}) order by id
+                """,
+                ids,
+            ).fetchall()
+            return [self._feishu_delivery_from_row(row) for row in claimed]
+
+    def transition_feishu_delivery(
+        self,
+        delivery_id: int,
+        *,
+        from_statuses: tuple[str, ...] | list[str] | set[str],
+        to_status: str,
+        feishu_message_id: str = "",
+        request_log_id: str = "",
+        error_code: str = "",
+        error: str = "",
+        available_at: str = "",
+        locked_at: str = "",
+    ) -> FeishuDelivery:
+        """Compare-and-swap a delivery while preserving its idempotency key."""
+        sources = tuple(from_statuses)
+        if not sources:
+            raise ValueError("from_statuses must be non-empty")
+        unknown = (set(sources) | {to_status}) - FEISHU_DELIVERY_STATUSES
+        if unknown:
+            raise ValueError(f"unknown Feishu delivery statuses: {sorted(unknown)}")
+        invalid = [
+            (source, to_status)
+            for source in sources
+            if (source, to_status) not in FEISHU_DELIVERY_TRANSITIONS
+        ]
+        if invalid:
+            raise ValueError(f"invalid Feishu delivery transition: {invalid}")
+        placeholders = ",".join("?" for _ in sources)
+        with self._connect() as db:
+            db.execute("begin immediate")
+            current = db.execute(
+                "select * from feishu_deliveries where id=?", (delivery_id,)
+            ).fetchone()
+            if current is None:
+                raise ValueError("Feishu delivery not found")
+            if current["status"] not in sources:
+                raise ValueError(
+                    "Feishu delivery status changed: "
+                    f"expected {sources}, found {current['status']}"
+                )
+            resulting_message_id = feishu_message_id or current["feishu_message_id"]
+            if to_status == "sent" and not resulting_message_id:
+                raise ValueError("sent Feishu delivery requires feishu_message_id")
+            resulting_log_id = request_log_id or current["request_log_id"]
+            next_locked_at = ""
+            increment_attempt = 0
+            if to_status == "sending":
+                next_locked_at = (
+                    locked_at or datetime.now().astimezone().isoformat()
+                )
+                increment_attempt = 1
+            cursor = db.execute(
+                f"""
+                update feishu_deliveries
+                set status=?, feishu_message_id=?, request_log_id=?,
+                    attempts=attempts + ?, locked_at=?, available_at=?,
+                    error_code=?, error=?, updated_at=current_timestamp
+                where id=? and status in ({placeholders})
+                """,
+                (
+                    to_status,
+                    resulting_message_id,
+                    resulting_log_id,
+                    increment_attempt,
+                    next_locked_at,
+                    available_at,
+                    error_code,
+                    error,
+                    delivery_id,
+                    *sources,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("Feishu delivery transition lost atomic race")
+            row = db.execute(
+                "select * from feishu_deliveries where id=?", (delivery_id,)
+            ).fetchone()
+            return self._feishu_delivery_from_row(row)
+
+    def set_feishu_delivery_status(
+        self,
+        delivery_id: int,
+        status: str,
+        *,
+        from_statuses: tuple[str, ...] | list[str] | set[str],
+        **fields,
+    ) -> FeishuDelivery:
+        return self.transition_feishu_delivery(
+            delivery_id,
+            from_statuses=from_statuses,
+            to_status=status,
+            **fields,
+        )
+
+    def mark_feishu_delivery_sent(
+        self,
+        delivery_id: int,
+        *,
+        feishu_message_id: str,
+        request_log_id: str = "",
+    ) -> FeishuDelivery:
+        return self.transition_feishu_delivery(
+            delivery_id,
+            from_statuses=("sending", "send_unknown"),
+            to_status="sent",
+            feishu_message_id=feishu_message_id,
+            request_log_id=request_log_id,
+        )
+
+    def mark_feishu_delivery_retry(
+        self,
+        delivery_id: int,
+        *,
+        error_code: str,
+        error: str,
+        available_at: str = "",
+    ) -> FeishuDelivery:
+        return self.transition_feishu_delivery(
+            delivery_id,
+            from_statuses=("sending", "send_unknown", "failed"),
+            to_status="retry",
+            error_code=error_code,
+            error=error,
+            available_at=available_at,
+        )
+
+    def mark_feishu_delivery_send_unknown(
+        self,
+        delivery_id: int,
+        *,
+        error_code: str,
+        error: str,
+        request_log_id: str = "",
+    ) -> FeishuDelivery:
+        return self.transition_feishu_delivery(
+            delivery_id,
+            from_statuses=("sending",),
+            to_status="send_unknown",
+            request_log_id=request_log_id,
+            error_code=error_code,
+            error=error,
+        )
+
+    def mark_feishu_delivery_failed(
+        self,
+        delivery_id: int,
+        *,
+        error_code: str,
+        error: str,
+    ) -> FeishuDelivery:
+        return self.transition_feishu_delivery(
+            delivery_id,
+            from_statuses=("sending", "send_unknown"),
+            to_status="failed",
+            error_code=error_code,
+            error=error,
+        )
+
+    def mark_feishu_delivery_rejected(
+        self,
+        delivery_id: int,
+        *,
+        app_id: str,
+        error: str = "rejected_by_reviewer",
+    ) -> FeishuDelivery:
+        if not app_id.strip():
+            raise ValueError("Feishu delivery rejection requires app_id")
+        current = self.get_feishu_delivery(delivery_id)
+        if current is None:
+            raise ValueError("Feishu delivery not found")
+        if current.app_id != app_id:
+            raise PermissionError("Feishu delivery App ID does not match runtime")
+        return self.transition_feishu_delivery(
+            delivery_id,
+            from_statuses=("ready_to_send", "retry"),
+            to_status="rejected",
+            error_code="rejected",
+            error=error,
+        )
+
+    def reject_feishu_delivery(
+        self,
+        delivery_id: int,
+        *,
+        app_id: str,
+        error: str = "rejected_by_reviewer",
+    ) -> FeishuDelivery:
+        return self.mark_feishu_delivery_rejected(
+            delivery_id, app_id=app_id, error=error
+        )
 
     # ---- WeChat channel: reply scopes ----
     def replace_wechat_reply_scopes(
@@ -6024,9 +7144,8 @@ class AutoReplyStore:
                         else draft_reply_text
                     end as output_text,
                     action,
-                    case
-                        when channel != 'wechat' then send_status
-                        else coalesce((
+                    case channel
+                        when 'wechat' then coalesce((
                             select case deliveries.status
                                 when 'ready_to_send' then 'pending'
                                 when 'sending' then 'processing'
@@ -6040,6 +7159,22 @@ class AutoReplyStore:
                               and tasks.trigger_message_id=reply_attempts.trigger_message_id
                             limit 1
                         ), send_status)
+                        when 'feishu' then coalesce((
+                            select case deliveries.status
+                                when 'ready_to_send' then 'pending'
+                                when 'sending' then 'processing'
+                                when 'retry' then 'processing'
+                                else deliveries.status
+                            end
+                            from reply_tasks as tasks
+                            join feishu_deliveries as deliveries
+                                on deliveries.reply_task_id=tasks.id
+                            where tasks.channel='feishu'
+                              and tasks.conversation_id=reply_attempts.conversation_id
+                              and tasks.trigger_message_id=reply_attempts.trigger_message_id
+                            limit 1
+                        ), send_status)
+                        else send_status
                     end as status,
                     conversation_title as target_title,
                     codex_session_id,

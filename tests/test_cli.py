@@ -5433,6 +5433,24 @@ def test_wechat_subcommand_passes_through_remainder():
     assert args.wechat_args == ["read-recent", "--target-id", "filehelper", "--include-text"]
 
 
+def test_feishu_subcommand_passes_through_remainder():
+    from app.cli import build_parser
+
+    args = build_parser().parse_args(
+        ["feishu", "scopes", "approve", "--target-type", "group", "--target-id", "oc_1"]
+    )
+
+    assert args.command == "feishu"
+    assert args.feishu_args == [
+        "scopes",
+        "approve",
+        "--target-type",
+        "group",
+        "--target-id",
+        "oc_1",
+    ]
+
+
 def test_wechat_service_components_disabled_by_default(monkeypatch, tmp_path):
     import types
     from app import cli
@@ -5475,6 +5493,65 @@ def test_wechat_service_components_absent_when_ready_account_has_no_self_id(
     monkeypatch.setenv("CEO_WECHAT_SENDER_ENABLED", "1")
 
     assert cli._wechat_service_components(types.SimpleNamespace(db_path=db)) == ()
+
+
+def test_feishu_service_components_disabled_by_default(monkeypatch, tmp_path):
+    settings = SimpleNamespace(db_path=tmp_path / "f.sqlite3")
+    monkeypatch.delenv("CEO_FEISHU_ENABLED", raising=False)
+
+    assert cli._feishu_service_components(settings) == ()
+
+
+def test_feishu_service_components_fail_closed_when_credentials_missing(
+    monkeypatch, tmp_path
+):
+    settings = SimpleNamespace(db_path=tmp_path / "f.sqlite3")
+    monkeypatch.setenv("CEO_FEISHU_ENABLED", "1")
+    monkeypatch.delenv("CEO_FEISHU_APP_ID", raising=False)
+    monkeypatch.setattr("app.config.feishu_app_secret", lambda: "")
+
+    assert cli._feishu_service_components(settings) == ()
+
+    errors = AutoReplyStore(settings.db_path).list_errors()
+    assert any(error.kind == "feishu_configuration_blocked" for error in errors)
+
+
+def test_feishu_service_components_share_channel_runtime(
+    monkeypatch, tmp_path
+):
+    from app.feishu import service as feishu_service
+    from app.feishu import setup as feishu_setup
+
+    runtime = object()
+    monkeypatch.setenv("CEO_FEISHU_ENABLED", "1")
+    monkeypatch.setenv("CEO_FEISHU_APP_ID", "cli_test")
+    monkeypatch.setattr("app.config.feishu_app_secret", lambda: "secret")
+    monkeypatch.setattr(
+        feishu_setup,
+        "dependency_status",
+        lambda: SimpleNamespace(
+            channel_version_ok=True,
+            oapi_version_ok=True,
+        ),
+    )
+    monkeypatch.setattr(feishu_service, "build_runtime", lambda store: runtime)
+    settings = SimpleNamespace(
+        db_path=tmp_path / "f.sqlite3",
+        workspace=tmp_path,
+        codex_timeout_seconds=30,
+        codex_idle_timeout_seconds=30,
+        max_batches=None,
+    )
+
+    components = cli._feishu_service_components(settings)
+
+    assert [name for name, _ in components] == [
+        "feishu-listener",
+        "feishu-consumer",
+    ]
+    # No second sender WebSocket component is constructed; sending is a task in
+    # the listener runtime and the consumer remains client-free.
+    assert all(name != "feishu-sender" for name, _ in components)
 
 
 def test_wechat_loop_stops_after_app_data_permission_denial(
