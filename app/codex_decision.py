@@ -15,7 +15,7 @@ from app.codex_history import (
 )
 from app.codex_runner import CodexRunner
 from app.config import assistant_signature, forbidden_path_prefixes
-from app.dingtalk_models import CodexAction, CodexDecision
+from app.dingtalk_models import CodexAction, CodexDecision, SensitivityKind
 from app.process_runner import run_process_with_idle_timeout
 
 
@@ -41,6 +41,13 @@ SECRET_PATTERNS = (
     re.compile(r"cookie[:=][^\s]+", re.IGNORECASE),
     re.compile(r"oauth[_-]?code=[^\s&]+", re.IGNORECASE),
 )
+
+
+def _sensitivity_kind(value: str) -> SensitivityKind:
+    try:
+        return SensitivityKind(value)
+    except ValueError:
+        return SensitivityKind.GENERAL
 
 
 def append_signature(text: str) -> str:
@@ -89,7 +96,7 @@ def codex_decision_from_envelope(envelope: Any) -> CodexDecision:
         action=action,
         reply_text=parsed.user_response.text,
         reason=parsed.audit.summary,
-        sensitivity_kind=parsed.user_response.sensitivity_kind.value,
+        sensitivity_kind=_sensitivity_kind(parsed.user_response.sensitivity_kind.value),
         personnel_subject_user_id=parsed.domain_payload.get(
             "personnel_subject_user_id"
         ),
@@ -257,7 +264,7 @@ def _decision_from_agent_envelope_like(
         action=action,
         reply_text=reply_text,
         reason=audit_summary,
-        sensitivity_kind=sensitivity_kind,
+        sensitivity_kind=_sensitivity_kind(sensitivity_kind),
         personnel_subject_user_id=domain_payload.get("personnel_subject_user_id"),
         candidate_context_known=bool(
             domain_payload.get("candidate_context_known", False)

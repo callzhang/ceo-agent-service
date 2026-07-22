@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Protocol
 
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from app.store import AutoReplyStore, RecentFollowUpCandidate
 from app.codex_runner import memory_connector_config_issue
@@ -32,7 +32,7 @@ FOLLOW_UP_WORK_END_HOUR = 18
 
 
 class TaskCodex(Protocol):
-    last_session_id: str
+    last_session_id: str | None
     last_transcript_start_line: int
     last_transcript_end_line: int
 
@@ -110,10 +110,16 @@ class TaskAgentCodexRunner:
         prompt: str,
         session_id: str | None = None,
     ) -> TaskAgentDecision:
-        self.last_transcript_start_line = self._session_line_count(session_id)
+        self.last_transcript_start_line = (
+            self._session_line_count(session_id) if session_id else 0
+        )
         raw = self._execute(prompt=prompt, session_id=session_id)
         self.last_session_id = self._extract_codex_session_id(raw) or session_id
-        self.last_transcript_end_line = self._session_line_count(self.last_session_id)
+        self.last_transcript_end_line = (
+            self._session_line_count(self.last_session_id)
+            if self.last_session_id
+            else 0
+        )
         session_events = []
         if self.last_session_id:
             session_events = self._extract_codex_audit_events_from_session(
@@ -133,6 +139,7 @@ class TaskAgentCodexRunner:
             session_id,
             image_paths=None,
             output_schema_path=TASK_AGENT_DECISION_SCHEMA_PATH,
+            ignore_user_config=True,
         )
         if self.executor is not None:
             return self.executor(command, prompt)
@@ -988,7 +995,7 @@ def _json_dumps(value: object) -> str:
 
 
 def _jsonable(value: object) -> object:
-    if hasattr(value, "model_dump"):
+    if isinstance(value, BaseModel):
         return value.model_dump(mode="json")
     if isinstance(value, list):
         return [_jsonable(item) for item in value]

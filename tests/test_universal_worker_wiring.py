@@ -21,7 +21,6 @@ from app.universal_plan import (
     UniversalAudit,
     UniversalPlan,
 )
-from app.universal_validator import DependencyStatus
 from app.worker import DingTalkAutoReplyWorker
 
 

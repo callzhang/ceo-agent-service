@@ -13,10 +13,12 @@ AX identifiers proven in the send spike (search_item_function_<name>,
 chat_input_field). It is guarded behind pyobjc and is not exercised by unit
 tests, which inject a fake runner.
 """
+# PyObjC exposes these symbols dynamically and does not ship complete type metadata.
+# pyright: reportAttributeAccessIssue=false, reportOptionalMemberAccess=false
 from __future__ import annotations
 
 import hashlib
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 
 @dataclass

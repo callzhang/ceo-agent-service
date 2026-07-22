@@ -65,7 +65,7 @@ class MemoryConnectorClient:
         self._request_timeout_seconds = request_timeout_seconds
 
     @asynccontextmanager
-    async def _default_session(self, provider: object):
+    async def _default_session(self, provider: Any):
         timeout = httpx.Timeout(self._request_timeout_seconds)
         async with httpx.AsyncClient(
             auth=provider,

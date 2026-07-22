@@ -214,10 +214,11 @@ class StructuredCodexRunner:
 
     def _execute(self, command: list[str], prompt: str) -> str:
         env = self.runner.build_env()
-        if self.executor is not None:
+        executor = self.executor
+        if executor is not None:
             return run_external(
                 "codex exec",
-                lambda: self.executor(command, prompt, env),
+                lambda: executor(command, prompt, env),
                 max_attempts=3,
             )
         completed = run_external(

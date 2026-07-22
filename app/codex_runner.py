@@ -291,8 +291,6 @@ def memory_connector_config_options() -> list[str]:
     token = env.get(MEMORY_CONNECTOR_API_KEY_ENV)
     if not url:
         return []
-    config_env = _memory_connector_env_from_config(_codex_home() / "config.toml")
-    configured_token = config_env.get(MEMORY_CONNECTOR_API_KEY_ENV)
     if not token:
         return []
     env_http_headers: dict[str, str] = {}

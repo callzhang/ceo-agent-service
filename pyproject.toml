@@ -2,14 +2,14 @@
 name = "ceo-agent-service"
 version = "0.1.0"
 description = "Local-first DingTalk executive auto-reply service"
-requires-python = ">=3.11"
+requires-python = ">=3.12,<3.13"
 license = "MIT"
 dependencies = [
   "cryptography>=42",
   "fastapi>=0.115",
   "jieba>=0.42",
   "keyring>=25,<26",
-  "mcp==1.27.0",
+  "mcp>=1.28.1,<2",
   "pypdf>=5.0",
   "pydantic>=2.10",
   "robust-json-parser>=0.1.6,<0.2",
@@ -18,8 +18,14 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
+  "detect-secrets>=1.5,<2",
+  "diff-cover>=9,<10",
   "httpx>=0.28",
-  "pytest>=8.3"
+  "pip-audit>=2.9,<3",
+  "pyright>=1.1.400,<2",
+  "pytest>=8.3,<10",
+  "pytest-cov>=6,<8",
+  "ruff>=0.12,<1"
 ]
 reader-build = [
   "pyinstaller>=6.14,<7",
@@ -30,13 +36,27 @@ reader-build = [
 
 [project.scripts]
 ceo-agent = "app.cli:main"
+ceo-quality = "app.quality.cli:entrypoint"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
 markers = [
-  "live: explicit opt-in tests that may call real dws, Codex, or DingTalk"
+  "live: explicit opt-in tests that may call real dws, Codex, or DingTalk",
+  "macos: tests that require macOS frameworks or launchd behavior",
+  "migration: database migration and recovery tests",
+  "protocol: deterministic Agent protocol evaluation tests",
+  "security: authorization, data leakage, target binding, and idempotency tests"
 ]
+
+[tool.ruff]
+target-version = "py312"
+
+[tool.pyright]
+pythonVersion = "3.12"
+typeCheckingMode = "basic"
+venvPath = "."
+venv = ".venv"
 
 [build-system]
 requires = ["setuptools>=64"]

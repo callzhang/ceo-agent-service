@@ -1,3 +1,4 @@
+from collections.abc import Mapping
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -42,7 +43,7 @@ class SetupStepStatus(BaseModel):
     title: str
     status: SetupStatus = "not_started"
     summary: str = ""
-    evidence: dict[str, str | int | bool] = Field(default_factory=dict)
+    evidence: Mapping[str, str | int | bool] = Field(default_factory=dict)
     available_actions: list[SetupAction] = Field(default_factory=list)
     manual_confirmation_allowed: bool = False
     updated_at: str = ""
@@ -55,7 +56,7 @@ class SetupWizardEvent(BaseModel):
     status: SetupActionStatus
     next_step_status: str = ""
     summary: str = ""
-    evidence: dict[str, str | int | bool] = Field(default_factory=dict)
+    evidence: Mapping[str, str | int | bool] = Field(default_factory=dict)
     stdout_excerpt: str = ""
     stderr_excerpt: str = ""
     started_at: str = ""

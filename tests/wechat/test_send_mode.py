@@ -29,7 +29,8 @@ class FakeSender:
 
 
 def test_confirm_mode_holds_deliveries(tmp_path):
-    store = AutoReplyStore(tmp_path / "w.sqlite3"); _seed(store)
+    store = AutoReplyStore(tmp_path / "w.sqlite3")
+    _seed(store)
     sender = FakeSender()
     assert service.process_ready_wechat_deliveries(store, sender, mode="confirm", sender_enabled=True) == 0
     assert sender.sent == []
@@ -37,35 +38,40 @@ def test_confirm_mode_holds_deliveries(tmp_path):
 
 
 def test_sender_disabled_holds_even_in_auto(tmp_path):
-    store = AutoReplyStore(tmp_path / "w.sqlite3"); _seed(store)
+    store = AutoReplyStore(tmp_path / "w.sqlite3")
+    _seed(store)
     sender = FakeSender()
     assert service.process_ready_wechat_deliveries(store, sender, mode="auto", sender_enabled=False) == 0
     assert sender.sent == []
 
 
 def test_auto_mode_sends(tmp_path):
-    store = AutoReplyStore(tmp_path / "w.sqlite3"); _seed(store)
+    store = AutoReplyStore(tmp_path / "w.sqlite3")
+    _seed(store)
     sender = FakeSender()
     assert service.process_ready_wechat_deliveries(store, sender, mode="auto", sender_enabled=True) == 1
     assert sender.sent == [1]
 
 
 def test_approve_sends_specific_pending(tmp_path):
-    store = AutoReplyStore(tmp_path / "w.sqlite3"); d = _seed(store)
+    store = AutoReplyStore(tmp_path / "w.sqlite3")
+    d = _seed(store)
     sender = FakeSender()
     assert service.approve_wechat_delivery(store, sender, d.id) == "sent"
     assert sender.sent == [d.id]
 
 
 def test_reject_marks_failed_without_send(tmp_path):
-    store = AutoReplyStore(tmp_path / "w.sqlite3"); d = _seed(store)
+    store = AutoReplyStore(tmp_path / "w.sqlite3")
+    d = _seed(store)
     service.reject_wechat_delivery(store, d.id)
     assert store.get_wechat_delivery_for_task(1).status == "failed"
     assert service.pending_wechat_deliveries(store) == []
 
 
 def test_recall_uses_runner_capability_with_text(tmp_path):
-    store = AutoReplyStore(tmp_path / "w.sqlite3"); d = _seed(store)
+    store = AutoReplyStore(tmp_path / "w.sqlite3")
+    d = _seed(store)
 
     class Runner:
         def __init__(self):
@@ -82,7 +88,8 @@ def test_recall_uses_runner_capability_with_text(tmp_path):
 
 
 def test_recall_noop_when_runner_lacks_capability(tmp_path):
-    store = AutoReplyStore(tmp_path / "w.sqlite3"); d = _seed(store)
+    store = AutoReplyStore(tmp_path / "w.sqlite3")
+    d = _seed(store)
     assert service.recall_wechat_delivery(store, object(), d.id, "收到") is False
 
 
@@ -104,20 +111,23 @@ class _IdRunner:
 
 
 def test_verify_binding_verified_when_unique_and_ui_matches(tmp_path):
-    store = AutoReplyStore(tmp_path / "w.sqlite3"); store.replace_wechat_reply_scopes("a", [_scope()])
+    store = AutoReplyStore(tmp_path / "w.sqlite3")
+    store.replace_wechat_reply_scopes("a", [_scope()])
     st = service.verify_wechat_binding(store, _scope(), runner=_IdRunner("G"), is_unique=True)
     assert st == "verified"
     assert store.get_wechat_reply_scope("a", "group", "g@chatroom").binding_status == "verified"
 
 
 def test_verify_binding_conflict_when_not_unique(tmp_path):
-    store = AutoReplyStore(tmp_path / "w.sqlite3"); store.replace_wechat_reply_scopes("a", [_scope()])
+    store = AutoReplyStore(tmp_path / "w.sqlite3")
+    store.replace_wechat_reply_scopes("a", [_scope()])
     st = service.verify_wechat_binding(store, _scope(), runner=_IdRunner("G"), is_unique=False)
     assert st == "conflict"
 
 
 def test_verify_binding_unverified_when_ui_mismatch(tmp_path):
-    store = AutoReplyStore(tmp_path / "w.sqlite3"); store.replace_wechat_reply_scopes("a", [_scope()])
+    store = AutoReplyStore(tmp_path / "w.sqlite3")
+    store.replace_wechat_reply_scopes("a", [_scope()])
     st = service.verify_wechat_binding(store, _scope(), runner=_IdRunner("OTHER GROUP"), is_unique=True)
     assert st == "unverified"
 

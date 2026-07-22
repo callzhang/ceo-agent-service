@@ -72,10 +72,11 @@ def test_main_launch_agent_runs_single_keepalive_service():
     assert "CEO_SERVICE_ROOT" in command[2]
     assert 'CEO_MAX_BATCHES="${CEO_MAX_BATCHES:-1}"' in command[2]
     assert 'DWS_DISABLE_KEYCHAIN="${DWS_DISABLE_KEYCHAIN:-1}"' in command[2]
-    assert (
-        'DWS_KEYCHAIN_DIR="${DWS_KEYCHAIN_DIR:-${service_root}/data/dws-keychain}"'
-        in command[2]
-    )
+    assert 'service_root="${CEO_SERVICE_ROOT:-${HOME:?HOME must be set}/.local/share/ceo-agent-service/current}"' in command[2]
+    assert 'runtime_root="${CEO_SERVICE_DATA_ROOT:-${HOME}/Library/Application Support/CEO Agent Service}"' in command[2]
+    assert 'CEO_ENV_FILE="${CEO_ENV_FILE:-${runtime_root}/service.env}"' in command[2]
+    assert 'DWS_KEYCHAIN_DIR="${DWS_KEYCHAIN_DIR:-${runtime_root}/dws-keychain}"' in command[2]
+    assert 'CEO_WORKER_DB="${CEO_WORKER_DB:-${runtime_root}/auto-reply.sqlite3}"' in command[2]
     assert 'CEO_DING_ROBOT_NAME="${CEO_DING_ROBOT_NAME:-磊哥}"' in command[2]
     assert "CEO_NOT_SEND_MESSAGE=0" in command[2]
     assert "CEO_LIVE_SEND_BLOCKERS_ACCEPTED=1" in command[2]

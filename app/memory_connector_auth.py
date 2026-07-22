@@ -20,6 +20,7 @@ from mcp.shared.auth import (
     OAuthToken,
     ProtectedResourceMetadata,
 )
+from pydantic import AnyUrl
 
 
 MEMORY_CONNECTOR_SCOPES = "memory.read memory.write offline_access"
@@ -373,7 +374,7 @@ class MemoryConnectorAuthManager:
             self.url,
             OAuthClientMetadata(
                 client_name="CEO Agent Service",
-                redirect_uris=[DEFAULT_REDIRECT_URI],
+                redirect_uris=[AnyUrl(DEFAULT_REDIRECT_URI)],
                 grant_types=["authorization_code", "refresh_token"],
                 response_types=["code"],
                 scope=MEMORY_CONNECTOR_SCOPES,

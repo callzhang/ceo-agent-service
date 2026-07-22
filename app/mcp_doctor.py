@@ -4,7 +4,7 @@ import tomllib
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable, Iterable
+from typing import Any, Callable, Iterable
 
 import httpx
 
@@ -63,7 +63,7 @@ class McpDoctorState:
             encoding="utf-8",
         )
 
-    def _read(self) -> dict[str, object]:
+    def _read(self) -> dict[str, Any]:
         if not self.path.exists():
             return {"notifications": {}}
         try:

@@ -412,7 +412,8 @@ def _evidence_coverage_lines(profile: WorkProfile) -> list[str]:
     ]
     rules_by_id = {rule.id: rule for rule in profile.rules}
     for rule_id in sorted(coverage.rule_reference_counts):
-        rule_title = rules_by_id.get(rule_id).title if rule_id in rules_by_id else rule_id
+        rule = rules_by_id.get(rule_id)
+        rule_title = rule.title if rule is not None else rule_id
         lines.append(
             f"  - {rule_title}: {coverage.rule_reference_counts[rule_id]} refs "
             f"({_source_counts_line(coverage.rule_source_counts.get(rule_id, {}))})"

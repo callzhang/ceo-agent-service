@@ -1,0 +1,47 @@
+name: trusted-live-eval
+
+on:
+  workflow_dispatch:
+    inputs:
+      commit:
+        description: Exact commit SHA to evaluate
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  live-eval:
+    name: trusted-live-eval
+    runs-on: [self-hosted, macOS, ceo-quality-trusted]
+    environment: trusted-quality
+    timeout-minutes: 45
+    steps:
+      - name: Check out requested commit without persisted credentials
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ inputs.commit }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify commit belongs to a trusted repository branch
+        run: |
+          git fetch --no-tags origin '+refs/heads/*:refs/remotes/origin/*'
+          test "$(git rev-parse HEAD)" = "${{ inputs.commit }}"
+          git branch -r --contains "${{ inputs.commit }}" | grep -q 'origin/'
+      - name: Evaluate main baseline
+        env:
+          CEO_QUALITY_TRUSTED: "1"
+        run: |
+          git checkout --detach origin/main
+          uv sync --frozen --extra dev --extra reader-build
+          baseline_commit="$(git rev-parse HEAD)"
+          uv run ceo-quality eval --suite semantic --live --commit "${baseline_commit}" --format json > /tmp/ceo-quality-main.json
+      - name: Evaluate exact commit without new failures
+        env:
+          CEO_QUALITY_TRUSTED: "1"
+        run: |
+          git checkout --detach "${{ inputs.commit }}"
+          test "$(git rev-parse HEAD)" = "${{ inputs.commit }}"
+          uv sync --frozen --extra dev --extra reader-build
+          uv run ceo-quality eval --suite semantic --live --commit "${{ inputs.commit }}" --baseline-results /tmp/ceo-quality-main.json --format junit > quality-semantic.xml

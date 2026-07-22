@@ -4238,10 +4238,11 @@ class DwsClient:
         role_sub_resource_ids = DwsClient._string_list(
             record.get("roleSubResourceIds")
         )
+        policy_id = DwsClient._int_value(record.get("policyId"), default=3)
         return DwsMinutesPermissionRequest(
             uuids=uuids,
             member_uids=member_uids,
-            policy_id=DwsClient._int_value(record.get("policyId"), default=3),
+            policy_id=policy_id if policy_id is not None else 3,
             role_sub_resource_ids=role_sub_resource_ids,
             cover_permission=DwsClient._bool_value(
                 record.get("coverPermission"),

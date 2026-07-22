@@ -105,8 +105,10 @@ class MeetingAlignmentCodexRunner:
         self.last_audit_tool_events = []
         raw = self._execute(prompt=prompt)
         self.last_session_id = self._extract_codex_session_id(raw)
-        self.last_transcript_end_line = self._session_line_count(
-            self.last_session_id
+        self.last_transcript_end_line = (
+            self._session_line_count(self.last_session_id)
+            if self.last_session_id
+            else 0
         )
         session_events: list[dict[str, str]] = []
         if self.last_session_id:

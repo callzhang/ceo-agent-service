@@ -33,6 +33,7 @@ from app.history import (
     UniversalExecutionObservation,
     safe_observability_error,
 )
+from app.quality.migrations import apply_migrations
 from app.universal_context import (
     UniversalTaskContext,
     canonical_universal_context_json,
@@ -58,6 +59,13 @@ UNIVERSAL_MEMORY_LEASE_SECONDS = 15 * 60
 CODEX_SESSION_LOCK_STALE_SECONDS = 20 * 60
 _INITIALIZED_STORE_PATHS: set[Path] = set()
 _INITIALIZE_LOCK = threading.Lock()
+
+
+def _required_lastrowid(cursor: sqlite3.Cursor) -> int:
+    row_id = cursor.lastrowid
+    if row_id is None:
+        raise RuntimeError("SQLite insert did not return a row id")
+    return row_id
 
 
 @dataclass(frozen=True)
@@ -405,6 +413,11 @@ class AutoReplyStore:
 
     def _initialize(self) -> None:
         with self._connect() as db:
+            quick_check = db.execute("pragma quick_check").fetchone()
+            if quick_check is None or str(quick_check[0]) != "ok":
+                raise sqlite3.DatabaseError("database quick_check failed")
+            if db.execute("pragma foreign_key_check").fetchone() is not None:
+                raise sqlite3.DatabaseError("database foreign_key_check failed")
             db.execute("pragma journal_mode = wal")
             db.executescript(
                 """
@@ -975,8 +988,6 @@ class AutoReplyStore:
                     on follow_up_drafts(owner_user_id, sent_at, id);
                 create index if not exists idx_follow_up_drafts_conversation_sent
                     on follow_up_drafts(target_conversation_id, sent_at, id);
-                create index if not exists idx_follow_up_drafts_history_updated
-                    on follow_up_drafts(updated_at, id);
                 create table if not exists daily_scan_state (
                     scanner_name text primary key,
                     last_success_at text not null default '',
@@ -1254,6 +1265,7 @@ class AutoReplyStore:
                     "alter table wechat_memory_candidates add column "
                     "memory_write_error text not null default ''"
                 )
+            apply_migrations(db)
 
     @staticmethod
     def _migrate_reply_task_channel_identity(db: sqlite3.Connection) -> None:
@@ -2813,6 +2825,322 @@ class AutoReplyStore:
             ).fetchone()
             return int(row["count"])
 
+    def record_component_health(
+        self,
+        component: str,
+        *,
+        success: bool,
+        observed_at: datetime | None = None,
+        error_kind: str = "",
+    ) -> None:
+        if not component or not component.replace("-", "").replace("_", "").isalnum():
+            raise ValueError("component must be a stable identifier")
+        if error_kind and not error_kind.replace("-", "").replace("_", "").isalnum():
+            raise ValueError("error_kind must be a redacted error code")
+        timestamp = (observed_at or datetime.now().astimezone()).isoformat()
+        with self._connect() as db:
+            if success:
+                db.execute(
+                    """
+                    insert into service_component_health (
+                        component, status, last_success_at, consecutive_failures
+                    ) values (?, 'ready', ?, 0)
+                    on conflict(component) do update set
+                        status='ready',
+                        last_success_at=excluded.last_success_at,
+                        last_error_kind='',
+                        consecutive_failures=0,
+                        updated_at=current_timestamp
+                    """,
+                    (component, timestamp),
+                )
+            else:
+                db.execute(
+                    """
+                    insert into service_component_health (
+                        component, status, last_failure_at, last_error_kind,
+                        consecutive_failures
+                    ) values (?, 'degraded', ?, ?, 1)
+                    on conflict(component) do update set
+                        status=case when consecutive_failures + 1 >= 3
+                            then 'failed' else 'degraded' end,
+                        last_failure_at=excluded.last_failure_at,
+                        last_error_kind=excluded.last_error_kind,
+                        consecutive_failures=consecutive_failures + 1,
+                        updated_at=current_timestamp
+                    """,
+                    (component, timestamp, error_kind),
+                )
+
+    def list_component_health(self) -> list[dict[str, object]]:
+        with self._connect() as db:
+            rows = db.execute(
+                "select * from service_component_health order by component"
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def quality_backlog_counts(self) -> dict[str, int]:
+        categories = {
+            "failed": 0,
+            "processing": 0,
+            "unknown": 0,
+            "failed_actions": 0,
+            "unknown_actions": 0,
+        }
+        queries = {
+            "failed": (
+                ("reply_tasks", "status='failed'"),
+                ("meeting_alignment_jobs", "status='failed'"),
+                ("work_summary_inputs", "status='failed'"),
+                ("memory_write_events", "status='failed'"),
+                ("wechat_deliveries", "status='failed'"),
+                ("universal_action_executions", "status='failed'"),
+            ),
+            "processing": (
+                ("reply_tasks", "status='processing'"),
+                ("meeting_alignment_jobs", "status='processing'"),
+                ("work_summary_inputs", "status='processing'"),
+                ("memory_write_events", "status='processing'"),
+                ("wechat_deliveries", "status='sending'"),
+                ("universal_action_executions", "status in ('started', 'recovering')"),
+            ),
+            "unknown": (
+                ("memory_write_events", "status='unknown'"),
+                ("wechat_deliveries", "status='unknown'"),
+                ("universal_action_executions", "status='unknown'"),
+            ),
+            "failed_actions": (
+                ("wechat_deliveries", "status='failed'"),
+                ("universal_action_executions", "status='failed'"),
+            ),
+            "unknown_actions": (
+                ("memory_write_events", "status='unknown'"),
+                ("wechat_deliveries", "status='unknown'"),
+                ("universal_action_executions", "status='unknown'"),
+            ),
+        }
+        with self._connect() as db:
+            existing_tables = {
+                str(row[0])
+                for row in db.execute(
+                    "select name from sqlite_master where type='table'"
+                ).fetchall()
+            }
+            for category, table_queries in queries.items():
+                for table, where in table_queries:
+                    if table not in existing_tables:
+                        continue
+                    row = db.execute(
+                        f"select count(*) from {table} where {where}"
+                    ).fetchone()
+                    categories[category] += int(row[0] or 0) if row else 0
+        return categories
+
+    def oldest_quality_queue_age_seconds(self) -> int:
+        queue_queries = (
+            ("reply_tasks", "status in ('pending', 'processing')"),
+            ("meeting_alignment_jobs", "status in ('pending', 'processing')"),
+            ("work_summary_inputs", "status in ('pending', 'processing')"),
+            ("memory_write_events", "status in ('pending', 'processing', 'unknown')"),
+            ("wechat_deliveries", "status in ('pending', 'sending', 'unknown')"),
+            (
+                "universal_action_executions",
+                "status in ('pending', 'started', 'recovering', 'unknown')",
+            ),
+        )
+        with self._connect() as db:
+            existing_tables = {
+                str(row[0])
+                for row in db.execute(
+                    "select name from sqlite_master where type='table'"
+                ).fetchall()
+            }
+            ages = [0]
+            for table, where in queue_queries:
+                if table not in existing_tables:
+                    continue
+                row = db.execute(
+                    f"""
+                    select max(
+                        0,
+                        cast(
+                            (julianday('now') - julianday(min(created_at))) * 86400
+                            as integer
+                        )
+                    )
+                    from {table}
+                    where {where}
+                    """
+                ).fetchone()
+                ages.append(int(row[0] or 0) if row else 0)
+        return max(ages)
+
+    def record_quality_run(
+        self,
+        *,
+        suite: str,
+        mode: str,
+        commit_sha: str,
+        status: str,
+        total: int,
+        passed: int,
+        failed: int,
+        score: float,
+    ) -> int:
+        with self._connect() as db:
+            cursor = db.execute(
+                """
+                insert into quality_runs (
+                    suite, mode, commit_sha, status, total, passed, failed, score
+                ) values (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (suite, mode, commit_sha, status, total, passed, failed, score),
+            )
+            return _required_lastrowid(cursor)
+
+    def list_quality_runs(self, *, limit: int = 20) -> list[dict[str, object]]:
+        with self._connect() as db:
+            rows = db.execute(
+                "select * from quality_runs order by created_at desc, id desc limit ?",
+                (limit,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def record_quality_snapshot(self, snapshot: BaseModel) -> int:
+        payload = snapshot.model_dump(mode="json")
+        with self._connect() as db:
+            cursor = db.execute(
+                """
+                insert into quality_snapshots (
+                    commit_sha, pid, schema_version, ready, slo_status,
+                    backlog_json, components_json
+                ) values (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    payload["commit"],
+                    payload["pid"],
+                    payload["schema_version"],
+                    int(bool(payload["ready"])),
+                    payload["slo_status"],
+                    json.dumps(payload["backlog"], sort_keys=True),
+                    json.dumps(payload["components"], sort_keys=True),
+                ),
+            )
+            return _required_lastrowid(cursor)
+
+    def list_quality_snapshots(self, *, limit: int = 20) -> list[dict[str, object]]:
+        with self._connect() as db:
+            rows = db.execute(
+                "select * from quality_snapshots order by created_at desc, id desc limit ?",
+                (limit,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def open_quality_incident(
+        self,
+        incident_key: str,
+        *,
+        severity: str,
+        summary_code: str,
+    ) -> bool:
+        with self._connect() as db:
+            existing = db.execute(
+                "select status from quality_incidents where incident_key=?",
+                (incident_key,),
+            ).fetchone()
+            if existing is not None and existing["status"] in {"open", "acknowledged"}:
+                return False
+            if existing is None:
+                db.execute(
+                    """
+                    insert into quality_incidents (
+                        incident_key, status, severity, summary_code
+                    ) values (?, 'open', ?, ?)
+                    """,
+                    (incident_key, severity, summary_code),
+                )
+            else:
+                db.execute(
+                    """
+                    update quality_incidents
+                    set status='open', severity=?, summary_code=?, owner='', due_at='',
+                        acknowledged_at='', resolved_at='', updated_at=current_timestamp
+                    where incident_key=?
+                    """,
+                    (severity, summary_code, incident_key),
+                )
+            return True
+
+    def acknowledge_quality_incident(
+        self, incident_key: str, *, owner: str, due_at: str
+    ) -> bool:
+        if not owner.strip() or not due_at.strip():
+            raise ValueError("incident owner and due date are required")
+        with self._connect() as db:
+            cursor = db.execute(
+                """
+                update quality_incidents
+                set status='acknowledged', owner=?, due_at=?,
+                    acknowledged_at=current_timestamp, updated_at=current_timestamp
+                where incident_key=? and status='open'
+                """,
+                (owner, due_at, incident_key),
+            )
+            return cursor.rowcount == 1
+
+    def resolve_quality_incident(self, incident_key: str) -> bool:
+        with self._connect() as db:
+            cursor = db.execute(
+                """
+                update quality_incidents
+                set status='resolved', resolved_at=current_timestamp,
+                    updated_at=current_timestamp
+                where incident_key=? and status in ('open', 'acknowledged')
+                """,
+                (incident_key,),
+            )
+            return cursor.rowcount == 1
+
+    def list_quality_incidents(self) -> list[dict[str, object]]:
+        with self._connect() as db:
+            rows = db.execute(
+                "select * from quality_incidents order by created_at desc, id desc"
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def quality_feedback_rates(self, *, days: int = 30) -> dict[str, float | int]:
+        with self._connect() as db:
+            feedback = db.execute(
+                """
+                select
+                    count(*) as total,
+                    sum(case when lower(trim(rating)) in (
+                        'negative', 'bad', 'down', 'dislike', '差评'
+                    ) then 1 else 0 end) as negative
+                from feedback_events
+                where datetime(coalesce(nullif(received_at, ''), created_at))
+                    >= datetime('now', '-' || ? || ' days')
+                """,
+                (days,),
+            ).fetchone()
+            corrections = db.execute(
+                """
+                select count(*)
+                from reply_attempts
+                where datetime(created_at) >= datetime('now', '-' || ? || ' days')
+                  and trim(corrected_reply_text) <> ''
+                """,
+                (days,),
+            ).fetchone()
+        total = int(feedback["total"] or 0) if feedback else 0
+        negative = int(feedback["negative"] or 0) if feedback else 0
+        corrected = int(corrections[0] or 0) if corrections else 0
+        return {
+            "sample_count": total,
+            "negative_rate": negative / total if total else 0.0,
+            "correction_rate": corrected / total if total else 0.0,
+        }
+
     def list_reply_tasks(
         self,
         statuses: tuple[str, ...] | None = None,
@@ -3176,7 +3504,7 @@ class AutoReplyStore:
             )
             if cur.rowcount != 1:
                 return None
-            return int(cur.lastrowid)
+            return _required_lastrowid(cur)
 
     def get_wechat_memory_candidate(self, candidate_id: int) -> dict | None:
         with self._connect() as db:
@@ -3786,7 +4114,7 @@ class AutoReplyStore:
                     error,
                 ),
             )
-            return int(cursor.lastrowid)
+            return _required_lastrowid(cursor)
 
     def list_meeting_alignment_runs(
         self,
@@ -4085,7 +4413,7 @@ class AutoReplyStore:
                     audit_summary,
                 ),
             )
-            return int(cursor.lastrowid)
+            return _required_lastrowid(cursor)
 
     def record_okr_review_item(
         self,
@@ -4119,7 +4447,7 @@ class AutoReplyStore:
                     item_json,
                 ),
             )
-            return int(cursor.lastrowid)
+            return _required_lastrowid(cursor)
 
     def upsert_conversation(
         self,
@@ -5094,7 +5422,7 @@ class AutoReplyStore:
                     channel,
                 ),
             )
-            attempt_id = int(cursor.lastrowid)
+            attempt_id = _required_lastrowid(cursor)
             self._record_memory_write_events_in_connection(
                 db,
                 attempt_id,
@@ -5217,7 +5545,7 @@ class AutoReplyStore:
                     send_status,
                 ),
             )
-            attempt_id = int(cursor.lastrowid)
+            attempt_id = _required_lastrowid(cursor)
             self._record_memory_write_events_in_connection(
                 db,
                 attempt_id,
@@ -6327,7 +6655,7 @@ class AutoReplyStore:
                         embedding_model,
                     ),
                 )
-                row_id = int(cursor.lastrowid)
+                row_id = _required_lastrowid(cursor)
             else:
                 row_id = int(row["id"])
                 db.execute(
@@ -6734,7 +7062,7 @@ class AutoReplyStore:
                 f"insert into work_projects ({columns}) values ({placeholders})",
                 [filtered[key] for key in keys],
             )
-            return int(cursor.lastrowid)
+            return _required_lastrowid(cursor)
 
     def update_work_project(self, project_id: int, **values) -> None:
         if not values:
@@ -6867,7 +7195,7 @@ class AutoReplyStore:
                 f"insert into work_todos ({columns}) values ({placeholders})",
                 [filtered[key] for key in keys],
             )
-            return int(cursor.lastrowid)
+            return _required_lastrowid(cursor)
 
     def update_work_todo(self, todo_id: int, **values) -> None:
         if not values:
@@ -7021,7 +7349,7 @@ class AutoReplyStore:
                 if existing is not None:
                     return int(existing["id"])
                 raise
-            return int(cursor.lastrowid)
+            return _required_lastrowid(cursor)
 
     def update_work_todo_dingtalk_link(self, link_id: int, **values) -> None:
         if not values:
@@ -7198,7 +7526,7 @@ class AutoReplyStore:
                 """,
                 (filtered["project_id"],),
             )
-            return int(cursor.lastrowid)
+            return _required_lastrowid(cursor)
 
     def has_work_update(
         self,
@@ -7263,7 +7591,7 @@ class AutoReplyStore:
                     int(memory_recall_used),
                 ),
             )
-            return int(cursor.lastrowid)
+            return _required_lastrowid(cursor)
 
     def create_follow_up_draft(self, **values) -> int:
         allowed_columns = {
@@ -7310,7 +7638,7 @@ class AutoReplyStore:
                 f"insert into follow_up_drafts ({columns}) values ({placeholders})",
                 [filtered[key] for key in keys],
             )
-            return int(cursor.lastrowid)
+            return _required_lastrowid(cursor)
 
     def update_follow_up_draft(self, draft_id: int, **values) -> None:
         if not values:
@@ -8085,7 +8413,7 @@ class AutoReplyStore:
                     status,
                 ),
             )
-            return int(cursor.lastrowid)
+            return _required_lastrowid(cursor)
 
     def list_setup_wizard_events(
         self,
