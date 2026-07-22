@@ -176,6 +176,8 @@ class WorkerSettings(BaseModel):
     dws_transient_retry_delay_seconds: float = 1.0
     codex_timeout_seconds: PositiveInt = 1200
     codex_idle_timeout_seconds: PositiveInt = 900
+    oa_codex_timeout_seconds: PositiveInt = 360
+    oa_codex_idle_timeout_seconds: PositiveInt = 120
     task_codex_timeout_seconds: PositiveInt = 1200
     task_codex_idle_timeout_seconds: PositiveInt = 900
     task_work_item_interval_seconds: PositiveInt = 60
@@ -342,6 +344,28 @@ def build_parser() -> argparse.ArgumentParser:
                 )
             ),
             help="maximum seconds to wait without Codex stdout/stderr output",
+        )
+        subparser.add_argument(
+            "--oa-codex-timeout-seconds",
+            type=_positive_int,
+            default=_positive_int(
+                os.getenv(
+                    "CEO_OA_CODEX_TIMEOUT_SECONDS",
+                    str(defaults.oa_codex_timeout_seconds),
+                )
+            ),
+            help="maximum seconds to wait for one OA approval Codex decision",
+        )
+        subparser.add_argument(
+            "--oa-codex-idle-timeout-seconds",
+            type=_positive_int,
+            default=_positive_int(
+                os.getenv(
+                    "CEO_OA_CODEX_IDLE_TIMEOUT_SECONDS",
+                    str(defaults.oa_codex_idle_timeout_seconds),
+                )
+            ),
+            help="maximum seconds to wait without OA approval Codex stdout/stderr output",
         )
         subparser.add_argument(
             "--task-codex-timeout-seconds",
@@ -663,8 +687,8 @@ def create_worker(settings: WorkerSettings) -> DingTalkAutoReplyWorker:
     )
     oa_approval_handler = OaApprovalSpecHandler(
         workspace=settings.workspace,
-        timeout_seconds=settings.codex_timeout_seconds,
-        idle_timeout_seconds=settings.codex_idle_timeout_seconds,
+        timeout_seconds=settings.oa_codex_timeout_seconds,
+        idle_timeout_seconds=settings.oa_codex_idle_timeout_seconds,
         store=store,
     )
     style_profile = _load_style_profile(settings.corpus_dir)

@@ -2513,6 +2513,8 @@ def test_settings_defaults_point_to_memory_home():
     assert settings.poll_interval_seconds == 300
     assert settings.codex_timeout_seconds == 1200
     assert settings.codex_idle_timeout_seconds == 900
+    assert settings.oa_codex_timeout_seconds == 360
+    assert settings.oa_codex_idle_timeout_seconds == 120
     assert settings.task_codex_timeout_seconds == 1200
     assert settings.task_codex_idle_timeout_seconds == 900
     assert settings.task_work_item_interval_seconds == 60
@@ -3633,6 +3635,24 @@ def test_parser_supports_codex_timeout_option():
     assert settings.codex_idle_timeout_seconds == 180
 
 
+def test_parser_supports_oa_codex_timeout_options():
+    parser = build_parser()
+
+    args = parser.parse_args(
+        [
+            "run-once",
+            "--oa-codex-timeout-seconds",
+            "360",
+            "--oa-codex-idle-timeout-seconds",
+            "120",
+        ]
+    )
+    settings = settings_from_args(args)
+
+    assert settings.oa_codex_timeout_seconds == 360
+    assert settings.oa_codex_idle_timeout_seconds == 120
+
+
 def test_parser_supports_task_codex_timeout_options():
     parser = build_parser()
 
@@ -3677,6 +3697,19 @@ def test_create_worker_wires_store_dws_codex_and_dry_run(monkeypatch, tmp_path):
             constructed["codex_timeout_seconds"] = timeout_seconds
             constructed["codex_idle_timeout_seconds"] = idle_timeout_seconds
 
+    class FakeOaApprovalHandler:
+        def __init__(
+            self,
+            workspace,
+            timeout_seconds,
+            idle_timeout_seconds,
+            store=None,
+        ):
+            constructed["oa_workspace"] = workspace
+            constructed["oa_timeout_seconds"] = timeout_seconds
+            constructed["oa_idle_timeout_seconds"] = idle_timeout_seconds
+            constructed["oa_store"] = store
+
     class FakeWorker:
         def __init__(
             self,
@@ -3699,6 +3732,7 @@ def test_create_worker_wires_store_dws_codex_and_dry_run(monkeypatch, tmp_path):
     monkeypatch.setattr(cli, "CachedOrgDirectory", FakeCachedOrgDirectory)
     monkeypatch.setattr(cli, "CachedDwsClient", FakeCachedDwsClient)
     monkeypatch.setattr(cli, "CodexDecisionRunner", FakeCodex)
+    monkeypatch.setattr(cli, "OaApprovalSpecHandler", FakeOaApprovalHandler)
     monkeypatch.setattr(cli, "DingTalkAutoReplyWorker", FakeWorker)
     monkeypatch.setenv("CEO_OKR_SOURCE_KIND", "agoal")
 
@@ -3709,6 +3743,8 @@ def test_create_worker_wires_store_dws_codex_and_dry_run(monkeypatch, tmp_path):
         dry_run=True,
         codex_timeout_seconds=480,
         codex_idle_timeout_seconds=180,
+        oa_codex_timeout_seconds=360,
+        oa_codex_idle_timeout_seconds=120,
     )
     settings.corpus_dir.mkdir()
     (settings.corpus_dir / "style_profile.md").write_text(
@@ -3747,6 +3783,10 @@ def test_create_worker_wires_store_dws_codex_and_dry_run(monkeypatch, tmp_path):
     assert constructed["codex_workspace"] == settings.workspace
     assert constructed["codex_timeout_seconds"] == 480
     assert constructed["codex_idle_timeout_seconds"] == 180
+    assert constructed["oa_workspace"] == settings.workspace
+    assert constructed["oa_timeout_seconds"] == 360
+    assert constructed["oa_idle_timeout_seconds"] == 120
+    assert constructed["worker"].oa_approval_handler is not None
     assert constructed["worker_args"][3] is True
     assert "先结论" in constructed["style_profile"]
     assert len(constructed["style_records"]) == 1
