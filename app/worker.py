@@ -140,6 +140,12 @@ MAX_REPLY_TASK_ATTEMPTS = 3
 REPLY_TASK_RETRY_BASE_DELAY_SECONDS = 60
 REPLY_TASK_RETRY_MAX_DELAY_SECONDS = 15 * 60
 STALE_CODEX_RESUME_ATTEMPTS = 2
+OA_PENDING_SCAN_INTERVAL = env_duration(
+    "CEO_OA_PENDING_SCAN_INTERVAL",
+    timedelta(seconds=30),
+)
+OA_PENDING_CONVERSATION_ID = "oa-pending"
+OA_PENDING_CONVERSATION_TITLE = "OA 待审批"
 CALENDAR_PENDING_INVITE_LOOKAHEAD_DAYS = 14
 CALENDAR_PENDING_INVITE_EVENT_MATCH_SECONDS = 5 * 60
 CALENDAR_PENDING_INVITE_NO_CHANGE_TIME_START_LOOKAHEAD = timedelta(hours=24)
@@ -383,6 +389,7 @@ DWS_UPGRADE_CHECKED_DATE_STATE_KEY = "dws_upgrade_checked_date"
 DWS_UPGRADE_CHECK_RESULT_STATE_KEY = "dws_upgrade_check_result"
 MESSAGE_RECOVERY_CHECKED_AT_STATE_KEY = "message_recovery_checked_at"
 MESSAGE_FAST_PATH_CHECKED_AT_STATE_KEY = "message_fast_path_checked_at"
+OA_PENDING_CHECKED_AT_STATE_KEY = "oa_pending_checked_at"
 ROBOT_DIRECT_MESSAGE_LOOKBACK = env_duration(
     "CEO_ROBOT_DIRECT_MESSAGE_LOOKBACK",
     timedelta(hours=4),
@@ -3671,7 +3678,104 @@ class DingTalkAutoReplyWorker:
             MESSAGE_FAST_PATH_CHECKED_AT_STATE_KEY,
             fast_path_checked_at.isoformat(),
         )
+        if queued_tasks == 0:
+            queued_tasks += self._produce_pending_oa_approvals(
+                max_tasks=max_tasks,
+            )
         return queued_tasks
+
+    def _produce_pending_oa_approvals(self, max_tasks: int | None = None) -> int:
+        if max_tasks == 0:
+            return 0
+        list_pending_oa_approvals = getattr(self.dws, "list_pending_oa_approvals", None)
+        if list_pending_oa_approvals is None:
+            return 0
+        now = self._now()
+        if not self._pending_oa_scan_due(now):
+            return 0
+        candidates = self._call_dws(
+            "list_pending_oa_approvals",
+            lambda: list_pending_oa_approvals(page=1, size=30),
+            default=[],
+        )
+        self.store.set_service_state(
+            OA_PENDING_CHECKED_AT_STATE_KEY,
+            now.astimezone(timezone.utc).isoformat(),
+        )
+        if not candidates:
+            return 0
+        conversation = DingTalkConversation(
+            open_conversation_id=OA_PENDING_CONVERSATION_ID,
+            title=OA_PENDING_CONVERSATION_TITLE,
+            single_chat=False,
+            unread_point=0,
+        )
+        self.store.upsert_conversation(
+            conversation_id=conversation.open_conversation_id,
+            title=conversation.title,
+            single_chat=conversation.single_chat,
+            codex_session_id=None,
+        )
+        queued = 0
+        for candidate in candidates:
+            if max_tasks is not None and queued >= max_tasks:
+                break
+            message = self._pending_oa_approval_message(candidate, now)
+            if self.store.has_seen(message.open_message_id):
+                continue
+            if self._enqueue_reply_task(
+                conversation,
+                message,
+                context_messages=[],
+                replace_pending_single_chat=False,
+            ):
+                queued += 1
+        return queued
+
+    def _pending_oa_scan_due(self, now: datetime) -> bool:
+        checked_at = self.store.get_service_state(OA_PENDING_CHECKED_AT_STATE_KEY)
+        if not checked_at:
+            return True
+        last_checked = self._parse_service_state_datetime(checked_at)
+        if last_checked is None:
+            return True
+        return now.astimezone(timezone.utc) - last_checked.astimezone(
+            timezone.utc
+        ) >= OA_PENDING_SCAN_INTERVAL
+
+    @staticmethod
+    def _pending_oa_approval_message(candidate: Any, now: datetime) -> DingTalkMessage:
+        process_instance_id = str(candidate.process_instance_id).strip()
+        title = str(candidate.title or candidate.process_name or "OA 待审批").strip()
+        process_name = str(candidate.process_name or "").strip()
+        oa_url = (
+            "https://aflow.dingtalk.com/dingtalk/pc/query/pchomepage.htm"
+            f"?procInstId={quote(process_instance_id)}&swfrom=oa"
+        )
+        content_lines = [
+            f"[Ding]系统提醒您审批{title}",
+            f"processInstanceId: {process_instance_id}",
+        ]
+        if process_name:
+            content_lines.append(f"processName: {process_name}")
+        content_lines.append(oa_url)
+        return DingTalkMessage(
+            open_conversation_id=OA_PENDING_CONVERSATION_ID,
+            open_message_id=f"oa-pending:{process_instance_id}",
+            conversation_title=OA_PENDING_CONVERSATION_TITLE,
+            single_chat=False,
+            sender_name="OA审批",
+            create_time=now.astimezone(DINGTALK_MESSAGE_TIME_ZONE).strftime(
+                DINGTALK_TIME_FORMAT
+            ),
+            content="\n".join(content_lines),
+            raw_payload={
+                "source": "pending_oa_approval_scan",
+                "processInstanceId": process_instance_id,
+                "processName": process_name,
+                "title": title,
+            },
+        )
 
     @staticmethod
     def _should_read_unread_messages(
@@ -5002,6 +5106,8 @@ class DingTalkAutoReplyWorker:
         conversation: DingTalkConversation,
         trigger: DingTalkMessage,
     ) -> bool:
+        if trigger.open_message_id.startswith(f"{OA_PENDING_CONVERSATION_ID}:"):
+            return True
         list_messages_by_ids = getattr(self.dws, "list_messages_by_ids", None)
         if list_messages_by_ids is None:
             return True
@@ -5840,12 +5946,10 @@ class DingTalkAutoReplyWorker:
         send_status = "dry_run"
         send_error = ""
         if not self.dry_run:
-            has_approval_target = bool(
-                effective_oa_process_instance_id.strip()
-                and effective_oa_task_id.strip()
-            )
-            if has_approval_target:
-                if result.oa_action == "退回":
+            has_process_target = bool(effective_oa_process_instance_id.strip())
+            has_task_target = bool(has_process_target and effective_oa_task_id.strip())
+            if result.oa_action == "退回":
+                if has_process_target:
                     try:
                         action_result = self.dws.comment_oa_approval(
                             effective_oa_process_instance_id,
@@ -5856,6 +5960,10 @@ class DingTalkAutoReplyWorker:
                         send_status = "failed"
                         send_error = str(exc)
                 else:
+                    send_status = "skipped"
+                    send_error = target_error or "missing_oa_approval_target"
+            else:
+                if has_task_target:
                     try:
                         action_result = self.dws.execute_oa_approval_action(
                             effective_oa_process_instance_id,
@@ -5867,9 +5975,9 @@ class DingTalkAutoReplyWorker:
                     except Exception as exc:
                         send_status = "failed"
                         send_error = str(exc)
-            else:
-                send_status = "skipped"
-                send_error = target_error or "missing_oa_approval_target"
+                else:
+                    send_status = "skipped"
+                    send_error = target_error or "missing_oa_approval_target"
         attempt_id = self.store.record_reply_attempt_for_trigger(
             conversation_id=conversation.open_conversation_id,
             conversation_title=conversation.title,

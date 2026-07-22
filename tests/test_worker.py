@@ -7292,6 +7292,113 @@ def test_oa_approval_uses_worker_url_target_when_agent_omits_identifiers(
     ]
 
 
+def test_oa_approval_comment_only_requires_process_target(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message(
+        "[Ding]刘瑞安提醒您审批他的录用申请 "
+        "https://aflow.dingtalk.com/detail?procInstId=proc-1",
+        single_chat=True,
+    )
+    dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该走聊天回复")
+    )
+    oa_handler = MissingTargetOaApprovalHandler()
+    worker = make_worker(
+        tmp_path,
+        dws,
+        codex,
+        monkeypatch,
+        dry_run=False,
+        oa_approval_handler=oa_handler,
+    )
+
+    worker.run_once()
+
+    attempt = worker.store.get_reply_attempt(1)
+    assert attempt is not None
+    assert attempt.action == "oa_approval"
+    assert attempt.send_status == "commented"
+    assert attempt.send_error == ""
+    assert attempt.oa_process_instance_id == "proc-1"
+    assert attempt.oa_task_id == ""
+    assert dws.oa_approval_comments == [
+        ("proc-1", "材料不足，暂不执行审批动作。")
+    ]
+
+
+def test_pending_oa_approval_scan_enqueues_and_comments(
+    tmp_path: Path, monkeypatch
+):
+    dws = FakeDws([], {})
+    dws.pending_oa_approvals = [
+        DwsOaApprovalCandidate(
+            process_instance_id="proc-1",
+            title="宋述提交的背调结果说明",
+            process_name="背调结果说明",
+        )
+    ]
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该走聊天回复")
+    )
+    oa_handler = ReturnOaApprovalHandler()
+    worker = make_worker(
+        tmp_path,
+        dws,
+        codex,
+        monkeypatch,
+        dry_run=False,
+        oa_approval_handler=oa_handler,
+    )
+
+    worker.run_once()
+
+    assert len(oa_handler.calls) == 1
+    trigger_text, _context_text, oa_url, execute = oa_handler.calls[0]
+    assert execute is False
+    assert "宋述提交的背调结果说明" in trigger_text
+    assert "processInstanceId: proc-1" in trigger_text
+    assert "procInstId=proc-1" in oa_url
+    assert dws.oa_approval_comments == [
+        ("proc-1", "请补充预算来源和项目归属后重新提交。")
+    ]
+    assert worker.store.has_seen("oa-pending:proc-1") is True
+    attempt = worker.store.get_reply_attempt(1)
+    assert attempt is not None
+    assert attempt.conversation_id == "oa-pending"
+    assert attempt.trigger_message_id == "oa-pending:proc-1"
+    assert attempt.action == "oa_approval"
+    assert attempt.send_status == "commented"
+
+
+def test_pending_oa_approval_scan_respects_interval(tmp_path: Path, monkeypatch):
+    dws = FakeDws([], {})
+    dws.pending_oa_approvals = [
+        DwsOaApprovalCandidate(
+            process_instance_id="proc-1",
+            title="宋述提交的背调结果说明",
+            process_name="背调结果说明",
+        )
+    ]
+    worker = make_worker(
+        tmp_path,
+        dws,
+        FakeCodex([]),
+        monkeypatch,
+        oa_approval_handler=ReturnOaApprovalHandler(),
+    )
+    worker.store.set_service_state(
+        worker_module.OA_PENDING_CHECKED_AT_STATE_KEY,
+        fixed_worker_now().isoformat(),
+    )
+
+    worker.run_once()
+
+    assert worker.store.count_reply_tasks(status="pending") == 0
+    assert worker.store.count_reply_attempts() == 0
+
+
 def test_oa_approval_does_not_execute_task_that_is_not_current_user(
     tmp_path: Path, monkeypatch
 ):

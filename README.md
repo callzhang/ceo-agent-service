@@ -397,6 +397,8 @@ scripts/install-auto-reply-agents.sh
 - `com.ceo-agent-service.main`：唯一的 launchd 主服务。
 - producer loop：按 `CEO_PRODUCER_INTERVAL_SECONDS` 间隔发现消息并入队，默认 60 秒。
 - consumer loop：按 `CEO_CONSUMER_POLL_INTERVAL_SECONDS` 间隔领取任务、调用 agent、执行发送或跳过，默认 10 秒。
+- OA pending scan：按 `CEO_OA_PENDING_SCAN_INTERVAL` 主动检查钉钉 OA 待审批列表，默认 `30s`；新审批会以 `oa-pending:<processInstanceId>` 合成触发消息进入现有 OA 审阅/评论流程。
+- OA approval Codex timeout：OA 审批使用独立超时，`CEO_OA_CODEX_TIMEOUT_SECONDS` 默认 `360` 秒，`CEO_OA_CODEX_IDLE_TIMEOUT_SECONDS` 默认 `120` 秒，避免单条复杂审批长期堵住后续待审批。
 - meeting producer loop：读取 AI 听记与日历参会证据，只为 Derek 参会且明确结束至少 `CEO_MEETING_SETTLE_SECONDS` 的会议建队列；没有匹配日程的临时通话，仅在完整转写恰好证明 Derek 和另一位唯一员工时按 1:1 放行；没有触发条件的会议保持安静。
 - meeting consumer loop：独立分析、选择最高分可发送群并投递；多方会议绝不降级私聊，1:1 才私聊另一位参会人。发送正文固定以 `【会议跟进】会议标题（会议时间）` 开头，便于收件人识别来源会议；真实 @ 默认限于参会人，非参会人只有会议转写明确说到是他的任务、由他负责、交给他确认或跟进时才 @。确认发送成功后复用 reply agent 的本地/Chrome notification 和钉钉会话点击跳转。dry-run 只分析到 `ready_to_send`，不会 claim 发送。
 - task maintenance loop：按 `CEO_TASK_WORK_ITEM_INTERVAL_SECONDS` 处理 Work Item，并按 `CEO_TASK_DAILY_INTERVAL_SECONDS` 扫描 AI 听记、`CEO_WORKSPACE` 文件和到期 follow-up。
