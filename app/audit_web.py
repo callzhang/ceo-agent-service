@@ -1680,6 +1680,8 @@ def render_config_page(
         content = _render_user_prompt_editor_content(saved=saved)
     elif active_tab == "system":
         content = _render_system_config(db_path=db_path)
+    elif active_tab == "channels":
+        content = _render_channel_config()
     elif active_tab == "wechat":
         store_path = db_path or _configured_worker_db_path()
         content = _render_wechat_config(AutoReplyStore(store_path))
@@ -1769,6 +1771,32 @@ def _render_wechat_config(store: AutoReplyStore) -> str:
         "<h2>微信自动回复对象</h2>"
         '<p class="muted">在这里持续维护自动回复范围；微信连接和能力检查请在 Tutorial 完成。</p>'
         f"{_wechat_target_picker_html(store)}"
+        "</section>"
+    )
+
+
+def _render_channel_config() -> str:
+    from app.channels import DingTalkCliAdapter, FeishuCliAdapter
+
+    statuses = [DingTalkCliAdapter().doctor(), FeishuCliAdapter().doctor()]
+    rows = "".join(
+        "<tr>"
+        f"<td>{escape(status.channel)}</td>"
+        f"<td><span class=\"setup-step-status setup-status-{escape(status.status)}\">"
+        f"{escape(status.status)}</span></td>"
+        f"<td>{escape(status.reason)}</td>"
+        f"<td><code>{escape(' '.join(status.command))}</code></td>"
+        "</tr>"
+        for status in statuses
+    )
+    return (
+        '<section class="card">'
+        "<h2>Channel doctor</h2>"
+        '<p class="muted">Reusable reply channels and their local CLI readiness.</p>'
+        '<table class="column-sized-table">'
+        "<thead><tr><th>Channel</th><th>Status</th><th>Reason</th><th>Probe</th></tr></thead>"
+        f"<tbody>{rows}</tbody>"
+        "</table>"
         "</section>"
     )
 
@@ -5157,6 +5185,9 @@ def _operation_status_class(status: str) -> str:
 def _config_tabs(active_tab: str) -> str:
     info_class = "prompt-tab active" if active_tab == "info" else "prompt-tab"
     system_class = "prompt-tab active" if active_tab == "system" else "prompt-tab"
+    channels_class = (
+        "prompt-tab active" if active_tab == "channels" else "prompt-tab"
+    )
     developer_class = (
         "prompt-tab active" if active_tab == "developer" else "prompt-tab"
     )
@@ -5167,6 +5198,7 @@ def _config_tabs(active_tab: str) -> str:
         f"<a class=\"{info_class}\" href=\"/config?tab=info\">Info</a>"
         f"<a class=\"{system_class}\" href=\"/config?tab=system\">"
         "System Config</a>"
+        f"<a class=\"{channels_class}\" href=\"/config?tab=channels\">Channels</a>"
         f"<a class=\"{wechat_class}\" href=\"/config?tab=wechat\">WeChat</a>"
         f"<a class=\"{developer_class}\" href=\"/config?tab=developer\">"
         "Developer Prompt</a>"

@@ -2574,6 +2574,36 @@ def test_render_config_page_shows_system_config_tab_with_descriptions():
     assert "保存位置" in system_section
 
 
+def test_render_config_page_shows_channel_doctor(monkeypatch):
+    from app.channels.models import ChannelDoctorStatus
+
+    monkeypatch.setattr(
+        "app.channels.DingTalkCliAdapter.doctor",
+        lambda self: ChannelDoctorStatus(
+            channel="dingtalk",
+            status="ready",
+            reason="dws ready",
+            command=["dws", "doctor"],
+        ),
+    )
+    monkeypatch.setattr(
+        "app.channels.FeishuCliAdapter.doctor",
+        lambda self: ChannelDoctorStatus(
+            channel="feishu",
+            status="blocked",
+            reason="lark command not found",
+            command=["lark", "--help"],
+        ),
+    )
+
+    html = render_config_page(active_tab="channels")
+
+    assert "Channel doctor" in html
+    assert "dingtalk" in html
+    assert "feishu" in html
+    assert "lark command not found" in html
+
+
 def test_handle_system_config_post_saves_runtime_params_to_env_file(
     tmp_path: Path,
     monkeypatch,

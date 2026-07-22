@@ -294,9 +294,22 @@ def single_chat_read_recovery_limit() -> int:
     return env_int("SINGLE_CHAT_READ_RECOVERY_LIMIT", 50)
 
 
+# --- Configurable CLI channels ---
+def _env_truthy(name: str) -> bool:
+    return os.getenv(name, "0").strip().lower() in ("1", "true", "yes", "on")
+
+
+def feishu_cli_binary() -> str:
+    return os.getenv("CEO_FEISHU_CLI_BINARY", "lark").strip() or "lark"
+
+
+def feishu_live_send_enabled() -> bool:
+    return _env_truthy("CEO_FEISHU_LIVE_SEND_ENABLED")
+
+
 # --- WeChat personal-account channel (disabled by default) ---
 def _wechat_truthy(name: str) -> bool:
-    return os.getenv(name, "0").strip().lower() in ("1", "true", "yes", "on")
+    return _env_truthy(name)
 
 
 def wechat_reader_enabled() -> bool:

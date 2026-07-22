@@ -140,6 +140,12 @@ def test_parser_supports_process_okr_reviews():
     assert args.max_batches == 1
 
 
+def test_parser_supports_channel_doctor():
+    args = build_parser().parse_args(["channel-doctor"])
+
+    assert args.command == "channel-doctor"
+
+
 def test_parser_supports_scan_task_sources():
     args = build_parser().parse_args(["scan-task-sources", "--workspace", "/tmp/w"])
 

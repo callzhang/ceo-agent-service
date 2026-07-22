@@ -258,6 +258,7 @@ def build_parser() -> argparse.ArgumentParser:
         "scan-task-sources",
         "process-follow-ups",
         "daily-task-maintenance",
+        "channel-doctor",
         "doctor-mcp",
         "setup-memory-connector",
         "build-corpus",
@@ -1355,6 +1356,18 @@ def doctor_mcp_command(
         verify_live=verify_live,
         notify=notify,
     )
+    print(json.dumps(report, ensure_ascii=False), flush=True)
+    return report
+
+
+def channel_doctor_command() -> dict[str, object]:
+    from app.channels import DingTalkCliAdapter, FeishuCliAdapter
+
+    statuses = [
+        DingTalkCliAdapter().doctor().model_dump(mode="json"),
+        FeishuCliAdapter().doctor().model_dump(mode="json"),
+    ]
+    report: dict[str, object] = {"channels": statuses}
     print(json.dumps(report, ensure_ascii=False), flush=True)
     return report
 
@@ -2927,6 +2940,8 @@ def main() -> None:
             verify_live=args.verify_live,
             notify=args.notify,
         )
+    elif args.command == "channel-doctor":
+        channel_doctor_command()
     elif args.command == "setup-memory-connector":
         setup_memory_connector_command(
             memory_url=args.memory_url,
