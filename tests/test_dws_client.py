@@ -1,4 +1,7 @@
 import subprocess
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from io import BytesIO
 import json
@@ -24,6 +27,12 @@ from app.dws_client import (
 )
 
 TEST_LOCAL_TZ = ZoneInfo("Asia/Shanghai")
+
+
+@pytest.fixture(autouse=True)
+def disable_dws_process_pacing(monkeypatch):
+    monkeypatch.setenv(dws_client.DWS_PROCESS_MIN_INTERVAL_SECONDS_ENV, "0")
+    monkeypatch.setattr(dws_client, "_DWS_LAST_PROCESS_START_MONOTONIC", 0.0)
 
 
 class RecordingDwsClient(DwsClient):
@@ -4374,6 +4383,65 @@ def test_run_json_raises_dws_error_on_nonzero_exit(monkeypatch):
 
     with pytest.raises(DwsError, match="exit code 1"):
         DwsClient(timeout_seconds=7).run_json(["dws", "probe"])
+
+
+def test_run_json_serializes_dws_processes_across_client_instances(monkeypatch):
+    start = threading.Barrier(2)
+    state_lock = threading.Lock()
+    active = 0
+    max_active = 0
+
+    def fake_run(command, text, capture_output, check, timeout, env=None):
+        nonlocal active, max_active
+        with state_lock:
+            active += 1
+            max_active = max(max_active, active)
+        time.sleep(0.05)
+        with state_lock:
+            active -= 1
+        return SimpleNamespace(returncode=0, stdout='{"ok":true}', stderr="")
+
+    def invoke(client):
+        start.wait()
+        return client.run_json(["dws", "probe"])
+
+    monkeypatch.setattr("app.dws_client.subprocess.run", fake_run)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(executor.map(invoke, (DwsClient(), DwsClient())))
+
+    assert results == [{"ok": True}, {"ok": True}]
+    assert max_active == 1
+
+
+def test_run_json_paces_dws_process_launches(monkeypatch):
+    clock = {"now": 100.0}
+    sleeps: list[float] = []
+    commands: list[list[str]] = []
+
+    def fake_monotonic():
+        return clock["now"]
+
+    def fake_sleep(seconds):
+        sleeps.append(seconds)
+        clock["now"] += seconds
+
+    def fake_run(command, text, capture_output, check, timeout, env=None):
+        commands.append(command)
+        return SimpleNamespace(returncode=0, stdout='{"ok":true}', stderr="")
+
+    monkeypatch.setenv(dws_client.DWS_PROCESS_MIN_INTERVAL_SECONDS_ENV, "2")
+    monkeypatch.setattr(dws_client.time, "monotonic", fake_monotonic)
+    monkeypatch.setattr(dws_client.time, "sleep", fake_sleep)
+    monkeypatch.setattr(dws_client.subprocess, "run", fake_run)
+
+    client = DwsClient()
+
+    assert client.run_json(["dws", "probe"]) == {"ok": True}
+    assert client.run_json(["dws", "probe"]) == {"ok": True}
+
+    assert commands == [["dws", "probe"], ["dws", "probe"]]
+    assert sleeps == [2.0]
 
 
 def test_run_json_uses_per_call_timeout_when_provided(monkeypatch):

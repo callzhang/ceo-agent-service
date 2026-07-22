@@ -3,6 +3,7 @@ import os
 import re
 import subprocess
 import tempfile
+import threading
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -30,6 +31,17 @@ MIN_UNREAD_MESSAGE_LIST_LIMIT = 5
 DWS_AGENT_CODE_ENV = "DINGTALK_DWS_AGENTCODE"
 DWS_DEFAULT_AGENT_CODE = "ceo-agent-service"
 BRACKETED_EMOJI_PATTERN = re.compile(r"^\[([^\[\]]*)\]$")
+DWS_PROCESS_MIN_INTERVAL_SECONDS_ENV = "CEO_DWS_PROCESS_MIN_INTERVAL_SECONDS"
+_DWS_PROCESS_GATE = threading.Lock()
+_DWS_LAST_PROCESS_START_MONOTONIC = 0.0
+
+
+def _dws_process_min_interval_seconds() -> float:
+    raw = os.getenv(DWS_PROCESS_MIN_INTERVAL_SECONDS_ENV, "1.0").strip()
+    try:
+        return max(0.0, float(raw))
+    except ValueError:
+        return 1.0
 
 
 def _local_time_zone():
@@ -2460,11 +2472,8 @@ class DwsClient:
             resource_type,
             output_path,
         )
-        result = subprocess.run(
+        result = self._run_cli_process(
             command,
-            text=True,
-            capture_output=True,
-            check=False,
             timeout=self.timeout_seconds + 15,
             env=self._cli_environment(),
         )
@@ -3076,11 +3085,8 @@ class DwsClient:
         automatic_retry_allowed = self._automatic_retry_allowed(command)
         while True:
             try:
-                result = subprocess.run(
+                result = self._run_cli_process(
                     command,
-                    text=True,
-                    capture_output=True,
-                    check=False,
                     timeout=command_timeout_seconds,
                     env=self._cli_environment(),
                 )
@@ -3128,11 +3134,8 @@ class DwsClient:
     ) -> str:
         command_timeout_seconds = timeout_seconds or self.timeout_seconds
         try:
-            result = subprocess.run(
+            result = self._run_cli_process(
                 command,
-                text=True,
-                capture_output=True,
-                check=False,
                 timeout=command_timeout_seconds,
                 env=self._cli_environment(),
             )
@@ -3175,6 +3178,36 @@ class DwsClient:
         if self.transient_retry_delay_seconds <= 0:
             return
         time.sleep(self.transient_retry_delay_seconds * (attempt_index + 1))
+
+    @staticmethod
+    def _run_cli_process(
+        command: list[str],
+        *,
+        timeout: int,
+        env: dict[str, str],
+    ) -> subprocess.CompletedProcess[str]:
+        global _DWS_LAST_PROCESS_START_MONOTONIC
+        with _DWS_PROCESS_GATE:
+            min_interval_seconds = _dws_process_min_interval_seconds()
+            if min_interval_seconds > 0:
+                now = time.monotonic()
+                wait_seconds = (
+                    _DWS_LAST_PROCESS_START_MONOTONIC
+                    + min_interval_seconds
+                    - now
+                )
+                if wait_seconds > 0:
+                    time.sleep(wait_seconds)
+                    now = time.monotonic()
+                _DWS_LAST_PROCESS_START_MONOTONIC = now
+            return subprocess.run(
+                command,
+                text=True,
+                capture_output=True,
+                check=False,
+                timeout=timeout,
+                env=env,
+            )
 
     @staticmethod
     def _unique_non_empty(values: list[str]) -> list[str]:
@@ -3232,11 +3265,8 @@ class DwsClient:
 
     def _refresh_cache(self) -> None:
         try:
-            subprocess.run(
+            self._run_cli_process(
                 [self.dws_bin, "cache", "refresh", "--format", "json"],
-                text=True,
-                capture_output=True,
-                check=False,
                 timeout=self.timeout_seconds,
                 env=self._cli_environment(),
             )
