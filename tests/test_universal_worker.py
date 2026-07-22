@@ -2604,6 +2604,32 @@ def test_universal_oa_comment_uses_comment_api_and_completes(
     assert result["dws_action_result"]["requestId"] == "request-comment-1"
 
 
+def test_universal_oa_comment_allows_trusted_process_without_task_id(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    execution = _execution(
+        store,
+        kind=PlannedActionKind.OA_APPROVAL,
+        target={"process_instance_id": "proc-1"},
+        payload={"action": "comment", "remark": "请补充可验证材料"},
+    )
+    dws = UniversalOaFakeDws()
+    worker = DingTalkAutoReplyWorker(store=store, dws=dws, codex=FakeCodex())
+
+    assert worker.execute_universal_oa_approval(execution) is True
+
+    assert dws.comment_calls == [("proc-1", "请补充可验证材料")]
+    assert dws.action_calls == []
+    assert dws.revert_calls == []
+    attempt = store.get_latest_reply_attempt_for_trigger("cid-context", "msg-context")
+    assert attempt is not None
+    assert attempt.send_status == "commented"
+    assert attempt.send_error == ""
+    assert attempt.oa_process_instance_id == "proc-1"
+    assert attempt.oa_task_id == ""
+
+
 def test_universal_oa_comment_falls_back_to_tasks_when_detail_parse_fails(
     tmp_path: Path,
 ) -> None:

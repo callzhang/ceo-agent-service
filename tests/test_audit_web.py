@@ -29,6 +29,8 @@ from app.audit_web import (
     render_developer_prompt_editor,
     render_error_list,
     render_log_list,
+    render_oa_approval_detail,
+    render_service_bugfix_candidates,
     render_task_project_detail,
     render_tasks_page,
     render_tutorial_page,
@@ -190,6 +192,116 @@ def test_render_attempt_list_shows_history_rows(tmp_path: Path):
     assert "查看/反馈" in html
     assert ">Codex</a>" not in html
     assert "/codex/session-1" not in html
+
+
+def test_attempt_detail_links_oa_metadata_to_process_history(tmp_path: Path):
+    db_path = tmp_path / "worker.sqlite3"
+    store = AutoReplyStore(db_path)
+    attempt_id = store.record_reply_attempt(
+        conversation_id="cid-oa",
+        conversation_title="OA 审批",
+        trigger_message_id="msg-oa-1",
+        trigger_sender="Derek",
+        trigger_text="审批",
+        action="oa_approval",
+        sensitivity_kind="internal_personnel",
+        codex_reason="退回",
+        draft_reply_text="请补材料",
+        audit_summary="材料不足。",
+        oa_process_instance_id="proc/oa 1",
+        oa_task_id="task-1",
+        oa_url="https://aflow.dingtalk.com/detail?procInstId=proc-oa-1&taskId=task-1",
+        oa_action="退回",
+        oa_remark="请补材料",
+        send_status="commented",
+    )
+
+    status, html = render_attempt_detail(store, attempt_id)
+
+    assert status == 200
+    assert "/oa-approvals/proc%2Foa%201" in html
+    assert "/oa-approvals/proc/oa 1" not in html
+    assert "查看同一审批历史" in html
+
+    client = TestClient(create_audit_app(db_path))
+    response = client.get("/oa-approvals/proc%2Foa%201")
+    assert response.status_code == 200
+    assert "proc/oa 1" in response.text
+
+
+def test_oa_approval_detail_route_shows_summary_and_history(tmp_path: Path):
+    db_path = tmp_path / "worker.sqlite3"
+    store = AutoReplyStore(db_path)
+    older_id = store.record_reply_attempt(
+        conversation_id="cid-oa",
+        conversation_title="OA 审批",
+        trigger_message_id="msg-oa-1",
+        trigger_sender="Derek",
+        trigger_text="审批",
+        action="oa_approval",
+        sensitivity_kind="internal_personnel",
+        codex_reason="退回",
+        draft_reply_text="请补材料",
+        oa_process_instance_id="proc-oa-1",
+        oa_task_id="task-1",
+        oa_action="退回",
+        oa_remark="请补材料",
+        send_status="commented",
+    )
+    newer_id = store.record_reply_attempt(
+        conversation_id="cid-oa",
+        conversation_title="OA 审批",
+        trigger_message_id="msg-oa-2",
+        trigger_sender="Derek",
+        trigger_text="继续审批",
+        action="oa_approval",
+        sensitivity_kind="internal_personnel",
+        codex_reason="同意",
+        draft_reply_text="同意",
+        oa_process_instance_id="proc-oa-1",
+        oa_task_id="task-2",
+        oa_url="https://aflow.dingtalk.com/detail?procInstId=proc-oa-1&taskId=task-2",
+        oa_action="同意",
+        oa_remark="同意，材料已补齐。",
+        send_status="skipped",
+    )
+
+    status, html = render_oa_approval_detail(store, "proc-oa-1")
+
+    assert status == 200
+    assert "process" in html
+    assert "proc-oa-1" in html
+    assert "reason" in html
+    assert "comment" in html
+    assert f"/attempts/{newer_id}" in html
+    assert f"/attempts/{older_id}" in html
+    assert html.index(f"/attempts/{newer_id}") < html.index(f"/attempts/{older_id}")
+
+    client = TestClient(create_audit_app(db_path))
+    response = client.get("/oa-approvals/proc-oa-1")
+    assert response.status_code == 200
+    assert "Attempt history" in response.text
+
+
+def test_service_bugfix_candidates_page_lists_pending_feedback(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.create_service_bugfix_candidate(
+        feedback_event_key="event-1",
+        feedback_token="token-1",
+        attempt_id=42,
+        title="自动回复服务报错",
+        reason="用户反馈明确指向 CEO 服务自身的 bug、失败或回归。",
+        feedback_comment="分身自动回复服务报错，需要修复。",
+        conversation_title="技术部",
+        trigger_text="上一条回复失败了",
+    )
+
+    html = render_service_bugfix_candidates(store)
+
+    assert "待处理服务修复" in html
+    assert "自动回复服务报错" in html
+    assert "/attempts/42" in html
+    assert "技术部" in html
 
 
 def _seed_wechat_pending(store: AutoReplyStore) -> int:
@@ -2460,6 +2572,36 @@ def test_render_config_page_shows_system_config_tab_with_descriptions():
     assert "CEO_FORBIDDEN_PATH_PREFIXES" in html
     system_section = html.split("<h2>系统运行参数</h2>", 1)[1]
     assert "保存位置" in system_section
+
+
+def test_render_config_page_shows_channel_doctor(monkeypatch):
+    from app.channels.models import ChannelDoctorStatus
+
+    monkeypatch.setattr(
+        "app.channels.DingTalkCliAdapter.doctor",
+        lambda self: ChannelDoctorStatus(
+            channel="dingtalk",
+            status="ready",
+            reason="dws ready",
+            command=["dws", "doctor"],
+        ),
+    )
+    monkeypatch.setattr(
+        "app.channels.FeishuCliAdapter.doctor",
+        lambda self: ChannelDoctorStatus(
+            channel="feishu",
+            status="blocked",
+            reason="lark command not found",
+            command=["lark", "--help"],
+        ),
+    )
+
+    html = render_config_page(active_tab="channels")
+
+    assert "Channel doctor" in html
+    assert "dingtalk" in html
+    assert "feishu" in html
+    assert "lark command not found" in html
 
 
 def test_handle_system_config_post_saves_runtime_params_to_env_file(

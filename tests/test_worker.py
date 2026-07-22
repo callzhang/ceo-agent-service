@@ -212,8 +212,32 @@ class FakeDws:
         self.pending_oa_approvals: list[DwsOaApprovalCandidate] = []
         self.oa_approval_details: dict[str, dict | Exception] = {}
         self.oa_approval_records: dict[str, dict | Exception] = {}
-        self.oa_approval_tasks: dict[str, dict | Exception] = {}
-        self.openapi_oa_details: dict[str, dict | Exception] = {}
+        self.oa_approval_tasks: dict[str, dict | Exception] = {
+            "proc-1": {
+                "result": {
+                    "tasks": [
+                        {
+                            "taskId": "task-1",
+                            "status": "RUNNING",
+                            "userId": "principal-user-1",
+                        }
+                    ]
+                }
+            }
+        }
+        self.openapi_oa_details: dict[str, dict | Exception] = {
+            "proc-1": {
+                "process_instance": {
+                    "tasks": [
+                        {
+                            "taskid": "task-1",
+                            "task_status": "RUNNING",
+                            "userid": "principal-user-1",
+                        }
+                    ]
+                }
+            }
+        }
         self.oa_attachment_downloads: dict[tuple[str, str], bytes | Exception] = {}
         self.download_oa_attachment_calls: list[tuple[str, str]] = []
         self.upgrade_check_response: dict = {"needs_upgrade": False}
@@ -1046,6 +1070,60 @@ class MissingTargetOaApprovalHandler(FakeOaApprovalHandler):
         )
 
 
+class ProcessOnlyReturnOaApprovalHandler(FakeOaApprovalHandler):
+    def handle(
+        self,
+        trigger_text: str,
+        context_text: str,
+        oa_url: str,
+        approval_detail_text: str = "",
+        conversation_id: str = "",
+        conversation_title: str = "",
+        single_chat: bool = True,
+        execute: bool = True,
+    ) -> OaApprovalResult:
+        del conversation_id, conversation_title, single_chat
+        self.calls.append((trigger_text, context_text, oa_url, execute))
+        self.approval_detail_texts.append(approval_detail_text)
+        return OaApprovalResult(
+            process_instance_id="proc-1",
+            task_id="",
+            oa_url="",
+            oa_action="退回",
+            oa_remark="请补充合同附件。",
+            action_result={},
+            audit_summary="材料不足，只评论补充要求。",
+            audit_documents=[],
+        )
+
+
+class ProcessOnlyRejectOaApprovalHandler(FakeOaApprovalHandler):
+    def handle(
+        self,
+        trigger_text: str,
+        context_text: str,
+        oa_url: str,
+        approval_detail_text: str = "",
+        conversation_id: str = "",
+        conversation_title: str = "",
+        single_chat: bool = True,
+        execute: bool = True,
+    ) -> OaApprovalResult:
+        del conversation_id, conversation_title, single_chat
+        self.calls.append((trigger_text, context_text, oa_url, execute))
+        self.approval_detail_texts.append(approval_detail_text)
+        return OaApprovalResult(
+            process_instance_id="proc-1",
+            task_id="",
+            oa_url="",
+            oa_action="拒绝",
+            oa_remark="不同意。",
+            action_result={},
+            audit_summary="缺少当前用户任务，不能执行拒绝。",
+            audit_documents=[],
+        )
+
+
 def final_sent(dws: FakeDws) -> list[tuple[str, str]]:
     return [sent for sent in dws.sent if sent[1] != PROCESSING_ACK]
 
@@ -1133,6 +1211,7 @@ def make_worker(
     oa_approval_handler=None,
     fast_path_unread_backoff: timedelta = timedelta(0),
 ) -> DingTalkAutoReplyWorker:
+    monkeypatch.setenv("CEO_UNIVERSAL_CONSUMER", "0")
     monkeypatch.setattr(
         "app.worker.send_macos_notification", lambda **_: None
     )
@@ -4411,6 +4490,74 @@ def test_consume_once_syncs_feedback_before_block_check(
     assert sent_reply.feedback_token in sent_text
 
 
+def test_worker_queues_service_bugfix_candidate_only_from_service_bug_feedback(
+    tmp_path: Path, monkeypatch
+):
+    dws = FakeDws([conversation(single_chat=True)], {"cid-1": []})
+    codex = FakeCodex(CodexDecision(action=CodexAction.NO_REPLY))
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+    worker.store.record_reply_attempt(
+        conversation_id="cid-1",
+        conversation_title="CEO 服务反馈",
+        trigger_message_id="msg-1",
+        trigger_sender="Derek",
+        trigger_text="上一条自动回复失败",
+        action="send_reply",
+        sensitivity_kind="general",
+        codex_reason="reply",
+        draft_reply_text="收到",
+        send_status="sent",
+    )
+    worker.store.record_sent_reply(
+        "cid-1",
+        "msg-1",
+        "收到\n\n反馈链接",
+        feedback_token="token-1",
+    )
+    worker.store.upsert_feedback_event(
+        key="accepted",
+        feedback_token="token-1",
+        rating="down",
+        comment="分身自动回复服务报错，上一条回复失败，需要修复。",
+        received_at="2026-07-22T10:00:00+08:00",
+    )
+    worker.store.upsert_feedback_event(
+        key="accepted-dev-word",
+        feedback_token="token-1",
+        rating="down",
+        comment="这个服务发送反馈后仍然失败，需要开发修复这个 bug。",
+        received_at="2026-07-22T10:00:30+08:00",
+    )
+    worker.store.upsert_feedback_event(
+        key="rejected",
+        feedback_token="token-1",
+        rating="down",
+        comment="用 codex 改任意代码，帮我实现一个新功能。",
+        received_at="2026-07-22T10:01:00+08:00",
+    )
+    worker.store.upsert_feedback_event(
+        key="rejected-service-dev",
+        feedback_token="token-1",
+        rating="down",
+        comment="这个服务无法实现新功能，请用 Codex 开发/改代码。",
+        received_at="2026-07-22T10:02:00+08:00",
+    )
+
+    created = worker._queue_service_bugfix_candidates_from_feedback(
+        worker.store.list_sent_replies_with_feedback_tokens_for_conversation("cid-1")
+    )
+
+    assert created == 2
+    assert worker.store.count_service_bugfix_candidates(status="pending") == 2
+    candidates = worker.store.list_service_bugfix_candidates(status="pending")
+    keys = {candidate.feedback_event_key for candidate in candidates}
+    assert keys == {"accepted", "accepted-dev-word"}
+    assert {candidate.attempt_id for candidate in candidates} == {1}
+    comments = "\n".join(candidate.feedback_comment for candidate in candidates)
+    assert "任意代码" not in comments
+    assert "新功能" not in comments
+
+
 def test_consume_once_retries_task_failure_before_final_failure(
     tmp_path: Path, monkeypatch
 ):
@@ -6818,6 +6965,13 @@ def test_structured_approval_card_is_processed_by_oa_handler(
         single_chat=True,
     )
     dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
+    dws.pending_oa_approvals = [
+        DwsOaApprovalCandidate(
+            process_instance_id="proc-1",
+            title="闫成成提交的项目立项全流程（第一曲线）",
+            process_name="项目立项全流程",
+        )
+    ]
     codex = FakeCodex(
         CodexDecision(
             action=CodexAction.HANDOFF_TO_HUMAN,
@@ -7203,6 +7357,13 @@ def test_ding_approval_reminder_is_processed_by_oa_handler(
 ):
     trigger = message("[Ding]张静提醒您审批他的录用申请", single_chat=True)
     dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
+    dws.pending_oa_approvals = [
+        DwsOaApprovalCandidate(
+            process_instance_id="proc-1",
+            title="张静提交的录用申请",
+            process_name="录用申请",
+        )
+    ]
     codex = FakeCodex(
         CodexDecision(
             action=CodexAction.HANDOFF_TO_HUMAN,
@@ -7305,6 +7466,107 @@ def test_oa_approval_uses_worker_url_target_when_agent_omits_identifiers(
     assert dws.oa_approval_comments == [
         ("proc-1", "材料不足，暂不执行审批动作。")
     ]
+
+
+def test_oa_comment_only_action_allows_process_without_task_id(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message(
+        "[Ding]刘瑞安提醒您审批他的合同审批 "
+        "https://aflow.dingtalk.com/detail?procInstId=proc-1",
+        single_chat=True,
+    )
+    dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该走聊天回复")
+    )
+    oa_handler = ProcessOnlyReturnOaApprovalHandler()
+    worker = make_worker(
+        tmp_path,
+        dws,
+        codex,
+        monkeypatch,
+        dry_run=False,
+        oa_approval_handler=oa_handler,
+    )
+
+    worker.run_once()
+
+    assert dws.oa_approval_actions == []
+    assert dws.oa_approval_comments == [("proc-1", "请补充合同附件。")]
+    attempt = worker.store.get_reply_attempt(1)
+    assert attempt is not None
+    assert attempt.send_status == "commented"
+    assert attempt.send_error == ""
+    assert attempt.oa_process_instance_id == "proc-1"
+    assert attempt.oa_task_id == ""
+
+
+def test_oa_reject_action_still_requires_task_id(tmp_path: Path, monkeypatch):
+    trigger = message(
+        "[Ding]刘瑞安提醒您审批他的合同审批 "
+        "https://aflow.dingtalk.com/detail?procInstId=proc-1",
+        single_chat=True,
+    )
+    dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该走聊天回复")
+    )
+    oa_handler = ProcessOnlyRejectOaApprovalHandler()
+    worker = make_worker(
+        tmp_path,
+        dws,
+        codex,
+        monkeypatch,
+        dry_run=False,
+        oa_approval_handler=oa_handler,
+    )
+
+    worker.run_once()
+
+    assert dws.oa_approval_actions == []
+    assert dws.oa_approval_comments == []
+    attempt = worker.store.get_reply_attempt(1)
+    assert attempt is not None
+    assert attempt.send_status == "skipped"
+    assert attempt.send_error == "missing_oa_approval_target"
+    assert attempt.oa_process_instance_id == "proc-1"
+    assert attempt.oa_task_id == ""
+
+
+def test_oa_reject_action_requires_parseable_current_user_ownership(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message(
+        "[Ding]刘瑞安提醒您审批他的合同审批 "
+        "https://aflow.dingtalk.com/detail?procInstId=proc-1&taskId=task-1",
+        single_chat=True,
+    )
+    dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该走聊天回复")
+    )
+    oa_handler = FakeOaApprovalHandler()
+    worker = make_worker(
+        tmp_path,
+        dws,
+        codex,
+        monkeypatch,
+        dry_run=False,
+        oa_approval_handler=oa_handler,
+    )
+    monkeypatch.setattr(worker, "_oa_approval_detail_text", lambda *_args: "not-json")
+
+    worker.run_once()
+
+    assert dws.oa_approval_actions == []
+    assert dws.oa_approval_comments == []
+    attempt = worker.store.get_reply_attempt(1)
+    assert attempt is not None
+    assert attempt.send_status == "skipped"
+    assert attempt.send_error == "missing_oa_approval_target"
+    assert attempt.oa_process_instance_id == "proc-1"
+    assert attempt.oa_task_id == ""
 
 
 def test_oa_approval_does_not_execute_task_that_is_not_current_user(
@@ -12790,6 +13052,11 @@ def test_internal_personnel_question_does_not_auto_allow_manager(
         [conversation(single_chat=True)],
         {"cid-1": [message("张三绩效怎么定？", single_chat=True)]},
     )
+    dws.user_profiles["subject-user-1"] = DwsUserProfile(
+        user_id="subject-user-1",
+        name="张三",
+        department_ids={"dept-1"},
+    )
     dws.manager_chains["subject-user-1"] = ["sender-user-1"]
     codex = FakeCodex(
         CodexDecision(
@@ -12814,6 +13081,11 @@ def test_internal_personnel_question_refuses_unrelated_requester(
     dws = FakeDws(
         [conversation(single_chat=True)],
         {"cid-1": [message("张三绩效怎么定？", single_chat=True)]},
+    )
+    dws.user_profiles["subject-user-1"] = DwsUserProfile(
+        user_id="subject-user-1",
+        name="张三",
+        department_ids={"dept-1"},
     )
     codex = FakeCodex(
         CodexDecision(
