@@ -116,6 +116,7 @@ class FakeDws:
         self.aitable_records: dict[tuple[str, str], dict] = {}
         self.document_search_results: dict[str, list[DwsDocumentSearchResult]] = {}
         self.download_docs: dict[str, dict | Exception] = {}
+        self.drive_file_downloads: dict[str, bytes | Exception] = {}
         self.resource_download_urls: dict[
             tuple[str, str, str, str],
             dict | Exception,
@@ -128,6 +129,7 @@ class FakeDws:
         self.query_aitable_record_calls: list[tuple[str, str, int]] = []
         self.search_document_calls: list[tuple[str, int]] = []
         self.download_doc_calls: list[str] = []
+        self.drive_file_download_calls: list[tuple[str, str, str]] = []
         self.resource_download_url_calls: list[tuple[str, str, str, str]] = []
         self.robot_message_file_download_calls: list[str] = []
         self.sent: list[tuple[str, str]] = []
@@ -482,6 +484,19 @@ class FakeDws:
         if isinstance(result, Exception):
             raise result
         return result or {}
+
+    def download_drive_file(
+        self,
+        node: str,
+        *,
+        file_name: str = "download",
+        space_id: str = "",
+    ) -> bytes:
+        self.drive_file_download_calls.append((node, file_name, space_id))
+        result = self.drive_file_downloads.get(node)
+        if isinstance(result, Exception):
+            raise result
+        return result or b""
 
     def get_resource_download_url(
         self,
@@ -8577,6 +8592,40 @@ def test_referenced_file_context_is_passed_to_codex_without_worker_read(
     assert "类型: dingtalk_file" in prompt
     assert "02_下一步推进建议.md" in prompt
     assert "来源消息: file-msg-1" in prompt
+
+
+def test_referenced_file_with_file_id_is_downloaded_for_universal_planning(
+    tmp_path: Path, monkeypatch
+):
+    file_name = "Stardust_Company_Brief_IMDA_English_20260722152953.pdf"
+    file_id = "Exel2BLV5pOEPex5IPjqQX5gWgk9rpMq"
+    file_message = message(
+        f"[文件] {file_name} fileId: {file_id} url: hidden",
+        message_id="file-msg-1",
+    )
+    trigger = message(
+        "最底下的customers部分 可以多写一些大公司，"
+        "请磊哥直接给我一个改好的pdf版本",
+        message_id="msg-2",
+    )
+    dws = FakeDws([conversation()], {"cid-1": [file_message, trigger]})
+    dws.drive_file_downloads[file_id] = b"%PDF fake company brief"
+    codex = FakeCodex(CodexDecision(action=CodexAction.NO_REPLY))
+    worker = make_worker(tmp_path, dws, codex, monkeypatch, dry_run=True)
+    monkeypatch.setattr(
+        DingTalkAutoReplyWorker,
+        "_extract_pdf_text",
+        classmethod(lambda cls, data: "Customers\nHuawei\nJAC\nIMDA"),
+    )
+
+    documents = worker._read_calendar_linked_documents([trigger], [file_message])
+
+    assert dws.drive_file_download_calls == [(file_id, file_name, "")]
+    assert dws.search_document_calls == []
+    assert len(documents) == 1
+    assert documents[0].title == file_name
+    assert "Customers" in documents[0].markdown
+    assert "Huawei" in documents[0].markdown
 
 
 def test_referenced_file_reference_does_not_download_or_expose_credentials(

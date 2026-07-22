@@ -8761,9 +8761,16 @@ class DingTalkAutoReplyWorker:
                 documents.append(self._read_linked_alidocs_node(url))
             except Exception as exc:
                 documents.append(self._linked_document_read_failure_context(url, exc))
+        file_source_by_name = self._referenced_file_source_messages(
+            new_messages,
+            context_messages,
+        )
         for file_name in self._referenced_file_names(new_messages, context_messages):
             try:
-                document = self._read_referenced_file(file_name)
+                document = self._read_referenced_file(
+                    file_name,
+                    source_message=file_source_by_name.get(file_name),
+                )
             except Exception as exc:
                 documents.append(self._linked_document_read_failure_context(file_name, exc))
                 continue
@@ -9447,7 +9454,19 @@ class DingTalkAutoReplyWorker:
             return ""
         return f"dws drive download --node {file_id} --output <local-path> --format json"
 
-    def _read_referenced_file(self, file_name: str) -> LinkedDocumentContext | None:
+    def _read_referenced_file(
+        self,
+        file_name: str,
+        *,
+        source_message: DingTalkMessage | None = None,
+    ) -> LinkedDocumentContext | None:
+        if source_message is not None:
+            direct_document = self._read_referenced_file_by_message_file_id(
+                file_name,
+                source_message,
+            )
+            if direct_document is not None:
+                return direct_document
         matches = self._matching_document_search_results(
             file_name,
             self.dws.search_documents(file_name, page_size=5),
@@ -9497,6 +9516,37 @@ class DingTalkAutoReplyWorker:
             ),
         )
 
+    def _read_referenced_file_by_message_file_id(
+        self,
+        file_name: str,
+        source_message: DingTalkMessage,
+    ) -> LinkedDocumentContext | None:
+        file_id = self._file_id_from_message_text(source_message.content)
+        if not file_id:
+            file_id = self._file_id_from_message_text(source_message.quoted_content or "")
+        if not file_id:
+            return None
+        data = self.dws.download_drive_file(file_id, file_name=file_name)
+        if len(data) > DOWNLOADED_FILE_MAX_BYTES:
+            raise DwsError("dingtalk_file_too_large")
+        markdown = self._downloaded_bytes_markdown(file_name, data)
+        if markdown.strip():
+            return LinkedDocumentContext(
+                url="",
+                title=file_name,
+                markdown=markdown,
+            )
+        return LinkedDocumentContext(
+            url="",
+            title=file_name,
+            markdown=(
+                "钉钉普通文件已按 fileId 下载，但正文未能读取。\n"
+                f"file_id: {file_id}\n"
+                f"extension: {Path(file_name).suffix.lstrip('.').lower() or 'unknown'}\n"
+                "如果新消息要求对文件内容 comments、审核、总结或判断，不能只凭文件名回复。"
+            ),
+        )
+
     def _downloaded_file_markdown(
         self, match: DwsDocumentSearchResult, payload: dict
     ) -> str:
@@ -9510,6 +9560,16 @@ class DingTalkAutoReplyWorker:
             return ""
         data = self._download_resource_bytes(resource_url, payload.get("headers"))
         extension = match.extension.lower()
+        if extension in {"txt", "md", "markdown", "csv", "json"}:
+            return self._decode_text_file(data)
+        if extension == "pdf":
+            return self._extract_pdf_text(data)
+        if extension == "docx":
+            return self._extract_docx_text(data)
+        return ""
+
+    def _downloaded_bytes_markdown(self, file_name: str, data: bytes) -> str:
+        extension = Path(file_name).suffix.lstrip(".").lower()
         if extension in {"txt", "md", "markdown", "csv", "json"}:
             return self._decode_text_file(data)
         if extension == "pdf":

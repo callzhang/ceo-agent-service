@@ -5,6 +5,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from io import BytesIO
 import json
+from pathlib import Path
 from types import SimpleNamespace
 from urllib.error import HTTPError
 from zoneinfo import ZoneInfo
@@ -711,6 +712,66 @@ def test_download_doc_supplies_required_output_path():
     assert command[:5] == ["dws", "doc", "download", "--node", "node-1"]
     assert command[output_index]
     assert command[output_index] != "--format"
+
+
+def test_drive_download_command_shape():
+    client = DwsClient(dws_bin="dws")
+
+    command = client.build_drive_download_command(
+        "file-1",
+        "/tmp/file.pdf",
+        space_id="space-1",
+    )
+
+    assert command == [
+        "dws",
+        "drive",
+        "download",
+        "--node",
+        "file-1",
+        "--output",
+        "/tmp/file.pdf",
+        "--format",
+        "json",
+        "--yes",
+        "--space-id",
+        "space-1",
+    ]
+
+
+def test_download_drive_file_reads_downloaded_file(tmp_path, monkeypatch):
+    output_paths = []
+
+    def fake_temporary_directory(prefix):
+        del prefix
+
+        class TemporaryDirectory:
+            def __enter__(self):
+                path = tmp_path / "download-dir"
+                path.mkdir(exist_ok=True)
+                return str(path)
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+        return TemporaryDirectory()
+
+    def fake_run(*args, **kwargs):
+        del kwargs
+        command = args[0]
+        output_path = Path(command[command.index("--output") + 1])
+        output_paths.append(output_path)
+        output_path.write_bytes(b"%PDF downloaded")
+        return subprocess.CompletedProcess(command, 0, stdout="downloaded", stderr="")
+
+    monkeypatch.setattr(dws_client.tempfile, "TemporaryDirectory", fake_temporary_directory)
+    monkeypatch.setattr(dws_client.subprocess, "run", fake_run)
+    client = DwsClient(dws_bin="dws")
+
+    data = client.download_drive_file("file-1", file_name="deck.pdf")
+
+    assert data == b"%PDF downloaded"
+    assert output_paths == [tmp_path / "download-dir" / "deck.pdf"]
 
 
 def test_minutes_read_commands_shape():

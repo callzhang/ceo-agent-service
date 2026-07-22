@@ -1191,6 +1191,29 @@ class DwsClient:
             "json",
         ]
 
+    def build_drive_download_command(
+        self,
+        node: str,
+        output_path: str,
+        *,
+        space_id: str = "",
+    ) -> list[str]:
+        command = [
+            self.dws_bin,
+            "drive",
+            "download",
+            "--node",
+            node,
+            "--output",
+            output_path,
+            "--format",
+            "json",
+            "--yes",
+        ]
+        if space_id.strip():
+            command.extend(["--space-id", space_id.strip()])
+        return command
+
     def build_create_doc_comment_command(self, node_id: str, content: str) -> list[str]:
         if not node_id.strip():
             raise ValueError("missing doc comment node")
@@ -2307,6 +2330,30 @@ class DwsClient:
         if not isinstance(payload, dict):
             raise DwsError("invalid doc download response")
         return payload
+
+    def download_drive_file(
+        self,
+        node: str,
+        *,
+        file_name: str = "download",
+        space_id: str = "",
+    ) -> bytes:
+        safe_name = Path(file_name).name or "download"
+        with tempfile.TemporaryDirectory(prefix="ceo-agent-dws-drive-") as temp_dir:
+            output_path = Path(temp_dir) / safe_name
+            self.run_text(
+                self.build_drive_download_command(
+                    node,
+                    str(output_path),
+                    space_id=space_id,
+                )
+            )
+            if not output_path.exists():
+                matches = [path for path in Path(temp_dir).iterdir() if path.is_file()]
+                if len(matches) != 1:
+                    raise DwsError("drive download did not create a file")
+                output_path = matches[0]
+            return output_path.read_bytes()
 
     def list_minutes(
         self,
