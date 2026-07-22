@@ -34,7 +34,7 @@ the local machine first and ask only when inspection cannot answer it.
 | --- | --- | --- |
 | Repository path | `~/Documents/Projects/ceo-agent-service` | Must be the service checkout. |
 | Workspace path | `~/Documents/memory` | Local knowledge corpus, AI minutes, SOPs, and source docs. |
-| Database path | `./data/auto-reply.sqlite3` | Local SQLite runtime state. |
+| Database path | `~/Library/Application Support/ceo-agent-service/auto-reply.sqlite3` | Local SQLite runtime state, kept outside iCloud-managed Documents. |
 | Corpus path | `./data/corpus` | Ignored by Git; contains style corpus. |
 | Principal display name | user supplied | Used in prompts, aliases, and handoff text. |
 | Mention aliases | user supplied | Include exact DingTalk @ aliases, comma-separated. |
@@ -225,7 +225,7 @@ not in `~/.agents/skills`.
 
    ```text
    CEO_WORKSPACE=$HOME/Documents/memory
-   CEO_WORKER_DB=./data/auto-reply.sqlite3
+   CEO_WORKER_DB=$HOME/Library/Application Support/ceo-agent-service/auto-reply.sqlite3
    CEO_CORPUS_DIR=./data/corpus
    CEO_CODEX_MODEL=
    CEO_CODEX_MODEL_PROVIDER=

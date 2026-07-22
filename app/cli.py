@@ -14,6 +14,11 @@ from pathlib import Path
 from pydantic import BaseModel, NonNegativeInt, PositiveInt
 
 from app.codex_decision import CodexDecisionRunner, append_signature
+from app.database_backup import (
+    BACKUP_CHECK_INTERVAL_SECONDS,
+    backup_database_if_due,
+    prune_database_backups,
+)
 from app.config import (
     consumer_poll_interval_seconds,
     embedding_api_key,
@@ -31,6 +36,7 @@ from app.config import (
     task_daily_interval_seconds,
     task_follow_up_interval_seconds,
     task_work_item_interval_seconds,
+    worker_db_path,
     work_profile_path,
 )
 from app.corpus import (
@@ -165,7 +171,7 @@ def _default_corpus_dir() -> Path:
 
 class WorkerSettings(BaseModel):
     workspace: Path = DEFAULT_WORKSPACE
-    db_path: Path = _default_data_dir() / "auto-reply.sqlite3"
+    db_path: Path = worker_db_path()
     corpus_dir: Path = _default_corpus_dir()
     dry_run: bool = False
     poll_interval_seconds: PositiveInt = 300
@@ -2259,6 +2265,16 @@ def run_consumer_loop(
         sleep(poll_interval_seconds)
 
 
+def run_database_backup_loop(
+    db_path: Path,
+    *,
+    sleep: Callable[[int], None] = time.sleep,
+) -> None:
+    while True:
+        backup_database_if_due(db_path)
+        sleep(BACKUP_CHECK_INTERVAL_SECONDS)
+
+
 def _create_meeting_dws(settings: WorkerSettings) -> DwsClient:
     return DwsClient(
         ding_robot_code=settings.ding_robot_code,
@@ -2533,6 +2549,10 @@ def run_service(
         (
             "audit-web",
             lambda: run_audit_web_command(settings, host=host, port=port, reload=False),
+        ),
+        (
+            "database-backup",
+            lambda: run_database_backup_loop(settings.db_path),
         ),
         (
             "producer",

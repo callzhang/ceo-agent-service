@@ -100,7 +100,14 @@ def workspace_path() -> Path:
 
 
 def worker_db_path() -> Path:
-    return env_path("CEO_WORKER_DB", repo_root() / "data" / "auto-reply.sqlite3")
+    return env_path(
+        "CEO_WORKER_DB",
+        Path.home()
+        / "Library"
+        / "Application Support"
+        / "ceo-agent-service"
+        / "auto-reply.sqlite3",
+    )
 
 
 def corpus_dir() -> Path:

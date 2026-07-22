@@ -573,6 +573,28 @@ def test_run_setup_service_config_creates_env_and_directories(tmp_path: Path):
     )
 
 
+def test_run_setup_service_config_defaults_database_to_application_support(
+    monkeypatch,
+    tmp_path: Path,
+):
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    (tmp_path / ".env.example").write_text(
+        "CEO_WORKSPACE=\nCEO_WORKER_DB=\nCEO_CORPUS_DIR=\nCEO_NOT_SEND_MESSAGE=\n",
+        encoding="utf-8",
+    )
+
+    event = run_setup_action("setup_service_config", repo_root=tmp_path, env={})
+
+    expected = home / "Library" / "Application Support" / "ceo-agent-service"
+    assert event.status == "done"
+    assert expected.is_dir()
+    assert (
+        "CEO_WORKER_DB=$HOME/Library/Application Support/ceo-agent-service/auto-reply.sqlite3"
+        in (tmp_path / ".env").read_text(encoding="utf-8")
+    )
+
+
 def test_run_setup_service_config_expands_example_environment_values(
     monkeypatch,
     tmp_path: Path,

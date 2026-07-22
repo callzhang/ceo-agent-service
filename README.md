@@ -160,7 +160,7 @@ cp .env.example .env
 | 变量 | 作用 |
 | --- | --- |
 | `CEO_WORKSPACE` | 本地知识 workspace，供 agent 检索 |
-| `CEO_WORKER_DB` | SQLite 状态库路径 |
+| `CEO_WORKER_DB` | SQLite 状态库路径；默认位于 `~/Library/Application Support/ceo-agent-service/auto-reply.sqlite3`，每天生成一次一致性备份并保留最近 3 天及约 7、14 天恢复点 |
 | `CEO_NOT_SEND_MESSAGE` | `1` 表示只记录不发送，`0` 表示允许发送 |
 | `CEO_LIVE_SEND_BLOCKERS_ACCEPTED` | live send 的显式确认开关 |
 | `CEO_CORPUS_DIR` | 本地风格语料目录 |

@@ -2510,9 +2510,14 @@ def test_settings_defaults_point_to_memory_home():
 
     settings = settings_from_args(args)
     repo_root = cli._repo_root()
-
     assert settings.workspace == Path.home() / "Documents" / "memory"
-    assert settings.db_path == repo_root / "data" / "auto-reply.sqlite3"
+    assert settings.db_path == (
+        Path.home()
+        / "Library"
+        / "Application Support"
+        / "ceo-agent-service"
+        / "auto-reply.sqlite3"
+    )
     assert settings.corpus_dir == repo_root / "data" / "corpus"
     assert settings.batch_seconds == 120
     assert settings.poll_interval_seconds == 300
@@ -5168,6 +5173,12 @@ def test_run_service_starts_web_producer_and_consumer(monkeypatch, tmp_path):
     monkeypatch.setattr(cli, "run_meeting_consumer_loop", meeting_consumer_loop)
     monkeypatch.setattr(
         cli,
+        "run_database_backup_loop",
+        lambda db_path: calls.append(("database-backup", db_path))
+        or stop("database-backup"),
+    )
+    monkeypatch.setattr(
+        cli,
         "_recover_meeting_alignment_jobs_on_service_start",
         lambda settings: calls.append(("meeting-recovery", settings.db_path)) or 0,
     )
@@ -5227,6 +5238,8 @@ def test_run_service_starts_web_producer_and_consumer(monkeypatch, tmp_path):
         ("meeting-recovery", tmp_path / "worker.sqlite3"),
         ("start", "ceo-agent-service-audit-web", True),
         ("audit-web", "127.0.0.1", 8765, False),
+        ("start", "ceo-agent-service-database-backup", True),
+        ("database-backup", tmp_path / "worker.sqlite3"),
         ("start", "ceo-agent-service-producer", True),
         ("producer", 60, 4, True),
         ("start", "ceo-agent-service-consumer", True),
@@ -5241,13 +5254,14 @@ def test_run_service_starts_web_producer_and_consumer(monkeypatch, tmp_path):
     ]
     assert failures == [
         ("audit-web", "stop audit-web"),
+        ("database-backup", "stop database-backup"),
         ("producer", "stop producer"),
         ("consumer", "stop consumer"),
         ("meeting-producer", "stop meeting-producer"),
         ("meeting-consumer", "stop meeting-consumer"),
         ("task-maintenance", "stop task-maintenance"),
     ]
-    assert exits == [1, 1, 1, 1, 1, 1]
+    assert exits == [1, 1, 1, 1, 1, 1, 1]
 
 
 def test_run_service_requeues_processing_reply_tasks_on_startup(tmp_path):

@@ -476,7 +476,10 @@ def check_setup_step(
             values = _env_values(repo_root / ".env")
             db_path = _resolve_repo_path(
                 repo_root,
-                values.get("CEO_WORKER_DB", "data/auto-reply.sqlite3"),
+                values.get(
+                    "CEO_WORKER_DB",
+                    "$HOME/Library/Application Support/ceo-agent-service/auto-reply.sqlite3",
+                ),
             )
             store = AutoReplyStore(db_path)
         return check_dry_run(store=store)
@@ -834,7 +837,7 @@ def _setup_service_config(
     values = _raw_env_values(source_path)
     defaults = {
         "CEO_WORKSPACE": "workspace",
-        "CEO_WORKER_DB": "data/auto-reply.sqlite3",
+        "CEO_WORKER_DB": "$HOME/Library/Application Support/ceo-agent-service/auto-reply.sqlite3",
         "CEO_CORPUS_DIR": "data/corpus",
         "CEO_WORK_PROFILE_PATH": "data/work-profile/work_profile.md",
         "CEO_DEVELOPER_PROMPT_TEMPLATE_PATH": "data/prompts/developer_prompt.md",
