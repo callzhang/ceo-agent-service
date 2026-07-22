@@ -2396,6 +2396,7 @@ def _run_wechat_loop(settings: WorkerSettings, role: str) -> None:
 
     from app import config as _cfg
     from app.wechat import service as _wx
+    from app.wechat.reader_ipc import ReaderIpcError
 
     store = AutoReplyStore(settings.db_path)
     state = _wx.ready_account_state(store)
@@ -2437,6 +2438,14 @@ def _run_wechat_loop(settings: WorkerSettings, role: str) -> None:
                     "",
                     "wechat_data_permission_required",
                     "WeChat data access was denied; reader paused until service restart.",
+                )
+                return
+            if isinstance(exc, ReaderIpcError):
+                store.record_error(
+                    "wechat",
+                    "",
+                    "wechat_reader_unavailable",
+                    f"WeChat reader unavailable; {role} paused until service restart: {exc}",
                 )
                 return
             store.record_error("wechat", "", f"wechat_{role}_loop_error", str(exc))
