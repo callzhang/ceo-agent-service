@@ -205,7 +205,7 @@ def build_codex_dev_task_prompt(task: CodexDevTask) -> str:
     task_json = json.dumps(task.model_dump(mode="json"), ensure_ascii=False, indent=2)
     return f"""Mina explicitly asked from DingTalk:
 
-Mina Agent，用codex执行这个任务
+Mina Agent，执行
 
 Execute this development task now.
 

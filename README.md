@@ -167,7 +167,7 @@ cp .env.example .env
 | `CEO_MEETING_PRODUCER_INTERVAL_SECONDS` | 会议信息发现周期，默认 60 秒 |
 | `CEO_MEETING_CONSUMER_POLL_INTERVAL_SECONDS` | 会后对齐队列消费周期，默认 10 秒 |
 | `CEO_MEETING_SETTLE_SECONDS` | 明确会议结束后的静默等待时间，默认 600 秒 |
-| `CEO_CODEX_DEV_WAKE_PHRASES` | 当前登录用户授权自动启动 Codex 开发执行的显式唤醒词，默认 `Name Agent，用codex执行这个任务`；也支持任意 `{Name} Agent, 用 codex 执行这个任务` 写法 |
+| `CEO_CODEX_DEV_WAKE_PHRASES` | 当前登录用户授权自动启动 Codex 开发执行的显式唤醒词，默认 `Name Agent，执行`，也兼容 `Name Agent，用codex执行这个任务`；支持任意 `{Name} Agent，执行` 写法 |
 | `CEO_CODEX_MODEL` / `CEO_CODEX_MODEL_REASONING_EFFORT` / `CEO_CODEX_MODEL_PROVIDER` | Codex 模型配置；默认 `gpt-5.5` + `medium`，避免服务继承用户全局 `~/.codex/config.toml` 的模型 |
 | `CEO_CODEX_PASSTHROUGH_MCP_SERVERS` | `--ignore-user-config` 下仍允许透传的 MCP 白名单；默认保留 `xiaoqing_interview,exa`。`memory_connector` 单独注入；飞书走 `lark-cli`，不是默认 MCP |
 | `CEO_MENTION_ALIASES` | 群聊中触发本人的 @ 别名 |

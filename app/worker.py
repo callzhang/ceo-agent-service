@@ -157,7 +157,7 @@ T = TypeVar("T")
 CALENDAR_ACTION_SEND_STATUS = "calendar"
 GENERIC_CODEX_DEV_WAKE_PATTERN = re.compile(
     r"[\w\u4e00-\u9fff（）()·.\-]+(?:\s+[\w\u4e00-\u9fff（）()·.\-]+)*"
-    r"\s+agent\s*[\s,，。.:：;；!！?？、]*用\s*codex\s*执行这个任务",
+    r"\s+agent\s*[\s,，。.:：;；!！?？、]*(?:执行|用\s*codex\s*执行这个任务)",
     re.IGNORECASE,
 )
 CURRENT_USER_CODEX_DEV_SCAN_LOOKBACK = env_duration(

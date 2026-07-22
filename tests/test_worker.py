@@ -13461,3 +13461,24 @@ def test_current_user_codex_dev_sender_scan_reads_paginated_results(
     assert len(claimed) == 1
     assert claimed[0].trigger_message_id == "sent-dev-page-2"
     assert claimed[0].instruction == "读 HR周例会 听记内容，识别待办 Owner 和 DDL"
+
+
+def test_current_user_codex_dev_short_wake_phrase_enqueues_dev_task(
+    tmp_path: Path, monkeypatch
+):
+    trigger = principal_message(
+        "Mina Agent，执行：整理会议提效机制",
+        message_id="short-codex-dev-1",
+    )
+    dws = FakeDws(
+        [conversation()],
+        {"cid-1": [trigger]},
+    )
+    worker = make_worker(tmp_path, dws, FakeCodex([]), monkeypatch)
+
+    queued = worker.produce_once()
+
+    assert queued == 1
+    claimed = worker.store.claim_codex_dev_tasks(limit=1)
+    assert len(claimed) == 1
+    assert claimed[0].instruction == "整理会议提效机制"

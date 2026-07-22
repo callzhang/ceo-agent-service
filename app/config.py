@@ -172,7 +172,7 @@ def document_extraction_ids() -> tuple[str, ...]:
 def codex_dev_wake_phrases() -> tuple[str, ...]:
     return env_csv(
         "CEO_CODEX_DEV_WAKE_PHRASES",
-        ("Name Agent，用codex执行这个任务",),
+        ("Name Agent，执行", "Name Agent，用codex执行这个任务"),
     )
 
 
