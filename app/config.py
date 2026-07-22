@@ -107,6 +107,10 @@ def corpus_dir() -> Path:
     return env_path("CEO_CORPUS_DIR", repo_root() / "data" / "corpus")
 
 
+def codex_bin() -> str:
+    return os.getenv("CEO_CODEX_BIN", "codex").strip() or "codex"
+
+
 def env_csv(name: str, default: tuple[str, ...]) -> tuple[str, ...]:
     value = os.getenv(name)
     if value is None:
@@ -163,6 +167,13 @@ def handoff_ack() -> str:
 
 def document_extraction_ids() -> tuple[str, ...]:
     return env_csv("DOCUMENT_EXTRACTION_IDS", (user_alias(),))
+
+
+def codex_dev_wake_phrases() -> tuple[str, ...]:
+    return env_csv(
+        "CEO_CODEX_DEV_WAKE_PHRASES",
+        ("Name Agent，执行", "Name Agent，用codex执行这个任务"),
+    )
 
 
 def forbidden_path_prefixes() -> tuple[str, ...]:

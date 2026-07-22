@@ -289,6 +289,29 @@ class ReplyTask(BaseModel):
     updated_at: str
 
 
+class CodexDevTask(BaseModel):
+    id: int
+    conversation_id: str
+    conversation_title: str
+    trigger_message_id: str
+    trigger_sender: str
+    trigger_sender_user_id: str = ""
+    trigger_text: str
+    instruction: str
+    status: str
+    attempts: int
+    error: str = ""
+    codex_session_id: str = ""
+    codex_transcript_start_line: int = 0
+    codex_transcript_end_line: int = 0
+    audit_tool_events_json: str = "[]"
+    result_summary: str = ""
+    locked_at: str | None = None
+    created_at: str
+    updated_at: str
+    finished_at: str = ""
+
+
 class OkrReviewRequest(BaseModel):
     id: int
     conversation_id: str
@@ -662,6 +685,31 @@ class AutoReplyStore:
                     updated_at text not null default current_timestamp,
                     unique(import_run_id, statement)
                 );
+                create table if not exists codex_dev_tasks (
+                    id integer primary key autoincrement,
+                    conversation_id text not null,
+                    conversation_title text not null,
+                    trigger_message_id text not null,
+                    trigger_sender text not null,
+                    trigger_sender_user_id text not null default '',
+                    trigger_text text not null,
+                    instruction text not null,
+                    status text not null default 'pending',
+                    attempts integer not null default 0,
+                    error text not null default '',
+                    codex_session_id text not null default '',
+                    codex_transcript_start_line integer not null default 0,
+                    codex_transcript_end_line integer not null default 0,
+                    audit_tool_events_json text not null default '[]',
+                    result_summary text not null default '',
+                    locked_at text,
+                    created_at text not null default current_timestamp,
+                    updated_at text not null default current_timestamp,
+                    finished_at text not null default '',
+                    unique(conversation_id, trigger_message_id)
+                );
+                create index if not exists idx_codex_dev_tasks_status
+                    on codex_dev_tasks(status, id);
                 create table if not exists meeting_alignment_jobs (
                     id integer primary key autoincrement,
                     meeting_id text not null unique,
@@ -6550,6 +6598,174 @@ class AutoReplyStore:
                 (source_type, source_ref),
             ).fetchone()
             return int(row["id"])
+
+    def enqueue_codex_dev_task(
+        self,
+        *,
+        conversation_id: str,
+        conversation_title: str,
+        trigger_message_id: str,
+        trigger_sender: str,
+        trigger_sender_user_id: str,
+        trigger_text: str,
+        instruction: str,
+    ) -> int:
+        with self._connect() as db:
+            db.execute(
+                """
+                insert into codex_dev_tasks (
+                    conversation_id,
+                    conversation_title,
+                    trigger_message_id,
+                    trigger_sender,
+                    trigger_sender_user_id,
+                    trigger_text,
+                    instruction
+                )
+                values (?, ?, ?, ?, ?, ?, ?)
+                on conflict(conversation_id, trigger_message_id) do update set
+                    conversation_title=excluded.conversation_title,
+                    trigger_sender=excluded.trigger_sender,
+                    trigger_sender_user_id=excluded.trigger_sender_user_id,
+                    trigger_text=excluded.trigger_text,
+                    instruction=excluded.instruction,
+                    status=case
+                        when codex_dev_tasks.status in ('failed', 'cancelled')
+                            then 'pending'
+                        else codex_dev_tasks.status
+                    end,
+                    error=case
+                        when codex_dev_tasks.status in ('failed', 'cancelled')
+                            then ''
+                        else codex_dev_tasks.error
+                    end,
+                    updated_at=current_timestamp
+                """,
+                (
+                    conversation_id,
+                    conversation_title,
+                    trigger_message_id,
+                    trigger_sender,
+                    trigger_sender_user_id,
+                    trigger_text,
+                    instruction,
+                ),
+            )
+            row = db.execute(
+                """
+                select id from codex_dev_tasks
+                where conversation_id=? and trigger_message_id=?
+                """,
+                (conversation_id, trigger_message_id),
+            ).fetchone()
+            return int(row["id"])
+
+    def claim_codex_dev_tasks(self, limit: int) -> list[CodexDevTask]:
+        if limit <= 0:
+            return []
+        with self._connect() as db:
+            db.execute("begin immediate")
+            rows = db.execute(
+                """
+                select *
+                from codex_dev_tasks
+                where status='pending'
+                order by id
+                limit ?
+                """,
+                (limit,),
+            ).fetchall()
+            ids = [row["id"] for row in rows]
+            if not ids:
+                return []
+            placeholders = ",".join("?" for _ in ids)
+            db.execute(
+                f"""
+                update codex_dev_tasks
+                set status='processing',
+                    attempts=attempts + 1,
+                    error='',
+                    locked_at=current_timestamp,
+                    updated_at=current_timestamp
+                where id in ({placeholders})
+                """,
+                ids,
+            )
+            claimed = db.execute(
+                f"""
+                select *
+                from codex_dev_tasks
+                where id in ({placeholders})
+                order by id
+                """,
+                ids,
+            ).fetchall()
+            return [CodexDevTask.model_validate(dict(row)) for row in claimed]
+
+    def reset_processing_codex_dev_tasks(self) -> int:
+        with self._connect() as db:
+            cursor = db.execute(
+                """
+                update codex_dev_tasks
+                set status='pending',
+                    error='',
+                    locked_at=null,
+                    updated_at=current_timestamp
+                where status='processing'
+                """
+            )
+            return cursor.rowcount
+
+    def mark_codex_dev_task_done(
+        self,
+        task_id: int,
+        *,
+        result_summary: str,
+        codex_session_id: str = "",
+        codex_transcript_start_line: int = 0,
+        codex_transcript_end_line: int = 0,
+        audit_tool_events_json: str = "[]",
+    ) -> None:
+        with self._connect() as db:
+            db.execute(
+                """
+                update codex_dev_tasks
+                set status='done',
+                    error='',
+                    result_summary=?,
+                    codex_session_id=?,
+                    codex_transcript_start_line=?,
+                    codex_transcript_end_line=?,
+                    audit_tool_events_json=?,
+                    locked_at=null,
+                    finished_at=current_timestamp,
+                    updated_at=current_timestamp
+                where id=?
+                """,
+                (
+                    result_summary,
+                    codex_session_id,
+                    codex_transcript_start_line,
+                    codex_transcript_end_line,
+                    audit_tool_events_json,
+                    task_id,
+                ),
+            )
+
+    def mark_codex_dev_task_failed(self, task_id: int, error: str) -> None:
+        with self._connect() as db:
+            db.execute(
+                """
+                update codex_dev_tasks
+                set status='failed',
+                    error=?,
+                    locked_at=null,
+                    finished_at=current_timestamp,
+                    updated_at=current_timestamp
+                where id=?
+                """,
+                (error, task_id),
+            )
 
     def claim_work_summary_inputs(self, limit: int) -> list[WorkSummaryInput]:
         if limit <= 0:

@@ -100,6 +100,9 @@ class FakeDws:
         self.unread_messages = self._messages_by_conversation(
             unread_messages or messages
         )
+        self.sender_messages: list[DingTalkMessage] = []
+        self.sender_payload_pages: list[dict] = []
+        self.sender_message_reads: list[tuple[str, str, str, int, str]] = []
         self.read_errors = read_errors or {}
         self.unread_errors = unread_errors or {}
         self.list_error = list_error
@@ -307,6 +310,46 @@ class FakeDws:
 
     def get_current_user_id(self) -> str:
         return self.current_user_id
+
+    def list_messages_by_sender(
+        self,
+        sender_user_id: str,
+        start: str,
+        end: str,
+        limit: int,
+        cursor: str,
+    ) -> dict:
+        self.sender_message_reads.append((sender_user_id, start, end, limit, cursor))
+        if self.sender_payload_pages:
+            index = int(cursor) if cursor.isdigit() else 0
+            return self.sender_payload_pages[index]
+        conversations: dict[str, list[DingTalkMessage]] = {}
+        for message in self.sender_messages[:limit]:
+            conversations.setdefault(message.open_conversation_id, []).append(message)
+        return {
+            "result": {
+                "conversationMessagesList": [
+                    {
+                        "title": grouped_messages[0].conversation_title,
+                        "singleChat": grouped_messages[0].single_chat,
+                        "messages": [
+                            {
+                                "openConversationId": message.open_conversation_id,
+                                "openMessageId": message.open_message_id,
+                                "sender": message.sender_name,
+                                "senderOpenDingTalkId": message.sender_open_dingtalk_id,
+                                "senderUserId": message.sender_user_id,
+                                "createTime": message.create_time,
+                                "content": message.content,
+                            }
+                            for message in grouped_messages
+                        ],
+                    }
+                    for grouped_messages in conversations.values()
+                ],
+                "hasMore": False,
+            }
+        }
 
     def search_department_ids(self, query: str) -> set[str]:
         del query
@@ -13314,3 +13357,224 @@ def test_retry_after_chat_failure_does_not_send_mail_twice(tmp_path: Path, monke
 
     assert len(dws.mail_replies) == 1
     assert worker.store.get_reply_attempt(1).send_status == "sent"
+
+def test_current_user_codex_dev_wake_phrase_enqueues_dev_task_without_reply_task(
+    tmp_path: Path, monkeypatch
+):
+    trigger = principal_message(
+        "Mina Agent，用codex执行这个任务。开发一个 merge 验证心跳功能"
+    )
+    dws = FakeDws(
+        [conversation()],
+        {"cid-1": [trigger]},
+    )
+    worker = make_worker(tmp_path, dws, FakeCodex([]), monkeypatch)
+
+    queued = worker.produce_once()
+
+    assert queued == 1
+    assert worker.store.has_seen(trigger.open_message_id) is True
+    assert worker.store.claim_reply_tasks(limit=1) == []
+    claimed = worker.store.claim_codex_dev_tasks(limit=1)
+    assert len(claimed) == 1
+    assert claimed[0].conversation_title == "Friday"
+    assert claimed[0].trigger_sender_user_id == "principal-user-1"
+    assert claimed[0].instruction == "开发一个 merge 验证心跳功能"
+
+
+def test_current_user_codex_dev_wake_phrase_reacts_after_enqueue(
+    tmp_path: Path, monkeypatch
+):
+    trigger = principal_message(
+        "Mina Agent，用codex执行这个任务。开发一个 merge 验证心跳功能"
+    )
+    dws = FakeDws(
+        [conversation()],
+        {"cid-1": [trigger]},
+    )
+    worker = make_worker(tmp_path, dws, FakeCodex([]), monkeypatch)
+
+    queued = worker.produce_once()
+
+    assert queued == 1
+    assert dws.created_text_emotions == [
+        ("收到，正在做", "收到，正在做", worker_module.DEFAULT_TEXT_EMOTION_BACKGROUND_ID)
+    ]
+    assert dws.message_text_emotions == [
+        (
+            "cid-1",
+            trigger.open_message_id,
+            "收到，正在做",
+            "created-1",
+            "收到，正在做",
+            "created-bg",
+        )
+    ]
+
+
+def test_current_user_codex_dev_wake_phrase_allows_generic_agent_name(
+    tmp_path: Path, monkeypatch
+):
+    trigger = principal_message(
+        "Friday Agent, 用 codex 执行这个任务，整理会议提效机制"
+    )
+    dws = FakeDws(
+        [conversation()],
+        {"cid-1": [trigger]},
+    )
+    worker = make_worker(tmp_path, dws, FakeCodex([]), monkeypatch)
+
+    queued = worker.produce_once()
+
+    assert queued == 1
+    claimed = worker.store.claim_codex_dev_tasks(limit=1)
+    assert len(claimed) == 1
+    assert claimed[0].instruction == "整理会议提效机制"
+
+
+def test_current_user_sent_codex_dev_wake_phrase_is_scanned_without_unread_message(
+    tmp_path: Path, monkeypatch
+):
+    sent_message = principal_message(
+        "Mina agent, 用 codex 执行这个任务，形成一份会议管理办法文件",
+        message_id="sent-dev-1",
+    )
+    sent_message.open_conversation_id = "cid-q3"
+    sent_message.conversation_title = "Q3 战略讨论"
+    dws = FakeDws([], {})
+    dws.sender_messages = [sent_message]
+    worker = make_worker(tmp_path, dws, FakeCodex([]), monkeypatch)
+
+    queued = worker.produce_once()
+
+    assert queued == 1
+    assert dws.sender_message_reads
+    assert worker.store.has_seen("sent-dev-1") is True
+    assert worker.store.claim_reply_tasks(limit=1) == []
+    claimed = worker.store.claim_codex_dev_tasks(limit=1)
+    assert len(claimed) == 1
+    assert claimed[0].conversation_id == "cid-q3"
+    assert claimed[0].conversation_title == "Q3 战略讨论"
+    assert claimed[0].instruction == "形成一份会议管理办法文件"
+
+
+def test_current_user_codex_dev_sender_scan_uses_two_hour_default_lookback(
+    tmp_path: Path, monkeypatch
+):
+    sent_message = principal_message(
+        "Mina Agent，用codex执行这个任务：读 HR周例会 听记内容，识别有哪些待办",
+        message_id="sent-dev-long-lookback",
+        create_time="2026-05-13 09:05:00",
+    )
+    sent_message.open_conversation_id = "cid-mina"
+    sent_message.conversation_title = "Mina 邹"
+    dws = FakeDws([], {})
+    dws.sender_messages = [sent_message]
+    worker = make_worker(tmp_path, dws, FakeCodex([]), monkeypatch)
+    worker.now_provider = lambda: datetime(
+        2026, 5, 13, 10, 0, 0, tzinfo=ZoneInfo("America/Los_Angeles")
+    )
+
+    queued = worker.produce_once()
+
+    assert queued == 1
+    assert dws.sender_message_reads
+    _, start, end, _, _ = dws.sender_message_reads[0]
+    assert start == "2026-05-13T15:00:00+00:00"
+    assert end == "2026-05-13T17:00:00+00:00"
+    claimed = worker.store.claim_codex_dev_tasks(limit=1)
+    assert len(claimed) == 1
+    assert claimed[0].instruction == "读 HR周例会 听记内容，识别有哪些待办"
+
+
+def test_current_user_codex_dev_sender_scan_reads_paginated_results(
+    tmp_path: Path, monkeypatch
+):
+    first_page_message = principal_message(
+        "普通消息",
+        message_id="sent-normal-page-1",
+    )
+    second_page_message = principal_message(
+        "Mina Agent，用codex执行这个任务：读 HR周例会 听记内容，识别待办 Owner 和 DDL",
+        message_id="sent-dev-page-2",
+    )
+    for msg in (first_page_message, second_page_message):
+        msg.open_conversation_id = "cid-mina"
+        msg.conversation_title = "Mina 邹"
+    dws = FakeDws([], {})
+    dws.sender_payload_pages = [
+        {
+            "result": {
+                "conversationMessagesList": [
+                    {
+                        "title": "Mina 邹",
+                        "singleChat": True,
+                        "messages": [
+                            {
+                                "openConversationId": first_page_message.open_conversation_id,
+                                "openMessageId": first_page_message.open_message_id,
+                                "sender": first_page_message.sender_name,
+                                "senderOpenDingTalkId": first_page_message.sender_open_dingtalk_id,
+                                "createTime": first_page_message.create_time,
+                                "content": first_page_message.content,
+                            }
+                        ],
+                    }
+                ],
+                "hasMore": True,
+                "nextCursor": "1",
+            }
+        },
+        {
+            "result": {
+                "conversationMessagesList": [
+                    {
+                        "title": "Mina 邹",
+                        "singleChat": True,
+                        "messages": [
+                            {
+                                "openConversationId": second_page_message.open_conversation_id,
+                                "openMessageId": second_page_message.open_message_id,
+                                "sender": second_page_message.sender_name,
+                                "senderOpenDingTalkId": second_page_message.sender_open_dingtalk_id,
+                                "createTime": second_page_message.create_time,
+                                "content": second_page_message.content,
+                            }
+                        ],
+                    }
+                ],
+                "hasMore": False,
+            }
+        },
+    ]
+    worker = make_worker(tmp_path, dws, FakeCodex([]), monkeypatch)
+
+    queued = worker.produce_once()
+
+    assert queued == 1
+    assert [read[-1] for read in dws.sender_message_reads] == ["0", "1"]
+    claimed = worker.store.claim_codex_dev_tasks(limit=1)
+    assert len(claimed) == 1
+    assert claimed[0].trigger_message_id == "sent-dev-page-2"
+    assert claimed[0].instruction == "读 HR周例会 听记内容，识别待办 Owner 和 DDL"
+
+
+def test_current_user_codex_dev_short_wake_phrase_enqueues_dev_task(
+    tmp_path: Path, monkeypatch
+):
+    trigger = principal_message(
+        "Mina Agent，执行：整理会议提效机制",
+        message_id="short-codex-dev-1",
+    )
+    dws = FakeDws(
+        [conversation()],
+        {"cid-1": [trigger]},
+    )
+    worker = make_worker(tmp_path, dws, FakeCodex([]), monkeypatch)
+
+    queued = worker.produce_once()
+
+    assert queued == 1
+    claimed = worker.store.claim_codex_dev_tasks(limit=1)
+    assert len(claimed) == 1
+    assert claimed[0].instruction == "整理会议提效机制"
