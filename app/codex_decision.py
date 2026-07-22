@@ -13,7 +13,7 @@ from app.codex_history import (
     extract_codex_audit_events_from_session,
     find_codex_session_path,
 )
-from app.codex_runner import CodexRunner
+from app.codex_runner import CODEX_TOOL_MODE_STANDARD, CodexRunner, CodexToolMode
 from app.config import assistant_signature, forbidden_path_prefixes
 from app.dingtalk_models import CodexAction, CodexDecision
 from app.process_runner import run_process_with_idle_timeout
@@ -40,6 +40,21 @@ SECRET_PATTERNS = (
     re.compile(r"appkey=[^\s]+", re.IGNORECASE),
     re.compile(r"cookie[:=][^\s]+", re.IGNORECASE),
     re.compile(r"oauth[_-]?code=[^\s&]+", re.IGNORECASE),
+)
+_CODEX_TOOL_EVENT_TYPES = frozenset(
+    {
+        "command_execution",
+        "dynamic_tool_call",
+        "function_call",
+        "function_call_output",
+        "mcp_tool_call",
+        "tool_call",
+        "tool_output",
+        "tool_result",
+        "tool_search_call",
+        "web_search",
+        "web_search_call",
+    }
 )
 
 
@@ -176,6 +191,22 @@ def _iter_json_payloads(raw: str) -> list[Any]:
             except json.JSONDecodeError:
                 continue
         return payloads
+
+
+def _contains_tool_event(raw: str) -> bool:
+    """Detect attempted tool activity, not only successfully completed calls."""
+    for payload in _iter_json_payloads(raw):
+        if not isinstance(payload, dict):
+            continue
+        item = payload.get("item")
+        if not isinstance(item, dict):
+            item = payload
+        item_type = str(item.get("type") or "").strip().lower()
+        if item_type in _CODEX_TOOL_EVENT_TYPES or item_type.endswith(
+            "_tool_call"
+        ):
+            return True
+    return False
 
 
 def _decision_from_payload(
@@ -636,8 +667,13 @@ class CodexDecisionRunner:
         timeout_seconds: int = 1200,
         idle_timeout_seconds: int = 900,
         codex_home: Path | None = None,
+        tool_mode: CodexToolMode = CODEX_TOOL_MODE_STANDARD,
     ):
-        self.runner = CodexRunner(workspace=workspace, codex_bin=codex_bin)
+        self.runner = CodexRunner(
+            workspace=workspace,
+            codex_bin=codex_bin,
+            tool_mode=tool_mode,
+        )
         self.executor = executor or self._subprocess_executor
         self.timeout_seconds = timeout_seconds
         self.idle_timeout_seconds = idle_timeout_seconds
@@ -646,6 +682,10 @@ class CodexDecisionRunner:
         self.last_audit_tool_events: list[dict[str, str]] = []
         self.last_transcript_start_line: int = 0
         self.last_transcript_end_line: int = 0
+
+    @property
+    def tool_mode(self) -> CodexToolMode:
+        return self.runner.tool_mode
 
     def decide(
         self,
@@ -664,6 +704,8 @@ class CodexDecisionRunner:
         )
         raw_outputs.append(first_raw)
         self._remember_session_id(first_raw)
+        if self._tool_isolation_violated(first_raw):
+            return self._tool_isolation_failure(raw_outputs)
         try:
             decision = parse_codex_json(first_raw, allow_legacy=False)
             timeout_session_decision = self._timeout_session_decision(decision)
@@ -704,6 +746,8 @@ class CodexDecisionRunner:
             )
             raw_outputs.append(second_raw)
             self._remember_session_id(second_raw)
+            if self._tool_isolation_violated(second_raw):
+                return self._tool_isolation_failure(raw_outputs)
             try:
                 decision = parse_codex_json(second_raw, allow_legacy=False)
                 timeout_session_decision = self._timeout_session_decision(decision)
@@ -737,6 +781,20 @@ class CodexDecisionRunner:
                     macos_notify=True,
                 )
 
+    def _tool_isolation_violated(self, raw: str) -> bool:
+        return self.tool_mode == "none" and _contains_tool_event(raw)
+
+    def _tool_isolation_failure(
+        self, raw_outputs: list[str]
+    ) -> CodexDecision:
+        self._remember_audit_tool_events(raw_outputs)
+        reason = "codex_tool_isolation_violation"
+        return CodexDecision(
+            action=CodexAction.STOP_WITH_ERROR,
+            reason=reason,
+            audit_summary=reason,
+        )
+
     def _finalize_decision(
         self,
         decision: CodexDecision,
@@ -744,6 +802,13 @@ class CodexDecisionRunner:
     ) -> CodexDecision:
         self._validate_decision(decision)
         self._remember_audit_tool_events(raw_outputs)
+        if self.tool_mode == "none" and self.last_audit_tool_events:
+            reason = "codex_tool_isolation_violation"
+            return CodexDecision(
+                action=CodexAction.STOP_WITH_ERROR,
+                reason=reason,
+                audit_summary=reason,
+            )
         failed_command = _failed_dws_transient_read_command(
             self.last_audit_tool_events
         )

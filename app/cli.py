@@ -632,6 +632,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     wechat_parser.add_argument("wechat_args", nargs=argparse.REMAINDER)
 
+    # Feishu channel commands pass through to the self-contained app.feishu.cli.
+    # Keeping its flags isolated also lets the optional channel stay import-free
+    # while it is disabled (the default).
+    feishu_parser = subparsers.add_parser(
+        "feishu",
+        help="Feishu channel diagnostics, scope review, and offline processing",
+    )
+    feishu_parser.add_argument("feishu_args", nargs=argparse.REMAINDER)
+
     return parser
 
 
@@ -2459,6 +2468,58 @@ def _wechat_service_components(settings: WorkerSettings) -> tuple:
     return tuple(components)
 
 
+def _feishu_service_components(settings: WorkerSettings) -> tuple:
+    """Build the optional Feishu runtime without importing the SDK eagerly.
+
+    The listener and sender are two logical components but intentionally share
+    one asyncio runtime and one WebSocket connection.  The Codex consumer stays
+    in a separate thread and never receives that client.
+    """
+    from app import config as _cfg
+
+    if not _cfg.feishu_enabled():
+        return ()
+
+    from app.feishu import service as _fs
+    from app.feishu.setup import dependency_status
+
+    store = AutoReplyStore(settings.db_path)
+    dependencies = dependency_status()
+    app_id = _cfg.feishu_app_id()
+    app_secret = _cfg.feishu_app_secret()
+    if not (
+        app_id
+        and app_secret
+        and dependencies.channel_version_ok
+        and dependencies.oapi_version_ok
+    ):
+        store.record_error(
+            None,
+            None,
+            "feishu_configuration_blocked",
+            "feishu_configuration_blocked:missing_or_unpinned",
+        )
+        return ()
+
+    runtime = _fs.build_runtime(store)
+    runner = _fs.build_decision_runner(
+        workspace=settings.workspace,
+        timeout_seconds=settings.codex_timeout_seconds,
+        idle_timeout_seconds=settings.codex_idle_timeout_seconds,
+    )
+    limit = 50 if settings.max_batches is None else settings.max_batches
+    return (
+        (
+            "feishu-listener",
+            lambda: _fs.run_channel_runtime(runtime),
+        ),
+        (
+            "feishu-consumer",
+            lambda: _fs.run_consumer_loop(store, runner, limit=limit),
+        ),
+    )
+
+
 def _run_wechat_loop(settings: WorkerSettings, role: str) -> None:
     import time
 
@@ -2614,7 +2675,11 @@ def run_service(
             ),
         ),
     )
-    components = components + _wechat_service_components(settings)
+    components = (
+        components
+        + _wechat_service_components(settings)
+        + _feishu_service_components(settings)
+    )
     for component, target in components:
         thread = thread_factory(
             target=_service_component_target(
@@ -2891,6 +2956,11 @@ def main() -> None:
         from app.wechat import cli as wechat_cli
 
         raise SystemExit(wechat_cli.main(args.wechat_args))
+
+    if args.command == "feishu":
+        from app.feishu import cli as feishu_cli
+
+        raise SystemExit(feishu_cli.main(args.feishu_args))
 
     settings = settings_from_args(args)
 
