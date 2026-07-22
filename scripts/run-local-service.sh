@@ -24,6 +24,49 @@ if [[ -x .venv/bin/ceo-agent ]]; then
   ceo_agent_cmd=(.venv/bin/ceo-agent)
 fi
 
+# app.config loads the repo-local .env.  The preflight itself is always local
+# and exits silently when Feishu is disabled; optional SDK and credential
+# checks run only after the operator explicitly enables the channel.
+.venv/bin/python - <<'PY'
+import importlib
+from importlib import metadata
+import sys
+
+from app.config import feishu_app_id, feishu_app_secret, feishu_enabled
+
+
+if not feishu_enabled():
+    raise SystemExit(0)
+
+sdk_configured = True
+required_sdks = (
+    ("lark_channel", "lark-channel-sdk", "1.2.0"),
+    ("lark_oapi", "lark-oapi", "1.7.1"),
+)
+for module_name, distribution_name, required_version in required_sdks:
+    try:
+        importlib.import_module(module_name)
+        if metadata.version(distribution_name) != required_version:
+            sdk_configured = False
+    except Exception:
+        sdk_configured = False
+
+app_id_configured = bool(feishu_app_id())
+app_secret_configured = bool(feishu_app_secret())
+statuses = {
+    "sdk": "configured" if sdk_configured else "missing",
+    "app_id": "configured" if app_id_configured else "missing",
+    "app_secret": "configured" if app_secret_configured else "missing",
+}
+print(
+    "feishu_preflight "
+    + " ".join(f"{name}={status}" for name, status in statuses.items()),
+    file=sys.stderr,
+)
+if not all((sdk_configured, app_id_configured, app_secret_configured)):
+    raise SystemExit(1)
+PY
+
 if [[ -n "${CEO_MAX_BATCHES:-}" ]]; then
   exec "${ceo_agent_cmd[@]}" run-once --max-batches "${CEO_MAX_BATCHES}"
 fi

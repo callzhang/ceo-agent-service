@@ -537,7 +537,7 @@ _DINGTALK_BRIDGE_STATUS: deque[dict[str, str]] = deque(maxlen=20)
 DEFAULT_ATTEMPT_LIST_LIMIT = 20
 ATTEMPT_LIST_LIMIT_OPTIONS = (20, 50, 100)
 HISTORY_TYPE_FILTERS = ("sent", "reacted", "skipped", "failed", "done")
-HISTORY_SEARCH_OBJECT_TYPES = ("replay", "wechat", "task", "meeting")
+HISTORY_SEARCH_OBJECT_TYPES = ("replay", "wechat", "feishu", "task", "meeting")
 TASK_PAGE_SIZE_OPTIONS = (20, 50, 100)
 DEFAULT_TASK_PAGE_SIZE = 20
 LOG_PAGE_SIZE_OPTIONS = (20, 50, 100)
@@ -1632,6 +1632,7 @@ def _top_nav(
         ("tasks", "Tasks", "/tasks"),
         ("user-feedback", "用户反馈", "/user-feedback"),
         ("codex", "Codex Sessions", "/codex"),
+        ("feishu", "Feishu", "/feishu/review"),
         ("config", "Config", "/config"),
         ("logs", "Logs", "/logs"),
     ]
@@ -2848,6 +2849,7 @@ def _history_search_object_type_checkboxes(
     labels = {
         "replay": "replay",
         "wechat": "wechat",
+        "feishu": "feishu",
         "task": "task",
         "meeting": "meeting",
     }
@@ -2874,7 +2876,7 @@ def _history_kinds_for_search_objects(
     search_object_types: tuple[str, ...],
 ) -> tuple[str, ...]:
     kinds: list[str] = []
-    if "replay" in search_object_types or "wechat" in search_object_types:
+    if {"replay", "wechat", "feishu"}.intersection(search_object_types):
         kinds.append("reply")
     if "task" in search_object_types:
         kinds.append("task")
@@ -2887,13 +2889,19 @@ def _history_reply_channels_for_search_objects(
     search_object_types: tuple[str, ...],
 ) -> tuple[str, ...] | None:
     selected = set(search_object_types)
-    if "replay" in selected and "wechat" in selected:
+    object_channels = {
+        "replay": "dingtalk",
+        "wechat": "wechat",
+        "feishu": "feishu",
+    }
+    channels = tuple(
+        channel
+        for object_type, channel in object_channels.items()
+        if object_type in selected
+    )
+    if len(channels) == len(object_channels):
         return None
-    if "wechat" in selected:
-        return ("wechat",)
-    if "replay" in selected:
-        return ("dingtalk",)
-    return None
+    return channels or None
 
 
 def _history_limit_select(limit: int | None) -> str:
@@ -3153,6 +3161,9 @@ def render_attempt_list(
     wechat_ready_delivery_by_attempt = _wechat_ready_delivery_by_attempt(
         store, attempts
     )
+    feishu_ready_delivery_by_attempt = _feishu_ready_delivery_by_attempt(
+        store, attempts
+    )
     sent_replies_by_attempt = store.list_sent_replies_for_attempts(attempts)
     feedback_events_by_token = _feedback_events_by_sent_reply(
         store,
@@ -3168,7 +3179,7 @@ def render_attempt_list(
         attempt = attempts_by_id.get(history_item.source_id)
         if attempt is None:
             continue
-        if (attempt.channel or "").strip().lower() == "wechat":
+        if (attempt.channel or "").strip().lower() in {"wechat", "feishu"}:
             attempt = attempt.model_copy(
                 update={"send_status": history_item.status}
             )
@@ -3189,6 +3200,7 @@ def render_attempt_list(
             f'<div class="attempt-foot">{warning_html}</div>' if warning_html else ""
         )
         wechat_delivery_id = wechat_ready_delivery_by_attempt.get(attempt.id)
+        feishu_delivery_id = feishu_ready_delivery_by_attempt.get(attempt.id)
         items.append(
             "<article class=\"attempt-item\">"
             "<div class=\"attempt-head\">"
@@ -3203,6 +3215,7 @@ def render_attempt_list(
             f"<time class=\"attempt-time\">{escape(_format_local_time(attempt.created_at))}</time>"
             "<div class=\"attempt-actions\">"
             f"{_wechat_send_actions(wechat_delivery_id)}"
+            f"{_feishu_send_actions(feishu_delivery_id)}"
             f"{_review_link(attempt)}"
             "</div>"
             "</div>"
@@ -3260,10 +3273,16 @@ def render_attempt_list(
 
 
 def _channel_badge(channel: str) -> str:
-    if (channel or "").strip().lower() == "wechat":
+    normalized = (channel or "").strip().lower()
+    if normalized == "wechat":
         return (
             '<span class="pill" style="background:#07c160;color:#fff;'
             'border-color:#07c160">微信</span> '
+        )
+    if normalized == "feishu":
+        return (
+            '<span class="pill" style="background:#3370ff;color:#fff;'
+            'border-color:#3370ff">飞书</span> '
         )
     return ""
 
@@ -3307,6 +3326,56 @@ def _wechat_send_actions(delivery_id: int | None) -> str:
         "</form>"
         f"<form method=\"post\" action=\"/wechat/deliveries/{delivery_id}/reject?next=/\" "
         "style=\"display:inline-flex;margin:0\">"
+        "<button class=\"compact-button\" type=\"submit\">拒绝</button>"
+        "</form>"
+    )
+
+
+def _feishu_ready_delivery_by_attempt(
+    store: AutoReplyStore,
+    attempts: list[ReplyAttempt],
+) -> dict[int, int]:
+    """Return actionable Feishu delivery ids keyed by audited attempt."""
+    from app import config
+
+    app_id = str(config.feishu_app_id() or "").strip()
+    if not app_id:
+        return {}
+    attempt_ids = {
+        attempt.id
+        for attempt in attempts
+        if (attempt.channel or "").strip().lower() == "feishu"
+    }
+    if not attempt_ids:
+        return {}
+    return {
+        delivery.attempt_id: delivery.id
+        for delivery in store.list_feishu_deliveries(
+            statuses=("ready_to_send", "retry"), app_id=app_id
+        )
+        if delivery.attempt_id in attempt_ids and not delivery.approved_at
+    }
+
+
+def _feishu_send_actions(delivery_id: int | None) -> str:
+    if not delivery_id:
+        return ""
+    from app.feishu.audit_web import csrf_form_input
+
+    token_input = csrf_form_input()
+    send_style = (
+        "background:#3370ff;color:#fff;border-color:#3370ff;font-weight:700"
+    )
+    return (
+        f"<form method=\"post\" action=\"/feishu/deliveries/{delivery_id}/approve?next=/\" "
+        "style=\"display:inline-flex;margin:0\">"
+        f"{token_input}"
+        "<input type='hidden' name='approved_by' value='local-history-review'>"
+        f"<button class=\"compact-button\" type=\"submit\" style=\"{send_style}\">发送</button>"
+        "</form>"
+        f"<form method=\"post\" action=\"/feishu/deliveries/{delivery_id}/reject?next=/\" "
+        "style=\"display:inline-flex;margin:0\">"
+        f"{token_input}"
         "<button class=\"compact-button\" type=\"submit\">拒绝</button>"
         "</form>"
     )
@@ -5615,6 +5684,15 @@ def create_audit_app(
     register_wechat_memory_review_routes(
         app, store_factory=lambda: _WechatStore(db_path),
         writer_factory=_wechat_memory_writer,
+    )
+
+    from app.feishu import service as _feishu_service
+    from app.feishu.audit_web import register_feishu_review_routes
+
+    register_feishu_review_routes(
+        app,
+        store_factory=lambda: AutoReplyStore(db_path),
+        health_factory=_feishu_service.current_health,
     )
 
     @app.get("/", response_class=HTMLResponse)

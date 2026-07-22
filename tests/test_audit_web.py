@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo
 from fastapi.testclient import TestClient
 
 import app.audit_web as audit_web_module
+from app import config
 from app.audit_web import (
     create_audit_app,
     create_default_audit_app,
@@ -295,6 +296,106 @@ def test_history_wechat_send_button_matches_exact_trigger(tmp_path: Path):
     assert html.count(f"/wechat/deliveries/{delivery_id}/reject?next=/") == 1
 
 
+def _seed_feishu_pending(store: AutoReplyStore) -> int:
+    from datetime import datetime, timezone
+
+    from app.feishu.delivery import delivery_idempotency_key
+    from app.feishu.models import FeishuInboundMessage
+
+    now = datetime.now(timezone.utc).isoformat()
+    message = FeishuInboundMessage(
+        event_id="evt-history-feishu",
+        app_id="cli_test",
+        message_id="om_history_feishu",
+        chat_id="oc_history_feishu",
+        chat_type="group",
+        chat_title="飞书测试群",
+        sender_open_id="ou_history_feishu",
+        sender_name="飞书同事",
+        message_type="text",
+        mentioned_bot=True,
+        body_text="请给出方案",
+        event_create_time=now,
+        received_at=now,
+    )
+    event = store.record_feishu_event(
+        message,
+        eligibility_status="eligible",
+        store_body=True,
+        enqueue_eligible=True,
+    )
+    attempt_id = store.record_reply_attempt(
+        conversation_id=message.chat_id,
+        conversation_title=message.chat_title,
+        trigger_message_id=message.message_id,
+        trigger_sender=message.sender_name,
+        trigger_text=message.body_text,
+        action="send_reply",
+        sensitivity_kind="general",
+        codex_reason="需要回复",
+        draft_reply_text="建议先小范围验证。",
+        send_status="pending",
+        channel="feishu",
+    )
+    delivery = store.create_feishu_delivery(
+        reply_task_id=event.reply_task_id,
+        attempt_id=attempt_id,
+        app_id=message.app_id,
+        chat_id=message.chat_id,
+        reply_to_message_id=message.message_id,
+        reply_in_thread=False,
+        reply_text="建议先小范围验证。",
+        idempotency_key=delivery_idempotency_key(
+            app_id=message.app_id,
+            reply_task_id=event.reply_task_id,
+            trigger_message_id=message.message_id,
+        ),
+    )
+    return delivery.id
+
+
+def test_history_shows_feishu_badge_and_exact_delivery_actions(
+    tmp_path: Path, monkeypatch
+):
+    monkeypatch.setattr(config, "feishu_app_id", lambda: "cli_test")
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    delivery_id = _seed_feishu_pending(store)
+
+    html = render_attempt_list(store, search_object_types=("feishu",))
+
+    assert "飞书</span>" in html
+    assert html.count(f"/feishu/deliveries/{delivery_id}/approve?next=/") == 1
+    assert html.count(f"/feishu/deliveries/{delivery_id}/reject?next=/") == 1
+    assert "💬 Pending" in html
+
+
+def test_history_feishu_actions_disappear_after_rejection(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(config, "feishu_app_id", lambda: "cli_test")
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    delivery_id = _seed_feishu_pending(store)
+    store.mark_feishu_delivery_rejected(delivery_id, app_id="cli_test")
+
+    html = render_attempt_list(store, search_object_types=("feishu",))
+
+    assert "飞书</span>" in html
+    assert f"/feishu/deliveries/{delivery_id}/approve" not in html
+    assert "💬 Rejected" in html
+
+
+def test_history_hides_feishu_actions_for_another_configured_app(
+    tmp_path: Path, monkeypatch
+):
+    monkeypatch.setattr(config, "feishu_app_id", lambda: "cli_other")
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    delivery_id = _seed_feishu_pending(store)
+
+    html = render_attempt_list(store, search_object_types=("feishu",))
+
+    assert "飞书</span>" in html
+    assert f"/feishu/deliveries/{delivery_id}/approve" not in html
+    assert f"/feishu/deliveries/{delivery_id}/reject" not in html
+
+
 def test_render_attempt_list_links_task_history_to_task_detail(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     project_id = store.create_work_project(
@@ -534,6 +635,50 @@ def test_history_wechat_object_filter_separates_message_channels(tmp_path: Path)
     )
     assert "DingTalk History Group" in replay_html
     assert "WeChat History Group" not in replay_html
+
+
+def test_history_feishu_object_filter_isolated_from_other_message_channels(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    for channel, title, message_id in (
+        ("dingtalk", "DingTalk History Group", "msg-dingtalk"),
+        ("wechat", "WeChat History Group", "msg-wechat"),
+        ("feishu", "Feishu History Group", "msg-feishu"),
+    ):
+        store.record_reply_attempt(
+            conversation_id=f"cid-{channel}",
+            conversation_title=title,
+            trigger_message_id=message_id,
+            trigger_sender="Alex",
+            trigger_text="feishu channel filter",
+            action="send_reply",
+            sensitivity_kind="general",
+            send_status="sent",
+            channel=channel,
+        )
+
+    default_html = render_attempt_list(store, query="feishu channel filter")
+    assert 'name="object_type" value="feishu" checked' in default_html
+
+    feishu_html = render_attempt_list(
+        store,
+        query="feishu channel filter",
+        search_object_types=("feishu",),
+    )
+    assert "Feishu History Group" in feishu_html
+    assert "飞书</span>" in feishu_html
+    assert "DingTalk History Group" not in feishu_html
+    assert "WeChat History Group" not in feishu_html
+
+    existing_channels_html = render_attempt_list(
+        store,
+        query="feishu channel filter",
+        search_object_types=("replay", "wechat"),
+    )
+    assert "DingTalk History Group" in existing_channels_html
+    assert "WeChat History Group" in existing_channels_html
+    assert "Feishu History Group" not in existing_channels_html
 
 
 def test_history_chart_labels_terminal_reactions_and_oa_actions(tmp_path: Path):
