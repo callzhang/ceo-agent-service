@@ -8,7 +8,7 @@ from pathlib import Path
 import socket
 import socketserver
 import stat
-from typing import Any
+from typing import Any, cast
 
 from app.wechat.accessibility import AccessibilityResult
 
@@ -73,7 +73,7 @@ class WechatSenderRpcService:
 
 class _SenderRequestHandler(socketserver.StreamRequestHandler):
     def handle(self) -> None:
-        server = self.server
+        server = cast(WechatSenderUnixServer, self.server)
         try:
             getpeereid = getattr(self.request, "getpeereid", None)
             if getpeereid is not None and getpeereid()[0] != os.getuid():

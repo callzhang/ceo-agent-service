@@ -12,9 +12,9 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
-from app.dws_client import DwsClient
-from app.okr_review import DwsLiveOkrSource, requested_okr_period
-from app.store import AutoReplyStore
+from app.dws_client import DwsClient  # noqa: E402
+from app.okr_review import DwsLiveOkrSource, requested_okr_period  # noqa: E402
+from app.store import AutoReplyStore  # noqa: E402
 
 
 def main() -> int:

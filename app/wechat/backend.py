@@ -66,7 +66,7 @@ class WcdbReaderBackend:
                     if user and user != "filehelper":
                         counts[user] = counts.get(user, 0) + 1
                 if counts:
-                    return max(counts, key=counts.get)
+                    return max(counts, key=lambda user: counts[user])
             except sqlite3.Error:
                 pass
             finally:

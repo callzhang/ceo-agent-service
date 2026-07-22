@@ -3,9 +3,11 @@ import os
 import re
 import shutil
 import subprocess
+from collections.abc import Mapping
 from contextlib import redirect_stderr, redirect_stdout
 from io import StringIO
 from pathlib import Path
+from typing import Any, cast
 
 from app.cli import setup_memory_connector_command
 from app.developer_prompt import (
@@ -36,8 +38,12 @@ LOCAL_PATH_RE = re.compile(r"(?:/Users|/private/tmp|/private/var|/tmp)/[^\s'\"<>
 SETUP_STATUS_VALUES = set(SetupStatus.__args__)
 
 
+def _step(**values: Any) -> SetupStepDefinition:
+    return SetupStepDefinition.model_validate(values)
+
+
 SETUP_WIZARD_STEPS: tuple[SetupStepDefinition, ...] = (
-    SetupStepDefinition(
+    _step(
         id="preflight",
         title="Preflight",
         phase="Phase 1",
@@ -51,7 +57,7 @@ SETUP_WIZARD_STEPS: tuple[SetupStepDefinition, ...] = (
             ),
         ],
     ),
-    SetupStepDefinition(
+    _step(
         id="cli_components",
         title="CLI Components",
         phase="Phase 2",
@@ -72,7 +78,7 @@ SETUP_WIZARD_STEPS: tuple[SetupStepDefinition, ...] = (
             ),
         ],
     ),
-    SetupStepDefinition(
+    _step(
         id="mcp",
         title="Memory Connector MCP",
         phase="Phase 2",
@@ -83,7 +89,7 @@ SETUP_WIZARD_STEPS: tuple[SetupStepDefinition, ...] = (
             SetupAction(id="setup_mcp", label="Fix automatically", step_id="mcp", kind="run"),
         ],
     ),
-    SetupStepDefinition(
+    _step(
         id="service_config",
         title="Service Config",
         phase="Phase 3",
@@ -104,7 +110,7 @@ SETUP_WIZARD_STEPS: tuple[SetupStepDefinition, ...] = (
             ),
         ],
     ),
-    SetupStepDefinition(
+    _step(
         id="wechat_connection",
         title="Connect WeChat",
         phase="Phase 3",
@@ -125,7 +131,7 @@ SETUP_WIZARD_STEPS: tuple[SetupStepDefinition, ...] = (
             ),
         ],
     ),
-    SetupStepDefinition(
+    _step(
         id="data_corpus",
         title="Data Corpus",
         phase="Phase 4",
@@ -146,7 +152,7 @@ SETUP_WIZARD_STEPS: tuple[SetupStepDefinition, ...] = (
             ),
         ],
     ),
-    SetupStepDefinition(
+    _step(
         id="work_profile",
         title="Work Profile Distillation",
         phase="Phase 5",
@@ -167,7 +173,7 @@ SETUP_WIZARD_STEPS: tuple[SetupStepDefinition, ...] = (
             ),
         ],
     ),
-    SetupStepDefinition(
+    _step(
         id="dry_run",
         title="Dry-Run Validation",
         phase="Phase 7",
@@ -183,7 +189,7 @@ SETUP_WIZARD_STEPS: tuple[SetupStepDefinition, ...] = (
             SetupAction(id="run_dry_run", label="Run", step_id="dry_run", kind="run"),
         ],
     ),
-    SetupStepDefinition(
+    _step(
         id="launchd",
         title="Launchd Service",
         phase="Phase 8",
@@ -205,7 +211,7 @@ SETUP_WIZARD_STEPS: tuple[SetupStepDefinition, ...] = (
             ),
         ],
     ),
-    SetupStepDefinition(
+    _step(
         id="live_send",
         title="Live Send Verification",
         phase="Phase 9",
@@ -270,9 +276,9 @@ def _status(
     step_id: str,
     *,
     title: str,
-    status: str,
+    status: SetupStatus,
     summary: str,
-    evidence: dict[str, str | int | bool] | None = None,
+    evidence: Mapping[str, str | int | bool] | None = None,
 ) -> SetupStepStatus:
     return SetupStepStatus(
         step_id=step_id,
@@ -780,7 +786,7 @@ def _setup_cli_components(
     )
     stdout = redact_setup_output(completed.stdout)
     stderr = redact_setup_output(completed.stderr)
-    evidence: dict[str, object] = {
+    evidence: dict[str, str | int | bool] = {
         "returncode": completed.returncode,
     }
     summary = "Local CLI components were checked and repaired."
@@ -1003,10 +1009,12 @@ def build_wizard_status(store: AutoReplyStore) -> SetupWizardStatus:
 
         persisted_status = row["status"] if row else "not_started"
         if persisted_status not in SETUP_STATUS_VALUES:
+            invalid_status = persisted_status
             persisted_status = "failed"
-            summary = f"Invalid persisted status: {row['status']}"
+            summary = f"Invalid persisted status: {invalid_status}"
         else:
             summary = row["summary"] if row else ""
+        persisted_status = cast(SetupStatus, persisted_status)
 
         statuses.append(
             SetupStepStatus(
@@ -1014,7 +1022,7 @@ def build_wizard_status(store: AutoReplyStore) -> SetupWizardStatus:
                 title=definition.title,
                 status=persisted_status,
                 summary=summary,
-                available_actions=definition.actions,
+                available_actions=list(definition.actions),
                 manual_confirmation_allowed=any(
                     action.kind == "confirm" for action in definition.actions
                 ),

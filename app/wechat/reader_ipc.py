@@ -15,7 +15,7 @@ import socketserver
 import stat
 import threading
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, cast
 
 from app.wechat.models import WechatAccount, WechatCapability, WechatMessage
 
@@ -109,7 +109,7 @@ class WechatReaderRpcService:
 
 class _ReaderRequestHandler(socketserver.StreamRequestHandler):
     def handle(self) -> None:
-        server = self.server
+        server = cast(WechatReaderUnixServer, self.server)
         try:
             getpeereid = getattr(self.request, "getpeereid", None)
             if getpeereid is not None and getpeereid()[0] != os.getuid():

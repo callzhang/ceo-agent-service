@@ -158,7 +158,7 @@ def developer_prompt_variable_pairs(variable_definitions: str) -> list[tuple[str
             raise DeveloperPromptTemplateError(
                 f"invalid variable definition on line {line_number}: {raw_line}"
             )
-        pairs.append(match.groups())
+        pairs.append((match.group(1), match.group(2)))
     return pairs
 
 

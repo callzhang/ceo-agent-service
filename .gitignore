@@ -14,6 +14,10 @@ node_modules/
 .next/
 dist/
 coverage/
+.coverage
+coverage.xml
+pytest.xml
+quality-*.xml
 prompts/
 profiles/
 .venv/

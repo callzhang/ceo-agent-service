@@ -9,9 +9,7 @@ from itertools import count, zip_longest
 import os
 from pathlib import Path
 import subprocess
-from typing import TypedDict
-import urllib.error
-import urllib.request
+from typing import Protocol, TypedDict
 from urllib.parse import parse_qs, quote, urlencode, urlparse
 
 import uvicorn
@@ -99,8 +97,8 @@ from app.feedback_events import (
     sync_feedback_events_for_context as sync_feedback_events_for_context_impl,
     sync_feedback_events_for_sent_replies as sync_feedback_events_for_sent_replies_impl,
 )
-from app.meeting_alignment_models import MeetingAlignmentRun
 from app.history import UniversalExecutionObservation
+from app.quality.snapshot import DEFAULT_REQUIRED_COMPONENTS, build_quality_snapshot
 from app.store import (
     FAST_PATH_UNREAD_BACKOFF_TASK_ERROR,
     AutoReplyStore,
@@ -122,13 +120,13 @@ from app.setup_wizard import (
 from app.setup_wizard_models import SetupStepStatus, SetupWizardEvent
 from app.task_models import ProjectPriority, ProjectStatus, RiskLevel, TodoStatus
 from app.user_prompt_blocks import USER_PROMPT_BLOCKS, UserPromptBlock
+from app.worker import DingTalkAutoReplyWorker
 
 DISPLAY_TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
 AUDIT_WEB_SQLITE_BUSY_TIMEOUT_SECONDS = 2
 USER_FEEDBACK_SYNC_BATCH_LIMIT = 5
 USER_FEEDBACK_SYNC_TIMEOUT_SECONDS = 0.5
 USER_FEEDBACK_SYNC_LIMIT_PER_TOKEN = 5
-from app.worker import DingTalkAutoReplyWorker
 
 
 CSS = """
@@ -1633,6 +1631,7 @@ def _top_nav(
         ("user-feedback", "用户反馈", "/user-feedback"),
         ("codex", "Codex Sessions", "/codex"),
         ("config", "Config", "/config"),
+        ("quality", "Quality", "/quality"),
         ("logs", "Logs", "/logs"),
     ]
     item_html = "".join(
@@ -2435,7 +2434,9 @@ def _history_chart_payload(
 
 def _render_history_chart(store: AutoReplyStore) -> str:
     payload = _history_chart_payload(store)
-    if int(payload["total"]) <= 0:
+    total = payload.get("total", 0)
+    total = total if isinstance(total, int) else 0
+    if total <= 0:
         return (
             "<section class=\"card history-chart-card\">"
             "<div class=\"history-chart-head\">"
@@ -2450,7 +2451,7 @@ def _render_history_chart(store: AutoReplyStore) -> str:
         "<div class=\"history-chart-head\">"
         "<div><h2 class=\"history-chart-title\">最近 24 小时事件</h2>"
         f"<div class=\"history-chart-subtitle\">{escape(str(payload['range']))}</div></div>"
-        f"<span class=\"pill\">{int(payload['total'])} events</span>"
+        f"<span class=\"pill\">{total} events</span>"
         "</div>"
         "<div id=\"history-event-chart\" class=\"history-chart\" role=\"img\" "
         "aria-label=\"最近 24 小时事件数量堆叠柱状图\"></div>"
@@ -4353,14 +4354,6 @@ def _simple_table_row(
     )
 
 
-def _json_list(text: str) -> list:
-    try:
-        payload = json.loads(text or "[]")
-    except json.JSONDecodeError:
-        return []
-    return payload if isinstance(payload, list) else []
-
-
 def _task_json_compact(text: str, default: str) -> str:
     try:
         payload = json.loads(text or default)
@@ -5583,6 +5576,118 @@ def create_audit_app(
 ) -> FastAPI:
     app = FastAPI(title="CEO Agent Audit")
 
+    def _quality_snapshot():
+        configured = tuple(
+            component.strip()
+            for component in os.getenv(
+                "CEO_QUALITY_REQUIRED_COMPONENTS",
+                ",".join(DEFAULT_REQUIRED_COMPONENTS),
+            ).split(",")
+            if component.strip()
+        )
+        return build_quality_snapshot(
+            AutoReplyStore(db_path),
+            required_components=configured,
+        )
+
+    @app.get("/health/live")
+    def health_live() -> dict[str, object]:
+        return {"status": "live", "pid": os.getpid()}
+
+    @app.get("/health/ready")
+    def health_ready() -> JSONResponse:
+        snapshot = _quality_snapshot()
+        payload = snapshot.model_dump(mode="json")
+        payload["status"] = "ready" if snapshot.ready else "not_ready"
+        return JSONResponse(payload, status_code=200 if snapshot.ready else 503)
+
+    @app.get("/api/quality")
+    def quality_api() -> dict[str, object]:
+        return _quality_snapshot().model_dump(mode="json")
+
+    @app.get("/quality", response_class=HTMLResponse)
+    def quality_page() -> str:
+        store = AutoReplyStore(db_path)
+        snapshot = _quality_snapshot()
+        metrics = store.quality_feedback_rates(days=30)
+        runs = store.list_quality_runs(limit=20)
+        incidents = store.list_quality_incidents()
+        component_rows = "".join(
+            "<tr>"
+            f"<td>{escape(component.component)}</td>"
+            f"<td>{escape(component.status)}</td>"
+            f"<td>{component.consecutive_failures}</td>"
+            "</tr>"
+            for component in snapshot.components
+        )
+        run_rows = "".join(
+            "<tr>"
+            f"<td>{escape(str(run['suite']))}</td>"
+            f"<td>{escape(str(run['mode']))}</td>"
+            f"<td>{escape(str(run['status']))}</td>"
+            f"<td>{escape(str(run['score']))}</td>"
+            f"<td>{escape(str(run['created_at']))}</td>"
+            "</tr>"
+            for run in runs
+        ) or "<tr><td colspan='5'>No quality runs recorded.</td></tr>"
+        incident_rows = "".join(
+            "<tr>"
+            f"<td>{escape(str(incident['incident_key']))}</td>"
+            f"<td>{escape(str(incident['severity']))}</td>"
+            f"<td>{escape(str(incident['status']))}</td>"
+            f"<td>{escape(str(incident['owner']))}</td>"
+            f"<td>{escape(str(incident['due_at']))}</td>"
+            "</tr>"
+            for incident in incidents
+        ) or "<tr><td colspan='5'>No quality incidents.</td></tr>"
+        body = (
+            "<section class='card'><h2>Runtime quality</h2>"
+            f"<p class='muted'>Readiness: {str(snapshot.ready).lower()} · "
+            f"SLO: {escape(snapshot.slo_status)} · schema: {snapshot.schema_version}</p>"
+            "<table><thead><tr><th>Component</th><th>Status</th>"
+            "<th>Consecutive failures</th></tr></thead>"
+            f"<tbody>{component_rows}</tbody></table></section>"
+            "<section class='card'><h2>Backlog</h2><pre>"
+            f"{escape(json.dumps(snapshot.backlog, sort_keys=True))}"
+            "</pre></section>"
+            "<section class='card'><h2>30-day feedback</h2>"
+            f"<p>Samples: {metrics['sample_count']} · Negative: "
+            f"{float(metrics['negative_rate']):.1%} · Manual corrections: "
+            f"{float(metrics['correction_rate']):.1%}</p></section>"
+            "<section class='card'><h2>Evaluation and releases</h2>"
+            "<table><thead><tr><th>Suite</th><th>Mode</th><th>Status</th>"
+            f"<th>Score</th><th>Created</th></tr></thead><tbody>{run_rows}</tbody></table>"
+            "</section><section class='card'><h2>Quality incidents</h2>"
+            "<table><thead><tr><th>Key</th><th>Severity</th><th>Status</th>"
+            f"<th>Owner</th><th>Due</th></tr></thead><tbody>{incident_rows}</tbody></table>"
+            "</section>"
+        )
+        return render_page("Quality", body, active_nav="quality", auto_refresh=True)
+
+    @app.post("/api/quality/incidents/{incident_key}/ack")
+    async def quality_incident_ack(incident_key: str, request: Request) -> JSONResponse:
+        payload = await request.json()
+        owner = str(payload.get("owner") or "") if isinstance(payload, dict) else ""
+        due_at = str(payload.get("due_at") or "") if isinstance(payload, dict) else ""
+        try:
+            changed = AutoReplyStore(db_path).acknowledge_quality_incident(
+                incident_key, owner=owner, due_at=due_at
+            )
+        except ValueError as exc:
+            return JSONResponse({"status": "invalid", "reason": str(exc)}, status_code=400)
+        return JSONResponse(
+            {"status": "acknowledged" if changed else "unchanged"},
+            status_code=200 if changed else 409,
+        )
+
+    @app.post("/api/quality/incidents/{incident_key}/resolve")
+    def quality_incident_resolve(incident_key: str) -> JSONResponse:
+        changed = AutoReplyStore(db_path).resolve_quality_incident(incident_key)
+        return JSONResponse(
+            {"status": "resolved" if changed else "unchanged"},
+            status_code=200 if changed else 409,
+        )
+
     from app.store import AutoReplyStore as _WechatStore
     from app.wechat import service as _wechat_service
     from app.wechat.audit_web import (
@@ -5782,7 +5887,7 @@ def create_audit_app(
         return HTMLResponse(html, status_code=status)
 
     @app.get("/developer-prompt", response_class=HTMLResponse)
-    def developer_prompt_editor(request: Request) -> str:
+    def developer_prompt_editor(request: Request) -> RedirectResponse:
         tab = request.query_params.get("tab", "developer")
         saved_suffix = "&saved=1" if request.query_params.get("saved") == "1" else ""
         return RedirectResponse(f"/config?tab={tab}{saved_suffix}", status_code=303)
@@ -7100,7 +7205,14 @@ def _audit_document_uses_for_attempt(attempt: ReplyAttempt) -> list[dict[str, ob
     return uses
 
 
-def _audit_event_uses_for_attempt(attempt: ReplyAttempt) -> list[dict[str, object]]:
+class _AuditAttempt(Protocol):
+    codex_session_id: str
+    codex_transcript_start_line: int
+    codex_transcript_end_line: int
+    audit_tool_events_json: str
+
+
+def _audit_event_uses_for_attempt(attempt: _AuditAttempt) -> list[dict[str, object]]:
     events = _audit_tool_events_for_attempt(attempt)
     calls: list[dict[str, object]] = []
     by_call_id: dict[str, dict[str, object]] = {}
@@ -7144,7 +7256,7 @@ def _audit_event_uses_for_attempt(attempt: ReplyAttempt) -> list[dict[str, objec
     return calls
 
 
-def _audit_tool_events_for_attempt(attempt: ReplyAttempt) -> list[dict[str, str]]:
+def _audit_tool_events_for_attempt(attempt: _AuditAttempt) -> list[dict[str, str]]:
     if attempt.codex_session_id.strip():
         session_events = extract_codex_audit_events_from_session(
             attempt.codex_session_id.strip(),

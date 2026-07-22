@@ -57,7 +57,8 @@ def completed_mcp_tool_calls(raw: str) -> list[dict]:
 def has_any_tool_event(raw: str) -> bool:
     """Detect any Codex tool lifecycle event, including attempted/started calls."""
     for payload in _jsonl_payloads(raw):
-        item = payload.get("item") if isinstance(payload.get("item"), dict) else payload
+        candidate = payload.get("item")
+        item = candidate if isinstance(candidate, dict) else payload
         item_type = str(item.get("type") or "").strip().lower()
         if item_type in _TOOL_ITEM_TYPES or item_type.endswith("_tool_call"):
             return True
@@ -110,6 +111,9 @@ def make_read_only_without_tools(command: list[str]) -> None:
     while CODEX_BYPASS_APPROVALS_AND_SANDBOX in command:
         command.remove(CODEX_BYPASS_APPROVALS_AND_SANDBOX)
     disable_configured_mcp_servers(command)
+    memory_disabled = "mcp_servers.memory_connector.enabled=false"
+    if memory_disabled not in command:
+        command[-1:-1] = ["-c", memory_disabled]
     command[-1:-1] = [
         "--sandbox", "read-only",
         "-c", "tools.enabled_tools=[]",

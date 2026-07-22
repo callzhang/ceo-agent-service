@@ -150,8 +150,12 @@ def test_wechat_pid_comes_from_main_bundle_application():
     assert seen == ["com.tencent.xinWeChat"]
 
 
+@pytest.mark.macos
 def test_request_accessibility_asks_macos_to_show_prompt(monkeypatch):
-    import ApplicationServices
+    ApplicationServices = pytest.importorskip(
+        "ApplicationServices",
+        reason="requires the macOS reader-build dependency",
+    )
 
     seen = []
     monkeypatch.setattr(

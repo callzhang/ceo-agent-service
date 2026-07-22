@@ -12741,6 +12741,11 @@ def test_internal_personnel_question_does_not_auto_allow_manager(
         [conversation(single_chat=True)],
         {"cid-1": [message("张三绩效怎么定？", single_chat=True)]},
     )
+    dws.user_profiles["subject-user-1"] = DwsUserProfile(
+        user_id="subject-user-1",
+        name="张三",
+        open_dingtalk_id="subject-open-1",
+    )
     dws.manager_chains["subject-user-1"] = ["sender-user-1"]
     codex = FakeCodex(
         CodexDecision(
@@ -12765,6 +12770,11 @@ def test_internal_personnel_question_refuses_unrelated_requester(
     dws = FakeDws(
         [conversation(single_chat=True)],
         {"cid-1": [message("张三绩效怎么定？", single_chat=True)]},
+    )
+    dws.user_profiles["subject-user-1"] = DwsUserProfile(
+        user_id="subject-user-1",
+        name="张三",
+        open_dingtalk_id="subject-open-1",
     )
     codex = FakeCodex(
         CodexDecision(

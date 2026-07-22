@@ -39,7 +39,7 @@ def _aes_cbc_decryptor(key: bytes, iv: bytes):
         return Cipher(algorithms.AES(key), modes.CBC(iv)).decryptor()
     except ModuleNotFoundError:
         try:
-            from Crypto.Cipher import AES
+            from Crypto.Cipher import AES  # pyright: ignore[reportMissingImports]
             cipher = AES.new(key, AES.MODE_CBC, iv)
             class _Wrap:
                 def update(self, data): return cipher.decrypt(data)
@@ -90,7 +90,6 @@ class WcdbCipherBackend:
         enc_key = enc_key_from_passphrase(passphrase, salt)
         if not validates(snapshot, passphrase):
             raise CipherError("passphrase did not validate page 1")
-        mac_key = _mac_key(enc_key, salt)
         out = bytearray()
         npages = len(data) // PAGE
         for i in range(npages):

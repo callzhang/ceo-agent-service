@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from io import BytesIO
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import Any, Literal, Protocol, TypeVar, TypedDict, cast
 from urllib.parse import parse_qs, quote, unquote, urlparse, urlsplit, urlunsplit
 from xml.etree import ElementTree as ET
 
@@ -77,7 +77,7 @@ from app.leak_check import (
 )
 from app.message_split import split_dingtalk_text
 from app.memory_connector_auth import MemoryConnectorAuthorizationRequired
-from app.memory_connector_client import MemoryConnectorClient, MemoryWriteResult
+from app.memory_connector_client import MemoryWriteResult
 from app.notification import (
     dingtalk_conversation_notification_url,
     send_macos_notification,
@@ -481,6 +481,27 @@ class UniversalActionUnknownError(ReplyTaskProcessingError):
     """Raised when replay could duplicate an externally visible side effect."""
 
 
+class WorkerMemoryClient(Protocol):
+    def ensure_ready_sync(self) -> None: ...
+
+    def memory_write_sync(
+        self,
+        *,
+        data: str,
+        type: Literal["text", "message"],
+        created_at: str,
+        source_description: str,
+        wait_for_processing: bool = False,
+    ) -> MemoryWriteResult: ...
+
+
+class UniversalMemoryPayload(TypedDict):
+    data: str
+    type: Literal["text", "message"]
+    created_at: str
+    source_description: str
+
+
 class DingTalkAutoReplyWorker:
     def __init__(
         self,
@@ -495,7 +516,7 @@ class DingTalkAutoReplyWorker:
         max_task_attempts: int = MAX_REPLY_TASK_ATTEMPTS,
         now_provider: Callable[[], datetime] | None = None,
         oa_approval_handler=None,
-        memory_client: MemoryConnectorClient | None = None,
+        memory_client: WorkerMemoryClient | None = None,
         universal_planner=None,
         universal_dependency_status_provider=None,
     ):
@@ -512,6 +533,7 @@ class DingTalkAutoReplyWorker:
         self.permission_gate = PermissionGate(dws)
         self.oa_approval_handler = oa_approval_handler
         self.memory_client = memory_client
+        self.okr_live_source: Any | None = None
         self._injected_universal_planner = universal_planner
         self._universal_dependency_status_provider = (
             universal_dependency_status_provider or self.universal_dependency_status
@@ -1000,7 +1022,7 @@ class DingTalkAutoReplyWorker:
                 return True
             attempt = self.store.get_reply_attempt(attempt_id)
             if self._is_definite_universal_send_failure(attempt):
-                error = attempt.send_error or str(exc)
+                error = attempt.send_error if attempt is not None else str(exc)
                 self.store.mark_universal_action_execution_failed(execution, error)
                 raise
             error = f"universal_action_outcome_unknown: {exc}"
@@ -1018,7 +1040,11 @@ class DingTalkAutoReplyWorker:
         ):
             attempt = self.store.get_reply_attempt(attempt_id)
             if self._is_definite_universal_send_failure(attempt):
-                error = attempt.send_error or "definite pre-send failure"
+                error = (
+                    attempt.send_error
+                    if attempt is not None
+                    else "definite pre-send failure"
+                )
                 self.store.mark_universal_action_execution_failed(execution, error)
                 raise ReplyDeliveryError(error)
             error = "universal_action_outcome_unknown: delivery not recorded"
@@ -2931,10 +2957,13 @@ class DingTalkAutoReplyWorker:
     @staticmethod
     def _universal_memory_payload(
         execution: UniversalActionExecution,
-    ) -> dict[str, str]:
+    ) -> UniversalMemoryPayload:
         action_payload = execution.action.payload
         data = str(action_payload["data"]).strip()
         memory_type = str(action_payload["type"])
+        if memory_type not in {"text", "message"}:
+            raise ValueError("universal Memory type must be text or message")
+        typed_memory_type = cast(Literal["text", "message"], memory_type)
         trigger_time = datetime.fromisoformat(
             execution.context.trigger_create_time.replace("Z", "+00:00")
         )
@@ -2953,7 +2982,7 @@ class DingTalkAutoReplyWorker:
         source_hash = hashlib.sha256(source_material.encode("utf-8")).hexdigest()
         return {
             "data": data,
-            "type": memory_type,
+            "type": typed_memory_type,
             "created_at": trigger_time.isoformat(),
             "source_description": f"ceo-agent-memory:{source_hash}",
         }
@@ -3362,7 +3391,7 @@ class DingTalkAutoReplyWorker:
             is_forbidden_read = bool(
                 conversation_id and self._is_dws_forbidden_read_error(exc)
             )
-            if is_forbidden_read:
+            if is_forbidden_read and conversation_id is not None:
                 self._mark_dws_read_forbidden(conversation_id)
             should_notify = bool(notify_title)
             should_record_error = record_forbidden_error or not is_forbidden_read
@@ -5693,9 +5722,12 @@ class DingTalkAutoReplyWorker:
             trigger.content,
             today=self._now().date().isoformat(),
         )
-        if not hasattr(self, "okr_live_source"):
+        if self.okr_live_source is None:
             error = "OKR live source is not configured"
-            updates = {"send_status": "failed", "send_error": error}
+            updates: dict[str, Any] = {
+                "send_status": "failed",
+                "send_error": error,
+            }
             if not preserve_attempt_action:
                 updates["action"] = "okr_review"
             self.store.update_reply_attempt(attempt_id, **updates)
@@ -7127,7 +7159,12 @@ class DingTalkAutoReplyWorker:
             existing.start_time
         )
         existing_end = DingTalkAutoReplyWorker._parse_calendar_time(existing.end_time)
-        if not all((invite_start, invite_end, existing_start, existing_end)):
+        if (
+            invite_start is None
+            or invite_end is None
+            or existing_start is None
+            or existing_end is None
+        ):
             return False
         return invite_start < existing_end and existing_start < invite_end
 
@@ -9166,7 +9203,8 @@ class DingTalkAutoReplyWorker:
             table_id = str(table.get("tableId") or "")
             table_name = str(table.get("tableName") or "未命名数据表")
             description = str(table.get("description") or table.get("tableDescription") or "")
-            fields = table.get("fields") if isinstance(table.get("fields"), list) else []
+            raw_fields = table.get("fields")
+            fields = raw_fields if isinstance(raw_fields, list) else []
             field_names = [
                 str(field.get("fieldName"))
                 for field in fields
@@ -10743,7 +10781,7 @@ class DingTalkAutoReplyWorker:
             if send_result_json_builder is not None
             else (send_result or {})
         )
-        native_reply_extra = (
+        native_reply_extra: dict[str, Any] = (
             dict(send_result_json_payload)
             if send_result_json_builder is not None
             else {

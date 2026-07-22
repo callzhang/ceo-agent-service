@@ -7,19 +7,19 @@ binding evidence are exposed.
 """
 from __future__ import annotations
 
-from typing import Callable, Literal
+from typing import Any, Callable, Literal
 
 from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel, model_validator
 
-from app.wechat.models import WechatReplyScope
+from app.wechat.models import TriggerMode, WechatReplyScope
 
 
 class WechatScopeTarget(BaseModel):
     target_type: Literal["direct", "group"]
     target_id: str
     display_name: str
-    trigger_mode: str
+    trigger_mode: TriggerMode
     conversation_id: str = ""
 
     @model_validator(mode="after")
@@ -39,8 +39,8 @@ class WechatReplyScopeRequest(BaseModel):
 
 
 def register_wechat_memory_review_routes(
-    app: FastAPI, *, store_factory: Callable[[], object],
-    writer_factory: Callable[[object], object],
+    app: FastAPI, *, store_factory: Callable[[], Any],
+    writer_factory: Callable[[Any], Any],
 ) -> None:
     """Human review for cleaned candidates. There is deliberately no bulk approve."""
     import html
@@ -203,8 +203,8 @@ def register_wechat_memory_review_routes(
         return RedirectResponse("/wechat/memory-review", status_code=303)
 
 
-def register_wechat_review_routes(app: FastAPI, *, store_factory: Callable[[], object],
-                                  sender_factory: Callable[[object], object]) -> None:
+def register_wechat_review_routes(app: FastAPI, *, store_factory: Callable[[], Any],
+                                  sender_factory: Callable[[Any], Any]) -> None:
     """Confirm-mode review UI: list ready_to_send deliveries with a 发送 (approve)
     and 拒绝 (reject) button. Approve runs the real send in a background thread
     (idle-gated), so the request returns immediately; the page auto-refreshes to
@@ -295,7 +295,7 @@ def register_wechat_review_routes(app: FastAPI, *, store_factory: Callable[[], o
         return RedirectResponse(_safe_next(next), status_code=303)
 
 
-def register_wechat_tutorial_routes(app: FastAPI, *, setup_factory: Callable[[], object]) -> None:
+def register_wechat_tutorial_routes(app: FastAPI, *, setup_factory: Callable[[], Any]) -> None:
     @app.get("/config/wechat/conversations")
     @app.get("/tutorial/wechat/conversations")
     def list_targets(query: str = "", kind: str = "all", limit: int = 50, offset: int = 0):

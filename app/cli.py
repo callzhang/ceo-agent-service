@@ -74,6 +74,7 @@ from app.meeting_alignment import (
 )
 from app.meeting_alignment_agent import MeetingAlignmentCodexRunner
 from app.oa_approval import OaApprovalSpecHandler
+from app.quality.monitor import run_quality_monitor_loop
 from app.org_cache import (
     CachedDwsClient,
     CachedOrgDirectory,
@@ -1900,7 +1901,7 @@ def feedback_spike_command(args: argparse.Namespace) -> dict[str, object]:
             secret=args.secret,
             limit=args.limit,
         )
-        result = {"events_url": url}
+        result: dict[str, object] = {"events_url": url}
         print(json.dumps(result, ensure_ascii=False), flush=True)
         return result
 
@@ -2159,12 +2160,14 @@ class ServiceDependencyGate:
         wifi_connected: Callable[[], bool] = _macos_wifi_connected,
         dws_ready: Callable[[WorkerSettings], bool] = _dws_read_dependency_ready,
         check_interval_seconds: int = 30,
+        health_store: AutoReplyStore | None = None,
     ):
         self.settings = settings
         self.monotonic = monotonic
         self.wifi_connected = wifi_connected
         self.dws_ready = dws_ready
         self.check_interval_seconds = check_interval_seconds
+        self.health_store = health_store
         self._last_checked_at: float | None = None
         self._last_ready = True
 
@@ -2176,8 +2179,50 @@ class ServiceDependencyGate:
         ):
             return self._last_ready
         self._last_checked_at = now
-        self._last_ready = self.wifi_connected() and self.dws_ready(self.settings)
+        wifi_ready = self.wifi_connected()
+        if self.health_store is not None:
+            self.health_store.record_component_health(
+                "network",
+                success=wifi_ready,
+                error_kind="unavailable" if not wifi_ready else "",
+            )
+        dws_ready = wifi_ready and self.dws_ready(self.settings)
+        if self.health_store is not None:
+            self.health_store.record_component_health(
+                "dws",
+                success=dws_ready,
+                error_kind="dependency_unavailable" if not dws_ready else "",
+            )
+        self._last_ready = wifi_ready and dws_ready
         return self._last_ready
+
+
+def _record_worker_loop_health(
+    worker: object,
+    component: str,
+    *,
+    success: bool,
+    error_kind: str = "",
+) -> None:
+    store = getattr(worker, "store", None)
+    if isinstance(store, AutoReplyStore):
+        store.record_component_health(
+            component,
+            success=success,
+            error_kind=error_kind,
+        )
+
+
+def _record_store_health(
+    store: object,
+    component: str,
+    *,
+    success: bool,
+    error_kind: str = "",
+) -> None:
+    recorder = getattr(store, "record_component_health", None)
+    if callable(recorder):
+        recorder(component, success=success, error_kind=error_kind)
 
 
 def run_loop(
@@ -2189,9 +2234,19 @@ def run_loop(
 ) -> None:
     while True:
         if not network_ready():
+            _record_worker_loop_health(
+                worker, "service-loop", success=False, error_kind="dependency_unavailable"
+            )
             sleep(poll_interval_seconds)
             continue
-        worker.run_once(max_batches=max_batches)
+        try:
+            worker.run_once(max_batches=max_batches)
+        except Exception as exc:
+            _record_worker_loop_health(
+                worker, "service-loop", success=False, error_kind=type(exc).__name__
+            )
+            raise
+        _record_worker_loop_health(worker, "service-loop", success=True)
         sleep(poll_interval_seconds)
 
 
@@ -2204,9 +2259,19 @@ def run_producer_loop(
 ) -> None:
     while True:
         if not network_ready():
+            _record_worker_loop_health(
+                worker, "producer", success=False, error_kind="dependency_unavailable"
+            )
             sleep(poll_interval_seconds)
             continue
-        worker.produce_once(max_tasks=max_tasks)
+        try:
+            worker.produce_once(max_tasks=max_tasks)
+        except Exception as exc:
+            _record_worker_loop_health(
+                worker, "producer", success=False, error_kind=type(exc).__name__
+            )
+            raise
+        _record_worker_loop_health(worker, "producer", success=True)
         sleep(poll_interval_seconds)
 
 
@@ -2219,9 +2284,19 @@ def run_consumer_loop(
 ) -> None:
     while True:
         if not network_ready():
+            _record_worker_loop_health(
+                worker, "consumer", success=False, error_kind="dependency_unavailable"
+            )
             sleep(poll_interval_seconds)
             continue
-        worker.consume_once(max_tasks=max_tasks)
+        try:
+            worker.consume_once(max_tasks=max_tasks)
+        except Exception as exc:
+            _record_worker_loop_health(
+                worker, "consumer", success=False, error_kind=type(exc).__name__
+            )
+            raise
+        _record_worker_loop_health(worker, "consumer", success=True)
         sleep(poll_interval_seconds)
 
 
@@ -2246,6 +2321,10 @@ def run_meeting_producer_loop(
     dws = _create_meeting_dws(settings)
     while True:
         if not network_ready():
+            _record_store_health(
+                store,
+                "meeting-producer", success=False, error_kind="dependency_unavailable"
+            )
             sleep(poll_interval_seconds)
             continue
         try:
@@ -2255,7 +2334,12 @@ def run_meeting_producer_loop(
                 now=datetime.now().astimezone(),
                 settle_seconds=settle_seconds,
             )
+            _record_store_health(store, "meeting-producer", success=True)
         except Exception as exc:
+            _record_store_health(
+                store,
+                "meeting-producer", success=False, error_kind=type(exc).__name__
+            )
             if not _is_dws_transient_dependency_error(exc):
                 store.record_error(
                     "",
@@ -2292,6 +2376,10 @@ def run_meeting_consumer_loop(
     )
     while True:
         if not network_ready():
+            _record_store_health(
+                store,
+                "meeting-consumer", success=False, error_kind="dependency_unavailable"
+            )
             sleep(poll_interval_seconds)
             continue
         try:
@@ -2304,7 +2392,12 @@ def run_meeting_consumer_loop(
                 deliver=not settings.dry_run,
                 embedding_client=embedding_client,
             )
+            _record_store_health(store, "meeting-consumer", success=True)
         except Exception as exc:
+            _record_store_health(
+                store,
+                "meeting-consumer", success=False, error_kind=type(exc).__name__
+            )
             if not _is_dws_transient_dependency_error(exc):
                 store.record_error(
                     "",
@@ -2343,8 +2436,12 @@ def run_task_maintenance_loop(
     network_ready: Callable[[], bool] = _macos_wifi_connected,
 ) -> None:
     next_daily_run = monotonic()
+    store = AutoReplyStore(settings.db_path)
     while True:
         if not network_ready():
+            store.record_component_health(
+                "task-maintenance", success=False, error_kind="dependency_unavailable"
+            )
             sleep(work_item_interval_seconds)
             continue
         process_work_items_command(settings)
@@ -2363,6 +2460,7 @@ def run_task_maintenance_loop(
                 limit=50 if settings.max_batches is None else settings.max_batches,
             )
             next_daily_run = now + daily_interval_seconds
+        store.record_component_health("task-maintenance", success=True)
         sleep(work_item_interval_seconds)
 
 
@@ -2431,7 +2529,11 @@ def _run_wechat_loop(settings: WorkerSettings, role: str) -> None:
                     mode=_cfg.wechat_send_mode(),
                     sender_enabled=_cfg.wechat_sender_enabled(),
                 )
+            store.record_component_health(f"wechat-{role}", success=True)
         except Exception as exc:  # keep the loop alive; surface via error log
+            store.record_component_health(
+                f"wechat-{role}", success=False, error_kind=type(exc).__name__
+            )
             if isinstance(exc, OSError) and exc.errno in {errno.EACCES, errno.EPERM}:
                 store.record_error(
                     "wechat",
@@ -2489,7 +2591,9 @@ def run_service(
         ),
         notify=True,
     )
+    service_store = AutoReplyStore(settings.db_path)
     dependency_gate = ServiceDependencyGate(settings)
+    dependency_gate.health_store = service_store
     components = (
         (
             "audit-web",
@@ -2538,6 +2642,14 @@ def run_service(
                 work_item_interval_seconds=settings.task_work_item_interval_seconds,
                 daily_interval_seconds=settings.task_daily_interval_seconds,
                 network_ready=dependency_gate.ready,
+            ),
+        ),
+        (
+            "quality-monitor",
+            lambda: run_quality_monitor_loop(
+                service_store,
+                interval_seconds=60,
+                sleep=time.sleep,
             ),
         ),
     )

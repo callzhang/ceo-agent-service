@@ -3,7 +3,7 @@ import re
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, cast
 from urllib.parse import parse_qs, unquote, urlparse
 
 from pydantic import BaseModel, Field, ValidationError, model_validator
@@ -339,7 +339,7 @@ class OaApprovalSpecHandler:
         if run.envelope.kind != AgentKind.OA_APPROVAL:
             raise ValidationError.from_exception_data(
                 "OaApprovalResult",
-                [
+                cast(Any, [
                     {
                         "type": "value_error",
                         "loc": ("kind",),
@@ -351,7 +351,7 @@ class OaApprovalSpecHandler:
                             )
                         },
                     }
-                ],
+                ]),
             )
         return OaApprovalResult.model_validate(run.envelope.domain_payload)
 
@@ -581,7 +581,7 @@ def _result_from_agent_envelope_payload(payload: Any) -> OaApprovalResult | None
     if envelope.kind != AgentKind.OA_APPROVAL:
         raise ValidationError.from_exception_data(
             "OaApprovalResult",
-            [
+            cast(Any, [
                 {
                     "type": "value_error",
                     "loc": ("kind",),
@@ -593,7 +593,7 @@ def _result_from_agent_envelope_payload(payload: Any) -> OaApprovalResult | None
                         )
                     },
                 }
-            ],
+            ]),
         )
     return OaApprovalResult.model_validate(envelope.domain_payload)
 

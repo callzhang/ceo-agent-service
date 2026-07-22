@@ -5084,6 +5084,11 @@ def test_run_service_starts_web_producer_and_consumer(monkeypatch, tmp_path):
     monkeypatch.setattr(cli, "run_task_maintenance_loop", task_maintenance_loop)
     monkeypatch.setattr(
         cli,
+        "run_quality_monitor_loop",
+        lambda store, interval_seconds, sleep: stop("quality-monitor"),
+    )
+    monkeypatch.setattr(
+        cli,
         "_record_service_failure",
         lambda settings, component, exc: failures.append((component, str(exc))),
     )
@@ -5120,6 +5125,7 @@ def test_run_service_starts_web_producer_and_consumer(monkeypatch, tmp_path):
         ("meeting-consumer", 10, 4, True),
         ("start", "ceo-agent-service-task-maintenance", True),
         ("task-maintenance", 31, 3600, True),
+        ("start", "ceo-agent-service-quality-monitor", True),
         ("wait",),
     ]
     assert failures == [
@@ -5129,8 +5135,9 @@ def test_run_service_starts_web_producer_and_consumer(monkeypatch, tmp_path):
         ("meeting-producer", "stop meeting-producer"),
         ("meeting-consumer", "stop meeting-consumer"),
         ("task-maintenance", "stop task-maintenance"),
+        ("quality-monitor", "stop quality-monitor"),
     ]
-    assert exits == [1, 1, 1, 1, 1, 1]
+    assert exits == [1, 1, 1, 1, 1, 1, 1]
 
 
 def test_run_service_requeues_processing_reply_tasks_on_startup(tmp_path):
