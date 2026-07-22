@@ -2963,7 +2963,7 @@ class DingTalkAutoReplyWorker:
             PlannedActionKind.NO_REPLY: "skipped",
             PlannedActionKind.HANDOFF_TO_HUMAN: "skipped",
             PlannedActionKind.BLOCKED: "blocked",
-            PlannedActionKind.STOP_WITH_ERROR: "failed",
+            PlannedActionKind.STOP_WITH_ERROR: "blocked",
         }
         send_status = terminal_statuses.get(execution.action.kind)
         if send_status is None:
@@ -8256,7 +8256,11 @@ class DingTalkAutoReplyWorker:
                 attempt_id,
                 send_status=(
                     "blocked"
-                    if authorization_wait or transient_dependency
+                    if (
+                        authorization_wait
+                        or transient_dependency
+                        or critical_info_unavailable
+                    )
                     else "failed"
                 ),
                 send_error=send_error,

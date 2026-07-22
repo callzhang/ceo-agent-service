@@ -9549,7 +9549,7 @@ def test_critical_info_unavailable_stop_with_error_fails_queued_task(
     attempt = worker.store.get_reply_attempt(1)
     assert attempt is not None
     assert attempt.action == "stop_with_error"
-    assert attempt.send_status == "failed"
+    assert attempt.send_status == "blocked"
     assert attempt.send_error == reason
     assert final_sent(dws) == []
     assert [

@@ -2112,6 +2112,7 @@ def test_universal_reply_leak_check_block_is_definite_failure(
         (PlannedActionKind.NO_REPLY, "skipped"),
         (PlannedActionKind.HANDOFF_TO_HUMAN, "skipped"),
         (PlannedActionKind.BLOCKED, "blocked"),
+        (PlannedActionKind.STOP_WITH_ERROR, "blocked"),
     ],
 )
 def test_universal_terminal_actions_record_attempt_and_complete(
@@ -2144,7 +2145,8 @@ def test_universal_terminal_actions_record_attempt_and_complete(
         handoff_event = json.loads(attempt.audit_tool_events_json)[-1]
         assert handoff_event["tool"] == "universal_handoff"
         assert json.loads(handoff_event["output"])["notification_invoked"] is True
-    assert store.has_seen("msg-context") is True
+    expected_seen = kind is not PlannedActionKind.STOP_WITH_ERROR
+    assert store.has_seen("msg-context") is expected_seen
 
 
 @pytest.mark.parametrize(

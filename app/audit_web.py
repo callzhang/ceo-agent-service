@@ -6182,7 +6182,7 @@ def _visible_universal_action_status(action) -> str:
         "no_reply": "skipped",
         "handoff_to_human": "skipped",
         "blocked": "blocked",
-        "stop_with_error": "failed",
+        "stop_with_error": "blocked",
     }
     return terminal_outcomes.get(action.kind, action.status)
 
@@ -6201,7 +6201,7 @@ def _display_universal_action_kind(value: str) -> str:
         "no_reply": "无需回复",
         "handoff_to_human": "转人工",
         "blocked": "等待处理",
-        "stop_with_error": "处理失败",
+        "stop_with_error": "处理受阻",
     }
     return labels.get(value, "自动处理")
 

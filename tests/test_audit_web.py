@@ -3734,7 +3734,8 @@ def test_universal_terminal_failure_displays_business_outcome(tmp_path: Path):
 
     assert status == 200
     for html in (history_html, detail_html):
-        assert "处理失败 · Failed" in html
+        assert "处理受阻 · Blocked" in html
+        assert "处理失败 · Failed" not in html
         assert "处理失败 · Succeeded" not in html
 
 
