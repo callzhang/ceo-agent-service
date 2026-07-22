@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from app.codex_decision import _subprocess_failure_reason
-from app.codex_runner import CodexRunner, _config_string
+from app.codex_runner import CodexRunner, _config_string, memory_connector_config_issue
 from app.memory_connector_auth import MemoryConnectorAuthorizationRequired
 from app.memory_connector_client import MemoryWriteResult
 from app.memory_setup import codex_config_has_memory_connector
@@ -50,6 +50,9 @@ class CodexMcpMemoryClient:
             raise MemoryConnectorAuthorizationRequired(
                 "memory connector native Codex MCP is not configured"
             )
+        issue = memory_connector_config_issue()
+        if issue:
+            raise MemoryConnectorAuthorizationRequired(issue)
         if self.direct_client is None:
             return
         try:

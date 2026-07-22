@@ -181,7 +181,14 @@ def test_memory_dependency_blocks_before_planner_and_never_opens_browser(
     assert client.login_calls == 0
 
 
-def test_codex_mcp_memory_client_falls_back_to_native_codex_config(tmp_path: Path):
+def test_codex_mcp_memory_client_falls_back_to_native_codex_config(
+    tmp_path: Path,
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        "app.codex_memory_client.memory_connector_config_issue",
+        lambda: "",
+    )
     codex_config = tmp_path / "config.toml"
     codex_config.write_text(
         '[mcp_servers.memory_connector]\nurl = "https://memory.example/mcp/"\n',
@@ -256,6 +263,32 @@ def test_codex_mcp_memory_client_falls_back_to_native_codex_config(tmp_path: Pat
     assert 'mcp_servers.memory_connector.enabled_tools=["memory_write"]' in captured[
         "command"
     ]
+
+
+def test_codex_mcp_memory_client_requires_transferable_auth(
+    tmp_path: Path,
+    monkeypatch,
+):
+    codex_config = tmp_path / "config.toml"
+    codex_config.write_text(
+        '[mcp_servers.memory_connector]\nurl = "https://memory.example/mcp/"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "app.codex_memory_client.memory_connector_config_issue",
+        lambda: "memory connector transferable auth is missing",
+    )
+    client = CodexMcpMemoryClient(
+        workspace=tmp_path,
+        codex_config_path=codex_config,
+        executor=lambda _command, _prompt: "",
+    )
+
+    with pytest.raises(
+        MemoryConnectorAuthorizationRequired,
+        match="transferable auth is missing",
+    ):
+        client.ensure_ready_sync()
 
 
 def test_codex_mcp_memory_client_requires_native_codex_config(tmp_path: Path):
