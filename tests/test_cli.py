@@ -2545,7 +2545,7 @@ def test_reset_codex_sessions_command_only_clears_conversation_sessions(tmp_path
     assert attempt.codex_session_id == "session-1"
 
 
-@pytest.mark.parametrize("send_status", ["dry_run", "failed"])
+@pytest.mark.parametrize("send_status", ["dry_run", "failed", "pending"])
 def test_send_attempt_command_sends_existing_unsent_reply_without_rerunning_codex(
     monkeypatch, tmp_path, capsys, send_status
 ):
@@ -2615,6 +2615,41 @@ def test_send_attempt_command_sends_existing_unsent_reply_without_rerunning_code
     assert '"kind": "native_reply"' in sent_reply.send_result_json
     assert '"ref_message_id": "msg-1"' in sent_reply.send_result_json
     assert '"send_status": "sent"' in capsys.readouterr().out
+
+
+def test_send_attempt_command_marks_existing_sent_reply_without_duplicate_send(
+    monkeypatch, tmp_path, capsys
+):
+    class FakeDws:
+        def __init__(self, **kwargs):
+            raise AssertionError("DwsClient should not be constructed")
+
+    monkeypatch.setattr(cli, "DwsClient", FakeDws)
+    settings = WorkerSettings(db_path=tmp_path / "worker.sqlite3", dry_run=False)
+    store = cli.AutoReplyStore(settings.db_path)
+    store.upsert_conversation("cid-1", "Friday", False, None)
+    enqueue_trigger_task(store)
+    attempt_id = store.record_reply_attempt(
+        conversation_id="cid-1",
+        conversation_title="Friday",
+        trigger_message_id="msg-1",
+        trigger_sender="Phina",
+        trigger_text="@Alex Chen 看一下",
+        action="send_reply",
+        sensitivity_kind="general",
+        send_status="pending",
+    )
+    store.update_reply_attempt(attempt_id, final_reply_text="新回复")
+    store.record_sent_reply("cid-1", "msg-1", "已发回复", send_result_json='{"ok":true}')
+
+    result = send_attempt_command(settings, attempt_id)
+
+    assert result["send_status"] == "sent"
+    updated = cli.AutoReplyStore(settings.db_path).get_reply_attempt(attempt_id)
+    assert updated is not None
+    assert updated.send_status == "sent"
+    assert updated.send_error == "already_sent"
+    assert "已发回复" in capsys.readouterr().out
 
 
 def test_send_attempt_command_executes_existing_dry_run_calendar_response(

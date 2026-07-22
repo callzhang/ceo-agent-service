@@ -1437,7 +1437,7 @@ def send_attempt_command(settings: WorkerSettings, attempt_id: int) -> dict[str,
     attempt = store.get_reply_attempt(attempt_id)
     if attempt is None:
         raise SystemExit(f"reply attempt not found: {attempt_id}")
-    if attempt.send_status not in {"dry_run", "failed"}:
+    if attempt.send_status not in {"dry_run", "failed", "pending"}:
         raise SystemExit(
             f"reply attempt {attempt_id} is not an unsent attempt: "
             f"{attempt.send_status}"
@@ -1479,6 +1479,28 @@ def send_attempt_command(settings: WorkerSettings, attempt_id: int) -> dict[str,
     conversation = store.get_conversation(attempt.conversation_id)
     if conversation is None:
         raise SystemExit(f"conversation not found: {attempt.conversation_id}")
+    sent_reply = store.get_sent_reply(
+        attempt.conversation_id,
+        attempt.trigger_message_id,
+    )
+    if sent_reply is not None:
+        store.update_reply_attempt(
+            attempt.id,
+            send_status="sent",
+            send_error="already_sent",
+            retry_count=0,
+        )
+        result = {
+            "attempt_id": attempt.id,
+            "conversation_title": attempt.conversation_title,
+            "trigger_sender": attempt.trigger_sender,
+            "trigger_text_excerpt": _excerpt(attempt.trigger_text),
+            "send_status": "sent",
+            "reply_text_excerpt": _excerpt(sent_reply.reply_text),
+            "send_result_excerpt": _excerpt(sent_reply.send_result_json),
+        }
+        print(json.dumps(result, ensure_ascii=False), flush=True)
+        return result
 
     dws = DwsClient(
         ding_robot_code=settings.ding_robot_code,
