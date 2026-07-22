@@ -38,6 +38,8 @@ TERMINAL_CODES = frozenset(
         "ssrf_blocked",
     }
 )
+DEFAULT_SEND_TIMEOUT_SECONDS = 60.0
+DEFAULT_SEND_LEASE_STALE_SECONDS = 5 * 60
 
 
 @dataclass(frozen=True)
@@ -89,12 +91,19 @@ class FeishuDeliverySender:
         send_mode: str = "confirm",
         max_sends_per_minute: int = 10,
         max_attempts: int = 3,
+        send_timeout_seconds: float = DEFAULT_SEND_TIMEOUT_SECONDS,
+        send_lease_stale_seconds: int = DEFAULT_SEND_LEASE_STALE_SECONDS,
         now: Callable[[], datetime] | None = None,
         monotonic_clock: Callable[[], float] = monotonic,
     ):
         if send_mode not in {"confirm", "auto"}:
             raise ValueError("Feishu send_mode must be confirm or auto")
-        if max_sends_per_minute <= 0 or max_attempts <= 0:
+        if (
+            max_sends_per_minute <= 0
+            or max_attempts <= 0
+            or send_timeout_seconds <= 0
+            or send_lease_stale_seconds <= send_timeout_seconds
+        ):
             raise ValueError("Feishu delivery limits must be positive")
         self.store = store
         self.client = client
@@ -103,6 +112,8 @@ class FeishuDeliverySender:
         self.send_mode = send_mode
         self.max_sends_per_minute = max_sends_per_minute
         self.max_attempts = max_attempts
+        self.send_timeout_seconds = send_timeout_seconds
+        self.send_lease_stale_seconds = send_lease_stale_seconds
         self.now = now or (lambda: datetime.now(timezone.utc))
         self.monotonic_clock = monotonic_clock
         self._sent_times: deque[float] = deque()
@@ -117,10 +128,24 @@ class FeishuDeliverySender:
             raise PermissionError("Feishu authenticated client App ID is unavailable")
         return app_id
 
-    def _require_delivery_binding(self, delivery) -> str:
+    def _require_delivery_binding(
+        self, delivery, *, require_send_lease: bool = True
+    ) -> str:
         app_id = self._authenticated_app_id()
         if str(getattr(delivery, "app_id", "") or "").strip() != app_id:
             raise PermissionError("Feishu delivery App ID does not match client")
+        lease_token = str(getattr(delivery, "lease_token", "") or "").strip()
+        if require_send_lease and not lease_token:
+            raise ValueError("Feishu delivery has no active send lease")
+        validated = self.store.validate_feishu_delivery_for_send(
+            int(getattr(delivery, "id", 0) or 0),
+            app_id=app_id,
+            lease_token=(lease_token if require_send_lease else ""),
+        )
+        if validated.attempt_id != int(
+            getattr(delivery, "attempt_id", 0) or 0
+        ):
+            raise ValueError("Feishu delivery attempt identity changed")
         return app_id
 
     def _rate_slot(self) -> bool:
@@ -141,6 +166,7 @@ class FeishuDeliverySender:
             delivery.id,
             from_statuses=("sending",),
             to_status=status,
+            expected_lease_token=delivery.lease_token,
             **fields,
         )
 
@@ -173,9 +199,7 @@ class FeishuDeliverySender:
 
         code = result.error_code if result.error_code in KNOWN_ERROR_CODES else "unknown"
         error = f"feishu_send_failed:{code}"
-        if (
-            code in RETRYABLE_CODES or code == "unknown"
-        ) and delivery.attempts < self.max_attempts:
+        if code in RETRYABLE_CODES and delivery.attempts < self.max_attempts:
             self._transition(
                 delivery,
                 "retry",
@@ -187,7 +211,7 @@ class FeishuDeliverySender:
                 error=error,
             )
             return FeishuDeliveryOutcome("retry", code, error)
-        if code in TERMINAL_CODES:
+        if code in TERMINAL_CODES or code in RETRYABLE_CODES:
             self._transition(
                 delivery,
                 "failed",
@@ -196,7 +220,7 @@ class FeishuDeliverySender:
                 error=error,
             )
             return FeishuDeliveryOutcome("failed", code, error)
-        # Timeout and exhausted/unknown outcomes cannot prove non-delivery.
+        # Only timeouts and unknown results lack proof of non-delivery.
         self._transition(
             delivery,
             "send_unknown",
@@ -224,7 +248,10 @@ class FeishuDeliverySender:
                 "retry", "rate_limited", "local_rate_limit"
             )
         try:
-            result = await self.client.send_reply(delivery)
+            result = await asyncio.wait_for(
+                self.client.send_reply(delivery),
+                timeout=self.send_timeout_seconds,
+            )
         except asyncio.CancelledError:
             # The caller timed out while an upstream action may already have
             # happened.  Preserve uncertainty rather than leaving ``sending``
@@ -248,7 +275,7 @@ class FeishuDeliverySender:
                     error=error,
                 )
                 return FeishuDeliveryOutcome("retry", code, error)
-            if code in TERMINAL_CODES:
+            if code in TERMINAL_CODES or code in RETRYABLE_CODES:
                 self._transition(
                     delivery, "failed", error_code=code, error=error
                 )
@@ -265,15 +292,25 @@ class FeishuDeliverySender:
         if limit <= 0 or not self.outbound_gate_open:
             return 0
         app_id = self._authenticated_app_id()
-        deliveries = self.store.claim_feishu_deliveries(
-            limit,
-            statuses=("ready_to_send", "retry"),
-            app_id=app_id,
-            approved_only=self.send_mode == "confirm",
-        )
-        for delivery in deliveries:
-            await self.send_claimed(delivery)
-        return len(deliveries)
+        processed = 0
+        for _ in range(limit):
+            recover_orphaned_sending(
+                self.store,
+                app_id=app_id,
+                max_age_seconds=self.send_lease_stale_seconds,
+                now=self.now(),
+            )
+            deliveries = self.store.claim_feishu_deliveries(
+                1,
+                statuses=("ready_to_send", "retry"),
+                app_id=app_id,
+                approved_only=self.send_mode == "confirm",
+            )
+            if not deliveries:
+                break
+            await self.send_claimed(deliveries[0])
+            processed += 1
+        return processed
 
     async def approve_and_send(
         self,
@@ -288,7 +325,7 @@ class FeishuDeliverySender:
         pending = self.store.get_feishu_delivery(delivery_id)
         if pending is None:
             raise ValueError(f"Feishu delivery {delivery_id} is not sendable")
-        self._require_delivery_binding(pending)
+        self._require_delivery_binding(pending, require_send_lease=False)
         if not pending.approved_at:
             pending = self.store.approve_feishu_delivery(
                 delivery_id,
@@ -315,18 +352,28 @@ class FeishuDeliverySender:
             raise ValueError(f"Feishu delivery {delivery_id} is not rejectable")
 
 
-def recover_orphaned_sending(store, *, app_id: str = "") -> int:
+def recover_orphaned_sending(
+    store,
+    *,
+    app_id: str = "",
+    max_age_seconds: int = DEFAULT_SEND_LEASE_STALE_SECONDS,
+    now: datetime | None = None,
+) -> int:
     """Never blindly resend after a crash; require explicit human verification."""
     recovered = 0
-    for delivery in store.list_feishu_deliveries(
-        status="sending", app_id=app_id
+    for delivery in store.list_stale_feishu_sending(
+        max_age_seconds, app_id=app_id, now=now
     ):
-        updated = store.transition_feishu_delivery(
-            delivery.id,
-            from_statuses=("sending",),
-            to_status="send_unknown",
-            error_code="unknown",
-            error="orphaned_sending_requires_review",
-        )
+        try:
+            updated = store.transition_feishu_delivery(
+                delivery.id,
+                from_statuses=("sending",),
+                to_status="send_unknown",
+                error_code="unknown",
+                error="orphaned_sending_requires_review",
+                expected_lease_token=delivery.lease_token,
+            )
+        except ValueError:
+            continue
         recovered += int(updated is not None)
     return recovered

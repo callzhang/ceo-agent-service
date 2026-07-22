@@ -1,4 +1,4 @@
-import json
+import sqlite3
 
 import pytest
 
@@ -39,16 +39,25 @@ def _trigger():
 
 def _seed(store):
     trigger = _trigger()
-    store.enqueue_reply_task(
-        channel="feishu",
-        conversation_id=trigger.chat_id,
-        conversation_title=trigger.chat_title,
-        single_chat=False,
-        trigger_message_id=trigger.message_id,
-        trigger_create_time=trigger.event_create_time,
-        trigger_sender=trigger.sender_name,
-        trigger_text=trigger.body_text,
-        trigger_message_json=trigger.model_dump_json(),
+    store.record_feishu_event(
+        trigger,
+        eligibility_status="eligible",
+        store_body=True,
+    )
+
+
+def _seed_second(store):
+    store.record_feishu_event(
+        _trigger().model_copy(
+            update={
+                "event_id": "evt_2",
+                "message_id": "om_2",
+                "chat_id": "oc_2",
+                "thread_id": "",
+            }
+        ),
+        eligibility_status="eligible",
+        store_body=True,
     )
 
 
@@ -134,6 +143,117 @@ def test_consumer_rejects_runner_without_hard_tool_isolation(store):
 
     with pytest.raises(ValueError, match="tool isolation"):
         FeishuReplyConsumer(store, UnsafeRunner())
+
+
+def test_consumer_claims_and_finishes_one_task_at_a_time(store):
+    _seed(store)
+    _seed_second(store)
+    tasks = store.list_reply_tasks(channel="feishu")
+    first_id, second_id = sorted(task.id for task in tasks)
+    consumer = FeishuReplyConsumer(store, FakeRunner())
+
+    def finish(task):
+        current = {row.id: row for row in store.list_reply_tasks(channel="feishu")}
+        if task.id == first_id:
+            assert current[second_id].status == "pending"
+        assert store.complete_processing_reply_task(
+            task.id, channel="feishu"
+        )
+
+    consumer.process = finish
+
+    assert consumer.run_once(limit=2) == 2
+    assert all(
+        task.status == "done"
+        for task in store.list_reply_tasks(channel="feishu")
+    )
+
+
+def test_standalone_consumer_reclaims_only_stale_feishu_task(store):
+    _seed(store)
+    [claimed] = store.claim_reply_tasks(1, channel="feishu")
+    with sqlite3.connect(store.path) as db:
+        db.execute(
+            "update reply_tasks set locked_at=datetime('now', '-31 minutes') where id=?",
+            (claimed.id,),
+        )
+    runner = FakeRunner(CodexDecision(action=CodexAction.NO_REPLY))
+
+    assert FeishuReplyConsumer(store, runner).run_once(limit=1) == 1
+
+    [task] = store.list_reply_tasks(channel="feishu")
+    assert task.status == "done"
+    assert task.attempts == 2
+    assert len(runner.prompts) == 1
+
+
+def test_consumer_does_not_reclaim_during_json_repair_window(store):
+    _seed(store)
+    [claimed] = store.claim_reply_tasks(1, channel="feishu")
+    with sqlite3.connect(store.path) as db:
+        db.execute(
+            "update reply_tasks set locked_at=datetime('now', '-31 minutes') where id=?",
+            (claimed.id,),
+        )
+    runner = FakeRunner(CodexDecision(action=CodexAction.NO_REPLY))
+    runner.timeout_seconds = 1200
+
+    assert FeishuReplyConsumer(store, runner).run_once(limit=1) == 0
+
+    [task] = store.list_reply_tasks(channel="feishu")
+    assert task.status == "processing"
+    assert task.attempts == 1
+    assert runner.prompts == []
+
+
+def test_unexpected_task_failure_does_not_stop_later_task(store):
+    _seed(store)
+    _seed_second(store)
+    first_id, second_id = sorted(
+        task.id for task in store.list_reply_tasks(channel="feishu")
+    )
+    consumer = FeishuReplyConsumer(store, FakeRunner())
+
+    def fail_first(task):
+        if task.id == first_id:
+            raise RuntimeError("raw secret must not be persisted")
+        assert store.complete_processing_reply_task(
+            task.id, channel="feishu"
+        )
+
+    consumer.process = fail_first
+
+    assert consumer.run_once(limit=2) == 2
+    tasks = {row.id: row for row in store.list_reply_tasks(channel="feishu")}
+    assert tasks[first_id].status == "failed"
+    assert tasks[first_id].error == "feishu_consumer_failed:RuntimeError"
+    assert tasks[second_id].status == "done"
+
+
+def test_atomic_finalize_rolls_back_attempt_if_delivery_insert_fails(store):
+    _seed(store)
+    with store._connect() as db:
+        db.execute(
+            """
+            create trigger reject_test_delivery
+            before insert on feishu_deliveries
+            begin
+                select raise(abort, 'injected delivery failure');
+            end
+            """
+        )
+    runner = FakeRunner(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="reply")
+    )
+
+    assert FeishuReplyConsumer(store, runner).run_once(limit=1) == 1
+
+    [task] = store.list_reply_tasks(channel="feishu")
+    assert task.status == "failed"
+    assert task.error == "feishu_consumer_failed:IntegrityError"
+    assert store.list_reply_attempts() == []
+    assert store.list_feishu_deliveries() == []
+    assert len(runner.prompts) == 1
 
 
 def test_idempotency_key_is_stable_for_same_identity(store):

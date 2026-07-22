@@ -21,10 +21,11 @@ def _message(
     chat_type: str = "group",
     body_text: str = "hello",
     created_at: str = "",
+    app_id: str = "cli_a",
 ):
     return FeishuInboundMessage(
         event_id=event_id or f"evt-{number}",
-        app_id="cli_a",
+        app_id=app_id,
         message_id=message_id or f"om_{number}",
         chat_id=chat_id,
         chat_type=chat_type,
@@ -47,6 +48,26 @@ def _eligible(store, number: int = 1, **message_fields):
         _message(number, **message_fields),
         eligibility_status="eligible",
         store_body=True,
+    )
+
+
+def _attempt(store, event):
+    task = next(
+        row
+        for row in store.list_reply_tasks(channel="feishu")
+        if row.id == event.reply_task_id
+    )
+    return store.record_reply_attempt(
+        conversation_id=task.conversation_id,
+        conversation_title=task.conversation_title,
+        trigger_message_id=event.message_id,
+        trigger_sender=event.sender_name or event.sender_open_id,
+        trigger_text=event.body_text,
+        action="send_reply",
+        sensitivity_kind="general",
+        draft_reply_text="reply",
+        send_status="pending",
+        channel="feishu",
     )
 
 
@@ -93,7 +114,8 @@ def test_eligible_event_and_reply_task_are_recorded_idempotently(tmp_path):
     assert duplicate.reply_task_id == first.reply_task_id
     tasks = store.list_reply_tasks(channel="feishu")
     assert len(tasks) == 1
-    assert tasks[0].conversation_id == "oc_1"
+    assert tasks[0].conversation_id.startswith("feishu:")
+    assert tasks[0].conversation_id.endswith(":oc_1")
     assert tasks[0].trigger_message_id == "om_1"
     assert tasks[0].trigger_text == "hello"
     assert store.count_reply_tasks(channel="dingtalk") == 0
@@ -269,8 +291,10 @@ def test_scope_rejection_fails_closed(tmp_path):
 def test_delivery_create_claim_unknown_retry_and_sent_keep_one_uuid(tmp_path):
     store = _store(tmp_path)
     event = _eligible(store)
+    attempt_id = _attempt(store, event)
     delivery = store.create_feishu_delivery(
         reply_task_id=event.reply_task_id,
+        attempt_id=attempt_id,
         app_id="cli_a",
         chat_id="oc_1",
         reply_to_message_id="om_1",
@@ -279,6 +303,7 @@ def test_delivery_create_claim_unknown_retry_and_sent_keep_one_uuid(tmp_path):
     )
     duplicate = store.create_feishu_delivery(
         reply_task_id=event.reply_task_id,
+        attempt_id=attempt_id,
         app_id="cli_a",
         chat_id="oc_1",
         reply_to_message_id="om_1",
@@ -299,10 +324,18 @@ def test_delivery_create_claim_unknown_retry_and_sent_keep_one_uuid(tmp_path):
         error="result not confirmed",
         request_log_id="log-1",
     )
-    retry = store.mark_feishu_delivery_retry(
+    verified_not_sent = store.reconcile_feishu_delivery_unknown(
         delivery.id,
-        error_code="send_timeout",
-        error="safe same-uuid retry",
+        app_id="cli_a",
+        outcome="not_sent",
+        verified_by="operator",
+        evidence_kind="message_lookup",
+    )
+    retry = store.requeue_feishu_delivery_after_verification(
+        delivery.id,
+        app_id="cli_a",
+        verified_by="operator",
+        evidence_kind="admin_audit",
         available_at="2026-07-22T12:05:00+08:00",
     )
     assert store.claim_feishu_delivery(
@@ -321,6 +354,7 @@ def test_delivery_create_claim_unknown_retry_and_sent_keep_one_uuid(tmp_path):
     assert duplicate.reply_text == "first reply"
     assert duplicate.idempotency_key == delivery.idempotency_key
     assert unknown.idempotency_key == delivery.idempotency_key
+    assert verified_not_sent.status == "failed"
     assert retry.idempotency_key == delivery.idempotency_key
     assert claimed_again.attempts == 2
     assert sent.status == "sent"
@@ -335,6 +369,7 @@ def test_delivery_claim_is_single_winner_and_reject_is_terminal(tmp_path):
     deliveries = [
         store.create_feishu_delivery(
             reply_task_id=event.reply_task_id,
+            attempt_id=_attempt(store, event),
             app_id="cli_a",
             chat_id="oc_1",
             reply_to_message_id=event.message_id,
@@ -362,6 +397,7 @@ def test_delivery_approval_is_audited_app_bound_and_claim_filterable(tmp_path):
     event = _eligible(store)
     delivery = store.create_feishu_delivery(
         reply_task_id=event.reply_task_id,
+        attempt_id=_attempt(store, event),
         app_id="cli_a",
         chat_id="oc_1",
         reply_to_message_id="om_1",
@@ -397,10 +433,11 @@ def test_delivery_approval_is_audited_app_bound_and_claim_filterable(tmp_path):
 def test_batch_claim_is_strictly_filtered_by_app_id(tmp_path):
     store = _store(tmp_path)
     first = _eligible(store, 1, chat_id="oc_a")
-    second = _eligible(store, 2, chat_id="oc_b")
+    second = _eligible(store, 2, chat_id="oc_b", app_id="cli_b")
     deliveries = [
         store.create_feishu_delivery(
             reply_task_id=event.reply_task_id,
+            attempt_id=_attempt(store, event),
             app_id=app_id,
             chat_id=event.chat_id,
             reply_to_message_id=event.message_id,
@@ -424,6 +461,7 @@ def test_batch_claims_at_most_one_delivery_per_chat(tmp_path):
     deliveries = [
         store.create_feishu_delivery(
             reply_task_id=event.reply_task_id,
+            attempt_id=_attempt(store, event),
             app_id="cli_a",
             chat_id=event.chat_id,
             reply_to_message_id=event.message_id,
@@ -440,7 +478,9 @@ def test_batch_claims_at_most_one_delivery_per_chat(tmp_path):
     assert [item.id for item in claimed] == [deliveries[0].id, deliveries[2].id]
     assert store.claim_feishu_delivery(deliveries[1].id) is None
     store.mark_feishu_delivery_failed(
-        deliveries[0].id, error_code="closed", error="first is done"
+        deliveries[0].id,
+        error_code="target_revoked",
+        error="first is done",
     )
     assert store.claim_feishu_delivery(deliveries[1].id) is not None
 
@@ -453,6 +493,7 @@ def test_later_delivery_cannot_overtake_delayed_retry_in_same_chat(tmp_path):
     deliveries = [
         store.create_feishu_delivery(
             reply_task_id=event.reply_task_id,
+            attempt_id=_attempt(store, event),
             app_id="cli_a",
             chat_id="oc_same",
             reply_to_message_id=event.message_id,
@@ -491,6 +532,7 @@ def test_concurrent_specific_claims_cannot_send_same_chat_in_parallel(tmp_path):
     deliveries = [
         store.create_feishu_delivery(
             reply_task_id=event.reply_task_id,
+            attempt_id=_attempt(store, event),
             app_id="cli_a",
             chat_id="oc_same",
             reply_to_message_id=event.message_id,
@@ -532,6 +574,7 @@ def test_delivery_cannot_be_created_for_dingtalk_task(tmp_path):
     with pytest.raises(ValueError, match="channel=feishu"):
         store.create_feishu_delivery(
             reply_task_id=task.id,
+            attempt_id=1,
             app_id="cli_a",
             chat_id="oc_1",
             reply_to_message_id="om_1",
@@ -545,6 +588,7 @@ def test_sent_transition_requires_remote_message_id(tmp_path):
     event = _eligible(store)
     delivery = store.create_feishu_delivery(
         reply_task_id=event.reply_task_id,
+        attempt_id=_attempt(store, event),
         app_id="cli_a",
         chat_id="oc_1",
         reply_to_message_id="om_1",
@@ -558,6 +602,41 @@ def test_sent_transition_requires_remote_message_id(tmp_path):
     assert store.get_feishu_delivery(delivery.id).status == "sending"
 
 
+def test_uncertain_send_cannot_be_misclassified_for_retry_or_failure(tmp_path):
+    store = _store(tmp_path)
+    event = _eligible(store)
+    delivery = store.create_feishu_delivery(
+        reply_task_id=event.reply_task_id,
+        attempt_id=_attempt(store, event),
+        app_id="cli_a",
+        chat_id="oc_1",
+        reply_to_message_id=event.message_id,
+        reply_in_thread=False,
+        reply_text="reply",
+    )
+    store.claim_feishu_delivery(delivery.id)
+
+    with pytest.raises(ValueError, match="confirmed retryable"):
+        store.mark_feishu_delivery_retry(
+            delivery.id,
+            error_code="send_timeout",
+            error="outcome unknown",
+        )
+    with pytest.raises(ValueError, match="must enter send_unknown"):
+        store.mark_feishu_delivery_failed(
+            delivery.id,
+            error_code="send_timeout",
+            error="outcome unknown",
+        )
+
+    unknown = store.mark_feishu_delivery_send_unknown(
+        delivery.id,
+        error_code="send_timeout",
+        error="outcome unknown",
+    )
+    assert unknown.status == "send_unknown"
+
+
 def test_unique_idempotency_key_cannot_cross_reply_tasks(tmp_path):
     store = _store(tmp_path)
     first = _eligible(store, 1)
@@ -565,6 +644,7 @@ def test_unique_idempotency_key_cannot_cross_reply_tasks(tmp_path):
     stable_key = "stable-key"
     store.create_feishu_delivery(
         reply_task_id=first.reply_task_id,
+        attempt_id=_attempt(store, first),
         app_id="cli_a",
         chat_id="oc_1",
         reply_to_message_id="om_1",
@@ -576,10 +656,26 @@ def test_unique_idempotency_key_cannot_cross_reply_tasks(tmp_path):
     with pytest.raises(sqlite3.IntegrityError):
         store.create_feishu_delivery(
             reply_task_id=second.reply_task_id,
+            attempt_id=_attempt(store, second),
             app_id="cli_a",
             chat_id="oc_1",
             reply_to_message_id="om_2",
             reply_in_thread=False,
             reply_text="two",
             idempotency_key=stable_key,
+        )
+
+
+def test_delivery_requires_a_durable_reply_attempt(tmp_path):
+    store = _store(tmp_path)
+    event = _eligible(store)
+
+    with pytest.raises(ValueError, match="durable reply attempt"):
+        store.create_feishu_delivery(
+            reply_task_id=event.reply_task_id,
+            app_id="cli_a",
+            chat_id="oc_1",
+            reply_to_message_id=event.message_id,
+            reply_in_thread=False,
+            reply_text="must not send",
         )

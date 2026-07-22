@@ -34,8 +34,13 @@ def _seed(store: AutoReplyStore):
         store_body=True,
         enqueue_eligible=True,
     )
+    task = next(
+        row
+        for row in store.list_reply_tasks(channel="feishu")
+        if row.id == event.reply_task_id
+    )
     attempt_id = store.record_reply_attempt(
-        conversation_id=message.chat_id,
+        conversation_id=task.conversation_id,
         conversation_title=message.chat_title,
         trigger_message_id=message.message_id,
         trigger_sender=message.sender_name,

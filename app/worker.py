@@ -4628,10 +4628,10 @@ class DingTalkAutoReplyWorker:
         limit = max_tasks if max_tasks is not None else 50
         processed_tasks = 0
         stale_tasks = self.store.list_stale_processing_reply_tasks(
-            STALE_PROCESSING_TASK_SECONDS
+            STALE_PROCESSING_TASK_SECONDS, channel="dingtalk"
         )
         reset_count = self.store.reset_stale_processing_reply_tasks(
-            STALE_PROCESSING_TASK_SECONDS
+            STALE_PROCESSING_TASK_SECONDS, channel="dingtalk"
         )
         if reset_count:
             for stale_task in stale_tasks:

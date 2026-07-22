@@ -33,8 +33,26 @@ def _seed_delivery(db):
         store_body=True,
         enqueue_eligible=True,
     )
+    task = next(
+        row
+        for row in store.list_reply_tasks(channel="feishu")
+        if row.id == event.reply_task_id
+    )
+    attempt_id = store.record_reply_attempt(
+        conversation_id=task.conversation_id,
+        conversation_title=task.conversation_title,
+        trigger_message_id=message.message_id,
+        trigger_sender=message.sender_name,
+        trigger_text=message.body_text,
+        action="send_reply",
+        sensitivity_kind="general",
+        draft_reply_text="已审核草稿",
+        send_status="pending",
+        channel="feishu",
+    )
     return store.create_feishu_delivery(
         reply_task_id=event.reply_task_id,
+        attempt_id=attempt_id,
         app_id=message.app_id,
         chat_id=message.chat_id,
         reply_to_message_id=message.message_id,
@@ -184,6 +202,8 @@ def test_delivery_reject_is_local_and_configured_app_bound(
                 str(db),
                 "--id",
                 str(delivery.id),
+                "--rejected-by",
+                "operator",
             ]
         )
         == 2
@@ -201,6 +221,8 @@ def test_delivery_reject_is_local_and_configured_app_bound(
                 str(db),
                 "--id",
                 str(delivery.id),
+                "--rejected-by",
+                "operator",
             ]
         )
         == 0
@@ -275,8 +297,171 @@ def test_produce_once_only_attaches_stored_eligible_events(tmp_path, capsys):
     stored = store.get_feishu_event(record.id)
     assert stored is not None
     assert stored.reply_task_id > 0
-    task = store.get_reply_task_for_message(
-        "oc_cli_1", "om_cli_1", channel="feishu"
-    )
-    assert task is not None
+    [task] = store.list_reply_tasks(channel="feishu")
+    assert task.id == stored.reply_task_id
     assert '"enqueued": 1' in capsys.readouterr().out
+
+
+def test_unknown_reconcile_and_requeue_require_separate_cli_actions(
+    tmp_path, monkeypatch, capsys
+):
+    db = tmp_path / "db.sqlite3"
+    delivery = _seed_delivery(db)
+    store = AutoReplyStore(db)
+    store.approve_feishu_delivery(
+        delivery.id, app_id="cli_test", approved_by="first-reviewer"
+    )
+    store.claim_feishu_delivery(delivery.id, approved_only=True)
+    store.mark_feishu_delivery_send_unknown(
+        delivery.id,
+        error_code="send_timeout",
+        error="uncertain",
+    )
+    monkeypatch.setattr(cli.config, "feishu_app_id", lambda: "cli_test")
+
+    assert (
+        cli.main(
+            [
+                "deliveries",
+                "reconcile",
+                "--db",
+                str(db),
+                "--id",
+                str(delivery.id),
+                "--outcome",
+                "not-sent",
+                "--verified-by",
+                "operator",
+                "--evidence-kind",
+                "message_lookup",
+            ]
+        )
+        == 0
+    )
+    assert store.get_feishu_delivery(delivery.id).status == "failed"
+    capsys.readouterr()
+
+    assert (
+        cli.main(
+            [
+                "deliveries",
+                "requeue",
+                "--db",
+                str(db),
+                "--id",
+                str(delivery.id),
+                "--verified-by",
+                "operator",
+                "--evidence-kind",
+                "admin_audit",
+            ]
+        )
+        == 0
+    )
+    saved = store.get_feishu_delivery(delivery.id)
+    assert saved.status == "retry"
+    assert saved.approved_at == ""
+    assert '"approved": false' in capsys.readouterr().out
+
+
+def test_reconcile_sent_requires_verified_remote_message_id(
+    tmp_path, monkeypatch, capsys
+):
+    db = tmp_path / "db.sqlite3"
+    delivery = _seed_delivery(db)
+    store = AutoReplyStore(db)
+    store.claim_feishu_delivery(delivery.id)
+    store.mark_feishu_delivery_send_unknown(
+        delivery.id,
+        error_code="send_timeout",
+        error="uncertain",
+    )
+    monkeypatch.setattr(cli.config, "feishu_app_id", lambda: "cli_test")
+    base = [
+        "deliveries",
+        "reconcile",
+        "--db",
+        str(db),
+        "--id",
+        str(delivery.id),
+        "--outcome",
+        "sent",
+        "--verified-by",
+        "operator",
+        "--evidence-kind",
+        "feishu_ui",
+    ]
+
+    assert cli.main(base) == 2
+    assert "requires Feishu message ID" in capsys.readouterr().out
+    assert cli.main([*base, "--feishu-message-id", "om_remote"]) == 0
+    assert store.get_feishu_delivery(delivery.id).status == "sent"
+
+
+def test_reconcile_not_sent_preserves_request_log_id(
+    tmp_path, monkeypatch
+):
+    db = tmp_path / "db.sqlite3"
+    delivery = _seed_delivery(db)
+    store = AutoReplyStore(db)
+    store.claim_feishu_delivery(delivery.id)
+    store.mark_feishu_delivery_send_unknown(
+        delivery.id,
+        error_code="send_timeout",
+        error="uncertain",
+    )
+    monkeypatch.setattr(cli.config, "feishu_app_id", lambda: "cli_test")
+
+    assert (
+        cli.main(
+            [
+                "deliveries",
+                "reconcile",
+                "--db",
+                str(db),
+                "--id",
+                str(delivery.id),
+                "--outcome",
+                "not-sent",
+                "--verified-by",
+                "operator",
+                "--evidence-kind",
+                "message_lookup",
+                "--request-log-id",
+                "log-not-sent",
+            ]
+        )
+        == 0
+    )
+    assert store.get_feishu_delivery(delivery.id).request_log_id == "log-not-sent"
+
+
+def test_audit_events_requires_explicit_cross_app_or_configured_app(
+    tmp_path, monkeypatch, capsys
+):
+    db = tmp_path / "db.sqlite3"
+    _seed_delivery(db)
+    monkeypatch.setattr(cli.config, "feishu_app_id", lambda: "")
+
+    assert cli.main(["audit-events", "--db", str(db)]) == 2
+    assert "App ID is not configured" in capsys.readouterr().out
+    assert (
+        cli.main(["audit-events", "--db", str(db), "--all-apps"])
+        == 0
+    )
+    assert "attempt_recorded" in capsys.readouterr().out
+
+    assert (
+        cli.main(
+            [
+                "audit-events",
+                "--db",
+                str(db),
+                "--all-apps",
+                "--app-id",
+                "cli_test",
+            ]
+        )
+        == 2
+    )
+    assert "either --all-apps or --app-id" in capsys.readouterr().out

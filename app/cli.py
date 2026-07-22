@@ -2415,15 +2415,52 @@ def run_task_maintenance_loop(
     monotonic: Callable[[], float] = time.monotonic,
     network_ready: Callable[[], bool] = _macos_wifi_connected,
 ) -> None:
-    now = monotonic()
-    next_daily_run = now
-    next_follow_up_run = now
+    initial_now = monotonic()
+    next_daily_run = initial_now
+    next_follow_up_run = initial_now
+    next_feishu_retention_run = initial_now
+    local_store = AutoReplyStore(settings.db_path)
     while True:
+        retention_now = monotonic()
+        if retention_now >= next_feishu_retention_run:
+            next_feishu_retention_run = retention_now + daily_interval_seconds
+            try:
+                from app import config as _cfg
+                from app.feishu.maintenance import purge_expired_feishu_events
+
+                maintenance_result = purge_expired_feishu_events(
+                    local_store,
+                    retention_days=_cfg.feishu_event_retention_days(),
+                    app_id="",
+                )
+                if maintenance_result.more_may_remain:
+                    local_store.record_error(
+                        "",
+                        "",
+                        "feishu_retention_backlog",
+                        "feishu_retention_backlog:more_batches_remain",
+                    )
+                    next_feishu_retention_run = (
+                        retention_now + work_item_interval_seconds
+                    )
+            except Exception as exc:
+                local_store.record_error(
+                    "",
+                    "",
+                    "feishu_retention_maintenance",
+                    f"feishu_retention_maintenance:{type(exc).__name__}",
+                )
+                next_feishu_retention_run = retention_now + min(
+                    work_item_interval_seconds, 300
+                )
         if not network_ready():
             sleep(work_item_interval_seconds)
             continue
         process_work_items_command(settings)
         process_okr_reviews_command(settings)
+        # Work and review processing can be slow. Re-sample the clock so a
+        # daily or hourly follow-up deadline crossed during that work is still
+        # handled in this iteration.
         now = monotonic()
         if now >= next_daily_run:
             scan_task_sources_command(
@@ -2726,8 +2763,13 @@ def _recover_meeting_alignment_jobs_on_service_start(
 
 def _recover_processing_reply_tasks_on_service_start(settings: WorkerSettings) -> int:
     store = AutoReplyStore(settings.db_path)
-    recovered_tasks = store.reset_processing_reply_tasks()
-    return len(recovered_tasks)
+    # Feishu owns lease-aware stale recovery in its consumer.  Immediate
+    # startup reset would let a second service process steal an active model
+    # execution.  DingTalk and WeChat retain their existing crash recovery.
+    return sum(
+        len(store.reset_processing_reply_tasks(channel=channel))
+        for channel in ("dingtalk", "wechat")
+    )
 
 
 def _recover_processing_work_summary_inputs_on_service_start(

@@ -9810,7 +9810,7 @@ def test_stale_processing_task_with_terminal_attempt_is_requeued_not_completed(
     monkeypatch.setattr(
         worker.store,
         "reset_stale_processing_reply_tasks",
-        lambda _max_age_seconds: 0,
+        lambda _max_age_seconds, **_kwargs: 0,
     )
 
     assert worker.consume_once(max_tasks=1) == 0

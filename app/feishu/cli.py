@@ -210,6 +210,20 @@ def cmd_consume_once(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_maintenance_once(args: argparse.Namespace) -> int:
+    from app.feishu.maintenance import purge_expired_feishu_events
+
+    result = purge_expired_feishu_events(
+        _store(args),
+        retention_days=config.feishu_event_retention_days(),
+        app_id=str(args.app_id or "").strip(),
+        batch_limit=args.batch_limit,
+        max_batches=args.max_batches,
+    )
+    print(_json(result))
+    return 1 if result.more_may_remain else 0
+
+
 def cmd_scopes_list(args: argparse.Namespace) -> int:
     rows = _store(args).list_feishu_reply_scopes(
         app_id=str(args.app_id or config.feishu_app_id()).strip(),
@@ -256,6 +270,21 @@ def cmd_deliveries_list(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_audit_events_list(args: argparse.Namespace) -> int:
+    if args.all_apps and str(args.app_id or "").strip():
+        raise ValueError("use either --all-apps or --app-id")
+    selected_app_id = "" if args.all_apps else _configured_app_id(args)
+    rows = _store(args).list_feishu_audit_events(
+        app_id=selected_app_id,
+        entity_type=args.entity_type,
+        entity_id=args.entity_id,
+        before_id=args.before_id,
+        limit=args.limit,
+    )
+    print(_json([row.model_dump() for row in rows]))
+    return 0
+
+
 def cmd_delivery_approve(args: argparse.Namespace) -> int:
     """Record approval locally; the single service runtime performs the send."""
     if not config.feishu_live_send_allowed():
@@ -288,8 +317,62 @@ def cmd_delivery_reject(args: argparse.Namespace) -> int:
     app_id = str(config.feishu_app_id() or "").strip()
     if not app_id:
         raise ValueError("Feishu App ID is not configured")
-    _store(args).reject_feishu_delivery(args.id, app_id=app_id)
+    _store(args).reject_feishu_delivery(
+        args.id,
+        app_id=app_id,
+        rejected_by=args.rejected_by,
+    )
     print(_json({"id": args.id, "status": "rejected"}))
+    return 0
+
+
+def cmd_delivery_reconcile(args: argparse.Namespace) -> int:
+    app_id = _configured_app_id(args)
+    delivery = _store(args).reconcile_feishu_delivery_unknown(
+        args.id,
+        app_id=app_id,
+        outcome=args.outcome,
+        verified_by=args.verified_by,
+        evidence_kind=args.evidence_kind,
+        feishu_message_id=args.feishu_message_id,
+        request_log_id=args.request_log_id,
+    )
+    print(
+        _json(
+            {
+                "id": delivery.id,
+                "status": delivery.status,
+                "feishu_message_id": delivery.feishu_message_id,
+                "next": (
+                    "none"
+                    if delivery.status == "sent"
+                    else "Use deliveries requeue only after independently confirming non-delivery."
+                ),
+            }
+        )
+    )
+    return 0
+
+
+def cmd_delivery_requeue(args: argparse.Namespace) -> int:
+    app_id = _configured_app_id(args)
+    delivery = _store(args).requeue_feishu_delivery_after_verification(
+        args.id,
+        app_id=app_id,
+        verified_by=args.verified_by,
+        evidence_kind=args.evidence_kind,
+        available_at=args.available_at,
+    )
+    print(
+        _json(
+            {
+                "id": delivery.id,
+                "status": delivery.status,
+                "approved": bool(delivery.approved_at),
+                "next": "A fresh approval is required in confirm mode.",
+            }
+        )
+    )
     return 0
 
 
@@ -339,6 +422,27 @@ def build_parser() -> argparse.ArgumentParser:
     consume.add_argument("--limit", type=int, default=50)
     consume.set_defaults(func=cmd_consume_once)
 
+    maintenance = sub.add_parser(
+        "maintenance-once", help="bounded local retention cleanup; no network"
+    )
+    _add_db(maintenance)
+    _add_app_id(maintenance)
+    maintenance.add_argument("--batch-limit", type=int, default=500)
+    maintenance.add_argument("--max-batches", type=int, default=20)
+    maintenance.set_defaults(func=cmd_maintenance_once)
+
+    audit_events = sub.add_parser(
+        "audit-events", help="list append-only Feishu state evidence"
+    )
+    _add_db(audit_events)
+    _add_app_id(audit_events)
+    audit_events.add_argument("--all-apps", action="store_true")
+    audit_events.add_argument("--entity-type", default="")
+    audit_events.add_argument("--entity-id", default="")
+    audit_events.add_argument("--before-id", type=int, default=0)
+    audit_events.add_argument("--limit", type=int, default=100)
+    audit_events.set_defaults(func=cmd_audit_events_list)
+
     scopes = sub.add_parser("scopes")
     scope_sub = scopes.add_subparsers(dest="scope_command", required=True)
     scope_list = scope_sub.add_parser("list")
@@ -381,7 +485,36 @@ def build_parser() -> argparse.ArgumentParser:
     reject = delivery_sub.add_parser("reject")
     _add_db(reject)
     reject.add_argument("--id", type=int, required=True)
+    reject.add_argument("--rejected-by", required=True)
     reject.set_defaults(func=cmd_delivery_reject)
+    reconcile = delivery_sub.add_parser("reconcile")
+    _add_db(reconcile)
+    _add_app_id(reconcile)
+    reconcile.add_argument("--id", type=int, required=True)
+    reconcile.add_argument(
+        "--outcome", choices=("sent", "not-sent"), required=True
+    )
+    reconcile.add_argument("--verified-by", required=True)
+    reconcile.add_argument(
+        "--evidence-kind",
+        choices=("feishu_ui", "message_lookup", "admin_audit"),
+        required=True,
+    )
+    reconcile.add_argument("--feishu-message-id", default="")
+    reconcile.add_argument("--request-log-id", default="")
+    reconcile.set_defaults(func=cmd_delivery_reconcile)
+    requeue = delivery_sub.add_parser("requeue")
+    _add_db(requeue)
+    _add_app_id(requeue)
+    requeue.add_argument("--id", type=int, required=True)
+    requeue.add_argument("--verified-by", required=True)
+    requeue.add_argument(
+        "--evidence-kind",
+        choices=("feishu_ui", "message_lookup", "admin_audit"),
+        required=True,
+    )
+    requeue.add_argument("--available-at", default="")
+    requeue.set_defaults(func=cmd_delivery_requeue)
     return parser
 
 

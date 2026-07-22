@@ -436,8 +436,13 @@ def _seed_feishu_pending(store: AutoReplyStore) -> int:
         store_body=True,
         enqueue_eligible=True,
     )
+    task = next(
+        row
+        for row in store.list_reply_tasks(channel="feishu")
+        if row.id == event.reply_task_id
+    )
     attempt_id = store.record_reply_attempt(
-        conversation_id=message.chat_id,
+        conversation_id=task.conversation_id,
         conversation_title=message.chat_title,
         trigger_message_id=message.message_id,
         trigger_sender=message.sender_name,
@@ -830,8 +835,37 @@ def test_history_feishu_object_filter_isolated_from_other_message_channels(
         ("wechat", "WeChat History Group", "msg-wechat"),
         ("feishu", "Feishu History Group", "msg-feishu"),
     ):
+        conversation_id = f"cid-{channel}"
+        if channel == "feishu":
+            from app.feishu.models import FeishuInboundMessage
+
+            event = store.record_feishu_event(
+                FeishuInboundMessage(
+                    event_id="evt-history-filter-feishu",
+                    app_id="cli-history-filter",
+                    message_id=message_id,
+                    chat_id="oc-history-filter",
+                    chat_type="group",
+                    chat_title=title,
+                    sender_open_id="ou-history-filter",
+                    sender_name="Alex",
+                    message_type="text",
+                    mentioned_bot=True,
+                    body_text="feishu channel filter",
+                    event_create_time="2026-07-22T10:00:00+08:00",
+                    received_at="2026-07-22T10:00:01+08:00",
+                ),
+                eligibility_status="eligible",
+                store_body=True,
+            )
+            task = next(
+                row
+                for row in store.list_reply_tasks(channel="feishu")
+                if row.id == event.reply_task_id
+            )
+            conversation_id = task.conversation_id
         store.record_reply_attempt(
-            conversation_id=f"cid-{channel}",
+            conversation_id=conversation_id,
             conversation_title=title,
             trigger_message_id=message_id,
             trigger_sender="Alex",

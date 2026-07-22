@@ -6,6 +6,7 @@ import pytest
 
 from app.feishu.delivery import FeishuDeliverySender, delivery_idempotency_key
 from app.feishu.listener import FeishuListenerHealth
+from app.feishu.models import FeishuInboundMessage
 from app.feishu import service
 from app.feishu.service import component_names
 from app.store import AutoReplyStore
@@ -51,25 +52,54 @@ def test_runtime_health_returns_safe_listener_snapshot():
 
 def _delivery_store(tmp_path):
     store = AutoReplyStore(tmp_path / "feishu-runtime.sqlite3")
-    store.enqueue_reply_task(
+    event = store.record_feishu_event(
+        FeishuInboundMessage(
+            event_id="evt_1",
+            app_id="cli_test",
+            message_id="om_1",
+            chat_id="oc_1",
+            chat_type="group",
+            chat_title="Group",
+            sender_open_id="ou_1",
+            sender_name="Alex",
+            message_type="text",
+            mentioned_bot=True,
+            body_text="hi",
+            event_create_time="2026-07-22T03:20:00+00:00",
+            received_at="2026-07-22T03:20:01+00:00",
+        ),
+        eligibility_status="eligible",
+        store_body=True,
+    )
+    task = next(
+        row
+        for row in store.list_reply_tasks(channel="feishu")
+        if row.id == event.reply_task_id
+    )
+    attempt_id = store.record_reply_attempt(
+        conversation_id=task.conversation_id,
+        conversation_title=task.conversation_title,
+        trigger_message_id=event.message_id,
+        trigger_sender=event.sender_name,
+        trigger_text=event.body_text,
+        action="send_reply",
+        sensitivity_kind="general",
+        draft_reply_text="收到",
+        send_status="pending",
         channel="feishu",
-        conversation_id="oc_1",
-        conversation_title="Group",
-        single_chat=False,
-        trigger_message_id="om_1",
-        trigger_create_time="2026-07-22T03:20:00+00:00",
-        trigger_sender="Alex",
-        trigger_text="hi",
     )
     delivery = store.create_feishu_delivery(
-        reply_task_id=1,
+        reply_task_id=event.reply_task_id,
+        attempt_id=attempt_id,
         app_id="cli_test",
         chat_id="oc_1",
         reply_to_message_id="om_1",
         reply_in_thread=False,
         reply_text="收到",
         idempotency_key=delivery_idempotency_key(
-            app_id="cli_test", reply_task_id=1, trigger_message_id="om_1"
+            app_id="cli_test",
+            reply_task_id=event.reply_task_id,
+            trigger_message_id="om_1",
         ),
     )
     return store, delivery

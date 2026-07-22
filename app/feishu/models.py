@@ -70,6 +70,7 @@ class FeishuEventRecord(BaseModel):
     mentioned_bot: bool
     body_text: str
     event_create_time: str
+    event_create_time_ms: int = 0
     received_at: str
     eligibility_status: str
     reject_reason: str = ""
@@ -131,6 +132,7 @@ class FeishuDelivery(BaseModel):
     feishu_message_id: str = ""
     request_log_id: str = ""
     attempts: int = 0
+    lease_token: str = ""
     approved_at: str = ""
     approved_by: str = ""
     locked_at: str = ""
@@ -139,3 +141,20 @@ class FeishuDelivery(BaseModel):
     error: str = ""
     created_at: str = ""
     updated_at: str = ""
+
+
+class FeishuAuditEvent(BaseModel):
+    """Append-only, payload-free audit evidence for local Feishu mutations."""
+
+    model_config = ConfigDict(frozen=True)
+
+    id: int
+    app_id: str
+    entity_type: str
+    entity_id: str
+    event_type: str
+    previous_state: str = ""
+    new_state: str = ""
+    actor: str = ""
+    detail: str = ""
+    created_at: str = ""

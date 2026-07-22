@@ -22,12 +22,12 @@ def _scope(*, target_type="group", target_id="oc_1", enabled=True):
     )
 
 
-def _message(**updates):
+def _message(*, app_id="cli_test", **updates):
     sdk = FakeSdkMessage(create_time=str(int(NOW.timestamp() * 1000)))
     for key, value in updates.items():
         setattr(sdk, key, value)
     return normalize_sdk_message(
-        sdk, app_id="cli_test", now=lambda: NOW
+        sdk, app_id=app_id, now=lambda: NOW
     )
 
 
@@ -41,7 +41,23 @@ def test_normalizes_only_safe_business_fields():
 
 def test_missing_event_header_uses_deterministic_message_key():
     message = _message(raw={})
-    assert message.event_id == "message:om_1"
+    assert message.event_id == "message:cli_test:om_1"
+
+
+def test_missing_event_header_scopes_message_key_by_normalized_app_id():
+    first = _message(app_id="  cli_a  ", raw={})
+    duplicate = _message(app_id="cli_a", raw={})
+    other_app = _message(app_id="cli_b", raw={})
+
+    assert first.app_id == "cli_a"
+    assert first.event_id == duplicate.event_id == "message:cli_a:om_1"
+    assert other_app.event_id == "message:cli_b:om_1"
+    assert first.event_id != other_app.event_id
+
+
+def test_official_event_id_remains_unchanged_across_apps():
+    assert _message(app_id="  cli_a  ").event_id == "evt_1"
+    assert _message(app_id="cli_b").event_id == "evt_1"
 
 
 def test_group_requires_structured_bot_mention_not_visible_text():

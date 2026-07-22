@@ -372,7 +372,11 @@ def register_feishu_review_routes(
         if not app_id:
             raise HTTPException(status_code=409, detail="Feishu App ID is missing")
         try:
-            store_factory().reject_feishu_delivery(delivery_id, app_id=app_id)
+            store_factory().reject_feishu_delivery(
+                delivery_id,
+                app_id=app_id,
+                rejected_by="local-audit-review",
+            )
         except PermissionError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         except ValueError as exc:

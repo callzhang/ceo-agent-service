@@ -54,7 +54,7 @@ def _first_nonempty(*values: Any) -> str:
     return ""
 
 
-def _event_id(message: Any, message_id: str) -> str:
+def _event_id(message: Any, message_id: str, app_id: str) -> str:
     raw = _value(message, "raw", {}) or {}
     event_id = _first_nonempty(
         _value(message, "event_id", ""),
@@ -62,10 +62,10 @@ def _event_id(message: Any, message_id: str) -> str:
         _nested(raw, "event", "header", "event_id"),
         _value(raw, "event_id", ""),
     )
-    # Some normalized SDK objects omit the event header.  A namespaced message
-    # id remains deterministic and, together with the DB's (app_id,message_id)
-    # uniqueness, preserves at-least-once callback idempotency.
-    return event_id or f"message:{message_id}"
+    # Some normalized SDK objects omit the event header.  Include the
+    # normalized application identity so two Apps receiving the same message
+    # id cannot collide at the DB's global event-id idempotency boundary.
+    return event_id or f"message:{app_id}:{message_id}"
 
 
 def _chat_title(message: Any) -> str:
@@ -89,7 +89,8 @@ def normalize_sdk_message(
     Raw payloads are inspected only to recover the event id; they are never
     copied into the returned model or SQLite.
     """
-    if not app_id.strip():
+    normalized_app_id = app_id.strip()
+    if not normalized_app_id:
         raise ValueError("Feishu app_id is required")
 
     conversation = _value(sdk_message, "conversation", None)
@@ -149,8 +150,8 @@ def normalize_sdk_message(
     clock = now or (lambda: datetime.now(timezone.utc))
     received = received_at or clock().astimezone(timezone.utc).isoformat()
     return FeishuInboundMessage(
-        event_id=_event_id(sdk_message, message_id),
-        app_id=app_id.strip(),
+        event_id=_event_id(sdk_message, message_id, normalized_app_id),
+        app_id=normalized_app_id,
         message_id=message_id,
         chat_id=chat_id,
         chat_type=chat_type,
