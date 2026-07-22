@@ -2439,7 +2439,7 @@ def _run_wechat_loop(settings: WorkerSettings, role: str) -> None:
                     "wechat_data_permission_required",
                     "WeChat data access was denied; reader paused until service restart.",
                 )
-                return
+                _pause_wechat_loop_until_service_restart(time.sleep)
             if isinstance(exc, ReaderIpcError):
                 store.record_error(
                     "wechat",
@@ -2447,9 +2447,14 @@ def _run_wechat_loop(settings: WorkerSettings, role: str) -> None:
                     "wechat_reader_unavailable",
                     f"WeChat reader unavailable; {role} paused until service restart: {exc}",
                 )
-                return
+                _pause_wechat_loop_until_service_restart(time.sleep)
             store.record_error("wechat", "", f"wechat_{role}_loop_error", str(exc))
         time.sleep(interval)
+
+
+def _pause_wechat_loop_until_service_restart(sleep: Callable[[float], None]) -> None:
+    while True:
+        sleep(3600)
 
 
 def run_service(

@@ -5483,6 +5483,9 @@ def test_wechat_loop_stops_after_app_data_permission_denial(
 ):
     import time
 
+    class StopLoop(Exception):
+        pass
+
     db = tmp_path / "w.sqlite3"
     store = AutoReplyStore(db)
     store.upsert_wechat_read_state(
@@ -5506,15 +5509,23 @@ def test_wechat_loop_stops_after_app_data_permission_denial(
             PermissionError(1, "Operation not permitted", "/private/wechat.db")
         ),
     )
-    monkeypatch.setattr(time, "sleep", lambda seconds: pytest.fail("must pause loop"))
+    sleeps = []
 
-    cli._run_wechat_loop(settings, "producer")
+    def sleep(seconds):
+        sleeps.append(seconds)
+        raise StopLoop
+
+    monkeypatch.setattr(time, "sleep", sleep)
+
+    with pytest.raises(StopLoop):
+        cli._run_wechat_loop(settings, "producer")
 
     errors = store.list_errors(limit=10)
     assert [error.kind for error in errors] == ["wechat_data_permission_required"]
     assert errors[0].detail == (
         "WeChat data access was denied; reader paused until service restart."
     )
+    assert sleeps == [3600]
 
 
 def test_wechat_loop_stops_after_reader_ipc_unavailable(
@@ -5524,6 +5535,9 @@ def test_wechat_loop_stops_after_reader_ipc_unavailable(
     import time
 
     from app.wechat.reader_ipc import ReaderIpcError
+
+    class StopLoop(Exception):
+        pass
 
     db = tmp_path / "w.sqlite3"
     store = AutoReplyStore(db)
@@ -5548,10 +5562,18 @@ def test_wechat_loop_stops_after_reader_ipc_unavailable(
             ReaderIpcError("WeChat reader unavailable: timed out")
         ),
     )
-    monkeypatch.setattr(time, "sleep", lambda seconds: pytest.fail("must pause loop"))
+    sleeps = []
 
-    cli._run_wechat_loop(settings, "producer")
+    def sleep(seconds):
+        sleeps.append(seconds)
+        raise StopLoop
+
+    monkeypatch.setattr(time, "sleep", sleep)
+
+    with pytest.raises(StopLoop):
+        cli._run_wechat_loop(settings, "producer")
 
     errors = store.list_errors(limit=10)
     assert [error.kind for error in errors] == ["wechat_reader_unavailable"]
     assert "producer paused until service restart" in errors[0].detail
+    assert sleeps == [3600]
