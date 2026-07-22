@@ -26,6 +26,16 @@ JSON value to end at the end of stdout, and parses the extracted text again with
 the standard JSON parser. It never repairs truncated or malformed DWS action
 results.
 
+All synchronous DWS CLI executions share one process-wide gate. The service has
+separate producer, consumer, meeting, and task-maintenance threads, but only one
+of them may launch and wait for a DWS child process at a time. This keeps a slow
+macOS code-signing assessment from turning independent DWS retries into a burst
+of concurrent Gatekeeper requests. The gate covers JSON, text, cache-refresh,
+and resource-download commands; it does not change each command's timeout or
+retry policy. Process starts are also paced at least one second apart by default;
+`CEO_DWS_PROCESS_MIN_INTERVAL_SECONDS` may override that interval, or set it to
+zero when pacing is intentionally disabled.
+
 For single-chat recent-context reads, a missing direct-user mapping is treated as
 unavailable context rather than a business failure. The worker returns an empty
 recent-context list for that read and does not write an `errors` row; unread
