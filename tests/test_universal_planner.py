@@ -79,6 +79,20 @@ def test_universal_planner_prompt_restricts_personnel_subject_id_sources():
     assert "Never use calendar participant uid values" in prompt
 
 
+def test_universal_planner_prompt_allows_only_one_terminal_control_action():
+    from app.universal_planner import UniversalPlanner
+
+    planner = UniversalPlanner(
+        workspace=Path("/tmp/universal-planner-workspace"),
+        codex_bin="codex",
+    )
+
+    prompt = planner.build_prompt(_context())
+
+    assert "Choose exactly one terminal conversation-control action per plan" in prompt
+    assert "Do not combine a chat reply with handoff_to_human" in prompt
+
+
 def test_parse_universal_plan_json_accepts_direct_and_newest_nested_jsonl_payload():
     from app.universal_planner import parse_universal_plan_json
 
