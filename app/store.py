@@ -6275,11 +6275,11 @@ class AutoReplyStore:
                     case
                         when runs.status='no_action' then 'skipped'
                         when runs.status in ('retry', 'failed') then 'failed'
+                        when runs.status='ready_to_send' and jobs.status='sent' then 'sent'
                         when runs.status='ready_to_send' and exists (
                             select 1 from meeting_alignment_runs as later_runs
                             where later_runs.job_id=runs.job_id and later_runs.id>runs.id
-                        ) then 'failed'
-                        when runs.status='ready_to_send' and jobs.status='sent' then 'sent'
+                        ) then 'ready_to_send'
                         when runs.status='ready_to_send' and jobs.status in ('retry', 'failed') then 'failed'
                         else runs.status
                     end as status,

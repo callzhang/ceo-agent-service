@@ -4873,10 +4873,10 @@ def _meeting_run_display_status(
         return "skipped"
     if run_status in {"retry", "failed"}:
         return "failed"
-    if run_status == "ready_to_send" and has_later_run:
-        return "failed"
     if run_status == "ready_to_send" and job_status == "sent":
         return "sent"
+    if run_status == "ready_to_send" and has_later_run:
+        return "ready_to_send"
     if run_status == "ready_to_send" and job_status in {"retry", "failed"}:
         return "failed"
     return run_status

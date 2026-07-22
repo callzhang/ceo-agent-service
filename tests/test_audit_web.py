@@ -514,6 +514,53 @@ def test_meeting_history_uses_reply_card_and_detail_contract(tmp_path: Path):
     assert f"/meeting-attempts/{run_id}" in missing_session_html
 
 
+def test_meeting_attempt_detail_keeps_ready_run_sent_after_later_run(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    job_id = store.upsert_meeting_alignment_job(
+        meeting_id="minutes-later-ready",
+        title="招聘站会",
+        source_json="{}",
+        participants_json="[]",
+        ended_at="2026-07-22T10:12:44+00:00",
+        eligible_at="2026-07-22T10:22:44+00:00",
+        status="pending",
+    )
+    first_run = store.record_meeting_alignment_run(
+        job_id=job_id,
+        codex_session_id="meeting-session-first",
+        decision_json='{"action":"send","target":{"title":"HR"}}',
+        audit_summary="首次生成完成",
+        status="ready_to_send",
+        error="",
+    )
+    store.record_meeting_alignment_run(
+        job_id=job_id,
+        codex_session_id="meeting-session-second",
+        decision_json='{"action":"send","target":{"title":"HR"}}',
+        audit_summary="再次生成完成",
+        status="ready_to_send",
+        error="",
+    )
+    store.update_meeting_alignment_job(
+        job_id,
+        status="sent",
+        target_kind="group",
+        target_title="HR",
+        final_message="会后对齐已发送。",
+        send_result_json='{"status":"sent"}',
+    )
+
+    client = TestClient(create_audit_app(store.path))
+    response = client.get(f"/meeting-attempts/{first_run}")
+
+    assert response.status_code == 200
+    assert (
+        '<div class="attempt-detail-label">status</div>'
+        '<div class="attempt-detail-value">sent</div>'
+    ) in response.text
+    assert '<div class="attempt-detail-value">failed</div>' not in response.text
+
+
 def test_history_search_shows_similar_codex_sessions(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     run_id = seed_meeting_attempt(store)

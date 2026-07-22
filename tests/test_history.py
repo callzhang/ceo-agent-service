@@ -257,7 +257,7 @@ def test_history_preserves_immutable_retry_run_after_job_succeeds(tmp_path):
     )] == [retry_run]
 
 
-def test_history_marks_earlier_ready_run_failed_after_later_send_succeeds(tmp_path):
+def test_history_keeps_earlier_ready_run_sent_after_later_send_succeeds(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     job_id = store.upsert_meeting_alignment_job(
         meeting_id="minutes-two-ready",
@@ -290,7 +290,7 @@ def test_history_marks_earlier_ready_run_failed_after_later_send_succeeds(tmp_pa
         item.source_id: item.status for item in store.list_history_items(limit=20)
     }
 
-    assert statuses[first_run] == "failed"
+    assert statuses[first_run] == "sent"
     assert statuses[second_run] == "sent"
 
 
