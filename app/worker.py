@@ -10025,12 +10025,6 @@ class DingTalkAutoReplyWorker:
         try:
             self._ding_self(handoff_text)
         except Exception as exc:
-            self.store.record_error(
-                conversation.open_conversation_id,
-                trigger.open_message_id,
-                "handoff",
-                f"DING handoff delivery failed: {exc}",
-            )
             try:
                 receiver_user_id = getattr(self.dws, "ding_receiver_user_id", None)
                 if not receiver_user_id:
@@ -10042,7 +10036,10 @@ class DingTalkAutoReplyWorker:
                     conversation.open_conversation_id,
                     trigger.open_message_id,
                     "handoff",
-                    f"bot handoff delivery failed: {bot_exc}",
+                    (
+                        "external handoff delivery failed; local notification used. "
+                        f"DING error: {exc}; bot error: {bot_exc}"
+                    ),
                 )
             self._notify(
                 title=f"CEO handoff: {conversation.title}",

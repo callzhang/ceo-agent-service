@@ -13130,7 +13130,7 @@ def test_handoff_ding_failure_does_not_block_ack(
         ("cid-1", "msg-1", "我去叫", "created-1", "我去叫", "created-bg")
     ]
     assert store.has_seen("msg-1") is True
-    assert store.count_errors() == 1
+    assert store.count_errors() == 0
     assert store.count_reply_tasks(status="done") == 1
     assert len(notifications) == 1
     assert notifications[0]["title"] == "CEO handoff: Friday"
@@ -13140,6 +13140,37 @@ def test_handoff_ding_failure_does_not_block_ack(
     )
     assert notifications[0]["message"] == "@Alex Chen(明哥) 不要分身，真人看一下"
     assert "不要分身" in notifications[0]["message"]
+
+
+def test_handoff_records_one_error_when_external_delivery_falls_back_to_local(
+    tmp_path: Path, monkeypatch
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    notifications: list[dict[str, str | None]] = []
+    monkeypatch.setattr(
+        "app.worker.send_macos_notification",
+        lambda **kwargs: notifications.append(kwargs),
+    )
+    dws = FakeDws(
+        [conversation()],
+        {"cid-1": [message("@Alex Chen(明哥) 不要分身，真人看一下")]},
+        ding_error=RuntimeError("ding failed"),
+        send_error=RuntimeError("bot failed"),
+    )
+    codex = FakeCodex(CodexDecision(action=CodexAction.HANDOFF_TO_HUMAN))
+    worker = DingTalkAutoReplyWorker(
+        store=store, dws=dws, codex=codex, now_provider=fixed_worker_now
+    )
+
+    worker.run_once()
+
+    errors = store.list_errors()
+    assert len(errors) == 1
+    assert errors[0].kind == "handoff"
+    assert "external handoff delivery failed" in errors[0].detail
+    assert "DING error: ding failed" in errors[0].detail
+    assert "bot error: bot failed" in errors[0].detail
+    assert len(notifications) == 1
 
 
 def test_handoff_text_emotion_failure_still_notifies_and_marks_seen(
