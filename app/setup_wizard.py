@@ -4,6 +4,7 @@ import re
 import shutil
 import subprocess
 from contextlib import redirect_stderr, redirect_stdout
+from datetime import datetime, timezone
 from io import StringIO
 from pathlib import Path
 
@@ -502,16 +503,20 @@ def check_setup_step(
 def check_dry_run(*, store: AutoReplyStore) -> SetupStepStatus:
     processing = store.count_reply_tasks("processing")
     failed = store.count_reply_tasks("failed")
+    due_follow_ups = store.count_due_follow_up_drafts(
+        due_before=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    )
     evidence = {
         "processing_reply_tasks": processing,
         "failed_reply_tasks": failed,
+        "due_follow_up_drafts": due_follow_ups,
     }
-    if processing or failed:
+    if processing or failed or due_follow_ups:
         return _status(
             "dry_run",
             title="Dry-Run Validation",
             status="needs_action",
-            summary="Unresolved failed or processing reply tasks exist.",
+            summary="Unresolved reply or follow-up backlog exists.",
             evidence=evidence,
         )
     return _status(

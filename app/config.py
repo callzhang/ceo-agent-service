@@ -227,6 +227,10 @@ def task_daily_interval_seconds() -> int:
     return env_int("CEO_TASK_DAILY_INTERVAL_SECONDS", 86_400)
 
 
+def task_follow_up_interval_seconds() -> int:
+    return env_int("CEO_TASK_FOLLOW_UP_INTERVAL_SECONDS", 3_600)
+
+
 def embedding_base_url() -> str:
     return os.getenv("CEO_EMBEDDING_BASE_URL", "https://embed.preseen.ai/v1")
 

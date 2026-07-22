@@ -2252,6 +2252,8 @@ def test_parser_supports_single_service_command(monkeypatch):
             "31",
             "--task-daily-interval-seconds",
             "3600",
+            "--task-follow-up-interval-seconds",
+            "900",
         ]
     )
 
@@ -2262,16 +2264,19 @@ def test_parser_supports_single_service_command(monkeypatch):
     assert args.consumer_poll_interval_seconds == 11
     assert args.task_work_item_interval_seconds == 31
     assert args.task_daily_interval_seconds == 3600
+    assert args.task_follow_up_interval_seconds == 900
 
 
 def test_service_parser_defaults_task_intervals_from_system_config(monkeypatch):
     monkeypatch.setenv("CEO_TASK_WORK_ITEM_INTERVAL_SECONDS", "45")
     monkeypatch.setenv("CEO_TASK_DAILY_INTERVAL_SECONDS", "7200")
+    monkeypatch.setenv("CEO_TASK_FOLLOW_UP_INTERVAL_SECONDS", "1800")
 
     args = build_parser().parse_args(["service"])
 
     assert args.task_work_item_interval_seconds == 45
     assert args.task_daily_interval_seconds == 7200
+    assert args.task_follow_up_interval_seconds == 1800
 
 
 def test_parser_keeps_dry_run_as_not_send_message_alias():
@@ -2517,6 +2522,7 @@ def test_settings_defaults_point_to_memory_home():
     assert settings.task_codex_idle_timeout_seconds == 900
     assert settings.task_work_item_interval_seconds == 60
     assert settings.task_daily_interval_seconds == 86_400
+    assert settings.task_follow_up_interval_seconds == 3_600
     assert settings.max_batches is None
 
 
@@ -4882,6 +4888,7 @@ def test_task_maintenance_loop_skips_when_network_not_ready(monkeypatch, tmp_pat
             settings,
             work_item_interval_seconds=60,
             daily_interval_seconds=3600,
+            follow_up_interval_seconds=900,
             sleep=sleep,
             network_ready=lambda: False,
         )
@@ -4968,6 +4975,7 @@ def test_task_maintenance_loop_processes_work_and_daily_steps(monkeypatch, tmp_p
             settings,
             work_item_interval_seconds=31,
             daily_interval_seconds=3600,
+            follow_up_interval_seconds=900,
             sleep=sleep,
             monotonic=lambda: next(times),
             network_ready=lambda: True,
@@ -4977,6 +4985,77 @@ def test_task_maintenance_loop_processes_work_and_daily_steps(monkeypatch, tmp_p
         ("work", tmp_path / "worker.sqlite3"),
         ("okr", tmp_path / "worker.sqlite3"),
         ("scan", tmp_path / "worker.sqlite3", 4),
+        ("work", tmp_path / "worker.sqlite3"),
+        ("okr", tmp_path / "worker.sqlite3"),
+        ("follow", tmp_path / "worker.sqlite3", False, 4),
+        ("sleep", 31),
+    ]
+
+
+def test_task_maintenance_loop_runs_follow_ups_between_daily_scans(
+    monkeypatch, tmp_path
+):
+    calls = []
+    times = iter([0.0, 0.0, 31.0, 901.0])
+
+    class StopLoop(Exception):
+        pass
+
+    settings = WorkerSettings(db_path=tmp_path / "worker.sqlite3", max_batches=4)
+    monkeypatch.setattr(
+        cli,
+        "process_work_items_command",
+        lambda received: calls.append(("work", received.db_path)) or 0,
+    )
+    monkeypatch.setattr(
+        cli,
+        "scan_task_sources_command",
+        lambda received, max_new_items=None: calls.append(
+            ("scan", received.db_path, max_new_items)
+        )
+        or 0,
+    )
+    monkeypatch.setattr(
+        cli,
+        "process_okr_reviews_command",
+        lambda received: calls.append(("okr", received.db_path)) or 0,
+    )
+    monkeypatch.setattr(
+        cli,
+        "process_follow_ups_command",
+        lambda received, refresh_evidence=True, limit=50: calls.append(
+            ("follow", received.db_path, refresh_evidence, limit)
+        )
+        or 0,
+    )
+
+    def sleep(seconds):
+        calls.append(("sleep", seconds))
+        if calls.count(("sleep", seconds)) >= 3:
+            raise StopLoop
+
+    with pytest.raises(StopLoop):
+        run_task_maintenance_loop(
+            settings,
+            work_item_interval_seconds=31,
+            daily_interval_seconds=3600,
+            follow_up_interval_seconds=900,
+            sleep=sleep,
+            monotonic=lambda: next(times),
+            network_ready=lambda: True,
+        )
+
+    assert calls == [
+        ("work", tmp_path / "worker.sqlite3"),
+        ("okr", tmp_path / "worker.sqlite3"),
+        ("scan", tmp_path / "worker.sqlite3", 4),
+        ("work", tmp_path / "worker.sqlite3"),
+        ("okr", tmp_path / "worker.sqlite3"),
+        ("follow", tmp_path / "worker.sqlite3", False, 4),
+        ("sleep", 31),
+        ("work", tmp_path / "worker.sqlite3"),
+        ("okr", tmp_path / "worker.sqlite3"),
+        ("sleep", 31),
         ("work", tmp_path / "worker.sqlite3"),
         ("okr", tmp_path / "worker.sqlite3"),
         ("follow", tmp_path / "worker.sqlite3", False, 4),
@@ -5104,6 +5183,7 @@ def test_run_service_starts_web_producer_and_consumer(monkeypatch, tmp_path):
         settings,
         work_item_interval_seconds,
         daily_interval_seconds,
+        follow_up_interval_seconds,
         network_ready=None,
     ):
         calls.append(
@@ -5111,6 +5191,7 @@ def test_run_service_starts_web_producer_and_consumer(monkeypatch, tmp_path):
                 "task-maintenance",
                 work_item_interval_seconds,
                 daily_interval_seconds,
+                follow_up_interval_seconds,
                 network_ready is gate.ready,
             )
         )
@@ -5131,6 +5212,7 @@ def test_run_service_starts_web_producer_and_consumer(monkeypatch, tmp_path):
             max_batches=4,
             task_work_item_interval_seconds=31,
             task_daily_interval_seconds=3600,
+            task_follow_up_interval_seconds=900,
         ),
         host="127.0.0.1",
         port=8765,
@@ -5154,7 +5236,7 @@ def test_run_service_starts_web_producer_and_consumer(monkeypatch, tmp_path):
         ("start", "ceo-agent-service-meeting-consumer", True),
         ("meeting-consumer", 10, 4, True),
         ("start", "ceo-agent-service-task-maintenance", True),
-        ("task-maintenance", 31, 3600, True),
+        ("task-maintenance", 31, 3600, 900, True),
         ("wait",),
     ]
     assert failures == [

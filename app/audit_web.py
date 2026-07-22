@@ -60,6 +60,7 @@ from app.config import (
     single_chat_read_recovery_limit,
     single_chat_read_recovery_window,
     task_daily_interval_seconds,
+    task_follow_up_interval_seconds,
     task_work_item_interval_seconds,
     user_alias,
     worker_db_path,
@@ -1880,7 +1881,12 @@ def _system_config_rows() -> list[tuple[str, str, str]]:
         (
             "CEO_TASK_DAILY_INTERVAL_SECONDS",
             str(task_daily_interval_seconds()),
-            "task-maintenance 扫 task sources/follow-ups 的间隔秒数。",
+            "task-maintenance 扫 task sources 的间隔秒数。",
+        ),
+        (
+            "CEO_TASK_FOLLOW_UP_INTERVAL_SECONDS",
+            str(task_follow_up_interval_seconds()),
+            "task-maintenance 处理 due follow-ups 的间隔秒数。",
         ),
         (
             "CEO_POLL_INTERVAL_SECONDS",
@@ -2036,6 +2042,7 @@ def _editable_system_config_keys() -> set[str]:
         "CEO_MEETING_SETTLE_SECONDS",
         "CEO_TASK_WORK_ITEM_INTERVAL_SECONDS",
         "CEO_TASK_DAILY_INTERVAL_SECONDS",
+        "CEO_TASK_FOLLOW_UP_INTERVAL_SECONDS",
         "CEO_POLL_INTERVAL_SECONDS",
         "CEO_BATCH_SECONDS",
         "FAST_PATH_UNREAD_BACKOFF",

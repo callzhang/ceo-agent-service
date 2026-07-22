@@ -29,6 +29,7 @@ from app.config import (
     producer_interval_seconds,
     profile_evidence_dir,
     task_daily_interval_seconds,
+    task_follow_up_interval_seconds,
     task_work_item_interval_seconds,
     work_profile_path,
 )
@@ -180,6 +181,7 @@ class WorkerSettings(BaseModel):
     task_codex_idle_timeout_seconds: PositiveInt = 900
     task_work_item_interval_seconds: PositiveInt = 60
     task_daily_interval_seconds: PositiveInt = 86_400
+    task_follow_up_interval_seconds: PositiveInt = 3_600
     meeting_producer_interval_seconds: PositiveInt = 60
     meeting_consumer_poll_interval_seconds: PositiveInt = 10
     meeting_settle_seconds: PositiveInt = 600
@@ -514,6 +516,11 @@ def build_parser() -> argparse.ArgumentParser:
                 type=_positive_int,
                 default=task_daily_interval_seconds(),
             )
+            subparser.add_argument(
+                "--task-follow-up-interval-seconds",
+                type=_positive_int,
+                default=task_follow_up_interval_seconds(),
+            )
         if command == "export-feedback":
             subparser.add_argument(
                 "--output",
@@ -648,6 +655,11 @@ def settings_from_args(args: argparse.Namespace) -> WorkerSettings:
             args,
             "task_daily_interval_seconds",
             WorkerSettings().task_daily_interval_seconds,
+        ),
+        task_follow_up_interval_seconds=getattr(
+            args,
+            "task_follow_up_interval_seconds",
+            WorkerSettings().task_follow_up_interval_seconds,
         ),
         meeting_producer_interval_seconds=meeting_producer_interval_seconds(),
         meeting_consumer_poll_interval_seconds=meeting_consumer_poll_interval_seconds(),
@@ -2360,11 +2372,14 @@ def run_task_maintenance_loop(
     *,
     work_item_interval_seconds: int,
     daily_interval_seconds: int,
+    follow_up_interval_seconds: int,
     sleep: Callable[[int], None] = time.sleep,
     monotonic: Callable[[], float] = time.monotonic,
     network_ready: Callable[[], bool] = _macos_wifi_connected,
 ) -> None:
-    next_daily_run = monotonic()
+    now = monotonic()
+    next_daily_run = now
+    next_follow_up_run = now
     while True:
         if not network_ready():
             sleep(work_item_interval_seconds)
@@ -2379,12 +2394,14 @@ def run_task_maintenance_loop(
             )
             process_work_items_command(settings)
             process_okr_reviews_command(settings)
+            next_daily_run = now + daily_interval_seconds
+        if now >= next_follow_up_run:
             process_follow_ups_command(
                 settings,
                 refresh_evidence=False,
                 limit=50 if settings.max_batches is None else settings.max_batches,
             )
-            next_daily_run = now + daily_interval_seconds
+            next_follow_up_run = now + follow_up_interval_seconds
         sleep(work_item_interval_seconds)
 
 
@@ -2559,6 +2576,7 @@ def run_service(
                 settings,
                 work_item_interval_seconds=settings.task_work_item_interval_seconds,
                 daily_interval_seconds=settings.task_daily_interval_seconds,
+                follow_up_interval_seconds=settings.task_follow_up_interval_seconds,
                 network_ready=dependency_gate.ready,
             ),
         ),

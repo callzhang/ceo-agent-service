@@ -368,6 +368,7 @@ def test_check_dry_run_passes_without_failed_or_processing_backlog(tmp_path: Pat
     assert result.evidence == {
         "processing_reply_tasks": 0,
         "failed_reply_tasks": 0,
+        "due_follow_up_drafts": 0,
     }
 
 
@@ -387,8 +388,33 @@ def test_check_dry_run_reports_processing_backlog(tmp_path: Path):
     result = check_setup_step("dry_run", repo_root=tmp_path, store=store)
 
     assert result.status == "needs_action"
-    assert result.summary == "Unresolved failed or processing reply tasks exist."
+    assert result.summary == "Unresolved reply or follow-up backlog exists."
     assert result.evidence["processing_reply_tasks"] == 1
+
+
+def test_check_dry_run_reports_due_follow_up_backlog(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    project_id = store.create_work_project(
+        title="宝马项目周末攻坚与客户Demo推进",
+        category="sales",
+        status="active",
+        priority="P0",
+        risk_level="high",
+    )
+    store.create_follow_up_draft(
+        project_id=project_id,
+        owner_name="Claire Huang",
+        target_kind="direct",
+        question_text="准备宝马专家邀请材料了吗？",
+        scheduled_at="2000-01-01 01:00:00",
+        status="draft",
+    )
+
+    result = check_setup_step("dry_run", repo_root=tmp_path, store=store)
+
+    assert result.status == "needs_action"
+    assert result.summary == "Unresolved reply or follow-up backlog exists."
+    assert result.evidence["due_follow_up_drafts"] == 1
 
 
 def test_check_service_config_accepts_env_and_directories(tmp_path: Path):

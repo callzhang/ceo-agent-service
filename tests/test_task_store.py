@@ -237,6 +237,41 @@ def test_create_project_todo_update_and_follow_up(tmp_path: Path):
     assert fetched_draft.id == draft_id
     assert store.get_follow_up_draft(999) is None
 
+
+def test_list_follow_up_drafts_due_before_handles_iso_timezone(tmp_path: Path):
+    store = _store(tmp_path)
+    project_id = store.create_work_project(
+        title="宝马项目周末攻坚与客户Demo推进",
+        category="sales",
+        status="active",
+        priority="P0",
+        risk_level="high",
+    )
+    due_id = store.create_follow_up_draft(
+        project_id=project_id,
+        owner_name="Claire Huang",
+        target_kind="direct",
+        question_text="准备宝马专家邀请材料了吗？",
+        scheduled_at="2026-07-22T10:00:00+08:00",
+        status="draft",
+    )
+    future_id = store.create_follow_up_draft(
+        project_id=project_id,
+        owner_name="Claire Huang",
+        target_kind="direct",
+        question_text="宝马报价材料准备好了吗？",
+        scheduled_at="2026-07-23T10:00:00+08:00",
+        status="draft",
+    )
+
+    drafts = store.list_follow_up_drafts(
+        statuses=("draft",),
+        due_before="2026-07-22 16:00:00",
+    )
+
+    assert [draft.id for draft in drafts] == [due_id]
+    assert future_id not in [draft.id for draft in drafts]
+
     run_id = store.record_task_agent_run(
         summary_input_id=123,
         codex_session_id="sid",

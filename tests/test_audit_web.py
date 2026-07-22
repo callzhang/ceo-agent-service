@@ -331,6 +331,31 @@ def test_render_attempt_list_links_task_history_to_task_detail(tmp_path: Path):
     assert f'id="follow-up-{follow_up_id}"' in detail
 
 
+def test_render_attempt_list_shows_draft_follow_up_as_pending(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    project_id = store.create_work_project(
+        title="宝马项目周末攻坚与客户Demo推进",
+        category="sales",
+        priority="P0",
+        risk_level="high",
+        owner_name="Claire Huang",
+    )
+    follow_up_id = store.create_follow_up_draft(
+        project_id=project_id,
+        owner_name="Claire Huang",
+        target_kind="direct",
+        question_text="准备宝马专家邀请材料了吗？",
+        scheduled_at="2099-07-23 01:00:00",
+        status="draft",
+    )
+
+    html = render_attempt_list(store, search_object_types=("task",))
+
+    assert f"#follow-up-{follow_up_id}" in html
+    assert ">Pending</span>" in html
+    assert ">Processing</span>" not in html
+
+
 def test_meeting_history_uses_reply_card_and_detail_contract(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     run_id = seed_meeting_attempt(store)
@@ -2409,7 +2434,9 @@ def test_render_config_page_shows_system_config_tab_with_descriptions():
     assert "CEO_TASK_WORK_ITEM_INTERVAL_SECONDS" in html
     assert "task-maintenance 处理 work item/OKR review 的间隔秒数" in html
     assert "CEO_TASK_DAILY_INTERVAL_SECONDS" in html
-    assert "task-maintenance 扫 task sources/follow-ups 的间隔秒数" in html
+    assert "task-maintenance 扫 task sources 的间隔秒数" in html
+    assert "CEO_TASK_FOLLOW_UP_INTERVAL_SECONDS" in html
+    assert "task-maintenance 处理 due follow-ups 的间隔秒数" in html
     assert "CEO_POLL_INTERVAL_SECONDS" in html
     assert "CEO_BATCH_SECONDS" in html
     assert "FAST_PATH_UNREAD_BACKOFF" in html
@@ -2461,6 +2488,8 @@ def test_handle_system_config_post_saves_runtime_params_to_env_file(
         "&system_value=60"
         "&system_key=CEO_TASK_DAILY_INTERVAL_SECONDS"
         "&system_value=86400"
+        "&system_key=CEO_TASK_FOLLOW_UP_INTERVAL_SECONDS"
+        "&system_value=3600"
         "&system_key=FAST_PATH_UNREAD_BACKOFF"
         "&system_value=5m"
         "&system_key=MESSAGE_RECOVERY_INTERVAL"
@@ -2485,6 +2514,7 @@ def test_handle_system_config_post_saves_runtime_params_to_env_file(
     assert "CEO_MEETING_SETTLE_SECONDS=600" in env_text
     assert "CEO_TASK_WORK_ITEM_INTERVAL_SECONDS=60" in env_text
     assert "CEO_TASK_DAILY_INTERVAL_SECONDS=86400" in env_text
+    assert "CEO_TASK_FOLLOW_UP_INTERVAL_SECONDS=3600" in env_text
     assert "FAST_PATH_UNREAD_BACKOFF=5m" in env_text
     assert "MESSAGE_RECOVERY_INTERVAL=30m" in env_text
     assert "SINGLE_CHAT_READ_RECOVERY_WINDOW=12h" in env_text

@@ -2813,6 +2813,28 @@ class AutoReplyStore:
             ).fetchone()
             return int(row["count"])
 
+    def count_due_follow_up_drafts(
+        self,
+        *,
+        due_before: str,
+        statuses: tuple[str, ...] = ("draft", "approved"),
+    ) -> int:
+        if not due_before.strip() or not statuses:
+            return 0
+        placeholders = ",".join("?" for _ in statuses)
+        with self._connect() as db:
+            row = db.execute(
+                f"""
+                select count(*) as count
+                from follow_up_drafts
+                where status in ({placeholders})
+                  and scheduled_at != ''
+                  and datetime(scheduled_at) <= datetime(?)
+                """,
+                [*statuses, due_before.strip()],
+            ).fetchone()
+            return int(row["count"] or 0)
+
     def list_reply_tasks(
         self,
         statuses: tuple[str, ...] | None = None,
@@ -6146,9 +6168,10 @@ class AutoReplyStore:
                     'follow_up_' || drafts.status as action,
                     case
                         when drafts.status='sent' then 'sent'
+                        when drafts.status in ('draft', 'approved') then 'pending'
                         when drafts.status in ('skipped', 'cancelled') then 'skipped'
                         when drafts.status='failed' then 'failed'
-                        else 'processing'
+                        else drafts.status
                     end as status,
                     coalesce(nullif(todos.title, ''), drafts.owner_name, projects.title) as target_title,
                     '' as codex_session_id,
@@ -6156,7 +6179,7 @@ class AutoReplyStore:
                     drafts.todo_id as todo_id,
                     drafts.id as follow_up_id,
                     'dingtalk' as channel,
-                    coalesce(nullif(drafts.sent_at, ''), drafts.updated_at, drafts.created_at) as created_at,
+                    coalesce(nullif(drafts.sent_at, ''), nullif(drafts.updated_at, ''), drafts.created_at) as created_at,
                     projects.title || ' ' || projects.category || ' ' ||
                     projects.owner_name || ' ' || projects.goal || ' ' ||
                     projects.background || ' ' || projects.current_state || ' ' ||
@@ -7388,7 +7411,7 @@ class AutoReplyStore:
             clauses.append(f"status in ({','.join('?' for _ in statuses)})")
             args.extend(statuses)
         if due_before is not None:
-            clauses.append("scheduled_at != '' and scheduled_at <= ?")
+            clauses.append("scheduled_at != '' and datetime(scheduled_at) <= datetime(?)")
             args.append(due_before)
         if clauses:
             query = f"{query} where {' and '.join(clauses)}"
