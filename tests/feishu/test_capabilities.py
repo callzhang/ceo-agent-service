@@ -12,6 +12,7 @@ from app.feishu.capabilities import (
     CapabilityStatus,
     CredentialKind,
     FEISHU_CAPABILITIES,
+    FEISHU_VERIFIED_NO_EQUIVALENTS,
     UnsupportedCapabilityError,
     capability_manifest,
     resolve_capability,
@@ -60,7 +61,7 @@ EXPECTED_CAPABILITIES = (
         "P1",
         "TAT",
         "R2",
-        "planned",
+        "implemented",
     ),
     (
         "queue_okr_review",
@@ -78,7 +79,7 @@ EXPECTED_CAPABILITIES = (
         "P1",
         "TAT",
         "R2",
-        "planned",
+        "implemented",
     ),
     ("blocked", "control.blocked", "P0", "LOC", "R0", "planned"),
     (
@@ -107,6 +108,22 @@ def test_registry_has_unique_action_and_capability_ids() -> None:
     assert len({item.capability_id for item in FEISHU_CAPABILITIES}) == 13
 
 
+def test_verified_no_equivalents_are_unique_official_and_not_silent_fallbacks():
+    assert {
+        item.source_capability_id for item in FEISHU_VERIFIED_NO_EQUIVALENTS
+    } == {
+        "dingtalk.message.text_emotion",
+        "dingtalk.handoff.ding_confirmation",
+        "feishu.message.sticker_download",
+    }
+    assert all(
+        item.phase is CapabilityPhase.P1
+        and item.official_reference.startswith("https://")
+        and item.reason
+        for item in FEISHU_VERIFIED_NO_EQUIVALENTS
+    )
+
+
 def test_registry_metadata_is_stable_and_does_not_overstate_p0() -> None:
     actual = tuple(
         (
@@ -121,7 +138,7 @@ def test_registry_metadata_is_stable_and_does_not_overstate_p0() -> None:
     )
     assert actual == EXPECTED_CAPABILITIES
     assert resolve_capability("feishu", "handoff_to_human").status is (
-        CapabilityStatus.PLANNED
+        CapabilityStatus.IMPLEMENTED
     )
     assert resolve_capability("feishu", "blocked").status is CapabilityStatus.PLANNED
     assert resolve_capability("feishu", "stop_with_error").status is (

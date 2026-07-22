@@ -102,9 +102,20 @@ def test_sender_is_bot_flag_is_rejected_even_with_user_type():
     assert result.reason == "sender_not_user"
 
 
-def test_media_is_rejected_without_body_retention():
+def test_media_uses_normalized_summary_when_body_is_empty():
     result = evaluate_ingress(
         _message(raw_content_type="image"),
+        _scope(),
+        stale_event_seconds=300,
+        now=NOW,
+    )
+    assert result.eligible
+    assert result.store_body
+
+
+def test_unknown_message_type_is_rejected_without_body_retention():
+    result = evaluate_ingress(
+        _message(raw_content_type="interactive"),
         _scope(),
         stale_event_seconds=300,
         now=NOW,

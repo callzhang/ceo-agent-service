@@ -693,6 +693,11 @@ class CodexDecisionRunner:
         session_id: str | None,
         image_paths: list[Path] | None = None,
     ) -> CodexDecision:
+        no_tools = self.tool_mode == "none"
+        # A no-tool decision is always an independent ephemeral turn.  Ignore
+        # any accidentally supplied global session id instead of resuming it.
+        if no_tools:
+            session_id = None
         raw_outputs: list[str] = []
         self.last_audit_tool_events = []
         self.last_session_id = session_id
@@ -726,7 +731,9 @@ class CodexDecisionRunner:
                     return self._finalize_decision(session_decision, raw_outputs)
                 except ValueError:
                     pass
-            retry_session_id = session_id or self.last_session_id
+            retry_session_id = (
+                None if no_tools else session_id or self.last_session_id
+            )
             repair_prompt = (
                 "上一次输出不是合法 AgentEnvelope JSON，或需要回复但 user_response.text 为空。"
                 "只输出合法 JSON，不要解释。"
@@ -736,6 +743,21 @@ class CodexDecisionRunner:
                 "audit.summary 必须说明未找到可用文档证据或只需上下文判断。"
                 f"{REPLY_AGENT_ENVELOPE_SCHEMA_HINT}"
             )
+            if no_tools:
+                invalid_excerpt = first_raw.strip()
+                if len(invalid_excerpt) > 4000:
+                    invalid_excerpt = invalid_excerpt[:4000] + "\n...[truncated]"
+                repair_prompt = (
+                    f"{repair_prompt}\n\n"
+                    "这是独立的临时修复运行，不能依赖任何先前 session。"
+                    "请根据下面完整原始提示重新作答。\n\n"
+                    "<original_prompt>\n"
+                    f"{prompt}\n"
+                    "</original_prompt>\n\n"
+                    "<invalid_output_excerpt>\n"
+                    f"{invalid_excerpt}\n"
+                    "</invalid_output_excerpt>"
+                )
             second_raw = self.executor(
                 self.runner.build_command(
                     repair_prompt,
@@ -830,6 +852,9 @@ class CodexDecisionRunner:
         return decision
 
     def _remember_session_id(self, raw: str) -> None:
+        if self.tool_mode == "none":
+            self.last_session_id = None
+            return
         session_id = extract_codex_session_id(raw)
         if session_id:
             self.last_session_id = session_id
@@ -852,6 +877,8 @@ class CodexDecisionRunner:
         return session_decision
 
     def _current_session_decision(self, wait_seconds: int = 0) -> CodexDecision | None:
+        if self.tool_mode == "none":
+            return None
         if not self.last_session_id:
             return None
         deadline = time.monotonic() + wait_seconds
@@ -880,7 +907,7 @@ class CodexDecisionRunner:
             return None
 
     def _remember_audit_tool_events(self, raw_outputs: list[str]) -> None:
-        session_id = self.last_session_id
+        session_id = None if self.tool_mode == "none" else self.last_session_id
         self.last_transcript_end_line = self._session_line_count(session_id)
         session_events = []
         if session_id:
@@ -942,6 +969,8 @@ class CodexDecisionRunner:
         return completed.stdout.strip()
 
     def _session_line_count(self, session_id: str | None) -> int:
+        if self.tool_mode == "none":
+            return 0
         if not session_id:
             return 0
         return count_codex_session_lines(session_id, codex_home=self.codex_home)

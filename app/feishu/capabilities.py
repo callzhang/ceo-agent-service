@@ -62,6 +62,69 @@ _CAPABILITY_ID_PATTERN = re.compile(
 
 
 @dataclass(frozen=True, slots=True)
+class VerifiedNoEquivalent:
+    """Auditable parity exception backed by current official documentation."""
+
+    source_capability_id: str
+    nearest_feishu_capability_id: str
+    phase: CapabilityPhase
+    reason: str
+    official_reference: str
+
+    def __post_init__(self) -> None:
+        for value in (
+            self.source_capability_id,
+            self.nearest_feishu_capability_id,
+        ):
+            if not _CAPABILITY_ID_PATTERN.fullmatch(value):
+                raise ValueError("parity capability IDs must be stable dotted IDs")
+        if not self.reason.strip():
+            raise ValueError("verified no-equivalent reason is required")
+        if not self.official_reference.startswith("https://"):
+            raise ValueError("verified no-equivalent requires an HTTPS reference")
+
+
+FEISHU_VERIFIED_NO_EQUIVALENTS: tuple[VerifiedNoEquivalent, ...] = (
+    VerifiedNoEquivalent(
+        source_capability_id="dingtalk.message.text_emotion",
+        nearest_feishu_capability_id="feishu.message.emoji_reaction",
+        phase=CapabilityPhase.P1,
+        reason=(
+            "Feishu reactions accept a platform emoji_type; they cannot create "
+            "an arbitrary text reaction. Text must remain a normal message."
+        ),
+        official_reference=(
+            "https://open.larksuite.com/document/server-docs/im-v1/introduction"
+        ),
+    ),
+    VerifiedNoEquivalent(
+        source_capability_id="dingtalk.handoff.ding_confirmation",
+        nearest_feishu_capability_id="feishu.message.urgent_app",
+        phase=CapabilityPhase.P1,
+        reason=(
+            "Feishu urgency annotates a bot-owned existing message and does not "
+            "provide the same DING confirmation or escalation semantics."
+        ),
+        official_reference=(
+            "https://open.larksuite.com/document/ukTMukTMukTM/"
+            "uYTM5UjL2ETO14iNxkTN/scope-list?fb=2&lang=en-US"
+        ),
+    ),
+    VerifiedNoEquivalent(
+        source_capability_id="feishu.message.sticker_download",
+        nearest_feishu_capability_id="feishu.message.sticker_reference",
+        phase=CapabilityPhase.P1,
+        reason=(
+            "The message-resource API does not download stickers; a bot may "
+            "only retain the bounded key for supported resend scenarios."
+        ),
+        official_reference=(
+            "https://open.larksuite.com/document/server-docs/im-v1/introduction"
+        ),
+    ),
+)
+
+@dataclass(frozen=True, slots=True)
 class CapabilityDefinition:
     provider: CapabilityProvider
     action_kind: PlannedActionKind
@@ -100,8 +163,8 @@ class CapabilityDefinition:
 
 # Keep this tuple in PlannedActionKind declaration order.  ``implemented``
 # means a real Feishu execution path with dedicated tests exists today.  In
-# particular, HANDOFF_TO_HUMAN remains planned: the current consumer can finish
-# such a task, but does not notify a human.
+# particular, an implemented status requires a real execution path and dedicated
+# tests rather than a prompt-only declaration.
 FEISHU_CAPABILITIES: tuple[CapabilityDefinition, ...] = (
     CapabilityDefinition(
         CapabilityProvider.FEISHU,
@@ -164,7 +227,7 @@ FEISHU_CAPABILITIES: tuple[CapabilityDefinition, ...] = (
         CapabilityPhase.P1,
         CredentialKind.TAT,
         CapabilityRisk.R2,
-        CapabilityStatus.PLANNED,
+        CapabilityStatus.IMPLEMENTED,
     ),
     CapabilityDefinition(
         CapabilityProvider.FEISHU,
@@ -200,7 +263,7 @@ FEISHU_CAPABILITIES: tuple[CapabilityDefinition, ...] = (
         CapabilityPhase.P1,
         CredentialKind.TAT,
         CapabilityRisk.R2,
-        CapabilityStatus.PLANNED,
+        CapabilityStatus.IMPLEMENTED,
     ),
     CapabilityDefinition(
         CapabilityProvider.FEISHU,

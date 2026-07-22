@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import asyncio
-from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from time import monotonic
@@ -10,6 +9,13 @@ from typing import Any, Callable
 from uuid import UUID, uuid5
 
 from app.feishu.client import FeishuSendResult
+from app.feishu.payloads import (
+    FeishuReplyPayload,
+    delivery_chunk_idempotency_key,
+    delivery_chunk_plan_sha256,
+    split_reply_payload,
+)
+from app.feishu.rate_limit import SlidingWindowMutationBudget
 
 
 DELIVERY_UUID_NAMESPACE = UUID("49f6141e-9852-5e2d-8e9e-3c4207468328")
@@ -17,6 +23,7 @@ KNOWN_ERROR_CODES = frozenset(
     {
         "format_error",
         "target_revoked",
+        "target_state_unknown",
         "rate_limited",
         "permission_denied",
         "upload_failed",
@@ -27,7 +34,9 @@ KNOWN_ERROR_CODES = frozenset(
         "unknown",
     }
 )
-RETRYABLE_CODES = frozenset({"rate_limited", "not_connected"})
+RETRYABLE_CODES = frozenset(
+    {"rate_limited", "not_connected", "target_state_unknown"}
+)
 TERMINAL_CODES = frozenset(
     {
         "format_error",
@@ -40,8 +49,6 @@ TERMINAL_CODES = frozenset(
 )
 DEFAULT_SEND_TIMEOUT_SECONDS = 60.0
 DEFAULT_SEND_LEASE_STALE_SECONDS = 5 * 60
-
-
 @dataclass(frozen=True)
 class FeishuDeliveryOutcome:
     status: str
@@ -95,6 +102,7 @@ class FeishuDeliverySender:
         send_lease_stale_seconds: int = DEFAULT_SEND_LEASE_STALE_SECONDS,
         now: Callable[[], datetime] | None = None,
         monotonic_clock: Callable[[], float] = monotonic,
+        mutation_budget: SlidingWindowMutationBudget | None = None,
     ):
         if send_mode not in {"confirm", "auto"}:
             raise ValueError("Feishu send_mode must be confirm or auto")
@@ -116,7 +124,12 @@ class FeishuDeliverySender:
         self.send_lease_stale_seconds = send_lease_stale_seconds
         self.now = now or (lambda: datetime.now(timezone.utc))
         self.monotonic_clock = monotonic_clock
-        self._sent_times: deque[float] = deque()
+        self.mutation_budget = mutation_budget or SlidingWindowMutationBudget(
+            max_sends_per_minute,
+            monotonic_clock=monotonic_clock,
+        )
+        # Kept as a compatibility alias for focused tests and local diagnostics.
+        self._sent_times = self.mutation_budget._mutation_times
 
     @property
     def outbound_gate_open(self) -> bool:
@@ -130,7 +143,7 @@ class FeishuDeliverySender:
 
     def _require_delivery_binding(
         self, delivery, *, require_send_lease: bool = True
-    ) -> str:
+    ):
         app_id = self._authenticated_app_id()
         if str(getattr(delivery, "app_id", "") or "").strip() != app_id:
             raise PermissionError("Feishu delivery App ID does not match client")
@@ -146,16 +159,32 @@ class FeishuDeliverySender:
             getattr(delivery, "attempt_id", 0) or 0
         ):
             raise ValueError("Feishu delivery attempt identity changed")
-        return app_id
+        immutable_fields = (
+            "reply_task_id",
+            "attempt_id",
+            "app_id",
+            "chat_id",
+            "reply_to_message_id",
+            "reply_in_thread",
+            "reply_text",
+            "reply_format",
+            "mention_open_ids",
+            "payload_sha256",
+            "idempotency_key",
+            "expected_chunks",
+            "chunk_plan_sha256",
+            "review_generation",
+            "approval_hash",
+        )
+        if any(
+            getattr(validated, field) != getattr(delivery, field, None)
+            for field in immutable_fields
+        ):
+            raise ValueError("Feishu delivery immutable snapshot changed")
+        return validated
 
     def _rate_slot(self) -> bool:
-        current = self.monotonic_clock()
-        while self._sent_times and current - self._sent_times[0] >= 60:
-            self._sent_times.popleft()
-        if len(self._sent_times) >= self.max_sends_per_minute:
-            return False
-        self._sent_times.append(current)
-        return True
+        return self.mutation_budget.try_acquire()
 
     def _retry_at(self, attempts: int, *, rate_limited: bool = False) -> str:
         seconds = 60 if rate_limited else min(300, max(5, 2 ** max(1, attempts)))
@@ -170,122 +199,459 @@ class FeishuDeliverySender:
             **fields,
         )
 
-    def _finish_result(
-        self, delivery, result: FeishuSendResult
+    def _superseded_outcome(self, delivery) -> FeishuDeliveryOutcome | None:
+        current = self.store.get_feishu_delivery(delivery.id)
+        if (
+            current is not None
+            and current.status == "rejected"
+            and current.error_code == "superseded"
+        ):
+            return FeishuDeliveryOutcome(
+                "rejected",
+                "superseded",
+                "superseded_by_newer_feishu_trigger",
+            )
+        return None
+
+    def _transition_with_prefix(
+        self,
+        delivery,
+        status: str,
+        *,
+        known_message_ids: tuple[str, ...] = (),
+        request_log_id: str = "",
+        **fields,
+    ):
+        if known_message_ids:
+            fields["feishu_message_id"] = known_message_ids[0]
+            fields["message_ids"] = known_message_ids
+        if request_log_id:
+            fields["request_log_id"] = request_log_id
+        return self._transition(delivery, status, **fields)
+
+    def _finish_failure(
+        self,
+        delivery,
+        result: FeishuSendResult,
+        *,
+        remote_failures: int,
+        known_message_ids: tuple[str, ...] = (),
+        failure_error: str = "",
     ) -> FeishuDeliveryOutcome:
-        if result.success:
-            if result.message_id:
-                self._transition(
-                    delivery,
-                    "sent",
-                    feishu_message_id=result.message_id,
-                    request_log_id=result.request_log_id,
-                )
-                return FeishuDeliveryOutcome(
-                    "sent",
-                    message_id=result.message_id,
-                    request_log_id=result.request_log_id,
-                )
-            self._transition(
+        code = (
+            result.error_code
+            if result.error_code in KNOWN_ERROR_CODES
+            else "unknown"
+        )
+        error = failure_error or f"feishu_send_failed:{code}"
+        next_remote_failures = remote_failures + 1
+        # A response that contains an ID proves a mutation occurred but a
+        # contradictory failed result cannot prove the chunk's final state.
+        if result.message_ids:
+            self._transition_with_prefix(
                 delivery,
                 "send_unknown",
+                known_message_ids=known_message_ids,
                 request_log_id=result.request_log_id,
+                remote_failures=next_remote_failures,
                 error_code="unknown",
-                error="successful_response_missing_message_id",
+                error="feishu_partial_delivery_result_unknown",
             )
             return FeishuDeliveryOutcome(
-                "send_unknown", "unknown", "successful_response_missing_message_id"
+                "send_unknown",
+                "unknown",
+                "feishu_partial_delivery_result_unknown",
+                message_id=(known_message_ids[0] if known_message_ids else ""),
+                request_log_id=result.request_log_id,
             )
-
-        code = result.error_code if result.error_code in KNOWN_ERROR_CODES else "unknown"
-        error = f"feishu_send_failed:{code}"
-        if code in RETRYABLE_CODES and delivery.attempts < self.max_attempts:
-            self._transition(
+        if code in RETRYABLE_CODES and next_remote_failures < self.max_attempts:
+            self._transition_with_prefix(
                 delivery,
                 "retry",
+                known_message_ids=known_message_ids,
                 available_at=self._retry_at(
-                    delivery.attempts, rate_limited=code == "rate_limited"
+                    next_remote_failures, rate_limited=code == "rate_limited"
                 ),
                 request_log_id=result.request_log_id,
+                remote_failures=next_remote_failures,
                 error_code=code,
                 error=error,
             )
             return FeishuDeliveryOutcome("retry", code, error)
         if code in TERMINAL_CODES or code in RETRYABLE_CODES:
-            self._transition(
+            self._transition_with_prefix(
                 delivery,
                 "failed",
+                known_message_ids=known_message_ids,
                 request_log_id=result.request_log_id,
+                remote_failures=next_remote_failures,
                 error_code=code,
                 error=error,
             )
-            return FeishuDeliveryOutcome("failed", code, error)
+            return FeishuDeliveryOutcome(
+                "failed",
+                code,
+                error,
+                message_id=(known_message_ids[0] if known_message_ids else ""),
+                request_log_id=result.request_log_id,
+            )
         # Only timeouts and unknown results lack proof of non-delivery.
-        self._transition(
+        self._transition_with_prefix(
             delivery,
             "send_unknown",
+            known_message_ids=known_message_ids,
             request_log_id=result.request_log_id,
+            remote_failures=next_remote_failures,
             error_code=code,
             error=error,
         )
-        return FeishuDeliveryOutcome("send_unknown", code, error)
+        return FeishuDeliveryOutcome(
+            "send_unknown",
+            code,
+            error,
+            message_id=(known_message_ids[0] if known_message_ids else ""),
+            request_log_id=result.request_log_id,
+        )
+
+    @staticmethod
+    def _chunk_plan(delivery) -> tuple[str, ...]:
+        payload = FeishuReplyPayload(
+            kind=delivery.reply_format,
+            text=delivery.reply_text,
+            mention_open_ids=delivery.mention_open_ids,
+        )
+        if payload.sha256() != delivery.payload_sha256:
+            raise ValueError("Feishu delivery payload snapshot changed")
+        chunks = split_reply_payload(payload)
+        if len(chunks) != delivery.expected_chunks:
+            raise ValueError("Feishu delivery chunk plan changed")
+        if delivery_chunk_plan_sha256(chunks) != delivery.chunk_plan_sha256:
+            raise ValueError("Feishu delivery chunk boundaries changed")
+        return chunks
+
+    def _record_chunk_result(
+        self,
+        delivery,
+        *,
+        ordinal: int,
+        result: FeishuSendResult,
+    ) -> str:
+        if len(result.message_ids) != 1:
+            raise ValueError("Feishu SDK returned an unexpected wire chunk set")
+        message_id = result.message_ids[0]
+        self.store.record_feishu_delivery_chunk(
+            delivery.id,
+            app_id=delivery.app_id,
+            lease_token=delivery.lease_token,
+            ordinal=ordinal,
+            expected_chunks=delivery.expected_chunks,
+            message_id=message_id,
+            request_log_id=result.request_log_id,
+        )
+        return message_id
 
     async def send_claimed(self, delivery) -> FeishuDeliveryOutcome:
         if not self.outbound_gate_open:
             raise PermissionError("Feishu outbound gates are closed")
         if delivery.status != "sending":
             raise ValueError("Feishu delivery must be atomically claimed first")
-        self._require_delivery_binding(delivery)
-        if not self._rate_slot():
+        delivery = self._require_delivery_binding(delivery)
+        if self.send_mode == "confirm" and not (
+            delivery.approved_at and delivery.approved_by
+        ):
             self._transition(
                 delivery,
-                "retry",
-                available_at=self._retry_at(delivery.attempts, rate_limited=True),
-                error_code="rate_limited",
-                error="local_rate_limit",
+                "failed",
+                error_code="format_error",
+                error="durable_approval_missing_at_send",
+                actor="sender",
+                audit_event_type="approval_missing_at_send",
             )
             return FeishuDeliveryOutcome(
-                "retry", "rate_limited", "local_rate_limit"
+                "failed", "format_error", "durable_approval_missing_at_send"
             )
+        chunks = self._chunk_plan(delivery)
         try:
-            result = await asyncio.wait_for(
-                self.client.send_reply(delivery),
-                timeout=self.send_timeout_seconds,
+            prior_receipts = self.store.validate_feishu_delivery_receipt_prefix(
+                delivery.id, app_id=delivery.app_id
             )
-        except asyncio.CancelledError:
-            # The caller timed out while an upstream action may already have
-            # happened.  Preserve uncertainty rather than leaving ``sending``
-            # or making the delivery eligible for a blind retry.
+        except ValueError:
             self._transition(
                 delivery,
                 "send_unknown",
-                error_code="send_timeout",
-                error="feishu_send_cancelled_result_unknown",
+                error_code="unknown",
+                error="delivery_receipt_prefix_invalid",
+            )
+            return FeishuDeliveryOutcome(
+                "send_unknown", "unknown", "delivery_receipt_prefix_invalid"
+            )
+
+        known_message_ids = [receipt.message_id for receipt in prior_receipts]
+        remote_failures = int(delivery.remote_failures)
+        last_request_log_id = (
+            prior_receipts[-1].request_log_id
+            if prior_receipts
+            else delivery.request_log_id
+        )
+        # A crash can happen after the final durable receipt but before the
+        # terminal CAS.  No remote probe or mutation is needed to converge it.
+        if len(known_message_ids) == delivery.expected_chunks:
+            self._transition_with_prefix(
+                delivery,
+                "sent",
+                known_message_ids=tuple(known_message_ids),
+                request_log_id=last_request_log_id,
+                remote_failures=0,
+            )
+            return FeishuDeliveryOutcome(
+                "sent",
+                message_id=known_message_ids[0],
+                request_log_id=last_request_log_id,
+            )
+
+        try:
+            target_state = await asyncio.wait_for(
+                self.client.fetch_message_state(
+                    delivery.app_id, delivery.reply_to_message_id
+                ),
+                timeout=self.send_timeout_seconds,
+            )
+        except asyncio.CancelledError:
+            # The existence probe has no remote mutation, so the claimed row
+            # can safely become retryable rather than result-unknown.
+            next_remote_failures = remote_failures + 1
+            retryable = next_remote_failures < self.max_attempts
+            self._transition_with_prefix(
+                delivery,
+                "retry" if retryable else "failed",
+                known_message_ids=tuple(known_message_ids),
+                available_at=(
+                    self._retry_at(next_remote_failures) if retryable else ""
+                ),
+                remote_failures=next_remote_failures,
+                error_code="target_state_unknown",
+                error=(
+                    "trigger_state_probe_cancelled"
+                    if retryable
+                    else "trigger_state_probe_cancelled_max_attempts"
+                ),
             )
             raise
-        except Exception as exc:
-            code = error_code(exc)
-            error = f"feishu_send_exception:{code}:{type(exc).__name__}"
-            if code in RETRYABLE_CODES and delivery.attempts < self.max_attempts:
-                self._transition(
+        except Exception:
+            target_state = None
+        state = str(getattr(target_state, "state", "unknown") or "unknown")
+        if state == "absent":
+            self._transition_with_prefix(
+                delivery,
+                "failed",
+                known_message_ids=tuple(known_message_ids),
+                error_code="target_revoked",
+                error="reply_target_revoked_before_send",
+            )
+            return FeishuDeliveryOutcome(
+                "failed", "target_revoked", "reply_target_revoked_before_send"
+            )
+        if state != "exists":
+            next_remote_failures = remote_failures + 1
+            if next_remote_failures < self.max_attempts:
+                self._transition_with_prefix(
                     delivery,
                     "retry",
-                    available_at=self._retry_at(delivery.attempts),
-                    error_code=code,
-                    error=error,
+                    known_message_ids=tuple(known_message_ids),
+                    available_at=self._retry_at(next_remote_failures),
+                    remote_failures=next_remote_failures,
+                    error_code="target_state_unknown",
+                    error="reply_target_state_unknown",
                 )
-                return FeishuDeliveryOutcome("retry", code, error)
-            if code in TERMINAL_CODES or code in RETRYABLE_CODES:
-                self._transition(
-                    delivery, "failed", error_code=code, error=error
+                return FeishuDeliveryOutcome(
+                    "retry", "target_state_unknown", "reply_target_state_unknown"
                 )
-                return FeishuDeliveryOutcome("failed", code, error)
-            # An exception during send may occur after the upstream accepted it.
-            self._transition(
-                delivery, "send_unknown", error_code=code, error=error
+            self._transition_with_prefix(
+                delivery,
+                "failed",
+                known_message_ids=tuple(known_message_ids),
+                remote_failures=next_remote_failures,
+                error_code="target_state_unknown",
+                error="reply_target_state_unknown_max_attempts",
             )
-            return FeishuDeliveryOutcome("send_unknown", code, error)
-        return self._finish_result(delivery, result)
+            return FeishuDeliveryOutcome(
+                "failed",
+                "target_state_unknown",
+                "reply_target_state_unknown_max_attempts",
+            )
+        first_remote_call = True
+        for ordinal in range(len(known_message_ids), len(chunks)):
+            chunk = chunks[ordinal]
+            if not self._rate_slot():
+                try:
+                    self._transition_with_prefix(
+                        delivery,
+                        "retry",
+                        known_message_ids=tuple(known_message_ids),
+                        available_at=self._retry_at(
+                            delivery.attempts, rate_limited=True
+                        ),
+                        error_code="rate_limited",
+                        error="local_rate_limit",
+                    )
+                except ValueError:
+                    superseded = self._superseded_outcome(delivery)
+                    if superseded is not None:
+                        return superseded
+                    raise
+                return FeishuDeliveryOutcome(
+                    "retry",
+                    "rate_limited",
+                    "local_rate_limit",
+                    message_id=(known_message_ids[0] if known_message_ids else ""),
+                )
+            chunk_key = delivery_chunk_idempotency_key(
+                delivery_key=delivery.idempotency_key,
+                ordinal=ordinal,
+                expected_chunks=delivery.expected_chunks,
+                chunk_plan_sha256=delivery.chunk_plan_sha256,
+                payload_sha256=delivery.payload_sha256,
+            )
+            mutation_at = self.now().astimezone(timezone.utc).isoformat()
+            if first_remote_call:
+                try:
+                    fenced = self.store.begin_feishu_delivery_mutation(
+                        delivery.id,
+                        app_id=delivery.app_id,
+                        lease_token=delivery.lease_token,
+                        now=mutation_at,
+                    )
+                except ValueError as exc:
+                    if "remote mutation already started" not in str(exc):
+                        raise
+                    self._transition_with_prefix(
+                        delivery,
+                        "send_unknown",
+                        known_message_ids=tuple(known_message_ids),
+                        request_log_id=last_request_log_id,
+                        error_code="unknown",
+                        error="remote_mutation_fence_already_started",
+                    )
+                    return FeishuDeliveryOutcome(
+                        "send_unknown",
+                        "unknown",
+                        "remote_mutation_fence_already_started",
+                        message_id=(
+                            known_message_ids[0] if known_message_ids else ""
+                        ),
+                        request_log_id=last_request_log_id,
+                    )
+                if fenced is None:
+                    return FeishuDeliveryOutcome(
+                        "rejected",
+                        "superseded",
+                        "superseded_by_newer_feishu_trigger",
+                    )
+                delivery = fenced
+                first_remote_call = False
+            else:
+                self.store.heartbeat_feishu_delivery_send(
+                    delivery.id,
+                    app_id=delivery.app_id,
+                    lease_token=delivery.lease_token,
+                    now=mutation_at,
+                )
+            try:
+                result = await asyncio.wait_for(
+                    self.client.send_reply_chunk(
+                        delivery,
+                        text=chunk,
+                        ordinal=ordinal,
+                        expected_chunks=delivery.expected_chunks,
+                        idempotency_key=chunk_key,
+                    ),
+                    timeout=self.send_timeout_seconds,
+                )
+            except asyncio.CancelledError:
+                self._transition_with_prefix(
+                    delivery,
+                    "send_unknown",
+                    known_message_ids=tuple(known_message_ids),
+                    request_log_id=last_request_log_id,
+                    error_code="send_timeout",
+                    error="feishu_send_cancelled_result_unknown",
+                )
+                raise
+            except Exception as exc:
+                code = error_code(exc)
+                error = f"feishu_send_exception:{code}:{type(exc).__name__}"
+                return self._finish_failure(
+                    delivery,
+                    FeishuSendResult(False, error_code=code),
+                    remote_failures=remote_failures,
+                    known_message_ids=tuple(known_message_ids),
+                    failure_error=error,
+                )
+
+            last_request_log_id = result.request_log_id or last_request_log_id
+            # A provider ID attached to a failed/contradictory result is only
+            # unconfirmed evidence.  Persisting it as an active receipt would
+            # skip that ordinal after a verified-not-sent requeue.  Only an
+            # unequivocally successful one-ID result advances the prefix.
+            if result.success and len(result.message_ids) == 1:
+                message_id = self._record_chunk_result(
+                    delivery, ordinal=ordinal, result=result
+                )
+                known_message_ids.append(message_id)
+                remote_failures = 0
+            elif len(result.message_ids) > 1:
+                self._transition_with_prefix(
+                    delivery,
+                    "send_unknown",
+                    known_message_ids=tuple(known_message_ids),
+                    request_log_id=last_request_log_id,
+                    error_code="unknown",
+                    error="sdk_returned_unplanned_wire_chunks",
+                )
+                return FeishuDeliveryOutcome(
+                    "send_unknown",
+                    "unknown",
+                    "sdk_returned_unplanned_wire_chunks",
+                    message_id=(known_message_ids[0] if known_message_ids else ""),
+                    request_log_id=last_request_log_id,
+                )
+
+            if not result.success:
+                return self._finish_failure(
+                    delivery,
+                    result,
+                    remote_failures=remote_failures,
+                    known_message_ids=tuple(known_message_ids),
+                )
+            if not result.message_ids:
+                self._transition_with_prefix(
+                    delivery,
+                    "send_unknown",
+                    known_message_ids=tuple(known_message_ids),
+                    request_log_id=last_request_log_id,
+                    error_code="unknown",
+                    error="successful_response_missing_message_id",
+                )
+                return FeishuDeliveryOutcome(
+                    "send_unknown",
+                    "unknown",
+                    "successful_response_missing_message_id",
+                    message_id=(known_message_ids[0] if known_message_ids else ""),
+                    request_log_id=last_request_log_id,
+                )
+
+        self._transition_with_prefix(
+            delivery,
+            "sent",
+            known_message_ids=tuple(known_message_ids),
+            request_log_id=last_request_log_id,
+            remote_failures=0,
+        )
+        return FeishuDeliveryOutcome(
+            "sent",
+            message_id=known_message_ids[0],
+            request_log_id=last_request_log_id,
+        )
 
     async def process_once(self, limit: int = 10) -> int:
         """Claim rows for this client; confirm mode requires durable approval."""
@@ -316,21 +682,27 @@ class FeishuDeliverySender:
         self,
         delivery_id: int,
         *,
-        approved_by: str = "local-audit-runtime",
+        expected_approval_hash: str,
+        approved_by: str,
     ) -> FeishuDeliveryOutcome:
         """Approve durably, then send through this already-connected client."""
         if not self.outbound_gate_open:
             raise PermissionError("Feishu outbound gates are closed")
+        if not isinstance(approved_by, str) or not approved_by.strip():
+            raise ValueError("Feishu delivery approval requires approved_by")
         app_id = self._authenticated_app_id()
         pending = self.store.get_feishu_delivery(delivery_id)
         if pending is None:
             raise ValueError(f"Feishu delivery {delivery_id} is not sendable")
         self._require_delivery_binding(pending, require_send_lease=False)
+        if expected_approval_hash != pending.approval_hash:
+            raise ValueError("Feishu delivery approval hash changed")
         if not pending.approved_at:
             pending = self.store.approve_feishu_delivery(
                 delivery_id,
                 app_id=app_id,
                 approved_by=approved_by,
+                expected_approval_hash=expected_approval_hash,
             )
         delivery = self.store.claim_feishu_delivery(
             delivery_id,
@@ -359,19 +731,61 @@ def recover_orphaned_sending(
     max_age_seconds: int = DEFAULT_SEND_LEASE_STALE_SECONDS,
     now: datetime | None = None,
 ) -> int:
-    """Never blindly resend after a crash; require explicit human verification."""
+    """Retry only pre-mutation crashes; quarantine every uncertain send."""
     recovered = 0
     for delivery in store.list_stale_feishu_sending(
         max_age_seconds, app_id=app_id, now=now
     ):
         try:
+            receipts = store.validate_feishu_delivery_receipt_prefix(
+                delivery.id, app_id=delivery.app_id
+            )
+        except ValueError:
+            receipts = None
+        try:
+            message_ids = tuple(
+                receipt.message_id for receipt in (receipts or ())
+            )
+            complete = (
+                receipts is not None
+                and len(message_ids) == delivery.expected_chunks
+            )
+            pre_mutation = (
+                receipts is not None
+                and not message_ids
+                and not delivery.mutation_started_at
+            )
+            if complete:
+                next_status = "sent"
+                next_error_code = ""
+                next_error = ""
+                audit_event_type = "orphaned_receipts_completed"
+            elif pre_mutation:
+                next_status = "retry"
+                next_error_code = "not_connected"
+                next_error = "orphaned_before_remote_mutation"
+                audit_event_type = "orphaned_pre_mutation_retry"
+            else:
+                next_status = "send_unknown"
+                next_error_code = "unknown"
+                next_error = "orphaned_sending_requires_review"
+                audit_event_type = "orphaned_send_unknown"
             updated = store.transition_feishu_delivery(
                 delivery.id,
                 from_statuses=("sending",),
-                to_status="send_unknown",
-                error_code="unknown",
-                error="orphaned_sending_requires_review",
+                to_status=next_status,
+                feishu_message_id=(message_ids[0] if message_ids else ""),
+                message_ids=message_ids,
+                request_log_id=(
+                    receipts[-1].request_log_id
+                    if complete and receipts
+                    else ""
+                ),
+                error_code=next_error_code,
+                error=next_error,
                 expected_lease_token=delivery.lease_token,
+                actor="sender-recovery",
+                audit_event_type=audit_event_type,
             )
         except ValueError:
             continue

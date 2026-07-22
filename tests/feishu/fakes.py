@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from types import SimpleNamespace
 
-from app.feishu.client import FeishuSendResult
+from app.feishu.client import FeishuMessageState, FeishuSendResult
 
 
 @dataclass
@@ -49,17 +49,48 @@ class FakeDeliveryClient:
         error=None,
         *,
         app_id: str = "cli_test",
+        message_state: str = "exists",
+        state_error=None,
     ):
         self.result = result or FeishuSendResult(True, message_id="om_reply")
         self.error = error
         self.app_id = app_id
         self.deliveries = []
+        self.chunk_calls = []
+        self.message_state = message_state
+        self.state_error = state_error
+        self.state_probes = []
+
+    async def fetch_message_state(self, app_id, message_id):
+        self.state_probes.append((app_id, message_id))
+        if self.state_error:
+            raise self.state_error
+        return FeishuMessageState(self.message_state)
 
     async def send_reply(self, delivery):
         self.deliveries.append(delivery)
         if self.error:
             raise self.error
         return self.result
+
+    async def send_reply_chunk(
+        self,
+        delivery,
+        *,
+        text,
+        ordinal,
+        expected_chunks,
+        idempotency_key,
+    ):
+        self.chunk_calls.append(
+            {
+                "text": text,
+                "ordinal": ordinal,
+                "expected_chunks": expected_chunks,
+                "idempotency_key": idempotency_key,
+            }
+        )
+        return await self.send_reply(delivery)
 
 
 class FakeRawChannel:

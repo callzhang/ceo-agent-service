@@ -68,8 +68,18 @@ _UNSAFE_AUDIT_ROUTE_CASES = (
     ("/config/wechat/reply-scope", "/config/wechat/reply-scope"),
     ("/developer-prompt", "/developer-prompt"),
     ("/dingtalk/bridge-status", "/dingtalk/bridge-status"),
+    ("/feishu/actions/{action_id}/approve", "/feishu/actions/1/approve"),
+    ("/feishu/actions/{action_id}/reject", "/feishu/actions/1/reject"),
+    ("/feishu/actions/{action_id}/reconcile", "/feishu/actions/1/reconcile"),
+    ("/feishu/actions/{action_id}/requeue", "/feishu/actions/1/requeue"),
     ("/feishu/deliveries/{delivery_id}/approve", "/feishu/deliveries/1/approve"),
     ("/feishu/deliveries/{delivery_id}/reject", "/feishu/deliveries/1/reject"),
+    (
+        "/feishu/deliveries/{delivery_id}/reconcile",
+        "/feishu/deliveries/1/reconcile",
+    ),
+    ("/feishu/deliveries/{delivery_id}/requeue", "/feishu/deliveries/1/requeue"),
+    ("/feishu/receipts/{receipt_id}/recall", "/feishu/receipts/1/recall"),
     (
         "/feishu/scopes/{target_type}/{target_id}/approve",
         "/feishu/scopes/group/chat-1/approve",
@@ -577,7 +587,7 @@ def _seed_feishu_pending(store: AutoReplyStore) -> int:
     return delivery.id
 
 
-def test_history_shows_feishu_badge_and_exact_delivery_actions(
+def test_history_shows_feishu_badge_and_non_mutating_review_link(
     tmp_path: Path, monkeypatch
 ):
     monkeypatch.setattr(config, "feishu_app_id", lambda: "cli_test")
@@ -585,11 +595,65 @@ def test_history_shows_feishu_badge_and_exact_delivery_actions(
     delivery_id = _seed_feishu_pending(store)
 
     html = render_attempt_list(store, search_object_types=("feishu",))
-
     assert "飞书</span>" in html
-    assert html.count(f"/feishu/deliveries/{delivery_id}/approve?next=/") == 1
-    assert html.count(f"/feishu/deliveries/{delivery_id}/reject?next=/") == 1
+    assert 'href="/feishu/review"' in html
+    assert f'data-feishu-delivery-id="{delivery_id}"' in html
+    assert "审核飞书回复" in html
+    assert "/feishu/deliveries/" not in html
+    assert "approval_hash" not in html
+    assert "csrf_token" not in html
     assert "💬 Pending" in html
+
+
+def test_history_feishu_review_link_is_non_mutating_and_frame_protected(
+    tmp_path: Path, monkeypatch
+):
+    monkeypatch.setattr(config, "feishu_app_id", lambda: "cli_test")
+    monkeypatch.setattr(config, "feishu_app_secret", lambda: "")
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    delivery_id = _seed_feishu_pending(store)
+    client = TestClient(
+        create_audit_app(store.path),
+        base_url="http://127.0.0.1:8765",
+        client=("127.0.0.1", 50000),
+    )
+
+    history = client.get("/")
+    assert f'data-feishu-delivery-id="{delivery_id}"' in history.text
+    assert 'href="/feishu/review"' in history.text
+    assert "/feishu/deliveries/" not in history.text
+    assert "csrf_token" not in history.text
+    assert history.headers["cache-control"] == "no-store"
+    assert history.headers["x-frame-options"] == "DENY"
+    assert "frame-ancestors 'none'" in history.headers[
+        "content-security-policy"
+    ]
+
+    saved = store.get_feishu_delivery(delivery_id)
+    assert saved.approved_at == ""
+    assert saved.approved_by == ""
+
+
+def test_history_links_approved_feishu_delivery_to_review_page(
+    tmp_path: Path, monkeypatch
+):
+    monkeypatch.setattr(config, "feishu_app_id", lambda: "cli_test")
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    delivery_id = _seed_feishu_pending(store)
+    delivery = store.get_feishu_delivery(delivery_id)
+    store.approve_feishu_delivery(
+        delivery_id,
+        app_id=delivery.app_id,
+        approved_by="first-reviewer",
+        expected_approval_hash=delivery.approval_hash,
+    )
+
+    html = render_attempt_list(store, search_object_types=("feishu",))
+
+    assert f'data-feishu-delivery-id="{delivery_id}"' in html
+    assert 'href="/feishu/review"' in html
+    assert "查看飞书审核" in html
+    assert "/feishu/deliveries/" not in html
 
 
 def test_history_feishu_actions_disappear_after_rejection(tmp_path: Path, monkeypatch):
@@ -601,7 +665,7 @@ def test_history_feishu_actions_disappear_after_rejection(tmp_path: Path, monkey
     html = render_attempt_list(store, search_object_types=("feishu",))
 
     assert "飞书</span>" in html
-    assert f"/feishu/deliveries/{delivery_id}/approve" not in html
+    assert f'data-feishu-delivery-id="{delivery_id}"' not in html
     assert "💬 Rejected" in html
 
 
@@ -615,8 +679,7 @@ def test_history_hides_feishu_actions_for_another_configured_app(
     html = render_attempt_list(store, search_object_types=("feishu",))
 
     assert "飞书</span>" in html
-    assert f"/feishu/deliveries/{delivery_id}/approve" not in html
-    assert f"/feishu/deliveries/{delivery_id}/reject" not in html
+    assert f'data-feishu-delivery-id="{delivery_id}"' not in html
 
 
 def test_render_attempt_list_links_task_history_to_task_detail(tmp_path: Path):
@@ -1164,7 +1227,11 @@ def test_history_route_reads_page_query(tmp_path: Path):
         if index == 0:
             first_id = attempt_id
     app = create_audit_app(store.path)
-    client = TestClient(app)
+    client = TestClient(
+        app,
+        base_url="http://127.0.0.1:8765",
+        client=("127.0.0.1", 50000),
+    )
 
     response = client.get("/?page=2&limit=50")
 
@@ -1207,7 +1274,11 @@ def test_history_route_reads_multi_type_query(tmp_path: Path):
         send_status="skipped",
     )
     app = create_audit_app(store.path)
-    client = TestClient(app)
+    client = TestClient(
+        app,
+        base_url="http://127.0.0.1:8765",
+        client=("127.0.0.1", 50000),
+    )
 
     response = client.get("/?type=sent&type=reacted&limit=1")
 
@@ -1905,7 +1976,11 @@ def test_history_route_returns_busy_page_when_database_is_locked(
         raise sqlite3.OperationalError("database is locked")
 
     monkeypatch.setattr(audit_web_module, "render_attempt_list", locked_attempt_list)
-    client = TestClient(create_audit_app(tmp_path / "worker.sqlite3"))
+    client = TestClient(
+        create_audit_app(tmp_path / "worker.sqlite3"),
+        base_url="http://127.0.0.1:8765",
+        client=("127.0.0.1", 50000),
+    )
 
     response = client.get("/")
 
@@ -1915,13 +1990,45 @@ def test_history_route_returns_busy_page_when_database_is_locked(
 
 
 def test_history_route_renders_chart_on_default_page(tmp_path: Path):
-    client = TestClient(create_audit_app(tmp_path / "worker.sqlite3"))
+    client = TestClient(
+        create_audit_app(tmp_path / "worker.sqlite3"),
+        base_url="http://127.0.0.1:8765",
+        client=("127.0.0.1", 50000),
+    )
 
     response = client.get("/")
 
     assert response.status_code == 200
     assert "CEO Agent Audit" in response.text
     assert "最近 24 小时事件" in response.text
+    assert response.headers["cache-control"] == "no-store"
+    assert response.headers["x-frame-options"] == "DENY"
+
+
+def test_history_and_attempt_detail_reject_dns_rebinding_and_remote_clients(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    attempt_id = seed_attempt(store)
+    app = create_audit_app(store.path)
+    local_client = TestClient(
+        app,
+        base_url="http://127.0.0.1:8765",
+        client=("127.0.0.1", 50000),
+    )
+    remote_client = TestClient(
+        app,
+        base_url="http://127.0.0.1:8765",
+        client=("10.0.0.8", 50000),
+    )
+
+    for path in ("/", f"/attempts/{attempt_id}"):
+        assert local_client.get(path).status_code == 200
+        assert local_client.get(
+            path,
+            headers={"Host": "attacker.example"},
+        ).status_code == 403
+        assert remote_client.get(path).status_code == 403
 
 
 def test_tutorial_check_route_records_real_step_status(tmp_path: Path):
@@ -4079,7 +4186,11 @@ def test_fastapi_app_serves_history_routes(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     attempt_id = seed_attempt(store)
     app = create_audit_app(store.path)
-    client = TestClient(app)
+    client = TestClient(
+        app,
+        base_url="http://127.0.0.1:8765",
+        client=("127.0.0.1", 50000),
+    )
 
     response = client.get("/")
     detail_response = client.get(f"/attempts/{attempt_id}")
@@ -4089,6 +4200,8 @@ def test_fastapi_app_serves_history_routes(tmp_path: Path):
     assert "技术部" in response.text
     assert detail_response.status_code == 200
     assert "agent 执行记录" in detail_response.text
+    assert detail_response.headers["cache-control"] == "no-store"
+    assert detail_response.headers["x-frame-options"] == "DENY"
 
 
 def test_fastapi_app_records_feedback_and_redirects(tmp_path: Path):

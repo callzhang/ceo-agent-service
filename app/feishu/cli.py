@@ -15,6 +15,12 @@ from pathlib import Path
 from typing import Any
 
 from app import config
+from app.feishu.approval_preview import (
+    action_approval_preview,
+    action_list_preview,
+    delivery_approval_preview,
+    delivery_list_preview,
+)
 from app.store import AutoReplyStore
 
 
@@ -55,6 +61,7 @@ def cmd_status(args: argparse.Namespace) -> int:
 
     dependencies = dependency_status()
     store = _store(args)
+    app_id = str(config.feishu_app_id() or "").strip()
     payload = {
         "enabled": config.feishu_enabled(),
         "sender_enabled": config.feishu_sender_enabled(),
@@ -65,14 +72,20 @@ def cmd_status(args: argparse.Namespace) -> int:
         "dependencies": asdict(dependencies),
         "scope_counts": {
             "pending": len(
-                store.list_feishu_reply_scopes(binding_status="pending")
+                store.list_feishu_reply_scopes(
+                    app_id=app_id, binding_status="pending"
+                )
             ),
             "verified": len(
-                store.list_feishu_reply_scopes(binding_status="verified")
+                store.list_feishu_reply_scopes(
+                    app_id=app_id, binding_status="verified"
+                )
             ),
-        },
+        } if app_id else {"pending": 0, "verified": 0},
         "delivery_counts": {
-            status: len(store.list_feishu_deliveries(status=status))
+            status: len(
+                store.list_feishu_deliveries(status=status, app_id=app_id)
+            ) if app_id else 0
             for status in (
                 "ready_to_send",
                 "sending",
@@ -185,7 +198,7 @@ def cmd_receive_test(args: argparse.Namespace) -> int:
 
 def cmd_produce_once(args: argparse.Namespace) -> int:
     store = _store(args)
-    app_id = str(args.app_id or config.feishu_app_id()).strip()
+    app_id = _configured_app_id(args)
     events = store.list_feishu_events(
         app_id=app_id,
         eligibility_status="eligible",
@@ -213,10 +226,15 @@ def cmd_consume_once(args: argparse.Namespace) -> int:
 def cmd_maintenance_once(args: argparse.Namespace) -> int:
     from app.feishu.maintenance import purge_expired_feishu_events
 
+    explicit_app_id = str(args.app_id or "").strip()
+    if args.all_apps and explicit_app_id:
+        raise ValueError("use either --all-apps or --app-id, not both")
+    app_id = "" if args.all_apps else _configured_app_id(args)
     result = purge_expired_feishu_events(
         _store(args),
         retention_days=config.feishu_event_retention_days(),
-        app_id=str(args.app_id or "").strip(),
+        media_retention_days=config.feishu_media_retention_days(),
+        app_id=app_id,
         batch_limit=args.batch_limit,
         max_batches=args.max_batches,
     )
@@ -226,7 +244,7 @@ def cmd_maintenance_once(args: argparse.Namespace) -> int:
 
 def cmd_scopes_list(args: argparse.Namespace) -> int:
     rows = _store(args).list_feishu_reply_scopes(
-        app_id=str(args.app_id or config.feishu_app_id()).strip(),
+        app_id=_configured_app_id(args),
         target_type=args.target_type,
         binding_status=args.status,
     )
@@ -257,16 +275,250 @@ def cmd_scope_disable(args: argparse.Namespace) -> int:
 def cmd_deliveries_list(args: argparse.Namespace) -> int:
     rows = _store(args).list_feishu_deliveries(
         status=args.status,
-        app_id=str(args.app_id or config.feishu_app_id()).strip(),
+        app_id=_configured_app_id(args),
         limit=args.limit,
     )
     payload = []
     for row in rows:
-        item = row.model_dump()
-        if not args.include_text:
-            item["reply_text"] = f"[redacted:{len(row.reply_text)} chars]"
+        item = {
+            "id": row.id,
+            "attempt_id": row.attempt_id,
+            "status": row.status,
+            "summary": f"[redacted:{len(row.reply_text)} chars]",
+            "preview": delivery_list_preview(row),
+            "reply_format": row.reply_format,
+            "expected_chunks": row.expected_chunks,
+            "attempts": row.attempts,
+            "approved_at": row.approved_at,
+            "approved_by": row.approved_by,
+            "error_code": row.error_code,
+            "error": row.error,
+            "created_at": row.created_at,
+            "updated_at": row.updated_at,
+        }
+        if args.include_preview:
+            item["approval_hash"] = row.approval_hash
+            item["approval_preview"] = delivery_approval_preview(row)
         payload.append(item)
     print(_json(payload))
+    return 0
+
+
+def _safe_action_summary(action) -> str:
+    effect = action_approval_preview(action)["effect"]
+    if action.kind == "add_reaction":
+        return f"emoji={effect['emoji_type']}"
+    if action.kind == "handoff_notify":
+        text_summary = action_list_preview(action)["effect"]["text_summary"]
+        return f"handoff text={text_summary}"
+    return "bot-owned message recall"
+
+
+def _safe_action_json(action) -> dict[str, object]:
+    return {
+        "id": action.id,
+        "reply_task_id": action.reply_task_id,
+        "attempt_id": action.attempt_id,
+        "kind": action.kind,
+        "risk": action.risk,
+        "status": action.status,
+        "summary": _safe_action_summary(action),
+        "preview": action_list_preview(action),
+        "approved_at": action.approved_at,
+        "approved_by": action.approved_by,
+        "attempts": action.attempts,
+        "error_code": action.error_code,
+        "created_at": action.created_at,
+        "updated_at": action.updated_at,
+    }
+
+
+def _require_action_kind_gate(kind: str, *, require_live: bool) -> None:
+    enabled = {
+        "add_reaction": config.feishu_reaction_enabled,
+        "recall_message": config.feishu_recall_enabled,
+        "handoff_notify": config.feishu_handoff_enabled,
+    }.get(kind)
+    if enabled is None or not enabled():
+        raise PermissionError("Feishu action kind gate is closed")
+    if require_live and not config.feishu_live_send_allowed():
+        raise PermissionError("Feishu outbound gates are closed")
+
+
+def cmd_receipts_list(args: argparse.Namespace) -> int:
+    if args.limit <= 0:
+        raise ValueError("limit must be greater than zero")
+    limit = min(args.limit, 1000)
+    rows = _store(args).list_feishu_delivery_receipts(
+        app_id=_configured_app_id(args),
+        status=args.status,
+    )
+    print(
+        _json(
+            [
+                {
+                    "id": row.id,
+                    "delivery_id": row.delivery_id,
+                    "ordinal": row.ordinal,
+                    "message_id": row.message_id,
+                    "status": row.status,
+                    "recall_action_id": row.recall_action_id,
+                    "created_at": row.created_at,
+                    "updated_at": row.updated_at,
+                }
+                for row in rows[:limit]
+            ]
+        )
+    )
+    return 0
+
+
+def cmd_actions_list(args: argparse.Namespace) -> int:
+    if args.limit <= 0:
+        raise ValueError("limit must be greater than zero")
+    rows = _store(args).list_feishu_message_actions(
+        app_id=_configured_app_id(args),
+        statuses=(args.status,) if args.status else (),
+        kinds=(args.kind,) if args.kind else (),
+        limit=min(args.limit, 1000),
+    )
+    payload = []
+    for row in rows:
+        item = _safe_action_json(row)
+        if args.include_preview:
+            item["approval_hash"] = row.approval_hash
+            item["approval_preview"] = action_approval_preview(row)
+        payload.append(item)
+    print(_json(payload))
+    return 0
+
+
+def _configured_action(args: argparse.Namespace):
+    app_id = _configured_app_id(args)
+    store = _store(args)
+    action = store.get_feishu_message_action(args.id)
+    if action is None:
+        raise ValueError("Feishu message action not found")
+    if action.app_id != app_id:
+        raise PermissionError("Feishu message action App ID does not match runtime")
+    return store, app_id, action
+
+
+def cmd_action_approve(args: argparse.Namespace) -> int:
+    """Approve durable state only; the running runtime performs the action."""
+    store, app_id, action = _configured_action(args)
+    _require_action_kind_gate(action.kind, require_live=True)
+    saved = store.approve_feishu_message_action(
+        action.id,
+        app_id=app_id,
+        approved_by=args.approved_by,
+        expected_approval_hash=args.approval_hash,
+    )
+    print(
+        _json(
+            {
+                "id": saved.id,
+                "kind": saved.kind,
+                "status": "approved_pending_runtime",
+                "approved_by": saved.approved_by,
+                "network": "not_checked",
+                "send": "not_attempted",
+                "next": "The single running Feishu runtime will claim this action.",
+            }
+        )
+    )
+    return 0
+
+
+def cmd_action_reject(args: argparse.Namespace) -> int:
+    store, app_id, action = _configured_action(args)
+    saved = store.reject_feishu_message_action(
+        action.id,
+        app_id=app_id,
+        rejected_by=args.rejected_by,
+    )
+    print(
+        _json(
+            {
+                "id": saved.id,
+                "kind": saved.kind,
+                "status": saved.status,
+                "network": "not_checked",
+                "send": "not_attempted",
+            }
+        )
+    )
+    return 0
+
+
+def cmd_action_reconcile(args: argparse.Namespace) -> int:
+    """Resolve one unknown action from offline evidence; never call Feishu."""
+    store, app_id, action = _configured_action(args)
+    if args.reaction_id and args.message_id:
+        raise ValueError("use either --reaction-id or --message-id")
+    if action.kind == "add_reaction":
+        if args.message_id:
+            raise ValueError("add_reaction reconciliation requires --reaction-id")
+        remote_id = args.reaction_id
+    elif action.kind == "handoff_notify":
+        if args.reaction_id:
+            raise ValueError("handoff reconciliation requires --message-id")
+        remote_id = args.message_id
+    else:
+        if args.reaction_id or args.message_id:
+            raise ValueError("recall reconciliation accepts no remote identifier")
+        remote_id = ""
+    saved = store.reconcile_feishu_message_action_unknown(
+        action.id,
+        app_id=app_id,
+        outcome=args.outcome,
+        verified_by=args.verified_by,
+        evidence_kind=args.evidence_kind,
+        remote_id=remote_id,
+        request_log_id=args.request_log_id,
+    )
+    print(
+        _json(
+            {
+                "id": saved.id,
+                "kind": saved.kind,
+                "status": saved.status,
+                "network": "not_checked",
+                "send": "not_attempted",
+                "next": (
+                    "none"
+                    if saved.status == "sent"
+                    else "Use actions requeue only after the verified not-applied result."
+                ),
+            }
+        )
+    )
+    return 0
+
+
+def cmd_action_requeue(args: argparse.Namespace) -> int:
+    """Requeue only a verified non-applied action and revoke old approval."""
+    store, app_id, action = _configured_action(args)
+    saved = store.requeue_feishu_message_action_after_verification(
+        action.id,
+        app_id=app_id,
+        verified_by=args.verified_by,
+        evidence_kind=args.evidence_kind,
+        available_at=args.available_at,
+    )
+    print(
+        _json(
+            {
+                "id": saved.id,
+                "kind": saved.kind,
+                "status": saved.status,
+                "approved": bool(saved.approved_at),
+                "network": "not_checked",
+                "send": "not_attempted",
+                "next": "A fresh approval is required in confirm mode.",
+            }
+        )
+    )
     return 0
 
 
@@ -297,6 +549,7 @@ def cmd_delivery_approve(args: argparse.Namespace) -> int:
         args.id,
         app_id=app_id,
         approved_by=args.approved_by,
+        expected_approval_hash=args.approval_hash,
     )
     print(
         _json(
@@ -328,26 +581,52 @@ def cmd_delivery_reject(args: argparse.Namespace) -> int:
 
 def cmd_delivery_reconcile(args: argparse.Namespace) -> int:
     app_id = _configured_app_id(args)
-    delivery = _store(args).reconcile_feishu_delivery_unknown(
+    store = _store(args)
+    delivery = store.reconcile_feishu_delivery_unknown(
         args.id,
         app_id=app_id,
         outcome=args.outcome,
         verified_by=args.verified_by,
         evidence_kind=args.evidence_kind,
-        feishu_message_id=args.feishu_message_id,
+        message_ids=tuple(args.message_id),
+        expected_chunks=args.expected_chunks,
         request_log_id=args.request_log_id,
     )
+    verified_chunks = len(
+        store.list_feishu_delivery_receipts(delivery_id=delivery.id)
+    )
+    if delivery.status == "sent":
+        next_step = "none"
+    elif delivery.status == "retry" and verified_chunks:
+        next_step = (
+            "The sender will resume only the unverified suffix with the same "
+            "immutable approval."
+        )
+    elif (
+        delivery.status == "failed"
+        and delivery.error_code == "verified_not_sent"
+    ):
+        next_step = (
+            "Use deliveries requeue to create a new review generation; the "
+            "previous approval hash is no longer reusable."
+        )
+    elif delivery.status == "failed":
+        next_step = (
+            "This structurally uncertain delivery is terminal and cannot be "
+            "requeued; active partial receipts may be recalled."
+        )
+    else:
+        next_step = (
+            "Keep the delivery quarantined until independent evidence closes "
+            "the uncertain next chunk."
+        )
     print(
         _json(
             {
                 "id": delivery.id,
                 "status": delivery.status,
-                "feishu_message_id": delivery.feishu_message_id,
-                "next": (
-                    "none"
-                    if delivery.status == "sent"
-                    else "Use deliveries requeue only after independently confirming non-delivery."
-                ),
+                "verified_chunks": verified_chunks,
+                "next": next_step,
             }
         )
     )
@@ -427,6 +706,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_db(maintenance)
     _add_app_id(maintenance)
+    maintenance.add_argument(
+        "--all-apps",
+        action="store_true",
+        help="explicitly purge retained rows for every Feishu app",
+    )
     maintenance.add_argument("--batch-limit", type=int, default=500)
     maintenance.add_argument("--max-batches", type=int, default=20)
     maintenance.set_defaults(func=cmd_maintenance_once)
@@ -475,12 +759,17 @@ def build_parser() -> argparse.ArgumentParser:
     _add_app_id(delivery_list)
     delivery_list.add_argument("--status", default="")
     delivery_list.add_argument("--limit", type=int, default=100)
-    delivery_list.add_argument("--include-text", action="store_true")
+    delivery_list.add_argument(
+        "--include-preview",
+        action="store_true",
+        help="include exact approval text in this local command output",
+    )
     delivery_list.set_defaults(func=cmd_deliveries_list)
     approve = delivery_sub.add_parser("approve")
     _add_db(approve)
     approve.add_argument("--id", type=int, required=True)
     approve.add_argument("--approved-by", required=True)
+    approve.add_argument("--approval-hash", required=True)
     approve.set_defaults(func=cmd_delivery_approve)
     reject = delivery_sub.add_parser("reject")
     _add_db(reject)
@@ -500,7 +789,17 @@ def build_parser() -> argparse.ArgumentParser:
         choices=("feishu_ui", "message_lookup", "admin_audit"),
         required=True,
     )
-    reconcile.add_argument("--feishu-message-id", default="")
+    reconcile.add_argument(
+        "--message-id",
+        action="append",
+        default=[],
+        help=(
+            "verified remote chunk ID in exact wire order; normally repeat "
+            "the durable prefix plus exactly one newly verified ID; "
+            "structural quarantines cannot be reconstructed as sent"
+        ),
+    )
+    reconcile.add_argument("--expected-chunks", type=int, default=0)
     reconcile.add_argument("--request-log-id", default="")
     reconcile.set_defaults(func=cmd_delivery_reconcile)
     requeue = delivery_sub.add_parser("requeue")
@@ -515,6 +814,107 @@ def build_parser() -> argparse.ArgumentParser:
     )
     requeue.add_argument("--available-at", default="")
     requeue.set_defaults(func=cmd_delivery_requeue)
+
+    receipts = sub.add_parser(
+        "receipts", help="list app-owned outbound message receipts; no network"
+    )
+    receipt_sub = receipts.add_subparsers(
+        dest="receipt_command", required=True
+    )
+    receipt_list = receipt_sub.add_parser("list")
+    _add_db(receipt_list)
+    _add_app_id(receipt_list)
+    receipt_list.add_argument(
+        "--status",
+        choices=("", "active", "recalled", "recall_unknown"),
+        default="",
+    )
+    receipt_list.add_argument("--limit", type=int, default=100)
+    receipt_list.set_defaults(func=cmd_receipts_list)
+
+    actions = sub.add_parser(
+        "actions", help="review durable message actions; never sends directly"
+    )
+    action_sub = actions.add_subparsers(dest="action_command", required=True)
+    action_list = action_sub.add_parser("list")
+    _add_db(action_list)
+    _add_app_id(action_list)
+    action_list.add_argument(
+        "--status",
+        choices=(
+            "",
+            "ready",
+            "sending",
+            "sent",
+            "retry",
+            "result_unknown",
+            "failed",
+            "rejected",
+        ),
+        default="",
+    )
+    action_list.add_argument(
+        "--kind",
+        choices=("", "add_reaction", "recall_message", "handoff_notify"),
+        default="",
+    )
+    action_list.add_argument("--limit", type=int, default=100)
+    action_list.add_argument(
+        "--include-preview",
+        action="store_true",
+        help="include exact handoff approval text in this local command output",
+    )
+    action_list.set_defaults(func=cmd_actions_list)
+    action_approve = action_sub.add_parser("approve")
+    _add_db(action_approve)
+    _add_app_id(action_approve)
+    action_approve.add_argument("--id", type=int, required=True)
+    action_approve.add_argument("--approved-by", required=True)
+    action_approve.add_argument("--approval-hash", required=True)
+    action_approve.set_defaults(func=cmd_action_approve)
+    action_reject = action_sub.add_parser("reject")
+    _add_db(action_reject)
+    _add_app_id(action_reject)
+    action_reject.add_argument("--id", type=int, required=True)
+    action_reject.add_argument("--rejected-by", required=True)
+    action_reject.set_defaults(func=cmd_action_reject)
+    action_reconcile = action_sub.add_parser("reconcile")
+    _add_db(action_reconcile)
+    _add_app_id(action_reconcile)
+    action_reconcile.add_argument("--id", type=int, required=True)
+    action_reconcile.add_argument(
+        "--outcome", choices=("applied", "not-applied"), required=True
+    )
+    action_reconcile.add_argument("--verified-by", required=True)
+    action_reconcile.add_argument(
+        "--evidence-kind",
+        choices=("feishu_ui", "message_lookup", "admin_audit"),
+        required=True,
+    )
+    action_reconcile.add_argument(
+        "--reaction-id",
+        default="",
+        help="verified reaction ID for add_reaction only",
+    )
+    action_reconcile.add_argument(
+        "--message-id",
+        default="",
+        help="verified notification message ID for handoff_notify only",
+    )
+    action_reconcile.add_argument("--request-log-id", default="")
+    action_reconcile.set_defaults(func=cmd_action_reconcile)
+    action_requeue = action_sub.add_parser("requeue")
+    _add_db(action_requeue)
+    _add_app_id(action_requeue)
+    action_requeue.add_argument("--id", type=int, required=True)
+    action_requeue.add_argument("--verified-by", required=True)
+    action_requeue.add_argument(
+        "--evidence-kind",
+        choices=("feishu_ui", "message_lookup", "admin_audit"),
+        required=True,
+    )
+    action_requeue.add_argument("--available-at", default="")
+    action_requeue.set_defaults(func=cmd_action_requeue)
     return parser
 
 

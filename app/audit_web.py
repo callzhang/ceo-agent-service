@@ -138,15 +138,13 @@ from app.setup_wizard import (
 from app.setup_wizard_models import SetupStepStatus, SetupWizardEvent
 from app.task_models import ProjectPriority, ProjectStatus, RiskLevel, TodoStatus
 from app.user_prompt_blocks import USER_PROMPT_BLOCKS, UserPromptBlock
+from app.worker import DingTalkAutoReplyWorker
 
 DISPLAY_TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
 AUDIT_WEB_SQLITE_BUSY_TIMEOUT_SECONDS = 2
 USER_FEEDBACK_SYNC_BATCH_LIMIT = 5
 USER_FEEDBACK_SYNC_TIMEOUT_SECONDS = 0.5
 USER_FEEDBACK_SYNC_LIMIT_PER_TOKEN = 5
-from app.worker import DingTalkAutoReplyWorker
-
-
 CSS = """
 :root{--ink:#0a0a0a;--charcoal:#1c1c1e;--slate:#3a3a3c;--steel:#5a5a5c;--stone:#888888;--muted:#a8a8aa;--canvas:#ffffff;--surface:#f7f7f7;--surface-soft:#fafafa;--surface-code:#1c1c1e;--hairline:#e5e5e5;--hairline-soft:#ededed;--mint:#00d4a4;--mint-deep:#00b48a;--tag:#3772cf;--error:#d45656}
 *{box-sizing:border-box}
@@ -3314,7 +3312,7 @@ def render_attempt_list(
             f'<div class="attempt-foot">{warning_html}</div>' if warning_html else ""
         )
         wechat_delivery_id = wechat_ready_delivery_by_attempt.get(attempt.id)
-        feishu_delivery_id = feishu_ready_delivery_by_attempt.get(attempt.id)
+        feishu_delivery_review = feishu_ready_delivery_by_attempt.get(attempt.id)
         items.append(
             "<article class=\"attempt-item\">"
             "<div class=\"attempt-head\">"
@@ -3329,7 +3327,7 @@ def render_attempt_list(
             f"<time class=\"attempt-time\">{escape(_format_local_time(attempt.created_at))}</time>"
             "<div class=\"attempt-actions\">"
             f"{_wechat_send_actions(wechat_delivery_id)}"
-            f"{_feishu_send_actions(feishu_delivery_id)}"
+            f"{_feishu_send_actions(feishu_delivery_review)}"
             f"{_review_link(attempt)}"
             "</div>"
             "</div>"
@@ -3465,8 +3463,8 @@ def _wechat_send_actions(delivery_id: int | None) -> str:
 def _feishu_ready_delivery_by_attempt(
     store: AutoReplyStore,
     attempts: list[ReplyAttempt],
-) -> dict[int, int]:
-    """Return actionable Feishu delivery ids keyed by audited attempt."""
+) -> dict[int, tuple[int, bool]]:
+    """Return hash-bound Feishu delivery reviews keyed by audited attempt."""
     from app import config
 
     app_id = str(config.feishu_app_id() or "").strip()
@@ -3480,30 +3478,27 @@ def _feishu_ready_delivery_by_attempt(
     if not attempt_ids:
         return {}
     return {
-        delivery.attempt_id: delivery.id
+        delivery.attempt_id: (
+            delivery.id,
+            bool(delivery.approved_at),
+        )
         for delivery in store.list_feishu_deliveries(
             statuses=("ready_to_send", "retry"), app_id=app_id
         )
-        if delivery.attempt_id in attempt_ids and not delivery.approved_at
+        if delivery.attempt_id in attempt_ids
     }
 
 
-def _feishu_send_actions(delivery_id: int | None) -> str:
-    if not delivery_id:
+def _feishu_send_actions(
+    delivery_review: tuple[int, bool] | None,
+) -> str:
+    if delivery_review is None:
         return ""
-    send_style = (
-        "background:#3370ff;color:#fff;border-color:#3370ff;font-weight:700"
-    )
+    delivery_id, approved = delivery_review
+    label = "查看飞书审核" if approved else "审核飞书回复"
     return (
-        f"<form method=\"post\" action=\"/feishu/deliveries/{delivery_id}/approve?next=/\" "
-        "style=\"display:inline-flex;margin:0\">"
-        "<input type='hidden' name='approved_by' value='local-history-review'>"
-        f"<button class=\"compact-button\" type=\"submit\" style=\"{send_style}\">发送</button>"
-        "</form>"
-        f"<form method=\"post\" action=\"/feishu/deliveries/{delivery_id}/reject?next=/\" "
-        "style=\"display:inline-flex;margin:0\">"
-        "<button class=\"compact-button\" type=\"submit\">拒绝</button>"
-        "</form>"
+        f'<a class="compact-button" href="/feishu/review" '
+        f'data-feishu-delivery-id="{delivery_id}">{label}</a>'
     )
 
 
@@ -6005,7 +6000,8 @@ def create_audit_app(
         except sqlite3.OperationalError as exc:
             if _is_sqlite_busy_error(exc):
                 return _render_history_busy_page()
-            raise
+            else:
+                raise
 
     @app.get("/user-feedback", response_class=HTMLResponse)
     def user_feedback_list(request: Request) -> str:

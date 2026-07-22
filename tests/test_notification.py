@@ -1,3 +1,5 @@
+import subprocess
+
 import pytest
 
 from app.audit_security import (
@@ -5,8 +7,10 @@ from app.audit_security import (
     NOTIFICATION_BRIDGE_HEADER_VALUE,
 )
 from app.notification import (
+    LocalNotificationDeliveryError,
     _send_browser_notification,
     dingtalk_conversation_notification_url,
+    send_macos_local_notification,
     send_macos_notification,
 )
 
@@ -206,7 +210,7 @@ def test_notification_prefers_terminal_notifier(monkeypatch):
     )
     monkeypatch.setattr(
         "app.notification.subprocess.run",
-        lambda command, check: commands.append((command, check))
+        lambda command, check, **_kwargs: commands.append((command, check))
         or type("Completed", (), {"returncode": 0})(),
     )
 
@@ -244,7 +248,7 @@ def test_notification_falls_back_to_browser_when_terminal_notifier_fails(monkeyp
     )
     monkeypatch.setattr(
         "app.notification.subprocess.run",
-        lambda command, check: commands.append((command, check))
+        lambda command, check, **_kwargs: commands.append((command, check))
         or type("Completed", (), {"returncode": 1})(),
     )
 
@@ -262,3 +266,123 @@ def test_notification_falls_back_to_browser_when_terminal_notifier_fails(monkeyp
             "url": "http://127.0.0.1:8765/open-dingtalk?cid=75217569357",
         }
     ]
+
+
+def test_feishu_local_notification_never_uses_remote_bridge(monkeypatch):
+    commands = []
+    monkeypatch.setenv(
+        "CEO_NOTIFICATION_BRIDGE_BASE_URL", "https://remote.example.invalid"
+    )
+    monkeypatch.setattr("app.notification.shutil.which", lambda _name: None)
+    monkeypatch.setattr(
+        "app.notification.request.urlopen",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("offline Feishu notification attempted network I/O")
+        ),
+    )
+    monkeypatch.setattr(
+        "app.notification.subprocess.run",
+        lambda command, check, **_kwargs: commands.append((command, check))
+        or type("Completed", (), {"returncode": 0})(),
+    )
+
+    send_macos_local_notification(
+        title="CEO Feishu handoff required",
+        message="private Feishu handoff metadata",
+        url=None,
+    )
+
+    assert commands == [
+        (
+            [
+                "osascript",
+                "-e",
+                'display notification "private Feishu handoff metadata" with title "CEO Feishu handoff required"',
+            ],
+            False,
+        )
+    ]
+
+
+def test_feishu_local_notification_rejects_url_before_any_side_effect(monkeypatch):
+    def unexpected(*_args, **_kwargs):
+        raise AssertionError("URL rejection must happen before any local or network I/O")
+
+    monkeypatch.setattr("app.notification.shutil.which", unexpected)
+    monkeypatch.setattr("app.notification.subprocess.run", unexpected)
+    monkeypatch.setattr("app.notification.request.urlopen", unexpected)
+
+    with pytest.raises(ValueError, match="does not accept a URL"):
+        send_macos_local_notification(
+            title="private-title",
+            message="secret-message",
+            url="http://127.0.0.1:8765/anything",
+        )
+
+
+def test_feishu_local_terminal_notifier_has_no_execute_action(monkeypatch):
+    commands = []
+    monkeypatch.setattr(
+        "app.notification.shutil.which",
+        lambda _name: "/opt/homebrew/bin/terminal-notifier",
+    )
+    monkeypatch.setattr(
+        "app.notification.subprocess.run",
+        lambda command, **_kwargs: commands.append(command)
+        or type("Completed", (), {"returncode": 0})(),
+    )
+
+    send_macos_local_notification(
+        title="private-title",
+        message="secret-message",
+    )
+
+    assert len(commands) == 1
+    assert "-execute" not in commands[0]
+
+
+@pytest.mark.parametrize("returncode", [1, 70])
+def test_feishu_local_notification_nonzero_exit_is_not_fake_success(
+    monkeypatch, returncode
+):
+    commands = []
+    monkeypatch.setattr("app.notification.shutil.which", lambda _name: None)
+    monkeypatch.setattr(
+        "app.notification.subprocess.run",
+        lambda command, **kwargs: commands.append((command, kwargs))
+        or type("Completed", (), {"returncode": returncode})(),
+    )
+
+    with pytest.raises(LocalNotificationDeliveryError) as exc_info:
+        send_macos_local_notification(
+            title="private-title",
+            message="secret-message",
+        )
+
+    assert len(commands) == 1
+    assert commands[0][1]["timeout"] == 10.0
+    assert "private-title" not in str(exc_info.value)
+    assert "secret-message" not in str(exc_info.value)
+
+
+def test_feishu_local_notification_timeout_raises_payload_free_error(monkeypatch):
+    monkeypatch.setattr(
+        "app.notification.shutil.which",
+        lambda _name: "/opt/homebrew/bin/terminal-notifier",
+    )
+
+    def timeout(command, **kwargs):
+        assert kwargs["timeout"] == 10.0
+        raise subprocess.TimeoutExpired(command, kwargs["timeout"])
+
+    monkeypatch.setattr("app.notification.subprocess.run", timeout)
+
+    with pytest.raises(LocalNotificationDeliveryError) as exc_info:
+        send_macos_local_notification(
+            title="private-title",
+            message="secret-message",
+        )
+
+    assert str(exc_info.value) == (
+        "local_notification_result_unknown:send_timeout"
+    )

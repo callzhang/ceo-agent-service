@@ -1,9 +1,14 @@
 import asyncio
+from datetime import datetime, timezone
+from types import SimpleNamespace
 
 import pytest
 
 from app.feishu.client import FeishuClientConfig
 from app.feishu.listener import FeishuIngressListener
+from app.feishu.producer import FeishuReplyProducer
+from app.store import AutoReplyStore
+from tests.feishu.fakes import FakeSdkMessage
 
 
 class FakeStore:
@@ -121,3 +126,69 @@ def test_connect_failure_is_persisted_sanitized():
     errors = [item for item in producer.store.errors if item[2] == "feishu_connect_failed"]
     assert errors
     assert "do-not-store" not in errors[0][3]
+
+
+def test_callback_only_normalizes_and_persists_media_without_download(tmp_path):
+    now = datetime(2026, 7, 22, 3, 20, tzinfo=timezone.utc)
+    store = AutoReplyStore(tmp_path / "listener-media.sqlite3")
+    producer = FeishuReplyProducer(
+        store,
+        app_id="cli_test",
+        stale_event_seconds=300,
+        media_enabled=True,
+        now=lambda: now,
+    )
+    producer.ingest_sdk_message(
+        FakeSdkMessage(create_time=str(int(now.timestamp() * 1000)))
+    )
+    store.review_feishu_reply_scope(
+        "cli_test", "group", "oc_1", approved=True, approved_by="local-user"
+    )
+
+    class NeverDownloadClient(FakeConnectedClient):
+        app_id = "cli_test"
+
+        def __init__(self):
+            super().__init__()
+            self.downloads = 0
+
+        async def download_inbound_resource(self, **_kwargs):
+            self.downloads += 1
+            raise AssertionError("listener callback must not download")
+
+    client = NeverDownloadClient()
+    handlers = {}
+
+    def factory(config, **callbacks):
+        del config
+        handlers.update(callbacks)
+        return client
+
+    listener = FeishuIngressListener(
+        producer, _config(), enabled=True, client_factory=factory
+    )
+    message = FakeSdkMessage(
+        message_id="om_media",
+        raw_content_type="image",
+        body_text="must-not-copy-key",
+        create_time=str(int(now.timestamp() * 1000)),
+        raw={"header": {"event_id": "evt_media"}},
+    )
+    message.resources = [
+        SimpleNamespace(type="image", file_key="img_secret_key")
+    ]
+
+    async def scenario():
+        task = asyncio.create_task(listener.run())
+        await asyncio.sleep(0)
+        await listener.wait_ready()
+        await handlers["on_message"](message)
+        await listener.stop()
+        await task
+
+    asyncio.run(scenario())
+    assert client.downloads == 0
+    event = store.get_feishu_event("evt_media")
+    assert event is not None and event.reply_task_id == 0
+    [asset] = store.list_feishu_media_assets(event_record_id=event.id)
+    assert asset.status == "pending"

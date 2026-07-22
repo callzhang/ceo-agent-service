@@ -66,6 +66,10 @@ def test_real_sdk_import_is_delayed_until_build(monkeypatch):
         def __init__(self, **kwargs):
             self.kwargs = kwargs
 
+    class CapturedConfig:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
     class Channel:
         def __init__(self, **kwargs):
             self.kwargs = kwargs
@@ -77,6 +81,12 @@ def test_real_sdk_import_is_delayed_until_build(monkeypatch):
     fake_sdk = SimpleNamespace(
         SecurityConfig=SecurityConfig,
         PolicyConfig=PolicyConfig,
+        SafetyConfig=CapturedConfig,
+        TextBatchConfig=CapturedConfig,
+        MediaBatchConfig=CapturedConfig,
+        ChatQueueConfig=CapturedConfig,
+        InboundConfig=CapturedConfig,
+        NameCacheConfig=CapturedConfig,
         FeishuChannel=Channel,
     )
 
@@ -94,6 +104,21 @@ def test_real_sdk_import_is_delayed_until_build(monkeypatch):
     assert client.app_id == "cli_test"
     assert client.channel.kwargs["security"].kwargs["mode"] == "strict"
     assert client.channel.kwargs["policy"].kwargs["require_mention"] is True
+    safety = client.channel.kwargs["safety"].kwargs
+    assert safety["text_batch"].kwargs["delay_ms"] == 0
+    assert safety["text_batch"].kwargs["max_messages"] == 1
+    assert safety["media_batch"].kwargs["enabled"] is False
+    assert safety["chat_queue"].kwargs == {
+        "enabled": True,
+        "merge_while_busy": False,
+    }
+    inbound = client.channel.kwargs["inbound"].kwargs
+    assert inbound["expand_merge_forward"] is False
+    assert inbound["fetch_interactive_card"] is False
+    assert inbound["name_cache"].kwargs["enabled"] is False
+    assert inbound["include_raw"] is True
+    assert inbound["emit_raw_events"] is False
+    assert client.channel.kwargs["name_lookup"](["ou_private"]) == {}
 
 
 def test_missing_reply_target_is_rejected_before_sdk_call():

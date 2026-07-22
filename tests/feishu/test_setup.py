@@ -8,9 +8,21 @@ def test_registration_manifest_is_exactly_least_privilege():
     assert manifest["tenant_scopes"] == (
         "im:message.p2p_msg:readonly",
         "im:message.group_at_msg:readonly",
-        "im:message:send_as_bot",
     )
     assert manifest["events"] == ("im.message.receive_v1",)
+    assert manifest["optional_scope_groups"] == {
+        "reply_send": (
+            "im:message:send_as_bot",
+            "im:message:readonly",
+        ),
+        "rich_message_read": ("im:message:readonly",),
+        "emoji_reaction": ("im:message.reactions:write_only",),
+        "recall_bot_message": ("im:message:recall",),
+    }
+    assert manifest["unsupported_not_to_grant"] == {
+        "all_group_messages": ("im:message.group_msg",),
+        "outbound_media_upload": ("im:resource",),
+    }
     assert manifest["addons_preset"] is False
 
 

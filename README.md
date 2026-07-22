@@ -187,7 +187,13 @@ cp .env.example .env
 | `CEO_ASSISTANT_SIGNATURE` | 自动回复签名 |
 | `CEO_HANDOFF_ACK` | 交给真人时发送的确认文本 |
 | `CEO_FEISHU_ENABLED` | 飞书接收/处理总开关，默认 `0` |
-| `CEO_FEISHU_SENDER_ENABLED` | 飞书真实投递独立开关，默认 `0` |
+| `CEO_FEISHU_SENDER_ENABLED` | 飞书真实投递独立开关，默认 `0`；启用前必须整组授予 `reply_send`（`im:message:send_as_bot` + `im:message:readonly`）并发布应用版本 |
+| `CEO_FEISHU_MEDIA_ENABLED` | 飞书附件受控下载，默认 `0`；还要求总开关开启 |
+| `CEO_FEISHU_REACTION_ENABLED` | 飞书 Emoji reaction，默认 `0`；还要求 sender 开启 |
+| `CEO_FEISHU_RECALL_ENABLED` | 经审核的 bot 消息撤回，默认 `0`；还要求 sender 开启 |
+| `CEO_FEISHU_HANDOFF_ENABLED` | 受信 allowlist 接管通知，默认 `0`；还要求 sender 开启 |
+| `CEO_FEISHU_REPLY_MENTION_SENDER` | 群聊/话题回复时结构化 @ 已验证的入站发送人，默认 `0`；模型不能指定目标 |
+| `CEO_FEISHU_MEDIA_RETENTION_DAYS` | 已验证附件的本地保留天数，默认 `7`；清理先删除媒体再清理事件 |
 | `CEO_FEISHU_SEND_MODE` | `confirm`（默认）保留待人工批准；`auto` 仅能在另行授权后启用 |
 | `CEO_FEISHU_APP_ID` | 企业自建应用 App ID；App Secret 不写入 `.env.example` |
 | `CEO_FEEDBACK_SPIKE_VERCEL_BASE_URL` | 可选的对话方反馈页根地址；留空则不追加反馈链接。启用前必须把本仓库的 Vercel API 路由部署到安装者自己的 Vercel 项目，并填写自己的部署根地址；不要复用其他人的反馈服务 URL。配置后会在发出的回复末尾追加 `👍 赞｜👎 踩` 反馈链接；同一会话长期未评价时会升级为强提醒，超过硬阈值后只回复“请对我提供反馈后再提问” |
@@ -197,9 +203,11 @@ cp .env.example .env
 #### 可选：飞书官方 Bot 消息通道
 
 飞书消息通道使用企业自建应用的 Bot 身份和官方 WebSocket 长连接，不读取飞书
-本地数据库、不操作桌面客户端，也不代表某个员工身份发言。首版最小权限仅用于
-接收机器人私聊、接收群内 `@机器人` 和以机器人身份回复；不申请通讯录、云盘、
-完整历史消息或用户 access token。
+本地数据库、不操作桌面客户端，也不代表某个员工身份发言。receive-only 基线只
+申请机器人私聊和群内 `@机器人` 的接收权限；发送权限不混入基线。启用任何 sender
+之前，必须另行整组授予 `reply_send`（`im:message:send_as_bot` 与
+`im:message:readonly`），以同时满足 bot 发送和发送前原消息状态复核。不申请通讯录、
+云盘、完整历史消息或用户 access token。
 
 所有飞书开关默认关闭。App Secret 优先保存在 macOS Keychain 的
 `ceo-agent-service/feishu` 服务、`app_secret` 账户下；环境变量只作为本地调试
@@ -561,6 +569,7 @@ Live smoke tests 默认跳过，只有显式设置环境变量时才会访问真
 - [docs/dws-capabilities.md](docs/dws-capabilities.md)：项目使用的 DWS 能力。
 - [docs/dws-command-inventory.md](docs/dws-command-inventory.md)：本机 `dws` CLI 能力清单和安全边界。
 - [docs/feishu-channel-operations.md](docs/feishu-channel-operations.md)：飞书官方 Bot 通道的最小权限、启停、凭证轮换、故障处理和回滚。
+- [docs/feishu-dingtalk-parity-plan.md](docs/feishu-dingtalk-parity-plan.md)：飞书对标钉钉的分阶段目标、验收矩阵和停止条件。
 - [docs/work-profile-distillation-tutorial.md](docs/work-profile-distillation-tutorial.md)：工作画像生成教程。
 - [SECURITY.md](SECURITY.md)：安全策略。
 - [CONTRIBUTING.md](CONTRIBUTING.md)：贡献指南。

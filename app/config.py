@@ -413,6 +413,13 @@ def _feishu_positive_int(name: str, default: int) -> int:
     return value
 
 
+def _feishu_bounded_positive_int(name: str, default: int, maximum: int) -> int:
+    value = _feishu_positive_int(name, default)
+    if value > maximum:
+        raise ValueError(f"{name} must not exceed {maximum}")
+    return value
+
+
 def feishu_enabled() -> bool:
     """Whether the Feishu receive/decision channel may start."""
     return _feishu_truthy("CEO_FEISHU_ENABLED")
@@ -420,7 +427,36 @@ def feishu_enabled() -> bool:
 
 def feishu_sender_enabled() -> bool:
     """Whether the separately gated Feishu delivery worker may start."""
-    return _feishu_truthy("CEO_FEISHU_SENDER_ENABLED")
+    return feishu_enabled() and _feishu_truthy("CEO_FEISHU_SENDER_ENABLED")
+
+
+def feishu_media_enabled() -> bool:
+    """Whether approved inbound attachments may be downloaded and verified."""
+    return feishu_enabled() and _feishu_truthy("CEO_FEISHU_MEDIA_ENABLED")
+
+
+def feishu_reaction_enabled() -> bool:
+    """Whether the separately gated Emoji-reaction worker may mutate Feishu."""
+    return feishu_sender_enabled() and _feishu_truthy(
+        "CEO_FEISHU_REACTION_ENABLED"
+    )
+
+
+def feishu_recall_enabled() -> bool:
+    """Whether reviewed recalls may execute; every recall still needs approval."""
+    return feishu_sender_enabled() and _feishu_truthy("CEO_FEISHU_RECALL_ENABLED")
+
+
+def feishu_handoff_enabled() -> bool:
+    """Whether handoff notifications may target the local trusted allowlist."""
+    return feishu_sender_enabled() and _feishu_truthy("CEO_FEISHU_HANDOFF_ENABLED")
+
+
+def feishu_reply_mention_sender_enabled() -> bool:
+    """Whether group replies may mention the trusted inbound sender identity."""
+    return feishu_sender_enabled() and _feishu_truthy(
+        "CEO_FEISHU_REPLY_MENTION_SENDER"
+    )
 
 
 def feishu_live_send_allowed() -> bool:
@@ -449,7 +485,15 @@ def feishu_stale_event_seconds() -> int:
 
 
 def feishu_context_limit() -> int:
-    return _feishu_positive_int("CEO_FEISHU_CONTEXT_LIMIT", 20)
+    return _feishu_bounded_positive_int("CEO_FEISHU_CONTEXT_LIMIT", 20, 100)
+
+
+def feishu_context_lookback_seconds() -> int:
+    """Bound prompt context to the shorter of event retention and 30 days."""
+    maximum = min(feishu_event_retention_days() * 24 * 60 * 60, 30 * 24 * 60 * 60)
+    return _feishu_bounded_positive_int(
+        "CEO_FEISHU_CONTEXT_LOOKBACK_SECONDS", 24 * 60 * 60, maximum
+    )
 
 
 def feishu_max_sends_per_minute() -> int:
@@ -458,6 +502,40 @@ def feishu_max_sends_per_minute() -> int:
 
 def feishu_event_retention_days() -> int:
     return _feishu_positive_int("CEO_FEISHU_EVENT_RETENTION_DAYS", 30)
+
+
+def feishu_media_retention_days() -> int:
+    return _feishu_positive_int("CEO_FEISHU_MEDIA_RETENTION_DAYS", 7)
+
+
+def feishu_media_max_assets() -> int:
+    return _feishu_bounded_positive_int("CEO_FEISHU_MEDIA_MAX_ASSETS", 8, 8)
+
+
+def feishu_media_max_bytes() -> int:
+    return _feishu_bounded_positive_int(
+        "CEO_FEISHU_MEDIA_MAX_BYTES", 20 * 1024 * 1024, 20 * 1024 * 1024
+    )
+
+
+def feishu_media_event_max_bytes() -> int:
+    return _feishu_bounded_positive_int(
+        "CEO_FEISHU_MEDIA_EVENT_MAX_BYTES",
+        32 * 1024 * 1024,
+        32 * 1024 * 1024,
+    )
+
+
+def feishu_handoff_open_ids() -> tuple[str, ...]:
+    """Return a normalized, bounded local allowlist; never accept model targets."""
+    values = []
+    for item in os.getenv("CEO_FEISHU_HANDOFF_OPEN_IDS", "").split(","):
+        normalized = item.strip()
+        if normalized and normalized not in values:
+            values.append(normalized)
+    if len(values) > 20:
+        raise ValueError("CEO_FEISHU_HANDOFF_OPEN_IDS must contain at most 20 IDs")
+    return tuple(values)
 
 
 def feishu_app_id() -> str:

@@ -2,6 +2,7 @@ import base64
 import json
 import os
 import shlex
+import tempfile
 import time
 import tomllib
 from pathlib import Path
@@ -119,6 +120,7 @@ _NO_TOOL_SECRET_ENV_KEYS = {
     "CEO_DWS_AGENT_CODE",
     "CEO_FEISHU_APP_ID",
     "CEO_FEISHU_APP_SECRET",
+    "CEO_FEISHU_HANDOFF_OPEN_IDS",
 }
 
 
@@ -436,6 +438,18 @@ class CodexRunner:
         self.workspace = workspace
         self.codex_bin = codex_bin
         self.tool_mode = tool_mode
+        self._no_tool_cwd_owner = None
+        self._no_tool_cwd: Path | None = None
+        if tool_mode == CODEX_TOOL_MODE_NONE:
+            # Never place a no-tool decision run in the application workspace:
+            # Codex discovers AGENTS.md and other project material from its cwd.
+            # A process-private empty directory plus project_doc_max_bytes=0
+            # makes the prompt (and explicit image arguments) the only input.
+            self._no_tool_cwd_owner = tempfile.TemporaryDirectory(
+                prefix="ceo-agent-codex-no-tools-"
+            )
+            self._no_tool_cwd = Path(self._no_tool_cwd_owner.name)
+            self._no_tool_cwd.chmod(0o700)
 
     def build_env(self) -> dict[str, str]:
         if self.tool_mode == CODEX_TOOL_MODE_NONE:
@@ -468,7 +482,10 @@ class CodexRunner:
         effective_ignore_user_config = ignore_user_config or no_tools
         image_options: list[str] = []
         for image_path in image_paths or []:
-            image_options.extend(["--image", str(image_path)])
+            explicit_path = Path(image_path)
+            if no_tools and not explicit_path.is_absolute():
+                explicit_path = self.workspace / explicit_path
+            image_options.extend(["--image", str(explicit_path)])
         schema_options = (
             ["--output-schema", str(output_schema_path)]
             if output_schema_path is not None
@@ -512,17 +529,21 @@ class CodexRunner:
                 [
                     "--sandbox",
                     "read-only",
+                    "--ephemeral",
+                    "--skip-git-repo-check",
                     "-c",
                     "tools.enabled_tools=[]",
                     "-c",
                     'web_search="disabled"',
+                    "-c",
+                    "project_doc_max_bytes=0",
                 ]
                 if no_tools
                 else []
             ),
         ]
         bypass_options = [] if no_tools else [CODEX_BYPASS_APPROVALS_AND_SANDBOX]
-        if session_id:
+        if session_id and not no_tools:
             return [
                 self.codex_bin,
                 "exec",
@@ -546,6 +567,6 @@ class CodexRunner:
             *schema_options,
             *image_options,
             "--cd",
-            str(self.workspace),
+            str(self._no_tool_cwd if no_tools else self.workspace),
             "-",
         ]

@@ -109,7 +109,7 @@ def test_context_is_thread_scoped_as_of_trigger_and_excludes_future(tmp_path):
         "oc_1",
         app_id="cli_a",
         thread_id="thread-a",
-        before_event_id=trigger.event_id,
+        before_message_id=trigger.message_id,
     )
 
     assert [row.message_id for row in context] == ["om_cli_a_1"]
@@ -118,11 +118,11 @@ def test_context_is_thread_scoped_as_of_trigger_and_excludes_future(tmp_path):
             "oc_1",
             app_id="cli_a",
             thread_id="thread-b",
-            before_event_id=trigger.event_id,
+            before_message_id=trigger.message_id,
         )
     with pytest.raises(ValueError, match="requires app_id and thread_id"):
         store.list_feishu_context(
-            "oc_1", before_event_id=trigger.event_id
+            "oc_1", before_message_id=trigger.message_id
         )
 
 
@@ -224,7 +224,10 @@ def test_delivery_attempt_sync_and_verified_unknown_recovery(tmp_path):
     assert recorded.event_type == "attempt_recorded"
     assert recorded.new_state == "pending"
     store.approve_feishu_delivery(
-        delivery.id, app_id="cli_a", approved_by="operator"
+        delivery.id,
+        app_id="cli_a",
+        approved_by="operator",
+        expected_approval_hash=delivery.approval_hash,
     )
     assert store.get_reply_attempt(attempt_id).send_status == "pending"
 
@@ -279,6 +282,43 @@ def test_delivery_attempt_sync_and_verified_unknown_recovery(tmp_path):
             entity_type="delivery", entity_id=delivery.id
         )
     }
+
+
+def test_delivery_schema_migration_invalidates_stale_approval_snapshot(tmp_path):
+    store = AutoReplyStore(tmp_path / "db.sqlite3")
+    _, _, _, delivery = _attempt_and_delivery(store)
+    store.approve_feishu_delivery(
+        delivery.id,
+        app_id=delivery.app_id,
+        approved_by="legacy-reviewer",
+        expected_approval_hash=delivery.approval_hash,
+    )
+    with sqlite3.connect(store.path) as db:
+        db.execute("drop trigger feishu_deliveries_identity_immutable")
+        db.execute(
+            """
+            update feishu_deliveries
+            set expected_chunks=2, approval_hash=?
+            where id=?
+            """,
+            ("0" * 64, delivery.id),
+        )
+
+    store._initialize()
+
+    migrated = store.get_feishu_delivery(delivery.id)
+    assert migrated.expected_chunks == 1
+    assert migrated.approval_hash == delivery.approval_hash
+    assert migrated.approved_at == ""
+    assert migrated.approved_by == ""
+    assert any(
+        row.event_type == "approval_snapshot_migrated"
+        and row.actor == "schema-migration"
+        and row.detail == "approval_invalidated=1"
+        for row in store.list_feishu_audit_events(
+            entity_type="delivery", entity_id=delivery.id
+        )
+    )
 
 
 def test_feishu_attempt_requires_a_durable_reply_task(tmp_path):
@@ -346,6 +386,7 @@ def test_target_misbinding_migration_quarantines_attempt_and_delivery(tmp_path):
     store = AutoReplyStore(path)
     _, _, attempt_id, delivery = _attempt_and_delivery(store)
     with sqlite3.connect(path) as db:
+        db.execute("drop trigger feishu_deliveries_identity_immutable")
         db.execute(
             "update feishu_deliveries set reply_to_message_id='om_wrong' where id=?",
             (delivery.id,),
@@ -373,6 +414,7 @@ def test_terminal_target_misbinding_preserves_fact_and_is_idempotent(tmp_path):
     store = AutoReplyStore(path)
     _, _, attempt_id, delivery = _attempt_and_delivery(store)
     with sqlite3.connect(path) as db:
+        db.execute("drop trigger feishu_deliveries_identity_immutable")
         db.execute(
             """
             update feishu_deliveries
@@ -452,6 +494,7 @@ def test_legacy_cross_task_attempt_is_rebound_and_synced(tmp_path):
         store, number=2, chat_id="oc_2"
     )
     with sqlite3.connect(path) as db:
+        db.execute("drop trigger feishu_deliveries_identity_immutable")
         db.execute(
             """
             update feishu_deliveries
@@ -492,7 +535,7 @@ def test_consumer_crash_windows_recover_without_second_model_run(tmp_path):
         channel="feishu",
     )
 
-    assert store.recover_feishu_reply_task(claimed.id) is True
+    assert store.recover_feishu_reply_task(claimed.id, app_id="cli_a") is True
     assert store.reply_task_is_done(claimed.id)
     assert store.get_reply_attempt(attempt_id).send_status == "skipped"
 
@@ -518,7 +561,7 @@ def test_consumer_crash_windows_recover_without_second_model_run(tmp_path):
         reply_in_thread=False,
         reply_text="reply",
     )
-    assert store.recover_feishu_reply_task(second_task.id) is True
+    assert store.recover_feishu_reply_task(second_task.id, app_id="cli_a") is True
     assert store.reply_task_is_done(second_task.id)
     assert store.get_feishu_delivery(delivery.id).id == delivery.id
 
@@ -541,6 +584,7 @@ def test_stale_task_owner_cannot_finalize_new_owner_claim(tmp_path):
     with pytest.raises(ValueError, match="lease"):
         store.finalize_feishu_reply_task(
             old_owner.id,
+            app_id="cli_a",
             lease_token=old_owner.lease_token,
             action="no_reply",
             sensitivity_kind="general",
@@ -550,6 +594,7 @@ def test_stale_task_owner_cannot_finalize_new_owner_claim(tmp_path):
 
     store.finalize_feishu_reply_task(
         new_owner.id,
+        app_id="cli_a",
         lease_token=new_owner.lease_token,
         action="no_reply",
         sensitivity_kind="general",
@@ -721,15 +766,68 @@ def test_event_time_migration_resumes_partial_backfill(
         violations = db.execute("pragma foreign_key_check").fetchall()
         delivery_row = db.execute(
             """
-            select attempt_id, status from feishu_deliveries
+            select attempt_id, status, payload_sha256,
+                   expected_chunks, approval_hash
+            from feishu_deliveries
             where reply_task_id=7
             """
         ).fetchone()
+        receipt_columns = {
+            row["name"]
+            for row in db.execute(
+                "pragma table_info(feishu_delivery_receipts)"
+            ).fetchall()
+        }
+        delivery_triggers = {
+            row["name"]
+            for row in db.execute(
+                """
+                select name from sqlite_master
+                where type='trigger' and tbl_name='feishu_deliveries'
+                """
+            ).fetchall()
+        }
+        event_unique_columns = {
+            tuple(
+                item["name"]
+                for item in db.execute(
+                    f"pragma index_info('{index['name']}')"
+                ).fetchall()
+            )
+            for index in db.execute("pragma index_list(feishu_events)").fetchall()
+            if index["unique"]
+        }
+        media_fk_targets = {
+            row["table"]
+            for row in db.execute(
+                "pragma foreign_key_list(feishu_media_assets)"
+            ).fetchall()
+        }
+        event_columns = {
+            row["name"]
+            for row in db.execute("pragma table_info(feishu_events)").fetchall()
+        }
     assert event_row["event_create_time_ms"] == 1784714405000
     assert event_row["reply_task_id"] == 7
     assert task_row["execution_generation"] == "generation-7"
     assert delivery_row["attempt_id"] > 0
     assert delivery_row["status"] == "ready_to_send"
+    assert delivery_row["expected_chunks"] == 1
+    assert len(delivery_row["payload_sha256"]) == 64
+    assert len(delivery_row["approval_hash"]) == 64
+    assert "request_log_id" in receipt_columns
+    assert "feishu_deliveries_identity_immutable" in delivery_triggers
+    assert ("event_id",) not in event_unique_columns
+    assert ("app_id", "message_id") in event_unique_columns
+    assert "feishu_events" in media_fk_targets
+    assert {
+        "root_message_id",
+        "parent_message_id",
+        "normalized_summary",
+        "normalization_version",
+        "content_truncated",
+        "resource_truncated",
+    } <= event_columns
     attempt = store.get_reply_attempt(delivery_row["attempt_id"])
     assert attempt.channel == "feishu"
     assert attempt.send_status == "pending"

@@ -4,13 +4,16 @@ from types import SimpleNamespace
 
 import pytest
 
+from app.dingtalk_models import CodexAction, CodexDecision
+from app.feishu.consumer import FeishuReplyConsumer
 from app.feishu.delivery import FeishuDeliverySender, delivery_idempotency_key
 from app.feishu.listener import FeishuListenerHealth
+from app.feishu.local_notifications import FeishuLocalNotificationWorker
 from app.feishu.models import FeishuInboundMessage
 from app.feishu import service
 from app.feishu.service import component_names
 from app.store import AutoReplyStore
-from tests.feishu.fakes import FakeDeliveryClient
+from tests.feishu.fakes import FakeDeliveryClient, FakeRunner
 
 
 def test_components_are_absent_when_disabled_or_unconfigured():
@@ -38,6 +41,18 @@ def test_decision_runner_is_hard_isolated_from_all_tools(tmp_path):
     assert "tools.enabled_tools=[]" in command
     assert "--ignore-user-config" in command
     assert "--dangerously-bypass-approvals-and-sandbox" not in command
+
+
+def test_build_consumer_threads_configured_context_lookback(monkeypatch):
+    monkeypatch.setenv("CEO_FEISHU_ENABLED", "0")
+    monkeypatch.setenv("CEO_FEISHU_APP_ID", "cli_test")
+    monkeypatch.setenv("CEO_FEISHU_EVENT_RETENTION_DAYS", "30")
+    monkeypatch.setenv("CEO_FEISHU_CONTEXT_LOOKBACK_SECONDS", "321")
+    runner = SimpleNamespace(tool_mode="none", timeout_seconds=0)
+
+    consumer = service.build_consumer(SimpleNamespace(), runner)
+
+    assert consumer.context_lookback_seconds == 321
 
 
 def test_runtime_health_returns_safe_listener_snapshot():
@@ -109,6 +124,12 @@ def test_audit_approval_uses_active_runtime_client_without_second_ws(tmp_path):
     store, delivery = _delivery_store(tmp_path)
     client = FakeDeliveryClient()
 
+    async def fetch_message_state(app_id, message_id):
+        assert app_id == "cli_test" and message_id == "om_1"
+        return SimpleNamespace(state="exists")
+
+    client.fetch_message_state = fetch_message_state
+
     runtime = service.FeishuChannelRuntime(
         listener=SimpleNamespace(
             health=FeishuListenerHealth(status="ready"), client=client
@@ -137,7 +158,11 @@ def test_audit_approval_uses_active_runtime_client_without_second_ws(tmp_path):
     service._register_runtime(runtime)
     try:
         outcome = service.approve_delivery_on_runtime(
-            store, delivery.id, timeout=2
+            store,
+            delivery.id,
+            expected_approval_hash=delivery.approval_hash,
+            approved_by="operator",
+            timeout=2,
         )
     finally:
         loop.call_soon_threadsafe(loop.stop)
@@ -153,4 +178,506 @@ def test_audit_approval_fails_closed_without_active_runtime(tmp_path):
     with service._RUNTIME_HEALTH_LOCK:
         service._CURRENT_RUNTIME = None
     with pytest.raises(RuntimeError, match="not active"):
-        service.approve_delivery_on_runtime(store, delivery.id, timeout=1)
+        service.approve_delivery_on_runtime(
+            store,
+            delivery.id,
+            expected_approval_hash=delivery.approval_hash,
+            approved_by="operator",
+            timeout=1,
+        )
+
+
+def test_runtime_approval_cannot_self_source_hash_from_delivery_id(tmp_path):
+    store, delivery = _delivery_store(tmp_path)
+    with pytest.raises(TypeError, match="expected_approval_hash"):
+        service.approve_delivery_on_runtime(
+            store,
+            delivery.id,
+            approved_by="operator",
+            timeout=1,
+        )
+
+
+class _MediaRuntimeListener:
+    enabled = True
+
+    def __init__(self):
+        self.config = SimpleNamespace(app_id="cli_test")
+        self.client = SimpleNamespace(app_id="cli_test")
+        self.health = FeishuListenerHealth(status="stopped")
+        self.started = False
+        self.stopped = False
+        self.errors = []
+
+    async def run(self):
+        self.started = True
+        self.health = FeishuListenerHealth(status="ready")
+        while not self.stopped:
+            await asyncio.sleep(0)
+
+    async def wait_ready(self, timeout=30):
+        del timeout
+        while not self.started:
+            await asyncio.sleep(0)
+
+    async def stop(self):
+        self.stopped = True
+
+    def _record_error(self, kind, error=None):
+        self.errors.append((kind, type(error).__name__ if error else "none"))
+
+
+class _MediaRuntimeStore:
+    def __init__(self, path):
+        self.path = path
+        self.recoveries = []
+        self.local_notification_recoveries = []
+        self.attached = []
+
+    def recover_stale_feishu_media_assets(self, **kwargs):
+        self.recoveries.append(kwargs)
+        return 0
+
+    def list_feishu_events(self, *_args, **_kwargs):
+        return []
+
+    def list_feishu_media_assets(self, **_kwargs):
+        return []
+
+    def feishu_media_event_ready_for_enqueue(self, *_args, **_kwargs):
+        return True
+
+    def attach_feishu_event_reply_task(self, event_record_id):
+        self.attached.append(event_record_id)
+
+    def recover_stale_feishu_local_notifications(self, **kwargs):
+        self.local_notification_recoveries.append(kwargs)
+        return 0
+
+    def claim_feishu_local_notifications(self, *_args, **_kwargs):
+        return []
+
+
+def test_runtime_drains_local_fallback_without_any_remote_send_feature(tmp_path):
+    listener = _MediaRuntimeListener()
+    listener.client = SimpleNamespace()
+    store = _MediaRuntimeStore(tmp_path / "runtime.sqlite3")
+    factory_calls = []
+
+    class LocalWorker:
+        async def process_once(self):
+            listener.stopped = True
+            return 0
+
+    def local_factory(st, *, app_id):
+        factory_calls.append((st, app_id))
+        return LocalWorker()
+
+    runtime = service.FeishuChannelRuntime(
+        listener=listener,
+        store=store,
+        local_notification_factory=local_factory,
+        sender_interval_seconds=0.001,
+    )
+
+    asyncio.run(runtime.run())
+
+    assert factory_calls == [(store, "cli_test")]
+    assert store.local_notification_recoveries == [
+        {"app_id": "cli_test", "stale_after_seconds": 300, "now": None}
+    ]
+
+
+def _local_fallback_store(tmp_path):
+    store = AutoReplyStore(tmp_path / "local-fallback.sqlite3")
+    store.record_feishu_event(
+        FeishuInboundMessage(
+            event_id="evt_local_fallback",
+            app_id="cli_test",
+            message_id="om_local_fallback",
+            chat_id="oc_local_fallback",
+            chat_type="group",
+            chat_title="Operations",
+            sender_open_id="ou_requester",
+            sender_name="Alex",
+            message_type="text",
+            mentioned_bot=True,
+            body_text="needs a human",
+            event_create_time="2026-07-22T03:20:00+00:00",
+            received_at="2026-07-22T03:20:01+00:00",
+        ),
+        eligibility_status="eligible",
+        store_body=True,
+    )
+    FeishuReplyConsumer(
+        store,
+        FakeRunner(CodexDecision(action=CodexAction.HANDOFF_TO_HUMAN)),
+        app_id="cli_test",
+    ).run_once(1)
+    return store
+
+
+class _UnavailableListener:
+    enabled = True
+
+    def __init__(self, *, fail=False):
+        self.config = SimpleNamespace(app_id="cli_test")
+        self.client = None
+        self.fail = fail
+        self.stopped = False
+        self.run_calls = 0
+        self.errors = []
+
+    async def run(self):
+        self.run_calls += 1
+        if self.fail:
+            await asyncio.sleep(0)
+            raise RuntimeError("connect detail must stay private")
+        while not self.stopped:
+            await asyncio.sleep(0)
+
+    async def wait_ready(self, timeout=30):
+        await asyncio.wait_for(asyncio.Event().wait(), timeout=timeout)
+
+    async def stop(self):
+        self.stopped = True
+
+    def _record_error(self, kind, error=None):
+        self.errors.append((kind, type(error).__name__ if error else "none"))
+
+
+@pytest.mark.parametrize("fail", [True, False])
+def test_local_fallback_drains_during_connect_failure_or_never_ready(
+    tmp_path, fail
+):
+    store = _local_fallback_store(tmp_path)
+    listener = _UnavailableListener(fail=fail)
+    calls = []
+    runtime = service.FeishuChannelRuntime(
+        listener=listener,
+        store=store,
+        listener_ready_timeout_seconds=0.02,
+        sender_interval_seconds=0.001,
+        local_notification_factory=lambda st, *, app_id: (
+            FeishuLocalNotificationWorker(
+                st,
+                app_id=app_id,
+                notifier=lambda **payload: calls.append(payload),
+            )
+        ),
+    )
+
+    with pytest.raises((RuntimeError, TimeoutError)) as exc_info:
+        asyncio.run(runtime.run())
+
+    assert listener.run_calls == 1
+    if fail:
+        assert type(exc_info.value) is RuntimeError
+    assert len(calls) == 1
+    [notification] = store.list_feishu_local_notifications(app_id="cli_test")
+    assert notification.status == "sent"
+    assert listener.stopped is True
+    assert runtime._loop is None
+
+
+def test_listener_total_disable_never_starts_local_fallback(tmp_path):
+    store = _local_fallback_store(tmp_path)
+    listener = _UnavailableListener()
+    listener.enabled = False
+    factory_calls = []
+    runtime = service.FeishuChannelRuntime(
+        listener=listener,
+        store=store,
+        local_notification_factory=lambda *_args, **_kwargs: factory_calls.append(
+            True
+        ),
+    )
+
+    asyncio.run(runtime.run())
+
+    assert factory_calls == []
+    [notification] = store.list_feishu_local_notifications(app_id="cli_test")
+    assert notification.status == "pending"
+
+
+def test_connected_app_id_must_match_local_configuration(tmp_path):
+    listener = _MediaRuntimeListener()
+    listener.client = SimpleNamespace(app_id="cli_other")
+    store = _MediaRuntimeStore(tmp_path / "runtime.sqlite3")
+
+    with pytest.raises(PermissionError, match="does not match"):
+        asyncio.run(
+            service.FeishuChannelRuntime(
+                listener=listener,
+                store=store,
+                sender_interval_seconds=0.001,
+            ).run()
+        )
+
+
+def test_runtime_cancellation_stops_independent_local_loop(tmp_path):
+    async def scenario():
+        listener = _MediaRuntimeListener()
+        store = _MediaRuntimeStore(tmp_path / "runtime.sqlite3")
+        second_pass = asyncio.Event()
+
+        class BlockingWorker:
+            def __init__(self):
+                self.calls = 0
+                self.cancelled = False
+
+            async def process_once(self):
+                self.calls += 1
+                if self.calls == 1:
+                    return 0
+                second_pass.set()
+                try:
+                    await asyncio.Event().wait()
+                except asyncio.CancelledError:
+                    self.cancelled = True
+                    raise
+
+        worker = BlockingWorker()
+        runtime = service.FeishuChannelRuntime(
+            listener=listener,
+            store=store,
+            sender_interval_seconds=0.001,
+            local_notification_factory=lambda *_args, **_kwargs: worker,
+        )
+        task = asyncio.create_task(runtime.run())
+        await asyncio.wait_for(second_pass.wait(), timeout=1)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        return listener, runtime, worker
+
+    listener, runtime, worker = asyncio.run(scenario())
+
+    assert worker.cancelled is True
+    assert listener.stopped is True
+    assert runtime._loop is None
+
+
+def test_media_runtime_uses_listener_client_recovers_and_attaches(tmp_path):
+    listener = _MediaRuntimeListener()
+    store = _MediaRuntimeStore(tmp_path / "runtime.sqlite3")
+    factory_calls = []
+
+    class Resolver:
+        app_id = "cli_test"
+
+        async def resolve_pending(self, *, limit):
+            assert limit == 8
+            listener.stopped = True
+            return [
+                SimpleNamespace(
+                    event_ready_for_enqueue=True,
+                    asset=SimpleNamespace(
+                        event_record_id=42,
+                        app_id="cli_test",
+                        message_id="om_media",
+                    ),
+                )
+            ]
+
+    def media_factory(st, client, **kwargs):
+        factory_calls.append((st, client, kwargs))
+        return Resolver()
+
+    runtime = service.FeishuChannelRuntime(
+        listener=listener,
+        store=store,
+        media_enabled=True,
+        media_workspace=tmp_path,
+        media_factory=media_factory,
+        sender_interval_seconds=0.001,
+    )
+
+    asyncio.run(runtime.run())
+
+    assert factory_calls[0][0] is store
+    assert factory_calls[0][1] is listener.client
+    assert factory_calls[0][2]["workspace"] == tmp_path.resolve()
+    assert store.recoveries == [
+        {"app_id": "cli_test", "stale_after_seconds": 300}
+    ]
+    assert store.attached == [42]
+
+
+def test_media_download_failure_degrades_only_media_loop(tmp_path):
+    listener = _MediaRuntimeListener()
+    store = _MediaRuntimeStore(tmp_path / "runtime.sqlite3")
+
+    class FlakyResolver:
+        app_id = "cli_test"
+
+        def __init__(self):
+            self.calls = 0
+
+        async def resolve_pending(self, *, limit):
+            del limit
+            self.calls += 1
+            if self.calls == 1:
+                raise RuntimeError("file_key=must-not-be-recorded")
+            listener.stopped = True
+            return []
+
+    resolver = FlakyResolver()
+    runtime = service.FeishuChannelRuntime(
+        listener=listener,
+        store=store,
+        media_enabled=True,
+        media_workspace=tmp_path,
+        media_factory=lambda *_args, **_kwargs: resolver,
+        sender_interval_seconds=0.001,
+    )
+
+    asyncio.run(runtime.run())
+
+    assert resolver.calls == 2
+    assert ("feishu_media_resolve_failed", "RuntimeError") in listener.errors
+    assert "must-not-be-recorded" not in repr(listener.errors)
+
+
+def test_media_runtime_rejects_limit_above_normalized_contract(tmp_path):
+    runtime = service.FeishuChannelRuntime(
+        listener=_MediaRuntimeListener(),
+        store=_MediaRuntimeStore(tmp_path / "runtime.sqlite3"),
+        media_enabled=True,
+        media_workspace=tmp_path,
+        media_max_assets=9,
+    )
+    with pytest.raises(ValueError, match="between 1 and 8"):
+        asyncio.run(runtime.run())
+
+
+def test_action_runtime_reuses_listener_client_without_second_connection(
+    tmp_path, monkeypatch
+):
+    listener = _MediaRuntimeListener()
+    store = _MediaRuntimeStore(tmp_path / "runtime.sqlite3")
+    recoveries = []
+    factory_calls = []
+
+    monkeypatch.setattr(
+        service,
+        "recover_orphaned_message_actions",
+        lambda st, **kwargs: recoveries.append((st, kwargs)) or 0,
+    )
+
+    class ActionSender:
+        async def process_once(self):
+            listener.stopped = True
+            return 0
+
+    def action_sender_factory(st, client):
+        factory_calls.append((st, client))
+        return ActionSender()
+
+    runtime = service.FeishuChannelRuntime(
+        listener=listener,
+        store=store,
+        reaction_enabled=True,
+        action_sender_factory=action_sender_factory,
+        sender_interval_seconds=0.001,
+    )
+
+    asyncio.run(runtime.run())
+
+    assert factory_calls == [(store, listener.client)]
+    assert recoveries == [(store, {"app_id": "cli_test"})]
+    assert listener.started is True
+
+
+def test_action_sender_builder_preserves_independent_default_off_gates(
+    monkeypatch,
+):
+    monkeypatch.setenv("CEO_FEISHU_ENABLED", "1")
+    monkeypatch.setenv("CEO_FEISHU_SENDER_ENABLED", "1")
+    monkeypatch.setenv("CEO_NOT_SEND_MESSAGE", "0")
+    monkeypatch.setenv("CEO_FEISHU_REACTION_ENABLED", "1")
+    monkeypatch.setenv("CEO_FEISHU_RECALL_ENABLED", "0")
+    monkeypatch.setenv("CEO_FEISHU_HANDOFF_ENABLED", "1")
+    monkeypatch.setenv(
+        "CEO_FEISHU_HANDOFF_OPEN_IDS", "ou_owner,ou_backup,ou_owner"
+    )
+
+    sender = service.build_action_sender(
+        SimpleNamespace(), SimpleNamespace(app_id="cli_test")
+    )
+
+    assert sender.outbound_gate_open is True
+    assert sender.enabled_kinds == ("add_reaction", "handoff_notify")
+    assert sender.handoff_target_allowlist == frozenset(
+        {"ou_owner", "ou_backup"}
+    )
+
+
+def test_runtime_reply_and_action_factories_share_one_bidirectional_budget(
+    monkeypatch,
+):
+    monkeypatch.setenv("CEO_FEISHU_MAX_SENDS_PER_MINUTE", "1")
+    monkeypatch.setenv("CEO_FEISHU_MEDIA_ENABLED", "0")
+    monkeypatch.setattr(
+        service,
+        "build_listener",
+        lambda *_args, **_kwargs: SimpleNamespace(),
+    )
+    client = SimpleNamespace(app_id="cli_test")
+
+    reply_first_runtime = service.build_runtime(SimpleNamespace())
+    reply_sender = reply_first_runtime.sender_factory(
+        SimpleNamespace(), client
+    )
+    action_sender = reply_first_runtime.action_sender_factory(
+        SimpleNamespace(), client
+    )
+
+    assert reply_sender.mutation_budget is action_sender.mutation_budget
+    assert reply_sender._rate_slot() is True
+    assert action_sender._rate_slot() is False
+
+    action_first_runtime = service.build_runtime(SimpleNamespace())
+    reply_sender = action_first_runtime.sender_factory(
+        SimpleNamespace(), client
+    )
+    action_sender = action_first_runtime.action_sender_factory(
+        SimpleNamespace(), client
+    )
+
+    assert action_sender._rate_slot() is True
+    assert reply_sender._rate_slot() is False
+
+
+def test_action_sender_failure_degrades_only_action_loop(tmp_path, monkeypatch):
+    listener = _MediaRuntimeListener()
+    store = _MediaRuntimeStore(tmp_path / "runtime.sqlite3")
+    monkeypatch.setattr(
+        service, "recover_orphaned_message_actions", lambda *_args, **_kwargs: 0
+    )
+
+    class FlakyActionSender:
+        def __init__(self):
+            self.calls = 0
+
+        async def process_once(self):
+            self.calls += 1
+            if self.calls == 1:
+                raise RuntimeError("remote or secret detail")
+            listener.stopped = True
+            return 0
+
+    sender = FlakyActionSender()
+    runtime = service.FeishuChannelRuntime(
+        listener=listener,
+        store=store,
+        handoff_enabled=True,
+        action_sender_factory=lambda *_args: sender,
+        sender_interval_seconds=0.001,
+    )
+
+    asyncio.run(runtime.run())
+
+    assert sender.calls == 2
+    assert ("feishu_action_process_failed", "RuntimeError") in listener.errors
+    assert "remote or secret detail" not in repr(listener.errors)

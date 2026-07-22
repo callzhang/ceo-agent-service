@@ -5,7 +5,7 @@ import threading
 from datetime import datetime, timedelta, timezone
 from contextlib import contextmanager
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from collections.abc import Iterator
 from uuid import uuid4
 
@@ -14,9 +14,31 @@ from pydantic import BaseModel, Field, TypeAdapter
 from app.feishu.models import (
     FeishuAuditEvent,
     FeishuDelivery,
+    FeishuDeliveryReceipt,
     FeishuEventRecord,
     FeishuInboundMessage,
     FeishuReplyScope,
+)
+from app.feishu.actions import (
+    FeishuMessageAction,
+    action_approval_hash,
+    build_message_action,
+)
+from app.feishu.media import (
+    DEFAULT_MAX_EVENT_BYTES,
+    DEFAULT_MAX_EVENT_RESOURCES,
+    DEFAULT_MAX_RESOURCE_BYTES,
+    DEFAULT_MEDIA_PROCESSING_GRACE_SECONDS,
+    FeishuMediaAsset,
+    FeishuMediaRejected,
+    file_key_sha256,
+    safe_media_name,
+)
+from app.feishu.payloads import (
+    FeishuReplyPayload,
+    delivery_approval_hash,
+    delivery_chunk_plan_sha256,
+    split_reply_payload,
 )
 from app.wechat.models import WechatReplyScope
 from app.meeting_alignment_models import (
@@ -85,6 +107,7 @@ FEISHU_DELIVERY_TRANSITIONS = frozenset(
         ("sending", "send_unknown"),
         ("sending", "failed"),
         ("send_unknown", "sent"),
+        ("send_unknown", "retry"),
         ("send_unknown", "failed"),
         ("failed", "retry"),
     }
@@ -92,7 +115,9 @@ FEISHU_DELIVERY_TRANSITIONS = frozenset(
 FEISHU_RECONCILIATION_EVIDENCE_KINDS = frozenset(
     {"feishu_ui", "message_lookup", "admin_audit"}
 )
-FEISHU_RETRYABLE_ERROR_CODES = frozenset({"rate_limited", "not_connected"})
+FEISHU_RETRYABLE_ERROR_CODES = frozenset(
+    {"rate_limited", "not_connected", "target_state_unknown"}
+)
 FEISHU_CONFIRMED_NOT_SENT_ERROR_CODES = frozenset(
     {
         *FEISHU_RETRYABLE_ERROR_CODES,
@@ -120,8 +145,77 @@ _LEGACY_FEISHU_CLI_TASK_KEYS = frozenset(
 )
 _LEGACY_FEISHU_CLI_QUARANTINE_PREFIX = "feishu_cli_quarantine:"
 FEISHU_UNCERTAIN_SEND_ERROR_CODES = frozenset({"send_timeout", "unknown"})
+FEISHU_ACTION_STATUSES = frozenset(
+    {"ready", "sending", "sent", "retry", "result_unknown", "failed", "rejected"}
+)
+FEISHU_ACTION_TRANSITIONS = frozenset(
+    {
+        ("ready", "sending"),
+        ("ready", "rejected"),
+        ("retry", "sending"),
+        ("retry", "rejected"),
+        ("sending", "sent"),
+        ("sending", "retry"),
+        ("sending", "result_unknown"),
+        ("sending", "failed"),
+    }
+)
+FEISHU_ACTION_RETRYABLE_ERROR_CODES = frozenset(
+    {"rate_limited", "not_connected"}
+)
+FEISHU_ACTION_TERMINAL_ERROR_CODES = frozenset(
+    {"format_error", "permission_denied", "target_revoked"}
+)
+FEISHU_ACTION_UNCERTAIN_ERROR_CODES = frozenset({"send_timeout", "unknown"})
+FEISHU_LOCAL_NOTIFICATION_STATUSES = frozenset(
+    {
+        "waiting_remote",
+        "pending",
+        "sending",
+        "retry",
+        "result_unknown",
+        "sent",
+        "failed",
+        "cancelled",
+    }
+)
+FEISHU_RECEIPT_STATUSES = frozenset(
+    {"active", "recalled", "recall_unknown"}
+)
+FEISHU_RECALLABLE_DELIVERY_STATUSES = frozenset(
+    {"sent", "failed", "rejected"}
+)
+FEISHU_SINGLE_CHUNK_UNKNOWN_ERRORS = frozenset(
+    {
+        "feishu_partial_delivery_result_unknown",
+        "successful_response_missing_message_id",
+        "feishu_send_cancelled_result_unknown",
+        "feishu_send_failed:send_timeout",
+        "feishu_send_failed:unknown",
+        "orphaned_sending_requires_review",
+    }
+)
+FEISHU_MEDIA_STATUSES = frozenset(
+    {"pending", "downloading", "ready", "rejected", "purged"}
+)
+FEISHU_MEDIA_RESOURCE_TYPES = frozenset(
+    {"image", "file", "audio", "video", "sticker"}
+)
 _INITIALIZED_STORE_PATHS: set[Path] = set()
 _INITIALIZE_LOCK = threading.Lock()
+
+
+def _feishu_unknown_allows_one_chunk_verification(row: sqlite3.Row) -> bool:
+    """Recognize only locally-produced, single-invocation uncertainty."""
+    error = str(row["error"] or "")
+    if error in FEISHU_SINGLE_CHUNK_UNKNOWN_ERRORS:
+        return True
+    code = str(row["error_code"] or "")
+    if code == "send_timeout":
+        return True
+    return code == "unknown" and error.startswith(
+        f"feishu_send_exception:{code}:"
+    )
 
 
 @dataclass(frozen=True)
@@ -367,6 +461,31 @@ class ReplyTask(BaseModel):
     error: str = ""
     created_at: str
     updated_at: str
+
+
+class FeishuLocalNotification(BaseModel):
+    """One durable, offline-only fallback notification."""
+
+    id: int
+    reply_task_id: int
+    attempt_id: int
+    app_id: str
+    execution_generation: str
+    kind: str = "handoff_fallback"
+    dependency_mode: str
+    title: str
+    message: str
+    status: str
+    attempts: int = 0
+    lease_token: str = ""
+    locked_at: str = ""
+    mutation_started_at: str = ""
+    available_at: str = ""
+    error_code: str = ""
+    error: str = ""
+    sent_at: str = ""
+    created_at: str = ""
+    updated_at: str = ""
 
 
 class OkrReviewRequest(BaseModel):
@@ -655,13 +774,15 @@ class AutoReplyStore:
                     on reply_tasks(status, id);
                 create table if not exists feishu_events (
                     id integer primary key autoincrement,
-                    event_id text not null unique,
+                    event_id text not null,
                     app_id text not null,
                     message_id text not null,
                     chat_id text not null,
                     chat_type text not null,
                     chat_title text not null default '',
                     thread_id text not null default '',
+                    root_message_id text not null default '',
+                    parent_message_id text not null default '',
                     reply_to_message_id text not null default '',
                     sender_open_id text not null,
                     sender_type text not null default 'user',
@@ -669,6 +790,11 @@ class AutoReplyStore:
                     message_type text not null,
                     mentioned_bot integer not null default 0,
                     body_text text not null default '',
+                    normalized_summary text not null default '',
+                    normalization_version integer not null default 1,
+                    content_truncated integer not null default 0,
+                    resource_truncated integer not null default 0,
+                    media_required integer not null default 0,
                     event_create_time text not null,
                     event_create_time_ms integer not null default 0,
                     received_at text not null default current_timestamp,
@@ -691,6 +817,43 @@ class AutoReplyStore:
                     on feishu_events(reply_task_id);
                 create index if not exists idx_feishu_events_retention
                     on feishu_events(created_at, id);
+                create table if not exists feishu_media_assets (
+                    id integer primary key autoincrement,
+                    event_record_id integer not null,
+                    app_id text not null,
+                    message_id text not null,
+                    ordinal integer not null,
+                    resource_type text not null,
+                    role text not null default '',
+                    file_key text not null default '',
+                    file_key_sha256 text not null,
+                    safe_name text not null default '',
+                    duration_ms integer not null default 0,
+                    status text not null default 'pending'
+                        check(status in (
+                            'pending', 'downloading', 'ready',
+                            'rejected', 'purged'
+                        )),
+                    lease_token text not null default '',
+                    relative_path text not null default '',
+                    mime_type text not null default '',
+                    size_bytes integer not null default 0,
+                    sha256 text not null default '',
+                    error_code text not null default '',
+                    error text not null default '',
+                    locked_at text not null default '',
+                    ready_at text not null default '',
+                    purged_at text not null default '',
+                    created_at text not null default current_timestamp,
+                    updated_at text not null default current_timestamp,
+                    unique(event_record_id, ordinal),
+                    foreign key(event_record_id) references feishu_events(id)
+                        on delete cascade
+                );
+                create index if not exists idx_feishu_media_assets_claim
+                    on feishu_media_assets(app_id, status, id);
+                create index if not exists idx_feishu_media_assets_event
+                    on feishu_media_assets(event_record_id, status, ordinal);
                 create table if not exists feishu_reply_scopes (
                     app_id text not null,
                     target_type text not null,
@@ -718,12 +881,23 @@ class AutoReplyStore:
                     reply_to_message_id text not null,
                     reply_in_thread integer not null default 0,
                     reply_text text not null,
+                    reply_format text not null default 'text',
+                    mention_open_ids_json text not null default '[]',
+                    payload_sha256 text not null default '',
                     idempotency_key text not null unique,
+                    expected_chunks integer not null default 1
+                        check(expected_chunks >= 1 and expected_chunks <= 100),
+                    chunk_plan_sha256 text not null default '',
+                    review_generation integer not null default 1
+                        check(review_generation >= 1),
+                    approval_hash text not null default '',
                     status text not null default 'ready_to_send',
                     feishu_message_id text not null default '',
                     request_log_id text not null default '',
                     attempts integer not null default 0,
+                    remote_failures integer not null default 0,
                     lease_token text not null default '',
+                    mutation_started_at text not null default '',
                     approved_at text not null default '',
                     approved_by text not null default '',
                     locked_at text not null default '',
@@ -739,6 +913,164 @@ class AutoReplyStore:
                     on feishu_deliveries(status, available_at, id);
                 create index if not exists idx_feishu_deliveries_chat
                     on feishu_deliveries(app_id, chat_id, id);
+                create table if not exists feishu_delivery_receipts (
+                    id integer primary key autoincrement,
+                    delivery_id integer not null,
+                    app_id text not null,
+                    ordinal integer not null check(ordinal >= 0 and ordinal < 100),
+                    message_id text not null,
+                    request_log_id text not null default '',
+                    status text not null default 'active'
+                        check(status in ('active', 'recalled', 'recall_unknown')),
+                    recall_action_id integer not null default 0,
+                    created_at text not null default current_timestamp,
+                    updated_at text not null default current_timestamp,
+                    unique(delivery_id, ordinal),
+                    unique(app_id, message_id),
+                    foreign key(delivery_id) references feishu_deliveries(id)
+                        on delete restrict
+                );
+                create index if not exists idx_feishu_delivery_receipts_owner
+                    on feishu_delivery_receipts(app_id, message_id, status);
+                create table if not exists feishu_message_actions (
+                    id integer primary key autoincrement,
+                    reply_task_id integer not null,
+                    attempt_id integer not null,
+                    app_id text not null,
+                    chat_id text not null default '',
+                    action_key text not null,
+                    kind text not null check(kind in (
+                        'add_reaction', 'recall_message', 'handoff_notify'
+                    )),
+                    target_message_id text not null default '',
+                    target_open_id text not null default '',
+                    payload_json text not null,
+                    payload_sha256 text not null,
+                    idempotency_key text not null unique,
+                    review_generation integer not null default 1
+                        check(review_generation >= 1),
+                    approval_hash text not null,
+                    risk text not null check(risk in ('R2', 'R4')),
+                    status text not null default 'ready' check(status in (
+                        'ready', 'sending', 'sent', 'retry',
+                        'result_unknown', 'failed', 'rejected'
+                    )),
+                    remote_id text not null default '',
+                    request_log_id text not null default '',
+                    attempts integer not null default 0,
+                    remote_failures integer not null default 0,
+                    lease_token text not null default '',
+                    mutation_started_at text not null default '',
+                    approved_at text not null default '',
+                    approved_by text not null default '',
+                    locked_at text not null default '',
+                    available_at text not null default '',
+                    error_code text not null default '',
+                    error text not null default '',
+                    created_at text not null default current_timestamp,
+                    updated_at text not null default current_timestamp,
+                    unique(reply_task_id, action_key),
+                    foreign key(reply_task_id) references reply_tasks(id)
+                        on delete restrict,
+                    foreign key(attempt_id) references reply_attempts(id)
+                        on delete restrict
+                );
+                create index if not exists idx_feishu_message_actions_claim
+                    on feishu_message_actions(app_id, status, available_at, id);
+                create index if not exists idx_feishu_message_actions_chat
+                    on feishu_message_actions(app_id, chat_id, id);
+                create trigger if not exists feishu_message_actions_identity_immutable
+                before update on feishu_message_actions
+                when old.reply_task_id<>new.reply_task_id
+                  or old.attempt_id<>new.attempt_id
+                  or old.app_id<>new.app_id
+                  or old.chat_id<>new.chat_id
+                  or old.action_key<>new.action_key
+                  or old.kind<>new.kind
+                  or old.target_message_id<>new.target_message_id
+                  or old.target_open_id<>new.target_open_id
+                  or old.payload_json<>new.payload_json
+                  or old.payload_sha256<>new.payload_sha256
+                  or old.idempotency_key<>new.idempotency_key
+                  or old.risk<>new.risk
+                  or (
+                    old.status='failed'
+                    and old.error_code='verified_not_applied'
+                    and new.status='retry'
+                    and not (
+                      new.error_code=''
+                      and new.review_generation=old.review_generation + 1
+                      and new.approval_hash<>old.approval_hash
+                      and new.approved_at='' and new.approved_by=''
+                    )
+                  )
+                  or (
+                    (
+                      old.review_generation<>new.review_generation
+                      or old.approval_hash<>new.approval_hash
+                    )
+                    and not (
+                      old.status='failed'
+                      and old.error_code='verified_not_applied'
+                      and new.status='retry' and new.error_code=''
+                      and new.review_generation=old.review_generation + 1
+                      and new.approval_hash<>old.approval_hash
+                      and new.approved_at='' and new.approved_by=''
+                    )
+                  )
+                begin
+                    select raise(abort, 'Feishu message action identity is immutable');
+                end;
+                create table if not exists feishu_local_notifications (
+                    id integer primary key autoincrement,
+                    reply_task_id integer not null,
+                    attempt_id integer not null,
+                    app_id text not null,
+                    execution_generation text not null,
+                    kind text not null default 'handoff_fallback'
+                        check(kind='handoff_fallback'),
+                    dependency_mode text not null check(dependency_mode in (
+                        'immediate', 'remote_failure'
+                    )),
+                    title text not null,
+                    message text not null,
+                    status text not null check(status in (
+                        'waiting_remote', 'pending', 'sending', 'retry',
+                        'result_unknown', 'sent', 'failed', 'cancelled'
+                    )),
+                    attempts integer not null default 0,
+                    lease_token text not null default '',
+                    locked_at text not null default '',
+                    mutation_started_at text not null default '',
+                    available_at text not null default '',
+                    error_code text not null default '',
+                    error text not null default '',
+                    sent_at text not null default '',
+                    created_at text not null default current_timestamp,
+                    updated_at text not null default current_timestamp,
+                    unique(reply_task_id, execution_generation, kind),
+                    foreign key(reply_task_id) references reply_tasks(id)
+                        on delete restrict,
+                    foreign key(attempt_id) references reply_attempts(id)
+                        on delete restrict
+                );
+                create index if not exists idx_feishu_local_notifications_claim
+                    on feishu_local_notifications(
+                        app_id, status, available_at, id
+                    );
+                create trigger if not exists feishu_local_notifications_identity_immutable
+                before update on feishu_local_notifications
+                when old.reply_task_id<>new.reply_task_id
+                  or old.attempt_id<>new.attempt_id
+                  or old.app_id<>new.app_id
+                  or old.execution_generation<>new.execution_generation
+                  or old.kind<>new.kind
+                  or old.dependency_mode<>new.dependency_mode
+                  or old.title<>new.title
+                  or old.message<>new.message
+                begin
+                    select raise(abort, 'Feishu local notification identity is immutable');
+                end;
                 create table if not exists feishu_audit_events (
                     id integer primary key autoincrement,
                     app_id text not null,
@@ -1215,21 +1547,42 @@ class AutoReplyStore:
                 row["name"]
                 for row in db.execute("pragma table_info(feishu_events)").fetchall()
             }
-            if "event_create_time_ms" not in feishu_event_columns:
-                try:
-                    db.execute(
-                        "alter table feishu_events add column "
-                        "event_create_time_ms integer not null default 0"
-                    )
-                except sqlite3.OperationalError:
-                    concurrent_columns = {
-                        row["name"]
-                        for row in db.execute(
-                            "pragma table_info(feishu_events)"
-                        ).fetchall()
-                    }
-                    if "event_create_time_ms" not in concurrent_columns:
-                        raise
+            for column, definition in (
+                ("root_message_id", "text not null default ''"),
+                ("parent_message_id", "text not null default ''"),
+                ("normalized_summary", "text not null default ''"),
+                ("normalization_version", "integer not null default 1"),
+                ("content_truncated", "integer not null default 0"),
+                ("resource_truncated", "integer not null default 0"),
+                ("media_required", "integer not null default 0"),
+                ("event_create_time_ms", "integer not null default 0"),
+            ):
+                if column not in feishu_event_columns:
+                    try:
+                        db.execute(
+                            "alter table feishu_events add column "
+                            f"{column} {definition}"
+                        )
+                    except sqlite3.OperationalError:
+                        concurrent_columns = {
+                            row["name"]
+                            for row in db.execute(
+                                "pragma table_info(feishu_events)"
+                            ).fetchall()
+                        }
+                        if column not in concurrent_columns:
+                            raise
+            self._migrate_feishu_event_identity(db)
+            db.execute(
+                """
+                update feishu_events
+                set media_required=1
+                where media_required=0 and exists (
+                    select 1 from feishu_media_assets as asset
+                    where asset.event_record_id=feishu_events.id
+                )
+                """
+            )
             while True:
                 legacy_events = db.execute(
                     """
@@ -1265,6 +1618,15 @@ class AutoReplyStore:
                 )
                 """
             )
+            db.execute(
+                """
+                create index if not exists idx_feishu_events_root_asof
+                on feishu_events(
+                    app_id, chat_id, root_message_id, eligibility_status,
+                    event_create_time_ms, id
+                )
+                """
+            )
             feishu_delivery_columns = {
                 row["name"]
                 for row in db.execute(
@@ -1282,6 +1644,114 @@ class AutoReplyStore:
                         "alter table feishu_deliveries add column "
                         f"{column} text not null default ''"
                     )
+            feishu_delivery_columns = {
+                row["name"]
+                for row in db.execute(
+                    "pragma table_info(feishu_deliveries)"
+                ).fetchall()
+            }
+            for column, definition in (
+                ("reply_format", "text not null default 'text'"),
+                ("mention_open_ids_json", "text not null default '[]'"),
+                ("payload_sha256", "text not null default ''"),
+                ("expected_chunks", "integer not null default 1"),
+                ("chunk_plan_sha256", "text not null default ''"),
+                ("approval_hash", "text not null default ''"),
+                ("review_generation", "integer not null default 1"),
+                ("remote_failures", "integer not null default 0"),
+                ("mutation_started_at", "text not null default ''"),
+            ):
+                if column not in feishu_delivery_columns:
+                    db.execute(
+                        "alter table feishu_deliveries add column "
+                        f"{column} {definition}"
+                    )
+            db.execute(
+                """
+                update feishu_deliveries
+                set mutation_started_at=coalesce(
+                    nullif(locked_at, ''), nullif(updated_at, ''),
+                    current_timestamp
+                )
+                where mutation_started_at=''
+                  and (
+                    status in ('sending', 'send_unknown', 'sent')
+                    or feishu_message_id<>''
+                    or exists (
+                        select 1 from feishu_delivery_receipts as receipts
+                        where receipts.delivery_id=feishu_deliveries.id
+                    )
+                  )
+                """
+            )
+            feishu_action_columns = {
+                row["name"]
+                for row in db.execute(
+                    "pragma table_info(feishu_message_actions)"
+                ).fetchall()
+            }
+            for column, definition in (
+                ("remote_failures", "integer not null default 0"),
+                ("mutation_started_at", "text not null default ''"),
+                ("review_generation", "integer not null default 1"),
+            ):
+                if column not in feishu_action_columns:
+                    db.execute(
+                        "alter table feishu_message_actions add column "
+                        f"{column} {definition}"
+                    )
+            db.execute(
+                """
+                update feishu_message_actions
+                set mutation_started_at=coalesce(
+                    nullif(locked_at, ''), nullif(updated_at, ''),
+                    current_timestamp
+                )
+                where mutation_started_at=''
+                  and status in ('sending', 'result_unknown', 'sent')
+                """
+            )
+            self._migrate_feishu_action_approval_identity(db)
+            self._migrate_feishu_local_notifications(db)
+            for legacy_delivery in db.execute(
+                """
+                select id, reply_text, reply_format, mention_open_ids_json,
+                       payload_sha256
+                from feishu_deliveries
+                where payload_sha256=''
+                """
+            ).fetchall():
+                try:
+                    mentions = tuple(
+                        json.loads(legacy_delivery["mention_open_ids_json"] or "[]")
+                    )
+                    payload = FeishuReplyPayload(
+                        kind=legacy_delivery["reply_format"] or "text",
+                        text=legacy_delivery["reply_text"],
+                        mention_open_ids=mentions,
+                    )
+                except Exception as exc:
+                    raise sqlite3.IntegrityError(
+                        "legacy Feishu delivery payload is invalid"
+                    ) from exc
+                db.execute(
+                    """
+                    update feishu_deliveries set payload_sha256=?
+                    where id=? and payload_sha256=''
+                    """,
+                    (payload.sha256(), legacy_delivery["id"]),
+                )
+            receipt_columns = {
+                row["name"]
+                for row in db.execute(
+                    "pragma table_info(feishu_delivery_receipts)"
+                ).fetchall()
+            }
+            if "request_log_id" not in receipt_columns:
+                db.execute(
+                    "alter table feishu_delivery_receipts add column "
+                    "request_log_id text not null default ''"
+                )
             self._migrate_reply_task_channel_identity(db)
             self._migrate_legacy_feishu_cli_reply_tasks(db)
             sent_reply_columns = {
@@ -1462,7 +1932,14 @@ class AutoReplyStore:
                         f"text not null default 'dingtalk'"
                     )
             self._migrate_feishu_delivery_attempts(db)
+            self._migrate_feishu_delivery_approval_identity(
+                db, create_trigger=False
+            )
             self._migrate_feishu_delivery_bindings(db)
+            self._migrate_feishu_delivery_approval_identity(
+                db, create_trigger=True
+            )
+            self._migrate_feishu_delivery_receipts(db)
             work_summary_input_columns = {
                 row["name"]
                 for row in db.execute("pragma table_info(work_summary_inputs)").fetchall()
@@ -1474,6 +1951,7 @@ class AutoReplyStore:
                     db.execute(
                         f"alter table work_summary_inputs add column {column} {definition}"
                     )
+
             work_todo_columns = {
                 row["name"]
                 for row in db.execute("pragma table_info(work_todos)").fetchall()
@@ -1562,6 +2040,255 @@ class AutoReplyStore:
                     "alter table wechat_memory_candidates add column "
                     "memory_write_error text not null default ''"
                 )
+
+    @staticmethod
+    def _migrate_feishu_local_notifications(db: sqlite3.Connection) -> None:
+        """Add the local mutation fence and explicit uncertainty state."""
+        definition = db.execute(
+            """
+            select sql from sqlite_master
+            where type='table' and name='feishu_local_notifications'
+            """
+        ).fetchone()
+        if definition is None:
+            return
+        columns = {
+            row["name"]
+            for row in db.execute(
+                "pragma table_info(feishu_local_notifications)"
+            ).fetchall()
+        }
+        table_sql = str(definition["sql"] or "")
+        if (
+            "mutation_started_at" in columns
+            and "'result_unknown'" in table_sql
+        ):
+            return
+
+        legacy_has_fence = "mutation_started_at" in columns
+        db.execute(
+            "drop trigger if exists feishu_local_notifications_identity_immutable"
+        )
+        db.execute("drop index if exists idx_feishu_local_notifications_claim")
+        db.execute(
+            """
+            alter table feishu_local_notifications
+            rename to feishu_local_notifications_legacy
+            """
+        )
+        db.execute(
+            """
+            create table feishu_local_notifications (
+                id integer primary key autoincrement,
+                reply_task_id integer not null,
+                attempt_id integer not null,
+                app_id text not null,
+                execution_generation text not null,
+                kind text not null default 'handoff_fallback'
+                    check(kind='handoff_fallback'),
+                dependency_mode text not null check(dependency_mode in (
+                    'immediate', 'remote_failure'
+                )),
+                title text not null,
+                message text not null,
+                status text not null check(status in (
+                    'waiting_remote', 'pending', 'sending', 'retry',
+                    'result_unknown', 'sent', 'failed', 'cancelled'
+                )),
+                attempts integer not null default 0,
+                lease_token text not null default '',
+                locked_at text not null default '',
+                mutation_started_at text not null default '',
+                available_at text not null default '',
+                error_code text not null default '',
+                error text not null default '',
+                sent_at text not null default '',
+                created_at text not null default current_timestamp,
+                updated_at text not null default current_timestamp,
+                unique(reply_task_id, execution_generation, kind),
+                foreign key(reply_task_id) references reply_tasks(id)
+                    on delete restrict,
+                foreign key(attempt_id) references reply_attempts(id)
+                    on delete restrict
+            )
+            """
+        )
+        fence_expression = (
+            "mutation_started_at"
+            if legacy_has_fence
+            else "case when status='sending' then "
+            "coalesce(nullif(locked_at, ''), nullif(updated_at, ''), "
+            "current_timestamp) else '' end"
+        )
+        db.execute(
+            f"""
+            insert into feishu_local_notifications (
+                id, reply_task_id, attempt_id, app_id,
+                execution_generation, kind, dependency_mode,
+                title, message, status, attempts, lease_token, locked_at,
+                mutation_started_at, available_at, error_code, error,
+                sent_at, created_at, updated_at
+            )
+            select
+                id, reply_task_id, attempt_id, app_id,
+                execution_generation, kind, dependency_mode,
+                title, message, status, attempts, lease_token, locked_at,
+                {fence_expression}, available_at, error_code, error,
+                sent_at, created_at, updated_at
+            from feishu_local_notifications_legacy
+            """
+        )
+        db.execute("drop table feishu_local_notifications_legacy")
+        db.execute(
+            """
+            create index idx_feishu_local_notifications_claim
+            on feishu_local_notifications(app_id, status, available_at, id)
+            """
+        )
+        db.execute(
+            """
+            create trigger feishu_local_notifications_identity_immutable
+            before update on feishu_local_notifications
+            when old.reply_task_id<>new.reply_task_id
+              or old.attempt_id<>new.attempt_id
+              or old.app_id<>new.app_id
+              or old.execution_generation<>new.execution_generation
+              or old.kind<>new.kind
+              or old.dependency_mode<>new.dependency_mode
+              or old.title<>new.title
+              or old.message<>new.message
+            begin
+                select raise(abort, 'Feishu local notification identity is immutable');
+            end
+            """
+        )
+
+    @staticmethod
+    def _migrate_feishu_event_identity(db: sqlite3.Connection) -> None:
+        """Drop the legacy global event-ID uniqueness constraint safely.
+
+        Feishu documents ``message_id`` as the receive-event deduplication key.
+        ``event_id`` is retained as audit evidence only and may repeat across
+        redeliveries, messages, or applications.
+        """
+        unique_columns = {
+            tuple(
+                row["name"]
+                for row in db.execute(
+                    f"pragma index_info('{index['name']}')"
+                ).fetchall()
+            )
+            for index in db.execute("pragma index_list(feishu_events)").fetchall()
+            if index["unique"]
+        }
+        if ("event_id",) not in unique_columns:
+            return
+
+        if db.in_transaction:
+            db.commit()
+        db.execute("pragma foreign_keys=off")
+        if db.execute("pragma foreign_keys").fetchone()[0] != 0:
+            raise sqlite3.OperationalError(
+                "could not disable foreign keys for feishu_events migration"
+            )
+        try:
+            db.executescript(
+                """
+                begin immediate;
+                drop table if exists feishu_events_identity_migration;
+                create table feishu_events_identity_migration (
+                    id integer primary key autoincrement,
+                    event_id text not null,
+                    app_id text not null,
+                    message_id text not null,
+                    chat_id text not null,
+                    chat_type text not null,
+                    chat_title text not null default '',
+                    thread_id text not null default '',
+                    root_message_id text not null default '',
+                    parent_message_id text not null default '',
+                    reply_to_message_id text not null default '',
+                    sender_open_id text not null,
+                    sender_type text not null default 'user',
+                    sender_name text not null default '',
+                    message_type text not null,
+                    mentioned_bot integer not null default 0,
+                    body_text text not null default '',
+                    normalized_summary text not null default '',
+                    normalization_version integer not null default 1,
+                    content_truncated integer not null default 0,
+                    resource_truncated integer not null default 0,
+                    media_required integer not null default 0,
+                    event_create_time text not null,
+                    event_create_time_ms integer not null default 0,
+                    received_at text not null default current_timestamp,
+                    eligibility_status text not null,
+                    reject_reason text not null default '',
+                    reply_task_id integer,
+                    created_at text not null default current_timestamp,
+                    unique(app_id, message_id),
+                    foreign key(reply_task_id) references reply_tasks(id)
+                );
+                insert into feishu_events_identity_migration (
+                    id, event_id, app_id, message_id, chat_id, chat_type,
+                    chat_title, thread_id, root_message_id, parent_message_id,
+                    reply_to_message_id, sender_open_id, sender_type,
+                    sender_name, message_type, mentioned_bot, body_text,
+                    normalized_summary, normalization_version,
+                    content_truncated, resource_truncated, media_required,
+                    event_create_time,
+                    event_create_time_ms, received_at, eligibility_status,
+                    reject_reason, reply_task_id, created_at
+                )
+                select
+                    id, event_id, app_id, message_id, chat_id, chat_type,
+                    chat_title, thread_id, root_message_id, parent_message_id,
+                    reply_to_message_id, sender_open_id, sender_type,
+                    sender_name, message_type, mentioned_bot, body_text,
+                    normalized_summary, normalization_version,
+                    content_truncated, resource_truncated, media_required,
+                    event_create_time,
+                    event_create_time_ms, received_at, eligibility_status,
+                    reject_reason, reply_task_id, created_at
+                from feishu_events;
+                drop table feishu_events;
+                alter table feishu_events_identity_migration rename to feishu_events;
+                create index idx_feishu_events_context
+                    on feishu_events(app_id, chat_id, eligibility_status,
+                                     event_create_time, id);
+                create index idx_feishu_events_thread_context
+                    on feishu_events(
+                        app_id, chat_id, thread_id, eligibility_status,
+                        event_create_time, id
+                    );
+                create index idx_feishu_events_reply_task
+                    on feishu_events(reply_task_id);
+                create index idx_feishu_events_retention
+                    on feishu_events(created_at, id);
+                create index idx_feishu_events_thread_asof
+                    on feishu_events(
+                        app_id, chat_id, thread_id, eligibility_status,
+                        event_create_time_ms, id
+                    );
+                create index idx_feishu_events_root_asof
+                    on feishu_events(
+                        app_id, chat_id, root_message_id, eligibility_status,
+                        event_create_time_ms, id
+                    );
+                commit;
+                """
+            )
+        except Exception:
+            if db.in_transaction:
+                db.rollback()
+            raise
+        finally:
+            db.execute("pragma foreign_keys=on")
+        violations = db.execute("pragma foreign_key_check").fetchall()
+        if violations:
+            raise sqlite3.IntegrityError(
+                "feishu_events migration broke foreign keys"
+            )
 
     @staticmethod
     def _migrate_reply_task_channel_identity(db: sqlite3.Connection) -> None:
@@ -2106,6 +2833,39 @@ class AutoReplyStore:
                     "select * from feishu_deliveries where id=?",
                     (row["id"],),
                 ).fetchone()
+                expected_chunks, chunk_plan_sha256, approval_hash = (
+                    cls._feishu_delivery_approval_values(row)
+                )
+                db.execute(
+                    """
+                    update feishu_deliveries
+                    set expected_chunks=?, chunk_plan_sha256=?, approval_hash=?,
+                        approved_at='', approved_by='',
+                        updated_at=current_timestamp
+                    where id=?
+                    """,
+                    (
+                        expected_chunks,
+                        chunk_plan_sha256,
+                        approval_hash,
+                        row["id"],
+                    ),
+                )
+                cls._append_feishu_audit_event(
+                    db,
+                    app_id=row["app_id"],
+                    entity_type="delivery",
+                    entity_id=row["id"],
+                    event_type="approval_snapshot_migrated",
+                    previous_state=row["status"],
+                    new_state=row["status"],
+                    actor="schema-migration",
+                    detail="attempt_rebound=1;approval_invalidated=1",
+                )
+                row = db.execute(
+                    "select * from feishu_deliveries where id=?",
+                    (row["id"],),
+                ).fetchone()
             try:
                 cls._validate_feishu_delivery_binding(
                     db, row, require_target_identity=True
@@ -2119,6 +2879,400 @@ class AutoReplyStore:
                 # Converge every trustworthy legacy attempt to the delivery's
                 # durable state during startup.
                 cls._sync_feishu_attempt_from_delivery(db, row)
+
+    @classmethod
+    def _feishu_delivery_approval_values(
+        cls,
+        row: sqlite3.Row,
+        *,
+        review_generation: int | None = None,
+    ) -> tuple[int, str, str]:
+        mentions = tuple(json.loads(row["mention_open_ids_json"] or "[]"))
+        payload = FeishuReplyPayload(
+            kind=row["reply_format"] or "text",
+            text=row["reply_text"],
+            mention_open_ids=mentions,
+        )
+        chunks = split_reply_payload(payload)
+        expected_chunks = len(chunks)
+        chunk_plan_sha256 = delivery_chunk_plan_sha256(chunks)
+        generation = (
+            int(row["review_generation"])
+            if review_generation is None
+            else review_generation
+        )
+        return expected_chunks, chunk_plan_sha256, delivery_approval_hash(
+            reply_task_id=int(row["reply_task_id"]),
+            attempt_id=int(row["attempt_id"]),
+            app_id=row["app_id"],
+            chat_id=row["chat_id"],
+            reply_to_message_id=row["reply_to_message_id"],
+            reply_in_thread=bool(row["reply_in_thread"]),
+            payload_sha256=row["payload_sha256"],
+            idempotency_key=row["idempotency_key"],
+            expected_chunks=expected_chunks,
+            chunk_plan_sha256=chunk_plan_sha256,
+            review_generation=generation,
+        )
+
+    @classmethod
+    def _migrate_feishu_action_approval_identity(
+        cls, db: sqlite3.Connection
+    ) -> None:
+        """Bind legacy action approvals to a persisted review generation."""
+        db.execute(
+            "drop trigger if exists feishu_message_actions_identity_immutable"
+        )
+        for row in db.execute(
+            "select * from feishu_message_actions order by id"
+        ).fetchall():
+            try:
+                generation = int(row["review_generation"] or 0)
+                if generation <= 0:
+                    generation = 1
+                approval_hash = action_approval_hash(
+                    reply_task_id=int(row["reply_task_id"]),
+                    attempt_id=int(row["attempt_id"]),
+                    app_id=row["app_id"],
+                    chat_id=row["chat_id"],
+                    action_key=row["action_key"],
+                    kind=row["kind"],
+                    target_id=(
+                        row["target_message_id"] or row["target_open_id"]
+                    ),
+                    payload_sha256=row["payload_sha256"],
+                    idempotency_key=row["idempotency_key"],
+                    risk=row["risk"],
+                    review_generation=generation,
+                )
+            except Exception as exc:
+                raise sqlite3.IntegrityError(
+                    "legacy Feishu action approval identity is invalid"
+                ) from exc
+            if (
+                int(row["review_generation"] or 0) != generation
+                or row["approval_hash"] != approval_hash
+            ):
+                db.execute(
+                    """
+                    update feishu_message_actions
+                    set review_generation=?, approval_hash=?,
+                        approved_at='', approved_by='',
+                        updated_at=current_timestamp
+                    where id=?
+                    """,
+                    (generation, approval_hash, row["id"]),
+                )
+                cls._append_feishu_audit_event(
+                    db,
+                    app_id=row["app_id"],
+                    entity_type="message_action",
+                    entity_id=row["id"],
+                    event_type="approval_snapshot_migrated",
+                    previous_state=row["status"],
+                    new_state=row["status"],
+                    actor="schema-migration",
+                    detail=(
+                        f"review_generation={generation};"
+                        "approval_invalidated=1"
+                    ),
+                )
+        db.execute(
+            """
+            create trigger feishu_message_actions_identity_immutable
+            before update on feishu_message_actions
+            when old.reply_task_id<>new.reply_task_id
+              or old.attempt_id<>new.attempt_id
+              or old.app_id<>new.app_id
+              or old.chat_id<>new.chat_id
+              or old.action_key<>new.action_key
+              or old.kind<>new.kind
+              or old.target_message_id<>new.target_message_id
+              or old.target_open_id<>new.target_open_id
+              or old.payload_json<>new.payload_json
+              or old.payload_sha256<>new.payload_sha256
+              or old.idempotency_key<>new.idempotency_key
+              or old.risk<>new.risk
+              or (
+                old.status='failed'
+                and old.error_code='verified_not_applied'
+                and new.status='retry'
+                and not (
+                  new.error_code=''
+                  and new.review_generation=old.review_generation + 1
+                  and new.approval_hash<>old.approval_hash
+                  and new.approved_at='' and new.approved_by=''
+                )
+              )
+              or (
+                (
+                  old.review_generation<>new.review_generation
+                  or old.approval_hash<>new.approval_hash
+                )
+                and not (
+                  old.status='failed'
+                  and old.error_code='verified_not_applied'
+                  and new.status='retry' and new.error_code=''
+                  and new.review_generation=old.review_generation + 1
+                  and new.approval_hash<>old.approval_hash
+                  and new.approved_at='' and new.approved_by=''
+                )
+              )
+            begin
+                select raise(abort, 'Feishu message action identity is immutable');
+            end
+            """
+        )
+
+    @classmethod
+    def _migrate_feishu_delivery_approval_identity(
+        cls, db: sqlite3.Connection, *, create_trigger: bool
+    ) -> None:
+        """Backfill the immutable chunk plan and approval preview hash."""
+        db.execute("drop trigger if exists feishu_deliveries_identity_immutable")
+        for row in db.execute(
+            "select * from feishu_deliveries order by id"
+        ).fetchall():
+            try:
+                expected_chunks, chunk_plan_sha256, approval_hash = (
+                    cls._feishu_delivery_approval_values(row)
+                )
+            except Exception as exc:
+                raise sqlite3.IntegrityError(
+                    "legacy Feishu delivery approval identity is invalid"
+                ) from exc
+            if (
+                int(row["expected_chunks"] or 0) != expected_chunks
+                or row["chunk_plan_sha256"] != chunk_plan_sha256
+                or row["approval_hash"] != approval_hash
+            ):
+                persisted_plan_hash = str(
+                    row["chunk_plan_sha256"] or ""
+                ).strip()
+                plan_snapshot_changed = (
+                    persisted_plan_hash != chunk_plan_sha256
+                )
+                receipt_count = int(db.execute(
+                    """
+                    select count(*) from feishu_delivery_receipts
+                    where delivery_id=?
+                    """,
+                    (row["id"],),
+                ).fetchone()[0])
+                has_receipt = receipt_count > 0
+                legacy_sent_would_become_partial = bool(
+                    row["status"] == "sent"
+                    and expected_chunks > 1
+                    and receipt_count < expected_chunks
+                )
+                unsafe_legacy_resume = bool(
+                    plan_snapshot_changed
+                    and (
+                        (
+                            row["status"] in {
+                                "ready_to_send",
+                                "retry",
+                                "sending",
+                                "send_unknown",
+                                "failed",
+                            }
+                            and (
+                                has_receipt
+                                or row["feishu_message_id"]
+                                or row["mutation_started_at"]
+                            )
+                        )
+                        or legacy_sent_would_become_partial
+                    )
+                )
+                db.execute(
+                    """
+                    update feishu_deliveries
+                    set expected_chunks=?, chunk_plan_sha256=?, approval_hash=?,
+                        status=case when ? then 'send_unknown' else status end,
+                        error_code=case
+                            when ? then 'legacy_chunk_plan_unverifiable'
+                            else error_code end,
+                        error=case
+                            when ? then 'legacy_chunk_plan_requires_review'
+                            else error end,
+                        lease_token=case when ? then '' else lease_token end,
+                        locked_at=case when ? then '' else locked_at end,
+                        approved_at='', approved_by='',
+                        updated_at=current_timestamp
+                    where id=?
+                    """,
+                    (
+                        expected_chunks,
+                        chunk_plan_sha256,
+                        approval_hash,
+                        *([int(unsafe_legacy_resume)] * 5),
+                        row["id"],
+                    ),
+                )
+                cls._append_feishu_audit_event(
+                    db,
+                    app_id=row["app_id"],
+                    entity_type="delivery",
+                    entity_id=row["id"],
+                    event_type="approval_snapshot_migrated",
+                    previous_state=row["status"],
+                    new_state=row["status"],
+                    actor="schema-migration",
+                    detail=(
+                        "approval_invalidated=1;chunk_plan_unverifiable=1"
+                        if unsafe_legacy_resume
+                        else "approval_invalidated=1"
+                    ),
+                )
+                if unsafe_legacy_resume:
+                    cls._append_feishu_audit_event(
+                        db,
+                        app_id=row["app_id"],
+                        entity_type="delivery",
+                        entity_id=row["id"],
+                        event_type="legacy_chunk_plan_quarantined",
+                        previous_state=row["status"],
+                        new_state="send_unknown",
+                        actor="schema-migration",
+                        detail="resume_blocked=1",
+                    )
+        if not create_trigger:
+            return
+        db.execute(
+            """
+            create trigger feishu_deliveries_identity_immutable
+            before update on feishu_deliveries
+            when old.reply_task_id<>new.reply_task_id
+              or old.attempt_id<>new.attempt_id
+              or old.app_id<>new.app_id
+              or old.chat_id<>new.chat_id
+              or old.reply_to_message_id<>new.reply_to_message_id
+              or old.reply_in_thread<>new.reply_in_thread
+              or old.reply_text<>new.reply_text
+              or old.reply_format<>new.reply_format
+              or old.mention_open_ids_json<>new.mention_open_ids_json
+              or old.payload_sha256<>new.payload_sha256
+              or old.idempotency_key<>new.idempotency_key
+              or old.expected_chunks<>new.expected_chunks
+              or old.chunk_plan_sha256<>new.chunk_plan_sha256
+              or (
+                old.status='failed'
+                and old.error_code='verified_not_sent'
+                and new.status='retry'
+                and not (
+                  new.error_code=''
+                  and new.review_generation=old.review_generation + 1
+                  and new.approval_hash<>old.approval_hash
+                  and new.approved_at='' and new.approved_by=''
+                )
+              )
+              or (
+                (
+                  old.review_generation<>new.review_generation
+                  or old.approval_hash<>new.approval_hash
+                )
+                and not (
+                  old.status='failed'
+                  and old.error_code='verified_not_sent'
+                  and new.status='retry' and new.error_code=''
+                  and new.review_generation=old.review_generation + 1
+                  and new.approval_hash<>old.approval_hash
+                  and new.approved_at='' and new.approved_by=''
+                )
+              )
+            begin
+                select raise(abort, 'Feishu delivery identity is immutable');
+            end
+            """
+        )
+
+    @classmethod
+    def _migrate_feishu_delivery_receipts(
+        cls, db: sqlite3.Connection
+    ) -> None:
+        """Idempotently bind legacy primary message IDs to receipt ordinal 0."""
+        legacy = db.execute(
+            """
+            select id, app_id, feishu_message_id
+            from feishu_deliveries
+            where status='sent' and feishu_message_id<>''
+            order by id
+            """
+        ).fetchall()
+        for delivery in legacy:
+            message_id = str(delivery["feishu_message_id"] or "").strip()
+            if (
+                not message_id
+                or len(message_id) > 512
+                or any(ord(character) < 32 for character in message_id)
+            ):
+                raise sqlite3.IntegrityError(
+                    "legacy Feishu delivery message ID is invalid"
+                )
+            db.execute(
+                """
+                insert into feishu_delivery_receipts (
+                    delivery_id, app_id, ordinal, message_id, status
+                ) values (?, ?, 0, ?, 'active')
+                on conflict do nothing
+                """,
+                (delivery["id"], delivery["app_id"], message_id),
+            )
+            receipt = db.execute(
+                """
+                select delivery_id, app_id, ordinal, message_id
+                from feishu_delivery_receipts
+                where delivery_id=? and ordinal=0
+                """,
+                (delivery["id"],),
+            ).fetchone()
+            if (
+                receipt is None
+                or receipt["app_id"] != delivery["app_id"]
+                or receipt["message_id"] != message_id
+            ):
+                raise sqlite3.IntegrityError(
+                    "legacy Feishu delivery receipt ownership conflicts"
+                )
+        incomplete = db.execute(
+            """
+            select deliveries.*
+            from feishu_deliveries as deliveries
+            where deliveries.status='sent'
+              and deliveries.expected_chunks<>(
+                select count(*) from feishu_delivery_receipts as receipts
+                where receipts.delivery_id=deliveries.id
+              )
+            order by deliveries.id
+            """
+        ).fetchall()
+        for delivery in incomplete:
+            db.execute(
+                """
+                update feishu_deliveries
+                set status='send_unknown', error_code='unknown',
+                    error='legacy_chunk_receipts_incomplete',
+                    updated_at=current_timestamp
+                where id=? and status='sent'
+                """,
+                (delivery["id"],),
+            )
+            updated = db.execute(
+                "select * from feishu_deliveries where id=?",
+                (delivery["id"],),
+            ).fetchone()
+            cls._sync_feishu_attempt_from_delivery(db, updated)
+            cls._append_feishu_audit_event(
+                db,
+                app_id=delivery["app_id"],
+                entity_type="delivery",
+                entity_id=delivery["id"],
+                event_type="legacy_chunk_receipts_incomplete",
+                previous_state="sent",
+                new_state="send_unknown",
+                actor="schema-migration",
+            )
 
     @staticmethod
     def _reply_task_from_row(row: sqlite3.Row) -> ReplyTask:
@@ -2164,6 +3318,8 @@ class AutoReplyStore:
             chat_type=row["chat_type"],
             chat_title=row["chat_title"],
             thread_id=row["thread_id"],
+            root_message_id=row["root_message_id"],
+            parent_message_id=row["parent_message_id"],
             reply_to_message_id=row["reply_to_message_id"],
             sender_open_id=row["sender_open_id"],
             sender_type=row["sender_type"],
@@ -2171,6 +3327,11 @@ class AutoReplyStore:
             message_type=row["message_type"],
             mentioned_bot=bool(row["mentioned_bot"]),
             body_text=row["body_text"],
+            normalized_summary=row["normalized_summary"],
+            normalization_version=int(row["normalization_version"]),
+            content_truncated=bool(row["content_truncated"]),
+            resource_truncated=bool(row["resource_truncated"]),
+            media_required=bool(row["media_required"]),
             event_create_time=row["event_create_time"],
             event_create_time_ms=row["event_create_time_ms"],
             received_at=row["received_at"],
@@ -2180,6 +3341,35 @@ class AutoReplyStore:
             created_at=row["created_at"],
             inserted=inserted,
             enqueued=(reply_task_id > 0 if enqueued is None else enqueued),
+        )
+
+    @staticmethod
+    def _feishu_media_asset_from_row(row: sqlite3.Row) -> FeishuMediaAsset:
+        return FeishuMediaAsset(
+            id=row["id"],
+            event_record_id=row["event_record_id"],
+            app_id=row["app_id"],
+            message_id=row["message_id"],
+            ordinal=row["ordinal"],
+            resource_type=row["resource_type"],
+            role=row["role"],
+            file_key=row["file_key"],
+            file_key_sha256=row["file_key_sha256"],
+            safe_name=row["safe_name"],
+            duration_ms=row["duration_ms"],
+            status=row["status"],
+            lease_token=row["lease_token"],
+            relative_path=row["relative_path"],
+            mime_type=row["mime_type"],
+            size_bytes=row["size_bytes"],
+            sha256=row["sha256"],
+            error_code=row["error_code"],
+            error=row["error"],
+            locked_at=row["locked_at"],
+            ready_at=row["ready_at"],
+            purged_at=row["purged_at"],
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
         )
 
     @staticmethod
@@ -2201,6 +3391,12 @@ class AutoReplyStore:
 
     @staticmethod
     def _feishu_delivery_from_row(row: sqlite3.Row) -> FeishuDelivery:
+        try:
+            mention_open_ids = tuple(
+                json.loads(row["mention_open_ids_json"] or "[]")
+            )
+        except (json.JSONDecodeError, TypeError, ValueError) as exc:
+            raise ValueError("Feishu delivery mentions are invalid") from exc
         return FeishuDelivery(
             id=row["id"],
             reply_task_id=row["reply_task_id"],
@@ -2210,12 +3406,21 @@ class AutoReplyStore:
             reply_to_message_id=row["reply_to_message_id"],
             reply_in_thread=bool(row["reply_in_thread"]),
             reply_text=row["reply_text"],
+            reply_format=row["reply_format"],
+            mention_open_ids=mention_open_ids,
+            payload_sha256=row["payload_sha256"],
             idempotency_key=row["idempotency_key"],
+            expected_chunks=row["expected_chunks"],
+            chunk_plan_sha256=row["chunk_plan_sha256"],
+            review_generation=row["review_generation"],
+            approval_hash=row["approval_hash"],
             status=row["status"],
             feishu_message_id=row["feishu_message_id"],
             request_log_id=row["request_log_id"],
             attempts=row["attempts"],
+            remote_failures=row["remote_failures"],
             lease_token=row["lease_token"],
+            mutation_started_at=row["mutation_started_at"],
             approved_at=row["approved_at"],
             approved_by=row["approved_by"],
             locked_at=row["locked_at"],
@@ -2225,6 +3430,35 @@ class AutoReplyStore:
             created_at=row["created_at"],
             updated_at=row["updated_at"],
         )
+
+    @staticmethod
+    def _feishu_delivery_receipt_from_row(
+        row: sqlite3.Row,
+    ) -> FeishuDeliveryReceipt:
+        return FeishuDeliveryReceipt(
+            id=row["id"],
+            delivery_id=row["delivery_id"],
+            app_id=row["app_id"],
+            ordinal=row["ordinal"],
+            message_id=row["message_id"],
+            request_log_id=row["request_log_id"],
+            status=row["status"],
+            recall_action_id=row["recall_action_id"],
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
+
+    @staticmethod
+    def _feishu_message_action_from_row(
+        row: sqlite3.Row,
+    ) -> FeishuMessageAction:
+        return FeishuMessageAction.model_validate(dict(row))
+
+    @staticmethod
+    def _feishu_local_notification_from_row(
+        row: sqlite3.Row,
+    ) -> FeishuLocalNotification:
+        return FeishuLocalNotification.model_validate(dict(row))
 
     @staticmethod
     def _feishu_audit_event_from_row(row: sqlite3.Row) -> FeishuAuditEvent:
@@ -2309,6 +3543,41 @@ class AutoReplyStore:
         attempt_id = int(row["attempt_id"] or 0)
         if attempt_id <= 0:
             raise ValueError("Feishu delivery has no durable attempt audit")
+        try:
+            mention_open_ids = tuple(
+                json.loads(row["mention_open_ids_json"] or "[]")
+            )
+            payload = FeishuReplyPayload(
+                kind=row["reply_format"],
+                text=row["reply_text"],
+                mention_open_ids=mention_open_ids,
+            )
+        except Exception as exc:
+            raise ValueError("Feishu delivery payload contract is invalid") from exc
+        if row["payload_sha256"] != payload.sha256():
+            raise ValueError("Feishu delivery payload hash does not match")
+        chunks = split_reply_payload(payload)
+        expected_chunks = len(chunks)
+        if int(row["expected_chunks"] or 0) != expected_chunks:
+            raise ValueError("Feishu delivery chunk plan does not match payload")
+        chunk_plan_sha256 = delivery_chunk_plan_sha256(chunks)
+        if row["chunk_plan_sha256"] != chunk_plan_sha256:
+            raise ValueError("Feishu delivery chunk boundaries do not match")
+        expected_approval_hash = delivery_approval_hash(
+            reply_task_id=int(row["reply_task_id"]),
+            attempt_id=attempt_id,
+            app_id=row["app_id"],
+            chat_id=row["chat_id"],
+            reply_to_message_id=row["reply_to_message_id"],
+            reply_in_thread=bool(row["reply_in_thread"]),
+            payload_sha256=row["payload_sha256"],
+            idempotency_key=row["idempotency_key"],
+            expected_chunks=expected_chunks,
+            chunk_plan_sha256=chunk_plan_sha256,
+            review_generation=int(row["review_generation"]),
+        )
+        if row["approval_hash"] != expected_approval_hash:
+            raise ValueError("Feishu delivery approval hash does not match")
         binding = db.execute(
             """
             select attempts.channel as attempt_channel,
@@ -3432,14 +4701,30 @@ class AutoReplyStore:
                 raise ValueError("universal action execution must be started")
 
     def claim_reply_tasks(
-        self, limit: int, now: str | None = None, *, channel: str = "dingtalk"
+        self,
+        limit: int,
+        now: str | None = None,
+        *,
+        channel: str = "dingtalk",
+        feishu_app_id: str = "",
     ) -> list[ReplyTask]:
         if limit <= 0:
             return []
+        if feishu_app_id and channel != "feishu":
+            raise ValueError("Feishu app claim requires channel=feishu")
         with self._connect() as db:
             db.execute("begin immediate")
             now_expression = "current_timestamp" if now is None else "?"
             args: list[str | int] = [channel]
+            app_clause = ""
+            if feishu_app_id:
+                app_clause = """
+                  and exists (
+                    select 1 from feishu_events as event
+                    where event.reply_task_id=reply_tasks.id and event.app_id=?
+                  )
+                """
+                args.append(feishu_app_id.strip())
             if now is not None:
                 args.append(now)
             args.append(limit)
@@ -3449,6 +4734,7 @@ class AutoReplyStore:
                 from reply_tasks
                 where status='pending'
                   and channel=?
+                  {app_clause}
                   and (available_at='' or available_at <= {now_expression})
                 order by id
                 limit ?
@@ -3485,14 +4771,29 @@ class AutoReplyStore:
             return [self._reply_task_from_row(row) for row in claimed_rows]
 
     def reset_stale_processing_reply_tasks(
-        self, max_age_seconds: int, *, channel: str = ""
+        self,
+        max_age_seconds: int,
+        *,
+        channel: str = "",
+        feishu_app_id: str = "",
     ) -> int:
         if max_age_seconds <= 0:
             return 0
+        if feishu_app_id and channel != "feishu":
+            raise ValueError("Feishu app reset requires channel=feishu")
         channel_clause = " and channel=?" if channel else ""
         args: list[str] = []
         if channel:
             args.append(channel)
+        app_clause = ""
+        if feishu_app_id:
+            app_clause = """
+              and exists (
+                select 1 from feishu_events as event
+                where event.reply_task_id=reply_tasks.id and event.app_id=?
+              )
+            """
+            args.append(feishu_app_id.strip())
         args.append(f"-{int(max_age_seconds)} seconds")
         with self._connect() as db:
             db.execute("begin immediate")
@@ -3502,6 +4803,7 @@ class AutoReplyStore:
                 from reply_tasks
                 where status='processing'
                   {channel_clause}
+                  {app_clause}
                   and locked_at is not null
                   and datetime(locked_at) <= datetime('now', ?)
                 order by locked_at, id
@@ -3833,16 +5135,28 @@ class AutoReplyStore:
         *,
         channel: str,
         lease_token: str = "",
+        feishu_app_id: str = "",
     ) -> bool:
         """Fail an active channel claim without overwriting a requeue."""
         if not channel.strip():
             raise ValueError("reply task channel must be non-empty")
+        if feishu_app_id and channel != "feishu":
+            raise ValueError("Feishu app failure requires channel=feishu")
         lease_clause = " and lease_token=?" if lease_token else ""
+        app_clause = ""
         args: list[str | int] = [
             safe_observability_error(error),
             task_id,
             channel,
         ]
+        if feishu_app_id:
+            app_clause = """
+              and exists (
+                select 1 from feishu_events as event
+                where event.reply_task_id=reply_tasks.id and event.app_id=?
+              )
+            """
+            args.append(feishu_app_id.strip())
         if lease_token:
             args.append(lease_token)
         with self._connect() as db:
@@ -3853,6 +5167,7 @@ class AutoReplyStore:
                     error=?, available_at='',
                     updated_at=current_timestamp
                 where id=? and channel=? and status='processing'
+                  {app_clause}
                   {lease_clause}
                 """,
                 args,
@@ -4021,6 +5336,230 @@ class AutoReplyStore:
         return f"feishu:{app_namespace}:{chat_id}"
 
     @staticmethod
+    def _feishu_reference_root(row) -> str:
+        """Return the app/chat-local reference root used for supersession."""
+        return str(
+            row["thread_id"] or row["root_message_id"] or row["message_id"]
+        )
+
+    @classmethod
+    def _cancel_feishu_local_notifications_for_task_db(
+        cls,
+        db: sqlite3.Connection,
+        *,
+        reply_task_id: int,
+        app_id: str,
+        actor: str,
+    ) -> int:
+        rows = db.execute(
+            """
+            select * from feishu_local_notifications
+            where reply_task_id=? and app_id=?
+              and (
+                status in ('waiting_remote', 'pending', 'retry')
+                or (status='sending' and mutation_started_at='')
+              )
+            order by id
+            """,
+            (reply_task_id, app_id),
+        ).fetchall()
+        cancelled = 0
+        for row in rows:
+            updated = db.execute(
+                """
+                update feishu_local_notifications
+                set status='cancelled', lease_token='', locked_at='',
+                    available_at='', error_code='superseded',
+                    error='superseded_by_newer_feishu_trigger',
+                    updated_at=current_timestamp
+                where id=? and status=?
+                  and (?<>'sending' or mutation_started_at='')
+                """,
+                (row["id"], row["status"], row["status"]),
+            )
+            if updated.rowcount != 1:
+                continue
+            cancelled += 1
+            cls._append_feishu_audit_event(
+                db,
+                app_id=app_id,
+                entity_type="local_notification",
+                entity_id=int(row["id"]),
+                event_type="trigger_superseded",
+                previous_state=str(row["status"]),
+                new_state="cancelled",
+                actor=actor,
+                detail="error_code=superseded",
+            )
+        return cancelled
+
+    @classmethod
+    def _supersede_pending_feishu_tasks_db(
+        cls,
+        db: sqlite3.Connection,
+        *,
+        event_row: sqlite3.Row,
+    ) -> None:
+        """Terminalize older pending triggers under exactly one reference root."""
+        reference_root = cls._feishu_reference_root(event_row)
+        rows = db.execute(
+            """
+            select events.id as event_record_id, events.app_id,
+                   events.message_id, events.thread_id,
+                   events.root_message_id, events.event_create_time_ms,
+                   events.reply_task_id, tasks.status
+            from feishu_events as events
+            left join reply_tasks as tasks on tasks.id=events.reply_task_id
+            where events.app_id=? and events.chat_id=?
+              and events.eligibility_status='eligible'
+              and coalesce(nullif(events.thread_id, ''),
+                           nullif(events.root_message_id, ''),
+                           events.message_id)=?
+            order by events.event_create_time_ms, events.id
+            """,
+            (event_row["app_id"], event_row["chat_id"], reference_root),
+        ).fetchall()
+        if len(rows) <= 1:
+            return
+        latest = max(
+            rows,
+            key=lambda candidate: (
+                int(candidate["event_create_time_ms"] or 0),
+                int(candidate["event_record_id"]),
+            ),
+        )
+        for candidate in rows:
+            if int(candidate["event_record_id"]) == int(
+                latest["event_record_id"]
+            ):
+                continue
+            if not int(candidate["reply_task_id"] or 0):
+                continue
+            task_id = int(candidate["reply_task_id"])
+            if candidate["status"] == "pending":
+                updated = db.execute(
+                    """
+                    update reply_tasks
+                    set status='done', lease_token='', locked_at=null,
+                        error='superseded_by_newer_feishu_trigger',
+                        available_at='', updated_at=current_timestamp
+                    where id=? and channel='feishu' and status='pending'
+                    """,
+                    (task_id,),
+                )
+                if updated.rowcount == 1:
+                    cls._append_feishu_audit_event(
+                        db,
+                        app_id=str(candidate["app_id"]),
+                        entity_type="reply_task",
+                        entity_id=task_id,
+                        event_type="trigger_superseded",
+                        previous_state="pending",
+                        new_state="done",
+                        actor="ingress",
+                        detail=(
+                            "newer_event_record_id="
+                            f"{int(latest['event_record_id'])}"
+                        ),
+                    )
+
+            deliveries = db.execute(
+                """
+                select deliveries.* from feishu_deliveries as deliveries
+                where deliveries.reply_task_id=?
+                  and deliveries.status in (
+                    'ready_to_send', 'retry', 'sending'
+                  )
+                  and deliveries.mutation_started_at=''
+                  and not exists (
+                    select 1 from feishu_delivery_receipts as receipts
+                    where receipts.delivery_id=deliveries.id
+                  )
+                """,
+                (task_id,),
+            ).fetchall()
+            for delivery in deliveries:
+                updated = db.execute(
+                    """
+                    update feishu_deliveries
+                    set status='rejected', lease_token='', locked_at='',
+                        approved_at='', approved_by='', available_at='',
+                        error_code='superseded',
+                        error='superseded_by_newer_feishu_trigger',
+                        updated_at=current_timestamp
+                    where id=?
+                      and status in ('ready_to_send', 'retry', 'sending')
+                      and mutation_started_at=''
+                      and not exists (
+                        select 1 from feishu_delivery_receipts as receipts
+                        where receipts.delivery_id=feishu_deliveries.id
+                      )
+                    """,
+                    (delivery["id"],),
+                )
+                if updated.rowcount != 1:
+                    continue
+                rejected = db.execute(
+                    "select * from feishu_deliveries where id=?",
+                    (delivery["id"],),
+                ).fetchone()
+                cls._sync_feishu_attempt_from_delivery(db, rejected)
+                cls._append_feishu_audit_event(
+                    db,
+                    app_id=str(candidate["app_id"]),
+                    entity_type="delivery",
+                    entity_id=int(delivery["id"]),
+                    event_type="trigger_superseded",
+                    previous_state=str(delivery["status"]),
+                    new_state="rejected",
+                    actor="ingress",
+                )
+
+            actions = db.execute(
+                """
+                select * from feishu_message_actions
+                where reply_task_id=?
+                  and status in ('ready', 'retry', 'sending')
+                  and kind<>'recall_message'
+                  and mutation_started_at='' and remote_id=''
+                """,
+                (task_id,),
+            ).fetchall()
+            for action in actions:
+                updated = db.execute(
+                    """
+                    update feishu_message_actions
+                    set status='rejected', lease_token='', locked_at='',
+                        approved_at='', approved_by='', available_at='',
+                        error_code='superseded',
+                        error='superseded_by_newer_feishu_trigger',
+                        updated_at=current_timestamp
+                    where id=? and status in ('ready', 'retry', 'sending')
+                      and kind<>'recall_message'
+                      and mutation_started_at='' and remote_id=''
+                    """,
+                    (action["id"],),
+                )
+                if updated.rowcount != 1:
+                    continue
+                cls._append_feishu_audit_event(
+                    db,
+                    app_id=str(candidate["app_id"]),
+                    entity_type="message_action",
+                    entity_id=int(action["id"]),
+                    event_type="trigger_superseded",
+                    previous_state=str(action["status"]),
+                    new_state="rejected",
+                    actor="ingress",
+                )
+            cls._cancel_feishu_local_notifications_for_task_db(
+                db,
+                reply_task_id=task_id,
+                app_id=str(candidate["app_id"]),
+                actor="ingress",
+            )
+
+    @staticmethod
     def _enqueue_feishu_event_row(
         db: sqlite3.Connection, row: sqlite3.Row
     ) -> int:
@@ -4030,6 +5569,16 @@ class AutoReplyStore:
         if row["reply_task_id"]:
             return int(row["reply_task_id"])
         if not row["body_text"].strip():
+            return 0
+        if bool(row["media_required"]) and not AutoReplyStore._feishu_media_event_ready_db(
+            db,
+            event_record_id=int(row["id"]),
+            app_id=str(row["app_id"]),
+            message_id=str(row["message_id"]),
+        ):
+            # Resource-bearing turns are never attachable until a non-empty,
+            # complete terminal asset set is durable. This also fail-closes
+            # manual ``produce-once`` against legacy/corrupted orphan rows.
             return 0
         task_conversation_id = AutoReplyStore._feishu_task_conversation_id(
             row["app_id"], row["chat_id"]
@@ -4043,6 +5592,8 @@ class AutoReplyStore:
             "chat_type": row["chat_type"],
             "chat_title": row["chat_title"],
             "thread_id": row["thread_id"],
+            "root_message_id": row["root_message_id"],
+            "parent_message_id": row["parent_message_id"],
             "reply_to_message_id": row["reply_to_message_id"],
             "sender_open_id": row["sender_open_id"],
             "sender_type": row["sender_type"],
@@ -4050,6 +5601,11 @@ class AutoReplyStore:
             "message_type": row["message_type"],
             "mentioned_bot": bool(row["mentioned_bot"]),
             "body_text": row["body_text"],
+            "normalized_summary": row["normalized_summary"],
+            "normalization_version": int(row["normalization_version"]),
+            "content_truncated": bool(row["content_truncated"]),
+            "resource_truncated": bool(row["resource_truncated"]),
+            "media_required": bool(row["media_required"]),
             "event_create_time": row["event_create_time"],
             "received_at": row["received_at"],
         }
@@ -4095,6 +5651,12 @@ class AutoReplyStore:
             """,
             (task_id, row["id"]),
         )
+        attached_row = db.execute(
+            "select * from feishu_events where id=?", (row["id"],)
+        ).fetchone()
+        AutoReplyStore._supersede_pending_feishu_tasks_db(
+            db, event_row=attached_row
+        )
         return task_id
 
     def record_feishu_event(
@@ -4105,18 +5667,41 @@ class AutoReplyStore:
         reject_reason: str = "",
         store_body: bool = False,
         enqueue_eligible: bool = True,
+        normalization_version: int = 1,
+        content_truncated: bool = False,
+        resource_truncated: bool = False,
+        media_candidates=None,
+        media_max_event_resources: int = DEFAULT_MAX_EVENT_RESOURCES,
     ) -> FeishuEventRecord:
         """Idempotently record an event and, when eligible, enqueue it atomically.
 
-        The first observation is immutable.  A repeated ``event_id`` or
-        ``(app_id, message_id)`` returns the original row and never stores a
-        later payload.  An eligible event initially recorded in receive-only
-        mode may be attached to its reply task by a later duplicate call.
+        The first observation is immutable.  A repeated ``(app_id,
+        message_id)`` returns the original row and never stores a later
+        payload.  ``event_id`` is audit evidence, not an identity key.  An
+        eligible event initially recorded in receive-only mode may be attached
+        to its reply task by a later duplicate call.
         """
         if not eligibility_status.strip():
             raise ValueError("eligibility_status must be non-empty")
         if eligibility_status == "eligible" and not store_body:
             raise ValueError("eligible Feishu events must persist normalized body")
+        if normalization_version != 1:
+            raise ValueError("unsupported Feishu normalization version")
+        media_required = media_candidates is not None
+        normalized_media = (
+            self._normalize_feishu_media_candidates(
+                media_candidates,
+                max_event_resources=media_max_event_resources,
+            )
+            if media_required
+            else []
+        )
+        if media_required and (
+            eligibility_status != "eligible" or enqueue_eligible
+        ):
+            raise ValueError(
+                "Feishu media events must be eligible and recorded receive-only"
+            )
         received_at = message.received_at or datetime.now().astimezone().isoformat()
         body_text = message.body_text if store_body else ""
         event_create_time_ms = self._feishu_event_time_ms(
@@ -4126,25 +5711,23 @@ class AutoReplyStore:
             raise ValueError("eligible Feishu event requires valid create_time")
         with self._connect() as db:
             db.execute("begin immediate")
-            matches = db.execute(
+            row = db.execute(
                 """
                 select * from feishu_events
-                where event_id=? or (app_id=? and message_id=?)
-                order by id
+                where app_id=? and message_id=?
                 """,
-                (message.event_id, message.app_id, message.message_id),
-            ).fetchall()
-            if len(matches) > 1:
-                raise sqlite3.IntegrityError(
-                    "Feishu event idempotency keys resolve to different rows"
-                )
-            if matches:
-                row = matches[0]
-                if row["event_id"] == message.event_id and (
-                    row["app_id"] != message.app_id
-                    or row["message_id"] != message.message_id
-                ):
-                    raise ValueError("event_id reused for a different Feishu message")
+                (message.app_id, message.message_id),
+            ).fetchone()
+            if row is not None:
+                if media_required and bool(row["media_required"]):
+                    self._insert_feishu_media_assets_db(
+                        db,
+                        event_record_id=int(row["id"]),
+                        app_id=message.app_id,
+                        message_id=message.message_id,
+                        normalized=normalized_media,
+                        actor="ingress",
+                    )
                 if enqueue_eligible and row["eligibility_status"] == "eligible":
                     self._enqueue_feishu_event_row(db, row)
                     row = db.execute(
@@ -4156,11 +5739,19 @@ class AutoReplyStore:
                 """
                 insert into feishu_events (
                     event_id, app_id, message_id, chat_id, chat_type,
-                    chat_title, thread_id, reply_to_message_id,
+                    chat_title, thread_id, root_message_id, parent_message_id,
+                    reply_to_message_id,
                     sender_open_id, sender_type, sender_name, message_type,
-                    mentioned_bot, body_text, event_create_time, received_at,
+                    mentioned_bot, body_text, normalized_summary,
+                    normalization_version, content_truncated,
+                    resource_truncated, media_required,
+                    event_create_time, received_at,
                     event_create_time_ms, eligibility_status, reject_reason
-                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) values (
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                    ?, ?, ?, ?, ?, ?
+                )
                 """,
                 (
                     message.event_id,
@@ -4170,6 +5761,8 @@ class AutoReplyStore:
                     message.chat_type,
                     message.chat_title,
                     message.thread_id,
+                    message.root_message_id,
+                    message.parent_message_id,
                     message.reply_to_message_id,
                     message.sender_open_id,
                     message.sender_type,
@@ -4177,6 +5770,11 @@ class AutoReplyStore:
                     message.message_type,
                     int(message.mentioned_bot),
                     body_text,
+                    message.normalized_summary if store_body else "",
+                    normalization_version,
+                    int(content_truncated),
+                    int(resource_truncated),
+                    int(media_required),
                     message.event_create_time,
                     received_at,
                     event_create_time_ms,
@@ -4187,12 +5785,1312 @@ class AutoReplyStore:
             row = db.execute(
                 "select * from feishu_events where id=?", (cursor.lastrowid,)
             ).fetchone()
+            if media_required:
+                self._insert_feishu_media_assets_db(
+                    db,
+                    event_record_id=int(row["id"]),
+                    app_id=message.app_id,
+                    message_id=message.message_id,
+                    normalized=normalized_media,
+                    actor="ingress",
+                )
             if enqueue_eligible and eligibility_status == "eligible":
                 self._enqueue_feishu_event_row(db, row)
                 row = db.execute(
                     "select * from feishu_events where id=?", (cursor.lastrowid,)
                 ).fetchone()
             return self._feishu_event_from_row(row, inserted=True)
+
+    # ---- Feishu channel: inbound media assets ----
+    @staticmethod
+    def _feishu_media_candidate_value(candidate, name: str, default=""):
+        if isinstance(candidate, dict):
+            return candidate.get(name, default)
+        return getattr(candidate, name, default)
+
+    @staticmethod
+    def _feishu_media_event_ready_db(
+        db: sqlite3.Connection,
+        *,
+        event_record_id: int,
+        app_id: str,
+        message_id: str,
+    ) -> bool:
+        event = db.execute(
+            """
+            select eligibility_status, reply_task_id, body_text
+            from feishu_events
+            where id=? and app_id=? and message_id=?
+            """,
+            (event_record_id, app_id, message_id),
+        ).fetchone()
+        if (
+            event is None
+            or event["eligibility_status"] != "eligible"
+            or event["reply_task_id"] is not None
+            or not event["body_text"].strip()
+        ):
+            return False
+        counts = db.execute(
+            """
+            select count(*) as total,
+                   sum(case when status in ('ready', 'rejected') then 1 else 0 end)
+                       as terminal
+            from feishu_media_assets
+            where event_record_id=? and app_id=? and message_id=?
+            """,
+            (event_record_id, app_id, message_id),
+        ).fetchone()
+        return bool(
+            counts is not None
+            and int(counts["total"] or 0) > 0
+            and int(counts["total"] or 0) == int(counts["terminal"] or 0)
+        )
+
+    @staticmethod
+    def _sanitize_feishu_media_error(error: str, *secrets: str) -> str:
+        cleaned = str(error or "")
+        for secret in secrets:
+            if secret:
+                cleaned = cleaned.replace(secret, "[REDACTED]")
+        return safe_observability_error(cleaned)[:512]
+
+    @staticmethod
+    def _validate_feishu_media_relative_path(
+        relative_path: str,
+        *,
+        app_id: str,
+        sha256: str,
+    ) -> str:
+        cleaned = str(relative_path or "").strip()
+        if (
+            not cleaned
+            or "\\" in cleaned
+            or any(ord(char) < 32 or ord(char) == 127 for char in cleaned)
+        ):
+            raise ValueError("invalid Feishu media relative path")
+        path = PurePosixPath(cleaned)
+        app_digest = hashlib.sha256(app_id.encode("utf-8")).hexdigest()
+        expected = (
+            ".ceo-agent",
+            "feishu-media",
+            app_digest,
+            sha256[:2],
+            sha256,
+        )
+        if path.is_absolute() or path.parts != expected:
+            raise ValueError("invalid Feishu media relative path")
+        return path.as_posix()
+
+    @classmethod
+    def _normalize_feishu_media_candidates(
+        cls,
+        candidates,
+        *,
+        max_event_resources: int,
+    ) -> list[dict[str, object]]:
+        if (
+            max_event_resources <= 0
+            or max_event_resources > DEFAULT_MAX_EVENT_RESOURCES
+        ):
+            raise ValueError(
+                "Feishu media event resource limit must be between 1 and 8"
+            )
+        materialized = list(candidates)
+        if not materialized:
+            raise ValueError("Feishu media event requires at least one resource")
+        if len(materialized) > max_event_resources:
+            raise ValueError("Feishu media event has too many resources")
+
+        normalized: list[dict[str, object]] = []
+        ordinals: set[int] = set()
+        for candidate in materialized:
+            ordinal = int(cls._feishu_media_candidate_value(candidate, "ordinal", -1))
+            resource_type = str(
+                cls._feishu_media_candidate_value(candidate, "resource_type", "")
+                or ""
+            ).strip().lower()
+            file_key = str(
+                cls._feishu_media_candidate_value(candidate, "file_key", "") or ""
+            ).strip()
+            role = str(
+                cls._feishu_media_candidate_value(candidate, "role", "") or ""
+            ).strip()
+            duration_ms = int(
+                cls._feishu_media_candidate_value(candidate, "duration_ms", 0) or 0
+            )
+            file_name = str(
+                cls._feishu_media_candidate_value(candidate, "file_name", "") or ""
+            )
+            if ordinal < 0 or ordinal > 10_000 or ordinal in ordinals:
+                raise ValueError("Feishu media candidate ordinal is invalid")
+            ordinals.add(ordinal)
+            if resource_type not in FEISHU_MEDIA_RESOURCE_TYPES:
+                raise ValueError("Feishu media resource type is unsupported")
+            if (
+                not file_key
+                or len(file_key) > 4096
+                or any(ord(char) < 32 or ord(char) == 127 for char in file_key)
+            ):
+                raise ValueError("Feishu media file key is invalid")
+            if (
+                len(role) > 64
+                or any(ord(char) < 32 or ord(char) == 127 for char in role)
+            ):
+                raise ValueError("Feishu media role is invalid")
+            if duration_ms < 0 or duration_ms > 86_400_000:
+                raise ValueError("Feishu media duration is invalid")
+            status = "pending"
+            error_code = ""
+            try:
+                safe_name = safe_media_name(
+                    file_name, resource_type=resource_type
+                )
+            except FeishuMediaRejected as exc:
+                safe_name = ""
+                status = "rejected"
+                error_code = exc.error_code
+            normalized.append(
+                {
+                    "ordinal": ordinal,
+                    "resource_type": resource_type,
+                    "role": role,
+                    "file_key": file_key if status == "pending" else "",
+                    "file_key_sha256": file_key_sha256(file_key),
+                    "safe_name": safe_name,
+                    "duration_ms": duration_ms,
+                    "status": status,
+                    "error_code": error_code,
+                }
+            )
+        return normalized
+
+    @classmethod
+    def _insert_feishu_media_assets_db(
+        cls,
+        db: sqlite3.Connection,
+        *,
+        event_record_id: int,
+        app_id: str,
+        message_id: str,
+        normalized: list[dict[str, object]],
+        actor: str,
+    ) -> list[sqlite3.Row]:
+        event = db.execute(
+            """
+            select id, eligibility_status, media_required from feishu_events
+            where id=? and app_id=? and message_id=?
+            """,
+            (event_record_id, app_id, message_id),
+        ).fetchone()
+        if event is None:
+            raise ValueError("Feishu media event identity does not match")
+        if event["eligibility_status"] != "eligible" or not bool(
+            event["media_required"]
+        ):
+            raise PermissionError(
+                "Feishu media keys require an approved media event"
+            )
+
+        existing = db.execute(
+            """
+            select * from feishu_media_assets
+            where event_record_id=? order by ordinal
+            """,
+            (event_record_id,),
+        ).fetchall()
+        if existing:
+            if len(existing) != len(normalized):
+                raise ValueError("Feishu media candidate replay does not match")
+            by_ordinal = {int(row["ordinal"]): row for row in existing}
+            for candidate in normalized:
+                row = by_ordinal.get(int(candidate["ordinal"]))
+                if row is None or any(
+                    row[field] != candidate[field]
+                    for field in (
+                        "resource_type",
+                        "role",
+                        "file_key_sha256",
+                        "safe_name",
+                        "duration_ms",
+                    )
+                ):
+                    raise ValueError("Feishu media candidate replay does not match")
+            return existing
+
+        for candidate in normalized:
+            cursor = db.execute(
+                """
+                insert into feishu_media_assets (
+                    event_record_id, app_id, message_id, ordinal,
+                    resource_type, role, file_key, file_key_sha256,
+                    safe_name, duration_ms, status, error_code, error
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    event_record_id,
+                    app_id,
+                    message_id,
+                    candidate["ordinal"],
+                    candidate["resource_type"],
+                    candidate["role"],
+                    candidate["file_key"],
+                    candidate["file_key_sha256"],
+                    candidate["safe_name"],
+                    candidate["duration_ms"],
+                    candidate["status"],
+                    candidate["error_code"],
+                    candidate["error_code"],
+                ),
+            )
+            cls._append_feishu_audit_event(
+                db,
+                app_id=app_id,
+                entity_type="media_asset",
+                entity_id=cursor.lastrowid,
+                event_type="created",
+                new_state=str(candidate["status"]),
+                actor=actor,
+                detail=(
+                    f"error_code={candidate['error_code']}"
+                    if candidate["error_code"]
+                    else ""
+                ),
+            )
+        return db.execute(
+            """
+            select * from feishu_media_assets
+            where event_record_id=? and app_id=? and message_id=?
+            order by ordinal
+            """,
+            (event_record_id, app_id, message_id),
+        ).fetchall()
+
+    def insert_feishu_media_assets(
+        self,
+        event_record_id: int,
+        *,
+        app_id: str,
+        message_id: str,
+        candidates,
+        max_event_resources: int = DEFAULT_MAX_EVENT_RESOURCES,
+        actor: str = "ingress",
+    ) -> list[FeishuMediaAsset]:
+        """Atomically persist approved resource descriptors without payloads.
+
+        Plaintext file keys are accepted only for an already-approved event and
+        are erased as soon as the asset becomes terminal.  Replays validate the
+        immutable candidate identity rather than replacing the first record.
+        """
+        if event_record_id <= 0 or not app_id.strip() or not message_id.strip():
+            raise ValueError("Feishu media event identity is incomplete")
+        normalized = self._normalize_feishu_media_candidates(
+            candidates,
+            max_event_resources=max_event_resources,
+        )
+
+        with self._connect() as db:
+            db.execute("begin immediate")
+            rows = self._insert_feishu_media_assets_db(
+                db,
+                event_record_id=event_record_id,
+                app_id=app_id,
+                message_id=message_id,
+                normalized=normalized,
+                actor=actor,
+            )
+            return [self._feishu_media_asset_from_row(row) for row in rows]
+
+    def list_feishu_media_assets(
+        self,
+        *,
+        event_record_id: int = 0,
+        app_id: str = "",
+        message_id: str = "",
+        statuses: tuple[str, ...] | list[str] | set[str] = (),
+        limit: int = 100,
+    ) -> list[FeishuMediaAsset]:
+        if limit <= 0:
+            return []
+        if limit > 1000:
+            raise ValueError("Feishu media asset limit must not exceed 1000")
+        selected = tuple(statuses)
+        if any(status not in FEISHU_MEDIA_STATUSES for status in selected):
+            raise ValueError("invalid Feishu media status")
+        where: list[str] = []
+        args: list[str | int] = []
+        if event_record_id:
+            where.append("event_record_id=?")
+            args.append(event_record_id)
+        if app_id:
+            where.append("app_id=?")
+            args.append(app_id)
+        if message_id:
+            where.append("message_id=?")
+            args.append(message_id)
+        if selected:
+            placeholders = ",".join("?" for _ in selected)
+            where.append(f"status in ({placeholders})")
+            args.extend(selected)
+        clause = f"where {' and '.join(where)}" if where else ""
+        args.append(limit)
+        with self._connect() as db:
+            rows = db.execute(
+                f"""
+                select * from feishu_media_assets {clause}
+                order by event_record_id, ordinal, id limit ?
+                """,
+                args,
+            ).fetchall()
+        return [self._feishu_media_asset_from_row(row) for row in rows]
+
+    def get_feishu_media_asset(self, asset_id: int) -> FeishuMediaAsset | None:
+        with self._connect() as db:
+            row = db.execute(
+                "select * from feishu_media_assets where id=?", (asset_id,)
+            ).fetchone()
+        return self._feishu_media_asset_from_row(row) if row is not None else None
+
+    def claim_feishu_media_assets(
+        self,
+        app_id: str,
+        *,
+        limit: int = 1,
+        now: str = "",
+        actor: str = "media-resolver",
+    ) -> list[FeishuMediaAsset]:
+        """Atomically lease a bounded set of pending assets for one app."""
+        normalized_app_id = app_id.strip()
+        if not normalized_app_id:
+            raise ValueError("Feishu media claim requires app_id")
+        if limit <= 0:
+            return []
+        if limit > 64:
+            raise ValueError("Feishu media claim limit must not exceed 64")
+        locked_at = now or datetime.now().astimezone().isoformat()
+        with self._connect() as db:
+            db.execute("begin immediate")
+            rows = db.execute(
+                """
+                select assets.*
+                from feishu_media_assets as assets
+                join feishu_events as events
+                  on events.id=assets.event_record_id
+                 and events.app_id=assets.app_id
+                 and events.message_id=assets.message_id
+                where assets.app_id=? and assets.status='pending'
+                  and assets.file_key<>''
+                  and events.eligibility_status='eligible'
+                order by assets.id
+                limit ?
+                """,
+                (normalized_app_id, limit),
+            ).fetchall()
+            claimed: list[FeishuMediaAsset] = []
+            for row in rows:
+                lease_token = uuid4().hex
+                cursor = db.execute(
+                    """
+                    update feishu_media_assets
+                    set status='downloading', lease_token=?, locked_at=?,
+                        error_code='', error='', updated_at=current_timestamp
+                    where id=? and event_record_id=? and app_id=?
+                      and message_id=? and resource_type=? and file_key=?
+                      and file_key_sha256=? and status='pending'
+                      and lease_token=''
+                    """,
+                    (
+                        lease_token,
+                        locked_at,
+                        row["id"],
+                        row["event_record_id"],
+                        row["app_id"],
+                        row["message_id"],
+                        row["resource_type"],
+                        row["file_key"],
+                        row["file_key_sha256"],
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    raise RuntimeError("Feishu media claim lost atomic race")
+                current = db.execute(
+                    "select * from feishu_media_assets where id=?", (row["id"],)
+                ).fetchone()
+                self._append_feishu_audit_event(
+                    db,
+                    app_id=current["app_id"],
+                    entity_type="media_asset",
+                    entity_id=current["id"],
+                    event_type="claimed",
+                    previous_state="pending",
+                    new_state="downloading",
+                    actor=actor,
+                )
+                claimed.append(self._feishu_media_asset_from_row(current))
+            return claimed
+
+    def claim_feishu_media_asset(
+        self,
+        app_id: str,
+        *,
+        now: str = "",
+        actor: str = "media-resolver",
+    ) -> FeishuMediaAsset | None:
+        claimed = self.claim_feishu_media_assets(
+            app_id, limit=1, now=now, actor=actor
+        )
+        return claimed[0] if claimed else None
+
+    @staticmethod
+    def _require_feishu_media_claim_db(
+        db: sqlite3.Connection,
+        asset_id: int,
+        *,
+        event_record_id: int,
+        app_id: str,
+        message_id: str,
+        file_key: str,
+        resource_type: str,
+        lease_token: str,
+    ) -> sqlite3.Row:
+        if not lease_token.strip() or not file_key:
+            raise ValueError("Feishu media terminal transition requires its lease")
+        row = db.execute(
+            """
+            select * from feishu_media_assets
+            where id=? and event_record_id=? and app_id=? and message_id=?
+              and file_key=? and resource_type=? and lease_token=?
+              and status='downloading'
+            """,
+            (
+                asset_id,
+                event_record_id,
+                app_id,
+                message_id,
+                file_key,
+                resource_type,
+                lease_token,
+            ),
+        ).fetchone()
+        if row is None:
+            raise ValueError("Feishu media lease or identity does not match")
+        if row["file_key_sha256"] != file_key_sha256(file_key):
+            raise ValueError("Feishu media file-key binding is invalid")
+        return row
+
+    def mark_feishu_media_ready(
+        self,
+        asset_id: int,
+        *,
+        event_record_id: int,
+        app_id: str,
+        message_id: str,
+        file_key: str,
+        resource_type: str,
+        lease_token: str,
+        relative_path: str,
+        mime_type: str,
+        size_bytes: int,
+        sha256: str,
+        max_resource_bytes: int = DEFAULT_MAX_RESOURCE_BYTES,
+        max_event_bytes: int = DEFAULT_MAX_EVENT_BYTES,
+        actor: str = "media-resolver",
+    ) -> tuple[FeishuMediaAsset, bool]:
+        """CAS-complete a download and return the atomic event enqueue signal."""
+        digest = str(sha256 or "").strip().lower()
+        if len(digest) != 64 or any(char not in "0123456789abcdef" for char in digest):
+            raise ValueError("invalid Feishu media sha256")
+        if not mime_type.strip() or len(mime_type) > 128:
+            raise ValueError("invalid Feishu media MIME type")
+        if size_bytes <= 0:
+            raise ValueError("Feishu media size must be positive")
+        if max_resource_bytes <= 0 or max_event_bytes <= 0:
+            raise ValueError("Feishu media byte limits must be positive")
+        cleaned_path = self._validate_feishu_media_relative_path(
+            relative_path, app_id=app_id, sha256=digest
+        )
+        with self._connect() as db:
+            db.execute("begin immediate")
+            current = self._require_feishu_media_claim_db(
+                db,
+                asset_id,
+                event_record_id=event_record_id,
+                app_id=app_id,
+                message_id=message_id,
+                file_key=file_key,
+                resource_type=resource_type,
+                lease_token=lease_token,
+            )
+            aggregate = db.execute(
+                """
+                select coalesce(sum(size_bytes), 0) as ready_bytes
+                from feishu_media_assets
+                where event_record_id=? and app_id=? and message_id=?
+                  and id<>? and status='ready'
+                """,
+                (event_record_id, app_id, message_id, asset_id),
+            ).fetchone()
+            total_bytes = int(aggregate["ready_bytes"] or 0) + size_bytes
+            error_code = ""
+            if size_bytes > max_resource_bytes:
+                error_code = "resource_too_large"
+            elif total_bytes > max_event_bytes:
+                error_code = "event_too_large"
+            next_status = "rejected" if error_code else "ready"
+            cursor = db.execute(
+                """
+                update feishu_media_assets
+                set status=?, file_key='', lease_token='', locked_at='',
+                    relative_path=?, mime_type=?, size_bytes=?, sha256=?,
+                    error_code=?, error=?,
+                    ready_at=case when ?='ready' then current_timestamp else '' end,
+                    updated_at=current_timestamp
+                where id=? and event_record_id=? and app_id=?
+                  and message_id=? and resource_type=? and file_key=?
+                  and lease_token=? and status='downloading'
+                """,
+                (
+                    next_status,
+                    "" if error_code else cleaned_path,
+                    "" if error_code else mime_type.strip().lower(),
+                    0 if error_code else size_bytes,
+                    "" if error_code else digest,
+                    error_code,
+                    error_code,
+                    next_status,
+                    asset_id,
+                    event_record_id,
+                    app_id,
+                    message_id,
+                    resource_type,
+                    file_key,
+                    lease_token,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("Feishu media ready transition lost its lease")
+            row = db.execute(
+                "select * from feishu_media_assets where id=?", (asset_id,)
+            ).fetchone()
+            self._append_feishu_audit_event(
+                db,
+                app_id=app_id,
+                entity_type="media_asset",
+                entity_id=asset_id,
+                event_type="rejected" if error_code else "ready",
+                previous_state=current["status"],
+                new_state=next_status,
+                actor=actor,
+                detail=(
+                    f"error_code={error_code}"
+                    if error_code
+                    else f"mime_type={row['mime_type']};size_bytes={size_bytes};sha256={digest}"
+                ),
+            )
+            ready_for_enqueue = self._feishu_media_event_ready_db(
+                db,
+                event_record_id=event_record_id,
+                app_id=app_id,
+                message_id=message_id,
+            )
+            return self._feishu_media_asset_from_row(row), ready_for_enqueue
+
+    def mark_feishu_media_rejected(
+        self,
+        asset_id: int,
+        *,
+        event_record_id: int,
+        app_id: str,
+        message_id: str,
+        file_key: str,
+        resource_type: str,
+        lease_token: str,
+        error_code: str,
+        error: str = "",
+        actor: str = "media-resolver",
+    ) -> tuple[FeishuMediaAsset, bool]:
+        code = str(error_code or "").strip().lower()
+        if (
+            not code
+            or len(code) > 64
+            or any(char not in "abcdefghijklmnopqrstuvwxyz0123456789_" for char in code)
+        ):
+            raise ValueError("invalid Feishu media error code")
+        safe_error = self._sanitize_feishu_media_error(error or code, file_key)
+        with self._connect() as db:
+            db.execute("begin immediate")
+            current = self._require_feishu_media_claim_db(
+                db,
+                asset_id,
+                event_record_id=event_record_id,
+                app_id=app_id,
+                message_id=message_id,
+                file_key=file_key,
+                resource_type=resource_type,
+                lease_token=lease_token,
+            )
+            cursor = db.execute(
+                """
+                update feishu_media_assets
+                set status='rejected', file_key='', lease_token='', locked_at='',
+                    relative_path='', mime_type='', size_bytes=0, sha256='',
+                    error_code=?, error=?, updated_at=current_timestamp
+                where id=? and event_record_id=? and app_id=?
+                  and message_id=? and resource_type=? and file_key=?
+                  and lease_token=? and status='downloading'
+                """,
+                (
+                    code,
+                    safe_error,
+                    asset_id,
+                    event_record_id,
+                    app_id,
+                    message_id,
+                    resource_type,
+                    file_key,
+                    lease_token,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("Feishu media rejection lost its lease")
+            row = db.execute(
+                "select * from feishu_media_assets where id=?", (asset_id,)
+            ).fetchone()
+            self._append_feishu_audit_event(
+                db,
+                app_id=app_id,
+                entity_type="media_asset",
+                entity_id=asset_id,
+                event_type="rejected",
+                previous_state=current["status"],
+                new_state="rejected",
+                actor=actor,
+                detail=f"error_code={code}",
+            )
+            ready_for_enqueue = self._feishu_media_event_ready_db(
+                db,
+                event_record_id=event_record_id,
+                app_id=app_id,
+                message_id=message_id,
+            )
+            return self._feishu_media_asset_from_row(row), ready_for_enqueue
+
+    def feishu_media_event_ready_for_enqueue(
+        self,
+        event_record_id: int,
+        *,
+        app_id: str,
+        message_id: str,
+    ) -> bool:
+        """Atomically re-check whether every approved asset is terminal."""
+        with self._connect() as db:
+            db.execute("begin immediate")
+            return self._feishu_media_event_ready_db(
+                db,
+                event_record_id=event_record_id,
+                app_id=app_id,
+                message_id=message_id,
+            )
+
+    def recover_stale_feishu_media_assets(
+        self,
+        *,
+        app_id: str = "",
+        stale_after_seconds: int = 5 * 60,
+        now: str = "",
+        batch_limit: int = 100,
+        actor: str = "media-recovery",
+    ) -> int:
+        """Return only stale downloading leases to pending for safe retry."""
+        if stale_after_seconds <= 0:
+            raise ValueError("Feishu media stale interval must be positive")
+        if batch_limit <= 0 or batch_limit > 1000:
+            raise ValueError("Feishu media recovery batch limit is invalid")
+        if now:
+            try:
+                current = datetime.fromisoformat(now.replace("Z", "+00:00"))
+            except ValueError as exc:
+                raise ValueError("invalid Feishu media recovery time") from exc
+            if current.tzinfo is None or current.utcoffset() is None:
+                raise ValueError("Feishu media recovery time must include timezone")
+        else:
+            current = datetime.now(timezone.utc)
+        cutoff = (current.astimezone(timezone.utc) - timedelta(
+            seconds=stale_after_seconds
+        )).isoformat()
+        app_clause = " and app_id=?" if app_id else ""
+        args: list[str | int] = [cutoff]
+        if app_id:
+            args.append(app_id)
+        args.append(batch_limit)
+        with self._connect() as db:
+            db.execute("begin immediate")
+            rows = db.execute(
+                f"""
+                select * from feishu_media_assets
+                where status='downloading' and lease_token<>''
+                  and locked_at<>'' and julianday(locked_at) <= julianday(?)
+                  {app_clause}
+                order by id limit ?
+                """,
+                args,
+            ).fetchall()
+            recovered = 0
+            for row in rows:
+                cursor = db.execute(
+                    """
+                    update feishu_media_assets
+                    set status='pending', lease_token='', locked_at='',
+                        error_code='stale_lease_recovered',
+                        error='stale_lease_recovered',
+                        updated_at=current_timestamp
+                    where id=? and event_record_id=? and app_id=?
+                      and message_id=? and resource_type=? and file_key=?
+                      and lease_token=? and status='downloading'
+                    """,
+                    (
+                        row["id"],
+                        row["event_record_id"],
+                        row["app_id"],
+                        row["message_id"],
+                        row["resource_type"],
+                        row["file_key"],
+                        row["lease_token"],
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    continue
+                recovered += 1
+                self._append_feishu_audit_event(
+                    db,
+                    app_id=row["app_id"],
+                    entity_type="media_asset",
+                    entity_id=row["id"],
+                    event_type="stale_lease_recovered",
+                    previous_state="downloading",
+                    new_state="pending",
+                    actor=actor,
+                )
+            return recovered
+
+    def expire_feishu_media_keys_before(
+        self,
+        cutoff: str,
+        *,
+        downloading_stale_before: str,
+        app_id: str = "",
+        batch_limit: int = 100,
+        actor: str = "media-retention",
+    ) -> list[FeishuMediaAsset]:
+        """Terminally discard expired opaque keys without racing live downloads."""
+        normalized: list[str] = []
+        for value, label in (
+            (cutoff, "retention cutoff"),
+            (downloading_stale_before, "downloading cutoff"),
+        ):
+            cleaned = str(value or "").strip()
+            try:
+                parsed = datetime.fromisoformat(cleaned.replace("Z", "+00:00"))
+            except ValueError as exc:
+                raise ValueError(f"invalid Feishu media {label}") from exc
+            if parsed.tzinfo is None or parsed.utcoffset() is None:
+                raise ValueError(f"Feishu media {label} must include timezone")
+            normalized.append(
+                parsed.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+            )
+        if batch_limit <= 0 or batch_limit > 1000:
+            raise ValueError("Feishu media key expiry batch_limit must be 1..1000")
+        app_clause = "and app_id=?" if app_id else ""
+        args: list[str | int] = [normalized[0], normalized[1]]
+        if app_id:
+            args.append(app_id)
+        args.append(batch_limit)
+        with self._connect() as db:
+            db.execute("begin immediate")
+            rows = db.execute(
+                f"""
+                select * from feishu_media_assets
+                where file_key<>''
+                  and datetime(created_at) < datetime(?)
+                  and (
+                    status='pending'
+                    or (
+                      status='downloading'
+                      and (
+                        locked_at=''
+                        or datetime(locked_at) < datetime(?)
+                      )
+                    )
+                  )
+                  {app_clause}
+                order by id
+                limit ?
+                """,
+                args,
+            ).fetchall()
+            expired: list[FeishuMediaAsset] = []
+            for row in rows:
+                cursor = db.execute(
+                    """
+                    update feishu_media_assets
+                    set status='rejected', file_key='', lease_token='',
+                        locked_at='', relative_path='', mime_type='',
+                        size_bytes=0, sha256='',
+                        error_code='retention_expired',
+                        error='retention_expired',
+                        updated_at=current_timestamp
+                    where id=? and event_record_id=? and app_id=?
+                      and message_id=? and file_key=? and status=?
+                      and lease_token=?
+                    """,
+                    (
+                        row["id"],
+                        row["event_record_id"],
+                        row["app_id"],
+                        row["message_id"],
+                        row["file_key"],
+                        row["status"],
+                        row["lease_token"],
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    continue
+                current = db.execute(
+                    "select * from feishu_media_assets where id=?", (row["id"],)
+                ).fetchone()
+                self._append_feishu_audit_event(
+                    db,
+                    app_id=row["app_id"],
+                    entity_type="media_asset",
+                    entity_id=row["id"],
+                    event_type="retention_key_expired",
+                    previous_state=row["status"],
+                    new_state="rejected",
+                    actor=actor,
+                    detail="error_code=retention_expired",
+                )
+                expired.append(self._feishu_media_asset_from_row(current))
+            return expired
+
+    def list_feishu_media_app_ids(
+        self, *, app_id: str = "", limit: int = 1000
+    ) -> list[str]:
+        """Return a bounded set of clear app identities for hashed-dir cleanup."""
+        cleaned_app_id = str(app_id or "").strip()
+        if cleaned_app_id:
+            return [cleaned_app_id]
+        if limit <= 0:
+            return []
+        if limit > 1000:
+            raise ValueError("Feishu media app list limit must not exceed 1000")
+        with self._connect() as db:
+            rows = db.execute(
+                """
+                select app_id from (
+                    select app_id from feishu_media_assets
+                    union
+                    select app_id from feishu_events
+                )
+                where app_id<>''
+                order by app_id
+                limit ?
+                """,
+                (limit,),
+            ).fetchall()
+        return [str(row["app_id"]) for row in rows]
+
+    def feishu_media_blob_is_referenced(
+        self, *, app_id: str, sha256: str, relative_path: str
+    ) -> bool:
+        """Recheck one exact content path while its interprocess lock is held."""
+        digest = str(sha256 or "").strip().lower()
+        cleaned_path = self._validate_feishu_media_relative_path(
+            relative_path, app_id=app_id, sha256=digest
+        )
+        with self._connect() as db:
+            row = db.execute(
+                """
+                select 1 from feishu_media_assets
+                where app_id=? and sha256=? and relative_path<>''
+                  and relative_path=? and status in ('ready', 'purged')
+                limit 1
+                """,
+                (app_id, digest, cleaned_path),
+            ).fetchone()
+        return row is not None
+
+    def mark_feishu_media_purged_before(
+        self,
+        cutoff: str,
+        *,
+        app_id: str = "",
+        batch_limit: int = 100,
+        processing_stale_before: str = "",
+        actor: str = "media-retention",
+    ) -> list[FeishuMediaAsset]:
+        """Expire ready assets without allowing queue state to bypass the TTL."""
+        cleaned_cutoff = str(cutoff or "").strip()
+        if not cleaned_cutoff:
+            raise ValueError("Feishu media retention requires a cutoff")
+        try:
+            parsed = datetime.fromisoformat(cleaned_cutoff.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise ValueError("invalid Feishu media retention cutoff") from exc
+        if parsed.tzinfo is None or parsed.utcoffset() is None:
+            raise ValueError("Feishu media retention cutoff must include timezone")
+        normalized_cutoff = parsed.astimezone(timezone.utc).strftime(
+            "%Y-%m-%d %H:%M:%S"
+        )
+        if processing_stale_before:
+            try:
+                stale = datetime.fromisoformat(
+                    processing_stale_before.replace("Z", "+00:00")
+                )
+            except ValueError as exc:
+                raise ValueError(
+                    "invalid Feishu media processing grace cutoff"
+                ) from exc
+            if stale.tzinfo is None or stale.utcoffset() is None:
+                raise ValueError(
+                    "Feishu media processing grace cutoff must include timezone"
+                )
+        else:
+            stale = datetime.now(timezone.utc) - timedelta(
+                seconds=DEFAULT_MEDIA_PROCESSING_GRACE_SECONDS
+            )
+        normalized_stale = stale.astimezone(timezone.utc).strftime(
+            "%Y-%m-%d %H:%M:%S"
+        )
+        if batch_limit <= 0 or batch_limit > 1000:
+            raise ValueError("Feishu media retention batch_limit must be 1..1000")
+        app_clause = "and assets.app_id=?" if app_id else ""
+        args: list[str | int] = [normalized_cutoff]
+        if app_id:
+            args.append(app_id)
+        args.append(normalized_stale)
+        args.append(batch_limit)
+        with self._connect() as db:
+            db.execute("begin immediate")
+            rows = db.execute(
+                f"""
+                select assets.*,
+                       events.reply_task_id as retention_task_id,
+                       tasks.status as retention_task_status,
+                       tasks.lease_token as retention_task_lease
+                from feishu_media_assets as assets
+                join feishu_events as events
+                  on events.id=assets.event_record_id
+                 and events.app_id=assets.app_id
+                 and events.message_id=assets.message_id
+                left join reply_tasks as tasks
+                  on tasks.id=events.reply_task_id
+                where assets.status='ready'
+                  and datetime(
+                    case when assets.ready_at<>''
+                         then assets.ready_at else assets.created_at end
+                  ) < datetime(?)
+                  {app_clause}
+                  and (
+                    events.reply_task_id is null
+                    or tasks.status='pending'
+                    or tasks.status not in ('pending', 'processing')
+                    or (
+                      tasks.status='processing'
+                      and (
+                        tasks.locked_at is null
+                        or tasks.locked_at=''
+                        or datetime(tasks.locked_at) <= datetime(?)
+                      )
+                    )
+                  )
+                order by assets.id
+                limit ?
+                """,
+                args,
+            ).fetchall()
+            marked: list[FeishuMediaAsset] = []
+            terminated_tasks: set[int] = set()
+            for row in rows:
+                task_id = int(row["retention_task_id"] or 0)
+                task_status = str(row["retention_task_status"] or "")
+                if task_id and task_id not in terminated_tasks:
+                    if task_status == "pending":
+                        task_cursor = db.execute(
+                            """
+                            update reply_tasks
+                            set status='failed', lease_token='', locked_at=null,
+                                error='feishu_media_retention_expired',
+                                available_at='', updated_at=current_timestamp
+                            where id=? and channel='feishu' and status='pending'
+                            """,
+                            (task_id,),
+                        )
+                    elif task_status == "processing":
+                        task_cursor = db.execute(
+                            """
+                            update reply_tasks
+                            set status='failed', lease_token='', locked_at=null,
+                                error='feishu_media_retention_expired',
+                                available_at='', updated_at=current_timestamp
+                            where id=? and channel='feishu'
+                              and status='processing' and lease_token=?
+                              and (
+                                locked_at is null or locked_at=''
+                                or datetime(locked_at) <= datetime(?)
+                              )
+                            """,
+                            (
+                                task_id,
+                                row["retention_task_lease"],
+                                normalized_stale,
+                            ),
+                        )
+                    else:
+                        task_cursor = None
+                    if task_cursor is not None:
+                        if task_cursor.rowcount != 1:
+                            continue
+                        terminated_tasks.add(task_id)
+                        self._append_feishu_audit_event(
+                            db,
+                            app_id=row["app_id"],
+                            entity_type="reply_task",
+                            entity_id=task_id,
+                            event_type="media_retention_expired",
+                            previous_state=task_status,
+                            new_state="failed",
+                            actor=actor,
+                            detail="error_code=feishu_media_retention_expired",
+                        )
+                cursor = db.execute(
+                    """
+                    update feishu_media_assets
+                    set status='purged', purged_at=current_timestamp,
+                        lease_token='', locked_at='', error_code='', error='',
+                        updated_at=current_timestamp
+                    where id=? and event_record_id=? and app_id=?
+                      and message_id=? and status='ready'
+                      and relative_path=? and sha256=?
+                    """,
+                    (
+                        row["id"],
+                        row["event_record_id"],
+                        row["app_id"],
+                        row["message_id"],
+                        row["relative_path"],
+                        row["sha256"],
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    continue
+                current = db.execute(
+                    "select * from feishu_media_assets where id=?", (row["id"],)
+                ).fetchone()
+                self._append_feishu_audit_event(
+                    db,
+                    app_id=row["app_id"],
+                    entity_type="media_asset",
+                    entity_id=row["id"],
+                    event_type="expired_marked_purged",
+                    previous_state="ready",
+                    new_state="purged",
+                    actor=actor,
+                )
+                marked.append(self._feishu_media_asset_from_row(current))
+            return marked
+
+    def list_feishu_media_pending_purge(
+        self,
+        *,
+        app_id: str = "",
+        limit: int = 100,
+    ) -> list[FeishuMediaAsset]:
+        """List crash-recoverable purged rows whose local path is retained."""
+        if limit <= 0:
+            return []
+        if limit > 1000:
+            raise ValueError("Feishu media purge list limit must not exceed 1000")
+        app_clause = "and app_id=?" if app_id else ""
+        args: list[str | int] = []
+        if app_id:
+            args.append(app_id)
+        args.append(limit)
+        with self._connect() as db:
+            rows = db.execute(
+                f"""
+                select * from feishu_media_assets
+                where status='purged' and relative_path<>'' {app_clause}
+                order by case when error_code='' then 0 else 1 end, id limit ?
+                """,
+                args,
+            ).fetchall()
+        return [self._feishu_media_asset_from_row(row) for row in rows]
+
+    def finalize_feishu_media_purge(
+        self,
+        asset_id: int,
+        *,
+        app_id: str,
+        sha256: str,
+        relative_path: str,
+        delete_file,
+        actor: str = "media-retention",
+    ) -> tuple[FeishuMediaAsset, str]:
+        """Delete and CAS-finalize one purged file with live-ref exclusion.
+
+        ``delete_file`` executes while a SQLite write transaction is held.  It
+        must be a bounded, local-only callback returning true when it unlinked
+        a file and false when the exact path was already absent.
+        """
+        if asset_id <= 0 or not app_id.strip():
+            raise ValueError("Feishu media purge identity is incomplete")
+        digest = str(sha256 or "").strip().lower()
+        if len(digest) != 64 or any(char not in "0123456789abcdef" for char in digest):
+            raise ValueError("invalid Feishu media purge sha256")
+        cleaned_path = self._validate_feishu_media_relative_path(
+            relative_path, app_id=app_id, sha256=digest
+        )
+        if not callable(delete_file):
+            raise ValueError("Feishu media purge requires a delete callback")
+        with self._connect() as db:
+            db.execute("begin immediate")
+            row = db.execute(
+                "select * from feishu_media_assets where id=?", (asset_id,)
+            ).fetchone()
+            if row is None:
+                raise ValueError("Feishu media asset not found")
+            if row["app_id"] != app_id:
+                raise PermissionError("Feishu media purge App ID does not match")
+            if row["status"] != "purged":
+                raise ValueError("Feishu media asset is not marked purged")
+            if not row["relative_path"]:
+                return self._feishu_media_asset_from_row(row), "already_finalized"
+            if row["sha256"] != digest or row["relative_path"] != cleaned_path:
+                raise ValueError("Feishu media purge identity changed")
+            live_reference = db.execute(
+                """
+                select 1 from feishu_media_assets
+                where id<>? and app_id=? and status='ready'
+                  and sha256=? and relative_path=?
+                limit 1
+                """,
+                (asset_id, app_id, digest, cleaned_path),
+            ).fetchone()
+            if live_reference is not None:
+                cursor = db.execute(
+                    """
+                    update feishu_media_assets
+                    set relative_path='', error_code='', error='',
+                        lease_token='', locked_at='', updated_at=current_timestamp
+                    where id=? and app_id=? and status='purged'
+                      and relative_path=? and sha256=?
+                    """,
+                    (asset_id, app_id, cleaned_path, digest),
+                )
+                if cursor.rowcount != 1:
+                    raise ValueError(
+                        "Feishu media shared-reference finalization lost atomic race"
+                    )
+                current = db.execute(
+                    "select * from feishu_media_assets where id=?", (asset_id,)
+                ).fetchone()
+                self._append_feishu_audit_event(
+                    db,
+                    app_id=app_id,
+                    entity_type="media_asset",
+                    entity_id=asset_id,
+                    event_type="purge_file_shared_reference",
+                    previous_state="purged",
+                    new_state="purged",
+                    actor=actor,
+                )
+                return self._feishu_media_asset_from_row(current), "shared_reference"
+            deleted = delete_file(cleaned_path, digest)
+            if not isinstance(deleted, bool):
+                raise ValueError("Feishu media delete callback returned invalid result")
+            cursor = db.execute(
+                """
+                update feishu_media_assets
+                set relative_path='', error_code='', error='',
+                    lease_token='', locked_at='', updated_at=current_timestamp
+                where id=? and app_id=? and status='purged'
+                  and relative_path=? and sha256=?
+                """,
+                (asset_id, app_id, cleaned_path, digest),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("Feishu media purge finalization lost atomic race")
+            current = db.execute(
+                "select * from feishu_media_assets where id=?", (asset_id,)
+            ).fetchone()
+            outcome = "deleted" if deleted else "missing"
+            self._append_feishu_audit_event(
+                db,
+                app_id=app_id,
+                entity_type="media_asset",
+                entity_id=asset_id,
+                event_type=f"purge_file_{outcome}",
+                previous_state="purged",
+                new_state="purged",
+                actor=actor,
+            )
+            return self._feishu_media_asset_from_row(current), outcome
+
+    def record_feishu_media_purge_failure(
+        self,
+        asset_id: int,
+        *,
+        app_id: str,
+        error_code: str,
+        actor: str = "media-retention",
+    ) -> FeishuMediaAsset:
+        """Record only a closed, path-free purge error for later retry."""
+        allowed = {
+            "content_hash_mismatch",
+            "file_size_exceeded",
+            "filesystem_error",
+            "not_regular_file",
+            "path_validation_failed",
+            "symlink_rejected",
+        }
+        code = str(error_code or "").strip().lower()
+        if code not in allowed:
+            code = "filesystem_error"
+        with self._connect() as db:
+            db.execute("begin immediate")
+            row = db.execute(
+                "select * from feishu_media_assets where id=?", (asset_id,)
+            ).fetchone()
+            if row is None:
+                raise ValueError("Feishu media asset not found")
+            if row["app_id"] != app_id:
+                raise PermissionError("Feishu media purge App ID does not match")
+            if row["status"] != "purged" or not row["relative_path"]:
+                raise ValueError("Feishu media purge failure is no longer current")
+            db.execute(
+                """
+                update feishu_media_assets
+                set error_code=?, error=?, updated_at=current_timestamp
+                where id=? and app_id=? and status='purged'
+                  and relative_path<>''
+                """,
+                (code, code, asset_id, app_id),
+            )
+            current = db.execute(
+                "select * from feishu_media_assets where id=?", (asset_id,)
+            ).fetchone()
+            self._append_feishu_audit_event(
+                db,
+                app_id=app_id,
+                entity_type="media_asset",
+                entity_id=asset_id,
+                event_type="purge_failed",
+                previous_state="purged",
+                new_state="purged",
+                actor=actor,
+                detail=f"error_code={code}",
+            )
+            return self._feishu_media_asset_from_row(current)
 
     def attach_feishu_event_reply_task(
         self, event_record_id: int
@@ -4212,11 +7110,21 @@ class AutoReplyStore:
             return self._feishu_event_from_row(row)
 
     def get_feishu_event(self, event_id: str | int) -> FeishuEventRecord | None:
-        column = "id" if isinstance(event_id, int) else "event_id"
         with self._connect() as db:
-            row = db.execute(
-                f"select * from feishu_events where {column}=?", (event_id,)
-            ).fetchone()
+            if isinstance(event_id, int):
+                row = db.execute(
+                    "select * from feishu_events where id=?", (event_id,)
+                ).fetchone()
+            else:
+                rows = db.execute(
+                    "select * from feishu_events where event_id=? order by id",
+                    (event_id,),
+                ).fetchall()
+                if len(rows) > 1:
+                    raise ValueError(
+                        "Feishu event_id is ambiguous; use app_id and message_id"
+                    )
+                row = rows[0] if rows else None
         return self._feishu_event_from_row(row) if row is not None else None
 
     def get_feishu_event_for_message(
@@ -4313,12 +7221,53 @@ class AutoReplyStore:
                           and not exists (
                             select 1 from feishu_deliveries as deliveries
                             where deliveries.reply_task_id=tasks.id
-                              and deliveries.status in (
-                                'ready_to_send', 'sending', 'retry',
-                                'send_unknown'
+                              and (
+                                deliveries.status in (
+                                  'ready_to_send', 'sending', 'retry',
+                                  'send_unknown'
+                                )
+                                or (
+                                  deliveries.status='failed'
+                                  and deliveries.error_code='verified_not_sent'
+                                )
+                              )
+                          )
+                          and not exists (
+                            select 1 from feishu_message_actions as actions
+                            where actions.reply_task_id=tasks.id
+                              and (
+                                actions.status in (
+                                  'ready', 'sending', 'retry', 'result_unknown'
+                                )
+                                or (
+                                  actions.status='failed'
+                                  and actions.error_code='verified_not_applied'
+                                )
+                              )
+                          )
+                          and not exists (
+                            select 1
+                            from feishu_local_notifications as local_notifications
+                            where local_notifications.reply_task_id=tasks.id
+                              and local_notifications.status in (
+                                'waiting_remote', 'pending', 'sending', 'retry',
+                                'result_unknown'
                               )
                           )
                         )
+                      )
+                      and not exists (
+                        select 1 from feishu_media_assets as media
+                        where media.event_record_id=events.id
+                          and (
+                            media.status in (
+                              'pending', 'downloading', 'ready'
+                            )
+                            or (
+                              media.status='purged'
+                              and media.relative_path<>''
+                            )
+                          )
                       )
                     order by events.id
                     limit ?
@@ -4346,7 +7295,9 @@ class AutoReplyStore:
         *,
         app_id: str = "",
         thread_id: str | None = None,
-        before_event_id: str = "",
+        root_message_id: str | None = None,
+        before_message_id: str = "",
+        lookback_seconds: int = 24 * 60 * 60,
     ) -> list[FeishuEventRecord]:
         """Return approved local context oldest-first, optionally thread-bound.
 
@@ -4354,6 +7305,10 @@ class AutoReplyStore:
         a non-empty value selects exactly one topic.  ``None`` retains the
         legacy all-thread query for non-consumer diagnostic callers.
         """
+        if lookback_seconds <= 0 or lookback_seconds > 30 * 24 * 60 * 60:
+            raise ValueError(
+                "Feishu context lookback_seconds must be between 1 and 2592000"
+            )
         if limit <= 0:
             return []
         where = ["chat_id=?", "eligibility_status='eligible'", "body_text<>''"]
@@ -4362,10 +7317,18 @@ class AutoReplyStore:
             where.append("app_id=?")
             args.append(app_id)
         if thread_id is not None:
-            where.append("thread_id=?")
-            args.append(thread_id)
+            if thread_id:
+                where.append("thread_id=?")
+                args.append(thread_id)
+            else:
+                where.append("thread_id='' ")
+                if root_message_id:
+                    where.append("(root_message_id=? or message_id=?)")
+                    args.extend((root_message_id, root_message_id))
+                else:
+                    where.append("root_message_id='' ")
         with self._connect() as db:
-            if before_event_id:
+            if before_message_id:
                 if not app_id or thread_id is None:
                     raise ValueError(
                         "as-of Feishu context requires app_id and thread_id"
@@ -4373,17 +7336,29 @@ class AutoReplyStore:
                 boundary = db.execute(
                     """
                     select id, chat_id, thread_id, event_create_time_ms
+                         , root_message_id, message_id
                     from feishu_events
-                    where app_id=? and event_id=?
+                    where app_id=? and message_id=?
                     """,
-                    (app_id, before_event_id),
+                    (app_id, before_message_id),
                 ).fetchone()
                 if boundary is None:
-                    raise ValueError("Feishu context boundary event not found")
-                if (
-                    boundary["chat_id"] != chat_id
-                    or boundary["thread_id"] != thread_id
-                ):
+                    raise ValueError("Feishu context boundary message not found")
+                boundary_root = (
+                    boundary["root_message_id"] or boundary["message_id"]
+                )
+                root_matches = (
+                    True
+                    if thread_id
+                    else (
+                        boundary_root == root_message_id
+                        if root_message_id
+                        else not boundary["root_message_id"]
+                    )
+                )
+                if boundary["chat_id"] != chat_id or (
+                    boundary["thread_id"] != thread_id
+                ) or not root_matches:
                     raise ValueError("Feishu context boundary scope does not match")
                 # Both normalized event time and local insertion order must be
                 # at-or-before the trigger.  This excludes earlier-arriving
@@ -4392,6 +7367,11 @@ class AutoReplyStore:
                 args.append(boundary["id"])
                 where.append("event_create_time_ms <= ?")
                 args.append(boundary["event_create_time_ms"])
+                where.append("event_create_time_ms >= ?")
+                args.append(
+                    int(boundary["event_create_time_ms"])
+                    - (lookback_seconds * 1000)
+                )
             args.append(limit)
             rows = db.execute(
                 f"""
@@ -4613,14 +7593,181 @@ class AutoReplyStore:
             return self._feishu_scope_from_row(row)
 
     # ---- Feishu channel: outbound deliveries ----
+    @staticmethod
+    def _normalize_feishu_reply_payload(
+        *,
+        reply_text: str,
+        reply_format: str,
+        mention_open_ids,
+        payload_sha256: str,
+    ) -> tuple[FeishuReplyPayload, str]:
+        if isinstance(mention_open_ids, str):
+            raise ValueError("Feishu delivery mentions must be a sequence")
+        payload = FeishuReplyPayload(
+            kind=reply_format,
+            text=reply_text,
+            mention_open_ids=tuple(mention_open_ids),
+        )
+        digest = payload.sha256()
+        if payload_sha256 and payload_sha256 != digest:
+            raise ValueError("Feishu delivery payload hash does not match")
+        mentions_json = json.dumps(
+            list(payload.mention_open_ids),
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        return payload, mentions_json
+
+    @classmethod
+    def _supersede_processing_feishu_reply_task_db(
+        cls,
+        db: sqlite3.Connection,
+        *,
+        task: sqlite3.Row,
+        app_id: str,
+        lease_token: str,
+    ) -> bool:
+        current = db.execute(
+            """
+            select * from feishu_events
+            where reply_task_id=? and app_id=?
+            """,
+            (task["id"], app_id),
+        ).fetchone()
+        if current is None:
+            raise ValueError("Feishu reply task event identity is missing")
+        reference_root = cls._feishu_reference_root(current)
+        newer = db.execute(
+            """
+            select events.id
+            from feishu_events as events
+            where events.app_id=? and events.chat_id=?
+              and events.eligibility_status='eligible'
+              and coalesce(nullif(events.thread_id, ''),
+                           nullif(events.root_message_id, ''),
+                           events.message_id)=?
+              and (
+                    events.event_create_time_ms > ?
+                    or (
+                        events.event_create_time_ms=? and events.id>?
+                    )
+                  )
+            order by events.event_create_time_ms desc, events.id desc
+            limit 1
+            """,
+            (
+                app_id,
+                current["chat_id"],
+                reference_root,
+                current["event_create_time_ms"],
+                current["event_create_time_ms"],
+                current["id"],
+            ),
+        ).fetchone()
+        if newer is None:
+            return False
+        updated = db.execute(
+            """
+            update reply_tasks
+            set status='done', lease_token='', locked_at=null,
+                error='superseded_by_newer_feishu_trigger',
+                available_at='', updated_at=current_timestamp
+            where id=? and channel='feishu' and status='processing'
+              and lease_token=?
+            """,
+            (task["id"], lease_token),
+        )
+        if updated.rowcount != 1:
+            raise ValueError("Feishu reply task lease is no longer active")
+        db.execute(
+            """
+            update feishu_deliveries
+            set status='rejected', lease_token='', locked_at='',
+                available_at='', error_code='target_revoked',
+                error='superseded_by_newer_feishu_trigger',
+                updated_at=current_timestamp
+            where reply_task_id=? and status in ('ready_to_send', 'retry')
+            """,
+            (task["id"],),
+        )
+        cls._cancel_feishu_local_notifications_for_task_db(
+            db,
+            reply_task_id=int(task["id"]),
+            app_id=app_id,
+            actor="consumer",
+        )
+        db.execute(
+            """
+            update feishu_message_actions
+            set status='rejected', lease_token='', locked_at='',
+                available_at='', error_code='target_revoked',
+                error='superseded_by_newer_feishu_trigger',
+                updated_at=current_timestamp
+            where reply_task_id=? and status in ('ready', 'retry')
+              and kind<>'recall_message'
+            """,
+            (task["id"],),
+        )
+        cls._append_feishu_audit_event(
+            db,
+            app_id=app_id,
+            entity_type="reply_task",
+            entity_id=int(task["id"]),
+            event_type="trigger_superseded",
+            previous_state="processing",
+            new_state="done",
+            actor="consumer",
+            detail=f"newer_event_record_id={int(newer['id'])}",
+        )
+        return True
+
+    def supersede_processing_feishu_reply_task(
+        self,
+        reply_task_id: int,
+        *,
+        app_id: str,
+        lease_token: str,
+    ) -> bool:
+        """CAS-terminalize one active task when a newer same-root trigger exists."""
+        normalized_app_id = str(app_id or "").strip()
+        if not normalized_app_id or not str(lease_token or "").strip():
+            raise ValueError("Feishu supersession requires App ID and lease")
+        with self._connect() as db:
+            db.execute("begin immediate")
+            task = db.execute(
+                "select * from reply_tasks where id=?", (reply_task_id,)
+            ).fetchone()
+            if task is None or task["channel"] != "feishu":
+                raise ValueError("Feishu supersession requires a Feishu task")
+            if self._feishu_task_app_id(task) != normalized_app_id:
+                raise PermissionError("Feishu supersession App ID does not match")
+            if (
+                task["status"] != "processing"
+                or task["lease_token"] != lease_token
+            ):
+                raise ValueError("Feishu reply task lease is no longer active")
+            return self._supersede_processing_feishu_reply_task_db(
+                db,
+                task=task,
+                app_id=normalized_app_id,
+                lease_token=lease_token,
+            )
+
     def recover_feishu_reply_task(
-        self, reply_task_id: int, *, lease_token: str = ""
+        self,
+        reply_task_id: int,
+        *,
+        app_id: str,
+        lease_token: str = "",
     ) -> bool:
         """Close crash windows between attempt, delivery, and task commits.
 
         Returns true when an already-created immutable delivery was found and
         the task was completed without running the model a second time.
         """
+        normalized_app_id = str(app_id or "").strip()
+        if not normalized_app_id:
+            raise ValueError("Feishu recovery requires app_id")
         with self._connect() as db:
             db.execute("begin immediate")
             task = db.execute(
@@ -4628,11 +7775,20 @@ class AutoReplyStore:
             ).fetchone()
             if task is None or task["channel"] != "feishu":
                 raise ValueError("Feishu recovery requires a Feishu reply task")
+            if self._feishu_task_app_id(task) != normalized_app_id:
+                raise PermissionError("Feishu recovery App ID does not match task")
             if lease_token and (
                 task["status"] != "processing"
                 or task["lease_token"] != lease_token
             ):
                 raise ValueError("Feishu reply task lease is no longer active")
+            if lease_token and self._supersede_processing_feishu_reply_task_db(
+                db,
+                task=task,
+                app_id=normalized_app_id,
+                lease_token=lease_token,
+            ):
+                return True
             delivery = db.execute(
                 "select * from feishu_deliveries where reply_task_id=?",
                 (reply_task_id,),
@@ -4752,6 +7908,7 @@ class AutoReplyStore:
         self,
         reply_task_id: int,
         *,
+        app_id: str,
         lease_token: str,
         action: str,
         sensitivity_kind: str,
@@ -4765,7 +7922,13 @@ class AutoReplyStore:
         delivery_chat_id: str = "",
         reply_to_message_id: str = "",
         reply_in_thread: bool = False,
+        reply_format: str = "text",
+        mention_open_ids: tuple[str, ...] | list[str] = (),
+        payload_sha256: str = "",
         idempotency_key: str = "",
+        message_action_specs: tuple[dict, ...] | list[dict] = (),
+        handoff_target_allowlist=(),
+        local_notification_spec: dict | None = None,
     ) -> tuple[int, FeishuDelivery | None]:
         """Atomically persist one audited Feishu decision and task outcome.
 
@@ -4773,6 +7936,9 @@ class AutoReplyStore:
         completion in one transaction.  No attempt-only crash window can make
         a restarted consumer execute the model a second time.
         """
+        normalized_consumer_app_id = str(app_id or "").strip()
+        if not normalized_consumer_app_id:
+            raise ValueError("Feishu task finalization requires app_id")
         if not lease_token.strip():
             raise ValueError("Feishu task finalization requires a lease token")
         if task_status not in {"done", "failed"}:
@@ -4782,6 +7948,9 @@ class AutoReplyStore:
             or delivery_chat_id
             or reply_to_message_id
             or idempotency_key
+            or mention_open_ids
+            or payload_sha256
+            or reply_format != "text"
         )
         if delivery_requested and not all(
             (
@@ -4797,6 +7966,89 @@ class AutoReplyStore:
             task_status != "done" or send_status != "pending"
         ):
             raise ValueError("Feishu delivery finalization state is invalid")
+        delivery_payload: FeishuReplyPayload | None = None
+        delivery_mentions_json = "[]"
+        if delivery_requested:
+            delivery_payload, delivery_mentions_json = (
+                self._normalize_feishu_reply_payload(
+                    reply_text=draft_reply_text,
+                    reply_format=reply_format,
+                    mention_open_ids=mention_open_ids,
+                    payload_sha256=payload_sha256,
+                )
+            )
+        normalized_action_specs = list(message_action_specs)
+        if len(normalized_action_specs) > 20:
+            raise ValueError("too many Feishu message actions")
+        allowed_spec_fields = {
+            "action_key",
+            "kind",
+            "target_message_id",
+            "target_open_id",
+            "payload",
+        }
+        for spec in normalized_action_specs:
+            if not isinstance(spec, dict) or set(spec) - allowed_spec_fields:
+                raise ValueError("invalid Feishu message action spec")
+            if not isinstance(spec.get("payload", {}), dict):
+                raise ValueError("invalid Feishu message action payload")
+        if normalized_action_specs and task_status != "done":
+            raise ValueError("failed Feishu tasks cannot enqueue message actions")
+        normalized_local_notification: dict[str, str] | None = None
+        if local_notification_spec is not None:
+            if not isinstance(local_notification_spec, dict) or set(
+                local_notification_spec
+            ) != {"kind", "dependency_mode", "title", "message"}:
+                raise ValueError("invalid Feishu local notification spec")
+            notification_kind = str(local_notification_spec.get("kind") or "")
+            dependency_mode = str(
+                local_notification_spec.get("dependency_mode") or ""
+            )
+            title = str(local_notification_spec.get("title") or "")
+            message = str(local_notification_spec.get("message") or "")
+            if (
+                notification_kind != "handoff_fallback"
+                or dependency_mode not in {"immediate", "remote_failure"}
+                or not title.strip()
+                or title != title.strip()
+                or len(title) > 200
+                or not message.strip()
+                or message != message.strip()
+                or len(message) > 2000
+                or any(ord(character) < 32 for character in title)
+                or any(
+                    ord(character) < 32 and character not in "\n\t"
+                    for character in message
+                )
+            ):
+                raise ValueError("invalid Feishu local notification spec")
+            handoff_specs = [
+                spec
+                for spec in normalized_action_specs
+                if str(spec.get("kind") or "") == "handoff_notify"
+            ]
+            if (
+                action != "handoff_to_human"
+                or task_status != "done"
+                or (
+                    dependency_mode == "remote_failure"
+                    and (
+                        not handoff_specs
+                        or len(handoff_specs) != len(normalized_action_specs)
+                    )
+                )
+                or (dependency_mode == "immediate" and handoff_specs)
+            ):
+                raise ValueError("Feishu local notification dependency is invalid")
+            normalized_local_notification = {
+                "kind": notification_kind,
+                "dependency_mode": dependency_mode,
+                "title": title,
+                "message": message,
+            }
+        normalized_handoff_allowlist = self._normalize_feishu_handoff_allowlist(
+            handoff_target_allowlist
+        )
         with self._connect() as db:
             db.execute("begin immediate")
             task = db.execute(
@@ -4804,14 +8056,29 @@ class AutoReplyStore:
             ).fetchone()
             if task is None or task["channel"] != "feishu":
                 raise ValueError("Feishu task finalization requires a Feishu task")
+            if self._feishu_task_app_id(task) != normalized_consumer_app_id:
+                raise PermissionError(
+                    "Feishu task finalization App ID does not match consumer"
+                )
             if (
                 task["status"] != "processing"
                 or task["lease_token"] != lease_token
             ):
                 raise ValueError("Feishu reply task lease is no longer active")
+            if self._supersede_processing_feishu_reply_task_db(
+                db,
+                task=task,
+                app_id=normalized_consumer_app_id,
+                lease_token=lease_token,
+            ):
+                return 0, None
 
             trigger: dict[str, object] = {}
-            if delivery_requested:
+            if (
+                delivery_requested
+                or normalized_action_specs
+                or normalized_local_notification is not None
+            ):
                 try:
                     decoded = json.loads(task["trigger_message_json"] or "{}")
                 except json.JSONDecodeError as exc:
@@ -4819,24 +8086,30 @@ class AutoReplyStore:
                 if not isinstance(decoded, dict):
                     raise ValueError("Feishu reply task trigger is invalid")
                 trigger = decoded
-                if trigger.get("app_id") != delivery_app_id:
+                expected_app_id = delivery_app_id or str(trigger.get("app_id") or "")
+                expected_chat_id = delivery_chat_id or str(trigger.get("chat_id") or "")
+                if trigger.get("app_id") != expected_app_id:
                     raise PermissionError(
-                        "Feishu delivery App ID does not match task"
+                        "Feishu finalization App ID does not match task"
                     )
-                if trigger.get("chat_id") != delivery_chat_id:
+                if trigger.get("chat_id") != expected_chat_id:
                     raise ValueError(
-                        "Feishu delivery chat does not match reply task"
+                        "Feishu finalization chat does not match reply task"
                     )
-                if trigger.get("message_id") != reply_to_message_id:
+                if trigger.get("message_id") != task["trigger_message_id"]:
+                    raise ValueError(
+                        "Feishu finalization trigger does not match reply task"
+                    )
+                if delivery_requested and trigger.get("message_id") != reply_to_message_id:
                     raise ValueError(
                         "Feishu delivery reply target does not match task"
                     )
                 expected_conversation_id = self._feishu_task_conversation_id(
-                    delivery_app_id, delivery_chat_id
+                    expected_app_id, expected_chat_id
                 )
                 if task["conversation_id"] not in {
                     expected_conversation_id,
-                    delivery_chat_id,
+                    expected_chat_id,
                 }:
                     raise ValueError(
                         "Feishu task conversation identity is invalid"
@@ -4881,13 +8154,31 @@ class AutoReplyStore:
 
             delivery: FeishuDelivery | None = None
             if delivery_requested:
+                delivery_chunks = split_reply_payload(delivery_payload)
+                delivery_expected_chunks = len(delivery_chunks)
+                delivery_plan_hash = delivery_chunk_plan_sha256(delivery_chunks)
+                delivery_preview_hash = delivery_approval_hash(
+                    reply_task_id=reply_task_id,
+                    attempt_id=attempt_id,
+                    app_id=delivery_app_id,
+                    chat_id=delivery_chat_id,
+                    reply_to_message_id=reply_to_message_id,
+                    reply_in_thread=reply_in_thread,
+                    payload_sha256=delivery_payload.sha256(),
+                    idempotency_key=idempotency_key,
+                    expected_chunks=delivery_expected_chunks,
+                    chunk_plan_sha256=delivery_plan_hash,
+                    review_generation=1,
+                )
                 delivery_cursor = db.execute(
                     """
                     insert into feishu_deliveries (
                         reply_task_id, attempt_id, app_id, chat_id,
                         reply_to_message_id, reply_in_thread, reply_text,
-                        idempotency_key
-                    ) values (?, ?, ?, ?, ?, ?, ?, ?)
+                        reply_format, mention_open_ids_json, payload_sha256,
+                        idempotency_key, expected_chunks, chunk_plan_sha256,
+                        review_generation, approval_hash
+                    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         reply_task_id,
@@ -4896,8 +8187,15 @@ class AutoReplyStore:
                         delivery_chat_id,
                         reply_to_message_id,
                         int(reply_in_thread),
-                        draft_reply_text,
+                        delivery_payload.text,
+                        delivery_payload.kind,
+                        delivery_mentions_json,
+                        delivery_payload.sha256(),
                         idempotency_key,
+                        delivery_expected_chunks,
+                        delivery_plan_hash,
+                        1,
+                        delivery_preview_hash,
                     ),
                 )
                 delivery_row = db.execute(
@@ -4915,6 +8213,119 @@ class AutoReplyStore:
                     actor="consumer",
                 )
                 delivery = self._feishu_delivery_from_row(delivery_row)
+
+            for index, spec in enumerate(normalized_action_specs):
+                action_row = build_message_action(
+                    reply_task_id=reply_task_id,
+                    attempt_id=attempt_id,
+                    app_id=str(trigger["app_id"]),
+                    chat_id=str(trigger["chat_id"]),
+                    action_key=str(spec.get("action_key") or f"action:{index}"),
+                    kind=str(spec.get("kind") or ""),
+                    target_message_id=str(spec.get("target_message_id") or ""),
+                    target_open_id=str(spec.get("target_open_id") or ""),
+                    payload=dict(spec.get("payload") or {}),
+                )
+                if (
+                    action_row.kind == "handoff_notify"
+                    and action_row.target_open_id not in normalized_handoff_allowlist
+                ):
+                    raise PermissionError(
+                        "Feishu handoff target is not locally allowlisted"
+                    )
+                if action_row.kind == "add_reaction":
+                    if action_row.target_message_id != task["trigger_message_id"]:
+                        raise PermissionError(
+                            "Feishu reaction target is not its persisted trigger"
+                        )
+                elif action_row.kind == "recall_message":
+                    owned = self._feishu_recall_target_row(
+                        db,
+                        app_id=action_row.app_id,
+                        chat_id=action_row.chat_id,
+                        message_id=action_row.target_message_id,
+                    )
+                    if owned is None:
+                        raise PermissionError(
+                            "Feishu recall target is not an active terminal receipt"
+                        )
+                action_cursor = db.execute(
+                    """
+                    insert into feishu_message_actions (
+                        reply_task_id, attempt_id, app_id, chat_id, action_key,
+                        kind, target_message_id, target_open_id, payload_json,
+                        payload_sha256, idempotency_key, review_generation,
+                        approval_hash, risk
+                    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        action_row.reply_task_id,
+                        action_row.attempt_id,
+                        action_row.app_id,
+                        action_row.chat_id,
+                        action_row.action_key,
+                        action_row.kind,
+                        action_row.target_message_id,
+                        action_row.target_open_id,
+                        action_row.payload_json,
+                        action_row.payload_sha256,
+                        action_row.idempotency_key,
+                        action_row.review_generation,
+                        action_row.approval_hash,
+                        action_row.risk,
+                    ),
+                )
+                self._append_feishu_audit_event(
+                    db,
+                    app_id=action_row.app_id,
+                    entity_type="message_action",
+                    entity_id=action_cursor.lastrowid,
+                    event_type="created",
+                    new_state="ready",
+                    actor="consumer",
+                    detail=f"kind={action_row.kind};risk={action_row.risk}",
+                )
+
+            if normalized_local_notification is not None:
+                notification_status = (
+                    "pending"
+                    if normalized_local_notification["dependency_mode"]
+                    == "immediate"
+                    else "waiting_remote"
+                )
+                notification_cursor = db.execute(
+                    """
+                    insert into feishu_local_notifications (
+                        reply_task_id, attempt_id, app_id,
+                        execution_generation, kind, dependency_mode,
+                        title, message, status
+                    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        reply_task_id,
+                        attempt_id,
+                        app_id,
+                        str(task["execution_generation"]),
+                        normalized_local_notification["kind"],
+                        normalized_local_notification["dependency_mode"],
+                        normalized_local_notification["title"],
+                        normalized_local_notification["message"],
+                        notification_status,
+                    ),
+                )
+                self._append_feishu_audit_event(
+                    db,
+                    app_id=app_id,
+                    entity_type="local_notification",
+                    entity_id=notification_cursor.lastrowid,
+                    event_type="created",
+                    new_state=notification_status,
+                    actor="consumer",
+                    detail=(
+                        "kind=handoff_fallback;dependency="
+                        + normalized_local_notification["dependency_mode"]
+                    ),
+                )
 
             task_error = (
                 safe_observability_error(error)
@@ -4965,6 +8376,9 @@ class AutoReplyStore:
         reply_to_message_id: str,
         reply_in_thread: bool,
         reply_text: str,
+        reply_format: str = "text",
+        mention_open_ids: tuple[str, ...] | list[str] = (),
+        payload_sha256: str = "",
         idempotency_key: str = "",
     ) -> FeishuDelivery:
         """Create exactly one immutable-idempotency delivery per reply task."""
@@ -4976,6 +8390,12 @@ class AutoReplyStore:
             raise ValueError("Feishu delivery reply_text must be non-empty")
         if attempt_id <= 0:
             raise ValueError("Feishu delivery requires a durable reply attempt")
+        payload, mentions_json = self._normalize_feishu_reply_payload(
+            reply_text=reply_text,
+            reply_format=reply_format,
+            mention_open_ids=mention_open_ids,
+            payload_sha256=payload_sha256,
+        )
         stable_key = idempotency_key or str(uuid4())
         with self._connect() as db:
             db.execute("begin immediate")
@@ -5018,13 +8438,31 @@ class AutoReplyStore:
                 or attempt["trigger_message_id"] != task["trigger_message_id"]
             ):
                 raise ValueError("reply attempt does not match reply task")
+            chunks = split_reply_payload(payload)
+            expected_chunks = len(chunks)
+            plan_hash = delivery_chunk_plan_sha256(chunks)
+            approval_hash = delivery_approval_hash(
+                reply_task_id=reply_task_id,
+                attempt_id=attempt_id,
+                app_id=app_id,
+                chat_id=chat_id,
+                reply_to_message_id=reply_to_message_id,
+                reply_in_thread=reply_in_thread,
+                payload_sha256=payload.sha256(),
+                idempotency_key=stable_key,
+                expected_chunks=expected_chunks,
+                chunk_plan_sha256=plan_hash,
+                review_generation=1,
+            )
             cursor = db.execute(
                 """
                 insert into feishu_deliveries (
                     reply_task_id, attempt_id, app_id, chat_id,
                     reply_to_message_id, reply_in_thread, reply_text,
-                    idempotency_key
-                ) values (?, ?, ?, ?, ?, ?, ?, ?)
+                    reply_format, mention_open_ids_json, payload_sha256,
+                    idempotency_key, expected_chunks, chunk_plan_sha256,
+                    review_generation, approval_hash
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 on conflict(reply_task_id) do nothing
                 """,
                 (
@@ -5034,8 +8472,15 @@ class AutoReplyStore:
                     chat_id,
                     reply_to_message_id,
                     int(reply_in_thread),
-                    reply_text,
+                    payload.text,
+                    payload.kind,
+                    mentions_json,
+                    payload.sha256(),
                     stable_key,
+                    expected_chunks,
+                    plan_hash,
+                    1,
+                    approval_hash,
                 ),
             )
             row = db.execute(
@@ -5097,6 +8542,2557 @@ class AutoReplyStore:
             ).fetchone()
         return self._feishu_delivery_from_row(row) if row is not None else None
 
+    @staticmethod
+    def _normalize_feishu_delivery_message_ids(
+        message_ids,
+    ) -> tuple[str, ...]:
+        if message_ids is None:
+            return ()
+        if isinstance(message_ids, str) or not isinstance(
+            message_ids, (tuple, list)
+        ):
+            raise ValueError("Feishu delivery message_ids must be a sequence")
+        if len(message_ids) > 100:
+            raise ValueError("Feishu delivery produced too many message IDs")
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for raw in message_ids:
+            if not isinstance(raw, str):
+                raise ValueError("Feishu delivery message ID is invalid")
+            value = raw.strip()
+            if (
+                not value
+                or value != raw
+                or len(value) > 512
+                or any(ord(character) < 32 for character in value)
+            ):
+                raise ValueError("Feishu delivery message ID is invalid")
+            if value in seen:
+                raise ValueError("Feishu delivery message IDs must be unique")
+            seen.add(value)
+            normalized.append(value)
+        return tuple(normalized)
+
+    @classmethod
+    def _validate_feishu_delivery_receipt_prefix(
+        cls,
+        db: sqlite3.Connection,
+        delivery: sqlite3.Row,
+        *,
+        allow_primary_without_receipt: bool = False,
+    ) -> list[sqlite3.Row]:
+        """Return a proven contiguous prefix or reject corrupted receipts."""
+        rows = db.execute(
+            """
+            select * from feishu_delivery_receipts
+            where delivery_id=? order by ordinal
+            """,
+            (delivery["id"],),
+        ).fetchall()
+        expected_chunks = int(delivery["expected_chunks"] or 0)
+        if expected_chunks <= 0 or len(rows) > expected_chunks:
+            raise ValueError("Feishu delivery receipt prefix exceeds chunk plan")
+        message_ids = cls._normalize_feishu_delivery_message_ids(
+            tuple(row["message_id"] for row in rows)
+        )
+        for expected_ordinal, row in enumerate(rows):
+            if int(row["ordinal"]) != expected_ordinal:
+                raise ValueError(
+                    "Feishu delivery receipts are not a contiguous ordered prefix"
+                )
+            if row["app_id"] != delivery["app_id"]:
+                raise ValueError("Feishu delivery receipt App ID does not match")
+            if row["status"] != "active" or int(row["recall_action_id"] or 0):
+                raise ValueError("Feishu delivery receipt prefix is not active")
+        primary = str(delivery["feishu_message_id"] or "")
+        if message_ids:
+            if primary != message_ids[0]:
+                raise ValueError(
+                    "Feishu delivery primary message ID does not match receipts"
+                )
+        elif primary and not allow_primary_without_receipt:
+            raise ValueError(
+                "Feishu delivery primary message ID has no durable receipt"
+            )
+        return rows
+
+    @classmethod
+    def _persist_feishu_delivery_receipts(
+        cls,
+        db: sqlite3.Connection,
+        delivery: sqlite3.Row,
+        message_ids: tuple[str, ...],
+        *,
+        allow_existing_prefix: bool = False,
+    ) -> None:
+        if not message_ids or message_ids[0] != delivery["feishu_message_id"]:
+            raise ValueError(
+                "Feishu delivery receipts require the compatible primary ID"
+            )
+        existing = cls._validate_feishu_delivery_receipt_prefix(
+            db,
+            delivery,
+            allow_primary_without_receipt=True,
+        )
+        if existing:
+            existing_ids = [row["message_id"] for row in existing]
+            if existing_ids != list(message_ids[: len(existing_ids)]):
+                raise ValueError("Feishu delivery receipt replay does not match")
+            if any(row["app_id"] != delivery["app_id"] for row in existing):
+                raise ValueError("Feishu delivery receipt App ID does not match")
+            if len(existing) == len(message_ids):
+                return
+            if not allow_existing_prefix:
+                raise ValueError("Feishu delivery receipt set is incomplete")
+        for ordinal, message_id in enumerate(
+            message_ids[len(existing) :], start=len(existing)
+        ):
+            db.execute(
+                """
+                insert into feishu_delivery_receipts (
+                    delivery_id, app_id, ordinal, message_id, status
+                ) values (?, ?, ?, ?, 'active')
+                """,
+                (delivery["id"], delivery["app_id"], ordinal, message_id),
+            )
+        cls._validate_feishu_delivery_receipt_prefix(db, delivery)
+
+    def begin_feishu_delivery_mutation(
+        self,
+        delivery_id: int,
+        *,
+        app_id: str,
+        lease_token: str,
+        now: str = "",
+    ) -> FeishuDelivery | None:
+        """Fence the first remote send against a newer same-root trigger.
+
+        ``None`` means ingress, or this transaction itself, safely superseded
+        the delivery before any remote mutation could begin.  Once this marker
+        is durable, ingress must treat the delivery as potentially mutated and
+        leave final-state recovery to the sender/reconciliation workflow.
+        """
+        if delivery_id <= 0 or not app_id.strip() or not lease_token.strip():
+            raise ValueError("Feishu delivery mutation identity is incomplete")
+        mutation_at = now or datetime.now().astimezone().isoformat()
+        try:
+            parsed = datetime.fromisoformat(mutation_at.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise ValueError("Feishu delivery mutation time is invalid") from exc
+        if parsed.tzinfo is None or parsed.utcoffset() is None:
+            raise ValueError("Feishu delivery mutation time requires timezone")
+
+        with self._connect() as db:
+            db.execute("begin immediate")
+            delivery = db.execute(
+                "select * from feishu_deliveries where id=?", (delivery_id,)
+            ).fetchone()
+            if delivery is None:
+                raise ValueError("Feishu delivery not found")
+            if delivery["app_id"] != app_id:
+                raise PermissionError(
+                    "Feishu delivery App ID does not match runtime"
+                )
+            if (
+                delivery["status"] == "rejected"
+                and delivery["error_code"] == "superseded"
+            ):
+                return None
+            if (
+                delivery["status"] != "sending"
+                or delivery["lease_token"] != lease_token
+            ):
+                raise ValueError("Feishu delivery send lease is no longer active")
+            self._validate_feishu_delivery_binding(
+                db, delivery, require_target_identity=True
+            )
+            receipts = self._validate_feishu_delivery_receipt_prefix(
+                db, delivery
+            )
+            if receipts:
+                # The first remote-mutation fence linearizes the complete
+                # immutable delivery. A proven prefix must finish in order.
+                updated = db.execute(
+                    """
+                    update feishu_deliveries
+                    set mutation_started_at=case
+                            when mutation_started_at='' then ?
+                            else mutation_started_at
+                        end,
+                        locked_at=?, updated_at=current_timestamp
+                    where id=? and status='sending' and lease_token=?
+                    """,
+                    (mutation_at, mutation_at, delivery_id, lease_token),
+                )
+                if updated.rowcount != 1:
+                    raise ValueError(
+                        "Feishu delivery mutation fence lost atomic race"
+                    )
+                row = db.execute(
+                    "select * from feishu_deliveries where id=?", (delivery_id,)
+                ).fetchone()
+                return self._feishu_delivery_from_row(row)
+            if delivery["mutation_started_at"]:
+                raise ValueError(
+                    "Feishu delivery remote mutation already started"
+                )
+            current = db.execute(
+                """
+                select * from feishu_events
+                where reply_task_id=? and app_id=? and chat_id=?
+                  and message_id=? and eligibility_status='eligible'
+                """,
+                (
+                    delivery["reply_task_id"],
+                    app_id,
+                    delivery["chat_id"],
+                    delivery["reply_to_message_id"],
+                ),
+            ).fetchone()
+            if current is None:
+                raise ValueError("Feishu delivery trigger event is unavailable")
+            reference_root = self._feishu_reference_root(current)
+            newer = db.execute(
+                """
+                select events.id
+                from feishu_events as events
+                where events.app_id=? and events.chat_id=?
+                  and events.eligibility_status='eligible'
+                  and coalesce(nullif(events.thread_id, ''),
+                               nullif(events.root_message_id, ''),
+                               events.message_id)=?
+                  and (
+                    events.event_create_time_ms>?
+                    or (
+                      events.event_create_time_ms=? and events.id>?
+                    )
+                  )
+                order by events.event_create_time_ms desc, events.id desc
+                limit 1
+                """,
+                (
+                    app_id,
+                    delivery["chat_id"],
+                    reference_root,
+                    current["event_create_time_ms"],
+                    current["event_create_time_ms"],
+                    current["id"],
+                ),
+            ).fetchone()
+            if newer is not None:
+                updated = db.execute(
+                        """
+                        update feishu_deliveries
+                        set status='rejected', lease_token='', locked_at='',
+                            approved_at='', approved_by='', available_at='',
+                            error_code='superseded',
+                            error='superseded_by_newer_feishu_trigger',
+                            updated_at=current_timestamp
+                        where id=? and app_id=? and status='sending'
+                          and lease_token=? and mutation_started_at=''
+                          and not exists (
+                            select 1
+                            from feishu_delivery_receipts as receipts
+                            where receipts.delivery_id=feishu_deliveries.id
+                          )
+                        """,
+                        (delivery_id, app_id, lease_token),
+                )
+                if updated.rowcount != 1:
+                    raise ValueError(
+                        "Feishu delivery mutation fence lost atomic race"
+                    )
+                rejected = db.execute(
+                    "select * from feishu_deliveries where id=?", (delivery_id,)
+                ).fetchone()
+                self._sync_feishu_attempt_from_delivery(db, rejected)
+                self._cancel_feishu_local_notifications_for_task_db(
+                    db,
+                    reply_task_id=int(delivery["reply_task_id"]),
+                    app_id=app_id,
+                    actor="sender",
+                )
+                self._append_feishu_audit_event(
+                    db,
+                    app_id=app_id,
+                    entity_type="delivery",
+                    entity_id=delivery_id,
+                    event_type="trigger_superseded_at_send_fence",
+                    previous_state="sending",
+                    new_state="rejected",
+                    actor="sender",
+                    detail=f"newer_event_record_id={int(newer['id'])}",
+                )
+                return None
+
+            updated = db.execute(
+                """
+                update feishu_deliveries
+                set mutation_started_at=?, locked_at=?,
+                    updated_at=current_timestamp
+                where id=? and app_id=? and status='sending'
+                  and lease_token=? and mutation_started_at=''
+                  and not exists (
+                    select 1 from feishu_delivery_receipts as receipts
+                    where receipts.delivery_id=feishu_deliveries.id
+                  )
+                """,
+                (mutation_at, mutation_at, delivery_id, app_id, lease_token),
+            )
+            if updated.rowcount != 1:
+                raise ValueError("Feishu delivery mutation fence lost atomic race")
+            self._append_feishu_audit_event(
+                db,
+                app_id=app_id,
+                entity_type="delivery",
+                entity_id=delivery_id,
+                event_type="mutation_fence_acquired",
+                previous_state="sending",
+                new_state="sending",
+                actor="sender",
+                detail=f"trigger_event_record_id={int(current['id'])}",
+            )
+            row = db.execute(
+                "select * from feishu_deliveries where id=?", (delivery_id,)
+            ).fetchone()
+            return self._feishu_delivery_from_row(row)
+
+    def record_feishu_delivery_chunk(
+        self,
+        delivery_id: int,
+        *,
+        app_id: str,
+        lease_token: str,
+        ordinal: int,
+        expected_chunks: int,
+        message_id: str,
+        request_log_id: str = "",
+    ) -> FeishuDeliveryReceipt:
+        """Persist one proven remote result before attempting the next chunk."""
+        if not app_id.strip() or not lease_token.strip():
+            raise ValueError("Feishu delivery chunk owner identity is incomplete")
+        if (
+            isinstance(ordinal, bool)
+            or isinstance(expected_chunks, bool)
+            or not isinstance(ordinal, int)
+            or not isinstance(expected_chunks, int)
+            or ordinal < 0
+            or expected_chunks <= 0
+            or ordinal >= expected_chunks
+        ):
+            raise ValueError("Feishu delivery chunk position is invalid")
+        [normalized_message_id] = self._normalize_feishu_delivery_message_ids(
+            (message_id,)
+        )
+        normalized_log_id = request_log_id.strip()
+        if request_log_id and (
+            request_log_id != normalized_log_id
+            or len(normalized_log_id) > 256
+            or any(ord(character) < 32 for character in normalized_log_id)
+        ):
+            raise ValueError("Feishu delivery request log ID is invalid")
+        with self._connect() as db:
+            db.execute("begin immediate")
+            delivery = db.execute(
+                "select * from feishu_deliveries where id=?", (delivery_id,)
+            ).fetchone()
+            if delivery is None:
+                raise ValueError("Feishu delivery not found")
+            if delivery["app_id"] != app_id:
+                raise PermissionError(
+                    "Feishu delivery App ID does not match runtime"
+                )
+            if (
+                delivery["status"] != "sending"
+                or delivery["lease_token"] != lease_token
+            ):
+                raise ValueError("Feishu delivery send lease is no longer active")
+            self._validate_feishu_delivery_binding(
+                db, delivery, require_target_identity=True
+            )
+            if int(delivery["expected_chunks"]) != expected_chunks:
+                raise ValueError("Feishu delivery chunk plan changed")
+            existing = self._validate_feishu_delivery_receipt_prefix(
+                db, delivery
+            )
+            if ordinal < len(existing):
+                prior = existing[ordinal]
+                if (
+                    prior["message_id"] != normalized_message_id
+                    or prior["app_id"] != app_id
+                    or prior["request_log_id"] != normalized_log_id
+                ):
+                    raise ValueError("Feishu delivery chunk replay does not match")
+                return self._feishu_delivery_receipt_from_row(prior)
+            if ordinal != len(existing):
+                raise ValueError("Feishu delivery chunks must be recorded in order")
+            cursor = db.execute(
+                """
+                insert into feishu_delivery_receipts (
+                    delivery_id, app_id, ordinal, message_id,
+                    request_log_id, status
+                ) values (?, ?, ?, ?, ?, 'active')
+                """,
+                (
+                    delivery_id,
+                    app_id,
+                    ordinal,
+                    normalized_message_id,
+                    normalized_log_id,
+                ),
+            )
+            heartbeat_at = datetime.now().astimezone().isoformat()
+            if ordinal == 0:
+                db.execute(
+                    """
+                    update feishu_deliveries
+                    set feishu_message_id=?, request_log_id=?,
+                        remote_failures=0, locked_at=?,
+                        mutation_started_at=case
+                            when mutation_started_at='' then ?
+                            else mutation_started_at
+                        end,
+                        updated_at=current_timestamp
+                    where id=? and status='sending' and lease_token=?
+                    """,
+                    (
+                        normalized_message_id,
+                        normalized_log_id,
+                        heartbeat_at,
+                        heartbeat_at,
+                        delivery_id,
+                        lease_token,
+                    ),
+                )
+            else:
+                db.execute(
+                    """
+                    update feishu_deliveries
+                    set request_log_id=case when ?<>'' then ? else request_log_id end,
+                        remote_failures=0, locked_at=?,
+                        mutation_started_at=case
+                            when mutation_started_at='' then ?
+                            else mutation_started_at
+                        end,
+                        updated_at=current_timestamp
+                    where id=? and status='sending' and lease_token=?
+                    """,
+                    (
+                        normalized_log_id,
+                        normalized_log_id,
+                        heartbeat_at,
+                        heartbeat_at,
+                        delivery_id,
+                        lease_token,
+                    ),
+                )
+            self._append_feishu_audit_event(
+                db,
+                app_id=app_id,
+                entity_type="delivery",
+                entity_id=delivery_id,
+                event_type="chunk_sent",
+                previous_state="sending",
+                new_state="sending",
+                actor="sender",
+                detail=f"ordinal={ordinal};expected={expected_chunks}",
+            )
+            row = db.execute(
+                "select * from feishu_delivery_receipts where id=?",
+                (cursor.lastrowid,),
+            ).fetchone()
+            return self._feishu_delivery_receipt_from_row(row)
+
+    def heartbeat_feishu_delivery_send(
+        self,
+        delivery_id: int,
+        *,
+        app_id: str,
+        lease_token: str,
+        now: str = "",
+    ) -> FeishuDelivery:
+        """Refresh only the currently leased delivery using a token CAS."""
+
+        if delivery_id <= 0 or not app_id.strip() or not lease_token.strip():
+            raise ValueError("Feishu delivery heartbeat identity is incomplete")
+        heartbeat_at = now or datetime.now().astimezone().isoformat()
+        try:
+            parsed = datetime.fromisoformat(heartbeat_at.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise ValueError("Feishu delivery heartbeat time is invalid") from exc
+        if parsed.tzinfo is None or parsed.utcoffset() is None:
+            raise ValueError("Feishu delivery heartbeat time requires timezone")
+        with self._connect() as db:
+            db.execute("begin immediate")
+            cursor = db.execute(
+                """
+                update feishu_deliveries
+                set locked_at=?, updated_at=current_timestamp
+                where id=? and app_id=? and status='sending' and lease_token=?
+                """,
+                (heartbeat_at, delivery_id, app_id, lease_token),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("Feishu delivery send lease is no longer active")
+            row = db.execute(
+                "select * from feishu_deliveries where id=?", (delivery_id,)
+            ).fetchone()
+            return self._feishu_delivery_from_row(row)
+
+    def validate_feishu_delivery_receipt_prefix(
+        self, delivery_id: int, *, app_id: str
+    ) -> list[FeishuDeliveryReceipt]:
+        """Load the only receipt shape that is safe for deterministic resume."""
+        if not app_id.strip():
+            raise ValueError("Feishu receipt validation requires app_id")
+        with self._connect() as db:
+            delivery = db.execute(
+                "select * from feishu_deliveries where id=?", (delivery_id,)
+            ).fetchone()
+            if delivery is None:
+                raise ValueError("Feishu delivery not found")
+            if delivery["app_id"] != app_id:
+                raise PermissionError(
+                    "Feishu delivery App ID does not match runtime"
+                )
+            rows = self._validate_feishu_delivery_receipt_prefix(db, delivery)
+        return [self._feishu_delivery_receipt_from_row(row) for row in rows]
+
+    def list_feishu_delivery_receipts(
+        self,
+        *,
+        delivery_id: int = 0,
+        app_id: str = "",
+        status: str = "",
+    ) -> list[FeishuDeliveryReceipt]:
+        if status and status not in FEISHU_RECEIPT_STATUSES:
+            raise ValueError("unknown Feishu delivery receipt status")
+        where: list[str] = []
+        args: list[str | int] = []
+        if delivery_id:
+            where.append("delivery_id=?")
+            args.append(delivery_id)
+        if app_id:
+            where.append("app_id=?")
+            args.append(app_id)
+        if status:
+            where.append("status=?")
+            args.append(status)
+        clause = f"where {' and '.join(where)}" if where else ""
+        with self._connect() as db:
+            rows = db.execute(
+                f"""
+                select * from feishu_delivery_receipts {clause}
+                order by delivery_id, ordinal
+                """,
+                args,
+            ).fetchall()
+        return [self._feishu_delivery_receipt_from_row(row) for row in rows]
+
+    def get_feishu_delivery_receipt(
+        self, *, app_id: str, message_id: str
+    ) -> FeishuDeliveryReceipt | None:
+        if not app_id.strip() or not message_id.strip():
+            raise ValueError("Feishu delivery receipt identity is incomplete")
+        with self._connect() as db:
+            row = db.execute(
+                """
+                select * from feishu_delivery_receipts
+                where app_id=? and message_id=?
+                """,
+                (app_id.strip(), message_id.strip()),
+            ).fetchone()
+        return (
+            self._feishu_delivery_receipt_from_row(row)
+            if row is not None
+            else None
+        )
+
+    @staticmethod
+    def _feishu_recall_target_row(
+        db: sqlite3.Connection,
+        *,
+        app_id: str,
+        chat_id: str,
+        message_id: str,
+    ) -> sqlite3.Row | None:
+        return db.execute(
+            """
+            select receipts.*, deliveries.status as delivery_status,
+                   deliveries.chat_id as delivery_chat_id
+            from feishu_delivery_receipts as receipts
+            join feishu_deliveries as deliveries
+              on deliveries.id=receipts.delivery_id
+             and deliveries.app_id=receipts.app_id
+            where receipts.app_id=? and receipts.message_id=?
+              and deliveries.chat_id=? and receipts.status='active'
+              and deliveries.status in ('sent', 'failed', 'rejected')
+            """,
+            (app_id, message_id, chat_id),
+        ).fetchone()
+
+    def validate_feishu_delivery_receipt_for_recall(
+        self, receipt_id: int, *, app_id: str
+    ) -> tuple[FeishuDeliveryReceipt, FeishuDelivery]:
+        """Return an active receipt only at the unified terminal boundary."""
+        if receipt_id <= 0 or not app_id.strip():
+            raise ValueError("Feishu recall receipt identity is incomplete")
+        with self._connect() as db:
+            row = db.execute(
+                """
+                select receipts.message_id, deliveries.chat_id
+                from feishu_delivery_receipts as receipts
+                join feishu_deliveries as deliveries
+                  on deliveries.id=receipts.delivery_id
+                 and deliveries.app_id=receipts.app_id
+                where receipts.id=? and receipts.app_id=?
+                """,
+                (receipt_id, app_id.strip()),
+            ).fetchone()
+            target = (
+                self._feishu_recall_target_row(
+                    db,
+                    app_id=app_id.strip(),
+                    chat_id=row["chat_id"],
+                    message_id=row["message_id"],
+                )
+                if row is not None
+                else None
+            )
+            if target is None or int(target["id"]) != receipt_id:
+                raise PermissionError(
+                    "Feishu recall target is not an active terminal receipt"
+                )
+            delivery = db.execute(
+                "select * from feishu_deliveries where id=?",
+                (target["delivery_id"],),
+            ).fetchone()
+        return (
+            self._feishu_delivery_receipt_from_row(target),
+            self._feishu_delivery_from_row(delivery),
+        )
+
+    @staticmethod
+    def _validate_feishu_message_action_binding(
+        db: sqlite3.Connection,
+        row: sqlite3.Row,
+        *,
+        require_active_target: bool,
+    ) -> FeishuMessageAction:
+        try:
+            action = AutoReplyStore._feishu_message_action_from_row(row)
+        except Exception as exc:
+            raise ValueError("Feishu message action identity is invalid") from exc
+        expected_approval_hash = action_approval_hash(
+            reply_task_id=action.reply_task_id,
+            attempt_id=action.attempt_id,
+            app_id=action.app_id,
+            chat_id=action.chat_id,
+            action_key=action.action_key,
+            kind=action.kind,
+            target_id=action.target_message_id or action.target_open_id,
+            payload_sha256=action.payload_sha256,
+            idempotency_key=action.idempotency_key,
+            risk=action.risk,
+            review_generation=action.review_generation,
+        )
+        if action.approval_hash != expected_approval_hash:
+            raise ValueError("Feishu message action approval hash does not match")
+        task = db.execute(
+            "select * from reply_tasks where id=?", (action.reply_task_id,)
+        ).fetchone()
+        attempt = db.execute(
+            "select * from reply_attempts where id=?", (action.attempt_id,)
+        ).fetchone()
+        if task is None or attempt is None:
+            raise ValueError("Feishu message action audit binding is unavailable")
+        try:
+            trigger = json.loads(task["trigger_message_json"] or "{}")
+        except json.JSONDecodeError as exc:
+            raise ValueError("Feishu message action trigger is invalid") from exc
+        if not isinstance(trigger, dict):
+            raise ValueError("Feishu message action trigger is invalid")
+        expected_conversation = AutoReplyStore._feishu_task_conversation_id(
+            action.app_id, action.chat_id
+        )
+        if (
+            task["channel"] != "feishu"
+            or attempt["channel"] != "feishu"
+            or attempt["conversation_id"] != task["conversation_id"]
+            or attempt["trigger_message_id"] != task["trigger_message_id"]
+            or trigger.get("app_id") != action.app_id
+            or trigger.get("chat_id") != action.chat_id
+            or trigger.get("message_id") != task["trigger_message_id"]
+            or task["conversation_id"]
+            not in {expected_conversation, action.chat_id}
+        ):
+            raise ValueError("Feishu message action does not match its task")
+        if action.kind == "add_reaction":
+            if action.target_message_id != task["trigger_message_id"]:
+                raise PermissionError(
+                    "Feishu reaction target is not its persisted trigger"
+                )
+        elif action.kind == "recall_message":
+            receipt = AutoReplyStore._feishu_recall_target_row(
+                db,
+                app_id=action.app_id,
+                chat_id=action.chat_id,
+                message_id=action.target_message_id,
+            )
+            if require_active_target and receipt is None:
+                raise PermissionError(
+                    "Feishu recall target is not an active terminal receipt"
+                )
+        return action
+
+    @staticmethod
+    def _normalize_feishu_handoff_allowlist(values) -> frozenset[str]:
+        if values is None:
+            return frozenset()
+        if isinstance(values, str):
+            raise ValueError("Feishu handoff allowlist must be a local sequence")
+        normalized: set[str] = set()
+        for raw in values:
+            if not isinstance(raw, str):
+                raise ValueError("Feishu handoff allowlist contains invalid target")
+            value = raw.strip()
+            suffix = value[3:] if value.startswith("ou_") else ""
+            if (
+                value != raw
+                or not suffix
+                or len(value) > 256
+                or any(
+                    character
+                    not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-"
+                    for character in suffix
+                )
+            ):
+                raise ValueError("Feishu handoff allowlist contains invalid target")
+            normalized.add(value)
+        return frozenset(normalized)
+
+    @staticmethod
+    def _normalize_feishu_action_review_actor(
+        value: str, *, operation: str
+    ) -> str:
+        if not isinstance(value, str):
+            raise ValueError(
+                f"Feishu message action {operation} requires a valid actor"
+            )
+        normalized = value.strip()
+        if (
+            not normalized
+            or normalized != value
+            or len(normalized) > 128
+            or any(ord(character) < 32 for character in normalized)
+        ):
+            raise ValueError(
+                f"Feishu message action {operation} requires a valid actor"
+            )
+        return normalized
+
+    @staticmethod
+    def _normalize_feishu_action_requeue_time(value: str) -> str:
+        if not isinstance(value, str):
+            raise ValueError("invalid Feishu message action requeue available_at")
+        normalized = value.strip()
+        if not normalized:
+            return ""
+        if normalized != value:
+            raise ValueError("invalid Feishu message action requeue available_at")
+        try:
+            parsed = datetime.fromisoformat(normalized.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise ValueError(
+                "invalid Feishu message action requeue available_at"
+            ) from exc
+        if parsed.tzinfo is None or parsed.utcoffset() is None:
+            raise ValueError(
+                "Feishu message action requeue available_at requires timezone"
+            )
+        return parsed.astimezone(timezone.utc).isoformat()
+
+    def create_feishu_message_action(
+        self,
+        action: FeishuMessageAction,
+        *,
+        handoff_target_allowlist=(),
+        actor: str = "consumer",
+    ) -> FeishuMessageAction:
+        """Persist one closed action after proving all local ownership links."""
+        action = FeishuMessageAction.model_validate(action.model_dump())
+        if (
+            action.id != 0
+            or action.review_generation != 1
+            or action.status != "ready"
+            or action.attempts != 0
+            or action.remote_failures != 0
+            or action.lease_token
+            or action.mutation_started_at
+            or action.approved_at
+            or action.approved_by
+            or action.remote_id
+            or action.request_log_id
+            or action.error_code
+            or action.error
+        ):
+            raise ValueError("new Feishu message action contains mutable state")
+        allowlist = self._normalize_feishu_handoff_allowlist(
+            handoff_target_allowlist
+        )
+        if action.kind == "handoff_notify" and action.target_open_id not in allowlist:
+            raise PermissionError("Feishu handoff target is not locally allowlisted")
+        with self._connect() as db:
+            db.execute("begin immediate")
+            task = db.execute(
+                "select * from reply_tasks where id=?", (action.reply_task_id,)
+            ).fetchone()
+            attempt = db.execute(
+                "select * from reply_attempts where id=?", (action.attempt_id,)
+            ).fetchone()
+            if task is None or attempt is None:
+                raise ValueError("Feishu message action task or attempt is missing")
+            try:
+                trigger = json.loads(task["trigger_message_json"] or "{}")
+            except json.JSONDecodeError as exc:
+                raise ValueError("Feishu message action trigger is invalid") from exc
+            expected_conversation = self._feishu_task_conversation_id(
+                action.app_id, action.chat_id
+            )
+            if (
+                not isinstance(trigger, dict)
+                or task["channel"] != "feishu"
+                or attempt["channel"] != "feishu"
+                or attempt["conversation_id"] != task["conversation_id"]
+                or attempt["trigger_message_id"] != task["trigger_message_id"]
+                or trigger.get("app_id") != action.app_id
+                or trigger.get("chat_id") != action.chat_id
+                or trigger.get("message_id") != task["trigger_message_id"]
+                or task["conversation_id"]
+                not in {expected_conversation, action.chat_id}
+            ):
+                raise ValueError("Feishu message action does not match its task")
+            if action.kind == "add_reaction":
+                if action.target_message_id != task["trigger_message_id"]:
+                    raise PermissionError(
+                        "Feishu reaction target is not its persisted trigger"
+                    )
+            elif action.kind == "recall_message":
+                owned = self._feishu_recall_target_row(
+                    db,
+                    app_id=action.app_id,
+                    chat_id=action.chat_id,
+                    message_id=action.target_message_id,
+                )
+                if owned is None:
+                    raise PermissionError(
+                        "Feishu recall target is not an active terminal receipt"
+                    )
+            existing = db.execute(
+                """
+                select * from feishu_message_actions
+                where reply_task_id=? and action_key=?
+                """,
+                (action.reply_task_id, action.action_key),
+            ).fetchone()
+            if existing is not None:
+                immutable_fields = (
+                    "attempt_id",
+                    "app_id",
+                    "chat_id",
+                    "kind",
+                    "target_message_id",
+                    "target_open_id",
+                    "payload_json",
+                    "payload_sha256",
+                    "idempotency_key",
+                    "review_generation",
+                    "approval_hash",
+                    "risk",
+                )
+                if any(
+                    existing[field] != getattr(action, field)
+                    for field in immutable_fields
+                ):
+                    raise ValueError("Feishu message action replay does not match")
+                return self._feishu_message_action_from_row(existing)
+            try:
+                cursor = db.execute(
+                    """
+                    insert into feishu_message_actions (
+                        reply_task_id, attempt_id, app_id, chat_id, action_key,
+                        kind, target_message_id, target_open_id, payload_json,
+                        payload_sha256, idempotency_key, review_generation,
+                        approval_hash, risk
+                    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        action.reply_task_id,
+                        action.attempt_id,
+                        action.app_id,
+                        action.chat_id,
+                        action.action_key,
+                        action.kind,
+                        action.target_message_id,
+                        action.target_open_id,
+                        action.payload_json,
+                        action.payload_sha256,
+                        action.idempotency_key,
+                        action.review_generation,
+                        action.approval_hash,
+                        action.risk,
+                    ),
+                )
+            except sqlite3.IntegrityError as exc:
+                raise ValueError("Feishu message action identity conflicts") from exc
+            row = db.execute(
+                "select * from feishu_message_actions where id=?",
+                (cursor.lastrowid,),
+            ).fetchone()
+            self._validate_feishu_message_action_binding(
+                db, row, require_active_target=True
+            )
+            self._append_feishu_audit_event(
+                db,
+                app_id=action.app_id,
+                entity_type="message_action",
+                entity_id=row["id"],
+                event_type="created",
+                new_state="ready",
+                actor=actor,
+                detail=f"kind={action.kind};risk={action.risk}",
+            )
+            return self._feishu_message_action_from_row(row)
+
+    def get_feishu_message_action(
+        self, action_id: int
+    ) -> FeishuMessageAction | None:
+        with self._connect() as db:
+            row = db.execute(
+                "select * from feishu_message_actions where id=?", (action_id,)
+            ).fetchone()
+        return self._feishu_message_action_from_row(row) if row is not None else None
+
+    def list_feishu_message_actions(
+        self,
+        *,
+        app_id: str = "",
+        statuses: tuple[str, ...] | list[str] | set[str] = (),
+        kinds: tuple[str, ...] | list[str] | set[str] = (),
+        limit: int = 100,
+    ) -> list[FeishuMessageAction]:
+        if limit <= 0:
+            return []
+        selected_statuses = tuple(statuses)
+        if set(selected_statuses) - FEISHU_ACTION_STATUSES:
+            raise ValueError("unknown Feishu message action status")
+        selected_kinds = tuple(kinds)
+        allowed_kinds = {"add_reaction", "recall_message", "handoff_notify"}
+        if set(selected_kinds) - allowed_kinds:
+            raise ValueError("unknown Feishu message action kind")
+        where: list[str] = []
+        args: list[str | int] = []
+        if app_id:
+            where.append("app_id=?")
+            args.append(app_id)
+        if selected_statuses:
+            placeholders = ",".join("?" for _ in selected_statuses)
+            where.append(f"status in ({placeholders})")
+            args.extend(selected_statuses)
+        if selected_kinds:
+            placeholders = ",".join("?" for _ in selected_kinds)
+            where.append(f"kind in ({placeholders})")
+            args.extend(selected_kinds)
+        clause = f"where {' and '.join(where)}" if where else ""
+        args.append(min(limit, 1000))
+        with self._connect() as db:
+            rows = db.execute(
+                f"""
+                select * from feishu_message_actions {clause}
+                order by id limit ?
+                """,
+                args,
+            ).fetchall()
+        return [self._feishu_message_action_from_row(row) for row in rows]
+
+    def validate_feishu_message_action_for_send(
+        self,
+        action_id: int,
+        *,
+        app_id: str,
+        lease_token: str,
+    ) -> FeishuMessageAction:
+        if not app_id.strip() or not lease_token.strip():
+            raise ValueError("Feishu message action send lease is required")
+        with self._connect() as db:
+            row = db.execute(
+                "select * from feishu_message_actions where id=?", (action_id,)
+            ).fetchone()
+            if row is None:
+                raise ValueError("Feishu message action not found")
+            if row["app_id"] != app_id:
+                raise PermissionError("Feishu message action App ID does not match")
+            if row["status"] != "sending" or row["lease_token"] != lease_token:
+                raise ValueError("Feishu message action lease is no longer active")
+            return self._validate_feishu_message_action_binding(
+                db, row, require_active_target=True
+            )
+
+    def begin_feishu_message_action_mutation(
+        self,
+        action_id: int,
+        *,
+        app_id: str,
+        lease_token: str,
+        now: str = "",
+    ) -> FeishuMessageAction | None:
+        """Fence the first SDK mutation against a newer same-root trigger."""
+        if action_id <= 0 or not app_id.strip() or not lease_token.strip():
+            raise ValueError("Feishu message action mutation identity is incomplete")
+        mutation_at = now or datetime.now().astimezone().isoformat()
+        try:
+            parsed = datetime.fromisoformat(mutation_at.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise ValueError(
+                "Feishu message action mutation time is invalid"
+            ) from exc
+        if parsed.tzinfo is None or parsed.utcoffset() is None:
+            raise ValueError(
+                "Feishu message action mutation time requires timezone"
+            )
+
+        with self._connect() as db:
+            db.execute("begin immediate")
+            row = db.execute(
+                "select * from feishu_message_actions where id=?", (action_id,)
+            ).fetchone()
+            if row is None:
+                raise ValueError("Feishu message action not found")
+            if row["app_id"] != app_id:
+                raise PermissionError("Feishu message action App ID does not match")
+            if row["status"] == "rejected" and row["error_code"] == "superseded":
+                return None
+            if row["status"] != "sending" or row["lease_token"] != lease_token:
+                raise ValueError("Feishu message action lease is no longer active")
+            action = self._validate_feishu_message_action_binding(
+                db, row, require_active_target=True
+            )
+            if row["mutation_started_at"]:
+                raise ValueError(
+                    "Feishu message action remote mutation already started"
+                )
+
+            if action.kind == "recall_message":
+                # Recall is bound to a terminal app-owned receipt rather than
+                # to the continued retention or freshness of its trigger event.
+                # This keeps explicit R4 cleanup operable after event purge.
+                updated = db.execute(
+                    """
+                    update feishu_message_actions
+                    set mutation_started_at=?, locked_at=?,
+                        updated_at=current_timestamp
+                    where id=? and app_id=? and status='sending'
+                      and lease_token=? and mutation_started_at=''
+                      and remote_id=''
+                    """,
+                    (mutation_at, mutation_at, action_id, app_id, lease_token),
+                )
+                if updated.rowcount != 1:
+                    raise ValueError(
+                        "Feishu message action mutation fence lost atomic race"
+                    )
+                self._append_feishu_audit_event(
+                    db,
+                    app_id=app_id,
+                    entity_type="message_action",
+                    entity_id=action_id,
+                    event_type="mutation_fence_acquired",
+                    previous_state="sending",
+                    new_state="sending",
+                    actor="action-sender",
+                    detail="receipt_owned_recall=1",
+                )
+                current_row = db.execute(
+                    "select * from feishu_message_actions where id=?",
+                    (action_id,),
+                ).fetchone()
+                return self._feishu_message_action_from_row(current_row)
+
+            current = db.execute(
+                """
+                select * from feishu_events
+                where reply_task_id=? and app_id=? and chat_id=?
+                  and eligibility_status='eligible'
+                """,
+                (action.reply_task_id, app_id, action.chat_id),
+            ).fetchone()
+            if current is None:
+                raise ValueError("Feishu message action trigger event is unavailable")
+            reference_root = self._feishu_reference_root(current)
+            newer = db.execute(
+                """
+                select events.id
+                from feishu_events as events
+                where events.app_id=? and events.chat_id=?
+                  and events.eligibility_status='eligible'
+                  and coalesce(nullif(events.thread_id, ''),
+                               nullif(events.root_message_id, ''),
+                               events.message_id)=?
+                  and (
+                    events.event_create_time_ms>?
+                    or (
+                      events.event_create_time_ms=? and events.id>?
+                    )
+                  )
+                order by events.event_create_time_ms desc, events.id desc
+                limit 1
+                """,
+                (
+                    app_id,
+                    action.chat_id,
+                    reference_root,
+                    current["event_create_time_ms"],
+                    current["event_create_time_ms"],
+                    current["id"],
+                ),
+            ).fetchone()
+            # Recall is an explicitly approved cleanup of an app-owned remote
+            # effect, so a newer trigger in the same thread must not strand it.
+            # Reaction and handoff actions remain tied to their trigger epoch.
+            if newer is not None and action.kind != "recall_message":
+                updated = db.execute(
+                    """
+                    update feishu_message_actions
+                    set status='rejected', lease_token='', locked_at='',
+                        approved_at='', approved_by='', available_at='',
+                        error_code='superseded',
+                        error='superseded_by_newer_feishu_trigger',
+                        updated_at=current_timestamp
+                    where id=? and app_id=? and status='sending'
+                      and lease_token=? and mutation_started_at=''
+                      and remote_id=''
+                    """,
+                    (action_id, app_id, lease_token),
+                )
+                if updated.rowcount != 1:
+                    raise ValueError(
+                        "Feishu message action mutation fence lost atomic race"
+                    )
+                self._cancel_feishu_local_notifications_for_task_db(
+                    db,
+                    reply_task_id=action.reply_task_id,
+                    app_id=app_id,
+                    actor="action-sender",
+                )
+                self._append_feishu_audit_event(
+                    db,
+                    app_id=app_id,
+                    entity_type="message_action",
+                    entity_id=action_id,
+                    event_type="trigger_superseded_at_mutation_fence",
+                    previous_state="sending",
+                    new_state="rejected",
+                    actor="action-sender",
+                    detail=f"newer_event_record_id={int(newer['id'])}",
+                )
+                return None
+
+            updated = db.execute(
+                """
+                update feishu_message_actions
+                set mutation_started_at=?, locked_at=?,
+                    updated_at=current_timestamp
+                where id=? and app_id=? and status='sending'
+                  and lease_token=? and mutation_started_at=''
+                  and remote_id=''
+                """,
+                (mutation_at, mutation_at, action_id, app_id, lease_token),
+            )
+            if updated.rowcount != 1:
+                raise ValueError(
+                    "Feishu message action mutation fence lost atomic race"
+                )
+            self._append_feishu_audit_event(
+                db,
+                app_id=app_id,
+                entity_type="message_action",
+                entity_id=action_id,
+                event_type="mutation_fence_acquired",
+                previous_state="sending",
+                new_state="sending",
+                actor="action-sender",
+                detail=f"trigger_event_record_id={int(current['id'])}",
+            )
+            current_row = db.execute(
+                "select * from feishu_message_actions where id=?", (action_id,)
+            ).fetchone()
+            return self._feishu_message_action_from_row(current_row)
+
+    def approve_feishu_message_action(
+        self,
+        action_id: int,
+        *,
+        app_id: str,
+        approved_by: str,
+        expected_approval_hash: str,
+        now: str = "",
+    ) -> FeishuMessageAction:
+        if not app_id.strip() or not approved_by.strip():
+            raise ValueError("Feishu message action approval identity is incomplete")
+        if (
+            len(expected_approval_hash) != 64
+            or any(
+                character not in "0123456789abcdef"
+                for character in expected_approval_hash
+            )
+        ):
+            raise ValueError("Feishu message action approval hash is invalid")
+        approved_at = now or datetime.now().astimezone().isoformat()
+        with self._connect() as db:
+            db.execute("begin immediate")
+            row = db.execute(
+                "select * from feishu_message_actions where id=?", (action_id,)
+            ).fetchone()
+            if row is None:
+                raise ValueError("Feishu message action not found")
+            if row["app_id"] != app_id:
+                raise PermissionError("Feishu message action App ID does not match")
+            action = self._validate_feishu_message_action_binding(
+                db, row, require_active_target=True
+            )
+            recalculated = action_approval_hash(
+                reply_task_id=action.reply_task_id,
+                attempt_id=action.attempt_id,
+                app_id=action.app_id,
+                chat_id=action.chat_id,
+                action_key=action.action_key,
+                kind=action.kind,
+                target_id=action.target_message_id or action.target_open_id,
+                payload_sha256=action.payload_sha256,
+                idempotency_key=action.idempotency_key,
+                risk=action.risk,
+                review_generation=action.review_generation,
+            )
+            if (
+                action.approval_hash != recalculated
+                or expected_approval_hash != action.approval_hash
+            ):
+                raise ValueError("Feishu message action approval hash changed")
+            if row["status"] not in {"ready", "retry"} or row["approved_at"]:
+                raise ValueError("Feishu message action is not approvable")
+            cursor = db.execute(
+                """
+                update feishu_message_actions
+                set approved_at=?, approved_by=?, updated_at=current_timestamp
+                where id=? and app_id=? and status in ('ready', 'retry')
+                  and approved_at='' and approval_hash=?
+                """,
+                (
+                    approved_at,
+                    approved_by.strip(),
+                    action_id,
+                    app_id,
+                    action.approval_hash,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("Feishu message action approval lost atomic race")
+            current = db.execute(
+                "select * from feishu_message_actions where id=?", (action_id,)
+            ).fetchone()
+            self._append_feishu_audit_event(
+                db,
+                app_id=app_id,
+                entity_type="message_action",
+                entity_id=action_id,
+                event_type="approved",
+                previous_state=row["status"],
+                new_state=row["status"],
+                actor=approved_by.strip(),
+                detail=f"risk={row['risk']}",
+            )
+            return self._feishu_message_action_from_row(current)
+
+    def claim_feishu_message_actions(
+        self,
+        limit: int,
+        *,
+        app_id: str,
+        kinds: tuple[str, ...] | list[str] | set[str],
+        send_mode: str = "confirm",
+        action_id: int = 0,
+        now: str = "",
+    ) -> list[FeishuMessageAction]:
+        if limit <= 0:
+            return []
+        if not app_id.strip():
+            raise ValueError("Feishu message action claim requires app_id")
+        if send_mode not in {"confirm", "auto"}:
+            raise ValueError("Feishu message action send_mode is invalid")
+        selected_kinds = tuple(kinds)
+        allowed_kinds = {"add_reaction", "recall_message", "handoff_notify"}
+        if not selected_kinds or set(selected_kinds) - allowed_kinds:
+            raise ValueError("Feishu message action claim kinds are invalid")
+        kind_placeholders = ",".join("?" for _ in selected_kinds)
+        approval_clause = (
+            "and candidate.approved_at<>''"
+            if send_mode == "confirm"
+            else "and (candidate.risk<>'R4' or candidate.approved_at<>'')"
+        )
+        action_clause = "and candidate.id=?" if action_id else ""
+        now_expression = "current_timestamp" if not now else "?"
+        args: list[str | int] = [app_id.strip(), *selected_kinds]
+        if action_id:
+            args.append(action_id)
+        if now:
+            args.append(now)
+        args.append(min(limit, 100))
+        with self._connect() as db:
+            db.execute("begin immediate")
+            rows = db.execute(
+                f"""
+                select candidate.* from feishu_message_actions as candidate
+                where candidate.app_id=?
+                  and candidate.kind in ({kind_placeholders})
+                  and candidate.status in ('ready', 'retry')
+                  {approval_clause}
+                  {action_clause}
+                  and (
+                    candidate.available_at=''
+                    or datetime(candidate.available_at) <= datetime({now_expression})
+                  )
+                  and not exists (
+                    select 1 from feishu_deliveries as delivery_blocker
+                    where delivery_blocker.app_id=candidate.app_id
+                      and delivery_blocker.chat_id=candidate.chat_id
+                      and delivery_blocker.status in ('sending', 'send_unknown')
+                  )
+                  and candidate.id=(
+                    select min(head.id) from feishu_message_actions as head
+                    where head.app_id=candidate.app_id
+                      and head.chat_id=candidate.chat_id
+                      and head.status in (
+                        'ready', 'retry', 'sending', 'result_unknown'
+                      )
+                  )
+                order by candidate.id
+                limit ?
+                """,
+                args,
+            ).fetchall()
+            claimed: list[FeishuMessageAction] = []
+            for row in rows:
+                try:
+                    self._validate_feishu_message_action_binding(
+                        db, row, require_active_target=True
+                    )
+                except (ValueError, PermissionError):
+                    cursor = db.execute(
+                        """
+                        update feishu_message_actions
+                        set status='failed', lease_token='', locked_at='',
+                            approved_at='', approved_by='',
+                            error_code='invalid_binding',
+                            error='message_action_identity_unverifiable',
+                            updated_at=current_timestamp
+                        where id=? and status in ('ready', 'retry')
+                        """,
+                        (row["id"],),
+                    )
+                    if cursor.rowcount:
+                        self._append_feishu_audit_event(
+                            db,
+                            app_id=row["app_id"],
+                            entity_type="message_action",
+                            entity_id=row["id"],
+                            event_type="invalid_binding_quarantined",
+                            previous_state=row["status"],
+                            new_state="failed",
+                            actor="action-sender",
+                            detail="error_code=invalid_binding",
+                        )
+                    continue
+                lease_token = uuid4().hex
+                locked_at = now or datetime.now().astimezone().isoformat()
+                cursor = db.execute(
+                    """
+                    update feishu_message_actions
+                    set status='sending', attempts=attempts + 1,
+                        lease_token=?, locked_at=?, available_at='',
+                        error_code='', error='', updated_at=current_timestamp
+                    where id=? and status in ('ready', 'retry')
+                    """,
+                    (lease_token, locked_at, row["id"]),
+                )
+                if cursor.rowcount != 1:
+                    raise ValueError("Feishu message action claim lost atomic race")
+                current = db.execute(
+                    "select * from feishu_message_actions where id=?",
+                    (row["id"],),
+                ).fetchone()
+                self._append_feishu_audit_event(
+                    db,
+                    app_id=row["app_id"],
+                    entity_type="message_action",
+                    entity_id=row["id"],
+                    event_type="claimed",
+                    previous_state=row["status"],
+                    new_state="sending",
+                    actor="action-sender",
+                    detail=f"kind={row['kind']};risk={row['risk']}",
+                )
+                claimed.append(self._feishu_message_action_from_row(current))
+            return claimed
+
+    def claim_feishu_message_action(
+        self,
+        action_id: int,
+        *,
+        app_id: str,
+        kinds: tuple[str, ...] | list[str] | set[str],
+        send_mode: str = "confirm",
+        now: str = "",
+    ) -> FeishuMessageAction | None:
+        rows = self.claim_feishu_message_actions(
+            1,
+            app_id=app_id,
+            kinds=kinds,
+            send_mode=send_mode,
+            action_id=action_id,
+            now=now,
+        )
+        return rows[0] if rows else None
+
+    def transition_feishu_message_action(
+        self,
+        action_id: int,
+        *,
+        from_statuses: tuple[str, ...] | list[str] | set[str],
+        to_status: str,
+        app_id: str,
+        expected_lease_token: str = "",
+        remote_id: str = "",
+        request_log_id: str = "",
+        error_code: str = "",
+        error: str = "",
+        available_at: str = "",
+        remote_failures: int | None = None,
+        actor: str = "action-sender",
+        audit_event_type: str = "",
+    ) -> FeishuMessageAction:
+        sources = tuple(from_statuses)
+        if not sources or (set(sources) | {to_status}) - FEISHU_ACTION_STATUSES:
+            raise ValueError("unknown Feishu message action status")
+        invalid = [
+            (source, to_status)
+            for source in sources
+            if (source, to_status) not in FEISHU_ACTION_TRANSITIONS
+        ]
+        if invalid:
+            raise ValueError(f"invalid Feishu message action transition: {invalid}")
+        safe_remote_id = remote_id.strip()
+        safe_request_log_id = request_log_id.strip()
+        if remote_id and (
+            safe_remote_id != remote_id
+            or len(safe_remote_id) > 512
+            or any(ord(character) < 32 for character in safe_remote_id)
+        ):
+            raise ValueError("Feishu message action remote ID is invalid")
+        if request_log_id and (
+            safe_request_log_id != request_log_id
+            or len(safe_request_log_id) > 256
+            or any(ord(character) < 32 for character in safe_request_log_id)
+        ):
+            raise ValueError("Feishu message action request log ID is invalid")
+        if to_status == "retry" and error_code not in FEISHU_ACTION_RETRYABLE_ERROR_CODES:
+            raise ValueError("Feishu message action retry is not proven safe")
+        if to_status == "failed" and error_code not in (
+            FEISHU_ACTION_RETRYABLE_ERROR_CODES
+            | FEISHU_ACTION_TERMINAL_ERROR_CODES
+            | {"invalid_binding"}
+        ):
+            raise ValueError("Feishu message action failure is not definite")
+        if to_status == "result_unknown" and error_code not in (
+            FEISHU_ACTION_UNCERTAIN_ERROR_CODES
+        ):
+            raise ValueError("Feishu message action uncertainty code is invalid")
+        if remote_failures is not None and (
+            isinstance(remote_failures, bool) or remote_failures < 0
+        ):
+            raise ValueError("Feishu message action remote failures is invalid")
+        placeholders = ",".join("?" for _ in sources)
+        with self._connect() as db:
+            db.execute("begin immediate")
+            row = db.execute(
+                "select * from feishu_message_actions where id=?", (action_id,)
+            ).fetchone()
+            if row is None:
+                raise ValueError("Feishu message action not found")
+            if row["app_id"] != app_id:
+                raise PermissionError("Feishu message action App ID does not match")
+            if row["status"] not in sources:
+                raise ValueError("Feishu message action status changed")
+            if row["status"] == "sending":
+                if (
+                    not expected_lease_token
+                    or row["lease_token"] != expected_lease_token
+                ):
+                    raise ValueError("Feishu message action lease is no longer active")
+                action = self._validate_feishu_message_action_binding(
+                    db, row, require_active_target=True
+                )
+            else:
+                action = self._validate_feishu_message_action_binding(
+                    db, row, require_active_target=True
+                )
+            if to_status == "sent":
+                if action.kind in {"add_reaction", "handoff_notify"} and not safe_remote_id:
+                    raise ValueError(
+                        f"successful {action.kind} requires a remote identifier"
+                    )
+                if action.kind == "recall_message" and safe_remote_id:
+                    raise ValueError("successful recall must not copy its target ID")
+            safe_error = safe_observability_error(error)[:512]
+            next_remote_failures = (
+                int(row["remote_failures"])
+                if remote_failures is None
+                else int(remote_failures)
+            )
+            next_mutation_started_at = str(
+                row["mutation_started_at"] or ""
+            )
+            if to_status == "retry":
+                # Retry is allowed only for a provider result that proves the
+                # attempted action was not applied.
+                next_mutation_started_at = ""
+            elif (
+                to_status in {"sent", "result_unknown"}
+                and not next_mutation_started_at
+            ):
+                next_mutation_started_at = (
+                    datetime.now().astimezone().isoformat()
+                )
+            lease_clause = "and lease_token=?" if expected_lease_token else ""
+            args: list[str | int] = [
+                to_status,
+                safe_remote_id or row["remote_id"],
+                safe_request_log_id or row["request_log_id"],
+                next_remote_failures,
+                next_mutation_started_at,
+                available_at,
+                error_code,
+                safe_error,
+                action_id,
+                app_id,
+                *sources,
+            ]
+            if expected_lease_token:
+                args.append(expected_lease_token)
+            cursor = db.execute(
+                f"""
+                update feishu_message_actions
+                set status=?, remote_id=?, request_log_id=?,
+                    remote_failures=?, mutation_started_at=?,
+                    lease_token='', locked_at='', available_at=?,
+                    error_code=?, error=?, updated_at=current_timestamp
+                where id=? and app_id=? and status in ({placeholders})
+                  {lease_clause}
+                """,
+                args,
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("Feishu message action transition lost atomic race")
+            if action.kind == "recall_message" and to_status in {
+                "sent",
+                "result_unknown",
+            }:
+                receipt_status = (
+                    "recalled" if to_status == "sent" else "recall_unknown"
+                )
+                receipt = db.execute(
+                    """
+                    update feishu_delivery_receipts
+                    set status=?, recall_action_id=?, updated_at=current_timestamp
+                    where app_id=? and message_id=? and status='active'
+                    """,
+                    (
+                        receipt_status,
+                        action.id,
+                        action.app_id,
+                        action.target_message_id,
+                    ),
+                )
+                if receipt.rowcount != 1:
+                    raise ValueError("Feishu recall receipt transition lost atomic race")
+            current = db.execute(
+                "select * from feishu_message_actions where id=?", (action_id,)
+            ).fetchone()
+            self._append_feishu_audit_event(
+                db,
+                app_id=app_id,
+                entity_type="message_action",
+                entity_id=action_id,
+                event_type=audit_event_type or to_status,
+                previous_state=row["status"],
+                new_state=to_status,
+                actor=actor,
+                detail=(f"error_code={error_code}" if error_code else ""),
+            )
+            return self._feishu_message_action_from_row(current)
+
+    def reconcile_feishu_message_action_unknown(
+        self,
+        action_id: int,
+        *,
+        app_id: str,
+        outcome: str,
+        verified_by: str,
+        evidence_kind: str,
+        remote_id: str = "",
+        request_log_id: str = "",
+    ) -> FeishuMessageAction:
+        """Resolve one uncertain IM action and its recall receipt atomically."""
+        from app.feishu.action_delivery import plan_message_action_reconciliation
+
+        if not isinstance(app_id, str) or not app_id.strip():
+            raise ValueError("Feishu action reconciliation requires app_id")
+        if not all(
+            isinstance(value, str)
+            for value in (
+                outcome,
+                verified_by,
+                evidence_kind,
+                remote_id,
+                request_log_id,
+            )
+        ):
+            raise ValueError("Feishu action reconciliation inputs are invalid")
+        normalized_app_id = app_id.strip()
+        actor = self._normalize_feishu_action_review_actor(
+            verified_by, operation="reconciliation"
+        )
+        with self._connect() as db:
+            db.execute("begin immediate")
+            row = db.execute(
+                "select * from feishu_message_actions where id=?", (action_id,)
+            ).fetchone()
+            if row is None:
+                raise ValueError("Feishu message action not found")
+            if row["app_id"] != normalized_app_id:
+                raise PermissionError("Feishu message action App ID does not match")
+            if row["status"] != "result_unknown":
+                raise ValueError(
+                    "Feishu action reconciliation requires result_unknown"
+                )
+            if row["error_code"] not in FEISHU_ACTION_UNCERTAIN_ERROR_CODES:
+                raise ValueError(
+                    "Feishu action reconciliation uncertainty is invalid"
+                )
+            if (
+                row["remote_id"]
+                or row["lease_token"]
+                or row["locked_at"]
+                or row["available_at"]
+            ):
+                raise ValueError(
+                    "Feishu action reconciliation mutable state is invalid"
+                )
+            action = self._validate_feishu_message_action_binding(
+                db, row, require_active_target=False
+            )
+            decision = plan_message_action_reconciliation(
+                action,
+                outcome=outcome,
+                verified_by=actor,
+                evidence_kind=evidence_kind,
+                remote_id=remote_id,
+                request_log_id=request_log_id,
+            )
+            if decision.final_status == "sent":
+                if decision.error_code or decision.audit_event_type != (
+                    "unknown_verified_applied"
+                ):
+                    raise ValueError(
+                        "Feishu action reconciliation decision is invalid"
+                    )
+                final_error = ""
+            elif decision.final_status == "failed":
+                if (
+                    decision.error_code != "verified_not_applied"
+                    or decision.remote_id
+                    or decision.audit_event_type
+                    != "unknown_verified_not_applied"
+                ):
+                    raise ValueError(
+                        "Feishu action reconciliation decision is invalid"
+                    )
+                final_error = "manual_verification_confirmed_not_applied"
+            else:
+                raise ValueError("Feishu action reconciliation decision is invalid")
+
+            existing_request_log_id = row["request_log_id"]
+            if existing_request_log_id and (
+                existing_request_log_id != existing_request_log_id.strip()
+                or len(existing_request_log_id) > 256
+                or any(
+                    ord(character) < 32
+                    for character in existing_request_log_id
+                )
+            ):
+                raise ValueError(
+                    "Feishu action reconciliation request log identity is invalid"
+                )
+            if (
+                decision.request_log_id
+                and existing_request_log_id
+                and decision.request_log_id != existing_request_log_id
+            ):
+                raise ValueError(
+                    "Feishu action reconciliation request log ID conflicts"
+                )
+            resulting_request_log_id = (
+                existing_request_log_id or decision.request_log_id
+            )
+
+            receipt_row = None
+            if action.kind == "recall_message":
+                expected_receipt_status = (
+                    "recalled"
+                    if decision.final_status == "sent"
+                    else "active"
+                )
+                if decision.recall_receipt_status != expected_receipt_status:
+                    raise ValueError(
+                        "Feishu recall reconciliation decision is invalid"
+                    )
+                receipt_row = db.execute(
+                    """
+                    select receipts.id, receipts.status,
+                           receipts.recall_action_id
+                    from feishu_delivery_receipts as receipts
+                    join feishu_deliveries as deliveries
+                      on deliveries.id=receipts.delivery_id
+                     and deliveries.app_id=receipts.app_id
+                    where receipts.app_id=? and receipts.message_id=?
+                      and deliveries.app_id=? and deliveries.chat_id=?
+                    """,
+                    (
+                        action.app_id,
+                        action.target_message_id,
+                        action.app_id,
+                        action.chat_id,
+                    ),
+                ).fetchone()
+                if (
+                    receipt_row is None
+                    or receipt_row["status"] != "recall_unknown"
+                    or receipt_row["recall_action_id"] != action.id
+                ):
+                    raise ValueError(
+                        "Feishu recall receipt does not match unknown action"
+                    )
+            elif decision.recall_receipt_status:
+                raise ValueError("Feishu action reconciliation decision is invalid")
+
+            cursor = db.execute(
+                """
+                update feishu_message_actions
+                set status=?, remote_id=?, request_log_id=?,
+                    lease_token='', locked_at='', available_at='',
+                    error_code=?, error=?, updated_at=current_timestamp
+                where id=? and app_id=? and status='result_unknown'
+                  and error_code=? and remote_id='' and request_log_id=?
+                  and lease_token=''
+                """,
+                (
+                    decision.final_status,
+                    decision.remote_id,
+                    resulting_request_log_id,
+                    decision.error_code,
+                    final_error,
+                    action_id,
+                    normalized_app_id,
+                    row["error_code"],
+                    existing_request_log_id,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError(
+                    "Feishu action reconciliation lost atomic race"
+                )
+
+            if receipt_row is not None:
+                resulting_recall_action_id = (
+                    action.id
+                    if decision.recall_receipt_status == "recalled"
+                    else 0
+                )
+                receipt_cursor = db.execute(
+                    """
+                    update feishu_delivery_receipts
+                    set status=?, recall_action_id=?,
+                        updated_at=current_timestamp
+                    where id=? and app_id=? and message_id=?
+                      and status='recall_unknown' and recall_action_id=?
+                      and exists (
+                        select 1 from feishu_deliveries as deliveries
+                        where deliveries.id=feishu_delivery_receipts.delivery_id
+                          and deliveries.app_id=? and deliveries.chat_id=?
+                      )
+                    """,
+                    (
+                        decision.recall_receipt_status,
+                        resulting_recall_action_id,
+                        receipt_row["id"],
+                        action.app_id,
+                        action.target_message_id,
+                        action.id,
+                        action.app_id,
+                        action.chat_id,
+                    ),
+                )
+                if receipt_cursor.rowcount != 1:
+                    raise ValueError(
+                        "Feishu recall reconciliation lost atomic race"
+                    )
+
+            self._append_feishu_audit_event(
+                db,
+                app_id=normalized_app_id,
+                entity_type="message_action",
+                entity_id=action_id,
+                event_type=decision.audit_event_type,
+                previous_state="result_unknown",
+                new_state=decision.final_status,
+                actor=decision.verified_by,
+                detail=f"evidence_kind={decision.evidence_kind}",
+            )
+            current = db.execute(
+                "select * from feishu_message_actions where id=?", (action_id,)
+            ).fetchone()
+            return self._feishu_message_action_from_row(current)
+
+    def requeue_feishu_message_action_after_verification(
+        self,
+        action_id: int,
+        *,
+        app_id: str,
+        verified_by: str,
+        evidence_kind: str,
+        available_at: str = "",
+    ) -> FeishuMessageAction:
+        """Create a fresh retry only after a definite not-applied decision."""
+        if not isinstance(app_id, str) or not app_id.strip():
+            raise ValueError("Feishu action requeue requires app_id")
+        if not isinstance(evidence_kind, str):
+            raise ValueError("unknown Feishu action reconciliation evidence kind")
+        normalized_app_id = app_id.strip()
+        normalized_evidence = evidence_kind.strip().lower()
+        if normalized_evidence not in FEISHU_RECONCILIATION_EVIDENCE_KINDS:
+            raise ValueError("unknown Feishu action reconciliation evidence kind")
+        actor = self._normalize_feishu_action_review_actor(
+            verified_by, operation="requeue"
+        )
+        normalized_available_at = self._normalize_feishu_action_requeue_time(
+            available_at
+        )
+
+        with self._connect() as db:
+            db.execute("begin immediate")
+            row = db.execute(
+                "select * from feishu_message_actions where id=?", (action_id,)
+            ).fetchone()
+            if row is None:
+                raise ValueError("Feishu message action not found")
+            if row["app_id"] != normalized_app_id:
+                raise PermissionError("Feishu message action App ID does not match")
+            if (
+                row["status"] != "failed"
+                or row["error_code"] != "verified_not_applied"
+            ):
+                raise ValueError(
+                    "Feishu message action is not verified for requeue"
+                )
+            if row["remote_id"] or row["lease_token"] or row["locked_at"]:
+                raise ValueError("Feishu message action requeue state is invalid")
+            action = self._validate_feishu_message_action_binding(
+                db, row, require_active_target=True
+            )
+            next_review_generation = action.review_generation + 1
+            next_approval_hash = action_approval_hash(
+                reply_task_id=action.reply_task_id,
+                attempt_id=action.attempt_id,
+                app_id=action.app_id,
+                chat_id=action.chat_id,
+                action_key=action.action_key,
+                kind=action.kind,
+                target_id=(
+                    action.target_message_id or action.target_open_id
+                ),
+                payload_sha256=action.payload_sha256,
+                idempotency_key=action.idempotency_key,
+                risk=action.risk,
+                review_generation=next_review_generation,
+            )
+            cursor = db.execute(
+                """
+                update feishu_message_actions
+                set status='retry', approved_at='', approved_by='',
+                    review_generation=?, approval_hash=?,
+                    lease_token='', locked_at='', available_at=?,
+                    mutation_started_at='',
+                    remote_failures=0, error_code='', error='',
+                    updated_at=current_timestamp
+                where id=? and app_id=? and status='failed'
+                  and error_code='verified_not_applied' and remote_id=''
+                  and lease_token='' and review_generation=?
+                  and approval_hash=?
+                """,
+                (
+                    next_review_generation,
+                    next_approval_hash,
+                    normalized_available_at,
+                    action_id,
+                    normalized_app_id,
+                    action.review_generation,
+                    action.approval_hash,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("Feishu action requeue lost atomic race")
+            self._append_feishu_audit_event(
+                db,
+                app_id=normalized_app_id,
+                entity_type="message_action",
+                entity_id=action_id,
+                event_type="requeued_after_verification",
+                previous_state="failed",
+                new_state="retry",
+                actor=actor,
+                detail=f"evidence_kind={normalized_evidence}",
+            )
+            current = db.execute(
+                "select * from feishu_message_actions where id=?", (action_id,)
+            ).fetchone()
+            return self._feishu_message_action_from_row(current)
+
+    def reject_feishu_message_action(
+        self,
+        action_id: int,
+        *,
+        app_id: str,
+        rejected_by: str = "local-reviewer",
+    ) -> FeishuMessageAction:
+        """Close a queued local action even when its remote target is inactive."""
+        normalized_app_id = app_id.strip()
+        if not normalized_app_id:
+            raise ValueError("Feishu message action rejection requires app_id")
+        actor = self._normalize_feishu_action_review_actor(
+            rejected_by, operation="rejection"
+        )
+        with self._connect() as db:
+            db.execute("begin immediate")
+            row = db.execute(
+                "select * from feishu_message_actions where id=?", (action_id,)
+            ).fetchone()
+            if row is None:
+                raise ValueError("Feishu message action not found")
+            if row["app_id"] != normalized_app_id:
+                raise PermissionError("Feishu message action App ID does not match")
+            if row["status"] not in {"ready", "retry"}:
+                raise ValueError("Feishu message action is not rejectable")
+            self._validate_feishu_message_action_binding(
+                db, row, require_active_target=False
+            )
+            cursor = db.execute(
+                """
+                update feishu_message_actions
+                set status='rejected', lease_token='', locked_at='',
+                    available_at='', error_code='rejected',
+                    error='user_rejected', updated_at=current_timestamp
+                where id=? and app_id=? and status in ('ready', 'retry')
+                """,
+                (action_id, normalized_app_id),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("Feishu message action rejection lost atomic race")
+            current = db.execute(
+                "select * from feishu_message_actions where id=?", (action_id,)
+            ).fetchone()
+            self._append_feishu_audit_event(
+                db,
+                app_id=normalized_app_id,
+                entity_type="message_action",
+                entity_id=action_id,
+                event_type="rejected",
+                previous_state=row["status"],
+                new_state="rejected",
+                actor=actor,
+                detail="error_code=rejected",
+            )
+            return self._feishu_message_action_from_row(current)
+
+    def list_stale_feishu_message_actions(
+        self,
+        max_age_seconds: int,
+        *,
+        app_id: str = "",
+        now: datetime | None = None,
+    ) -> list[FeishuMessageAction]:
+        if max_age_seconds <= 0:
+            return []
+        current = now or datetime.now(timezone.utc)
+        if current.tzinfo is None:
+            current = current.astimezone()
+        cutoff = (current - timedelta(seconds=max_age_seconds)).isoformat()
+        app_clause = "and app_id=?" if app_id else ""
+        args: list[str] = [cutoff]
+        if app_id:
+            args.append(app_id)
+        with self._connect() as db:
+            rows = db.execute(
+                f"""
+                select * from feishu_message_actions
+                where status='sending'
+                  and (locked_at='' or datetime(locked_at) <= datetime(?))
+                  {app_clause}
+                order by id
+                """,
+                args,
+            ).fetchall()
+        return [self._feishu_message_action_from_row(row) for row in rows]
+
+    @classmethod
+    def _feishu_local_notification_is_current_db(
+        cls,
+        db: sqlite3.Connection,
+        row: sqlite3.Row,
+    ) -> bool:
+        task = db.execute(
+            "select * from reply_tasks where id=?",
+            (row["reply_task_id"],),
+        ).fetchone()
+        if (
+            task is None
+            or task["channel"] != "feishu"
+            or task["status"] != "done"
+            or task["execution_generation"] != row["execution_generation"]
+            or "superseded" in str(task["error"] or "")
+            or cls._feishu_task_app_id(task) != row["app_id"]
+        ):
+            return False
+        event = db.execute(
+            """
+            select * from feishu_events
+            where reply_task_id=? and app_id=?
+            """,
+            (row["reply_task_id"], row["app_id"]),
+        ).fetchone()
+        if event is None:
+            return False
+        reference_root = cls._feishu_reference_root(event)
+        newer = db.execute(
+            """
+            select 1 from feishu_events
+            where app_id=? and chat_id=? and eligibility_status='eligible'
+              and coalesce(nullif(thread_id, ''), nullif(root_message_id, ''),
+                           message_id)=?
+              and (
+                    event_create_time_ms>?
+                    or (event_create_time_ms=? and id>?)
+                  )
+            limit 1
+            """,
+            (
+                event["app_id"],
+                event["chat_id"],
+                reference_root,
+                event["event_create_time_ms"],
+                event["event_create_time_ms"],
+                event["id"],
+            ),
+        ).fetchone()
+        return newer is None
+
+    @classmethod
+    def _feishu_remote_handoff_dependency_db(
+        cls,
+        db: sqlite3.Connection,
+        row: sqlite3.Row,
+    ) -> str:
+        actions = db.execute(
+            """
+            select status, error_code, error from feishu_message_actions
+            where reply_task_id=? and attempt_id=? and app_id=?
+              and kind='handoff_notify'
+            order by id
+            """,
+            (row["reply_task_id"], row["attempt_id"], row["app_id"]),
+        ).fetchall()
+        if not actions:
+            return "invalid"
+        if any(action["status"] == "sent" for action in actions):
+            return "remote_sent"
+        if any(
+            action["status"] not in {"failed", "rejected"}
+            for action in actions
+        ):
+            return "waiting"
+        if any(
+            action["error_code"] == "superseded"
+            or "superseded" in str(action["error"] or "")
+            for action in actions
+        ):
+            return "superseded"
+        return "all_failed"
+
+    @classmethod
+    def _set_feishu_local_notification_state_db(
+        cls,
+        db: sqlite3.Connection,
+        row: sqlite3.Row,
+        *,
+        status: str,
+        event_type: str,
+        error_code: str = "",
+        error: str = "",
+        actor: str = "local-notification-worker",
+    ) -> bool:
+        updated = db.execute(
+            """
+            update feishu_local_notifications
+            set status=?, lease_token='', locked_at='', available_at='',
+                error_code=?, error=?, updated_at=current_timestamp
+            where id=? and status=?
+            """,
+            (
+                status,
+                error_code,
+                safe_observability_error(error)[:512],
+                row["id"],
+                row["status"],
+            ),
+        )
+        if updated.rowcount != 1:
+            return False
+        cls._append_feishu_audit_event(
+            db,
+            app_id=str(row["app_id"]),
+            entity_type="local_notification",
+            entity_id=int(row["id"]),
+            event_type=event_type,
+            previous_state=str(row["status"]),
+            new_state=status,
+            actor=actor,
+            detail=(f"error_code={error_code}" if error_code else ""),
+        )
+        return True
+
+    def list_feishu_local_notifications(
+        self,
+        *,
+        app_id: str = "",
+        statuses: tuple[str, ...] | list[str] | set[str] = (),
+        limit: int = 100,
+    ) -> list[FeishuLocalNotification]:
+        if limit <= 0:
+            return []
+        selected = tuple(statuses)
+        if set(selected) - FEISHU_LOCAL_NOTIFICATION_STATUSES:
+            raise ValueError("unknown Feishu local notification status")
+        where: list[str] = []
+        args: list[str | int] = []
+        if app_id:
+            where.append("app_id=?")
+            args.append(app_id)
+        if selected:
+            placeholders = ",".join("?" for _ in selected)
+            where.append(f"status in ({placeholders})")
+            args.extend(selected)
+        clause = f"where {' and '.join(where)}" if where else ""
+        args.append(min(limit, 1000))
+        with self._connect() as db:
+            rows = db.execute(
+                f"""
+                select * from feishu_local_notifications {clause}
+                order by id limit ?
+                """,
+                args,
+            ).fetchall()
+        return [self._feishu_local_notification_from_row(row) for row in rows]
+
+    def claim_feishu_local_notifications(
+        self,
+        limit: int,
+        *,
+        app_id: str,
+        now: str = "",
+    ) -> list[FeishuLocalNotification]:
+        if limit <= 0:
+            return []
+        normalized_app_id = str(app_id or "").strip()
+        if not normalized_app_id:
+            raise ValueError("Feishu local notification claim requires app_id")
+        with self._connect() as db:
+            db.execute("begin immediate")
+            waiting = db.execute(
+                """
+                select * from feishu_local_notifications
+                where app_id=? and status='waiting_remote'
+                order by id limit 100
+                """,
+                (normalized_app_id,),
+            ).fetchall()
+            for row in waiting:
+                if not self._feishu_local_notification_is_current_db(db, row):
+                    self._set_feishu_local_notification_state_db(
+                        db,
+                        row,
+                        status="cancelled",
+                        event_type="stale_cancelled",
+                        error_code="superseded",
+                        error="local_notification_task_is_stale",
+                    )
+                    continue
+                dependency = self._feishu_remote_handoff_dependency_db(db, row)
+                if dependency == "all_failed":
+                    self._set_feishu_local_notification_state_db(
+                        db,
+                        row,
+                        status="pending",
+                        event_type="remote_handoff_failed",
+                    )
+                elif dependency in {"remote_sent", "superseded", "invalid"}:
+                    self._set_feishu_local_notification_state_db(
+                        db,
+                        row,
+                        status="cancelled",
+                        event_type=(
+                            "remote_handoff_sent"
+                            if dependency == "remote_sent"
+                            else "dependency_cancelled"
+                        ),
+                        error_code=(
+                            "remote_sent"
+                            if dependency == "remote_sent"
+                            else dependency
+                        ),
+                        error=f"local_notification_dependency_{dependency}",
+                    )
+
+            due_expression = "current_timestamp" if not now else "?"
+            args: list[str | int] = [normalized_app_id]
+            if now:
+                args.append(now)
+            args.append(min(limit * 4, 100))
+            candidates = db.execute(
+                f"""
+                select * from feishu_local_notifications
+                where app_id=? and status in ('pending', 'retry')
+                  and (
+                    available_at=''
+                    or datetime(available_at)<=datetime({due_expression})
+                  )
+                order by id limit ?
+                """,
+                args,
+            ).fetchall()
+            claimed: list[FeishuLocalNotification] = []
+            for row in candidates:
+                if len(claimed) >= min(limit, 20):
+                    break
+                if not self._feishu_local_notification_is_current_db(db, row):
+                    self._set_feishu_local_notification_state_db(
+                        db,
+                        row,
+                        status="cancelled",
+                        event_type="stale_cancelled",
+                        error_code="superseded",
+                        error="local_notification_task_is_stale",
+                    )
+                    continue
+                if row["dependency_mode"] == "remote_failure" and (
+                    self._feishu_remote_handoff_dependency_db(db, row)
+                    != "all_failed"
+                ):
+                    self._set_feishu_local_notification_state_db(
+                        db,
+                        row,
+                        status="cancelled",
+                        event_type="dependency_changed",
+                        error_code="dependency_changed",
+                        error="local_notification_dependency_changed",
+                    )
+                    continue
+                lease_token = uuid4().hex
+                locked_at = now or datetime.now().astimezone().isoformat()
+                updated = db.execute(
+                    """
+                    update feishu_local_notifications
+                    set status='sending', attempts=attempts + 1,
+                        lease_token=?, locked_at=?, available_at='',
+                        mutation_started_at='',
+                        error_code='', error='', updated_at=current_timestamp
+                    where id=? and status=?
+                    """,
+                    (lease_token, locked_at, row["id"], row["status"]),
+                )
+                if updated.rowcount != 1:
+                    raise ValueError(
+                        "Feishu local notification claim lost atomic race"
+                    )
+                current = db.execute(
+                    "select * from feishu_local_notifications where id=?",
+                    (row["id"],),
+                ).fetchone()
+                self._append_feishu_audit_event(
+                    db,
+                    app_id=normalized_app_id,
+                    entity_type="local_notification",
+                    entity_id=int(row["id"]),
+                    event_type="claimed",
+                    previous_state=str(row["status"]),
+                    new_state="sending",
+                    actor="local-notification-worker",
+                )
+                claimed.append(self._feishu_local_notification_from_row(current))
+            return claimed
+
+    def begin_feishu_local_notification_mutation(
+        self,
+        notification_id: int,
+        *,
+        app_id: str,
+        lease_token: str,
+        now: str = "",
+    ) -> FeishuLocalNotification | None:
+        """Revalidate then durably fence one imminent local OS mutation."""
+        if not app_id.strip() or not lease_token.strip():
+            raise ValueError("Feishu local notification send lease is required")
+        started_at = now or datetime.now().astimezone().isoformat()
+        with self._connect() as db:
+            db.execute("begin immediate")
+            row = db.execute(
+                "select * from feishu_local_notifications where id=?",
+                (notification_id,),
+            ).fetchone()
+            if row is None:
+                raise ValueError("Feishu local notification not found")
+            if row["app_id"] != app_id:
+                raise PermissionError("Feishu local notification App ID mismatch")
+            if row["status"] != "sending" or row["lease_token"] != lease_token:
+                raise ValueError("Feishu local notification lease is no longer active")
+            if row["mutation_started_at"]:
+                raise ValueError("Feishu local notification mutation already started")
+            current = self._feishu_local_notification_is_current_db(db, row)
+            dependency_current = not (
+                row["dependency_mode"] == "remote_failure"
+                and self._feishu_remote_handoff_dependency_db(db, row)
+                != "all_failed"
+            )
+            if not current or not dependency_current:
+                self._set_feishu_local_notification_state_db(
+                    db,
+                    row,
+                    status="cancelled",
+                    event_type="pre_mutation_cancelled",
+                    error_code=("superseded" if not current else "dependency_changed"),
+                    error=(
+                        "local_notification_task_is_stale"
+                        if not current
+                        else "local_notification_dependency_changed"
+                    ),
+                )
+                return None
+            updated = db.execute(
+                """
+                update feishu_local_notifications
+                set mutation_started_at=?, updated_at=current_timestamp
+                where id=? and app_id=? and status='sending'
+                  and lease_token=? and mutation_started_at=''
+                """,
+                (started_at, notification_id, app_id, lease_token),
+            )
+            if updated.rowcount != 1:
+                raise ValueError(
+                    "Feishu local notification mutation fence lost atomic race"
+                )
+            current_row = db.execute(
+                "select * from feishu_local_notifications where id=?",
+                (notification_id,),
+            ).fetchone()
+            self._append_feishu_audit_event(
+                db,
+                app_id=app_id,
+                entity_type="local_notification",
+                entity_id=notification_id,
+                event_type="mutation_started",
+                previous_state="sending",
+                new_state="sending",
+                actor="local-notification-worker",
+            )
+            return self._feishu_local_notification_from_row(current_row)
+
+    def validate_feishu_local_notification_for_send(
+        self,
+        notification_id: int,
+        *,
+        app_id: str,
+        lease_token: str,
+    ) -> FeishuLocalNotification:
+        if not app_id.strip() or not lease_token.strip():
+            raise ValueError("Feishu local notification send lease is required")
+        with self._connect() as db:
+            row = db.execute(
+                "select * from feishu_local_notifications where id=?",
+                (notification_id,),
+            ).fetchone()
+            if row is None:
+                raise ValueError("Feishu local notification not found")
+            if row["app_id"] != app_id:
+                raise PermissionError("Feishu local notification App ID mismatch")
+            if row["status"] != "sending" or row["lease_token"] != lease_token:
+                raise ValueError("Feishu local notification lease is no longer active")
+            if not row["mutation_started_at"]:
+                raise ValueError("Feishu local notification mutation has not started")
+            return self._feishu_local_notification_from_row(row)
+
+    def transition_feishu_local_notification(
+        self,
+        notification_id: int,
+        *,
+        app_id: str,
+        lease_token: str,
+        to_status: str,
+        error_code: str = "",
+        error: str = "",
+        available_at: str = "",
+        audit_event_type: str = "",
+    ) -> FeishuLocalNotification:
+        if to_status not in {
+            "sent",
+            "retry",
+            "result_unknown",
+            "failed",
+        }:
+            raise ValueError("invalid Feishu local notification transition")
+        if not app_id.strip() or not lease_token.strip():
+            raise ValueError("Feishu local notification transition lease is required")
+        with self._connect() as db:
+            db.execute("begin immediate")
+            row = db.execute(
+                "select * from feishu_local_notifications where id=?",
+                (notification_id,),
+            ).fetchone()
+            if row is None or row["app_id"] != app_id:
+                raise ValueError("Feishu local notification not found")
+            if row["status"] != "sending" or row["lease_token"] != lease_token:
+                raise ValueError("Feishu local notification lease is no longer active")
+            if not row["mutation_started_at"]:
+                raise ValueError("Feishu local notification mutation has not started")
+            if to_status == "retry" and error_code != "local_notification_not_started":
+                raise ValueError("local notification retry requires proven non-start")
+            if to_status == "failed" and error_code != "local_notification_not_started":
+                raise ValueError("local notification failure requires proven non-start")
+            if to_status == "result_unknown" and error_code not in {
+                "send_timeout",
+                "unknown",
+            }:
+                raise ValueError("local notification uncertainty code is invalid")
+            safe_error = safe_observability_error(error)[:512]
+            updated = db.execute(
+                """
+                update feishu_local_notifications
+                set status=?, lease_token='', locked_at='', available_at=?,
+                    mutation_started_at=case
+                      when ?='retry' then '' else mutation_started_at end,
+                    error_code=?, error=?,
+                    sent_at=case when ?='sent' then current_timestamp else sent_at end,
+                    updated_at=current_timestamp
+                where id=? and app_id=? and status='sending' and lease_token=?
+                """,
+                (
+                    to_status,
+                    available_at,
+                    to_status,
+                    error_code,
+                    safe_error,
+                    to_status,
+                    notification_id,
+                    app_id,
+                    lease_token,
+                ),
+            )
+            if updated.rowcount != 1:
+                raise ValueError(
+                    "Feishu local notification transition lost atomic race"
+                )
+            current = db.execute(
+                "select * from feishu_local_notifications where id=?",
+                (notification_id,),
+            ).fetchone()
+            self._append_feishu_audit_event(
+                db,
+                app_id=app_id,
+                entity_type="local_notification",
+                entity_id=notification_id,
+                event_type=audit_event_type or to_status,
+                previous_state="sending",
+                new_state=to_status,
+                actor="local-notification-worker",
+                detail=(f"error_code={error_code}" if error_code else ""),
+            )
+            return self._feishu_local_notification_from_row(current)
+
+    def recover_stale_feishu_local_notifications(
+        self,
+        *,
+        app_id: str,
+        stale_after_seconds: int,
+        now: datetime | None = None,
+    ) -> int:
+        if not app_id.strip() or stale_after_seconds <= 0:
+            raise ValueError("invalid Feishu local notification recovery scope")
+        current = now or datetime.now(timezone.utc)
+        if current.tzinfo is None:
+            current = current.astimezone()
+        cutoff = (current - timedelta(seconds=stale_after_seconds)).isoformat()
+        with self._connect() as db:
+            db.execute("begin immediate")
+            rows = db.execute(
+                """
+                select * from feishu_local_notifications
+                where app_id=? and status='sending'
+                  and (locked_at='' or datetime(locked_at)<=datetime(?))
+                order by id limit 100
+                """,
+                (app_id, cutoff),
+            ).fetchall()
+            recovered = 0
+            for row in rows:
+                mutation_started = bool(row["mutation_started_at"])
+                if self._set_feishu_local_notification_state_db(
+                    db,
+                    row,
+                    status=("result_unknown" if mutation_started else "retry"),
+                    event_type=(
+                        "stale_mutation_result_unknown"
+                        if mutation_started
+                        else "stale_claim_recovered"
+                    ),
+                    error_code=(
+                        "unknown" if mutation_started else "stale_claim_recovered"
+                    ),
+                    error=(
+                        "local_notification_result_unknown"
+                        if mutation_started
+                        else "local_notification_stale_claim_recovered"
+                    ),
+                    actor="local-notification-recovery",
+                ):
+                    recovered += 1
+            return recovered
+
     def get_feishu_delivery_for_task(
         self, reply_task_id: int
     ) -> FeishuDelivery | None:
@@ -5138,6 +11134,7 @@ class AutoReplyStore:
         *,
         app_id: str,
         approved_by: str,
+        expected_approval_hash: str,
         now: str = "",
     ) -> FeishuDelivery:
         """Durably approve one delivery without opening a network client.
@@ -5150,6 +11147,14 @@ class AutoReplyStore:
             raise ValueError("Feishu delivery approval requires app_id")
         if not approved_by.strip():
             raise ValueError("Feishu delivery approval requires approved_by")
+        if (
+            len(expected_approval_hash) != 64
+            or any(
+                character not in "0123456789abcdef"
+                for character in expected_approval_hash
+            )
+        ):
+            raise ValueError("Feishu delivery approval hash is invalid")
         approved_at = now or datetime.now().astimezone().isoformat()
         with self._connect() as db:
             db.execute("begin immediate")
@@ -5163,6 +11168,8 @@ class AutoReplyStore:
             self._validate_feishu_delivery_binding(
                 db, current, require_target_identity=True
             )
+            if current["approval_hash"] != expected_approval_hash:
+                raise ValueError("Feishu delivery approval hash changed")
             if current["status"] not in {"ready_to_send", "retry"}:
                 raise ValueError("Feishu delivery is not approvable")
             if current["approved_at"]:
@@ -5172,9 +11179,15 @@ class AutoReplyStore:
                 update feishu_deliveries
                 set approved_at=?, approved_by=?, updated_at=current_timestamp
                 where id=? and app_id=? and status in ('ready_to_send', 'retry')
-                  and approved_at=''
+                  and approved_at='' and approval_hash=?
                 """,
-                (approved_at, approved_by.strip(), delivery_id, app_id),
+                (
+                    approved_at,
+                    approved_by.strip(),
+                    delivery_id,
+                    app_id,
+                    expected_approval_hash,
+                ),
             )
             if cursor.rowcount != 1:
                 raise ValueError("Feishu delivery approval lost atomic race")
@@ -5337,6 +11350,17 @@ class AutoReplyStore:
             ).fetchone()
             if conversation_busy is not None:
                 return None
+            action_busy = db.execute(
+                """
+                select 1 from feishu_message_actions
+                where app_id=? and chat_id=?
+                  and status in ('sending', 'result_unknown')
+                limit 1
+                """,
+                (row["app_id"], row["chat_id"]),
+            ).fetchone()
+            if action_busy is not None:
+                return None
             locked_at = now or datetime.now().astimezone().isoformat()
             lease_token = uuid4().hex
             cursor = db.execute(
@@ -5411,6 +11435,12 @@ class AutoReplyStore:
                       and active.chat_id=candidate.chat_id
                       and active.status='sending'
                   )
+                  and not exists (
+                    select 1 from feishu_message_actions as action_blocker
+                    where action_blocker.app_id=candidate.app_id
+                      and action_blocker.chat_id=candidate.chat_id
+                      and action_blocker.status in ('sending', 'result_unknown')
+                  )
                   and candidate.id=(
                     select min(head.id) from feishu_deliveries as head
                     where head.app_id=candidate.app_id
@@ -5484,18 +11514,23 @@ class AutoReplyStore:
         from_statuses: tuple[str, ...] | list[str] | set[str],
         to_status: str,
         feishu_message_id: str = "",
+        message_ids: tuple[str, ...] | list[str] = (),
         request_log_id: str = "",
         error_code: str = "",
         error: str = "",
         available_at: str = "",
         locked_at: str = "",
+        remote_failures: int | None = None,
         app_id: str = "",
         actor: str = "sender",
         audit_event_type: str = "",
         clear_approval: bool = False,
+        rotate_review_generation: bool = False,
         audit_detail: str = "",
         required_error_code: str = "",
         expected_lease_token: str = "",
+        fill_request_log_id_only: bool = False,
+        verify_receipt_prefix_extension: bool = False,
     ) -> FeishuDelivery:
         """Compare-and-swap a delivery while preserving its idempotency key."""
         sources = tuple(from_statuses)
@@ -5514,6 +11549,7 @@ class AutoReplyStore:
         if "send_unknown" in sources:
             expected_event = {
                 "sent": "unknown_verified_sent",
+                "retry": "unknown_verified_partial",
                 "failed": "unknown_verified_not_sent",
             }.get(to_status)
             if not expected_event or audit_event_type != expected_event:
@@ -5524,8 +11560,59 @@ class AutoReplyStore:
             audit_event_type == "requeued_after_verification"
             and required_error_code == "verified_not_sent"
             and clear_approval
+            and rotate_review_generation
         ):
             raise ValueError("failed delivery requires verified requeue workflow")
+        if rotate_review_generation and not (
+            "failed" in sources
+            and to_status == "retry"
+            and audit_event_type == "requeued_after_verification"
+            and required_error_code == "verified_not_sent"
+            and clear_approval
+        ):
+            raise ValueError(
+                "Feishu delivery review generation rotation is not allowed"
+            )
+        if verify_receipt_prefix_extension and not (
+            "send_unknown" in sources
+            and to_status in {"sent", "retry"}
+            and audit_event_type
+            in {"unknown_verified_sent", "unknown_verified_partial"}
+        ):
+            raise ValueError(
+                "Feishu delivery receipt-prefix verification is not allowed"
+            )
+        normalized_message_ids = self._normalize_feishu_delivery_message_ids(
+            message_ids
+        )
+        normalized_primary = feishu_message_id.strip()
+        if feishu_message_id and normalized_primary != feishu_message_id:
+            raise ValueError("Feishu delivery message ID is invalid")
+        if normalized_primary and (
+            len(normalized_primary) > 512
+            or any(ord(character) < 32 for character in normalized_primary)
+        ):
+            raise ValueError("Feishu delivery message ID is invalid")
+        if normalized_message_ids:
+            if normalized_primary and normalized_primary != normalized_message_ids[0]:
+                raise ValueError(
+                    "Feishu delivery primary message ID does not match receipts"
+                )
+            normalized_primary = normalized_message_ids[0]
+        normalized_request_log_id = request_log_id.strip()
+        if request_log_id and (
+            request_log_id != normalized_request_log_id
+            or len(normalized_request_log_id) > 256
+            or any(
+                ord(character) < 32
+                for character in normalized_request_log_id
+            )
+        ):
+            raise ValueError("Feishu delivery request log ID is invalid")
+        if remote_failures is not None and (
+            isinstance(remote_failures, bool) or remote_failures < 0
+        ):
+            raise ValueError("Feishu delivery remote failures is invalid")
         placeholders = ",".join("?" for _ in sources)
         with self._connect() as db:
             db.execute("begin immediate")
@@ -5544,6 +11631,42 @@ class AutoReplyStore:
                 raise ValueError(
                     "Feishu delivery status changed: "
                     f"expected {sources}, found {current['status']}"
+                )
+            if rotate_review_generation:
+                recall_blocker = db.execute(
+                    """
+                    select 1
+                    from feishu_delivery_receipts as receipts
+                    join feishu_message_actions as actions
+                      on actions.app_id=receipts.app_id
+                     and actions.target_message_id=receipts.message_id
+                    where receipts.delivery_id=?
+                      and actions.kind='recall_message'
+                      and actions.status in (
+                        'ready', 'retry', 'sending', 'result_unknown'
+                      )
+                    limit 1
+                    """,
+                    (delivery_id,),
+                ).fetchone()
+                if recall_blocker is not None:
+                    raise ValueError(
+                        "Feishu delivery has an open recall action"
+                    )
+            legacy_plan_unverifiable = (
+                current["error_code"] == "legacy_chunk_plan_unverifiable"
+            )
+            if (
+                current["status"] == "send_unknown"
+                and legacy_plan_unverifiable
+                and not (
+                    to_status == "failed"
+                    and error_code == "verified_unresumable_not_sent"
+                    and audit_event_type == "unknown_verified_not_sent"
+                )
+            ):
+                raise ValueError(
+                    "legacy Feishu chunk plan cannot be resumed or requeued"
                 )
             if current["status"] == "sending":
                 if to_status == "retry" and error_code not in (
@@ -5564,13 +11687,125 @@ class AutoReplyStore:
                     raise ValueError(
                         "Feishu send_unknown requires an uncertain send error"
                     )
-            resulting_message_id = feishu_message_id or current["feishu_message_id"]
+            resulting_message_id = normalized_primary or current["feishu_message_id"]
             if to_status == "sent" and not resulting_message_id:
                 raise ValueError("sent Feishu delivery requires feishu_message_id")
-            resulting_log_id = request_log_id or current["request_log_id"]
+            receipt_message_ids = normalized_message_ids
+            if to_status == "sent" and not receipt_message_ids:
+                receipt_message_ids = (resulting_message_id,)
+            expected_chunks = int(current["expected_chunks"] or 0)
+            if verify_receipt_prefix_extension:
+                if legacy_plan_unverifiable:
+                    raise ValueError(
+                        "legacy Feishu chunk plan cannot be reconciled as sent"
+                    )
+                if current["error"] == "sdk_returned_unplanned_wire_chunks":
+                    raise ValueError(
+                        "unplanned Feishu wire chunks cannot be reconciled as "
+                        "the planned delivery"
+                    )
+                durable_prefix = tuple(
+                    str(receipt["message_id"])
+                    for receipt in db.execute(
+                        """
+                        select message_id
+                        from feishu_delivery_receipts
+                        where delivery_id=? order by ordinal
+                        """,
+                        (delivery_id,),
+                    ).fetchall()
+                )
+                if (
+                    len(receipt_message_ids) != len(durable_prefix) + 1
+                    or receipt_message_ids[:-1] != durable_prefix
+                ):
+                    raise ValueError(
+                        "verified Feishu delivery must extend the durable "
+                        "receipt prefix by exactly one message ID"
+                    )
+                if (
+                    to_status == "retry"
+                    and not _feishu_unknown_allows_one_chunk_verification(
+                        current
+                    )
+                ):
+                    raise ValueError(
+                        "Feishu delivery uncertainty is not safely resumable"
+                    )
+            if to_status == "sent" and len(receipt_message_ids) != expected_chunks:
+                raise ValueError(
+                    "sent Feishu delivery requires the complete ordered chunk set"
+                )
+            if len(receipt_message_ids) > expected_chunks:
+                raise ValueError("Feishu delivery receipts exceed the chunk plan")
+            existing_log_id = str(current["request_log_id"] or "")
+            if fill_request_log_id_only:
+                if (
+                    existing_log_id
+                    and normalized_request_log_id
+                    and existing_log_id != normalized_request_log_id
+                ):
+                    raise ValueError(
+                        "Feishu delivery reconciliation request log ID conflicts"
+                    )
+                resulting_log_id = existing_log_id or normalized_request_log_id
+            else:
+                resulting_log_id = normalized_request_log_id or existing_log_id
+            has_durable_receipt = db.execute(
+                """
+                select 1 from feishu_delivery_receipts
+                where delivery_id=? limit 1
+                """,
+                (delivery_id,),
+            ).fetchone() is not None
+            next_mutation_started_at = str(
+                current["mutation_started_at"] or ""
+            )
+            if (
+                to_status == "retry"
+                and not has_durable_receipt
+                and not receipt_message_ids
+            ):
+                # Every retry without a receipt is backed by confirmed
+                # non-delivery, so a future lease must acquire a fresh fence.
+                next_mutation_started_at = ""
+            elif (
+                not next_mutation_started_at
+                and (
+                    has_durable_receipt
+                    or receipt_message_ids
+                    or to_status in {"sent", "send_unknown"}
+                )
+            ):
+                next_mutation_started_at = (
+                    datetime.now().astimezone().isoformat()
+                )
             next_locked_at = ""
             next_lease_token = ""
             increment_attempt = 0
+            next_remote_failures = (
+                int(current["remote_failures"])
+                if remote_failures is None
+                else int(remote_failures)
+            )
+            next_review_generation = int(current["review_generation"])
+            next_approval_hash = str(current["approval_hash"])
+            if rotate_review_generation:
+                next_review_generation += 1
+                (
+                    frozen_expected_chunks,
+                    frozen_plan_hash,
+                    next_approval_hash,
+                ) = self._feishu_delivery_approval_values(
+                    current, review_generation=next_review_generation
+                )
+                if (
+                    frozen_expected_chunks != int(current["expected_chunks"])
+                    or frozen_plan_hash != current["chunk_plan_sha256"]
+                ):
+                    raise ValueError(
+                        "Feishu delivery chunk plan changed before requeue"
+                    )
             if to_status == "sending":
                 next_locked_at = (
                     locked_at or datetime.now().astimezone().isoformat()
@@ -5582,9 +11817,12 @@ class AutoReplyStore:
                 f"""
                 update feishu_deliveries
                 set status=?, feishu_message_id=?, request_log_id=?,
-                    attempts=attempts + ?, lease_token=?, locked_at=?,
+                    attempts=attempts + ?, remote_failures=?,
+                    lease_token=?, locked_at=?,
+                    mutation_started_at=?,
                     available_at=?,
                     error_code=?, error=?,
+                    review_generation=?, approval_hash=?,
                     approved_at=case when ? then '' else approved_at end,
                     approved_by=case when ? then '' else approved_by end,
                     updated_at=current_timestamp
@@ -5596,11 +11834,15 @@ class AutoReplyStore:
                     resulting_message_id,
                     resulting_log_id,
                     increment_attempt,
+                    next_remote_failures,
                     next_lease_token,
                     next_locked_at,
+                    next_mutation_started_at,
                     available_at,
                     error_code,
                     error,
+                    next_review_generation,
+                    next_approval_hash,
                     int(clear_approval),
                     int(clear_approval),
                     delivery_id,
@@ -5613,6 +11855,16 @@ class AutoReplyStore:
             row = db.execute(
                 "select * from feishu_deliveries where id=?", (delivery_id,)
             ).fetchone()
+            if receipt_message_ids:
+                self._persist_feishu_delivery_receipts(
+                    db,
+                    row,
+                    receipt_message_ids,
+                    allow_existing_prefix=(
+                        current["status"] == "send_unknown"
+                        and to_status in {"sent", "retry"}
+                    ),
+                )
             self._sync_feishu_attempt_from_delivery(db, row)
             self._append_feishu_audit_event(
                 db,
@@ -5649,6 +11901,7 @@ class AutoReplyStore:
         delivery_id: int,
         *,
         feishu_message_id: str,
+        message_ids: tuple[str, ...] | list[str] = (),
         request_log_id: str = "",
     ) -> FeishuDelivery:
         return self.transition_feishu_delivery(
@@ -5656,6 +11909,7 @@ class AutoReplyStore:
             from_statuses=("sending",),
             to_status="sent",
             feishu_message_id=feishu_message_id,
+            message_ids=message_ids,
             request_log_id=request_log_id,
         )
 
@@ -5755,13 +12009,16 @@ class AutoReplyStore:
         verified_by: str,
         evidence_kind: str,
         feishu_message_id: str = "",
+        message_ids: tuple[str, ...] | list[str] = (),
+        expected_chunks: int = 0,
         request_log_id: str = "",
     ) -> FeishuDelivery:
         """Resolve one uncertain send from independently verified evidence.
 
-        Only a closed evidence-kind enum is persisted.  A verified non-delivery
-        becomes ``failed`` and
-        requires a separate requeue plus a fresh approval before another send.
+        Only a closed evidence-kind enum is persisted.  A verified prefix is
+        either complete (``sent``) or safely resumed from its suffix
+        (``retry``).  A verified non-delivery becomes ``failed`` and requires
+        a separate requeue plus a fresh approval before another send.
         """
         normalized = outcome.strip().lower().replace("-", "_")
         if normalized not in {"sent", "not_sent"}:
@@ -5774,31 +12031,88 @@ class AutoReplyStore:
                 "Feishu reconciliation requires app_id and verified_by"
             )
         detail = f"evidence_kind={normalized_evidence}"
+        current = self.get_feishu_delivery(delivery_id)
+        if current is None:
+            raise ValueError("Feishu delivery not found")
+        if current.app_id != app_id.strip():
+            raise PermissionError(
+                "Feishu delivery App ID does not match runtime"
+            )
         if normalized == "sent":
-            if not feishu_message_id.strip():
-                raise ValueError("verified sent outcome requires Feishu message ID")
+            if feishu_message_id.strip() and message_ids:
+                raise ValueError(
+                    "verified sent outcome must use one message ID input form"
+                )
+            verified_ids = self._normalize_feishu_delivery_message_ids(
+                message_ids
+                if message_ids
+                else ((feishu_message_id.strip(),) if feishu_message_id.strip() else ())
+            )
+            supplied_expected = expected_chunks or (
+                1 if feishu_message_id.strip() and not message_ids else 0
+            )
+            if supplied_expected != current.expected_chunks:
+                raise ValueError(
+                    "verified sent outcome expected chunk count does not match"
+                )
+            if not verified_ids or len(verified_ids) > supplied_expected:
+                raise ValueError(
+                    "verified sent outcome requires an ordered chunk prefix"
+                )
+            complete = len(verified_ids) == supplied_expected
             return self.transition_feishu_delivery(
                 delivery_id,
                 from_statuses=("send_unknown",),
-                to_status="sent",
-                feishu_message_id=feishu_message_id.strip(),
+                to_status=("sent" if complete else "retry"),
+                feishu_message_id=verified_ids[0],
+                message_ids=verified_ids,
                 request_log_id=request_log_id.strip(),
+                remote_failures=0,
+                fill_request_log_id_only=True,
+                verify_receipt_prefix_extension=True,
                 app_id=app_id.strip(),
                 actor=verified_by.strip(),
-                audit_event_type="unknown_verified_sent",
-                audit_detail=detail,
+                audit_event_type=(
+                    "unknown_verified_sent"
+                    if complete
+                    else "unknown_verified_partial"
+                ),
+                audit_detail=(
+                    f"{detail};verified_prefix={len(verified_ids)}/"
+                    f"{supplied_expected}"
+                ),
             )
-        if feishu_message_id.strip():
+        if feishu_message_id.strip() or message_ids or expected_chunks:
             raise ValueError(
-                "verified not-sent outcome must not include Feishu message ID"
+                "verified not-sent outcome must not include chunk results"
             )
+        structurally_unresumable = not (
+            current.error_code != "legacy_chunk_plan_unverifiable"
+            and _feishu_unknown_allows_one_chunk_verification(
+                {
+                    "error_code": current.error_code,
+                    "error": current.error,
+                }
+            )
+        )
+        terminal_error_code = (
+            "verified_unresumable_not_sent"
+            if structurally_unresumable
+            else "verified_not_sent"
+        )
         return self.transition_feishu_delivery(
             delivery_id,
             from_statuses=("send_unknown",),
             to_status="failed",
             request_log_id=request_log_id.strip(),
-            error_code="verified_not_sent",
-            error="manual_verification_confirmed_not_sent",
+            remote_failures=0,
+            fill_request_log_id_only=True,
+            error_code=terminal_error_code,
+            error=(
+                "manual_verification_closed_unresumable_delivery"
+                if structurally_unresumable
+                else "manual_verification_confirmed_not_sent"
+            ),
             app_id=app_id.strip(),
             actor=verified_by.strip(),
             audit_event_type=f"unknown_verified_{normalized}",
@@ -5836,6 +12150,9 @@ class AutoReplyStore:
         self.validate_feishu_delivery_for_send(
             delivery_id, app_id=app_id.strip()
         )
+        self.validate_feishu_delivery_receipt_prefix(
+            delivery_id, app_id=app_id.strip()
+        )
         return self.transition_feishu_delivery(
             delivery_id,
             from_statuses=("failed",),
@@ -5843,10 +12160,12 @@ class AutoReplyStore:
             error_code="",
             error="",
             available_at=normalized_available_at,
+            remote_failures=0,
             app_id=app_id.strip(),
             actor=verified_by.strip(),
             audit_event_type="requeued_after_verification",
             clear_approval=True,
+            rotate_review_generation=True,
             audit_detail=f"evidence_kind={normalized_evidence}",
             required_error_code="verified_not_sent",
         )

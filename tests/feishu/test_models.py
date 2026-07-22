@@ -3,6 +3,7 @@ from pydantic import ValidationError
 
 from app.feishu.models import (
     FeishuDelivery,
+    FeishuDeliveryReceipt,
     FeishuInboundMessage,
     FeishuReplyScope,
 )
@@ -71,3 +72,31 @@ def test_delivery_exposes_durable_retry_and_idempotency_fields():
 
     assert delivery.status == "ready_to_send"
     assert delivery.available_at.endswith("+08:00")
+
+
+def test_delivery_rich_fields_and_receipt_are_immutable():
+    delivery = FeishuDelivery(
+        id=1,
+        reply_task_id=2,
+        attempt_id=3,
+        app_id="cli_a",
+        chat_id="oc_a",
+        reply_to_message_id="om_trigger",
+        reply_text="# Markdown",
+        reply_format="post",
+        mention_open_ids=("ou_a",),
+        payload_sha256="a" * 64,
+        idempotency_key="stable",
+    )
+    receipt = FeishuDeliveryReceipt(
+        id=1,
+        delivery_id=delivery.id,
+        app_id=delivery.app_id,
+        ordinal=0,
+        message_id="om_chunk",
+    )
+    assert delivery.reply_format == "post"
+    assert delivery.mention_open_ids == ("ou_a",)
+    assert receipt.status == "active"
+    with pytest.raises(ValidationError):
+        receipt.message_id = "changed"

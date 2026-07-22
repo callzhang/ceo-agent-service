@@ -2439,6 +2439,7 @@ def run_task_maintenance_loop(
                 maintenance_result = purge_expired_feishu_events(
                     local_store,
                     retention_days=_cfg.feishu_event_retention_days(),
+                    media_retention_days=_cfg.feishu_media_retention_days(),
                     app_id="",
                 )
                 if maintenance_result.more_may_remain:

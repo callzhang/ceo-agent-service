@@ -17,9 +17,31 @@ KEYRING_USERNAME = "app_secret"
 REQUIRED_TENANT_SCOPES = (
     "im:message.p2p_msg:readonly",
     "im:message.group_at_msg:readonly",
-    "im:message:send_as_bot",
 )
 REQUIRED_EVENTS = ("im.message.receive_v1",)
+OPTIONAL_TENANT_SCOPE_GROUPS = {
+    # The outbound runtime performs a final target-state lookup before ordinary
+    # replies.  Operators must grant this complete group before opening either
+    # outbound gate, rather than enabling send-only permission in isolation.
+    "reply_send": (
+        "im:message:send_as_bot",
+        "im:message:readonly",
+    ),
+    # Reading a message again is required for attachment resolution and the
+    # pre-send recalled-trigger guard.  Media-only receive deployments may
+    # request it without granting bot send permission.
+    "rich_message_read": ("im:message:readonly",),
+    "emoji_reaction": ("im:message.reactions:write_only",),
+    "recall_bot_message": ("im:message:recall",),
+}
+
+# The current adapter neither consumes every group message nor uploads outbound
+# media.  Keep these visible for operator clarity, but never present them as
+# optional capabilities that should be granted.
+UNSUPPORTED_NOT_TO_GRANT_SCOPE_GROUPS = {
+    "all_group_messages": ("im:message.group_msg",),
+    "outbound_media_upload": ("im:resource",),
+}
 
 
 @dataclass(frozen=True)
@@ -62,11 +84,15 @@ def dependency_status() -> FeishuDependencyStatus:
     )
 
 
-def registration_manifest() -> dict[str, tuple[str, ...] | bool]:
+def registration_manifest() -> dict[
+    str, tuple[str, ...] | bool | dict[str, tuple[str, ...]]
+]:
     """The exact least-privilege manifest for manual or official registration."""
     return {
         "tenant_scopes": REQUIRED_TENANT_SCOPES,
         "events": REQUIRED_EVENTS,
+        "optional_scope_groups": OPTIONAL_TENANT_SCOPE_GROUPS,
+        "unsupported_not_to_grant": UNSUPPORTED_NOT_TO_GRANT_SCOPE_GROUPS,
         "addons_preset": False,
     }
 
