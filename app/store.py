@@ -245,6 +245,21 @@ class UserFeedbackItem(BaseModel):
     updated_at: str = ""
 
 
+class ServiceBugfixCandidate(BaseModel):
+    id: int
+    feedback_event_key: str
+    feedback_token: str = ""
+    attempt_id: int = 0
+    status: str = "pending"
+    title: str
+    reason: str
+    feedback_comment: str
+    conversation_title: str = ""
+    trigger_text: str = ""
+    created_at: str
+    updated_at: str
+
+
 class ConversationRecord(BaseModel):
     conversation_id: str
     title: str
@@ -449,6 +464,22 @@ class AutoReplyStore:
                 );
                 create index if not exists idx_feedback_events_token
                     on feedback_events(feedback_token, received_at);
+                create table if not exists service_bugfix_candidates (
+                    id integer primary key autoincrement,
+                    feedback_event_key text not null unique,
+                    feedback_token text not null default '',
+                    attempt_id integer not null default 0,
+                    status text not null default 'pending',
+                    title text not null,
+                    reason text not null,
+                    feedback_comment text not null,
+                    conversation_title text not null default '',
+                    trigger_text text not null default '',
+                    created_at text not null default current_timestamp,
+                    updated_at text not null default current_timestamp
+                );
+                create index if not exists idx_service_bugfix_candidates_status
+                    on service_bugfix_candidates(status, created_at);
                 create table if not exists errors (
                     id integer primary key autoincrement,
                     conversation_id text,
@@ -975,8 +1006,6 @@ class AutoReplyStore:
                     on follow_up_drafts(owner_user_id, sent_at, id);
                 create index if not exists idx_follow_up_drafts_conversation_sent
                     on follow_up_drafts(target_conversation_id, sent_at, id);
-                create index if not exists idx_follow_up_drafts_history_updated
-                    on follow_up_drafts(updated_at, id);
                 create table if not exists daily_scan_state (
                     scanner_name text primary key,
                     last_success_at text not null default '',
@@ -1034,6 +1063,31 @@ class AutoReplyStore:
                     db.execute(
                         f"alter table feedback_events add column {column} {definition}"
                     )
+
+            db.execute(
+                """
+                create table if not exists service_bugfix_candidates (
+                    id integer primary key autoincrement,
+                    feedback_event_key text not null unique,
+                    feedback_token text not null default '',
+                    attempt_id integer not null default 0,
+                    status text not null default 'pending',
+                    title text not null,
+                    reason text not null,
+                    feedback_comment text not null,
+                    conversation_title text not null default '',
+                    trigger_text text not null default '',
+                    created_at text not null default current_timestamp,
+                    updated_at text not null default current_timestamp
+                )
+                """
+            )
+            db.execute(
+                """
+                create index if not exists idx_service_bugfix_candidates_status
+                on service_bugfix_candidates(status, created_at)
+                """
+            )
 
             reply_attempt_columns = {
                 row["name"]
@@ -4877,6 +4931,129 @@ class AutoReplyStore:
                 result.setdefault(event.feedback_token, []).append(event)
             return result
 
+    def create_service_bugfix_candidate(
+        self,
+        *,
+        feedback_event_key: str,
+        feedback_token: str = "",
+        attempt_id: int = 0,
+        title: str,
+        reason: str,
+        feedback_comment: str,
+        conversation_title: str = "",
+        trigger_text: str = "",
+    ) -> ServiceBugfixCandidate | None:
+        cleaned_key = feedback_event_key.strip()
+        if not cleaned_key:
+            return None
+        with self._connect() as db:
+            cursor = db.execute(
+                """
+                insert or ignore into service_bugfix_candidates (
+                    feedback_event_key,
+                    feedback_token,
+                    attempt_id,
+                    title,
+                    reason,
+                    feedback_comment,
+                    conversation_title,
+                    trigger_text
+                )
+                values (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    cleaned_key,
+                    feedback_token,
+                    max(0, int(attempt_id)),
+                    title,
+                    reason,
+                    feedback_comment,
+                    conversation_title,
+                    trigger_text,
+                ),
+            )
+            if cursor.rowcount != 1:
+                return None
+            row = db.execute(
+                """
+                select *
+                from service_bugfix_candidates
+                where feedback_event_key=?
+                """,
+                (cleaned_key,),
+            ).fetchone()
+            return ServiceBugfixCandidate.model_validate(dict(row)) if row else None
+
+    def create_service_bugfix_candidate_for_feedback_event(
+        self,
+        event: FeedbackEvent,
+        *,
+        title: str,
+        reason: str,
+    ) -> ServiceBugfixCandidate | None:
+        with self._connect() as db:
+            row = db.execute(
+                """
+                select
+                    coalesce(ra.id, 0) as attempt_id,
+                    coalesce(ra.conversation_title, '') as conversation_title,
+                    coalesce(ra.trigger_text, '') as trigger_text
+                from feedback_events fe
+                left join sent_replies sr
+                    on sr.feedback_token = fe.feedback_token
+                left join reply_attempts ra
+                    on ra.conversation_id = sr.conversation_id
+                   and ra.trigger_message_id = sr.trigger_message_id
+                where fe.key=?
+                order by ra.id desc
+                limit 1
+                """,
+                (event.key,),
+            ).fetchone()
+        return self.create_service_bugfix_candidate(
+            feedback_event_key=event.key,
+            feedback_token=event.feedback_token,
+            attempt_id=int(row["attempt_id"] or 0) if row else 0,
+            title=title,
+            reason=reason,
+            feedback_comment=event.comment,
+            conversation_title=str(row["conversation_title"] or "") if row else "",
+            trigger_text=str(row["trigger_text"] or "") if row else "",
+        )
+
+    def list_service_bugfix_candidates(
+        self,
+        *,
+        status: str | None = None,
+        limit: int = 50,
+    ) -> list[ServiceBugfixCandidate]:
+        filters: list[str] = []
+        args: list[object] = []
+        if status is not None:
+            filters.append("status=?")
+            args.append(status)
+        query = "select * from service_bugfix_candidates"
+        if filters:
+            query = f"{query} where {' and '.join(filters)}"
+        query = f"{query} order by created_at desc, id desc limit ?"
+        args.append(max(1, limit))
+        with self._connect() as db:
+            rows = db.execute(query, args).fetchall()
+            return [ServiceBugfixCandidate.model_validate(dict(row)) for row in rows]
+
+    def count_service_bugfix_candidates(self, *, status: str | None = None) -> int:
+        filters: list[str] = []
+        args: list[object] = []
+        if status is not None:
+            filters.append("status=?")
+            args.append(status)
+        query = "select count(*) as count from service_bugfix_candidates"
+        if filters:
+            query = f"{query} where {' and '.join(filters)}"
+        with self._connect() as db:
+            row = db.execute(query, args).fetchone()
+            return int(row["count"] if row else 0)
+
     def list_user_feedback_items(
         self, limit: int = 200, offset: int = 0
     ) -> list[UserFeedbackItem]:
@@ -6274,6 +6451,25 @@ class AutoReplyStore:
                 query = f"{query} limit ?"
                 args = (conversation_id, limit)
             rows = db.execute(query, args).fetchall()
+            return [ReplyAttempt.model_validate(dict(row)) for row in rows]
+
+    def list_oa_attempt_history(
+        self, process_instance_id: str, limit: int = 50
+    ) -> list[ReplyAttempt]:
+        process_id = process_instance_id.strip()
+        if not process_id:
+            return []
+        with self._connect() as db:
+            rows = db.execute(
+                """
+                select *
+                from reply_attempts
+                where oa_process_instance_id=?
+                order by id desc
+                limit ?
+                """,
+                (process_id, max(1, limit)),
+            ).fetchall()
             return [ReplyAttempt.model_validate(dict(row)) for row in rows]
 
     def list_reply_attempts_for_codex_session(

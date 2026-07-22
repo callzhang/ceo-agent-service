@@ -109,6 +109,7 @@ from app.store import (
     OperationLog,
     ReplyAttempt,
     ReplyError,
+    ServiceBugfixCandidate,
     ReplyTask,
     SentReply,
     UserFeedbackItem,
@@ -1632,6 +1633,7 @@ def _top_nav(
         ("tutorial", "Tutorial", "/tutorial"),
         ("tasks", "Tasks", "/tasks"),
         ("user-feedback", "用户反馈", "/user-feedback"),
+        ("service-bugfix", "服务修复", "/service-bugfix-candidates"),
         ("codex", "Codex Sessions", "/codex"),
         ("config", "Config", "/config"),
         ("logs", "Logs", "/logs"),
@@ -3236,6 +3238,7 @@ def render_attempt_list(
         )
     else:
         chart_html = _render_history_chart(store) if include_chart else ""
+        bugfix_html = _pending_service_bugfix_card(store)
         header = _history_table_header(
             base_path="/",
             page=page,
@@ -3247,6 +3250,7 @@ def render_attempt_list(
         )
         body = (
             f"{chart_html}"
+            f"{bugfix_html}"
             f"{header}"
             "<div data-live-search-region=\"history\">"
             f"{session_search_html}"
@@ -3263,6 +3267,21 @@ def render_attempt_list(
         user_feedback_pending_count=(
             store.count_pending_user_feedback_items() if include_feedback_count else 0
         ),
+    )
+
+
+def _pending_service_bugfix_card(store: AutoReplyStore) -> str:
+    pending_count = store.count_service_bugfix_candidates(status="pending")
+    if not pending_count:
+        return ""
+    label = "99+" if pending_count > 99 else str(pending_count)
+    return (
+        "<section class=\"card compact-card feedback-card\">"
+        "<div class=\"card-head\"><h2>待处理服务修复</h2>"
+        f"<a class=\"review-link\" href=\"/service-bugfix-candidates\">查看 {escape(label)}</a>"
+        "</div>"
+        "<p class=\"muted\">来自明确指出本服务 bug、失败或回归的用户反馈。</p>"
+        "</section>"
     )
 
 
@@ -4453,6 +4472,59 @@ def render_user_feedback_list(
     )
 
 
+def render_service_bugfix_candidates(store: AutoReplyStore) -> str:
+    candidates = store.list_service_bugfix_candidates(status="pending", limit=100)
+    rows = "".join(_service_bugfix_candidate_row(candidate) for candidate in candidates)
+    if rows:
+        body = (
+            "<section class=\"card\">"
+            "<div class=\"card-head\"><h2>待处理服务修复</h2></div>"
+            "<table class=\"column-sized-table\"><thead><tr>"
+            "<th>反馈</th><th>来源</th><th>原因</th><th>时间</th>"
+            "</tr></thead><tbody>"
+            f"{rows}"
+            "</tbody></table></section>"
+        )
+    else:
+        body = (
+            "<section class=\"card\"><div class=\"card-head\"><h2>待处理服务修复</h2></div>"
+            "<p class=\"muted\">暂无待处理服务修复。</p></section>"
+        )
+    return render_page(
+        "服务修复",
+        body,
+        active_nav="service-bugfix",
+        user_feedback_pending_count=store.count_pending_user_feedback_items(),
+    )
+
+
+def _service_bugfix_candidate_row(candidate: ServiceBugfixCandidate) -> str:
+    attempt_link = (
+        f"<a class=\"review-link\" href=\"/attempts/{candidate.attempt_id}\">#{candidate.attempt_id}</a>"
+        if candidate.attempt_id
+        else "<span class=\"muted\">未关联</span>"
+    )
+    source = " · ".join(
+        value
+        for value in (
+            candidate.conversation_title,
+            _excerpt(candidate.trigger_text, 120),
+        )
+        if value
+    )
+    return (
+        "<tr>"
+        "<td>"
+        f"<div class=\"user-feedback-comment\">{escape(candidate.title)}</div>"
+        f"<div class=\"user-feedback-context\">{escape(candidate.feedback_comment)}</div>"
+        "</td>"
+        f"<td>{attempt_link}<div class=\"user-feedback-context\">{escape(source)}</div></td>"
+        f"<td>{escape(candidate.reason)}</td>"
+        f"<td>{escape(_format_local_time(candidate.created_at))}</td>"
+        "</tr>"
+    )
+
+
 def _user_feedback_page_head() -> str:
     return (
         "<div class=\"card-head\"><h2>用户反馈</h2>"
@@ -4574,6 +4646,62 @@ def render_attempt_detail(store: AutoReplyStore, attempt_id: int) -> tuple[int, 
         ),
         active_nav="history",
         user_feedback_pending_count=store.count_pending_user_feedback_items(),
+    )
+
+
+def render_oa_approval_detail(
+    store: AutoReplyStore,
+    process_instance_id: str,
+) -> tuple[int, str]:
+    history = store.list_oa_attempt_history(process_instance_id, limit=50)
+    if not history:
+        return 404, render_page(
+            "OA approval not found",
+            "<section class=\"card\"><h2>OA approval not found</h2>"
+            f"<p>No stored attempts for process instance {escape(process_instance_id)}.</p></section>",
+            user_feedback_pending_count=store.count_pending_user_feedback_items(),
+        )
+    latest = history[0]
+    fields = [
+        ("process", latest.oa_process_instance_id),
+        ("task", latest.oa_task_id),
+        ("url", latest.oa_url),
+        ("action", latest.oa_action),
+        ("reason", latest.codex_reason or latest.audit_summary),
+        ("comment", latest.oa_remark),
+    ]
+    rows = "".join(
+        f"<div class=\"muted\">{escape(label)}</div><div>{escape(value)}</div>"
+        for label, value in fields
+    )
+    history_rows = "".join(_oa_history_row(attempt) for attempt in history)
+    body = (
+        "<section class=\"card compact-card\"><h2>OA approval</h2>"
+        f"<div class=\"grid\">{rows}</div></section>"
+        "<section class=\"card\"><h2>Attempt history</h2>"
+        "<table class=\"column-sized-table\"><thead><tr>"
+        "<th>Attempt</th><th>Time</th><th>Action</th><th>Comment</th><th>Status</th>"
+        "</tr></thead><tbody>"
+        f"{history_rows}"
+        "</tbody></table></section>"
+    )
+    return 200, render_page(
+        "OA approval",
+        body,
+        user_feedback_pending_count=store.count_pending_user_feedback_items(),
+    )
+
+
+def _oa_history_row(attempt: ReplyAttempt) -> str:
+    return (
+        "<tr>"
+        f"<td><a class=\"review-link\" href=\"/attempts/{attempt.id}\">#{attempt.id}</a></td>"
+        f"<td>{escape(_format_local_time(attempt.created_at))}</td>"
+        f"<td>{escape(attempt.oa_action)}</td>"
+        f"<td>{escape(_excerpt(attempt.oa_remark, 220))}</td>"
+        f"<td><span class=\"pill status-{escape(attempt.send_status)}\">{escape(attempt.send_status)}</span>"
+        f"<div class=\"user-feedback-context\">{escape(attempt.send_error)}</div></td>"
+        "</tr>"
     )
 
 
@@ -5658,6 +5786,10 @@ def create_audit_app(
             page=_positive_int_query(request, "page", default=1),
         )
 
+    @app.get("/service-bugfix-candidates", response_class=HTMLResponse)
+    def service_bugfix_candidates() -> str:
+        return render_service_bugfix_candidates(_audit_store(db_path))
+
     @app.get("/tutorial", response_class=HTMLResponse)
     def tutorial_page() -> str:
         return render_tutorial_page(store=AutoReplyStore(db_path))
@@ -5908,6 +6040,14 @@ def create_audit_app(
     @app.get("/attempts/{attempt_id}", response_class=HTMLResponse)
     def attempt_detail(attempt_id: int) -> HTMLResponse:
         status, html = render_attempt_detail(AutoReplyStore(db_path), attempt_id)
+        return HTMLResponse(html, status_code=status)
+
+    @app.get("/oa-approvals/{process_instance_id:path}", response_class=HTMLResponse)
+    def oa_approval_detail(process_instance_id: str) -> HTMLResponse:
+        status, html = render_oa_approval_detail(
+            AutoReplyStore(db_path),
+            process_instance_id,
+        )
         return HTMLResponse(html, status_code=status)
 
     @app.get("/meeting-attempts/{run_id}", response_class=HTMLResponse)
@@ -6626,6 +6766,13 @@ def _oa_metadata_card(attempt: ReplyAttempt) -> str:
         )
     ):
         return ""
+    process_instance_path = quote(attempt.oa_process_instance_id.strip(), safe="")
+    detail_link = (
+        "<div class=\"muted\">history</div>"
+        f"<div><a class=\"review-link\" href=\"/oa-approvals/{escape(process_instance_path)}\">查看同一审批历史</a></div>"
+        if attempt.oa_process_instance_id.strip()
+        else ""
+    )
     rows = "".join(
         f"<div class=\"muted\">{escape(label)}</div><div>{escape(value)}</div>"
         for label, value in (
@@ -6638,7 +6785,7 @@ def _oa_metadata_card(attempt: ReplyAttempt) -> str:
     )
     return (
         "<section class=\"card compact-card\"><h2>OA approval</h2>"
-        f"<div class=\"grid\">{rows}</div></section>"
+        f"<div class=\"grid\">{rows}{detail_link}</div></section>"
         f"{_json_card('OA action result', attempt.oa_action_result_json)}"
     )
 

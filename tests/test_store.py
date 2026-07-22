@@ -2137,6 +2137,60 @@ def test_missing_service_state_returns_none(tmp_path: Path):
     assert store.get_service_state("missing") is None
 
 
+def test_list_oa_attempt_history_returns_newest_first(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    first_id = store.record_reply_attempt(
+        conversation_id="cid-oa",
+        conversation_title="OA 群",
+        trigger_message_id="msg-1",
+        trigger_sender="Derek",
+        trigger_text="审批 1",
+        action="oa_approval",
+        sensitivity_kind="internal_personnel",
+        codex_reason="退回",
+        draft_reply_text="请补材料",
+        oa_process_instance_id="proc-1",
+        oa_task_id="task-1",
+        oa_action="退回",
+        oa_remark="请补材料",
+        send_status="commented",
+    )
+    second_id = store.record_reply_attempt(
+        conversation_id="cid-oa",
+        conversation_title="OA 群",
+        trigger_message_id="msg-2",
+        trigger_sender="Derek",
+        trigger_text="审批 2",
+        action="oa_approval",
+        sensitivity_kind="internal_personnel",
+        codex_reason="同意",
+        draft_reply_text="同意",
+        oa_process_instance_id="proc-1",
+        oa_task_id="task-2",
+        oa_action="同意",
+        oa_remark="同意",
+        send_status="skipped",
+    )
+    store.record_reply_attempt(
+        conversation_id="cid-other",
+        conversation_title="其他",
+        trigger_message_id="msg-3",
+        trigger_sender="Derek",
+        trigger_text="审批 3",
+        action="oa_approval",
+        sensitivity_kind="internal_personnel",
+        codex_reason="同意",
+        draft_reply_text="同意",
+        oa_process_instance_id="proc-2",
+        send_status="skipped",
+    )
+
+    history = store.list_oa_attempt_history("proc-1")
+
+    assert [attempt.id for attempt in history] == [second_id, first_id]
+    assert store.list_oa_attempt_history("") == []
+
+
 def test_setup_wizard_step_state_round_trips(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
 

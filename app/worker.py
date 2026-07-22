@@ -52,6 +52,7 @@ from app.feedback_spike import (
     prepare_outgoing_reply_text,
 )
 from app.feedback_events import sync_feedback_events_for_sent_replies
+from app.feedback_bugfix import classify_service_bugfix_feedback
 from app.feedback_policy import (
     FEEDBACK_REQUIRED_LINK_PREFIX,
     requires_feedback_block,
@@ -1055,6 +1056,7 @@ class DingTalkAutoReplyWorker:
         oa_url = str(target.get("oa_url") or "").strip()
         oa_action = str(payload["action"]).strip()
         oa_remark = str(payload["remark"]).strip()
+        is_comment_only_action = oa_action == "comment"
         attempt_id = self._record_universal_reply_attempt(
             execution,
             draft_reply_text=oa_remark,
@@ -1072,7 +1074,7 @@ class DingTalkAutoReplyWorker:
 
         trusted_process_id = execution.context.trusted_oa_process_instance_id
         trusted_task_id = execution.context.trusted_oa_task_id
-        if not trusted_process_id or not trusted_task_id:
+        if not trusted_process_id or (not trusted_task_id and not is_comment_only_action):
             return self._finalize_universal_oa_action(
                 execution,
                 attempt_id=attempt_id,
@@ -1080,13 +1082,45 @@ class DingTalkAutoReplyWorker:
                 send_status="blocked",
                 send_error="missing_trusted_oa_target",
             )
-        if process_instance_id != trusted_process_id or task_id != trusted_task_id:
+        if process_instance_id != trusted_process_id or (
+            task_id != trusted_task_id and not is_comment_only_action
+        ):
             return self._finalize_universal_oa_action(
                 execution,
                 attempt_id=attempt_id,
                 outcome="blocked",
                 send_status="blocked",
                 send_error="oa_target_mismatch",
+            )
+        if is_comment_only_action:
+            try:
+                action_result = self.dws.comment_oa_approval(
+                    process_instance_id, oa_remark
+                )
+            except Exception as exc:
+                self._mark_universal_oa_unknown(
+                    execution,
+                    attempt_id=attempt_id,
+                    error=exc,
+                )
+                raise
+            if not self._universal_oa_receipt_is_success(action_result):
+                error = "OA action returned without a verifiable receipt"
+                self._mark_universal_oa_unknown(
+                    execution,
+                    attempt_id=attempt_id,
+                    error=error,
+                    dws_action_result=(
+                        action_result if isinstance(action_result, dict) else None
+                    ),
+                )
+                raise ReplyDeliveryError(error)
+            return self._finalize_universal_oa_action(
+                execution,
+                attempt_id=attempt_id,
+                outcome="commented",
+                send_status="commented",
+                dws_action_result=action_result,
             )
 
         try:
@@ -5828,6 +5862,7 @@ class DingTalkAutoReplyWorker:
         )
         effective_oa_task_id = result.task_id.strip() or url_task_id
         effective_oa_url = result.oa_url.strip() or oa_url
+        is_comment_only_action = self._oa_action_is_comment_only(result.oa_action)
         target_status = self._oa_target_status_for_current_user(
             approval_detail_text,
             effective_oa_task_id,
@@ -5836,37 +5871,37 @@ class DingTalkAutoReplyWorker:
         if target_status is False:
             effective_oa_task_id = ""
             target_error = "oa_task_not_current_user"
+        elif target_status is None and not is_comment_only_action:
+            effective_oa_task_id = ""
+            target_error = "missing_oa_approval_target"
         action_result = {}
         send_status = "dry_run"
         send_error = ""
         if not self.dry_run:
-            has_approval_target = bool(
-                effective_oa_process_instance_id.strip()
-                and effective_oa_task_id.strip()
-            )
-            if has_approval_target:
-                if result.oa_action == "退回":
-                    try:
-                        action_result = self.dws.comment_oa_approval(
-                            effective_oa_process_instance_id,
-                            result.oa_remark,
-                        )
-                        send_status = "commented"
-                    except Exception as exc:
-                        send_status = "failed"
-                        send_error = str(exc)
-                else:
-                    try:
-                        action_result = self.dws.execute_oa_approval_action(
-                            effective_oa_process_instance_id,
-                            effective_oa_task_id,
-                            result.oa_action,
-                            result.oa_remark,
-                        )
-                        send_status = "skipped"
-                    except Exception as exc:
-                        send_status = "failed"
-                        send_error = str(exc)
+            has_process_target = bool(effective_oa_process_instance_id.strip())
+            has_approval_target = bool(has_process_target and effective_oa_task_id.strip())
+            if is_comment_only_action and has_process_target:
+                try:
+                    action_result = self.dws.comment_oa_approval(
+                        effective_oa_process_instance_id,
+                        result.oa_remark,
+                    )
+                    send_status = "commented"
+                except Exception as exc:
+                    send_status = "failed"
+                    send_error = str(exc)
+            elif has_approval_target:
+                try:
+                    action_result = self.dws.execute_oa_approval_action(
+                        effective_oa_process_instance_id,
+                        effective_oa_task_id,
+                        result.oa_action,
+                        result.oa_remark,
+                    )
+                    send_status = "skipped"
+                except Exception as exc:
+                    send_status = "failed"
+                    send_error = str(exc)
             else:
                 send_status = "skipped"
                 send_error = target_error or "missing_oa_approval_target"
@@ -5911,7 +5946,7 @@ class DingTalkAutoReplyWorker:
         self.store.update_reply_attempt(
             attempt_id,
             final_reply_text=result.oa_remark,
-            send_error=send_error or target_error,
+            send_error=send_error or ("" if is_comment_only_action else target_error),
         )
         if send_error and send_error not in {
             "missing_oa_approval_target",
@@ -5931,6 +5966,10 @@ class DingTalkAutoReplyWorker:
             raise ReplyDeliveryError(send_error)
         self._mark_seen([trigger])
         return True
+
+    @staticmethod
+    def _oa_action_is_comment_only(action: str) -> bool:
+        return action.strip() in {"comment", "评论", "备注", "退回"}
 
     def _oa_context_url_override(
         self,
@@ -10489,6 +10528,30 @@ class DingTalkAutoReplyWorker:
                 conversation_id,
                 synced,
             )
+            self._queue_service_bugfix_candidates_from_feedback(sent_replies)
+
+    def _queue_service_bugfix_candidates_from_feedback(self, sent_replies) -> int:
+        events_by_token = self.store.list_feedback_events_for_tokens(
+            [reply.feedback_token for reply in sent_replies]
+        )
+        created = 0
+        for events in events_by_token.values():
+            for event in events:
+                classification = classify_service_bugfix_feedback(event)
+                if not classification.accepted:
+                    continue
+                candidate = (
+                    self.store.create_service_bugfix_candidate_for_feedback_event(
+                        event,
+                        title=classification.title,
+                        reason=classification.reason,
+                    )
+                )
+                if candidate is not None:
+                    created += 1
+        if created:
+            logger.info("queued service bugfix candidates from feedback count=%s", created)
+        return created
 
     def _deliver_minutes_comment(
         self,
