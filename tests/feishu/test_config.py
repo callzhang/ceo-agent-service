@@ -11,6 +11,7 @@ FEISHU_ENV_NAMES = (
     "CEO_FEISHU_RECALL_ENABLED",
     "CEO_FEISHU_HANDOFF_ENABLED",
     "CEO_FEISHU_REPLY_MENTION_SENDER",
+    "CEO_FEISHU_REPLY_MENTION_OPEN_IDS",
     "CEO_FEISHU_SEND_MODE",
     "CEO_FEISHU_SECURITY_MODE",
     "CEO_FEISHU_STALE_EVENT_SECONDS",
@@ -56,6 +57,7 @@ def test_feishu_defaults_are_disabled_and_fail_closed():
     assert config.feishu_media_max_bytes() == 20 * 1024 * 1024
     assert config.feishu_media_event_max_bytes() == 32 * 1024 * 1024
     assert config.feishu_handoff_open_ids() == ()
+    assert config.feishu_reply_mention_open_ids() == ()
     assert config.feishu_app_id() == ""
 
 
@@ -136,6 +138,38 @@ def test_feishu_rich_capability_switches_require_parent_gates(monkeypatch):
     assert config.feishu_recall_enabled() is True
     assert config.feishu_handoff_enabled() is True
     assert config.feishu_reply_mention_sender_enabled() is True
+
+
+def test_feishu_reply_mention_allowlist_is_strict_deduplicated_and_bounded(
+    monkeypatch,
+):
+    monkeypatch.setenv(
+        "CEO_FEISHU_REPLY_MENTION_OPEN_IDS",
+        " ou_alice,ou_bob-2,ou_alice ",
+    )
+    assert config.feishu_reply_mention_open_ids() == (
+        "ou_alice",
+        "ou_bob-2",
+    )
+
+    monkeypatch.setenv(
+        "CEO_FEISHU_REPLY_MENTION_OPEN_IDS",
+        ",".join(f"ou_user_{index}" for index in range(21)),
+    )
+    with pytest.raises(ValueError, match="at most 20"):
+        config.feishu_reply_mention_open_ids()
+
+
+@pytest.mark.parametrize(
+    "value",
+    ("u_alice", "ou_", "ou_alice bob", "on_alice", "ou_张三", "ou_a/b"),
+)
+def test_feishu_reply_mention_allowlist_rejects_invalid_open_ids(
+    monkeypatch, value
+):
+    monkeypatch.setenv("CEO_FEISHU_REPLY_MENTION_OPEN_IDS", value)
+    with pytest.raises(ValueError, match="invalid open_id"):
+        config.feishu_reply_mention_open_ids()
 
 
 def test_feishu_modes_accept_known_values_and_fail_closed(monkeypatch):

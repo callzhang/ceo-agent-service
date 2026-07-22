@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import threading
 import time
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from functools import partial
 from pathlib import Path
@@ -30,10 +31,18 @@ from app.feishu.rate_limit import SlidingWindowMutationBudget
 LISTENER_COMPONENT = "feishu-listener"
 CONSUMER_COMPONENT = "feishu-consumer"
 SENDER_COMPONENT = "feishu-sender"
+_OUTBOUND_DRAIN_LIMIT_PER_KIND = 10
+_OUTBOUND_MUTATION_KIND: ContextVar[str] = ContextVar(
+    "feishu_outbound_mutation_kind", default=""
+)
 
 _RUNTIME_HEALTH_LOCK = threading.Lock()
 _CURRENT_LISTENER: FeishuIngressListener | None = None
 _CURRENT_RUNTIME: "FeishuChannelRuntime | None" = None
+
+
+def _other_outbound_kind(kind: str) -> str:
+    return "action" if kind == "reply" else "reply"
 
 
 def _register_listener(listener: FeishuIngressListener) -> None:
@@ -174,6 +183,7 @@ def build_consumer(
         handoff_enabled=config.feishu_handoff_enabled(),
         handoff_open_ids=config.feishu_handoff_open_ids(),
         reply_mention_sender=config.feishu_reply_mention_sender_enabled(),
+        reply_mention_open_ids=config.feishu_reply_mention_open_ids(),
     )
 
 
@@ -199,6 +209,58 @@ def build_decision_runner(
     )
 
 
+class _ObservedMutationBudget(SlidingWindowMutationBudget):
+    """Expose only admission counts needed to retain a denied fair turn."""
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self._observation_lock = threading.Lock()
+        self._observations = {
+            "reply": [0, 0],
+            "action": [0, 0],
+        }
+
+    def try_acquire(self) -> bool:
+        admitted = super().try_acquire()
+        kind = _OUTBOUND_MUTATION_KIND.get()
+        if kind in self._observations:
+            with self._observation_lock:
+                observation = self._observations[kind]
+                observation[0] += 1
+                observation[1] += int(admitted)
+        return admitted
+
+    def observation(self, kind: str) -> tuple[int, int]:
+        with self._observation_lock:
+            attempts, admissions = self._observations[kind]
+        return attempts, admissions
+
+
+def _build_mutation_budget(
+    store,
+    *,
+    app_id: str,
+    max_mutations_per_minute: int,
+    wall_clock: Callable[[], float] = time.time,
+    monotonic_clock: Callable[[], float] = time.monotonic,
+) -> SlidingWindowMutationBudget:
+    """Build an App-scoped budget that survives service restarts."""
+
+    durable_method = getattr(store, "try_acquire_feishu_mutation_slot", None)
+    durable_acquire = None
+    if callable(durable_method) and app_id:
+        durable_acquire = lambda: durable_method(
+            app_id=app_id,
+            max_mutations_per_minute=max_mutations_per_minute,
+            now_epoch_ms=int(wall_clock() * 1000),
+        )
+    return _ObservedMutationBudget(
+        max_mutations_per_minute,
+        monotonic_clock=monotonic_clock,
+        durable_acquire=durable_acquire,
+    )
+
+
 def build_sender(
     store,
     client,
@@ -207,13 +269,23 @@ def build_sender(
 ) -> FeishuDeliverySender:
     from app import config
 
+    max_mutations_per_minute = config.feishu_max_sends_per_minute()
+    mutation_budget = mutation_budget or _build_mutation_budget(
+        store,
+        app_id=config.feishu_app_id(),
+        max_mutations_per_minute=max_mutations_per_minute,
+    )
     return FeishuDeliverySender(
         store,
         client,
         sender_enabled=config.feishu_sender_enabled(),
         live_send_allowed=config.feishu_live_send_allowed(),
         send_mode=config.feishu_send_mode(),
-        max_sends_per_minute=config.feishu_max_sends_per_minute(),
+        max_sends_per_minute=max_mutations_per_minute,
+        reply_mention_sender_enabled=(
+            config.feishu_reply_mention_sender_enabled
+        ),
+        reply_mention_open_ids=config.feishu_reply_mention_open_ids,
         mutation_budget=mutation_budget,
     )
 
@@ -227,6 +299,12 @@ def build_action_sender(
     """Build the gated action drainer around the listener's existing client."""
     from app import config
 
+    max_mutations_per_minute = config.feishu_max_sends_per_minute()
+    mutation_budget = mutation_budget or _build_mutation_budget(
+        store,
+        app_id=config.feishu_app_id(),
+        max_mutations_per_minute=max_mutations_per_minute,
+    )
     return FeishuMessageActionSender(
         store,
         client,
@@ -237,7 +315,7 @@ def build_action_sender(
         handoff_enabled=config.feishu_handoff_enabled(),
         handoff_target_allowlist=config.feishu_handoff_open_ids(),
         send_mode=config.feishu_send_mode(),
-        max_actions_per_minute=config.feishu_max_sends_per_minute(),
+        max_actions_per_minute=max_mutations_per_minute,
         mutation_budget=mutation_budget,
     )
 
@@ -304,6 +382,10 @@ class FeishuChannelRuntime:
     _loop: asyncio.AbstractEventLoop | None = field(
         default=None, init=False, repr=False
     )
+    _outbound_next_kind: str = field(default="reply", init=False, repr=False)
+    _outbound_mutation_budget: _ObservedMutationBudget | None = field(
+        default=None, init=False, repr=False
+    )
 
     def _record_media_error(self, kind: str, error=None) -> None:
         recorder = getattr(self.listener, "_record_error", None)
@@ -324,6 +406,97 @@ class FeishuChannelRuntime:
         recorder = getattr(self.listener, "_record_error", None)
         if callable(recorder):
             recorder(kind, error)
+
+    def _outbound_budget_observation(self, kind: str) -> tuple[int, int]:
+        budget = self._outbound_mutation_budget
+        if budget is None:
+            return 0, 0
+        return budget.observation(kind)
+
+    async def _process_outbound_one(self, kind: str, worker) -> tuple[int, int, int]:
+        before_attempts, before_admissions = self._outbound_budget_observation(kind)
+        token = _OUTBOUND_MUTATION_KIND.set(kind)
+        processed = 0
+        error = None
+        try:
+            processed = await worker.process_once(1)
+        except Exception as exc:
+            error = exc
+        finally:
+            _OUTBOUND_MUTATION_KIND.reset(token)
+        after_attempts, after_admissions = self._outbound_budget_observation(kind)
+        if error is not None:
+            if kind == "reply":
+                self._record_sender_error("feishu_sender_process_failed", error)
+            else:
+                self._record_action_error("feishu_action_process_failed", error)
+            processed = 0
+        return (
+            int(processed or 0),
+            after_attempts - before_attempts,
+            after_admissions - before_admissions,
+        )
+
+    async def _drain_outbound_once(self, sender, action_sender) -> None:
+        """Drain bounded one-row turns and retain the next denied quota turn."""
+        workers = {
+            kind: worker
+            for kind, worker in (("reply", sender), ("action", action_sender))
+            if worker is not None
+        }
+        if not workers:
+            return
+        start = (
+            self._outbound_next_kind
+            if self._outbound_next_kind in workers
+            else next(iter(workers))
+        )
+        # Alternate ordinary drain starts too; a quota denial below overrides
+        # this with the category that owns the next fair admission.
+        self._outbound_next_kind = (
+            _other_outbound_kind(start)
+            if _other_outbound_kind(start) in workers
+            else start
+        )
+        active = set(workers)
+        attempts_by_kind = {kind: 0 for kind in workers}
+        turn = start
+        while active:
+            active = {
+                kind
+                for kind in active
+                if attempts_by_kind[kind] < _OUTBOUND_DRAIN_LIMIT_PER_KIND
+            }
+            if not active:
+                return
+            if turn not in active:
+                turn = (
+                    _other_outbound_kind(turn)
+                    if _other_outbound_kind(turn) in active
+                    else next(iter(active))
+                )
+            attempts_by_kind[turn] += 1
+            processed, budget_attempts, admissions = await self._process_outbound_one(
+                turn, workers[turn]
+            )
+            if processed <= 0:
+                active.discard(turn)
+            denied = budget_attempts > admissions
+            if denied:
+                # No admission means this category keeps its turn until quota
+                # reopens. A partial/multi-chunk admission has already had its
+                # turn, so the peer owns the next window.
+                self._outbound_next_kind = (
+                    _other_outbound_kind(turn)
+                    if admissions > 0 and _other_outbound_kind(turn) in workers
+                    else turn
+                )
+                return
+            turn = (
+                _other_outbound_kind(turn)
+                if _other_outbound_kind(turn) in active
+                else turn
+            )
 
     def _attach_recovered_media_tasks(self, app_id: str) -> None:
         """Close the crash window between terminal media and task attach."""
@@ -532,24 +705,7 @@ class FeishuChannelRuntime:
             while not listener_task.done():
                 if resolver is not None:
                     await self._resolve_media_once(resolver)
-                if sender is not None:
-                    try:
-                        await sender.process_once()
-                    except Exception as exc:
-                        # A lease/CAS/runtime failure must leave the durable row
-                        # for stale recovery without stopping inbound traffic.
-                        self._record_sender_error(
-                            "feishu_sender_process_failed", exc
-                        )
-                if action_sender is not None:
-                    try:
-                        await action_sender.process_once()
-                    except Exception as exc:
-                        # The action sender already handles per-request
-                        # outcomes; this is its final store/runtime boundary.
-                        self._record_action_error(
-                            "feishu_action_process_failed", exc
-                        )
+                await self._drain_outbound_once(sender, action_sender)
                 await asyncio.sleep(self.sender_interval_seconds)
             await listener_task
         finally:
@@ -581,8 +737,10 @@ def build_runtime(
     from app import config
 
     media_enabled = config.feishu_media_enabled()
-    mutation_budget = SlidingWindowMutationBudget(
-        config.feishu_max_sends_per_minute()
+    mutation_budget = _build_mutation_budget(
+        store,
+        app_id=config.feishu_app_id(),
+        max_mutations_per_minute=config.feishu_max_sends_per_minute(),
     )
     runtime = FeishuChannelRuntime(
         listener=build_listener(store, client_factory=client_factory),
@@ -607,6 +765,8 @@ def build_runtime(
             build_action_sender, mutation_budget=mutation_budget
         ),
     )
+    if isinstance(mutation_budget, _ObservedMutationBudget):
+        runtime._outbound_mutation_budget = mutation_budget
     _register_runtime(runtime)
     return runtime
 

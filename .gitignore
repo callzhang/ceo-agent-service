@@ -28,6 +28,7 @@ __pycache__/
 *.log
 *.sqlite3
 *.sqlite3.*
+.ceo-agent-schema-*.lock
 *.bak
 *.bak-*
 *.backup-*

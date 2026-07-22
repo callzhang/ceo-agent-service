@@ -6,6 +6,7 @@ import pytest
 
 import app.store as store_module
 from app.feishu import delivery as delivery_module
+from app.feishu import service as service_module
 from app.feishu.client import (
     FeishuChannelClient,
     FeishuMessageState,
@@ -22,7 +23,13 @@ from app.store import AutoReplyStore
 from tests.feishu.fakes import FakeDeliveryClient
 
 
-def _seed(tmp_path, *, reply_text="收到", reply_format="text"):
+def _seed(
+    tmp_path,
+    *,
+    reply_text="收到",
+    reply_format="text",
+    mention_open_ids=(),
+):
     store = AutoReplyStore(tmp_path / "feishu.sqlite3")
     event = store.record_feishu_event(
         FeishuInboundMessage(
@@ -69,6 +76,7 @@ def _seed(tmp_path, *, reply_text="收到", reply_format="text"):
         reply_in_thread=False,
         reply_text=reply_text,
         reply_format=reply_format,
+        mention_open_ids=mention_open_ids,
         idempotency_key=delivery_idempotency_key(
             app_id="cli_test",
             reply_task_id=event.reply_task_id,
@@ -189,6 +197,147 @@ def test_explicit_approval_sends_and_records_message_id(tmp_path):
     assert saved.approved_by == "test-reviewer"
 
 
+def test_verified_reply_mention_remains_bound_and_sends(tmp_path):
+    store, delivery = _seed(tmp_path, mention_open_ids=("ou_1",))
+    original_approval_hash = delivery.approval_hash
+    client = FakeDeliveryClient()
+    sender = _sender(
+        store,
+        client,
+        send_mode="confirm",
+        reply_mention_sender_enabled=lambda: True,
+        reply_mention_open_ids=lambda: ("ou_1",),
+    )
+
+    outcome = asyncio.run(_reviewed_send(sender, delivery))
+
+    saved = store.get_feishu_delivery(delivery.id)
+    assert outcome.status == "sent"
+    assert saved.status == "sent"
+    assert saved.app_id == "cli_test"
+    assert saved.mention_open_ids == ("ou_1",)
+    assert saved.approval_hash == original_approval_hash
+    assert len(client.deliveries) == 1
+
+
+@pytest.mark.parametrize("revocation", ["gate", "allowlist"])
+def test_queued_reply_mention_revocation_fails_before_any_sdk_call(
+    tmp_path, revocation
+):
+    store, delivery = _seed(tmp_path, mention_open_ids=("ou_1",))
+    original_approval_hash = delivery.approval_hash
+    policy = {"enabled": True, "open_ids": ("ou_1",)}
+    store.approve_feishu_delivery(
+        delivery.id,
+        app_id="cli_test",
+        approved_by="test-reviewer",
+        expected_approval_hash=delivery.approval_hash,
+    )
+    client = FakeDeliveryClient()
+    sender = _sender(
+        store,
+        client,
+        send_mode="confirm",
+        reply_mention_sender_enabled=lambda: policy["enabled"],
+        reply_mention_open_ids=lambda: policy["open_ids"],
+    )
+    if revocation == "gate":
+        policy["enabled"] = False
+    else:
+        policy["open_ids"] = ()
+
+    assert asyncio.run(sender.process_once()) == 1
+
+    saved = store.get_feishu_delivery(delivery.id)
+    assert saved.status == "failed"
+    assert saved.error_code == "permission_denied"
+    assert saved.error == "reply_mention_authorization_revoked_before_send"
+    assert saved.mutation_started_at == ""
+    assert saved.app_id == "cli_test"
+    assert saved.approval_hash == original_approval_hash
+    assert client.state_probes == []
+    assert client.deliveries == []
+    assert client.chunk_calls == []
+
+
+def test_reply_mention_revoked_during_target_probe_cannot_reach_sdk_mutation(
+    tmp_path,
+):
+    store, delivery = _seed(tmp_path, mention_open_ids=("ou_1",))
+    policy = {"enabled": True, "open_ids": ("ou_1",)}
+    store.approve_feishu_delivery(
+        delivery.id,
+        app_id="cli_test",
+        approved_by="test-reviewer",
+        expected_approval_hash=delivery.approval_hash,
+    )
+
+    class RevokingClient(FakeDeliveryClient):
+        async def fetch_message_state(self, app_id, message_id):
+            state = await super().fetch_message_state(app_id, message_id)
+            policy["open_ids"] = ()
+            return state
+
+    client = RevokingClient()
+    sender = _sender(
+        store,
+        client,
+        send_mode="confirm",
+        reply_mention_sender_enabled=lambda: policy["enabled"],
+        reply_mention_open_ids=lambda: policy["open_ids"],
+    )
+
+    assert asyncio.run(sender.process_once()) == 1
+
+    saved = store.get_feishu_delivery(delivery.id)
+    assert saved.status == "failed"
+    assert saved.error_code == "permission_denied"
+    assert saved.mutation_started_at == ""
+    assert client.state_probes == [("cli_test", "om_1")]
+    assert client.deliveries == []
+    assert client.chunk_calls == []
+
+
+def test_reply_mention_revocation_between_chunks_stops_next_sdk_mutation(
+    tmp_path,
+):
+    store, delivery = _seed(
+        tmp_path,
+        reply_text="x" * 4000,
+        mention_open_ids=("ou_1",),
+    )
+    policy = {"enabled": True, "open_ids": ("ou_1",)}
+
+    class RevokingAfterFirstChunkClient(FakeDeliveryClient):
+        async def send_reply_chunk(self, delivery, **kwargs):
+            result = await super().send_reply_chunk(delivery, **kwargs)
+            policy["enabled"] = False
+            return result
+
+    client = RevokingAfterFirstChunkClient()
+    sender = _sender(
+        store,
+        client,
+        send_mode="auto",
+        reply_mention_sender_enabled=lambda: policy["enabled"],
+        reply_mention_open_ids=lambda: policy["open_ids"],
+    )
+
+    assert asyncio.run(sender.process_once()) == 1
+
+    saved = store.get_feishu_delivery(delivery.id)
+    assert saved.status == "failed"
+    assert saved.error_code == "permission_denied"
+    assert saved.mutation_started_at
+    assert [
+        receipt.message_id
+        for receipt in store.list_feishu_delivery_receipts(
+            delivery_id=delivery.id
+        )
+    ] == ["om_reply"]
+    assert len(client.chunk_calls) == 1
+
+
 def test_client_app_mismatch_fails_before_claim_or_send(tmp_path):
     store, delivery = _seed(tmp_path)
     client = FakeDeliveryClient(app_id="cli_other")
@@ -237,6 +386,8 @@ def test_legacy_zero_attempt_delivery_is_never_sent(tmp_path):
         ("permission_denied", "failed"),
         ("target_revoked", "failed"),
         ("format_error", "failed"),
+        ("target_state_unknown", "send_unknown"),
+        ("target_probe_unknown", "send_unknown"),
         ("send_timeout", "send_unknown"),
         ("unknown", "send_unknown"),
     ],
@@ -263,6 +414,34 @@ def test_raised_timeout_is_send_unknown_not_blind_retry(tmp_path):
     )
     assert outcome.status == "send_unknown"
     assert "request details" not in store.get_feishu_delivery(delivery.id).error
+
+
+@pytest.mark.parametrize(
+    "provider_code", ["target_state_unknown", "target_probe_unknown"]
+)
+def test_probe_named_exception_after_mutation_is_unknown_and_not_replayed(
+    tmp_path, provider_code
+):
+    store, delivery = _seed(tmp_path)
+    provider_error = RuntimeError("provider state was indeterminate")
+    provider_error.code = provider_code
+    client = FakeDeliveryClient(error=provider_error)
+    sender = _sender(store, client, send_mode="confirm")
+
+    outcome = asyncio.run(_reviewed_send(sender, delivery))
+
+    saved = store.get_feishu_delivery(delivery.id)
+    assert outcome.status == "send_unknown"
+    assert outcome.error_code == "unknown"
+    assert saved.status == "send_unknown"
+    assert saved.error_code == "unknown"
+    assert saved.mutation_started_at
+    assert len(client.deliveries) == 1
+    assert len(client.chunk_calls) == 1
+
+    assert asyncio.run(sender.process_once()) == 0
+    assert len(client.deliveries) == 1
+    assert len(client.chunk_calls) == 1
 
 
 def test_sender_enforces_bounded_network_timeout(tmp_path):
@@ -594,7 +773,7 @@ def test_unknown_trigger_state_never_sends_and_respects_retry_budget(
     )
 
     assert outcome.status == expected
-    assert outcome.error_code == "target_state_unknown"
+    assert outcome.error_code == "target_probe_unknown"
     assert client.deliveries == []
 
 
@@ -621,7 +800,7 @@ def test_trigger_probe_timeout_is_safe_retry_without_send(tmp_path):
     )
 
     assert outcome.status == "retry"
-    assert outcome.error_code == "target_state_unknown"
+    assert outcome.error_code == "target_probe_unknown"
     assert client.deliveries == []
 
 
@@ -709,6 +888,37 @@ def test_new_trigger_after_mutation_fence_cannot_cancel_or_replay(tmp_path):
     assert store.get_feishu_delivery(delivery.id).status == "send_unknown"
     assert client.deliveries == []
     assert client.chunk_calls == []
+
+
+def test_store_rejects_target_probe_retry_after_delivery_fence_without_prefix(
+    tmp_path,
+):
+    store, delivery = _seed(tmp_path)
+    claimed = store.claim_feishu_delivery(
+        delivery.id,
+        app_id=delivery.app_id,
+    )
+    fenced = store.begin_feishu_delivery_mutation(
+        delivery.id,
+        app_id=delivery.app_id,
+        lease_token=claimed.lease_token,
+    )
+    assert fenced is not None and fenced.mutation_started_at
+
+    with pytest.raises(ValueError, match="target probe retry"):
+        store.transition_feishu_delivery(
+            delivery.id,
+            from_statuses=("sending",),
+            to_status="retry",
+            app_id=delivery.app_id,
+            expected_lease_token=claimed.lease_token,
+            error_code="target_probe_unknown",
+            error="unsafe forged probe outcome",
+        )
+
+    saved = store.get_feishu_delivery(delivery.id)
+    assert saved.status == "sending"
+    assert saved.mutation_started_at == fenced.mutation_started_at
 
 
 @pytest.mark.parametrize(
@@ -804,6 +1014,59 @@ def test_confirmed_partial_rate_limit_retries_only_the_suffix(tmp_path):
             delivery_id=delivery.id
         )
     ] == ["om_partial_1", "om_partial_2"]
+
+
+def test_partial_prefix_probe_unknown_retries_without_mutating_suffix(tmp_path):
+    store, delivery = _seed(tmp_path, reply_text="x" * 6000)
+
+    class PrefixThenRetryClient(FakeDeliveryClient):
+        async def send_reply(self, claimed_delivery):
+            self.deliveries.append(claimed_delivery)
+            if len(self.deliveries) == 1:
+                return FeishuSendResult(
+                    True,
+                    message_id="om_probe_prefix",
+                    request_log_id="log-prefix",
+                )
+            return FeishuSendResult(False, error_code="rate_limited")
+
+    client = PrefixThenRetryClient()
+    first = asyncio.run(
+        _reviewed_send(_sender(store, client, send_mode="confirm"), delivery)
+    )
+    prefix_retry = store.get_feishu_delivery(delivery.id)
+    assert first.status == "retry"
+    assert prefix_retry.mutation_started_at
+    assert [
+        receipt.message_id
+        for receipt in store.list_feishu_delivery_receipts(delivery_id=delivery.id)
+    ] == ["om_probe_prefix"]
+    prior_chunk_calls = len(client.chunk_calls)
+    prior_remote_calls = len(client.deliveries)
+
+    client.message_state = "unknown"
+    resumed = store.claim_feishu_delivery(
+        delivery.id,
+        app_id=delivery.app_id,
+        now="2099-01-01T00:00:00+00:00",
+    )
+    assert resumed is not None
+    probe_outcome = asyncio.run(
+        _sender(store, client, send_mode="confirm").send_claimed(resumed)
+    )
+
+    saved = store.get_feishu_delivery(delivery.id)
+    assert probe_outcome.status == "retry"
+    assert probe_outcome.error_code == "target_probe_unknown"
+    assert saved.status == "retry"
+    assert saved.error_code == "target_probe_unknown"
+    assert saved.mutation_started_at == prefix_retry.mutation_started_at
+    assert [
+        receipt.message_id
+        for receipt in store.list_feishu_delivery_receipts(delivery_id=delivery.id)
+    ] == ["om_probe_prefix"]
+    assert len(client.chunk_calls) == prior_chunk_calls
+    assert len(client.deliveries) == prior_remote_calls
 
 
 @pytest.mark.parametrize("code", ["rate_limited", "not_connected"])
@@ -1022,7 +1285,7 @@ def test_same_count_different_chunk_boundaries_quarantine_partial_resume(
     ] == ["om_boundary_first", "om_boundary_second"]
 
 
-def test_default_budget_sends_eleven_chunks_across_restart_without_replay(
+def test_durable_budget_defers_eleventh_chunk_across_restart_without_replay(
     tmp_path,
 ):
     store, delivery = _seed(tmp_path, reply_text="x" * (3500 * 10 + 1))
@@ -1039,8 +1302,26 @@ def test_default_budget_sends_eleven_chunks_across_restart_without_replay(
             )
 
     client = OrderedClient()
+    current = [100.0]
+
+    def budget():
+        return service_module._build_mutation_budget(
+            store,
+            app_id="cli_test",
+            max_mutations_per_minute=10,
+            wall_clock=lambda: current[0],
+        )
+
     first = asyncio.run(
-        _reviewed_send(_sender(store, client, send_mode="confirm"), delivery)
+        _reviewed_send(
+            _sender(
+                store,
+                client,
+                send_mode="confirm",
+                mutation_budget=budget(),
+            ),
+            delivery,
+        )
     )
 
     assert first.status == "retry"
@@ -1053,10 +1334,31 @@ def test_default_budget_sends_eleven_chunks_across_restart_without_replay(
         delivery.id, now="2099-01-01T00:00:00+00:00"
     )
     second = asyncio.run(
-        _sender(store, client, send_mode="confirm").send_claimed(resumed)
+        _sender(
+            store,
+            client,
+            send_mode="confirm",
+            mutation_budget=budget(),
+        ).send_claimed(resumed)
     )
 
-    assert second.status == "sent"
+    assert second.status == "retry"
+    assert [call["ordinal"] for call in client.chunk_calls] == list(range(10))
+
+    current[0] += 60
+    resumed = store.claim_feishu_delivery(
+        delivery.id, now="2099-01-01T00:00:00+00:00"
+    )
+    third = asyncio.run(
+        _sender(
+            store,
+            client,
+            send_mode="confirm",
+            mutation_budget=budget(),
+        ).send_claimed(resumed)
+    )
+
+    assert third.status == "sent"
     assert [call["ordinal"] for call in client.chunk_calls] == list(range(11))
     assert [
         receipt.message_id

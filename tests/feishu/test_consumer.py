@@ -206,6 +206,7 @@ def test_reply_payload_format_hash_and_structured_sender_mention_are_durable(sto
         store,
         runner,
         reply_mention_sender=True,
+        reply_mention_open_ids=("ou_1",),
     ).run_once(1)
 
     delivery = store.get_feishu_delivery_for_task(1)
@@ -216,6 +217,26 @@ def test_reply_payload_format_hash_and_structured_sender_mention_are_durable(sto
     assert delivery.mention_open_ids == ("ou_1",)
     assert delivery.payload_sha256 == expected.sha256()
     assert "Mallory" in delivery.reply_text
+
+
+def test_unmapped_sender_and_visible_name_cannot_create_structured_mention(store):
+    _seed(store)
+    text = "@Alex 和 @Mallory 都只是正文。"
+    runner = FakeRunner(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text=text)
+    )
+
+    FeishuReplyConsumer(
+        store,
+        runner,
+        reply_mention_sender=True,
+        reply_mention_open_ids=("ou_someone_else",),
+    ).run_once(1)
+
+    delivery = store.get_feishu_delivery_for_task(1)
+    assert delivery.mention_open_ids == ()
+    assert delivery.reply_text == text
+    assert delivery.payload_sha256 == choose_reply_payload(text).sha256()
 
 
 def test_sender_mention_gate_never_mentions_in_direct_chat(store):
@@ -230,11 +251,32 @@ def test_sender_mention_gate_never_mentions_in_direct_chat(store):
     )
 
     FeishuReplyConsumer(
-        store, runner, reply_mention_sender=True
+        store,
+        runner,
+        reply_mention_sender=True,
+        reply_mention_open_ids=("ou_1",),
     ).run_once(1)
 
     delivery = store.get_feishu_delivery_for_task(event.reply_task_id)
     assert delivery.mention_open_ids == ()
+
+
+def test_sender_mention_gate_allows_verified_sender_in_topic(store):
+    trigger = _trigger().model_copy(update={"chat_type": "topic"})
+    event = _record_trigger(store, trigger)
+    runner = FakeRunner(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="收到")
+    )
+
+    FeishuReplyConsumer(
+        store,
+        runner,
+        reply_mention_sender=True,
+        reply_mention_open_ids=("ou_1",),
+    ).run_once(1)
+
+    delivery = store.get_feishu_delivery_for_task(event.reply_task_id)
+    assert delivery.mention_open_ids == ("ou_1",)
 
 
 def test_no_reply_completes_without_delivery(store):

@@ -164,6 +164,7 @@ class FeishuReplyConsumer:
         handoff_enabled: bool = False,
         handoff_open_ids: tuple[str, ...] = (),
         reply_mention_sender: bool = False,
+        reply_mention_open_ids: tuple[str, ...] = (),
     ):
         normalized_app_id = str(app_id or "").strip()
         if not normalized_app_id:
@@ -212,6 +213,29 @@ class FeishuReplyConsumer:
             raise ValueError("Feishu handoff allowlist must contain at most 20 IDs")
         self.handoff_open_ids = tuple(normalized_handoff_open_ids)
         self.reply_mention_sender = bool(reply_mention_sender)
+        if isinstance(reply_mention_open_ids, str):
+            raise ValueError(
+                "Feishu reply mention allowlist must be a local sequence"
+            )
+        normalized_reply_mention_open_ids: list[str] = []
+        for target in reply_mention_open_ids:
+            if (
+                not isinstance(target, str)
+                or target != target.strip()
+                or not _OPEN_ID_RE.fullmatch(target)
+            ):
+                raise ValueError(
+                    "Feishu reply mention allowlist contains invalid target"
+                )
+            if target not in normalized_reply_mention_open_ids:
+                normalized_reply_mention_open_ids.append(target)
+        if len(normalized_reply_mention_open_ids) > 20:
+            raise ValueError(
+                "Feishu reply mention allowlist must contain at most 20 IDs"
+            )
+        self.reply_mention_open_ids = tuple(
+            normalized_reply_mention_open_ids
+        )
         self.media_workspace: Path | None = None
         self.media_root: Path | None = None
         if media_workspace is not None:
@@ -674,6 +698,7 @@ class FeishuReplyConsumer:
                 (trigger.sender_open_id,)
                 if self.reply_mention_sender
                 and trigger.chat_type in {"group", "topic"}
+                and trigger.sender_open_id in self.reply_mention_open_ids
                 else ()
             )
             try:

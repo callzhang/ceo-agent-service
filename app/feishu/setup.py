@@ -31,7 +31,10 @@ OPTIONAL_TENANT_SCOPE_GROUPS = {
     # pre-send recalled-trigger guard.  Media-only receive deployments may
     # request it without granting bot send permission.
     "rich_message_read": ("im:message:readonly",),
-    "emoji_reaction": ("im:message.reactions:write_only",),
+    "emoji_reaction": (
+        "im:message:readonly",
+        "im:message.reactions:write_only",
+    ),
     "recall_bot_message": ("im:message:recall",),
 }
 

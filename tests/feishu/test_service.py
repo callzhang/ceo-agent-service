@@ -1,4 +1,5 @@
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 import threading
 from types import SimpleNamespace
 
@@ -53,6 +54,27 @@ def test_build_consumer_threads_configured_context_lookback(monkeypatch):
     consumer = service.build_consumer(SimpleNamespace(), runner)
 
     assert consumer.context_lookback_seconds == 321
+
+
+def test_builders_thread_current_reply_mention_identity_policy(monkeypatch):
+    monkeypatch.setenv("CEO_FEISHU_ENABLED", "1")
+    monkeypatch.setenv("CEO_FEISHU_SENDER_ENABLED", "1")
+    monkeypatch.setenv("CEO_FEISHU_REPLY_MENTION_SENDER", "1")
+    monkeypatch.setenv("CEO_FEISHU_REPLY_MENTION_OPEN_IDS", "ou_1,ou_1")
+    monkeypatch.setenv("CEO_FEISHU_APP_ID", "cli_test")
+    monkeypatch.setenv("CEO_NOT_SEND_MESSAGE", "0")
+    runner = SimpleNamespace(tool_mode="none", timeout_seconds=0)
+
+    consumer = service.build_consumer(SimpleNamespace(), runner)
+    sender = service.build_sender(SimpleNamespace(), SimpleNamespace())
+
+    assert consumer.reply_mention_sender is True
+    assert consumer.reply_mention_open_ids == ("ou_1",)
+    delivery = SimpleNamespace(mention_open_ids=("ou_1",))
+    assert sender._reply_mentions_currently_authorized(delivery) is True
+
+    monkeypatch.setenv("CEO_FEISHU_REPLY_MENTION_OPEN_IDS", "")
+    assert sender._reply_mentions_currently_authorized(delivery) is False
 
 
 def test_runtime_health_returns_safe_listener_snapshot():
@@ -566,7 +588,8 @@ def test_action_runtime_reuses_listener_client_without_second_connection(
     )
 
     class ActionSender:
-        async def process_once(self):
+        async def process_once(self, limit=10):
+            assert limit == 1
             listener.stopped = True
             return 0
 
@@ -613,40 +636,182 @@ def test_action_sender_builder_preserves_independent_default_off_gates(
     )
 
 
-def test_runtime_reply_and_action_factories_share_one_bidirectional_budget(
-    monkeypatch,
+def test_runtime_reply_and_action_factories_share_durable_bidirectional_budget(
+    tmp_path, monkeypatch,
 ):
     monkeypatch.setenv("CEO_FEISHU_MAX_SENDS_PER_MINUTE", "1")
     monkeypatch.setenv("CEO_FEISHU_MEDIA_ENABLED", "0")
+    monkeypatch.setenv("CEO_FEISHU_APP_ID", "cli_test")
     monkeypatch.setattr(
         service,
         "build_listener",
         lambda *_args, **_kwargs: SimpleNamespace(),
     )
     client = SimpleNamespace(app_id="cli_test")
+    store = AutoReplyStore(tmp_path / "runtime-budget.sqlite3")
 
-    reply_first_runtime = service.build_runtime(SimpleNamespace())
+    reply_first_runtime = service.build_runtime(store)
     reply_sender = reply_first_runtime.sender_factory(
-        SimpleNamespace(), client
+        store, client
     )
     action_sender = reply_first_runtime.action_sender_factory(
-        SimpleNamespace(), client
+        store, client
     )
 
     assert reply_sender.mutation_budget is action_sender.mutation_budget
     assert reply_sender._rate_slot() is True
     assert action_sender._rate_slot() is False
 
-    action_first_runtime = service.build_runtime(SimpleNamespace())
+    action_first_runtime = service.build_runtime(store)
     reply_sender = action_first_runtime.sender_factory(
-        SimpleNamespace(), client
+        store, client
     )
     action_sender = action_first_runtime.action_sender_factory(
-        SimpleNamespace(), client
+        store, client
     )
 
-    assert action_sender._rate_slot() is True
+    assert action_sender._rate_slot() is False
     assert reply_sender._rate_slot() is False
+
+
+def test_durable_mutation_budget_expires_and_is_atomic_across_instances(tmp_path):
+    store = AutoReplyStore(tmp_path / "durable-budget.sqlite3")
+    current = [100.0]
+
+    def budget(app_id="cli_test", limit=2):
+        return service._build_mutation_budget(
+            store,
+            app_id=app_id,
+            max_mutations_per_minute=limit,
+            wall_clock=lambda: current[0],
+        )
+
+    first = budget()
+    assert first.try_acquire() is True
+    assert first.try_acquire() is True
+    assert budget().try_acquire() is False
+    assert budget(app_id="cli_other").try_acquire() is True
+
+    current[0] += 60
+    assert budget().try_acquire() is True
+
+    current[0] += 60
+    attempts = [budget(limit=5) for _ in range(20)]
+    with ThreadPoolExecutor(max_workers=20) as pool:
+        acquired = list(pool.map(lambda item: item.try_acquire(), attempts))
+    assert sum(acquired) == 5
+
+
+@pytest.mark.parametrize(
+    ("quota", "expected_kinds"),
+    [
+        (1, ["reply", "action", "reply", "action"]),
+        (
+            3,
+            [
+                "reply",
+                "action",
+                "reply",
+                "action",
+                "reply",
+                "action",
+                "reply",
+                "action",
+                "reply",
+                "action",
+                "reply",
+                "action",
+            ],
+        ),
+    ],
+)
+def test_outbound_drain_is_fair_across_durable_quota_windows(
+    tmp_path, quota, expected_kinds
+):
+    store = AutoReplyStore(tmp_path / f"fair-budget-{quota}.sqlite3")
+    current = [0.0]
+    budget = service._build_mutation_budget(
+        store,
+        app_id="cli_test",
+        max_mutations_per_minute=quota,
+        wall_clock=lambda: current[0],
+        monotonic_clock=lambda: current[0],
+    )
+    mutations = []
+
+    class BackloggedWorker:
+        def __init__(self, kind):
+            self.kind = kind
+            self.calls = 0
+
+        async def process_once(self, limit=10):
+            assert limit == 1
+            self.calls += 1
+            if budget.try_acquire():
+                mutations.append((self.kind, current[0]))
+            # The real senders count a claimed row even when the shared budget
+            # moves it to rate-limited retry.
+            return 1
+
+    reply = BackloggedWorker("reply")
+    action = BackloggedWorker("action")
+    runtime = service.FeishuChannelRuntime(
+        listener=SimpleNamespace(),
+        store=store,
+    )
+    runtime._outbound_mutation_budget = budget
+
+    async def drain_windows():
+        for _ in range(4):
+            await runtime._drain_outbound_once(reply, action)
+            current[0] += 60
+
+    asyncio.run(drain_windows())
+
+    assert [kind for kind, _ in mutations] == expected_kinds
+    assert {kind for kind, _ in mutations} == {"reply", "action"}
+
+
+def test_outbound_drain_keeps_other_class_moving_after_peer_failure(tmp_path):
+    store = AutoReplyStore(tmp_path / "fair-budget-failure.sqlite3")
+    current = [0.0]
+    budget = service._build_mutation_budget(
+        store,
+        app_id="cli_test",
+        max_mutations_per_minute=3,
+        wall_clock=lambda: current[0],
+        monotonic_clock=lambda: current[0],
+    )
+    listener = _MediaRuntimeListener()
+    mutations = []
+
+    class FailingReplyWorker:
+        calls = 0
+
+        async def process_once(self, limit=10):
+            assert limit == 1
+            self.calls += 1
+            raise RuntimeError("reply detail must stay private")
+
+    class BackloggedActionWorker:
+        async def process_once(self, limit=10):
+            assert limit == 1
+            if budget.try_acquire():
+                mutations.append("action")
+            return 1
+
+    reply = FailingReplyWorker()
+    runtime = service.FeishuChannelRuntime(listener=listener, store=store)
+    runtime._outbound_mutation_budget = budget
+
+    asyncio.run(
+        runtime._drain_outbound_once(reply, BackloggedActionWorker())
+    )
+
+    assert reply.calls == 1
+    assert mutations == ["action", "action", "action"]
+    assert ("feishu_sender_process_failed", "RuntimeError") in listener.errors
+    assert "reply detail must stay private" not in repr(listener.errors)
 
 
 def test_action_sender_failure_degrades_only_action_loop(tmp_path, monkeypatch):
@@ -660,7 +825,8 @@ def test_action_sender_failure_degrades_only_action_loop(tmp_path, monkeypatch):
         def __init__(self):
             self.calls = 0
 
-        async def process_once(self):
+        async def process_once(self, limit=10):
+            assert limit == 1
             self.calls += 1
             if self.calls == 1:
                 raise RuntimeError("remote or secret detail")

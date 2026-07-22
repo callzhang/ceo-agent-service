@@ -17,6 +17,7 @@ CEO_FEISHU_REACTION_ENABLED=0
 CEO_FEISHU_RECALL_ENABLED=0
 CEO_FEISHU_HANDOFF_ENABLED=0
 CEO_FEISHU_REPLY_MENTION_SENDER=0
+CEO_FEISHU_REPLY_MENTION_OPEN_IDS=
 CEO_FEISHU_SEND_MODE=confirm
 CEO_FEISHU_SECURITY_MODE=strict
 ```
@@ -73,7 +74,7 @@ lark-oapi==1.7.1
 | --- | --- | --- |
 | 回复与发送前复核（`reply_send`，必须整组授予） | `im:message:send_as_bot`、`im:message:readonly` | 关闭 |
 | 入站媒体读取 | `im:message:readonly` | 关闭 |
-| Emoji reaction 新增 | `im:message.reactions:write_only` | 关闭 |
+| Emoji reaction 与发送前存在性复核（必须整组授予） | `im:message:readonly`、`im:message.reactions:write_only` | 关闭 |
 | 撤回 bot 已发消息 | `im:message:recall` | 关闭，且逐项确认 |
 | 接收所有群消息 | `im:message.group_msg` | 未实现，禁止申请 |
 | 上传并发送媒体 | `im:resource` | 未实现，禁止申请 |
@@ -148,6 +149,7 @@ CEO_FEISHU_REACTION_ENABLED=0
 CEO_FEISHU_RECALL_ENABLED=0
 CEO_FEISHU_HANDOFF_ENABLED=0
 CEO_FEISHU_REPLY_MENTION_SENDER=0
+CEO_FEISHU_REPLY_MENTION_OPEN_IDS=
 CEO_FEISHU_SEND_MODE=confirm
 CEO_FEISHU_SECURITY_MODE=strict
 CEO_FEISHU_STALE_EVENT_SECONDS=300
@@ -171,13 +173,14 @@ CEO_FEISHU_APP_ID=
 | `CEO_FEISHU_REACTION_ENABLED` | Emoji reaction mutation；还要求 sender 开启 |
 | `CEO_FEISHU_RECALL_ENABLED` | 人工审核后的 bot 消息撤回；还要求 sender 开启 |
 | `CEO_FEISHU_HANDOFF_ENABLED` | 向本地受信 allowlist 发接管通知；还要求 sender 开启 |
-| `CEO_FEISHU_REPLY_MENTION_SENDER` | 群聊/话题回复时结构化 @ 已验证的入站发送人；还要求 sender 开启，模型不能指定目标 |
+| `CEO_FEISHU_REPLY_MENTION_SENDER` | 群聊/话题回复时结构化 @ 已验证的入站发送人；还要求 sender 开启且发送人命中本地映射，模型不能指定目标 |
+| `CEO_FEISHU_REPLY_MENTION_OPEN_IDS` | 逗号分隔的本地已验证 sender `open_id` 映射；默认空，严格 `ou_` 格式，去重后最多 20 个 |
 | `CEO_FEISHU_SEND_MODE` | `confirm` 或 `auto`；无效值安全回落到 `confirm` |
 | `CEO_FEISHU_SECURITY_MODE` | `strict` 或临时测试用 `audit`；无效值安全回落到 `strict` |
 | `CEO_FEISHU_STALE_EVENT_SECONDS` | 超过此时间的事件只审计、不触发回复 |
 | `CEO_FEISHU_CONTEXT_LIMIT` | 单会话最多注入的本地已接收消息数，默认 20，硬上限 100 |
 | `CEO_FEISHU_CONTEXT_LOOKBACK_SECONDS` | 以触发事件时间为准的上下文回看窗口，默认 86400 秒；必须为正数，且不得超过事件保留期与 30 天中的较短者 |
-| `CEO_FEISHU_MAX_SENDS_PER_MINUTE` | 当前 App 的本地 mutation 共享速率上限；reply 每个 wire chunk、reaction、recall 和 handoff 共用同一滑动窗口 |
+| `CEO_FEISHU_MAX_SENDS_PER_MINUTE` | 当前 App 的本地 mutation 共享速率上限；reply 每个 wire chunk、reaction、recall 和 handoff 共用持久化滑动窗口，服务重启或第二进程不会清空预算 |
 | `CEO_FEISHU_EVENT_RETENTION_DAYS` | 归一化 `feishu_events` 的应用级保留窗口；不是 task/attempt/delivery/audit/WAL/备份的物理擦除期限 |
 | `CEO_FEISHU_MEDIA_RETENTION_DAYS` | 已验证附件的本地保留窗口，默认 7 天；维护先安全清理媒体文件和引用，再清理事件 |
 | `CEO_FEISHU_MEDIA_MAX_ASSETS` | 单事件最多资源数，默认与硬上限均为 8 |
@@ -187,6 +190,17 @@ CEO_FEISHU_APP_ID=
 | `CEO_FEISHU_APP_ID` | 企业自建应用 App ID，不是 Secret |
 
 数值配置必须是大于零的整数，否则服务应拒绝以无效配置启动。
+
+sender 对 reply 与 action 使用持久化轮转游标进行有界公平调度；单轮每类最多处理
+10 项。即使配额低至每分钟 1 次，某一类持续积压也不能永久饿死另一类。配额领取和
+调度游标更新都在 SQLite 原子事务中完成，进程重启、第二个 worker 或系统时钟回拨
+不会重置或扩大当前窗口预算。
+
+Reply mention 只有在功能门开启、触发来自群聊或话题，且入站
+`sender_open_id` 精确命中 `CEO_FEISHU_REPLY_MENTION_OPEN_IDS` 时才会冻结到
+delivery。sender 在每次真实 mutation 前会重新读取功能门和 allowlist；排队后关闭功能
+或移除 ID 会将该 delivery 失败关闭，且不会调用发送 mutation。正文里的 `@名字` 或
+模型输出的 ID 永远不能替代这一本地映射。修改映射后应重启服务，使 `.env` 重新加载。
 
 `CEO_FEISHU_HANDOFF_OPEN_IDS` 在进程启动时规范化。handoff action 入库时会校验一次，
 sender claim 后、任何 SDK 调用前还会用当前进程配置复核一次。撤掉目标并重启后，旧的
@@ -468,6 +482,7 @@ CEO_FEISHU_REACTION_ENABLED=0
 CEO_FEISHU_RECALL_ENABLED=0
 CEO_FEISHU_HANDOFF_ENABLED=0
 CEO_FEISHU_REPLY_MENTION_SENDER=0
+CEO_FEISHU_REPLY_MENTION_OPEN_IDS=
 CEO_FEISHU_ENABLED=0
 ```
 

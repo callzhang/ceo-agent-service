@@ -9,7 +9,7 @@ from time import monotonic
 from typing import Callable
 
 from app.feishu.client import FeishuSendResult
-from app.feishu.delivery import error_code
+from app.feishu.delivery import TARGET_PROBE_UNKNOWN_ERROR_CODE, error_code
 from app.feishu.rate_limit import SlidingWindowMutationBudget
 
 
@@ -346,6 +346,85 @@ class FeishuMessageActionSender:
             )
         return None
 
+    async def _probe_reaction_target(
+        self, action
+    ) -> FeishuMessageActionOutcome | None:
+        """Fail closed unless the persisted trigger still exists remotely.
+
+        This is a read-only provider call and therefore happens before both
+        the mutation budget and the durable remote-mutation fence.  An
+        indeterminate probe can be retried safely; it must never be treated as
+        an unknown mutation result.
+        """
+
+        try:
+            target_state = await asyncio.wait_for(
+                self.client.fetch_message_state(
+                    action.app_id, action.target_message_id
+                ),
+                timeout=self.action_timeout_seconds,
+            )
+        except asyncio.CancelledError:
+            next_remote_failures = action.remote_failures + 1
+            retryable = next_remote_failures < self.max_attempts
+            self._transition(
+                action,
+                "retry" if retryable else "failed",
+                available_at=(
+                    self._retry_at(next_remote_failures) if retryable else ""
+                ),
+                remote_failures=next_remote_failures,
+                error_code=TARGET_PROBE_UNKNOWN_ERROR_CODE,
+                error=(
+                    "reaction_target_probe_cancelled"
+                    if retryable
+                    else "reaction_target_probe_cancelled_max_attempts"
+                ),
+            )
+            raise
+        except Exception:
+            target_state = None
+
+        state = str(getattr(target_state, "state", "unknown") or "unknown")
+        if state == "exists":
+            return None
+        if state == "absent":
+            error = "reaction_target_revoked_before_send"
+            self._transition(
+                action,
+                "failed",
+                error_code="target_revoked",
+                error=error,
+                actor="action-sender",
+                audit_event_type="reaction_target_revoked",
+            )
+            return FeishuMessageActionOutcome(
+                "failed", "target_revoked", error
+            )
+
+        next_remote_failures = action.remote_failures + 1
+        retryable = next_remote_failures < self.max_attempts
+        error = (
+            "reaction_target_state_unknown"
+            if retryable
+            else "reaction_target_state_unknown_max_attempts"
+        )
+        self._transition(
+            action,
+            "retry" if retryable else "failed",
+            available_at=(
+                self._retry_at(next_remote_failures) if retryable else ""
+            ),
+            remote_failures=next_remote_failures,
+            error_code=TARGET_PROBE_UNKNOWN_ERROR_CODE,
+            error=error,
+        )
+        return FeishuMessageActionOutcome(
+            "retry" if retryable else "failed",
+            TARGET_PROBE_UNKNOWN_ERROR_CODE,
+            error,
+        )
+
     async def _invoke(self, action) -> FeishuSendResult:
         if action.kind == "add_reaction":
             payload = json.loads(action.payload_json)
@@ -527,6 +606,10 @@ class FeishuMessageActionSender:
             return FeishuMessageActionOutcome(
                 "failed", "target_revoked", error
             )
+        if action.kind == "add_reaction":
+            probe_outcome = await self._probe_reaction_target(action)
+            if probe_outcome is not None:
+                return probe_outcome
         if not self._rate_slot():
             try:
                 self._transition(

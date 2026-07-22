@@ -16,7 +16,10 @@ def test_registration_manifest_is_exactly_least_privilege():
             "im:message:readonly",
         ),
         "rich_message_read": ("im:message:readonly",),
-        "emoji_reaction": ("im:message.reactions:write_only",),
+        "emoji_reaction": (
+            "im:message:readonly",
+            "im:message.reactions:write_only",
+        ),
         "recall_bot_message": ("im:message:recall",),
     }
     assert manifest["unsupported_not_to_grant"] == {

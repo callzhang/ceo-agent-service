@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from time import monotonic
@@ -19,11 +20,11 @@ from app.feishu.rate_limit import SlidingWindowMutationBudget
 
 
 DELIVERY_UUID_NAMESPACE = UUID("49f6141e-9852-5e2d-8e9e-3c4207468328")
+TARGET_PROBE_UNKNOWN_ERROR_CODE = "target_probe_unknown"
 KNOWN_ERROR_CODES = frozenset(
     {
         "format_error",
         "target_revoked",
-        "target_state_unknown",
         "rate_limited",
         "permission_denied",
         "upload_failed",
@@ -34,9 +35,7 @@ KNOWN_ERROR_CODES = frozenset(
         "unknown",
     }
 )
-RETRYABLE_CODES = frozenset(
-    {"rate_limited", "not_connected", "target_state_unknown"}
-)
+RETRYABLE_CODES = frozenset({"rate_limited", "not_connected"})
 TERMINAL_CODES = frozenset(
     {
         "format_error",
@@ -49,6 +48,9 @@ TERMINAL_CODES = frozenset(
 )
 DEFAULT_SEND_TIMEOUT_SECONDS = 60.0
 DEFAULT_SEND_LEASE_STALE_SECONDS = 5 * 60
+_OPEN_ID_RE = re.compile(r"^ou_[A-Za-z0-9_-]+$")
+
+
 @dataclass(frozen=True)
 class FeishuDeliveryOutcome:
     status: str
@@ -102,6 +104,8 @@ class FeishuDeliverySender:
         send_lease_stale_seconds: int = DEFAULT_SEND_LEASE_STALE_SECONDS,
         now: Callable[[], datetime] | None = None,
         monotonic_clock: Callable[[], float] = monotonic,
+        reply_mention_sender_enabled: Callable[[], bool] | None = None,
+        reply_mention_open_ids: Callable[[], tuple[str, ...]] | None = None,
         mutation_budget: SlidingWindowMutationBudget | None = None,
     ):
         if send_mode not in {"confirm", "auto"}:
@@ -124,6 +128,20 @@ class FeishuDeliverySender:
         self.send_lease_stale_seconds = send_lease_stale_seconds
         self.now = now or (lambda: datetime.now(timezone.utc))
         self.monotonic_clock = monotonic_clock
+        if reply_mention_sender_enabled is not None and not callable(
+            reply_mention_sender_enabled
+        ):
+            raise ValueError("Feishu reply mention gate must be callable")
+        if reply_mention_open_ids is not None and not callable(
+            reply_mention_open_ids
+        ):
+            raise ValueError("Feishu reply mention allowlist must be callable")
+        self._reply_mention_sender_enabled = (
+            reply_mention_sender_enabled or (lambda: False)
+        )
+        self._reply_mention_open_ids = (
+            reply_mention_open_ids or (lambda: ())
+        )
         self.mutation_budget = mutation_budget or SlidingWindowMutationBudget(
             max_sends_per_minute,
             monotonic_clock=monotonic_clock,
@@ -185,6 +203,60 @@ class FeishuDeliverySender:
 
     def _rate_slot(self) -> bool:
         return self.mutation_budget.try_acquire()
+
+    def _reply_mentions_currently_authorized(self, delivery) -> bool:
+        """Revalidate frozen mention identities against current local policy."""
+        mentions = tuple(getattr(delivery, "mention_open_ids", ()) or ())
+        if not mentions:
+            return True
+        try:
+            if not bool(self._reply_mention_sender_enabled()):
+                return False
+            configured = self._reply_mention_open_ids()
+        except Exception:
+            return False
+        if not isinstance(configured, (tuple, list)):
+            return False
+        allowed: list[str] = []
+        for open_id in configured:
+            if (
+                not isinstance(open_id, str)
+                or open_id != open_id.strip()
+                or not _OPEN_ID_RE.fullmatch(open_id)
+            ):
+                return False
+            if open_id not in allowed:
+                allowed.append(open_id)
+        if len(allowed) > 20:
+            return False
+        return all(open_id in allowed for open_id in mentions)
+
+    def _fail_closed_revoked_mentions(
+        self,
+        delivery,
+        *,
+        known_message_ids: tuple[str, ...] = (),
+        request_log_id: str = "",
+    ) -> FeishuDeliveryOutcome:
+        error = "reply_mention_authorization_revoked_before_send"
+        self._transition_with_prefix(
+            delivery,
+            "failed",
+            known_message_ids=known_message_ids,
+            request_log_id=request_log_id,
+            error_code="permission_denied",
+            error=error,
+            actor="sender",
+            audit_event_type="mention_authorization_revoked",
+            audit_detail=f"mention_count={len(delivery.mention_open_ids)}",
+        )
+        return FeishuDeliveryOutcome(
+            "failed",
+            "permission_denied",
+            error,
+            message_id=(known_message_ids[0] if known_message_ids else ""),
+            request_log_id=request_log_id,
+        )
 
     def _retry_at(self, attempts: int, *, rate_limited: bool = False) -> str:
         seconds = 60 if rate_limited else min(300, max(5, 2 ** max(1, attempts)))
@@ -356,6 +428,8 @@ class FeishuDeliverySender:
         if delivery.status != "sending":
             raise ValueError("Feishu delivery must be atomically claimed first")
         delivery = self._require_delivery_binding(delivery)
+        if not self._reply_mentions_currently_authorized(delivery):
+            return self._fail_closed_revoked_mentions(delivery)
         if self.send_mode == "confirm" and not (
             delivery.approved_at and delivery.approved_by
         ):
@@ -429,7 +503,7 @@ class FeishuDeliverySender:
                     self._retry_at(next_remote_failures) if retryable else ""
                 ),
                 remote_failures=next_remote_failures,
-                error_code="target_state_unknown",
+                error_code=TARGET_PROBE_UNKNOWN_ERROR_CODE,
                 error=(
                     "trigger_state_probe_cancelled"
                     if retryable
@@ -460,28 +534,36 @@ class FeishuDeliverySender:
                     known_message_ids=tuple(known_message_ids),
                     available_at=self._retry_at(next_remote_failures),
                     remote_failures=next_remote_failures,
-                    error_code="target_state_unknown",
+                    error_code=TARGET_PROBE_UNKNOWN_ERROR_CODE,
                     error="reply_target_state_unknown",
                 )
                 return FeishuDeliveryOutcome(
-                    "retry", "target_state_unknown", "reply_target_state_unknown"
+                    "retry",
+                    TARGET_PROBE_UNKNOWN_ERROR_CODE,
+                    "reply_target_state_unknown",
                 )
             self._transition_with_prefix(
                 delivery,
                 "failed",
                 known_message_ids=tuple(known_message_ids),
                 remote_failures=next_remote_failures,
-                error_code="target_state_unknown",
+                error_code=TARGET_PROBE_UNKNOWN_ERROR_CODE,
                 error="reply_target_state_unknown_max_attempts",
             )
             return FeishuDeliveryOutcome(
                 "failed",
-                "target_state_unknown",
+                TARGET_PROBE_UNKNOWN_ERROR_CODE,
                 "reply_target_state_unknown_max_attempts",
             )
         first_remote_call = True
         for ordinal in range(len(known_message_ids), len(chunks)):
             chunk = chunks[ordinal]
+            if not self._reply_mentions_currently_authorized(delivery):
+                return self._fail_closed_revoked_mentions(
+                    delivery,
+                    known_message_ids=tuple(known_message_ids),
+                    request_log_id=last_request_log_id,
+                )
             if not self._rate_slot():
                 try:
                     self._transition_with_prefix(

@@ -57,6 +57,7 @@ from app.config import (
     embedding_model,
     embedding_timeout_seconds,
     env_file_path,
+    env_value_references_sensitive_key,
     fast_path_unread_backoff_duration,
     feedback_spike_vercel_base_url,
     forbidden_path_prefixes,
@@ -70,7 +71,9 @@ from app.config import (
     poll_interval_seconds,
     principal_name,
     producer_interval_seconds,
+    is_sensitive_env_key,
     read_env_file,
+    read_env_file_raw,
     single_chat_read_recovery_limit,
     single_chat_read_recovery_window,
     task_daily_interval_seconds,
@@ -1878,7 +1881,43 @@ def _render_channel_config() -> str:
     )
 
 
-def _system_config_rows() -> list[tuple[str, str, str]]:
+_REDACTED_CONFIG_VALUE = "[redacted]"
+
+
+def _is_sensitive_config_key(key: str) -> bool:
+    return is_sensitive_env_key(key)
+
+
+def _system_config_display_value(
+    key: str,
+    value: str,
+    *,
+    raw_value: str = "",
+    raw_values: dict[str, str] | None = None,
+) -> str:
+    if _system_config_value_is_sensitive(
+        key,
+        raw_value,
+        raw_values=raw_values,
+    ):
+        return _REDACTED_CONFIG_VALUE
+    return value
+
+
+def _system_config_value_is_sensitive(
+    key: str,
+    raw_value: str,
+    *,
+    raw_values: dict[str, str] | None = None,
+) -> bool:
+    return _is_sensitive_config_key(key) or env_value_references_sensitive_key(
+        raw_value,
+        raw_values=raw_values,
+    )
+
+
+def _system_config_rows() -> list[tuple[str, str, str, bool]]:
+    raw_env_values = read_env_file_raw()
     env_values = read_env_file()
     mention_text = _csv_label(mention_aliases())
     broadcast_text = _csv_label(broadcast_mention_aliases())
@@ -2032,11 +2071,29 @@ def _system_config_rows() -> list[tuple[str, str, str]]:
     for key in env_values:
         if key not in values:
             ordered_keys.append(key)
+    raw_values_by_key = {
+        key: raw_env_values.get(key, os.environ.get(key, ""))
+        for key in ordered_keys
+    }
+    sensitive_by_key = {
+        key: _system_config_value_is_sensitive(
+            key,
+            raw_values_by_key[key],
+            raw_values=raw_env_values,
+        )
+        for key in ordered_keys
+    }
     return [
         (
             key,
-            env_values.get(key, values.get(key, "")),
+            _system_config_display_value(
+                key,
+                env_values.get(key, values.get(key, "")),
+                raw_value=raw_values_by_key[key],
+                raw_values=raw_env_values,
+            ),
             descriptions.get(key, "来自 .env；服务启动或 prompt/config 渲染时读取。"),
+            sensitive_by_key[key],
         )
         for key in ordered_keys
     ]
@@ -2070,11 +2127,11 @@ def _render_system_config(*, db_path: Path | None = None) -> str:
         "<tr><th>Key</th><th>Current value</th><th>说明</th></tr>",
         *[
             "<tr>"
-            f"<td>{_system_config_key_cell(key, key in editable_keys)}</td>"
-            f"<td>{_system_config_value_cell(key, value, key in editable_keys)}</td>"
+            f"<td>{_system_config_key_cell(key, key in editable_keys, sensitive)}</td>"
+            f"<td>{_system_config_value_cell(key, value, key in editable_keys, sensitive)}</td>"
             f"<td>{escape(description)}</td>"
             "</tr>"
-            for key, value, description in _system_config_rows()
+            for key, value, description, sensitive in _system_config_rows()
         ],
     ]
     return (
@@ -2127,7 +2184,8 @@ def _runtime_identity_cache_html(db_path: Path | None) -> str:
 
 
 def _editable_system_config_keys() -> set[str]:
-    return {
+    raw_env_values = read_env_file_raw()
+    candidates = {
         "CEO_PRINCIPAL_NAME",
         "USER_ALIAS",
         "MEMORY_CONNECTOR_USER_ID",
@@ -2156,11 +2214,23 @@ def _editable_system_config_keys() -> set[str]:
         "MESSAGE_RECOVERY_INTERVAL",
         "SINGLE_CHAT_READ_RECOVERY_WINDOW",
         "SINGLE_CHAT_READ_RECOVERY_LIMIT",
-        *read_env_file().keys(),
+        *raw_env_values.keys(),
+    }
+    return {
+        key
+        for key in candidates
+        if not _system_config_value_is_sensitive(
+            key,
+            raw_env_values.get(key, os.environ.get(key, "")),
+            raw_values=raw_env_values,
+        )
     }
 
 
-def _system_config_key_cell(key: str, editable: bool) -> str:
+def _system_config_key_cell(
+    key: str, editable: bool, sensitive: bool = False
+) -> str:
+    editable = editable and not (sensitive or _is_sensitive_config_key(key))
     if not editable:
         return f"<code class=\"config-value\">{escape(key)}</code>"
     return (
@@ -2169,7 +2239,14 @@ def _system_config_key_cell(key: str, editable: bool) -> str:
     )
 
 
-def _system_config_value_cell(key: str, value: str, editable: bool) -> str:
+def _system_config_value_cell(
+    key: str, value: str, editable: bool, sensitive: bool = False
+) -> str:
+    if sensitive or _is_sensitive_config_key(key):
+        return (
+            f"<code class=\"config-value\">"
+            f"{escape(_REDACTED_CONFIG_VALUE)}</code>"
+        )
     if not editable:
         return f"<code class=\"config-value\">{escape(value)}</code>"
     return (
@@ -5554,9 +5631,12 @@ def handle_system_config_post(body: bytes) -> tuple[int, dict[str, str], str]:
             parsed.get("system_value", []),
             fillvalue="",
         )
-        if key in editable_keys
+        if key in editable_keys and not _is_sensitive_config_key(key)
     }
-    write_env_values(updates)
+    try:
+        write_env_values(updates)
+    except ValueError:
+        return 400, {}, "invalid system config update"
     return 303, {"Location": "/config?tab=system&saved=1"}, ""
 
 

@@ -189,10 +189,11 @@ cp .env.example .env
 | `CEO_FEISHU_ENABLED` | 飞书接收/处理总开关，默认 `0` |
 | `CEO_FEISHU_SENDER_ENABLED` | 飞书真实投递独立开关，默认 `0`；启用前必须整组授予 `reply_send`（`im:message:send_as_bot` + `im:message:readonly`）并发布应用版本 |
 | `CEO_FEISHU_MEDIA_ENABLED` | 飞书附件受控下载，默认 `0`；还要求总开关开启 |
-| `CEO_FEISHU_REACTION_ENABLED` | 飞书 Emoji reaction，默认 `0`；还要求 sender 开启 |
+| `CEO_FEISHU_REACTION_ENABLED` | 飞书 Emoji reaction，默认 `0`；还要求 sender 开启，并整组授予 `im:message:readonly` + `im:message.reactions:write_only` 以便写入前复核原消息 |
 | `CEO_FEISHU_RECALL_ENABLED` | 经审核的 bot 消息撤回，默认 `0`；还要求 sender 开启 |
 | `CEO_FEISHU_HANDOFF_ENABLED` | 受信 allowlist 接管通知，默认 `0`；还要求 sender 开启 |
-| `CEO_FEISHU_REPLY_MENTION_SENDER` | 群聊/话题回复时结构化 @ 已验证的入站发送人，默认 `0`；模型不能指定目标 |
+| `CEO_FEISHU_REPLY_MENTION_SENDER` | 群聊/话题回复时结构化 @ 已验证的入站发送人，默认 `0`；还必须命中本地 open_id 映射，模型不能指定目标 |
+| `CEO_FEISHU_REPLY_MENTION_OPEN_IDS` | 逗号分隔的本地已验证 sender `open_id` 映射，默认空、严格 `ou_` 格式、去重后最多 20 个；排队后撤销会阻止真实 @ 发送 |
 | `CEO_FEISHU_MEDIA_RETENTION_DAYS` | 已验证附件的本地保留天数，默认 `7`；清理先删除媒体再清理事件 |
 | `CEO_FEISHU_SEND_MODE` | `confirm`（默认）保留待人工批准；`auto` 仅能在另行授权后启用 |
 | `CEO_FEISHU_APP_ID` | 企业自建应用 App ID；App Secret 不写入 `.env.example` |

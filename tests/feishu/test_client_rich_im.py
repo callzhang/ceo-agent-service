@@ -2,12 +2,17 @@ import asyncio
 import importlib.metadata
 import json
 import logging
+from datetime import datetime, timezone
 from types import SimpleNamespace
 
 import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 
+from app import config
 import app.feishu.client as client_module
 from app.feishu.actions import build_message_action
+from app.feishu.audit_web import register_feishu_review_routes
 from app.feishu.client import (
     ALLOWED_REACTION_EMOJI_TYPES,
     FeishuChannelClient,
@@ -17,6 +22,7 @@ from app.feishu.client import (
     normalize_send_result,
 )
 from app.feishu.ingress import normalize_sdk_envelope
+from app.feishu.producer import FeishuReplyProducer
 from app.feishu.prompt import build_feishu_turn_prompt
 from app.store import AutoReplyStore
 
@@ -932,6 +938,122 @@ def test_pinned_sdk_post_resource_keys_never_reach_event_task_or_prompt(
     ):
         assert image_key not in sink
         assert video_key not in sink
+
+
+def test_pinned_sdk_interactive_card_is_rejected_before_every_content_sink(
+    tmp_path, monkeypatch
+):
+    """Card JSON stays inside the pinned SDK object and never crosses ingress."""
+    sdk = pytest.importorskip("lark_channel")
+    assert importlib.metadata.version("lark-channel-sdk") == "1.2.0"
+    card_title_marker = "CARD_TITLE_MUST_NEVER_PERSIST_7f6b99"
+    card_secret_marker = "sk-card-secret-MUST-NEVER-PERSIST-21d4c8"
+    card_xss_marker = "CARD_XSS_MUST_NEVER_RENDER_72a1ef"
+    card_payload = {
+        "config": {"wide_screen_mode": True},
+        "header": {
+            "title": {
+                "tag": "plain_text",
+                "content": card_title_marker,
+            }
+        },
+        "elements": [
+            {
+                "tag": "div",
+                "text": {
+                    "tag": "lark_md",
+                    "content": (
+                        f"<script>{card_xss_marker}</script> "
+                        f"api_key={card_secret_marker}"
+                    ),
+                },
+            }
+        ],
+    }
+    raw_card_json = json.dumps(card_payload, ensure_ascii=False)
+    client = build_channel(
+        FeishuClientConfig(app_id="cli_card_contract", app_secret="secret")
+    )
+
+    async def normalize_card():
+        return await client.channel._pipeline.normalize(
+            event_id="evt_card_contract",
+            message_event={
+                "message_id": "om_card_contract",
+                "root_id": "",
+                "parent_id": "",
+                "create_time": "1784685600000",
+                "chat_id": "oc_card_contract",
+                "chat_type": "group",
+                "message_type": "interactive",
+                "content": raw_card_json,
+                "mentions": [],
+            },
+            sender={
+                "sender_id": {"open_id": "ou_card_contract"},
+                "sender_type": "user",
+            },
+        )
+
+    sdk_message = asyncio.run(normalize_card())
+    assert isinstance(sdk_message.content, sdk.InteractiveContent)
+    assert card_payload == sdk_message.content.card
+    envelope = normalize_sdk_envelope(
+        sdk_message, app_id="cli_card_contract"
+    )
+    assert envelope.message.message_type == "interactive"
+    assert envelope.message.body_text == ""
+    assert envelope.message.normalized_summary == ""
+    assert envelope.resources == ()
+
+    markers = (
+        card_title_marker,
+        card_secret_marker,
+        card_xss_marker,
+        raw_card_json,
+    )
+    normalized_json = envelope.model_dump_json()
+    for marker in markers:
+        assert marker not in normalized_json
+
+    db_path = tmp_path / "card-rejection.sqlite3"
+    store = AutoReplyStore(db_path)
+    producer = FeishuReplyProducer(
+        store,
+        app_id="cli_card_contract",
+        now=lambda: datetime(2026, 7, 22, 2, 0, 1, tzinfo=timezone.utc),
+    )
+    result = producer.ingest_envelope(envelope)
+
+    assert result.enqueued is False
+    assert result.decision.status == "rejected"
+    assert result.decision.reason == "unsupported_media"
+    stored = store.get_feishu_event(result.record.id)
+    assert stored is not None
+    assert stored.body_text == ""
+    assert stored.normalized_summary == ""
+    assert stored.reply_task_id == 0
+    assert store.list_reply_tasks(channel="feishu") == []
+
+    prompt = build_feishu_turn_prompt(envelope.message, [stored])
+    monkeypatch.setattr(config, "feishu_app_id", lambda: "cli_card_contract")
+    monkeypatch.setattr(config, "feishu_app_secret", lambda: "")
+    audit_app = FastAPI()
+    register_feishu_review_routes(
+        audit_app, store_factory=lambda: AutoReplyStore(db_path)
+    )
+    audit_response = TestClient(
+        audit_app,
+        base_url="http://127.0.0.1:8765",
+        client=("127.0.0.1", 50000),
+    ).get("/feishu/review")
+    assert audit_response.status_code == 200
+
+    for marker in markers:
+        assert marker not in prompt
+        assert marker not in audit_response.text
+        for sqlite_file in tmp_path.glob("card-rejection.sqlite3*"):
+            assert marker.encode() not in sqlite_file.read_bytes()
 
 
 def test_pinned_sdk_channel_disables_implicit_inbound_network_enrichment(

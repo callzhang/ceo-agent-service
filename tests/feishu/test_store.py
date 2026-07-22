@@ -857,6 +857,207 @@ def test_later_delivery_cannot_overtake_delayed_retry_in_same_chat(tmp_path):
     assert claimed.id == deliveries[0].id
 
 
+def _reopened_older_delivery_with_newer_unknown(store):
+    events = [
+        _eligible(store, number, chat_id="oc_unknown_order")
+        for number in (1, 2)
+    ]
+    deliveries = [
+        store.create_feishu_delivery(
+            reply_task_id=event.reply_task_id,
+            attempt_id=_attempt(store, event),
+            app_id="cli_a",
+            chat_id="oc_unknown_order",
+            reply_to_message_id=event.message_id,
+            reply_in_thread=False,
+            reply_text=f"reply-{event.message_id}",
+        )
+        for event in events
+    ]
+
+    first_claim = store.claim_feishu_delivery(
+        deliveries[0].id, app_id="cli_a"
+    )
+    store.mark_feishu_delivery_send_unknown(
+        deliveries[0].id,
+        error_code="send_timeout",
+        error="older outcome unknown",
+    )
+    store.reconcile_feishu_delivery_unknown(
+        deliveries[0].id,
+        app_id="cli_a",
+        outcome="not_sent",
+        verified_by="operator",
+        evidence_kind="message_lookup",
+    )
+
+    second_claim = store.claim_feishu_delivery(
+        deliveries[1].id, app_id="cli_a"
+    )
+    assert first_claim is not None and second_claim is not None
+    reopened = store.requeue_feishu_delivery_after_verification(
+        deliveries[0].id,
+        app_id="cli_a",
+        verified_by="operator",
+        evidence_kind="admin_audit",
+    )
+    store.mark_feishu_delivery_send_unknown(
+        deliveries[1].id,
+        error_code="send_timeout",
+        error="newer outcome unknown",
+    )
+    assert reopened.status == "retry"
+    return deliveries
+
+
+def test_specific_claim_cannot_cross_newer_same_conversation_send_unknown(
+    tmp_path,
+):
+    store = _store(tmp_path)
+    older, newer = _reopened_older_delivery_with_newer_unknown(store)
+
+    assert older.id < newer.id
+    assert store.claim_feishu_delivery(older.id, app_id="cli_a") is None
+    assert store.get_feishu_delivery(older.id).status == "retry"
+    assert store.get_feishu_delivery(newer.id).status == "send_unknown"
+
+
+def test_batch_claim_cannot_cross_newer_send_unknown_but_keeps_isolation(
+    tmp_path,
+):
+    store = _store(tmp_path)
+    older, newer = _reopened_older_delivery_with_newer_unknown(store)
+    other_chat_event = _eligible(store, 3, chat_id="oc_independent")
+    other_chat = store.create_feishu_delivery(
+        reply_task_id=other_chat_event.reply_task_id,
+        attempt_id=_attempt(store, other_chat_event),
+        app_id="cli_a",
+        chat_id="oc_independent",
+        reply_to_message_id=other_chat_event.message_id,
+        reply_in_thread=False,
+        reply_text="independent chat",
+    )
+    other_app_event = _eligible(
+        store,
+        4,
+        app_id="cli_b",
+        chat_id="oc_unknown_order",
+    )
+    other_app = store.create_feishu_delivery(
+        reply_task_id=other_app_event.reply_task_id,
+        attempt_id=_attempt(store, other_app_event),
+        app_id="cli_b",
+        chat_id="oc_unknown_order",
+        reply_to_message_id=other_app_event.message_id,
+        reply_in_thread=False,
+        reply_text="independent app",
+    )
+
+    claimed_a = store.claim_feishu_deliveries(10, app_id="cli_a")
+    claimed_b = store.claim_feishu_deliveries(10, app_id="cli_b")
+
+    assert [delivery.id for delivery in claimed_a] == [other_chat.id]
+    assert [delivery.id for delivery in claimed_b] == [other_app.id]
+    assert store.get_feishu_delivery(older.id).status == "retry"
+    assert store.get_feishu_delivery(newer.id).status == "send_unknown"
+
+
+def test_verified_requeue_cannot_cross_other_same_conversation_send_unknown(
+    tmp_path,
+):
+    store = _store(tmp_path)
+    events = [
+        _eligible(store, number, chat_id="oc_requeue_unknown")
+        for number in (1, 2)
+    ]
+    deliveries = [
+        store.create_feishu_delivery(
+            reply_task_id=event.reply_task_id,
+            attempt_id=_attempt(store, event),
+            app_id="cli_a",
+            chat_id="oc_requeue_unknown",
+            reply_to_message_id=event.message_id,
+            reply_in_thread=False,
+            reply_text=f"reply-{event.message_id}",
+        )
+        for event in events
+    ]
+    first_claim = store.claim_feishu_delivery(deliveries[0].id, app_id="cli_a")
+    assert first_claim is not None
+    store.mark_feishu_delivery_send_unknown(
+        deliveries[0].id,
+        error_code="send_timeout",
+        error="older outcome unknown",
+    )
+    failed = store.reconcile_feishu_delivery_unknown(
+        deliveries[0].id,
+        app_id="cli_a",
+        outcome="not_sent",
+        verified_by="operator",
+        evidence_kind="message_lookup",
+    )
+    second_claim = store.claim_feishu_delivery(deliveries[1].id, app_id="cli_a")
+    assert second_claim is not None
+    store.mark_feishu_delivery_send_unknown(
+        deliveries[1].id,
+        error_code="send_timeout",
+        error="newer outcome unknown",
+    )
+
+    with pytest.raises(ValueError, match="unresolved send"):
+        store.requeue_feishu_delivery_after_verification(
+            deliveries[0].id,
+            app_id="cli_a",
+            verified_by="operator",
+            evidence_kind="admin_audit",
+        )
+
+    unchanged = store.get_feishu_delivery(deliveries[0].id)
+    assert unchanged.status == "failed"
+    assert unchanged.error_code == "verified_not_sent"
+    assert unchanged.review_generation == failed.review_generation
+
+    store.reconcile_feishu_delivery_unknown(
+        deliveries[1].id,
+        app_id="cli_a",
+        outcome="not_sent",
+        verified_by="operator",
+        evidence_kind="message_lookup",
+    )
+    other_app_event = _eligible(
+        store,
+        3,
+        app_id="cli_b",
+        chat_id="oc_requeue_unknown",
+    )
+    other_app_delivery = store.create_feishu_delivery(
+        reply_task_id=other_app_event.reply_task_id,
+        attempt_id=_attempt(store, other_app_event),
+        app_id="cli_b",
+        chat_id="oc_requeue_unknown",
+        reply_to_message_id=other_app_event.message_id,
+        reply_in_thread=False,
+        reply_text="other app unknown",
+    )
+    other_app_claim = store.claim_feishu_delivery(
+        other_app_delivery.id, app_id="cli_b"
+    )
+    assert other_app_claim is not None
+    store.mark_feishu_delivery_send_unknown(
+        other_app_delivery.id,
+        error_code="send_timeout",
+        error="other app outcome unknown",
+    )
+
+    reopened = store.requeue_feishu_delivery_after_verification(
+        deliveries[0].id,
+        app_id="cli_a",
+        verified_by="operator",
+        evidence_kind="admin_audit",
+    )
+    assert reopened.status == "retry"
+
+
 def test_concurrent_specific_claims_cannot_send_same_chat_in_parallel(tmp_path):
     store = _store(tmp_path)
     events = [

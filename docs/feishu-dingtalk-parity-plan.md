@@ -22,8 +22,8 @@
 | 阶段 | 交付范围 | 验收边界 |
 |---|---|---|
 | 1. Foundation | 应用/会话隔离、队列 lease、outbox、审计、迁移、恢复 | PR #6；重复事件/并发 claim/崩溃恢复/未知发送全部 fail closed |
-| 2. Rich IM | 富消息、媒体、话题、长回复、mention、reaction、撤回、handoff | 本地验收完成：IM-01 至 IM-12，`tests/feishu` 557 项通过；真实租户 smoke test 仍保持 opt-in |
-| 3. Read-only | 通讯录、文档、日历、审批、邮件等企业数据只读 | TAT/UAT 边界明确；权限最小化；分页、限流、脱敏和快照一致性通过 |
+| 2. Rich IM | 富消息、媒体、话题、长回复、mention、reaction、撤回、handoff | 本地验收完成：IM-01 至 IM-12，`tests/feishu` 596 项通过；真实租户 smoke test 仍保持 opt-in |
+| 3. Read-only | 通讯录、文档/Wiki、云盘、Base、日历、审批、妙记及关联任务状态只读 | TAT/UAT 边界明确；权限最小化；分页、限流、脱敏和快照一致性通过 |
 | 4. Reviewed writes | 文档、日历、待办、邮件等经审核写入 | 每项写入有 preview、审批哈希、幂等和最终态核验 |
 | 5. High-risk | 审批响应、人员/组织及其他高风险业务动作 | UAT 用户隔离；四眼或逐项确认；拒绝跨身份和批量隐式写入 |
 | 6. Workflow parity | OKR、handoff、memory、定时/恢复流程和最终对标 | 能力注册表无未解释 `planned`；全量测试、迁移和回滚演练完成 |
@@ -51,8 +51,9 @@
 ### IM-03 文本、Post 与结构化 mention
 
 - 短文本和 Markdown/Post 由受限本地 payload 生成，禁止任意 SDK JSON。
-- mention 只能来自已验证的本地身份映射，使用 `open_id` 结构化发送；不解析模型生成的
-  `@名字`，也不允许模型提供用户 ID。
+- mention 只能来自默认空的本地 `open_id` 身份映射，使用 `open_id` 结构化发送；不解析
+  模型生成的 `@名字`，也不允许模型提供用户 ID。consumer 入队和 sender 每次真实
+  mutation 前都会校验当前功能门及映射，排队后撤销授权会失败关闭。
 - 本阶段不支持通用主动私聊或群发；普通回复目标必须来自持久化触发事件，handoff
   仅能直发给本地 allowlist 中的受信用户 `open_id`。
 
@@ -148,17 +149,24 @@
 
 ## Stage 2 本地验收证据
 
-- `tests/feishu`：557 passed；覆盖消息 ID 去重、应用/会话/引用根隔离、富消息投影、
+- `tests/feishu`：596 passed；覆盖消息 ID 去重、应用/会话/引用根隔离、富消息投影、
   媒体内容寻址与两阶段清理、reaction、人工撤回、handoff、审核 UI/CLI、并发 claim、
   crash recovery、未知结果互锁、逐片回执、审批哈希和旧库迁移。
-- 全仓隔离副本回归：2958 passed、24 failed、5 skipped；Stage 1 基线提交
-  `282a2ff` 为 2563 passed、24 failed、5 skipped，两个阶段的 24 个失败 node ID 完全
-  相同，均来自既有 live eval、Memory Connector 本机环境、macOS/Unix socket 沙箱、
-  缺失可选系统模块及非飞书语义；Stage 2 未新增失败。
+- Stage 2 聚焦回归：851 passed、1 deselected；全仓隔离回归：3191 passed、23 failed、
+  5 skipped。Stage 1 基线提交 `b8a7cd2` 为 2715 passed、22 failed、5 skipped；22 个
+  既有失败仍来自 live eval、Memory Connector 本机环境、macOS/Unix socket 沙箱、
+  缺失可选系统模块及非飞书语义。唯一额外失败是当前只读沙箱拒绝
+  `tests/test_prompt.py` 向仓库根写临时文件；飞书及相关业务测试没有新增失败。
 - `event_id` 仅保留为审计证据；持久身份为 `(app_id, message_id)`，上下文边界使用
   `message_id`，并持久化 `root_message_id`、`parent_message_id` 和归一化版本/截断标志。
 - 媒体默认最多 8 个资源，默认保留 7 天；维护流程先安全清理本地文件与媒体引用，
   再删除可清理的事件行。共享内容引用、处理中资源和清理失败均阻止事件提前删除。
 - `send_unknown` 与消息动作 `result_unknown` 会在同一 `app_id + chat_id` 双向阻塞，
   必须先完成确定性对账，不能让回复、reaction、撤回或 handoff 相互越过。
+- target preflight 使用独立错误域；mutation fence 后的任何查询异常都进入 unknown，
+  不会被 SDK 通用错误码误判为可安全重试。回复与 action 使用持久化共享速率预算和
+  跨窗口轮转游标，在多进程、重启以及极低配额下仍保持配额原子性与有界公平。
+- 旧库升级使用 owner-only、拒绝符号链接的跨进程文件锁，并在双进程竞争、完整性和
+  外键检查中通过；管理页对密钥键、递归别名、继承环境和嵌入式密钥统一脱敏，批量
+  配置写入在非法 key、控制字符或敏感引用时整批拒绝。
 - 所有新增开关仍默认关闭；没有真实租户连接、权限变更或消息发送作为默认验收步骤。

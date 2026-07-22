@@ -4,6 +4,7 @@ import re
 import sqlite3
 import subprocess
 from pathlib import Path
+from urllib.parse import urlencode
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -3016,6 +3017,156 @@ def test_render_config_page_shows_system_config_tab_with_descriptions():
     assert "保存位置" in system_section
 
 
+def test_render_system_config_redacts_secret_like_env_values(
+    tmp_path: Path,
+    monkeypatch,
+):
+    env_path = tmp_path / ".env"
+    sensitive_values = {
+        "CEO_FEISHU_APP_SECRET": "feishu-secret-plaintext",
+        "VENDOR_TOKEN": "vendor-token-plaintext",
+        "ADMIN_PASSWORD": "admin-password-plaintext",
+        "MODEL_API_KEY": "model-api-key-plaintext",
+        "SIGNING_PRIVATE_KEY": "private-key-plaintext",
+        "PROXY_AUTHORIZATION": "authorization-plaintext",
+        "SESSION_COOKIE": "cookie-plaintext",
+        "THIRD_PARTY_CREDENTIAL_BUNDLE": "credential-plaintext",
+        "DINGTALK_DING_ROBOT_CODE": "robot-code-plaintext",
+        "ALERT_WEBHOOK": "webhook-plaintext",
+        "CLOUD_ACCESS_KEY": "access-key-plaintext",
+        "PACKAGE_SIGNING_KEY": "signing-key-plaintext",
+        "KEY_PASSPHRASE": "passphrase-plaintext",
+        "SERVICE_BEARER": "bearer-plaintext",
+    }
+    env_path.write_text(
+        "\n".join(
+            [
+                *(f"{key}={value}" for key, value in sensitive_values.items()),
+                "CEO_WORKSPACE=/tmp/editable-workspace",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CEO_ENV_FILE", str(env_path))
+    monkeypatch.setenv("CEO_WORKSPACE", "/tmp/editable-workspace")
+
+    html = render_config_page(active_tab="system")
+
+    for key, value in sensitive_values.items():
+        assert key in html
+        assert value not in html
+        assert f'name="system_key" value="{key}"' not in html
+        assert f'aria-label="{key}"' not in html
+    assert html.count("[redacted]") >= len(sensitive_values)
+    assert 'name="system_key" value="CEO_WORKSPACE"' in html
+    assert 'aria-label="CEO_WORKSPACE"' in html
+    assert 'value="/tmp/editable-workspace"' in html
+
+
+@pytest.mark.parametrize(
+    "reference",
+    ["$CEO_FEISHU_APP_SECRET", "${CEO_FEISHU_APP_SECRET}"],
+)
+def test_render_system_config_redacts_sensitive_reference_provenance(
+    tmp_path: Path,
+    monkeypatch,
+    reference,
+):
+    env_path = tmp_path / ".env"
+    env_path.write_text(
+        "CEO_FEISHU_APP_SECRET=alias-secret-plaintext\n"
+        f"SAFE_ALIAS={reference}\n"
+        "SAFE_HOME_PATH=$HOME/runtime\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CEO_ENV_FILE", str(env_path))
+    monkeypatch.setenv("CEO_FEISHU_APP_SECRET", "alias-secret-plaintext")
+    monkeypatch.setenv("HOME", "/Users/example")
+
+    html = render_config_page(active_tab="system")
+
+    assert "alias-secret-plaintext" not in html
+    assert "SAFE_ALIAS" in html
+    assert 'name="system_key" value="SAFE_ALIAS"' not in html
+    assert 'aria-label="SAFE_ALIAS"' not in html
+    assert "[redacted]" in html
+    assert 'name="system_key" value="SAFE_HOME_PATH"' in html
+    assert 'value="/Users/example/runtime"' in html
+
+
+def test_render_system_config_redacts_recursive_sensitive_provenance(
+    tmp_path: Path,
+    monkeypatch,
+):
+    env_path = tmp_path / ".env"
+    env_path.write_text(
+        "CEO_SECRET=synthetic-secret-value\n"
+        "SAFE_ALIAS=$CEO_SECRET\n"
+        "CEO_WORKSPACE=$SAFE_ALIAS\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CEO_ENV_FILE", str(env_path))
+    for key in ("CEO_SECRET", "SAFE_ALIAS", "CEO_WORKSPACE"):
+        monkeypatch.delenv(key, raising=False)
+
+    html = render_config_page(active_tab="system")
+
+    assert "synthetic-secret-value" not in html
+    assert html.count("[redacted]") >= 3
+    assert 'name="system_key" value="SAFE_ALIAS"' not in html
+    assert 'aria-label="SAFE_ALIAS"' not in html
+    assert 'name="system_key" value="CEO_WORKSPACE"' not in html
+    assert 'aria-label="CEO_WORKSPACE"' not in html
+
+
+def test_render_system_config_handles_safe_reference_cycle(
+    tmp_path: Path,
+    monkeypatch,
+):
+    env_path = tmp_path / ".env"
+    env_path.write_text(
+        "PURE_LOOP_A=$PURE_LOOP_B\n"
+        "PURE_LOOP_B=$PURE_LOOP_A\n"
+        "CEO_WORKSPACE=$PURE_LOOP_A\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CEO_ENV_FILE", str(env_path))
+    for key in ("PURE_LOOP_A", "PURE_LOOP_B", "CEO_WORKSPACE"):
+        monkeypatch.delenv(key, raising=False)
+
+    html = render_config_page(active_tab="system")
+
+    assert 'name="system_key" value="PURE_LOOP_A"' in html
+    assert 'aria-label="PURE_LOOP_A"' in html
+    assert 'name="system_key" value="CEO_WORKSPACE"' in html
+    assert 'aria-label="CEO_WORKSPACE"' in html
+
+
+def test_render_system_config_redacts_pat_without_redacting_path_or_pattern(
+    tmp_path: Path,
+    monkeypatch,
+):
+    env_path = tmp_path / ".env"
+    env_path.write_text(
+        "GITHUB_PAT=synthetic-personal-access-value\n"
+        "PATH=/usr/local/bin\n"
+        "PYTHONPATH=/opt/python\n"
+        "PATTERN=ordinary-pattern\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CEO_ENV_FILE", str(env_path))
+
+    html = render_config_page(active_tab="system")
+
+    assert "synthetic-personal-access-value" not in html
+    assert 'name="system_key" value="GITHUB_PAT"' not in html
+    assert 'aria-label="GITHUB_PAT"' not in html
+    for key in ("PATH", "PYTHONPATH", "PATTERN"):
+        assert f'name="system_key" value="{key}"' in html
+        assert f'aria-label="{key}"' in html
+
+
 def test_render_config_page_shows_channel_doctor(monkeypatch):
     from app.channels.models import ChannelDoctorStatus
 
@@ -3104,6 +3255,188 @@ def test_handle_system_config_post_saves_runtime_params_to_env_file(
     assert "SINGLE_CHAT_READ_RECOVERY_WINDOW=12h" in env_text
     assert "SINGLE_CHAT_READ_RECOVERY_LIMIT=25" in env_text
     assert "MESSAGE_RECOVERY_INTERVAL" not in read_developer_prompt_template()
+
+
+def test_handle_system_config_post_ignores_secret_like_keys(
+    tmp_path: Path,
+    monkeypatch,
+):
+    env_path = tmp_path / ".env"
+    env_path.write_text(
+        "CEO_FEISHU_APP_SECRET=original-feishu-secret\n"
+        "THIRD_PARTY_CREDENTIAL_BUNDLE=original-credential\n"
+        "DINGTALK_DING_ROBOT_CODE=original-robot-code\n"
+        "ALERT_WEBHOOK=original-webhook\n"
+        "CEO_WORKSPACE=/tmp/original-workspace\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CEO_ENV_FILE", str(env_path))
+    monkeypatch.setenv("CEO_WORKSPACE", "/tmp/original-workspace")
+
+    status, headers, html = handle_system_config_post(
+        (
+            "system_key=CEO_FEISHU_APP_SECRET"
+            "&system_value=replaced-feishu-secret"
+            "&system_key=THIRD_PARTY_CREDENTIAL_BUNDLE"
+            "&system_value=replaced-credential"
+            "&system_key=DINGTALK_DING_ROBOT_CODE"
+            "&system_value=replaced-robot-code"
+            "&system_key=ALERT_WEBHOOK"
+            "&system_value=replaced-webhook"
+            "&system_key=CEO_WORKSPACE"
+            "&system_value=/tmp/new-workspace"
+        ).encode()
+    )
+
+    assert status == 303
+    assert headers["Location"] == "/config?tab=system&saved=1"
+    assert html == ""
+    env_text = env_path.read_text(encoding="utf-8")
+    assert "CEO_FEISHU_APP_SECRET=original-feishu-secret" in env_text
+    assert "THIRD_PARTY_CREDENTIAL_BUNDLE=original-credential" in env_text
+    assert "DINGTALK_DING_ROBOT_CODE=original-robot-code" in env_text
+    assert "ALERT_WEBHOOK=original-webhook" in env_text
+    assert "replaced-feishu-secret" not in env_text
+    assert "replaced-credential" not in env_text
+    assert "replaced-robot-code" not in env_text
+    assert "replaced-webhook" not in env_text
+    assert "CEO_WORKSPACE=/tmp/new-workspace" in env_text
+
+
+def test_handle_system_config_post_rejects_newline_secret_injection_atomically(
+    tmp_path: Path,
+    monkeypatch,
+):
+    env_path = tmp_path / ".env"
+    original = (
+        "CEO_FEISHU_APP_SECRET=original-feishu-secret\n"
+        "CEO_WORKSPACE=/tmp/original-workspace\n"
+        "CEO_PRODUCER_INTERVAL_SECONDS=60\n"
+    )
+    env_path.write_text(original, encoding="utf-8")
+    monkeypatch.setenv("CEO_ENV_FILE", str(env_path))
+
+    status, headers, html = handle_system_config_post(
+        urlencode(
+            [
+                ("system_key", "CEO_PRODUCER_INTERVAL_SECONDS"),
+                ("system_value", "99"),
+                ("system_key", "CEO_WORKSPACE"),
+                (
+                    "system_value",
+                    "/tmp/new\nCEO_FEISHU_APP_SECRET=injected-secret",
+                ),
+            ]
+        ).encode()
+    )
+
+    assert status == 400
+    assert headers == {}
+    assert html == "invalid system config update"
+    assert "injected-secret" not in html
+    assert env_path.read_text(encoding="utf-8") == original
+
+
+@pytest.mark.parametrize(
+    "reference",
+    ["$CEO_FEISHU_APP_SECRET", "${CEO_FEISHU_APP_SECRET}"],
+)
+def test_handle_system_config_post_rejects_sensitive_reference_atomically(
+    tmp_path: Path,
+    monkeypatch,
+    reference,
+):
+    env_path = tmp_path / ".env"
+    original = (
+        "CEO_FEISHU_APP_SECRET=original-feishu-secret\n"
+        "CEO_WORKSPACE=/tmp/original-workspace\n"
+        "CEO_PRODUCER_INTERVAL_SECONDS=60\n"
+    )
+    env_path.write_text(original, encoding="utf-8")
+    monkeypatch.setenv("CEO_ENV_FILE", str(env_path))
+    monkeypatch.setenv("CEO_FEISHU_APP_SECRET", "original-feishu-secret")
+
+    status, headers, html = handle_system_config_post(
+        urlencode(
+            [
+                ("system_key", "CEO_PRODUCER_INTERVAL_SECONDS"),
+                ("system_value", "99"),
+                ("system_key", "CEO_WORKSPACE"),
+                ("system_value", reference),
+            ]
+        ).encode()
+    )
+
+    assert status == 400
+    assert headers == {}
+    assert html == "invalid system config update"
+    assert "original-feishu-secret" not in html
+    assert env_path.read_text(encoding="utf-8") == original
+
+
+def test_handle_system_config_post_rejects_recursive_reference_atomically(
+    tmp_path: Path,
+    monkeypatch,
+):
+    env_path = tmp_path / ".env"
+    original = (
+        "CEO_SECRET=synthetic-secret-value\n"
+        "SAFE_ALIAS=$CEO_SECRET\n"
+        "CEO_WORKSPACE=/tmp/original-workspace\n"
+        "CEO_PRODUCER_INTERVAL_SECONDS=60\n"
+    )
+    env_path.write_text(original, encoding="utf-8")
+    monkeypatch.setenv("CEO_ENV_FILE", str(env_path))
+
+    status, headers, html = handle_system_config_post(
+        urlencode(
+            [
+                ("system_key", "CEO_PRODUCER_INTERVAL_SECONDS"),
+                ("system_value", "99"),
+                ("system_key", "CEO_WORKSPACE"),
+                ("system_value", "$SAFE_ALIAS"),
+            ]
+        ).encode()
+    )
+
+    assert status == 400
+    assert headers == {}
+    assert html == "invalid system config update"
+    assert "synthetic-secret-value" not in html
+    assert env_path.read_text(encoding="utf-8") == original
+
+
+def test_handle_system_config_post_rejects_inherited_wrapped_secret_atomically(
+    tmp_path: Path,
+    monkeypatch,
+):
+    env_path = tmp_path / ".env"
+    secret = "synthetic-secret-value"
+    original = (
+        f"CEO_SECRET={secret}\n"
+        "CEO_WORKSPACE=/tmp/original-workspace\n"
+        "CEO_PRODUCER_INTERVAL_SECONDS=60\n"
+    )
+    env_path.write_text(original, encoding="utf-8")
+    monkeypatch.setenv("CEO_ENV_FILE", str(env_path))
+    monkeypatch.setenv("SAFE_ALIAS", f"prefix-{secret}-suffix")
+
+    status, headers, html = handle_system_config_post(
+        urlencode(
+            [
+                ("system_key", "CEO_PRODUCER_INTERVAL_SECONDS"),
+                ("system_value", "99"),
+                ("system_key", "CEO_WORKSPACE"),
+                ("system_value", "$SAFE_ALIAS"),
+            ]
+        ).encode()
+    )
+
+    assert status == 400
+    assert headers == {}
+    assert html == "invalid system config update"
+    assert secret not in html
+    assert env_path.read_text(encoding="utf-8") == original
 
 
 def test_open_dingtalk_bridge_opens_conversation_url(tmp_path: Path, monkeypatch):

@@ -1,6 +1,9 @@
-import json
+import fcntl
 import hashlib
+import json
+import os
 import sqlite3
+import stat
 import threading
 from datetime import datetime, timedelta, timezone
 from contextlib import contextmanager
@@ -115,8 +118,9 @@ FEISHU_DELIVERY_TRANSITIONS = frozenset(
 FEISHU_RECONCILIATION_EVIDENCE_KINDS = frozenset(
     {"feishu_ui", "message_lookup", "admin_audit"}
 )
+FEISHU_TARGET_PROBE_UNKNOWN_ERROR_CODE = "target_probe_unknown"
 FEISHU_RETRYABLE_ERROR_CODES = frozenset(
-    {"rate_limited", "not_connected", "target_state_unknown"}
+    {"rate_limited", "not_connected", FEISHU_TARGET_PROBE_UNKNOWN_ERROR_CODE}
 )
 FEISHU_CONFIRMED_NOT_SENT_ERROR_CODES = frozenset(
     {
@@ -161,7 +165,7 @@ FEISHU_ACTION_TRANSITIONS = frozenset(
     }
 )
 FEISHU_ACTION_RETRYABLE_ERROR_CODES = frozenset(
-    {"rate_limited", "not_connected"}
+    {"rate_limited", "not_connected", FEISHU_TARGET_PROBE_UNKNOWN_ERROR_CODE}
 )
 FEISHU_ACTION_TERMINAL_ERROR_CODES = frozenset(
     {"format_error", "permission_denied", "target_revoked"}
@@ -203,6 +207,50 @@ FEISHU_MEDIA_RESOURCE_TYPES = frozenset(
 )
 _INITIALIZED_STORE_PATHS: set[Path] = set()
 _INITIALIZE_LOCK = threading.Lock()
+
+
+@contextmanager
+def _store_initialization_lock(path: Path) -> Iterator[None]:
+    """Serialize schema initialization across processes for one database.
+
+    SQLite serializes each individual DDL statement, but a legacy migration's
+    ``table_info`` check and its later ``alter table`` are separate operations.
+    A stable sidecar inode closes that check-then-act window without changing
+    the database transaction boundaries used by resumable migrations.
+    """
+
+    resolved_path = path.resolve()
+    digest = hashlib.sha256(str(resolved_path).encode("utf-8")).hexdigest()
+    lock_path = resolved_path.parent / f".ceo-agent-schema-{digest}.lock"
+    no_follow = getattr(os, "O_NOFOLLOW", 0)
+    if not no_follow:
+        raise RuntimeError("safe store initialization locking is unsupported")
+    try:
+        descriptor = os.open(
+            lock_path,
+            os.O_RDWR | os.O_CREAT | no_follow,
+            0o600,
+        )
+    except OSError as exc:
+        raise RuntimeError("store initialization lock is unsafe") from exc
+    try:
+        metadata = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_nlink != 1
+            or (
+                hasattr(os, "geteuid")
+                and metadata.st_uid != os.geteuid()
+            )
+        ):
+            raise RuntimeError("store initialization lock is unsafe")
+        os.fchmod(descriptor, 0o600)
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        yield
+    finally:
+        # Closing releases flock on every success and exception path.  Keep the
+        # sidecar itself so waiters always synchronize on the same inode.
+        os.close(descriptor)
 
 
 def _feishu_unknown_allows_one_chunk_verification(row: sqlite3.Row) -> bool:
@@ -603,6 +651,10 @@ class AutoReplyStore:
             connection.close()
 
     def _initialize(self) -> None:
+        with _store_initialization_lock(self.path):
+            self._initialize_locked()
+
+    def _initialize_locked(self) -> None:
         with self._connect() as db:
             db.execute("pragma journal_mode = wal")
             db.executescript(
@@ -979,6 +1031,16 @@ class AutoReplyStore:
                     on feishu_message_actions(app_id, status, available_at, id);
                 create index if not exists idx_feishu_message_actions_chat
                     on feishu_message_actions(app_id, chat_id, id);
+                create table if not exists feishu_mutation_budget_slots (
+                    id integer primary key autoincrement,
+                    app_id text not null,
+                    acquired_at_epoch_ms integer not null
+                        check(acquired_at_epoch_ms >= 0)
+                );
+                create index if not exists idx_feishu_mutation_budget_window
+                    on feishu_mutation_budget_slots(
+                        app_id, acquired_at_epoch_ms, id
+                    );
                 create trigger if not exists feishu_message_actions_identity_immutable
                 before update on feishu_message_actions
                 when old.reply_task_id<>new.reply_task_id
@@ -5659,6 +5721,66 @@ class AutoReplyStore:
         )
         return task_id
 
+    def try_acquire_feishu_mutation_slot(
+        self,
+        *,
+        app_id: str,
+        max_mutations_per_minute: int,
+        now_epoch_ms: int,
+    ) -> bool:
+        """Atomically consume one App-scoped outbound mutation slot.
+
+        Slots are durable so a service restart or a second process cannot
+        reset the configured safety ceiling.  A backwards wall-clock jump is
+        conservative: future-dated slots continue to count until the clock
+        catches up instead of reopening the gate.
+        """
+
+        normalized_app_id = app_id.strip() if isinstance(app_id, str) else ""
+        if (
+            not normalized_app_id
+            or normalized_app_id != app_id
+            or len(normalized_app_id) > 256
+            or any(ord(character) < 32 for character in normalized_app_id)
+        ):
+            raise ValueError("Feishu mutation budget App ID is invalid")
+        if (
+            isinstance(max_mutations_per_minute, bool)
+            or not isinstance(max_mutations_per_minute, int)
+            or not 1 <= max_mutations_per_minute <= 10_000
+        ):
+            raise ValueError("Feishu mutation budget limit is invalid")
+        if (
+            isinstance(now_epoch_ms, bool)
+            or not isinstance(now_epoch_ms, int)
+            or now_epoch_ms < 0
+        ):
+            raise ValueError("Feishu mutation budget time is invalid")
+
+        cutoff_epoch_ms = now_epoch_ms - 60_000
+        with self._connect() as db:
+            db.execute("begin immediate")
+            db.execute(
+                "delete from feishu_mutation_budget_slots "
+                "where app_id=? and acquired_at_epoch_ms<=?",
+                (normalized_app_id, cutoff_epoch_ms),
+            )
+            used = int(
+                db.execute(
+                    "select count(*) from feishu_mutation_budget_slots "
+                    "where app_id=? and acquired_at_epoch_ms>?",
+                    (normalized_app_id, cutoff_epoch_ms),
+                ).fetchone()[0]
+            )
+            if used >= max_mutations_per_minute:
+                return False
+            db.execute(
+                "insert into feishu_mutation_budget_slots "
+                "(app_id, acquired_at_epoch_ms) values (?, ?)",
+                (normalized_app_id, now_epoch_ms),
+            )
+            return True
+
     def record_feishu_event(
         self,
         message: FeishuInboundMessage,
@@ -10045,6 +10167,15 @@ class AutoReplyStore:
                 action = self._validate_feishu_message_action_binding(
                     db, row, require_active_target=True
                 )
+            if (
+                to_status == "retry"
+                and error_code == FEISHU_TARGET_PROBE_UNKNOWN_ERROR_CODE
+                and row["mutation_started_at"]
+            ):
+                raise ValueError(
+                    "Feishu message action target probe retry requires no "
+                    "remote mutation fence"
+                )
             if to_status == "sent":
                 if action.kind in {"add_reaction", "handoff_notify"} and not safe_remote_id:
                     raise ValueError(
@@ -11338,10 +11469,10 @@ class AutoReplyStore:
                 select 1 from feishu_deliveries
                 where app_id=? and chat_id=? and id<>?
                   and (
-                    status='sending'
+                    status in ('sending', 'send_unknown')
                     or (
                       id < ?
-                      and status in ('ready_to_send', 'retry', 'send_unknown')
+                      and status in ('ready_to_send', 'retry')
                     )
                   )
                 limit 1
@@ -11433,7 +11564,8 @@ class AutoReplyStore:
                     select 1 from feishu_deliveries as active
                     where active.app_id=candidate.app_id
                       and active.chat_id=candidate.chat_id
-                      and active.status='sending'
+                      and active.id<>candidate.id
+                      and active.status in ('sending', 'send_unknown')
                   )
                   and not exists (
                     select 1 from feishu_message_actions as action_blocker
@@ -11632,7 +11764,35 @@ class AutoReplyStore:
                     "Feishu delivery status changed: "
                     f"expected {sources}, found {current['status']}"
                 )
+            if (
+                to_status == "retry"
+                and error_code == FEISHU_TARGET_PROBE_UNKNOWN_ERROR_CODE
+                and current["mutation_started_at"]
+                and not self._validate_feishu_delivery_receipt_prefix(db, current)
+            ):
+                raise ValueError(
+                    "Feishu delivery target probe retry after remote mutation "
+                    "requires a durable receipt prefix"
+                )
             if rotate_review_generation:
+                # The earlier caller-side checks are advisory.  Revalidate the
+                # receipt/recall boundary under the same write lock as the
+                # failed -> retry transition so a completed recall cannot race
+                # a verified-not-sent delivery back into the send queue.
+                self._validate_feishu_delivery_receipt_prefix(db, current)
+                unresolved_delivery = db.execute(
+                    """
+                    select 1 from feishu_deliveries
+                    where app_id=? and chat_id=? and id<>?
+                      and status='send_unknown'
+                    limit 1
+                    """,
+                    (current["app_id"], current["chat_id"], delivery_id),
+                ).fetchone()
+                if unresolved_delivery is not None:
+                    raise ValueError(
+                        "Feishu delivery conversation has another unresolved send"
+                    )
                 recall_blocker = db.execute(
                     """
                     select 1
@@ -11643,7 +11803,7 @@ class AutoReplyStore:
                     where receipts.delivery_id=?
                       and actions.kind='recall_message'
                       and actions.status in (
-                        'ready', 'retry', 'sending', 'result_unknown'
+                        'ready', 'retry', 'sending', 'sent', 'result_unknown'
                       )
                     limit 1
                     """,

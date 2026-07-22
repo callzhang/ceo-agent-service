@@ -188,12 +188,18 @@ class FakeActionClient:
     app_id = "cli_a"
 
     def __init__(self):
+        self.message_state = SimpleNamespace(state="exists")
         self.reaction_result = FeishuSendResult(
             True, reaction_id="omr_1", request_log_id="log_reaction"
         )
         self.recall_result = FeishuSendResult(True, request_log_id="log_recall")
         self.handoff_result = FeishuSendResult(True, message_id="om_handoff")
         self.calls = []
+        self.probe_calls = []
+
+    async def fetch_message_state(self, app_id, message_id):
+        self.probe_calls.append((app_id, message_id))
+        return self.message_state
 
     async def add_reaction(self, app_id, message_id, emoji_type):
         self.calls.append(("reaction", app_id, message_id, emoji_type))
@@ -228,6 +234,128 @@ def _reviewed_action_send(sender, action, *, approved_by="operator"):
         expected_approval_hash=action.approval_hash,
         approved_by=approved_by,
     )
+
+
+def test_reaction_probes_persisted_trigger_before_remote_mutation(tmp_path):
+    store, task, attempt_id, _ = _seed(tmp_path)
+    action = _action(
+        store,
+        task,
+        attempt_id,
+        kind="add_reaction",
+        key="reaction:probe-exists",
+        target="om_trigger",
+        payload={"emoji_type": "OK"},
+    )
+    client = FakeActionClient()
+
+    outcome = asyncio.run(
+        _reviewed_action_send(
+            _sender(store, client, send_mode="auto"), action
+        )
+    )
+
+    assert outcome.status == "sent"
+    assert client.probe_calls == [("cli_a", "om_trigger")]
+    assert client.calls == [("reaction", "cli_a", "om_trigger", "OK")]
+
+
+def test_reaction_absent_target_fails_before_budget_fence_or_mutation(tmp_path):
+    store, task, attempt_id, _ = _seed(tmp_path)
+    action = _action(
+        store,
+        task,
+        attempt_id,
+        kind="add_reaction",
+        key="reaction:probe-absent",
+        target="om_trigger",
+        payload={"emoji_type": "OK"},
+    )
+    client = FakeActionClient()
+    client.message_state = SimpleNamespace(state="absent")
+    sender = _sender(store, client, send_mode="auto")
+
+    outcome = asyncio.run(_reviewed_action_send(sender, action))
+
+    saved = store.get_feishu_message_action(action.id)
+    assert outcome.status == "failed"
+    assert outcome.error_code == "target_revoked"
+    assert saved.status == "failed"
+    assert saved.mutation_started_at == ""
+    assert client.calls == []
+    assert list(sender._sent_times) == []
+
+
+@pytest.mark.parametrize(
+    ("max_attempts", "expected_status"),
+    [(3, "retry"), (1, "failed")],
+)
+def test_reaction_unknown_target_never_mutates(
+    tmp_path, max_attempts, expected_status
+):
+    store, task, attempt_id, _ = _seed(tmp_path)
+    action = _action(
+        store,
+        task,
+        attempt_id,
+        kind="add_reaction",
+        key=f"reaction:probe-unknown:{max_attempts}",
+        target="om_trigger",
+        payload={"emoji_type": "OK"},
+    )
+    client = FakeActionClient()
+    client.message_state = SimpleNamespace(state="unknown")
+    sender = _sender(
+        store,
+        client,
+        send_mode="auto",
+        max_attempts=max_attempts,
+    )
+
+    outcome = asyncio.run(_reviewed_action_send(sender, action))
+
+    saved = store.get_feishu_message_action(action.id)
+    assert outcome.status == expected_status
+    assert outcome.error_code == "target_probe_unknown"
+    assert saved.status == expected_status
+    assert saved.mutation_started_at == ""
+    assert client.calls == []
+    assert list(sender._sent_times) == []
+
+
+def test_reaction_probe_timeout_is_retryable_not_result_unknown(tmp_path):
+    store, task, attempt_id, _ = _seed(tmp_path)
+    action = _action(
+        store,
+        task,
+        attempt_id,
+        kind="add_reaction",
+        key="reaction:probe-timeout",
+        target="om_trigger",
+        payload={"emoji_type": "OK"},
+    )
+
+    class SlowProbeClient(FakeActionClient):
+        async def fetch_message_state(self, app_id, message_id):
+            await asyncio.sleep(1)
+
+    client = SlowProbeClient()
+    sender = _sender(
+        store,
+        client,
+        send_mode="auto",
+        action_timeout_seconds=0.01,
+    )
+
+    outcome = asyncio.run(_reviewed_action_send(sender, action))
+
+    saved = store.get_feishu_message_action(action.id)
+    assert outcome.status == "retry"
+    assert saved.status == "retry"
+    assert saved.error_code == "target_probe_unknown"
+    assert saved.mutation_started_at == ""
+    assert client.calls == []
+    assert list(sender._sent_times) == []
 
 
 def test_claimed_handoff_rechecks_current_allowlist_before_network(tmp_path):
@@ -545,6 +673,91 @@ def test_partial_receipt_recall_requires_terminal_owner_and_blocks_requeue(
     ).status == "recalled"
 
 
+def test_verified_delivery_requeue_rechecks_recall_atomically(
+    tmp_path, monkeypatch
+):
+    store, _, _, _ = _seed(tmp_path)
+    delivery = _pending_delivery(
+        store, number=2, reply_text="z" * 6000
+    )
+    task = next(
+        item
+        for item in store.list_reply_tasks(channel="feishu")
+        if item.id == delivery.reply_task_id
+    )
+    claimed = store.claim_feishu_delivery(delivery.id, app_id="cli_a")
+    store.record_feishu_delivery_chunk(
+        delivery.id,
+        app_id="cli_a",
+        lease_token=claimed.lease_token,
+        ordinal=0,
+        expected_chunks=2,
+        message_id="om_recalled_during_requeue",
+    )
+    store.mark_feishu_delivery_send_unknown(
+        delivery.id,
+        error_code="send_timeout",
+        error="second chunk unknown",
+    )
+    store.reconcile_feishu_delivery_unknown(
+        delivery.id,
+        app_id="cli_a",
+        outcome="not_sent",
+        verified_by="operator",
+        evidence_kind="message_lookup",
+    )
+    recall = _action(
+        store,
+        task,
+        delivery.attempt_id,
+        kind="recall_message",
+        key="recall:during-verified-requeue",
+        target="om_recalled_during_requeue",
+    )
+
+    reached_transition = threading.Event()
+    finish_transition = threading.Event()
+    original_transition = store.transition_feishu_delivery
+
+    def pause_after_requeue_prechecks(*args, **kwargs):
+        if kwargs.get("audit_event_type") == "requeued_after_verification":
+            reached_transition.set()
+            assert finish_transition.wait(timeout=5)
+        return original_transition(*args, **kwargs)
+
+    monkeypatch.setattr(
+        store, "transition_feishu_delivery", pause_after_requeue_prechecks
+    )
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        pending_requeue = executor.submit(
+            store.requeue_feishu_delivery_after_verification,
+            delivery.id,
+            app_id="cli_a",
+            verified_by="operator",
+            evidence_kind="admin_audit",
+        )
+        assert reached_transition.wait(timeout=5)
+        try:
+            outcome = asyncio.run(
+                _reviewed_action_send(
+                    _sender(store, FakeActionClient(), send_mode="auto"),
+                    recall,
+                )
+            )
+        finally:
+            finish_transition.set()
+
+        assert outcome.status == "sent"
+        with pytest.raises(ValueError, match="recall|receipt"):
+            pending_requeue.result(timeout=5)
+
+    assert store.get_feishu_delivery(delivery.id).status == "failed"
+    assert store.get_feishu_delivery_receipt(
+        app_id="cli_a", message_id="om_recalled_during_requeue"
+    ).status == "recalled"
+
+
 def test_partial_receipt_recall_is_denied_while_retrying_or_sending(tmp_path):
     store, _, _, _ = _seed(tmp_path)
     delivery = _pending_delivery(
@@ -779,6 +992,88 @@ def test_reaction_requires_reaction_id_and_unknown_is_never_reclaimed(tmp_path):
     assert len(client.calls) == 1
 
 
+@pytest.mark.parametrize(
+    "provider_code", ["target_state_unknown", "target_probe_unknown"]
+)
+def test_probe_named_reaction_exception_after_mutation_is_not_replayed(
+    tmp_path, provider_code
+):
+    store, task, attempt_id, _ = _seed(tmp_path)
+    action = _action(
+        store,
+        task,
+        attempt_id,
+        kind="add_reaction",
+        key=f"reaction:provider-error:{provider_code}",
+        target="om_trigger",
+        payload={"emoji_type": "OK"},
+    )
+    provider_error = RuntimeError("provider state was indeterminate")
+    provider_error.code = provider_code
+
+    class MutatingErrorClient(FakeActionClient):
+        async def add_reaction(self, app_id, message_id, emoji_type):
+            self.calls.append(("reaction", app_id, message_id, emoji_type))
+            raise provider_error
+
+    client = MutatingErrorClient()
+    sender = _sender(store, client, send_mode="auto")
+
+    outcome = asyncio.run(_reviewed_action_send(sender, action))
+
+    saved = store.get_feishu_message_action(action.id)
+    assert outcome.status == "result_unknown"
+    assert outcome.error_code == "unknown"
+    assert saved.status == "result_unknown"
+    assert saved.error_code == "unknown"
+    assert saved.mutation_started_at
+    assert client.calls == [("reaction", "cli_a", "om_trigger", "OK")]
+
+    assert asyncio.run(sender.process_once()) == 0
+    assert client.calls == [("reaction", "cli_a", "om_trigger", "OK")]
+
+
+def test_store_rejects_target_probe_retry_after_action_mutation_fence(tmp_path):
+    store, task, attempt_id, _ = _seed(tmp_path)
+    action = _action(
+        store,
+        task,
+        attempt_id,
+        kind="add_reaction",
+        key="reaction:probe-retry-after-fence",
+        target="om_trigger",
+        payload={"emoji_type": "OK"},
+    )
+    claimed = store.claim_feishu_message_action(
+        action.id,
+        app_id="cli_a",
+        kinds=("add_reaction",),
+        send_mode="auto",
+    )
+    assert claimed is not None
+    fenced = store.begin_feishu_message_action_mutation(
+        action.id,
+        app_id="cli_a",
+        lease_token=claimed.lease_token,
+    )
+    assert fenced is not None and fenced.mutation_started_at
+
+    with pytest.raises(ValueError, match="target probe retry"):
+        store.transition_feishu_message_action(
+            action.id,
+            from_statuses=("sending",),
+            to_status="retry",
+            app_id="cli_a",
+            expected_lease_token=claimed.lease_token,
+            error_code="target_probe_unknown",
+            error="unsafe forged probe outcome",
+        )
+
+    saved = store.get_feishu_message_action(action.id)
+    assert saved.status == "sending"
+    assert saved.mutation_started_at == fenced.mutation_started_at
+
+
 def test_recall_success_atomically_marks_owned_receipt(tmp_path):
     store, task, attempt_id, _ = _seed(tmp_path)
     action = _action(
@@ -961,6 +1256,9 @@ def test_pinned_sdk_target_echo_succeeds_end_to_end(tmp_path, kind):
     coerce = importlib.import_module("lark_channel.channel._coerce")
 
     class PinnedSdkChannel:
+        async def fetch_message(self, message_id):
+            return {"code": 0, "data": {"items": [{"message_id": message_id}]}}
+
         async def add_reaction(self, message_id, emoji_type):
             assert emoji_type == "OK"
             return coerce.result_from_raw(
@@ -1007,6 +1305,9 @@ def test_sdk_mismatched_or_multiple_action_ids_are_unknown_end_to_end(
     tmp_path, kind
 ):
     class AmbiguousSdkChannel:
+        async def fetch_message(self, message_id):
+            return {"code": 0, "data": {"items": [{"message_id": message_id}]}}
+
         async def add_reaction(self, message_id, emoji_type):
             return SimpleNamespace(
                 success=True,

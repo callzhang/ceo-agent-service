@@ -1,6 +1,122 @@
 import os
+import re
+from collections.abc import Mapping
 from datetime import timedelta
 from pathlib import Path
+
+
+_ENV_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_ENV_REFERENCE_RE = re.compile(
+    r"\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))"
+)
+_ENV_PROVENANCE_MAX_DEPTH = 32
+_SENSITIVE_ENV_KEY_MARKERS = (
+    "SECRET",
+    "TOKEN",
+    "PASSWORD",
+    "API_KEY",
+    "PRIVATE_KEY",
+    "AUTHORIZATION",
+    "COOKIE",
+    "CREDENTIAL",
+    "ROBOT_CODE",
+    "WEBHOOK",
+    "ACCESS_KEY",
+    "SIGNING_KEY",
+    "PASSPHRASE",
+    "BEARER",
+)
+_SENSITIVE_ENV_KEY_TOKENS = {"PAT"}
+
+
+def is_sensitive_env_key(key: str) -> bool:
+    normalized = str(key or "").upper()
+    return any(
+        marker in normalized for marker in _SENSITIVE_ENV_KEY_MARKERS
+    ) or any(token in normalized.split("_") for token in _SENSITIVE_ENV_KEY_TOKENS)
+
+
+def env_value_references_sensitive_key(
+    value: str,
+    *,
+    raw_values: Mapping[str, str] | None = None,
+    environment: Mapping[str, str] | None = None,
+    max_depth: int = _ENV_PROVENANCE_MAX_DEPTH,
+) -> bool:
+    if not isinstance(value, str):
+        return False
+    raw_values = raw_values or {}
+    environment = os.environ if environment is None else environment
+    sensitive_values = _sensitive_env_source_values(raw_values, environment)
+    return _env_value_has_sensitive_provenance(
+        value,
+        raw_values=raw_values,
+        environment=environment,
+        sensitive_values=sensitive_values,
+        visiting=frozenset(),
+        depth=0,
+        max_depth=max_depth,
+    )
+
+
+def _sensitive_env_source_values(
+    *sources: Mapping[str, str],
+) -> frozenset[str]:
+    return frozenset(
+        value
+        for source in sources
+        for key, value in source.items()
+        if is_sensitive_env_key(key) and isinstance(value, str) and value
+    )
+
+
+def _env_value_has_sensitive_provenance(
+    value: str,
+    *,
+    raw_values: Mapping[str, str],
+    environment: Mapping[str, str],
+    sensitive_values: frozenset[str],
+    visiting: frozenset[str],
+    depth: int,
+    max_depth: int,
+) -> bool:
+    if any(sensitive_value in value for sensitive_value in sensitive_values):
+        return True
+    for match in _ENV_REFERENCE_RE.finditer(value):
+        referenced_key = match.group(1) or match.group(2) or ""
+        if is_sensitive_env_key(referenced_key):
+            return True
+        if referenced_key in visiting:
+            continue
+        referenced_values: list[str] = []
+        for source in (raw_values, environment):
+            referenced_value = source.get(referenced_key)
+            if (
+                isinstance(referenced_value, str)
+                and referenced_value not in referenced_values
+            ):
+                referenced_values.append(referenced_value)
+        if not referenced_values:
+            continue
+        if depth >= max_depth:
+            # An unresolved chain is not provably safe.  Fail closed instead of
+            # allowing aliases deeper than the bounded provenance traversal.
+            return True
+        next_visiting = visiting | {referenced_key}
+        if any(
+            _env_value_has_sensitive_provenance(
+                referenced_value,
+                raw_values=raw_values,
+                environment=environment,
+                sensitive_values=sensitive_values,
+                visiting=next_visiting,
+                depth=depth + 1,
+                max_depth=max_depth,
+            )
+            for referenced_value in referenced_values
+        ):
+            return True
+    return False
 
 
 def repo_root() -> Path:
@@ -8,7 +124,8 @@ def repo_root() -> Path:
 
 
 def env_path(name: str, default: Path | str) -> Path:
-    return Path(os.path.expandvars(os.getenv(name, str(default)))).expanduser()
+    value = os.getenv(name, str(default))
+    return Path(_expand_env_value(name, value)).expanduser()
 
 
 def env_file_path() -> Path:
@@ -23,7 +140,7 @@ def load_env_file(path: Path | None = None) -> None:
         os.environ[key] = value
 
 
-def read_env_file(path: Path | None = None) -> dict[str, str]:
+def read_env_file_raw(path: Path | None = None) -> dict[str, str]:
     env_path = path or env_file_path()
     if not env_path.exists():
         return {}
@@ -36,12 +153,40 @@ def read_env_file(path: Path | None = None) -> dict[str, str]:
         key = key.strip()
         if not key:
             continue
-        values[key] = _decode_env_value(value.strip())
+        values[key] = _decode_env_literal(value.strip())
     return values
 
 
+def read_env_file(path: Path | None = None) -> dict[str, str]:
+    raw_values = read_env_file_raw(path)
+    return {
+        key: _expand_env_value(key, value, raw_values=raw_values)
+        for key, value in raw_values.items()
+    }
+
+
 def write_env_values(updates: dict[str, str], path: Path | None = None) -> Path:
+    validated_updates: dict[str, str] = {}
+    for key, value in updates.items():
+        if not isinstance(key, str) or not _ENV_KEY_RE.fullmatch(key):
+            raise ValueError("invalid environment variable name")
+        if not isinstance(value, str):
+            raise ValueError("environment variable value must be text")
+        if any(character in value for character in ("\r", "\n", "\x00")):
+            raise ValueError("environment variable value contains a forbidden control")
+        validated_updates[key] = value
+    updates = validated_updates
     env_path = path or env_file_path()
+    proposed_raw_values = read_env_file_raw(env_path)
+    proposed_raw_values.update(updates)
+    for key, value in updates.items():
+        if not is_sensitive_env_key(key) and env_value_references_sensitive_key(
+            value,
+            raw_values=proposed_raw_values,
+        ):
+            raise ValueError(
+                "non-sensitive environment variable cannot reference a sensitive one"
+            )
     existing_lines = (
         env_path.read_text(encoding="utf-8").splitlines() if env_path.exists() else []
     )
@@ -66,9 +211,23 @@ def write_env_values(updates: dict[str, str], path: Path | None = None) -> Path:
     return env_path
 
 
-def _decode_env_value(value: str) -> str:
+def _decode_env_literal(value: str) -> str:
     if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
         value = value[1:-1]
+    return value
+
+
+def _expand_env_value(
+    key: str,
+    value: str,
+    *,
+    raw_values: Mapping[str, str] | None = None,
+) -> str:
+    if not is_sensitive_env_key(key) and env_value_references_sensitive_key(
+        value,
+        raw_values=raw_values,
+    ):
+        return value
     return os.path.expandvars(value)
 
 
@@ -400,6 +559,7 @@ def wechat_article_max_chars() -> int:
 # --- Feishu official Bot channel (disabled by default) ---
 FEISHU_KEYRING_SERVICE = "ceo-agent-service/feishu"
 FEISHU_KEYRING_APP_SECRET_USERNAME = "app_secret"
+_FEISHU_OPEN_ID_RE = re.compile(r"^ou_[A-Za-z0-9_-]+$")
 
 
 def _feishu_truthy(name: str) -> bool:
@@ -457,6 +617,26 @@ def feishu_reply_mention_sender_enabled() -> bool:
     return feishu_sender_enabled() and _feishu_truthy(
         "CEO_FEISHU_REPLY_MENTION_SENDER"
     )
+
+
+def feishu_reply_mention_open_ids() -> tuple[str, ...]:
+    """Return the bounded local identity map allowed for reply mentions."""
+    values: list[str] = []
+    for item in os.getenv("CEO_FEISHU_REPLY_MENTION_OPEN_IDS", "").split(","):
+        normalized = item.strip()
+        if not normalized:
+            continue
+        if not _FEISHU_OPEN_ID_RE.fullmatch(normalized):
+            raise ValueError(
+                "CEO_FEISHU_REPLY_MENTION_OPEN_IDS contains an invalid open_id"
+            )
+        if normalized not in values:
+            values.append(normalized)
+    if len(values) > 20:
+        raise ValueError(
+            "CEO_FEISHU_REPLY_MENTION_OPEN_IDS must contain at most 20 IDs"
+        )
+    return tuple(values)
 
 
 def feishu_live_send_allowed() -> bool:
