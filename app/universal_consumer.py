@@ -267,6 +267,8 @@ class UniversalConsumerOrchestrator:
                     self.action_execution_state(deepcopy(execution))
                     is UniversalActionExecutionState.UNKNOWN
                 ):
+                    if action.kind is PlannedActionKind.MEMORY_WRITE:
+                        continue
                     return UniversalConsumerResult(
                         completed=False,
                         reason=f"action_execution_unknown:{execution.execution_id}",

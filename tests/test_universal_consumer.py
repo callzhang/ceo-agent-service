@@ -893,6 +893,46 @@ def test_unknown_action_execution_stops_without_replay() -> None:
     assert callbacks.calls["create_plan"] == 1
 
 
+def test_memory_write_unknown_during_execution_is_non_blocking() -> None:
+    reply = make_action(PlannedActionKind.SEND_REPLY)
+    memory = make_action(PlannedActionKind.MEMORY_WRITE)
+    callbacks = CallbackRecorder(
+        action_states={
+            0: UniversalActionExecutionState.SUCCEEDED,
+            1: UniversalActionExecutionState.NOT_STARTED,
+        }
+    )
+
+    class UnknownMemoryExecutor(RecordingExecutor):
+        def execute(self, execution: UniversalActionExecution) -> bool:
+            self.calls.append(execution)
+            if execution.action.kind is PlannedActionKind.MEMORY_WRITE:
+                callbacks.action_states[execution.action_index] = (
+                    UniversalActionExecutionState.UNKNOWN
+                )
+                raise RuntimeError("memory write outcome unknown")
+            return True
+
+    executor = UnknownMemoryExecutor()
+    orchestrator, _, _ = make_orchestrator(
+        make_plan(reply, memory, reason="Reply delivered"),
+        callbacks,
+        executor,
+    )
+
+    result = orchestrator.process(make_context())
+
+    assert result == UniversalConsumerResult(
+        completed=True,
+        reason="Reply delivered",
+        executed_actions=(),
+        outcome=UniversalConsumerOutcome.COMPLETED,
+    )
+    assert [call.action.kind for call in executor.calls] == [
+        PlannedActionKind.MEMORY_WRITE
+    ]
+
+
 def test_callback_and_worker_mutations_are_isolated_from_audit_action() -> None:
     class MutatingCallbacks(CallbackRecorder):
         def action_execution_state(
