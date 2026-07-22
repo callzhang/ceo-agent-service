@@ -3661,6 +3661,83 @@ def test_history_and_attempt_detail_show_redacted_universal_execution(tmp_path: 
     assert "plan_json" not in detail_html
 
 
+def test_universal_terminal_failure_displays_business_outcome(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    assert store.enqueue_reply_task(
+        conversation_id="cid-terminal-failure",
+        conversation_title="贾金鹏",
+        single_chat=True,
+        trigger_message_id="msg-terminal-failure",
+        trigger_create_time="2026-07-22 15:13:42",
+        trigger_sender="贾金鹏",
+        trigger_text="磊哥分身，这个你确认好了吗？",
+    )
+    task = store.claim_reply_tasks(limit=1)[0]
+    context = UniversalTaskContext(
+        task_id=task.id,
+        conversation_id=task.conversation_id,
+        conversation_title=task.conversation_title,
+        single_chat=task.single_chat,
+        trigger_message_id=task.trigger_message_id,
+        trigger_create_time=task.trigger_create_time,
+        trigger_sender=task.trigger_sender,
+        trigger_text=task.trigger_text,
+        context_messages=(),
+        required_dependencies=("dws",),
+        force_new_decision=False,
+        dry_run=False,
+        execution_generation=task.execution_generation,
+    )
+    plan = UniversalPlan(
+        task_kind="oa_status_check",
+        reason="Cannot verify current approval state.",
+        dependencies=["dws"],
+        actions=[
+            PlannedAction(
+                kind=PlannedActionKind.STOP_WITH_ERROR,
+                reason="critical_info_unavailable",
+                sensitivity_kind="general",
+                payload={},
+            )
+        ],
+        audit=UniversalAudit(summary="Missing approval context", confidence=0.9),
+    )
+    plan_execution = store.create_universal_plan_execution(context, plan)
+    execution = build_universal_action_execution(
+        context, plan_execution, plan_execution.plan.actions[0], 0
+    )
+    store.claim_universal_action_execution(execution)
+    attempt_id = store.record_universal_reply_attempt(
+        execution,
+        conversation_id=task.conversation_id,
+        conversation_title=task.conversation_title,
+        trigger_message_id=task.trigger_message_id,
+        trigger_sender=task.trigger_sender,
+        trigger_text=task.trigger_text,
+        action="stop_with_error",
+        sensitivity_kind="general",
+        send_status="failed",
+    )
+    store.update_reply_attempt(
+        attempt_id,
+        send_error="stop_with_error: critical_info_unavailable",
+    )
+    store.complete_universal_action_execution(
+        execution,
+        attempt_id=attempt_id,
+        result_json=json.dumps({"outcome": "failed"}),
+    )
+    store.complete_reply_task(task.id)
+
+    history_html = render_attempt_list(store)
+    status, detail_html = render_attempt_detail(store, attempt_id)
+
+    assert status == 200
+    for html in (history_html, detail_html):
+        assert "处理失败 · Failed" in html
+        assert "处理失败 · Succeeded" not in html
+
+
 def test_render_attempt_detail_renders_audit_tool_inputs_and_outputs(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     attempt_id = store.record_reply_attempt(

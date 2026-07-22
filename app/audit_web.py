@@ -6123,9 +6123,9 @@ def _universal_history_observability(item) -> str:
         else ""
     )
     actions = "".join(
-        f'<span class="pill status-action {_action_state_class(action.status)}">'
+        f'<span class="pill status-action {_action_state_class(_visible_universal_action_status(action))}">'
         f'{escape(_display_universal_action_kind(action.kind))} · '
-        f'{escape(_display_action_state(action.status))}</span>'
+        f'{escape(_display_action_state(_visible_universal_action_status(action)))}</span>'
         + (
             f'<span class="attempt-warning">'
             f'{escape(_display_universal_error(action.error))}</span>'
@@ -6155,7 +6155,7 @@ def _universal_execution_card(
         f'<div class="attempt-detail-label">Action {action.index + 1}</div>'
         f'<div class="attempt-detail-value">'
         f'{escape(_display_universal_action_kind(action.kind))} · '
-        f'{escape(_display_action_state(action.status))}</div>'
+        f'{escape(_display_action_state(_visible_universal_action_status(action)))}</div>'
         + (
             f'<div class="attempt-warning">{escape(_display_universal_error(action.error))}</div>'
             if action.error
@@ -6173,6 +6173,18 @@ def _universal_execution_card(
         f'<div class="attempt-detail-grid">{action_rows}</div>'
         '</section>'
     )
+
+
+def _visible_universal_action_status(action) -> str:
+    if action.status.strip().lower() != "succeeded":
+        return action.status
+    terminal_outcomes = {
+        "no_reply": "skipped",
+        "handoff_to_human": "skipped",
+        "blocked": "blocked",
+        "stop_with_error": "failed",
+    }
+    return terminal_outcomes.get(action.kind, action.status)
 
 
 def _display_universal_action_kind(value: str) -> str:
