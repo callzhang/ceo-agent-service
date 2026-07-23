@@ -194,6 +194,9 @@ class CachedDwsClient:
     def download_doc(self, node: str):
         return self.dws.download_doc(node)
 
+    def download_drive_file(self, node: str, *, file_name: str = "download"):
+        return self.dws.download_drive_file(node, file_name=file_name)
+
     def get_resource_download_url(
         self,
         open_conversation_id: str,

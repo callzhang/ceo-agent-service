@@ -716,6 +716,7 @@ class DingTalkAutoReplyWorker:
         conversation: DingTalkConversation,
         task: ReplyTask,
         trigger: DingTalkMessage,
+        context_messages: list[DingTalkMessage],
         prompt_context_messages: list[DingTalkMessage],
     ) -> bool:
         effective_oa_url = task.oa_url.strip()
@@ -747,9 +748,10 @@ class DingTalkAutoReplyWorker:
                 self._universal_calendar_prompt_message(calendar_prompt_message)
             )
 
+        material_context_messages = list(context_messages) or list(prompt_context_messages)
         linked_documents = self._read_calendar_linked_documents(
             [trigger],
-            planner_context_messages,
+            material_context_messages,
         )
         for index, document in enumerate(linked_documents[:3], start=1):
             planner_context_messages.append(
@@ -773,7 +775,7 @@ class DingTalkAutoReplyWorker:
 
         image_paths, image_download_errors = self._collect_image_paths(
             [trigger],
-            planner_context_messages,
+            material_context_messages,
         )
         image_sha256s = tuple(
             hashlib.sha256(path.read_bytes()).hexdigest() for path in image_paths
@@ -897,7 +899,8 @@ class DingTalkAutoReplyWorker:
             draft_reply_text=reply_text,
             send_status="pending",
         )
-        if self.store.has_sent_reply_for_trigger(
+        allow_duplicate_send = execution.context.force_new_decision
+        if not allow_duplicate_send and self.store.has_sent_reply_for_trigger(
             execution.context.conversation_id,
             execution.context.trigger_message_id,
         ):
@@ -978,6 +981,7 @@ class DingTalkAutoReplyWorker:
                 reason=execution.action.reason,
                 attempt_id=attempt_id,
                 raise_on_delivery_failure=True,
+                allow_duplicate_send=allow_duplicate_send,
             )
         except ReplyPreDeliveryError as exc:
             self.store.mark_universal_action_execution_failed(
@@ -4950,36 +4954,6 @@ class DingTalkAutoReplyWorker:
             )
             self._mark_seen([trigger])
             return True
-        if os.getenv("CEO_UNIVERSAL_CONSUMER", "1") != "0":
-            if self._handle_minutes_permission_request_if_actionable(
-                conversation,
-                trigger,
-                ignore_existing_attempt=task.force_new_decision,
-                raise_on_delivery_failure=True,
-            ):
-                return True
-            if self._is_system_or_notification_message(trigger):
-                self._record_system_or_notification_skip(conversation, trigger)
-                self.store.record_reply_attempt_for_trigger(
-                    conversation_id=conversation.open_conversation_id,
-                    conversation_title=conversation.title,
-                    trigger_message_id=trigger.open_message_id,
-                    trigger_sender=trigger.sender_name,
-                    trigger_text=trigger.content,
-                    action=CodexAction.NO_REPLY.value,
-                    sensitivity_kind=SensitivityKind.GENERAL.value,
-                    codex_reason="system_or_notification_message",
-                    audit_summary="系统类或通知类消息，无需自动回复。",
-                    send_status="skipped",
-                )
-                self._mark_seen([trigger])
-                return True
-            return self._process_universal_queued_task(
-                conversation,
-                task,
-                trigger,
-                prompt_context_messages,
-            )
         if self._handle_minutes_permission_request_if_actionable(
             conversation,
             trigger,
@@ -4987,45 +4961,29 @@ class DingTalkAutoReplyWorker:
             raise_on_delivery_failure=True,
         ):
             return True
-        if self._handle_calendar_invite_if_actionable(
-            conversation,
-            trigger,
-            prompt_context_messages,
-            ignore_existing_attempt=task.force_new_decision,
-            include_resolved_calendar_invites=task.force_new_decision,
-            allow_duplicate_send=task.force_new_decision,
-            raise_on_delivery_failure=True,
-            complete_task_id=task.id,
-        ):
-            return True
-        if self._handle_oa_approval_if_actionable(
-            conversation,
-            trigger,
-            prompt_context_messages,
-            ignore_existing_attempt=task.force_new_decision,
-            oa_url_override=task.oa_url,
-        ):
-            return not self.dry_run
         if self._is_system_or_notification_message(trigger):
             self._record_system_or_notification_skip(conversation, trigger)
+            self.store.record_reply_attempt_for_trigger(
+                conversation_id=conversation.open_conversation_id,
+                conversation_title=conversation.title,
+                trigger_message_id=trigger.open_message_id,
+                trigger_sender=trigger.sender_name,
+                trigger_text=trigger.content,
+                action=CodexAction.NO_REPLY.value,
+                sensitivity_kind=SensitivityKind.GENERAL.value,
+                codex_reason="system_or_notification_message",
+                audit_summary="系统类或通知类消息，无需自动回复。",
+                send_status="skipped",
+            )
             self._mark_seen([trigger])
             return True
-        self._process_batch(
+        return self._process_universal_queued_task(
             conversation,
-            [trigger],
+            task,
+            trigger,
+            context_messages,
             prompt_context_messages,
-            ignore_existing_attempt=(
-                task.force_new_decision
-                or self._should_regenerate_after_processing_failure(
-                    conversation,
-                    trigger,
-                    task,
-                )
-            ),
-            allow_duplicate_send=task.force_new_decision,
-            raise_on_delivery_failure=True,
         )
-        return True
 
     def _trigger_has_terminal_result(
         self,
@@ -5579,75 +5537,39 @@ class DingTalkAutoReplyWorker:
             self._record_trigger_recalled_after_backoff_skip(conversation, trigger)
             self._mark_seen([trigger])
             return trigger.open_message_id
-        if os.getenv("CEO_UNIVERSAL_CONSUMER", "1") != "0":
-            if force_new_decision:
-                task = self.store.enqueue_manual_rerun_reply_task(
-                    conversation_id=conversation.open_conversation_id,
-                    conversation_title=conversation.title,
-                    single_chat=conversation.single_chat,
-                    trigger_message_id=trigger.open_message_id,
-                    trigger_create_time=trigger.create_time,
-                    trigger_sender=trigger.sender_name,
-                    trigger_text=trigger.content,
-                    trigger_message_json=trigger.model_dump_json(),
-                    oa_url=oa_url,
-                )
-            else:
-                self.store.enqueue_reply_task(
-                    conversation_id=conversation.open_conversation_id,
-                    conversation_title=conversation.title,
-                    single_chat=conversation.single_chat,
-                    trigger_message_id=trigger.open_message_id,
-                    trigger_create_time=trigger.create_time,
-                    trigger_sender=trigger.sender_name,
-                    trigger_text=trigger.content,
-                    trigger_message_json=trigger.model_dump_json(),
-                    oa_url=oa_url,
-                )
-                task = self.store.get_reply_task_for_message(
-                    conversation.open_conversation_id,
-                    trigger.open_message_id,
-                )
-                if task is None:
-                    raise RuntimeError("rerun reply task was not persisted")
-            processed = self._process_queued_task(conversation, task)
-            if processed and not self.store.reply_task_is_done(task.id):
-                self.store.complete_reply_task(task.id)
-            return trigger.open_message_id
-        if self._handle_minutes_permission_request_if_actionable(
-            conversation,
-            trigger,
-            ignore_existing_attempt=force_new_decision,
-        ):
-            return trigger.open_message_id
-        if self._handle_calendar_invite_if_actionable(
-            conversation,
-            trigger,
-            prompt_context_messages,
-            ignore_existing_attempt=force_new_decision,
-            include_resolved_calendar_invites=force_new_decision,
-            allow_duplicate_send=force_new_decision,
-        ):
-            return trigger.open_message_id
-        if self._handle_oa_approval_if_actionable(
-            conversation,
-            trigger,
-            prompt_context_messages,
-            ignore_existing_attempt=force_new_decision,
-            oa_url_override=oa_url,
-        ):
-            return trigger.open_message_id
-        if self._is_system_or_notification_message(trigger):
-            self._record_system_or_notification_skip(conversation, trigger)
-            self._mark_seen([trigger])
-            return trigger.open_message_id
-        self._process_batch(
-            conversation,
-            [trigger],
-            prompt_context_messages,
-            ignore_existing_attempt=force_new_decision,
-            allow_duplicate_send=force_new_decision,
-        )
+        if force_new_decision:
+            task = self.store.enqueue_manual_rerun_reply_task(
+                conversation_id=conversation.open_conversation_id,
+                conversation_title=conversation.title,
+                single_chat=conversation.single_chat,
+                trigger_message_id=trigger.open_message_id,
+                trigger_create_time=trigger.create_time,
+                trigger_sender=trigger.sender_name,
+                trigger_text=trigger.content,
+                trigger_message_json=trigger.model_dump_json(),
+                oa_url=oa_url,
+            )
+        else:
+            self.store.enqueue_reply_task(
+                conversation_id=conversation.open_conversation_id,
+                conversation_title=conversation.title,
+                single_chat=conversation.single_chat,
+                trigger_message_id=trigger.open_message_id,
+                trigger_create_time=trigger.create_time,
+                trigger_sender=trigger.sender_name,
+                trigger_text=trigger.content,
+                trigger_message_json=trigger.model_dump_json(),
+                oa_url=oa_url,
+            )
+            task = self.store.get_reply_task_for_message(
+                conversation.open_conversation_id,
+                trigger.open_message_id,
+            )
+            if task is None:
+                raise RuntimeError("rerun reply task was not persisted")
+        processed = self._process_queued_task(conversation, task)
+        if processed and not self.store.reply_task_is_done(task.id):
+            self.store.complete_reply_task(task.id)
         return trigger.open_message_id
 
     def _lookup_rerun_message_by_id(
@@ -10461,8 +10383,7 @@ class DingTalkAutoReplyWorker:
         allow_duplicate_send: bool = False,
     ) -> None:
         reply_text = self._native_reply_body(final_reply_text)
-        universal_consumer_enabled = os.getenv("CEO_UNIVERSAL_CONSUMER", "1") != "0"
-        if universal_consumer_enabled and contains_forbidden_leak(reply_text):
+        if contains_forbidden_leak(reply_text):
             regenerated_reply_text = self._regenerate_reply_after_leak_check(
                 blocked_reply_text=reply_text,
             )
@@ -10471,7 +10392,7 @@ class DingTalkAutoReplyWorker:
                 reply_text = self._native_reply_body(
                     self._format_reply_delivery_text(reply_text)
                 )
-        if universal_consumer_enabled and contains_forbidden_leak(reply_text):
+        if contains_forbidden_leak(reply_text):
             self.store.update_reply_attempt(
                 attempt_id,
                 final_reply_text=reply_text,
@@ -10544,7 +10465,7 @@ class DingTalkAutoReplyWorker:
             direct_user_id=direct_user_id or "",
             direct_open_dingtalk_id=direct_open_dingtalk_id or "",
         )
-        if not universal_consumer_enabled and delivery_text_has_forbidden_leak():
+        if delivery_text_has_forbidden_leak():
             regenerated_reply_text = self._regenerate_reply_after_leak_check(
                 blocked_reply_text=reply_text,
             )
@@ -10574,7 +10495,7 @@ class DingTalkAutoReplyWorker:
             direct_user_id=direct_user_id or "",
             direct_open_dingtalk_id=direct_open_dingtalk_id or "",
         )
-        if not universal_consumer_enabled and delivery_text_has_forbidden_leak():
+        if delivery_text_has_forbidden_leak():
             self.store.update_reply_attempt(
                 attempt_id,
                 send_status="blocked",

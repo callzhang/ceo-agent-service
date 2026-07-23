@@ -169,7 +169,7 @@ def test_universal_worker_enriches_calendar_context_before_planning(
     monkeypatch.setattr(worker, "_universal_consumer", lambda: consumer)
 
     assert worker._process_universal_queued_task(
-        conversation(), reply_task(trigger), trigger, [old, trigger]
+        conversation(), reply_task(trigger), trigger, [old, trigger], [old, trigger]
     ) is True
 
     assert len(calendar_calls) == 1
@@ -225,6 +225,7 @@ def test_universal_worker_freezes_oa_follow_up_target_from_existing_resolvers(
         conversation(single_chat=True),
         reply_task(trigger),
         trigger,
+        [previous, trigger],
         [previous, trigger],
     )
 
@@ -333,30 +334,46 @@ def test_universal_worker_injects_service_read_file_body_before_planning(
 ) -> None:
     worker = make_worker(tmp_path)
     trigger = message("[文件] MorningStar复盘.docx")
+    file_reference = message(
+        "[文件] MorningStar复盘.docx fileId: file-1",
+        message_id="msg-file",
+    )
+    stale_reply = message(
+        "我这边现在读不到这份 MorningStar复盘.docx 的正文",
+        message_id="msg-stale",
+    )
     consumer = CapturingConsumer()
+    document_reader_calls = []
     monkeypatch.setattr(worker, "_calendar_invite_context", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(
-        worker,
-        "_read_calendar_linked_documents",
-        lambda *_args: [
+
+    def fake_read_documents(messages, context_messages):
+        document_reader_calls.append((messages, context_messages))
+        return [
             LinkedDocumentContext(
                 url="https://alidocs.dingtalk.com/i/nodes/file-1",
                 title="MorningStar复盘",
                 markdown="核心问题是 owner 决策链过长。",
             )
-        ],
-    )
+        ]
+
+    monkeypatch.setattr(worker, "_read_calendar_linked_documents", fake_read_documents)
     monkeypatch.setattr(worker, "_collect_image_paths", lambda *_: ([], []))
     monkeypatch.setattr(worker, "_universal_consumer", lambda: consumer)
 
     worker._process_universal_queued_task(
-        conversation(), reply_task(trigger), trigger, [trigger]
+        conversation(),
+        reply_task(trigger),
+        trigger,
+        [file_reference, stale_reply, trigger],
+        [stale_reply, trigger],
     )
 
+    assert document_reader_calls[0][1] == [file_reference, stale_reply, trigger]
     trusted = consumer.contexts[0].context_messages[-1]
     assert trusted.open_message_id.endswith(":trusted-document-1")
     assert "必须据此处理，不要只看文件名" in trusted.content
     assert "owner 决策链过长" in trusted.content
+    assert file_reference not in consumer.contexts[0].context_messages
 
 
 def test_universal_worker_freezes_image_content_hash_not_local_path(
@@ -377,7 +394,7 @@ def test_universal_worker_freezes_image_content_hash_not_local_path(
     monkeypatch.setattr(worker, "_universal_consumer", lambda: consumer)
 
     worker._process_universal_queued_task(
-        conversation(), reply_task(trigger), trigger, [trigger]
+        conversation(), reply_task(trigger), trigger, [trigger], [trigger]
     )
 
     context = consumer.contexts[0]

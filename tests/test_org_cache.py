@@ -345,6 +345,10 @@ def test_cached_dws_client_delegates_linked_material_reads(tmp_path):
             self.calls.append(("query_aitable_records", base_id, table_id, limit))
             return {"data": {"records": []}}
 
+        def download_drive_file(self, node, *, file_name="download"):
+            self.calls.append(("download_drive_file", node, file_name))
+            return b"file bytes"
+
         def get_resource_download_url(
             self,
             open_conversation_id,
@@ -381,6 +385,7 @@ def test_cached_dws_client_delegates_linked_material_reads(tmp_path):
     assert cached.query_aitable_records("base-1", "tbl-1", 5) == {
         "data": {"records": []}
     }
+    assert cached.download_drive_file("file-1", file_name="draft.txt") == b"file bytes"
     assert cached.get_resource_download_url("cid-1", "msg-1", "res-1", "image") == {
         "downloadUrl": "https://example.test/image.png"
     }
@@ -393,6 +398,7 @@ def test_cached_dws_client_delegates_linked_material_reads(tmp_path):
         ("get_aitable_base", "base-1"),
         ("get_aitable_tables", "base-1", ["tbl-1"]),
         ("query_aitable_records", "base-1", "tbl-1", 5),
+        ("download_drive_file", "file-1", "draft.txt"),
         (
             "get_resource_download_url",
             "cid-1",

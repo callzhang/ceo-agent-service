@@ -376,6 +376,7 @@ def _execution(
     trusted_mail_target: tuple[str, str, str] | None = None,
     trusted_calendar_target: tuple[str, str, str] | None = None,
     trusted_document_url: str = "",
+    force_new_decision: bool = False,
 ) -> UniversalActionExecution:
     inserted = store.enqueue_reply_task(
         conversation_id="cid-context",
@@ -385,6 +386,7 @@ def _execution(
         trigger_create_time="2026-07-20 10:00:00",
         trigger_sender="Context sender",
         trigger_text="Context trigger",
+        force_new_decision=force_new_decision,
     )
     assert inserted is True
     task = store.claim_reply_tasks(limit=1)[0]
@@ -418,7 +420,7 @@ def _execution(
             ),
         ),
         required_dependencies=("dws",),
-        force_new_decision=False,
+        force_new_decision=force_new_decision,
         dry_run=False,
         trusted_oa_process_instance_id=(
             trusted_oa_process_instance_id
@@ -1824,6 +1826,39 @@ def test_universal_reply_existing_delivery_completes_without_send(
         sort_keys=True,
         separators=(",", ":"),
     )
+
+
+def test_universal_reply_force_rerun_allows_corrective_delivery(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    execution = _execution(
+        store,
+        kind=PlannedActionKind.SEND_REPLY,
+        payload={"text": "Corrected review after reading the file"},
+        force_new_decision=True,
+    )
+    store.record_sent_reply(
+        "cid-context",
+        "msg-context",
+        "Earlier wrong clarification",
+    )
+    dws = NativeReplyFakeDws()
+    worker = DingTalkAutoReplyWorker(store=store, dws=dws, codex=FakeCodex())
+    monkeypatch.setattr(worker, "_notify", lambda **kwargs: None)
+    monkeypatch.setattr("app.worker.feedback_spike_vercel_base_url", lambda: "")
+
+    assert worker.execute_universal_send_reply(execution) is True
+
+    attempt = store.get_latest_reply_attempt_for_trigger("cid-context", "msg-context")
+    assert attempt is not None
+    assert attempt.send_status == "sent"
+    assert attempt.send_error == ""
+    assert len(dws.calls) == 1
+    sent = store.get_sent_reply("cid-context", "msg-context")
+    assert sent is not None
+    assert "Corrected review after reading the file" in sent.reply_text
 
 
 def test_universal_reply_unknown_fails_closed_without_send(

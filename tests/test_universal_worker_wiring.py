@@ -249,7 +249,7 @@ def enqueue(worker, trigger, *, force_new_decision=False, generation="initial", 
     return worker.store.list_reply_tasks(limit=1)[0]
 
 
-def test_explicit_flag_off_preserves_legacy_route(tmp_path, monkeypatch):
+def test_explicit_flag_off_still_uses_universal_route(tmp_path, monkeypatch):
     monkeypatch.setenv("CEO_UNIVERSAL_CONSUMER", "0")
     planner = RecordingPlanner(no_reply_plan())
     worker, trigger = make_worker(tmp_path, monkeypatch, planner=planner)
@@ -261,8 +261,8 @@ def test_explicit_flag_off_preserves_legacy_route(tmp_path, monkeypatch):
         conversation(), task
     ) is True
 
-    assert len(legacy_calls) == 1
-    assert planner.calls == []
+    assert legacy_calls == []
+    assert len(planner.calls) == 1
 
 
 def test_universal_route_is_default(tmp_path, monkeypatch):
@@ -291,7 +291,14 @@ def test_consume_completes_task_when_generation_mismatch_follows_terminal_result
     worker, trigger = make_worker(tmp_path, monkeypatch)
     enqueue(worker, trigger)
 
-    def sent_then_mismatch(conversation, task, trigger, prompt_context_messages):
+    def sent_then_mismatch(
+        conversation,
+        task,
+        trigger,
+        context_messages,
+        prompt_context_messages,
+    ):
+        del context_messages
         del prompt_context_messages
         worker.store.record_reply_attempt_for_trigger(
             conversation_id=conversation.open_conversation_id,
@@ -797,6 +804,7 @@ def test_same_conversation_tasks_cannot_plan_concurrently(tmp_path, monkeypatch)
             first_task,
             first_trigger,
             [first_trigger],
+            [first_trigger],
         )
         assert first_started.wait(timeout=5)
         second_future = pool.submit(
@@ -804,6 +812,7 @@ def test_same_conversation_tasks_cannot_plan_concurrently(tmp_path, monkeypatch)
             conversation(),
             second_task,
             second_trigger,
+            [second_trigger],
             [second_trigger],
         )
         with pytest.raises(RuntimeError, match="codex session locked"):
@@ -814,7 +823,7 @@ def test_same_conversation_tasks_cannot_plan_concurrently(tmp_path, monkeypatch)
     assert len(planner.calls) == 1
 
 
-def test_flag_off_keeps_legacy_leak_check_order(tmp_path, monkeypatch):
+def test_flag_off_still_keeps_universal_leak_check_order(tmp_path, monkeypatch):
     monkeypatch.setenv("CEO_UNIVERSAL_CONSUMER", "0")
     worker, trigger = make_worker(tmp_path, monkeypatch)
     updates = []
@@ -859,7 +868,7 @@ def test_flag_off_keeps_legacy_leak_check_order(tmp_path, monkeypatch):
         direct_open_dingtalk_id=None,
     )
 
-    assert updates[0]["final_reply_text"] == "unsafe-leak"
+    assert updates[0]["final_reply_text"] == "clean reply（by明哥分身）"
     assert regenerated == ["unsafe-leak"]
     assert len(delivered) == 1
     assert "clean reply" in delivered[0]["reply_text"]
