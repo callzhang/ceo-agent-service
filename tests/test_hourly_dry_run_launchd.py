@@ -20,11 +20,8 @@ def test_local_service_script_runs_single_main_service():
     assert 'export HOME="${CEO_SERVICE_HOME:-${HOME}}"' in content
     assert 'export PYTHONPATH="${PYTHONPATH:-.}"' in content
     assert 'export CEO_WORKSPACE="${CEO_WORKSPACE:-${HOME}/Documents/memory}"' in content
-    assert 'export DWS_DISABLE_KEYCHAIN="${DWS_DISABLE_KEYCHAIN:-1}"' in content
-    assert (
-        'export DWS_KEYCHAIN_DIR="${DWS_KEYCHAIN_DIR:-${repo_root}/data/dws-keychain}"'
-        in content
-    )
+    assert "DWS_DISABLE_KEYCHAIN" not in content
+    assert "DWS_KEYCHAIN_DIR" not in content
     assert 'export CEO_DING_ROBOT_NAME="${CEO_DING_ROBOT_NAME:-磊哥}"' in content
     assert "CEO_PRODUCER_INTERVAL_SECONDS" not in content
     assert "CEO_CONSUMER_POLL_INTERVAL_SECONDS" not in content
@@ -71,11 +68,8 @@ def test_main_launch_agent_runs_single_keepalive_service():
     assert "--port" in command[2]
     assert "CEO_SERVICE_ROOT" in command[2]
     assert 'CEO_MAX_BATCHES="${CEO_MAX_BATCHES:-1}"' in command[2]
-    assert 'DWS_DISABLE_KEYCHAIN="${DWS_DISABLE_KEYCHAIN:-1}"' in command[2]
-    assert (
-        'DWS_KEYCHAIN_DIR="${DWS_KEYCHAIN_DIR:-${service_root}/data/dws-keychain}"'
-        in command[2]
-    )
+    assert "DWS_DISABLE_KEYCHAIN" not in command[2]
+    assert "DWS_KEYCHAIN_DIR" not in command[2]
     assert 'CEO_DING_ROBOT_NAME="${CEO_DING_ROBOT_NAME:-磊哥}"' in command[2]
     assert "CEO_NOT_SEND_MESSAGE=0" in command[2]
     assert "CEO_LIVE_SEND_BLOCKERS_ACCEPTED=1" in command[2]
