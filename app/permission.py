@@ -52,11 +52,13 @@ class PermissionGate:
         try:
             requester_user_id = self.dws.resolve_message_sender(trigger)
         except Exception as exc:
-            if decision.personnel_subject_user_id:
-                return PermissionResult(action=PermissionAction.ERROR, reason=str(exc))
             return PermissionResult(
-                action=PermissionAction.REPLY,
-                reply_text=INTERNAL_PERSONNEL_PRIVATE_REFUSAL,
+                action=PermissionAction.ERROR,
+                reason=f"requester identity unavailable: {exc}",
+            )
+        if not decision.personnel_subject_user_id:
+            return PermissionResult(
+                action=PermissionAction.ERROR,
                 reason="missing personnel subject",
             )
         if (
@@ -69,12 +71,6 @@ class PermissionGate:
                 return PermissionResult(action=PermissionAction.ALLOW)
         except Exception:
             pass
-        if not decision.personnel_subject_user_id:
-            return PermissionResult(
-                action=PermissionAction.REPLY,
-                reply_text=INTERNAL_PERSONNEL_PRIVATE_REFUSAL,
-                reason="missing personnel subject",
-            )
         subject_error = self._invalid_internal_personnel_subject_reason(
             decision.personnel_subject_user_id
         )

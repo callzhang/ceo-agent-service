@@ -6,7 +6,7 @@ import pytest
 
 from app.leak_check import FORBIDDEN_MARKERS
 from app.store import AutoReplyStore
-from app.permission import PermissionAction, PermissionResult
+from app.permission import PermissionAction, PermissionGate, PermissionResult
 from app.universal_context import UniversalContextMessage, UniversalTaskContext
 from app.universal_executor import (
     UniversalActionExecution,
@@ -363,6 +363,7 @@ def _execution(
     store: AutoReplyStore,
     *,
     kind: PlannedActionKind,
+    single_chat: bool = False,
     target: dict | None = None,
     payload: dict | None = None,
     sensitivity_kind: str | None = None,
@@ -379,7 +380,7 @@ def _execution(
     inserted = store.enqueue_reply_task(
         conversation_id="cid-context",
         conversation_title="Context title",
-        single_chat=False,
+        single_chat=single_chat,
         trigger_message_id="msg-context",
         trigger_create_time="2026-07-20 10:00:00",
         trigger_sender="Context sender",
@@ -391,7 +392,7 @@ def _execution(
         task_id=task.id,
         conversation_id="cid-context",
         conversation_title="Context title",
-        single_chat=False,
+        single_chat=single_chat,
         trigger_message_id="msg-context",
         trigger_create_time=task.trigger_create_time,
         trigger_sender="Context sender",
@@ -1964,6 +1965,42 @@ def test_universal_reply_permission_refusal_is_sent_and_audited(
     decision = evaluated["decision"]
     assert decision.sensitivity_kind.value == "internal_personnel"
     assert decision.personnel_subject_user_id == "another-user"
+
+
+def test_universal_internal_personnel_missing_subject_blocks_without_refusal_send(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    execution = _execution(
+        store,
+        kind=PlannedActionKind.SEND_REPLY,
+        single_chat=True,
+        sensitivity_kind="internal_personnel",
+        payload={"text": "This business draft should not be overwritten."},
+    )
+    dws = NativeReplyFakeDws()
+    worker = _worker(store)
+    worker.dws = dws
+    worker.permission_gate = PermissionGate(dws)
+
+    def fail_send_reply(*args, **kwargs):
+        raise AssertionError("permission error must block sending")
+
+    monkeypatch.setattr(worker, "_send_reply", fail_send_reply)
+
+    with pytest.raises(ReplyDeliveryError, match="missing personnel subject"):
+        worker.execute_universal_send_reply(execution)
+
+    assert dws.calls == []
+    attempt = store.get_latest_reply_attempt_for_trigger("cid-context", "msg-context")
+    assert attempt is not None
+    assert attempt.send_status == "failed"
+    assert attempt.send_error == "missing personnel subject"
+    assert attempt.permission_action == "error"
+    assert attempt.permission_reason == "missing personnel subject"
+    assert attempt.draft_reply_text == "This business draft should not be overwritten."
+    assert attempt.final_reply_text == ""
 
 
 def test_universal_reply_permission_error_is_definite_retryable_failure(

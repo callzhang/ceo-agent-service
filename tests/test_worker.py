@@ -12972,7 +12972,7 @@ def test_processing_ack_does_not_hide_unanswered_group_mention(
     assert "请审一下这个文档" in prompt
 
 
-def test_internal_personnel_question_missing_subject_refuses_instead_of_asking(
+def test_internal_personnel_question_missing_subject_blocks_without_sending(
     tmp_path: Path, monkeypatch
 ):
     dws = FakeDws(
@@ -12990,9 +12990,12 @@ def test_internal_personnel_question_missing_subject_refuses_instead_of_asking(
 
     worker.run_once()
 
-    assert final_sent(dws) == [
-        ("cid-1", "这个涉及其他人的人事信息，我不能直接回答。（by明哥分身）")
-    ]
+    assert final_sent(dws) == []
+    attempts = worker.store.list_reply_attempts(limit=10)
+    assert attempts[0].send_status == "failed"
+    assert attempts[0].send_error == "missing personnel subject"
+    assert attempts[0].final_reply_text == ""
+    assert attempts[0].draft_reply_text == "可以晋升"
 
 
 def test_internal_personnel_question_allows_private_self_subject(

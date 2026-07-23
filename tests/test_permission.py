@@ -96,7 +96,7 @@ def test_internal_personnel_hr_private_requester_can_receive_other_person_reply(
     assert result.action == PermissionAction.ALLOW
 
 
-def test_internal_personnel_hr_private_requester_can_receive_reply_without_subject():
+def test_internal_personnel_hr_private_requester_still_needs_subject():
     class Dws:
         def resolve_message_sender(self, message):
             return message.sender_user_id
@@ -112,10 +112,12 @@ def test_internal_personnel_hr_private_requester_can_receive_reply_without_subje
         trigger(),
     )
 
-    assert result.action == PermissionAction.ALLOW
+    assert result.action == PermissionAction.ERROR
+    assert result.reason == "missing personnel subject"
+    assert result.reply_text == ""
 
 
-def test_internal_personnel_private_request_without_subject_refuses_instead_of_asking():
+def test_internal_personnel_private_request_without_subject_errors_instead_of_replying():
     class Dws:
         def resolve_message_sender(self, message):
             return message.sender_user_id
@@ -131,8 +133,8 @@ def test_internal_personnel_private_request_without_subject_refuses_instead_of_a
         trigger(),
     )
 
-    assert result.action == PermissionAction.REPLY
-    assert "其他人的人事信息" in result.reply_text
+    assert result.action == PermissionAction.ERROR
+    assert result.reply_text == ""
     assert result.reason == "missing personnel subject"
 
 
@@ -178,6 +180,24 @@ def test_internal_personnel_sender_resolution_failure_is_error():
 
     assert result.action == PermissionAction.ERROR
     assert "sender identity" in result.reason
+
+
+def test_internal_personnel_sender_resolution_failure_without_subject_is_error():
+    class Dws:
+        def resolve_message_sender(self, message):
+            raise RuntimeError("sender identity source is not configured")
+
+    result = PermissionGate(Dws()).evaluate(
+        CodexDecision(
+            action=CodexAction.SEND_REPLY,
+            sensitivity_kind=SensitivityKind.INTERNAL_PERSONNEL,
+        ),
+        trigger(),
+    )
+
+    assert result.action == PermissionAction.ERROR
+    assert "sender identity" in result.reason
+    assert result.reply_text == ""
 
 
 def test_candidate_empty_requester_departments_is_error():
