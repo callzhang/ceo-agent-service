@@ -2651,6 +2651,43 @@ def test_universal_oa_owner_action_executes_and_verifies_final_state(
     )
 
 
+def test_universal_oa_owner_action_recovers_detail_parse_failure_with_openapi(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    execution = _execution(
+        store,
+        kind=PlannedActionKind.OA_APPROVAL,
+        target={"process_instance_id": "proc-1", "task_id": "task-1"},
+        payload={"action": "同意", "remark": "按已核实材料处理"},
+    )
+    dws = UniversalOaFakeDws()
+
+    def detail_parse_failure(process_instance_id: str) -> dict:
+        del process_instance_id
+        raise RuntimeError("DWS detail response parse failed")
+
+    dws.read_oa_approval_detail = detail_parse_failure
+    dws.read_oa_process_instance_openapi = lambda process_id: {
+        "process_instance": {
+            "process_instance_id": process_id,
+            "status": "RUNNING",
+            "tasks": [dws._task()],
+        }
+    }
+    worker = DingTalkAutoReplyWorker(store=store, dws=dws, codex=FakeCodex())
+
+    assert worker.execute_universal_oa_approval(execution) is True
+
+    assert dws.action_calls == [
+        ("proc-1", "task-1", "通过", "按已核实材料处理")
+    ]
+    attempt = store.get_latest_reply_attempt_for_trigger("cid-context", "msg-context")
+    assert attempt is not None
+    assert attempt.send_status == "skipped"
+    assert attempt.send_error == ""
+
+
 def test_universal_oa_comment_uses_comment_api_and_completes(
     tmp_path: Path,
 ) -> None:

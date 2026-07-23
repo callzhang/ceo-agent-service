@@ -1410,18 +1410,29 @@ class DingTalkAutoReplyWorker:
         current_user_id = str(self.dws.get_current_user_id() or "").strip()
         if not current_user_id:
             raise RuntimeError("missing current DingTalk user identity")
-        detail = self.dws.read_oa_approval_detail(process_instance_id)
+        detail_error: Exception | None = None
+        try:
+            detail = self.dws.read_oa_approval_detail(process_instance_id)
+        except Exception as exc:
+            detail_error = exc
+            detail = {}
         tasks = self.dws.read_oa_approval_tasks(process_instance_id)
         records = self.dws.read_oa_approval_records(process_instance_id)
-        if not all(isinstance(value, dict) for value in (detail, tasks, records)):
+        if not all(isinstance(value, dict) for value in (tasks, records)):
             raise RuntimeError("invalid OA detail, task, or records response")
-        if not self._universal_oa_process_status(detail):
+        if not isinstance(detail, dict) or not self._universal_oa_process_status(
+            detail
+        ):
             openapi_reader = getattr(self.dws, "read_oa_process_instance_openapi", None)
             if callable(openapi_reader):
                 fallback = openapi_reader(process_instance_id)
                 if not isinstance(fallback, dict):
                     raise RuntimeError("invalid OA OpenAPI detail response")
                 detail = {"result": [detail, fallback]}
+            elif detail_error is not None:
+                raise detail_error
+        if not isinstance(detail, dict):
+            raise RuntimeError("invalid OA detail response")
         return current_user_id, detail, tasks, records
 
     def _read_universal_oa_comment_fallback_state(
