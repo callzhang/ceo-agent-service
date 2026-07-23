@@ -150,7 +150,11 @@ def broadcast_mention_aliases() -> tuple[str, ...]:
 
 
 def agent_names() -> tuple[str, ...]:
-    return env_csv("CEO_AGENT_NAMES", ())
+    configured = env_csv("CEO_AGENT_NAMES", ())
+    if configured:
+        return configured
+    robot_name = os.getenv("CEO_DING_ROBOT_NAME", "").strip()
+    return (robot_name,) if robot_name else ()
 
 
 def agent_mention_aliases() -> tuple[str, ...]:
@@ -158,11 +162,7 @@ def agent_mention_aliases() -> tuple[str, ...]:
 
 
 def chat_bot_names() -> tuple[str, ...]:
-    configured = agent_names()
-    if configured:
-        return configured
-    robot_name = os.getenv("CEO_DING_ROBOT_NAME", "").strip()
-    return (robot_name,) if robot_name else ()
+    return agent_names()
 
 
 def assistant_signature() -> str:

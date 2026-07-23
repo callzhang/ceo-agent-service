@@ -105,6 +105,15 @@ def test_dingtalk_message_addresses_principal_for_configured_agent_name(monkeypa
     assert message.addresses_principal() is True
 
 
+def test_dingtalk_message_addresses_principal_for_default_robot_name(monkeypatch):
+    monkeypatch.delenv("CEO_AGENT_NAMES", raising=False)
+    monkeypatch.setenv("CEO_DING_ROBOT_NAME", "磊哥")
+    message = make_message("@磊哥 帮我看一下")
+
+    assert message.mentions_agent() is True
+    assert message.addresses_principal() is True
+
+
 def test_dingtalk_message_does_not_address_principal_for_agent_name_without_at(
     monkeypatch,
 ):
