@@ -283,6 +283,49 @@ def test_universal_route_is_default(tmp_path, monkeypatch):
     assert legacy_calls == []
 
 
+def test_consume_completes_task_when_generation_mismatch_follows_terminal_result(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.delenv("CEO_UNIVERSAL_CONSUMER", raising=False)
+    worker, trigger = make_worker(tmp_path, monkeypatch)
+    enqueue(worker, trigger)
+
+    def sent_then_mismatch(conversation, task, trigger, prompt_context_messages):
+        del prompt_context_messages
+        worker.store.record_reply_attempt_for_trigger(
+            conversation_id=conversation.open_conversation_id,
+            conversation_title=conversation.title,
+            trigger_message_id=trigger.open_message_id,
+            trigger_sender=trigger.sender_name,
+            trigger_text=trigger.content,
+            action="ask_clarifying_question",
+            sensitivity_kind="general",
+            codex_reason="Need readable material.",
+            draft_reply_text="请补充可读取的正文。",
+            send_status="sent",
+        )
+        worker.store.record_sent_reply(
+            conversation.open_conversation_id,
+            trigger.open_message_id,
+            "请补充可读取的正文。",
+        )
+        raise ValueError("execution generation mismatch")
+
+    monkeypatch.setattr(
+        worker,
+        "_process_universal_queued_task",
+        sent_then_mismatch,
+    )
+
+    worker.consume_once(max_tasks=1)
+
+    task = worker.store.get_reply_task_for_message("cid-1", "msg-1")
+    assert task is not None
+    assert task.status == "done"
+    assert task.error == ""
+
+
 def test_rerun_message_uses_universal_route_by_default(tmp_path, monkeypatch):
     monkeypatch.delenv("CEO_UNIVERSAL_CONSUMER", raising=False)
     planner = RecordingPlanner(reply_plan_without_target())

@@ -4790,6 +4790,18 @@ class DingTalkAutoReplyWorker:
                     }
                     and task.attempts < self.max_task_attempts
                 ):
+                    if self._trigger_has_terminal_result(
+                        task.conversation_id,
+                        task.trigger_message_id,
+                    ):
+                        self.store.complete_reply_task(task.id)
+                        self.store.record_error(
+                            task.conversation_id,
+                            task.trigger_message_id,
+                            "reply_task_universal_plan_identity_after_terminal",
+                            error,
+                        )
+                        continue
                     self.store.rotate_reply_task_execution_generation(task.id)
                     self.store.requeue_reply_task(
                         task.id,
@@ -5013,6 +5025,24 @@ class DingTalkAutoReplyWorker:
             raise_on_delivery_failure=True,
         )
         return True
+
+    def _trigger_has_terminal_result(
+        self,
+        conversation_id: str,
+        trigger_message_id: str,
+    ) -> bool:
+        if self.store.sent_reply_exists(conversation_id, trigger_message_id):
+            return True
+        attempt = self.store.get_latest_reply_attempt_for_trigger(
+            conversation_id,
+            trigger_message_id,
+        )
+        return attempt is not None and attempt.send_status in {
+            "sent",
+            "skipped",
+            "commented",
+            "reacted",
+        }
 
     def _should_regenerate_after_processing_failure(
         self,

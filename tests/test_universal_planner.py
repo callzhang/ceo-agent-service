@@ -109,6 +109,21 @@ def test_universal_planner_prompt_asks_when_oa_target_can_be_recovered():
     assert "trusted ID is missing, emit blocked instead" not in prompt
 
 
+def test_universal_planner_prompt_asks_when_document_material_can_be_recovered():
+    from app.universal_planner import UniversalPlanner
+
+    planner = UniversalPlanner(
+        workspace=Path("/tmp/universal-planner-workspace"),
+        codex_bin="codex",
+    )
+
+    prompt = planner.build_prompt(_context())
+
+    assert "ordinary file body, or required review material cannot be read" in prompt
+    assert "emit ask_clarifying_question with the exact missing access" in prompt
+    assert "use stop_with_error only when the missing evidence is unrecoverable" in prompt
+
+
 def test_parse_universal_plan_json_accepts_direct_and_newest_nested_jsonl_payload():
     from app.universal_planner import parse_universal_plan_json
 
