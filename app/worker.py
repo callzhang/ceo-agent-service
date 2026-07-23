@@ -148,6 +148,7 @@ CALENDAR_PENDING_INVITE_NO_CHANGE_TIME_START_LOOKAHEAD = timedelta(hours=24)
 CALENDAR_CONTEXT_MATCH_MIN_SCORE = 0.05
 CALENDAR_CONTEXT_MATCH_LOOKBACK = timedelta(minutes=10)
 CALENDAR_ORGANIZER_RESPONSE_ERROR = "Cannot change response status of event organizer"
+CALENDAR_EVENT_NOT_FOUND_ERROR = "Event does not exist"
 CALENDAR_BURST_REPLY_SUPPRESSION_WINDOW = timedelta(minutes=30)
 OA_FOLLOW_UP_CONTEXT_WINDOW = timedelta(days=14)
 DWS_TRANSIENT_ERROR_STATE_PREFIX = "dws_transient_error_count:"
@@ -7428,6 +7429,10 @@ class DingTalkAutoReplyWorker:
     def _calendar_response_is_organizer_noop(exc: Exception) -> bool:
         return CALENDAR_ORGANIZER_RESPONSE_ERROR in str(exc)
 
+    @staticmethod
+    def _calendar_response_is_missing_event_noop(exc: Exception) -> bool:
+        return CALENDAR_EVENT_NOT_FOUND_ERROR in str(exc)
+
     def _mark_calendar_response_noop(
         self,
         *,
@@ -7436,12 +7441,14 @@ class DingTalkAutoReplyWorker:
         response_status: str,
         send_status: str | None,
         send_error: str,
+        noop_reason: str,
+        message: str,
         complete_task_id: int | None = None,
     ) -> None:
         result = {
             "success": True,
-            "noop_reason": "calendar_event_organizer",
-            "message": CALENDAR_ORGANIZER_RESPONSE_ERROR,
+            "noop_reason": noop_reason,
+            "message": message,
         }
         updates: dict[str, Any] = {
             "calendar_event_id": event_id,
@@ -7597,6 +7604,22 @@ class DingTalkAutoReplyWorker:
                     if mark_attempt_terminal
                     else None,
                     send_error="calendar_event_organizer_noop",
+                    noop_reason="calendar_event_organizer",
+                    message=CALENDAR_ORGANIZER_RESPONSE_ERROR,
+                    complete_task_id=complete_task_id,
+                )
+                return True
+            if self._calendar_response_is_missing_event_noop(exc):
+                self._mark_calendar_response_noop(
+                    attempt_id=attempt_id,
+                    event_id=event.event_id,
+                    response_status=response_status,
+                    send_status=CALENDAR_ACTION_SEND_STATUS
+                    if mark_attempt_terminal
+                    else None,
+                    send_error="calendar_event_not_found_noop",
+                    noop_reason="calendar_event_not_found",
+                    message=CALENDAR_EVENT_NOT_FOUND_ERROR,
                     complete_task_id=complete_task_id,
                 )
                 return True
@@ -10146,6 +10169,20 @@ class DingTalkAutoReplyWorker:
                     response_status=response_status,
                     send_status=CALENDAR_ACTION_SEND_STATUS,
                     send_error="calendar_event_organizer_noop",
+                    noop_reason="calendar_event_organizer",
+                    message=CALENDAR_ORGANIZER_RESPONSE_ERROR,
+                )
+                self._mark_seen(new_messages)
+                return True
+            if self._calendar_response_is_missing_event_noop(exc):
+                self._mark_calendar_response_noop(
+                    attempt_id=attempt.id,
+                    event_id=event_id,
+                    response_status=response_status,
+                    send_status=CALENDAR_ACTION_SEND_STATUS,
+                    send_error="calendar_event_not_found_noop",
+                    noop_reason="calendar_event_not_found",
+                    message=CALENDAR_EVENT_NOT_FOUND_ERROR,
                 )
                 self._mark_seen(new_messages)
                 return True

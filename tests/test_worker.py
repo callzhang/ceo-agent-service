@@ -5231,6 +5231,76 @@ def test_calendar_response_organizer_error_is_terminal_noop(
     }
 
 
+def test_calendar_response_missing_event_error_is_terminal_noop(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message("[日程]", single_chat=True, message_type="calendar")
+    invite = DwsCalendarEvent(
+        event_id="invite-1",
+        title="客户会议",
+        start_time="2026-05-16T09:00:00+08:00",
+        end_time="2026-05-16T10:00:00+08:00",
+        description="",
+        organizer="客户",
+        self_response_status="needsAction",
+        status="confirmed",
+    )
+    dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
+    dws.calendar_events[
+        "2026-05-13T17:00:00+08:00|2026-05-27T17:00:00+08:00"
+    ] = [invite]
+    dws.calendar_events[f"{invite.start_time}|{invite.end_time}"] = [invite]
+    dws.calendar_response_error = DwsError(
+        "DWS calendar/respond returned Event does not exist",
+        code="business_error",
+    )
+    codex = FakeCodex(
+        CodexDecision(
+            action=CodexAction.NO_REPLY,
+            reason="日程已不存在，不需要文字回复。",
+            calendar_response_status="accepted",
+            audit_summary="已读取待响应日程。",
+        )
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+    attempt_id = worker.store.record_reply_attempt(
+        conversation_id="cid-1",
+        conversation_title="Friday",
+        trigger_message_id=trigger.open_message_id,
+        trigger_sender=trigger.sender_name,
+        trigger_text=trigger.content,
+        action=CodexAction.NO_REPLY.value,
+        sensitivity_kind="calendar",
+        codex_reason="日程已不存在，不需要文字回复。",
+        calendar_event_id=invite.event_id,
+        calendar_response_status="accepted",
+        send_status="pending",
+    )
+
+    succeeded = worker._execute_calendar_response(
+        conversation=conversation(single_chat=True),
+        trigger=trigger,
+        event=invite,
+        response_status="accepted",
+        attempt_id=attempt_id,
+        mark_attempt_terminal=True,
+    )
+
+    assert succeeded is True
+    assert dws.calendar_responses == [("invite-1", "accepted")]
+    assert worker.store.count_reply_tasks(status="failed") == 0
+    attempt = worker.store.get_reply_attempt(attempt_id)
+    assert attempt.action == "no_reply"
+    assert attempt.send_status == "calendar"
+    assert attempt.send_error == "calendar_event_not_found_noop"
+    assert attempt.calendar_response_status == "accepted"
+    assert json.loads(attempt.calendar_response_result_json) == {
+        "message": "Event does not exist",
+        "noop_reason": "calendar_event_not_found",
+        "success": True,
+    }
+
+
 def test_send_reply_calendar_response_failure_does_not_send_reply(
     tmp_path: Path, monkeypatch
 ):
@@ -5426,6 +5496,51 @@ def test_existing_dry_run_calendar_response_is_executed_without_rerunning_codex(
     assert attempt.send_status == "calendar"
     assert attempt.send_error == ""
     assert attempt.calendar_response_result_json == '{"success": true}'
+    assert worker.store.has_seen(trigger.open_message_id) is True
+
+
+def test_retry_existing_calendar_response_missing_event_is_terminal_noop(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message("[日程]", single_chat=True)
+    dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
+    dws.calendar_response_error = DwsError(
+        "DWS calendar/respond returned Event does not exist",
+        code="business_error",
+    )
+    worker = make_worker(tmp_path, dws, FakeCodex([]), monkeypatch)
+    attempt_id = worker.store.record_reply_attempt(
+        conversation_id="cid-1",
+        conversation_title="Friday",
+        trigger_message_id=trigger.open_message_id,
+        trigger_sender=trigger.sender_name,
+        trigger_text=trigger.content,
+        action="no_reply",
+        sensitivity_kind="general",
+        codex_reason="标题足以判断需要接受。",
+        calendar_event_id="invite-1",
+        calendar_response_status="accepted",
+        send_status="dry_run",
+    )
+    attempt = worker.store.get_reply_attempt(attempt_id)
+
+    succeeded = worker._retry_existing_calendar_attempt(
+        conversation(single_chat=True),
+        trigger,
+        [trigger],
+        attempt,
+    )
+
+    assert succeeded is True
+    assert dws.calendar_responses == [("invite-1", "accepted")]
+    updated = worker.store.get_reply_attempt(attempt_id)
+    assert updated.send_status == "calendar"
+    assert updated.send_error == "calendar_event_not_found_noop"
+    assert json.loads(updated.calendar_response_result_json) == {
+        "message": "Event does not exist",
+        "noop_reason": "calendar_event_not_found",
+        "success": True,
+    }
     assert worker.store.has_seen(trigger.open_message_id) is True
 
 
