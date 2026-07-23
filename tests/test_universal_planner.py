@@ -93,6 +93,22 @@ def test_universal_planner_prompt_allows_only_one_terminal_control_action():
     assert "Do not combine a chat reply with handoff_to_human" in prompt
 
 
+def test_universal_planner_prompt_asks_when_oa_target_can_be_recovered():
+    from app.universal_planner import UniversalPlanner
+
+    planner = UniversalPlanner(
+        workspace=Path("/tmp/universal-planner-workspace"),
+        codex_bin="codex",
+    )
+
+    prompt = planner.build_prompt(_context())
+
+    assert "If either trusted ID is missing" in prompt
+    assert "emit ask_clarifying_question with the specific missing item" in prompt
+    assert "emit blocked only when no reliable requester or recovery path exists" in prompt
+    assert "trusted ID is missing, emit blocked instead" not in prompt
+
+
 def test_parse_universal_plan_json_accepts_direct_and_newest_nested_jsonl_payload():
     from app.universal_planner import parse_universal_plan_json
 
