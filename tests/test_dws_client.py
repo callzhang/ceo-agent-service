@@ -2309,7 +2309,7 @@ def test_add_message_emoji_command_shape():
         "--msg-id",
         "msg-1",
         "--emoji",
-        "👍",
+        "赞",
         "--format",
         "json",
         "--yes",
@@ -2325,7 +2325,14 @@ def test_add_message_emoji_command_strips_square_brackets():
         emoji="[👍]",
     )
 
-    assert command[command.index("--emoji") + 1] == "👍"
+    assert command[command.index("--emoji") + 1] == "赞"
+
+
+def test_normalize_message_emoji_uses_dingtalk_default_names():
+    assert dws_client.normalize_message_emoji("👍") == "赞"
+    assert dws_client.normalize_message_emoji("[👍]") == "赞"
+    assert dws_client.normalize_message_emoji("[[开心]]") == "开心"
+    assert dws_client.is_default_message_emoji("[开心]") is True
 
 
 def test_add_message_text_emotion_command_shape():

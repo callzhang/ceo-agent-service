@@ -135,6 +135,18 @@ def test_developer_prompt_delegates_memory_to_agent_mcp_tools():
     assert "memory_write 失败不应改变最终 JSON" in template
 
 
+def test_developer_prompt_uses_low_key_reactions_for_acknowledgement():
+    template = read_developer_prompt_template()
+
+    assert "确认收到、已看见、流程同步、客气收口、低信息跟进" in template
+    assert "反馈提示、对方解释说明、纠偏说明、提醒型待办" in template
+    assert "表示“看到了/知道了”即可" in template
+    assert '"emoji":"OK"' in template
+    assert '"emoji":"收到"' in template
+    assert "不要用「赞」过度表态" in template
+    assert "支持/赞美类才用「赞」「鼓掌」「开心」" in template
+
+
 def test_developer_prompt_keeps_business_metrics_out_of_personnel_sensitivity():
     template = read_developer_prompt_template()
 

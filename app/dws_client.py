@@ -29,7 +29,40 @@ DINGTALK_MESSAGE_TIME_ZONE = ZoneInfo("Asia/Shanghai")
 MIN_UNREAD_MESSAGE_LIST_LIMIT = 5
 DWS_AGENT_CODE_ENV = "DINGTALK_DWS_AGENTCODE"
 DWS_DEFAULT_AGENT_CODE = "ceo-agent-service"
-BRACKETED_EMOJI_PATTERN = re.compile(r"^\[([^\[\]]*)\]$")
+DINGTALK_DEFAULT_EMOJI_NAMES = frozenset(
+    {
+        "赞",
+        "弱",
+        "感谢",
+        "鼓掌",
+        "OK",
+        "开心",
+        "收到",
+        "笑哭",
+        "爱心",
+        "对勾",
+        "撒花",
+        "彩带",
+        "大笑",
+        "微笑",
+        "抱拳",
+        "加油干",
+    }
+)
+DINGTALK_UNICODE_EMOJI_ALIASES = {
+    "👍": "赞",
+    "👎": "弱",
+    "🙏": "感谢",
+    "👏": "鼓掌",
+    "👌": "OK",
+    "😊": "开心",
+    "😄": "开心",
+    "😂": "笑哭",
+    "❤️": "爱心",
+    "❤": "爱心",
+    "✅": "对勾",
+    "🎉": "撒花",
+}
 
 
 def _local_time_zone():
@@ -45,11 +78,26 @@ def local_time_zone_name() -> str:
 
 
 def normalize_message_emoji(emoji: str) -> str:
-    normalized = emoji.strip()
-    match = BRACKETED_EMOJI_PATTERN.match(normalized)
-    if match:
-        normalized = match.group(1).strip()
-    return normalized
+    normalized = _clean_message_emoji_label(emoji)
+    return DINGTALK_UNICODE_EMOJI_ALIASES.get(normalized, normalized)
+
+
+def is_default_message_emoji(emoji: str) -> bool:
+    return normalize_message_emoji(emoji) in DINGTALK_DEFAULT_EMOJI_NAMES
+
+
+def _clean_message_emoji_label(value: str) -> str:
+    text = value.strip()
+    while text.startswith("[]"):
+        text = text[2:].lstrip()
+    for left, right in (("[", "]"), ("［", "］"), ("【", "】")):
+        while text.startswith(left) and text.endswith(right):
+            inner = text[len(left) : -len(right)].strip()
+            if inner:
+                text = inner
+                continue
+            break
+    return text
 
 
 def extract_recall_key_from_send_result(send_result: dict[str, Any] | None) -> str:
