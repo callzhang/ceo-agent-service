@@ -2199,6 +2199,8 @@ def _is_dws_transient_dependency_error(exc: Exception) -> bool:
             "network_error",
             "timeout_error",
             "command timed out after",
+            "exit code -9",
+            "exit code -15",
         )
     )
 
