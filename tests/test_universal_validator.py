@@ -523,6 +523,30 @@ def test_no_reply_can_be_combined_with_reaction() -> None:
     ]
 
 
+def test_no_reply_can_be_combined_with_calendar_response() -> None:
+    result = UniversalValidator().validate(
+        make_plan(
+            PlannedAction(
+                kind=PlannedActionKind.CALENDAR_RESPONSE,
+                reason="Accept the trusted calendar invite",
+                target={"event_id": "event-123"},
+                payload={"response_status": "accepted"},
+            ),
+            PlannedAction(
+                kind=PlannedActionKind.NO_REPLY,
+                reason="No text reply is needed",
+            ),
+        ),
+        make_context(),
+    )
+
+    assert result.allowed is True
+    assert [action.kind for action in result.actions] == [
+        PlannedActionKind.CALENDAR_RESPONSE,
+        PlannedActionKind.NO_REPLY,
+    ]
+
+
 def test_memory_write_is_not_terminal() -> None:
     action = PlannedAction(
         kind=PlannedActionKind.MEMORY_WRITE,
