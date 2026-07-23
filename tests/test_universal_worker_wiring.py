@@ -283,6 +283,72 @@ def test_universal_route_is_default(tmp_path, monkeypatch):
     assert legacy_calls == []
 
 
+def test_rerun_message_uses_universal_route_by_default(tmp_path, monkeypatch):
+    monkeypatch.delenv("CEO_UNIVERSAL_CONSUMER", raising=False)
+    planner = RecordingPlanner(reply_plan_without_target())
+    worker, trigger = make_worker(tmp_path, monkeypatch, planner=planner)
+    legacy_calls = []
+    monkeypatch.setattr(
+        worker,
+        "_process_batch",
+        lambda *args, **kwargs: legacy_calls.append((args, kwargs)),
+    )
+
+    processed = worker.rerun_message(
+        conversation(),
+        trigger.open_message_id,
+        force_new_decision=True,
+    )
+
+    assert processed == trigger.open_message_id
+    assert len(planner.calls) == 1
+    assert legacy_calls == []
+    assert worker.dws.sent_replies == [
+        ("cid-1", "msg-1", "@宇航 已按当前消息处理（by明哥分身）")
+    ]
+    task = worker.store.get_reply_task_for_message("cid-1", "msg-1")
+    assert task is not None
+    assert task.status == "done"
+    attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
+    assert attempt is not None
+    assert attempt.universal_execution_id
+
+
+def test_rerun_message_without_force_does_not_duplicate_sent_reply(
+    tmp_path, monkeypatch
+):
+    monkeypatch.delenv("CEO_UNIVERSAL_CONSUMER", raising=False)
+    planner = RecordingPlanner(reply_plan_without_target())
+    worker, trigger = make_worker(tmp_path, monkeypatch, planner=planner)
+    worker.store.upsert_conversation("cid-1", "测试群", False, None)
+    worker.store.record_reply_attempt_for_trigger(
+        conversation_id="cid-1",
+        conversation_title="测试群",
+        trigger_message_id=trigger.open_message_id,
+        trigger_sender=trigger.sender_name,
+        trigger_text=trigger.content,
+        action="send_reply",
+        sensitivity_kind="general",
+        send_status="sent",
+    )
+    worker.store.record_sent_reply(
+        conversation_id="cid-1",
+        trigger_message_id=trigger.open_message_id,
+        reply_text="已经发过的回复",
+        send_result_json='{"ok": true}',
+    )
+
+    processed = worker.rerun_message(conversation(), trigger.open_message_id)
+
+    assert processed == trigger.open_message_id
+    assert planner.calls == []
+    assert worker.dws.sent_replies == []
+    assert worker.store.count_sent_replies() == 1
+    task = worker.store.get_reply_task_for_message("cid-1", "msg-1")
+    assert task is not None
+    assert task.status == "done"
+
+
 def test_dws_auth_blocks_before_planner_without_starting_login(tmp_path, monkeypatch):
     monkeypatch.setenv("CEO_UNIVERSAL_CONSUMER", "1")
     planner = RecordingPlanner(no_reply_plan())

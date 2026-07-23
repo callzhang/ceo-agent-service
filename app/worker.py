@@ -5548,6 +5548,41 @@ class DingTalkAutoReplyWorker:
             self._record_trigger_recalled_after_backoff_skip(conversation, trigger)
             self._mark_seen([trigger])
             return trigger.open_message_id
+        if os.getenv("CEO_UNIVERSAL_CONSUMER", "1") != "0":
+            if force_new_decision:
+                task = self.store.enqueue_manual_rerun_reply_task(
+                    conversation_id=conversation.open_conversation_id,
+                    conversation_title=conversation.title,
+                    single_chat=conversation.single_chat,
+                    trigger_message_id=trigger.open_message_id,
+                    trigger_create_time=trigger.create_time,
+                    trigger_sender=trigger.sender_name,
+                    trigger_text=trigger.content,
+                    trigger_message_json=trigger.model_dump_json(),
+                    oa_url=oa_url,
+                )
+            else:
+                self.store.enqueue_reply_task(
+                    conversation_id=conversation.open_conversation_id,
+                    conversation_title=conversation.title,
+                    single_chat=conversation.single_chat,
+                    trigger_message_id=trigger.open_message_id,
+                    trigger_create_time=trigger.create_time,
+                    trigger_sender=trigger.sender_name,
+                    trigger_text=trigger.content,
+                    trigger_message_json=trigger.model_dump_json(),
+                    oa_url=oa_url,
+                )
+                task = self.store.get_reply_task_for_message(
+                    conversation.open_conversation_id,
+                    trigger.open_message_id,
+                )
+                if task is None:
+                    raise RuntimeError("rerun reply task was not persisted")
+            processed = self._process_queued_task(conversation, task)
+            if processed and not self.store.reply_task_is_done(task.id):
+                self.store.complete_reply_task(task.id)
+            return trigger.open_message_id
         if self._handle_minutes_permission_request_if_actionable(
             conversation,
             trigger,
