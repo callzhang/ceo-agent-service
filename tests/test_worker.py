@@ -3862,6 +3862,25 @@ def test_repeated_produce_once_does_not_duplicate_pending_task(
     assert codex.calls == []
 
 
+def test_produce_once_treats_configured_agent_name_mention_like_principal_mention(
+    tmp_path: Path, monkeypatch
+):
+    monkeypatch.setenv("CEO_AGENT_NAMES", "磊哥")
+    trigger = message("@磊哥 这个怎么处理？")
+    dws = FakeDws([conversation()], {"cid-1": [trigger]})
+    dws.mentioned_messages = {"cid-1": [trigger]}
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该调用")
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+
+    assert worker.produce_once() == 1
+    task = worker.store.list_reply_tasks(statuses=("pending",), limit=1)[0]
+    assert task.trigger_message_id == "msg-1"
+    assert task.trigger_text == "@磊哥 这个怎么处理？"
+    assert codex.calls == []
+
+
 def test_produce_once_uses_recent_context_when_unread_read_fails_for_group_mention(
     tmp_path: Path, monkeypatch
 ):
@@ -12269,6 +12288,31 @@ def test_group_mention_from_unread_conversation_is_processed_when_unread_tail_mi
     attempts = worker.store.list_reply_attempts(limit=10)
     assert len(codex.calls) == 1
     assert attempts[0].trigger_message_id == "msg-mentioned"
+    assert attempts[0].send_status == "dry_run"
+
+
+def test_group_agent_name_mention_from_search_is_processed_when_mentions_miss_it(
+    tmp_path: Path, monkeypatch
+):
+    monkeypatch.setenv("CEO_AGENT_NAMES", "磊哥")
+    agent_mention = message(
+        "@磊哥 要不现在对一下",
+        message_id="msg-agent-mentioned",
+    )
+    agent_mention.create_time = "2026-05-25 16:20:14"
+    dws = FakeDws([], {})
+    dws.mentioned_messages = {}
+    dws.broadcast_messages = {"cid-1": [agent_mention]}
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="现在可以对")
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch, dry_run=True)
+
+    worker.run_once()
+
+    attempts = worker.store.list_reply_attempts(limit=10)
+    assert len(codex.calls) == 1
+    assert attempts[0].trigger_message_id == "msg-agent-mentioned"
     assert attempts[0].send_status == "dry_run"
 
 

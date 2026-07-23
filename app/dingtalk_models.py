@@ -2,7 +2,7 @@ from enum import StrEnum
 
 from pydantic import BaseModel, Field
 
-from app.config import broadcast_mention_aliases, mention_aliases
+from app.config import agent_mention_aliases, broadcast_mention_aliases, mention_aliases
 
 
 class DingTalkConversation(BaseModel):
@@ -38,8 +38,11 @@ class DingTalkMessage(BaseModel):
     def mentions_all(self) -> bool:
         return self._contains_mention_alias(broadcast_mention_aliases())
 
+    def mentions_agent(self) -> bool:
+        return self._contains_mention_alias(agent_mention_aliases())
+
     def addresses_principal(self) -> bool:
-        return self.mentions_principal() or self.mentions_all()
+        return self.mentions_principal() or self.mentions_all() or self.mentions_agent()
 
     def is_recalled(self) -> bool:
         return self._raw_payload_state("messageStatus") in {

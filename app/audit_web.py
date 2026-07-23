@@ -31,6 +31,7 @@ from app.codex_history import (
 )
 from app.codex_decision import audit_summary_explains_no_documents
 from app.config import (
+    agent_names,
     assistant_signature,
     batch_seconds,
     broadcast_mention_aliases,
@@ -1804,6 +1805,7 @@ def _render_channel_config() -> str:
 def _system_config_rows() -> list[tuple[str, str, str]]:
     env_values = read_env_file()
     mention_text = _csv_label(mention_aliases())
+    agent_names_text = _csv_label(agent_names())
     broadcast_text = _csv_label(broadcast_mention_aliases())
     document_extraction_text = _csv_label(document_extraction_ids())
     forbidden_path_text = _csv_label(forbidden_path_prefixes())
@@ -1827,6 +1829,11 @@ def _system_config_rows() -> list[tuple[str, str, str]]:
             "CEO_MENTION_ALIASES",
             mention_text,
             "群聊/消息触发时识别点名 principal 的别名；影响 producer 候选生成。",
+        ),
+        (
+            "CEO_AGENT_NAMES",
+            agent_names_text,
+            "群聊中 @Agent 名称时触发自动回复；配置值不用带 @，多个名称用逗号分隔。",
         ),
         (
             "CEO_BROADCAST_MENTION_ALIASES",
@@ -2055,6 +2062,7 @@ def _editable_system_config_keys() -> set[str]:
         "USER_ALIAS",
         "MEMORY_CONNECTOR_USER_ID",
         "CEO_MENTION_ALIASES",
+        "CEO_AGENT_NAMES",
         "CEO_BROADCAST_MENTION_ALIASES",
         "DOCUMENT_EXTRACTION_IDS",
         "CEO_ASSISTANT_SIGNATURE",

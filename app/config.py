@@ -149,8 +149,16 @@ def broadcast_mention_aliases() -> tuple[str, ...]:
     return env_csv("CEO_BROADCAST_MENTION_ALIASES", ("@所有人", "@all"))
 
 
+def agent_names() -> tuple[str, ...]:
+    return env_csv("CEO_AGENT_NAMES", ())
+
+
+def agent_mention_aliases() -> tuple[str, ...]:
+    return tuple(name if name.startswith("@") else f"@{name}" for name in agent_names())
+
+
 def chat_bot_names() -> tuple[str, ...]:
-    configured = env_csv("CEO_CHAT_BOT_NAMES", ())
+    configured = agent_names()
     if configured:
         return configured
     robot_name = os.getenv("CEO_DING_ROBOT_NAME", "").strip()

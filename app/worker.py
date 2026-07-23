@@ -26,6 +26,7 @@ from app.codex_decision import (
     codex_decision_from_envelope,
 )
 from app.config import (
+    agent_mention_aliases,
     assistant_signature,
     broadcast_mention_aliases,
     env_duration,
@@ -3567,10 +3568,12 @@ class DingTalkAutoReplyWorker:
         }
         robot_direct_messages = self._robot_direct_messages_by_conversation()
         mentioned_messages = self._mentioned_messages_by_conversation(conversations)
+        agent_named_messages = self._agent_named_messages_by_conversation()
         broadcast_messages = self._broadcast_messages_by_conversation()
         addressed_messages = self._merge_message_groups(
             robot_direct_messages,
             mentioned_messages,
+            agent_named_messages,
             broadcast_messages,
         )
         conversations = self._conversations_with_mentions(
@@ -5387,6 +5390,27 @@ class DingTalkAutoReplyWorker:
                 lookback_hours=24,
             ),
             notify_title="CEO read broadcast messages failed",
+            default=[],
+        )
+        grouped: dict[str, list[DingTalkMessage]] = {}
+        for message in messages:
+            if self._is_current_user_message_for_candidate_filter(message):
+                continue
+            grouped.setdefault(message.open_conversation_id, []).append(message)
+        return grouped
+
+    def _agent_named_messages_by_conversation(self) -> dict[str, list[DingTalkMessage]]:
+        aliases = agent_mention_aliases()
+        if not aliases:
+            return {}
+        messages = self._call_dws(
+            "read_agent_name_mentions",
+            lambda: self.dws.read_broadcast_messages(
+                aliases,
+                limit=100,
+                lookback_hours=24,
+            ),
+            notify_title="CEO read agent name mentions failed",
             default=[],
         )
         grouped: dict[str, list[DingTalkMessage]] = {}

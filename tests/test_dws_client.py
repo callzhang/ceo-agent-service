@@ -97,6 +97,24 @@ def test_dingtalk_message_mentions_principal_false_for_unrelated_content():
     assert message.mentions_principal() is False
 
 
+def test_dingtalk_message_addresses_principal_for_configured_agent_name(monkeypatch):
+    monkeypatch.setenv("CEO_AGENT_NAMES", "磊哥")
+    message = make_message("@磊哥 帮我看一下")
+
+    assert message.mentions_agent() is True
+    assert message.addresses_principal() is True
+
+
+def test_dingtalk_message_does_not_address_principal_for_agent_name_without_at(
+    monkeypatch,
+):
+    monkeypatch.setenv("CEO_AGENT_NAMES", "磊哥")
+    message = make_message("这个要和磊哥对一下")
+
+    assert message.mentions_agent() is False
+    assert message.addresses_principal() is False
+
+
 def test_codex_action_values_match_output_protocol():
     assert [action.value for action in CodexAction] == [
         "send_reply",
@@ -2234,7 +2252,7 @@ def test_send_direct_message_by_bot_uses_short_title():
 
 
 def test_read_robot_direct_messages_filters_configured_bot_chat(monkeypatch):
-    monkeypatch.setenv("CEO_CHAT_BOT_NAMES", "磊哥")
+    monkeypatch.setenv("CEO_AGENT_NAMES", "磊哥")
     monkeypatch.setattr(dws_client, "_local_time_zone", lambda: TEST_LOCAL_TZ)
 
     class FixedDatetime(datetime):
