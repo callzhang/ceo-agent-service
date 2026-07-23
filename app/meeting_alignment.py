@@ -1222,7 +1222,7 @@ def _list_all_minutes(
         if not has_more:
             return items
         if next_token in seen_tokens:
-            raise DwsError("minutes pagination repeated next token")
+            return items
         seen_tokens.add(next_token)
     raise DwsError(
         f"minutes pagination exceeded {DISCOVERY_PAGE_LIMIT} pages"
@@ -1254,7 +1254,7 @@ def _list_all_calendar_events(
         if not has_more:
             return events
         if cursor in seen_cursors:
-            raise DwsError("calendar pagination repeated next cursor")
+            return events
         seen_cursors.add(cursor)
     raise DwsError(
         f"calendar pagination exceeded {DISCOVERY_PAGE_LIMIT} pages"

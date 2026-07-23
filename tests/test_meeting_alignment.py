@@ -1208,15 +1208,14 @@ def test_producer_requires_explicit_status_to_be_ended(tmp_path, status):
         ),
     ],
 )
-def test_producer_hard_fails_repeated_pagination_cursor(
+def test_producer_stops_on_repeated_pagination_cursor(
     tmp_path, pages_attribute, initial_page
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     dws = FakeDws()
     setattr(dws, pages_attribute, {"": initial_page, "repeat": initial_page})
 
-    with pytest.raises(DwsError, match="repeated"):
-        produce_meeting_alignment_jobs(store, dws, now=NOW)
+    assert produce_meeting_alignment_jobs(store, dws, now=NOW) == 0
 
 
 @pytest.mark.parametrize("pages_attribute", ["minutes_pages", "calendar_pages"])
