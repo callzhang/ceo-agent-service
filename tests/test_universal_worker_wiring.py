@@ -43,6 +43,7 @@ class FakeDws:
         self.auth_status_calls = 0
         self.auth_login_starts = 0
         self.sent_replies: list[tuple[str, str, str]] = []
+        self.oa_detail_reads: list[str] = []
 
     def auth_status(self):
         self.auth_status_calls += 1
@@ -71,6 +72,46 @@ class FakeDws:
             (conversation.open_conversation_id, trigger.open_message_id, text)
         )
         return {"success": True, "messageId": "sent-1"}
+
+    def get_current_user_id(self):
+        return "principal-user-1"
+
+    def read_oa_approval_detail(self, process_instance_id: str):
+        self.oa_detail_reads.append(process_instance_id)
+        return {
+            "result": {
+                "processInstanceId": process_instance_id,
+                "title": "测试审批",
+                "status": "RUNNING",
+            }
+        }
+
+    def read_oa_approval_records(self, process_instance_id: str):
+        return {"result": [{"processInstanceId": process_instance_id}]}
+
+    def read_oa_approval_tasks(self, process_instance_id: str):
+        return {
+            "result": {
+                "taskIdList": [{"taskId": 168}],
+                "tasks": [
+                    {
+                        "taskId": 168,
+                        "taskStatus": "RUNNING",
+                        "taskResult": "NONE",
+                        "userId": "principal-user-1",
+                    }
+                ],
+            }
+        }
+
+    def read_oa_process_instance_openapi(self, process_instance_id: str):
+        return {
+            "process_instance": {
+                "process_instance_id": process_instance_id,
+                "status": "RUNNING",
+                "form_component_values": [],
+            }
+        }
 
 
 class FakeLegacyCodex:
@@ -521,7 +562,12 @@ def test_worker_builds_trusted_context_and_force_generation(tmp_path, monkeypatc
     assert context.trusted_mail_message_id == "42"
     assert context.trusted_calendar_event_id == "84"
     assert context.trusted_document_url == document_url
-    assert context.context_messages[-1].raw_payload_json
+    assert worker.dws.oa_detail_reads == ["126"]
+    assert any(
+        "可信OA审批材料" in message.content and "测试审批" in message.content
+        for message in context.context_messages
+    )
+    assert any(message.raw_payload_json for message in context.context_messages)
     assert planner.calls[0][1] is None
 
 

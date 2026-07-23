@@ -792,6 +792,29 @@ class DingTalkAutoReplyWorker:
                     content="图片材料读取失败：\n- " + "\n- ".join(image_download_errors),
                 )
             )
+        if effective_oa_url or self._is_oa_approval_message(trigger):
+            oa_url_for_detail = effective_oa_url or extract_oa_url(trigger.content)
+            approval_detail_text = self._oa_approval_detail_text(
+                trigger,
+                oa_url_for_detail,
+            )
+            planner_context_messages.append(
+                DingTalkMessage(
+                    open_conversation_id=conversation.open_conversation_id,
+                    open_message_id=f"{trigger.open_message_id}:trusted-oa-approval",
+                    conversation_title=conversation.title,
+                    single_chat=conversation.single_chat,
+                    sender_name="CEO系统",
+                    create_time=trigger.create_time,
+                    content=(
+                        "可信OA审批材料：\n"
+                        "以下审批详情由服务在规划前读取，包含当前用户、表单、"
+                        "审批记录、待办任务和可用 fallback；处理审批时必须据此"
+                        "判断，不要只看群消息。\n"
+                        f"{approval_detail_text[:60000]}"
+                    ),
+                )
+            )
         context = build_universal_context(
             conversation=conversation,
             trigger=trigger,
