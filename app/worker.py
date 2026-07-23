@@ -2439,6 +2439,11 @@ class DingTalkAutoReplyWorker:
                 )
                 raise error
             reaction_action["emoji"] = emoji
+        elif (
+            str(reaction_action.get("reaction_type") or "").strip()
+            == "text_emotion"
+        ):
+            self._normalize_text_emotion_action(reaction_action)
         events: list[dict[str, str]] = []
         result: object = None
         try:
@@ -2609,6 +2614,7 @@ class DingTalkAutoReplyWorker:
         if not isinstance(checkpoint, dict):
             checkpoint = {}
         checkpoint["reaction_type"] = "text_emotion"
+        action = self._normalize_text_emotion_action(dict(action))
         text = str(action.get("text") or "").strip()
         emotion_name = str(action.get("emotion_name") or "").strip() or text
         background_id = (
@@ -8453,6 +8459,7 @@ class DingTalkAutoReplyWorker:
                 emoji,
             )
         if reaction_type == "text_emotion":
+            action = self._normalize_text_emotion_action(dict(action))
             text = str(action.get("text") or "").strip()
             emotion_id = str(action.get("emotion_id") or "").strip()
             emotion_name = str(action.get("emotion_name") or "").strip() or text
@@ -8560,8 +8567,50 @@ class DingTalkAutoReplyWorker:
     def _message_reaction_summary(action: dict) -> str:
         reaction_type = str(action.get("reaction_type") or "emoji").strip()
         if reaction_type == "emoji":
-            return f"emoji: {str(action.get('emoji') or '').strip()}"
-        return f"text_emotion: {str(action.get('text') or '').strip()}"
+            return f"emoji: {normalize_message_emoji(str(action.get('emoji') or ''))}"
+        if reaction_type == "text_emotion":
+            normalized = DingTalkAutoReplyWorker._normalize_text_emotion_action(
+                dict(action)
+            )
+            return f"text_emotion: {str(normalized.get('text') or '').strip()}"
+        return reaction_type
+
+    @staticmethod
+    def _normalize_text_emotion_action(action: dict) -> dict:
+        text = DingTalkAutoReplyWorker._clean_text_emotion_label(
+            str(action.get("text") or "")
+        )
+        emotion_name = DingTalkAutoReplyWorker._clean_text_emotion_label(
+            str(action.get("emotion_name") or "")
+        )
+        text = DingTalkAutoReplyWorker._format_text_emotion_label(text)
+        emotion_name = DingTalkAutoReplyWorker._format_text_emotion_label(
+            emotion_name
+        )
+        action["text"] = text
+        action["emotion_name"] = emotion_name or text
+        return action
+
+    @staticmethod
+    def _clean_text_emotion_label(value: str) -> str:
+        text = value.strip()
+        while text.startswith("[]"):
+            text = text[2:].lstrip()
+        for left, right in (("[", "]"), ("［", "］"), ("【", "】")):
+            while text.startswith(left) and text.endswith(right):
+                inner = text[len(left) : -len(right)].strip()
+                if inner:
+                    text = inner
+                    continue
+                break
+        return text
+
+    @staticmethod
+    def _format_text_emotion_label(value: str) -> str:
+        text = value.strip()
+        if not text:
+            return ""
+        return f"[{text}]"
 
     def _append_attempt_audit_tool_events(
         self,
