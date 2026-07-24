@@ -23,6 +23,20 @@ from fastapi.responses import (
     Response,
     StreamingResponse,
 )
+from fastapi.staticfiles import StaticFiles
+
+from app.audit_security import (
+    audit_html_security_headers,
+    begin_audit_csp_nonce,
+    csrf_meta_tag,
+    is_loopback_host,
+    protect_post_forms,
+    reset_audit_csp_nonce,
+    require_internal_notification_request,
+    require_local_request,
+    require_local_mutation,
+    script_nonce_attr,
+)
 
 from app.codex_history import (
     RenderedCodexEvent,
@@ -44,6 +58,7 @@ from app.config import (
     embedding_model,
     embedding_timeout_seconds,
     env_file_path,
+    env_value_references_sensitive_key,
     fast_path_unread_backoff_duration,
     feedback_spike_vercel_base_url,
     forbidden_path_prefixes,
@@ -57,7 +72,9 @@ from app.config import (
     poll_interval_seconds,
     principal_name,
     producer_interval_seconds,
+    is_sensitive_env_key,
     read_env_file,
+    read_env_file_raw,
     single_chat_read_recovery_limit,
     single_chat_read_recovery_window,
     task_daily_interval_seconds,
@@ -125,15 +142,13 @@ from app.setup_wizard import (
 from app.setup_wizard_models import SetupStepStatus, SetupWizardEvent
 from app.task_models import ProjectPriority, ProjectStatus, RiskLevel, TodoStatus
 from app.user_prompt_blocks import USER_PROMPT_BLOCKS, UserPromptBlock
+from app.worker import DingTalkAutoReplyWorker
 
 DISPLAY_TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
 AUDIT_WEB_SQLITE_BUSY_TIMEOUT_SECONDS = 2
 USER_FEEDBACK_SYNC_BATCH_LIMIT = 5
 USER_FEEDBACK_SYNC_TIMEOUT_SECONDS = 0.5
 USER_FEEDBACK_SYNC_LIMIT_PER_TOKEN = 5
-from app.worker import DingTalkAutoReplyWorker
-
-
 CSS = """
 :root{--ink:#0a0a0a;--charcoal:#1c1c1e;--slate:#3a3a3c;--steel:#5a5a5c;--stone:#888888;--muted:#a8a8aa;--canvas:#ffffff;--surface:#f7f7f7;--surface-soft:#fafafa;--surface-code:#1c1c1e;--hairline:#e5e5e5;--hairline-soft:#ededed;--mint:#00d4a4;--mint-deep:#00b48a;--tag:#3772cf;--error:#d45656}
 *{box-sizing:border-box}
@@ -540,12 +555,15 @@ _DINGTALK_BRIDGE_STATUS: deque[dict[str, str]] = deque(maxlen=20)
 DEFAULT_ATTEMPT_LIST_LIMIT = 20
 ATTEMPT_LIST_LIMIT_OPTIONS = (20, 50, 100)
 HISTORY_TYPE_FILTERS = ("sent", "reacted", "skipped", "failed", "done")
-HISTORY_SEARCH_OBJECT_TYPES = ("replay", "wechat", "task", "meeting")
+HISTORY_SEARCH_OBJECT_TYPES = ("replay", "wechat", "feishu", "task", "meeting")
 TASK_PAGE_SIZE_OPTIONS = (20, 50, 100)
 DEFAULT_TASK_PAGE_SIZE = 20
 LOG_PAGE_SIZE_OPTIONS = (20, 50, 100)
-TABULATOR_CSS_URL = "https://cdn.jsdelivr.net/npm/tabulator-tables@6.4.0/dist/css/tabulator.min.css"
-TABULATOR_JS_URL = "https://cdn.jsdelivr.net/npm/tabulator-tables@6.4.0/dist/js/tabulator.min.js"
+AUDIT_STATIC_DIR = Path(__file__).resolve().parent / "static"
+ECHARTS_JS_URL = "/static/vendor/echarts-5.6.0/echarts.min.js"
+TABULATOR_CSS_URL = "/static/vendor/tabulator-6.4.0/tabulator.min.css"
+TABULATOR_JS_URL = "/static/vendor/tabulator-6.4.0/tabulator.min.js"
+DINGTALK_JSAPI_URL = "/static/vendor/dingtalk-jsapi-3.0.25/dingtalk.open.js"
 DEFAULT_ERROR_LIST_LIMIT = 20
 HISTORY_CHART_HOURS = 24
 HISTORY_CHART_COLORS = {
@@ -595,10 +613,10 @@ def render_page(
         "<meta http-equiv=\"refresh\" content=\"15\">" if auto_refresh else ""
     )
     nav_html = _top_nav(active_nav, user_feedback_pending_count)
-    return (
+    document = (
         "<!doctype html><html><head><meta charset=\"utf-8\">"
         "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
-        f"{refresh_meta}"
+        f"{refresh_meta}{csrf_meta_tag()}"
         f"<title>{escape(title)}</title>"
         f"<link rel=\"icon\" href=\"{FAVICON_HREF}\">"
         f"<style>{CSS}</style>{head_extra}</head><body>"
@@ -608,8 +626,9 @@ def render_page(
         "</div></a>"
         f"{nav_html}"
         "</div></header><main>"
-        f"{body}</main>{_browser_notification_client_script()}</body></html>"
+        f"{protect_post_forms(body)}</main>{_browser_notification_client_script()}</body></html>"
     )
+    return document
 
 
 def render_browser_notifications_page() -> str:
@@ -632,10 +651,7 @@ def _expand_configured_path(value: str) -> Path:
 
 
 def _configured_worker_db_path() -> Path:
-    configured_db_path = os.environ.get("CEO_WORKER_DB", "").strip()
-    if not configured_db_path:
-        return Path("data/auto-reply.sqlite3")
-    return _expand_configured_path(configured_db_path)
+    return worker_db_path()
 
 
 def render_tutorial_page(*, store: AutoReplyStore | None = None) -> str:
@@ -758,8 +774,8 @@ def _wechat_target_picker_html(store: AutoReplyStore) -> str:
     <button id="wechat-save-targets" type="button">保存自动回复对象</button>
   </div>
 </div>
-<script id="wechat-selected-targets" type="application/json">{selected_json}</script>
-<script>
+<script {script_nonce_attr()} id="wechat-selected-targets" type="application/json">{selected_json}</script>
+<script {script_nonce_attr()}>
 (() => {{
   const panel = document.getElementById("wechat-target-picker");
   if (!panel || panel.dataset.initialized === "true") return;
@@ -768,6 +784,7 @@ def _wechat_target_picker_html(store: AutoReplyStore) -> str:
   const results = document.getElementById("wechat-target-results");
   const status = document.getElementById("wechat-target-status");
   const selected = new Map();
+  const auditCsrfToken = document.querySelector('meta[name="ceo-audit-csrf"]')?.content || "";
   const initial = JSON.parse(document.getElementById("wechat-selected-targets").textContent);
   const keyFor = item => `${{item.target_type}}:${{item.target_id}}`;
   initial.forEach(item => selected.set(keyFor(item), item));
@@ -850,7 +867,10 @@ def _wechat_target_picker_html(store: AutoReplyStore) -> str:
     try {{
       const response = await fetch("/config/wechat/reply-scope", {{
         method: "POST",
-        headers: {{"Content-Type": "application/json"}},
+        headers: {{
+          "Content-Type": "application/json",
+          "X-CEO-Audit-CSRF": auditCsrfToken,
+        }},
         body: JSON.stringify({{
           account_id: panel.dataset.accountId,
           targets: Array.from(selected.values()),
@@ -1113,9 +1133,58 @@ def _tutorial_steps() -> list[_TutorialStep]:
 
 
 def _browser_notification_client_script() -> str:
-    return """
-<script>
+    return f"<script {script_nonce_attr()}>" + """
 (() => {
+  document.querySelectorAll("[data-auto-submit]").forEach((control) => {
+    control.addEventListener("change", () => {
+      const form = control.form;
+      if (!form) {
+        return;
+      }
+      if (typeof form.requestSubmit === "function") {
+        form.requestSubmit();
+        return;
+      }
+      form.submit();
+    });
+  });
+  document.querySelectorAll("form[data-confirm]").forEach((form) => {
+    form.addEventListener("submit", (event) => {
+      const message = form.dataset.confirm || "";
+      if (message && !window.confirm(message)) {
+        event.preventDefault();
+      }
+    });
+  });
+  document.querySelectorAll("[data-href]").forEach((control) => {
+    const navigate = (event) => {
+      if (event.target && event.target.closest("a,button,input,select,textarea")) {
+        return;
+      }
+      const target = control.dataset.href || "";
+      if (target.startsWith("/") && !target.startsWith("//")) {
+        window.location.assign(target);
+      }
+    };
+    control.addEventListener("click", navigate);
+    control.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") {
+        return;
+      }
+      event.preventDefault();
+      navigate(event);
+    });
+  });
+  document.querySelectorAll("a[data-popup-window]").forEach((link) => {
+    link.addEventListener("click", (event) => {
+      event.preventDefault();
+      window.open(
+        link.href,
+        link.dataset.popupWindow || "ceo-audit-popup",
+        "popup,width=420,height=260",
+      );
+    });
+  });
   const lockKey = "ceo-agent-service-notification-leader";
   const lockTtlMs = 5000;
   const heartbeatMs = 2000;
@@ -1414,11 +1483,12 @@ def _dingtalk_url_from_bridge_url(url: str) -> str:
 
 def render_dingtalk_open_chat_bridge(open_conversation_id: str) -> str:
     escaped_conversation_id = json.dumps(open_conversation_id)
-    return f"""<!doctype html>
+    document = f"""<!doctype html>
 <html>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  {csrf_meta_tag()}
   <title>打开钉钉会话</title>
   <style>
     body{{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;margin:0;padding:28px;background:#fff;color:#111;line-height:1.5}}
@@ -1427,7 +1497,7 @@ def render_dingtalk_open_chat_bridge(open_conversation_id: str) -> str:
     p{{margin:8px 0;color:#555}}
     code{{word-break:break-all;background:#eee;border-radius:6px;padding:2px 5px}}
   </style>
-  <script src="https://g.alicdn.com/dingding/dingtalk-jsapi/3.0.25/dingtalk.open.js"></script>
+  <script {script_nonce_attr()} src="{DINGTALK_JSAPI_URL}"></script>
 </head>
 <body>
   <section class="card">
@@ -1435,23 +1505,24 @@ def render_dingtalk_open_chat_bridge(open_conversation_id: str) -> str:
     <p id="status">等待钉钉 JSAPI...</p>
     <p><code>{escape(open_conversation_id)}</code></p>
   </section>
-  <script>
+  <script {script_nonce_attr()}>
     const openConversationId = {escaped_conversation_id};
     const statusEl = document.getElementById("status");
+    const auditCsrfToken = document.querySelector('meta[name="ceo-audit-csrf"]')?.content || "";
     function report(stage, detail) {{
       const body = JSON.stringify({{
         conversation_id: openConversationId,
         stage,
         detail: detail || "",
       }});
-      if (navigator.sendBeacon) {{
-        navigator.sendBeacon("/dingtalk/bridge-status", body);
-        return;
-      }}
       fetch("/dingtalk/bridge-status", {{
         method: "POST",
-        headers: {{ "Content-Type": "application/json" }},
+        headers: {{
+          "Content-Type": "application/json",
+          "X-CEO-Audit-CSRF": auditCsrfToken,
+        }},
         body,
+        keepalive: true,
       }}).catch(() => {{}});
     }}
     function setStatus(text) {{
@@ -1544,6 +1615,7 @@ def render_dingtalk_open_chat_bridge(open_conversation_id: str) -> str:
   </script>
 </body>
 </html>"""
+    return document
 
 
 def render_dingtalk_open_popup(*, cid: str = "", conversation_id: str = "") -> str:
@@ -1556,7 +1628,7 @@ def render_dingtalk_open_popup(*, cid: str = "", conversation_id: str = "") -> s
     if query:
         open_url = f"{open_url}?{urlencode(query)}"
     escaped_open_url = json.dumps(open_url)
-    return f"""<!doctype html>
+    document = f"""<!doctype html>
 <html>
 <head>
   <meta charset="utf-8">
@@ -1574,7 +1646,7 @@ def render_dingtalk_open_popup(*, cid: str = "", conversation_id: str = "") -> s
     <h1>正在打开钉钉消息</h1>
     <p id="status">请稍候...</p>
   </section>
-  <script>
+  <script {script_nonce_attr()}>
     const statusEl = document.getElementById("status");
     function closeSoon() {{
       setTimeout(() => window.close(), 900);
@@ -1592,6 +1664,7 @@ def render_dingtalk_open_popup(*, cid: str = "", conversation_id: str = "") -> s
   </script>
 </body>
 </html>"""
+    return document
 
 
 def _publish_browser_notification(event: dict[str, str]) -> bool:
@@ -1636,6 +1709,7 @@ def _top_nav(
         ("user-feedback", "用户反馈", "/user-feedback"),
         ("service-bugfix", "服务修复", "/service-bugfix-candidates"),
         ("codex", "Codex Sessions", "/codex"),
+        ("feishu", "Feishu", "/feishu/review"),
         ("config", "Config", "/config"),
         ("logs", "Logs", "/logs"),
     ]
@@ -1777,9 +1851,13 @@ def _render_wechat_config(store: AutoReplyStore) -> str:
 
 
 def _render_channel_config() -> str:
-    from app.channels import DingTalkCliAdapter, FeishuCliAdapter
+    from app.channels import DingTalkCliAdapter, FeishuCliAdapter, official_bot_doctor
 
-    statuses = [DingTalkCliAdapter().doctor(), FeishuCliAdapter().doctor()]
+    statuses = [
+        DingTalkCliAdapter().doctor(),
+        FeishuCliAdapter().doctor(),
+        official_bot_doctor(),
+    ]
     rows = "".join(
         "<tr>"
         f"<td>{escape(status.channel)}</td>"
@@ -1793,7 +1871,9 @@ def _render_channel_config() -> str:
     return (
         '<section class="card">'
         "<h2>Channel doctor</h2>"
-        '<p class="muted">Reusable reply channels and their local CLI readiness.</p>'
+        '<p class="muted">CLI diagnostics/read access and the official Bot are '
+        'separate capabilities. A ready feishu_cli result never means Bot receive '
+        'or send is enabled.</p>'
         '<table class="column-sized-table">'
         "<thead><tr><th>Channel</th><th>Status</th><th>Reason</th><th>Probe</th></tr></thead>"
         f"<tbody>{rows}</tbody>"
@@ -1802,7 +1882,43 @@ def _render_channel_config() -> str:
     )
 
 
-def _system_config_rows() -> list[tuple[str, str, str]]:
+_REDACTED_CONFIG_VALUE = "[redacted]"
+
+
+def _is_sensitive_config_key(key: str) -> bool:
+    return is_sensitive_env_key(key)
+
+
+def _system_config_display_value(
+    key: str,
+    value: str,
+    *,
+    raw_value: str = "",
+    raw_values: dict[str, str] | None = None,
+) -> str:
+    if _system_config_value_is_sensitive(
+        key,
+        raw_value,
+        raw_values=raw_values,
+    ):
+        return _REDACTED_CONFIG_VALUE
+    return value
+
+
+def _system_config_value_is_sensitive(
+    key: str,
+    raw_value: str,
+    *,
+    raw_values: dict[str, str] | None = None,
+) -> bool:
+    return _is_sensitive_config_key(key) or env_value_references_sensitive_key(
+        raw_value,
+        raw_values=raw_values,
+    )
+
+
+def _system_config_rows() -> list[tuple[str, str, str, bool]]:
+    raw_env_values = read_env_file_raw()
     env_values = read_env_file()
     mention_text = _csv_label(mention_aliases())
     agent_names_text = _csv_label(agent_names())
@@ -1962,11 +2078,29 @@ def _system_config_rows() -> list[tuple[str, str, str]]:
     for key in env_values:
         if key not in values:
             ordered_keys.append(key)
+    raw_values_by_key = {
+        key: raw_env_values.get(key, os.environ.get(key, ""))
+        for key in ordered_keys
+    }
+    sensitive_by_key = {
+        key: _system_config_value_is_sensitive(
+            key,
+            raw_values_by_key[key],
+            raw_values=raw_env_values,
+        )
+        for key in ordered_keys
+    }
     return [
         (
             key,
-            env_values.get(key, values.get(key, "")),
+            _system_config_display_value(
+                key,
+                env_values.get(key, values.get(key, "")),
+                raw_value=raw_values_by_key[key],
+                raw_values=raw_env_values,
+            ),
             descriptions.get(key, "来自 .env；服务启动或 prompt/config 渲染时读取。"),
+            sensitive_by_key[key],
         )
         for key in ordered_keys
     ]
@@ -2000,11 +2134,11 @@ def _render_system_config(*, db_path: Path | None = None) -> str:
         "<tr><th>Key</th><th>Current value</th><th>说明</th></tr>",
         *[
             "<tr>"
-            f"<td>{_system_config_key_cell(key, key in editable_keys)}</td>"
-            f"<td>{_system_config_value_cell(key, value, key in editable_keys)}</td>"
+            f"<td>{_system_config_key_cell(key, key in editable_keys, sensitive)}</td>"
+            f"<td>{_system_config_value_cell(key, value, key in editable_keys, sensitive)}</td>"
             f"<td>{escape(description)}</td>"
             "</tr>"
-            for key, value, description in _system_config_rows()
+            for key, value, description, sensitive in _system_config_rows()
         ],
     ]
     return (
@@ -2057,7 +2191,8 @@ def _runtime_identity_cache_html(db_path: Path | None) -> str:
 
 
 def _editable_system_config_keys() -> set[str]:
-    return {
+    raw_env_values = read_env_file_raw()
+    candidates = {
         "CEO_PRINCIPAL_NAME",
         "USER_ALIAS",
         "MEMORY_CONNECTOR_USER_ID",
@@ -2087,11 +2222,23 @@ def _editable_system_config_keys() -> set[str]:
         "MESSAGE_RECOVERY_INTERVAL",
         "SINGLE_CHAT_READ_RECOVERY_WINDOW",
         "SINGLE_CHAT_READ_RECOVERY_LIMIT",
-        *read_env_file().keys(),
+        *raw_env_values.keys(),
+    }
+    return {
+        key
+        for key in candidates
+        if not _system_config_value_is_sensitive(
+            key,
+            raw_env_values.get(key, os.environ.get(key, "")),
+            raw_values=raw_env_values,
+        )
     }
 
 
-def _system_config_key_cell(key: str, editable: bool) -> str:
+def _system_config_key_cell(
+    key: str, editable: bool, sensitive: bool = False
+) -> str:
+    editable = editable and not (sensitive or _is_sensitive_config_key(key))
     if not editable:
         return f"<code class=\"config-value\">{escape(key)}</code>"
     return (
@@ -2100,7 +2247,14 @@ def _system_config_key_cell(key: str, editable: bool) -> str:
     )
 
 
-def _system_config_value_cell(key: str, value: str, editable: bool) -> str:
+def _system_config_value_cell(
+    key: str, value: str, editable: bool, sensitive: bool = False
+) -> str:
+    if sensitive or _is_sensitive_config_key(key):
+        return (
+            f"<code class=\"config-value\">"
+            f"{escape(_REDACTED_CONFIG_VALUE)}</code>"
+        )
     if not editable:
         return f"<code class=\"config-value\">{escape(value)}</code>"
     return (
@@ -2499,8 +2653,8 @@ def _render_history_chart(store: AutoReplyStore) -> str:
         "</div>"
         "<div id=\"history-event-chart\" class=\"history-chart\" role=\"img\" "
         "aria-label=\"最近 24 小时事件数量堆叠柱状图\"></div>"
-        "<script src=\"https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js\"></script>"
-        "<script>"
+        f"<script {script_nonce_attr()} src=\"{ECHARTS_JS_URL}\"></script>"
+        f"<script {script_nonce_attr()}>"
         f"window.historyEventChartData = {payload_json};"
         """
 (() => {
@@ -2730,8 +2884,7 @@ def _table_toolbar(
 
 
 def _table_toolbar_live_search_script() -> str:
-    return """
-<script data-table-toolbar-live-search>
+    return f"<script {script_nonce_attr()} data-table-toolbar-live-search>" + """
 (() => {
   document.querySelectorAll("form.table-toolbar[data-live-search='server']").forEach((form) => {
     const input = form.querySelector("[data-live-search-input]");
@@ -2882,7 +3035,7 @@ def _history_type_select(type_filters: tuple[str, ...]) -> str:
     )
     return (
         "<select name=\"type\" class=\"table-type-select\" "
-        "aria-label=\"History type filter\" onchange=\"this.form.submit()\">"
+        "aria-label=\"History type filter\" data-auto-submit>"
         f"{''.join(options)}</select>"
     )
 
@@ -2893,6 +3046,7 @@ def _history_search_object_type_checkboxes(
     labels = {
         "replay": "replay",
         "wechat": "wechat",
+        "feishu": "feishu",
         "task": "task",
         "meeting": "meeting",
     }
@@ -2903,7 +3057,7 @@ def _history_search_object_type_checkboxes(
         inputs.append(
             "<label class=\"history-object-type-option\">"
             f"<input type=\"checkbox\" name=\"object_type\" value=\"{escape(value)}\""
-            f"{checked} onchange=\"this.form.requestSubmit()\">"
+            f"{checked} data-auto-submit>"
             f"<span>{escape(labels[value])}</span>"
             "</label>"
         )
@@ -2919,7 +3073,7 @@ def _history_kinds_for_search_objects(
     search_object_types: tuple[str, ...],
 ) -> tuple[str, ...]:
     kinds: list[str] = []
-    if "replay" in search_object_types or "wechat" in search_object_types:
+    if {"replay", "wechat", "feishu"}.intersection(search_object_types):
         kinds.append("reply")
     if "task" in search_object_types:
         kinds.append("task")
@@ -2932,13 +3086,19 @@ def _history_reply_channels_for_search_objects(
     search_object_types: tuple[str, ...],
 ) -> tuple[str, ...] | None:
     selected = set(search_object_types)
-    if "replay" in selected and "wechat" in selected:
+    object_channels = {
+        "replay": "dingtalk",
+        "wechat": "wechat",
+        "feishu": "feishu",
+    }
+    channels = tuple(
+        channel
+        for object_type, channel in object_channels.items()
+        if object_type in selected
+    )
+    if len(channels) == len(object_channels):
         return None
-    if "wechat" in selected:
-        return ("wechat",)
-    if "replay" in selected:
-        return ("dingtalk",)
-    return None
+    return channels or None
 
 
 def _history_limit_select(limit: int | None) -> str:
@@ -2950,7 +3110,7 @@ def _history_limit_select(limit: int | None) -> str:
     )
     return (
         "<select class=\"table-page-size history-limit-select\" name=\"limit\" "
-        "onchange=\"this.form.submit()\">"
+        "data-auto-submit>"
         f"{options}</select>"
     )
 
@@ -3198,6 +3358,9 @@ def render_attempt_list(
     wechat_ready_delivery_by_attempt = _wechat_ready_delivery_by_attempt(
         store, attempts
     )
+    feishu_ready_delivery_by_attempt = _feishu_ready_delivery_by_attempt(
+        store, attempts
+    )
     sent_replies_by_attempt = store.list_sent_replies_for_attempts(attempts)
     feedback_events_by_token = _feedback_events_by_sent_reply(
         store,
@@ -3213,7 +3376,7 @@ def render_attempt_list(
         attempt = attempts_by_id.get(history_item.source_id)
         if attempt is None:
             continue
-        if (attempt.channel or "").strip().lower() == "wechat":
+        if (attempt.channel or "").strip().lower() in {"wechat", "feishu"}:
             attempt = attempt.model_copy(
                 update={"send_status": history_item.status}
             )
@@ -3234,6 +3397,7 @@ def render_attempt_list(
             f'<div class="attempt-foot">{warning_html}</div>' if warning_html else ""
         )
         wechat_delivery_id = wechat_ready_delivery_by_attempt.get(attempt.id)
+        feishu_delivery_review = feishu_ready_delivery_by_attempt.get(attempt.id)
         items.append(
             "<article class=\"attempt-item\">"
             "<div class=\"attempt-head\">"
@@ -3248,6 +3412,7 @@ def render_attempt_list(
             f"<time class=\"attempt-time\">{escape(_format_local_time(attempt.created_at))}</time>"
             "<div class=\"attempt-actions\">"
             f"{_wechat_send_actions(wechat_delivery_id)}"
+            f"{_feishu_send_actions(feishu_delivery_review)}"
             f"{_review_link(attempt)}"
             "</div>"
             "</div>"
@@ -3322,10 +3487,16 @@ def _pending_service_bugfix_card(store: AutoReplyStore) -> str:
 
 
 def _channel_badge(channel: str) -> str:
-    if (channel or "").strip().lower() == "wechat":
+    normalized = (channel or "").strip().lower()
+    if normalized == "wechat":
         return (
             '<span class="pill" style="background:#07c160;color:#fff;'
             'border-color:#07c160">微信</span> '
+        )
+    if normalized == "feishu":
+        return (
+            '<span class="pill" style="background:#3370ff;color:#fff;'
+            'border-color:#3370ff">飞书</span> '
         )
     return ""
 
@@ -3371,6 +3542,48 @@ def _wechat_send_actions(delivery_id: int | None) -> str:
         "style=\"display:inline-flex;margin:0\">"
         "<button class=\"compact-button\" type=\"submit\">拒绝</button>"
         "</form>"
+    )
+
+
+def _feishu_ready_delivery_by_attempt(
+    store: AutoReplyStore,
+    attempts: list[ReplyAttempt],
+) -> dict[int, tuple[int, bool]]:
+    """Return hash-bound Feishu delivery reviews keyed by audited attempt."""
+    from app import config
+
+    app_id = str(config.feishu_app_id() or "").strip()
+    if not app_id:
+        return {}
+    attempt_ids = {
+        attempt.id
+        for attempt in attempts
+        if (attempt.channel or "").strip().lower() == "feishu"
+    }
+    if not attempt_ids:
+        return {}
+    return {
+        delivery.attempt_id: (
+            delivery.id,
+            bool(delivery.approved_at),
+        )
+        for delivery in store.list_feishu_deliveries(
+            statuses=("ready_to_send", "retry"), app_id=app_id
+        )
+        if delivery.attempt_id in attempt_ids
+    }
+
+
+def _feishu_send_actions(
+    delivery_review: tuple[int, bool] | None,
+) -> str:
+    if delivery_review is None:
+        return ""
+    delivery_id, approved = delivery_review
+    label = "查看飞书审核" if approved else "审核飞书回复"
+    return (
+        f'<a class="compact-button" href="/feishu/review" '
+        f'data-feishu-delivery-id="{delivery_id}">{label}</a>'
     )
 
 
@@ -3427,9 +3640,7 @@ def _task_history_card(item) -> str:
     detail_url = _task_history_detail_url(item)
     return (
         '<article class="attempt-item task-history-item" role="link" tabindex="0" '
-        f'data-href="{escape(detail_url, quote=True)}" '
-        "onclick=\"if (!event.target.closest('a')) window.location.href=this.dataset.href\" "
-        "onkeydown=\"if ((event.key === 'Enter' || event.key === ' ') && !event.target.closest('a')) { event.preventDefault(); window.location.href=this.dataset.href; }\">"
+        f'data-href="{escape(detail_url, quote=True)}">'
         '<div class="attempt-head">'
         '<div class="attempt-title">'
         f'<a class="attempt-id" href="{escape(detail_url, quote=True)}">'
@@ -3487,16 +3698,16 @@ def render_tasks_page(
         "<section class=\"tasks-page\">"
         f"{toolbar}"
         "<div id=\"tasks-table\" class=\"tasks-tabulator\"></div>"
-        f"<script id=\"tasks-data\" type=\"application/json\">{_json_script_payload(rows)}</script>"
-        f"<script id=\"tasks-initial-state\" type=\"application/json\">{_json_script_payload(initial_state)}</script>"
-        f"<script id=\"tasks-categories\" type=\"application/json\">{_json_script_payload(categories)}</script>"
-        f"<script id=\"tasks-states\" type=\"application/json\">{_json_script_payload(task_states)}</script>"
+        f"<script {script_nonce_attr()} id=\"tasks-data\" type=\"application/json\">{_json_script_payload(rows)}</script>"
+        f"<script {script_nonce_attr()} id=\"tasks-initial-state\" type=\"application/json\">{_json_script_payload(initial_state)}</script>"
+        f"<script {script_nonce_attr()} id=\"tasks-categories\" type=\"application/json\">{_json_script_payload(categories)}</script>"
+        f"<script {script_nonce_attr()} id=\"tasks-states\" type=\"application/json\">{_json_script_payload(task_states)}</script>"
         f"{_task_tabulator_script()}"
         "</section>"
     )
     head_extra = (
         f"<link rel=\"stylesheet\" href=\"{TABULATOR_CSS_URL}\">"
-        f"<script src=\"{TABULATOR_JS_URL}\"></script>"
+        f"<script {script_nonce_attr()} src=\"{TABULATOR_JS_URL}\"></script>"
     )
     return render_page(
         "Tasks",
@@ -3730,7 +3941,7 @@ def _task_page_size_select(
 def _task_tabulator_script() -> str:
     sort_options_json = _json_script_payload(_task_sort_options())
     return f"""
-<script>
+<script {script_nonce_attr()}>
 (() => {{
   const rows = JSON.parse(document.getElementById("tasks-data").textContent || "[]");
   const initial = JSON.parse(document.getElementById("tasks-initial-state").textContent || "{{}}");
@@ -5102,7 +5313,7 @@ def _log_type_select(*, log_type: str, log_types: list[str]) -> str:
     )
     return (
         "<select name=\"type\" class=\"table-type-select\" "
-        "aria-label=\"Log type filter\" onchange=\"this.form.submit()\">"
+        "aria-label=\"Log type filter\" data-auto-submit>"
         f"{''.join(options)}</select>"
     )
 
@@ -5116,7 +5327,7 @@ def _log_page_size_select(*, limit: int | None) -> str:
     )
     return (
         "<select name=\"limit\" class=\"table-page-size\" "
-        "aria-label=\"Logs per page\" onchange=\"this.form.submit()\">"
+        "aria-label=\"Logs per page\" data-auto-submit>"
         f"{options}</select>"
     )
 
@@ -5428,9 +5639,12 @@ def handle_system_config_post(body: bytes) -> tuple[int, dict[str, str], str]:
             parsed.get("system_value", []),
             fillvalue="",
         )
-        if key in editable_keys
+        if key in editable_keys and not _is_sensitive_config_key(key)
     }
-    write_env_values(updates)
+    try:
+        write_env_values(updates)
+    except ValueError:
+        return 400, {}, "invalid system config update"
     return 303, {"Location": "/config?tab=system&saved=1"}, ""
 
 
@@ -5447,6 +5661,15 @@ def handle_recall_post(
     attempt = store.get_reply_attempt(attempt_id)
     if attempt is None:
         return 404, {}, render_page("Attempt not found", "Attempt not found")
+    if (attempt.channel or "dingtalk").strip().lower() != "dingtalk":
+        return (
+            400,
+            {},
+            render_page(
+                "通道操作不匹配",
+                "<p>该 attempt 必须通过所属通道的审核与撤回流程处理。</p>",
+            ),
+        )
     sent_reply = store.get_sent_reply(
         attempt.conversation_id,
         attempt.trigger_message_id,
@@ -5545,6 +5768,15 @@ def handle_rerun_attempt_post(
     attempt = store.get_reply_attempt(attempt_id)
     if attempt is None:
         return 404, {}, render_page("Attempt not found", "Attempt not found")
+    if (attempt.channel or "dingtalk").strip().lower() != "dingtalk":
+        return (
+            400,
+            {},
+            render_page(
+                "通道操作不匹配",
+                "<p>该 attempt 必须通过所属通道的审核与重试流程处理。</p>",
+            ),
+        )
     conversation_record = store.get_conversation(attempt.conversation_id)
     if conversation_record is None:
         return (
@@ -5757,6 +5989,36 @@ def create_audit_app(
     ding_robot_name: str | None = None,
 ) -> FastAPI:
     app = FastAPI(title="CEO Agent Audit")
+    app.mount(
+        "/static",
+        StaticFiles(directory=AUDIT_STATIC_DIR),
+        name="audit-static",
+    )
+
+    @app.middleware("http")
+    async def local_mutation_boundary(request: Request, call_next):
+        nonce_scope = begin_audit_csp_nonce()
+        try:
+            try:
+                require_local_request(request)
+                if request.method.upper() not in {"GET", "HEAD", "OPTIONS", "TRACE"}:
+                    if request.url.path == "/browser-notifications":
+                        await require_internal_notification_request(request)
+                    else:
+                        await require_local_mutation(request)
+            except HTTPException as exc:
+                return JSONResponse(
+                    {"detail": exc.detail},
+                    status_code=exc.status_code,
+                    headers=exc.headers,
+                )
+            response = await call_next(request)
+            if response.headers.get("content-type", "").lower().startswith("text/html"):
+                for header, value in audit_html_security_headers().items():
+                    response.headers[header] = value
+            return response
+        finally:
+            reset_audit_csp_nonce(nonce_scope)
 
     from app.store import AutoReplyStore as _WechatStore
     from app.wechat import service as _wechat_service
@@ -5792,6 +6054,15 @@ def create_audit_app(
         writer_factory=_wechat_memory_writer,
     )
 
+    from app.feishu import service as _feishu_service
+    from app.feishu.audit_web import register_feishu_review_routes
+
+    register_feishu_review_routes(
+        app,
+        store_factory=lambda: AutoReplyStore(db_path),
+        health_factory=_feishu_service.current_health,
+    )
+
     @app.get("/", response_class=HTMLResponse)
     def attempt_list(request: Request) -> str:
         query = str(request.query_params.get("q", ""))
@@ -5817,7 +6088,8 @@ def create_audit_app(
         except sqlite3.OperationalError as exc:
             if _is_sqlite_busy_error(exc):
                 return _render_history_busy_page()
-            raise
+            else:
+                raise
 
     @app.get("/user-feedback", response_class=HTMLResponse)
     def user_feedback_list(request: Request) -> str:
@@ -6200,6 +6472,8 @@ def run_audit_web(
     reload_delay_seconds: int = 1,
     reload_dirs: list[Path] | None = None,
 ) -> None:
+    if not is_loopback_host(host):
+        raise ValueError("audit-web host must be a loopback address")
     print(f"audit-web listening on http://{host}:{port}", flush=True)
     if reload:
         os.environ["CEO_WORKER_DB"] = str(db_path)
@@ -6707,7 +6981,7 @@ def _recall_card(attempt: ReplyAttempt, sent_reply: SentReply | None) -> str:
         "<p class=\"muted\">撤回这条 attempt 已发送到钉钉的回复。</p>"
         f"{status_html}"
         f"<form method=\"post\" action=\"/attempts/{attempt.id}/recall\" "
-        "onsubmit=\"return confirm('确认撤销这条已发送消息？')\">"
+        "data-confirm=\"确认撤销这条已发送消息？\">"
         "<button class=\"danger\" type=\"submit\">撤销发送</button>"
         "</form></section>"
     )
@@ -6720,7 +6994,7 @@ def _rerun_card(attempt: ReplyAttempt) -> str:
         "<p class=\"muted\">用当前代码和 prompt 重新处理原 trigger。"
         "可能实际发送回复、处理日历或执行审批。</p>"
         f"<form method=\"post\" action=\"/attempts/{attempt.id}/rerun\" "
-        "onsubmit=\"return confirm('确认重跑这条 attempt？可能会实际发送新回复或执行日历/OA动作。')\">"
+        "data-confirm=\"确认重跑这条 attempt？可能会实际发送新回复或执行日历/OA动作。\">"
         "<button type=\"submit\">重跑</button>"
         "</form></section>"
     )
@@ -7099,6 +7373,21 @@ def _attempt_row_actions(
     *,
     session_id: str = "",
 ) -> str:
+    channel = (attempt.channel or "dingtalk").strip().lower()
+    if channel != "dingtalk":
+        if channel == "feishu":
+            return (
+                '<div class="attempt-row-actions">'
+                '<a class="compact-button" href="/feishu/review">飞书审核</a>'
+                "</div>"
+            )
+        if channel == "wechat":
+            return (
+                '<div class="attempt-row-actions">'
+                '<a class="compact-button" href="/wechat/review">微信审核</a>'
+                "</div>"
+            )
+        return '<div class="attempt-row-actions"><span class="disabled-action">请使用通道专属审核</span></div>'
     return_to = f"/codex/{quote(session_id, safe='')}" if session_id else f"/attempts/{attempt.id}"
     return_to_query = quote(return_to, safe="/")
     dingtalk_href = (
@@ -7107,7 +7396,7 @@ def _attempt_row_actions(
     )
     recall_html = (
         f"<form method=\"post\" action=\"/attempts/{attempt.id}/recall?return_to={return_to_query}\" "
-        "onsubmit=\"return confirm('确认撤销这条已发送消息？')\">"
+        "data-confirm=\"确认撤销这条已发送消息？\">"
         "<button class=\"danger\" type=\"submit\">撤销发送</button>"
         "</form>"
         if _sent_reply_has_recall_target(sent_reply)
@@ -7116,12 +7405,12 @@ def _attempt_row_actions(
     return (
         "<div class=\"attempt-row-actions\">"
         f"<form method=\"post\" action=\"/attempts/{attempt.id}/rerun?return_to={return_to_query}\" "
-        "onsubmit=\"return confirm('确认重跑这条 attempt？可能会实际发送新回复或执行日历/OA动作。')\">"
+        "data-confirm=\"确认重跑这条 attempt？可能会实际发送新回复或执行日历/OA动作。\">"
         "<button class=\"rerun\" type=\"submit\">重跑</button>"
         "</form>"
         f"{recall_html}"
         f"<a class=\"compact-button open-dingtalk-action\" href=\"{dingtalk_href}\" "
-        "onclick=\"window.open(this.href,'ceo-open-dingtalk','popup,width=420,height=260'); return false;\" "
+        "data-popup-window=\"ceo-open-dingtalk\" "
         "target=\"ceo-open-dingtalk\" rel=\"noopener\">查看钉钉消息</a>"
         "</div>"
     )

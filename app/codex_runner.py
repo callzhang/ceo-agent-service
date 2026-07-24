@@ -2,9 +2,11 @@ import base64
 import json
 import os
 import shlex
+import tempfile
 import time
 import tomllib
 from pathlib import Path
+from typing import Literal
 
 from app.dws_client import dws_noninteractive_environment
 from app.prompt import ceo_agent_thread_prompt
@@ -94,6 +96,32 @@ CODEX_MODEL_PROVIDER_ENV = "CEO_CODEX_MODEL_PROVIDER"
 CODEX_MODEL_REASONING_EFFORT_ENV = "CEO_CODEX_MODEL_REASONING_EFFORT"
 DEFAULT_CODEX_MODEL = "gpt-5.5"
 DEFAULT_CODEX_MODEL_REASONING_EFFORT = "medium"
+CODEX_TOOL_MODE_STANDARD = "standard"
+CODEX_TOOL_MODE_NONE = "none"
+CodexToolMode = Literal["standard", "none"]
+CODEX_NO_TOOL_DEVELOPER_INSTRUCTIONS = (
+    "You are a local reply decision worker. Return only the requested JSON. "
+    "No tools, MCP servers, web search, shell commands, or external systems are "
+    "available in this invocation. Decide only from material already included "
+    "in the prompt. Never claim that you inspected or changed anything outside "
+    "that prompt."
+)
+_NO_TOOL_SECRET_ENV_PREFIXES = (
+    "CONNECTOR_",
+    "DINGTALK_",
+    "DWS_",
+    "EXA_",
+    "FEISHU_",
+    "LARK_",
+    "MEMORY_CONNECTOR_",
+    "XIAOQING_",
+)
+_NO_TOOL_SECRET_ENV_KEYS = {
+    "CEO_DWS_AGENT_CODE",
+    "CEO_FEISHU_APP_ID",
+    "CEO_FEISHU_APP_SECRET",
+    "CEO_FEISHU_HANDOFF_OPEN_IDS",
+}
 
 
 def _memory_connector_runtime_instructions() -> str:
@@ -398,11 +426,44 @@ def _jwt_token_is_expired(token: str, *, now: float | None = None) -> bool:
 
 
 class CodexRunner:
-    def __init__(self, workspace: Path, codex_bin: str = "codex"):
+    def __init__(
+        self,
+        workspace: Path,
+        codex_bin: str = "codex",
+        *,
+        tool_mode: CodexToolMode = CODEX_TOOL_MODE_STANDARD,
+    ):
+        if tool_mode not in {CODEX_TOOL_MODE_STANDARD, CODEX_TOOL_MODE_NONE}:
+            raise ValueError(f"unsupported Codex tool mode: {tool_mode}")
         self.workspace = workspace
         self.codex_bin = codex_bin
+        self.tool_mode = tool_mode
+        self._no_tool_cwd_owner = None
+        self._no_tool_cwd: Path | None = None
+        if tool_mode == CODEX_TOOL_MODE_NONE:
+            # Never place a no-tool decision run in the application workspace:
+            # Codex discovers AGENTS.md and other project material from its cwd.
+            # A process-private empty directory plus project_doc_max_bytes=0
+            # makes the prompt (and explicit image arguments) the only input.
+            self._no_tool_cwd_owner = tempfile.TemporaryDirectory(
+                prefix="ceo-agent-codex-no-tools-"
+            )
+            self._no_tool_cwd = Path(self._no_tool_cwd_owner.name)
+            self._no_tool_cwd.chmod(0o700)
 
     def build_env(self) -> dict[str, str]:
+        if self.tool_mode == CODEX_TOOL_MODE_NONE:
+            # The command-level tool denylist is the primary boundary.  Do not
+            # pass known external-tool credentials either, so a future Codex
+            # regression cannot silently recover DWS, Memory, Feishu, or MCP
+            # authentication from this child process environment.
+            env = os.environ.copy()
+            for key in tuple(env):
+                if key in _NO_TOOL_SECRET_ENV_KEYS or key.startswith(
+                    _NO_TOOL_SECRET_ENV_PREFIXES
+                ):
+                    env.pop(key, None)
+            return env
         env = dws_noninteractive_environment({**os.environ, **_memory_connector_env()})
         for key in DWS_CLI_AUTH_ENV_KEYS:
             env.pop(key, None)
@@ -417,9 +478,14 @@ class CodexRunner:
         output_schema_path: Path | None = None,
         ignore_user_config: bool = False,
     ) -> list[str]:
+        no_tools = self.tool_mode == CODEX_TOOL_MODE_NONE
+        effective_ignore_user_config = ignore_user_config or no_tools
         image_options: list[str] = []
         for image_path in image_paths or []:
-            image_options.extend(["--image", str(image_path)])
+            explicit_path = Path(image_path)
+            if no_tools and not explicit_path.is_absolute():
+                explicit_path = self.workspace / explicit_path
+            image_options.extend(["--image", str(explicit_path)])
         schema_options = (
             ["--output-schema", str(output_schema_path)]
             if output_schema_path is not None
@@ -427,21 +493,30 @@ class CodexRunner:
         )
         common_options = [
             "--json",
-            *codex_model_config_options(ignore_user_config=ignore_user_config),
-            *(["--ignore-user-config"] if ignore_user_config else []),
+            *codex_model_config_options(
+                ignore_user_config=effective_ignore_user_config
+            ),
+            *(["--ignore-user-config"] if effective_ignore_user_config else []),
             "--ignore-rules",
             "--disable",
             "hooks",
             "--disable",
             "plugins",
-            *memory_connector_config_options(),
-            *passthrough_mcp_server_config_options(),
+            *([] if no_tools else memory_connector_config_options()),
+            *([] if no_tools else passthrough_mcp_server_config_options()),
             "-c",
             'approval_policy="untrusted"',
             "-c",
             'approvals_reviewer="auto_review"',
             "-c",
-            _config_string("developer_instructions", codex_developer_instructions()),
+            _config_string(
+                "developer_instructions",
+                (
+                    CODEX_NO_TOOL_DEVELOPER_INSTRUCTIONS
+                    if no_tools
+                    else codex_developer_instructions()
+                ),
+            ),
             "-c",
             'model_reasoning_summary="concise"',
             "-c",
@@ -450,14 +525,31 @@ class CodexRunner:
             "include_apps_instructions=false",
             "-c",
             "include_environment_context=false",
+            *(
+                [
+                    "--sandbox",
+                    "read-only",
+                    "--ephemeral",
+                    "--skip-git-repo-check",
+                    "-c",
+                    "tools.enabled_tools=[]",
+                    "-c",
+                    'web_search="disabled"',
+                    "-c",
+                    "project_doc_max_bytes=0",
+                ]
+                if no_tools
+                else []
+            ),
         ]
-        if session_id:
+        bypass_options = [] if no_tools else [CODEX_BYPASS_APPROVALS_AND_SANDBOX]
+        if session_id and not no_tools:
             return [
                 self.codex_bin,
                 "exec",
                 "resume",
                 *common_options,
-                CODEX_BYPASS_APPROVALS_AND_SANDBOX,
+                *bypass_options,
                 *(
                     ["--output-schema", str(output_schema_path)]
                     if output_schema_path is not None
@@ -471,10 +563,10 @@ class CodexRunner:
             self.codex_bin,
             "exec",
             *common_options,
-            CODEX_BYPASS_APPROVALS_AND_SANDBOX,
+            *bypass_options,
             *schema_options,
             *image_options,
             "--cd",
-            str(self.workspace),
+            str(self._no_tool_cwd if no_tools else self.workspace),
             "-",
         ]

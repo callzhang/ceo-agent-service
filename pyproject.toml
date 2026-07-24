@@ -21,6 +21,10 @@ dev = [
   "httpx>=0.28",
   "pytest>=8.3"
 ]
+feishu = [
+  "lark-channel-sdk==1.2.0",
+  "lark-oapi==1.7.1"
+]
 reader-build = [
   "pyinstaller>=6.14,<7",
   "pyobjc-framework-ApplicationServices>=12,<13; sys_platform == 'darwin'",
@@ -44,3 +48,9 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 include = ["app*"]
+
+[tool.setuptools.package-data]
+app = [
+  "static/vendor/*",
+  "static/vendor/*/*"
+]

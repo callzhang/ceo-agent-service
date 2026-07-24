@@ -2,7 +2,7 @@
 
 from app.channels.dingtalk import DingTalkCliAdapter
 from app.channels.enqueue import enqueue_channel_messages
-from app.channels.feishu import FeishuCliAdapter
+from app.channels.feishu import FeishuCliAdapter, official_bot_doctor
 from app.channels.models import (
     ChannelDoctorStatus,
     ChannelMessage,
@@ -15,5 +15,6 @@ __all__ = [
     "ChannelSendResult",
     "DingTalkCliAdapter",
     "FeishuCliAdapter",
+    "official_bot_doctor",
     "enqueue_channel_messages",
 ]

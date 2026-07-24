@@ -1,6 +1,122 @@
 import os
+import re
+from collections.abc import Mapping
 from datetime import timedelta
 from pathlib import Path
+
+
+_ENV_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_ENV_REFERENCE_RE = re.compile(
+    r"\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))"
+)
+_ENV_PROVENANCE_MAX_DEPTH = 32
+_SENSITIVE_ENV_KEY_MARKERS = (
+    "SECRET",
+    "TOKEN",
+    "PASSWORD",
+    "API_KEY",
+    "PRIVATE_KEY",
+    "AUTHORIZATION",
+    "COOKIE",
+    "CREDENTIAL",
+    "ROBOT_CODE",
+    "WEBHOOK",
+    "ACCESS_KEY",
+    "SIGNING_KEY",
+    "PASSPHRASE",
+    "BEARER",
+)
+_SENSITIVE_ENV_KEY_TOKENS = {"PAT"}
+
+
+def is_sensitive_env_key(key: str) -> bool:
+    normalized = str(key or "").upper()
+    return any(
+        marker in normalized for marker in _SENSITIVE_ENV_KEY_MARKERS
+    ) or any(token in normalized.split("_") for token in _SENSITIVE_ENV_KEY_TOKENS)
+
+
+def env_value_references_sensitive_key(
+    value: str,
+    *,
+    raw_values: Mapping[str, str] | None = None,
+    environment: Mapping[str, str] | None = None,
+    max_depth: int = _ENV_PROVENANCE_MAX_DEPTH,
+) -> bool:
+    if not isinstance(value, str):
+        return False
+    raw_values = raw_values or {}
+    environment = os.environ if environment is None else environment
+    sensitive_values = _sensitive_env_source_values(raw_values, environment)
+    return _env_value_has_sensitive_provenance(
+        value,
+        raw_values=raw_values,
+        environment=environment,
+        sensitive_values=sensitive_values,
+        visiting=frozenset(),
+        depth=0,
+        max_depth=max_depth,
+    )
+
+
+def _sensitive_env_source_values(
+    *sources: Mapping[str, str],
+) -> frozenset[str]:
+    return frozenset(
+        value
+        for source in sources
+        for key, value in source.items()
+        if is_sensitive_env_key(key) and isinstance(value, str) and value
+    )
+
+
+def _env_value_has_sensitive_provenance(
+    value: str,
+    *,
+    raw_values: Mapping[str, str],
+    environment: Mapping[str, str],
+    sensitive_values: frozenset[str],
+    visiting: frozenset[str],
+    depth: int,
+    max_depth: int,
+) -> bool:
+    if any(sensitive_value in value for sensitive_value in sensitive_values):
+        return True
+    for match in _ENV_REFERENCE_RE.finditer(value):
+        referenced_key = match.group(1) or match.group(2) or ""
+        if is_sensitive_env_key(referenced_key):
+            return True
+        if referenced_key in visiting:
+            continue
+        referenced_values: list[str] = []
+        for source in (raw_values, environment):
+            referenced_value = source.get(referenced_key)
+            if (
+                isinstance(referenced_value, str)
+                and referenced_value not in referenced_values
+            ):
+                referenced_values.append(referenced_value)
+        if not referenced_values:
+            continue
+        if depth >= max_depth:
+            # An unresolved chain is not provably safe.  Fail closed instead of
+            # allowing aliases deeper than the bounded provenance traversal.
+            return True
+        next_visiting = visiting | {referenced_key}
+        if any(
+            _env_value_has_sensitive_provenance(
+                referenced_value,
+                raw_values=raw_values,
+                environment=environment,
+                sensitive_values=sensitive_values,
+                visiting=next_visiting,
+                depth=depth + 1,
+                max_depth=max_depth,
+            )
+            for referenced_value in referenced_values
+        ):
+            return True
+    return False
 
 
 def repo_root() -> Path:
@@ -8,7 +124,8 @@ def repo_root() -> Path:
 
 
 def env_path(name: str, default: Path | str) -> Path:
-    return Path(os.path.expandvars(os.getenv(name, str(default)))).expanduser()
+    value = os.getenv(name, str(default))
+    return Path(_expand_env_value(name, value)).expanduser()
 
 
 def env_file_path() -> Path:
@@ -23,7 +140,7 @@ def load_env_file(path: Path | None = None) -> None:
         os.environ[key] = value
 
 
-def read_env_file(path: Path | None = None) -> dict[str, str]:
+def read_env_file_raw(path: Path | None = None) -> dict[str, str]:
     env_path = path or env_file_path()
     if not env_path.exists():
         return {}
@@ -36,12 +153,40 @@ def read_env_file(path: Path | None = None) -> dict[str, str]:
         key = key.strip()
         if not key:
             continue
-        values[key] = _decode_env_value(value.strip())
+        values[key] = _decode_env_literal(value.strip())
     return values
 
 
+def read_env_file(path: Path | None = None) -> dict[str, str]:
+    raw_values = read_env_file_raw(path)
+    return {
+        key: _expand_env_value(key, value, raw_values=raw_values)
+        for key, value in raw_values.items()
+    }
+
+
 def write_env_values(updates: dict[str, str], path: Path | None = None) -> Path:
+    validated_updates: dict[str, str] = {}
+    for key, value in updates.items():
+        if not isinstance(key, str) or not _ENV_KEY_RE.fullmatch(key):
+            raise ValueError("invalid environment variable name")
+        if not isinstance(value, str):
+            raise ValueError("environment variable value must be text")
+        if any(character in value for character in ("\r", "\n", "\x00")):
+            raise ValueError("environment variable value contains a forbidden control")
+        validated_updates[key] = value
+    updates = validated_updates
     env_path = path or env_file_path()
+    proposed_raw_values = read_env_file_raw(env_path)
+    proposed_raw_values.update(updates)
+    for key, value in updates.items():
+        if not is_sensitive_env_key(key) and env_value_references_sensitive_key(
+            value,
+            raw_values=proposed_raw_values,
+        ):
+            raise ValueError(
+                "non-sensitive environment variable cannot reference a sensitive one"
+            )
     existing_lines = (
         env_path.read_text(encoding="utf-8").splitlines() if env_path.exists() else []
     )
@@ -66,9 +211,23 @@ def write_env_values(updates: dict[str, str], path: Path | None = None) -> Path:
     return env_path
 
 
-def _decode_env_value(value: str) -> str:
+def _decode_env_literal(value: str) -> str:
     if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
         value = value[1:-1]
+    return value
+
+
+def _expand_env_value(
+    key: str,
+    value: str,
+    *,
+    raw_values: Mapping[str, str] | None = None,
+) -> str:
+    if not is_sensitive_env_key(key) and env_value_references_sensitive_key(
+        value,
+        raw_values=raw_values,
+    ):
+        return value
     return os.path.expandvars(value)
 
 
@@ -318,10 +477,6 @@ def feishu_cli_binary() -> str:
     return os.getenv("CEO_FEISHU_CLI_BINARY", "lark").strip() or "lark"
 
 
-def feishu_live_send_enabled() -> bool:
-    return _env_truthy("CEO_FEISHU_LIVE_SEND_ENABLED")
-
-
 # --- WeChat personal-account channel (disabled by default) ---
 def _wechat_truthy(name: str) -> bool:
     return _env_truthy(name)
@@ -407,3 +562,190 @@ def wechat_fetch_articles() -> bool:
 
 def wechat_article_max_chars() -> int:
     return env_int("CEO_WECHAT_ARTICLE_MAX_CHARS", 1500)
+
+
+# --- Feishu official Bot channel (disabled by default) ---
+FEISHU_KEYRING_SERVICE = "ceo-agent-service/feishu"
+FEISHU_KEYRING_APP_SECRET_USERNAME = "app_secret"
+_FEISHU_OPEN_ID_RE = re.compile(r"^ou_[A-Za-z0-9_-]+$")
+
+
+def _feishu_truthy(name: str) -> bool:
+    return os.getenv(name, "0").strip().lower() in ("1", "true", "yes", "on")
+
+
+def _feishu_positive_int(name: str, default: int) -> int:
+    value = env_int(name, default)
+    if value <= 0:
+        raise ValueError(f"{name} must be greater than zero")
+    return value
+
+
+def _feishu_bounded_positive_int(name: str, default: int, maximum: int) -> int:
+    value = _feishu_positive_int(name, default)
+    if value > maximum:
+        raise ValueError(f"{name} must not exceed {maximum}")
+    return value
+
+
+def feishu_enabled() -> bool:
+    """Whether the Feishu receive/decision channel may start."""
+    return _feishu_truthy("CEO_FEISHU_ENABLED")
+
+
+def feishu_sender_enabled() -> bool:
+    """Whether the separately gated Feishu delivery worker may start."""
+    return feishu_enabled() and _feishu_truthy("CEO_FEISHU_SENDER_ENABLED")
+
+
+def feishu_media_enabled() -> bool:
+    """Whether approved inbound attachments may be downloaded and verified."""
+    return feishu_enabled() and _feishu_truthy("CEO_FEISHU_MEDIA_ENABLED")
+
+
+def feishu_reaction_enabled() -> bool:
+    """Whether the separately gated Emoji-reaction worker may mutate Feishu."""
+    return feishu_sender_enabled() and _feishu_truthy(
+        "CEO_FEISHU_REACTION_ENABLED"
+    )
+
+
+def feishu_recall_enabled() -> bool:
+    """Whether reviewed recalls may execute; every recall still needs approval."""
+    return feishu_sender_enabled() and _feishu_truthy("CEO_FEISHU_RECALL_ENABLED")
+
+
+def feishu_handoff_enabled() -> bool:
+    """Whether handoff notifications may target the local trusted allowlist."""
+    return feishu_sender_enabled() and _feishu_truthy("CEO_FEISHU_HANDOFF_ENABLED")
+
+
+def feishu_reply_mention_sender_enabled() -> bool:
+    """Whether group replies may mention the trusted inbound sender identity."""
+    return feishu_sender_enabled() and _feishu_truthy(
+        "CEO_FEISHU_REPLY_MENTION_SENDER"
+    )
+
+
+def feishu_reply_mention_open_ids() -> tuple[str, ...]:
+    """Return the bounded local identity map allowed for reply mentions."""
+    values: list[str] = []
+    for item in os.getenv("CEO_FEISHU_REPLY_MENTION_OPEN_IDS", "").split(","):
+        normalized = item.strip()
+        if not normalized:
+            continue
+        if not _FEISHU_OPEN_ID_RE.fullmatch(normalized):
+            raise ValueError(
+                "CEO_FEISHU_REPLY_MENTION_OPEN_IDS contains an invalid open_id"
+            )
+        if normalized not in values:
+            values.append(normalized)
+    if len(values) > 20:
+        raise ValueError(
+            "CEO_FEISHU_REPLY_MENTION_OPEN_IDS must contain at most 20 IDs"
+        )
+    return tuple(values)
+
+
+def feishu_live_send_allowed() -> bool:
+    """Return true only when all Feishu outbound gates are explicitly open."""
+    return (
+        feishu_enabled()
+        and feishu_sender_enabled()
+        and os.getenv("CEO_NOT_SEND_MESSAGE", "1").strip() == "0"
+    )
+
+
+def feishu_send_mode() -> str:
+    """Return ``confirm`` unless the operator explicitly selects ``auto``."""
+    mode = os.getenv("CEO_FEISHU_SEND_MODE", "confirm").strip().lower()
+    return mode if mode in ("confirm", "auto") else "confirm"
+
+
+def feishu_security_mode() -> str:
+    """Return the Channel SDK security mode, failing closed to ``strict``."""
+    mode = os.getenv("CEO_FEISHU_SECURITY_MODE", "strict").strip().lower()
+    return mode if mode in ("audit", "strict") else "strict"
+
+
+def feishu_stale_event_seconds() -> int:
+    return _feishu_positive_int("CEO_FEISHU_STALE_EVENT_SECONDS", 300)
+
+
+def feishu_context_limit() -> int:
+    return _feishu_bounded_positive_int("CEO_FEISHU_CONTEXT_LIMIT", 20, 100)
+
+
+def feishu_context_lookback_seconds() -> int:
+    """Bound prompt context to the shorter of event retention and 30 days."""
+    maximum = min(feishu_event_retention_days() * 24 * 60 * 60, 30 * 24 * 60 * 60)
+    return _feishu_bounded_positive_int(
+        "CEO_FEISHU_CONTEXT_LOOKBACK_SECONDS", 24 * 60 * 60, maximum
+    )
+
+
+def feishu_max_sends_per_minute() -> int:
+    return _feishu_positive_int("CEO_FEISHU_MAX_SENDS_PER_MINUTE", 10)
+
+
+def feishu_event_retention_days() -> int:
+    return _feishu_positive_int("CEO_FEISHU_EVENT_RETENTION_DAYS", 30)
+
+
+def feishu_media_retention_days() -> int:
+    return _feishu_positive_int("CEO_FEISHU_MEDIA_RETENTION_DAYS", 7)
+
+
+def feishu_media_max_assets() -> int:
+    return _feishu_bounded_positive_int("CEO_FEISHU_MEDIA_MAX_ASSETS", 8, 8)
+
+
+def feishu_media_max_bytes() -> int:
+    return _feishu_bounded_positive_int(
+        "CEO_FEISHU_MEDIA_MAX_BYTES", 20 * 1024 * 1024, 20 * 1024 * 1024
+    )
+
+
+def feishu_media_event_max_bytes() -> int:
+    return _feishu_bounded_positive_int(
+        "CEO_FEISHU_MEDIA_EVENT_MAX_BYTES",
+        32 * 1024 * 1024,
+        32 * 1024 * 1024,
+    )
+
+
+def feishu_handoff_open_ids() -> tuple[str, ...]:
+    """Return a normalized, bounded local allowlist; never accept model targets."""
+    values = []
+    for item in os.getenv("CEO_FEISHU_HANDOFF_OPEN_IDS", "").split(","):
+        normalized = item.strip()
+        if normalized and normalized not in values:
+            values.append(normalized)
+    if len(values) > 20:
+        raise ValueError("CEO_FEISHU_HANDOFF_OPEN_IDS must contain at most 20 IDs")
+    return tuple(values)
+
+
+def feishu_app_id() -> str:
+    return os.getenv("CEO_FEISHU_APP_ID", "").strip()
+
+
+def feishu_app_secret() -> str:
+    """Read the App Secret from Keychain first, then the debug-only env fallback.
+
+    Keyring/backend errors are intentionally swallowed: exception text from a
+    credential backend must never be surfaced by configuration parsing because
+    it can contain sensitive backend details or credential material.
+    """
+    try:
+        import keyring
+
+        value = keyring.get_password(
+            FEISHU_KEYRING_SERVICE,
+            FEISHU_KEYRING_APP_SECRET_USERNAME,
+        )
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    except Exception:  # pragma: no cover - backend behavior is platform-specific
+        pass
+    return os.getenv("CEO_FEISHU_APP_SECRET", "").strip()

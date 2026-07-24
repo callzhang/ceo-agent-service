@@ -13,6 +13,7 @@ from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel, model_validator
 
 from app.wechat.models import WechatReplyScope
+from app.audit_security import protect_post_forms
 
 
 class WechatScopeTarget(BaseModel):
@@ -123,7 +124,7 @@ def register_wechat_memory_review_routes(
             "<button formaction='/wechat/memory-review/reject-selected' "
             "formmethod='post'>批量拒绝已勾选项</button></form>"
         )
-        return HTMLResponse("".join(parts))
+        return HTMLResponse(protect_post_forms("".join(parts)))
 
     @app.post("/wechat/memory-review/write-approved")
     async def write_approved(request: Request):
@@ -258,7 +259,7 @@ def register_wechat_review_routes(app: FastAPI, *, store_factory: Callable[[], o
         if recent:
             parts.append("<h3 style='color:#667085;font-size:13px;margin-top:22px'>最近</h3>")
             parts += [_item(d, False) for d in recent[-10:]]
-        return HTMLResponse("".join(parts))
+        return HTMLResponse(protect_post_forms("".join(parts)))
 
     @app.get("/wechat/deliveries")
     def wechat_deliveries_json():

@@ -2669,6 +2669,58 @@ def test_send_attempt_command_marks_existing_sent_reply_without_duplicate_send(
     assert "已发回复" in capsys.readouterr().out
 
 
+def test_send_attempt_command_rejects_feishu_before_any_dingtalk_side_effect(
+    monkeypatch, tmp_path
+):
+    class ForbiddenDws:
+        def __init__(self, **kwargs):
+            raise AssertionError("DwsClient must not be constructed for Feishu")
+
+    monkeypatch.setattr(cli, "DwsClient", ForbiddenDws)
+    monkeypatch.setattr(
+        cli,
+        "_regenerate_send_attempt_after_leak_check",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("model regeneration must not run for Feishu")
+        ),
+    )
+    settings = WorkerSettings(db_path=tmp_path / "worker.sqlite3", dry_run=False)
+    store = cli.AutoReplyStore(settings.db_path)
+    # A colliding generic conversation must not turn the attempt into DingTalk.
+    store.upsert_conversation("shared-id", "Collision", False, None)
+    store.enqueue_reply_task(
+        channel="feishu",
+        conversation_id="shared-id",
+        conversation_title="Feishu",
+        single_chat=False,
+        trigger_message_id="msg-1",
+        trigger_create_time="2026-07-22T10:00:00+08:00",
+        trigger_sender="Mina",
+        trigger_text="please reply",
+        trigger_message_json='{"app_id":"cli_test"}',
+    )
+    attempt_id = store.record_reply_attempt(
+        conversation_id="shared-id",
+        conversation_title="Feishu",
+        trigger_message_id="msg-1",
+        trigger_sender="Mina",
+        trigger_text="please reply",
+        action="send_reply",
+        sensitivity_kind="general",
+        send_status="pending",
+        channel="feishu",
+    )
+    store.update_reply_attempt(attempt_id, final_reply_text="sensitive reply")
+
+    with pytest.raises(SystemExit, match="use /feishu/review"):
+        send_attempt_command(settings, attempt_id)
+
+    unchanged = store.get_reply_attempt(attempt_id)
+    assert unchanged is not None
+    assert unchanged.send_status == "pending"
+    assert unchanged.final_reply_text == "sensitive reply"
+
+
 def test_send_attempt_command_executes_existing_dry_run_calendar_response(
     monkeypatch, tmp_path, capsys
 ):
@@ -4986,7 +5038,7 @@ def test_meeting_loop_failure_isolated_and_retried(monkeypatch, tmp_path):
 
 def test_task_maintenance_loop_processes_work_and_daily_steps(monkeypatch, tmp_path):
     calls = []
-    times = iter([10.0, 10.0])
+    times = iter([10.0, 10.0, 10.0, 10.0])
 
     class StopLoop(Exception):
         pass
@@ -5049,7 +5101,7 @@ def test_task_maintenance_loop_runs_follow_ups_between_daily_scans(
     monkeypatch, tmp_path
 ):
     calls = []
-    times = iter([0.0, 0.0, 31.0, 901.0])
+    times = iter([0.0, 0.0, 0.0, 0.0, 31.0, 31.0, 901.0, 901.0])
 
     class StopLoop(Exception):
         pass
@@ -5116,6 +5168,93 @@ def test_task_maintenance_loop_runs_follow_ups_between_daily_scans(
     ]
 
 
+def test_task_maintenance_loop_rechecks_clock_after_slow_work(
+    monkeypatch, tmp_path
+):
+    calls = []
+    # Init and retention happen before work at t=0. Work then crosses the
+    # follow-up deadline; the post-work sample must observe t=901.
+    times = iter([0.0, 0.0, 901.0, 901.0])
+
+    class StopLoop(Exception):
+        pass
+
+    settings = WorkerSettings(db_path=tmp_path / "worker.sqlite3", max_batches=2)
+    monkeypatch.setattr(
+        cli, "process_work_items_command", lambda received: calls.append("work")
+    )
+    monkeypatch.setattr(
+        cli, "process_okr_reviews_command", lambda received: calls.append("okr")
+    )
+    monkeypatch.setattr(
+        cli,
+        "scan_task_sources_command",
+        lambda received, max_new_items=None: calls.append("scan"),
+    )
+    monkeypatch.setattr(
+        cli,
+        "process_follow_ups_command",
+        lambda received, refresh_evidence=False, limit=50: calls.append("follow"),
+    )
+
+    with pytest.raises(StopLoop):
+        run_task_maintenance_loop(
+            settings,
+            work_item_interval_seconds=31,
+            daily_interval_seconds=3600,
+            follow_up_interval_seconds=900,
+            sleep=lambda seconds: (_ for _ in ()).throw(StopLoop()),
+            monotonic=lambda: next(times),
+            network_ready=lambda: True,
+        )
+
+    assert calls == ["work", "okr", "scan", "work", "okr", "follow"]
+
+
+def test_task_maintenance_loop_rechecks_clock_after_slow_daily_scan(
+    monkeypatch, tmp_path
+):
+    calls = []
+    # Init, retention, and ordinary work all happen at t=0. The daily scan
+    # then crosses the follow-up deadline; only the post-daily sample sees
+    # t=901 and must run the follow-up in this same iteration.
+    times = iter([0.0, 0.0, 0.0, 901.0])
+
+    class StopLoop(Exception):
+        pass
+
+    settings = WorkerSettings(db_path=tmp_path / "worker.sqlite3", max_batches=2)
+    monkeypatch.setattr(
+        cli, "process_work_items_command", lambda received: calls.append("work")
+    )
+    monkeypatch.setattr(
+        cli, "process_okr_reviews_command", lambda received: calls.append("okr")
+    )
+    monkeypatch.setattr(
+        cli,
+        "scan_task_sources_command",
+        lambda received, max_new_items=None: calls.append("scan"),
+    )
+    monkeypatch.setattr(
+        cli,
+        "process_follow_ups_command",
+        lambda received, refresh_evidence=False, limit=50: calls.append("follow"),
+    )
+
+    with pytest.raises(StopLoop):
+        run_task_maintenance_loop(
+            settings,
+            work_item_interval_seconds=31,
+            daily_interval_seconds=3600,
+            follow_up_interval_seconds=900,
+            sleep=lambda seconds: (_ for _ in ()).throw(StopLoop()),
+            monotonic=lambda: next(times),
+            network_ready=lambda: True,
+        )
+
+    assert calls == ["work", "okr", "scan", "work", "okr", "follow"]
+
+
 def test_meeting_discovery_activation_watermark_is_set_once(tmp_path):
     settings = WorkerSettings(db_path=tmp_path / "worker.sqlite3")
     first = datetime.fromisoformat("2026-07-15T02:00:00+08:00")
@@ -5156,6 +5295,25 @@ def test_meeting_discovery_activation_baselines_existing_unsent_history(tmp_path
     job = store.get_meeting_alignment_job(historical_id)
     assert job.status == "no_action"
     assert job.error == ""
+
+
+def test_run_service_rejects_non_loopback_audit_host_before_startup(tmp_path):
+    settings = WorkerSettings(
+        workspace=tmp_path / "workspace",
+        db_path=tmp_path / "worker.sqlite3",
+        corpus_dir=tmp_path / "corpus",
+    )
+
+    with pytest.raises(ValueError, match="loopback"):
+        run_service(
+            settings,
+            host="0.0.0.0",
+            port=8765,
+            producer_interval_seconds=60,
+            consumer_poll_interval_seconds=10,
+        )
+
+    assert not settings.db_path.exists()
 
 
 def test_run_service_starts_web_producer_and_consumer(monkeypatch, tmp_path):
@@ -5355,6 +5513,33 @@ def test_run_service_requeues_processing_reply_tasks_on_startup(tmp_path):
     assert task.locked_at is None
     assert errors == []
     assert calls[-1] == ("wait",)
+
+
+def test_startup_recovery_does_not_steal_active_feishu_lease(tmp_path):
+    db_path = tmp_path / "worker.sqlite3"
+    store = AutoReplyStore(db_path)
+    for channel in ("dingtalk", "wechat", "feishu"):
+        store.enqueue_reply_task(
+            channel=channel,
+            conversation_id=f"{channel}:cid",
+            conversation_title=channel,
+            single_chat=True,
+            trigger_message_id=f"{channel}:msg",
+            trigger_create_time="2026-05-28 18:00:00",
+            trigger_sender="Mina",
+            trigger_text="hello",
+        )
+        store.claim_reply_tasks(limit=1, channel=channel)
+
+    assert cli._recover_processing_reply_tasks_on_service_start(
+        WorkerSettings(db_path=db_path)
+    ) == 2
+
+    tasks = {row.channel: row for row in store.list_reply_tasks()}
+    assert tasks["dingtalk"].status == "pending"
+    assert tasks["wechat"].status == "pending"
+    assert tasks["feishu"].status == "processing"
+    assert tasks["feishu"].lease_token
 
 
 def test_run_service_requeues_processing_work_summary_inputs_on_startup(tmp_path):
@@ -5612,6 +5797,24 @@ def test_wechat_subcommand_passes_through_remainder():
     assert args.wechat_args == ["read-recent", "--target-id", "filehelper", "--include-text"]
 
 
+def test_feishu_subcommand_passes_through_remainder():
+    from app.cli import build_parser
+
+    args = build_parser().parse_args(
+        ["feishu", "scopes", "approve", "--target-type", "group", "--target-id", "oc_1"]
+    )
+
+    assert args.command == "feishu"
+    assert args.feishu_args == [
+        "scopes",
+        "approve",
+        "--target-type",
+        "group",
+        "--target-id",
+        "oc_1",
+    ]
+
+
 def test_wechat_service_components_disabled_by_default(monkeypatch, tmp_path):
     import types
     from app import cli
@@ -5654,6 +5857,65 @@ def test_wechat_service_components_absent_when_ready_account_has_no_self_id(
     monkeypatch.setenv("CEO_WECHAT_SENDER_ENABLED", "1")
 
     assert cli._wechat_service_components(types.SimpleNamespace(db_path=db)) == ()
+
+
+def test_feishu_service_components_disabled_by_default(monkeypatch, tmp_path):
+    settings = SimpleNamespace(db_path=tmp_path / "f.sqlite3")
+    monkeypatch.delenv("CEO_FEISHU_ENABLED", raising=False)
+
+    assert cli._feishu_service_components(settings) == ()
+
+
+def test_feishu_service_components_fail_closed_when_credentials_missing(
+    monkeypatch, tmp_path
+):
+    settings = SimpleNamespace(db_path=tmp_path / "f.sqlite3")
+    monkeypatch.setenv("CEO_FEISHU_ENABLED", "1")
+    monkeypatch.delenv("CEO_FEISHU_APP_ID", raising=False)
+    monkeypatch.setattr("app.config.feishu_app_secret", lambda: "")
+
+    assert cli._feishu_service_components(settings) == ()
+
+    errors = AutoReplyStore(settings.db_path).list_errors()
+    assert any(error.kind == "feishu_configuration_blocked" for error in errors)
+
+
+def test_feishu_service_components_share_channel_runtime(
+    monkeypatch, tmp_path
+):
+    from app.feishu import service as feishu_service
+    from app.feishu import setup as feishu_setup
+
+    runtime = object()
+    monkeypatch.setenv("CEO_FEISHU_ENABLED", "1")
+    monkeypatch.setenv("CEO_FEISHU_APP_ID", "cli_test")
+    monkeypatch.setattr("app.config.feishu_app_secret", lambda: "secret")
+    monkeypatch.setattr(
+        feishu_setup,
+        "dependency_status",
+        lambda: SimpleNamespace(
+            channel_version_ok=True,
+            oapi_version_ok=True,
+        ),
+    )
+    monkeypatch.setattr(feishu_service, "build_runtime", lambda store: runtime)
+    settings = SimpleNamespace(
+        db_path=tmp_path / "f.sqlite3",
+        workspace=tmp_path,
+        codex_timeout_seconds=30,
+        codex_idle_timeout_seconds=30,
+        max_batches=None,
+    )
+
+    components = cli._feishu_service_components(settings)
+
+    assert [name for name, _ in components] == [
+        "feishu-listener",
+        "feishu-consumer",
+    ]
+    # No second sender WebSocket component is constructed; sending is a task in
+    # the listener runtime and the consumer remains client-free.
+    assert all(name != "feishu-sender" for name, _ in components)
 
 
 def test_wechat_loop_stops_after_app_data_permission_denial(

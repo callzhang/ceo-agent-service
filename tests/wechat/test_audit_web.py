@@ -1,3 +1,5 @@
+import re
+
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -121,6 +123,7 @@ def test_review_page_shows_send_button(review_client):
     r = review_client.get("/wechat/review")
     assert r.status_code == 200
     assert "发送" in r.text and "草稿回复" in r.text
+    assert "name='csrf_token'" in r.text
 
 
 def test_deliveries_json_lists_pending(review_client):
@@ -188,6 +191,7 @@ def test_memory_review_page_escapes_and_filters(memory_client):
     assert "minimal &lt;evidence&gt;" in response.text
     assert "messages: m1" in response.text and "conversations: c1" in response.text
     assert "bulk approve" not in response.text.casefold()
+    assert "name='csrf_token'" in response.text
 
 
 def test_memory_review_requires_edited_final_statement(memory_client):
@@ -249,10 +253,73 @@ def test_memory_review_can_resolve_interrupted_write_to_unknown(memory_client):
 
 def test_main_audit_app_registers_memory_review(tmp_path):
     from app.audit_web import create_audit_app
-    response = TestClient(create_audit_app(tmp_path / "worker.sqlite3")).get(
-        "/wechat/memory-review")
+    response = TestClient(
+        create_audit_app(tmp_path / "worker.sqlite3"),
+        base_url="http://127.0.0.1:8765",
+        client=("127.0.0.1", 50000),
+    ).get("/wechat/memory-review")
     assert response.status_code == 200
     assert "微信 Memory 人工审核" in response.text
+
+
+def test_main_audit_app_wechat_review_form_token_survives_global_boundary(tmp_path):
+    from app.audit_web import create_audit_app
+
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    delivery = _seed_delivery(store)
+    client = TestClient(
+        create_audit_app(store.path),
+        base_url="http://127.0.0.1:8765",
+        client=("127.0.0.1", 50000),
+    )
+
+    page = client.get("/wechat/review")
+    form = re.search(
+        rf"action='/wechat/deliveries/{delivery.id}/reject'[^>]*>"
+        r".*?name='csrf_token' value='([^']+)'",
+        page.text,
+        re.DOTALL,
+    )
+    assert form is not None
+
+    response = client.post(
+        f"/wechat/deliveries/{delivery.id}/reject",
+        data={"csrf_token": form.group(1)},
+        headers={"Origin": "http://127.0.0.1:8765"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    assert store.get_wechat_delivery_for_task(delivery.task_id).status == "failed"
+
+
+def test_main_audit_app_wechat_memory_form_token_survives_global_boundary(tmp_path):
+    from app.audit_web import create_audit_app
+
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    candidate_id = _seed_memory_candidate(store, "reject this candidate")
+    client = TestClient(
+        create_audit_app(store.path),
+        base_url="http://127.0.0.1:8765",
+        client=("127.0.0.1", 50000),
+    )
+
+    page = client.get("/wechat/memory-review")
+    token = re.search(r"name='csrf_token' value='([^']+)'", page.text)
+    assert token is not None
+
+    response = client.post(
+        f"/wechat/memory-review/{candidate_id}/reject",
+        data={
+            "csrf_token": token.group(1),
+            f"reviewer_{candidate_id}": "browser-reviewer",
+        },
+        headers={"Origin": "http://127.0.0.1:8765"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    assert store.get_wechat_memory_candidate(candidate_id)["status"] == "rejected"
 
 
 def test_reject_default_redirects_to_review(review_client):

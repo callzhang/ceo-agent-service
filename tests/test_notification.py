@@ -1,4 +1,120 @@
-from app.notification import send_macos_notification
+import subprocess
+
+import pytest
+
+from app.audit_security import (
+    NOTIFICATION_BRIDGE_HEADER_NAME,
+    NOTIFICATION_BRIDGE_HEADER_VALUE,
+)
+from app.notification import (
+    LocalNotificationDeliveryError,
+    _send_browser_notification,
+    dingtalk_conversation_notification_url,
+    send_macos_local_notification,
+    send_macos_notification,
+)
+
+
+def test_browser_notification_uses_internal_bridge_protocol(monkeypatch):
+    captured = []
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def read(self):
+            return b'{"delivered": true}'
+
+    monkeypatch.setattr(
+        "app.notification.request.urlopen",
+        lambda http_request, timeout: captured.append((http_request, timeout))
+        or Response(),
+    )
+
+    assert _send_browser_notification("CEO", "done", None) is True
+    http_request, timeout = captured[0]
+    request_headers = {key.lower(): value for key, value in http_request.header_items()}
+    assert http_request.get_header("Origin") is None
+    assert http_request.get_header("X-ceo-audit-csrf") is None
+    assert request_headers[NOTIFICATION_BRIDGE_HEADER_NAME.lower()] == (
+        NOTIFICATION_BRIDGE_HEADER_VALUE
+    )
+    assert http_request.get_header("Content-type") == "application/json"
+    assert timeout == 0.5
+
+
+@pytest.mark.parametrize(
+    "base_url",
+    [
+        "https://127.0.0.1:8765",
+        "http://worker:password@127.0.0.1:8765",
+        "http://audit.example:8765",
+        "http://localhost.evil.example:8765",
+        "http://127.0.0.1:8765/evil",
+        "http://127.0.0.1:8765/evil/",
+        "http://127.0.0.1:8765?target=evil",
+        "http://127.0.0.1:8765?",
+        "http://127.0.0.1:8765#fragment",
+        "http://127.0.0.1:8765#",
+        "http://127.0.0.1:not-a-port",
+        "http://127.0.0.1:0",
+        "//127.0.0.1:8765",
+        " http://127.0.0.1:8765",
+    ],
+)
+def test_browser_notification_rejects_invalid_bridge_url_without_network(
+    monkeypatch,
+    base_url,
+):
+    network_calls = []
+    monkeypatch.setenv("CEO_NOTIFICATION_BRIDGE_BASE_URL", base_url)
+    monkeypatch.setattr(
+        "app.notification.request.urlopen",
+        lambda *args, **kwargs: network_calls.append((args, kwargs)),
+    )
+
+    assert _send_browser_notification("CEO", "done", None) is False
+    assert dingtalk_conversation_notification_url("cid-1") is None
+    assert network_calls == []
+
+
+@pytest.mark.parametrize(
+    ("base_url", "expected_endpoint"),
+    [
+        ("http://localhost:8765/", "http://localhost:8765/browser-notifications"),
+        ("http://127.0.0.2:8765", "http://127.0.0.2:8765/browser-notifications"),
+        ("http://[::1]:8765", "http://[::1]:8765/browser-notifications"),
+    ],
+)
+def test_browser_notification_accepts_http_loopback_base_urls(
+    monkeypatch,
+    base_url,
+    expected_endpoint,
+):
+    captured = []
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def read(self):
+            return b'{"delivered": true}'
+
+    monkeypatch.setenv("CEO_NOTIFICATION_BRIDGE_BASE_URL", base_url)
+    monkeypatch.setattr(
+        "app.notification.request.urlopen",
+        lambda http_request, timeout: captured.append((http_request, timeout))
+        or Response(),
+    )
+
+    assert _send_browser_notification("CEO", "done", None) is True
+    assert captured[0][0].full_url == expected_endpoint
 
 
 def test_notification_uses_valid_escaped_applescript_literals(monkeypatch):
@@ -94,7 +210,7 @@ def test_notification_prefers_terminal_notifier(monkeypatch):
     )
     monkeypatch.setattr(
         "app.notification.subprocess.run",
-        lambda command, check: commands.append((command, check))
+        lambda command, check, **_kwargs: commands.append((command, check))
         or type("Completed", (), {"returncode": 0})(),
     )
 
@@ -132,7 +248,7 @@ def test_notification_falls_back_to_browser_when_terminal_notifier_fails(monkeyp
     )
     monkeypatch.setattr(
         "app.notification.subprocess.run",
-        lambda command, check: commands.append((command, check))
+        lambda command, check, **_kwargs: commands.append((command, check))
         or type("Completed", (), {"returncode": 1})(),
     )
 
@@ -150,3 +266,123 @@ def test_notification_falls_back_to_browser_when_terminal_notifier_fails(monkeyp
             "url": "http://127.0.0.1:8765/open-dingtalk?cid=75217569357",
         }
     ]
+
+
+def test_feishu_local_notification_never_uses_remote_bridge(monkeypatch):
+    commands = []
+    monkeypatch.setenv(
+        "CEO_NOTIFICATION_BRIDGE_BASE_URL", "https://remote.example.invalid"
+    )
+    monkeypatch.setattr("app.notification.shutil.which", lambda _name: None)
+    monkeypatch.setattr(
+        "app.notification.request.urlopen",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("offline Feishu notification attempted network I/O")
+        ),
+    )
+    monkeypatch.setattr(
+        "app.notification.subprocess.run",
+        lambda command, check, **_kwargs: commands.append((command, check))
+        or type("Completed", (), {"returncode": 0})(),
+    )
+
+    send_macos_local_notification(
+        title="CEO Feishu handoff required",
+        message="private Feishu handoff metadata",
+        url=None,
+    )
+
+    assert commands == [
+        (
+            [
+                "osascript",
+                "-e",
+                'display notification "private Feishu handoff metadata" with title "CEO Feishu handoff required"',
+            ],
+            False,
+        )
+    ]
+
+
+def test_feishu_local_notification_rejects_url_before_any_side_effect(monkeypatch):
+    def unexpected(*_args, **_kwargs):
+        raise AssertionError("URL rejection must happen before any local or network I/O")
+
+    monkeypatch.setattr("app.notification.shutil.which", unexpected)
+    monkeypatch.setattr("app.notification.subprocess.run", unexpected)
+    monkeypatch.setattr("app.notification.request.urlopen", unexpected)
+
+    with pytest.raises(ValueError, match="does not accept a URL"):
+        send_macos_local_notification(
+            title="private-title",
+            message="secret-message",
+            url="http://127.0.0.1:8765/anything",
+        )
+
+
+def test_feishu_local_terminal_notifier_has_no_execute_action(monkeypatch):
+    commands = []
+    monkeypatch.setattr(
+        "app.notification.shutil.which",
+        lambda _name: "/opt/homebrew/bin/terminal-notifier",
+    )
+    monkeypatch.setattr(
+        "app.notification.subprocess.run",
+        lambda command, **_kwargs: commands.append(command)
+        or type("Completed", (), {"returncode": 0})(),
+    )
+
+    send_macos_local_notification(
+        title="private-title",
+        message="secret-message",
+    )
+
+    assert len(commands) == 1
+    assert "-execute" not in commands[0]
+
+
+@pytest.mark.parametrize("returncode", [1, 70])
+def test_feishu_local_notification_nonzero_exit_is_not_fake_success(
+    monkeypatch, returncode
+):
+    commands = []
+    monkeypatch.setattr("app.notification.shutil.which", lambda _name: None)
+    monkeypatch.setattr(
+        "app.notification.subprocess.run",
+        lambda command, **kwargs: commands.append((command, kwargs))
+        or type("Completed", (), {"returncode": returncode})(),
+    )
+
+    with pytest.raises(LocalNotificationDeliveryError) as exc_info:
+        send_macos_local_notification(
+            title="private-title",
+            message="secret-message",
+        )
+
+    assert len(commands) == 1
+    assert commands[0][1]["timeout"] == 10.0
+    assert "private-title" not in str(exc_info.value)
+    assert "secret-message" not in str(exc_info.value)
+
+
+def test_feishu_local_notification_timeout_raises_payload_free_error(monkeypatch):
+    monkeypatch.setattr(
+        "app.notification.shutil.which",
+        lambda _name: "/opt/homebrew/bin/terminal-notifier",
+    )
+
+    def timeout(command, **kwargs):
+        assert kwargs["timeout"] == 10.0
+        raise subprocess.TimeoutExpired(command, kwargs["timeout"])
+
+    monkeypatch.setattr("app.notification.subprocess.run", timeout)
+
+    with pytest.raises(LocalNotificationDeliveryError) as exc_info:
+        send_macos_local_notification(
+            title="private-title",
+            message="secret-message",
+        )
+
+    assert str(exc_info.value) == (
+        "local_notification_result_unknown:send_timeout"
+    )
