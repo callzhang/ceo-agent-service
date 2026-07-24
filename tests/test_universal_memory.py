@@ -265,6 +265,30 @@ def test_codex_mcp_memory_client_falls_back_to_native_codex_config(
     ]
 
 
+def test_codex_mcp_memory_client_uses_direct_readiness_without_transferable_auth(
+    tmp_path: Path,
+    monkeypatch,
+):
+    codex_config = tmp_path / "config.toml"
+    codex_config.write_text(
+        '[mcp_servers.memory_connector]\nurl = "https://memory.example/mcp/"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "app.codex_memory_client.memory_connector_config_issue",
+        lambda: "memory connector transferable auth is missing",
+    )
+    direct = FakeMemoryClient()
+    client = CodexMcpMemoryClient(
+        workspace=tmp_path,
+        direct_client=direct,
+        codex_config_path=codex_config,
+        executor=lambda _command, _prompt: "",
+    )
+
+    client.ensure_ready_sync()
+
+
 def test_codex_mcp_memory_client_requires_transferable_auth(
     tmp_path: Path,
     monkeypatch,

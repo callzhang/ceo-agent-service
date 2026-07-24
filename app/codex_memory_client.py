@@ -46,6 +46,12 @@ class CodexMcpMemoryClient:
         self.idle_timeout_seconds = idle_timeout_seconds
 
     def ensure_ready_sync(self) -> None:
+        if self.direct_client is not None:
+            try:
+                self.direct_client.ensure_ready_sync()
+                return
+            except MemoryConnectorAuthorizationRequired:
+                pass
         if not codex_config_has_memory_connector(self.codex_config_path):
             raise MemoryConnectorAuthorizationRequired(
                 "memory connector native Codex MCP is not configured"
@@ -53,12 +59,6 @@ class CodexMcpMemoryClient:
         issue = memory_connector_config_issue()
         if issue:
             raise MemoryConnectorAuthorizationRequired(issue)
-        if self.direct_client is None:
-            return
-        try:
-            self.direct_client.ensure_ready_sync()
-        except MemoryConnectorAuthorizationRequired:
-            return
 
     def memory_write_sync(
         self,
