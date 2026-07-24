@@ -78,8 +78,11 @@ from app.leak_check import (
     contains_forbidden_leak,
 )
 from app.message_split import split_dingtalk_text
-from app.memory_connector_auth import MemoryConnectorAuthorizationRequired
-from app.memory_connector_client import MemoryConnectorClient, MemoryWriteResult
+from app.codex_memory_write import (
+    CodexMemoryWriteAuthorizationRequired,
+    MemoryWriteResult,
+    run_codex_memory_write,
+)
 from app.notification import (
     dingtalk_conversation_notification_url,
     send_macos_notification,
@@ -508,7 +511,7 @@ class DingTalkAutoReplyWorker:
         max_task_attempts: int = MAX_REPLY_TASK_ATTEMPTS,
         now_provider: Callable[[], datetime] | None = None,
         oa_approval_handler=None,
-        memory_client: MemoryConnectorClient | None = None,
+        memory_write_runner: Callable[..., MemoryWriteResult] | None = None,
         universal_planner=None,
         universal_dependency_status_provider=None,
     ):
@@ -524,7 +527,9 @@ class DingTalkAutoReplyWorker:
         self.now_provider = now_provider or (lambda: datetime.now().astimezone())
         self.permission_gate = PermissionGate(dws)
         self.oa_approval_handler = oa_approval_handler
-        self.memory_client = memory_client
+        self._memory_write_runner = (
+            memory_write_runner or self._run_inherited_codex_memory_write
+        )
         self._injected_universal_planner = universal_planner
         self._universal_dependency_status_provider = (
             universal_dependency_status_provider or self.universal_dependency_status
@@ -554,30 +559,25 @@ class DingTalkAutoReplyWorker:
                 )
             else:
                 result["dws"] = DependencyStatus(ready=True)
-        if "memory" not in dependencies:
-            return result
-        if self.memory_client is None:
-            result["memory"] = DependencyStatus(
-                ready=False,
-                reason="memory_connector_not_configured",
-            )
-            return result
-        try:
-            self.memory_client.ensure_ready_sync()
-        except MemoryConnectorAuthorizationRequired:
-            result["memory"] = DependencyStatus(
-                ready=False,
-                reason="memory_authorization_required",
-                authorization_required=True,
-            )
-        except Exception:
-            result["memory"] = DependencyStatus(
-                ready=False,
-                reason="memory_unavailable",
-            )
-        else:
+        if "memory" in dependencies:
             result["memory"] = DependencyStatus(ready=True)
         return result
+
+    def _run_inherited_codex_memory_write(self, **payload) -> MemoryWriteResult:
+        runner = getattr(self.codex, "runner", None)
+        workspace = getattr(runner, "workspace", None)
+        if workspace is None:
+            raise RuntimeError("native Codex runner workspace is unavailable")
+        return run_codex_memory_write(
+            workspace=workspace,
+            codex_bin=str(getattr(runner, "codex_bin", "codex")),
+            timeout_seconds=max(int(getattr(self.codex, "timeout_seconds", 1200)), 900),
+            idle_timeout_seconds=max(
+                int(getattr(self.codex, "idle_timeout_seconds", 900)),
+                300,
+            ),
+            **payload,
+        )
 
     def _universal_planner(self):
         if self._injected_universal_planner is not None:
@@ -3082,24 +3082,9 @@ class DingTalkAutoReplyWorker:
             execution,
             send_status="pending",
         )
-        if self.memory_client is None:
-            error = "memory_connector_not_configured"
-            self.store.update_reply_attempt(
-                attempt_id,
-                send_status="blocked",
-                send_error=error,
-            )
-            self.store.mark_universal_memory_action_execution(
-                execution,
-                canonical_payload_json=canonical_payload_json,
-                lease_token=claim.lease_token,
-                status="failed",
-                error=error,
-            )
-            return True
         try:
-            result = self.memory_client.memory_write_sync(**payload)
-        except MemoryConnectorAuthorizationRequired:
+            result = self._memory_write_runner(**payload)
+        except CodexMemoryWriteAuthorizationRequired:
             error = "memory_authorization_required"
             self.store.update_reply_attempt(
                 attempt_id,

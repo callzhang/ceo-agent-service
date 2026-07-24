@@ -6,9 +6,11 @@ from pathlib import Path
 
 import pytest
 
-from app.codex_memory_client import CodexMcpMemoryClient
-from app.memory_connector_auth import MemoryConnectorAuthorizationRequired
-from app.memory_connector_client import MemoryWriteResult
+from app.codex_memory_write import (
+    CodexMemoryWriteAuthorizationRequired,
+    MemoryWriteResult,
+    run_codex_memory_write,
+)
 from app.store import AutoReplyStore
 from app.universal_consumer import UniversalConsumerOrchestrator
 from app.universal_context import UniversalTaskContext
@@ -32,22 +34,12 @@ class RecordingPlanner:
         return self.plan_result
 
 
-class FakeMemoryClient:
-    def __init__(self, results=None, dependency_error=None) -> None:
+class FakeMemoryWriteRunner:
+    def __init__(self, results=None) -> None:
         self.results = list(results or [])
-        self.dependency_error = dependency_error
         self.calls: list[dict[str, object]] = []
-        self.login_calls = 0
 
-    def ensure_ready_sync(self) -> None:
-        if self.dependency_error:
-            raise self.dependency_error
-
-    def login(self, **kwargs):
-        self.login_calls += 1
-        raise AssertionError("worker must not start interactive Memory login")
-
-    def memory_write_sync(self, **kwargs):
+    def __call__(self, **kwargs):
         self.calls.append(kwargs)
         result = self.results.pop(0)
         if isinstance(result, Exception):
@@ -55,13 +47,13 @@ class FakeMemoryClient:
         return result
 
 
-class BlockingMemoryClient(FakeMemoryClient):
+class BlockingMemoryWriteRunner(FakeMemoryWriteRunner):
     def __init__(self) -> None:
         super().__init__()
         self.entered = threading.Event()
         self.release = threading.Event()
 
-    def memory_write_sync(self, **kwargs):
+    def __call__(self, **kwargs):
         self.calls.append(kwargs)
         self.entered.set()
         assert self.release.wait(timeout=5)
@@ -93,7 +85,7 @@ def memory_plan() -> UniversalPlan:
     )
 
 
-def build_execution(tmp_path, *, memory_client: FakeMemoryClient):
+def build_execution(tmp_path, *, memory_write_runner: FakeMemoryWriteRunner):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     assert store.enqueue_reply_task(
         conversation_id="cid-memory",
@@ -127,12 +119,12 @@ def build_execution(tmp_path, *, memory_client: FakeMemoryClient):
         store=store,
         dws=object(),
         codex=object(),
-        memory_client=memory_client,
+        memory_write_runner=memory_write_runner,
     )
     return store, context, execution, worker
 
 
-def test_memory_dependency_blocks_before_planner_and_never_opens_browser(
+def test_memory_dependency_status_uses_inherited_codex_mcp_without_client_preflight(
     tmp_path: Path,
 ) -> None:
     context = UniversalTaskContext(
@@ -150,45 +142,24 @@ def test_memory_dependency_blocks_before_planner_and_never_opens_browser(
         trigger_create_time="2026-07-20 10:00:00",
     )
     planner = RecordingPlanner(memory_plan())
-    client = FakeMemoryClient(
-        dependency_error=MemoryConnectorAuthorizationRequired("authorization required")
-    )
+    runner = FakeMemoryWriteRunner()
     worker = DingTalkAutoReplyWorker(
         store=AutoReplyStore(tmp_path / "worker.sqlite3"),
         dws=object(),
         codex=object(),
-        memory_client=client,
+        memory_write_runner=runner,
     )
-    orchestrator = UniversalConsumerOrchestrator(
-        planner=planner,
-        validator_context_factory=worker.universal_dependency_status,
-        existing_terminal_attempt=lambda _: False,
-        existing_sent_reply=lambda _: False,
-        load_plan_execution=lambda _: None,
-        create_plan_execution=lambda *_: (_ for _ in ()).throw(
-            AssertionError("plan execution must not be created")
-        ),
-        action_execution_state=lambda _: UniversalActionExecutionState.NOT_STARTED,
-        session_id=lambda _: None,
-        executor=UniversalActionExecutor(worker),
-    )
+    del planner
 
-    result = orchestrator.process(context)
+    statuses = worker.universal_dependency_status(context, ("memory",))
 
-    assert result.completed is False
-    assert result.reason == "memory_authorization_required"
-    assert planner.calls == 0
-    assert client.login_calls == 0
+    assert statuses == {"memory": DependencyStatus(ready=True)}
+    assert runner.calls == []
 
 
-def test_codex_mcp_memory_client_inherits_codex_mcp_for_memory_write(
+def test_codex_mcp_memory_write_runner_inherits_codex_mcp_for_memory_write(
     tmp_path: Path,
 ):
-    codex_config = tmp_path / "config.toml"
-    codex_config.write_text(
-        '[mcp_servers.memory_connector]\nurl = "https://memory.example/mcp/"\n',
-        encoding="utf-8",
-    )
     output = {
         "structured_content": {
             "result": json.dumps(
@@ -228,17 +199,13 @@ def test_codex_mcp_memory_client_inherits_codex_mcp_for_memory_write(
         captured["prompt"] = prompt
         return raw
 
-    client = CodexMcpMemoryClient(
+    result = run_codex_memory_write(
         workspace=tmp_path,
-        codex_config_path=codex_config,
-        executor=executor,
-    )
-
-    result = client.memory_write_sync(
         data="Durable decision",
         type="text",
         created_at="2026-07-20T10:00:00+08:00",
         source_description="source",
+        executor=executor,
     )
 
     assert result == MemoryWriteResult("episode-1", "completed", False)
@@ -262,73 +229,35 @@ def test_codex_mcp_memory_client_inherits_codex_mcp_for_memory_write(
     ]
 
 
-def test_codex_mcp_memory_client_readiness_does_not_require_transferable_auth(
+def test_codex_mcp_memory_write_runner_write_surfaces_codex_authorization_errors(
     tmp_path: Path,
 ):
-    codex_config = tmp_path / "config.toml"
-    codex_config.write_text(
-        '[mcp_servers.memory_connector]\nurl = "https://memory.example/mcp/"\n',
-        encoding="utf-8",
-    )
-    client = CodexMcpMemoryClient(
-        workspace=tmp_path,
-        codex_config_path=codex_config,
-        executor=lambda _command, _prompt: "",
-    )
-
-    client.ensure_ready_sync()
-
-
-def test_codex_mcp_memory_client_write_surfaces_codex_authorization_errors(
-    tmp_path: Path,
-):
-    codex_config = tmp_path / "config.toml"
-    codex_config.write_text(
-        '[mcp_servers.memory_connector]\nurl = "https://memory.example/mcp/"\n',
-        encoding="utf-8",
-    )
-    client = CodexMcpMemoryClient(
-        workspace=tmp_path,
-        codex_config_path=codex_config,
-        executor=lambda _command, _prompt: "\n".join(
-            [
-                json.dumps({"type": "error", "message": "authorization required"}),
-                json.dumps({"status": "attempted"}),
-            ]
-        ),
-    )
-
     with pytest.raises(
         Exception,
         match="expected one memory_write tool call",
     ):
-        client.memory_write_sync(
+        run_codex_memory_write(
+            workspace=tmp_path,
             data="Durable decision",
             type="text",
             created_at="2026-07-20T10:00:00+08:00",
             source_description="source",
+            executor=lambda _command, _prompt: "\n".join(
+                [
+                    json.dumps({"type": "error", "message": "authorization required"}),
+                    json.dumps({"status": "attempted"}),
+                ]
+            ),
         )
 
 
-def test_codex_mcp_memory_client_readiness_does_not_require_native_config_file(
-    tmp_path: Path,
-):
-    client = CodexMcpMemoryClient(
-        workspace=tmp_path,
-        codex_config_path=tmp_path / "missing-config.toml",
-        executor=lambda _command, _prompt: "",
-    )
-
-    client.ensure_ready_sync()
-
-
 def test_dependency_status_checks_dws_and_memory_before_planner(tmp_path) -> None:
-    client = FakeMemoryClient()
+    runner = FakeMemoryWriteRunner()
     worker = DingTalkAutoReplyWorker(
         store=AutoReplyStore(tmp_path / "worker.sqlite3"),
         dws=ReadyDws(),
         codex=object(),
-        memory_client=client,
+        memory_write_runner=runner,
     )
     context = UniversalTaskContext(
         task_id=1,
@@ -357,11 +286,11 @@ def test_dependency_status_checks_dws_and_memory_before_planner(tmp_path) -> Non
 
 
 def test_memory_executor_uses_trigger_time_and_stable_source_description(tmp_path) -> None:
-    client = FakeMemoryClient(
+    runner = FakeMemoryWriteRunner(
         [MemoryWriteResult("episode-1", "queued", False)]
     )
     store, context, execution, worker = build_execution(
-        tmp_path, memory_client=client
+        tmp_path, memory_write_runner=runner
     )
 
     assert worker.execute_universal_memory_write(execution) is True
@@ -378,7 +307,7 @@ def test_memory_executor_uses_trigger_time_and_stable_source_description(tmp_pat
             separators=(",", ":"),
         ).encode("utf-8")
     ).hexdigest()
-    assert client.calls == [
+    assert runner.calls == [
         {
             "data": "The launch decision is approved.",
             "type": "text",
@@ -401,35 +330,35 @@ def test_memory_executor_uses_trigger_time_and_stable_source_description(tmp_pat
 
 
 def test_memory_timeout_can_resume_only_with_same_frozen_payload(tmp_path) -> None:
-    first_client = FakeMemoryClient([TimeoutError("network timeout")])
+    first_runner = FakeMemoryWriteRunner([TimeoutError("network timeout")])
     store, _, execution, worker = build_execution(
-        tmp_path, memory_client=first_client
+        tmp_path, memory_write_runner=first_runner
     )
 
     with pytest.raises(TimeoutError):
         worker.execute_universal_memory_write(execution)
     assert store.get_universal_action_execution_state(execution).value == "unknown"
 
-    second_client = FakeMemoryClient(
+    second_runner = FakeMemoryWriteRunner(
         [MemoryWriteResult("episode-existing", "duplicate", True)]
     )
     resumed_worker = DingTalkAutoReplyWorker(
         store=AutoReplyStore(store.path),
         dws=object(),
         codex=object(),
-        memory_client=second_client,
+        memory_write_runner=second_runner,
     )
 
     assert resumed_worker.execute_universal_memory_write(execution) is True
-    assert len(second_client.calls) == 1
+    assert len(second_runner.calls) == 1
     attempts = resumed_worker.store.list_reply_attempts(limit=10)
     assert len(attempts) == 1
     assert json.loads(attempts[0].audit_summary)["duplicate"] is True
 
 
 def test_memory_unknown_recovery_rejects_tampered_frozen_payload(tmp_path) -> None:
-    client = FakeMemoryClient([TimeoutError("network timeout")])
-    store, _, execution, worker = build_execution(tmp_path, memory_client=client)
+    runner = FakeMemoryWriteRunner([TimeoutError("network timeout")])
+    store, _, execution, worker = build_execution(tmp_path, memory_write_runner=runner)
     with pytest.raises(TimeoutError):
         worker.execute_universal_memory_write(execution)
     with sqlite3.connect(store.path) as db:
@@ -441,7 +370,7 @@ def test_memory_unknown_recovery_rejects_tampered_frozen_payload(tmp_path) -> No
         store=AutoReplyStore(store.path),
         dws=object(),
         codex=object(),
-        memory_client=FakeMemoryClient(
+        memory_write_runner=FakeMemoryWriteRunner(
             [MemoryWriteResult("episode-1", "queued", False)]
         ),
     )
@@ -453,11 +382,11 @@ def test_memory_recovers_when_receipt_was_audited_before_completion_commit(
     tmp_path,
     monkeypatch,
 ) -> None:
-    first_client = FakeMemoryClient(
+    first_runner = FakeMemoryWriteRunner(
         [MemoryWriteResult("episode-1", "queued", False)]
     )
     store, _, execution, worker = build_execution(
-        tmp_path, memory_client=first_client
+        tmp_path, memory_write_runner=first_runner
     )
 
     def fail_completion(*args, **kwargs):
@@ -481,7 +410,7 @@ def test_memory_recovers_when_receipt_was_audited_before_completion_commit(
         store=AutoReplyStore(store.path),
         dws=object(),
         codex=object(),
-        memory_client=FakeMemoryClient(
+        memory_write_runner=FakeMemoryWriteRunner(
             [MemoryWriteResult("episode-1", "duplicate", True)]
         ),
     )
@@ -492,27 +421,28 @@ def test_memory_recovers_when_receipt_was_audited_before_completion_commit(
 
 def test_concurrent_memory_workers_share_one_mcp_execution_lease(tmp_path) -> None:
     store, _, execution, failed_worker = build_execution(
-        tmp_path, memory_client=FakeMemoryClient([TimeoutError("network timeout")])
+        tmp_path,
+        memory_write_runner=FakeMemoryWriteRunner([TimeoutError("network timeout")]),
     )
     with pytest.raises(TimeoutError):
         failed_worker.execute_universal_memory_write(execution)
     assert store.get_universal_action_execution_state(execution).value == "unknown"
 
-    first_client = BlockingMemoryClient()
+    first_runner = BlockingMemoryWriteRunner()
     first_worker = DingTalkAutoReplyWorker(
         store=AutoReplyStore(store.path),
         dws=object(),
         codex=object(),
-        memory_client=first_client,
+        memory_write_runner=first_runner,
     )
-    second_client = FakeMemoryClient(
+    second_runner = FakeMemoryWriteRunner(
         [MemoryWriteResult("episode-duplicate", "duplicate", True)]
     )
     second_worker = DingTalkAutoReplyWorker(
         store=AutoReplyStore(store.path),
         dws=object(),
         codex=object(),
-        memory_client=second_client,
+        memory_write_runner=second_runner,
     )
     first_errors: list[BaseException] = []
 
@@ -524,14 +454,14 @@ def test_concurrent_memory_workers_share_one_mcp_execution_lease(tmp_path) -> No
 
     thread = threading.Thread(target=run_first)
     thread.start()
-    assert first_client.entered.wait(timeout=5)
+    assert first_runner.entered.wait(timeout=5)
 
     with pytest.raises(RuntimeError, match="memory action lease is active"):
         second_worker.execute_universal_memory_write(execution)
-    assert second_client.calls == []
+    assert second_runner.calls == []
 
-    first_client.release.set()
+    first_runner.release.set()
     thread.join(timeout=5)
     assert not thread.is_alive()
     assert first_errors == []
-    assert len(first_client.calls) == 1
+    assert len(first_runner.calls) == 1

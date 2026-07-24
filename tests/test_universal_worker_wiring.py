@@ -9,8 +9,7 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from app.dingtalk_models import DingTalkConversation, DingTalkMessage
-from app.memory_connector_auth import MemoryConnectorAuthorizationRequired
-from app.memory_connector_client import MemoryWriteResult
+from app.codex_memory_write import CodexMemoryWriteAuthorizationRequired, MemoryWriteResult
 from app.store import AutoReplyStore
 from app.universal_consumer import UniversalConsumerOutcome, UniversalConsumerResult
 from app.universal_context import build_universal_context
@@ -128,30 +127,21 @@ class FakeLegacyCodex:
     runner = Runner()
 
 
-class FailingMemoryClient:
+class FailingMemoryWriteRunner:
     def __init__(self) -> None:
-        self.ready_calls = 0
         self.write_calls = 0
 
-    def ensure_ready_sync(self):
-        self.ready_calls += 1
-        raise MemoryConnectorAuthorizationRequired("login required")
-
-    def memory_write_sync(self, **kwargs):
+    def __call__(self, **kwargs):
         del kwargs
         self.write_calls += 1
-        raise MemoryConnectorAuthorizationRequired("login required")
+        raise CodexMemoryWriteAuthorizationRequired("login required")
 
 
-class RecordingMemoryClient:
+class RecordingMemoryWriteRunner:
     def __init__(self) -> None:
-        self.ready_calls = 0
         self.write_calls = []
 
-    def ensure_ready_sync(self):
-        self.ready_calls += 1
-
-    def memory_write_sync(self, **kwargs):
+    def __call__(self, **kwargs):
         self.write_calls.append(kwargs)
         return MemoryWriteResult(
             episode_uuid="episode-1",
@@ -256,7 +246,7 @@ def make_worker(
     trigger=None,
     planner=None,
     dws_ready=True,
-    memory_client=None,
+    memory_write_runner=None,
     dry_run=False,
 ):
     monkeypatch.setattr("app.worker.send_macos_notification", lambda **_: None)
@@ -269,7 +259,7 @@ def make_worker(
         codex=FakeLegacyCodex(),
         dry_run=dry_run,
         now_provider=fixed_now,
-        memory_client=memory_client,
+        memory_write_runner=memory_write_runner,
         universal_planner=planner or RecordingPlanner(no_reply_plan()),
     )
     return worker, trigger
@@ -486,15 +476,15 @@ def test_dws_auth_blocks_before_planner_without_starting_login(tmp_path, monkeyp
 def test_memory_unavailable_does_not_block_memory_unrelated_plan(tmp_path, monkeypatch):
     monkeypatch.setenv("CEO_UNIVERSAL_CONSUMER", "1")
     planner = RecordingPlanner(no_reply_plan())
-    memory = FailingMemoryClient()
+    memory = FailingMemoryWriteRunner()
     worker, trigger = make_worker(
-        tmp_path, monkeypatch, planner=planner, memory_client=memory
+        tmp_path, monkeypatch, planner=planner, memory_write_runner=memory
     )
     enqueue(worker, trigger)
 
     assert worker.consume_once(max_tasks=1) == 1
     assert len(planner.calls) == 1
-    assert memory.ready_calls == 0
+    assert memory.write_calls == 0
 
 
 def test_memory_write_authorization_failure_does_not_block_reply_task(
@@ -502,9 +492,9 @@ def test_memory_write_authorization_failure_does_not_block_reply_task(
 ):
     monkeypatch.setenv("CEO_UNIVERSAL_CONSUMER", "1")
     planner = RecordingPlanner(reply_then_memory_plan(dependencies=("dws",)))
-    memory = FailingMemoryClient()
+    memory = FailingMemoryWriteRunner()
     worker, trigger = make_worker(
-        tmp_path, monkeypatch, planner=planner, memory_client=memory
+        tmp_path, monkeypatch, planner=planner, memory_write_runner=memory
     )
     task = enqueue(worker, trigger)
 
@@ -514,7 +504,6 @@ def test_memory_write_authorization_failure_does_not_block_reply_task(
     assert stored.status == "done"
     assert stored.error == ""
     assert len(planner.calls) == 1
-    assert memory.ready_calls == 0
     assert memory.write_calls == 1
     assert worker.dws.auth_login_starts == 0
     attempts = worker.store.list_reply_attempts(limit=10)
@@ -775,9 +764,9 @@ def test_default_universal_planner_uses_native_codex_runner_and_15_minute_floor(
 def test_active_plan_resumes_memory_after_reply_was_sent(tmp_path, monkeypatch):
     monkeypatch.setenv("CEO_UNIVERSAL_CONSUMER", "1")
     planner = RecordingPlanner(reply_then_memory_plan())
-    memory = RecordingMemoryClient()
+    memory = RecordingMemoryWriteRunner()
     worker, trigger = make_worker(
-        tmp_path, monkeypatch, planner=planner, memory_client=memory
+        tmp_path, monkeypatch, planner=planner, memory_write_runner=memory
     )
     task = enqueue(worker, trigger)
     context = build_universal_context(

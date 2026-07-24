@@ -715,7 +715,6 @@ def create_worker(settings: WorkerSettings) -> DingTalkAutoReplyWorker:
         dry_run=settings.dry_run,
         style_profile=style_profile,
         style_records=style_records,
-        memory_client=_create_memory_connector_client(settings.workspace),
     )
     worker.oa_approval_handler = oa_approval_handler
     okr_source_kind = _okr_source_kind()
@@ -732,13 +731,6 @@ def create_worker(settings: WorkerSettings) -> DingTalkAutoReplyWorker:
     else:
         worker.okr_live_source = UnconfiguredOkrLiveSource(OKR_SOURCE_KIND_ENV)
     return worker
-
-
-def _create_memory_connector_client(workspace: Path):
-    from app.codex_memory_client import CodexMcpMemoryClient
-
-    return CodexMcpMemoryClient(workspace=workspace)
-
 
 def _okr_source_kind() -> str:
     value = os.getenv(OKR_SOURCE_KIND_ENV, "dingteam_web").strip().casefold()

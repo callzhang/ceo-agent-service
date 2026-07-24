@@ -36,7 +36,6 @@ from app.cli import (
     run_audit_web_command,
 )
 from app.corpus import CorpusRecord, append_records
-from app.codex_memory_client import CodexMcpMemoryClient
 from app.dws_client import DwsError
 from app.store import AutoReplyStore
 from app.task_models import TaskAgentDecision, WorkItem
@@ -3738,13 +3737,11 @@ def test_create_worker_wires_store_dws_codex_and_dry_run(monkeypatch, tmp_path):
             dry_run,
             style_profile="",
             style_records=None,
-            memory_client=None,
         ):
             constructed["worker"] = self
             constructed["worker_args"] = (store, dws, codex, dry_run)
             constructed["style_profile"] = style_profile
             constructed["style_records"] = style_records
-            constructed["memory_client"] = memory_client
 
     monkeypatch.setattr(cli, "AutoReplyStore", FakeStore)
     monkeypatch.setattr(cli, "DwsClient", FakeDws)
@@ -3803,8 +3800,7 @@ def test_create_worker_wires_store_dws_codex_and_dry_run(monkeypatch, tmp_path):
     assert "先结论" in constructed["style_profile"]
     assert len(constructed["style_records"]) == 1
     assert constructed["style_records"][0].message_id == "style-msg-1"
-    assert isinstance(constructed["memory_client"], CodexMcpMemoryClient)
-    assert not hasattr(constructed["memory_client"], "direct_client")
+    assert "memory_client" not in constructed
 
 
 def test_run_once_command_calls_worker_once(monkeypatch, tmp_path):
