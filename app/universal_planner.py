@@ -216,6 +216,14 @@ class UniversalPlanner:
                 "names, or other raw payload ids as personnel_subject_user_id. If the "
                 "subject is the sender but no trusted user_id is available, leave "
                 "personnel_subject_user_id null and avoid concrete personnel claims.",
+                "Trusted task details in task context are read-only internal project "
+                "and TODO records from the service. When the sender asks about a "
+                "task, TODO, follow-up, owner, deadline, progress, status, blocker, "
+                "or task detail link, use this section as primary evidence. If "
+                "multiple task details are shown, choose the one best supported by "
+                "the conversation title, sender identity, message text, and match "
+                "reasons; ask a clarifying question only when the task still cannot "
+                "be identified reliably.",
                 example_prompt,
                 UNIVERSAL_PLAN_SCHEMA_HINT,
                 "Return only UniversalPlan JSON. Do not use Markdown fences or add "

@@ -17,9 +17,13 @@ action so realtime OKR retrieval, request creation, and acknowledgement remain
 durable and auditable.
 
 Before planning, the service freezes recoverable OA follow-up targets, full
-calendar invitation details and conflict results, and downloaded image paths.
-Planner tool-call proof is persisted with the plan and copied into action audit
-events; tool inputs and outputs are omitted from that proof.
+calendar invitation details and conflict results, downloaded image paths, and
+read-only task details relevant to the conversation, sender, and trigger text.
+The task context includes matching project fields, TODO descriptions, owners,
+deadlines, recent updates, follow-ups, and linked DingTalk Todo state so the
+planner can answer task-status questions without guessing from chat snippets
+alone. Planner tool-call proof is persisted with the plan and copied into action
+audit events; tool inputs and outputs are omitted from that proof.
 
 The universal observability projection never exposes the stored plan JSON, action target, action payload, canonical payload, or action result JSON.
 

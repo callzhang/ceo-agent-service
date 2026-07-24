@@ -7161,6 +7161,33 @@ class AutoReplyStore:
         with self._connect() as db:
             return [WorkTodo.model_validate(dict(row)) for row in db.execute(query, args)]
 
+    def list_work_project_ids_for_todo_owner(
+        self,
+        owner_user_id: str,
+        *,
+        project_statuses: tuple[str, ...] = ("active", "waiting"),
+        limit: int = 500,
+    ) -> set[int]:
+        owner_user_id = owner_user_id.strip()
+        if not owner_user_id or limit <= 0:
+            return set()
+        placeholders = ",".join("?" for _ in project_statuses)
+        query = f"""
+            select distinct todos.project_id
+            from work_todos todos
+            join work_projects projects on projects.id=todos.project_id
+            where todos.owner_user_id=?
+              and projects.status in ({placeholders})
+            order by projects.last_activity_at desc, projects.id desc
+            limit ?
+        """
+        with self._connect() as db:
+            rows = db.execute(
+                query,
+                [owner_user_id, *project_statuses, limit],
+            ).fetchall()
+            return {int(row["project_id"]) for row in rows}
+
     @staticmethod
     def _normalize_dingtalk_todo_link_status(status: object) -> str:
         return DingTalkTodoLinkStatus(str(status)).value

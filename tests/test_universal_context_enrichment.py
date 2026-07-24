@@ -219,6 +219,7 @@ def test_universal_worker_freezes_oa_follow_up_target_from_existing_resolvers(
     monkeypatch.setattr(worker, "_oa_follow_up_url_override", attempt_override)
     monkeypatch.setattr(worker, "_calendar_invite_context", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(worker, "_collect_image_paths", lambda *_: ([], []))
+    monkeypatch.setattr(worker, "_oa_approval_detail_text", lambda *_: "OA详情")
     monkeypatch.setattr(worker, "_universal_consumer", lambda: consumer)
 
     worker._process_universal_queued_task(
@@ -374,6 +375,70 @@ def test_universal_worker_injects_service_read_file_body_before_planning(
     assert "必须据此处理，不要只看文件名" in trusted.content
     assert "owner 决策链过长" in trusted.content
     assert file_reference not in consumer.contexts[0].context_messages
+
+
+def test_universal_worker_injects_task_details_before_planning(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    worker = make_worker(tmp_path)
+    project_id = worker.store.create_work_project(
+        title="技术部招聘",
+        category="recruiting",
+        status="active",
+        priority="P1",
+        risk_level="medium",
+        owner_user_id="sender-user-1",
+        owner_name="宇航",
+        current_state="候选人评估中",
+        next_step="确认 Colin 复试结论",
+        source_conversations_json=json.dumps(
+            [{"id": "cid-1", "title": "测试群"}],
+            ensure_ascii=False,
+        ),
+    )
+    todo_id = worker.store.create_work_todo(
+        project_id=project_id,
+        title="评估 Colin 售前解决方案候选人",
+        description="确认候选人的技术面、售前方案能力和下一轮安排。",
+        owner_user_id="sender-user-1",
+        owner_name="宇航",
+        priority="P1",
+        deadline_at="2026-07-25 18:00:00",
+        next_follow_up_at="2026-07-24 15:00:00",
+        follow_up_question="Colin 的复试结论定了吗？",
+    )
+    follow_up_id = worker.store.create_follow_up_draft(
+        project_id=project_id,
+        todo_id=todo_id,
+        owner_user_id="sender-user-1",
+        owner_name="宇航",
+        target_conversation_id="cid-1",
+        target_kind="group",
+        question_text="Colin 的复试结论定了吗？",
+        scheduled_at="2026-07-24 15:00:00",
+    )
+    trigger = message("这个任务现在是什么状态？")
+    consumer = CapturingConsumer()
+    monkeypatch.setattr(worker, "_calendar_invite_context", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(worker, "_read_calendar_linked_documents", lambda *_: [])
+    monkeypatch.setattr(worker, "_collect_image_paths", lambda *_: ([], []))
+    monkeypatch.setattr(worker, "_universal_consumer", lambda: consumer)
+
+    worker._process_universal_queued_task(
+        conversation(),
+        reply_task(trigger),
+        trigger,
+        [trigger],
+        [trigger],
+    )
+
+    trusted_task_context = consumer.contexts[0].trusted_task_context
+    payload = json.loads(trusted_task_context)
+    assert payload[0]["project"]["id"] == project_id
+    assert payload[0]["todos"][0]["id"] == todo_id
+    assert payload[0]["todos"][0]["deadline_at"] == "2026-07-25 18:00:00"
+    assert payload[0]["todos"][0]["follow_ups"][0]["id"] == follow_up_id
+    assert "Trusted task details:" in consumer.contexts[0].render_for_agent()
 
 
 def test_universal_worker_freezes_image_content_hash_not_local_path(

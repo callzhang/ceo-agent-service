@@ -1,7 +1,12 @@
 import json
 
 from app.store import AutoReplyStore
-from app.task_retrieval import render_candidate_prompt, retrieve_project_candidates
+from app.task_retrieval import (
+    render_candidate_prompt,
+    render_project_task_details,
+    retrieve_project_candidates,
+    retrieve_project_task_details,
+)
 
 
 def test_retrieve_project_candidates_uses_summary_and_project_name(tmp_path):
@@ -132,3 +137,69 @@ def test_retrieve_project_candidates_returns_empty_for_empty_query_or_no_project
         )
         == []
     )
+
+
+def test_retrieve_project_task_details_expands_group_matched_project(tmp_path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    project_id = store.create_work_project(
+        title="技术部招聘",
+        category="recruiting",
+        status="active",
+        priority="P1",
+        risk_level="medium",
+        owner_user_id="hr-owner",
+        owner_name="Mina",
+        goal="招聘关键技术岗位",
+        background="技术部候选人推进。",
+        current_state="候选人评估中",
+        next_step="确认售前解决方案候选人复试结论",
+        source_conversations_json=json.dumps(
+            [{"id": "cid-hiring", "title": "技术部招聘群"}],
+            ensure_ascii=False,
+        ),
+    )
+    todo_id = store.create_work_todo(
+        project_id=project_id,
+        title="评估 Colin 售前解决方案候选人",
+        description="确认技术面、售前方案能力、薪资预期和下一轮安排。",
+        owner_user_id="hr-owner",
+        owner_name="Mina",
+        priority="P1",
+        deadline_at="2026-07-25 18:00:00",
+        next_follow_up_at="2026-07-24 15:00:00",
+        follow_up_question="Colin 的复试结论和下一步安排定了吗？",
+    )
+    follow_up_id = store.create_follow_up_draft(
+        project_id=project_id,
+        todo_id=todo_id,
+        owner_user_id="hr-owner",
+        owner_name="Mina",
+        target_conversation_id="cid-hiring",
+        target_kind="group",
+        question_text="Colin 的复试结论和下一步安排定了吗？",
+        scheduled_at="2026-07-24 15:00:00",
+    )
+    store.create_work_update(
+        project_id=project_id,
+        source_type="reply_attempt",
+        source_ref="123",
+        summary="新增 Colin 候选人评估 TODO",
+        changes_json=json.dumps({"todo_id": todo_id}, ensure_ascii=False),
+        confidence=0.91,
+    )
+
+    details = retrieve_project_task_details(
+        store,
+        query="这个任务现在是什么状态？",
+        conversation_id="cid-hiring",
+        owner_user_id="hr-owner",
+    )
+    rendered = render_project_task_details(details)
+    payload = json.loads(rendered)
+
+    assert payload[0]["project"]["id"] == project_id
+    assert "source_conversation_match" in payload[0]["match"]["reasons"]
+    assert payload[0]["todos"][0]["id"] == todo_id
+    assert payload[0]["todos"][0]["deadline_at"] == "2026-07-25 18:00:00"
+    assert payload[0]["todos"][0]["follow_ups"][0]["id"] == follow_up_id
+    assert payload[0]["recent_updates"][0]["summary"] == "新增 Colin 候选人评估 TODO"

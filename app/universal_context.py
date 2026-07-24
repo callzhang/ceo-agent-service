@@ -68,6 +68,7 @@ class UniversalTaskContext:
     trusted_calendar_organizer: str = ""
     trigger_create_time: str = ""
     trusted_document_url: str = ""
+    trusted_task_context: str = ""
     image_paths: tuple[str, ...] = ()
     image_sha256s: tuple[str, ...] = ()
 
@@ -128,6 +129,8 @@ class UniversalTaskContext:
                     else "none"
                 ),
                 "Trusted document URL: " + (self.trusted_document_url or "none"),
+                "Trusted task details: "
+                + (self.trusted_task_context or "none"),
                 f"Attached image count: {len(self.image_paths)}",
                 "Attached image SHA-256: "
                 + (", ".join(self.image_sha256s) if self.image_sha256s else "none"),
@@ -173,6 +176,7 @@ def canonical_universal_context_json(context: UniversalTaskContext) -> str:
         "trusted_calendar_organizer",
         "trigger_create_time",
         "trusted_document_url",
+        "trusted_task_context",
     ):
         if not isinstance(getattr(context, field_name), str):
             raise TypeError(f"{field_name} must be a str")
@@ -260,6 +264,7 @@ def canonical_universal_context_json(context: UniversalTaskContext) -> str:
             "trusted_calendar_organizer": context.trusted_calendar_organizer,
             "trigger_create_time": context.trigger_create_time,
             "trusted_document_url": context.trusted_document_url,
+            "trusted_task_context": context.trusted_task_context,
             "image_sha256s": list(context.image_sha256s),
         },
         ensure_ascii=False,
@@ -286,6 +291,7 @@ def build_universal_context(
     trusted_calendar_event_id_override: str = "",
     trusted_calendar_response_status_override: str = "",
     trusted_calendar_organizer_override: str = "",
+    trusted_task_context: str = "",
     image_paths: tuple[str, ...] = (),
     image_sha256s: tuple[str, ...] = (),
 ) -> UniversalTaskContext:
@@ -349,6 +355,7 @@ def build_universal_context(
         trusted_calendar_organizer=trusted_calendar_organizer,
         trigger_create_time=trigger.create_time,
         trusted_document_url=trusted_document_url,
+        trusted_task_context=trusted_task_context,
         image_paths=image_paths,
         image_sha256s=image_sha256s,
     )

@@ -78,6 +78,7 @@ def test_maps_metadata_and_renders_trigger_and_recent_message() -> None:
         "Trusted mail target: none\n"
         "Trusted calendar target: none\n"
         "Trusted document URL: none\n"
+        "Trusted task details: none\n"
         "Attached image count: 0\n"
         "Attached image SHA-256: none\n"
             "Required dependencies: dws\n"
@@ -401,6 +402,20 @@ def test_trusted_mail_and_calendar_targets_change_canonical_identity() -> None:
     assert universal_context_sha256(trusted_calendar) != universal_context_sha256(context)
 
 
+def test_trusted_task_context_is_rendered_and_changes_canonical_identity() -> None:
+    context = build_context([])
+    trusted = replace(
+        context,
+        trusted_task_context='[{"project":{"id":297,"title":"技术部招聘"}}]',
+    )
+
+    rendered = trusted.render_for_agent()
+
+    assert "Trusted task details: " in rendered
+    assert "技术部招聘" in rendered
+    assert universal_context_sha256(trusted) != universal_context_sha256(context)
+
+
 def test_build_normalizes_numeric_mail_and_calendar_ids_from_real_nested_payloads() -> None:
     trigger = make_message("trigger-capabilities", "System", "Action notification")
     trigger.raw_payload = {
@@ -541,6 +556,7 @@ def test_canonical_context_json_covers_every_field_with_stable_order() -> None:
             "trusted_calendar_response_status": "",
             "trusted_calendar_organizer": "",
             "trusted_document_url": "",
+            "trusted_task_context": "",
         },
         ensure_ascii=False,
         sort_keys=True,

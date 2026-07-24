@@ -100,6 +100,10 @@ from app.store import (
     ReplyTask,
 )
 from app.task_models import WorkItem
+from app.task_retrieval import (
+    render_project_task_details,
+    retrieve_project_task_details,
+)
 from app.universal_consumer import (
     UniversalConsumerOrchestrator,
     UniversalConsumerOutcome,
@@ -822,6 +826,11 @@ class DingTalkAutoReplyWorker:
                     ),
                 )
             )
+        trusted_task_context = self._trusted_task_context_for_universal(
+            conversation,
+            trigger,
+            planner_context_messages,
+        )
         context = build_universal_context(
             conversation=conversation,
             trigger=trigger,
@@ -842,11 +851,35 @@ class DingTalkAutoReplyWorker:
             trusted_calendar_organizer_override=(
                 calendar_context.invite.organizer if calendar_context else ""
             ),
+            trusted_task_context=trusted_task_context,
             image_paths=tuple(str(path) for path in image_paths),
             image_sha256s=image_sha256s,
         )
         result = self._universal_consumer().process(context)
         return self._map_universal_consumer_result(result, trigger)
+
+    def _trusted_task_context_for_universal(
+        self,
+        conversation: DingTalkConversation,
+        trigger: DingTalkMessage,
+        planner_context_messages: list[DingTalkMessage],
+    ) -> str:
+        query = "\n".join(
+            [
+                conversation.title,
+                trigger.sender_name,
+                trigger.content,
+                *[message.content for message in planner_context_messages[-10:]],
+            ]
+        )
+        details = retrieve_project_task_details(
+            self.store,
+            query=query,
+            conversation_id=conversation.open_conversation_id,
+            owner_user_id=trigger.sender_user_id or "",
+            limit=3,
+        )
+        return render_project_task_details(details)
 
     def _with_resolved_sender_user_id_for_universal(
         self, message: DingTalkMessage

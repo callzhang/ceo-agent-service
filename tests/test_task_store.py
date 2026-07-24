@@ -960,6 +960,44 @@ def test_list_work_todo_dingtalk_links_for_todo_returns_all_matches(
     assert [link.id for link in links] == link_ids
 
 
+def test_list_work_project_ids_for_todo_owner_filters_active_projects(
+    tmp_path: Path,
+):
+    store = _store(tmp_path)
+    active_project_id = store.create_work_project(
+        title="技术部招聘",
+        category="recruiting",
+        status="active",
+        priority="P1",
+        risk_level="medium",
+    )
+    archived_project_id = store.create_work_project(
+        title="历史招聘",
+        category="recruiting",
+        status="archived",
+        priority="P2",
+        risk_level="low",
+    )
+    store.create_work_todo(
+        project_id=active_project_id,
+        title="评估 Colin",
+        owner_user_id="owner-1",
+        owner_name="Mina",
+        priority="P1",
+    )
+    store.create_work_todo(
+        project_id=archived_project_id,
+        title="归档候选人",
+        owner_user_id="owner-1",
+        owner_name="Mina",
+        priority="P2",
+    )
+
+    assert store.list_work_project_ids_for_todo_owner("owner-1") == {
+        active_project_id
+    }
+
+
 def test_operation_logs_sort_follow_up_by_operation_time_not_schedule(tmp_path: Path):
     store = _store(tmp_path)
     project_id = store.create_work_project(
