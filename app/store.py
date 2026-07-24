@@ -6146,6 +6146,7 @@ class AutoReplyStore:
         query_text: str = "",
         kinds: tuple[str, ...] | None = None,
         reply_channels: tuple[str, ...] | None = None,
+        object_types: tuple[str, ...] | None = None,
         created_since: str = "",
     ) -> list[HistoryItem]:
         query, args = self._history_items_query(
@@ -6153,6 +6154,7 @@ class AutoReplyStore:
             query_text=query_text,
             kinds=kinds,
             reply_channels=reply_channels,
+            object_types=object_types,
             created_since=created_since,
         )
         query = f"{query} order by created_at desc, source_id desc, kind desc"
@@ -6186,6 +6188,7 @@ class AutoReplyStore:
         query_text: str = "",
         kinds: tuple[str, ...] | None = None,
         reply_channels: tuple[str, ...] | None = None,
+        object_types: tuple[str, ...] | None = None,
         created_since: str = "",
     ) -> int:
         query, args = self._history_items_query(
@@ -6193,6 +6196,7 @@ class AutoReplyStore:
             query_text=query_text,
             kinds=kinds,
             reply_channels=reply_channels,
+            object_types=object_types,
             created_since=created_since,
         )
         with self._connect() as db:
@@ -6206,12 +6210,18 @@ class AutoReplyStore:
         query_text: str,
         kinds: tuple[str, ...] | None,
         reply_channels: tuple[str, ...] | None,
+        object_types: tuple[str, ...] | None,
         created_since: str,
     ) -> tuple[str, list[object]]:
         query = """
             with history_items as (
                 select
                     'reply' as kind,
+                    case
+                        when action='oa_approval' then 'approval'
+                        when channel='wechat' then 'wechat'
+                        else 'replay'
+                    end as object_type,
                     id as source_id,
                     conversation_title as source_title,
                     trigger_sender as source_actor,
@@ -6258,6 +6268,7 @@ class AutoReplyStore:
                 union all
                 select
                     'meeting' as kind,
+                    'meeting' as object_type,
                     runs.id as source_id,
                     jobs.title as source_title,
                     'Meeting Alignment Agent' as source_actor,
@@ -6302,6 +6313,7 @@ class AutoReplyStore:
                 union all
                 select
                     'task' as kind,
+                    'task' as object_type,
                     updates.id as source_id,
                     projects.title as source_title,
                     'Task Agent' as source_actor,
@@ -6330,6 +6342,7 @@ class AutoReplyStore:
                 union all
                 select
                     'task' as kind,
+                    'task' as object_type,
                     drafts.id as source_id,
                     projects.title as source_title,
                     'Follow-up' as source_actor,
@@ -6388,6 +6401,10 @@ class AutoReplyStore:
             placeholders = ",".join("?" for _ in reply_channels)
             filters.append(f"(kind != 'reply' or channel in ({placeholders}))")
             args.extend(reply_channels)
+        if object_types:
+            placeholders = ",".join("?" for _ in object_types)
+            filters.append(f"object_type in ({placeholders})")
+            args.extend(object_types)
         if created_since.strip():
             filters.append("created_at >= ?")
             args.append(created_since)

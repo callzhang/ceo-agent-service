@@ -599,6 +599,20 @@ def test_history_search_object_type_checkboxes_control_results(tmp_path: Path):
         sensitivity_kind="general",
         send_status="sent",
     )
+    store.record_reply_attempt(
+        conversation_id="cid-approval-history",
+        conversation_title="Approval Search Group",
+        trigger_message_id="msg-approval-history",
+        trigger_sender="Mina",
+        trigger_text="风险预算审批需要确认",
+        action="oa_approval",
+        sensitivity_kind="general",
+        oa_process_instance_id="proc-history-filter",
+        oa_task_id="task-history-filter",
+        oa_action="同意",
+        oa_remark="风险预算符合审批要求",
+        send_status="sent",
+    )
     store.enqueue_reply_task(
         conversation_id="cid-task",
         conversation_title="Task Search Group",
@@ -626,9 +640,12 @@ def test_history_search_object_type_checkboxes_control_results(tmp_path: Path):
         query_embedding=[1.0, 0.0],
     )
     assert 'name="object_type" value="replay" checked' in default_html
+    assert 'name="object_type" value="approval" checked' in default_html
+    assert ">审批</span>" in default_html
     assert 'name="object_type" value="task" checked' in default_html
     assert 'name="object_type" value="meeting" checked' in default_html
     assert "History Search Group" in default_html
+    assert "Approval Search Group" in default_html
     assert "Task Search Group" in default_html
     assert "相似 Codex sessions" in default_html
 
@@ -639,8 +656,20 @@ def test_history_search_object_type_checkboxes_control_results(tmp_path: Path):
         query_embedding=[1.0, 0.0],
     )
     assert "History Search Group" in replay_only_html
+    assert "Approval Search Group" not in replay_only_html
     assert "Task Search Group" not in replay_only_html
     assert "相似 Codex sessions" not in replay_only_html
+
+    approval_only_html = render_attempt_list(
+        store,
+        query="风险预算",
+        search_object_types=("approval",),
+        query_embedding=[1.0, 0.0],
+    )
+    assert "Approval Search Group" in approval_only_html
+    assert "History Search Group" not in approval_only_html
+    assert "Task Search Group" not in approval_only_html
+    assert "相似 Codex sessions" not in approval_only_html
 
     meeting_only_html = render_attempt_list(
         store,
@@ -672,6 +701,7 @@ def test_history_search_object_type_checkboxes_control_results(tmp_path: Path):
     )
     assert 'name="object_type" value="replay"' in object_type_html
     assert 'name="object_type" value="replay" checked' not in object_type_html
+    assert 'name="object_type" value="approval" checked' not in object_type_html
     assert 'name="object_type" value="task" checked' not in object_type_html
     assert 'name="object_type" value="meeting" checked' in object_type_html
 

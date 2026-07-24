@@ -29,6 +29,7 @@ def safe_observability_error(value: str, *, limit: int = 500) -> str:
 
 class HistoryItem(BaseModel):
     kind: Literal["reply", "meeting", "task"]
+    object_type: Literal["replay", "wechat", "approval", "meeting", "task"]
     source_id: int
     source_title: str
     source_actor: str

@@ -296,7 +296,7 @@ http://127.0.0.1:8765/
 
 常用页面：
 
-- `/`：回复历史和待处理任务
+- `/`：回复历史和待处理任务；“检索对象”可分别筛选普通钉钉回复、微信、审批、task 和 meeting
 - `/tasks`：work projects、状态、category filter、Priority/Risk 排序、TODO checklist、实时全文检索和分页
 - `/tasks/{project_id}`：单个 work project 详情、facts、TODO DDL/owner、更新记录和 follow-up 记录
 - `/attempts/{id}`：单次处理详情

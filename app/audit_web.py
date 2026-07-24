@@ -545,7 +545,7 @@ _DINGTALK_BRIDGE_STATUS: deque[dict[str, str]] = deque(maxlen=20)
 DEFAULT_ATTEMPT_LIST_LIMIT = 20
 ATTEMPT_LIST_LIMIT_OPTIONS = (20, 50, 100)
 HISTORY_TYPE_FILTERS = ("sent", "reacted", "skipped", "failed", "done")
-HISTORY_SEARCH_OBJECT_TYPES = ("replay", "wechat", "task", "meeting")
+HISTORY_SEARCH_OBJECT_TYPES = ("replay", "wechat", "approval", "task", "meeting")
 TASK_PAGE_SIZE_OPTIONS = (20, 50, 100)
 DEFAULT_TASK_PAGE_SIZE = 20
 LOG_PAGE_SIZE_OPTIONS = (20, 50, 100)
@@ -2898,6 +2898,7 @@ def _history_search_object_type_checkboxes(
     labels = {
         "replay": "replay",
         "wechat": "wechat",
+        "approval": "审批",
         "task": "task",
         "meeting": "meeting",
     }
@@ -2918,32 +2919,6 @@ def _history_search_object_type_checkboxes(
         f"{''.join(inputs)}"
         "</fieldset>"
     )
-
-
-def _history_kinds_for_search_objects(
-    search_object_types: tuple[str, ...],
-) -> tuple[str, ...]:
-    kinds: list[str] = []
-    if "replay" in search_object_types or "wechat" in search_object_types:
-        kinds.append("reply")
-    if "task" in search_object_types:
-        kinds.append("task")
-    if "meeting" in search_object_types:
-        kinds.append("meeting")
-    return tuple(kinds)
-
-
-def _history_reply_channels_for_search_objects(
-    search_object_types: tuple[str, ...],
-) -> tuple[str, ...] | None:
-    selected = set(search_object_types)
-    if "replay" in selected and "wechat" in selected:
-        return None
-    if "wechat" in selected:
-        return ("wechat",)
-    if "replay" in selected:
-        return ("dingtalk",)
-    return None
 
 
 def _history_limit_select(limit: int | None) -> str:
@@ -3145,9 +3120,7 @@ def render_attempt_list(
     query = query.strip()
     type_filters = _history_type_filters(type_filter)
     object_types = _history_search_object_types(search_object_types)
-    history_kinds = _history_kinds_for_search_objects(object_types)
-    reply_channels = _history_reply_channels_for_search_objects(object_types)
-    search_history_items = bool(history_kinds)
+    search_history_items = bool(object_types)
     search_reply_tasks = "task" in object_types
     search_codex_sessions = "meeting" in object_types
     send_status_filters = type_filters or None
@@ -3155,8 +3128,7 @@ def render_attempt_list(
         store.count_history_items(
             send_statuses=send_status_filters,
             query_text=query,
-            kinds=history_kinds,
-            reply_channels=reply_channels,
+            object_types=object_types,
         )
         if search_history_items
         else 0
@@ -3190,8 +3162,7 @@ def render_attempt_list(
             offset=offset,
             send_statuses=send_status_filters,
             query_text=query,
-            kinds=history_kinds,
-            reply_channels=reply_channels,
+            object_types=object_types,
         )
         if search_history_items
         else []
