@@ -211,10 +211,15 @@ The worker still preprocesses:
 OA detail collection extracts document and attachment references from both form
 fields and approval operation records, including applicant comments. Those OA
 references are promoted into the same top-level material-reference section used
-by ordinary messages. A folder reference is first inspected with `dws doc info`;
-the agent then lists its child nodes and reads each relevant item with the
-read-only command appropriate to that node type before making an approval
-judgment.
+by ordinary messages. For DingTalk document references, the service resolves the
+material through its authenticated read-only DWS client before planning. Folder
+references are expanded into their child nodes; online documents, online sheets,
+and downloaded XLSX files are converted to bounded text and stored as trusted
+`resolved_content`. The planner consumes that body directly and does not rerun
+the DWS command from its restricted shell. Read failures remain explicit on the
+individual material so an approval cannot mistake missing evidence for an empty
+document. Externally visible approval and comment actions still run only through
+the service executor.
 
 ## Mail review and reply
 

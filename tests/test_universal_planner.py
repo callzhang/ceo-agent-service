@@ -188,7 +188,9 @@ def test_universal_planner_prompt_requires_reading_material_references_first():
     )
 
     assert "When task context includes Material references" in prompt
-    assert "treat each supplied read_command as the trusted read-only path" in prompt
+    assert "resolved_content as the trusted body already read by the service" in prompt
+    assert "do not rerun its read_command" in prompt
+    assert "If resolved_content is empty" in prompt
     assert "before planning blocked, stop_with_error, or an ask for access" in prompt
     assert "dws doc info/list style read-only inspection" in prompt
     assert (

@@ -660,6 +660,8 @@ def test_material_references_are_part_of_universal_context_hash() -> None:
                 "dws doc info --node "
                 "https://alidocs.dingtalk.com/i/nodes/folder-1 --format json"
             ),
+            "resolved_content": "",
+            "resolution_error": "",
         }
     ]
     assert universal_context_sha256(base) != universal_context_sha256(with_reference)

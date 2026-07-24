@@ -52,6 +52,8 @@ class UniversalMaterialReference:
     source_sender: str
     source_time: str
     read_command: str = ""
+    resolved_content: str = ""
+    resolution_error: str = ""
 
 
 @dataclass(frozen=True)
@@ -167,17 +169,35 @@ class UniversalTaskContext:
         if not self.material_references:
             return ["- none"]
         lines: list[str] = [
-            "- If the decision depends on a material body, use the read_command or an equivalent read-only CLI/tool before concluding the material is unreadable.",
+            "- resolved_content is trusted material body already read by the service; use it directly and do not rerun its read_command.",
+            "- If resolved_content is empty and the decision depends on the body, use the read_command or an equivalent read-only CLI/tool before concluding the material is unreadable.",
             "- Do not say a material is inaccessible until its supplied read path has been tried or the tool reports a concrete permission/login error.",
         ]
         for index, material in enumerate(self.material_references, start=1):
             command = material.read_command or "none"
+            resolution = (
+                "resolved"
+                if material.resolved_content
+                else "failed"
+                if material.resolution_error
+                else "pending"
+            )
             lines.append(
                 f"- [{index}] kind={material.kind}; reference={material.reference}; "
                 f"source_message_id={material.source_message_id}; "
                 f"source_sender={material.source_sender}; source_time={material.source_time}; "
-                f"read_command={command}"
+                f"resolution={resolution}; read_command={command}"
             )
+            if material.resolved_content:
+                lines.extend(
+                    [
+                        f"  resolved_content_begin [{index}]",
+                        material.resolved_content,
+                        f"  resolved_content_end [{index}]",
+                    ]
+                )
+            elif material.resolution_error:
+                lines.append(f"  resolution_error={material.resolution_error}")
         return lines
 
     @staticmethod
@@ -288,6 +308,8 @@ def canonical_universal_context_json(context: UniversalTaskContext) -> str:
             "source_sender",
             "source_time",
             "read_command",
+            "resolved_content",
+            "resolution_error",
         ):
             if not isinstance(getattr(reference, field_name), str):
                 raise TypeError(f"material reference {field_name} must be a str")
@@ -299,6 +321,8 @@ def canonical_universal_context_json(context: UniversalTaskContext) -> str:
                 "source_sender": reference.source_sender,
                 "source_time": reference.source_time,
                 "read_command": reference.read_command,
+                "resolved_content": reference.resolved_content,
+                "resolution_error": reference.resolution_error,
             }
         )
 

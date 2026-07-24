@@ -200,8 +200,9 @@ class UniversalPlanner:
                 "not run mutating MCP or CLI operations; service executors own all "
                 "writes.",
                 "When task context includes Material references, treat each supplied "
-                "read_command as the trusted read-only path for that material. If "
-                "your decision depends on the material body, use that read_command "
+                "resolved_content as the trusted body already read by the service; "
+                "do not rerun its read_command. If resolved_content is empty and "
+                "your decision depends on the material body, use the supplied read_command "
                 "or an equivalent read-only CLI/tool before planning blocked, "
                 "stop_with_error, or an ask for access. Do not say a material link "
                 "is inaccessible until the supplied read path has been tried or the "

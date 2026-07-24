@@ -447,6 +447,130 @@ def test_universal_worker_promotes_oa_material_references_into_planner_context(
     )
 
 
+def test_universal_worker_resolves_oa_folder_material_before_planning(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    folder_url = (
+        "https://alidocs.dingtalk.com/i/nodes/"
+        "NZQYprEoWoEOXajDiBrvmqyEJ1waOeDk"
+    )
+
+    class FolderMaterialDws:
+        dws_bin = "dws"
+
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, str]] = []
+
+        def doc_info(self, node: str) -> dict[str, object]:
+            self.calls.append(("doc_info", node))
+            return {
+                "name": "立项信息",
+                "nodeType": "folder",
+            }
+
+        def list_doc_nodes(
+            self,
+            workspace_id: str | None = None,
+            folder_id: str | None = None,
+            page_token: str = "",
+        ) -> dict[str, object]:
+            del workspace_id, page_token
+            self.calls.append(("list_doc_nodes", folder_id or ""))
+            return {
+                "nodes": [
+                    {
+                        "name": "项目执行",
+                        "nodeId": "doc-project",
+                        "nodeType": "file",
+                        "contentType": "ALIDOC",
+                        "extension": "adoc",
+                    },
+                    {
+                        "name": "投前计划",
+                        "nodeId": "sheet-plan",
+                        "nodeType": "file",
+                        "contentType": "ALIDOC",
+                        "extension": "axls",
+                    },
+                ]
+            }
+
+        def read_doc(self, node: str) -> dict[str, object]:
+            self.calls.append(("read_doc", node))
+            return {"markdown": "执行范围：3D OD、OCC、4D车道线"}
+
+        def run_json(self, command: list[str]) -> dict[str, object]:
+            self.calls.append(("run_json", " ".join(command)))
+            return {
+                "cells": [
+                    [{"value": "日期"}, {"value": "项目类型"}],
+                    [{"value": "2026/7/1"}, {"value": "泊车 OD-3D"}],
+                ]
+            }
+
+    material_dws = FolderMaterialDws()
+    worker = make_worker(tmp_path)
+    worker.dws = material_dws
+    oa_url = (
+        "https://aflow.dingtalk.com/detail?"
+        "procInstId=proc-1&taskId=task-1"
+    )
+    trigger = message(
+        f"[Ding]贾金鹏提醒您审批他的项目申请 {oa_url}",
+        single_chat=True,
+    )
+    consumer = CapturingConsumer()
+    monkeypatch.setattr(worker, "_calendar_invite_context", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(worker, "_collect_image_paths", lambda *_: ([], []))
+    monkeypatch.setattr(
+        worker,
+        "_oa_approval_detail_text",
+        lambda *_: json.dumps(
+            {
+                "process_instance_id": "proc-1",
+                "oa_material_references": [
+                    {
+                        "kind": "dingtalk_doc",
+                        "reference": folder_url,
+                        "source": "openapi_detail.operation_records",
+                        "field_name": "ADD_REMARK",
+                        "read_command": (
+                            f"dws doc info --node {shlex.quote(folder_url)} --format json"
+                        ),
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+    )
+    monkeypatch.setattr(worker, "_universal_consumer", lambda: consumer)
+
+    worker._process_universal_queued_task(
+        conversation(single_chat=True),
+        reply_task(trigger, oa_url=oa_url),
+        trigger,
+        [trigger],
+        [trigger],
+    )
+
+    reference = consumer.contexts[0].material_references[0]
+    assert reference.resolution_error == ""
+    assert "文件夹：立项信息" in reference.resolved_content
+    assert "项目执行" in reference.resolved_content
+    assert "执行范围：3D OD、OCC、4D车道线" in reference.resolved_content
+    assert "投前计划" in reference.resolved_content
+    assert "2026/7/1\t泊车 OD-3D" in reference.resolved_content
+    assert material_dws.calls == [
+        ("doc_info", folder_url),
+        ("list_doc_nodes", folder_url),
+        ("read_doc", "doc-project"),
+        (
+            "run_json",
+            "dws sheet +read --node sheet-plan --format json",
+        ),
+    ]
+
+
 def test_default_material_read_command_shell_quotes_unsafe_references() -> None:
     unsafe_doc_url = "https://alidocs.dingtalk.com/i/nodes/abc;touch /tmp/pwn"
     unsafe_minutes_id = "minutes-1;touch /tmp/pwn"

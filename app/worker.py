@@ -7,13 +7,16 @@ import shlex
 import shutil
 import time
 import urllib.request
+import zipfile
 from collections.abc import Callable
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
+from io import BytesIO
 from pathlib import Path
 from typing import Any, TypeVar
 from urllib.parse import parse_qs, quote, unquote, urlparse, urlsplit, urlunsplit
+from xml.etree import ElementTree as ET
 
 from app.codex_decision import (
     DWS_TRANSIENT_DEPENDENCY_UNAVAILABLE_PREFIX,
@@ -414,6 +417,10 @@ MESSAGE_RECOVERY_INTERVAL = message_recovery_interval()
 FAST_PATH_UNREAD_BACKOFF = fast_path_unread_backoff_duration()
 SINGLE_CHAT_READ_RECOVERY_WINDOW = single_chat_read_recovery_window()
 SINGLE_CHAT_READ_RECOVERY_LIMIT = single_chat_read_recovery_limit()
+UNIVERSAL_MATERIAL_CONTENT_LIMIT = 60_000
+UNIVERSAL_MATERIAL_FOLDER_CHILD_LIMIT = 20
+UNIVERSAL_MATERIAL_SHEET_ROW_LIMIT = 200
+UNIVERSAL_MATERIAL_SHEET_COLUMN_LIMIT = 50
 
 
 @dataclass(frozen=True)
@@ -800,6 +807,9 @@ class DingTalkAutoReplyWorker:
                     oa_prompt_message,
                 ),
             )
+        material_references = self._resolve_universal_material_references(
+            material_references
+        )
         trusted_task_context = self._trusted_task_context_for_universal(
             conversation,
             trigger,
@@ -905,6 +915,174 @@ class DingTalkAutoReplyWorker:
                 seen.add(key)
                 merged.append(reference)
         return tuple(merged)
+
+    def _resolve_universal_material_references(
+        self,
+        references: tuple[UniversalMaterialReference, ...],
+    ) -> tuple[UniversalMaterialReference, ...]:
+        resolved: list[UniversalMaterialReference] = []
+        for reference in references:
+            if reference.kind != "dingtalk_doc":
+                resolved.append(reference)
+                continue
+            try:
+                content = self._read_universal_dingtalk_material(reference.reference)
+            except Exception as exc:
+                resolved.append(
+                    replace(
+                        reference,
+                        resolution_error=f"{type(exc).__name__}: {exc}"[:2000],
+                    )
+                )
+                continue
+            resolved.append(
+                replace(
+                    reference,
+                    resolved_content=content[:UNIVERSAL_MATERIAL_CONTENT_LIMIT],
+                    resolution_error="",
+                )
+            )
+        return tuple(resolved)
+
+    def _read_universal_dingtalk_material(self, reference: str) -> str:
+        info = self.dws.doc_info(reference)
+        if str(info.get("nodeType") or "").lower() != "folder":
+            return self._read_universal_dingtalk_node(info, reference)
+
+        folder_name = str(info.get("name") or "未命名文件夹")
+        listing = self.dws.list_doc_nodes(folder_id=reference)
+        raw_nodes = listing.get("nodes")
+        if not isinstance(raw_nodes, list):
+            raise DwsError("DingTalk folder list returned no nodes")
+        parts = [f"文件夹：{folder_name}", f"链接：{reference}"]
+        for raw_node in raw_nodes[:UNIVERSAL_MATERIAL_FOLDER_CHILD_LIMIT]:
+            if not isinstance(raw_node, dict):
+                continue
+            name = str(raw_node.get("name") or "未命名材料")
+            node_reference = str(
+                raw_node.get("nodeId") or raw_node.get("docUrl") or ""
+            )
+            if not node_reference:
+                parts.append(f"材料：{name}\n读取失败：缺少 nodeId/docUrl")
+                continue
+            try:
+                body = self._read_universal_dingtalk_node(
+                    raw_node,
+                    node_reference,
+                )
+            except Exception as exc:
+                body = f"读取失败：{type(exc).__name__}: {exc}"
+            parts.append(f"材料：{name}\n{body}")
+        return "\n\n".join(parts)
+
+    def _read_universal_dingtalk_node(
+        self,
+        info: dict[str, Any],
+        reference: str,
+    ) -> str:
+        name = str(info.get("name") or "未命名材料")
+        extension = str(info.get("extension") or "").lower()
+        content_type = str(info.get("contentType") or "").upper()
+        if content_type == "ALIDOC" and extension == "adoc":
+            payload = self.dws.read_doc(reference)
+            markdown = str(payload.get("markdown") or payload.get("content") or "")
+            if not markdown.strip():
+                raise DwsError(f"DingTalk doc read returned empty content: {reference}")
+            return markdown
+        if content_type == "ALIDOC" and extension == "axls":
+            payload = self.dws.run_json(
+                [
+                    self.dws.dws_bin,
+                    "sheet",
+                    "+read",
+                    "--node",
+                    reference,
+                    "--format",
+                    "json",
+                ]
+            )
+            return self._universal_sheet_text(payload)
+        if extension == "xlsx":
+            data = self.dws.download_drive_file(
+                reference,
+                file_name=f"{name}.xlsx",
+            )
+            text = self._xlsx_text(data)
+            if not text.strip():
+                raise DwsError(f"DingTalk xlsx read returned empty content: {reference}")
+            return text
+        return (
+            f"材料名称：{name}\n"
+            f"材料类型：{content_type or 'unknown'} / {extension or 'unknown'}\n"
+            "读取失败：当前服务没有该材料类型的只读正文解析器。"
+        )
+
+    @staticmethod
+    def _universal_sheet_text(payload: dict[str, Any]) -> str:
+        raw_cells = payload.get("cells")
+        if not isinstance(raw_cells, list):
+            raise DwsError("DingTalk sheet read returned no cells")
+        lines: list[str] = []
+        for raw_row in raw_cells[:UNIVERSAL_MATERIAL_SHEET_ROW_LIMIT]:
+            if not isinstance(raw_row, list):
+                continue
+            values = [
+                str(cell.get("value") or "") if isinstance(cell, dict) else str(cell)
+                for cell in raw_row[:UNIVERSAL_MATERIAL_SHEET_COLUMN_LIMIT]
+            ]
+            if any(value.strip() for value in values):
+                lines.append("\t".join(values).rstrip())
+        if not lines:
+            raise DwsError("DingTalk sheet read returned no non-empty cells")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _xlsx_text(data: bytes) -> str:
+        with zipfile.ZipFile(BytesIO(data)) as archive:
+            shared_strings: list[str] = []
+            if "xl/sharedStrings.xml" in archive.namelist():
+                root = ET.fromstring(archive.read("xl/sharedStrings.xml"))
+                shared_strings = [
+                    "".join(node.itertext())
+                    for node in root.findall(
+                        ".//{http://schemas.openxmlformats.org/spreadsheetml/2006/main}si"
+                    )
+                ]
+            sheet_names = [
+                name
+                for name in archive.namelist()
+                if re.match(r"xl/worksheets/sheet\d+\.xml$", name)
+            ]
+            rows: list[str] = []
+            namespace = {
+                "x": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+            }
+            for sheet_name in sheet_names[:5]:
+                root = ET.fromstring(archive.read(sheet_name))
+                for row in root.findall(".//x:row", namespace)[
+                    :UNIVERSAL_MATERIAL_SHEET_ROW_LIMIT
+                ]:
+                    values: list[str] = []
+                    for cell in row.findall("x:c", namespace)[
+                        :UNIVERSAL_MATERIAL_SHEET_COLUMN_LIMIT
+                    ]:
+                        value_node = cell.find("x:v", namespace)
+                        inline_node = cell.find("x:is/x:t", namespace)
+                        if inline_node is not None and inline_node.text:
+                            values.append(inline_node.text)
+                            continue
+                        if value_node is None or value_node.text is None:
+                            values.append("")
+                            continue
+                        value = value_node.text
+                        if cell.get("t") == "s" and value.isdigit():
+                            index = int(value)
+                            if 0 <= index < len(shared_strings):
+                                value = shared_strings[index]
+                        values.append(value)
+                    if any(value.strip() for value in values):
+                        rows.append("\t".join(values).rstrip())
+        return "\n".join(rows)
 
     @staticmethod
     def _default_material_read_command(kind: str, reference: str) -> str:
