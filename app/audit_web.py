@@ -546,7 +546,7 @@ _BROWSER_NOTIFICATION_SEQUENCE = count(1)
 _DINGTALK_BRIDGE_STATUS: deque[dict[str, str]] = deque(maxlen=20)
 DEFAULT_ATTEMPT_LIST_LIMIT = 20
 ATTEMPT_LIST_LIMIT_OPTIONS = (20, 50, 100)
-HISTORY_TYPE_FILTERS = ("sent", "reacted", "skipped", "failed", "done")
+HISTORY_TYPE_FILTERS = ("sent", "reacted", "skipped", "blocked", "failed", "done")
 HISTORY_SEARCH_OBJECT_TYPES = ("replay", "wechat", "approval", "task", "meeting")
 TASK_PAGE_SIZE_OPTIONS = (20, 50, 100)
 DEFAULT_TASK_PAGE_SIZE = 20

@@ -890,6 +890,40 @@ def test_render_attempt_list_paginates_attempts(tmp_path: Path):
     assert 'class="table-page-arrow disabled" aria-label="下一页"' in second_page
 
 
+def test_history_type_filter_accepts_blocked_attempts(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    blocked_id = store.record_reply_attempt(
+        conversation_id="cid-blocked-history",
+        conversation_title="Blocked History Group",
+        trigger_message_id="msg-blocked-history",
+        trigger_sender="Blake",
+        trigger_text="blocked question",
+        action="send_reply",
+        sensitivity_kind="general",
+        send_status="blocked",
+    )
+    store.update_reply_attempt(blocked_id, send_error="missing required material")
+    sent_id = store.record_reply_attempt(
+        conversation_id="cid-sent-history",
+        conversation_title="Sent History Group",
+        trigger_message_id="msg-sent-history",
+        trigger_sender="Sana",
+        trigger_text="sent question",
+        action="send_reply",
+        sensitivity_kind="general",
+        send_status="sent",
+    )
+
+    html = render_attempt_list(store, type_filter=("blocked",))
+
+    assert f"/attempts/{blocked_id}" in html
+    assert f"/attempts/{sent_id}" not in html
+    assert "Blocked History Group" in html
+    assert "Sent History Group" not in html
+    assert '<option value="blocked" selected>blocked</option>' in html
+    assert '<span class="table-toolbar-total">共 1 条</span>' in html
+
+
 def test_history_route_reads_page_query(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     first_id = 0
