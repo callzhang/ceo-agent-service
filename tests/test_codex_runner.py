@@ -120,6 +120,23 @@ def test_codex_command_reuses_user_config_by_default(tmp_path: Path):
     assert disabled_features == ["hooks", "plugins"]
 
 
+def test_codex_command_can_inherit_plugins_for_service_owned_mcp(tmp_path: Path):
+    runner = CodexRunner(workspace=tmp_path, codex_bin="codex")
+
+    command = runner.build_command(
+        prompt="hello",
+        session_id=None,
+        disable_plugins=False,
+    )
+
+    disabled_features = [
+        command[index + 1]
+        for index, value in enumerate(command[:-1])
+        if value == "--disable"
+    ]
+    assert disabled_features == ["hooks"]
+
+
 def test_codex_command_exposes_default_passthrough_mcps_from_codex_config(
     tmp_path: Path, monkeypatch
 ):

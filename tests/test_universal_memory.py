@@ -181,14 +181,9 @@ def test_memory_dependency_blocks_before_planner_and_never_opens_browser(
     assert client.login_calls == 0
 
 
-def test_codex_mcp_memory_client_falls_back_to_native_codex_config(
+def test_codex_mcp_memory_client_inherits_codex_mcp_for_memory_write(
     tmp_path: Path,
-    monkeypatch,
 ):
-    monkeypatch.setattr(
-        "app.codex_memory_client.memory_connector_config_issue",
-        lambda: "",
-    )
     codex_config = tmp_path / "config.toml"
     codex_config.write_text(
         '[mcp_servers.memory_connector]\nurl = "https://memory.example/mcp/"\n',
@@ -226,9 +221,6 @@ def test_codex_mcp_memory_client_falls_back_to_native_codex_config(
         ]
     )
 
-    direct = FakeMemoryClient(
-        [MemoryConnectorAuthorizationRequired("authorization required")]
-    )
     captured = {}
 
     def executor(command, prompt):
@@ -238,7 +230,6 @@ def test_codex_mcp_memory_client_falls_back_to_native_codex_config(
 
     client = CodexMcpMemoryClient(
         workspace=tmp_path,
-        direct_client=direct,
         codex_config_path=codex_config,
         executor=executor,
     )
@@ -252,6 +243,12 @@ def test_codex_mcp_memory_client_falls_back_to_native_codex_config(
 
     assert result == MemoryWriteResult("episode-1", "completed", False)
     assert "--ignore-user-config" not in captured["command"]
+    disabled_features = [
+        captured["command"][index + 1]
+        for index, value in enumerate(captured["command"][:-1])
+        if value == "--disable"
+    ]
+    assert disabled_features == ["hooks"]
     developer_options = [
         captured["command"][index + 1]
         for index, value in enumerate(captured["command"][:-1])
@@ -265,23 +262,16 @@ def test_codex_mcp_memory_client_falls_back_to_native_codex_config(
     ]
 
 
-def test_codex_mcp_memory_client_uses_direct_readiness_without_transferable_auth(
+def test_codex_mcp_memory_client_readiness_does_not_require_transferable_auth(
     tmp_path: Path,
-    monkeypatch,
 ):
     codex_config = tmp_path / "config.toml"
     codex_config.write_text(
         '[mcp_servers.memory_connector]\nurl = "https://memory.example/mcp/"\n',
         encoding="utf-8",
     )
-    monkeypatch.setattr(
-        "app.codex_memory_client.memory_connector_config_issue",
-        lambda: "memory connector transferable auth is missing",
-    )
-    direct = FakeMemoryClient()
     client = CodexMcpMemoryClient(
         workspace=tmp_path,
-        direct_client=direct,
         codex_config_path=codex_config,
         executor=lambda _command, _prompt: "",
     )
@@ -289,44 +279,47 @@ def test_codex_mcp_memory_client_uses_direct_readiness_without_transferable_auth
     client.ensure_ready_sync()
 
 
-def test_codex_mcp_memory_client_requires_transferable_auth(
+def test_codex_mcp_memory_client_write_surfaces_codex_authorization_errors(
     tmp_path: Path,
-    monkeypatch,
 ):
     codex_config = tmp_path / "config.toml"
     codex_config.write_text(
         '[mcp_servers.memory_connector]\nurl = "https://memory.example/mcp/"\n',
         encoding="utf-8",
     )
-    monkeypatch.setattr(
-        "app.codex_memory_client.memory_connector_config_issue",
-        lambda: "memory connector transferable auth is missing",
-    )
     client = CodexMcpMemoryClient(
         workspace=tmp_path,
         codex_config_path=codex_config,
-        executor=lambda _command, _prompt: "",
+        executor=lambda _command, _prompt: "\n".join(
+            [
+                json.dumps({"type": "error", "message": "authorization required"}),
+                json.dumps({"status": "attempted"}),
+            ]
+        ),
     )
 
     with pytest.raises(
-        MemoryConnectorAuthorizationRequired,
-        match="transferable auth is missing",
+        Exception,
+        match="expected one memory_write tool call",
     ):
-        client.ensure_ready_sync()
+        client.memory_write_sync(
+            data="Durable decision",
+            type="text",
+            created_at="2026-07-20T10:00:00+08:00",
+            source_description="source",
+        )
 
 
-def test_codex_mcp_memory_client_requires_native_codex_config(tmp_path: Path):
+def test_codex_mcp_memory_client_readiness_does_not_require_native_config_file(
+    tmp_path: Path,
+):
     client = CodexMcpMemoryClient(
         workspace=tmp_path,
         codex_config_path=tmp_path / "missing-config.toml",
         executor=lambda _command, _prompt: "",
     )
 
-    with pytest.raises(
-        MemoryConnectorAuthorizationRequired,
-        match="native Codex MCP is not configured",
-    ):
-        client.ensure_ready_sync()
+    client.ensure_ready_sync()
 
 
 def test_dependency_status_checks_dws_and_memory_before_planner(tmp_path) -> None:

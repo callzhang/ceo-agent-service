@@ -416,6 +416,7 @@ class CodexRunner:
         image_paths: list[Path] | None = None,
         output_schema_path: Path | None = None,
         ignore_user_config: bool = False,
+        disable_plugins: bool = True,
     ) -> list[str]:
         image_options: list[str] = []
         for image_path in image_paths or []:
@@ -432,8 +433,7 @@ class CodexRunner:
             "--ignore-rules",
             "--disable",
             "hooks",
-            "--disable",
-            "plugins",
+            *(["--disable", "plugins"] if disable_plugins else []),
             *memory_connector_config_options(),
             *passthrough_mcp_server_config_options(),
             "-c",

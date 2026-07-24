@@ -75,6 +75,15 @@ combine `no_reply` with another formal chat reply, handoff, blocked, or
 stop-with-error action because those outcomes conflict at the user-visible
 conversation level.
 
+## Memory write MCP inheritance
+
+Service-owned `memory_write` actions are executed by a restricted Codex child
+agent. The child agent inherits the installed Codex `memory_connector` MCP
+configuration and plugin login state, but its prompt and command-line config only
+allow the `memory_write` tool for that invocation. The reply worker must not
+create or refresh a separate Memory OAuth client for this path; otherwise the CEO
+service and Codex can diverge on identity and authorization state.
+
 ## DWS upgrade check
 
 The producer checks for `dws` updates inside the normal CEO system pass, once per

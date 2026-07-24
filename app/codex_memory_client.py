@@ -2,13 +2,12 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Literal
+from typing import Literal
 
 from app.codex_decision import _subprocess_failure_reason
-from app.codex_runner import CodexRunner, _config_string, memory_connector_config_issue
+from app.codex_runner import CodexRunner, _config_string
 from app.memory_connector_auth import MemoryConnectorAuthorizationRequired
 from app.memory_connector_client import MemoryWriteResult
-from app.memory_setup import codex_config_has_memory_connector
 from app.process_runner import run_process_with_idle_timeout
 from app.store import AutoReplyStore
 from app.wechat.codex_safety import completed_mcp_tool_calls, completed_tool_events
@@ -31,14 +30,12 @@ class CodexMcpMemoryClient:
         self,
         *,
         workspace: Path,
-        direct_client: Any | None = None,
         codex_bin: str = "codex",
         codex_config_path: Path | None = None,
         executor=None,
         timeout_seconds: int = 1200,
         idle_timeout_seconds: int = 900,
     ) -> None:
-        self.direct_client = direct_client
         self.runner = CodexRunner(workspace=workspace, codex_bin=codex_bin)
         self.codex_config_path = codex_config_path or Path.home() / ".codex" / "config.toml"
         self.executor = executor
@@ -46,19 +43,7 @@ class CodexMcpMemoryClient:
         self.idle_timeout_seconds = idle_timeout_seconds
 
     def ensure_ready_sync(self) -> None:
-        if self.direct_client is not None:
-            try:
-                self.direct_client.ensure_ready_sync()
-                return
-            except MemoryConnectorAuthorizationRequired:
-                pass
-        if not codex_config_has_memory_connector(self.codex_config_path):
-            raise MemoryConnectorAuthorizationRequired(
-                "memory connector native Codex MCP is not configured"
-            )
-        issue = memory_connector_config_issue()
-        if issue:
-            raise MemoryConnectorAuthorizationRequired(issue)
+        return None
 
     def memory_write_sync(
         self,
@@ -69,17 +54,6 @@ class CodexMcpMemoryClient:
         source_description: str,
         wait_for_processing: bool = False,
     ) -> MemoryWriteResult:
-        if self.direct_client is not None:
-            try:
-                return self.direct_client.memory_write_sync(
-                    data=data,
-                    type=type,
-                    created_at=created_at,
-                    source_description=source_description,
-                    wait_for_processing=wait_for_processing,
-                )
-            except MemoryConnectorAuthorizationRequired:
-                pass
         return self._codex_memory_write(
             data=data,
             type=type,
@@ -109,6 +83,7 @@ class CodexMcpMemoryClient:
             None,
             output_schema_path=WRITE_SCHEMA_PATH,
             ignore_user_config=False,
+            disable_plugins=False,
         )
         _remove_config_option(command, "developer_instructions=")
         command[-1:-1] = [

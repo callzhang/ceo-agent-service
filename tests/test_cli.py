@@ -3729,9 +3729,6 @@ def test_create_worker_wires_store_dws_codex_and_dry_run(monkeypatch, tmp_path):
             constructed["codex_timeout_seconds"] = timeout_seconds
             constructed["codex_idle_timeout_seconds"] = idle_timeout_seconds
 
-    class FakeMemoryConnectorClient:
-        pass
-
     class FakeWorker:
         def __init__(
             self,
@@ -3755,10 +3752,6 @@ def test_create_worker_wires_store_dws_codex_and_dry_run(monkeypatch, tmp_path):
     monkeypatch.setattr(cli, "CachedDwsClient", FakeCachedDwsClient)
     monkeypatch.setattr(cli, "CodexDecisionRunner", FakeCodex)
     monkeypatch.setattr(cli, "DingTalkAutoReplyWorker", FakeWorker)
-    monkeypatch.setattr(
-        "app.memory_connector_client.MemoryConnectorClient",
-        FakeMemoryConnectorClient,
-    )
     monkeypatch.setenv("CEO_OKR_SOURCE_KIND", "agoal")
 
     settings = WorkerSettings(
@@ -3811,10 +3804,7 @@ def test_create_worker_wires_store_dws_codex_and_dry_run(monkeypatch, tmp_path):
     assert len(constructed["style_records"]) == 1
     assert constructed["style_records"][0].message_id == "style-msg-1"
     assert isinstance(constructed["memory_client"], CodexMcpMemoryClient)
-    assert isinstance(
-        constructed["memory_client"].direct_client,
-        FakeMemoryConnectorClient,
-    )
+    assert not hasattr(constructed["memory_client"], "direct_client")
 
 
 def test_run_once_command_calls_worker_once(monkeypatch, tmp_path):

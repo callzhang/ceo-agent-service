@@ -736,14 +736,8 @@ def create_worker(settings: WorkerSettings) -> DingTalkAutoReplyWorker:
 
 def _create_memory_connector_client(workspace: Path):
     from app.codex_memory_client import CodexMcpMemoryClient
-    from app.memory_connector_auth import MemoryConnectorAuthError
-    from app.memory_connector_client import MemoryConnectorClient
 
-    try:
-        direct_client = MemoryConnectorClient()
-    except MemoryConnectorAuthError:
-        direct_client = None
-    return CodexMcpMemoryClient(workspace=workspace, direct_client=direct_client)
+    return CodexMcpMemoryClient(workspace=workspace)
 
 
 def _okr_source_kind() -> str:
