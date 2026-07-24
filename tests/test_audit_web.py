@@ -1,13 +1,22 @@
 import json
 import os
+import re
 import sqlite3
 import subprocess
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from fastapi.testclient import TestClient
+import pytest
+from fastapi.testclient import TestClient as _FastAPITestClient
 
 import app.audit_web as audit_web_module
+from app import config
+from app.audit_security import (
+    NOTIFICATION_BRIDGE_HEADER_NAME,
+    NOTIFICATION_BRIDGE_HEADER_VALUE,
+    audit_csrf_token,
+    csrf_request_headers,
+)
 from app.audit_web import (
     create_audit_app,
     create_default_audit_app,
@@ -47,9 +56,78 @@ from app.universal_executor import build_universal_action_execution
 from app.universal_plan import PlannedAction, PlannedActionKind, UniversalAudit, UniversalPlan
 
 
+_AUDIT_TEST_ORIGIN = "http://127.0.0.1:8765"
+_UNSAFE_AUDIT_ROUTE_CASES = (
+    ("/attempts/{attempt_id}/feedback", "/attempts/1/feedback"),
+    ("/attempts/{attempt_id}/recall", "/attempts/1/recall"),
+    ("/attempts/{attempt_id}/rerun", "/attempts/1/rerun"),
+    ("/browser-notifications", "/browser-notifications"),
+    ("/config", "/config"),
+    ("/config/system", "/config/system"),
+    ("/config/variables", "/config/variables"),
+    ("/config/wechat/reply-scope", "/config/wechat/reply-scope"),
+    ("/developer-prompt", "/developer-prompt"),
+    ("/dingtalk/bridge-status", "/dingtalk/bridge-status"),
+    ("/feishu/deliveries/{delivery_id}/approve", "/feishu/deliveries/1/approve"),
+    ("/feishu/deliveries/{delivery_id}/reject", "/feishu/deliveries/1/reject"),
+    (
+        "/feishu/scopes/{target_type}/{target_id}/approve",
+        "/feishu/scopes/group/chat-1/approve",
+    ),
+    (
+        "/feishu/scopes/{target_type}/{target_id}/disable",
+        "/feishu/scopes/group/chat-1/disable",
+    ),
+    ("/messages/reviewed-reply", "/messages/reviewed-reply"),
+    ("/tutorial/check/{step_id}", "/tutorial/check/example"),
+    ("/tutorial/confirm/{step_id}", "/tutorial/confirm/example"),
+    ("/tutorial/run/{action_id}", "/tutorial/run/example"),
+    ("/tutorial/wechat/reply-scope", "/tutorial/wechat/reply-scope"),
+    ("/user-feedback/resolve", "/user-feedback/resolve"),
+    ("/user-feedback/sync", "/user-feedback/sync"),
+    ("/wechat/deliveries/{delivery_id}/approve", "/wechat/deliveries/1/approve"),
+    ("/wechat/deliveries/{delivery_id}/reject", "/wechat/deliveries/1/reject"),
+    ("/wechat/memory-review/reject-selected", "/wechat/memory-review/reject-selected"),
+    ("/wechat/memory-review/write-approved", "/wechat/memory-review/write-approved"),
+    (
+        "/wechat/memory-review/{candidate_id}/approve",
+        "/wechat/memory-review/1/approve",
+    ),
+    (
+        "/wechat/memory-review/{candidate_id}/reject",
+        "/wechat/memory-review/1/reject",
+    ),
+    (
+        "/wechat/memory-review/{candidate_id}/resolve-unknown",
+        "/wechat/memory-review/1/resolve-unknown",
+    ),
+    (
+        "/wechat/memory-review/{candidate_id}/revoke",
+        "/wechat/memory-review/1/revoke",
+    ),
+)
+
+
+class TestClient(_FastAPITestClient):
+    """Production-like local audit client with the trusted request headers."""
+
+    def __init__(self, app, **kwargs):
+        headers = csrf_request_headers(_AUDIT_TEST_ORIGIN)
+        headers.update(kwargs.pop("headers", {}))
+        kwargs.setdefault("base_url", _AUDIT_TEST_ORIGIN)
+        kwargs.setdefault("client", ("127.0.0.1", 50000))
+        super().__init__(app, headers=headers, **kwargs)
+
+
 def task_script_json(html: str, element_id: str):
-    marker = f'<script id="{element_id}" type="application/json">'
-    return json.loads(html.split(marker, 1)[1].split("</script>", 1)[0])
+    match = re.search(
+        rf'<script\b[^>]*\bid="{re.escape(element_id)}"[^>]*'
+        r'\btype="application/json"[^>]*>(.*?)</script>',
+        html,
+        re.DOTALL,
+    )
+    assert match is not None
+    return json.loads(match.group(1))
 
 
 def seed_attempt(store: AutoReplyStore) -> int:
@@ -83,6 +161,35 @@ def seed_attempt(store: AutoReplyStore) -> int:
         send_status="sent",
     )
     return attempt_id
+
+
+def seed_feishu_attempt(
+    store: AutoReplyStore,
+    *,
+    conversation_id: str = "shared-id",
+    message_id: str = "feishu-msg-1",
+) -> int:
+    store.enqueue_reply_task(
+        channel="feishu",
+        conversation_id=conversation_id,
+        conversation_title="Feishu group",
+        single_chat=False,
+        trigger_message_id=message_id,
+        trigger_create_time="2026-07-22T10:00:00+08:00",
+        trigger_sender="Mina",
+        trigger_text="hello",
+        trigger_message_json='{"app_id":"cli_test"}',
+    )
+    return store.record_reply_attempt(
+        conversation_id=conversation_id,
+        conversation_title="Feishu group",
+        trigger_message_id=message_id,
+        trigger_sender="Mina",
+        trigger_text="hello",
+        action="send_reply",
+        sensitivity_kind="general",
+        channel="feishu",
+    )
 
 
 def seed_meeting_attempt(store: AutoReplyStore) -> int:
@@ -163,7 +270,7 @@ def test_render_attempt_list_shows_history_rows(tmp_path: Path):
     assert "CEO Agent Audit" in html
     assert "最近 24 小时事件" in html
     assert 'id="history-event-chart"' in html
-    assert "echarts@5" in html
+    assert audit_web_module.ECHARTS_JS_URL in html
     assert "historyEventChartData" in html
     assert '"name": "💬 Sent"' in html
     assert f"/attempts/{attempt_id}" in html
@@ -407,6 +514,111 @@ def test_history_wechat_send_button_matches_exact_trigger(tmp_path: Path):
     assert html.count(f"/wechat/deliveries/{delivery_id}/reject?next=/") == 1
 
 
+def _seed_feishu_pending(store: AutoReplyStore) -> int:
+    from datetime import datetime, timezone
+
+    from app.feishu.delivery import delivery_idempotency_key
+    from app.feishu.models import FeishuInboundMessage
+
+    now = datetime.now(timezone.utc).isoformat()
+    message = FeishuInboundMessage(
+        event_id="evt-history-feishu",
+        app_id="cli_test",
+        message_id="om_history_feishu",
+        chat_id="oc_history_feishu",
+        chat_type="group",
+        chat_title="飞书测试群",
+        sender_open_id="ou_history_feishu",
+        sender_name="飞书同事",
+        message_type="text",
+        mentioned_bot=True,
+        body_text="请给出方案",
+        event_create_time=now,
+        received_at=now,
+    )
+    event = store.record_feishu_event(
+        message,
+        eligibility_status="eligible",
+        store_body=True,
+        enqueue_eligible=True,
+    )
+    task = next(
+        row
+        for row in store.list_reply_tasks(channel="feishu")
+        if row.id == event.reply_task_id
+    )
+    attempt_id = store.record_reply_attempt(
+        conversation_id=task.conversation_id,
+        conversation_title=message.chat_title,
+        trigger_message_id=message.message_id,
+        trigger_sender=message.sender_name,
+        trigger_text=message.body_text,
+        action="send_reply",
+        sensitivity_kind="general",
+        codex_reason="需要回复",
+        draft_reply_text="建议先小范围验证。",
+        send_status="pending",
+        channel="feishu",
+    )
+    delivery = store.create_feishu_delivery(
+        reply_task_id=event.reply_task_id,
+        attempt_id=attempt_id,
+        app_id=message.app_id,
+        chat_id=message.chat_id,
+        reply_to_message_id=message.message_id,
+        reply_in_thread=False,
+        reply_text="建议先小范围验证。",
+        idempotency_key=delivery_idempotency_key(
+            app_id=message.app_id,
+            reply_task_id=event.reply_task_id,
+            trigger_message_id=message.message_id,
+        ),
+    )
+    return delivery.id
+
+
+def test_history_shows_feishu_badge_and_exact_delivery_actions(
+    tmp_path: Path, monkeypatch
+):
+    monkeypatch.setattr(config, "feishu_app_id", lambda: "cli_test")
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    delivery_id = _seed_feishu_pending(store)
+
+    html = render_attempt_list(store, search_object_types=("feishu",))
+
+    assert "飞书</span>" in html
+    assert html.count(f"/feishu/deliveries/{delivery_id}/approve?next=/") == 1
+    assert html.count(f"/feishu/deliveries/{delivery_id}/reject?next=/") == 1
+    assert "💬 Pending" in html
+
+
+def test_history_feishu_actions_disappear_after_rejection(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(config, "feishu_app_id", lambda: "cli_test")
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    delivery_id = _seed_feishu_pending(store)
+    store.mark_feishu_delivery_rejected(delivery_id, app_id="cli_test")
+
+    html = render_attempt_list(store, search_object_types=("feishu",))
+
+    assert "飞书</span>" in html
+    assert f"/feishu/deliveries/{delivery_id}/approve" not in html
+    assert "💬 Rejected" in html
+
+
+def test_history_hides_feishu_actions_for_another_configured_app(
+    tmp_path: Path, monkeypatch
+):
+    monkeypatch.setattr(config, "feishu_app_id", lambda: "cli_other")
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    delivery_id = _seed_feishu_pending(store)
+
+    html = render_attempt_list(store, search_object_types=("feishu",))
+
+    assert "飞书</span>" in html
+    assert f"/feishu/deliveries/{delivery_id}/approve" not in html
+    assert f"/feishu/deliveries/{delivery_id}/reject" not in html
+
+
 def test_render_attempt_list_links_task_history_to_task_detail(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     project_id = store.create_work_project(
@@ -438,6 +650,9 @@ def test_render_attempt_list_links_task_history_to_task_detail(tmp_path: Path):
 
     assert "task-history-item" in html
     assert f"/tasks/{project_id}#follow-up-{follow_up_id}" in html
+    assert f'data-href="/tasks/{project_id}#follow-up-{follow_up_id}"' in html
+    assert "onclick=" not in html
+    assert "onkeydown=" not in html
     assert "查看 task" in html
     assert f'id="todo-{todo_id}"' in detail
     assert f'id="follow-up-{follow_up_id}"' in detail
@@ -718,6 +933,79 @@ def test_history_wechat_object_filter_separates_message_channels(tmp_path: Path)
     )
     assert "DingTalk History Group" in replay_html
     assert "WeChat History Group" not in replay_html
+
+
+def test_history_feishu_object_filter_isolated_from_other_message_channels(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    for channel, title, message_id in (
+        ("dingtalk", "DingTalk History Group", "msg-dingtalk"),
+        ("wechat", "WeChat History Group", "msg-wechat"),
+        ("feishu", "Feishu History Group", "msg-feishu"),
+    ):
+        conversation_id = f"cid-{channel}"
+        if channel == "feishu":
+            from app.feishu.models import FeishuInboundMessage
+
+            event = store.record_feishu_event(
+                FeishuInboundMessage(
+                    event_id="evt-history-filter-feishu",
+                    app_id="cli-history-filter",
+                    message_id=message_id,
+                    chat_id="oc-history-filter",
+                    chat_type="group",
+                    chat_title=title,
+                    sender_open_id="ou-history-filter",
+                    sender_name="Alex",
+                    message_type="text",
+                    mentioned_bot=True,
+                    body_text="feishu channel filter",
+                    event_create_time="2026-07-22T10:00:00+08:00",
+                    received_at="2026-07-22T10:00:01+08:00",
+                ),
+                eligibility_status="eligible",
+                store_body=True,
+            )
+            task = next(
+                row
+                for row in store.list_reply_tasks(channel="feishu")
+                if row.id == event.reply_task_id
+            )
+            conversation_id = task.conversation_id
+        store.record_reply_attempt(
+            conversation_id=conversation_id,
+            conversation_title=title,
+            trigger_message_id=message_id,
+            trigger_sender="Alex",
+            trigger_text="feishu channel filter",
+            action="send_reply",
+            sensitivity_kind="general",
+            send_status="sent",
+            channel=channel,
+        )
+
+    default_html = render_attempt_list(store, query="feishu channel filter")
+    assert 'name="object_type" value="feishu" checked' in default_html
+
+    feishu_html = render_attempt_list(
+        store,
+        query="feishu channel filter",
+        search_object_types=("feishu",),
+    )
+    assert "Feishu History Group" in feishu_html
+    assert "飞书</span>" in feishu_html
+    assert "DingTalk History Group" not in feishu_html
+    assert "WeChat History Group" not in feishu_html
+
+    existing_channels_html = render_attempt_list(
+        store,
+        query="feishu channel filter",
+        search_object_types=("replay", "wechat"),
+    )
+    assert "DingTalk History Group" in existing_channels_html
+    assert "WeChat History Group" in existing_channels_html
+    assert "Feishu History Group" not in existing_channels_html
 
 
 def test_history_chart_labels_terminal_reactions_and_oa_actions(tmp_path: Path):
@@ -1410,7 +1698,7 @@ def test_top_nav_highlights_current_page_and_disables_current_link(tmp_path: Pat
     seed_attempt(store)
 
     history_html = render_attempt_list(store)
-    tutorial_html = render_tutorial_page()
+    tutorial_html = render_tutorial_page(store=store)
     user_feedback_html = render_user_feedback_list(store)
     config_html = render_config_page()
     codex_html = render_codex_session_list(store)
@@ -1785,8 +2073,8 @@ def test_tasks_page_renders_projects_and_todos_without_global_followups(tmp_path
     assert 'id="task-search-input"' in html
     assert "Search</button>" not in html
     assert 'id="tasks-table"' in html
-    assert "tabulator-tables@6.4.0/dist/css/tabulator.min.css" in html
-    assert "tabulator-tables@6.4.0/dist/js/tabulator.min.js" in html
+    assert audit_web_module.TABULATOR_CSS_URL in html
+    assert audit_web_module.TABULATOR_JS_URL in html
     assert 'headerFilter: "select"' in html
     assert ".tabulator-row.tabulator-selectable:hover" in html
     assert "background-color:#f5faff" in html
@@ -2764,7 +3052,7 @@ def test_open_dingtalk_bridge_opens_pc_jsapi_bridge_for_open_conversation_id(
     payload = response.json()
     assert payload["ok"] is True
     assert payload["bridge_url"] == (
-        "http://testserver/dingtalk/open-chat-bridge?conversation_id=cid-1"
+        f"{_AUDIT_TEST_ORIGIN}/dingtalk/open-chat-bridge?conversation_id=cid-1"
     )
     assert payload["dingtalk_url"].startswith(
         "dingtalk://dingtalkclient/page/link?url="
@@ -2824,7 +3112,7 @@ def test_dingtalk_open_chat_bridge_calls_open_conversation_jsapi(tmp_path: Path)
     response = client.get("/dingtalk/open-chat-bridge?conversation_id=cid-1")
 
     assert response.status_code == 200
-    assert "https://g.alicdn.com/dingding/dingtalk-jsapi/" in response.text
+    assert audit_web_module.DINGTALK_JSAPI_URL in response.text
     assert "dd.openChatByConversationId" in response.text
     assert "toConversationByOpenConversationId" not in response.text
     assert "biz.chat.toConversation" not in response.text
@@ -2908,10 +3196,17 @@ def test_browser_notifications_page_is_available(tmp_path: Path):
 
 
 def test_browser_notification_post_reports_no_subscribers(tmp_path: Path):
-    client = TestClient(create_audit_app(tmp_path / "worker.sqlite3"))
+    client = _FastAPITestClient(
+        create_audit_app(tmp_path / "worker.sqlite3"),
+        base_url=_AUDIT_TEST_ORIGIN,
+        client=("127.0.0.1", 50000),
+    )
 
     response = client.post(
         "/browser-notifications",
+        headers={
+            NOTIFICATION_BRIDGE_HEADER_NAME: NOTIFICATION_BRIDGE_HEADER_VALUE,
+        },
         json={
             "title": "CEO auto reply",
             "message": "已回复",
@@ -2926,6 +3221,104 @@ def test_browser_notification_post_reports_no_subscribers(tmp_path: Path):
         "subscribers": 0,
         "dingtalk_url": "dingtalk://dingtalkclient/page/conversation?cid=75217569357",
     }
+
+
+def test_browser_notification_internal_protocol_is_independent_of_process_csrf(
+    tmp_path: Path,
+):
+    client = _FastAPITestClient(
+        create_audit_app(tmp_path / "worker.sqlite3"),
+        base_url=_AUDIT_TEST_ORIGIN,
+        client=("127.0.0.1", 50000),
+    )
+
+    response = client.post(
+        "/browser-notifications",
+        headers={
+            NOTIFICATION_BRIDGE_HEADER_NAME: NOTIFICATION_BRIDGE_HEADER_VALUE,
+            "X-CEO-Audit-CSRF": "token-from-a-different-python-process",
+        },
+        json={"title": "CEO", "message": "done", "url": ""},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["ok"] is True
+
+
+def test_browser_notification_internal_protocol_rejects_browser_and_bad_header(
+    tmp_path: Path,
+):
+    app = create_audit_app(tmp_path / "worker.sqlite3")
+    client = _FastAPITestClient(
+        app,
+        base_url=_AUDIT_TEST_ORIGIN,
+        client=("127.0.0.1", 50000),
+    )
+    payload = {"title": "CEO", "message": "done", "url": ""}
+
+    browser_response = client.post(
+        "/browser-notifications",
+        headers={
+            NOTIFICATION_BRIDGE_HEADER_NAME: NOTIFICATION_BRIDGE_HEADER_VALUE,
+            "Origin": "https://evil.example",
+        },
+        json=payload,
+    )
+    bad_header_response = client.post(
+        "/browser-notifications",
+        headers={NOTIFICATION_BRIDGE_HEADER_NAME: "wrong-client"},
+        json=payload,
+    )
+    referer_response = client.post(
+        "/browser-notifications",
+        headers={
+            NOTIFICATION_BRIDGE_HEADER_NAME: NOTIFICATION_BRIDGE_HEADER_VALUE,
+            "Referer": _AUDIT_TEST_ORIGIN,
+        },
+        json=payload,
+    )
+
+    assert browser_response.status_code == 403
+    assert bad_header_response.status_code == 403
+    assert referer_response.status_code == 403
+
+
+def test_browser_notification_internal_protocol_requires_json_and_loopback(
+    tmp_path: Path,
+):
+    app = create_audit_app(tmp_path / "worker.sqlite3")
+    headers = {NOTIFICATION_BRIDGE_HEADER_NAME: NOTIFICATION_BRIDGE_HEADER_VALUE}
+    local = _FastAPITestClient(
+        app,
+        base_url=_AUDIT_TEST_ORIGIN,
+        client=("127.0.0.1", 50000),
+    )
+    remote = _FastAPITestClient(
+        app,
+        base_url=_AUDIT_TEST_ORIGIN,
+        client=("10.0.0.8", 50000),
+    )
+    non_loopback_host = _FastAPITestClient(
+        app,
+        base_url="http://audit.example:8765",
+        client=("127.0.0.1", 50000),
+    )
+
+    assert local.post(
+        "/browser-notifications",
+        headers={**headers, "Content-Type": "text/plain"},
+        content='{"title":"CEO"}',
+    ).status_code == 415
+    assert remote.post(
+        "/browser-notifications",
+        headers=headers,
+        json={"title": "CEO"},
+    ).status_code == 403
+    assert non_loopback_host.post(
+        "/browser-notifications",
+        headers=headers,
+        json={"title": "CEO"},
+    ).status_code == 403
 
 
 def test_browser_notification_event_includes_attempt_detail_url():
@@ -3718,6 +4111,218 @@ def test_fastapi_app_records_feedback_and_redirects(tmp_path: Path):
     assert attempt.corrected_reply_text == "先看材料"
 
 
+def test_rendered_post_form_token_survives_global_mutation_boundary(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    attempt_id = seed_attempt(store)
+    client = _FastAPITestClient(
+        create_audit_app(store.path),
+        base_url=_AUDIT_TEST_ORIGIN,
+        client=("127.0.0.1", 50000),
+        headers={"Origin": _AUDIT_TEST_ORIGIN},
+    )
+
+    page = client.get(f"/attempts/{attempt_id}")
+    token_match = re.search(
+        r"name=['\"]csrf_token['\"] value=['\"]([^'\"]+)['\"]",
+        page.text,
+    )
+    assert token_match is not None
+
+    response = client.post(
+        f"/attempts/{attempt_id}/feedback",
+        data={
+            "csrf_token": token_match.group(1),
+            "feedback": "仅表单令牌也应通过",
+            "corrected_reply": "先看材料",
+        },
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    assert store.get_reply_attempt(attempt_id).reviewer_feedback == "仅表单令牌也应通过"
+
+
+def test_unsafe_audit_route_inventory_is_fully_covered(tmp_path: Path):
+    app = create_audit_app(tmp_path / "worker.sqlite3")
+    actual = {
+        route.path
+        for route in app.routes
+        if set(getattr(route, "methods", set()))
+        - {"GET", "HEAD", "OPTIONS", "TRACE"}
+    }
+
+    assert actual == {route_path for route_path, _ in _UNSAFE_AUDIT_ROUTE_CASES}
+
+
+@pytest.mark.parametrize(
+    ("route_path", "request_path"),
+    _UNSAFE_AUDIT_ROUTE_CASES,
+    ids=[route_path for route_path, _ in _UNSAFE_AUDIT_ROUTE_CASES],
+)
+def test_every_unsafe_audit_route_rejects_missing_credential(
+    tmp_path: Path,
+    route_path: str,
+    request_path: str,
+):
+    client = _FastAPITestClient(
+        create_audit_app(tmp_path / "worker.sqlite3"),
+        base_url=_AUDIT_TEST_ORIGIN,
+        client=("127.0.0.1", 50000),
+    )
+    headers = {} if route_path == "/browser-notifications" else {
+        "Origin": _AUDIT_TEST_ORIGIN
+    }
+
+    response = client.post(request_path, headers=headers)
+
+    assert response.status_code == 403
+
+
+@pytest.mark.parametrize("path", ("/", "/feishu/deliveries", "/wechat/deliveries"))
+def test_audit_reads_reject_hostile_host_and_remote_peer(tmp_path: Path, path: str):
+    app = create_audit_app(tmp_path / "worker.sqlite3")
+    hostile_host = _FastAPITestClient(
+        app,
+        base_url="http://attacker-controlled.example:8765",
+        client=("127.0.0.1", 50000),
+    )
+    remote_peer = _FastAPITestClient(
+        app,
+        base_url=_AUDIT_TEST_ORIGIN,
+        client=("10.0.0.8", 50000),
+    )
+
+    hostile_response = hostile_host.get(path)
+    remote_response = remote_peer.get(path)
+
+    assert hostile_response.status_code == 403
+    assert remote_response.status_code == 403
+    assert "ceo-audit-csrf" not in hostile_response.text
+    assert "ceo-audit-csrf" not in remote_response.text
+
+
+def test_audit_mutation_origin_matches_scheme_and_port_with_referer_fallback(
+    tmp_path: Path,
+):
+    client = _FastAPITestClient(
+        create_audit_app(tmp_path / "worker.sqlite3"),
+        base_url=_AUDIT_TEST_ORIGIN,
+        client=("127.0.0.1", 50000),
+    )
+    token_header = {"X-CEO-Audit-CSRF": audit_csrf_token()}
+
+    valid_referer = client.post(
+        "/dingtalk/bridge-status",
+        headers={**token_header, "Referer": f"{_AUDIT_TEST_ORIGIN}/source"},
+        json={},
+    )
+    wrong_scheme = client.post(
+        "/dingtalk/bridge-status",
+        headers={**token_header, "Origin": "https://127.0.0.1:8765"},
+        json={},
+    )
+    wrong_port = client.post(
+        "/dingtalk/bridge-status",
+        headers={**token_header, "Origin": "http://127.0.0.1:8766"},
+        json={},
+    )
+    hostile_origin_with_valid_referer = client.post(
+        "/dingtalk/bridge-status",
+        headers={
+            **token_header,
+            "Origin": "https://evil.example",
+            "Referer": f"{_AUDIT_TEST_ORIGIN}/source",
+        },
+        json={},
+    )
+
+    assert valid_referer.status_code == 200
+    assert wrong_scheme.status_code == 403
+    assert wrong_port.status_code == 403
+    assert hostile_origin_with_valid_referer.status_code == 403
+
+
+def test_all_high_risk_audit_posts_reject_cross_site_origin(
+    tmp_path: Path,
+    monkeypatch,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    attempt_id = seed_attempt(store)
+    calls = []
+    monkeypatch.setattr(
+        audit_web_module,
+        "handle_system_config_post",
+        lambda *args, **kwargs: calls.append("config") or (303, {"Location": "/"}, ""),
+    )
+    monkeypatch.setattr(
+        audit_web_module,
+        "handle_recall_post",
+        lambda *args, **kwargs: calls.append("recall") or (303, {"Location": "/"}, ""),
+    )
+    monkeypatch.setattr(
+        audit_web_module,
+        "handle_rerun_attempt_post",
+        lambda *args, **kwargs: calls.append("rerun") or (303, {"Location": "/"}, ""),
+    )
+    monkeypatch.setattr(
+        audit_web_module,
+        "handle_reviewed_message_reply",
+        lambda *args, **kwargs: calls.append("reviewed-reply") or {"ok": True},
+    )
+    hostile_headers = csrf_request_headers(_AUDIT_TEST_ORIGIN)
+    hostile_headers["Origin"] = "https://evil.example"
+    client = _FastAPITestClient(
+        create_audit_app(store.path),
+        base_url=_AUDIT_TEST_ORIGIN,
+        client=("127.0.0.1", 50000),
+        headers=hostile_headers,
+    )
+
+    responses = [
+        client.post("/config/system", data={"CEO_NOT_SEND_MESSAGE": "1"}),
+        client.post(f"/attempts/{attempt_id}/recall"),
+        client.post(f"/attempts/{attempt_id}/rerun"),
+        client.post(
+            "/messages/reviewed-reply",
+            json={
+                "user_name": "Xiaomin",
+                "group_name": "技术部",
+                "message_str": "原消息",
+                "reply_text": "回复",
+            },
+        ),
+    ]
+
+    assert [response.status_code for response in responses] == [403, 403, 403, 403]
+    assert calls == []
+
+
+def test_audit_mutation_boundary_rejects_remote_client_and_missing_token(
+    tmp_path: Path,
+):
+    app = create_audit_app(tmp_path / "worker.sqlite3")
+    remote = _FastAPITestClient(
+        app,
+        base_url=_AUDIT_TEST_ORIGIN,
+        client=("10.0.0.8", 50000),
+        headers=csrf_request_headers(_AUDIT_TEST_ORIGIN),
+    )
+    no_token = _FastAPITestClient(
+        app,
+        base_url=_AUDIT_TEST_ORIGIN,
+        client=("127.0.0.1", 50000),
+        headers={"Origin": _AUDIT_TEST_ORIGIN},
+    )
+
+    assert remote.post("/user-feedback/sync").status_code == 403
+    assert no_token.post("/user-feedback/sync").status_code == 403
+    assert no_token.post(
+        "/user-feedback/sync",
+        content=b"\xff",
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    ).status_code == 403
+
+
 def test_render_attempt_detail_shows_full_decision_and_feedback_form(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     attempt_id = seed_attempt(store)
@@ -3752,7 +4357,9 @@ def test_render_attempt_detail_shows_full_decision_and_feedback_form(tmp_path: P
     assert f'action="/attempts/{attempt_id}/rerun?return_to=/attempts/{attempt_id}"' in html
     assert f'action="/attempts/{attempt_id}/recall?return_to=/attempts/{attempt_id}"' in html
     assert "/open-dingtalk-popup?conversation_id=cid-1" in html
-    assert "window.open(this.href,'ceo-open-dingtalk','popup,width=420,height=260')" in html
+    assert 'data-popup-window="ceo-open-dingtalk"' in html
+    assert "onclick=" not in html
+    assert "onsubmit=" not in html
     assert 'class="compact-button open-dingtalk-action"' in html
     assert '<button class="rerun" type="submit">重跑</button>' in html
     assert html.index("群名") < html.index("内部反馈/建议修改")
@@ -4460,6 +5067,19 @@ def test_render_attempt_detail_shows_rerun_only_in_banner_actions(tmp_path: Path
     assert "rerun-card" not in html
 
 
+def test_render_feishu_attempt_only_shows_channel_specific_review(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    attempt_id = seed_feishu_attempt(store)
+
+    status, html = render_attempt_detail(store, attempt_id)
+
+    assert status == 200
+    assert 'href="/feishu/review">飞书审核</a>' in html
+    assert f'/attempts/{attempt_id}/rerun' not in html
+    assert f'/attempts/{attempt_id}/recall' not in html
+    assert "open-dingtalk-popup" not in html
+
+
 def test_render_attempt_detail_returns_404_when_missing(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
 
@@ -4539,6 +5159,24 @@ def test_handle_rerun_attempt_post_replaces_invalid_legacy_task_json(
     trigger = DingTalkMessage.model_validate_json(task.trigger_message_json)
     assert trigger.open_message_id == "msg-1"
     assert trigger.content == "@Alex Chen 这个怎么处理？"
+
+
+def test_handle_rerun_attempt_post_rejects_feishu_channel_collision(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.upsert_conversation("shared-id", "DingTalk collision", False, None)
+    attempt_id = seed_feishu_attempt(store, message_id="same-msg")
+
+    status, headers, html = handle_rerun_attempt_post(store, attempt_id)
+
+    assert status == 400
+    assert headers == {}
+    assert "通道操作不匹配" in html
+    assert (
+        store.get_reply_task_for_message(
+            "shared-id", "same-msg", channel="dingtalk"
+        )
+        is None
+    )
 
 
 def test_handle_recall_post_calls_dws_message_recall_and_records_success(
@@ -4661,6 +5299,31 @@ def test_handle_recall_post_blocks_without_recall_key(tmp_path: Path):
     assert status == 400
     assert headers == {}
     assert "撤销不可用" in html
+
+
+def test_handle_recall_post_rejects_feishu_without_dws_call(tmp_path: Path):
+    class ForbiddenDws:
+        def __getattr__(self, name):
+            raise AssertionError(f"DWS must not be used for Feishu: {name}")
+
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.upsert_conversation("shared-id", "DingTalk collision", False, None)
+    attempt_id = seed_feishu_attempt(store, message_id="same-msg")
+    store.record_sent_reply(
+        "shared-id",
+        "same-msg",
+        "sent by Feishu",
+        send_result_json='{"result":{"openMessageId":"collision"}}',
+    )
+
+    status, headers, html = handle_recall_post(store, ForbiddenDws(), attempt_id)
+
+    assert status == 400
+    assert headers == {}
+    assert "通道操作不匹配" in html
+    sent_reply = store.get_sent_reply("shared-id", "same-msg")
+    assert sent_reply is not None
+    assert sent_reply.recall_status == ""
 
 
 def test_handle_reviewed_message_reply_matches_sender_group_and_text(
@@ -5354,6 +6017,16 @@ def test_run_audit_web_uses_stable_uvicorn_protocols(monkeypatch, tmp_path: Path
     assert calls["kwargs"]["port"] == 8765
     assert calls["kwargs"]["loop"] == "asyncio"
     assert calls["kwargs"]["http"] == "h11"
+
+
+def test_run_audit_web_rejects_non_loopback_bind(monkeypatch, tmp_path: Path):
+    calls = []
+    monkeypatch.setattr("app.audit_web.uvicorn.run", lambda *args, **kwargs: calls.append(args))
+
+    with pytest.raises(ValueError, match="loopback"):
+        run_audit_web(tmp_path / "worker.sqlite3", host="0.0.0.0", port=8765)
+
+    assert calls == []
 
 
 def test_run_audit_web_reload_uses_stable_uvicorn_protocols(

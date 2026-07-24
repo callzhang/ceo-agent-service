@@ -21,8 +21,6 @@ from app.wechat.memory import (
     CodexMemoryExtractionRunner, CodexMemoryRecallMatcher, WechatMemoryImporter,
 )
 
-DEFAULT_DB = "data/auto-reply.sqlite3"
-
 
 def _reader(*, self_username: str = ""):
     return service.build_reader(
@@ -183,36 +181,37 @@ def cmd_import_memory(args) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="wechat")
     sub = parser.add_subparsers(dest="cmd", required=True)
+    default_db = str(config.worker_db_path())
 
     p = sub.add_parser("status")
-    p.add_argument("--db", default=DEFAULT_DB)
+    p.add_argument("--db", default=default_db)
     p.set_defaults(fn=cmd_status)
     p = sub.add_parser("read-recent")
-    p.add_argument("--db", default=DEFAULT_DB)
+    p.add_argument("--db", default=default_db)
     p.add_argument("--target-id", required=True)
     p.add_argument("--type", default="direct", choices=["direct", "group"])
     p.add_argument("--limit", type=int, default=100)
     p.add_argument("--include-text", action="store_true")
     p.set_defaults(fn=cmd_read_recent)
     p = sub.add_parser("produce-once")
-    p.add_argument("--db", default=DEFAULT_DB)
+    p.add_argument("--db", default=default_db)
     p.set_defaults(fn=cmd_produce_once)
     p = sub.add_parser("consume-once")
-    p.add_argument("--db", default=DEFAULT_DB)
+    p.add_argument("--db", default=default_db)
     p.set_defaults(fn=cmd_consume_once)
     p = sub.add_parser("pending")
-    p.add_argument("--db", default=DEFAULT_DB)
+    p.add_argument("--db", default=default_db)
     p.set_defaults(fn=cmd_pending)
     p = sub.add_parser("approve")
-    p.add_argument("--db", default=DEFAULT_DB)
+    p.add_argument("--db", default=default_db)
     p.add_argument("--id", type=int, required=True)
     p.set_defaults(fn=cmd_approve)
     p = sub.add_parser("reject")
-    p.add_argument("--db", default=DEFAULT_DB)
+    p.add_argument("--db", default=default_db)
     p.add_argument("--id", type=int, required=True)
     p.set_defaults(fn=cmd_reject)
     p = sub.add_parser("import-memory")
-    p.add_argument("--db", default=DEFAULT_DB)
+    p.add_argument("--db", default=default_db)
     p.add_argument("--account-id", default="")
     p.add_argument("--target-id", action="append", required=True)
     p.add_argument("--since", default="")

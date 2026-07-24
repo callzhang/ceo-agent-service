@@ -632,6 +632,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     wechat_parser.add_argument("wechat_args", nargs=argparse.REMAINDER)
 
+    # Feishu channel commands pass through to the self-contained app.feishu.cli.
+    # Keeping its flags isolated also lets the optional channel stay import-free
+    # while it is disabled (the default).
+    feishu_parser = subparsers.add_parser(
+        "feishu",
+        help="Feishu channel diagnostics, scope review, and offline processing",
+    )
+    feishu_parser.add_argument("feishu_args", nargs=argparse.REMAINDER)
+
     return parser
 
 
@@ -1367,11 +1376,12 @@ def doctor_mcp_command(
 
 
 def channel_doctor_command() -> dict[str, object]:
-    from app.channels import DingTalkCliAdapter, FeishuCliAdapter
+    from app.channels import DingTalkCliAdapter, FeishuCliAdapter, official_bot_doctor
 
     statuses = [
         DingTalkCliAdapter().doctor().model_dump(mode="json"),
         FeishuCliAdapter().doctor().model_dump(mode="json"),
+        official_bot_doctor().model_dump(mode="json"),
     ]
     report: dict[str, object] = {"channels": statuses}
     print(json.dumps(report, ensure_ascii=False), flush=True)
@@ -1472,6 +1482,13 @@ def send_attempt_command(settings: WorkerSettings, attempt_id: int) -> dict[str,
         raise SystemExit(
             f"reply attempt {attempt_id} is not an unsent attempt: "
             f"{attempt.send_status}"
+        )
+    attempt_channel = (attempt.channel or "dingtalk").strip().lower()
+    if attempt_channel != "dingtalk":
+        review_path = "/feishu/review" if attempt_channel == "feishu" else "channel review"
+        raise SystemExit(
+            f"reply attempt {attempt_id} belongs to channel={attempt_channel}; "
+            f"use {review_path} instead of the DingTalk send-attempt repair path"
         )
     if attempt.calendar_event_id.strip() and attempt.calendar_response_status.strip():
         return _send_calendar_attempt(settings, store, attempt)
@@ -2408,15 +2425,52 @@ def run_task_maintenance_loop(
     monotonic: Callable[[], float] = time.monotonic,
     network_ready: Callable[[], bool] = _macos_wifi_connected,
 ) -> None:
-    now = monotonic()
-    next_daily_run = now
-    next_follow_up_run = now
+    initial_now = monotonic()
+    next_daily_run = initial_now
+    next_follow_up_run = initial_now
+    next_feishu_retention_run = initial_now
+    local_store = AutoReplyStore(settings.db_path)
     while True:
+        retention_now = monotonic()
+        if retention_now >= next_feishu_retention_run:
+            next_feishu_retention_run = retention_now + daily_interval_seconds
+            try:
+                from app import config as _cfg
+                from app.feishu.maintenance import purge_expired_feishu_events
+
+                maintenance_result = purge_expired_feishu_events(
+                    local_store,
+                    retention_days=_cfg.feishu_event_retention_days(),
+                    app_id="",
+                )
+                if maintenance_result.more_may_remain:
+                    local_store.record_error(
+                        "",
+                        "",
+                        "feishu_retention_backlog",
+                        "feishu_retention_backlog:more_batches_remain",
+                    )
+                    next_feishu_retention_run = (
+                        retention_now + work_item_interval_seconds
+                    )
+            except Exception as exc:
+                local_store.record_error(
+                    "",
+                    "",
+                    "feishu_retention_maintenance",
+                    f"feishu_retention_maintenance:{type(exc).__name__}",
+                )
+                next_feishu_retention_run = retention_now + min(
+                    work_item_interval_seconds, 300
+                )
         if not network_ready():
             sleep(work_item_interval_seconds)
             continue
         process_work_items_command(settings)
         process_okr_reviews_command(settings)
+        # Work and review processing can be slow. Re-sample the clock so a
+        # daily or hourly follow-up deadline crossed during that work is still
+        # handled in this iteration.
         now = monotonic()
         if now >= next_daily_run:
             scan_task_sources_command(
@@ -2425,6 +2479,10 @@ def run_task_maintenance_loop(
             )
             process_work_items_command(settings)
             process_okr_reviews_command(settings)
+            # A daily scan can itself run past the hourly follow-up deadline.
+            # Re-sample after all daily work so that deadline is handled below
+            # without waiting for another maintenance-loop iteration.
+            now = monotonic()
             next_daily_run = now + daily_interval_seconds
         if now >= next_follow_up_run:
             process_follow_ups_command(
@@ -2459,6 +2517,58 @@ def _wechat_service_components(settings: WorkerSettings) -> tuple:
     if _cfg.wechat_sender_enabled():
         components.append(("wechat-sender", lambda: _run_wechat_loop(settings, "sender")))
     return tuple(components)
+
+
+def _feishu_service_components(settings: WorkerSettings) -> tuple:
+    """Build the optional Feishu runtime without importing the SDK eagerly.
+
+    The listener and sender are two logical components but intentionally share
+    one asyncio runtime and one WebSocket connection.  The Codex consumer stays
+    in a separate thread and never receives that client.
+    """
+    from app import config as _cfg
+
+    if not _cfg.feishu_enabled():
+        return ()
+
+    from app.feishu import service as _fs
+    from app.feishu.setup import dependency_status
+
+    store = AutoReplyStore(settings.db_path)
+    dependencies = dependency_status()
+    app_id = _cfg.feishu_app_id()
+    app_secret = _cfg.feishu_app_secret()
+    if not (
+        app_id
+        and app_secret
+        and dependencies.channel_version_ok
+        and dependencies.oapi_version_ok
+    ):
+        store.record_error(
+            None,
+            None,
+            "feishu_configuration_blocked",
+            "feishu_configuration_blocked:missing_or_unpinned",
+        )
+        return ()
+
+    runtime = _fs.build_runtime(store)
+    runner = _fs.build_decision_runner(
+        workspace=settings.workspace,
+        timeout_seconds=settings.codex_timeout_seconds,
+        idle_timeout_seconds=settings.codex_idle_timeout_seconds,
+    )
+    limit = 50 if settings.max_batches is None else settings.max_batches
+    return (
+        (
+            "feishu-listener",
+            lambda: _fs.run_channel_runtime(runtime),
+        ),
+        (
+            "feishu-consumer",
+            lambda: _fs.run_consumer_loop(store, runner, limit=limit),
+        ),
+    )
 
 
 def _run_wechat_loop(settings: WorkerSettings, role: str) -> None:
@@ -2547,6 +2657,10 @@ def run_service(
     wait: Callable[[], None] | None = None,
     exit_process: Callable[[int], None] = os._exit,
 ) -> None:
+    from app.audit_security import is_loopback_host
+
+    if not is_loopback_host(host):
+        raise ValueError("service audit-web host must be a loopback address")
     _initialize_meeting_discovery_on_service_start(settings)
     _recover_processing_reply_tasks_on_service_start(settings)
     _recover_processing_work_summary_inputs_on_service_start(settings)
@@ -2616,7 +2730,11 @@ def run_service(
             ),
         ),
     )
-    components = components + _wechat_service_components(settings)
+    components = (
+        components
+        + _wechat_service_components(settings)
+        + _feishu_service_components(settings)
+    )
     for component, target in components:
         thread = thread_factory(
             target=_service_component_target(
@@ -2663,8 +2781,13 @@ def _recover_meeting_alignment_jobs_on_service_start(
 
 def _recover_processing_reply_tasks_on_service_start(settings: WorkerSettings) -> int:
     store = AutoReplyStore(settings.db_path)
-    recovered_tasks = store.reset_processing_reply_tasks()
-    return len(recovered_tasks)
+    # Feishu owns lease-aware stale recovery in its consumer.  Immediate
+    # startup reset would let a second service process steal an active model
+    # execution.  DingTalk and WeChat retain their existing crash recovery.
+    return sum(
+        len(store.reset_processing_reply_tasks(channel=channel))
+        for channel in ("dingtalk", "wechat")
+    )
 
 
 def _recover_processing_work_summary_inputs_on_service_start(
@@ -2893,6 +3016,11 @@ def main() -> None:
         from app.wechat import cli as wechat_cli
 
         raise SystemExit(wechat_cli.main(args.wechat_args))
+
+    if args.command == "feishu":
+        from app.feishu import cli as feishu_cli
+
+        raise SystemExit(feishu_cli.main(args.feishu_args))
 
     settings = settings_from_args(args)
 

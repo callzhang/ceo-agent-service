@@ -318,10 +318,6 @@ def feishu_cli_binary() -> str:
     return os.getenv("CEO_FEISHU_CLI_BINARY", "lark").strip() or "lark"
 
 
-def feishu_live_send_enabled() -> bool:
-    return _env_truthy("CEO_FEISHU_LIVE_SEND_ENABLED")
-
-
 # --- WeChat personal-account channel (disabled by default) ---
 def _wechat_truthy(name: str) -> bool:
     return _env_truthy(name)
@@ -407,3 +403,91 @@ def wechat_fetch_articles() -> bool:
 
 def wechat_article_max_chars() -> int:
     return env_int("CEO_WECHAT_ARTICLE_MAX_CHARS", 1500)
+
+
+# --- Feishu official Bot channel (disabled by default) ---
+FEISHU_KEYRING_SERVICE = "ceo-agent-service/feishu"
+FEISHU_KEYRING_APP_SECRET_USERNAME = "app_secret"
+
+
+def _feishu_truthy(name: str) -> bool:
+    return os.getenv(name, "0").strip().lower() in ("1", "true", "yes", "on")
+
+
+def _feishu_positive_int(name: str, default: int) -> int:
+    value = env_int(name, default)
+    if value <= 0:
+        raise ValueError(f"{name} must be greater than zero")
+    return value
+
+
+def feishu_enabled() -> bool:
+    """Whether the Feishu receive/decision channel may start."""
+    return _feishu_truthy("CEO_FEISHU_ENABLED")
+
+
+def feishu_sender_enabled() -> bool:
+    """Whether the separately gated Feishu delivery worker may start."""
+    return _feishu_truthy("CEO_FEISHU_SENDER_ENABLED")
+
+
+def feishu_live_send_allowed() -> bool:
+    """Return true only when all Feishu outbound gates are explicitly open."""
+    return (
+        feishu_enabled()
+        and feishu_sender_enabled()
+        and os.getenv("CEO_NOT_SEND_MESSAGE", "1").strip() == "0"
+    )
+
+
+def feishu_send_mode() -> str:
+    """Return ``confirm`` unless the operator explicitly selects ``auto``."""
+    mode = os.getenv("CEO_FEISHU_SEND_MODE", "confirm").strip().lower()
+    return mode if mode in ("confirm", "auto") else "confirm"
+
+
+def feishu_security_mode() -> str:
+    """Return the Channel SDK security mode, failing closed to ``strict``."""
+    mode = os.getenv("CEO_FEISHU_SECURITY_MODE", "strict").strip().lower()
+    return mode if mode in ("audit", "strict") else "strict"
+
+
+def feishu_stale_event_seconds() -> int:
+    return _feishu_positive_int("CEO_FEISHU_STALE_EVENT_SECONDS", 300)
+
+
+def feishu_context_limit() -> int:
+    return _feishu_positive_int("CEO_FEISHU_CONTEXT_LIMIT", 20)
+
+
+def feishu_max_sends_per_minute() -> int:
+    return _feishu_positive_int("CEO_FEISHU_MAX_SENDS_PER_MINUTE", 10)
+
+
+def feishu_event_retention_days() -> int:
+    return _feishu_positive_int("CEO_FEISHU_EVENT_RETENTION_DAYS", 30)
+
+
+def feishu_app_id() -> str:
+    return os.getenv("CEO_FEISHU_APP_ID", "").strip()
+
+
+def feishu_app_secret() -> str:
+    """Read the App Secret from Keychain first, then the debug-only env fallback.
+
+    Keyring/backend errors are intentionally swallowed: exception text from a
+    credential backend must never be surfaced by configuration parsing because
+    it can contain sensitive backend details or credential material.
+    """
+    try:
+        import keyring
+
+        value = keyring.get_password(
+            FEISHU_KEYRING_SERVICE,
+            FEISHU_KEYRING_APP_SECRET_USERNAME,
+        )
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    except Exception:  # pragma: no cover - backend behavior is platform-specific
+        pass
+    return os.getenv("CEO_FEISHU_APP_SECRET", "").strip()

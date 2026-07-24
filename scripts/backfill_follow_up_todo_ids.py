@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from difflib import SequenceMatcher
 from pathlib import Path
 
+from app.config import worker_db_path
+
 
 EXACT_MATCH_SCORE = 1.0
 EXISTING_TODO_SCORE_THRESHOLD = 0.75
@@ -43,14 +45,18 @@ class Candidate:
     question: str
 
 
-def main() -> int:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Backfill follow_up_drafts.todo_id by binding each draft to a TODO."
     )
-    parser.add_argument("--db", default="data/auto-reply.sqlite3")
+    parser.add_argument("--db", default=str(worker_db_path()))
     parser.add_argument("--audit", default="")
     parser.add_argument("--apply", action="store_true")
-    args = parser.parse_args()
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
 
     db_path = Path(args.db)
     audit_path = Path(args.audit) if args.audit else None

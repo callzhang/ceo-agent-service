@@ -13,7 +13,9 @@ CliRunner = Callable[..., subprocess.CompletedProcess[str]]
 
 
 class FeishuCliAdapter:
-    channel_name = "feishu"
+    # Keep this namespace distinct from the official Bot channel.  Tasks from
+    # this diagnostic/read-only adapter must never be claimed by app.feishu.
+    channel_name = "feishu_cli"
 
     def __init__(
         self,
@@ -24,11 +26,10 @@ class FeishuCliAdapter:
     ):
         self.binary = binary or config.feishu_cli_binary()
         self.runner = runner
-        self.live_send_enabled = (
-            config.feishu_live_send_enabled()
-            if live_send_enabled is None
-            else live_send_enabled
-        )
+        # Source-compatibility only. CLI outbound cannot satisfy the official
+        # channel's durable approval, app binding, idempotency and ambiguous-
+        # result fencing contract, so no flag or caller may enable it.
+        _ = live_send_enabled
 
     def doctor(self) -> ChannelDoctorStatus:
         command = [self.binary, "--help"]
@@ -85,7 +86,7 @@ class FeishuCliAdapter:
             "--recent",
             "--limit",
             str(limit),
-                "--json",
+            "--json",
         ]
         try:
             completed = self.runner(
@@ -115,51 +116,32 @@ class FeishuCliAdapter:
             "--json",
         ]
         safe_command = _redact_send_command(command)
-        if not self.live_send_enabled:
-            return ChannelSendResult(
-                channel=self.channel_name,
-                status="blocked",
-                reason="set CEO_FEISHU_LIVE_SEND_ENABLED=1 to allow Feishu CLI sends",
-                command=safe_command,
-            )
-        try:
-            completed = self.runner(
-                command,
-                capture_output=True,
-                text=True,
-                timeout=30,
-                check=False,
-                env=_non_interactive_env(),
-            )
-        except subprocess.TimeoutExpired:
-            return ChannelSendResult(
-                channel=self.channel_name,
-                status="failed",
-                reason="Feishu CLI send command timed out",
-                command=safe_command,
-            )
-        except OSError as exc:
-            return ChannelSendResult(
-                channel=self.channel_name,
-                status="failed",
-                reason=str(exc),
-                command=safe_command,
-            )
-        if completed.returncode != 0:
-            reason = (completed.stderr or completed.stdout or "").strip()
-            return ChannelSendResult(
-                channel=self.channel_name,
-                status="failed",
-                reason=reason or f"Feishu CLI send exited {completed.returncode}",
-                command=safe_command,
-            )
         return ChannelSendResult(
             channel=self.channel_name,
-            status="ready",
-            reason="Feishu CLI send completed",
+            status="blocked",
+            reason=(
+                "Feishu CLI outbound is permanently disabled; use the reviewed "
+                "official Bot delivery pipeline"
+            ),
             command=safe_command,
-            evidence={"stdout": completed.stdout.strip()},
         )
+
+
+def official_bot_doctor() -> ChannelDoctorStatus:
+    """Return an offline-only status for the official SDK Bot channel."""
+    from app.feishu.setup import doctor
+
+    result = doctor(
+        app_id=config.feishu_app_id(),
+        app_secret=config.feishu_app_secret(),
+    )
+    ready = result.status == "ready_for_explicit_live_check"
+    return ChannelDoctorStatus(
+        channel="feishu_bot",
+        status="ready" if ready else "blocked",
+        reason=f"offline official Bot check: {result.status}",
+        command=["ceo-agent", "feishu", "doctor"],
+    )
 
 
 def parse_feishu_messages(raw: str) -> list[ChannelMessage]:
@@ -214,7 +196,7 @@ def _parse_message(item: object, index: int) -> ChannelMessage:
     if conversation_type not in {"direct", "group"}:
         conversation_type = "unknown"
     return ChannelMessage(
-        channel="feishu",
+        channel="feishu_cli",
         conversation_id=conversation_id,
         conversation_title=(
             _string_field(item, "conversation_title")
@@ -236,9 +218,12 @@ def _string_field(payload: dict, key: str) -> str:
 
 
 def _non_interactive_env() -> dict[str, str]:
-    env = os.environ.copy()
-    env.setdefault("CI", "1")
-    env.setdefault("NO_COLOR", "1")
+    # Do not leak Bot, Memory, model-provider, or unrelated application
+    # credentials into a subprocess used only for local diagnostics/reading.
+    allowed = ("HOME", "PATH", "TMPDIR", "LANG", "LC_ALL", "XDG_CONFIG_HOME")
+    env = {name: os.environ[name] for name in allowed if name in os.environ}
+    env["CI"] = "1"
+    env["NO_COLOR"] = "1"
     return env
 
 

@@ -1,15 +1,55 @@
 import json
+from ipaddress import ip_address
 from pathlib import Path
 import shlex
 import shutil
 import subprocess
 from urllib import error, request
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
+from app.audit_security import (
+    NOTIFICATION_BRIDGE_HEADER_NAME,
+    NOTIFICATION_BRIDGE_HEADER_VALUE,
+)
 from app.config import notification_bridge_base_url
 
 
 DEFAULT_NOTIFICATION_ICON_PATH = Path(__file__).resolve().parent / "logo.png"
+
+
+def _validated_notification_bridge_base_url() -> str | None:
+    base_url = notification_bridge_base_url()
+    if not base_url or base_url != base_url.strip() or any(
+        character.isspace() for character in base_url
+    ):
+        return None
+    try:
+        parsed = urlsplit(base_url)
+        host = parsed.hostname or ""
+        port = parsed.port
+    except ValueError:
+        return None
+    if (
+        parsed.scheme.lower() != "http"
+        or not parsed.netloc
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.path not in {"", "/"}
+        or "?" in base_url
+        or "#" in base_url
+        or parsed.query
+        or parsed.fragment
+        or port == 0
+    ):
+        return None
+    normalized_host = host.rstrip(".").lower()
+    if normalized_host != "localhost":
+        try:
+            if not ip_address(normalized_host).is_loopback:
+                return None
+        except ValueError:
+            return None
+    return base_url.rstrip("/")
 
 
 def dingtalk_conversation_notification_url(
@@ -18,12 +58,13 @@ def dingtalk_conversation_notification_url(
     attempt_id: int | None = None,
 ) -> str | None:
     cleaned_conversation_id = conversation_id.strip()
-    if not cleaned_conversation_id:
+    base_url = _validated_notification_bridge_base_url()
+    if not cleaned_conversation_id or base_url is None:
         return None
     query = f"conversation_id={quote(cleaned_conversation_id, safe='')}"
     if attempt_id is not None:
         query = f"{query}&attempt_id={int(attempt_id)}"
-    return f"{notification_bridge_base_url()}/open-dingtalk?{query}"
+    return f"{base_url}/open-dingtalk?{query}"
 
 
 def send_macos_notification(title: str, message: str, url: str | None = None) -> None:
@@ -72,7 +113,10 @@ def _send_terminal_notifier_notification(
 
 
 def _send_browser_notification(title: str, message: str, url: str | None) -> bool:
-    endpoint = f"{notification_bridge_base_url()}/browser-notifications"
+    base_url = _validated_notification_bridge_base_url()
+    if base_url is None:
+        return False
+    endpoint = f"{base_url}/browser-notifications"
     body = json.dumps(
         {"title": title, "message": message, "url": url or ""},
         ensure_ascii=False,
@@ -80,7 +124,10 @@ def _send_browser_notification(title: str, message: str, url: str | None) -> boo
     http_request = request.Request(
         endpoint,
         data=body,
-        headers={"Content-Type": "application/json"},
+        headers={
+            "Content-Type": "application/json",
+            NOTIFICATION_BRIDGE_HEADER_NAME: NOTIFICATION_BRIDGE_HEADER_VALUE,
+        },
         method="POST",
     )
     try:
