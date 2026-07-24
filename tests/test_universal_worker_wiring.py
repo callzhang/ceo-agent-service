@@ -804,6 +804,37 @@ def test_universal_outcome_mapping(
     assert stored_task(worker, task.id).status == expected_status
 
 
+def test_unrecoverable_validation_block_records_attempt_and_completes_task(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("CEO_UNIVERSAL_CONSUMER", "1")
+    worker, trigger = make_worker(tmp_path, monkeypatch)
+    task = enqueue(worker, trigger)
+
+    class FakeOrchestrator:
+        def process(self, context):
+            return UniversalConsumerResult(
+                completed=False,
+                reason="conflicting_terminal_actions",
+                executed_actions=(),
+                outcome=UniversalConsumerOutcome.VALIDATION_BLOCKED,
+            )
+
+    monkeypatch.setattr(worker, "_universal_consumer", lambda: FakeOrchestrator())
+    assert worker.consume_once(max_tasks=1) == 1
+
+    stored = stored_task(worker, task.id)
+    assert stored.status == "done"
+    attempt = worker.store.get_latest_reply_attempt_for_trigger(
+        trigger.open_conversation_id,
+        trigger.open_message_id,
+    )
+    assert attempt is not None
+    assert attempt.action == "blocked"
+    assert attempt.send_status == "blocked"
+    assert "conflicting_terminal_actions" in attempt.send_error
+
+
 def test_concurrent_workers_execute_one_plan(tmp_path, monkeypatch):
     monkeypatch.setenv("CEO_UNIVERSAL_CONSUMER", "1")
     trigger = trigger_message()

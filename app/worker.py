@@ -484,6 +484,12 @@ class UniversalActionUnknownError(ReplyTaskProcessingError):
     """Raised when replay could duplicate an externally visible side effect."""
 
 
+UNRECOVERABLE_UNIVERSAL_VALIDATION_REASONS = {
+    "conflicting_terminal_actions",
+    "conflicting_okr_review_actions",
+}
+
+
 class DingTalkAutoReplyWorker:
     def __init__(
         self,
@@ -4753,11 +4759,30 @@ class DingTalkAutoReplyWorker:
                     conversation=conversation,
                 )
                 continue
-            except (
-                UniversalDependencyDeferredError,
-                UniversalValidationDeferredError,
-            ) as exc:
+            except UniversalDependencyDeferredError as exc:
                 error = str(exc)
+                self.store.defer_reply_task(
+                    task.id,
+                    error,
+                    available_at=self._reply_task_authorization_available_at(),
+                )
+                self.store.record_error(
+                    task.conversation_id,
+                    task.trigger_message_id,
+                    "reply_task_universal_deferred",
+                    error,
+                )
+                continue
+            except UniversalValidationDeferredError as exc:
+                error = str(exc)
+                if error in UNRECOVERABLE_UNIVERSAL_VALIDATION_REASONS:
+                    self._complete_unrecoverable_universal_validation_block(
+                        conversation,
+                        task,
+                        error,
+                    )
+                    processed_tasks += 1
+                    continue
                 self.store.defer_reply_task(
                     task.id,
                     error,
@@ -4911,6 +4936,45 @@ class DingTalkAutoReplyWorker:
         )
         return self._sqlite_timestamp(
             self._now().astimezone(timezone.utc) + timedelta(seconds=delay_seconds)
+        )
+
+    def _complete_unrecoverable_universal_validation_block(
+        self,
+        conversation: DingTalkConversation,
+        task: ReplyTask,
+        reason: str,
+    ) -> None:
+        send_error = (
+            "blocked: universal plan validation is unrecoverable for this trigger: "
+            f"{reason}"
+        )
+        attempt_id = self.store.record_reply_attempt_for_trigger(
+            conversation_id=task.conversation_id,
+            conversation_title=task.conversation_title,
+            trigger_message_id=task.trigger_message_id,
+            trigger_sender=task.trigger_sender,
+            trigger_text=task.trigger_text,
+            action="blocked",
+            sensitivity_kind="general",
+            codex_reason=send_error,
+            audit_summary=send_error,
+            send_status="blocked",
+        )
+        self.store.update_reply_attempt(
+            attempt_id,
+            send_error=send_error,
+        )
+        self.store.complete_reply_task(task.id)
+        self.store.record_error(
+            task.conversation_id,
+            task.trigger_message_id,
+            "reply_task_universal_validation_unrecoverable",
+            send_error,
+        )
+        self._notify(
+            title=f"CEO task blocked: {task.conversation_title}",
+            message=send_error[:120],
+            conversation=conversation,
         )
 
     def _reply_task_authorization_available_at(self) -> str:
