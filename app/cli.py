@@ -2542,6 +2542,7 @@ def run_service(
     _initialize_meeting_discovery_on_service_start(settings)
     _recover_processing_reply_tasks_on_service_start(settings)
     _recover_processing_work_summary_inputs_on_service_start(settings)
+    _recover_resolved_universal_action_failures_on_service_start(settings)
     _recover_okr_review_requests_on_service_start(settings)
     _recover_meeting_alignment_jobs_on_service_start(settings)
     doctor_mcp_command(
@@ -2665,6 +2666,13 @@ def _recover_processing_work_summary_inputs_on_service_start(
     store = AutoReplyStore(settings.db_path)
     recovered_inputs = store.reset_processing_work_summary_inputs()
     return len(recovered_inputs)
+
+
+def _recover_resolved_universal_action_failures_on_service_start(
+    settings: WorkerSettings,
+) -> int:
+    store = AutoReplyStore(settings.db_path)
+    return store.reconcile_resolved_universal_action_failures()
 
 
 def _recover_okr_review_requests_on_service_start(settings: WorkerSettings) -> int:

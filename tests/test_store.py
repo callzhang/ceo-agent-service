@@ -833,6 +833,121 @@ def test_reset_processing_reply_tasks_requeues_all_processing_on_startup(
     assert reclaimed[0].attempts == 2
 
 
+def test_reconcile_resolved_universal_action_failure_uses_terminal_attempt(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    execution = _universal_action_execution(store, task_id)
+    assert (
+        store.claim_universal_action_execution(execution)
+        is UniversalActionExecutionState.NOT_STARTED
+    )
+    attempt_id = store.record_universal_reply_attempt(
+        execution,
+        conversation_id=execution.context.conversation_id,
+        conversation_title=execution.context.conversation_title,
+        trigger_message_id=execution.context.trigger_message_id,
+        trigger_sender=execution.context.trigger_sender,
+        trigger_text=execution.context.trigger_text,
+        action=execution.action.kind.value,
+        sensitivity_kind=execution.action.sensitivity_kind or "general",
+        send_status="pending",
+    )
+    store.mark_universal_action_execution_failed(execution, "transient failure")
+    store.update_reply_attempt(
+        attempt_id,
+        send_status="calendar",
+        send_error="calendar_event_not_found_noop",
+        calendar_response_result_json=json.dumps(
+            {"noop_reason": "calendar_event_not_found", "success": True}
+        ),
+    )
+
+    assert store.reconcile_resolved_universal_action_failures() == 1
+
+    assert (
+        store.get_universal_action_execution_state(execution)
+        is UniversalActionExecutionState.SUCCEEDED
+    )
+    with sqlite3.connect(tmp_path / "worker.sqlite3") as db:
+        db.row_factory = sqlite3.Row
+        row = db.execute(
+            "select attempt_id, result_json, error from universal_action_executions"
+        ).fetchone()
+    assert row["attempt_id"] == attempt_id
+    assert row["error"] == ""
+    assert json.loads(row["result_json"])["outcome"] == "attempt_terminal"
+
+
+def test_reconcile_resolved_universal_action_failure_uses_superseding_attempt(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    execution = _universal_action_execution(store, task_id)
+    assert (
+        store.claim_universal_action_execution(execution)
+        is UniversalActionExecutionState.NOT_STARTED
+    )
+    failed_attempt_id = store.record_universal_reply_attempt(
+        execution,
+        conversation_id=execution.context.conversation_id,
+        conversation_title=execution.context.conversation_title,
+        trigger_message_id=execution.context.trigger_message_id,
+        trigger_sender=execution.context.trigger_sender,
+        trigger_text=execution.context.trigger_text,
+        action=execution.action.kind.value,
+        sensitivity_kind=execution.action.sensitivity_kind or "general",
+        send_status="pending",
+    )
+    store.mark_universal_action_execution_failed(execution, "missing subject")
+    sent_attempt_id = store.record_reply_attempt(
+        conversation_id=execution.context.conversation_id,
+        conversation_title=execution.context.conversation_title,
+        trigger_message_id=execution.context.trigger_message_id,
+        trigger_sender=execution.context.trigger_sender,
+        trigger_text=execution.context.trigger_text,
+        action=execution.action.kind.value,
+        sensitivity_kind=execution.action.sensitivity_kind or "general",
+        send_status="sent",
+    )
+    store.update_reply_attempt(
+        sent_attempt_id,
+        final_reply_text="covered by newer attempt",
+    )
+    store.update_reply_attempt(
+        failed_attempt_id,
+        send_status="skipped",
+        send_error=f"superseded_by_sent_attempt:{sent_attempt_id}",
+    )
+
+    assert store.reconcile_resolved_universal_action_failures() == 1
+
+    assert (
+        store.get_universal_action_execution_state(execution)
+        is UniversalActionExecutionState.SUCCEEDED
+    )
+    with sqlite3.connect(tmp_path / "worker.sqlite3") as db:
+        db.row_factory = sqlite3.Row
+        row = db.execute("select result_json from universal_action_executions").fetchone()
+    result = json.loads(row["result_json"])
+    assert result["outcome"] == "superseded_by_terminal_attempt"
+    assert result["superseded_attempt_id"] == sent_attempt_id
+
+
+def test_count_unresolved_universal_action_executions_counts_failed(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    execution = _universal_action_execution(store, task_id)
+    store.claim_universal_action_execution(execution)
+    store.mark_universal_action_execution_failed(execution, "still unresolved")
+
+    assert store.count_unresolved_universal_action_executions() == 1
+
+
 def test_complete_unfinished_reply_tasks_before_trigger_marks_older_tasks_done(
     tmp_path: Path,
 ):

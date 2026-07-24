@@ -368,6 +368,7 @@ def test_check_dry_run_passes_without_failed_or_processing_backlog(tmp_path: Pat
     assert result.evidence == {
         "processing_reply_tasks": 0,
         "failed_reply_tasks": 0,
+        "unresolved_universal_actions": 0,
         "due_follow_up_drafts": 0,
     }
 
@@ -388,8 +389,65 @@ def test_check_dry_run_reports_processing_backlog(tmp_path: Path):
     result = check_setup_step("dry_run", repo_root=tmp_path, store=store)
 
     assert result.status == "needs_action"
-    assert result.summary == "Unresolved reply or follow-up backlog exists."
+    assert result.summary == "Unresolved reply, action, or follow-up backlog exists."
     assert result.evidence["processing_reply_tasks"] == 1
+
+
+def test_check_dry_run_reports_unresolved_universal_action(tmp_path: Path):
+    db_path = tmp_path / "worker.sqlite3"
+    store = AutoReplyStore(db_path)
+    store.enqueue_reply_task(
+        conversation_id="cid-1",
+        conversation_title="测试群",
+        single_chat=False,
+        trigger_message_id="msg-1",
+        trigger_create_time="2026-07-21 12:00:00",
+        trigger_sender="测试用户",
+        trigger_text="测试消息",
+    )
+    task = store.get_reply_task_for_message("cid-1", "msg-1")
+    assert task is not None
+    with store._connect() as db:
+        db.execute(
+            """
+            insert into universal_plan_executions (
+                execution_scope_id,
+                reply_task_id,
+                execution_generation,
+                plan_json,
+                context_hash,
+                context_json
+            ) values ('scope-1', ?, 'initial', '{}', 'hash-1', '{}')
+            """,
+            (task.id,),
+        )
+        db.execute(
+            """
+            insert into universal_action_executions (
+                execution_id,
+                execution_scope_id,
+                action_index,
+                action_kind,
+                action_hash,
+                action_json,
+                status
+            ) values (
+                'exec-1',
+                'scope-1',
+                0,
+                'send_reply',
+                'hash-1',
+                '{}',
+                'failed'
+            )
+            """
+        )
+
+    result = check_setup_step("dry_run", repo_root=tmp_path, store=store)
+
+    assert result.status == "needs_action"
+    assert result.summary == "Unresolved reply, action, or follow-up backlog exists."
+    assert result.evidence["unresolved_universal_actions"] == 1
 
 
 def test_check_dry_run_reports_due_follow_up_backlog(tmp_path: Path):
@@ -413,7 +471,7 @@ def test_check_dry_run_reports_due_follow_up_backlog(tmp_path: Path):
     result = check_setup_step("dry_run", repo_root=tmp_path, store=store)
 
     assert result.status == "needs_action"
-    assert result.summary == "Unresolved reply or follow-up backlog exists."
+    assert result.summary == "Unresolved reply, action, or follow-up backlog exists."
     assert result.evidence["due_follow_up_drafts"] == 1
 
 

@@ -506,20 +506,22 @@ def check_setup_step(
 def check_dry_run(*, store: AutoReplyStore) -> SetupStepStatus:
     processing = store.count_reply_tasks("processing")
     failed = store.count_reply_tasks("failed")
+    unresolved_universal_actions = store.count_unresolved_universal_action_executions()
     due_follow_ups = store.count_due_follow_up_drafts(
         due_before=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
     )
     evidence = {
         "processing_reply_tasks": processing,
         "failed_reply_tasks": failed,
+        "unresolved_universal_actions": unresolved_universal_actions,
         "due_follow_up_drafts": due_follow_ups,
     }
-    if processing or failed or due_follow_ups:
+    if processing or failed or unresolved_universal_actions or due_follow_ups:
         return _status(
             "dry_run",
             title="Dry-Run Validation",
             status="needs_action",
-            summary="Unresolved reply or follow-up backlog exists.",
+            summary="Unresolved reply, action, or follow-up backlog exists.",
             evidence=evidence,
         )
     return _status(

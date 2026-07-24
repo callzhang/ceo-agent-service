@@ -2639,6 +2639,131 @@ class AutoReplyStore:
             )
             return [self._reply_task_from_row(row) for row in rows]
 
+    def reconcile_resolved_universal_action_failures(self) -> int:
+        resolved_statuses = {"sent", "commented", "calendar", "reacted", "document"}
+        with self._connect() as db:
+            db.execute("begin immediate")
+            rows = db.execute(
+                """
+                select actions.execution_id,
+                       actions.execution_scope_id,
+                       actions.action_kind,
+                       attempts.id as attempt_id,
+                       attempts.send_status,
+                       attempts.send_error,
+                       attempts.conversation_id,
+                       attempts.trigger_message_id
+                from universal_action_executions as actions
+                join reply_attempts as attempts
+                  on attempts.universal_execution_id=actions.execution_id
+                where actions.status='failed'
+                order by attempts.updated_at desc, attempts.id desc
+                """
+            ).fetchall()
+            resolved: dict[str, tuple[int, str]] = {}
+            for row in rows:
+                execution_id = str(row["execution_id"])
+                if execution_id in resolved:
+                    continue
+                status = str(row["send_status"] or "").strip()
+                error = str(row["send_error"] or "").strip()
+                if status in resolved_statuses:
+                    resolved[execution_id] = (
+                        int(row["attempt_id"]),
+                        self._universal_action_reconciled_result_json(
+                            row,
+                            reason="attempt_terminal",
+                        ),
+                    )
+                    continue
+                superseded_attempt_id = self._superseded_sent_attempt_id(error)
+                if status == "skipped" and superseded_attempt_id is not None:
+                    sent = db.execute(
+                        """
+                        select id
+                        from reply_attempts
+                        where id=?
+                          and conversation_id=?
+                          and trigger_message_id=?
+                          and send_status in ('sent', 'commented', 'calendar', 'reacted', 'document')
+                        """,
+                        (
+                            superseded_attempt_id,
+                            row["conversation_id"],
+                            row["trigger_message_id"],
+                        ),
+                    ).fetchone()
+                    if sent is not None:
+                        resolved[execution_id] = (
+                            int(row["attempt_id"]),
+                            self._universal_action_reconciled_result_json(
+                                row,
+                                reason="superseded_by_terminal_attempt",
+                                superseded_attempt_id=superseded_attempt_id,
+                            ),
+                        )
+            if not resolved:
+                return 0
+            for execution_id, (attempt_id, result_json) in resolved.items():
+                db.execute(
+                    """
+                    update universal_action_executions
+                    set status='succeeded',
+                        attempt_id=?,
+                        result_json=?,
+                        error='',
+                        completed_at=current_timestamp,
+                        updated_at=current_timestamp
+                    where execution_id=? and status='failed'
+                    """,
+                    (attempt_id, result_json, execution_id),
+                )
+            return len(resolved)
+
+    @staticmethod
+    def _superseded_sent_attempt_id(error: str) -> int | None:
+        prefix = "superseded_by_sent_attempt:"
+        if not error.startswith(prefix):
+            return None
+        value = error[len(prefix) :].strip()
+        if not value.isdigit():
+            return None
+        return int(value)
+
+    @staticmethod
+    def _universal_action_reconciled_result_json(
+        row: sqlite3.Row,
+        *,
+        reason: str,
+        superseded_attempt_id: int | None = None,
+    ) -> str:
+        payload: dict[str, object] = {
+            "action_kind": row["action_kind"],
+            "execution_id": row["execution_id"],
+            "execution_scope_id": row["execution_scope_id"],
+            "outcome": reason,
+            "send_status": row["send_status"],
+        }
+        if superseded_attempt_id is not None:
+            payload["superseded_attempt_id"] = superseded_attempt_id
+        return json.dumps(
+            payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+
+    def count_unresolved_universal_action_executions(self) -> int:
+        with self._connect() as db:
+            row = db.execute(
+                """
+                select count(*) as count
+                from universal_action_executions
+                where status in ('failed', 'unknown', 'started', 'recovering')
+                """
+            ).fetchone()
+            return int(row["count"])
+
     def list_stale_processing_reply_tasks(
         self, max_age_seconds: int
     ) -> list[ReplyTask]:

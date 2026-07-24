@@ -5353,6 +5353,107 @@ def test_run_service_requeues_processing_reply_tasks_on_startup(tmp_path):
     assert calls[-1] == ("wait",)
 
 
+def test_run_service_reconciles_resolved_universal_action_failures_on_startup(
+    tmp_path,
+):
+    db_path = tmp_path / "worker.sqlite3"
+    store = AutoReplyStore(db_path)
+    store.enqueue_reply_task(
+        conversation_id="cid-1",
+        conversation_title="Calendar",
+        single_chat=True,
+        trigger_message_id="msg-1",
+        trigger_create_time="2026-05-28 18:00:00",
+        trigger_sender="Claire",
+        trigger_text="[日程]",
+    )
+    task = store.get_reply_task_for_message("cid-1", "msg-1")
+    assert task is not None
+    with store._connect() as db:
+        db.execute(
+            """
+            insert into universal_plan_executions (
+                execution_scope_id,
+                reply_task_id,
+                execution_generation,
+                plan_json,
+                context_hash,
+                context_json
+            ) values ('scope-1', ?, 'initial', '{}', 'hash-1', '{}')
+            """,
+            (task.id,),
+        )
+        db.execute(
+            """
+            insert into universal_action_executions (
+                execution_id,
+                execution_scope_id,
+                action_index,
+                action_kind,
+                action_hash,
+                action_json,
+                status,
+                error
+            ) values (
+                'exec-1',
+                'scope-1',
+                0,
+                'calendar_response',
+                'hash-1',
+                '{}',
+                'failed',
+                'calendar live state unavailable'
+            )
+            """
+        )
+    store.record_reply_attempt(
+        conversation_id="cid-1",
+        conversation_title="Calendar",
+        trigger_message_id="msg-1",
+        trigger_sender="Claire",
+        trigger_text="[日程]",
+        action="calendar_response",
+        sensitivity_kind="general",
+        universal_execution_id="exec-1",
+        universal_execution_scope_id="scope-1",
+        calendar_response_result_json=json.dumps(
+            {"noop_reason": "calendar_event_not_found", "success": True}
+        ),
+        send_status="calendar",
+    )
+    calls = []
+
+    class FakeThread:
+        def __init__(self, target, name, daemon):
+            self.target = target
+            self.name = name
+            self.daemon = daemon
+
+        def start(self):
+            calls.append(("start", self.name, self.daemon))
+
+    run_service(
+        WorkerSettings(db_path=db_path),
+        host="127.0.0.1",
+        port=8765,
+        producer_interval_seconds=60,
+        consumer_poll_interval_seconds=10,
+        thread_factory=FakeThread,
+        wait=lambda: calls.append(("wait",)),
+        exit_process=lambda status: calls.append(("exit", status)),
+    )
+
+    with sqlite3.connect(db_path) as db:
+        db.row_factory = sqlite3.Row
+        row = db.execute(
+            "select status, error, result_json from universal_action_executions"
+        ).fetchone()
+    assert row["status"] == "succeeded"
+    assert row["error"] == ""
+    assert json.loads(row["result_json"])["outcome"] == "attempt_terminal"
+    assert calls[-1] == ("wait",)
+
+
 def test_run_service_requeues_processing_work_summary_inputs_on_startup(tmp_path):
     db_path = tmp_path / "worker.sqlite3"
     store = AutoReplyStore(db_path)
