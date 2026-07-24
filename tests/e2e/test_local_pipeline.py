@@ -14,6 +14,12 @@ from app.org_cache import (
     refresh_org_cache,
 )
 from app.store import AutoReplyStore
+from app.universal_plan import (
+    PlannedAction,
+    PlannedActionKind,
+    UniversalAudit,
+    UniversalPlan,
+)
 from app.worker import DingTalkAutoReplyWorker, PROCESSING_ACK
 from app.dws_client import DwsUserProfile
 from app.dws_client import DwsCalendarAttendee, DwsCalendarEvent
@@ -254,6 +260,63 @@ class FakeCodex:
         return self.decision
 
 
+class FakeUniversalPlanner:
+    def __init__(self, decision: CodexDecision):
+        self.decision = decision
+        self.calls = []
+        self.last_session_id = None
+
+    def plan(self, context, session_id=None):
+        self.calls.append((context, session_id))
+        self.last_session_id = "session-1"
+        return universal_plan_from_decision(
+            self.decision,
+            conversation_id=context.conversation_id,
+            trigger_message_id=context.trigger_message_id,
+        )
+
+
+def universal_plan_from_decision(
+    decision: CodexDecision,
+    *,
+    conversation_id: str,
+    trigger_message_id: str,
+) -> UniversalPlan:
+    target = {
+        "conversation_id": conversation_id,
+        "trigger_message_id": trigger_message_id,
+    }
+    if decision.action is CodexAction.SEND_REPLY:
+        action = PlannedAction(
+            kind=PlannedActionKind.SEND_REPLY,
+            reason=decision.reason or "reply",
+            sensitivity_kind=decision.sensitivity_kind or SensitivityKind.GENERAL,
+            personnel_subject_user_id=decision.personnel_subject_user_id,
+            target=target,
+            payload={"text": decision.reply_text or ""},
+        )
+    elif decision.action is CodexAction.HANDOFF_TO_HUMAN:
+        action = PlannedAction(
+            kind=PlannedActionKind.HANDOFF_TO_HUMAN,
+            reason=decision.reason or "handoff",
+            target=target,
+            payload={},
+        )
+    else:
+        raise AssertionError(f"unsupported fake decision: {decision.action}")
+    return UniversalPlan(
+        task_kind="reply",
+        reason=decision.reason or action.reason,
+        dependencies=["dws"],
+        actions=[action],
+        audit=UniversalAudit(
+            summary=decision.audit_summary or decision.reason or action.reason,
+            documents=decision.audit_documents,
+            confidence=0.9,
+        ),
+    )
+
+
 def final_sent(dws: FakeDws):
     return [sent for sent in dws.sent if sent[1] != PROCESSING_ACK]
 
@@ -458,6 +521,7 @@ def test_local_pipeline_refreshes_org_cache_then_replies_without_runtime_org_cal
         codex=codex,
         dry_run=False,
         now_provider=fixed_worker_now,
+        universal_planner=FakeUniversalPlanner(codex.decision),
     )
 
     worker.run_once()
@@ -489,6 +553,9 @@ def test_local_pipeline_handoff_reacts_and_dings_without_runtime_org_calls(
         codex=FakeCodex(CodexDecision(action=CodexAction.HANDOFF_TO_HUMAN)),
         dry_run=False,
         now_provider=fixed_worker_now,
+        universal_planner=FakeUniversalPlanner(
+            CodexDecision(action=CodexAction.HANDOFF_TO_HUMAN)
+        ),
     )
 
     worker.run_once()
