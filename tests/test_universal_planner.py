@@ -127,6 +127,21 @@ def test_universal_planner_prompt_asks_when_oa_target_can_be_recovered():
     assert "trusted ID is missing, emit blocked instead" not in prompt
 
 
+def test_universal_planner_prompt_uses_comment_for_return_advice_without_revert_target():
+    from app.universal_planner import UniversalPlanner
+
+    planner = UniversalPlanner(
+        workspace=Path("/tmp/universal-planner-workspace"),
+        codex_bin="codex",
+    )
+
+    prompt = planner.build_prompt(_context())
+
+    assert "Use oa_approval action=退回 only for a real OA revert" in prompt
+    assert "use oa_approval action=comment" in prompt
+    assert "建议退回" in prompt
+
+
 def test_universal_planner_prompt_asks_when_document_material_can_be_recovered():
     from app.universal_planner import UniversalPlanner
 

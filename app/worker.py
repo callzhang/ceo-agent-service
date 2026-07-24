@@ -6050,7 +6050,7 @@ class DingTalkAutoReplyWorker:
             conversation_id=conversation.open_conversation_id,
             conversation_title=conversation.title,
             single_chat=conversation.single_chat,
-            execute=False,
+            execute=not self.dry_run,
         )
         url_process_instance_id = self._oa_process_instance_id_from_url(oa_url)
         url_task_id = self._oa_task_id_from_url(oa_url)

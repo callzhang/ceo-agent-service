@@ -7150,7 +7150,7 @@ def test_structured_approval_card_is_processed_by_oa_handler(
     assert attempt.oa_url.startswith("https://aflow.dingtalk.com/")
     assert attempt.oa_action == "拒绝"
     assert attempt.oa_remark == "请补充预算来源和项目归属后重新提交。"
-    assert oa_handler.calls[0][3] is False
+    assert oa_handler.calls[0][3] is True
     assert dws.oa_approval_actions == [
         (
             "proc-1",
@@ -7193,6 +7193,7 @@ def test_oa_return_action_is_left_as_approval_comment_instead_of_reject(
     assert dws.oa_approval_comments == [
         ("proc-1", "请补充预算来源和项目归属后重新提交。")
     ]
+    assert oa_handler.calls[0][3] is True
     attempt = worker.store.get_reply_attempt(1)
     assert attempt is not None
     assert attempt.action == "oa_approval"
@@ -7203,6 +7204,49 @@ def test_oa_return_action_is_left_as_approval_comment_instead_of_reject(
         "errcode": 0,
         "errmsg": "ok",
     }
+
+
+def test_live_oa_review_uses_execution_mode_for_return_comment(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message(
+        "[Ding]张静提醒您审批他的费用报销 "
+        "https://aflow.dingtalk.com/detail?procInstId=proc-1&taskId=task-1",
+        single_chat=True,
+    )
+    dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该走聊天回复")
+    )
+    oa_handler = ReturnOaApprovalHandler()
+    worker = make_worker(
+        tmp_path,
+        dws,
+        codex,
+        monkeypatch,
+        dry_run=False,
+        oa_approval_handler=oa_handler,
+    )
+
+    handled = worker._handle_oa_approval_if_actionable(
+        conversation(single_chat=True),
+        trigger,
+        [trigger],
+        ignore_existing_attempt=True,
+    )
+
+    assert handled is True
+    assert oa_handler.calls[0][3] is True
+    assert dws.oa_approval_actions == []
+    assert dws.oa_approval_comments == [
+        ("proc-1", "请补充预算来源和项目归属后重新提交。")
+    ]
+    attempt = worker.store.get_reply_attempt(1)
+    assert attempt is not None
+    assert attempt.action == "oa_approval"
+    assert attempt.oa_action == "退回"
+    assert attempt.send_status == "commented"
+    assert attempt.send_error == ""
 
 
 def test_existing_commented_oa_attempt_is_terminal(tmp_path: Path, monkeypatch):
@@ -7519,7 +7563,7 @@ def test_ding_approval_reminder_is_processed_by_oa_handler(
     assert codex.calls == []
     assert len(oa_handler.calls) == 1
     assert oa_handler.calls[0][2] == ""
-    assert oa_handler.calls[0][3] is False
+    assert oa_handler.calls[0][3] is True
     assert dws.oa_approval_actions == [
         (
             "proc-1",
@@ -8128,7 +8172,7 @@ def test_oa_approval_dry_run_uses_review_only_mode_and_keeps_live_retry_open(
     live_worker.run_once()
 
     assert len(live_runner.calls) == 1
-    assert live_runner.calls[0][3] is False
+    assert live_runner.calls[0][3] is True
     assert dws.oa_approval_actions == [
         (
             "proc-1",
@@ -12689,7 +12733,7 @@ def test_fast_path_followup_uses_recent_oa_card_url_when_unread_omits_card(
     assert "贾金鹏提交的项目立项全流程" in context_text
     assert "procInstId=proc-1" in oa_url
     assert "taskId=task-1" in oa_url
-    assert execute is False
+    assert execute is True
     attempt = worker.store.get_reply_attempt(1)
     assert attempt is not None
     assert attempt.action == "oa_approval"
