@@ -2,6 +2,7 @@ import json
 import re
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
+from html import unescape
 from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import parse_qs, unquote, urlparse
@@ -114,7 +115,7 @@ def extract_oa_url(text: str) -> str:
 
 def _urlish_candidates(text: str) -> list[str]:
     candidates: list[str] = []
-    text = text.replace("\\/", "/").replace("\\u0026", "&")
+    text = unescape(text).replace("\\/", "/").replace("\\u0026", "&")
     for separator in ('"', "'", " ", "\n", "\t", "\r", "<", ">"):
         text = text.replace(separator, "\n")
     for raw in text.splitlines():

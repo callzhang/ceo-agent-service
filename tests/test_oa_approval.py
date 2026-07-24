@@ -202,6 +202,23 @@ def test_extract_oa_url_strips_sentence_period_from_direct_url():
     )
 
 
+def test_extract_oa_url_decodes_html_escaped_query_delimiters():
+    text = (
+        "> 宋述评论了审批:"
+        "[宋述提交的费用报销对外付款综合审批单]"
+        "(https://aflow.dingtalk.com/dingtalk/mobile/homepage.htm?"
+        "corpid=ding-test&amp;dd_share=false&amp;"
+        "procInstId=proc-1&amp;taskId=task-1&amp;"
+        "dinghash=approval#approval)"
+    )
+
+    assert extract_oa_url(text) == (
+        "https://aflow.dingtalk.com/dingtalk/mobile/homepage.htm?"
+        "corpid=ding-test&dd_share=false&procInstId=proc-1&taskId=task-1&"
+        "dinghash=approval#approval"
+    )
+
+
 def test_runner_injects_skill_uses_schema_parses_result_and_records_session(
     tmp_path: Path, monkeypatch
 ):
