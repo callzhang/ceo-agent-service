@@ -993,7 +993,7 @@ def test_read_only_handle_allows_dws_reads_and_requires_empty_action_result(
     assert 'sandbox_mode="read-only"' not in command
 
 
-def test_execute_handle_warns_return_becomes_service_comment(tmp_path: Path):
+def test_execute_handle_warns_return_becomes_applicant_message(tmp_path: Path):
     skill_path = tmp_path / "skill.md"
     skill_path.write_text("# OA Skill", encoding="utf-8")
     prompts: list[str] = []
@@ -1014,7 +1014,7 @@ def test_execute_handle_warns_return_becomes_service_comment(tmp_path: Path):
 
     _handle_approval(runner, "触发消息", "", "", execute=True)
 
-    assert "退回会由服务作为审批单评论提交" in prompts[0]
+    assert "退回意见会由服务单独发消息给审批申请人" in prompts[0]
     assert "不会用拒绝冒充退回" in prompts[0]
 
 

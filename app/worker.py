@@ -1301,14 +1301,13 @@ class DingTalkAutoReplyWorker:
                 if not isinstance(activities, dict):
                     raise ValueError("invalid OA revert activities response")
             except ValueError as exc:
-                return self._finalize_universal_oa_action(
+                return self._notify_universal_oa_applicant(
                     execution,
                     attempt_id=attempt_id,
-                    outcome="blocked",
-                    send_status="blocked",
-                    send_error=self._safe_universal_oa_error(
-                        "oa_revert_material_invalid",
-                        exc,
+                    detail=detail,
+                    remark=oa_remark,
+                    reason=self._safe_universal_oa_error(
+                        "oa_revert_material_invalid", exc
                     ),
                 )
             if not self._universal_oa_revert_is_allowed(
@@ -1316,12 +1315,12 @@ class DingTalkAutoReplyWorker:
                 target_activity_id=target_activity_id,
                 revert_action=revert_action,
             ):
-                return self._finalize_universal_oa_action(
+                return self._notify_universal_oa_applicant(
                     execution,
                     attempt_id=attempt_id,
-                    outcome="blocked",
-                    send_status="blocked",
-                    send_error="missing_oa_revert_material",
+                    detail=detail,
+                    remark=oa_remark,
+                    reason="missing_oa_revert_material",
                 )
 
         action_result: Any
@@ -1865,6 +1864,78 @@ class DingTalkAutoReplyWorker:
             or ""
         ).strip().upper()
 
+    @classmethod
+    def _oa_applicant_user_id(cls, detail: Any) -> str:
+        for item in cls._universal_oa_dicts(detail):
+            user_id = str(item.get("originator_userid") or "").strip()
+            if user_id:
+                return user_id
+        return ""
+
+    @staticmethod
+    def _oa_return_notification_text(remark: str) -> str:
+        return (
+            "你的审批申请需要补充或修改后重新提交。\n\n"
+            f"审批意见：{remark.strip()}"
+        )
+
+    def _notify_universal_oa_applicant(
+        self,
+        execution: UniversalActionExecution,
+        *,
+        attempt_id: int,
+        detail: dict[str, Any],
+        remark: str,
+        reason: str,
+    ) -> bool:
+        applicant_user_id = self._oa_applicant_user_id(detail)
+        if not applicant_user_id:
+            error = "missing_oa_applicant_user_id"
+            self.store.update_reply_attempt(
+                attempt_id,
+                send_status="failed",
+                send_error=error,
+            )
+            self.store.mark_universal_action_execution_failed(execution, error)
+            return True
+        notice = self._oa_return_notification_text(remark)
+        self.store.update_reply_attempt(
+            attempt_id,
+            direct_user_id=applicant_user_id,
+            final_reply_text=notice,
+        )
+        try:
+            action_result = self.dws.send_direct_message_by_bot(
+                applicant_user_id,
+                notice,
+            )
+        except Exception as exc:
+            self._mark_universal_oa_unknown(
+                execution,
+                attempt_id=attempt_id,
+                error=exc,
+            )
+            raise
+        if not self._universal_oa_receipt_is_success(action_result):
+            error = "OA applicant notification returned without a verifiable receipt"
+            self._mark_universal_oa_unknown(
+                execution,
+                attempt_id=attempt_id,
+                error=error,
+                dws_action_result=(
+                    action_result if isinstance(action_result, dict) else None
+                ),
+            )
+            raise ReplyDeliveryError(error)
+        return self._finalize_universal_oa_action(
+            execution,
+            attempt_id=attempt_id,
+            outcome="applicant_notified",
+            send_status="sent",
+            dws_action_result=action_result,
+            result_metadata={"notification_reason": reason},
+        )
+
     def _fail_universal_oa_preflight(
         self,
         execution: UniversalActionExecution,
@@ -1931,11 +2002,13 @@ class DingTalkAutoReplyWorker:
         send_status: str,
         send_error: str = "",
         dws_action_result: dict[str, Any] | None = None,
+        result_metadata: dict[str, Any] | None = None,
     ) -> bool:
         result_json = self._universal_oa_result_json(
             execution,
             outcome=outcome,
             dws_action_result=dws_action_result,
+            result_metadata=result_metadata,
         )
         self.store.update_reply_attempt(
             attempt_id,
@@ -1972,6 +2045,7 @@ class DingTalkAutoReplyWorker:
         *,
         outcome: str,
         dws_action_result: dict[str, Any] | None = None,
+        result_metadata: dict[str, Any] | None = None,
     ) -> str:
         result: dict[str, Any] = {
                 "action": execution.action.payload["action"],
@@ -1983,6 +2057,8 @@ class DingTalkAutoReplyWorker:
                 ),
                 "task_id": str(execution.action.target.get("task_id") or ""),
             }
+        if result_metadata:
+            result.update(result_metadata)
         if dws_action_result is not None:
             result["dws_action_result"] = dws_action_result
         return json.dumps(
@@ -6074,10 +6150,39 @@ class DingTalkAutoReplyWorker:
         action_result = {}
         send_status = "dry_run"
         send_error = ""
+        direct_user_id = ""
+        final_reply_text = result.oa_remark
         if not self.dry_run:
             has_process_target = bool(effective_oa_process_instance_id.strip())
             has_approval_target = bool(has_process_target and effective_oa_task_id.strip())
-            if is_comment_only_action and has_process_target:
+            if result.oa_action.strip() == "退回":
+                try:
+                    approval_detail = json.loads(approval_detail_text)
+                except json.JSONDecodeError:
+                    approval_detail = {}
+                direct_user_id = self._oa_applicant_user_id(approval_detail)
+                final_reply_text = self._oa_return_notification_text(result.oa_remark)
+                if not direct_user_id:
+                    send_status = "failed"
+                    send_error = "missing_oa_applicant_user_id"
+                else:
+                    try:
+                        action_result = self.dws.send_direct_message_by_bot(
+                            direct_user_id,
+                            final_reply_text,
+                        )
+                        if self._universal_oa_receipt_is_success(action_result):
+                            send_status = "sent"
+                        else:
+                            send_status = "failed"
+                            send_error = (
+                                "OA applicant notification returned without a "
+                                "verifiable receipt"
+                            )
+                    except Exception as exc:
+                        send_status = "failed"
+                        send_error = str(exc)
+            elif is_comment_only_action and has_process_target:
                 try:
                     action_result = self.dws.comment_oa_approval(
                         effective_oa_process_instance_id,
@@ -6112,6 +6217,7 @@ class DingTalkAutoReplyWorker:
             sensitivity_kind="internal_personnel",
             codex_reason=result.oa_action,
             draft_reply_text=result.oa_remark,
+            direct_user_id=direct_user_id,
             codex_session_id=getattr(self.oa_approval_handler, "last_session_id", "")
             or "",
             codex_transcript_start_line=getattr(
@@ -6142,7 +6248,7 @@ class DingTalkAutoReplyWorker:
         )
         self.store.update_reply_attempt(
             attempt_id,
-            final_reply_text=result.oa_remark,
+            final_reply_text=final_reply_text,
             send_error=send_error or ("" if is_comment_only_action else target_error),
         )
         if send_error and send_error not in {

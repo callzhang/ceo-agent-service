@@ -283,7 +283,7 @@ class OaApprovalSpecHandler:
     ) -> OaApprovalResult:
         mode = (
             "执行模式：可以在完整审阅并确认 taskId 后执行通过或拒绝；"
-            "退回会由服务作为审批单评论提交，服务不会用拒绝冒充退回。"
+            "退回意见会由服务单独发消息给审批申请人，服务不会用拒绝冒充退回。"
             if execute
             else "只读审阅模式：不得执行通过、拒绝、退回或评论；只输出建议动作和建议留言，action_result 填 {}。"
         )

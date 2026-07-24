@@ -228,6 +228,7 @@ class FakeDws:
         self.openapi_oa_details: dict[str, dict | Exception] = {
             "proc-1": {
                 "process_instance": {
+                    "originator_userid": "applicant-user-1",
                     "tasks": [
                         {
                             "taskid": "task-1",
@@ -7165,7 +7166,7 @@ def test_structured_approval_card_is_processed_by_oa_handler(
     }
 
 
-def test_oa_return_action_is_left_as_approval_comment_instead_of_reject(
+def test_oa_return_without_revert_api_messages_applicant_instead_of_blocking(
     tmp_path: Path, monkeypatch
 ):
     trigger = message(
@@ -7187,26 +7188,37 @@ def test_oa_return_action_is_left_as_approval_comment_instead_of_reject(
         oa_approval_handler=oa_handler,
     )
 
-    worker.run_once()
+    handled = worker._handle_oa_approval_if_actionable(
+        conversation(single_chat=True),
+        trigger,
+        [trigger],
+        ignore_existing_attempt=True,
+    )
 
+    assert handled is True
     assert dws.oa_approval_actions == []
-    assert dws.oa_approval_comments == [
-        ("proc-1", "请补充预算来源和项目归属后重新提交。")
+    assert dws.oa_approval_comments == []
+    assert dws.bot_direct_messages == [
+        (
+            "applicant-user-1",
+            "你的审批申请需要补充或修改后重新提交。\n\n"
+            "审批意见：请补充预算来源和项目归属后重新提交。",
+        )
     ]
     assert oa_handler.calls[0][3] is True
     attempt = worker.store.get_reply_attempt(1)
     assert attempt is not None
     assert attempt.action == "oa_approval"
     assert attempt.oa_action == "退回"
-    assert attempt.send_status == "commented"
+    assert attempt.send_status == "sent"
     assert attempt.send_error == ""
+    assert attempt.direct_user_id == "applicant-user-1"
     assert json.loads(attempt.oa_action_result_json) == {
-        "errcode": 0,
-        "errmsg": "ok",
+        "success": True,
     }
 
 
-def test_live_oa_review_uses_execution_mode_for_return_comment(
+def test_live_oa_review_uses_execution_mode_for_return_notice(
     tmp_path: Path, monkeypatch
 ):
     trigger = message(
@@ -7238,14 +7250,19 @@ def test_live_oa_review_uses_execution_mode_for_return_comment(
     assert handled is True
     assert oa_handler.calls[0][3] is True
     assert dws.oa_approval_actions == []
-    assert dws.oa_approval_comments == [
-        ("proc-1", "请补充预算来源和项目归属后重新提交。")
+    assert dws.oa_approval_comments == []
+    assert dws.bot_direct_messages == [
+        (
+            "applicant-user-1",
+            "你的审批申请需要补充或修改后重新提交。\n\n"
+            "审批意见：请补充预算来源和项目归属后重新提交。",
+        )
     ]
     attempt = worker.store.get_reply_attempt(1)
     assert attempt is not None
     assert attempt.action == "oa_approval"
     assert attempt.oa_action == "退回"
-    assert attempt.send_status == "commented"
+    assert attempt.send_status == "sent"
     assert attempt.send_error == ""
 
 
@@ -7629,24 +7646,35 @@ def test_oa_approval_uses_worker_url_target_when_agent_omits_identifiers(
         oa_approval_handler=oa_handler,
     )
 
-    worker.run_once()
+    handled = worker._handle_oa_approval_if_actionable(
+        conversation(single_chat=True),
+        trigger,
+        [trigger],
+        ignore_existing_attempt=True,
+    )
 
+    assert handled is True
     attempt = worker.store.get_reply_attempt(1)
     assert attempt is not None
     assert attempt.action == "oa_approval"
-    assert attempt.send_status == "commented"
+    assert attempt.send_status == "sent"
     assert attempt.send_error == ""
     assert attempt.oa_process_instance_id == "proc-1"
     assert attempt.oa_task_id == "task-1"
     assert attempt.oa_url == (
         "https://aflow.dingtalk.com/detail?procInstId=proc-1&taskId=task-1"
     )
-    assert dws.oa_approval_comments == [
-        ("proc-1", "材料不足，暂不执行审批动作。")
+    assert dws.oa_approval_comments == []
+    assert dws.bot_direct_messages == [
+        (
+            "applicant-user-1",
+            "你的审批申请需要补充或修改后重新提交。\n\n"
+            "审批意见：材料不足，暂不执行审批动作。",
+        )
     ]
 
 
-def test_oa_comment_only_action_allows_process_without_task_id(
+def test_oa_return_action_allows_process_without_task_id_and_messages_applicant(
     tmp_path: Path, monkeypatch
 ):
     trigger = message(
@@ -7668,13 +7696,25 @@ def test_oa_comment_only_action_allows_process_without_task_id(
         oa_approval_handler=oa_handler,
     )
 
-    worker.run_once()
+    handled = worker._handle_oa_approval_if_actionable(
+        conversation(single_chat=True),
+        trigger,
+        [trigger],
+        ignore_existing_attempt=True,
+    )
 
+    assert handled is True
     assert dws.oa_approval_actions == []
-    assert dws.oa_approval_comments == [("proc-1", "请补充合同附件。")]
+    assert dws.oa_approval_comments == []
+    assert dws.bot_direct_messages == [
+        (
+            "applicant-user-1",
+            "你的审批申请需要补充或修改后重新提交。\n\n审批意见：请补充合同附件。",
+        )
+    ]
     attempt = worker.store.get_reply_attempt(1)
     assert attempt is not None
-    assert attempt.send_status == "commented"
+    assert attempt.send_status == "sent"
     assert attempt.send_error == ""
     assert attempt.oa_process_instance_id == "proc-1"
     assert attempt.oa_task_id == ""

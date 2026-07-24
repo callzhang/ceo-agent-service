@@ -233,6 +233,7 @@ class UniversalOaFakeDws(FakeDws):
         self.action_calls: list[tuple[str, str, str, str]] = []
         self.comment_calls: list[tuple[str, str]] = []
         self.revert_calls: list[tuple[str, str, str, str, str]] = []
+        self.bot_direct_messages: list[tuple[str, str]] = []
         self.records: list[dict] = []
         self.raise_after_apply = False
         self.raise_without_apply = False
@@ -271,6 +272,7 @@ class UniversalOaFakeDws(FakeDws):
         return {
             "result": {
                 "processInstanceId": process_instance_id,
+                "originator_userid": "applicant-user-1",
                 "status": self.process_status,
                 "tasks": [] if self.task_hidden else [self._task()],
             }
@@ -319,6 +321,13 @@ class UniversalOaFakeDws(FakeDws):
         if self.raise_without_apply:
             raise TimeoutError("comment response timeout")
         return self.comment_result
+
+    def send_direct_message_by_bot(self, user_id: str, text: str) -> dict:
+        self.bot_direct_messages.append((user_id, text))
+        return {
+            "success": True,
+            "result": {"processQueryKey": "oa-return-notice-1"},
+        }
 
     def revert_oa_approval_task(
         self,
@@ -2919,7 +2928,7 @@ def test_universal_oa_value_error_after_mutating_call_is_unknown_without_proof(
     )
 
 
-def test_universal_oa_value_error_before_revert_call_is_final_blocked(
+def test_universal_oa_value_error_before_revert_call_notifies_applicant(
     tmp_path: Path,
 ) -> None:
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
@@ -2945,10 +2954,19 @@ def test_universal_oa_value_error_before_revert_call_is_final_blocked(
     assert worker.execute_universal_oa_approval(execution) is True
 
     assert dws.revert_calls == []
+    assert dws.bot_direct_messages == [
+        (
+            "applicant-user-1",
+            "你的审批申请需要补充或修改后重新提交。\n\n审批意见：请补充材料",
+        )
+    ]
     attempt = store.get_latest_reply_attempt_for_trigger("cid-context", "msg-context")
     assert attempt is not None
-    assert attempt.send_status == "blocked"
-    assert "oa_revert_material_invalid" in attempt.send_error
+    assert attempt.send_status == "sent"
+    assert attempt.send_error == ""
+    result = json.loads(attempt.oa_action_result_json)
+    assert result["outcome"] == "applicant_notified"
+    assert result["notification_reason"] == "oa_revert_material_invalid: ValueError"
 
 
 def test_universal_oa_requires_trusted_context_target_before_dws_read(
@@ -3379,10 +3397,23 @@ def test_universal_oa_return_requires_selected_activity_to_allow_revert_action(
     assert worker.execute_universal_oa_approval(execution) is True
 
     assert dws.revert_calls == []
+    assert dws.bot_direct_messages == [
+        (
+            "applicant-user-1",
+            "你的审批申请需要补充或修改后重新提交。\n\n审批意见：请补充材料",
+        )
+    ]
     attempt = store.get_latest_reply_attempt_for_trigger("cid-context", "msg-context")
     assert attempt is not None
-    assert attempt.send_status == "blocked"
-    assert attempt.send_error == "missing_oa_revert_material"
+    assert attempt.send_status == "sent"
+    assert attempt.send_error == ""
+    assert attempt.direct_user_id == "applicant-user-1"
+    result = json.loads(attempt.oa_action_result_json)
+    assert result["outcome"] == "applicant_notified"
+    assert result["notification_reason"] == "missing_oa_revert_material"
+    assert result["dws_action_result"]["result"]["processQueryKey"] == (
+        "oa-return-notice-1"
+    )
 
 
 def test_universal_oa_ambiguous_transport_error_marks_unknown_and_retry_fails_closed(
