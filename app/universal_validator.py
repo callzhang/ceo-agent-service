@@ -213,6 +213,7 @@ class UniversalValidator:
                     PlannedActionKind.OA_APPROVAL,
                     PlannedActionKind.NO_REPLY,
                     PlannedActionKind.DWS_MESSAGE_REACTION,
+                    PlannedActionKind.MEMORY_WRITE,
                 }
                 for action in actions
             )

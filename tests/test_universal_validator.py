@@ -574,6 +574,35 @@ def test_no_reply_can_be_combined_with_oa_approval() -> None:
     ]
 
 
+def test_no_reply_can_be_combined_with_memory_write() -> None:
+    memory_write = PlannedAction(
+        kind=PlannedActionKind.MEMORY_WRITE,
+        reason="Preserve durable style feedback",
+        payload={
+            "data": "Use a more natural, concise style for future replies.",
+            "type": "message",
+        },
+    )
+    no_reply = PlannedAction(
+        kind=PlannedActionKind.NO_REPLY,
+        reason="A human already acknowledged the trigger",
+    )
+
+    result = UniversalValidator().validate(
+        make_plan(no_reply, memory_write),
+        make_context(
+            dependency_status={
+                "dws": DependencyStatus(ready=True),
+                "memory": DependencyStatus(ready=True),
+            }
+        ),
+    )
+
+    assert result.allowed is True
+    assert result.actions == (no_reply, memory_write)
+    assert result.terminal is False
+
+
 def test_memory_write_is_not_terminal() -> None:
     action = PlannedAction(
         kind=PlannedActionKind.MEMORY_WRITE,
