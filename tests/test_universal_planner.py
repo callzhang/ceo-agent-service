@@ -81,6 +81,22 @@ def test_universal_planner_prompt_restricts_personnel_subject_id_sources():
     assert "Never use calendar participant uid values" in prompt
 
 
+def test_universal_planner_prompt_exposes_task_management_api_for_context_lookup():
+    from app.universal_planner import UniversalPlanner
+
+    planner = UniversalPlanner(
+        workspace=Path("/tmp/universal-planner-workspace"),
+        codex_bin="codex",
+    )
+
+    prompt = planner.build_prompt(_context())
+
+    assert "local read-only Task Management API" in prompt
+    assert "http://127.0.0.1:8765/api/task-management/search" in prompt
+    assert "http://127.0.0.1:8765/api/task-management/projects" in prompt
+    assert "do not mutate tasks from the planner" in prompt
+
+
 def test_universal_planner_prompt_allows_only_one_terminal_control_action():
     from app.universal_planner import UniversalPlanner
 

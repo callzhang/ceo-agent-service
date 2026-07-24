@@ -224,6 +224,13 @@ class UniversalPlanner:
                 "the conversation title, sender identity, message text, and match "
                 "reasons; ask a clarifying question only when the task still cannot "
                 "be identified reliably.",
+                "If Trusted task details are missing or too shallow for a task-related "
+                "request, you may query the local read-only Task Management API before "
+                "planning: GET http://127.0.0.1:8765/api/task-management/search?q=<text>"
+                "&conversation_id=<conversation_id>&owner_user_id=<sender_user_id>&limit=3, "
+                "or GET http://127.0.0.1:8765/api/task-management/projects/<project_id>. "
+                "Use the API only for evidence gathering; do not mutate tasks from the "
+                "planner.",
                 example_prompt,
                 UNIVERSAL_PLAN_SCHEMA_HINT,
                 "Return only UniversalPlan JSON. Do not use Markdown fences or add "

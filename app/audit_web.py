@@ -124,6 +124,11 @@ from app.setup_wizard import (
 )
 from app.setup_wizard_models import SetupStepStatus, SetupWizardEvent
 from app.task_models import ProjectPriority, ProjectStatus, RiskLevel, TodoStatus
+from app.task_retrieval import (
+    load_project_task_detail,
+    render_project_task_details,
+    retrieve_project_task_details,
+)
 from app.user_prompt_blocks import USER_PROMPT_BLOCKS, UserPromptBlock
 
 DISPLAY_TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
@@ -4027,6 +4032,59 @@ def render_task_project_detail(store: AutoReplyStore, project_id: int) -> tuple[
     )
 
 
+def task_management_search_payload(
+    store: AutoReplyStore,
+    *,
+    query: str = "",
+    conversation_id: str = "",
+    owner_user_id: str = "",
+    limit: int = 3,
+) -> dict:
+    bounded_limit = max(1, min(limit, 10))
+    details = retrieve_project_task_details(
+        store,
+        query=query,
+        conversation_id=conversation_id,
+        owner_user_id=owner_user_id,
+        limit=bounded_limit,
+    )
+    items = json.loads(render_project_task_details(details) or "[]")
+    return {
+        "ok": True,
+        "query": query.strip(),
+        "conversation_id": conversation_id.strip(),
+        "owner_user_id": owner_user_id.strip(),
+        "limit": bounded_limit,
+        "count": len(items),
+        "items": items,
+    }
+
+
+def task_management_project_payload(
+    store: AutoReplyStore,
+    project_id: int,
+) -> tuple[int, dict]:
+    detail = load_project_task_detail(store, project_id)
+    if detail is None:
+        return (
+            404,
+            {
+                "ok": False,
+                "error": "project_not_found",
+                "project_id": project_id,
+            },
+        )
+    items = json.loads(render_project_task_details([detail]) or "[]")
+    return (
+        200,
+        {
+            "ok": True,
+            "project_id": project_id,
+            "item": items[0],
+        },
+    )
+
+
 def _task_project_detail_rows(project) -> list[tuple[str, str, bool]]:
     tags = _task_detail_pills(_task_simple_labels(project.tags_json))
     related_people = _task_detail_pills(_task_people_labels(project.related_people_json))
@@ -5926,6 +5984,26 @@ def create_audit_app(
             page=_positive_int_query(request, "page", default=1),
             page_size=_positive_int_query(request, "page_size", default=DEFAULT_TASK_PAGE_SIZE),
         )
+
+    @app.get("/api/task-management/search", response_class=JSONResponse)
+    def task_management_search(request: Request) -> JSONResponse:
+        return JSONResponse(
+            task_management_search_payload(
+                AutoReplyStore(db_path),
+                query=str(request.query_params.get("q") or ""),
+                conversation_id=str(request.query_params.get("conversation_id") or ""),
+                owner_user_id=str(request.query_params.get("owner_user_id") or ""),
+                limit=_positive_int_query(request, "limit", default=3),
+            )
+        )
+
+    @app.get("/api/task-management/projects/{project_id}", response_class=JSONResponse)
+    def task_management_project(project_id: int) -> JSONResponse:
+        status, payload = task_management_project_payload(
+            AutoReplyStore(db_path),
+            project_id,
+        )
+        return JSONResponse(payload, status_code=status)
 
     @app.get("/tasks/{project_id}", response_class=HTMLResponse)
     def task_project_detail(project_id: int) -> HTMLResponse:

@@ -25,6 +25,14 @@ planner can answer task-status questions without guessing from chat snippets
 alone. Planner tool-call proof is persisted with the plan and copied into action
 audit events; tool inputs and outputs are omitted from that proof.
 
+Agents can also query task context on demand through the local read-only JSON API:
+
+- `GET /api/task-management/search?q=<text>&conversation_id=<id>&owner_user_id=<id>&limit=3`
+- `GET /api/task-management/projects/<project_id>`
+
+These endpoints expose the same project, TODO, update, follow-up, and DingTalk
+Todo-link context used by planner enrichment. They do not create or update tasks.
+
 The universal observability projection never exposes the stored plan JSON, action target, action payload, canonical payload, or action result JSON.
 
 ## Terminal States

@@ -228,6 +228,48 @@ def retrieve_project_task_details(
     return details
 
 
+def load_project_task_detail(
+    store: AutoReplyStore,
+    project_id: int,
+    *,
+    todos_per_project: int | None = None,
+    updates_per_project: int = 50,
+    follow_ups_per_todo: int = 20,
+) -> ProjectTaskDetail | None:
+    project = store.get_work_project(project_id)
+    if project is None:
+        return None
+    todos = store.list_work_todos(project_id=project.id)
+    if todos_per_project is not None:
+        todos = todos[:todos_per_project]
+    todo_ids = [todo.id for todo in todos]
+    links_by_todo = {
+        todo_id: tuple(links)
+        for todo_id, links in store.list_work_todo_dingtalk_links_for_todos(
+            todo_ids
+        ).items()
+    }
+    follow_ups_by_todo = {
+        todo.id: tuple(
+            store.list_follow_up_drafts(
+                project_id=project.id,
+                todo_id=todo.id,
+                limit=follow_ups_per_todo,
+            )
+        )
+        for todo in todos
+    }
+    return ProjectTaskDetail(
+        project=project,
+        score=0.0,
+        match_reasons=("project_id",),
+        todos=tuple(todos),
+        updates=tuple(store.list_work_updates(project.id, limit=updates_per_project)),
+        follow_ups_by_todo=follow_ups_by_todo,
+        dingtalk_links_by_todo=links_by_todo,
+    )
+
+
 def render_project_task_details(details: list[ProjectTaskDetail]) -> str:
     if not details:
         return ""

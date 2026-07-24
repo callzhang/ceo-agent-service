@@ -2468,6 +2468,104 @@ def test_task_project_detail_route_returns_404_for_missing_project(tmp_path: Pat
     assert "Project not found" in response.text
 
 
+def test_task_management_search_api_returns_task_context(tmp_path: Path):
+    db_path = tmp_path / "worker.sqlite3"
+    store = AutoReplyStore(db_path)
+    project_id = store.create_work_project(
+        title="技术部招聘",
+        category="recruiting",
+        status="active",
+        priority="P1",
+        risk_level="medium",
+        owner_user_id="owner-1",
+        owner_name="Mina",
+        current_state="候选人评估中",
+        next_step="确认 Colin 复试结论",
+        source_conversations_json=json.dumps(
+            [{"id": "cid-hiring", "title": "技术部招聘群"}],
+            ensure_ascii=False,
+        ),
+    )
+    todo_id = store.create_work_todo(
+        project_id=project_id,
+        title="评估 Colin 售前解决方案候选人",
+        description="确认候选人的技术面、售前方案能力和下一轮安排。",
+        owner_user_id="owner-1",
+        owner_name="Mina",
+        priority="P1",
+        deadline_at="2026-07-25 18:00:00",
+        next_follow_up_at="2026-07-24 15:00:00",
+    )
+    follow_up_id = store.create_follow_up_draft(
+        project_id=project_id,
+        todo_id=todo_id,
+        owner_user_id="owner-1",
+        owner_name="Mina",
+        target_conversation_id="cid-hiring",
+        target_kind="group",
+        question_text="Colin 的复试结论定了吗？",
+        scheduled_at="2026-07-24 15:00:00",
+    )
+    client = TestClient(create_audit_app(db_path))
+
+    response = client.get(
+        "/api/task-management/search",
+        params={
+            "q": "这个任务现在是什么状态？",
+            "conversation_id": "cid-hiring",
+            "owner_user_id": "owner-1",
+            "limit": "3",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["count"] == 1
+    item = payload["items"][0]
+    assert item["project"]["id"] == project_id
+    assert item["project"]["detail_url"] == f"/tasks/{project_id}"
+    assert "source_conversation_match" in item["match"]["reasons"]
+    assert item["todos"][0]["id"] == todo_id
+    assert item["todos"][0]["detail_url"] == f"/tasks/{project_id}#todo-{todo_id}"
+    assert item["todos"][0]["deadline_at"] == "2026-07-25 18:00:00"
+    assert item["todos"][0]["follow_ups"][0]["id"] == follow_up_id
+    assert item["todos"][0]["follow_ups"][0]["detail_url"] == (
+        f"/tasks/{project_id}#follow-up-{follow_up_id}"
+    )
+
+
+def test_task_management_project_api_returns_detail_and_404(tmp_path: Path):
+    db_path = tmp_path / "worker.sqlite3"
+    store = AutoReplyStore(db_path)
+    project_id = store.create_work_project(
+        title="售前知识库建设",
+        category="sales",
+        status="active",
+        priority="P1",
+        risk_level="medium",
+    )
+    store.create_work_todo(
+        project_id=project_id,
+        title="补齐来源链接",
+        owner_name="Alex",
+        status="open",
+        priority="P1",
+    )
+    client = TestClient(create_audit_app(db_path))
+
+    response = client.get(f"/api/task-management/projects/{project_id}")
+    missing = client.get("/api/task-management/projects/999")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["item"]["project"]["id"] == project_id
+    assert payload["item"]["todos"][0]["title"] == "补齐来源链接"
+    assert missing.status_code == 404
+    assert missing.json()["error"] == "project_not_found"
+
+
 def test_non_history_pages_do_not_auto_refresh(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     attempt_id = seed_attempt(store)
