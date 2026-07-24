@@ -65,6 +65,16 @@ exhausted, the worker falls back to the same local notification path instead of
 failing the reply attempt. The original chat acknowledgement remains the delivery
 source of truth; the local notification only replaces the operator alert.
 
+## No-reply side effects
+
+Universal plans treat `no_reply` as "do not send a formal chat text reply", not
+as "do nothing". It may be combined with non-text side effects that do not create
+a separate business commitment, such as a lightweight message reaction, a trusted
+calendar/OA action, or `memory_write`. The validator must still block plans that
+combine `no_reply` with another formal chat reply, handoff, blocked, or
+stop-with-error action because those outcomes conflict at the user-visible
+conversation level.
+
 ## DWS upgrade check
 
 The producer checks for `dws` updates inside the normal CEO system pass, once per
