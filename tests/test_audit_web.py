@@ -4597,6 +4597,52 @@ def test_render_attempt_detail_returns_404_when_missing(tmp_path: Path):
     assert "Attempt not found" in html
 
 
+def test_render_attempt_detail_shows_later_oa_result_instead_of_stale_blocked_pill(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    blocked_id = store.record_reply_attempt(
+        conversation_id="cid-1",
+        conversation_title="贾金鹏",
+        trigger_message_id="msg-1",
+        trigger_sender="贾金鹏",
+        trigger_text="这个你确认好了吗？",
+        action="oa_approval",
+        sensitivity_kind="general",
+        oa_process_instance_id="process-1",
+        oa_task_id="task-1",
+        oa_action="退回",
+        oa_remark="请补齐材料后重新提交",
+        send_status="blocked",
+    )
+    later_id = store.record_reply_attempt(
+        conversation_id="cid-1",
+        conversation_title="贾金鹏",
+        trigger_message_id="msg-1",
+        trigger_sender="贾金鹏",
+        trigger_text="这个你确认好了吗？",
+        action="oa_approval",
+        sensitivity_kind="general",
+        oa_process_instance_id="process-1",
+        oa_task_id="task-1",
+        oa_action="comment",
+        oa_remark="请补齐材料后重新提交",
+        send_status="commented",
+    )
+
+    status, html = render_attempt_detail(store, blocked_id)
+
+    assert status == 200
+    reply_meta = html[
+        html.index('<div class="reply-meta">') : html.index("</div><h2>Trigger")
+    ]
+    assert "💬 Blocked" not in reply_meta
+    assert f'href="/attempts/{later_id}"' in reply_meta
+    assert f"已由 #{later_id} 后续处理" in reply_meta
+    assert "💬 Commented" in reply_meta
+    assert "🧾 comment" in reply_meta
+
+
 def test_handle_feedback_post_updates_attempt_and_redirects(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     attempt_id = seed_attempt(store)

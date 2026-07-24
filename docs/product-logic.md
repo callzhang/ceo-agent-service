@@ -230,6 +230,9 @@ path, so follow-up does not need a separate reply engine.
   records the Codex session, tool events, approval URL, approval action,
   approval remark, and action result on the existing reply attempt audit row,
   and does not create a separate OA audit page.
+- When a later attempt handles the same OA trigger, the older attempt detail
+  presents the later OA result in its primary status area and links to that
+  attempt. The older row's stored status remains unchanged as audit evidence.
 - The OA handler may use authorized DingTalk OA API detail reads when DWS does
   not return complete approval detail. Secrets and signed URLs must not be
   written to logs, SQLite, audit summaries, reports, or DingTalk replies.

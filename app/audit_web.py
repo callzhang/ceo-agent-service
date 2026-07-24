@@ -454,6 +454,7 @@ a.nav-item:hover{color:var(--ink);text-decoration:none;border-color:var(--ink)}
 .action-state-pending,.action-state-processing,.action-state-dry-run,.action-state-commented{background:rgba(55,114,207,.10);color:#245aa5;border-color:rgba(55,114,207,.24)}
 .action-state-tentative,.action-state-returned,.action-state-blocked-terminal{background:rgba(195,125,13,.12);color:#8a5a08;border-color:rgba(195,125,13,.24)}
 .action-state-failed,.action-state-blocked,.action-state-declined,.action-state-rejected{background:rgba(212,86,86,.12);color:#9a2f2f;border-color:rgba(212,86,86,.24)}
+.action-state-superseded{background:rgba(55,114,207,.10);color:#245aa5;border-color:rgba(55,114,207,.28)}
 .log-feed{display:grid;gap:8px}
 .log-item{display:grid;gap:8px;padding:11px 12px;border:1px solid var(--hairline);border-radius:8px;background:var(--canvas)}
 .log-main{display:grid;gap:8px;min-width:0}
@@ -4700,6 +4701,7 @@ def render_attempt_detail(store: AutoReplyStore, attempt_id: int) -> tuple[int, 
         attempt.conversation_id
     )
     universal_observation = store.get_universal_execution_observability(attempt_id)
+    later_attempt = _later_attempt_for_display(store, attempt)
     return 200, render_page(
         f"Attempt #{attempt.id}",
         _attempt_detail_body(
@@ -4708,10 +4710,34 @@ def render_attempt_detail(store: AutoReplyStore, attempt_id: int) -> tuple[int, 
             codex_session_id,
             feedback_events,
             universal_observation,
+            later_attempt,
         ),
         active_nav="history",
         user_feedback_pending_count=store.count_pending_user_feedback_items(),
     )
+
+
+def _later_attempt_for_display(
+    store: AutoReplyStore,
+    attempt: ReplyAttempt,
+) -> ReplyAttempt | None:
+    if attempt.oa_process_instance_id.strip():
+        for candidate in store.list_oa_attempt_history(
+            attempt.oa_process_instance_id,
+            limit=50,
+        ):
+            if (
+                candidate.id > attempt.id
+                and candidate.conversation_id == attempt.conversation_id
+                and candidate.trigger_message_id == attempt.trigger_message_id
+                and candidate.oa_action.strip()
+            ):
+                return candidate
+    latest = store.get_latest_reply_attempt_for_trigger(
+        attempt.conversation_id,
+        attempt.trigger_message_id,
+    )
+    return latest if latest is not None and latest.id > attempt.id else None
 
 
 def render_oa_approval_detail(
@@ -6303,6 +6329,7 @@ def _attempt_detail_body(
     codex_session_id: str | None,
     feedback_events: list[FeedbackEvent],
     universal_observation: UniversalExecutionObservation | None = None,
+    later_attempt: ReplyAttempt | None = None,
 ) -> str:
     fields = [
         ("trigger message id", attempt.trigger_message_id),
@@ -6325,7 +6352,7 @@ def _attempt_detail_body(
         codex_session_id=codex_session_id,
         actions_html=_attempt_row_actions(attempt, sent_reply),
         fields=fields,
-        pills_html=_attempt_action_pills(attempt),
+        pills_html=_attempt_action_pills(attempt, later_attempt=later_attempt),
         trigger_title="Trigger",
         trigger_text=_trigger_text(attempt),
         reason_title="Codex reason",
@@ -6910,7 +6937,18 @@ def _calendar_metadata_card(attempt: ReplyAttempt) -> str:
     )
 
 
-def _attempt_action_pills(attempt: ReplyAttempt) -> str:
+def _attempt_action_pills(
+    attempt: ReplyAttempt,
+    *,
+    later_attempt: ReplyAttempt | None = None,
+) -> str:
+    if later_attempt is not None:
+        return (
+            f'<a class="pill status-action action-state-superseded" '
+            f'href="/attempts/{later_attempt.id}">'
+            f'🔁 已由 #{later_attempt.id} 后续处理</a>'
+            f'{_attempt_action_pills(later_attempt)}'
+        )
     calendar_only = (
         attempt.send_status.strip().lower() == "calendar"
         and attempt.calendar_response_status.strip()
