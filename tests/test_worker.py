@@ -3051,12 +3051,64 @@ def test_no_reply_agent_envelope_text_emotion_creates_and_adds_reaction(
     assert attempt is not None
     assert attempt.action == "no_reply"
     assert attempt.send_status == "reacted"
-    assert attempt.send_error == "text_emotion: 我去摇人"
-    assert dws.created_text_emotions == [("我去摇人", "我去摇人", "im_bg_5")]
+    assert attempt.send_error == "text_emotion: [我去摇人]"
+    assert dws.created_text_emotions == [("[我去摇人]", "[我去摇人]", "im_bg_5")]
     assert dws.message_text_emotions == [
-        ("cid-1", "msg-1", "我去摇人", "created-1", "我去摇人", "created-bg")
+        (
+            "cid-1",
+            "msg-1",
+            "[我去摇人]",
+            "created-1",
+            "[我去摇人]",
+            "created-bg",
+        )
     ]
     assert final_sent(dws) == []
+
+
+def test_no_reply_agent_envelope_text_emotion_normalizes_square_brackets(
+    tmp_path: Path,
+    monkeypatch,
+):
+    trigger = message("@Alex Chen(明哥) 这个方案推进得不错")
+    dws = FakeDws([conversation()], {"cid-1": [trigger]})
+    envelope = AgentEnvelope.model_validate(
+        {
+            "kind": "no_action",
+            "user_response": {
+                "mode": "no_reply",
+                "text": "",
+                "sensitivity_kind": "general",
+            },
+            "system_actions": [
+                {
+                    "type": "dws_message_reaction",
+                    "reaction_type": "text_emotion",
+                    "text": "[开心]",
+                    "emotion_name": "[[开心]]",
+                }
+            ],
+            "domain_payload": {},
+            "audit": {
+                "summary": "正向反馈适合轻量 reaction。",
+                "documents": [],
+                "confidence": 0.9,
+            },
+        }
+    )
+    codex = FakeEnvelopeCodex(envelope)
+    worker = make_worker(tmp_path, dws, codex, monkeypatch, dry_run=False)
+
+    worker.run_once()
+
+    attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
+    assert attempt is not None
+    assert attempt.send_status == "reacted"
+    assert attempt.send_error == "text_emotion: [开心]"
+    assert dws.created_text_emotions == [("[开心]", "[开心]", "im_bg_5")]
+    assert dws.message_text_emotions == [
+        ("cid-1", "msg-1", "[开心]", "created-1", "[开心]", "created-bg")
+    ]
 
 
 def test_worker_creates_markdown_doc_for_long_reply_before_sending(
@@ -11914,9 +11966,9 @@ def test_handoff_adds_text_emotion_dings_self_and_records_reaction(
 
     assert final_sent(dws) == []
     assert dws.reply_messages == []
-    assert dws.created_text_emotions == [("我去叫", "我去叫", "im_bg_5")]
+    assert dws.created_text_emotions == [("[我去叫]", "[我去叫]", "im_bg_5")]
     assert dws.message_text_emotions == [
-        ("cid-1", "msg-1", "我去叫", "created-1", "我去叫", "created-bg")
+        ("cid-1", "msg-1", "[我去叫]", "created-1", "[我去叫]", "created-bg")
     ]
     assert len(dws.dings) == 1
     assert "Friday" in dws.dings[0]
@@ -11926,7 +11978,7 @@ def test_handoff_adds_text_emotion_dings_self_and_records_reaction(
     assert attempt is not None
     assert attempt.final_reply_text == ""
     assert attempt.send_status == "reacted"
-    assert attempt.send_error == "text_emotion: 我去叫"
+    assert attempt.send_error == "text_emotion: [我去叫]"
     sent_reply = store.get_sent_reply("cid-1", "msg-1")
     assert sent_reply is None
     assert store.count_errors() == 0
@@ -13610,7 +13662,7 @@ def test_handoff_ding_failure_does_not_block_ack(
         )
     ]
     assert dws.message_text_emotions == [
-        ("cid-1", "msg-1", "我去叫", "created-1", "我去叫", "created-bg")
+        ("cid-1", "msg-1", "[我去叫]", "created-1", "[我去叫]", "created-bg")
     ]
     assert store.has_seen("msg-1") is True
     assert store.count_errors() == 0
