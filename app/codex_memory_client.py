@@ -83,7 +83,6 @@ class CodexMcpMemoryClient:
             None,
             output_schema_path=WRITE_SCHEMA_PATH,
             ignore_user_config=False,
-            disable_plugins=False,
         )
         _remove_config_option(command, "developer_instructions=")
         command[-1:-1] = [

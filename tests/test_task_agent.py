@@ -2472,16 +2472,11 @@ def test_task_agent_codex_runner_isolates_user_config_for_memory_recall(tmp_path
 
     command = captured["command"]
     assert "--ignore-user-config" in command
-    assert "plugins" in [
+    assert [
         command[index + 1]
         for index, value in enumerate(command[:-1])
         if value == "--disable"
-    ]
-    assert "hooks" in [
-        command[index + 1]
-        for index, value in enumerate(command[:-1])
-        if value == "--disable"
-    ]
+    ] == ["hooks"]
 
 
 def test_task_agent_prompt_names_required_memory_recall_tool():
@@ -3053,11 +3048,6 @@ def test_task_agent_codex_runner_uses_process_runner_signature(tmp_path):
     assert "--output-schema" in command
     assert "--ignore-user-config" in command
     assert command[command.index("--disable") + 1] == "hooks"
-    assert "plugins" in [
-        command[index + 1]
-        for index, value in enumerate(command[:-1])
-        if value == "--disable"
-    ]
     assert str(TASK_AGENT_DECISION_SCHEMA_PATH) in command
     assert str(CODEX_DECISION_SCHEMA_PATH) not in command
 

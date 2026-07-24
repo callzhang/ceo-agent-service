@@ -86,8 +86,7 @@ def test_codex_command_exposes_memory_connector_mcp(tmp_path: Path, monkeypatch)
         for index, value in enumerate(command[:-1])
         if value == "--disable"
     ]
-    assert "hooks" in disabled_features
-    assert "plugins" in disabled_features
+    assert disabled_features == ["hooks"]
     assert (
         'mcp_servers.memory_connector.url="https://memory.example/mcp/"'
         in command
@@ -112,23 +111,6 @@ def test_codex_command_reuses_user_config_by_default(tmp_path: Path):
     command = runner.build_command(prompt="hello", session_id=None)
 
     assert "--ignore-user-config" not in command
-    disabled_features = [
-        command[index + 1]
-        for index, value in enumerate(command[:-1])
-        if value == "--disable"
-    ]
-    assert disabled_features == ["hooks", "plugins"]
-
-
-def test_codex_command_can_inherit_plugins_for_service_owned_mcp(tmp_path: Path):
-    runner = CodexRunner(workspace=tmp_path, codex_bin="codex")
-
-    command = runner.build_command(
-        prompt="hello",
-        session_id=None,
-        disable_plugins=False,
-    )
-
     disabled_features = [
         command[index + 1]
         for index, value in enumerate(command[:-1])
@@ -769,8 +751,6 @@ def test_builds_new_thread_command(tmp_path: Path):
         "--ignore-rules",
         "--disable",
         "hooks",
-        "--disable",
-        "plugins",
         "-c",
         'mcp_servers.exa.url="https://mcp.exa.ai/mcp"',
         "-c",
@@ -817,8 +797,6 @@ def test_builds_resume_command(tmp_path: Path):
         "--ignore-rules",
         "--disable",
         "hooks",
-        "--disable",
-        "plugins",
         "-c",
         'mcp_servers.exa.url="https://mcp.exa.ai/mcp"',
         "-c",

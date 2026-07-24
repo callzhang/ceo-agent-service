@@ -329,7 +329,11 @@ def test_plan_uses_new_and_resume_commands_with_configured_mcps(tmp_path, monkey
         assert "--ignore-rules" in command
         assert CODEX_BYPASS_APPROVALS_AND_SANDBOX not in command
         assert command[command.index("-m") + 1] == "planner-model"
-        assert [command[index + 1] for index, value in enumerate(command[:-1]) if value == "--disable"] == ["hooks", "plugins"]
+        assert [
+            command[index + 1]
+            for index, value in enumerate(command[:-1])
+            if value == "--disable"
+        ] == ["hooks"]
         assert any("mcp_servers.exa.url" in value for value in _config_values(command))
         assert any("mcp_servers.memory_connector.url" in value for value in _config_values(command))
         assert 'model_reasoning_effort="high"' in _config_values(command)

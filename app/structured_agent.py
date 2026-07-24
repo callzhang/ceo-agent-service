@@ -265,8 +265,6 @@ class StructuredCodexRunner:
             "--ignore-rules",
             "--disable",
             "hooks",
-            "--disable",
-            "plugins",
             *memory_connector_config_options(),
             *passthrough_mcp_server_config_options(),
             *safety_options,

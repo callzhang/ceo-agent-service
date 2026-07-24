@@ -363,7 +363,7 @@ CEO_NOT_SEND_MESSAGE=1 .venv/bin/ceo-agent daily-task-maintenance --not-send-mes
 
 Codex 配置会写入 `[mcp_servers.memory_connector]`，并使用现有 OAuth Authorization 作为身份。Claude Desktop 的 remote MCP 需要在 Settings > Connectors 手动添加；命令只报告状态，不直接改写 remote connector。
 
-CEO reply agent 默认复用本机 Codex MCP/OAuth 配置，但仍显式禁用 hooks 和 plugins，避免个人自动化脚本影响服务行为。需要保留给 agent 的外部能力分两类：
+CEO reply agent 默认复用本机 Codex MCP/OAuth 配置，但仍显式禁用 hooks，避免个人自动化脚本影响服务行为。需要保留给 agent 的外部能力分两类：
 
 - CLI 能力：`dws` 和 Feishu/Lark CLI 由服务环境直接提供。DWS 负责钉钉消息、文档、审批、日历、通讯录和 AI 听记；Feishu/Lark CLI 负责飞书读取和显式开启后的回复发送。两者都不通过 MCP 透传。
 - MCP 能力：`memory_connector` 复用 `~/.codex/config.toml` 里的同名 MCP 配置，并在存在可转交 bearer 时注入给隔离子流程；`xiaoqing_interview` 和 `exa` 从 `~/.codex/config.toml` 的同名 `[mcp_servers.*]` 读取安全连接字段后透传。若安装者没有配置 `[mcp_servers.exa]`，服务使用默认 Exa remote MCP URL；若没有配置 `[mcp_servers.xiaoqing_interview]`，涉及小青面试资料的任务会被视为阻断性依赖缺失。
