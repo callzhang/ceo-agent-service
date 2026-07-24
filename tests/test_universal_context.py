@@ -8,6 +8,7 @@ from app.dingtalk_models import DingTalkConversation, DingTalkMessage
 from app.store import AutoReplyStore
 from app.universal_context import (
     UniversalContextMessage,
+    UniversalMaterialReference,
     UniversalTaskContext,
     build_universal_context,
     canonical_universal_context_json,
@@ -85,6 +86,8 @@ def test_maps_metadata_and_renders_trigger_and_recent_message() -> None:
         "Execution generation: initial\n"
         "Force new decision: true\n"
         "Dry run: false\n"
+        "Material references:\n"
+        "- none\n"
         "Recent messages:\n"
         "- Alex (prior-1): The previous decision was recorded.\n"
         "- Derek (trigger-1): Please review this."
@@ -117,6 +120,48 @@ def test_render_includes_trusted_sender_user_id_when_present() -> None:
         "- Derek (trigger-1, sender_user_id=user-derek): Please review this."
         in context.render_for_agent()
     )
+
+
+def test_render_includes_material_references_with_commands() -> None:
+    context = UniversalTaskContext(
+        task_id=42,
+        conversation_id="conversation-1",
+        conversation_title="Friday planning",
+        single_chat=True,
+        trigger_message_id="trigger-1",
+        trigger_sender="Derek",
+        trigger_text="Please review this folder.",
+        context_messages=(
+            UniversalContextMessage("Derek", "trigger-1", "Please review this folder."),
+        ),
+        required_dependencies=("dws",),
+        force_new_decision=True,
+        dry_run=False,
+        material_references=(
+            UniversalMaterialReference(
+                kind="dingtalk_doc",
+                reference="https://alidocs.dingtalk.com/i/nodes/NZQYprEoWoEOXajDiBrvmqyEJ1waOeDk",
+                source_message_id="trigger-1",
+                source_sender="Derek",
+                source_time="2026-07-20 10:00:00",
+                read_command=(
+                    "dws doc info --node https://alidocs.dingtalk.com/i/nodes/"
+                    "NZQYprEoWoEOXajDiBrvmqyEJ1waOeDk --format json"
+                ),
+            ),
+        ),
+    )
+
+    rendered = context.render_for_agent()
+
+    assert "Material references:" in rendered
+    assert "kind=dingtalk_doc" in rendered
+    assert "source_message_id=trigger-1" in rendered
+    assert "source_sender=Derek" in rendered
+    assert (
+        "dws doc info --node https://alidocs.dingtalk.com/i/nodes/"
+        "NZQYprEoWoEOXajDiBrvmqyEJ1waOeDk --format json"
+    ) in rendered
 
 
 def test_snapshots_every_behaviorally_relevant_message_field() -> None:
@@ -540,6 +585,7 @@ def test_canonical_context_json_covers_every_field_with_stable_order() -> None:
             "execution_generation": "manual-rerun-2",
             "force_new_decision": True,
             "image_sha256s": [],
+            "material_references": [],
             "required_dependencies": ["dws", "memory"],
             "single_chat": True,
             "task_id": 42,
@@ -566,6 +612,57 @@ def test_canonical_context_json_covers_every_field_with_stable_order() -> None:
         canonical.encode("utf-8")
     ).hexdigest()
     assert canonical_universal_context_json(replace(context)) == canonical
+
+
+def test_material_references_are_part_of_universal_context_hash() -> None:
+    base = UniversalTaskContext(
+        task_id=42,
+        conversation_id="conversation-1",
+        conversation_title="Friday planning",
+        single_chat=True,
+        trigger_message_id="trigger-1",
+        trigger_sender="Derek",
+        trigger_text="Please review this folder.",
+        context_messages=(
+            UniversalContextMessage("Derek", "trigger-1", "Please review this folder."),
+        ),
+        required_dependencies=("dws",),
+        force_new_decision=True,
+        dry_run=False,
+    )
+    with_reference = replace(
+        base,
+        material_references=(
+            UniversalMaterialReference(
+                kind="dingtalk_doc",
+                reference="https://alidocs.dingtalk.com/i/nodes/folder-1",
+                source_message_id="trigger-1",
+                source_sender="Derek",
+                source_time="2026-07-20 10:00:00",
+                read_command=(
+                    "dws doc info --node "
+                    "https://alidocs.dingtalk.com/i/nodes/folder-1 --format json"
+                ),
+            ),
+        ),
+    )
+
+    canonical = json.loads(canonical_universal_context_json(with_reference))
+
+    assert canonical["material_references"] == [
+        {
+            "kind": "dingtalk_doc",
+            "reference": "https://alidocs.dingtalk.com/i/nodes/folder-1",
+            "source_message_id": "trigger-1",
+            "source_sender": "Derek",
+            "source_time": "2026-07-20 10:00:00",
+            "read_command": (
+                "dws doc info --node "
+                "https://alidocs.dingtalk.com/i/nodes/folder-1 --format json"
+            ),
+        }
+    ]
+    assert universal_context_sha256(base) != universal_context_sha256(with_reference)
 
 
 def test_canonical_context_identity_preserves_message_and_dependency_order() -> None:

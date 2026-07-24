@@ -45,6 +45,16 @@ class UniversalContextMessage:
 
 
 @dataclass(frozen=True)
+class UniversalMaterialReference:
+    kind: str
+    reference: str
+    source_message_id: str
+    source_sender: str
+    source_time: str
+    read_command: str = ""
+
+
+@dataclass(frozen=True)
 class UniversalTaskContext:
     task_id: int
     conversation_id: str
@@ -71,6 +81,7 @@ class UniversalTaskContext:
     trusted_task_context: str = ""
     image_paths: tuple[str, ...] = ()
     image_sha256s: tuple[str, ...] = ()
+    material_references: tuple[UniversalMaterialReference, ...] = ()
 
     def __post_init__(self) -> None:
         if (
@@ -91,6 +102,13 @@ class UniversalTaskContext:
             raise ValueError("image_sha256s must be a tuple of SHA-256 hex strings")
         if len(self.image_paths) != len(self.image_sha256s):
             raise ValueError("image_paths and image_sha256s must have equal length")
+        if not isinstance(self.material_references, tuple) or any(
+            not isinstance(reference, UniversalMaterialReference)
+            for reference in self.material_references
+        ):
+            raise TypeError(
+                "material_references must be a tuple[UniversalMaterialReference, ...]"
+            )
 
     def render_for_agent(self) -> str:
         message_lines = [
@@ -138,10 +156,29 @@ class UniversalTaskContext:
                 f"Execution generation: {self.execution_generation}",
                 f"Force new decision: {str(self.force_new_decision).lower()}",
                 f"Dry run: {str(self.dry_run).lower()}",
+                "Material references:",
+                *self._render_material_references_for_agent(),
                 "Recent messages:",
                 *message_lines,
             ]
         )
+
+    def _render_material_references_for_agent(self) -> list[str]:
+        if not self.material_references:
+            return ["- none"]
+        lines: list[str] = [
+            "- If the decision depends on a material body, use the read_command or an equivalent read-only CLI/tool before concluding the material is unreadable.",
+            "- Do not say a material is inaccessible until its supplied read path has been tried or the tool reports a concrete permission/login error.",
+        ]
+        for index, material in enumerate(self.material_references, start=1):
+            command = material.read_command or "none"
+            lines.append(
+                f"- [{index}] kind={material.kind}; reference={material.reference}; "
+                f"source_message_id={material.source_message_id}; "
+                f"source_sender={material.source_sender}; source_time={material.source_time}; "
+                f"read_command={command}"
+            )
+        return lines
 
     @staticmethod
     def _render_message_for_agent(message: UniversalContextMessage) -> str:
@@ -240,6 +277,31 @@ def canonical_universal_context_json(context: UniversalTaskContext) -> str:
             raise TypeError("required_dependencies items must be str")
         required_dependencies.append(dependency)
 
+    material_references: list[dict[str, str]] = []
+    for reference in context.material_references:
+        if not isinstance(reference, UniversalMaterialReference):
+            raise TypeError("material_references items must be UniversalMaterialReference")
+        for field_name in (
+            "kind",
+            "reference",
+            "source_message_id",
+            "source_sender",
+            "source_time",
+            "read_command",
+        ):
+            if not isinstance(getattr(reference, field_name), str):
+                raise TypeError(f"material reference {field_name} must be a str")
+        material_references.append(
+            {
+                "kind": reference.kind,
+                "reference": reference.reference,
+                "source_message_id": reference.source_message_id,
+                "source_sender": reference.source_sender,
+                "source_time": reference.source_time,
+                "read_command": reference.read_command,
+            }
+        )
+
     return json.dumps(
         {
             "task_id": context.task_id,
@@ -266,6 +328,7 @@ def canonical_universal_context_json(context: UniversalTaskContext) -> str:
             "trusted_document_url": context.trusted_document_url,
             "trusted_task_context": context.trusted_task_context,
             "image_sha256s": list(context.image_sha256s),
+            "material_references": material_references,
         },
         ensure_ascii=False,
         sort_keys=True,
@@ -294,6 +357,7 @@ def build_universal_context(
     trusted_task_context: str = "",
     image_paths: tuple[str, ...] = (),
     image_sha256s: tuple[str, ...] = (),
+    material_references: tuple[UniversalMaterialReference, ...] = (),
 ) -> UniversalTaskContext:
     trigger_snapshot = _snapshot_message(trigger)
     messages: list[UniversalContextMessage] = []
@@ -358,6 +422,7 @@ def build_universal_context(
         trusted_task_context=trusted_task_context,
         image_paths=image_paths,
         image_sha256s=image_sha256s,
+        material_references=material_references,
     )
 
 
