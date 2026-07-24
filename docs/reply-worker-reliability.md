@@ -208,6 +208,14 @@ The worker still preprocesses:
 - Images, because Codex receives local image paths rather than DingTalk media
   IDs.
 
+OA detail collection extracts document and attachment references from both form
+fields and approval operation records, including applicant comments. Those OA
+references are promoted into the same top-level material-reference section used
+by ordinary messages. A folder reference is first inspected with `dws doc info`;
+the agent then lists its child nodes and reads each relevant item with the
+read-only command appropriate to that node type before making an approval
+judgment.
+
 ## Mail review and reply
 
 A quoted DingTalk mail card is treated as a locator, not as the complete mail

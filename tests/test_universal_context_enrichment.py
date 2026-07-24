@@ -386,6 +386,67 @@ def test_universal_worker_passes_material_references_without_reading_bodies(
     )
 
 
+def test_universal_worker_promotes_oa_material_references_into_planner_context(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    worker = make_worker(tmp_path)
+    folder_url = (
+        "https://alidocs.dingtalk.com/i/nodes/"
+        "NZQYprEoWoEOXajDiBrvmqyEJ1waOeDk"
+    )
+    oa_url = (
+        "https://aflow.dingtalk.com/detail?"
+        "procInstId=proc-1&taskId=task-1"
+    )
+    trigger = message(
+        f"[Ding]贾金鹏提醒您审批他的项目申请 {oa_url}",
+        single_chat=True,
+    )
+    consumer = CapturingConsumer()
+    monkeypatch.setattr(worker, "_calendar_invite_context", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(worker, "_collect_image_paths", lambda *_: ([], []))
+    monkeypatch.setattr(
+        worker,
+        "_oa_approval_detail_text",
+        lambda *_: json.dumps(
+            {
+                "process_instance_id": "proc-1",
+                "oa_material_references": [
+                    {
+                        "kind": "dingtalk_doc",
+                        "reference": folder_url,
+                        "source": "openapi_detail.operation_records",
+                        "field_name": "ADD_REMARK",
+                        "read_command": (
+                            f"dws doc info --node {shlex.quote(folder_url)} --format json"
+                        ),
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+    )
+    monkeypatch.setattr(worker, "_universal_consumer", lambda: consumer)
+
+    worker._process_universal_queued_task(
+        conversation(single_chat=True),
+        reply_task(trigger, oa_url=oa_url),
+        trigger,
+        [trigger],
+        [trigger],
+    )
+
+    context = consumer.contexts[0]
+    assert len(context.material_references) == 1
+    reference = context.material_references[0]
+    assert reference.kind == "dingtalk_doc"
+    assert reference.reference == folder_url
+    assert reference.source_message_id == "msg-trigger:trusted-oa-approval"
+    assert reference.read_command == (
+        f"dws doc info --node {shlex.quote(folder_url)} --format json"
+    )
+
+
 def test_default_material_read_command_shell_quotes_unsafe_references() -> None:
     unsafe_doc_url = "https://alidocs.dingtalk.com/i/nodes/abc;touch /tmp/pwn"
     unsafe_minutes_id = "minutes-1;touch /tmp/pwn"

@@ -777,22 +777,28 @@ class DingTalkAutoReplyWorker:
                 trigger,
                 oa_url_for_detail,
             )
-            planner_context_messages.append(
-                DingTalkMessage(
-                    open_conversation_id=conversation.open_conversation_id,
-                    open_message_id=f"{trigger.open_message_id}:trusted-oa-approval",
-                    conversation_title=conversation.title,
-                    single_chat=conversation.single_chat,
-                    sender_name="CEO系统",
-                    create_time=trigger.create_time,
-                    content=(
-                        "可信OA审批材料：\n"
-                        "以下审批详情由服务在规划前读取，包含当前用户、表单、"
-                        "审批记录、待办任务和可读取材料引用；处理审批时必须据此"
-                        "判断，不要只看群消息。\n"
-                        f"{approval_detail_text[:60000]}"
-                    ),
-                )
+            oa_prompt_message = DingTalkMessage(
+                open_conversation_id=conversation.open_conversation_id,
+                open_message_id=f"{trigger.open_message_id}:trusted-oa-approval",
+                conversation_title=conversation.title,
+                single_chat=conversation.single_chat,
+                sender_name="CEO系统",
+                create_time=trigger.create_time,
+                content=(
+                    "可信OA审批材料：\n"
+                    "以下审批详情由服务在规划前读取，包含当前用户、表单、"
+                    "审批记录、待办任务和可读取材料引用；处理审批时必须据此"
+                    "判断，不要只看群消息。\n"
+                    f"{approval_detail_text[:60000]}"
+                ),
+            )
+            planner_context_messages.append(oa_prompt_message)
+            material_references = self._merge_universal_material_references(
+                material_references,
+                self._universal_oa_material_references(
+                    approval_detail_text,
+                    oa_prompt_message,
+                ),
             )
         trusted_task_context = self._trusted_task_context_for_universal(
             conversation,
@@ -850,6 +856,55 @@ class DingTalkAutoReplyWorker:
                 )
             )
         return tuple(universal_references)
+
+    @staticmethod
+    def _universal_oa_material_references(
+        approval_detail_text: str,
+        source_message: DingTalkMessage,
+    ) -> tuple[UniversalMaterialReference, ...]:
+        try:
+            detail = json.loads(approval_detail_text)
+        except json.JSONDecodeError:
+            return ()
+        if not isinstance(detail, dict):
+            return ()
+        raw_references = detail.get("oa_material_references")
+        if not isinstance(raw_references, list):
+            return ()
+        references: list[UniversalMaterialReference] = []
+        for raw_reference in raw_references:
+            if not isinstance(raw_reference, dict):
+                continue
+            kind = str(raw_reference.get("kind") or "").strip()
+            reference = str(raw_reference.get("reference") or "").strip()
+            if not kind or not reference:
+                continue
+            references.append(
+                UniversalMaterialReference(
+                    kind=kind,
+                    reference=reference,
+                    source_message_id=source_message.open_message_id,
+                    source_sender=source_message.sender_name,
+                    source_time=source_message.create_time,
+                    read_command=str(raw_reference.get("read_command") or "").strip(),
+                )
+            )
+        return tuple(references)
+
+    @staticmethod
+    def _merge_universal_material_references(
+        *groups: tuple[UniversalMaterialReference, ...],
+    ) -> tuple[UniversalMaterialReference, ...]:
+        merged: list[UniversalMaterialReference] = []
+        seen: set[tuple[str, str]] = set()
+        for group in groups:
+            for reference in group:
+                key = (reference.kind, reference.reference)
+                if key in seen:
+                    continue
+                seen.add(key)
+                merged.append(reference)
+        return tuple(merged)
 
     @staticmethod
     def _default_material_read_command(kind: str, reference: str) -> str:
@@ -6460,6 +6515,11 @@ class DingTalkAutoReplyWorker:
             references,
         )
         self._collect_oa_alidocs_references(values, references)
+        self._collect_oa_alidocs_references(
+            process.get("operation_records"),
+            references,
+            source="openapi_detail.operation_records",
+        )
         if references:
             documents["oa_material_references"] = self._dedupe_oa_material_references(
                 references
@@ -6509,6 +6569,7 @@ class DingTalkAutoReplyWorker:
         references: list[dict[str, str]],
         *,
         field_name: str = "",
+        source: str = "openapi_detail.form_component_values",
     ) -> None:
         if isinstance(value, list):
             for item in value:
@@ -6516,10 +6577,17 @@ class DingTalkAutoReplyWorker:
                     item,
                     references,
                     field_name=field_name,
+                    source=source,
                 )
             return
         if isinstance(value, dict):
-            next_field_name = str(value.get("name") or value.get("label") or field_name)
+            next_field_name = str(
+                value.get("name")
+                or value.get("label")
+                or value.get("operation_type")
+                or value.get("operationType")
+                or field_name
+            )
             nested_keys = [
                 nested_key
                 for nested_key in ("value", "extendValue", "rowValue")
@@ -6536,6 +6604,7 @@ class DingTalkAutoReplyWorker:
                     value.get(nested_key),
                     references,
                     field_name=next_field_name,
+                    source=source,
                 )
             return
         if not isinstance(value, str):
@@ -6549,6 +6618,7 @@ class DingTalkAutoReplyWorker:
                 parsed,
                 references,
                 field_name=field_name,
+                source=source,
             )
             return
         for match in DINGTALK_DOC_URL_PATTERN.finditer(value):
@@ -6557,7 +6627,7 @@ class DingTalkAutoReplyWorker:
                 {
                     "kind": "dingtalk_doc",
                     "reference": url,
-                    "source": "openapi_detail.form_component_values",
+                    "source": source,
                     "field_name": field_name,
                     "read_command": (
                         f"dws doc info --node {shlex.quote(url)} --format json"

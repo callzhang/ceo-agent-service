@@ -8208,6 +8208,60 @@ def test_oa_approval_detail_reports_alidocs_folder_reference_from_openapi_form(
     } in detail["oa_material_references"]
 
 
+def test_oa_approval_detail_reports_alidocs_reference_from_openapi_comment(
+    tmp_path: Path, monkeypatch
+):
+    folder_url = (
+        "https://alidocs.dingtalk.com/i/nodes/"
+        "NZQYprEoWoEOXajDiBrvmqyEJ1waOeDk"
+    )
+    trigger = message(
+        "[Ding]贾金鹏提醒您审批他的项目申请 "
+        "https://aflow.dingtalk.com/detail?procInstId=proc-1&taskId=task-1",
+        single_chat=True,
+    )
+    dws = FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]})
+    dws.oa_approval_details["proc-1"] = DwsError("detail parse failed")
+    dws.oa_approval_records["proc-1"] = {"records": []}
+    dws.oa_approval_tasks["proc-1"] = {
+        "tasks": [{"taskId": "task-1", "userid": "derek-user"}]
+    }
+    dws.current_user_id = "derek-user"
+    dws.openapi_oa_details["proc-1"] = {
+        "process_instance": {
+            "form_component_values": [],
+            "operation_records": [
+                {
+                    "operation_type": "ADD_REMARK",
+                    "userid": "applicant-user",
+                    "remark": f"其他信息请读取项目材料：{folder_url}",
+                }
+            ],
+        }
+    }
+    codex = FakeCodex(CodexDecision(action=CodexAction.NO_REPLY))
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+
+    detail = json.loads(
+        worker._oa_approval_detail_text(
+            trigger,
+            "https://aflow.dingtalk.com/detail?procInstId=proc-1&taskId=task-1",
+        )
+    )
+
+    assert detail["oa_material_references"] == [
+        {
+            "kind": "dingtalk_doc",
+            "reference": folder_url,
+            "source": "openapi_detail.operation_records",
+            "field_name": "ADD_REMARK",
+            "read_command": (
+                f"dws doc info --node {shlex.quote(folder_url)} --format json"
+            ),
+        }
+    ]
+
+
 def test_oa_approval_detail_extracts_alidocs_reference_from_json_string_value(
     tmp_path: Path, monkeypatch
 ):
