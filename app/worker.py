@@ -4480,14 +4480,18 @@ class DingTalkAutoReplyWorker:
             return
         status_fields = self._dws_auth_backup_status_fields(auth_status)
         reason = "DWS auth status is not ready for noninteractive Codex execution"
-        self._set_dws_auth_login_state(
-            {
-                "status": "blocked",
-                "reason": reason,
-                "checked_at": self._now().astimezone(timezone.utc).isoformat(),
-                **status_fields,
-            }
+        login_requested = self._ensure_dws_auth_login(
+            DwsError(reason, code="2"),
         )
+        if not login_requested:
+            self._set_dws_auth_login_state(
+                {
+                    "status": "blocked",
+                    "reason": reason,
+                    "checked_at": self._now().astimezone(timezone.utc).isoformat(),
+                    **status_fields,
+                }
+            )
         raise DwsAuthorizationRequiredError(reason)
 
     def _dws_auth_backup_due(

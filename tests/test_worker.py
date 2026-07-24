@@ -38,6 +38,7 @@ from app.worker import (
     DWS_AUTH_LOGIN_STATE_KEY,
     PROCESSING_ACK,
     DingTalkAutoReplyWorker,
+    DwsAuthorizationRequiredError,
 )
 
 
@@ -1869,8 +1870,7 @@ def test_consume_once_checks_dws_auth_before_starting_codex(
     tmp_path: Path, monkeypatch
 ):
     notifications = []
-    trigger = message("@Alex Chen 看下这个材料")
-    dws = FakeDws([conversation()], {"cid-1": [trigger]})
+    dws = FakeDws([], {})
     dws.auth_status_response = {
         "authenticated": False,
         "token_valid": False,
@@ -1880,32 +1880,27 @@ def test_consume_once_checks_dws_auth_before_starting_codex(
         CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该调用")
     )
     worker = make_worker(tmp_path, dws, codex, monkeypatch)
-    worker.store.enqueue_reply_task(
-        conversation_id="cid-1",
-        conversation_title="Friday",
-        single_chat=False,
-        trigger_message_id=trigger.open_message_id,
-        trigger_create_time=trigger.create_time,
-        trigger_sender=trigger.sender_name,
-        trigger_text=trigger.content,
-        trigger_message_json=trigger.model_dump_json(),
-    )
     monkeypatch.setattr(
         "app.worker.send_macos_notification",
         lambda **kwargs: notifications.append(kwargs),
     )
 
-    assert worker.consume_once() == 0
+    with pytest.raises(DwsAuthorizationRequiredError):
+        worker._ensure_dws_ready_for_codex()
 
     assert codex.calls == []
     assert dws.auth_status_calls >= 1
-    assert worker.store.count_reply_tasks(status="pending") == 1
+    assert dws.auth_login_starts == 1
     state = json.loads(worker.store.get_service_state(DWS_AUTH_LOGIN_STATE_KEY))
-    assert state["status"] == "blocked"
-    errors = worker.store.list_errors(limit=10)
-    assert [error.kind for error in errors] == ["reply_task_authorization"]
-    assert "DWS auth status is not ready" in errors[0].detail
-    assert notifications[0]["title"] == "CEO task waiting for authorization: Friday"
+    assert state["status"] == "running"
+    assert state["pid"] == 1234
+    assert notifications == [
+        {
+            "title": "CEO DWS auth login required",
+            "message": "Started dws auth login. Please complete DingTalk login.",
+            "url": None,
+        }
+    ]
 
 
 def test_produce_once_restarts_stale_persisted_dws_auth_login(
