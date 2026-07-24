@@ -52,6 +52,28 @@ from app.universal_plan import (
 )
 
 FAST_PATH_UNREAD_BACKOFF_TASK_ERROR = "waiting_fast_path_unread_backoff"
+UNRECOVERABLE_BLOCKED_ERROR_PREFIX = "blocked_unrecoverable_"
+
+
+def is_unrecoverable_blocked_attempt(attempt: "ReplyAttempt") -> bool:
+    return (
+        attempt.send_status.strip().lower() == "blocked"
+        and attempt.send_error.strip().lower().startswith(
+            UNRECOVERABLE_BLOCKED_ERROR_PREFIX
+        )
+    )
+
+
+def is_terminal_reply_attempt(attempt: "ReplyAttempt") -> bool:
+    status = attempt.send_status.strip().lower()
+    return status in {
+        "sent",
+        "skipped",
+        "commented",
+        "reacted",
+        "calendar",
+        "document",
+    } or is_unrecoverable_blocked_attempt(attempt)
 SQLITE_BUSY_TIMEOUT_SECONDS = 30
 SQLITE_BUSY_TIMEOUT_MILLISECONDS = SQLITE_BUSY_TIMEOUT_SECONDS * 1000
 UNIVERSAL_MEMORY_LEASE_SECONDS = 15 * 60
@@ -6834,6 +6856,31 @@ class AutoReplyStore:
             row = db.execute(
                 f"select count(*) as count from reply_attempts{where_sql}",
                 args,
+            ).fetchone()
+            return int(row["count"])
+
+    def count_recoverable_blocked_reply_attempts(self) -> int:
+        with self._connect() as db:
+            row = db.execute(
+                """
+                select count(*) as count
+                from reply_attempts as attempts
+                where attempts.send_status='blocked'
+                  and lower(attempts.send_error) not like ?
+                  and attempts.id = (
+                      select max(latest.id)
+                      from reply_attempts as latest
+                      where latest.conversation_id=attempts.conversation_id
+                        and latest.trigger_message_id=attempts.trigger_message_id
+                  )
+                  and not exists (
+                      select 1
+                      from sent_replies as sent
+                      where sent.conversation_id=attempts.conversation_id
+                        and sent.trigger_message_id=attempts.trigger_message_id
+                  )
+                """,
+                (f"{UNRECOVERABLE_BLOCKED_ERROR_PREFIX}%",),
             ).fetchone()
             return int(row["count"])
 

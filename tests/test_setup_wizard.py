@@ -369,6 +369,7 @@ def test_check_dry_run_passes_without_failed_or_processing_backlog(tmp_path: Pat
         "processing_reply_tasks": 0,
         "failed_reply_tasks": 0,
         "unresolved_universal_actions": 0,
+        "recoverable_blocked_attempts": 0,
         "due_follow_up_drafts": 0,
     }
 
@@ -448,6 +449,50 @@ def test_check_dry_run_reports_unresolved_universal_action(tmp_path: Path):
     assert result.status == "needs_action"
     assert result.summary == "Unresolved reply, action, or follow-up backlog exists."
     assert result.evidence["unresolved_universal_actions"] == 1
+
+
+def test_check_dry_run_reports_recoverable_blocked_attempt(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.record_reply_attempt(
+        conversation_id="cid-1",
+        conversation_title="测试群",
+        trigger_message_id="msg-1",
+        trigger_sender="测试用户",
+        trigger_text="测试消息",
+        action="blocked",
+        sensitivity_kind="general",
+        send_status="blocked",
+    )
+
+    result = check_setup_step("dry_run", repo_root=tmp_path, store=store)
+
+    assert result.status == "needs_action"
+    assert result.evidence["recoverable_blocked_attempts"] == 1
+
+
+def test_check_dry_run_ignores_unrecoverable_blocked_attempt(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.record_reply_attempt(
+        conversation_id="cid-1",
+        conversation_title="测试群",
+        trigger_message_id="msg-1",
+        trigger_sender="测试用户",
+        trigger_text="测试消息",
+        action="blocked",
+        sensitivity_kind="general",
+        send_status="blocked",
+    )
+    attempt = store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
+    assert attempt is not None
+    store.update_reply_attempt(
+        attempt.id,
+        send_error="blocked_unrecoverable_external_auth: not current user",
+    )
+
+    result = check_setup_step("dry_run", repo_root=tmp_path, store=store)
+
+    assert result.status == "done"
+    assert result.evidence["recoverable_blocked_attempts"] == 0
 
 
 def test_check_dry_run_reports_due_follow_up_backlog(tmp_path: Path):

@@ -114,6 +114,7 @@ from app.store import (
     ReplyTask,
     SentReply,
     UserFeedbackItem,
+    is_unrecoverable_blocked_attempt as store_is_unrecoverable_blocked_attempt,
 )
 from app.setup_wizard import (
     build_wizard_status,
@@ -7023,10 +7024,7 @@ def _send_status_action(attempt: ReplyAttempt) -> tuple[str, str]:
 
 
 def _is_unrecoverable_blocked_attempt(attempt: ReplyAttempt) -> bool:
-    return (
-        attempt.send_status.strip().lower() == "blocked"
-        and attempt.send_error.strip().lower().startswith("blocked_unrecoverable_")
-    )
+    return store_is_unrecoverable_blocked_attempt(attempt)
 
 
 def _action_state_class(value: str) -> str:
