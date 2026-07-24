@@ -4659,6 +4659,53 @@ def test_consume_once_replans_universal_context_identity_drift(
     ]
 
 
+def test_consume_once_completes_identity_drift_after_terminal_at_max_attempts(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message("@Alex Chen(明哥) 这个怎么处理？")
+    dws = FakeDws(
+        [conversation()],
+        {"cid-1": [trigger]},
+    )
+    worker = make_worker(
+        tmp_path,
+        dws,
+        FakeCodex([]),
+        monkeypatch,
+        max_task_attempts=1,
+    )
+    worker.produce_once()
+    task = worker.store.list_reply_tasks(statuses=["pending"])[0]
+    worker.store.record_reply_attempt(
+        conversation_id=task.conversation_id,
+        conversation_title=task.conversation_title,
+        trigger_message_id=task.trigger_message_id,
+        trigger_sender=task.trigger_sender,
+        trigger_text=task.trigger_text,
+        action="oa_approval",
+        sensitivity_kind="general",
+        send_status="commented",
+    )
+
+    def raise_context_identity_mismatch(*_args, **_kwargs):
+        raise ValueError("context identity mismatch")
+
+    monkeypatch.setattr(
+        worker,
+        "_process_queued_task",
+        raise_context_identity_mismatch,
+    )
+
+    assert worker.consume_once(max_tasks=1) == 0
+
+    assert worker.store.count_reply_tasks(status="done") == 1
+    assert worker.store.count_reply_tasks(status="failed") == 0
+    assert worker.store.count_reply_tasks(status="pending") == 0
+    assert "reply_task_universal_plan_identity_after_terminal" in [
+        error.kind for error in worker.store.list_errors(limit=10)
+    ]
+
+
 def test_consume_once_records_stale_processing_tasks_before_requeue(
     tmp_path: Path, monkeypatch
 ):

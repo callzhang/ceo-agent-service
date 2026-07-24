@@ -5244,7 +5244,6 @@ class DingTalkAutoReplyWorker:
                         "context identity mismatch",
                         "execution generation mismatch",
                     }
-                    and task.attempts < self.max_task_attempts
                 ):
                     if self._trigger_has_terminal_result(
                         task.conversation_id,
@@ -5256,6 +5255,20 @@ class DingTalkAutoReplyWorker:
                             task.trigger_message_id,
                             "reply_task_universal_plan_identity_after_terminal",
                             error,
+                        )
+                        continue
+                    if task.attempts >= self.max_task_attempts:
+                        self.store.fail_reply_task(task.id, error)
+                        self.store.record_error(
+                            task.conversation_id,
+                            task.trigger_message_id,
+                            "reply_task",
+                            error,
+                        )
+                        self._notify(
+                            title=f"CEO task failed: {task.conversation_title}",
+                            message=error[:120],
+                            conversation=conversation,
                         )
                         continue
                     self.store.rotate_reply_task_execution_generation(task.id)

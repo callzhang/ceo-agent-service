@@ -48,6 +48,8 @@ CEO Agent Service 会从钉钉读取私聊、群聊、在线文档、OA 审批�
 
 `blocked` 只表示缺少权限、依赖、材料或安全条件，后续条件恢复后仍应进入修复/恢复口径。确定不可恢复的阻塞必须写入 `send_status=blocked` 且 `send_error` 以 `blocked_unrecoverable_` 开头；这类记录在审计页显示为 terminal blocked，不再作为待修复 backlog。
 
+当同一 `conversation_id + trigger_message_id` 已经产生更新的 terminal attempt（例如 `sent`、`skipped`、`commented`、`blocked`）或 `sent_replies` 记录时，后续恢复流程遇到 Universal Plan 上下文身份漂移应收敛旧 `reply_tasks` 为 `done`，避免已经处理过的消息在最大重试次数后再次显示为 failed。
+
 ## 消息如何被处理
 
 ### 快路径
