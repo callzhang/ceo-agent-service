@@ -90,6 +90,34 @@ def test_maps_metadata_and_renders_trigger_and_recent_message() -> None:
     )
 
 
+def test_render_includes_trusted_sender_user_id_when_present() -> None:
+    context = UniversalTaskContext(
+        task_id=42,
+        conversation_id="conversation-1",
+        conversation_title="Friday planning",
+        single_chat=True,
+        trigger_message_id="trigger-1",
+        trigger_sender="Derek",
+        trigger_text="Please review this.",
+        context_messages=(
+            UniversalContextMessage(
+                "Derek",
+                "trigger-1",
+                "Please review this.",
+                sender_user_id="user-derek",
+            ),
+        ),
+        required_dependencies=("dws",),
+        force_new_decision=True,
+        dry_run=False,
+    )
+
+    assert (
+        "- Derek (trigger-1, sender_user_id=user-derek): Please review this."
+        in context.render_for_agent()
+    )
+
+
 def test_snapshots_every_behaviorally_relevant_message_field() -> None:
     trigger = DingTalkMessage(
         open_conversation_id="conversation-1",

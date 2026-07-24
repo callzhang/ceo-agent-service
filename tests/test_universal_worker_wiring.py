@@ -76,6 +76,9 @@ class FakeDws:
     def get_current_user_id(self):
         return "principal-user-1"
 
+    def resolve_message_sender(self, message):
+        return message.sender_user_id or "resolved-sender-user"
+
     def read_oa_approval_detail(self, process_instance_id: str):
         self.oa_detail_reads.append(process_instance_id)
         return {
@@ -322,6 +325,29 @@ def test_universal_route_is_default(tmp_path, monkeypatch):
 
     assert len(planner.calls) == 1
     assert legacy_calls == []
+
+
+def test_universal_context_resolves_missing_trigger_sender_user_id(
+    tmp_path, monkeypatch
+):
+    monkeypatch.delenv("CEO_UNIVERSAL_CONSUMER", raising=False)
+    trigger = trigger_message().model_copy(update={"sender_user_id": None})
+    planner = RecordingPlanner(no_reply_plan())
+    worker, trigger = make_worker(
+        tmp_path, monkeypatch, trigger=trigger, planner=planner
+    )
+    enqueue(worker, trigger)
+
+    assert worker.consume_once(max_tasks=1) == 1
+
+    context = planner.calls[0][0]
+    trigger_snapshot = next(
+        message
+        for message in context.context_messages
+        if message.open_message_id == trigger.open_message_id
+    )
+    assert trigger_snapshot.sender_user_id == "resolved-sender-user"
+    assert "sender_user_id=resolved-sender-user" in context.render_for_agent()
 
 
 def test_consume_completes_task_when_generation_mismatch_follows_terminal_result(

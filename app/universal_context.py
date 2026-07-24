@@ -93,7 +93,7 @@ class UniversalTaskContext:
 
     def render_for_agent(self) -> str:
         message_lines = [
-            f"- {message.sender_name} ({message.open_message_id}): {message.content}"
+            self._render_message_for_agent(message)
             for message in self.context_messages
         ]
         if not message_lines:
@@ -138,6 +138,16 @@ class UniversalTaskContext:
                 "Recent messages:",
                 *message_lines,
             ]
+        )
+
+    @staticmethod
+    def _render_message_for_agent(message: UniversalContextMessage) -> str:
+        identity_parts = [message.open_message_id]
+        if message.sender_user_id:
+            identity_parts.append(f"sender_user_id={message.sender_user_id}")
+        return (
+            f"- {message.sender_name} ({', '.join(identity_parts)}): "
+            f"{message.content}"
         )
 
 

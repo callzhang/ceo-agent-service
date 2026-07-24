@@ -719,6 +719,7 @@ class DingTalkAutoReplyWorker:
         context_messages: list[DingTalkMessage],
         prompt_context_messages: list[DingTalkMessage],
     ) -> bool:
+        trigger = self._with_resolved_sender_user_id_for_universal(trigger)
         effective_oa_url = task.oa_url.strip()
         if not effective_oa_url and not self._is_oa_approval_message(trigger):
             effective_oa_url = self._oa_context_url_override(
@@ -840,6 +841,16 @@ class DingTalkAutoReplyWorker:
         )
         result = self._universal_consumer().process(context)
         return self._map_universal_consumer_result(result, trigger)
+
+    def _with_resolved_sender_user_id_for_universal(
+        self, message: DingTalkMessage
+    ) -> DingTalkMessage:
+        if message.sender_user_id:
+            return message
+        user_id = self._resolve_sender_user_id_for_prompt(message)
+        if not user_id:
+            return message
+        return message.model_copy(update={"sender_user_id": user_id})
 
     @staticmethod
     def _universal_calendar_prompt_message(
